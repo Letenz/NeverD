@@ -254,11 +254,13 @@ They are the one source of what a known routine takes and returns, as IDA's
 type libraries are beside its signatures: signatures (`signatures/`)
 recognize a routine by its bytes and only name it. A platform or an
 architecture joins by a header under `lib/types/headers/`, a row of
-`HeaderLibraries.def` naming its data model and the spelling its headers
-name builtins in, which shows its declarations as they read (Windows'
-`ULONG`), and rows of `HeaderLibraryImages.def`: how an image's headers tell
-its kind (a PE's subsystem), and the libraries an image of each kind and
-architecture joins, in order. Its calling convention's rules then place
+`HeaderLibraries.def` naming its data model, the record ABI its records are
+laid out by (a 32-bit Linux program's i386 System V ABI or AAPCS32, which
+its data model alone does not say) and the spelling its headers name
+builtins in, which shows its declarations as they read (Windows' `ULONG`),
+and rows of `HeaderLibraryImages.def`: how an image's headers tell its kind
+(a PE's subsystem, the C library an ELF image under Linux runs on), and the
+libraries an image of each kind and architecture joins, in order. Its calling convention's rules then place
 each parameter (`placeSourceParameters`, one file per convention).
 `scripts/generate_windows_types.py` renders, from mingw-w64's headers, what
 a driver's `<ntifs.h>` declares into `lib/types/headers/WindowsKernelX64.h`
@@ -269,13 +271,23 @@ into `WindowsUserX64.h`, `WindowsUserX86.h` and `WindowsUserARM64.h`;
 mingw-w64's DDK declares no ARM64 kernel. phnt is read with mingw-w64's SDK
 for Windows 11 24H2, in place of `<winternl.h>`; `scripts/windows_types`
 supplies what it takes from Microsoft's SDK that mingw-w64 lacks or spells
-otherwise. The build embeds each file in a unit of its own, and
+otherwise. `scripts/generate_linux_types.py` renders what the GNU C
+Library's headers declare for a program built with `_GNU_SOURCE` into
+`LinuxX64.h`, `LinuxX86.h`, `LinuxARM64.h` and `LinuxARM.h`; a routine glibc
+gives an assembler name (`__isoc23_strtol` for strtol, as glibc 2.38 names
+it) takes its prototype under that name too, which a program imports. The
+loader records the dynamic linker an ELF image asks for and Android's
+identification note, and `linuxLibC` (`ELFOperatingSystem.h`) tells glibc's
+programs from bionic's and musl's, whose 32-bit records glibc's do not
+describe. The build embeds each file in a unit of its own, and
 `headerLibrary` reads each once. The C API joins the libraries the table
 names to an image (an x64 or x86 PE of the native subsystem joins its
 kernel's; one of the Windows GUI or console subsystem joins its user mode's,
 then, on x64 and x86, its kernel's for the few ntdll exports only the
-kernel's headers declare, such as `RtlIsNameLegalDOS8Dot3`) after the
-program's PDB and before the user's declarations:
+kernel's headers declare, such as `RtlIsNameLegalDOS8Dot3`; a Linux
+program on glibc joins its architecture's) after the program's debug
+information and before the user's declarations, where the library's data
+model and record ABI are the program's:
 - a header type joins only where the program has no type of its name;
 - a typedef names the program's type, as C binds it;
 - a header record laid out with a type the program sizes otherwise is left

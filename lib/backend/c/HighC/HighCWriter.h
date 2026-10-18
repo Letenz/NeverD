@@ -570,6 +570,11 @@ public:
   /// that declares it.  A public symbol's name alone yields to the header's
   /// prototype of a C library routine the unit includes.
   bool debugDeclaresCallee(const HighExpr &E) const;
+  /// Whether \p Type names a record a C library header the unit includes
+  /// for \p E's callee declares: the header's `struct stat`, which the unit
+  /// neither defines nor names by a typedef, and which a function of the
+  /// same name would hide.
+  bool headerRecordOfCallee(const HighExpr &E, const TypeRef &Type) const;
   /// Whether the unit includes the standard header that declares the C
   /// library routine \p Name (libc::headerFor).
   bool includesHeaderOf(llvm::StringRef Name) const;
