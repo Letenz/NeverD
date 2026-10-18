@@ -235,6 +235,7 @@ add_neverd_unittest(NeverDLiftTests
   core/LiftCommonTests.cpp
   core/LinuxSyscallTests.cpp
   core/SmcccCallTests.cpp
+  core/RegisterPairCallTests.cpp
   core/TargetRegInfoSubRegTests.cpp
   core/MedSSAMultiRootTests.cpp
   core/ObjCSourceTypeHintTests.cpp
@@ -2576,6 +2577,7 @@ set(X86_32_TEST_SOURCES
   x86_32/test_jumptable_frame_lane32.s
   x86_32/test_jumptable_foreign_store_i386.c
   x86_32/test_jumptable_dynamic_stack_i386.s
+  x86_32/test_register_pair_returns_i386.s
   x86_32/test_arith32.c
   x86_32/test_control32.c
   x86_32/test_bitops32.c
@@ -2659,6 +2661,7 @@ set(ARM32_TEST_SOURCES
   arm32/test_smccc_arm.s
   arm32/test_coprocessor_arm.s
   arm32/test_status_registers_arm.s
+  arm32/test_register_pair_returns_arm.s
   arm32/test_thumb_pc_reads.s
   arm32/test_module_predicated_escape_arm.s
   format/test_elf_pointer_reloc_arm32.s
