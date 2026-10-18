@@ -9594,6 +9594,10 @@ static fs::path maskedLaneA64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_jumptable_masked_lane_a64.o";
 }
 
+static fs::path byteLoopA64Obj() {
+  return fs::path(TEST_OBJ_DIR) / "test_jumptable_byte_loop_a64.o";
+}
+
 static fs::path pageoffWrongBaseA64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_pageoff_wrong_base_a64.o";
 }
@@ -10165,6 +10169,45 @@ TEST_F(JTE_AArch64, ZlibInflateDispatchReachesEveryMode) {
   for (size_t Mode = 0; Mode < Modes; ++Mode) {
     const auto Entry = static_cast<int16_t>(Rodata->Data[2 * Mode] |
                                             (Rodata->Data[2 * Mode + 1] << 8));
+    Expected.push_back(Anchor + static_cast<int64_t>(Entry) * 4);
+  }
+  EXPECT_EQ(Table.Targets, Expected);
+  EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+}
+
+// `byte_loop` masks each opcode to a byte and dispatches through a 256-entry
+// compact table. A second mask sits after the dispatch: the loop head skips a
+// zero opcode by branching there, and that block fetches the next opcode,
+// masks it and jumps back. Both masks produce the index, so the table keeps
+// all 256 entries.
+TEST_F(JTE_AArch64, MaskAfterTheDispatchBoundsAByteTable) {
+  auto ImageOrErr = neverd::loadBinary(byteLoopA64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  const neverd::Symbol *Function = Image.findSymbol("byte_loop");
+  ASSERT_NE(Function, nullptr);
+  const neverd::Section *Rodata = nullptr;
+  for (const neverd::Section &Section : Image.Sections)
+    if (Section.Name == ".rodata")
+      Rodata = &Section;
+  constexpr size_t Opcodes = 256;
+  ASSERT_NE(Rodata, nullptr);
+  ASSERT_GE(Rodata->Data.size(), Opcodes * 2);
+
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const neverd::LowFunc Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  ASSERT_EQ(Low.JumpTables.size(), 1u);
+  const neverd::JumpTable &Table = Low.JumpTables.front();
+  EXPECT_EQ(Table.BaseAddr, Rodata->VA);
+  std::vector<neverd::va_t> Expected;
+  const neverd::va_t Anchor = Table.InsnAddr + 4;
+  for (size_t Opcode = 0; Opcode < Opcodes; ++Opcode) {
+    const auto Entry = static_cast<int16_t>(
+        Rodata->Data[2 * Opcode] | (Rodata->Data[2 * Opcode + 1] << 8));
     Expected.push_back(Anchor + static_cast<int64_t>(Entry) * 4);
   }
   EXPECT_EQ(Table.Targets, Expected);
