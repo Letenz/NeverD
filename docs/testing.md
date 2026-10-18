@@ -7642,6 +7642,17 @@ analysis level stay apart, and another image object never reads the record.
 `MedStackDelta.*` (in `NeverDLiftTests`) resolves the stack-pointer offset
 behind 64 joins in a row, each merging two arms; every path reaches the live-in
 stack pointer exactly at the depth limit, and one more join exceeds it.
+`MedABIPass.FrameLocalLeafSummary*` (in `NeverDFPParameterMaskTests`) checks
+the indexed leaf summary against duplicate definitions and entries, PHIs,
+value widths and identities, authenticated stack live-ins, the depth limit,
+and reuse across functions or invocations. The index belongs to one immutable
+function; a rejected function must still count toward duplicate-entry rejection.
+The `Native pipeline compatibility` workflow runs the complete focused ABI,
+pipeline-outcome, thread and HighIR control-flow owners on Linux, macOS and
+Windows x64 (MSVC and clang-cl), together with actual SDK allocation and native
+worker requests. It requires registered cases to execute without failures or
+skips and asserts that the normal build enables mimalloc by default. This
+focused profile does not replace CPU-emulation or full semantic qualification.
 `NeverDGraphCyclesTests` checks component grouping and a million-node chain.
 
 `MedCxxContinuationFrame.ProtectedSourcesFollowCompactedBlockIdentities` uses

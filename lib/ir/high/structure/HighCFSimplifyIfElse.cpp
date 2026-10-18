@@ -4794,6 +4794,8 @@ static void inlineSmallExclusiveJoinNested(std::vector<HighStmt> &Body,
 /// Structures \p Stmts bottom-up; true when anything in it changed.
 static bool structureIfElseNested(std::vector<HighStmt> &Stmts, int MaxPasses,
                                   const MedFunc *Med) {
+  if (Stmts.empty())
+    return false;
   bool ChildrenChanged = false;
   for (HighStmt &S : Stmts) {
     ChildrenChanged |= structureIfElseNested(S.Body, MaxPasses, Med);
