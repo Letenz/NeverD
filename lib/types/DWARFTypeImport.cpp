@@ -8,6 +8,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
@@ -43,14 +44,50 @@ bool isRecordTag(dw::Tag Tag) {
          Tag == dw::DW_TAG_union_type;
 }
 
+/// The language of \p Die's unit (DW_LANG_*), or none.
+uint64_t languageOf(const llvm::DWARFDie &Die) {
+  llvm::DWARFUnit *Unit = Die.getDwarfUnit();
+  return Unit ? dw::toUnsigned(Unit->getUnitDIE().find(dw::DW_AT_language), 0)
+              : 0;
+}
+
 /// Whether \p Die is of a Go unit, whose functions list their results as
 /// parameters marked DW_AT_variable_parameter.
 bool ofGo(const llvm::DWARFDie &Die) {
-  llvm::DWARFUnit *Unit = Die.getDwarfUnit();
-  if (!Unit)
-    return false;
-  return dw::toUnsigned(Unit->getUnitDIE().find(dw::DW_AT_language), 0) ==
-         dw::DW_LANG_Go;
+  return languageOf(Die) == dw::DW_LANG_Go;
+}
+
+/// The type \p Die names, through its typedefs and qualifiers.
+llvm::DWARFDie heldType(llvm::DWARFDie Die) {
+  for (unsigned Hops = 0; Die.isValid() && Hops < MaxDepth; ++Hops) {
+    switch (Die.getTag()) {
+    case dw::DW_TAG_typedef:
+    case dw::DW_TAG_const_type:
+    case dw::DW_TAG_volatile_type:
+    case dw::DW_TAG_restrict_type:
+    case dw::DW_TAG_atomic_type:
+      Die = Die.getAttributeValueAsReferencedDie(dw::DW_AT_type);
+      continue;
+    default:
+      return Die;
+    }
+  }
+  return llvm::DWARFDie();
+}
+
+/// The bytes a value of type \p Die holds, as DWARF says them, which it says
+/// of a type the library may not hold yet; none where it says none.
+std::optional<uint64_t> declaredBytes(const llvm::DWARFDie &Die) {
+  const llvm::DWARFDie Held = heldType(Die);
+  return Held.isValid() ? unsignedOf(Held, dw::DW_AT_byte_size) : std::nullopt;
+}
+
+/// Whether \p Die, a type, is a pointer to a function.
+bool pointsToFunction(const llvm::DWARFDie &Die) {
+  const llvm::DWARFDie Held = heldType(Die);
+  return Held.getTag() == dw::DW_TAG_pointer_type &&
+         heldType(Held.getAttributeValueAsReferencedDie(dw::DW_AT_type))
+                 .getTag() == dw::DW_TAG_subroutine_type;
 }
 
 /// Whether \p Die, a record, holds a variant part, as a Rust enumeration
@@ -357,6 +394,11 @@ private:
       const std::string TargetName = Tagged ? qualifiedName(Target) : "";
       if (Tagged && TargetName.empty())
         named(Die);
+      else if (Tagged && TargetName == Name)
+        // A typedef of the record of its own name, as Go gives each of its
+        // types and C's `typedef struct x x;` does, is that record, which
+        // what holds it by value lays out by.
+        later(Target);
       else
         later(Die);
       if (Tagged && TargetName == Name)
@@ -744,6 +786,18 @@ private:
     Record->Size = unsignedOf(Die, dw::DW_AT_byte_size).value_or(0);
     Record->Alignment =
         uint32_t(unsignedOf(Die, dw::DW_AT_alignment).value_or(0));
+    // Where a Rust record's members begin, and its last, which rustc's DWARF
+    // describes otherwise than they are (rustMember).
+    const bool Rust = languageOf(Die) == dw::DW_LANG_Rust;
+    std::vector<uint64_t> Starts;
+    uint64_t LastMember = 0;
+    if (Rust)
+      for (const llvm::DWARFDie &Child : Die.children())
+        if (Child.getTag() == dw::DW_TAG_member)
+          if (const std::optional<uint64_t> Bytes = memberBytes(Child)) {
+            Starts.push_back(*Bytes);
+            LastMember = Child.getOffset();
+          }
     for (const llvm::DWARFDie &Child : Die.children()) {
       const dw::Tag Tag = Child.getTag();
       if (Tag == dw::DW_TAG_variant_part)
@@ -833,13 +887,19 @@ private:
         Why = Refusal{"a member that does not begin at a byte"};
         return nullptr;
       }
+      if (Rust && !BitSize &&
+          !rustMember(Field, TypeDie, Record->Size, Starts,
+                      Child.getOffset() == LastMember))
+        continue;
       // A member that holds no bytes, as Rust's () and PhantomData, lies
       // nowhere a record's bytes say; C spells none.  An array of none, as
-      // a trailing `data[0]`, still names the bytes after it.
+      // a trailing `data[0]`, still names the bytes after it.  DWARF says so
+      // of a type the library may hold only later.
       const bool Void = Field.Type->Kind == TypeExprKind::Builtin &&
                         Field.Type->TheBuiltin == Builtin::Void;
       if (!BitSize && Field.Type->Kind != TypeExprKind::Array &&
-          (Void || Library.sizeOf(*Field.Type) == std::optional<uint64_t>(0)))
+          (Void || declaredBytes(TypeDie) == std::optional<uint64_t>(0) ||
+           Library.sizeOf(*Field.Type) == std::optional<uint64_t>(0)))
         continue;
       Record->Members.push_back(std::move(Field));
     }
@@ -858,6 +918,37 @@ private:
       return nullptr;
     }
     return Record;
+  }
+
+  /// \p Field, a member of a Rust record of \p RecordBytes whose members
+  /// begin at \p Starts, as what it is where rustc's DWARF describes it as
+  /// something else; false for one that holds nothing.
+  /// - A function item holds no bytes, but DWARF gives it as a pointer to
+  ///   its function, as it gives a function pointer: a pointer to a function
+  ///   the record leaves no room for, as it leaves none past its end or where
+  ///   another member begins, is one.
+  /// - An unsized tail, as a slice `[u8]`, DWARF gives as its element: the
+  ///   last member, reaching past the record's end, is an array of unknown
+  ///   bound of it, C's flexible array.
+  bool rustMember(Member &Field, const llvm::DWARFDie &TypeDie,
+                  uint64_t RecordBytes, llvm::ArrayRef<uint64_t> Starts,
+                  bool Last) const {
+    const uint64_t At = Field.BitOffset / 8;
+    if (pointsToFunction(TypeDie)) {
+      const uint64_t Width = pointerBytesOf(heldType(TypeDie));
+      const size_t Overlaps = llvm::count_if(Starts, [&](uint64_t Start) {
+        return Start >= At && Start < At + Width;
+      });
+      return At + Width <= RecordBytes && Overlaps <= 1;
+    }
+    if (!Last || At > RecordBytes || Field.Type->Kind == TypeExprKind::Array)
+      return true;
+    std::optional<uint64_t> Bytes = Library.sizeOf(*Field.Type);
+    if (!Bytes)
+      Bytes = declaredBytes(TypeDie);
+    if (Bytes && *Bytes && At + *Bytes > RecordBytes)
+      Field.Type = makeArray(std::move(Field.Type), std::nullopt);
+    return true;
   }
 
   /// Numbers the second and later members of a name another has, as Go's
