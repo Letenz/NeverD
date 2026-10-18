@@ -17,6 +17,7 @@
 namespace neverd::emulation::linux_model {
 /// Returns AF_INET/AF_INET6 only for a complete canonical Linux endpoint.
 uint16_t networkAddressFamily(llvm::ArrayRef<uint8_t> Address);
+bool hasTimedReceives(const LinuxNetworkOptions &Options);
 llvm::Error validateNetworkOptions(const LinuxNetworkOptions &Options);
 } // namespace neverd::emulation::linux_model
 #endif

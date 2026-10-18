@@ -12,9 +12,11 @@
 
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
+#include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/support/IntegerLiterals.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/raw_ostream.h"
@@ -53,6 +55,48 @@ bool readConstant(llvm::StringRef Text, unsigned &Value) {
     return false;
   Value = static_cast<unsigned>(*Constant);
   return true;
+}
+
+/// An AArch64 system instruction the lift kept the op0:op1:CRn:CRm:op2 field
+/// of as \p Ops[0]: an MRS or MSR of a register as ACLE's __arm_rsr64 or
+/// __arm_wsr64, which name it, and any other as an `asm` statement that runs
+/// it (`dc civac, %0`).  Empty for any other shape.
+std::string renderA64SystemInstruction(Intrinsic Id,
+                                       const std::vector<std::string> &Ops,
+                                       uint16_t ResultBytes,
+                                       bool &HasCIntrinsics) {
+  const std::optional<uint64_t> Field =
+      Ops.empty() ? std::nullopt : constantOperand(Ops[0]);
+  if (!Field || Ops.size() > 2)
+    return {};
+  const bool HasOutput = ResultBytes != 0;
+  const bool HasRegister = Ops.size() == 2;
+  const std::string Asm =
+      aarch64SystemInstructionAsm(Id, *Field, HasOutput, HasRegister);
+  if (Asm.empty())
+    return {};
+  if (Id == Intrinsic::Mrs) {
+    HasCIntrinsics = true;
+    return "__arm_rsr64(\"" +
+           aarch64SystemRegisterName(*Field, /*Write=*/false) + "\")";
+  }
+  if (Id == Intrinsic::Msr && HasRegister) {
+    HasCIntrinsics = true;
+    return "__arm_wsr64(\"" +
+           aarch64SystemRegisterName(*Field, /*Write=*/true) + "\", " + Ops[1] +
+           ")";
+  }
+  // The `$0` of the assembly is GNU C's `%0`.
+  std::string Template = Asm;
+  if (const size_t Operand = Template.find("$0"); Operand != std::string::npos)
+    Template[Operand] = '%';
+  if (HasOutput)
+    return "({ uint64_t __result; __asm__ volatile(\"" + Template +
+           "\" : \"=r\"(__result) : : \"memory\"); __result; })";
+  if (HasRegister)
+    return "__asm__ volatile(\"" + Template + "\" : : \"r\"(" + Ops[1] +
+           ") : \"memory\")";
+  return "__asm__ volatile(\"" + Template + "\" ::: \"memory\")";
 }
 
 /// The C type an exclusive access of \p Size bytes moves, or null for a
@@ -576,6 +620,9 @@ bool armIntrinsicUsesCHeader(Intrinsic Id) {
 #define NEVERD_NEON_DOUBLING_MULTIPLY(ID, Base, Widening) case I::ID:
 #include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
   case I::A64_Fcvtxn:
+  // An MRS or MSR of a register is ACLE's __arm_rsr64 or __arm_wsr64.
+  case I::Mrs:
+  case I::Msr:
     return true;
   default:
     return false;
@@ -969,15 +1016,33 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
     return std::string("__builtin_bit_cast(") + RawTy + ", " + Fn + "(" +
            BitCastArg(Ops[0]) + ", " + BitCastArg(Ops[1]) + "))";
   }
+  case I::Mrs:
+  case I::Msr:
+  case I::Dc:
+  case I::Ic:
+  case I::Tlbi:
+  case I::At:
+    return renderA64SystemInstruction(Id, Ops, ResultBytes, HasCIntrinsics);
   case I::Dmb:
   case I::ArmDmb:
-    return "__dmb(0xF)";
   case I::Dsb:
   case I::ArmDsb:
-    return "__dsb(0xB)";
   case I::Isb:
-  case I::ArmIsb:
-    return "__isb(0xF)";
+  case I::ArmIsb: {
+    // The barrier's own option, which the lift keeps (`dsb sy` is
+    // `__dsb(0xF)`); a lift that kept none ran these.
+    const bool Dmb = Id == I::Dmb || Id == I::ArmDmb;
+    const bool Dsb = Id == I::Dsb || Id == I::ArmDsb;
+    std::string Option = Dsb ? "0xB" : "0xF";
+    if (!Ops.empty()) {
+      const std::optional<uint64_t> Value = constantOperand(Ops[0]);
+      Option = Value ? "0x" + llvm::utohexstr(*Value) : Ops[0];
+    }
+    return std::string(Dmb   ? "__dmb("
+                       : Dsb ? "__dsb("
+                             : "__isb(") +
+           Option + ")";
+  }
   case I::A64_Clrex:
   case I::ArmClrex:
     HasCIntrinsics = true;

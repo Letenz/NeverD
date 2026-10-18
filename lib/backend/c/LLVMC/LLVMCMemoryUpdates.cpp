@@ -85,7 +85,7 @@ void LLVMCWriter::planRawMemoryUpdates(llvm::Function &Fn) {
     const auto Size = llvmAccessSize(Load->getType());
     if ((!llvm::isa<llvm::Argument>(Base) &&
          !llvm::isa<llvm::IntToPtrInst>(Base)) ||
-        imageDataVA(Pointer) || typedRecordAccess(Pointer, Size) ||
+        imageDataVA(Pointer) || typedLoadAccess(*Load) ||
         frameSlotAccess(Pointer, Size, false, false))
       return nullptr;
     return Load;

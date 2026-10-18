@@ -128,6 +128,8 @@ public:
   BionicResult invoke(NativeCallEvent &Call);
   BionicResult finishCallback(const GuestCallback &Callback);
   BionicResult resumeMutex(uint64_t Address, uint16_t Attributes);
+  /// Complete a shared kernel result using the current thread's libc errno.
+  BionicResult kernelResult(std::optional<uint64_t> Returned);
   BionicResult resumeSemaphore(uint64_t Address, bool Shared);
   llvm::Error jniThreadExit();
   llvm::Error initializeDex();
@@ -215,7 +217,6 @@ private:
                 const ProcessServiceEvent &Event);
   BionicResult kernelCall(std::optional<linux_model::ServiceKind> Kind,
                           const NativeCallEvent &Call);
-  BionicResult kernelResult(std::optional<uint64_t> Returned);
   BionicResult usleep(const NativeCallEvent &Call);
   BionicResult openLibrary(NativeCallEvent &Call);
   BionicResult lookupSymbol(NativeCallEvent &Call);
@@ -276,6 +277,7 @@ private:
   BionicResult copyMemory(const NativeCallEvent &Call);
   BionicResult setMemory(const NativeCallEvent &Call);
   BionicResult compareMemory(const NativeCallEvent &Call);
+  BionicResult descriptorSet(const NativeCallEvent &Call);
   BionicResult stringLength(const NativeCallEvent &Call);
   BionicResult decimalInteger(const NativeCallEvent &Call);
   llvm::Expected<std::optional<uint64_t>>

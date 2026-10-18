@@ -446,8 +446,9 @@ struct BinaryImage {
   /// resolves to the wrong segment (or is rejected as code); this map lets the
   /// emitter pin such a base to the symbol's own rodata global with a (possibly
   /// negative) byte offset, so `base + runtime_index` lands back inside the
-  /// table.  Filled by the loader for i386 R_386_GOTOFF whose symbol is in
-  /// clean rodata.
+  /// table.  Filled by the loader for an i386 instruction operand, GOTOFF or
+  /// absolute (non-PIC `lea T-0x20(,%esi,4)`), whose symbol is in clean
+  /// rodata.
   std::map<uint64_t, uint64_t> RodataAnchorSeg;
   /// Virtual addresses of relocation slots that hold an absolute pointer into
   /// an executable segment (filled by the loader for R_X86_64_64 /
@@ -975,14 +976,14 @@ struct BinaryImage {
     return Writer == ObjectRelocationWriteBytes->end() || *Writer >= VA + Width;
   }
 
-  /// Verify the symbol owner retained for an i386 ELF R_386_GOTOFF field.
-  /// Most GOTOFF addends resolve inside (or one-past) their symbol's ordinary
-  /// section owner and use relocatedTargetBelongsToOwner directly.  Clang may
-  /// instead fold a negative selector bias into the relocation, placing S+A
-  /// before the symbol's rodata load segment.  The ELF loader records that
-  /// exceptional relation in RodataAnchorSeg; accept it only when the exact
-  /// folded VA names the same read-only data segment as the exact section
-  /// owner.
+  /// Verify the symbol owner retained for an i386 ELF R_386_GOTOFF field, or
+  /// for an absolute instruction operand anchored the same way.  Most addends
+  /// resolve inside (or one-past) their symbol's ordinary section owner and
+  /// use relocatedTargetBelongsToOwner directly.  Clang may instead fold a
+  /// negative selector bias into the relocation, placing S+A before the
+  /// symbol's rodata load segment.  The ELF loader records that exceptional
+  /// relation in RodataAnchorSeg; accept it only when the exact folded VA
+  /// names the same read-only data segment as the exact section owner.
   bool relocatedI386GOTOFFTargetBelongsToOwner(va_t TargetVA,
                                                va_t OwnerVA) const {
     if (Arch != Arch::X86 || !isELF() || getPointerSize() != 4 ||
@@ -1006,7 +1007,7 @@ struct BinaryImage {
     // space.  A negative selector bias may therefore wrap below a rodata
     // segment at VA zero to (for example) 0xfffffff0.  Authenticate only the
     // exact loader-recorded anchor and a small, non-zero modular backward
-    // distance; ordinary absolute relocations never populate this relation.
+    // distance; an absolute data slot never populates this relation.
     const uint32_t BackDistance =
         static_cast<uint32_t>(OwnerSeg->VA) - static_cast<uint32_t>(TargetVA);
     if (BackDistance == 0 ||

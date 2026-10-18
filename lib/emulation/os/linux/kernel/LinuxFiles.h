@@ -71,6 +71,9 @@ public:
   llvm::Expected<std::optional<uint64_t>>
   poll(const ProcessServiceEvent &Event,
        const std::optional<LinuxKernelOptions> &Kernel, ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>>
+  select(const ProcessServiceEvent &Event, ProcessResult &Result,
+         ThreadContext *Thread = nullptr);
 
 private:
   enum class Stream { Input, Output, Error };
@@ -130,6 +133,18 @@ private:
     bool Failed = false;
     int64_t ReceiveTimeoutSeconds = 0, SendTimeoutSeconds = 0;
   };
+  struct Readiness {
+    unsigned Available = 0;
+    std::optional<uint64_t> Wake;
+    const char *Unknown = nullptr;
+  };
+  Readiness socketReadiness(const OpenSocket &Socket, unsigned Wanted) const;
+  /// A missing value means receive may proceed; otherwise return EAGAIN or
+  /// preserve an unsupported blocking receive without consuming an event.
+  std::optional<std::optional<uint64_t>>
+  receiveBeforeReady(const OpenSocket &Socket, uint32_t Flags,
+                     ProcessResult &Result) const;
+  class SelectWait;
   size_t NextConnection = 0;
   size_t NextDatagramConnection = 0;
   std::optional<uint64_t> receiveSocketError(OpenSocket &Socket,

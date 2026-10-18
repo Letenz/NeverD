@@ -10,16 +10,21 @@
 #define NEVERD_EMULATION_LINUXNETWORKOPTIONS_H
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace neverd::emulation {
 /// One explicit receive completion. Error is a positive Linux errno and has
 /// no bytes. AfterSend gates availability on accepted stream bytes or UDP
-/// datagrams; it does not model elapsed time or acknowledge application data.
+/// datagrams; it does not acknowledge application data.
 struct LinuxNetworkReceive {
   std::vector<uint8_t> Bytes;
   uint32_t Error = 0;
   uint64_t AfterSend = 0;
+  /// Optional arrival in elapsed virtual nanoseconds since workload start.
+  /// Explicitly asserts no earlier read readiness before this data event.
+  /// Completion errors cannot carry an arrival observation.
+  std::optional<uint64_t> ReadyAtNS;
 };
 /// One ordered TCP connection attempt. Addresses are Linux sockaddr_in (16
 /// bytes) or sockaddr_in6 (28 bytes), with network-order port/address bytes.
@@ -38,6 +43,11 @@ struct LinuxStreamConnection {
   /// Ordered short reads/errors, mutually exclusive with the legacy Receive
   /// byte stream. Empty TCP data completions are invalid; EOF stays explicit.
   std::vector<LinuxNetworkReceive> ReceiveEvents;
+  /// Optional arrival of the explicitly declared EOF, after all data events.
+  std::optional<uint64_t> ReceiveEOFAtNS;
+  /// After all receive events, asserts no read readiness through this elapsed
+  /// nanosecond (inclusive). Later state stays unknown. Incompatible with EOF.
+  std::optional<uint64_t> ReceiveQuietUntilNS;
 };
 /// One ordered connected UDP route observation. A successful connect selects
 /// a default peer, not a handshake or delivery confirmation. Reconnect and
@@ -49,6 +59,7 @@ struct LinuxDatagramConnection {
   /// Every data completion is one whole datagram, including an empty one.
   /// A short buffer discards its remaining bytes unless MSG_PEEK is used.
   std::vector<LinuxNetworkReceive> ReceiveEvents;
+  std::optional<uint64_t> ReceiveQuietUntilNS;
 };
 struct LinuxNetworkOptions {
   /// Attempts are consumed only after the exact peer and guest memory pass

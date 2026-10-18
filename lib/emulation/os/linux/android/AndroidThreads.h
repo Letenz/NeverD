@@ -55,7 +55,7 @@ public:
   void wakeMutex(uint64_t Address);
   void waitSemaphore(uint64_t Address, bool Shared);
   void wakeSemaphore(uint64_t Address);
-  bool waitSleep();
+  bool waitKernel();
   void suspend(const ServiceRequest &Request, size_t Event,
                WaitSource Source = WaitSource::NativeCall);
   llvm::Error finish(uint64_t Value, uint32_t ExitStatus = 0);
@@ -88,7 +88,9 @@ private:
     bool Shared, Ready = false;
   };
   struct Wait {
-    std::variant<Join, Once, Mutex, Sleep, Semaphore> Operation;
+    std::variant<Join, Once, Mutex, Sleep, Semaphore,
+                 std::unique_ptr<linux_model::KernelWait>>
+        Operation;
     std::optional<ServiceRequest> Request;
     size_t Event = 0;
     WaitSource Source = WaitSource::NativeCall;

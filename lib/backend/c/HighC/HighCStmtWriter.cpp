@@ -585,7 +585,9 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         Stmt.Dst->MemoryOrdering == NdMemoryOrdering::None) {
       const uint16_t AccessSize =
           Stmt.Val && Stmt.Val->Type ? Stmt.Val->Type->Size : 0;
-      if (auto DestM = typedMemberAccess(*Stmt.Dst->Operands[0], AccessSize)) {
+      if (auto DestM = typedMemberAccess(*Stmt.Dst->Operands[0], AccessSize,
+                                         /*EnterNestedAtZero=*/true,
+                                         accessClassOf(Stmt.Val.get()))) {
         const std::string ValS = exprStr(*Stmt.Val);
         if (ValS == *DestM || ValS.find(*DestM) != std::string::npos)
           return;
@@ -669,7 +671,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       if (ResultUsed)
         throw std::invalid_argument("HighC cannot render a live SVC result");
       emitIndent(Indent);
-      OS << statementCallText(*Stmt.Val) << ";\n";
+      OS << callStatementText(*Stmt.Val) << "\n";
       break;
     }
     // A callee declared to return nothing leaves no value in the result
@@ -678,7 +680,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     if (knownVoidCall(*Stmt.Val) &&
         (Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi)) {
       emitIndent(Indent);
-      OS << statementCallText(*Stmt.Val) << ";\n";
+      OS << callStatementText(*Stmt.Val) << "\n";
       const std::string Dest = varName(Stmt.Dst->Var);
       const std::string Printed = printedForwardedVar(Dest, 0);
       if (!Analysis.OmittedCallResults.count(&Stmt) &&
@@ -701,7 +703,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
          !DeclaredCNames.count(
              printedForwardedVar(varName(Stmt.Dst->Var), 0)))) {
       emitIndent(Indent);
-      OS << statementCallText(*Stmt.Val) << ";\n";
+      OS << callStatementText(*Stmt.Val) << "\n";
       break;
     }
     bool DeadIntrinsicResult = Stmt.Dst->Kind == ExprKind::Var &&
@@ -724,7 +726,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         (isSideeffectIntrinsic(Stmt.Val->IntrinsicId) ||
          !intrinsicCName(Stmt.Val->IntrinsicId))) {
       emitIndent(Indent);
-      OS << statementCallText(*Stmt.Val) << ";\n";
+      OS << callStatementText(*Stmt.Val) << "\n";
       break;
     }
     if (Stmt.Dst->Kind == ExprKind::Load && !Stmt.Dst->Operands.empty()) {
@@ -1017,7 +1019,9 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     {
       const uint16_t AccessSize =
           Stmt.StoreVal->Type ? Stmt.StoreVal->Type->Size : 0;
-      if (auto Member = typedMemberAccess(*Stmt.StoreAddr, AccessSize)) {
+      if (auto Member = typedMemberAccess(*Stmt.StoreAddr, AccessSize,
+                                          /*EnterNestedAtZero=*/true,
+                                          accessClassOf(Stmt.StoreVal.get()))) {
         // Text containing a destination can still compute a new value (for
         // example a modular increment). Only an exact, ordinary self-load
         // proves this field assignment redundant.
@@ -1059,12 +1063,28 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         }
       }
     }
+    // A float stored as its bits to a union member is stored to the union's
+    // floating alternative of its width: `v->d = x`, not `v->i` the bits.
+    if (Stmt.MemoryOrdering == NdMemoryOrdering::None &&
+        Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        Stmt.StoreVal->Kind == ExprKind::BitCast &&
+        Stmt.StoreVal->Operands.size() == 1 && Stmt.StoreVal->Operands[0] &&
+        Stmt.StoreVal->Operands[0]->Type && Stmt.StoreVal->Type &&
+        Stmt.StoreVal->Operands[0]->Type->Size == Stmt.StoreVal->Type->Size &&
+        !namedFrameSlot(*Stmt.StoreAddr))
+      if (const auto Member = floatAlternative(
+              *Stmt.StoreAddr, *Stmt.StoreVal->Operands[0]->Type)) {
+        emitIndent(Indent);
+        OS << *Member << " = " << exprStr(*Stmt.StoreVal->Operands[0]) << ";\n";
+        break;
+      }
     if (Stmt.MemoryOrdering == NdMemoryOrdering::None &&
         Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default)
-      if (auto Member = typedMemberAccess(*Stmt.StoreAddr,
-                                          Stmt.StoreVal && Stmt.StoreVal->Type
-                                              ? Stmt.StoreVal->Type->Size
-                                              : 0);
+      if (auto Member = typedMemberAccess(
+              *Stmt.StoreAddr,
+              Stmt.StoreVal && Stmt.StoreVal->Type ? Stmt.StoreVal->Type->Size
+                                                   : 0,
+              /*EnterNestedAtZero=*/true, accessClassOf(Stmt.StoreVal.get()));
           Member && !namedFrameSlot(*Stmt.StoreAddr)) {
         bool Overlayed = false;
         if (auto Overlay =
@@ -1080,7 +1100,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           std::string Value = exprStr(*Stmt.StoreVal);
           const TypeRef StoredType = Stmt.StoreVal->Type;
           const TypeRef MemberType = typedMemberType(
-              *Stmt.StoreAddr, StoredType ? StoredType->Size : 0);
+              *Stmt.StoreAddr, StoredType ? StoredType->Size : 0,
+              accessClassOf(Stmt.StoreVal.get()));
           // A constant stored to an enumeration names its enumerator.
           if (MemberType && MemberType->Kind == NdTypeKind::Struct &&
               MemberType->IsEnum)
@@ -1293,7 +1314,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       }
     }
     emitIndent(Indent);
-    OS << statementCallText(*Stmt.CallExpr) << ";\n";
+    OS << callStatementText(*Stmt.CallExpr) << "\n";
     break;
 
   case StmtKind::Return:
@@ -1310,7 +1331,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       // all the same.
       if (const HighExpr *Call =
               Stmt.RetVal ? returnedCall(*Stmt.RetVal) : nullptr) {
-        OS << statementCallText(*Call) << ";\n";
+        OS << callStatementText(*Call) << "\n";
         emitIndent(Indent);
       }
       OS << "return;\n";
@@ -1495,7 +1516,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       OS << (Stmt.Val->Kind == ExprKind::Store
                  ? statementText(exprStr(*Stmt.Val))
                  : exprStr(*Stmt.Val))
-         << ";\n";
+         << ";" << intrinsicInstructionComment(*Stmt.Val) << "\n";
     }
     break;
 
@@ -3126,7 +3147,8 @@ bool HighCWriter::isInplaceAddStore(const HighStmt &S, int64_t &Delta) const {
     return false;
   // A displayed field/slot may have a different signedness from its IR view.
   // Both load hiding and statement rendering must make the same decision.
-  TypeRef DisplayType = typedMemberType(*S.StoreAddr, Ty->Size);
+  TypeRef DisplayType =
+      typedMemberType(*S.StoreAddr, Ty->Size, Ty->accessClass());
   if (auto Disp = frameDisplacement(*S.StoreAddr)) {
     auto Slot = FrameSlots.find(*Disp);
     if (Slot != FrameSlots.end())
@@ -3137,8 +3159,10 @@ bool HighCWriter::isInplaceAddStore(const HighStmt &S, int64_t &Delta) const {
        DisplayType->IsEnum || DisplayType->Size != Ty->Size))
     return false;
   if (Ty->IsSigned &&
-      (!DisplayType || (!namedFrameSlot(*S.StoreAddr) &&
-                        !typedMemberAccess(*S.StoreAddr, Ty->Size))))
+      (!DisplayType ||
+       (!namedFrameSlot(*S.StoreAddr) &&
+        !typedMemberAccess(*S.StoreAddr, Ty->Size,
+                           /*EnterNestedAtZero=*/true, Ty->accessClass()))))
     return false;
   // Peeling a narrowing/widening view or a narrow signed immediate changes
   // the update's value. Only abbreviate an exact same-width arithmetic step.
@@ -3188,7 +3212,9 @@ std::string HighCWriter::formatInplaceAdd(const TypeRef &Ty,
   const uint64_t Abs =
       Delta > 0 ? static_cast<uint64_t>(Delta) : static_cast<uint64_t>(-Delta);
   const std::string Imm = std::to_string(Abs);
-  if (auto Member = typedMemberAccess(Addr, Ty ? Ty->Size : 0);
+  if (auto Member =
+          typedMemberAccess(Addr, Ty ? Ty->Size : 0, /*EnterNestedAtZero=*/true,
+                            Ty ? Ty->accessClass() : NdAccessClass::Unknown);
       Member && !namedFrameSlot(Addr))
     return *Member + Op + Imm;
   if (auto Slot = namedFrameSlot(Addr))

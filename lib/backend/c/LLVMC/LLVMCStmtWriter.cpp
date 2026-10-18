@@ -23,6 +23,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/MachineInstructionText.h"
 #include "neverd/backend/c/render/X87ContextRender.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceTypeHints.h"
@@ -31,6 +32,7 @@
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/backend/llvm/LLVMX87ConstantAsm.h"
+#include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/libc/LibCResult.h"
 #include "neverd/loader/BinaryImage.h"
@@ -56,6 +58,15 @@
 namespace neverd {
 
 namespace {
+/// ` /* brk #0x3E8 */` for a call or fence that carries the instruction it
+/// was lifted from, where its C leaves out that instruction's operand.
+std::string instructionComment(const llvm::Instruction &I) {
+  const std::string Text = machine_instruction_text::get(I);
+  // An instruction without an operand (`isb`) says no more than its C.
+  return Text.find(' ') == std::string::npos ? std::string()
+                                             : " /* " + Text + " */";
+}
+
 constexpr uint32_t kCxxCatchConst = 0x1u;
 constexpr uint32_t kCxxCatchVolatile = 0x2u;
 constexpr uint32_t kCxxCatchReference = 0x8u;
@@ -1808,8 +1819,7 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
         ValueTexts[&Inst] = Text->second;
       return;
     }
-    if (auto Member = typedRecordAccess(LI->getPointerOperand(),
-                                        llvmAccessSize(LI->getType()))) {
+    if (auto Member = typedLoadAccess(*LI)) {
       ValueTypes[&Inst] = Member->Type;
       ValueTexts[&Inst] = Member->Text;
       return;
@@ -1989,9 +1999,7 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
       }
       if (OmittedLeftoverNarrow.count(SI) || storeIsLeftoverHomeUndef(*SI))
         return;
-      if (auto Member = typedRecordAccess(
-              SI->getPointerOperand(),
-              llvmAccessSize(SI->getValueOperand()->getType()))) {
+      if (auto Member = typedStoreAccess(*SI)) {
         emitIndent(Indent);
         if (std::string Up =
                 inplaceIntegerUpdate(*SI, Member->Text, SI->getValueOperand());
@@ -3581,7 +3589,15 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
 
   if (auto *FI = llvm::dyn_cast<llvm::FenceInst>(&Inst)) {
     emitIndent(Indent);
-    OS << renderFence(Opts.TheArch, FI->getOrdering());
+    // A fence that stands for a DMB prints that barrier, with its own option
+    // (`dmb ishld` is `__dmb(0x9)`); the fence orders at least as much.
+    std::string Fence = renderFence(Opts.TheArch, FI->getOrdering());
+    const std::string Instruction = machine_instruction_text::get(*FI);
+    if (llvm::StringRef Option = Instruction; Option.consume_front("dmb "))
+      if (const std::optional<uint64_t> CRm = armBarrierOptionValue(Option))
+        Fence = "__dmb(0x" + llvm::utohexstr(*CRm) + ");" +
+                instructionComment(*FI) + "\n";
+    OS << Fence;
     HasCIntrinsics = true;
     return;
   }
@@ -3988,7 +4004,8 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     if (AfterCxxThrow)
       return true;
     emitIndent(Indent);
-    OS << "__builtin_trap();\n";
+    // The instruction a trap was lifted from, with its code (`brk #0x3E8`).
+    OS << "__builtin_trap();" << instructionComment(Call) << "\n";
     AfterCxxThrow = false;
     return true;
   }
@@ -5451,8 +5468,7 @@ std::string LLVMCWriter::comparedOperandText(const llvm::Value *V,
   const auto *LI = llvm::dyn_cast_or_null<llvm::LoadInst>(Typed);
   if (!LI)
     return Text;
-  auto Acc =
-      typedRecordAccess(LI->getPointerOperand(), llvmAccessSize(LI->getType()));
+  auto Acc = typedLoadAccess(*LI);
   if (!Acc)
     return Text;
   if (auto Name = enumeratorDisplay(Acc->Type, CI->getZExtValue()))
@@ -6935,8 +6951,7 @@ void LLVMCWriter::writeReturn(llvm::ReturnInst &Ret, int Indent) {
       if (!PointerReturnType.empty() && RV->getType()->isIntegerTy()) {
         std::optional<std::string> Address;
         if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(RV))
-          if (auto Acc = typedRecordAccess(LI->getPointerOperand(),
-                                           llvmAccessSize(LI->getType()));
+          if (auto Acc = typedLoadAccess(*LI);
               Acc && Acc->Type && Acc->Type->Kind == NdTypeKind::Ptr)
             Address = SourceRecorder
                           ? SourceRecorder->expression(*LI, Acc->Text)

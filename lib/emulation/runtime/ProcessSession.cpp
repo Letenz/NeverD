@@ -107,6 +107,10 @@ llvm::Expected<ProcessResult> runProfile(const std::filesystem::path &Path,
           "linux_network requires a Linux profile and linux_files");
     if (auto E = linux_model::validateNetworkOptions(*Options.LinuxNetwork))
       return std::move(E);
+    if (linux_model::hasTimedReceives(*Options.LinuxNetwork) &&
+        (!Options.LinuxTime || !Options.LinuxTime->AdvanceOnIdle))
+      return diagnostic::error(
+          "timed network input requires linux_time.advance_on_idle");
   }
   if (Options.LinuxPriority) {
     if (Profile != ProcessProfile::LinuxELF64 &&

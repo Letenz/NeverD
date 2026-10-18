@@ -2080,9 +2080,40 @@ TypeRef LLVMCWriter::typeOfValue(const llvm::Value *V) const {
                                              /*ArrayElements=*/false);
 }
 
+namespace {
+/// The class of an access of LLVM type \p Ty: a floating value's, a
+/// pointer's or an integer's.
+NdAccessClass accessClassOf(const llvm::Type *Ty) {
+  if (!Ty)
+    return NdAccessClass::Unknown;
+  if (Ty->isFloatingPointTy())
+    return NdAccessClass::Floating;
+  if (Ty->isPointerTy())
+    return NdAccessClass::Pointer;
+  if (Ty->isIntegerTy())
+    return NdAccessClass::Integer;
+  return NdAccessClass::Unknown;
+}
+} // namespace
+
+std::optional<LLVMCWriter::TypedAccess>
+LLVMCWriter::typedLoadAccess(const llvm::LoadInst &LI) const {
+  return typedRecordAccess(LI.getPointerOperand(), llvmAccessSize(LI.getType()),
+                           /*EnterNestedAtZero=*/true,
+                           accessClassOf(LI.getType()));
+}
+
+std::optional<LLVMCWriter::TypedAccess>
+LLVMCWriter::typedStoreAccess(const llvm::StoreInst &SI) const {
+  const llvm::Type *Value = SI.getValueOperand()->getType();
+  return typedRecordAccess(SI.getPointerOperand(), llvmAccessSize(Value),
+                           /*EnterNestedAtZero=*/true, accessClassOf(Value));
+}
+
 std::optional<LLVMCWriter::TypedAccess>
 LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
-                               bool EnterNestedAtZero) const {
+                               bool EnterNestedAtZero,
+                               NdAccessClass Class) const {
   if (!Ptr)
     return std::nullopt;
   const auto Peeled = peelPointerOffset(Ptr);
@@ -2149,7 +2180,7 @@ LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
   completeDisplayRecord(Dbg, Rec);
   auto Field =
       Rec->displayFieldPathAt(Peeled->second, AccessSize, EnterNestedAtZero,
-                              /*ArrayElements=*/false);
+                              /*ArrayElements=*/false, Class);
   if (!Field)
     return std::nullopt;
   auto Path = canonicalizeDisplayPath(*Field);
@@ -2158,13 +2189,13 @@ LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
   TypedAccess Out;
   Out.Text = BaseName + "->" + *Path;
   Out.Type = Rec->displayFieldTypeAt(Peeled->second, AccessSize,
-                                     /*ArrayElements=*/false);
+                                     /*ArrayElements=*/false, Class);
   // A value of a size is no whole record no member of which holds it, as a
   // union whose alternatives are all that wide is; the address of one is.
   if (EnterNestedAtZero && AccessSize && Out.Type &&
       Out.Type->Kind == NdTypeKind::Struct && !Out.Type->IsEnum &&
       !Out.Type->displayFieldPathAt(0, AccessSize, /*EnterNestedAtZero=*/true,
-                                    /*ArrayElements=*/false))
+                                    /*ArrayElements=*/false, Class))
     return std::nullopt;
   MemberRecords.insert(Rec->SourceName);
   return Out;
@@ -2354,8 +2385,7 @@ std::string LLVMCWriter::indexExprStr(const llvm::Value *V) {
     }
   }
   if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
-    if (auto Acc = typedRecordAccess(LI->getPointerOperand(),
-                                     llvmAccessSize(LI->getType())))
+    if (auto Acc = typedLoadAccess(*LI))
       return Acc->Text;
   }
   if (auto Acc = typedRecordAccess(V, 4))
@@ -2387,8 +2417,7 @@ std::string LLVMCWriter::ultimateComposedText(const llvm::Value *V) {
         Text != ValueTexts.end() && !Text->second.empty())
       return Text->second;
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
-      if (auto Acc = typedRecordAccess(LI->getPointerOperand(),
-                                       llvmAccessSize(LI->getType())))
+      if (auto Acc = typedLoadAccess(*LI))
         return Acc->Text;
       if (auto Acc = typedIndexAccess(LI->getPointerOperand()))
         return Acc->Text;
@@ -2849,8 +2878,7 @@ std::string LLVMCWriter::indirectCalleeStr(const llvm::Value *Callee,
         ObjStr = valueStr(Home->second);
     }
     if (ObjStr.empty())
-      if (auto Acc = typedRecordAccess(ObjLI->getPointerOperand(),
-                                       llvmAccessSize(ObjLI->getType())))
+      if (auto Acc = typedLoadAccess(*ObjLI))
         ObjStr = Acc->Text;
   }
   if (ObjStr.empty())
@@ -3031,8 +3059,7 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
     }
   }
   if (const auto *StoredLoad = llvm::dyn_cast<llvm::LoadInst>(V)) {
-    if (!typedRecordAccess(StoredLoad->getPointerOperand(),
-                           llvmAccessSize(StoredLoad->getType()))) {
+    if (!typedLoadAccess(*StoredLoad)) {
       const llvm::AllocaInst *CursorHome = nullptr;
       unsigned Stores = 0;
       for (const llvm::User *U : StoredLoad->users()) {
@@ -3066,8 +3093,7 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
     // A cached variable name does not: never attribute that reference as an
     // emitted memory operation.
     if (SourceRecorder && LI) {
-      auto Access = typedRecordAccess(LI->getPointerOperand(),
-                                      llvmAccessSize(LI->getType()));
+      auto Access = typedLoadAccess(*LI);
       if (!Access)
         Access = typedIndexAccess(LI->getPointerOperand());
       if (Access && Access->Text == Text->second)
@@ -3077,8 +3103,7 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
     return LI ? memberAsAccessed(*LI, Text->second, Member) : Text->second;
   }
   if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
-    if (auto Acc = typedRecordAccess(LI->getPointerOperand(),
-                                     llvmAccessSize(LI->getType()))) {
+    if (auto Acc = typedLoadAccess(*LI)) {
       std::string Read = memberAsAccessed(*LI, Acc->Text, Acc->Type);
       return SourceRecorder ? SourceRecorder->expression(*LI, Read) : Read;
     }
@@ -3415,7 +3440,9 @@ bool LLVMCWriter::operandIsUnsignedWidth(const llvm::Value *V,
   if (!LI)
     return false;
   const auto Width = static_cast<uint16_t>(Bits / 8);
-  auto Acc = typedRecordAccess(LI->getPointerOperand(), Width);
+  auto Acc = typedRecordAccess(LI->getPointerOperand(), Width,
+                               /*EnterNestedAtZero=*/true,
+                               accessClassOf(LI->getType()));
   if (!Acc || !Acc->Type || Acc->Type->Kind != NdTypeKind::Int)
     return false;
   if (Acc->Type->IsSigned || Acc->Type->IsEnum)
@@ -3882,7 +3909,8 @@ std::string LLVMCWriter::atomicRMWText(const llvm::AtomicRMWInst &AI) {
     const uint16_t Width =
         static_cast<uint16_t>(AI.getType()->getIntegerBitWidth() / 8);
     if (auto Acc = typedRecordAccess(AI.getPointerOperand(), Width,
-                                     /*EnterNestedAtZero=*/false)) {
+                                     /*EnterNestedAtZero=*/false,
+                                     NdAccessClass::Integer)) {
       Ptr = "&" + Acc->Text;
       TypedPointer = true;
     }

@@ -18,6 +18,7 @@
 #include "../CSourceRecorder.h"
 #include "../DebugParamBinding.h"
 #include "../FloatConversion.h"
+#include "../StdcallImportPops.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/pass/HighC/HighCPasses.h"
@@ -84,6 +85,11 @@ inline constexpr llvm::StringLiteral kFrameStorageName = "stack_storage";
 
 /// The bytes of a pointer, and of an integer argument register, on \p A.
 uint16_t pointerBytes(Arch A);
+/// The class of the access that reads or writes \p Value, by its type.
+inline NdAccessClass accessClassOf(const HighExpr *Value) {
+  return Value && Value->Type ? Value->Type->accessClass()
+                              : NdAccessClass::Unknown;
+}
 
 /// The bytes of the integer \p Operand a bit count counts, or 0.
 uint16_t countedBytes(const HighExpr &Operand);
@@ -459,11 +465,24 @@ public:
   /// The member \p Load reads: one of its width, else one of another width
   /// it reads as it is, but never a whole record, whose bytes no scalar is.
   std::optional<std::string> loadedMemberAccess(const HighExpr &Load) const;
+  /// The type of the member loadedMemberAccess names.
+  TypeRef loadedMemberType(const HighExpr &Load) const;
+  /// The union alternative of floating type \p Float that holds the bits
+  /// the code reads by \p Bits, an ordinary load, or writes to \p Addr, as
+  /// `v->d` holds those of `v->i`; none where no such alternative of that
+  /// width is there.
+  std::optional<std::string> floatAlternative(const HighExpr &Addr,
+                                              const NdType &Float) const;
+  /// The member at \p Addr an access of \p AccessSize bytes reads or
+  /// writes; of a union's alternatives of that width, the one its \p Class
+  /// holds (NdType::scalarOfClassAt).
   std::optional<std::string>
   typedMemberAccess(const HighExpr &Addr, uint16_t AccessSize = 0,
-                    bool EnterNestedAtZero = true) const;
+                    bool EnterNestedAtZero = true,
+                    NdAccessClass Class = NdAccessClass::Unknown) const;
   std::optional<std::string> typedMemberAddress(const HighExpr &Addr) const;
-  TypeRef typedMemberType(const HighExpr &Addr, uint16_t AccessSize = 0) const;
+  TypeRef typedMemberType(const HighExpr &Addr, uint16_t AccessSize = 0,
+                          NdAccessClass Class = NdAccessClass::Unknown) const;
   /// Whether \p Addr is a member of a record the unit defines from the
   /// program's local types (RecordDefinitions).
   bool memberOfDefinedRecord(const HighExpr &Addr) const;
@@ -515,6 +534,16 @@ public:
   std::string indirectCalleeStr(const HighExpr &E,
                                 const TypeRef &ReturnType = nullptr);
   const HighExpr *unwrapIntegerView(const HighExpr *E) const;
+  /// The instruction a call \p E of an intrinsic that keeps its operand was
+  /// lifted from (`brk #0x3E8`, intrinsicInstructionText); empty for any
+  /// other call.
+  std::string intrinsicInstruction(const HighExpr &E) const;
+  /// ` /* brk #0x3E8 */` beside a statement calling \p E, whose builtin
+  /// leaves out the operand of the instruction it stands for; empty when its
+  /// C spells the instruction itself.
+  std::string intrinsicInstructionComment(const HighExpr &E) const;
+  /// \p Call as a statement, with the instruction it stands for beside it.
+  std::string callStatementText(const HighExpr &Call);
   /// Whether every byte of \p E from \p Bytes up is zero, as far as its
   /// form and forwarded values show: a comparison, a constant, a zero
   /// extension or a mask that fits.
@@ -562,6 +591,11 @@ public:
   /// that declares it.  A public symbol's name alone yields to the header's
   /// prototype of a C library routine the unit includes.
   bool debugDeclaresCallee(const HighExpr &E) const;
+  /// Whether \p Type names a record a C library header the unit includes
+  /// for \p E's callee declares: the header's `struct stat`, which the unit
+  /// neither defines nor names by a typedef, and which a function of the
+  /// same name would hide.
+  bool headerRecordOfCallee(const HighExpr &E, const TypeRef &Type) const;
   /// Whether the unit includes the standard header that declares the C
   /// library routine \p Name (libc::headerFor).
   bool includesHeaderOf(llvm::StringRef Name) const;
@@ -572,9 +606,16 @@ public:
   /// pointer/string/fill source and drops leftover register clobbers.
   size_t debugCallArgLimit(const HighExpr &E) const;
   /// The fixed arity of the known function \p Symbol, which the C name
-  /// \p Identifier reads; a C++ stem is no name the tables know.
-  static std::optional<libc::LibCArity> knownArity(llvm::StringRef Symbol,
-                                                   llvm::StringRef Identifier);
+  /// \p Identifier reads; a C++ stem is no name the tables know.  An i386
+  /// stdcall routine's names spell it (stdcallPops): a 32-bit argument for
+  /// each four bytes the routine pops.
+  std::optional<libc::LibCArity> knownArity(llvm::StringRef Symbol,
+                                            llvm::StringRef Identifier) const;
+  /// The bytes the i386 stdcall routine \p Symbol, which the C name
+  /// \p Identifier reads, pops: as its own name spells them (`_Validate@8`)
+  /// or the names the image imports it by (StdcallImportPops).
+  std::optional<unsigned> stdcallPops(llvm::StringRef Symbol,
+                                      llvm::StringRef Identifier) const;
   /// How many arguments the plain declaration of the external function \p E
   /// calls gives it (writeForwardDecls), when its arity is known.
   std::optional<size_t> plainDeclarationArity(const HighExpr &E) const;
@@ -878,6 +919,9 @@ public:
   // carry source names. Keep their mapping separate when both _foo and __foo
   // occur in one function.
   std::map<std::string, std::set<std::string>> ExternalCallSources;
+  /// What each i386 stdcall routine the image imports pops, by its import
+  /// name (c_library::stdcallImportPops).
+  c_library::ImportPops StdcallImportPops;
   /// Callees with a call that never returns (HighExpr::DoesNotReturn); their
   /// declarations say so, as for a routine the name list knows.
   std::set<std::string> NoReturnCallTargets;
@@ -1373,6 +1417,10 @@ public:
   /// the backing's `neverd.image` line names it; empty for a name the
   /// emitter made.
   std::string backingReadable(const ImageBacking &Backing) const;
+  /// The initializer of a backing's bytes, if any byte is nonzero: a string
+  /// of them within C's translation limits, or a list of them, whichever is
+  /// shorter.
+  void writeBackingBytes(const ImageBacking &Backing);
   /// The C address a relocated pointer slot holds: the function or data it
   /// names, or none when no C object names it.
   std::optional<std::string> relocatedSlotTarget(va_t Slot) const;

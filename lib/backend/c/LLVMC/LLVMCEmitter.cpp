@@ -17,6 +17,7 @@
 
 #include "../FloatConversion.h"
 #include "../LibraryPrototype.h"
+#include "../StdcallImportPops.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
 #include "../pass/LLVMC/LLVMCBitTests.h"
@@ -39,6 +40,7 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/FloatingPointContract.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/backend/c/render/SyscallHelpers.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
@@ -452,7 +454,38 @@ std::string LLVMCWriter::recordPointerSpelling(const NdType &Record) {
   return Tag + "*";
 }
 
-void LLVMCWriter::writeRecordDefinitions(llvm::StringRef Text) {
+/// \p Text with each use of \p Tag as a type (a declaration's, a cast's)
+/// spelled with its keyword: `struct stat buf`, where a function of the
+/// same name hides the bare one.
+static void spellTagUses(std::string &Text, llvm::StringRef Tag,
+                         llvm::StringRef Keyword) {
+  const auto Identifier = [](char C) { return llvm::isAlnum(C) || C == '_'; };
+  for (size_t At = Text.find(Tag.data(), 0, Tag.size());
+       At != std::string::npos; At = Text.find(Tag.data(), At, Tag.size())) {
+    const size_t End = At + Tag.size();
+    size_t Before = At;
+    while (Before > 0 && Text[Before - 1] == ' ')
+      --Before;
+    size_t After = End;
+    while (After < Text.size() && Text[After] == ' ')
+      ++After;
+    const bool Word = (At == 0 || !Identifier(Text[At - 1])) &&
+                      (End == Text.size() || !Identifier(Text[End]));
+    const bool Member =
+        Before > 0 && (Text[Before - 1] == '.' || Text[Before - 1] == '>');
+    const bool Tagged =
+        llvm::StringRef(Text).take_front(Before).ends_with(Keyword.str());
+    const bool Type =
+        After < Text.size() && (Text[After] == '*' || Identifier(Text[After]));
+    if (Word && !Member && !Tagged && Type) {
+      Text.insert(At, Keyword.str() + " ");
+      At += Keyword.size() + 1;
+    }
+    At += Tag.size();
+  }
+}
+
+void LLVMCWriter::writeRecordDefinitions(std::string &Text) {
   if (!Opts.EmitIncludes)
     return;
   // A record only pointers name, which no definition below completes, is
@@ -485,7 +518,7 @@ void LLVMCWriter::writeRecordDefinitions(llvm::StringRef Text) {
     while (End < Text.size() && (llvm::isAlnum(Text[End]) || Text[End] == '_'))
       ++End;
     if (I == 0 || (!llvm::isAlnum(Text[I - 1]) && Text[I - 1] != '_'))
-      Words.insert(Text.substr(I, End - I).str());
+      Words.insert(Text.substr(I, End - I));
     I = End;
   }
   std::vector<TypeRef> Named;
@@ -508,13 +541,21 @@ void LLVMCWriter::writeRecordDefinitions(llvm::StringRef Text) {
     if (Words.count(Name))
       Enumerations.push_back(Name);
   // A name the definitions declare that the unit gives a function or an
-  // object of its own leaves them out: one name would mean both.
+  // object of its own leaves them out: one name would mean both.  A record
+  // the text spells by such a name is spelled by its tag, as a header the
+  // unit includes may define it (glibc's `struct stat` beside `stat`).
   std::vector<std::string> Declared = Definitions.Identifiers;
   llvm::append_range(Declared, Spelled);
   llvm::append_range(Declared, Enumerations);
+  const auto Held = [&](const std::string &Name) {
+    return GlobalIdentifierAllocator.holds(Name) ||
+           EmittedGlobalNames.count(Name);
+  };
   for (const std::string &Name : Declared)
-    if (GlobalIdentifierAllocator.holds(Name) ||
-        EmittedGlobalNames.count(Name)) {
+    if (Held(Name)) {
+      for (const std::string &Tag : Spelled)
+        if (Held(Tag))
+          spellTagUses(Text, Tag, Definitions.Tags[Tag] ? "union" : "struct");
       OS << "/* The local types' definitions are left out: " << Name
          << " names one of the unit's functions or objects too. */\n\n";
       DeclareIncomplete({});
@@ -766,6 +807,16 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
             if ((Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
                 (Asm->getAsmString() == "ldmxcsr ($0)" ||
                  Asm->getAsmString() == "stmxcsr ($0)"))
+              HasCIntrinsics = true;
+            // An ARM assembly the writer prints as an ACLE intrinsic
+            // (`msr tpidr_el0, $0` is __arm_wsr64, `dsb sy` __dsb(0xF))
+            // needs the header that declares it.
+            if ((Opts.TheArch == Arch::ARM || Opts.TheArch == Arch::AArch64) &&
+                renderInlineAsm(Opts.TheArch, Asm->getAsmString().str(),
+                                CI->getType()->isStructTy(), "result",
+                                /*ResultLive=*/true,
+                                std::vector<std::string>(CI->arg_size(), "0"))
+                    .SetIntrinsics)
               HasCIntrinsics = true;
             continue;
           }
@@ -1537,9 +1588,16 @@ std::string LLVMCWriter::callResult(const llvm::CallBase &Call,
 }
 
 void LLVMCWriter::writeImportCalleeDecls(llvm::Module &Mod) {
-  // Each import with the type its calls return; one whose calls disagree is
-  // left to them.
-  std::map<std::string, std::optional<std::string>> Imports;
+  const c_library::ImportPops StdcallPops =
+      Img ? c_library::stdcallImportPops(*Img) : c_library::ImportPops();
+  // Each import with the type its calls return, and for a stdcall one the
+  // types they pass; one whose calls disagree is left to them.
+  struct ImportCalls {
+    std::optional<std::string> Return;
+    std::optional<std::vector<std::string>> Params;
+  };
+  std::map<std::string, ImportCalls> Imports;
+  const llvm::DataLayout &Layout = Mod.getDataLayout();
   // Each routine the runtime's tables type, with their prototype.
   std::map<std::string, const libc::LibCPrototype *> Typed;
   // The imports a weak reference names, whose null address the code tests
@@ -1574,9 +1632,31 @@ void LLVMCWriter::writeImportCalleeDecls(llvm::Module &Mod) {
           continue;
         }
         const std::string Return = typeToCLLVM(Call->getType());
-        const auto [Import, Added] = Imports.emplace(Name, Return);
-        if (!Added && Import->second && *Import->second != Return)
-          Import->second.reset();
+        // A stdcall routine pops the arguments its calls push, which a C
+        // compiler leaves to it only by its declaration: the call's, where
+        // they fill the slots its name spells.
+        std::optional<std::vector<std::string>> Params;
+        if (const auto Pops = StdcallPops.find(Name);
+            Pops != StdcallPops.end() && Pops->second) {
+          uint64_t Pushed = 0;
+          Params.emplace();
+          for (const llvm::Use &Argument : Call->args()) {
+            Pushed += llvm::alignTo(
+                Layout.getTypeStoreSize(Argument->getType()).getFixedValue(),
+                4);
+            Params->push_back(typeToCLLVM(Argument->getType()));
+          }
+          if (Pushed != *Pops->second)
+            Params.reset();
+        }
+        const auto [Import, Added] =
+            Imports.try_emplace(Name, ImportCalls{Return, Params});
+        if (Added)
+          continue;
+        if (Import->second.Return && *Import->second.Return != Return)
+          Import->second.Return.reset();
+        if (Import->second.Params != Params)
+          Import->second.Params.reset();
       }
   }
   auto Extern = [&](const std::string &Name) {
@@ -1585,10 +1665,20 @@ void LLVMCWriter::writeImportCalleeDecls(llvm::Module &Mod) {
   for (const auto &[Name, Prototype] : Typed)
     OS << Extern(Name) << c_library::declaration(*Prototype, Name, Opts.TheArch)
        << ";\n";
-  // Unprototyped, the declaration takes the arguments the machine passed.
-  for (const auto &[Name, Return] : Imports)
-    if (Return)
-      OS << Extern(Name) << *Return << " " << Name << "();\n";
+  for (const auto &[Name, Calls] : Imports) {
+    if (!Calls.Return)
+      continue;
+    // Unprototyped, the declaration takes the arguments the machine passed.
+    if (!Calls.Params) {
+      OS << Extern(Name) << *Calls.Return << " " << Name << "();\n";
+      continue;
+    }
+    OS << Extern(Name) << "__attribute__((stdcall)) " << *Calls.Return << " "
+       << Name << "(";
+    for (size_t I = 0; I < Calls.Params->size(); ++I)
+      OS << (I ? ", " : "") << (*Calls.Params)[I];
+    OS << (Calls.Params->empty() ? "void" : "") << ");\n";
+  }
 }
 
 void LLVMCWriter::collectImageDataUses(llvm::Module &Mod) {
@@ -1664,7 +1754,25 @@ LLVMCWriter::sourceFunctionDeclaration(const llvm::Function &Fn,
   return Result + ")";
 }
 
+/// The stack bytes the first \p Params parameters of \p Fn (all without)
+/// take on i386, each a multiple of four.
+static uint64_t argumentSlotBytes(const llvm::Function &Fn,
+                                  std::optional<unsigned> Params) {
+  const llvm::DataLayout &Layout = Fn.getParent()->getDataLayout();
+  const unsigned Count = std::min(Params.value_or(Fn.arg_size()),
+                                  static_cast<unsigned>(Fn.arg_size()));
+  uint64_t Bytes = 0;
+  for (unsigned I = 0; I < Count; ++I)
+    Bytes += llvm::alignTo(
+        Layout.getTypeStoreSize(Fn.getFunctionType()->getParamType(I))
+            .getFixedValue(),
+        4);
+  return Bytes;
+}
+
 void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
+  const c_library::ImportPops StdcallPops =
+      Img ? c_library::stdcallImportPops(*Img) : c_library::ImportPops();
   for (auto &Fn : Mod) {
     if (OnlyFunction) {
       // Selected fragments need declarations for their referenced providers,
@@ -1726,7 +1834,16 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
 
     // Calls the callee's prototype decides pass as many arguments as it
     // takes (printedCallArgLimit), which the declaration takes too.
-    OS << sourceFunctionDeclaration(Fn, Name, prototypedParamCount(Fn));
+    const std::optional<unsigned> Params = prototypedParamCount(Fn);
+    // An i386 stdcall routine pops the arguments its calls push, which a C
+    // compiler leaves to it only by its declaration: where its parameters
+    // fill the slots its names spell (c_library::stdcallImportPops).
+    if (Fn.isDeclaration())
+      if (const auto Pops = StdcallPops.find(Name);
+          Pops != StdcallPops.end() && Pops->second &&
+          *Pops->second == argumentSlotBytes(Fn, Params))
+        OS << "__attribute__((stdcall)) ";
+    OS << sourceFunctionDeclaration(Fn, Name, Params);
     // An import whose identifier is not its symbol links by the symbol, which
     // a comment spells as its language does.
     std::string Comment;

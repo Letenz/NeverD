@@ -319,6 +319,53 @@ TEST(LocalTypesDebugContext, GivesTheDebugInformationsRecordsTheirMembers) {
   EXPECT_EQ(Own->FieldDisplayOffsets, std::vector<uint16_t>{0});
 }
 
+TEST(LocalTypesDebugContext, AccessesTakeTheUnionAlternativeOfTheirClass) {
+  using namespace neverd;
+  auto Library = std::make_shared<types::TypeLibrary>();
+  ASSERT_TRUE(types::parseCTypes(R"(
+    typedef union _VALUE { LONGLONG Integer; double Real; void *Pointer; } VALUE;
+    typedef struct _CELL { ULONG Tag; VALUE Value; } CELL;
+    typedef union _FAST_REF { void *Object; ULONGLONG Value; } FAST_REF;
+    typedef union _TWINS { LONGLONG A; ULONGLONG B; double D; } TWINS;
+  )",
+                                 *Library)
+                  .ok());
+  NamesOnlyDebugContext Names;
+  auto Context = std::make_unique<sdk::LocalTypesDebugContext>(Names, Library);
+  const auto record = [&](const char *Name, uint16_t Size) {
+    const TypeRef Record = NdType::makeNamedRecord(Name, Size);
+    Context->completeType(NdType::makePtr(Record));
+    return Record;
+  };
+  const auto path = [](const TypeRef &Record, uint64_t Offset,
+                       NdAccessClass Class) {
+    return Record->displayFieldPathAt(Offset, 8, /*EnterNestedAtZero=*/true,
+                                      /*ArrayElements=*/true, Class);
+  };
+  // Where nothing says which alternative the code holds, an access of the
+  // union's width reads the union whole; an integer, a floating value or a
+  // pointer the code loads or stores picks the alternative of its class.
+  const TypeRef Cell = record("_CELL", 16);
+  EXPECT_EQ(Cell->displayFieldPathAt(8, 8), "Value");
+  EXPECT_EQ(path(Cell, 8, NdAccessClass::Integer), "Value.Integer");
+  EXPECT_EQ(path(Cell, 8, NdAccessClass::Floating), "Value.Real");
+  EXPECT_EQ(path(Cell, 8, NdAccessClass::Pointer), "Value.Pointer");
+  const TypeRef Real = Cell->displayFieldTypeAt(8, 8, /*ArrayElements=*/true,
+                                                NdAccessClass::Floating);
+  ASSERT_TRUE(Real);
+  EXPECT_EQ(Real->Kind, NdTypeKind::Float);
+  // A pointer is an integer of its width to the machine, as an integer is a
+  // pointer where the union holds no integer.
+  const TypeRef FastRef = record("_FAST_REF", 8);
+  EXPECT_EQ(path(FastRef, 0, NdAccessClass::Pointer), "Object");
+  EXPECT_EQ(path(FastRef, 0, NdAccessClass::Integer), "Value");
+  // Two alternatives of the class stay raw.
+  const TypeRef Twins = record("_TWINS", 8);
+  EXPECT_EQ(path(Twins, 0, NdAccessClass::Integer), std::nullopt);
+  EXPECT_EQ(path(Twins, 0, NdAccessClass::Pointer), std::nullopt);
+  EXPECT_EQ(path(Twins, 0, NdAccessClass::Floating), "D");
+}
+
 TEST(LocalTypesDebugContext, NamesValuesByTheLibrarysEnumerators) {
   using namespace neverd;
   auto Library = std::make_shared<types::TypeLibrary>();

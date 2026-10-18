@@ -266,6 +266,10 @@ private:
   }
 
   Printed value(const Expr *E, const CType *Want) {
+    // A character a byte holds is that byte's literal.
+    if (E->Kind == ExprKind::Character && E->Text.starts_with("'") && Want &&
+        Want->isInteger() && Want->Bits == 8 && !Want->Signed)
+      return withComments(E, Printed{"b" + E->Text.str(), PrecAtom});
     if (const Expr *Narrow = narrowable(E, Want))
       return withComments(E, narrowed(Narrow, Want));
     return convert(raw(E), valueType(E), Want);
@@ -514,6 +518,31 @@ private:
         Result += ".0";
     }
     return Result + (Single ? "_f32" : "");
+  }
+
+  /// \p Bytes as the byte string of an array of \p Count bytes, which C
+  /// zero-fills past them.
+  static std::string byteString(llvm::StringRef Bytes, uint64_t Count) {
+    std::string Text = "*b\"";
+    for (const unsigned char Byte : Bytes) {
+      if (Byte == '"' || Byte == '\\')
+        Text += {'\\', static_cast<char>(Byte)};
+      else if (Byte == '\n')
+        Text += "\\n";
+      else if (Byte == '\t')
+        Text += "\\t";
+      else if (Byte == '\r')
+        Text += "\\r";
+      else if (!Byte)
+        Text += "\\0";
+      else if (Byte >= 32 && Byte < 127)
+        Text += static_cast<char>(Byte);
+      else
+        Text += "\\x" + llvm::utohexstr(Byte, /*LowerCase=*/false, 2);
+    }
+    for (uint64_t I = Bytes.size(); I < Count; ++I)
+      Text += "\\0";
+    return Text + "\"";
   }
 
   std::string stringLiteral(const Expr *E) const {
@@ -1332,8 +1361,13 @@ private:
 
   std::string initializer(const Expr *Init, const CType *Ty) {
     if (Init->Kind != ExprKind::InitList) {
-      if (Ty->isArray() && Init->Kind == ExprKind::String)
+      if (Ty->isArray() && Init->Kind == ExprKind::String) {
+        if (byteArray(Ty))
+          if (const auto Bytes = stringBytes(Init);
+              Bytes && Bytes->size() <= *Ty->Count)
+            return byteString(*Bytes, *Ty->Count);
         return stringLiteral(Init);
+      }
       return value(Init, Ty).Text;
     }
     if (Ty->isArray()) {

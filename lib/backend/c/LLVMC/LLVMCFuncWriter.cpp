@@ -3318,7 +3318,7 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
           continue;
         }
         const uint16_t Size = llvmAccessSize(LI->getType());
-        if (auto Acc = typedRecordAccess(LI->getPointerOperand(), Size)) {
+        if (auto Acc = typedLoadAccess(*LI)) {
           ValueTypes[LI] = Acc->Type;
           ValueTexts[LI] = Acc->Text;
         } else if (auto Acc =
@@ -3457,7 +3457,7 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
         if (!LI || !LI->isSimple())
           continue;
         const uint16_t Size = llvmAccessSize(LI->getType());
-        if (auto Acc = typedRecordAccess(LI->getPointerOperand(), Size)) {
+        if (auto Acc = typedLoadAccess(*LI)) {
           if (ValueTexts[LI] != Acc->Text) {
             ValueTypes[LI] = Acc->Type;
             ValueTexts[LI] = Acc->Text;
@@ -4426,7 +4426,7 @@ bool LLVMCWriter::storedTypedMemberLoad(const llvm::Value *Stored) const {
   if (!LI)
     return false;
   const uint16_t Size = llvmAccessSize(LI->getType());
-  if (typedRecordAccess(LI->getPointerOperand(), Size))
+  if (typedLoadAccess(*LI))
     return true;
   // A slot read where the load is prints as its temporary.
   return slotReadAtUses(*LI) &&
@@ -4739,9 +4739,7 @@ bool LLVMCWriter::instructionIsPrinted(const llvm::Instruction &Inst) {
   }
   if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
     if (isImportCalleeOnlyLoad(LI) || computedAllocaLoadIsForwarded(LI) ||
-        typedRecordAccess(LI->getPointerOperand(),
-                          llvmAccessSize(LI->getType())) ||
-        typedIndexAccess(LI->getPointerOperand()) ||
+        typedLoadAccess(*LI) || typedIndexAccess(LI->getPointerOperand()) ||
         isTypedRecordCursorSlot(asAllocaPointer(LI->getPointerOperand())) ||
         isJoinCallArgAlloca(asAllocaPointer(LI->getPointerOperand())) ||
         joinFieldDefaultText(asAllocaPointer(LI->getPointerOperand())))
@@ -5241,8 +5239,7 @@ std::string LLVMCWriter::cursorFieldIncText(const llvm::BasicBlock *BB,
     const auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst);
     if (!LI)
       continue;
-    if (auto Acc = typedRecordAccess(LI->getPointerOperand(),
-                                     llvmAccessSize(LI->getType()));
+    if (auto Acc = typedLoadAccess(*LI);
         Acc && Acc->Text.find("->") != std::string::npos) {
       Field = Acc->Text;
       continue;
@@ -8460,9 +8457,7 @@ bool LLVMCWriter::allocaHasPrintedLoad(const llvm::AllocaInst *Slot) {
       continue;
     if (Analysis.DeadFrameStores.count(LI) || Analysis.Inlinable.count(LI) ||
         isImportCalleeOnlyLoad(LI) || computedAllocaLoadIsForwarded(LI) ||
-        typedRecordAccess(LI->getPointerOperand(),
-                          llvmAccessSize(LI->getType())) ||
-        typedIndexAccess(LI->getPointerOperand()) ||
+        typedLoadAccess(*LI) || typedIndexAccess(LI->getPointerOperand()) ||
         isTypedRecordCursorSlot(Slot))
       continue;
     // A value folded from the current print path cannot prove that every
@@ -8578,8 +8573,7 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
             continue;
           }
           if (isImportCalleeOnlyLoad(LI) || computedAllocaLoadIsForwarded(LI) ||
-              typedRecordAccess(LI->getPointerOperand(),
-                                llvmAccessSize(LI->getType())) ||
+              typedLoadAccess(*LI) ||
               (slotReadAtUses(*LI) &&
                frameSlotAccess(LI->getPointerOperand(),
                                llvmAccessSize(LI->getType()),

@@ -4,6 +4,29 @@
 
 # Testing NeverD
 
+`AndroidFDSet.*` checks Bionic checked descriptor bitmaps at O0/O2 with ordinary,
+packed and RELR relocations on available CPU backends. Independent byte oracles
+cover word boundaries, untouched canaries, boolean queries, full-width extents,
+signed-int narrowing, read-only and partial-page access, overflow, FORTIFY error
+priority and dynamic provider closure. The bitmap-only cases do not establish
+readiness or execute host networking.
+
+`LinuxSelect.*` checks the common x64/AArch64 `pselect6` owner with independent
+bitmap, alias and stream-cursor assertions. It covers non-consuming TCP/UDP
+readiness, EOF and empty datagrams, gated/absent inputs, wrapper/timeout/mask
+error order, closed descriptors, ordered and partial output faults, aliased
+timeout output and explicit unsupported waits. `AndroidFDSet.RawAndBionicPselect*`
+executes actual AArch64 SVC and Bionic `syscall` callers, checking errno separation
+against the same regular-file description. Timed Linux cases check arrival,
+EOF, empty datagrams, independent timeout arithmetic, finite quiet intervals,
+non-consuming queries, early nonblocking receives, suspended input copies,
+output faults, FD replacement and atomic clock-overflow refusal.
+`AndroidReadiness.*` runs two original guest threads at O0/O2 across relocation
+formats and available CPU backends. It checks sleep/I/O deadline ordering,
+exact timeout ties, shared-memory mutation during waits, output permissions
+changed by another thread, raw versus libc errno, and exactly one completion
+of the original call. No case opens a host socket.
+
 `AArch64SIMD.RegisterShifts*` checks baseline USHL/SSHL scalar D and fixed
 vectors against independent bit selection, including signed low-byte amounts,
 oversized shifts, destination aliases, cleared upper lanes, complete register
@@ -193,6 +216,11 @@ IR, same-address image replacement, failed reload, function edits, target
 policy, signature matching and feature changes between selections. Run these
 with `NeverDPipelineOutcomeTests` and `NeverDSessionCAPITests`; the no-return,
 x87 and jump-table suites cover their shared proof consumers.
+`PipelineOutcome.Warm*` checks that idle preparation leaves selected runs
+unchanged, keeps a cache built for other entries, and stops at the cache bound
+without evicting. `NeverDWorkerWarmFunctions` checks the worker's `warm` open
+option against the mock engine: off by default, a running pass, a restart
+after an edit, a full cache and an engine without preparation.
 
 `MedDCE.KeepsLivePhiCyclesAndDropsDeadCyclesInEitherBlockOrder` checks register
 DCE liveness through cyclic PHIs, dead-cycle removal and sparse identifiers on
@@ -444,9 +472,22 @@ does the same on the image read without its PDB, of a type the user
 declares, and checks that another function's text stays as it was.
 
 `TypeParse.SizesAMemberReachedThroughANullPointer` reads
-`sizeof(((T *)0)->Member)`, as phnt's `RTL_FIELD_SIZE` spells it.
-`HeaderLibrary.*` reads the embedded Windows libraries and checks how a
-header library joins a program's types;
+`sizeof(((T *)0)->Member)`, as phnt's `RTL_FIELD_SIZE` spells it, and
+`TypeParse.ARoutineTakesItsPrototypeUnderItsAssemblerName` reads glibc's
+`__REDIRECT` (`__isoc23_strtol`) and C99's qualified parameter arrays.
+`HeaderLibrary.*` reads the embedded libraries and checks how a header
+library joins a program's types;
+`HeaderLibrary.TheLinuxLibrariesLayRecordsOutAsGlibcDoes` checks the sizes
+and offsets clang measures for glibc's `stat`, `timespec`,
+`pthread_mutex_t`, `FILE`, `sigaction` and `dirent` on each architecture,
+`HeaderLibrary.TheAndroidLibrariesLayRecordsOutAsBionicDoes` bionic's,
+`SessionCAPITest.LinuxProgramsJoinTheirGlibcLibrary` decompiles
+`unittests/types/fixtures/linux_libc_calls_{x64,x86,arm64,arm}`, built as
+`linux_libc_calls.c` says, and
+`SessionCAPITest.AndroidProgramsJoinTheirBionicLibrary` loads
+`android_libc_calls_arm64`, a program that asks for Android's linker, and
+`android_libc_calls_arm`, a library only the NDK's note marks, built as
+`android_libc_calls.c` says;
 `HeaderLibrary.TheUserLibrariesDeclareNtdllsNativeAPI` checks phnt's
 routines and the PEB, TEB and loader records each user mode library lays
 out. The user mode libraries read a checkout of
@@ -465,6 +506,35 @@ python3 scripts/check_type_renders.py --neverd build/bin/neverd \
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/WindowsUserARM64.h --data-model LLP64
 ```
+
+The Linux libraries read glibc's headers as each architecture's toolchain
+installs them: the host's for x64 and x86 (libc6-dev, libc6-dev-i386),
+`/usr/aarch64-linux-gnu` for ARM64 and `/usr/arm-linux-gnueabihf` for ARM
+(libc6-dev-arm64-cross, libc6-dev-armhf-cross), or another sysroot:
+`scripts/generate_linux_types.py --sysroot linux-arm=<directory>`. The
+Android libraries read a checkout of bionic
+(`--bionic <checkout>`, of https://android.googlesource.com/platform/bionic;
+its libc/include, libc/kernel and libc/NOTICE are all they need), and name
+its commit. Check the x64 and x86 Linux ones with their record ABIs:
+
+```sh
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --declare lib/types/headers/LinuxX64.h --data-model LP64
+python3 scripts/check_type_renders.py --neverd build/bin/neverd \
+  --declare lib/types/headers/LinuxX86.h --data-model ILP32 \
+  --record-abi i386-sysv
+```
+
+Their C in the keywords spelling, which the libraries name builtins in,
+compiles, as do Go, JavaScript and, for x64, Rust and Python. Their portable
+and windows spellings and their C++ do not compile against a glibc host's
+own headers, which declare glibc's reserved `__` types as well: `__off_t` is
+`long` there, `int32_t` in the portable spelling, and C++ takes the
+`struct __fsid_t` a typedef of glibc's anonymous record names. On x64 the
+prototypes unit warns where it redeclares `vprintf` and its kin, whose
+va_list the library passes as the address it is. The checker builds for
+x86's targets only: `HeaderLibrary.TheLinuxLibrariesLayRecordsOutAsGlibcDoes`
+checks the ARM libraries' layouts against clang's.
 
 With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
 ntoskrnl.exe and its PDB,
@@ -1085,6 +1155,17 @@ cmake --build build-release --target NeverDX86EncodingAccuracyTests
 ctest --test-dir build-release -L '^NeverDX86EncodingAccuracyTests$' \
   --output-on-failure
 ```
+
+`NeverDMachineInstructionTextTests` lifts AArch64 `brk` (clang's `#1` and
+GCC's `#0x3e8`), `udf`, `hlt`, `hvc`, `smc` and barriers, ARM's `trap`,
+`bkpt` and barriers, and x86's sanitizer `ud1`, and checks the operand each
+intrinsic keeps and the instruction text both C routes print: beside a
+builtin, as an `asm` statement, and as the ACLE value of a barrier's own
+option. It lifts AArch64 `mrs`, `msr` (register and PSTATE), `dc`, `ic`,
+`tlbi`, `at`, `sys` and `sysl` and checks the field each keeps and that an
+MSR or SYS writes no register, prints every system register, SYS operation
+and PSTATE field encoding against capstone's listing, and checks the ACLE
+and `asm` forms both C routes print.
 
 ## LLVMC parameter names and CPU queries
 
@@ -7182,7 +7263,7 @@ range must retain separate owners; a damaged prefix supplies no new entry.
 
 `OrdinaryInternalReturnsRetainTheParentsReturnPC` and `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` check parent-PC corruption and disjoint parent-local writes on PE, ELF and Mach-O x64 and ELF i386. An intact callee PC alone cannot authorize an ordinary call.
 
-`LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` bounds repeated positive and negative query work across x86, x64, ARM and AArch64. The context tests retain bound-value, entry-SP, width and zero-budget refusals, and discard answers across provisional/rebuilt feasible graphs and function changes.
+`LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` bounds repeated positive and negative query work across x86, x64, ARM and AArch64. `SharedBudgetProofsReplayTheirNodes` checks that a replayed shared-budget proof leaves the same answer and remaining budget as a fresh walk, for an exactly sufficient budget, one node short and half the nodes, and that a walk that ran out replays only for budgets no larger than its own; `BoundQueriesReuseOnlyTheirBindings` keeps answers for different bindings apart. The context tests retain bound-value, entry-SP, width and zero-budget refusals, and discard answers across provisional/rebuilt feasible graphs and function changes.
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` also checks early stopping below a bound, sentinel exits, enclosing links that skip the requested index and joins with distinct stopping levels. Missing finally bodies must still be rejected when actually traversed; a skipped cleanup must not lend a frame-write effect.
 

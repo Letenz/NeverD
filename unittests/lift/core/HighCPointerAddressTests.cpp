@@ -1667,6 +1667,229 @@ int main(void) {
 )c");
 }
 
+// A read-only section of these bytes and read_byte(i), which reads the byte
+// at a variable index into it, so the table runs to the section's end.
+std::string emitIndexedByteTable(const std::vector<uint8_t> &Bytes) {
+  constexpr va_t Base = 0x140003700;
+  BinaryImage Img = makeImageObjectFixture(Base, Bytes, false);
+  Section Sec;
+  Sec.Name = ".rdata";
+  Sec.VA = Base;
+  Sec.Size = Bytes.size();
+  Sec.Flags = SegmentFlags::Readable;
+  Img.Sections.push_back(Sec);
+  const auto Word = NdType::makeInt(8, false);
+  HighFunc Func;
+  Func.Name = "read_byte";
+  Func.ReturnType = NdType::makeInt(4, false);
+  Func.Params = {{"arg0", Word}};
+  auto Element = HighExpr::makeLoad(
+      HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeConst(Base, 8),
+                          parameter(0, Word)),
+      NdType::makeInt(1, false));
+  auto Value = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Element));
+  Value->Type = Func.ReturnType;
+  returnValue(Func, std::move(Value));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  Options.Image = &Img;
+  EXPECT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  return Source;
+}
+
+// Every byte of the table reads back as the image holds it, trailing zeros
+// included.
+void expectTableReadsBack(const std::string &Source,
+                          const std::vector<uint8_t> &Bytes) {
+  std::string Expected;
+  for (const uint8_t Byte : Bytes)
+    Expected += std::to_string(Byte) + ", ";
+  compileAndRunCallOrdering(
+      Source + "static const unsigned char expected[] = {" + Expected + R"c(};
+int main(void) {
+  for (unsigned i = 0; i < sizeof expected; ++i)
+    if (read_byte(i) != expected[i])
+      return 1;
+  return 0;
+}
+)c");
+}
+
+// The source compiles as strictly conforming C11, within its translation
+// limits.
+void expectPedanticC(const std::string &Source) {
+#ifdef NEVERD_TEST_CLANG
+  const std::string Compiler = NEVERD_TEST_CLANG;
+#else
+  auto FoundCompiler = llvm::sys::findProgramByName("clang");
+  ASSERT_TRUE(static_cast<bool>(FoundCompiler)) << "clang is required";
+  const std::string Compiler = *FoundCompiler;
+#endif
+  llvm::SmallString<128> SourcePath, ErrorPath;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-highc-strict", "c",
+                                                  SourcePath));
+  llvm::FileRemover RemoveSource(SourcePath);
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-highc-strict", "err",
+                                                  ErrorPath));
+  llvm::FileRemover RemoveError(ErrorPath);
+  {
+    std::error_code EC;
+    llvm::raw_fd_ostream OS(SourcePath, EC);
+    ASSERT_FALSE(EC) << EC.message();
+    OS << Source;
+  }
+  const std::optional<llvm::StringRef> Redirects[] = {
+      std::nullopt, std::nullopt, ErrorPath.str()};
+  std::string Error;
+  const int Checked = llvm::sys::ExecuteAndWait(
+      Compiler,
+      {Compiler, "-std=c11", "-pedantic-errors", "-fsyntax-only", SourcePath},
+      std::nullopt, Redirects, 30, 0, &Error);
+  const auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
+  EXPECT_EQ(Checked, 0) << Error
+                        << (Errors ? (*Errors)->getBuffer().str() : "");
+}
+
+TEST(HighCPointerAddresses, ImageStringsStayWithinCTranslationLimits) {
+  // C promises compilers take strings of 4095 characters.  Longer text is
+  // a list of its characters, and both compile as strict C11.
+  const auto Text = [](size_t Size) {
+    const llvm::StringRef Pattern = "It's a back\\slash \x01\x7F";
+    std::vector<uint8_t> Bytes;
+    while (Bytes.size() < Size)
+      Bytes.push_back(Pattern[Bytes.size() % Pattern.size()]);
+    Bytes.push_back(0);
+    return Bytes;
+  };
+  const std::vector<uint8_t> Limit = Text(4095);
+  const std::string AtLimit = emitIndexedByteTable(Limit);
+  EXPECT_NE(AtLimit.find("_bytes[4096] =\n  \"It's a back\\\\slash \\001\\177"),
+            std::string::npos)
+      << AtLimit;
+  expectPedanticC(AtLimit);
+  expectTableReadsBack(AtLimit, Limit);
+  const std::vector<uint8_t> Over = Text(4096);
+  const std::string OverLimit = emitIndexedByteTable(Over);
+  EXPECT_NE(
+      OverLimit.find("_bytes[4097] = {\n  'I', 't', '\\'', 's', ' ', 'a', "
+                     "' ', 'b', 'a', 'c', 'k', '\\\\', 's'"),
+      std::string::npos)
+      << OverLimit;
+  // Bytes that are not text are hexadecimal, wherever the lines break.
+  std::string Joined = OverLimit;
+  for (size_t At; (At = Joined.find("\n ")) != std::string::npos;)
+    Joined.erase(At, 2);
+  EXPECT_NE(Joined.find("' ', 0x1, 0x7F, 'I'"), std::string::npos) << OverLimit;
+  expectPedanticC(OverLimit);
+  expectTableReadsBack(OverLimit, Over);
+}
+
+TEST(HighCPointerAddresses, ImageTextInitializesItsBytesAsAString) {
+  // Text is several times shorter as a string than byte by byte.  Every
+  // byte that is not printable has a three-digit octal escape, so the
+  // digits after a NUL stay characters of their own.
+  const std::vector<uint8_t> Bytes = {'a',  'b',  '?',  '"',  '\\', 0x01,
+                                      0x7F, 0xFF, '\n', '\t', 0,    'c',
+                                      'd',  '0',  '7',  0,    0,    0};
+  const std::string Source = emitIndexedByteTable(Bytes);
+  EXPECT_NE(Source.find(R"(_bytes[18] = "ab\?\"\\\001\177\377\n\t\000cd07";)"),
+            std::string::npos)
+      << Source;
+  expectTableReadsBack(Source, Bytes);
+}
+
+TEST(HighCPointerAddresses, LongImageTextWrapsWhereItsStringsEnd) {
+  // A long string continues on the next line after a NUL, and every line
+  // stays short.
+  std::vector<uint8_t> Bytes;
+  for (int I = 0; I < 12; ++I) {
+    for (const char C : "a string of the table, number ")
+      if (C)
+        Bytes.push_back(C);
+    Bytes.push_back('0' + I % 10);
+    Bytes.push_back(0);
+  }
+  Bytes.push_back(0);
+  const std::string Source = emitIndexedByteTable(Bytes);
+  const std::string Declaration =
+      "_bytes[" + std::to_string(Bytes.size()) + "] =\n  \"";
+  ASSERT_NE(Source.find(Declaration), std::string::npos) << Source;
+  EXPECT_NE(Source.find("number 1\\000\"\n  \"a string"), std::string::npos)
+      << Source;
+  for (llvm::StringRef Rest = Source; !Rest.empty();) {
+    const auto [Line, After] = Rest.split('\n');
+    if (Line.starts_with("  \""))
+      EXPECT_LE(Line.size(), 104u) << Line.str();
+    Rest = After;
+  }
+  expectTableReadsBack(Source, Bytes);
+}
+
+TEST(HighCPointerAddresses, ImageBytesWithoutRoomForTheNulAreAList) {
+  // A string initializer ends with a NUL.  Bytes that fill their array to
+  // the last one are a list, as C++ and GCC's
+  // -Wunterminated-string-initialization require.
+  const std::vector<uint8_t> Bytes = {'a', 'b', 'c', 'd'};
+  const std::string Source = emitIndexedByteTable(Bytes);
+  EXPECT_NE(Source.find("_bytes[4] = { 'a', 'b', 'c', 'd', };"),
+            std::string::npos)
+      << Source;
+  expectTableReadsBack(Source, Bytes);
+}
+
+TEST(HighCPointerAddresses, SparseImageBytesNameTheirIndexes) {
+  // A list names a byte's index after more zeros than that takes to write;
+  // an all-zero table has no initializer.
+  std::vector<uint8_t> Bytes(64);
+  Bytes[40] = 0x5A;
+  const std::string Sparse = emitIndexedByteTable(Bytes);
+  EXPECT_NE(Sparse.find("_bytes[64] = { [40] = 'Z', };"), std::string::npos)
+      << Sparse;
+  expectTableReadsBack(Sparse, Bytes);
+  const std::vector<uint8_t> Zeros(16);
+  const std::string Empty = emitIndexedByteTable(Zeros);
+  EXPECT_NE(Empty.find("_bytes[16];"), std::string::npos) << Empty;
+  expectTableReadsBack(Empty, Zeros);
+}
+
+TEST(HighCPointerAddresses, AlignedImageStringKeepsItsLeadingPadding) {
+  // The bytes before an aligned backing's base are zero, and its string
+  // starts with them.
+  BinaryImage Img = makeImageObjectFixture(
+      0x140003002, {0x11, 0x22, 0x33, 0x44, 0x00, 0x00}, true);
+  HighFunc Func;
+  Func.Name = "atomic_read";
+  Func.ReturnType = NdType::makeInt(8, false);
+  const auto U32 = NdType::makeInt(4, false);
+  auto Plain = HighExpr::makeLoad(HighExpr::makeConst(0x140003002, 8), U32);
+  auto Acquire = HighExpr::makeLoad(HighExpr::makeConst(0x140003004, 8), U32,
+                                    NdMemoryOrdering::Acquire);
+  auto Wide = [](ExprPtr Value) {
+    auto Extended = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Value));
+    Extended->Type = NdType::makeInt(8, false);
+    return Extended;
+  };
+  auto Sum =
+      HighExpr::makeBinop(NdOp::INT_ADD, Wide(Plain), Wide(std::move(Acquire)));
+  Sum->Type = NdType::makeInt(8, false);
+  returnValue(Func, std::move(Sum));
+  const std::string Source = emitFunctions({Func}, Arch::X64, &Img);
+  EXPECT_NE(
+      Source.find(
+          R"(_Alignas(4) unsigned char g_140003002_bytes[8] = "\000\000\021\"3D";)"),
+      std::string::npos)
+      << Source;
+  compileAndRunCallOrdering(Source + R"c(
+int main(void) {
+  return atomic_read() == 0x44332211u + 0x4433u ? 0 : 1;
+}
+)c");
+}
+
 TEST(HighCPointerAddresses, StringLiteralInIntegerMaskUsesItsAddress) {
   // A branchless select masks two string addresses. The literal is an array
   // in C; the mask needs its address. A call argument keeps the literal.

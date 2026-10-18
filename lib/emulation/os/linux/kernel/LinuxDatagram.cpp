@@ -30,6 +30,9 @@ LinuxFiles::transferDatagram(OpenSocket &Socket, bool Send, uint64_t Address,
                        "UDP transfer requires an explicit connected route");
   if (Size > MaxSignedIOSize)
     return Reply(uint64_t(0) - InvalidArgument);
+  if (!Send)
+    if (auto Early = receiveBeforeReady(Socket, Flags, Result))
+      return *Early;
   const auto &C = *Socket.Datagram;
   const LinuxNetworkReceive *Event = nullptr;
   if (Send) {

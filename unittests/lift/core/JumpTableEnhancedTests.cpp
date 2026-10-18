@@ -452,6 +452,157 @@ int selected_function_table(int input) {
       << "a data-pointer slot cannot supply an indirect-call target";
 }
 
+// `t[(j + 5) % 13]` becomes a select between two addresses: t + 0x14 when
+// j < 8 and t - 0x20 otherwise.  The second lies before .rodata; the loader
+// anchors that exact operand, GOTOFF or absolute, to the table's segment, so
+// the select arm is rebuilt from its owner.
+static const char *const BiasedSelectArmSource = R"(
+static const unsigned t[13] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41};
+int biased_select_arm(int input) {
+  unsigned s = (unsigned)input, h = 0;
+  for (int i = 0; i < 190; ++i) {
+    s = s * 1103515245u + 12345u;
+    unsigned j = ((s >> 5) * 7u + 3u) % 13u;
+    h = h * 131u + t[j] + t[(j + 5) % 13u];
+    h ^= h >> 7;
+  }
+  return (int)h;
+}
+)";
+
+TEST_F(JTE_X86_32, SelectArmBiasedBeforeItsTableKeepsTheAnchoredOwner) {
+  // PIC: both arms are GOTOFF fields; without the anchor this arm is refused.
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target Clang unavailable";
+  const fs::path Source = tmpFile("biased_select_arm.c");
+  const fs::path Object = tmpFile("biased_select_arm.o");
+  {
+    std::ofstream File(Source);
+    File << BiasedSelectArmSource;
+  }
+  auto Compiled = exec(NEVERD_TEST_CLANG,
+                       {"-target", "i386-linux-gnu", "-march=pentium4", "-O2",
+                        "-fPIC", "-c", Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+  auto ImageOrErr = neverd::loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  auto &Image = *ImageOrErr;
+  ASSERT_EQ(Image.RodataAnchorSeg.size(), 1u)
+      << "expected exactly one select arm biased before the table";
+  auto Anchored = runPipelineWithEvidenceBudget(Image, 256);
+  ASSERT_TRUE(Anchored.Result.Success) << Anchored.Result.Error;
+  EXPECT_NE(Anchored.LLVMIR.find(".rodata, i64 -32)"), std::string::npos)
+      << "the biased arm must be rebuilt from its owner\n"
+      << Anchored.LLVMIR;
+}
+
+TEST_F(JTE_X86_32, AbsoluteSelectArmBiasedBeforeItsTableKeepsTheOwner) {
+  // Non-PIC: the arms are R_386_32 operands.  Without the anchor the biased
+  // arm was emitted as its raw original address, which the recompiled code
+  // dereferenced.
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target Clang unavailable";
+  const fs::path Source = tmpFile("absolute_biased_select_arm.c");
+  const fs::path Object = tmpFile("absolute_biased_select_arm.o");
+  {
+    std::ofstream File(Source);
+    File << BiasedSelectArmSource;
+  }
+  auto Compiled =
+      exec(NEVERD_TEST_CLANG,
+           {"-target", "i386-linux-gnu", "-march=pentium4", "-O2", "-fno-pic",
+            "-c", Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+  auto ImageOrErr = neverd::loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  auto &Image = *ImageOrErr;
+  ASSERT_EQ(Image.RodataAnchorSeg.size(), 1u)
+      << "expected exactly one select arm biased before the table";
+  auto Anchored = runPipelineWithEvidenceBudget(Image, 256);
+  ASSERT_TRUE(Anchored.Result.Success) << Anchored.Result.Error;
+  EXPECT_NE(Anchored.LLVMIR.find(".rodata, i64 -32)"), std::string::npos)
+      << "the biased arm must be rebuilt from its owner\n"
+      << Anchored.LLVMIR;
+}
+
+TEST_F(JTE_X86_32, SpilledGOTBaseSurvivesFloatingMemoryOperands) {
+  // At -O0 the GOT base is spilled to the frame, and SSE arithmetic reads its
+  // operands from frame slots (`addss -0x54(%ebp), %xmm0`).  Such a memory
+  // operand writes no slot, so the reloaded base still addresses the constant
+  // pool.
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target Clang unavailable";
+  const fs::path Source = tmpFile("spilled_got_float.c");
+  const fs::path Object = tmpFile("spilled_got_float.o");
+  {
+    std::ofstream File(Source);
+    File << R"(
+int spilled_got_float(int input) {
+  unsigned h = (unsigned)input;
+  float buf[16];
+  for (int j = 0; j < 16; j++) {
+    h = h * 1103515245u + 12345u;
+    buf[j] = (float)((int)(h & 0xffffu) - 0x8000);
+  }
+  float sum = 0.0f, mn = buf[0], mx = buf[0];
+  for (int j = 0; j < 16; j++) {
+    sum += buf[j] * 0.5f;
+    if (buf[j] < mn)
+      mn = buf[j];
+    if (buf[j] > mx)
+      mx = buf[j];
+  }
+  return (int)(sum + mn + mx);
+}
+)";
+  }
+  auto Compiled = exec(NEVERD_TEST_CLANG,
+                       {"-target", "i386-linux-gnu", "-march=pentium4", "-O0",
+                        "-fPIC", "-c", Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+  auto ImageOrErr = neverd::loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  auto Lifted = runPipelineWithEvidenceBudget(*ImageOrErr, 256);
+  EXPECT_TRUE(Lifted.Result.Success) << Lifted.Result.Error;
+}
+
+static neverd::LowFunc buildI386RingSpill(unsigned RingMask) {
+  auto ImageOrErr = neverd::loadBinary(
+      fs::path(TEST_OBJ_DIR) /
+      ("test_i386_ring_spill_" + std::to_string(RingMask) + ".o"));
+  if (!ImageOrErr) {
+    ADD_FAILURE() << llvm::toString(ImageOrErr.takeError());
+    return {};
+  }
+  const neverd::Symbol *Function = ImageOrErr->findSymbol("i386_ring_spill");
+  neverd::Decoder Decoder;
+  if (!Function || !Decoder.init(ImageOrErr->Arch, ImageOrErr->Mode)) {
+    ADD_FAILURE() << "i386_ring_spill cannot be decoded";
+    return {};
+  }
+  neverd::CFGBuilder Builder;
+  return Builder.build(*ImageOrErr, Decoder, Function->Addr, Function->Name);
+}
+
+TEST_F(JTE_X86_32, MaskedRingStoreLeavesTheSpilledGOTBase) {
+  // `movb %bl, 0x10(%esp,%edx,1)` with edx = x & 15 writes 0x10..0x1f; the
+  // GOT base spilled at 0x20 reaches its reload, so the table resolves.
+  const neverd::LowFunc Low = buildI386RingSpill(15);
+  ASSERT_EQ(Low.JumpTables.size(), 1u);
+  EXPECT_EQ(Low.JumpTables.front().Targets.size(), 4u);
+  EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+}
+
+TEST_F(JTE_X86_32, WiderRingStoreMayOverwriteTheSpilledGOTBase) {
+  // With edx = x & 31 the same write may cover 0x20, so the reload no longer
+  // proves the GOT base and the dispatch stays unresolved.
+  const neverd::LowFunc Low = buildI386RingSpill(31);
+  EXPECT_TRUE(Low.JumpTables.empty());
+}
+
 TEST_F(JTE_X86_32, O0ThreeSwitchLoopsReuseCanonicalFrameSpill) {
   auto ImageOrErr = neverd::loadBinary(fs::path(TEST_OBJ_DIR) /
                                        "test_i386_three_switch_loops.o");
@@ -3480,6 +3631,138 @@ protected:
 
 static fs::path jteX64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_jumptable_enhanced.o";
+}
+
+static fs::path recursiveSwitchX64Obj() {
+  return fs::path(TEST_OBJ_DIR) / "test_jumptable_recursive.o";
+}
+
+static fs::path rbpTableBaseX64Obj() {
+  return fs::path(TEST_OBJ_DIR) / "test_jumptable_rbp_base.o";
+}
+
+// `rbp_dispatch` loads RBP with the table address before the read. A frame
+// register that holds a constant there is no frame base, so the stack-table
+// probe never runs: even with no stack-table budget, the table is the plain
+// relative table whose offsets start .rodata.
+TEST_F(JTE_X86_64, RBPLoadedWithATableAddressIsNoFrameBase) {
+  auto ImageOrErr = neverd::loadBinary(rbpTableBaseX64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  const neverd::Symbol *Function = Image.findSymbol("rbp_dispatch");
+  ASSERT_NE(Function, nullptr);
+  const neverd::Section *Rodata = nullptr;
+  for (const neverd::Section &Section : Image.Sections)
+    if (Section.Name == ".rodata")
+      Rodata = &Section;
+  ASSERT_NE(Rodata, nullptr);
+  std::vector<neverd::va_t> Expected;
+  for (size_t Case = 0; Case < 6; ++Case) {
+    const uint8_t *Bytes = Image.readVA(Rodata->VA + Case * 4, 4);
+    ASSERT_NE(Bytes, nullptr);
+    int32_t Entry = 0;
+    std::memcpy(&Entry, Bytes, sizeof(Entry));
+    Expected.push_back(Rodata->VA + static_cast<int64_t>(Entry));
+  }
+
+  for (size_t Budget :
+       {size_t{0}, size_t{neverd::limits::kMaxJumpTableStackEvidenceWork}}) {
+    SCOPED_TRACE(Budget);
+    neverd::Decoder Decoder;
+    ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+    neverd::CFGBuilder Builder;
+    Builder.setStackTableEvidenceBudgetForTesting(Budget);
+    const neverd::LowFunc Low =
+        Builder.build(Image, Decoder, Function->Addr, Function->Name);
+    ASSERT_EQ(Low.JumpTables.size(), 1u);
+    EXPECT_EQ(Low.JumpTables.front().BaseAddr, Rodata->VA);
+    EXPECT_EQ(Low.JumpTables.front().Targets, Expected);
+    EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+  }
+}
+
+static fs::path tailStubX64Obj() {
+  return fs::path(TEST_OBJ_DIR) / "test_jumptable_tail_stub.o";
+}
+
+// `cleanup_dispatch` jumps past its end, where padding falls into `helper`,
+// and it also calls `helper`. The graph models the edge into `helper` as a
+// tail call at helper's entry; that record holds none of this function's
+// code, so the call does not enter this function and its table stays.
+TEST_F(JTE_X86_64, CallsToATailCalledEntryKeepTheRelativeTable) {
+  auto ImageOrErr = neverd::loadBinary(tailStubX64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  const neverd::Symbol *Function = Image.findSymbol("cleanup_dispatch");
+  ASSERT_NE(Function, nullptr);
+  const neverd::Symbol *Helper = Image.findSymbol("helper");
+  ASSERT_NE(Helper, nullptr);
+  const neverd::Section *Rodata = nullptr;
+  for (const neverd::Section &Section : Image.Sections)
+    if (Section.Name == ".rodata")
+      Rodata = &Section;
+  ASSERT_NE(Rodata, nullptr);
+  std::vector<neverd::va_t> Expected;
+  for (size_t Case = 0; Case < 6; ++Case) {
+    const uint8_t *Bytes = Image.readVA(Rodata->VA + Case * 4, 4);
+    ASSERT_NE(Bytes, nullptr);
+    int32_t Entry = 0;
+    std::memcpy(&Entry, Bytes, sizeof(Entry));
+    Expected.push_back(Rodata->VA + static_cast<int64_t>(Entry));
+  }
+
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const std::set<neverd::va_t> FunctionEntries{Function->Addr, Helper->Addr};
+  Builder.setKnownFuncEntries(&FunctionEntries);
+  const neverd::LowFunc Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  ASSERT_EQ(Low.JumpTables.size(), 1u);
+  EXPECT_EQ(Low.JumpTables.front().BaseAddr, Rodata->VA);
+  EXPECT_EQ(Low.JumpTables.front().Targets, Expected);
+  EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+}
+
+// Every case of `evaluate` calls `evaluate`. Such a call enters at the
+// function's entry, as every invocation does, so it reaches the dispatch only
+// through the guard; only a call to an interior address is another entry.
+// The table holds offsets from its base, which is the start of .rodata; the
+// loader writes them from the object's relocations.
+TEST_F(JTE_X86_64, RecursiveCallsKeepTheRelativeTable) {
+  auto ImageOrErr = neverd::loadBinary(recursiveSwitchX64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  const neverd::Symbol *Function = Image.findSymbol("evaluate");
+  ASSERT_NE(Function, nullptr);
+  const neverd::Section *Rodata = nullptr;
+  for (const neverd::Section &Section : Image.Sections)
+    if (Section.Name == ".rodata")
+      Rodata = &Section;
+  constexpr size_t Cases = 6;
+  ASSERT_NE(Rodata, nullptr);
+
+  neverd::CFGBuilder Builder;
+  const neverd::LowFunc Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  ASSERT_EQ(Low.JumpTables.size(), 1u);
+  const neverd::JumpTable &Table = Low.JumpTables.front();
+  EXPECT_EQ(Table.BaseAddr, Rodata->VA);
+  std::vector<neverd::va_t> Expected;
+  for (size_t Case = 0; Case < Cases; ++Case) {
+    const uint8_t *Bytes = Image.readVA(Rodata->VA + Case * 4, 4);
+    ASSERT_NE(Bytes, nullptr);
+    int32_t Entry = 0;
+    std::memcpy(&Entry, Bytes, sizeof(Entry));
+    Expected.push_back(Rodata->VA + static_cast<int64_t>(Entry));
+  }
+  EXPECT_EQ(Table.Targets, Expected);
+  EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
 }
 
 struct COFFImageRelativeRVASwitchOptions {

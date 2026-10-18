@@ -265,6 +265,49 @@ from them as from mingw-w64's headers. phnt's `ntintsafe.h` and
 `scripts/windows_types` holds the few macros and types phnt takes from
 Microsoft's SDK that mingw-w64 lacks. Generated on 2026-10-17.
 
+## Linux type libraries
+
+`lib/types/headers/LinuxX64.h`, `LinuxX86.h`, `LinuxARM64.h` and
+`LinuxARM.h` hold the types and prototypes that the GNU C Library's headers
+declare for x64, x86, ARM64 and ARM programs built with `_GNU_SOURCE`, as
+`scripts/generate_linux_types.py` renders them from the headers of glibc
+2.43 (the Ubuntu packages libc6-dev, libc6-dev-i386, libc6-dev-arm64-cross
+and libc6-dev-armhf-cross) and the Linux kernel's user-space API headers
+they include (linux-libc-dev). glibc's headers are Copyright 1991-2026 the
+Free Software Foundation, Inc. and others, under the GNU Lesser General
+Public License 2.1 or later; the kernel's are under the GNU General Public
+License 2.0 with the Linux syscall note. The libraries hold only what NeverD
+reads from the headers and renders again: data structure layouts, the
+values of enumerations and function declarations, whose use section 5 of
+the LGPL 2.1 leaves unrestricted ("numerical parameters, data structure
+layouts and accessors, and small macros and small inline functions"); the
+syscall note puts programs that use the kernel's interfaces outside the
+GPL. The licenses and the note are preserved in
+[LICENSES/glibc-headers.txt](LICENSES/glibc-headers.txt). Generated on
+2026-10-17.
+
+## Android type libraries
+
+`lib/types/headers/AndroidX64.h`, `AndroidX86.h`, `AndroidARM64.h` and
+`AndroidARM.h` hold the types and prototypes that the headers of bionic,
+Android's C library, declare for x64, x86, ARM64 and ARM programs of API
+level 35 built with `_GNU_SOURCE`, as `scripts/generate_linux_types.py`
+renders them from bionic's `libc/include` and its processed copies of the
+Linux kernel's user-space API headers (`libc/kernel`), at commit
+731631f300090436d7f5df80d50b6275c8c60a93 of
+https://android.googlesource.com/platform/bionic. bionic's C library
+headers are under the BSD and similar licenses its `libc/NOTICE` gathers,
+with the copyright notices of their authors (the Android Open Source
+Project, the NetBSD, OpenBSD and FreeBSD projects, the Regents of the
+University of California and others); bionic's kernel README says the
+processed kernel headers "only contain type and macro definitions", whose
+originals are under the GPL 2.0 with the Linux syscall note. The libraries
+hold only what NeverD reads from the headers and renders again: data
+structure layouts, the values of enumerations and function declarations.
+bionic's `libc/NOTICE` is preserved in
+[LICENSES/bionic-headers.txt](LICENSES/bionic-headers.txt). Generated on
+2026-10-17.
+
 ## FPREM anti-emulation regression
 
 The FPREM regression in
