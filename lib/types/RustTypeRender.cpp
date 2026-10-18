@@ -465,7 +465,10 @@ void RustWriter::accessors(const RecordPlan &Plan, std::string &Out) const {
         Write = "unsafe { " + Write + " }";
       }
       const std::string Getter = unique(Names.member(Bit->Name));
-      const std::string Setter = unique("set_" + Names.member(Bit->Name));
+      // set_type for a field r#type: the setter is no keyword.
+      llvm::StringRef Plain = Getter;
+      Plain.consume_front("r#");
+      const std::string Setter = unique("set_" + Plain.str());
       Methods += "    pub const fn " + Getter + "(&self) -> " + Value +
                  " {\n        " + Read + "\n    }\n";
       Methods += "    pub fn " + Setter + "(&mut self, value: " + Value +

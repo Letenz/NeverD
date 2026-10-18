@@ -33,10 +33,6 @@
 
 static_assert(sizeof(long) == 4, "these types need a 32-bit long");
 
-// The member names a C library's headers may define as macros.
-#pragma push_macro("__unused")
-#undef __unused
-
 struct _IO_FILE;
 union _G_fpos64_t;
 struct _IO_cookie_io_functions_t;
@@ -4071,5 +4067,3 @@ double y1(double);
 float y1f(float);
 double yn(int, double);
 float ynf(int, float);
-
-#pragma pop_macro("__unused")

@@ -41,10 +41,6 @@
 
 static_assert(sizeof(long) == 4, "these types need a 32-bit long");
 
-// The member names a C library's headers may define as macros.
-#pragma push_macro("__used")
-#undef __used
-
 typedef struct __fsid_t __fsid_t;
 typedef struct __mbstate_t __mbstate_t;
 struct _G_fpos_t;
@@ -6952,5 +6948,3 @@ _Float32 ynf32(int, _Float32);
 _Float32x ynf32x(int, _Float32x);
 _Float64 ynf64(int, _Float64);
 long double ynl(int, long double);
-
-#pragma pop_macro("__used")

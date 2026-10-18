@@ -904,6 +904,56 @@ TEST(TypeRender, ChecksLeaveTheFillersOut) {
   EXPECT_FALSE(contains(renderTypes(Back, {}, Options), "__filler0) =="));
 }
 
+TEST(TypeRender, TheWindowsRuntimesRecordsStayMinGWsUnderMinGW) {
+  // A Windows program's records of the C runtime, which MinGW's <stdint.h>
+  // declares too: under MinGW the header's own take other names, which
+  // leave MinGW's after it.
+  TypeLibrary Library(DataModel::LLP64);
+  ASSERT_TRUE(parseCTypes("struct tagLC_ID { unsigned short wLanguage; "
+                          "unsigned short wCountry; unsigned short "
+                          "wCodePage; };\n"
+                          "typedef long long time_t;\n"
+                          "struct uses { struct tagLC_ID id; time_t when; };\n",
+                          Library)
+                  .ok());
+  const std::string Text = renderTypes(Library, {}, in(Language::C));
+  for (const char *Expected :
+       {"#if defined(__MINGW32__)\n#pragma push_macro(\"tagLC_ID\")\n#define "
+        "tagLC_ID neverd_tagLC_ID\n#endif\n",
+        "#if defined(_WIN32)\n#pragma push_macro(\"time_t\")\n#define time_t "
+        "neverd_time_t\n#endif\n",
+        "#if defined(__MINGW32__)\n#pragma pop_macro(\"tagLC_ID\")\n#endif\n"})
+    EXPECT_TRUE(contains(Text, Expected)) << Expected << "\n" << Text;
+  // A name no compiler's headers declare keeps its own.
+  EXPECT_FALSE(contains(Text, "push_macro(\"uses\")")) << Text;
+  // Read back, the types keep their names.
+  TypeLibrary Back(DataModel::LLP64);
+  ASSERT_TRUE(parseCTypes(Text, Back).ok());
+  EXPECT_NE(Back.find("tagLC_ID"), nullptr);
+  EXPECT_EQ(Back.find("neverd_tagLC_ID"), nullptr);
+}
+
+TEST(TypeRender, KeywordBitfieldsAndPartlyNamedParametersRender) {
+  // A bit-field named type, Rust's r#type, takes the setter set_type; Go
+  // names every parameter of a function or none.
+  TypeLibrary Library(DataModel::LP64);
+  ASSERT_TRUE(parseCTypes("struct flags { unsigned type : 3; unsigned rest : "
+                          "5; };\n"
+                          "typedef void recorder(int, void *, unsigned type, "
+                          "int);\n"
+                          "typedef void printer(char *fmt, ...);\n",
+                          Library)
+                  .ok());
+  const std::string Rust = renderTypes(Library, {}, in(Language::Rust));
+  EXPECT_TRUE(contains(Rust, "pub fn set_type(&mut self")) << Rust;
+  EXPECT_FALSE(contains(Rust, "set_r#")) << Rust;
+  const std::string Go = renderTypes(Library, {}, in(Language::Go));
+  EXPECT_TRUE(
+      contains(Go, "func(_ int32, _ unsafe.Pointer, type_ uint32, _ int32)"))
+      << Go;
+  EXPECT_TRUE(contains(Go, "func(fmt *int8, _ ...uintptr)")) << Go;
+}
+
 TEST(TypeRender, RustImportsCoreVoidWhereItIsSpelled) {
   // An import nothing uses warns, which a check of warnings fails on.
   TypeLibrary Library;
