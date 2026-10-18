@@ -308,9 +308,10 @@ class Checker:
         if not node:
             self.skip("JavaScript", "node not found")
             return
-        tsc = shutil.which(self.arguments.tsc)
+        tsc = shutil.which(self.arguments.tsc) or shutil.which(
+            self.toolchains.get("tsc", ""))
         if not tsc:
-            self.skip("TypeScript", f"{self.arguments.tsc} not found")
+            self.skip("TypeScript", f"{self.arguments.tsc} not found; {FETCH}")
         for spelling in JAVASCRIPT_SPELLINGS:
             # .mjs: Node reads the file as the module it is.
             module = self.render(f"types-{spelling}.mjs", "--lang",
@@ -326,10 +327,12 @@ class Checker:
     def lua(self):
         """Lua 5.3 or later runs the module, whose checks read and write
         every accessor within its record."""
-        lua = next(filter(None, (shutil.which(name)
-                                 for name in self.arguments.lua)), None)
+        names = self.arguments.lua + [self.toolchains.get("lua", "")]
+        lua = next(filter(None, (shutil.which(name) for name in names if name)),
+                   None)
         if not lua:
-            self.skip("Lua", f"none of {', '.join(self.arguments.lua)} found")
+            self.skip("Lua", f"none of {', '.join(self.arguments.lua)} found; "
+                      f"{FETCH}")
             return
         for spelling in LUA_SPELLINGS:
             module = self.render(f"types-{spelling}.lua", "--lang", "lua",

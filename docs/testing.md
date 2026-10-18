@@ -753,11 +753,14 @@ the checker (`--toolchains` names another directory): rustup with the
 standard library of each cross target; Python for i386 Linux from Debian's
 i386 packages, which runs on the host's 32-bit C library; Python for 32-bit
 ARM and 32-bit Windows from python-build-standalone, run by qemu-arm against
-the armhf C library of Debian's cross packages and by Wine; and the C
+the armhf C library of Debian's cross packages and by Wine; the C
 libraries' headers of armhf and arm64 Linux and of Android (bionic, at the
-commit the Android libraries name). It needs an x86-64 Debian or Ubuntu host
-with dpkg, apt-get and Wine; a part it cannot fetch is reported, and the
-checker skips what it would have checked, naming the script. Without
+commit the Android libraries name); Lua 5.4, built from lua.org's sources;
+and TypeScript's compiler, from npm. The checker takes a Lua or a `tsc` it
+finds first, and these where it finds none. It needs an x86-64 Debian or
+Ubuntu host with dpkg, apt-get, Wine, make, a C compiler and npm; a part it
+cannot fetch is reported, and the checker skips what it would have checked,
+naming the script. Without
 `--binary` it checks the fixture:
 
 ```sh
