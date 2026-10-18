@@ -146,6 +146,10 @@ struct Session {
     std::string Error;
   };
   std::vector<JoinedHeaders> LocalTypeHeaders;
+  /// The type the joined libraries give the image's entry point, a pointer
+  /// to a function, where the image's kind says which
+  /// (NEVERD_HEADER_PE_ENTRY_TYPE): empty for none.
+  std::string LocalTypeEntryType;
   /// Drops the program's types, read anew when next asked for; the user's
   /// declarations stay, to be read again over them.
   void dropLocalTypes() {
@@ -156,6 +160,7 @@ struct Session {
     LocalTypesSource.clear();
     DeclarationProblems.clear();
     LocalTypeHeaders.clear();
+    LocalTypeEntryType.clear();
     dropLocalTypesDebug();
   }
 

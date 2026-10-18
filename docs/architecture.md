@@ -339,7 +339,20 @@ The loader records the platforms a Mach-O image's build version commands
 name (`machOCommandPlatform`, `MachOPlatform.h`, which the emulator's images
 read too), and `darwinPlatform` (`DarwinOperatingSystem.h`) tells macOS
 programs from iOS ones; a program for Mac Catalyst, tvOS or watchOS, or one
-that names no platform or several, joins no library. The build embeds each file in a unit of
+that names no platform or several, joins no library.
+`scripts/generate_uefi_types.py` renders what EDK II's MdePkg declares for a
+UEFI module into `UefiX64.h`, `UefiX86.h` and `UefiARM64.h`: the UEFI and
+PI specifications, every protocol, GUID and industry standard, and the
+library classes but those of one kind of module, which each declare
+`_ModuleEntryPoint` their way. A PE image of an EFI subsystem joins its
+architecture's, and where the subsystem says which entry the image has
+(`NEVERD_HEADER_PE_ENTRY_TYPE`: an application's and a runtime driver's are
+the specification's `EFI_IMAGE_ENTRY_POINT`), the debug context gives the
+entry point that type, so that the system table the code reaches the
+firmware through is typed; a boot service driver's entry is not typed, as
+EDK II builds PEIMs and standalone MM drivers under that subsystem too. The
+reader refuses a routine one text declares again with another type, which
+it kept the last of. The build embeds each file in a unit of
 its own, and
 `headerLibrary` reads each once. The C API joins the libraries the table
 names to an image (an x64 or x86 PE of the native subsystem joins its
@@ -347,7 +360,7 @@ kernel's; one of the Windows GUI or console subsystem joins its user mode's,
 then, on x64 and x86, its kernel's for the few ntdll exports only the
 kernel's headers declare, such as `RtlIsNameLegalDOS8Dot3`; a Linux
 program on glibc, bionic or musl joins its architecture's, a Mach-O program
-its platform's) after the program's debug
+its platform's, a UEFI module MdePkg's) after the program's debug
 information and before the user's declarations, where the library's data
 model and record ABI are the program's:
 - a header type joins only where the program has no type of its name;

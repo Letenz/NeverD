@@ -186,6 +186,18 @@ void joinHeaders(Session &S) {
   if (*Kind == HeaderImageKind::ImageKind && S.Img.Arch == Arch::Machine)      \
     join(types::HeaderLibrary::Library);
 #include "neverd/types/HeaderLibraryImages.def"
+  // The entry's type, where the image's subsystem says which it is and a
+  // library joined to declare it.
+  if (S.LocalTypeHeaders.empty())
+    return;
+  if (const std::optional<uint16_t> Subsystem = peSubsystem(S))
+    switch (*Subsystem) {
+#define NEVERD_HEADER_PE_ENTRY_TYPE(Subsystem, Type)                           \
+  case Subsystem:                                                              \
+    S.LocalTypeEntryType = Type;                                               \
+    break;
+#include "neverd/types/HeaderLibraryImages.def"
+    }
 }
 
 /// Applies \p Declaration to \p Library: the types its source declares, or
@@ -633,7 +645,8 @@ DebugContext *Session::decompileDebug() {
       Dbg ? *Dbg : static_cast<const DebugContext &>(NoDebugInfo),
       Library ? std::make_shared<types::TypeLibrary>(*Library)
               : std::shared_ptr<types::TypeLibrary>(libraryFor(Img)),
-      std::move(Declarations), &Img, std::move(Headers), SigDB.buildNameMap());
+      std::move(Declarations), &Img, std::move(Headers), SigDB.buildNameMap(),
+      LocalTypeEntryType);
   return LocalTypesDbg.get();
 }
 

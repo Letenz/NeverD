@@ -385,10 +385,11 @@ LocalTypesDebugContext::LocalTypesDebugContext(
     const DebugContext &Inner, std::shared_ptr<const types::TypeLibrary> Types,
     std::map<va_t, std::string> Declarations, const BinaryImage *Image,
     std::vector<types::HeaderLibrary> Headers,
-    std::unordered_map<uint64_t, std::string> Recognized)
+    std::unordered_map<uint64_t, std::string> Recognized, std::string EntryType)
     : Inner(Inner), Types(std::move(Types)),
       Declarations(std::move(Declarations)), Image(Image),
-      Headers(std::move(Headers)), Recognized(std::move(Recognized)) {}
+      Headers(std::move(Headers)), Recognized(std::move(Recognized)),
+      EntryType(std::move(EntryType)) {}
 
 LocalTypesDebugContext::~LocalTypesDebugContext() {
   std::lock_guard<std::mutex> Guard(Mutex);
@@ -665,6 +666,29 @@ LocalTypesDebugContext::resolvePrototype(llvm::StringRef Name) const {
   return Signature;
 }
 
+std::optional<FunctionSym> LocalTypesDebugContext::entrySignature() const {
+  // A typedef of a pointer to a function, as UEFI's EFI_IMAGE_ENTRY_POINT.
+  const types::LocalType *Type = Types->find(EntryType);
+  if (!Type || Type->Kind != types::TypeKind::Typedef || !Type->Target ||
+      Type->Target->Kind != types::TypeExprKind::Pointer ||
+      !Type->Target->Element ||
+      Type->Target->Element->Kind != types::TypeExprKind::Function ||
+      !Type->Target->Element->Function)
+    return std::nullopt;
+  const types::FunctionDef &Function = *Type->Target->Element->Function;
+  std::optional<FunctionSym> Signature =
+      signatureOf(*Types, Function, std::string());
+  if (!Signature)
+    return Signature;
+  for (const types::HeaderLibrary Library : Headers)
+    if (const types::TypeLibrary *Header = types::headerLibrary(Library);
+        Header && Header->find(EntryType)) {
+      Signature->PrototypeLibrary = types::headerLibraryName(Library).str();
+      break;
+    }
+  return Signature;
+}
+
 std::vector<std::string> LocalTypesDebugContext::statedNames(va_t Entry) const {
   if (!Image)
     return {};
@@ -743,6 +767,10 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
       if (const std::optional<FunctionSym> Other = resolvePrototype(Names[I]);
           Other && !passesAlike(*Known, *Other))
         return Function;
+  // The image's entry point, as its kind's specification types it: a UEFI
+  // application's (ImageHandle, SystemTable).
+  if (!Known && Image && Addr == Image->Entry && !EntryType.empty())
+    Known = entrySignature();
   // A call through an import's slot or stub reaches the routine another
   // module exports under the import's name, which the call names it by.
   if (!Known && !AtEntry)

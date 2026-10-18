@@ -512,10 +512,13 @@ private:
   }
   void retainSummary(const CFGBuilder &B, va_t Address, LowFunc &F,
                      const CFGBuilder::CallRegisterBodyWitness &Witness) {
-    if (!canRetainSummary(B) || !Witness.Complete ||
-        !F.hasCompleteLiftCoverage() || F.Blocks.empty() ||
+    // An incomplete lift is retained too: replaying the answers its build
+    // read reproduces it as it does a complete one, and a caller's call
+    // effects read it as incomplete either way.
+    if (!canRetainSummary(B) || !Witness.Complete || F.Blocks.empty() ||
         F.Blocks.front().StartAddr != Address)
       return;
+    const bool Covered = F.hasCompleteLiftCoverage();
     // Called only after the raw graph projection has finished reading F. Move
     // its blocks into one owner instead of copying them for every consumer.
     if (!summaryBytes(F.Blocks, F.Blocks.capacity(), Witness.Calls.size(),
@@ -553,7 +556,7 @@ private:
            *MetadataBytes > MaxSummaryBytes - EstimatedContext - *BodyBytes))
         MetadataBytes.reset();
       auto Facts = std::make_shared<SummaryFacts>();
-      Facts->Body.Complete = true;
+      Facts->Body.Complete = Covered;
       Facts->Body.UnsafeIndirectBranches =
           !F.UnsafeIndirectBranchAddresses.empty();
       if (MetadataBytes) {
@@ -1660,7 +1663,8 @@ std::optional<LowFunc> CFGBuilder::cachedDefaultFunction(
   const auto Facts = Cache->validatedSummary(
       Cache, Img, Entry, Entries, NoReturnTargets, NoReturnCallees,
       RelocationRoots, CodeOwners, /*RequireFunction=*/true);
-  if (!Facts)
+  // Only a complete lift stands in for a selected function's own build.
+  if (!Facts || !Facts->Body.Complete)
     return std::nullopt;
   LowFunc Result = *Facts->Function;
   Result.Blocks = Facts->Body.Blocks;

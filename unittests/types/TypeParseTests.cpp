@@ -418,6 +418,88 @@ TEST(TypeParse, SizesAStringLiteralWithItsTerminator) {
             "struct{szUrl@0 Joined@4168 Empty@4172}");
 }
 
+TEST(TypeParse, ARoutineDeclaredAgainWithAnotherTypeIsRefused) {
+  // EDK II's module kinds each declare _ModuleEntryPoint their way: a text
+  // that declares two of them describes no one routine.  A declaration that
+  // passes and returns alike, its parameters named otherwise or const,
+  // reads; another text, as the user's declarations are, gives the routine
+  // a type anew.
+  const char *Source = "int Entry(void *ImageHandle, void *SystemTable);\n"
+                       "int Entry(void *Handle, void *const Table);\n"
+                       "int Entry(void *HobStart);\n";
+  TypeLibrary Strict(DataModel::LLP64);
+  const ParseResult Refused = parseCTypes(Source, Strict);
+  ASSERT_EQ(Refused.Problems.size(), 1u);
+  EXPECT_EQ(Refused.Problems[0].Line, 3u);
+  EXPECT_EQ(Refused.Problems[0].Message,
+            "'Entry' is declared again with another type");
+  TypeLibrary Going(DataModel::LLP64);
+  ParseOptions Options;
+  Options.KeepGoing = true;
+  EXPECT_EQ(parseCTypes(Source, Going, Options).Problems.size(), 1u);
+  ASSERT_NE(Going.findPrototype("Entry"), nullptr);
+  EXPECT_EQ(Going.findPrototype("Entry")->Params.size(), 2u);
+  ASSERT_TRUE(parseCTypes("int Entry(void *HobStart);", Going).ok());
+  EXPECT_EQ(Going.findPrototype("Entry")->Params.size(), 1u);
+
+  // Two headers that declare one routine through other typedefs, as
+  // mingw-w64's and phnt's RtlIpv4AddressToStringA, pass alike.
+  TypeLibrary Windows(DataModel::LLP64);
+  EXPECT_TRUE(parseCTypes("typedef unsigned long ULONG;\n"
+                          "typedef const char *PCSTR;\n"
+                          "ULONG Crc(const char *Buffer, unsigned long Size);\n"
+                          "unsigned long Crc(PCSTR Buffer, ULONG Size);",
+                          Windows)
+                  .ok());
+
+  // bionic's strtol_l, which takes a locale, is strtol's symbol: strtol's
+  // own declaration describes strtol, before or after it.
+  for (const char *Bionic :
+       {"long strtol(const char *s, char **end, int base);\n"
+        "long strtol_l(const char *s, char **end, int base, void *locale) "
+        "__asm__(\"strtol\");",
+        "long strtol_l(const char *s, char **end, int base, void *locale) "
+        "__asm__(\"strtol\");\n"
+        "long strtol(const char *s, char **end, int base);"}) {
+    TypeLibrary Android(DataModel::LP64);
+    ASSERT_TRUE(parseCTypes(Bionic, Android).ok()) << Bionic;
+    ASSERT_NE(Android.findPrototype("strtol"), nullptr);
+    EXPECT_EQ(Android.findPrototype("strtol")->Params.size(), 3u) << Bionic;
+    ASSERT_NE(Android.findPrototype("strtol_l"), nullptr);
+    EXPECT_EQ(Android.findPrototype("strtol_l")->Params.size(), 4u);
+  }
+}
+
+TEST(TypeParse, SizesWideAndUnicodeLiterals) {
+  // EDK II's Base.h checks its characters: L'A' is a wchar_t, two bytes
+  // under Microsoft's ABI, which UEFI follows, four under System V's; a
+  // character constant without a prefix is an int.
+  TypeLibrary Uefi(DataModel::LLP64);
+  Uefi.setRecordABI(RecordABI::Microsoft);
+  const ParseResult Read = parseCTypes(
+      "_Static_assert (sizeof (L'A') == 2, \"L'A'\");\n"
+      "_Static_assert (sizeof (L\"A\") == 4, \"L\\\"A\\\"\");\n"
+      "_Static_assert (sizeof ('A') == 4, \"'A'\");\n"
+      "_Static_assert (sizeof (u\"ab\") == 6, \"u\");\n"
+      "_Static_assert (sizeof (U\"ab\") == 12, \"U\");\n"
+      "_Static_assert (sizeof (u8\"ab\") == 3, \"u8\");\n"
+      "_Static_assert (sizeof (L\"a\" \"bc\") == 8, \"joined\");\n"
+      "typedef struct { unsigned short Name[sizeof (L\"Boot\") / 2]; } "
+      "BOOT_NAME;",
+      Uefi);
+  EXPECT_TRUE(Read.ok()) << Read.Problems.front().Message;
+  EXPECT_EQ(recordOf(Uefi, "BOOT_NAME").Size, 10u);
+  TypeLibrary Linux(DataModel::LP64);
+  Linux.setRecordABI(RecordABI::Itanium);
+  EXPECT_TRUE(
+      parseCTypes("_Static_assert (sizeof (L\"A\") == 8, \"L\");", Linux).ok());
+  // Literals of two prefixes do not join.
+  EXPECT_FALSE(
+      parseCTypes("_Static_assert (sizeof (u\"a\" U\"b\") == 8, \"mixed\");",
+                  Linux)
+          .ok());
+}
+
 TEST(TypeParse, RefusesWhatItCannotLayOutAndKeepsGoingWhenAsked) {
   TypeLibrary Library;
   // A #pragma pack of an unknown name leaves every layout after it unknown.
@@ -715,6 +797,40 @@ TEST(TypeParse, ExactLongDoublesReadBackAsTheProgramsOwn) {
   EXPECT_EQ(Wrong.Problems[0].Message,
             "'neverd_long_double_16' is a long double of 16 bytes, where the "
             "program's is of 8");
+}
+
+TEST(TypeParse, ARecordsTypedefRendersBeforeWhatNamesIt) {
+  // EDK II's PEI notification: the record holds a function pointer whose
+  // parameter is the record's typedef, which the rendering must declare
+  // first; what holds the typedef by value still follows the record.
+  TypeLibrary Library(DataModel::LP64);
+  ASSERT_TRUE(parseCTypes("typedef struct _NOTIFY NOTIFY;\n"
+                          "typedef int (*NOTIFY_ENTRY)(NOTIFY *Notify, "
+                          "void *Ppi);\n"
+                          "struct _NOTIFY { unsigned long Flags; "
+                          "NOTIFY_ENTRY Notify; };\n"
+                          "typedef struct { NOTIFY Inner; int Count; } "
+                          "HOLDER;\n",
+                          Library)
+                  .ok());
+  for (const LocalType *Root :
+       {Library.find("NOTIFY"), Library.find("NOTIFY_ENTRY"),
+        Library.find("_NOTIFY"), Library.find("HOLDER")}) {
+    ASSERT_NE(Root, nullptr);
+    const std::string Header = renderTypes(Library, {Root}, RenderOptions());
+    TypeLibrary Back(DataModel::LP64);
+    const ParseResult Read = parseCTypes(Header, Back);
+    EXPECT_TRUE(Read.ok()) << Root->Name << ": "
+                           << Read.Problems.front().Message << "\n"
+                           << Header;
+  }
+  const std::string All = renderTypes(Library, {}, RenderOptions());
+  EXPECT_LT(All.find("typedef struct _NOTIFY NOTIFY;"),
+            All.find("(*NOTIFY_ENTRY)("))
+      << All;
+  TypeLibrary Back(DataModel::LP64);
+  ASSERT_TRUE(parseCTypes(All, Back).ok()) << All;
+  EXPECT_EQ(recordOf(Back, "HOLDER").Size, 24u);
 }
 
 TEST(TypeParse, ChecksStaticAssertions) {
