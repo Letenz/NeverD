@@ -2892,7 +2892,15 @@ pointer). Gaps are named `gapXX` by offset. A debug object of another type (a
 record, an array, a pointer or an enumeration) keeps its bytes raw, and a debug
 integer must have the access width. `frame_base`, the entry stack pointer's
 address in the storage, is declared only when the body reads it: for such raw
-bytes and for displacements outside the storage. Every access reaches the same
+bytes and for displacements outside the storage. The storage is aligned to
+sixteen bytes, and the entry stack pointer sits in it at the phase the target's
+callers keep (`syntheticEntryStackResidue`): 8 mod 16 on x86-64, and 12 mod 16
+on i386 under the System V psABI and on Darwin. A slot in which the code keeps
+a vector with `movaps` is then as aligned in C as on the machine, so its
+alignment guard holds there too. An address prints as the object the unit
+defines there, not as a string the object's first bytes spell, wherever the
+object holds more than that string (`(uintptr_t)&LCPI0_2 & 15`, not
+`L"\t" & 15`; `objectOutgrowsLiteral`). Every access reaches the same
 object, so a member and the bytes around it always alias. The record's tag is
 `frame_<entry>`: the C++, Go and Rust views parse the HighC text into one
 namespace of record tags, and the Go and Rust views print the record's type

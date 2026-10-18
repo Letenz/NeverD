@@ -400,6 +400,12 @@ public:
   /// wrap. Segmented offsets disable image backing projection to stay numeric.
   std::string addrStr(const HighExpr &Expr, int ParentPrec = 0,
                       bool ProjectImageBacking = true);
+  /// Whether the object the unit defines at \p Addr holds more than the
+  /// string \p Literal its first bytes spell, which is then no string: a
+  /// vector constant whose first lane is 9 is no L"\t".  A sized object
+  /// that holds a string's bytes is the string itself, as
+  /// imageStringLiteral asks of a symbol.
+  bool objectOutgrowsLiteral(va_t Addr, llvm::StringRef Literal) const;
   std::string renderUnaryOp(const HighExpr &E, int ParentPrec);
   std::string resolvedCallTarget(const HighExpr &E) const;
   /// The name the image lists the function at \p Addr under

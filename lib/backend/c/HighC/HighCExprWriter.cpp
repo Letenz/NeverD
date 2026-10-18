@@ -5468,7 +5468,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return "(" + typeToC(E.Type) + ")" + *Anchored;
       return PointerInteger(*Anchored);
     }
-    if (auto Lit = stringLiteralAt(Opts.Image, Dbg, E.ConstVal))
+    if (auto Lit = stringLiteralAt(Opts.Image, Dbg, E.ConstVal);
+        Lit && !objectOutgrowsLiteral(E.ConstVal, *Lit))
       return LiteralAddressOperands.count(&E)
                  ? PointerInteger("(uintptr_t)" + *Lit)
                  : *Lit;
@@ -6362,6 +6363,32 @@ HighCWriter::indexedObjectAt(va_t Addr) const {
       End - Begin > limits::kMaxSingleGlobalEmbedLen)
     return std::nullopt;
   return std::pair{Begin, static_cast<uint64_t>(End - Begin)};
+}
+
+bool HighCWriter::objectOutgrowsLiteral(va_t Addr,
+                                        llvm::StringRef Literal) const {
+  const auto Object = ImageObjects.find(Addr);
+  if (!Opts.Image || Object == ImageObjects.end() || Object->second.String)
+    return false;
+  const ImageObject &Held = Object->second;
+  uint64_t Extent =
+      std::max<uint64_t>({Held.Type ? Held.Type->Size : uint64_t{0},
+                          Held.ArrayBytes, Held.IndexedBytes});
+  for (const uint16_t Width : Held.MemoryWidths)
+    Extent = std::max<uint64_t>(Extent, Width);
+  // The literal's units run to its terminator, which ends it inside the
+  // object when the object holds more.
+  const unsigned Unit = Literal.starts_with("L\"")   ? 2
+                        : Literal.starts_with("U\"") ? 4
+                                                     : 1;
+  for (uint64_t At = 0; At + Unit <= Extent; At += Unit) {
+    const uint8_t *Bytes = Opts.Image->readVA(Addr + At, Unit);
+    if (!Bytes)
+      return false;
+    if (std::all_of(Bytes, Bytes + Unit, [](uint8_t Byte) { return !Byte; }))
+      return At + Unit < Extent;
+  }
+  return false;
 }
 
 std::optional<std::string> HighCWriter::imageBackingAddress(va_t Addr) const {
