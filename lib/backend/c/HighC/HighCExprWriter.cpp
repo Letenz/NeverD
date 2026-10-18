@@ -1738,7 +1738,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       if (!Op)
         continue;
       OpBytes.push_back(Op->Type ? Op->Type->Size : 0);
-      if (((LinuxSyscallArgs == 1 && I >= 2) || I >= FirstUnreadOperand) &&
+      if (((LinuxSyscallArgs && !x64SyscallOperandRead(I, *LinuxSyscallArgs)) ||
+           I >= FirstUnreadOperand) &&
           CanOmit(CanOmit, Op.get(), 0)) {
         OpStrs.push_back("0");
         continue;

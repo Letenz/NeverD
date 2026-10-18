@@ -11,8 +11,8 @@ a64_linux_exit_group:
         ret
         .size a64_linux_exit_group, .-a64_linux_exit_group
 
-// A syscall whose arity the table does not verify passes every argument
-// register; here each one is set.
+// A syscall whose arity the table does not list, a number no kernel
+// assigns, passes every argument register; here each one is set.
         .globl a64_linux_six
         .type a64_linux_six, %function
 a64_linux_six:
@@ -22,7 +22,7 @@ a64_linux_six:
         mov x3, #23
         mov x4, #24
         mov x5, #25
-        mov x8, #63
+        mov x8, #0x5ab
         svc #0
         ret
         .size a64_linux_six, .-a64_linux_six
