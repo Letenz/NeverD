@@ -1591,7 +1591,7 @@ std::string LLVMCWriter::callResult(const llvm::CallBase &Call,
   if (!Library)
     return Expr;
   const std::optional<libc::LibCResult> Result =
-      libc::libcResult(Library.Name, Opts.Format);
+      libc::libcResult(Library.Name, libcVariant());
   if (!Result)
     return Expr;
   // C does not convert the pointer a routine returns to the integer the

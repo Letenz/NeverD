@@ -5,3 +5,5 @@ LIBC_VARARG_FORMAT_NAME("printf", 1)
 LIBC_VARARG_FORMAT_NAME("scanf", 1)
 LIBC_VARARG_FORMAT_NAME("wprintf", 1)
 LIBC_VARARG_FORMAT_NAME("wscanf", 1)
+// Darwin's libmalloc.
+LIBC_VARARG_FORMAT_NAME("malloc_printf", 1)

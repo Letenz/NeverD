@@ -376,7 +376,8 @@ recoverFormattedSourceOutputs(const BinaryImage *Img,
       formattedSourceName(StatedName);
   if (!Source)
     return std::nullopt;
-  const unsigned FixedCount = libc::varArgFixedCount(Source->first);
+  const unsigned FixedCount = libc::varArgFixedCount(
+      Source->first, Img ? libc::libcVariantOf(*Img) : libc::LibCVariant::GNU);
   if (FixedCount == 0 || FixedCount > Args.size())
     return std::nullopt;
   const unsigned FormatArg = FixedCount - 1;

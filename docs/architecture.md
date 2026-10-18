@@ -291,8 +291,8 @@ the program's types.
 Header libraries (`HeaderLibraries.def`, `HeaderLibrary.h`) give a program
 the system's types and prototypes that its debug information lacks: the
 Windows kernel's PDB names records, but no typedefs and no prototypes.
-They are the one source of what a known routine takes and returns, as IDA's
-type libraries are beside its signatures: signatures (`signatures/`)
+They are the one source of a known routine's declaration, which the call
+model's tables agree with, as IDA's type libraries are beside its signatures: signatures (`signatures/`)
 recognize a routine by its bytes and only name it. A platform or an
 architecture joins by a header under `lib/types/headers/`, a row of
 `HeaderLibraries.def` naming its data model, the record ABI its records are
@@ -370,6 +370,27 @@ model and record ABI are the program's:
 - a typedef names the program's type, as C binds it;
 - a header record laid out with a type the program sizes otherwise is left
   out and reported (`conflicts`).
+
+The call model (`lib/libc`) answers what a routine takes and returns before
+a program joins a header library, and where none joins: function discovery,
+the call analysis, MedIR's ABI pass and both C writers read it from layers
+that do not link the type libraries, as LLVM's TargetLibraryInfo stands
+beside the declarations Clang reads from headers. Its tables follow the GNU C
+Library's declarations. The C library a program links (`LibCVariant`: GNU,
+musl, bionic, Darwin's libSystem or a Windows C runtime, which
+`libcVariantOf` reads from the image) selects what `LibCVariants.def` gives
+a routine another library declares otherwise: Darwin's `sendfile` takes six
+arguments, and its `shm_open` is variadic, whose mode Apple's AArch64
+convention passes on the stack. On Darwin a routine's suffixed variants
+(`syslog$DARWIN_EXTSN`, `fcntl$NOCANCEL`) take its facts
+(`routineOfSymbol`). Every lookup names the variant. The header libraries
+hold the declarations themselves, and for every routine both know the
+tables agree with each library (`HeaderLibraryCallModelTests`): its arity,
+whether it is variadic and after how many named parameters, its result, and
+which parameters point to objects or to functions. The tables keep what no
+declaration says: routines that never return or return twice where a header
+does not mark them, format strings, fortified forms, the va_list forms
+variadic routines pass on to, and what copies and stack probes do.
 
 A C or C++ header rendered for a program joined to a library of a system's
 headers (`HeaderLibrarySystems.def`: glibc's, bionic's, musl's and Apple's
@@ -6501,7 +6522,7 @@ libraries supplied by the CMake helper.
 | `lib/debug` | DWARF, PDB, and linker-map debug contexts | IR |
 | `lib/types` | Local types: the type library, PDB type import with anonymous nesting and inferred packing, and rendering as C, C++, Rust, Go, Python, JavaScript and Lua | LLVM DebugInfo PDB |
 | `lib/sigs` | Signature parsing, databases, and matching | Loader |
-| `lib/libc` | Known libc names and call-model support | Standalone component |
+| `lib/libc` | The call model of library routines for each C library (arity, named parameters of variadic routines, results, no-return, formats), checked against the header libraries | Loader |
 | `lib/symbolic` | Width-exact symbolic execution, bounded path exploration, stable control-decision histories, and the exact concrete shadow | LowIR |
 | `lib/solver` | Bounded bit-vector encoding, incremental SAT solving, models, and typed unknown/invalid outcomes | Symbolic |
 | `lib/concolic` | Exact-prefix conditional branch flips with register-model projection and fresh replay receipts | Symbolic, Solver |

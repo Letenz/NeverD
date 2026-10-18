@@ -54,7 +54,8 @@ inline std::string variadicImportOfStub(const BinaryImage &Image, va_t Entry) {
     return Forward->Format == Image.Format && libc::isKnownFunction(Name)
                ? Name
                : std::string();
-  return libc::isKnownFunction(Name) && libc::varArgFixedCount(Name) > 0
+  return libc::isKnownFunction(Name) &&
+                 libc::varArgFixedCount(Name, libc::libcVariantOf(Image)) > 0
              ? Name
              : std::string();
 }
