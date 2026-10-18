@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <map>
 #include <set>
 #include <utility>
 
@@ -92,6 +93,33 @@ void MedToHighConverter::collectI386GetPcValues(const MedFunc &Med) {
   I386GetPcPushes.clear();
   if (TargetArch != Arch::X86)
     return;
+  // In an unlinked object the GOTPC model, not the PC, gives the pop's sum
+  // its value, the GOT base (collectI386GotBase): a popped temporary nothing
+  // but that sum reads is read for nothing as well.
+  std::set<VarKey> GotBaseAddends;
+  if (!I386GotBase.empty()) {
+    std::map<VarKey, unsigned> Reads;
+    auto Note = [&](const MedVar &V) {
+      if (!V.isConst())
+        ++Reads[varKey(V)];
+    };
+    for (const MedBlock &Block : Med.Blocks) {
+      for (const PhiNode &Phi : Block.Phis)
+        for (const auto &[Predecessor, Input] : Phi.Args)
+          Note(Input);
+      for (const MedOp &Op : Block.Ops)
+        for (uint8_t I = 0; I < Op.NumInputs; ++I)
+          Note(Op.Inputs[I]);
+    }
+    for (const MedBlock &Block : Med.Blocks)
+      for (const MedOp &Op : Block.Ops)
+        if (Op.Opcode == NdOp::INT_ADD && Op.NumInputs == 2 &&
+            Op.Inputs[0].isConst() != Op.Inputs[1].isConst() &&
+            I386GotBase.count(varKey(Op.Output)))
+          if (const MedVar &Addend = Op.Inputs[Op.Inputs[0].isConst() ? 1 : 0];
+              Addend.Kind == MedVar::Temp && Reads[varKey(Addend)] == 1)
+            GotBaseAddends.insert(varKey(Addend));
+  }
   // A pop whose value nothing used is gone, and so is its read of the slot:
   // the push of `call $+5` then has no reader at all.  The `pop r32` right
   // after the call is the slot's only reader, since i386 code keeps nothing
@@ -100,7 +128,9 @@ void MedToHighConverter::collectI386GetPcValues(const MedFunc &Med) {
   for (const MedBlock &Block : Med.Blocks)
     for (const MedOp &Op : Block.Ops)
       if (Op.Opcode == NdOp::LOAD && Op.NumInputs >= 1 &&
-          !Op.Inputs[0].isConst() && !I386GetPcValues.count(varKey(Op.Output)))
+          !Op.Inputs[0].isConst() &&
+          !I386GetPcValues.count(varKey(Op.Output)) &&
+          !GotBaseAddends.count(varKey(Op.Output)))
         ReadSlots.insert(varKey(Op.Inputs[0]));
   constexpr uint8_t CallNext[] = {0xE8, 0, 0, 0, 0};
   constexpr uint8_t PopOpcode = 0x58, PopRegisterMask = 0x07;
