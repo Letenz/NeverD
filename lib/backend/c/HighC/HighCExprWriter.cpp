@@ -25,6 +25,7 @@
 #include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/X86ShadowStackShape.h"
 #include "neverd/ir/high/X87ConstantShape.h"
+#include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
 #include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/libc/LibCNames.h"
@@ -1656,6 +1657,21 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
         });
     if (!Typed.empty())
       return Typed;
+
+    // A trap or a breakpoint whose code the intrinsic keeps spells as its
+    // builtin, which takes no code: the statement prints the instruction
+    // beside it.  One with no C name runs as the instruction itself.
+    if (const std::string Instruction = intrinsicInstruction(E);
+        !Instruction.empty()) {
+      const char *CName = intrinsicCName(E.IntrinsicId);
+      if (CName && (isUnconditionalTrapIntrinsic(E.IntrinsicId) ||
+                    llvm::StringRef(CName) == "__builtin_debugtrap"))
+        return std::string(CName) + "()";
+      if (!CName)
+        return Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64
+                   ? "__asm { " + Instruction + " }"
+                   : "__asm__ volatile(\"" + Instruction + "\" ::: \"memory\")";
+    }
 
     std::optional<unsigned> LinuxSyscallArgs;
     if (E.IntrinsicId == Intrinsic::X64Syscall && E.Operands.size() == 5 &&
@@ -4590,6 +4606,31 @@ const HighExpr *HighCWriter::sameWidthVariable(const HighExpr &E) const {
     Cur = Cur->Operands[0].get();
   }
   return nullptr;
+}
+
+std::string HighCWriter::intrinsicInstruction(const HighExpr &E) const {
+  if (E.Kind != ExprKind::Call ||
+      !intrinsicCarriesInstructionOperand(E.IntrinsicId) ||
+      E.Operands.empty() || !E.Operands[0])
+    return {};
+  const HighExpr *Operand = unwrapIntegerView(E.Operands[0].get());
+  if (!Operand || Operand->Kind != ExprKind::Const)
+    return {};
+  return intrinsicInstructionText(E.IntrinsicId, Operand->ConstVal);
+}
+
+std::string HighCWriter::intrinsicInstructionComment(const HighExpr &E) const {
+  if (!intrinsicCName(E.IntrinsicId))
+    return {};
+  // An instruction without an operand (`isb`) says no more than its C.
+  const std::string Instruction = intrinsicInstruction(E);
+  if (Instruction.find(' ') == std::string::npos)
+    return {};
+  return " /* " + Instruction + " */";
+}
+
+std::string HighCWriter::callStatementText(const HighExpr &Call) {
+  return statementCallText(Call) + ";" + intrinsicInstructionComment(Call);
 }
 
 const HighExpr *HighCWriter::unwrapIntegerView(const HighExpr *E) const {

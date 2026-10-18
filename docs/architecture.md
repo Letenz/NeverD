@@ -3665,6 +3665,23 @@ Malformed contracts and unrepresented aggregate ABIs are refused explicitly.
 The C renderer retains volatile assembly and the original memory barrier for
 each query, including unused outputs and CPUID's ECX subleaf.
 
+`ir/intrinsics/IntrinsicInstructionText.h` owns the operand a trap, a
+breakpoint, a hypervisor or secure-monitor call and a barrier carry. The
+lifters keep the code (`brk #0x3e8`, which GCC's `__builtin_trap()` is and
+clang's `brk #1` is not; `udf`, `bkpt`, `hlt`, `hvc`, `smc`; the check kind
+of the `ud1 eax, [eax + kind]` clang's trapping sanitizers raise) or the
+option (`dmb ishld`, `ARMBarrierOptions.def`) as the intrinsic's first input.
+HighC prints a trap's or a breakpoint's builtin, which takes no code, with
+the instruction beside it (`__builtin_trap(); /* brk #0x3E8 */`), a
+barrier's ACLE intrinsic with its option and its name beside it, and an
+instruction without a C name as an `asm` statement that runs it. The LLVM
+emitters run HVC, SMC, BKPT, HLT, UDF, DSB and ISB as the instruction with
+its own operand; a trap stays `llvm.trap` and a DMB a sequentially
+consistent fence, each carrying the instruction as `neverd.instruction`
+metadata (`MachineInstructionText.h`) that LLVM C prints beside it, and
+LLVM C reads a barrier's ACLE value from its option. AArch64's `udf` raises
+an undefined-instruction exception (`Udf_A64`), not a breakpoint.
+
 `ir/FloatConversion.h` owns the result policy for scalar float-to-integer
 operations: saturation for the non-x86 path and x86 indefinite results for
 invalid conversions. HighC and the LLVM lowering select that same policy;

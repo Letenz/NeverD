@@ -1712,6 +1712,17 @@ if(NEVERD_TEST_CLANG_EXECUTABLE)
     NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 endif()
 
+# The operand a trap, a breakpoint or a barrier keeps through the lift and
+# both C routes (IntrinsicInstructionText.h).
+add_neverd_unittest(NeverDMachineInstructionTextTests
+  core/MachineInstructionTextTests.cpp
+  LINK_COMPONENTS Decode Lift BackendC
+)
+target_include_directories(NeverDMachineInstructionTextTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
+
 add_neverd_unittest(NeverDLLVMCValueTests
   core/LLVMCValueTests.cpp
   LINK_COMPONENTS BackendC

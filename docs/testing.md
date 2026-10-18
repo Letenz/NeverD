@@ -1101,6 +1101,13 @@ ctest --test-dir build-release -L '^NeverDX86EncodingAccuracyTests$' \
   --output-on-failure
 ```
 
+`NeverDMachineInstructionTextTests` lifts AArch64 `brk` (clang's `#1` and
+GCC's `#0x3e8`), `udf`, `hlt`, `hvc`, `smc` and barriers, ARM's `trap`,
+`bkpt` and barriers, and x86's sanitizer `ud1`, and checks the operand each
+intrinsic keeps and the instruction text both C routes print: beside a
+builtin, as an `asm` statement, and as the ACLE value of a barrier's own
+option.
+
 ## LLVMC parameter names and CPU queries
 
 `NeverDLLVMCIntrinsicSemanticTests` compiles and executes cached parameter views,

@@ -513,6 +513,16 @@ public:
   std::string indirectCalleeStr(const HighExpr &E,
                                 const TypeRef &ReturnType = nullptr);
   const HighExpr *unwrapIntegerView(const HighExpr *E) const;
+  /// The instruction a call \p E of an intrinsic that keeps its operand was
+  /// lifted from (`brk #0x3E8`, intrinsicInstructionText); empty for any
+  /// other call.
+  std::string intrinsicInstruction(const HighExpr &E) const;
+  /// ` /* brk #0x3E8 */` beside a statement calling \p E, whose builtin
+  /// leaves out the operand of the instruction it stands for; empty when its
+  /// C spells the instruction itself.
+  std::string intrinsicInstructionComment(const HighExpr &E) const;
+  /// \p Call as a statement, with the instruction it stands for beside it.
+  std::string callStatementText(const HighExpr &Call);
   /// Whether every byte of \p E from \p Bytes up is zero, as far as its
   /// form and forwarded values show: a comparison, a constant, a zero
   /// extension or a mask that fits.
