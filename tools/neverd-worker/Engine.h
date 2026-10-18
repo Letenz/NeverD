@@ -252,6 +252,12 @@ private:
   void requireLoaded() const;
   void requireWriter() const;
   void analyze();
+  /// Analyze a VM image first, as the queries of its function list need.
+  void analyzeBeforeFunctionQueries();
+  /// The function (or -1) and address a name resolves to: a function's own
+  /// name, or a name the listing shows.
+  std::optional<std::pair<int, std::uint64_t>>
+  resolvedName(const std::string &name);
   /// Run the session's restricted single-function pipeline for \p address
   /// unless whole-image analysis already covers it.
   void prepareFunction(std::uint64_t address,
