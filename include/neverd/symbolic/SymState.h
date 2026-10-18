@@ -85,15 +85,23 @@ struct SymStorePreservationRange {
   int64_t End = 0;
 };
 
+/// One interval of an independently based current memory region.
+struct SymStorePreservationRegion {
+  SymRef Base;
+  int64_t Begin = 0;
+  int64_t End = 0;
+};
+
 /// Caller-established separation for one STORE or one atomic write phase:
-/// none of its accessed bytes
-/// can equal a byte in the union of the primary and additional root-relative
-/// ranges. Addresses use modulo-2^64 arithmetic. This interface does not prove
-/// separation or grant accessibility; callers supply a proof or an explicit
-/// domain contract. Only already materialised bytes of this exact symbolic
-/// base survive. Work counts validation, membership checks, saving and
-/// restoring; budget failure applies no store or preservation. Never reuse
-/// this descriptor as a global policy.
+/// none of its accessed bytes can equal a byte in the union of the declared
+/// root-relative ranges. Addresses use modulo-2^64 arithmetic. This interface
+/// does not prove separation or grant accessibility; callers supply a proof
+/// or an explicit domain contract for every declared region. Only already
+/// materialised bytes of each exact symbolic base survive. References must
+/// belong to the state context; SymRef indices cannot authenticate ownership
+/// across contexts. Work counts validation, membership checks, saving and
+/// restoring; budget failure applies no store or preservation. Never reuse this
+/// descriptor as a global policy.
 struct SymStorePreservation {
   SymRef Base;
   int64_t Begin = 0;
@@ -104,6 +112,11 @@ struct SymStorePreservation {
   /// Borrowed for this single store. Empty retains the original single-range
   /// accounting; every additional range must independently have Begin < End.
   llvm::ArrayRef<SymStorePreservationRange> AdditionalRanges;
+  /// Borrowed for this single store. Each region requires a nonconstant
+  /// 64-bit Base and Begin < End. No declared Base may be the STORE's own
+  /// region. Overlapping and repeated declarations form a union; each is
+  /// inspected and charged separately. Empty preserves the old accounting.
+  llvm::ArrayRef<SymStorePreservationRegion> AdditionalRegions;
 };
 
 /// The state is a regular value: copying one is what forking a path is, so it
@@ -168,7 +181,7 @@ public:
   /// Apply one valid 64-bit-address STORE under an explicit preservation
   /// contract. As with store(), false can denote a successful symbolic write;
   /// inspect Preservation.Status for success. Invalid contracts and budget
-  /// exhaustion leave state unchanged. Stores to the protected base itself
+  /// exhaustion leave state unchanged. Stores to any protected base itself
   /// are rejected; they must use normal byte-overlap semantics instead.
   bool store(SymRef Addr, SymRef Value, SymStorePreservation &Preservation);
 

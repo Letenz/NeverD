@@ -569,9 +569,14 @@ bool SymState::store(SymRef Addr, SymRef Value,
                      SymStorePreservation &Preservation) {
   Preservation.WorkUsed = 0;
   Preservation.Status = SymStorePreservationStatus::Invalid;
-  if (!Addr || Ctx->width(Addr) != 64 || !Preservation.Base ||
-      Ctx->width(Preservation.Base) != 64 || Ctx->isConst(Preservation.Base) ||
-      Preservation.Begin >= Preservation.End)
+  const auto ValidRef = [&](SymRef Ref) {
+    return Ref && Ref.index() < Ctx->numNodes();
+  };
+  const auto ValidBase = [&](SymRef Base) {
+    return ValidRef(Base) && Ctx->width(Base) == 64 && !Ctx->isConst(Base);
+  };
+  if (!ValidRef(Addr) || Ctx->width(Addr) != 64 || !ValidRef(Value) ||
+      !ValidBase(Preservation.Base) || Preservation.Begin >= Preservation.End)
     return false;
   const Location Where = locate(Addr);
   if (Where.Base == Preservation.Base ||
@@ -593,17 +598,32 @@ bool SymState::store(SymRef Addr, SymRef Value,
   for (const auto &Range : Preservation.AdditionalRanges)
     if (Range.Begin >= Range.End)
       return false;
-  llvm::SmallVector<std::pair<uint64_t, ByteView>, 32> Saved;
-  auto Found = Regions.find(Preservation.Base.index());
-  if (Found != Regions.end()) {
-    const uint64_t Begin = static_cast<uint64_t>(Preservation.Begin);
-    const uint64_t Size = static_cast<uint64_t>(Preservation.End) - Begin;
+  if (!Charge(Preservation.AdditionalRegions.size()))
+    return false;
+  for (const auto &Region : Preservation.AdditionalRegions)
+    if (!ValidBase(Region.Base) || Region.Begin >= Region.End ||
+        Region.Base == Where.Base)
+      return false;
+
+  struct SavedByte {
+    Bank *Storage;
+    uint64_t Offset;
+    ByteView Byte;
+  };
+  llvm::SmallVector<SavedByte, 32> Saved;
+  const auto SaveRegion = [&](SymRef Base, int64_t Lower, int64_t Upper,
+                              llvm::ArrayRef<SymStorePreservationRange> More) {
+    auto Found = Regions.find(Base.index());
+    if (Found == Regions.end())
+      return true;
+    const uint64_t Begin = static_cast<uint64_t>(Lower);
+    const uint64_t Size = static_cast<uint64_t>(Upper) - Begin;
     for (const auto &[Offset, Byte] : Found->second.Bytes) {
       if (!Charge(1))
         return false;
       bool Protected = Offset - Begin < Size;
       if (!Protected)
-        for (const auto &Range : Preservation.AdditionalRanges) {
+        for (const auto &Range : More) {
           if (!Charge(1))
             return false;
           if (Offset - static_cast<uint64_t>(Range.Begin) <
@@ -616,18 +636,24 @@ bool SymState::store(SymRef Addr, SymRef Value,
       if (Protected) {
         if (!Charge(2))
           return false;
-        Saved.emplace_back(Offset, Byte);
+        Saved.push_back({&Found->second, Offset, Byte});
       }
     }
-  }
+    return true;
+  };
+  if (!SaveRegion(Preservation.Base, Preservation.Begin, Preservation.End,
+                  Preservation.AdditionalRanges))
+    return false;
+  for (const auto &Region : Preservation.AdditionalRegions)
+    if (!SaveRegion(Region.Base, Region.Begin, Region.End, {}))
+      return false;
 
   const bool Absolute = store(Addr, Value);
   // Restore only known bytes. The real STORE owns the new epochs, unknown
   // defaults, other banks and provenance; rolling back a whole bank would
   // incorrectly reintroduce untouched entry-memory identities outside bounds.
-  if (Found != Regions.end())
-    for (const auto &[Offset, Byte] : Saved)
-      Found->second.Bytes.emplace(Offset, Byte);
+  for (const auto &Entry : Saved)
+    Entry.Storage->Bytes.emplace(Entry.Offset, Entry.Byte);
   Preservation.Status = SymStorePreservationStatus::Applied;
   return Absolute;
 }
