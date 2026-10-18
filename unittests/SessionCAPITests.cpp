@@ -5512,7 +5512,8 @@ TEST_F(SessionCAPITest, MuslProgramsJoinTheirMuslLibrary) {
   // which takes stat's prototype.  <sys/stat.h> declares stat, whose record
   // the call reaches through void *, and no typedef names the record as the
   // function; the output declares __stat_time64 itself, with the record's
-  // type, which a typedef names.
+  // type.  A typedef names the record, which is still spelled by its tag:
+  // the C library has a function of its name.
   struct Program {
     const char *File, *Library, *Model, *ABI;
     int64_t StatSize;
@@ -5523,7 +5524,7 @@ TEST_F(SessionCAPITest, MuslProgramsJoinTheirMuslLibrary) {
       {"musl_libc_calls_x64", "musl-x64", "LP64", "itanium", 144,
        "stat((char*)(uintptr_t)arg0, (void*)&", false},
       {"musl_libc_calls_x86", "musl-x86", "ILP32", "i386-sysv", 144,
-       "__stat_time64((char*)(uintptr_t)arg0, (stat*)&", true},
+       "__stat_time64((char*)(uintptr_t)arg0, (struct stat*)&", true},
   };
   const auto Fixtures =
       std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
@@ -5577,8 +5578,8 @@ TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
   };
   const Program Programs[] = {
       {"darwin_libc_calls_x64", "macos-x64", "itanium",
-       "stat_INODE64((char*)(uintptr_t)arg0, (stat*)&",
-       "extern int32_t stat_INODE64(char* arg0, stat* arg1) "
+       "stat_INODE64((char*)(uintptr_t)arg0, (struct stat*)&",
+       "extern int32_t stat_INODE64(char* arg0, struct stat* arg1) "
        "__asm__(\"_stat$INODE64\");"},
       {"darwin_libc_calls_arm64", "macos-arm64", "apple-arm64",
        "stat((char*)(uintptr_t)arg0, (void*)&", "#include <sys/stat.h>"},
