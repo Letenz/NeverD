@@ -3503,6 +3503,12 @@ full 1 MiB DEX allowance, split images, both wire limits and malformed inputs.
 `ProcessPublic.DexWireAllowanceReachesSharedValidation` checks that the C API
 admits a large request to the DEX validator while retaining the non-DEX text
 limit. The wire allowance never bypasses DEX container validation.
+`AndroidJNI.DexClassCapacityIsSeparateAndAggregate` uses generated DEX035
+containers to cross the former 16-class limit, resolve the last class at the
+4096-class boundary in single and split inputs, and reject oversized combined
+inventories, too many images, duplicate classes and corrupted bytes. The input
+generator is shared with the independent mobile inventory benchmarks; no JDK,
+phone or copied application DEX is needed.
 
 `AndroidSleepTests.cpp` compiles independent O0/O2 callers with ordinary, APS2 and
 RELR relocations. It checks raw, named and variadic relative sleeps, complete

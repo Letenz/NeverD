@@ -1000,7 +1000,8 @@ created by this projection.
 With JNI enabled, `android.dex_images` accepts an array of complete hex-encoded
 DEX images. This is an explicit classpath for this workload; the model never
 searches the host, phone, APK store or network. The Android API 28 profile admits
-versions 035, 037, 038 and 039, at most 16 images and 1 MiB of input, further
+versions 035, 037, 038 and 039, at most 16 images, 4096 supplied classes across
+all images and 1 MiB of input, further
 limited by the process memory allowance. The process JSON contract reserves
 2 MiB for this hexadecimal payload in addition to its 64 KiB metadata budget;
 other fields and escape overhead receive no extra allowance. The shared DEX reader checks container

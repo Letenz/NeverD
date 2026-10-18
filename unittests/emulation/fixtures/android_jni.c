@@ -60,6 +60,16 @@ int jni_build_version(int expected_sdk, int distinct) {
   CHECK(!C(vm, int, 5));
   return 0;
 }
+int jni_dex_class_pair(const char *first, const char *last) {
+  Handle e = attach();
+  CHECK(e);
+  Ref a = C(e, Ref, 6, first);
+  Ref b = C(e, Ref, 6, last);
+  CHECK(a && b && !C(e, int, 24, a, b));
+  CHECK(!C(e, int, 228));
+  CHECK(!C(vm, int, 5));
+  return 0;
+}
 int jni_build_version_wrong_accessor(void) {
   Handle e = attach();
   Ref klass = C(e, Ref, 6, "android/os/Build$VERSION");
