@@ -28,6 +28,9 @@ using namespace neverd::sdk;
 
 void Session::refreshFunctionNames() {
   const auto Names = SigDB.buildNameMap();
+  // The list is in address order, as the map is, so each name lands at or
+  // just before where the last one did instead of being searched for.
+  auto Next = OriginalNames.begin();
   for (auto &F : Functions) {
     if (F.LinkageName.empty()) {
       F.LinkageName = F.Name;
@@ -42,7 +45,7 @@ void Session::refreshFunctionNames() {
         F.Origin = NameOrigin::Analysis;
       }
     }
-    OriginalNames[F.Entry] = F.Name;
+    Next = std::next(OriginalNames.insert_or_assign(Next, F.Entry, F.Name));
     if (auto Rename = Renames.find(F.Entry); Rename != Renames.end()) {
       F.Name = Rename->second;
       F.Origin = NameOrigin::User;

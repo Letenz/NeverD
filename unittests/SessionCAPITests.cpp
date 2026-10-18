@@ -7125,6 +7125,93 @@ TEST_F(SessionCAPITest, SelectedRunsPublishOnlyFunctionsTheListLacks) {
   EXPECT_EQ(Listed(), Before);
 }
 
+TEST_F(SessionCAPITest, SelectionsKeepTheFunctionListARebuildWouldMake) {
+  using neverd::sdk::SessionTestAccess;
+  const auto Path = write("kept-list.elf", makeAnalysisCacheELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Entry = seedAnalysisCacheSymbols(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  const auto Select = [&](neverd_va_t Function) {
+    ASSERT_EQ(neverd_prepare_function(Session, Function), 1)
+        << takeString(neverd_last_error(Session));
+    ASSERT_GT(neverd_func_count(Session), 0);
+  };
+  // The first run takes the signature generation of the load, retiring the
+  // pipeline state the list was built beside; the next selection builds it.
+  Select(Entry);
+  EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
+  Select(Entry + 0x10);
+  EXPECT_TRUE(SessionTestAccess::keepsFunctionList(State));
+  // Then navigation keeps the list, which is the one a rebuild makes.
+  Select(Entry);
+  EXPECT_TRUE(SessionTestAccess::keepsFunctionList(State));
+  EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
+  Select(Entry + 0x10);
+  EXPECT_TRUE(SessionTestAccess::keepsFunctionList(State));
+  EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
+
+  // A rename, of a function or of an address, is built into the list again.
+  const int Index = neverd_func_find_by_addr(Session, Entry + 0x10);
+  ASSERT_GE(Index, 0);
+  const auto Name = takeString(neverd_func_name(Session, Index));
+  ASSERT_EQ(neverd_rename_func(Session, Name.c_str(), "renamed_by_name"), 0);
+  EXPECT_FALSE(SessionTestAccess::keepsFunctionList(State));
+  Select(Entry);
+  EXPECT_TRUE(SessionTestAccess::keepsFunctionList(State));
+  EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
+  EXPECT_EQ(takeString(neverd_func_name(Session, Index)), "renamed_by_name");
+  ASSERT_EQ(neverd_rename_addr(Session, Entry + 0x30, "renamed_code"), 0);
+  ASSERT_EQ(neverd_rename_addr(Session, Entry, "renamed_by_address"), 0);
+  EXPECT_FALSE(SessionTestAccess::keepsFunctionList(State));
+  Select(Entry + 0x10);
+  EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
+  EXPECT_EQ(takeString(neverd_func_name(
+                Session, neverd_func_find_by_addr(Session, Entry))),
+            "renamed_by_address");
+
+  // The detector's entries and the user's function edits.
+  ASSERT_GT(neverd_session_discover_functions(Session), 0);
+  EXPECT_FALSE(SessionTestAccess::keepsFunctionList(State));
+  Select(Entry);
+  EXPECT_TRUE(SessionTestAccess::keepsFunctionList(State));
+  EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
+  ASSERT_EQ(neverd_func_create(Session, Entry + 0x30), 0);
+  Select(Entry);
+  EXPECT_GE(neverd_func_find_by_addr(Session, Entry + 0x30), 0);
+  EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
+  ASSERT_EQ(neverd_func_delete(Session, Entry + 0x30), 0);
+  Select(Entry + 0x10);
+  EXPECT_LT(neverd_func_find_by_addr(Session, Entry + 0x30), 0);
+  EXPECT_TRUE(SessionTestAccess::keepsFunctionList(State));
+  EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
+
+  // A run that publishes a function no table states leaves a list no
+  // rebuild makes, and the next selection builds it again.
+  Select(Entry + 0x20);
+  EXPECT_GE(neverd_func_find_by_addr(Session, Entry + 0x20), 0);
+  EXPECT_FALSE(SessionTestAccess::keepsFunctionList(State));
+  EXPECT_FALSE(SessionTestAccess::functionListIsRebuilt(State));
+  Select(Entry);
+  EXPECT_LT(neverd_func_find_by_addr(Session, Entry + 0x20), 0);
+  EXPECT_TRUE(SessionTestAccess::keepsFunctionList(State));
+  EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
+
+  // Retiring the pipeline builds it again at the next selection.
+  SessionTestAccess::clearFeatures(State);
+  Select(Entry + 0x10);
+  EXPECT_FALSE(SessionTestAccess::keepsFunctionList(State));
+  EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
+  Select(Entry);
+  EXPECT_TRUE(SessionTestAccess::keepsFunctionList(State));
+  // So does a symbol the image gains.
+  State.Img.Symbols.push_back(neverd::Symbol::makeFunc(Entry + 0x48, 2));
+  EXPECT_FALSE(SessionTestAccess::keepsFunctionList(State));
+  Select(Entry + 0x10);
+  EXPECT_GE(neverd_func_find_by_addr(Session, Entry + 0x48), 0);
+  EXPECT_TRUE(SessionTestAccess::keepsFunctionList(State));
+  EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
+}
+
 TEST_F(SessionCAPITest, AnalysisCacheSurvivesOnlyFunctionNavigation) {
   const auto Path = write("cache.elf", makeAnalysisCacheELF(false));
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
