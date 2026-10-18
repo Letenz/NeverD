@@ -635,8 +635,11 @@ graph and machine-body caches. Each selection owns independent output IR,
 replays the ordinary proof obligations and recomputes caller-dependent
 register/argument summaries. Exact candidate and verified-entry inventories
 bind reuse; selection cannot silently change a cached function's boundaries.
-No-return proof and lazy-name memo entries are cleared between runs, so they
-do not accumulate across navigation. Image indexes scale with the loaded
+No-return answers (proofs, screens and stated calls) depend only on the image
+and those facts, so later selections keep them, up to
+`kMaxRetainedNoReturnAnswers`; the screened instructions behind them and the
+lazy-name memo are cleared between runs and do not accumulate across
+navigation. Image indexes scale with the loaded
 metadata. The session cache finds graphs and bodies through a hash index and
 has its own allowances (`kMaxPipelineCallGraphEntries`,
 `kMaxPipelineCallGraphBytes` and `kMaxPipelineCallBodyBytes` in
