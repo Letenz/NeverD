@@ -62,6 +62,12 @@ public:
   /// prover's identity but not accumulating memo entries across selections.
   /// The previous run's workers must have joined before calling this.
   void clearMemoizedProofs();
+  /// Begin another run against the same immutable inputs, keeping the
+  /// answers earlier runs found: they depend only on those inputs.  The
+  /// screened instructions and transfers, which grow with every function a
+  /// run screens, are dropped, and so are the answers once there are more
+  /// than \p MaxAnswers.  The previous run's workers must have joined.
+  void trimMemoizedProofs(size_t MaxAnswers);
 
 private:
   /// What the screen reads of an instruction, decoded without lifting.
