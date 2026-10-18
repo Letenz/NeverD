@@ -6937,6 +6937,15 @@ have separate `LinuxProcTests` and `AndroidProcTests` coverage; see
 [live proc](linux-live-proc.md). These bounded contracts do not establish
 creation or complete Android filesystem equivalence.
 
+`LinuxFileNamespace.RepeatedSeparators*` and `Separator*` check repeated guest
+path separators in both LP64 ABIs: shared bytes and metadata, write visibility,
+directory and link boundaries, and the original 4096-byte import limit.
+`AndroidFiles.RepeatedSeparatorsUseTheSharedFileNamespace` runs independent raw
+syscall and Bionic callers at O0/O2 with all relocation packings; successful
+aliases preserve errno and missing/non-directory paths retain exact errors.
+Catalogue inputs still require canonical names, and dot walks remain explicit
+unsupported boundaries.
+
 Independent tokenization fixtures at O0/O2 and all three relocation packings
 check changed delimiters, interleaved contexts, unsigned bytes, final/empty
 tokens, exact cursor width, input mutations and errno preservation. Read-only

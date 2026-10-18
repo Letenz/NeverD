@@ -200,6 +200,10 @@ TEST_P(AndroidFiles, FileSystemQueriesPreserveCursorsAndLookupErrorPrecedence) {
   returned(run("files_filesystem_status"));
   returned(run("files_filesystem_status_bionic"));
 }
+TEST_P(AndroidFiles, RepeatedSeparatorsUseTheSharedFileNamespace) {
+  returned(run("files_repeated_slashes"));
+  returned(run("files_repeated_slashes_bionic"));
+}
 TEST_P(AndroidFiles, TrailingSeparatorsDoNotInventDirectoryStateOrPermissions) {
   for (uint64_t Mode = 0; Mode < 10; ++Mode) {
     SCOPED_TRACE(Mode);
@@ -211,6 +215,12 @@ TEST_P(AndroidFiles, TrailingSeparatorsDoNotInventDirectoryStateOrPermissions) {
       returned(R, 3);
       EXPECT_EQ(R.Services.front().Number, 56u);
       EXPECT_EQ(R.Services.front().Result, 3u);
+      continue;
+    }
+    if (Mode == 4) {
+      returned(R, uint64_t(-20));
+      EXPECT_EQ(R.Services.front().Number, 48u);
+      EXPECT_EQ(R.Services.front().Result, uint64_t(-20));
       continue;
     }
     EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
@@ -258,6 +268,13 @@ TEST_P(AndroidFiles, AccessRequiresExplicitInputsAndDoesNotInferPermissions) {
       Options.LinuxFiles->Metadata["/fixture/data"] = fileTestMetadata();
     }
     auto R = run("files_access_unsupported", {Mode});
+    if (Mode == 2) {
+      returned(R);
+      ASSERT_EQ(R.Services.size(), 1u);
+      EXPECT_EQ(R.Services.front().Number, 48u);
+      EXPECT_EQ(R.Services.front().Result, 0u);
+      continue;
+    }
     EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
     EXPECT_FALSE(R.ReturnValue);
     ASSERT_FALSE(R.Services.empty());

@@ -60,11 +60,14 @@ protected:
     return llvm::cantFail(Kernel->handle(K, {0, 0, {A, B, C, D, 0, 0}, {}}));
   }
   uint64_t open(const char *Name, unsigned Flags = 0) {
+    path(Name);
+    return *call(ServiceKind::OpenAt, uint64_t(-100), Base, Flags);
+  }
+  void path(const char *Name) {
     llvm::StringRef S(Name);
     std::vector<uint8_t> V(S.begin(), S.end());
     V.push_back(0);
     llvm::cantFail(cpu().write(Base, V));
-    return *call(ServiceKind::OpenAt, uint64_t(-100), Base, Flags);
   }
   std::vector<uint8_t> bytes(uint64_t At, unsigned Count) {
     std::vector<uint8_t> V(Count);
@@ -72,6 +75,76 @@ protected:
     return V;
   }
 };
+
+TEST_P(LinuxFileNamespace,
+       RepeatedSeparatorsShareFileBytesAndCapturedMetadata) {
+  const auto Writer = open("///files////data", 2);
+  ASSERT_EQ(Writer, 3u);
+  for (const char *Name :
+       {"/files/data", "//files/data", "/files//data", "////files/////data"}) {
+    const auto Reader = open(Name);
+    ASSERT_EQ(Reader, 4u);
+    EXPECT_EQ(call(ServiceKind::Read, Reader, Base + 512, 3), 3u);
+    EXPECT_EQ(bytes(Base + 512, 3), (std::vector<uint8_t>{'a', 'b', 'c'}));
+    EXPECT_EQ(call(ServiceKind::FaccessAt, uint64_t(-100), Base, 0), 0u);
+    EXPECT_EQ(call(ServiceKind::FstatAt, uint64_t(-100), Base, Base + 1024, 0),
+              0u);
+    EXPECT_EQ(call(ServiceKind::Fstat, Reader, Base + 1280), 0u);
+    const unsigned Size = GetParam() == GuestArchitecture::X64 ? 144 : 128;
+    EXPECT_EQ(bytes(Base + 1024, Size), bytes(Base + 1280, Size));
+    EXPECT_EQ(call(ServiceKind::Close, Reader), 0u);
+  }
+  llvm::cantFail(cpu().write(Base + 512, {'x', 'y'}));
+  EXPECT_EQ(call(ServiceKind::Write, Writer, Base + 512, 2), 2u);
+  const auto Reader = open("/files/data");
+  EXPECT_EQ(call(ServiceKind::Read, Reader, Base + 512, 3), 3u);
+  EXPECT_EQ(bytes(Base + 512, 3), (std::vector<uint8_t>{'x', 'y', 'c'}));
+  EXPECT_EQ(call(ServiceKind::Lseek, Writer, 0, 1), 2u);
+}
+
+TEST_P(LinuxFileNamespace, SeparatorAliasesRetainDirectoryAndLinkBoundaries) {
+  EXPECT_EQ(open("/files//missing"), uint64_t(-2));
+  EXPECT_EQ(open("///files//data////"), uint64_t(-20));
+  EXPECT_EQ(open("//files//data//child"), uint64_t(-20));
+  const auto Directory = open("///empty////");
+  ASSERT_EQ(Directory, 3u);
+  EXPECT_EQ(call(ServiceKind::Getdents64, Directory, Base + 512, 48), 48u);
+  path("//files///data");
+  EXPECT_EQ(call(ServiceKind::MkdirAt, uint64_t(-100), Base, 0777),
+            uint64_t(-17));
+  path("//missing///child");
+  EXPECT_EQ(call(ServiceKind::MkdirAt, uint64_t(-100), Base, 0777),
+            uint64_t(-2));
+  const auto File = open("//files/data");
+  ASSERT_EQ(File, 4u);
+  path("///proc//self///fd//4");
+  EXPECT_EQ(
+      call(ServiceKind::ReadlinkAt, uint64_t(-100), Base, Base + 512, 128),
+      11u);
+  EXPECT_EQ(bytes(Base + 512, 11),
+            (std::vector<uint8_t>{'/', 'f', 'i', 'l', 'e', 's', '/', 'd', 'a',
+                                  't', 'a'}));
+  path("//proc//self//fd//4///");
+  EXPECT_FALSE(call(ServiceKind::OpenAt, uint64_t(-100), Base, 0));
+  EXPECT_EQ(Report.Stop, ProcessStopReason::UnsupportedService);
+}
+
+TEST_P(LinuxFileNamespace,
+       SeparatorFoldingKeepsOriginalPathLengthAndUnknownDotWalks) {
+  for (const char *Name :
+       {"/files//./data", "//files///../data", "files//data"}) {
+    path(Name);
+    EXPECT_FALSE(call(ServiceKind::OpenAt, uint64_t(-100), Base, 0));
+  }
+  std::string Long(4096, '/');
+  path(Long.c_str());
+  EXPECT_EQ(call(ServiceKind::OpenAt, uint64_t(-100), Base, 0), uint64_t(-36));
+  // The input catalogue still has one canonical spelling per object.
+  Options.LinuxFiles->Files["/files//other"] = {};
+  auto Error = linux_model::validateFileOptions(*Options.LinuxFiles);
+  EXPECT_TRUE(bool(Error));
+  llvm::consumeError(std::move(Error));
+}
 
 TEST_P(LinuxFileNamespace, IoctlTraceKeepsEntryPointerAndRefusedCallBytes) {
   auto &D = Options.LinuxFiles->Devices["/dev/example"];

@@ -52,12 +52,21 @@ LinuxFiles::parsePath(llvm::StringRef Path) {
   if (!Path.starts_with('/'))
     return std::nullopt;
   const bool RequiresDirectory = Path.ends_with('/');
-  Path = Path.rtrim('/');
-  if (Path.empty())
+  // Linux skips repeated separators during the walk. Preserve the terminal
+  // directory requirement and leave dot components/link traversal to their
+  // existing explicit boundaries; this is not host path normalization.
+  std::string Name;
+  Name.reserve(Path.size());
+  for (char Byte : Path)
+    if (Byte != '/' || Name.empty() || Name.back() != '/')
+      Name.push_back(Byte);
+  if (Name == "/")
     return ParsedPath{"/", true};
-  if (!isCanonicalFilePath(Path))
+  if (RequiresDirectory)
+    Name.pop_back();
+  if (!isCanonicalFilePath(Name))
     return std::nullopt;
-  return ParsedPath{Path.str(), RequiresDirectory};
+  return ParsedPath{std::move(Name), RequiresDirectory};
 }
 
 LinuxFiles::PathKind LinuxFiles::lookupPath(const std::string &Path,
