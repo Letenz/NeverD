@@ -20,6 +20,7 @@
 #include "neverd/ir/X87Constant.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-intrinsic"
+#include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
@@ -312,6 +313,49 @@ void MedLLVMEmitter::emitVoidInlineAsm(const char *Mnemonic, const MedOp &Op,
 
 bool MedLLVMEmitter::emitSideeffectIntrinsic(const MedOp &Op, Intrinsic IC,
                                              llvm::IRBuilder<> &Builder) {
+  // An SMC or HVC #0 runs under the SMC Calling Convention with its registers
+  // pinned: the function identifier and arguments in x0-x7 (r0-r7), the
+  // results out of x0-x3, which bind the outputs the lift gave it.
+  if (Op.NumInputs >= 2 && Op.Inputs[1].isConst())
+    if (const llvm::ArrayRef<uint64_t> Arguments =
+            smcccArgumentRegisters(TargetArch, IC, Op.Inputs[1].ConstVal);
+        !Arguments.empty() && Op.NumInputs == 2 + Arguments.size()) {
+      const bool AArch64 = TargetArch == Arch::AArch64;
+      auto *RegisterTy = AArch64 ? Builder.getInt64Ty() : Builder.getInt32Ty();
+      const std::string Prefix = AArch64 ? "x" : "r";
+      std::vector<llvm::Value *> Values;
+      for (unsigned Index = 0; Index < Arguments.size(); ++Index) {
+        llvm::Value *Value = getVar(Op.Inputs[2 + Index], Builder);
+        Values.push_back(Value->getType()->isPointerTy()
+                             ? Builder.CreatePtrToInt(Value, RegisterTy)
+                             : Builder.CreateZExtOrTrunc(Value, RegisterTy));
+      }
+      std::string Constraints;
+      for (unsigned Index = 0; Index < 4; ++Index)
+        Constraints += "={" + Prefix + std::to_string(Index) + "},";
+      Constraints += "0,1,2,3";
+      for (unsigned Index = 4; Index < Arguments.size(); ++Index)
+        Constraints += ",{" + Prefix + std::to_string(Index) + "}";
+      Constraints += ",~{memory}";
+      auto *ResultTy = llvm::StructType::get(
+          *Ctx, {RegisterTy, RegisterTy, RegisterTy, RegisterTy});
+      std::vector<llvm::Type *> Types(Values.size(), RegisterTy);
+      auto *Call = Builder.CreateCall(
+          llvm::InlineAsm::get(llvm::FunctionType::get(ResultTy, Types, false),
+                               intrinsicInstructionText(IC, 0), Constraints,
+                               /*hasSideEffects=*/true),
+          Values, "smccc");
+      for (unsigned Index = 0; Index < 4; ++Index)
+        PendingIntrinsicOutputs[Index] =
+            Builder.CreateExtractValue(Call, {Index}, "smccc.result");
+      PendingIntrinsicCount = 4;
+      if (Op.Output.Size > 0)
+        setVar(Op.Output,
+               Builder.CreateZExtOrTrunc(PendingIntrinsicOutputs[0],
+                                         sizeToType(Op.Output.Size)),
+               Builder);
+      return true;
+    }
   bool Matched = false;
   switch (TargetArch) {
   case Arch::X86:

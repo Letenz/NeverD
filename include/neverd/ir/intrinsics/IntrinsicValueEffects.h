@@ -102,6 +102,21 @@ constexpr bool intrinsicReturnsSystemCallResult(Intrinsic Id) {
   }
 }
 
+/// SMC and HVC, whose outputs the lift binds under the SMC Calling
+/// Convention (SMC or HVC #0) are the call's results: like a system call's,
+/// a value where a caller reads it.
+constexpr bool intrinsicReturnsSmcccResults(Intrinsic Id) {
+  switch (Id) {
+  case Intrinsic::Smc:
+  case Intrinsic::Hvc:
+  case Intrinsic::ArmSmc:
+  case Intrinsic::ArmHvc:
+    return true;
+  default:
+    return false;
+  }
+}
+
 /// Operand roles of an intrinsic whose complete effects are its explicit
 /// output and one access to the memory at an explicit address operand.  Input
 /// indices count the constant intrinsic ID as input 0; AccessSize names the

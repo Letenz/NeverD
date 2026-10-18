@@ -869,6 +869,15 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
                                    Syscall->ArgumentRegisters[I], Size)));
           MOp.Output = ndVarToMedVar(NdVar::reg(Syscall->ResultRegister, Size));
         }
+      // An SMC or HVC #0 reads the registers of the SMC Calling Convention;
+      // the lift binds its results.
+      if (LOp.Opcode == NdOp::INTRINSIC && LOp.NumInputs == 2 &&
+          LOp.Inputs[0].isConst() && LOp.Inputs[1].isConst())
+        for (uint64_t Register : smcccArgumentRegisters(
+                 TheArch, static_cast<Intrinsic>(LOp.Inputs[0].Offset),
+                 LOp.Inputs[1].Offset))
+          MOp.addInput(ndVarToMedVar(
+              NdVar::reg(Register, TheArch == Arch::AArch64 ? 8 : 4)));
       DispatchCallDefinedArgs = DispatchDefined;
       // A register an indirect call goes through, loaded from an import's
       // slot, names that import as the slot would (`mov rax, [rip+slot];

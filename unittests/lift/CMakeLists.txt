@@ -227,6 +227,7 @@ add_neverd_unittest(NeverDLiftTests
   core/LowInstructionBoundaryTests.cpp
   core/LiftCommonTests.cpp
   core/LinuxSyscallTests.cpp
+  core/SmcccCallTests.cpp
   core/TargetRegInfoSubRegTests.cpp
   core/MedSSAMultiRootTests.cpp
   core/ObjCSourceTypeHintTests.cpp
@@ -2592,6 +2593,7 @@ set(AARCH64_TEST_SOURCES
   aarch64/test_return_join_a64.c
   aarch64/test_param_phi_a64.s
   aarch64/test_linux_svc_a64.s
+  aarch64/test_smccc_a64.s
   aarch64/test_jumptable_index_identity_a64.s
   aarch64/test_jumptable_gcc_compact_a64.s
   aarch64/test_jumptable_inflate_gcc_a64.s
@@ -2643,6 +2645,7 @@ set(ARM32_TEST_SOURCES
   arm32/test_arm_rel32_multiple_sources.s
   arm32/test_arm_relocation_free_literal.s
   arm32/test_linux_svc_arm.s
+  arm32/test_smccc_arm.s
   arm32/test_thumb_pc_reads.s
   arm32/test_module_predicated_escape_arm.s
   format/test_elf_pointer_reloc_arm32.s

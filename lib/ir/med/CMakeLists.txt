@@ -46,6 +46,7 @@ add_neverd_component_library(NeverDIRMed
   abi/MedCallingConv.cpp
   abi/MedCallingConvFP.cpp
   abi/MedCallingConvX86.cpp
+  abi/MedSmcccConvention.cpp
   abi/MedSyscallConvention.cpp
   abi/MedSyscallConventionLinux.cpp
   abi/MedVariadic.cpp

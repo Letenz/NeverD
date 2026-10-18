@@ -109,10 +109,18 @@ bool ARMLifter::liftControl(LiftState &S, const cs_insn *Insn,
                          : Insn->id == ARM_INS_SMC  ? Intrinsic::ArmSmc
                          : Insn->id == ARM_INS_BKPT ? Intrinsic::ArmBkpt
                                                     : Intrinsic::ArmHlt;
-    if (const std::optional<uint64_t> Code = exceptionCode(Insn, ARM))
-      S.emitIntrinsic(Id, NdVar::reg(armreg::R0, 4), {NdVar::cst(*Code, 2)});
-    else
+    const std::optional<uint64_t> Code = exceptionCode(Insn, ARM);
+    if (!Code) {
       S.emitIntrinsic(Id);
+      break;
+    }
+    S.emitIntrinsic(Id, NdVar::reg(armreg::R0, 4), {NdVar::cst(*Code, 2)});
+    // An SMC or HVC #0 follows the SMC Calling Convention, which returns its
+    // results in r0-r3; LowToMed gives it the argument registers it reads.
+    if ((Id == Intrinsic::ArmHvc || Id == Intrinsic::ArmSmc) && *Code == 0)
+      for (unsigned Result = 0; Result < 4; ++Result)
+        S.emit(NdOp::COPY, NdVar::reg(armreg::R0 + Result * 4, 4),
+               {S.makeTemp(4)});
     break;
   }
   case ARM_INS_UDF:
