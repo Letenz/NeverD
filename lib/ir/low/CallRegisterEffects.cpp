@@ -1321,20 +1321,72 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
       Reads[Entry] = GPRReadWidths{};
   for (const auto &[Entry, Widths] : FixedEntryReads)
     Reads[Entry] = Widths;
-  for (bool Changed = true; Changed;) {
-    Changed = false;
-    for (auto &[Entry, Widths] : Reads) {
-      if (FixedEntryReads.count(Entry) || !Funcs.count(Entry))
-        continue;
-      GPRReadWidths Next = Widths;
-      joinReads(Next, entryLiveWidths(Funcs.at(Entry), Writes, Reads,
-                                      VolatileFamilies, ArgumentFamilies,
-                                      DispatchThunks));
-      if (Next != Widths) {
-        Widths = Next;
-        Changed = true;
-      }
+  // A function's entry reads depend only on those of the routines its steps
+  // name, so a change revisits just their readers.  Visiting callees before
+  // their callers reaches the same least fixed point while visiting most
+  // functions once.
+  std::vector<va_t> Solved;
+  std::map<va_t, size_t> SolvedIndex;
+  for (const auto &[Entry, Widths] : Reads)
+    if (!FixedEntryReads.count(Entry) && Funcs.count(Entry)) {
+      SolvedIndex.emplace(Entry, Solved.size());
+      Solved.push_back(Entry);
     }
+  std::vector<std::vector<size_t>> Named(Solved.size()), Readers(Solved.size());
+  for (size_t I = 0; I < Solved.size(); ++I) {
+    for (const RegisterBlock &Block : Funcs.at(Solved[I]).Blocks)
+      for (const RegisterStep &Step : Block.Steps)
+        for (va_t Routine :
+             {Step.Callee, Step.ImportCallee, Step.ArgumentsFrom})
+          if (const auto Found = SolvedIndex.find(Routine);
+              Found != SolvedIndex.end())
+            Named[I].push_back(Found->second);
+    llvm::sort(Named[I]);
+    Named[I].erase(std::unique(Named[I].begin(), Named[I].end()),
+                   Named[I].end());
+    for (size_t Callee : Named[I])
+      Readers[Callee].push_back(I);
+  }
+  // Depth-first post-order puts every callee outside a cycle first.
+  std::deque<size_t> Pending;
+  std::vector<uint8_t> Queued(Solved.size(), 0);
+  for (size_t Root = 0; Root < Solved.size(); ++Root) {
+    if (Queued[Root])
+      continue;
+    Queued[Root] = 1;
+    std::vector<std::pair<size_t, size_t>> Stack{{Root, 0}};
+    while (!Stack.empty()) {
+      const size_t Node = Stack.back().first;
+      size_t &Next = Stack.back().second;
+      if (Next < Named[Node].size()) {
+        const size_t Callee = Named[Node][Next++];
+        if (!Queued[Callee]) {
+          Queued[Callee] = 1;
+          Stack.emplace_back(Callee, 0);
+        }
+        continue;
+      }
+      Pending.push_back(Node);
+      Stack.pop_back();
+    }
+  }
+  while (!Pending.empty()) {
+    const size_t I = Pending.front();
+    Pending.pop_front();
+    Queued[I] = 0;
+    GPRReadWidths &Widths = Reads[Solved[I]];
+    GPRReadWidths Next = Widths;
+    joinReads(Next, entryLiveWidths(Funcs.at(Solved[I]), Writes, Reads,
+                                    VolatileFamilies, ArgumentFamilies,
+                                    DispatchThunks));
+    if (Next == Widths)
+      continue;
+    Widths = Next;
+    for (size_t Reader : Readers[I])
+      if (!Queued[Reader]) {
+        Queued[Reader] = 1;
+        Pending.push_back(Reader);
+      }
   }
 
   // Incoming stack arguments, also a least fixed point: a tail call at the

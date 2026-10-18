@@ -7635,6 +7635,52 @@ TEST(CallRegisterEffects, PartialWriteSatisfiesNarrowerRead) {
   EXPECT_EQ(Reads[Family(x86reg::R8)], 1u);
 }
 
+TEST(CallRegisterEffects, EntryReadsCrossChainsCyclesAndPointerCalls) {
+  // 0x1000 calls 0x1100, which calls 0x1200: callers precede their callees
+  // in address order.  0x1200 and 0x1300 call each other, and 0x1400 calls
+  // through a pointer that starts at 0x1300.  Every one reads what the cycle
+  // reads, which settles only after the cycle does.
+  auto Family = [](uint64_t RegOff) { return RegOff / 8; };
+  auto Call = [](va_t Callee) {
+    RegisterStep Step;
+    Step.Callee = Callee;
+    return Step;
+  };
+  auto Read = [&](uint64_t RegOff, uint8_t Bytes) {
+    RegisterStep Step;
+    Step.Reads[Family(RegOff)] = Bytes;
+    return Step;
+  };
+  std::map<va_t, LocalRegisterEffect> Funcs;
+  auto Define = [&](va_t Entry, std::vector<RegisterStep> Steps) {
+    LocalRegisterEffect &Effect = Funcs[Entry];
+    for (const RegisterStep &Step : Steps)
+      if (Step.Callee != InvalidVA)
+        Effect.Callees.insert(Step.Callee);
+    Effect.Blocks.push_back({std::move(Steps), {}});
+  };
+  Define(0x1000, {Call(0x1100)});
+  Define(0x1100, {Call(0x1200)});
+  Define(0x1200, {Read(x86reg::RDX, 8), Call(0x1300)});
+  Define(0x1300, {Read(x86reg::R8, 4), Call(0x1200)});
+  RegisterStep Pointer;
+  Pointer.UnknownCall = true;
+  Pointer.ArgumentsFrom = 0x1300;
+  Define(0x1400, {Pointer});
+  const GPRFamilyMask Args =
+      (1u << Family(x86reg::RCX)) | (1u << Family(x86reg::RDX)) |
+      (1u << Family(x86reg::R8)) | (1u << Family(x86reg::R9));
+  const auto Summaries = solveCallRegisterEffects(Funcs, Args, Args);
+  for (va_t Entry : {0x1000, 0x1100, 0x1200, 0x1300, 0x1400}) {
+    SCOPED_TRACE(Entry);
+    ASSERT_TRUE(Summaries.EntryReads.count(Entry));
+    const GPRReadWidths &Reads = Summaries.EntryReads.at(Entry);
+    EXPECT_EQ(Reads[Family(x86reg::RDX)], 8u);
+    EXPECT_EQ(Reads[Family(x86reg::R8)], 4u);
+    EXPECT_EQ(Reads[Family(x86reg::RCX)], 0u);
+  }
+}
+
 TEST(CallRegisterEffects, AScalarFloatReadIsTheLowLaneOfItsVectorRegister) {
   // `addsd xmm0, xmm0` reads the low eight bytes of xmm0; the merge that
   // keeps its upper lane observes nothing. Through `movaps xmm1, xmm0` the
