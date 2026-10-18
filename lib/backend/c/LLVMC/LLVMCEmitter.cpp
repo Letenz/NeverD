@@ -1679,7 +1679,8 @@ void LLVMCWriter::writeImportCalleeDecls(llvm::Module &Mod) {
     return Weak.count(Name) ? "extern __attribute__((weak)) " : "extern ";
   };
   for (const auto &[Name, Prototype] : Typed)
-    OS << Extern(Name) << c_library::declaration(*Prototype, Name, Opts.TheArch)
+    OS << Extern(Name)
+       << c_library::declaration(*Prototype, Name, Opts.TheArch, Opts.Format)
        << ";\n";
   for (const auto &[Name, Calls] : Imports) {
     if (!Calls.Return)
@@ -1839,7 +1840,9 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
               libc::libcPrototype(Name, Opts.Format)) {
         OS << (Fn.hasExternalWeakLinkage() ? "extern __attribute__((weak)) "
                                            : "extern ")
-           << c_library::declaration(*Prototype, Name, Opts.TheArch) << ";\n";
+           << c_library::declaration(*Prototype, Name, Opts.TheArch,
+                                     Opts.Format)
+           << ";\n";
         continue;
       }
     if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format)) {

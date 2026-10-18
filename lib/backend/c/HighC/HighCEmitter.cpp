@@ -2187,7 +2187,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       // give it; its calls convert their arguments to its parameter types.
       if (const libc::LibCPrototype *Prototype = prototypeForSymbol(Symbol)) {
         OS << "extern "
-           << c_library::declaration(*Prototype, Declared, Opts.TheArch);
+           << c_library::declaration(*Prototype, Declared, Opts.TheArch,
+                                     Opts.Format);
       } else {
         const std::string Register =
             "int" + std::to_string(pointerBytes(Opts.TheArch) * 8) + "_t";
