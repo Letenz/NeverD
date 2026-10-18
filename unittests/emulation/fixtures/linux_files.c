@@ -856,6 +856,49 @@ U64 files_repeated_slashes_bionic(void) {
   return 0;
 }
 
+U64 files_create_directories(U64 Mode) {
+  struct FileStatus Parent, Child, Again;
+  int F = open("/made", 0);
+  CHECK(F, 3);
+  *__errno() = 73;
+  U64 R = Mode == 0   ? (U64)mkdir("//made//child///", 07777)
+          : Mode == 1 ? (U64)syscall(MkdirAt, -1UL, "/made/child", 07777UL)
+                      : raw(MkdirAt, -1UL, (U64) "/made/child", 07777, 0);
+  CHECK(R, 0);
+  CHECK(*__errno(), 73);
+  CHECK(fstat(F, &Parent), 0);
+  CHECK(Parent.Links, 3);
+  CHECK(Parent.Size, 60);
+  CHECK(Parent.Modification.Seconds, 100);
+  CHECK(Parent.Change.Seconds, 100);
+  CHECK(Parent.Access.Seconds, 3);
+  int D = open("/made/child", 0);
+  CHECK(D, 4);
+  CHECK(fstat(D, &Child), 0);
+  CHECK(Child.Mode, 0043755);
+  CHECK(Child.UID, 1000);
+  CHECK(Child.GID, 1234);
+  CHECK(Child.Links, 2);
+  CHECK(Child.Size, 40);
+  CHECK(Child.Blocks, 0);
+  CHECK(Child.BlockSize, 4096);
+  CHECK(Child.Access.Seconds, 100);
+  CHECK(Child.Access.Nanoseconds, 123);
+  CHECK(mkdirat(-1, "/made/child", 0), -1);
+  CHECK(*__errno(), 17);
+  CHECK(fstat(D, &Again), 0);
+  for (unsigned I = 0; I < sizeof(Child); ++I)
+    CHECK(((unsigned char *)&Child)[I], ((unsigned char *)&Again)[I]);
+  CHECK(mkdirat(-1, "/made/child/deep", 0700), 0);
+  CHECK(fstat(D, &Child), 0);
+  CHECK(Child.Links, 3);
+  CHECK(Child.Size, 60);
+  CHECK(close(D), 0);
+  CHECK(close(F), 0);
+  CHECK(access("/made/child/deep", 0), 0);
+  return 0;
+}
+
 extern char *getcwd(char *, U64);
 extern void free(void *);
 static int cwd_text(const char *p) {

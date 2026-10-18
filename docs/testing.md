@@ -21,6 +21,15 @@ checks both LP64 ABIs, output bounds, root and unknown snapshots.
 O0/O2 across relocation packing, including guest allocation/free and errno.
 `ProcessReport.GuestDirectoriesAreExplicitAndTyped` checks JSON boundaries.
 
+`LinuxFileNamespace.CreatedDirectories*` and `Directory*` check directory
+inodes, complete stat layouts, parent updates, setgid/umask, reservation/time
+refusal, EOF insertion and duplicated cursors on both LP64 ABIs.
+`AndroidFiles.DirectoryCreationHasSharedStatAndLifetimeAcrossCallABIs` checks
+native, variadic and raw callers. `AndroidSearch.Substring*` checks exact first
+match, empty/overlapping inputs, high bytes, page ends, errno and dynamic library
+closure; `AndroidSearchMemory.*` checks memory/time bounds. The strict directory
+JSON check is `ProcessReport.DirectoryCreationRequiresCompleteBoundedMetadata`.
+
 `NeverDDirectTailCallMetadataTests` builds real x86, x64 and AArch64 CFGs and
 validates direct tail-call targets at strict instruction boundaries. It covers
 fallthrough and conditional transfers into known functions, an existing direct

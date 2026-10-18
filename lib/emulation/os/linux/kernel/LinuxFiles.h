@@ -201,6 +201,9 @@ private:
   tracedIoctl(const ProcessServiceEvent &Event, ProcessResult &Result);
   std::vector<std::weak_ptr<LinuxDeviceState>> DeviceDescriptions;
   std::map<std::string, MutableFile> MutableFiles;
+  std::map<std::string, LinuxFileMetadata> DirectoryMetadata;
+  std::vector<std::string> CreatedDirectories;
+  const LinuxFileMetadata *directoryMetadata(const std::string &Path) const;
   std::map<std::string, uint64_t> Inodes;
   std::set<uint64_t> UsedInodes;
   uint64_t NextInode = 1;
@@ -261,8 +264,8 @@ private:
            ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>>
   access(uint64_t Address, uint32_t Mode, ProcessResult &Result);
-  llvm::Expected<std::optional<uint64_t>> makeDirectory(uint64_t Address,
-                                                        ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>>
+  makeDirectory(uint64_t Address, uint32_t Mode, ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>>
   open(uint64_t Address, uint32_t Flags, ProcessResult &Result,
        uint32_t Directory = AtCurrentDirectory);
