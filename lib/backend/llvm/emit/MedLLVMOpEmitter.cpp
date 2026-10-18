@@ -940,6 +940,9 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
                                         LoadedRole);
       }
       if (!Ptr)
+        Ptr = tryResolveI386GotRelativeReadOnlyPtr(AddrVar, Op.Output.Size,
+                                                   Builder);
+      if (!Ptr)
         // Immutable-data resolver arbitration is shared with pointer
         // arguments: the generic all-arms audit defers a pure recurrent PHI to
         // the induction owner, while ambiguous provenance fails closed before

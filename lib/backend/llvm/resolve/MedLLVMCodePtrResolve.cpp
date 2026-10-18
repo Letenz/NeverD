@@ -1367,6 +1367,12 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
     bool AllowImplicitZeroBase, const MedVar *LoadedValue) {
   if (!CurMedFunc || !Img || AddrVar.isConst())
     return nullptr;
+  // i386 PIC data at a displacement from the GOT is a pointer-table access
+  // only where that sum lies in a table of relocated pointers.  The GOT's own
+  // segment holds the PLT's slots, which must not claim the read.
+  if (const auto Got = matchI386GotRelative(AddrVar);
+      Got && !segHasPtrRelocSlots(Img->getSegmentFor(Got->Base)))
+    return nullptr;
 
   const MedOp *LoadedOp = LoadedValue ? lookupDef(*LoadedValue) : nullptr;
   const JumpTable *RecoveredJumpTable =
