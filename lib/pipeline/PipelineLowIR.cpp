@@ -3198,10 +3198,7 @@ ImportPrototypeArguments importPrototypeArguments(
   auto Declared = [&](const std::string &Name) -> std::optional<FunctionSym> {
     if (!Dbg)
       return std::nullopt;
-    return Dbg->resolvePrototype(
-        importNamesAreCNames(Img.Format)
-            ? llvm::StringRef(Name)
-            : cNameOfSymbol(Name, Img.Format, Img.Arch));
+    return Dbg->resolvePrototype(cNameOfStatedName(Name, Img.Format, Img.Arch));
   };
   auto SignatureArguments =
       [&](const FunctionSym &Function) -> std::optional<Arguments> {
@@ -3759,9 +3756,10 @@ struct PipelineAnalysisCache::Impl {
                           [Dbg](va_t Addr) { return Dbg->functionName(Addr); })
                     : libc::NoReturnTargetIndex::NameResolver(),
                 Dbg ? libc::NoReturnTargetIndex::DeclaredNoReturn(
-                          [Dbg](llvm::StringRef Name) {
+                          [Dbg, &Img](llvm::StringRef Name) {
                             const std::optional<FunctionSym> Prototype =
-                                Dbg->resolvePrototype(Name);
+                                Dbg->resolvePrototype(cNameOfStatedName(
+                                    Name, Img.Format, Img.Arch));
                             return Prototype && Prototype->NoReturn;
                           })
                     : libc::NoReturnTargetIndex::DeclaredNoReturn()),

@@ -306,14 +306,27 @@ the name `__stat_time64`, which takes its prototype too. The loader records
 the dynamic linker an ELF image asks for and Android's identification note,
 and `linuxLibC` (`ELFOperatingSystem.h`) tells glibc's programs from
 bionic's (Android's linker, or the note an APK's native library carries
-alone) and musl's (musl's linker). The build embeds each file in a unit of
+alone) and musl's (musl's linker). `scripts/generate_darwin_types.py`
+renders what libSystem's headers declare for a program into `MacOSX64.h`,
+`MacOSARM64.h` and `IOSARM64.h`, from the projects whose source Apple
+publishes (Libc, xnu, libpthread, Libinfo, libmalloc, libplatform, dyld and
+AvailabilityVersions), laid out as each project's build installs its
+headers, with what those builds resolve by unifdef given as macros; an
+assembler name drops the underscore Mach-O gives C names, so that
+`stat$INODE64`, which an x64 macOS program imports, takes stat's prototype.
+The loader records the platforms a Mach-O image's build version commands
+name (`machOCommandPlatform`, `MachOPlatform.h`, which the emulator's images
+read too), and `darwinPlatform` (`DarwinOperatingSystem.h`) tells macOS
+programs from iOS ones; a program for Mac Catalyst, tvOS or watchOS, or one
+that names no platform or several, joins no library. The build embeds each file in a unit of
 its own, and
 `headerLibrary` reads each once. The C API joins the libraries the table
 names to an image (an x64 or x86 PE of the native subsystem joins its
 kernel's; one of the Windows GUI or console subsystem joins its user mode's,
 then, on x64 and x86, its kernel's for the few ntdll exports only the
 kernel's headers declare, such as `RtlIsNameLegalDOS8Dot3`; a Linux
-program on glibc, bionic or musl joins its architecture's) after the program's debug
+program on glibc, bionic or musl joins its architecture's, a Mach-O program
+its platform's) after the program's debug
 information and before the user's declarations, where the library's data
 model and record ABI are the program's:
 - a header type joins only where the program has no type of its name;

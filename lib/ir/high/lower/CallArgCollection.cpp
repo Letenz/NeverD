@@ -370,9 +370,7 @@ unsigned MedToHighConverter::importFixedArgCount(size_t CallIdx,
     return 0;
   // A Mach-O bind names the symbol; a PE import entry is the C name.
   const std::string Name =
-      importNamesAreCNames(Image->Format)
-          ? Import
-          : cNameOfSymbol(Import, Image->Format, Image->Arch).str();
+      cNameOfStatedName(Import, Image->Format, Image->Arch).str();
   if (const libc::LibCPrototype *Prototype =
           libc::libcPrototype(Name, Image->abiFormat()))
     return llvm::any_of(

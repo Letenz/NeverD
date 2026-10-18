@@ -195,9 +195,7 @@ importOwnRoutine(const BinaryImage &Img,
   if (!Imp || !Imp->IATAddr)
     return std::nullopt;
   if (libc::libcArityForSymbol(Imp->Name) ||
-      libc::libcPrototype(importNamesAreCNames(Img.Format)
-                              ? llvm::StringRef(Imp->Name)
-                              : cNameOfSymbol(Imp->Name, Img.Format, Img.Arch),
+      libc::libcPrototype(cNameOfStatedName(Imp->Name, Img.Format, Img.Arch),
                           Img.abiFormat()))
     return std::nullopt;
   const auto It = ArgumentSources->find(Imp->IATAddr);

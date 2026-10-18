@@ -23,6 +23,7 @@
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <map>
 #include <set>
 
 namespace neverd::types::render {
@@ -996,20 +997,40 @@ std::string renderCHeader(const TypeLibrary &Library,
   size_t PrototypeCount = 0;
   if (Options.Prototypes && Roots.empty()) {
     std::vector<std::pair<llvm::StringRef, const FunctionDef *>> Sorted;
-    for (const auto &Entry : Library.prototypes())
-      if (Entry.second && isIdentifier(Entry.first()))
+    // A routine a program imports by a name C cannot spell, as Mach-O's
+    // stat$INODE64, is the assembler name of a C name that shares its
+    // prototype: the declaration a reader takes both names from.
+    std::map<const FunctionDef *, std::vector<llvm::StringRef>> Symbols;
+    for (const auto &Entry : Library.prototypes()) {
+      if (!Entry.second)
+        continue;
+      if (isIdentifier(Entry.first()))
         Sorted.emplace_back(Entry.first(), Entry.second.get());
+      else if (llvm::all_of(Entry.first(), [](char C) {
+                 return llvm::isPrint(C) && C != '"' && C != '\\';
+               }))
+        Symbols[Entry.second.get()].push_back(Entry.first());
+    }
     llvm::sort(Sorted);
+    for (auto &[Function, Names] : Symbols)
+      llvm::sort(Names);
     const bool Cpp = Options.Lang == Language::Cpp;
     for (const auto &[Name, Function] : Sorted) {
       if (Function->NoReturn)
         Prototypes += Cpp ? "[[noreturn]] " : "_Noreturn ";
       Prototypes += Writer.declare(
-                        *makeFunction(std::make_shared<FunctionDef>(*Function)),
-                        Name.str()) +
-                    ";\n";
+          *makeFunction(std::make_shared<FunctionDef>(*Function)), Name.str());
+      // The first C name of the prototype takes its first such name; C gives
+      // a routine one assembler name.
+      if (auto Labels = Symbols.find(Function);
+          Labels != Symbols.end() && !Labels->second.empty()) {
+        Prototypes += " __asm__(\"" + Labels->second.front().str() + "\")";
+        Labels->second.erase(Labels->second.begin());
+        ++PrototypeCount;
+      }
+      Prototypes += ";\n";
     }
-    PrototypeCount = Sorted.size();
+    PrototypeCount += Sorted.size();
   }
 
   std::string Out =

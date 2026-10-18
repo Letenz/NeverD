@@ -585,11 +585,12 @@ private:
            Word == "intptr_t" || Word == "uintptr_t" || Word == "ssize_t" ||
            (vaListWord(Word) && !Library.find(Word));
   }
-  /// The compiler's va_list, as <stdarg.h>, glibc, bionic and musl name it.
+  /// The compiler's va_list, as <stdarg.h>, glibc, bionic, musl and Darwin
+  /// name it.
   static bool vaListWord(llvm::StringRef Word) {
     return Word == "__builtin_va_list" || Word == "va_list" ||
            Word == "__gnuc_va_list" || Word == "__va_list" ||
-           Word == "__isoc_va_list";
+           Word == "__isoc_va_list" || Word == "__darwin_va_list";
   }
   /// Whether the token at \p Ahead may begin a declaration's type.
   bool startsType(size_t Ahead = 0) const {
@@ -1478,6 +1479,12 @@ private:
       }
       Enumerator Value;
       Value.Name = take().Text;
+      // Darwin's headers mark an enumerator's availability after its name.
+      if (startsAttribute()) {
+        Attributes Marks;
+        if (!attributes(Marks))
+          return nullptr;
+      }
       if (accept("=")) {
         std::optional<int64_t> Given = constant();
         if (!Given)

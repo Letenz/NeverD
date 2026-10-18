@@ -18,6 +18,7 @@
 #include "neverd/debug/DWARFLoader.h"
 #include "neverd/debug/PDBLoader.h"
 #include "neverd/loader/ELF/ELFOperatingSystem.h"
+#include "neverd/loader/MachO/DarwinOperatingSystem.h"
 #include "neverd/support/FilePath.h"
 #include "neverd/support/ProjectFiles.h"
 #include "neverd/support/ProjectWriteLock.h"
@@ -120,6 +121,12 @@ std::optional<HeaderImageKind> headerImageKind(const Session &S) {
   if (const std::optional<LinuxLibC> LibC = linuxLibC(S.Img)) {
 #define NEVERD_HEADER_LINUX_LIBC(Library, Kind)                                \
   if (*LibC == LinuxLibC::Library)                                             \
+    return HeaderImageKind::Kind;
+#include "neverd/types/HeaderLibraryImages.def"
+  }
+  if (const std::optional<DarwinPlatform> Platform = darwinPlatform(S.Img)) {
+#define NEVERD_HEADER_DARWIN_PLATFORM(Name, Kind)                              \
+  if (*Platform == DarwinPlatform::Name)                                       \
     return HeaderImageKind::Kind;
 #include "neverd/types/HeaderLibraryImages.def"
   }

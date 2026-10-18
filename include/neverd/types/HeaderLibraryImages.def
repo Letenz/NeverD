@@ -21,6 +21,10 @@
 ///   An ELF image under Linux that runs on the C library (LinuxLibC,
 ///   ELFOperatingSystem.h) is of the kind.
 ///
+/// NEVERD_HEADER_DARWIN_PLATFORM(Platform, Kind)
+///   A Mach-O image built for the platform (DarwinPlatform,
+///   DarwinOperatingSystem.h) is of the kind.
+///
 /// NEVERD_HEADER_LIBRARY_IMAGE(Kind, Arch, Library)
 ///   An image of the kind and architecture joins the library, after the
 ///   rows above for the same image, where the library's data model is the
@@ -37,6 +41,9 @@
 #ifndef NEVERD_HEADER_LINUX_LIBC
 #define NEVERD_HEADER_LINUX_LIBC(LibC, Kind)
 #endif
+#ifndef NEVERD_HEADER_DARWIN_PLATFORM
+#define NEVERD_HEADER_DARWIN_PLATFORM(Platform, Kind)
+#endif
 #ifndef NEVERD_HEADER_LIBRARY_IMAGE
 #define NEVERD_HEADER_LIBRARY_IMAGE(Kind, Arch, Library)
 #endif
@@ -51,6 +58,10 @@ NEVERD_HEADER_IMAGE_KIND(GNULinux)
 NEVERD_HEADER_IMAGE_KIND(Android)
 // Linux programs and libraries on musl.
 NEVERD_HEADER_IMAGE_KIND(MuslLinux)
+// macOS programs and the libraries they load, on libSystem.
+NEVERD_HEADER_IMAGE_KIND(MacOS)
+// iOS apps and the frameworks they load, on libSystem, the simulator's too.
+NEVERD_HEADER_IMAGE_KIND(IOS)
 
 NEVERD_HEADER_PE_SUBSYSTEM(1, WindowsKernel) // IMAGE_SUBSYSTEM_NATIVE
 NEVERD_HEADER_PE_SUBSYSTEM(2, WindowsUser)   // IMAGE_SUBSYSTEM_WINDOWS_GUI
@@ -60,6 +71,9 @@ NEVERD_HEADER_PE_SUBSYSTEM(3, WindowsUser)   // IMAGE_SUBSYSTEM_WINDOWS_CUI
 NEVERD_HEADER_LINUX_LIBC(GNU, GNULinux)
 NEVERD_HEADER_LINUX_LIBC(Bionic, Android)
 NEVERD_HEADER_LINUX_LIBC(Musl, MuslLinux)
+
+NEVERD_HEADER_DARWIN_PLATFORM(MacOS, MacOS)
+NEVERD_HEADER_DARWIN_PLATFORM(IOS, IOS)
 
 NEVERD_HEADER_LIBRARY_IMAGE(WindowsKernel, X64, WindowsKernelX64)
 NEVERD_HEADER_LIBRARY_IMAGE(WindowsUser, X64, WindowsUserX64)
@@ -85,8 +99,14 @@ NEVERD_HEADER_LIBRARY_IMAGE(MuslLinux, X64, MuslX64)
 NEVERD_HEADER_LIBRARY_IMAGE(MuslLinux, X86, MuslX86)
 NEVERD_HEADER_LIBRARY_IMAGE(MuslLinux, AArch64, MuslARM64)
 NEVERD_HEADER_LIBRARY_IMAGE(MuslLinux, ARM, MuslARM)
+NEVERD_HEADER_LIBRARY_IMAGE(MacOS, X64, MacOSX64)
+NEVERD_HEADER_LIBRARY_IMAGE(MacOS, AArch64, MacOSARM64)
+// No library describes the simulator's x64 iOS: Apple silicon Macs run the
+// ARM64 simulator, whose apps join iOS's.
+NEVERD_HEADER_LIBRARY_IMAGE(IOS, AArch64, IOSARM64)
 
 #undef NEVERD_HEADER_IMAGE_KIND
 #undef NEVERD_HEADER_PE_SUBSYSTEM
 #undef NEVERD_HEADER_LINUX_LIBC
+#undef NEVERD_HEADER_DARWIN_PLATFORM
 #undef NEVERD_HEADER_LIBRARY_IMAGE

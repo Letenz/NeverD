@@ -291,9 +291,7 @@ private:
     if (isMsvcDestructorName(Name))
       return true;
     const std::string CName =
-        importNamesAreCNames(Img.Format)
-            ? Name.str()
-            : cNameOfSymbol(Name, Img.Format, Img.Arch).str();
+        cNameOfStatedName(Name, Img.Format, Img.Arch).str();
     if (const std::optional<bool> Returns =
             libc::libcReturnsValue(CName, Img.abiFormat()))
       return !*Returns;

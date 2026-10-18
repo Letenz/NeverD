@@ -533,6 +533,8 @@ and offsets clang measures for glibc's `stat`, `timespec`,
 `HeaderLibrary.TheAndroidLibrariesLayRecordsOutAsBionicDoes` bionic's and
 the NDK's JNI records,
 `HeaderLibrary.TheMuslLibrariesLayRecordsOutAsMuslDoes` musl's,
+`HeaderLibrary.TheDarwinLibrariesLayRecordsOutAsLibSystemDoes` libSystem's
+and the routines it names by assembler names (`stat$INODE64`),
 `SessionCAPITest.LinuxProgramsJoinTheirGlibcLibrary` decompiles
 `unittests/types/fixtures/linux_libc_calls_{x64,x86,arm64,arm}`, built as
 `linux_libc_calls.c` says, and
@@ -543,6 +545,9 @@ the NDK's JNI records,
 `SessionCAPITest.MuslProgramsJoinTheirMuslLibrary` loads
 `musl_libc_calls_{x64,x86}`, `linux_libc_calls.c` built against musl's
 headers as `musl_libc_stub.c` says;
+`SessionCAPITest.DarwinProgramsJoinTheirPlatformsLibrary` loads
+`darwin_libc_calls_{x64,arm64,ios_arm64}`, built against the headers the
+Darwin libraries read as `darwin_libc_stub.c` says;
 `HeaderLibrary.TheUserLibrariesDeclareNtdllsNativeAPI` checks phnt's
 routines and the PEB, TEB and loader records each user mode library lays
 out. The user mode libraries read a checkout of
@@ -576,7 +581,18 @@ https://android.googlesource.com/platform/libnativehelper) and
 https://android.googlesource.com/platform/system/logging), and name their
 commits. The musl libraries read a checkout of musl (`--musl <checkout>`,
 of https://git.musl-libc.org/git/musl), whose headers it installs for each
-architecture in a build directory of its own, and name its version. Check the x64 and x86 Linux ones with their record ABIs:
+architecture in a build directory of its own, and name its version. The
+Darwin libraries read a checkout of each project `PROJECTS` in
+`scripts/generate_darwin_types.py` lists, of
+https://github.com/apple-oss-distributions, at the tag each generated
+library names, side by side in one directory
+(`scripts/generate_darwin_types.py --darwin <directory>`): the libraries
+name each project by its tag, so a checkout that is not at one fails. They
+need Perl for Libc's feature script, and write
+`LICENSES/darwin-headers.txt` again.
+`--install-headers <directory>` installs the headers alone and prints what
+clang takes to read them for each target, as the Darwin fixtures were
+built. Check the x64 and x86 Linux ones with their record ABIs:
 
 ```sh
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
