@@ -37,6 +37,32 @@ linuxX64SyscallArgumentCount(uint64_t Number) {
   return linuxSyscallArgumentCount(Arch::X64, Number);
 }
 
+/// Whether a Linux x86-64 syscall of \p Count arguments reads operand
+/// \p Operand of its intrinsic, whose operands after the number are RDI,
+/// RDX:RSI, R8:R10 and R9: the first, the second and third, the fourth and
+/// fifth, and the sixth argument.  A pair is read whole once either half is.
+constexpr bool x64SyscallOperandRead(size_t Operand, unsigned Count) {
+  switch (Operand) {
+  case 1:
+    return Count >= 1;
+  case 2:
+    return Count >= 2;
+  case 3:
+    return Count >= 4;
+  case 4:
+    return Count >= 6;
+  default:
+    return true;
+  }
+}
+
+/// How many of kLinuxX64SyscallArgumentRegisters, from the first, a syscall
+/// of \p Count arguments reads through the operands that carry them
+/// (x64SyscallOperandRead).
+constexpr unsigned x64SyscallRegistersRead(unsigned Count) {
+  return Count == 0 ? 0 : Count == 1 ? 1 : Count <= 3 ? 3 : Count <= 5 ? 5 : 6;
+}
+
 } // namespace neverd
 
 #endif // NEVERD_IR_INTRINSICS_X64SYSCALL_H

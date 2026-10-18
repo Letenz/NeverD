@@ -223,10 +223,18 @@ bool AArch64Lifter::liftControl(LiftState &S, const cs_insn *Insn,
                          : Insn->id == AARCH64_INS_SMC ? Intrinsic::Smc
                          : Insn->id == AARCH64_INS_BRK ? Intrinsic::Brk
                                                        : Intrinsic::Hlt_A64;
-    if (const std::optional<uint64_t> Code = exceptionCode(ARM64))
-      S.emitIntrinsic(Id, NdVar::reg(a64reg::X0, 8), {NdVar::cst(*Code, 2)});
-    else
+    const std::optional<uint64_t> Code = exceptionCode(ARM64);
+    if (!Code) {
       S.emitIntrinsic(Id);
+      break;
+    }
+    S.emitIntrinsic(Id, NdVar::reg(a64reg::X0, 8), {NdVar::cst(*Code, 2)});
+    // An SMC or HVC #0 follows the SMC Calling Convention, which returns its
+    // results in x0-x3; LowToMed gives it the argument registers it reads.
+    if ((Id == Intrinsic::Hvc || Id == Intrinsic::Smc) && *Code == 0)
+      for (unsigned Result = 0; Result < 4; ++Result)
+        S.emit(NdOp::COPY, NdVar::reg(a64reg::X0 + Result * 8, 8),
+               {S.makeTemp(8)});
     break;
   }
 
