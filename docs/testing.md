@@ -4,6 +4,11 @@
 
 # Testing NeverD
 
+`NeverDSymBatchSubstitutionTests` checks simultaneous substitutions over
+shared DAG roots, stable ordering/duplicates, borrowed operand storage,
+opaque operators and deep iterative traversal. Single-root substitution uses
+the same implementation.
+
 `AndroidFDSet.*` checks Bionic checked descriptor bitmaps at O0/O2 with ordinary,
 packed and RELR relocations on available CPU backends. Independent byte oracles
 cover word boundaries, untouched canaries, boolean queries, full-width extents,

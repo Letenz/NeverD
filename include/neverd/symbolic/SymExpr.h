@@ -435,6 +435,14 @@ public:
   /// runs through the `mk*` builders, so the result is canonical.
   SymRef substitute(SymRef R, const std::unordered_map<uint32_t, SymRef> &Map);
 
+  /// Substitute several roots with one shared DAG walk. Results retain the
+  /// input order and duplicates. Replacements are simultaneous: nodes in Map's
+  /// values are not substituted again. Roots may borrow this context's operand
+  /// storage; every root and replacement must belong to this context.
+  std::vector<SymRef>
+  substituteAll(llvm::ArrayRef<SymRef> Roots,
+                const std::unordered_map<uint32_t, SymRef> &Map);
+
   /// Replace variable \p VarIdx with \p Val throughout \p R.
   SymRef substituteVar(SymRef R, uint32_t VarIdx, SymRef Val);
 
