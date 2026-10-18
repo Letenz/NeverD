@@ -368,8 +368,11 @@ builtin spellings each language takes and which it takes unless asked;
 an agent reads one object.
 
 `SessionSidecar.cpp` owns the shared atomic write for Session sidecars. Type
-declaration and persistence adapters use that same private helper. Private
-Session LLVM tests compile their actual type/debug owners and sidecar helper
+declaration and persistence adapters use that same private helper. It also owns
+recording the project's input after a successful sidecar write.
+The same owner supplies private input/hash observations to the information
+queries, without a dependency on UI adapters. Private Session LLVM tests
+compile their actual type/debug owners and sidecar helper
 directly; the shared SDK keeps its existing public C boundary.
 
 The decompiler reads the local types through `LocalTypesDebugContext`
@@ -4793,6 +4796,13 @@ LLVM Support. All transports share its physical x87 state and FXSAVE64 layout;
 Unicorn does not depend on KVM/WHP. KVM and WHP transfer the complete FP/SSE
 state through XSAVE packets; the ISA codec owns the shared layout and init-state
 rules. Unicorn converts its full tag word at its boundary.
+The portable Unicorn adapter enforces its admitted absolute deadline in the
+mandatory instruction hook, before observers and again before guest effects.
+It disables Unicorn's optional per-entry timer thread, so short scheduling
+slices do not wait for a host timer to retire. A timed-out CPU remains resumable
+under a newly admitted CPU budget; the owning workload still retains its
+original `ExecutionBudget`.
+
 CPU snapshots preserve x87 control/status, the physical nonempty `FPTag` mask,
 TOP, opcode,
 instruction/data pointers and all eight 80-bit payloads. This state contract
@@ -6506,6 +6516,8 @@ The source ABI explicitly records 32-bit sign or zero extension for narrow integ
 
 At a bound Darwin ARM64 call, a 1- or 2-byte integer register argument reads the complete 32-bit `Wn` carrier before SSA and then extracts only its declared low bytes. This keeps converging `Wn` definitions in one SSA web without claiming that the call observes extra source bytes. x86-64 keeps its separate partial-register rules.
 
+Before SSA, source-call binding replaces a complete generic register-argument summary with the validated source ABI's argument order and lanes. The shared physical call-occurrence key must identify an original LowIR call with only its target operand; prototype argument counts alone do not authorize reconstruction. This also covers SysV x86-64 calls whose integer/vector uses were already published and Swift calls with a dedicated context register. Binding failure retains the generic operands. Explicit LowIR arguments and exact formatted calls keep their own contracts; source hints remain disabled for lifting and patching.
+
 Before an AAPCS64 call clobbers a full `Q8`–`Q15` carrier, MedIR materializes the low `D` view established by the latest full-vector write. The call preserves that exact 64-bit value while the upper half remains unknown. HighIR keeps ARM `FMINNM`/`FMAXNM` as IEEE number-selecting operations, and HighC emits the matching typed compiler builtins.
 
 Mach-O loading preserves the segment’s explicit read-only-after-fixups guarantee without changing its initial permissions. Source byte and pointer readers share unique, file-backed storage checks; section names alone provide no immutability proof. An ordinary full-width load may bind a resolved local data pointer to an independently validated constant-string object. The binding retains its originating slot for revalidation, and aliases share the target object’s generated identity. Mutable storage, conflicting fixups, partial or ordered loads, and the slot’s own address remain unsupported.
@@ -7692,12 +7704,34 @@ introduced. See [Darwin environments](darwin-emulation.md) for the finite contra
 `MachOExecutionImage` also retains original constructor section/routines facts.
 `DarwinImage` alone admits local executable targets after relocation and orders
 shared dependencies once in postorder. `DarwinCallbacks` owns startup, main and
-main-thread TLS termination, authenticated return frames and private pending
+main-thread TLS and global termination, authenticated return frames and private pending
 exit state. It reuses `IntegerABI`, the original process stack/return page and
 the existing `ExecutionSession` budget. `DarwinStack` owns bounded `ProgramVars`;
 `DarwinLibSystem` decodes the exact void TLS-registration and nonreturning exit
 ABIs before delegating their lifecycle effects. Runtime callback targets retain
 unrounded original executable spans, and termination preserves the current stack.
+`DarwinLibSystemCalls.def` declares C and C++ registration arities; one private
+classification is shared with image admission. Global registration returns int
+zero through the existing ABI owner and preserves errno. `DarwinCallbacks`
+interleaves C/C++ LIFO work after the TLS phase exactly once and removes each
+entry before invoking original code. The DSO carrier is event data only.
+An externally discriminated private union preserves the old callback base and
+TLS record stride: strong global imports select precharged combined storage
+with a separate 1,024-entry quota. Raw and constructor/TLS-only images retain
+their previous admission budgets. Selective finalization remains an explicit unsupported import.
+
+`DarwinLibSystemCalls.def` also owns each exact provider identity. The three
+static-guard operations belong only to libc++. `DarwinImage` admits that finite
+builtin alongside libSystem and reserves one shared pair of runtime pages,
+charging every fixup and unique gate without inventing callback storage for
+guard-only imports. `DarwinLibSystem` alone owns the single-main-thread guard
+state transitions in guest memory and consumes the explicit ThreadSelfPort;
+completed acquire reads only its initialized byte. The common IntegerABI return
+publisher preserves void results and emits the binding table's provider. No
+loader, emitter, thread scheduler or host-library lookup duplicates this rule.
+Baseline ARM64 fixtures use verified generic armv8-a output; RCpc remains outside
+the checked execution contract.
+
 
 ### Sequential raw compare-and-exchange
 
