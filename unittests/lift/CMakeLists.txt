@@ -125,6 +125,7 @@ add_neverd_unittest(NeverDLiftTests
   arm32/ARM32_CallAbiTests.cpp
   arm32/ARM32_CarryTests.cpp
   arm32/ARM32_ControlTests.cpp
+  arm32/ARM32_CoprocessorTests.cpp
   arm32/ARM32_ExtendTests.cpp
   arm32/ARM32_IntrinsicsTests.cpp
   arm32/ARM32_LiteralPoolTests.cpp
@@ -2648,6 +2649,7 @@ set(ARM32_TEST_SOURCES
   arm32/test_arm_relocation_free_literal.s
   arm32/test_linux_svc_arm.s
   arm32/test_smccc_arm.s
+  arm32/test_coprocessor_arm.s
   arm32/test_thumb_pc_reads.s
   arm32/test_module_predicated_escape_arm.s
   format/test_elf_pointer_reloc_arm32.s

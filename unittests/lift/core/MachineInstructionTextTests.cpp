@@ -5,13 +5,15 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// A trap, a breakpoint, a hypervisor or secure-monitor call, a barrier and
-/// an AArch64 MRS, MSR or SYS keep their instruction's operand through the
-/// lift (the code of `brk #0x3e8`, the option of `dmb ishld`, the register
-/// of `msr tpidr_el0, x1`), and both C routes print it: beside a builtin
-/// that leaves it out (`__builtin_trap(); /* brk #0x3E8 */`), as the ACLE
-/// intrinsic that names it (`__arm_rsr64("cntvct_el0")`), or as the
-/// instruction an `asm` statement runs.
+/// A trap, a breakpoint, a hypervisor or secure-monitor call, a barrier, an
+/// AArch64 MRS, MSR or SYS and an ARM coprocessor transfer keep their
+/// instruction's operand through the lift (the code of `brk #0x3e8`, the
+/// option of `dmb ishld`, the register of `msr tpidr_el0, x1`, the numbers
+/// of `mrc p15, #0, r0, c13, c0, #3`), and both C routes print it: beside a
+/// builtin that leaves it out (`__builtin_trap(); /* brk #0x3E8 */`), as the
+/// ACLE intrinsic that names it (`__arm_rsr64("cntvct_el0")`,
+/// `__arm_mrc(15, 0, 13, 0, 3)`), or as the instruction an `asm` statement
+/// runs.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -20,6 +22,7 @@
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/backend/c/render/ArmCoprocessorAcle.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -109,6 +112,88 @@ TEST(MachineInstructionText, ARMKeepsTrapCodesAndBarrierOptions) {
                Intrinsic::ArmDmb, 0xB, "dmb ish");
   expectLifted(Arch::ARM, InstructionMode::ARM, {0x4f, 0xf0, 0x7f, 0xf5},
                Intrinsic::ArmDsb, 0xF, "dsb sy");
+}
+
+TEST(MachineInstructionText, ARMKeepsCoprocessorTransfers) {
+  // The lift keeps the instruction's numbers as one field, in ARM and Thumb;
+  // the LLVM route runs its assembly, which reads back to the same field,
+  // and both C routes call ACLE with the numbers.
+  const struct {
+    InstructionMode Mode;
+    std::vector<uint8_t> Bytes;
+    Intrinsic Id;
+    uint64_t Field;
+    const char *Asm;
+    const char *Acle;
+  } Cases[] = {
+      {InstructionMode::ARM,
+       {0x70, 0x0f, 0x1d, 0xee},
+       Intrinsic::ArmMrc,
+       0xF0D03,
+       "mrc p15, #0, $0, c13, c0, #3",
+       "__arm_mrc(15, 0, 13, 0, 3)"},
+      {InstructionMode::Thumb,
+       {0x1d, 0xee, 0x70, 0x0f},
+       Intrinsic::ArmMrc,
+       0xF0D03,
+       "mrc p15, #0, $0, c13, c0, #3",
+       "__arm_mrc(15, 0, 13, 0, 3)"},
+      {InstructionMode::ARM,
+       {0x50, 0x0f, 0x0d, 0xee},
+       Intrinsic::ArmMcr,
+       0xF0D02,
+       "mcr p15, #0, $0, c13, c0, #2",
+       "__arm_mcr(15, 0, value, 13, 0, 2)"},
+      {InstructionMode::ARM,
+       {0x15, 0x1e, 0x10, 0xee},
+       Intrinsic::ArmMrc,
+       0xE0050,
+       "mrc p14, #0, $0, c0, c5, #0",
+       "__arm_mrc(14, 0, 0, 5, 0)"},
+      {InstructionMode::ARM,
+       {0x1e, 0x0f, 0x51, 0xec},
+       Intrinsic::ArmMrrc,
+       0xF10E0,
+       "mrrc p15, #1, ${0:Q}, ${0:R}, c14",
+       "__arm_mrrc(15, 1, 14)"},
+      {InstructionMode::ARM,
+       {0x3e, 0x0f, 0x41, 0xec},
+       Intrinsic::ArmMcrr,
+       0xF30E0,
+       "mcrr p15, #3, ${0:Q}, ${0:R}, c14",
+       "__arm_mcrr(15, 3, value, 14)"},
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Asm);
+    const Lifted Result = liftOne(Arch::ARM, Case.Mode, Case.Bytes);
+    EXPECT_EQ(Result.Id, Case.Id);
+    EXPECT_EQ(Result.Operand, Case.Field);
+    EXPECT_EQ(armCoprocessorInstructionAsm(Case.Id, Case.Field), Case.Asm);
+    EXPECT_EQ(armCoprocessorAsmField(Case.Asm), std::pair(Case.Id, Case.Field));
+    EXPECT_EQ(armCoprocessorAcleCall(Case.Id, Case.Field, "value"), Case.Acle);
+  }
+  // A field no transfer has, or other assembly, reads as none.
+  EXPECT_EQ(armCoprocessorInstructionAsm(Intrinsic::ArmMrc, 0xF8D03), "");
+  EXPECT_EQ(armCoprocessorInstructionAsm(Intrinsic::ArmMrrc, 0xF1DE0), "");
+  EXPECT_EQ(armCoprocessorAsmField("mrc p15, #8, $0, c13, c0, #3"),
+            std::nullopt);
+  EXPECT_EQ(armCoprocessorAsmField("mrc p15, #0, $0, c13, c0"), std::nullopt);
+  EXPECT_EQ(armCoprocessorAsmField("mrs $0, apsr"), std::nullopt);
+
+  // The MRC that writes the flags, and an MRRC that writes one register
+  // twice, have no typed lift.
+  Decoder Decode;
+  ASSERT_TRUE(Decode.init(Arch::ARM, InstructionMode::ARM));
+  for (const std::vector<uint8_t> &Bytes :
+       {std::vector<uint8_t>{0x11, 0xfe, 0x10, 0xee},
+        std::vector<uint8_t>{0x1e, 0x0f, 0x50, 0xec}}) {
+    DecodedInsn Instruction;
+    ASSERT_EQ(Decode.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000,
+                                      Instruction),
+              4);
+    std::vector<LowOp> Ops;
+    EXPECT_THROW(Decode.liftToLow(Instruction, Ops), UnliftedInstruction);
+  }
 }
 
 TEST(MachineInstructionText, X86KeepsTheSanitizerCheckOfUD1) {

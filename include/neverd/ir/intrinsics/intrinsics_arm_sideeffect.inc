@@ -15,6 +15,9 @@ SIDEEFFECT(Intrinsic::ArmSmc);
 SIDEEFFECT(Intrinsic::ArmBkpt);
 SIDEEFFECT(Intrinsic::ArmHlt);
 SIDEEFFECT(Intrinsic::ArmUdf);
+// coprocessor register writes
+SIDEEFFECT(Intrinsic::ArmMcr);
+SIDEEFFECT(Intrinsic::ArmMcrr);
 // exclusive / atomic
 SIDEEFFECT(Intrinsic::ArmClrex);
 SIDEEFFECT(Intrinsic::ArmLinuxSyscall);
