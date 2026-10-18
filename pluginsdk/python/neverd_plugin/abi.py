@@ -1103,6 +1103,20 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_type_libraries_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_type_libraries_set",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare("neverd_type_libraries_save", "int", ["neverd_session_t"])
+_declare("neverd_type_libraries_load", "int", ["neverd_session_t"])
+_declare(
     "neverd_local_types_fit_json",
     "const char *",
     ["neverd_session_t", "const char *"],
