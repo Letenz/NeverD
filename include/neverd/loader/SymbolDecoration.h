@@ -86,6 +86,16 @@ inline bool importNamesAreCNames(BinaryFormat Format) {
   return false;
 }
 
+/// The C name \p Name spells, which the image states for a function as a
+/// symbol or an import entry: as it is where import entries name C names
+/// (PE's `_initterm`), otherwise without the format's underscore (Mach-O's
+/// `_stat$INODE64` is `stat$INODE64`).  A prototype is looked up by it.
+inline llvm::StringRef cNameOfStatedName(llvm::StringRef Name,
+                                         BinaryFormat Format, Arch Target) {
+  return importNamesAreCNames(Format) ? Name
+                                      : cNameOfSymbol(Name, Format, Target);
+}
+
 /// The symbol the import its import entry names \p Name links as, so that
 /// cNameOfSymbol gives that name back: 32-bit Windows' `_initterm` is the
 /// symbol `__initterm`, not the C name `initterm`.

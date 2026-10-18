@@ -536,6 +536,32 @@ TEST(TypeParse, ARoutineTakesItsPrototypeUnderItsAssemblerName) {
   }
   TypeLibrary Expression(DataModel::ILP32);
   EXPECT_FALSE(parseCTypes("__typeof__(1 + 2) three;", Expression).ok());
+
+  // An x64 macOS program imports stat as stat$INODE64, which no C name
+  // spells: the rendering gives it to stat as its assembler name, and the
+  // reading takes both names back.
+  TypeLibrary Darwin(DataModel::LP64);
+  ASSERT_TRUE(parseCTypes("struct stat { long long st_size; };\n"
+                          "int stat(const char *, struct stat *) "
+                          "__asm(\"stat\" \"$INODE64\");",
+                          Darwin)
+                  .ok());
+  ASSERT_NE(Darwin.findPrototype("stat$INODE64"), nullptr);
+  RenderOptions Prototypes;
+  Prototypes.Prototypes = true;
+  const std::string Header = renderTypes(Darwin, {}, Prototypes);
+  EXPECT_NE(Header.find("int32_t stat(const char *, struct stat *) "
+                        "__asm__(\"stat$INODE64\");"),
+            std::string::npos)
+      << Header;
+  EXPECT_NE(Header.find("2 prototypes"), std::string::npos) << Header;
+  TypeLibrary Back(DataModel::LP64);
+  ASSERT_TRUE(parseCTypes(Header, Back).ok());
+  for (const char *Name : {"stat", "stat$INODE64"}) {
+    const FunctionDef *Function = Back.findPrototype(Name);
+    ASSERT_NE(Function, nullptr) << Name;
+    EXPECT_EQ(Function->Params.size(), 2u) << Name;
+  }
 }
 
 TEST(TypeParse, ATypedefOfSizeTKeepsItsName) {
@@ -561,16 +587,18 @@ TEST(TypeParse, ATypedefOfSizeTKeepsItsName) {
 TEST(TypeParse, AnLP64ParameterPassesItsVaListByAddress) {
   // x86-64's va_list decays from an array, and AAPCS64 passes a record that
   // large by reference, under each name a C library gives it: glibc's
-  // __gnuc_va_list, bionic's __va_list, musl's __isoc_va_list.  Elsewhere it
-  // is a record local types do not hold.
+  // __gnuc_va_list, bionic's __va_list, musl's __isoc_va_list, Darwin's
+  // __darwin_va_list.  Elsewhere it is a record local types do not hold.
   TypeLibrary Library(DataModel::LP64);
   ASSERT_TRUE(parseCTypes("int vprintf(const char *, __gnuc_va_list);\n"
                           "int vsyslog(int, const char *, __va_list);\n"
                           "int vfprintf(void *, const char *, "
-                          "__isoc_va_list);",
+                          "__isoc_va_list);\n"
+                          "int vdprintf(int, const char *, "
+                          "__darwin_va_list);",
                           Library)
                   .ok());
-  for (const char *Name : {"vprintf", "vsyslog", "vfprintf"}) {
+  for (const char *Name : {"vprintf", "vsyslog", "vfprintf", "vdprintf"}) {
     const FunctionDef *Function = Library.findPrototype(Name);
     ASSERT_NE(Function, nullptr) << Name;
     const TypeExpr &List = *Function->Params.back().Type;
@@ -580,6 +608,32 @@ TEST(TypeParse, AnLP64ParameterPassesItsVaListByAddress) {
   TypeLibrary Record(DataModel::LP64);
   EXPECT_FALSE(
       parseCTypes("typedef __builtin_va_list __isoc_va_list;", Record).ok());
+}
+
+TEST(TypeParse, AnEnumeratorReadsPastItsAttributes) {
+  // Darwin's headers mark an enumerator's availability, or its Swift name,
+  // after the enumerator's name.
+  TypeLibrary Library(DataModel::LP64);
+  ASSERT_TRUE(
+      parseCTypes(
+          "typedef enum {\n"
+          "  _CLOCK_REALTIME __attribute__((availability(macosx,introduced="
+          "10.12))) = 0,\n"
+          "  _CLOCK_MONOTONIC __attribute__((availability(macosx,introduced="
+          "10.12))) = 6,\n"
+          "  _CLOCK_NEXT __attribute__((swift_name(\"next\")))\n"
+          "} clockid_t;\n"
+          "int clock_gettime(clockid_t __clock_id, void *__tp);",
+          Library)
+          .ok());
+  const LocalType *Clock = Library.resolve("clockid_t");
+  ASSERT_NE(Clock, nullptr);
+  ASSERT_EQ(Clock->Kind, TypeKind::Enum);
+  ASSERT_EQ(Clock->Enum->Values.size(), 3u);
+  EXPECT_EQ(Clock->Enum->Values[1].Name, "_CLOCK_MONOTONIC");
+  EXPECT_EQ(Clock->Enum->Values[1].Value, 6u);
+  EXPECT_EQ(Clock->Enum->Values[2].Value, 7u);
+  ASSERT_NE(Library.findPrototype("clock_gettime"), nullptr);
 }
 
 TEST(TypeParse, ConvertsWithoutAProgram) {

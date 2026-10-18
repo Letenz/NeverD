@@ -7,6 +7,7 @@
 
 #include "neverd/loader/BinaryImageFlags.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
+#include "neverd/loader/MachO/MachOPlatform.h"
 #include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -225,15 +226,11 @@ loadMachOExecutionImage(const std::filesystem::path &Path,
           !entryOnlyThread(LC, Image.Arch == Arch::X64);
       break;
     case LC_BUILD_VERSION:
-      Result.Platforms.push_back(Obj.getBuildVersionLoadCommand(LC).platform);
-      break;
     case LC_VERSION_MIN_MACOSX:
-      Result.Platforms.push_back(PLATFORM_MACOS);
-      break;
     case LC_VERSION_MIN_IPHONEOS:
-      // Legacy Intel iOS load commands denote a simulator binary.
-      Result.Platforms.push_back(Image.Arch == Arch::X64 ? PLATFORM_IOSSIMULATOR
-                                                         : PLATFORM_IOS);
+      if (const std::optional<uint32_t> Platform =
+              machOCommandPlatform(Obj, LC, Image.Arch))
+        Result.Platforms.push_back(*Platform);
       break;
     case LC_LOAD_DYLINKER: {
       auto Text = commandString(LC, Obj.getDylinkerCommand(LC).name,

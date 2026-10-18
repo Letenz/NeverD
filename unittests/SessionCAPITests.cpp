@@ -5359,6 +5359,64 @@ TEST_F(SessionCAPITest, MuslProgramsJoinTheirMuslLibrary) {
   }
 }
 
+TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
+  // A Mach-O program joins the library of the platform its build version
+  // names, for its architecture: macOS's on x64 and ARM64, iOS's on ARM64.
+  // An x64 program imports stat as stat$INODE64, which takes stat's
+  // prototype under that name: the output declares it with its assembler
+  // name, a char * path and the struct stat it fills.  ARM64's stat is
+  // <sys/stat.h>'s, whose record the call reaches through void *.
+  struct Program {
+    const char *File, *Library, *ABI, *Call, *Declaration;
+  };
+  const Program Programs[] = {
+      {"darwin_libc_calls_x64", "macos-x64", "itanium",
+       "stat_INODE64((char*)(uintptr_t)arg0, (stat*)&",
+       "extern int32_t stat_INODE64(char* arg0, stat* arg1) "
+       "__asm__(\"_stat$INODE64\");"},
+      {"darwin_libc_calls_arm64", "macos-arm64", "apple-arm64",
+       "stat((char*)(uintptr_t)arg0, (void*)&", "#include <sys/stat.h>"},
+      {"darwin_libc_calls_ios_arm64", "ios-arm64", "apple-arm64",
+       "stat((char*)(uintptr_t)arg0, (void*)&", "#include <sys/stat.h>"},
+  };
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  for (const Program &P : Programs) {
+    SCOPED_TRACE(P.File);
+    std::ifstream Input(Fixtures / P.File, std::ios::binary);
+    const std::string Path =
+        write(P.File, std::string(std::istreambuf_iterator<char>(Input), {}));
+    neverd_session_t Darwin = neverd_session_create();
+    ASSERT_NE(Darwin, nullptr);
+    const auto Destroy =
+        llvm::make_scope_exit([&] { neverd_session_destroy(Darwin); });
+    ASSERT_EQ(neverd_session_load(Darwin, Path.c_str()), 1)
+        << takeString(neverd_last_error(Darwin));
+    ASSERT_GE(neverd_session_discover_functions(Darwin), 0)
+        << takeString(neverd_last_error(Darwin));
+    auto Parsed =
+        llvm::json::parse(takeString(neverd_local_types_json(Darwin, nullptr)));
+    ASSERT_TRUE(static_cast<bool>(Parsed));
+    const llvm::json::Object &Types = *Parsed->getAsObject();
+    EXPECT_EQ(Types.getString("dataModel"), "LP64");
+    EXPECT_EQ(Types.getString("recordABI"), P.ABI);
+    const llvm::json::Array *Headers = Types.getArray("headers");
+    ASSERT_TRUE(Headers && Headers->size() == 1u);
+    EXPECT_EQ((*Headers)[0].getAsObject()->getString("name"), P.Library);
+    auto Stat = llvm::json::parse(
+        takeString(neverd_local_type_json(Darwin, "stat", nullptr)));
+    ASSERT_TRUE(static_cast<bool>(Stat));
+    EXPECT_EQ(Stat->getAsObject()->getInteger("size"), 144);
+
+    const int Index = neverd_func_find_by_name(Darwin, "_Size");
+    ASSERT_GE(Index, 0);
+    const std::string HighC =
+        takeString(neverd_decompile(Darwin, neverd_func_entry(Darwin, Index)));
+    EXPECT_NE(HighC.find(P.Call), std::string::npos) << HighC;
+    EXPECT_NE(HighC.find(P.Declaration), std::string::npos) << HighC;
+  }
+}
+
 TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
   const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
   const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");

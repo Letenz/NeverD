@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/low/ImportCallee.h"
+#include "neverd/loader/SymbolDecoration.h"
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
@@ -21,6 +22,19 @@ namespace {
 
 /// How deep a type converts: records hold records, which hold more.
 constexpr unsigned MaxDepth = 16;
+
+/// Whether emitted C takes the type \p Name from the headers it includes
+/// (CHeaderNames.def) rather than declaring it.
+bool fromCHeader(llvm::StringRef Name) {
+#define NEVERD_C_HEADER_INTEGER(Header, Bits, Signed)                          \
+  if (Name == Header)                                                          \
+    return true;
+#define NEVERD_C_HEADER_NAMED_TYPE(Header, Bits)                               \
+  if (Name == Header)                                                          \
+    return true;
+#include "neverd/backend/c/dialect/CHeaderNames.def"
+  return false;
+}
 
 bool isDisplayName(llvm::StringRef Name) {
   return !Name.empty() &&
@@ -540,6 +554,12 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
     if (!Record || Record->Kind != NdTypeKind::Struct ||
         Record->SourceName.empty() || RenamedInC->contains(Record->SourceName))
       continue;
+    // A name emitted C takes from the headers it includes, as its casts
+    // spell uintptr_t, is the header's: a local type of the name, as a
+    // system's header library gives, would define it again, as another
+    // type where the header's is long and the local type's int64_t.
+    if (fromCHeader(Record->SourceName))
+      continue;
     const types::LocalType *Local = Types->find(Record->SourceName);
     // A name the unit only spells.
     const bool Spelled =
@@ -702,11 +722,13 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
   if (AtEntry && (Function->ReturnType || !Function->Params.empty()))
     return Function;
   // The prototype of the name the function is displayed under: the export
-  // or symbol the image states, else the debug information's name.  Where a
-  // linker folded identical functions, the entry's other names name other
-  // functions, whose prototypes must pass and return alike for the code to
-  // follow the shown one.
-  const std::vector<std::string> Names = statedNames(Addr);
+  // or symbol the image states, as C names it, else the debug information's
+  // name.  Where a linker folded identical functions, the entry's other
+  // names name other functions, whose prototypes must pass and return alike
+  // for the code to follow the shown one.
+  std::vector<std::string> Names = statedNames(Addr);
+  for (std::string &Stated : Names)
+    Stated = cNameOfStatedName(Stated, Image->Format, Image->Arch).str();
   std::string Name = Names.empty() ? std::string() : Names.front();
   if (Name.empty() && AtEntry)
     Name = Function->Name;
@@ -725,7 +747,8 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
   // module exports under the import's name, which the call names it by.
   if (!Known && !AtEntry)
     if (const std::string Imported = importName(Addr); !Imported.empty())
-      if ((Known = resolvePrototype(Imported))) {
+      if ((Known = resolvePrototype(
+               cNameOfStatedName(Imported, Image->Format, Image->Arch)))) {
         Known->Addr = Addr;
         return Known;
       }

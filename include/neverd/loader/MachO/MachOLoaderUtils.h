@@ -197,7 +197,8 @@ void parseChainedFixupsRebases(const uint8_t *BasePtr, size_t FileSize,
 void parseUUID(const llvm::object::MachOObjectFile &Obj, BinaryImage &Img);
 
 /// Parse LC_BUILD_VERSION and store the min OS version string in
-/// Img.DynInfo.MinOSVersion.
+/// Img.DynInfo.MinOSVersion, and the platforms it and the older
+/// LC_VERSION_MIN_ commands name in Img.DynInfo.MachOPlatforms.
 void parseBuildVersion(const llvm::object::MachOObjectFile &Obj,
                        BinaryImage &Img);
 

@@ -6,6 +6,7 @@
 
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 
+#include "neverd/loader/MachO/MachOPlatform.h"
 #include "neverd/object/MachOLayout.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/FilePath.h"
@@ -550,14 +551,17 @@ void parseUUID(const llvm::object::MachOObjectFile &Obj, BinaryImage &Img) {
 void parseBuildVersion(const llvm::object::MachOObjectFile &Obj,
                        BinaryImage &Img) {
   for (const auto &LC : Obj.load_commands()) {
+    if (const std::optional<uint32_t> Platform =
+            machOCommandPlatform(Obj, LC, Img.Arch))
+      Img.DynInfo.MachOPlatforms.push_back(*Platform);
     if (LC.C.cmd != LC_BUILD_VERSION ||
-        LC.C.cmdsize < sizeof(build_version_command))
+        LC.C.cmdsize < sizeof(build_version_command) ||
+        !Img.DynInfo.MinOSVersion.empty())
       continue;
     auto BV = *reinterpret_cast<const build_version_command *>(LC.Ptr);
     Img.DynInfo.MinOSVersion = packed_version::toString(BV.minos);
     LLVM_DEBUG(llvm::dbgs()
                << "macho: min OS = " << Img.DynInfo.MinOSVersion << "\n");
-    return;
   }
 }
 
