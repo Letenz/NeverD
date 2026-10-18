@@ -585,10 +585,11 @@ private:
            Word == "intptr_t" || Word == "uintptr_t" || Word == "ssize_t" ||
            (vaListWord(Word) && !Library.find(Word));
   }
-  /// The compiler's va_list, as <stdarg.h>, glibc and bionic name it.
+  /// The compiler's va_list, as <stdarg.h>, glibc, bionic and musl name it.
   static bool vaListWord(llvm::StringRef Word) {
     return Word == "__builtin_va_list" || Word == "va_list" ||
-           Word == "__gnuc_va_list" || Word == "__va_list";
+           Word == "__gnuc_va_list" || Word == "__va_list" ||
+           Word == "__isoc_va_list";
   }
   /// Whether the token at \p Ahead may begin a declaration's type.
   bool startsType(size_t Ahead = 0) const {
@@ -598,11 +599,11 @@ private:
     if (startsAttribute(Ahead))
       return true;
     return isTypeName(T.Text) || T.Text == "struct" || T.Text == "union" ||
-           T.Text == "enum" || T.Text == "class" || constWord(T.Text) ||
-           T.Text == "_Noreturn" || T.Text == "DECLSPEC_NORETURN" ||
-           volatileWord(T.Text) || T.Text == "typename" ||
-           conventionWord(T.Text) || ignoredWord(T.Text) ||
-           startsAttribute(Ahead);
+           T.Text == "enum" || T.Text == "class" || typeofWord(T.Text) ||
+           constWord(T.Text) || T.Text == "_Noreturn" ||
+           T.Text == "DECLSPEC_NORETURN" || volatileWord(T.Text) ||
+           T.Text == "typename" || conventionWord(T.Text) ||
+           ignoredWord(T.Text) || startsAttribute(Ahead);
   }
 
   uint32_t pointerSize() const { return pointerBytes(Library.dataModel()); }
@@ -613,7 +614,11 @@ private:
            Word == "struct" || Word == "union" || Word == "enum" ||
            Word == "class" || Word == "const" || Word == "volatile" ||
            Word == "typedef" || Word == "__declspec" ||
-           Word == "__attribute__" || Word == "sizeof";
+           Word == "__attribute__" || Word == "sizeof" || typeofWord(Word);
+  }
+
+  static bool typeofWord(llvm::StringRef Word) {
+    return Word == "__typeof__" || Word == "__typeof" || Word == "typeof";
   }
 
   // The pack in force.
@@ -974,6 +979,29 @@ private:
           break;
         take();
         Spec.Type = enumeration(Spec.Defines);
+      } else if (typeofWord(W)) {
+        if (Spec.Type || AnyWord)
+          break;
+        // The type of a routine or a type declared before: musl's __REDIR
+        // declares a routine again under another assembler name.
+        const Token At = take();
+        if (!expect("(", "after " + W.str()))
+          return false;
+        const Token Of = take();
+        const FunctionDef *Routine = Of.Kind == TokenKind::Word
+                                         ? Library.findPrototype(Of.Text)
+                                         : nullptr;
+        if (Routine)
+          Spec.Type = makeFunction(std::make_shared<FunctionDef>(*Routine));
+        else if (Of.Kind == TokenKind::Word && Library.find(Of.Text))
+          Spec.Type = named(Of.Text);
+        else {
+          fail(At, W.str() + " reads the type of a routine or a type declared "
+                             "before it, not of an expression");
+          return false;
+        }
+        if (!expect(")", "after the routine"))
+          return false;
       } else if (builtinKeyword(W)) {
         if (Spec.Type)
           break;

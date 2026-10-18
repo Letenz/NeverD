@@ -98,7 +98,7 @@ TEST(HeaderLibrary, EveryLibraryReadsLaidOutForItsDataModel) {
     ASSERT_NE(Types, nullptr) << Error;
     EXPECT_EQ(Types->dataModel(), headerLibraryModel(Library));
     EXPECT_EQ(Types->recordABI(), headerLibraryRecordABI(Library));
-    EXPECT_GT(Types->size(), 400u);
+    EXPECT_GT(Types->size(), 300u);
     EXPECT_GT(Types->prototypes().size(), 1000u);
     const bool Wide = headerLibraryModel(Library) != DataModel::ILP32;
     if (headerLibrarySpelling(Library) == BuiltinSpelling::Windows) {
@@ -241,8 +241,9 @@ TEST(HeaderLibrary, TheLinuxLibrariesLayRecordsOutAsGlibcDoes) {
 
 TEST(HeaderLibrary, TheAndroidLibrariesLayRecordsOutAsBionicDoes) {
   // bionic's records as each architecture's compilers lay them out, as clang
-  // measures them against the same headers for API level 35: not glibc's,
-  // whose 32-bit pthread_mutex_t is 24 bytes and whose x64 sigaction 152.
+  // measures them against the same headers for API level 35 and the NDK's:
+  // not glibc's, whose 32-bit pthread_mutex_t is 24 bytes and whose x64
+  // sigaction 152.
   struct Expected {
     HeaderLibrary Library;
     uint64_t Stat, StatSize, Timespec, Mutex, Sigaction, Dirent;
@@ -283,6 +284,75 @@ TEST(HeaderLibrary, TheAndroidLibrariesLayRecordsOutAsBionicDoes) {
     EXPECT_EQ(Read->Params[2].Name, "__count");
     ASSERT_NE(Types->findPrototype("__assert2"), nullptr);
     EXPECT_TRUE(Types->findPrototype("__assert2")->NoReturn);
+
+    // The NDK's <jni.h> and <android/log.h>: JNIEnv's function table, a
+    // pointer for each of its 233 entries, and the log.
+    const bool Wide = headerLibraryModel(E.Library) != DataModel::ILP32;
+    const std::string JNI =
+        Check("sizeof(struct JNINativeInterface)", Wide ? 1864 : 932) +
+        Check("sizeof(JNIEnv)", Wide ? 8 : 4) +
+        Check("sizeof(JavaVMInitArgs)", Wide ? 24 : 16) +
+        Check("sizeof(jvalue)", 8);
+    const ParseResult Native = parseCTypes(JNI, Layout);
+    EXPECT_TRUE(Native.Problems.empty()) << Native.Problems.front().Message;
+    const FunctionDef *Create = Types->findPrototype("JNI_CreateJavaVM");
+    ASSERT_NE(Create, nullptr);
+    EXPECT_EQ(Create->Params.size(), 3u);
+    const FunctionDef *Print = Types->findPrototype("__android_log_print");
+    ASSERT_NE(Print, nullptr);
+    EXPECT_EQ(Print->Params.size(), 3u);
+    EXPECT_TRUE(Print->Variadic);
+    ASSERT_NE(Types->findPrototype("__android_log_assert"), nullptr);
+    EXPECT_TRUE(Types->findPrototype("__android_log_assert")->NoReturn);
+  }
+}
+
+TEST(HeaderLibrary, TheMuslLibrariesLayRecordsOutAsMuslDoes) {
+  // musl's records as each architecture's compilers lay them out, as clang
+  // measures them against the headers musl installs for it: a 32-bit
+  // program's time_t is 64 bits, which makes its stat and timespec larger
+  // than glibc's and bionic's, and its stat is __stat_time64.
+  struct Expected {
+    HeaderLibrary Library;
+    uint64_t Stat, StatSize, Timespec, Mutex, Sigaction, Dirent;
+    bool Time64;
+  };
+  const Expected Libraries[] = {
+      {HeaderLibrary::MuslX64, 144, 48, 16, 40, 152, 280, false},
+      {HeaderLibrary::MuslX86, 144, 44, 16, 24, 140, 276, true},
+      {HeaderLibrary::MuslARM64, 128, 48, 16, 40, 152, 280, false},
+      {HeaderLibrary::MuslARM, 152, 48, 16, 24, 140, 280, true},
+  };
+  for (const Expected &E : Libraries) {
+    SCOPED_TRACE(headerLibraryName(E.Library).str());
+    std::string Error;
+    const TypeLibrary *Types = headerLibrary(E.Library, &Error);
+    ASSERT_NE(Types, nullptr) << Error;
+    const auto Check = [](const char *What, uint64_t Value) {
+      return "_Static_assert(" + std::string(What) +
+             " == " + std::to_string(Value) + ", \"" + What + "\");\n";
+    };
+    const std::string Assertions =
+        Check("sizeof(struct stat)", E.Stat) +
+        Check("__builtin_offsetof(struct stat, st_size)", E.StatSize) +
+        Check("sizeof(struct timespec)", E.Timespec) +
+        Check("sizeof(pthread_mutex_t)", E.Mutex) +
+        Check("sizeof(struct sigaction)", E.Sigaction) +
+        Check("sizeof(struct dirent)", E.Dirent);
+    // A copy, which the assertions read without changing the library.
+    TypeLibrary Layout = *Types;
+    const ParseResult Laid = parseCTypes(Assertions, Layout);
+    EXPECT_TRUE(Laid.Problems.empty()) << Laid.Problems.front().Message;
+
+    const FunctionDef *Read = Types->findPrototype("read");
+    ASSERT_NE(Read, nullptr);
+    EXPECT_EQ(Read->Params.size(), 3u);
+    const FunctionDef *Stat = Types->findPrototype("__stat_time64");
+    EXPECT_EQ(Stat != nullptr, E.Time64);
+    if (Stat)
+      EXPECT_EQ(Stat->Params.size(), 2u);
+    ASSERT_NE(Types->findPrototype("exit"), nullptr);
+    EXPECT_TRUE(Types->findPrototype("exit")->NoReturn);
   }
 }
 

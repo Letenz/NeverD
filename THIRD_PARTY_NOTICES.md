@@ -286,6 +286,20 @@ GPL. The licenses and the note are preserved in
 [LICENSES/glibc-headers.txt](LICENSES/glibc-headers.txt). Generated on
 2026-10-17.
 
+## musl type libraries
+
+`lib/types/headers/MuslX64.h`, `MuslX86.h`, `MuslARM64.h` and `MuslARM.h`
+hold the types and prototypes that the headers of musl 1.2.5
+(https://musl.libc.org/) declare for x64, x86, ARM64 and ARM programs built
+with `_GNU_SOURCE`, as `scripts/generate_linux_types.py` renders them from
+the headers a checkout of musl installs for each architecture. musl is
+Copyright 2005-2020 Rich Felker, et al., under the MIT license, which is
+preserved with its list of contributors in
+[LICENSES/musl-headers.txt](LICENSES/musl-headers.txt). The libraries hold
+only what NeverD reads from the headers and renders again: data structure
+layouts, the values of enumerations and function declarations. Generated
+on 2026-10-17.
+
 ## Android type libraries
 
 `lib/types/headers/AndroidX64.h`, `AndroidX86.h`, `AndroidARM64.h` and
@@ -307,6 +321,16 @@ structure layouts, the values of enumerations and function declarations.
 bionic's `libc/NOTICE` is preserved in
 [LICENSES/bionic-headers.txt](LICENSES/bionic-headers.txt). Generated on
 2026-10-17.
+
+The same libraries hold what two headers the NDK ships declare: `<jni.h>`,
+from `include_jni` of
+https://android.googlesource.com/platform/libnativehelper at commit
+aef2939781fc0b57b4477df7160935cdf5697919, and `<android/log.h>`, from
+`liblog/include` of https://android.googlesource.com/platform/system/logging
+at commit bcac7c30d88a3773a7c0bc9f5617a23a886331fd. Both are Copyright (C)
+2006-2009 The Android Open Source Project, under the Apache License,
+Version 2.0, which is preserved with libnativehelper's NOTICE in
+[LICENSES/android-ndk-headers.txt](LICENSES/android-ndk-headers.txt).
 
 ## FPREM anti-emulation regression
 

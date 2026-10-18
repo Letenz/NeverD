@@ -3,16 +3,19 @@
 
 A program's calls to the C library and the system name routines whose
 parameters no debug information of its own declares.  This reads the
-headers that declare them, from the GNU C Library for Linux programs and
-from bionic for Android's, as a program built for each architecture
-includes them, and renders the types and prototypes they declare as the C
-NeverD reads back:
+headers that declare them, from the GNU C Library or musl for Linux
+programs and from bionic for Android's, as a program built for each
+architecture includes them, and renders the types and prototypes they
+declare as the C NeverD reads back:
 
 1. clang preprocesses what a program includes for the C library, POSIX and
    the Linux interfaces (UNIT_HEADERS), with _GNU_SOURCE as most programs
    build, for the architecture's triple: against the glibc headers
-   installed for it (--sysroot), or against a checkout of bionic (--bionic)
-   for Android API level 35.  glibc 2.38 and later give some routines the
+   installed for it (--sysroot), against musl's as a checkout of it
+   installs them (--musl), or against a checkout of bionic (--bionic) for
+   Android API level 35, with the NDK's <jni.h> (--libnativehelper) and
+   <android/log.h> (--liblog), which native code for Android most often
+   includes beside the C library's.  glibc 2.38 and later give some routines the
    name a program built so imports (`__isoc23_strtol` for strtol); the
    reader declares each under both.
 2. The lines of the compiler's own headers (<stddef.h>, <stdarg.h>) are
@@ -74,14 +77,21 @@ UNIT_HEADERS = (
     "malloc", "execinfo", "err", "error", "ucontext", "fts", "ftw",
     "wordexp", "shadow")
 
-# The headers of UNIT_HEADERS bionic does not have.
-NOT_BIONIC = ("aio", "mqueue", "wordexp", "shadow")
+# What an Android program includes beside the C library's: the JNI and the
+# log.
+NDK_HEADERS = ("jni", "android/log")
 
-# glibc's and bionic's typedefs of the compiler's va_list (<stdio.h>,
-# <wchar.h>, <sys/cdefs.h>).
+# The headers of UNIT_HEADERS a C library does not have.
+MISSING = {
+    "bionic": ("aio", "mqueue", "wordexp", "shadow"),
+    "musl": ("execinfo", "error", "fts"),
+}
+
+# glibc's, bionic's and musl's typedefs of the compiler's va_list (<stdio.h>,
+# <wchar.h>, <sys/cdefs.h>, <bits/alltypes.h>).
 VA_LIST_TYPEDEF = re.compile(
-    r"\s*typedef\s+(?:__gnuc_va_list\s+va_list|__builtin_va_list\s+__va_list)"
-    r"\s*;\s*$")
+    r"\s*typedef\s+(?:__gnuc_va_list\s+va_list|"
+    r"__builtin_va_list\s+(?:__va_list|va_list|__isoc_va_list))\s*;\s*$")
 
 # The 128-bit integers GCC and clang predefine for 64-bit targets.
 WIDE_INTEGERS = """typedef __int128 __int128_t;
@@ -109,8 +119,15 @@ class Target:
     describes: str
     output: Path
     # Bionic's kernel headers' directory for the architecture's <asm/...>;
-    # none for glibc's.
+    # none for glibc's and musl's.
     bionic_asm: str | None = None
+    # musl's name of the architecture; none for glibc's and bionic's.
+    musl_arch: str | None = None
+
+    @property
+    def libc(self):
+        return ("bionic" if self.bionic_asm else
+                "musl" if self.musl_arch else "glibc")
 
 
 TARGETS = {
@@ -124,6 +141,16 @@ TARGETS = {
     "linux-arm": Target("arm-linux-gnueabihf", "ILP32", "aapcs32",
                         "/usr/arm-linux-gnueabihf", "ARM (ILP32)",
                         HEADERS / "LinuxARM.h"),
+    "musl-x64": Target("x86_64-linux-musl", "LP64", "itanium", None,
+                       "x64 (LP64)", HEADERS / "MuslX64.h",
+                       musl_arch="x86_64"),
+    "musl-x86": Target("i386-linux-musl", "ILP32", "i386-sysv", None,
+                       "x86 (ILP32)", HEADERS / "MuslX86.h", musl_arch="i386"),
+    "musl-arm64": Target("aarch64-linux-musl", "LP64", "itanium", None,
+                         "ARM64 (LP64)", HEADERS / "MuslARM64.h",
+                         musl_arch="aarch64"),
+    "musl-arm": Target("arm-linux-musleabihf", "ILP32", "aapcs32", None,
+                       "ARM (ILP32)", HEADERS / "MuslARM.h", musl_arch="arm"),
     "android-x64": Target("x86_64-linux-android35", "LP64", "itanium", None,
                           "x64 (LP64)", HEADERS / "AndroidX64.h", "asm-x86"),
     "android-x86": Target("i686-linux-android35", "ILP32", "android-i386",
@@ -173,33 +200,58 @@ def neverd_types(arguments, target, *options):
                 "--record-abi", target.abi, *options])
 
 
-def bionic_includes(clang, bionic, target):
+def bionic_includes(clang, arguments, target):
     """The include directories a program for Android builds against: the
-    compiler's own, then bionic's C library and processed kernel headers."""
-    libc = Path(bionic) / "libc"
+    compiler's own, bionic's C library and processed kernel headers, and the
+    NDK's JNI and log headers."""
+    libc = Path(arguments.bionic) / "libc"
     resources = run([clang, "-print-resource-dir"]).strip()
     return ["-nostdinc", "-isystem", f"{resources}/include", "-isystem",
             str(libc / "include"), "-isystem", str(libc / "kernel" / "uapi"),
             "-isystem", str(libc / "kernel" / "uapi" / target.bionic_asm),
-            "-isystem", str(libc / "kernel" / "android" / "uapi")]
+            "-isystem", str(libc / "kernel" / "android" / "uapi"),
+            "-isystem", str(Path(arguments.libnativehelper) / "include_jni"),
+            "-isystem", str(Path(arguments.liblog) / "liblog" / "include")]
+
+
+def musl_includes(clang, musl, target, work):
+    """The include directories a program for musl builds against: the
+    compiler's own, then musl's headers as its checkout installs them for
+    the architecture."""
+    # A build directory of its own, as the checkout's would keep the
+    # bits/alltypes.h of the first architecture installed for every other.
+    built, installed = work / "musl-build", work / "musl"
+    built.mkdir()
+    run(["make", "-s", "-C", str(built), "-f",
+         str(Path(musl).resolve() / "Makefile"),
+         f"srcdir={Path(musl).resolve()}", f"ARCH={target.musl_arch}",
+         f"prefix={installed}", f"includedir={installed / 'include'}",
+         "install-headers"])
+    resources = run([clang, "-print-resource-dir"]).strip()
+    return ["-nostdinc", "-isystem", f"{resources}/include", "-isystem",
+            str(installed / "include")]
 
 
 def generate(arguments, name, target):
-    if target.bionic_asm:
-        includes = bionic_includes(arguments.clang, arguments.bionic, target)
-        headers = [header for header in UNIT_HEADERS
-                   if header not in NOT_BIONIC]
-    else:
-        sysroot = arguments.sysroot.get(name, target.sysroot)
-        if sysroot and not Path(sysroot, "include").is_dir():
-            sys.exit(f"{name}: no glibc headers in {sysroot}/include; give "
-                     f"--sysroot {name}=<directory>")
-        includes = [f"--sysroot={sysroot}"] if sysroot else []
-        headers = UNIT_HEADERS
-    clang = [arguments.clang, f"--target={target.triple}", *includes]
+    headers = [header for header in UNIT_HEADERS
+               if header not in MISSING.get(target.libc, ())]
+    if target.libc == "bionic":
+        headers += NDK_HEADERS
     output = Path(arguments.output) if arguments.output else target.output
     with tempfile.TemporaryDirectory(prefix="neverd-linux-types-") as scratch:
         work = Path(scratch)
+        if target.libc == "bionic":
+            includes = bionic_includes(arguments.clang, arguments, target)
+        elif target.libc == "musl":
+            includes = musl_includes(arguments.clang, arguments.musl, target,
+                                     work)
+        else:
+            sysroot = arguments.sysroot.get(name, target.sysroot)
+            if sysroot and not Path(sysroot, "include").is_dir():
+                sys.exit(f"{name}: no glibc headers in {sysroot}/include; "
+                         f"give --sysroot {name}=<directory>")
+            includes = [f"--sysroot={sysroot}"] if sysroot else []
+        clang = [arguments.clang, f"--target={target.triple}", *includes]
         unit = work / "system.c"
         unit.write_text("#define _GNU_SOURCE 1\n" + "".join(
             f"#include <{header}.h>\n" for header in headers),
@@ -227,19 +279,35 @@ def generate(arguments, name, target):
                      "keywords", "--no-offsets", "-o", str(rendered))
         body = rendered.read_text(encoding="utf-8")
 
-    if target.bionic_asm:
-        commit = run(["git", "-C", str(arguments.bionic), "rev-parse",
-                      "HEAD"]).strip()
+    if target.libc == "musl":
+        version = (Path(arguments.musl) / "VERSION").read_text().strip()
+        text = (
+            f"The Linux types and prototypes for {target.describes}, as a "
+            "program declares them with musl's headers and _GNU_SOURCE.  "
+            f"Generated on {datetime.date.today().isoformat()} by "
+            f"scripts/generate_linux_types.py --target {name} from the "
+            f"headers of musl {version}: changed from them, as NeverD reads "
+            "and renders their declarations again.  The headers' notices "
+            "are in LICENSES/musl-headers.txt.  Do not edit; generate it "
+            "again.")
+    elif target.bionic_asm:
+        def commit(checkout):
+            return run(["git", "-C", str(checkout), "rev-parse",
+                        "HEAD"]).strip()
         text = (
             f"The Android types and prototypes for {target.describes}, as a "
-            "program declares them with bionic's headers and _GNU_SOURCE, "
-            "for API level 35.  Generated on "
-            f"{datetime.date.today().isoformat()} by "
+            "program declares them with bionic's headers, <jni.h> and "
+            "<android/log.h> and _GNU_SOURCE, for API level 35.  Generated "
+            f"on {datetime.date.today().isoformat()} by "
             f"scripts/generate_linux_types.py --target {name} from the "
-            f"headers of bionic at commit {commit}: changed from them, as "
+            f"headers of bionic at commit {commit(arguments.bionic)}, "
+            "libnativehelper at commit "
+            f"{commit(arguments.libnativehelper)} and system/logging at "
+            f"commit {commit(arguments.liblog)}: changed from them, as "
             "NeverD reads and renders their declarations again.  The "
-            "headers' notices are in LICENSES/bionic-headers.txt.  Do not "
-            "edit; generate it again.")
+            "headers' notices are in LICENSES/bionic-headers.txt and "
+            "LICENSES/android-ndk-headers.txt.  Do not edit; generate it "
+            "again.")
     else:
         version = f"{defined['__GLIBC__']}.{defined['__GLIBC_MINOR__']}"
         text = (
@@ -271,10 +339,19 @@ def main():
                         help="where a target's glibc headers are, as "
                              "<DIRECTORY>/include (default: the host's for "
                              "x86 and x64, /usr/<triple> for ARM)")
+    parser.add_argument("--musl", default=None,
+                        help="a checkout of https://git.musl-libc.org/git/"
+                             "musl, whose headers the musl libraries declare")
     parser.add_argument("--bionic", default=None,
                         help="a checkout of https://android.googlesource.com/"
                              "platform/bionic, whose headers the Android "
                              "libraries declare")
+    parser.add_argument("--libnativehelper", default=None,
+                        help="a checkout of https://android.googlesource.com/"
+                             "platform/libnativehelper, for <jni.h>")
+    parser.add_argument("--liblog", default=None,
+                        help="a checkout of https://android.googlesource.com/"
+                             "platform/system/logging, for <android/log.h>")
     parser.add_argument("--target", action="append", choices=sorted(TARGETS),
                         help="the library to generate; repeat for more "
                              "(default: every library)")
@@ -292,8 +369,15 @@ def main():
             parser.error(f"--sysroot takes TARGET=DIRECTORY, not {given}")
         sysroots[name] = directory
     arguments.sysroot = sysroots
-    if not arguments.bionic and any(TARGETS[name].bionic_asm for name in names):
-        parser.error("the Android libraries read bionic: give --bionic")
+    if (not arguments.bionic or not arguments.libnativehelper or
+            not arguments.liblog) and any(TARGETS[name].libc == "bionic"
+                                          for name in names):
+        parser.error("the Android libraries read bionic, libnativehelper "
+                     "and system/logging: give --bionic, --libnativehelper "
+                     "and --liblog")
+    if not arguments.musl and any(TARGETS[name].libc == "musl"
+                                  for name in names):
+        parser.error("the musl libraries read musl: give --musl")
     for name in names:
         generate(arguments, name, TARGETS[name])
 

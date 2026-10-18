@@ -55,4 +55,11 @@ NEVERD_HEADER_LIBRARY(AndroidARM64, "android-arm64", AndroidARM64, LP64,
 NEVERD_HEADER_LIBRARY(AndroidARM, "android-arm", AndroidARM, ILP32, AAPCS32,
                       Keywords)
 
+NEVERD_HEADER_LIBRARY(MuslX64, "musl-x64", MuslX64, LP64, Itanium, Keywords)
+NEVERD_HEADER_LIBRARY(MuslX86, "musl-x86", MuslX86, ILP32, I386SystemV,
+                      Keywords)
+NEVERD_HEADER_LIBRARY(MuslARM64, "musl-arm64", MuslARM64, LP64, Itanium,
+                      Keywords)
+NEVERD_HEADER_LIBRARY(MuslARM, "musl-arm", MuslARM, ILP32, AAPCS32, Keywords)
+
 #undef NEVERD_HEADER_LIBRARY

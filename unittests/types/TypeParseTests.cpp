@@ -513,6 +513,23 @@ TEST(TypeParse, ARoutineTakesItsPrototypeUnderItsAssemblerName) {
   ASSERT_NE(Match, nullptr);
   ASSERT_EQ(Match->Params.size(), 5u);
   EXPECT_EQ(Library.sizeOf(*Match->Params[3].Type), 8u);
+
+  // musl's __REDIR declares a 32-bit program's stat again, with the type it
+  // has, under the name of its 64-bit time.
+  TypeLibrary Musl(DataModel::ILP32);
+  ASSERT_TRUE(parseCTypes("struct stat { long long st_mtime; };\n"
+                          "int stat(const char *__restrict, struct stat "
+                          "*__restrict);\n"
+                          "__typeof__(stat) stat __asm__(\"__stat_time64\");",
+                          Musl)
+                  .ok());
+  for (const char *Name : {"stat", "__stat_time64"}) {
+    const FunctionDef *Function = Musl.findPrototype(Name);
+    ASSERT_NE(Function, nullptr) << Name;
+    EXPECT_EQ(Function->Params.size(), 2u) << Name;
+  }
+  TypeLibrary Expression(DataModel::ILP32);
+  EXPECT_FALSE(parseCTypes("__typeof__(1 + 2) three;", Expression).ok());
 }
 
 TEST(TypeParse, ATypedefOfSizeTKeepsItsName) {
@@ -533,6 +550,30 @@ TEST(TypeParse, ATypedefOfSizeTKeepsItsName) {
   EXPECT_EQ(Read->Return->Name, "ssize_t");
   EXPECT_EQ(Read->Params[2].Type->Name, "size_t");
   EXPECT_EQ(Library.sizeOf(*Read->Params[2].Type), 4u);
+}
+
+TEST(TypeParse, AnLP64ParameterPassesItsVaListByAddress) {
+  // x86-64's va_list decays from an array, and AAPCS64 passes a record that
+  // large by reference, under each name a C library gives it: glibc's
+  // __gnuc_va_list, bionic's __va_list, musl's __isoc_va_list.  Elsewhere it
+  // is a record local types do not hold.
+  TypeLibrary Library(DataModel::LP64);
+  ASSERT_TRUE(parseCTypes("int vprintf(const char *, __gnuc_va_list);\n"
+                          "int vsyslog(int, const char *, __va_list);\n"
+                          "int vfprintf(void *, const char *, "
+                          "__isoc_va_list);",
+                          Library)
+                  .ok());
+  for (const char *Name : {"vprintf", "vsyslog", "vfprintf"}) {
+    const FunctionDef *Function = Library.findPrototype(Name);
+    ASSERT_NE(Function, nullptr) << Name;
+    const TypeExpr &List = *Function->Params.back().Type;
+    EXPECT_EQ(List.Kind, TypeExprKind::Pointer) << Name;
+    EXPECT_EQ(Library.sizeOf(List), 8u) << Name;
+  }
+  TypeLibrary Record(DataModel::LP64);
+  EXPECT_FALSE(
+      parseCTypes("typedef __builtin_va_list __isoc_va_list;", Record).ok());
 }
 
 TEST(TypeParse, ConvertsWithoutAProgram) {
