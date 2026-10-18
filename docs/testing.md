@@ -4,6 +4,10 @@
 
 # Testing NeverD
 
+`NeverDSymMBAObservedWindowTests` checks bounded observed-bit normalization,
+packed flags, extension windows, arithmetic carries and partial budgets with
+exhaustive narrow oracles and wide bit-vector equivalence proofs.
+
 `AndroidFDSet.*` checks Bionic checked descriptor bitmaps at O0/O2 with ordinary,
 packed and RELR relocations on available CPU backends. Independent byte oracles
 cover word boundaries, untouched canaries, boolean queries, full-width extents,
@@ -65,6 +69,19 @@ state generators retain an explicit unsupported test.
 ## Segmented store recovery checks
 
 `InterpreterSpecialization.SegmentedWrite*` checks independent byte-memory results, all scalar widths, base-addition wraparound, frame aliases, overwritten pointer origins, cross-node invalidation and exact/short budgets. `SegmentedWritesAndReadsShareLinearMemory` covers equal and distinct segment bases. `PEFixedImageTest.RawSegmented*` checks native bytes, live return-cell alias refusal and changed capability receipts. The existing receipt compatibility cases retain their values. Build the specialization, PE fixed-image, machine-state and native/LLVM refinement test owners; source and proof refusal checks include an unused write capability.
+
+## Symbolic SHUFPS semantics
+
+`SymIntegerIntrinsics.*` checks all 256 shuffle controls at 128, 256 and 512
+bits, bit-pattern preservation, source/destination aliases and temporary
+outputs. It also checks malformed shapes, unavailable values and unsupported
+intrinsics. `NeverDSymbolicIntegerIntrinsicTests` runs these checks together
+with the existing execution, store-preservation and x87 regressions:
+
+```sh
+cmake --build build-release --target NeverDSymbolicIntegerIntrinsicTests --parallel 4
+ctest --test-dir build-release -L '^NeverDSymbolicIntegerIntrinsicTests$' --output-on-failure
+```
 
 ## Concrete entry-memory concolic replay
 

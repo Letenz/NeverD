@@ -4040,6 +4040,12 @@ provider owns immutable image evidence, `SymExec` owns instruction semantics,
 and the residual CFG reuses the ordinary SSA and source backends. Recovery
 evidence remains separate from native occurrence and binary patch certificates.
 
+`SymIntegerIntrinsics` owns exact bit-vector evaluation of LowIR SHUFPS.
+It selects 32-bit words within each 128-bit lane and captures both original
+inputs before publishing a possibly aliased output. The lifter continues to
+own memory-source loads and encoding-specific upper-register effects.
+Unsupported IDs and malformed shapes retain the unmodelled execution path.
+
 `InterpreterSpecialization` owns bounded backward propagation of pending bit
 demands after a failed attempt. It reuses the scalar evaluator without changing
 graph facts or allocating control fields or contexts; all work remains
