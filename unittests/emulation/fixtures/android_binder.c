@@ -114,6 +114,8 @@ int binder_partial_command(void) {
 
 extern void *mmap(void *, U64, int, int, int, U64);
 extern int munmap(void *, U64);
+extern void *memset(void *, int, U64);
+extern int memcmp(const void *, const void *, U64);
 struct Transaction {
   U64 target, cookie;
   unsigned code, flags, sender_pid, sender_euid;
@@ -265,6 +267,73 @@ int binder_object_transaction(void) {
   int fd = open("/dev/binder", 2 | 0x800);
   struct Transaction tx = {0, 0, 9, 0, 0, 0, 0, 8, 0, 0};
   return send_message(fd, 0x40406300, &tx);
+}
+int binder_large_arena_transactions(void) {
+  int server = open("/dev/binder", 2 | 0x800);
+  int clients[2] = {open("/dev/binder", 2 | 0x800),
+                    open("/dev/binder", 2 | 0x800)};
+  CHECK(server >= 0 && clients[0] >= 0 && clients[1] >= 0);
+  const U64 arena_size = 2 * 1024 * 1024 - 8192;
+  unsigned char *arena = mmap(0, arena_size, 1, 2 | 0x4000, server, 0);
+  CHECK(arena != (void *)-1);
+  void *client_arenas[2];
+  static unsigned char payload[65536];
+  static unsigned char expected[65536];
+  CHECK(!ioctl(server, 0x40046207UL, 0));
+  unsigned enter = 0x630c;
+  struct WriteRead wr = {4, 0, (U64)&enter, 0, 0, 0};
+  CHECK(!exchange(server, &wr));
+  for (unsigned i = 0; i < 2; ++i) {
+    client_arenas[i] = mmap(0, 4096, 1, 2, clients[i], 0);
+    CHECK(client_arenas[i] != (void *)-1);
+    memset(payload, 17 + i, sizeof(payload));
+    payload[65535] = 63 + i;
+    struct Transaction tx = {
+        0, 0, 31 + i, 16, 0, 0, sizeof(payload), 0, (U64)payload, 0};
+    CHECK(!send_message(clients[i], 0x40406300, &tx));
+  }
+  memset(payload, 0, sizeof(payload));
+  U64 buffers[2];
+  for (unsigned i = 0; i < 2; ++i) {
+    unsigned output[32] = {0};
+    wr = (struct WriteRead){0, 0, 0, sizeof(output), 0, (U64)output};
+    CHECK(!exchange(server, &wr));
+    CHECK(wr.read_consumed == 72 && output[0] == 0x720c);
+    CHECK(output[1] == 0x80407202);
+    struct Transaction tx;
+    bytes(&tx, output + 2, 64);
+    CHECK(tx.code == 31 + i && tx.data_size == 65536 && !tx.offsets_size);
+    buffers[i] = tx.buffer;
+    CHECK(tx.buffer == (U64)arena + i * 65536);
+    CHECK(((unsigned char *)tx.buffer)[0] == 17 + i);
+    CHECK(((unsigned char *)tx.buffer)[65535] == 63 + i);
+    memset(expected, 17 + i, sizeof(expected));
+    expected[65535] = 63 + i;
+    CHECK(!memcmp((void *)tx.buffer, expected, sizeof(expected)));
+    unsigned reply =
+        ((unsigned char *)tx.buffer)[0] + ((unsigned char *)tx.buffer)[65535];
+    tx = (struct Transaction){0, 0, 73, 0, 0, 0, 4, 0, (U64)&reply, 0};
+    CHECK(!send_message(server, 0x40406301, &tx));
+    /* Private completion work is drained before taking another process call. */
+    wr = (struct WriteRead){0, 0, 0, sizeof(output), 0, (U64)output};
+    CHECK(!exchange(server, &wr) && wr.read_consumed == 8 &&
+          output[1] == 0x7206);
+  }
+  /* Both live requests occupy the larger arena; release each original owner. */
+  CHECK(!free_buffer(server, buffers[0]) && !free_buffer(server, buffers[1]));
+  for (unsigned i = 0; i < 2; ++i) {
+    unsigned output[32] = {0};
+    wr = (struct WriteRead){0, 0, 0, sizeof(output), 0, (U64)output};
+    CHECK(!exchange(clients[i], &wr) && wr.read_consumed == 76 &&
+          output[1] == 0x7206 && output[2] == 0x80407203);
+    struct Transaction tx;
+    bytes(&tx, output + 3, 64);
+    CHECK(tx.data_size == 4 && *(unsigned *)tx.buffer == 80 + 2 * i);
+    CHECK(!free_buffer(clients[i], tx.buffer));
+    CHECK(!munmap(client_arenas[i], 4096) && !close(clients[i]));
+  }
+  CHECK(!munmap(arena, arena_size) && !close(server));
+  return 0;
 }
 int binder_oneway_transaction(void) {
   int fd = open("/dev/binder", 2 | 0x800);

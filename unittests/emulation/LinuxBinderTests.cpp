@@ -40,7 +40,8 @@ protected:
     ASSERT_TRUE(bool(P)) << llvm::toString(P.takeError());
     if (P->Availability != BackendAvailability::Available)
       GTEST_SKIP() << P->Reason;
-    Backend.emplace(llvm::cantFail(createExecutionBackend(C, 4 * 1024 * 1024)));
+    Backend.emplace(
+        llvm::cantFail(createExecutionBackend(C, 16 * 1024 * 1024)));
     llvm::cantFail(
         cpu().addressSpace()->map(Base, 8192, Read | Write | UserAccessible));
     auto &D = Options.LinuxFiles.emplace().Devices["/dev/binder"];
@@ -59,6 +60,10 @@ protected:
     llvm::cantFail(cpu().write(Base, Path));
     return call(ServiceKind::OpenAt, uint64_t(-100), Base, 2 | 0x800).value();
   }
+  std::optional<uint64_t> map(uint64_t FD, uint64_t Size) {
+    return llvm::cantFail(Kernel->handle(
+        ServiceKind::Mmap, {0, 0, {0, Size, 1, 2 | 0x4000, FD, 0}, {}}));
+  }
   std::vector<uint8_t> read(uint64_t At, unsigned Size) {
     std::vector<uint8_t> Bytes(Size);
     llvm::cantFail(cpu().read(At, Bytes));
@@ -74,6 +79,66 @@ protected:
     llvm::cantFail(cpu().write(Base + 256, Bytes));
   }
 };
+TEST_P(LinuxBinder, LargeArenasKeepReadOnlyBoundsAndOpenLifetime) {
+  const auto FD = open();
+  const auto Alias = call(ServiceKind::Dup, FD).value();
+  constexpr uint64_t Size = 4 * 1024 * 1024;
+  const auto Address = map(FD, Size - 1);
+  ASSERT_TRUE(Address);
+  ASSERT_LT(*Address, Layout.UserLimit);
+  EXPECT_TRUE(
+      llvm::cantFail(cpu().canAccess(*Address, Size, Read | UserAccessible)));
+  EXPECT_FALSE(llvm::cantFail(
+      cpu().canAccess(*Address + Size, 1, Read | UserAccessible)));
+  EXPECT_FALSE(
+      llvm::cantFail(cpu().canAccess(*Address, 1, Write | UserAccessible)));
+  EXPECT_FALSE(llvm::cantFail(
+      cpu().canAccess(*Address + Size - 1, 1, Write | UserAccessible)));
+  EXPECT_EQ(call(ServiceKind::Mprotect, *Address + Size - 4096, 4096, 3),
+            uint64_t(0) - 13);
+  EXPECT_EQ(map(Alias, 4096), uint64_t(0) - 16);
+  ASSERT_EQ(call(ServiceKind::Close, FD), 0u);
+  EXPECT_TRUE(llvm::cantFail(
+      cpu().canAccess(*Address + Size - 4096, 4096, Read | UserAccessible)));
+  ASSERT_EQ(call(ServiceKind::Munmap, *Address, Size), 0u);
+  EXPECT_FALSE(
+      llvm::cantFail(cpu().canAccess(*Address, 1, Read | UserAccessible)));
+  EXPECT_EQ(map(Alias, 4096), uint64_t(0) - 16);
+  ASSERT_EQ(call(ServiceKind::Close, Alias), 0u);
+  const auto Fresh = open();
+  const auto NewAddress = map(Fresh, Size);
+  ASSERT_TRUE(NewAddress);
+  ASSERT_LT(*NewAddress, Layout.UserLimit);
+  EXPECT_EQ(call(ServiceKind::Close, Fresh), 0u);
+  EXPECT_TRUE(llvm::cantFail(
+      cpu().canAccess(*NewAddress, Size, Read | UserAccessible)));
+  EXPECT_EQ(call(ServiceKind::Munmap, *NewAddress, Size), 0u);
+}
+TEST_P(LinuxBinder, OversizedArenaRefusalDoesNotReserveTheOpen) {
+  const auto FD = open();
+  const auto Before = cpu().addressSpace()->mappedBytes();
+  EXPECT_FALSE(map(FD, 4 * 1024 * 1024 + 1));
+  EXPECT_EQ(Report.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(cpu().addressSpace()->mappedBytes(), Before);
+  const auto Address = map(FD, 1024 * 1024);
+  ASSERT_TRUE(Address);
+  EXPECT_LT(*Address, Layout.UserLimit);
+  EXPECT_EQ(cpu().addressSpace()->mappedBytes(), Before + 1024 * 1024);
+}
+TEST_P(LinuxBinder, ArenaBudgetFailureAllowsSmallerRetry) {
+  Options.MemoryLimit = 2 * 1024 * 1024;
+  Kernel = std::make_unique<linux_model::LinuxServices>(
+      cpu(), Layout, Base + 8192, Options, Report);
+  const auto FD = open();
+  const auto Before = cpu().addressSpace()->mappedBytes();
+  // Existing mappings consume the same process budget as receive arenas.
+  EXPECT_EQ(map(FD, Options.MemoryLimit), uint64_t(0) - 12);
+  EXPECT_EQ(cpu().addressSpace()->mappedBytes(), Before);
+  const auto Address = map(FD, 1024 * 1024);
+  ASSERT_TRUE(Address);
+  EXPECT_LT(*Address, Layout.UserLimit);
+  EXPECT_EQ(cpu().addressSpace()->mappedBytes(), Before + 1024 * 1024);
+}
 TEST_P(LinuxBinder, GuardedVersionAndBadPointers) {
   auto FD = open();
   std::vector<uint8_t> Expected(16, 0xa5);

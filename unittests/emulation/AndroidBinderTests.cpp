@@ -91,6 +91,11 @@ TEST_P(AndroidBinder, MissingTargetErrorsRemainQueuedUntilReadCapacityFits) {
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
   EXPECT_EQ(R.ReturnValue, 0u);
 }
+TEST_P(AndroidBinder, LargeArenasRetainMultipleCopiedRequestsAndReplies) {
+  auto R = run("binder_large_arena_transactions");
+  EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+}
 INSTANTIATE_TEST_SUITE_P(
     Backends, AndroidBinder,
     testing::Combine(testing::Values("binder-O0-none", "binder-O2-none",
