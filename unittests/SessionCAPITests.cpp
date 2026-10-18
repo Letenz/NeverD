@@ -5785,6 +5785,11 @@ TEST_F(SessionCAPITest, UefiApplicationsJoinTheirFirmwaresLibrary) {
     // A call through a member passes the parameters its type declares: on
     // x86 the word the caller pushed to make room on the stack is none.
     EXPECT_EQ(HighC.find("unknown register"), std::string::npos) << HighC;
+    const std::string LLVMC = takeString(
+        neverd_decompile_llvm(Uefi, neverd_session_entry_addr(Uefi)));
+    EXPECT_NE(LLVMC.find("(SystemTable->ConOut->OutputString))("),
+              std::string::npos)
+        << LLVMC;
   }
 }
 
@@ -5812,6 +5817,14 @@ TEST_F(SessionCAPITest, CallsThroughTypedMembersReadEachPointerOnce) {
   EXPECT_NE(HighC.find("(t->boot->reset))(handle, "), std::string::npos)
       << HighC;
   EXPECT_EQ(HighC.find("*(void **)(t->out)"), std::string::npos) << HighC;
+  // LLVM-C reads them so too: it read the table pointer at the member's
+  // value, a function's code, and called what the code held there.
+  const std::string LLVMC = takeString(
+      neverd_decompile_llvm(Session, neverd_func_entry(Session, Index)));
+  EXPECT_NE(LLVMC.find("(t->out->write))("), std::string::npos) << LLVMC;
+  EXPECT_NE(LLVMC.find("(t->boot->reset))("), std::string::npos) << LLVMC;
+  EXPECT_EQ(LLVMC.find("*(void **)(t->out)"), std::string::npos) << LLVMC;
+  EXPECT_EQ(LLVMC.find("**(void ***)(t->boot)"), std::string::npos) << LLVMC;
 }
 
 TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {

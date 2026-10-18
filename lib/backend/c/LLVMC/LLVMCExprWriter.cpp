@@ -2811,6 +2811,31 @@ std::string LLVMCWriter::indirectCalleeStr(const llvm::Value *Callee,
   if (!SlotLI)
     return {};
   Mark(SlotLI);
+  const uint16_t PtrSize = Img && Img->Bits == Bitness::Bits32 ? 4u : 8u;
+  // A slot a typed record names prints as its member, which the call reads:
+  // a UEFI protocol's SystemTable->ConOut->OutputString, t->boot->reset.
+  if (const std::optional<TypedAccess> Member = typedLoadAccess(*SlotLI);
+      Member && !Member->Text.empty() && Member->Type &&
+      Member->Type->Kind == NdTypeKind::Ptr &&
+      llvmAccessSize(SlotLI->getType()) == PtrSize) {
+    // The member's address is the record's plus the slot's offset, which
+    // the member names.
+    const llvm::Value *Addr = PeelCast(SlotLI->getPointerOperand(),
+                                       /*HideCasts=*/true);
+    if (const auto *BO = llvm::dyn_cast<llvm::BinaryOperator>(Addr);
+        BO && (BO->getOpcode() == llvm::Instruction::Add ||
+               BO->getOpcode() == llvm::Instruction::Or))
+      Mark(BO);
+    if (MarkChain)
+      for (const llvm::Instruction *I : Chain)
+        if (!MaterializedExpressions.count(I))
+          Analysis.Inlinable.insert(I);
+    std::string Text = "(" + Member->Text + ")";
+    if (SourceRecorder && !MarkChain)
+      for (const auto *I : Chain)
+        Text = SourceRecorder->expression(*I, std::move(Text));
+    return Text;
+  }
   const llvm::Value *Addr = PeelCast(SlotLI->getPointerOperand(),
                                      /*HideCasts=*/true);
   const auto *BO = llvm::dyn_cast<llvm::BinaryOperator>(Addr);
@@ -2881,9 +2906,14 @@ std::string LLVMCWriter::indirectCalleeStr(const llvm::Value *Callee,
       if (auto Acc = typedLoadAccess(*ObjLI))
         ObjStr = Acc->Text;
   }
+  // The member at the object's address is what the address holds: the
+  // table pointer itself, which the slot's address is read from directly.
+  bool TableText = false;
   if (ObjStr.empty())
-    if (auto Acc = typedRecordAccess(Obj, 8))
+    if (auto Acc = typedRecordAccess(Obj, PtrSize)) {
       ObjStr = Acc->Text;
+      TableText = true;
+    }
   if (ObjStr.empty()) {
     if (auto Text = ValueTexts.find(Obj);
         Text != ValueTexts.end() && !Text->second.empty())
@@ -2902,13 +2932,40 @@ std::string LLVMCWriter::indirectCalleeStr(const llvm::Value *Callee,
       Off <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max())
           ? integerConstantText(llvm::APInt(64, Off))
           : std::to_string(Off);
-  std::string Text = Off == 0 ? "(**(void ***)(" + ObjStr + "))"
-                              : "(*(void **)((uintptr_t)(*(void **)(" + ObjStr +
-                                    ")) + " + Slot + "))";
+  std::string Text;
+  if (TableText)
+    Text = Off == 0
+               ? "(*(void **)(" + ObjStr + "))"
+               : "(*(void **)((uintptr_t)(" + ObjStr + ") + " + Slot + "))";
+  else
+    Text = Off == 0 ? "(**(void ***)(" + ObjStr + "))"
+                    : "(*(void **)((uintptr_t)(*(void **)(" + ObjStr + ")) + " +
+                          Slot + "))";
   if (SourceRecorder && !MarkChain)
     for (const auto *I : Chain)
       Text = SourceRecorder->expression(*I, std::move(Text));
   return Text;
+}
+
+std::optional<unsigned>
+LLVMCWriter::typedSlotParamCount(const llvm::CallBase &Call) const {
+  if (Call.getCalledFunction() || Opts.PreserveLLVMFunctionTypes)
+    return std::nullopt;
+  const llvm::Value *Callee = Call.getCalledOperand();
+  while (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Callee))
+    Callee = Cast->getOperand(0);
+  const auto *SlotLI = llvm::dyn_cast<llvm::LoadInst>(Callee);
+  if (!SlotLI)
+    return std::nullopt;
+  const std::optional<TypedAccess> Member = typedLoadAccess(*SlotLI);
+  // A member of a variadic function type is no function type here
+  // (LocalTypesDebugContext), so its calls keep every argument.
+  if (!Member || !Member->Type || Member->Type->Kind != NdTypeKind::Ptr ||
+      !Member->Type->Pointee ||
+      Member->Type->Pointee->Kind != NdTypeKind::Func ||
+      Member->Type->Pointee->ParamTypes.empty())
+    return std::nullopt;
+  return static_cast<unsigned>(Member->Type->Pointee->ParamTypes.size());
 }
 
 void LLVMCWriter::markIndirectCalleeChains(llvm::Function &Fn) {
