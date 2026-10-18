@@ -2851,6 +2851,35 @@ void seedAccessWidthFunctions(neverd_session_t Session) {
   neverd::sdk::SessionTestAccess::resetFunctions(State);
 }
 
+TEST_F(SessionCAPITest, WarmingScansTheDataAccessWidthsTheFirstViewReads) {
+  const auto Input = write("widths.elf", accessWidthCacheELF());
+  std::string Cold;
+  {
+    neverd_session_t Plain = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Plain, Input.c_str()), 1);
+    seedAccessWidthFunctions(Plain);
+    Cold = takeString(neverd_decompile(Plain, DataELFEntry));
+    neverd_session_destroy(Plain);
+  }
+  ASSERT_FALSE(Cold.empty());
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  seedAccessWidthFunctions(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  ASSERT_FALSE(State.AccessWidths);
+  auto Page = llvm::json::parse(
+      takeString(neverd_warm_functions_json(Session, 0, 4096)));
+  ASSERT_TRUE(bool(Page)) << llvm::toString(Page.takeError());
+  ASSERT_NE(Page->getAsObject(), nullptr);
+  EXPECT_EQ(Page->getAsObject()->getBoolean("available"), true);
+  // Warming scanned them as the first decompile would, which reads them.
+  ASSERT_TRUE(State.AccessWidths);
+  EXPECT_EQ(State.AccessWidths->at(DataELFData), 8u);
+  const auto *Storage = &*State.AccessWidths->begin();
+  EXPECT_EQ(takeString(neverd_decompile(Session, DataELFEntry)), Cold);
+  ASSERT_TRUE(State.AccessWidths);
+  EXPECT_EQ(&*State.AccessWidths->begin(), Storage);
+}
+
 TEST_F(SessionCAPITest, DataAccessWidthsSurviveNavigationWithFreshSource) {
   const auto Input = write("widths.elf", accessWidthCacheELF());
   ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);

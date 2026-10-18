@@ -717,10 +717,11 @@ has its own allowances (`kMaxPipelineCallGraphEntries`,
 `open` asks for `warm`, builds a page of functions' graphs and bodies into
 that cache with the entries a selected run of a symbol start uses. Warming
 never evicts: it reports the cache full instead. It records the current
-feature generation, so the next selection keeps what it built. A COFF image
-keeps it while handler discovery adds nothing, as after a full load, which
-decodes every table. A function that is not a symbol start adds its own entry
-to its run, which keys other facts. The cache keeps the latest such
+feature generation, so the next selection keeps what it built, and scans the
+data access widths the first C view reads. A COFF image keeps it while handler
+discovery adds nothing, as after a full load, which decodes every table. A
+function that is not a symbol start adds its own entry to its run, which keys
+other facts. The cache keeps the latest such
 selection's facts beside the symbol inventory's, so passing through one
 leaves what the symbol starts share in place.
 Reload, function edits, signature matching and analysis-policy changes retire

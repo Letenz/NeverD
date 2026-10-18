@@ -181,7 +181,8 @@ NEVERD_API int neverd_prepare_function_view(neverd_session_t Sess,
 /// Prepare later neverd_prepare_function calls for the functions from
 /// FirstEntry on, in entry order, at most MaxFunctions (clamped to
 /// 1..4096): build the control-flow graphs those calls would otherwise build
-/// on demand, for them to reuse.  The results of later calls are unchanged,
+/// on demand, for them to reuse, and scan the image's data access widths the
+/// first C view reads.  The results of later calls are unchanged,
 /// and nothing already prepared is discarded.  Returns
 /// {"available":bool,"prepared":int,"full":bool,"next_entry":"0x..."|null}:
 /// "prepared" counts the functions the session now holds prepared, "full"
