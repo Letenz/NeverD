@@ -15,7 +15,9 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/COFFLoaderUtils.h"
 #include "neverd/loader/FunctionDiscovery.h"
+#include "neverd/loader/PointerRelocation.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -632,4 +634,118 @@ TEST(X86_32_FunctionDiscovery,
   ASSERT_FALSE(Result.HighFuncs.empty())
       << "decompile must keep first-pass CFGs when table evidence is exhausted";
   EXPECT_FALSE(Result.HighFuncs.front().Name.empty());
+}
+
+namespace {
+
+void addPeSection(BinaryImage &Img, const char *Name, va_t VA,
+                  std::vector<uint8_t> Bytes, SegmentFlags Flags) {
+  Segment Seg;
+  Seg.Name = Name;
+  Seg.VA = VA;
+  Seg.Size = Bytes.size();
+  Seg.FileSz = Bytes.size();
+  Seg.Flags = Flags;
+  Seg.Data = std::move(Bytes);
+  Section Sec;
+  Sec.Name = Name;
+  Sec.VA = VA;
+  Sec.Size = Seg.Size;
+  Sec.FileSz = Seg.Size;
+  Sec.Flags = Flags;
+  Img.Segments.push_back(std::move(Seg));
+  Img.Sections.push_back(std::move(Sec));
+}
+
+/// A linked i386 PE whose switch dispatches through the table MSVC places in
+/// .text after the function, two bytes past a four-byte boundary.  The next
+/// function stores a pointer with `mov dword ptr [disp32], imm32`, whose two
+/// relocated fields sit back to back, and reads a relocated .rdata pointer
+/// an instruction names: an anchor past the table, four-byte aligned.  The
+/// base relocations are recorded as the COFF loader records them.
+BinaryImage makeSwitchTableAmongCode() {
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  std::vector<uint8_t> Text;
+  auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Text.insert(Text.end(), Bytes);
+  };
+  // 0x401000: switch_on_arg.
+  Emit({0x55, 0x8B, 0xEC});                         // push ebp; mov ebp, esp
+  Emit({0x8B, 0x45, 0x08});                         // mov eax, [ebp+8]
+  Emit({0x83, 0xF8, 0x02, 0x77, 0x1D});             // cmp eax, 2; ja 0x401028
+  Emit({0xFF, 0x24, 0x85, 0x2E, 0x10, 0x40, 0x00}); // jmp [eax*4+0x40102E]
+  Emit({0xB8, 0x0A, 0x00, 0x00, 0x00, 0x5D, 0xC3}); // 0x401012: case 0
+  Emit({0xB8, 0x14, 0x00, 0x00, 0x00, 0x5D, 0xC3}); // 0x401019: case 1
+  Emit({0xB8, 0x1E, 0x00, 0x00, 0x00, 0x5D, 0xC3}); // 0x401020: case 2
+  Emit({0x90, 0x33, 0xC0, 0x5D, 0xC3});             // nop; 0x401028: default
+  Emit({0x8B, 0xC0});                               // mov eax, eax
+  Emit({0x12, 0x10, 0x40, 0x00, 0x19, 0x10});       // 0x40102E: the table
+  Emit({0x40, 0x00, 0x20, 0x10, 0x40, 0x00});       //
+  Emit({0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC});       //
+  // 0x401040: mov dword ptr [0x403000], 0x401040.
+  Emit({0xC7, 0x05, 0x00, 0x30, 0x40, 0x00, 0x40, 0x10, 0x40, 0x00});
+  Emit({0xB9, 0x00, 0x20, 0x40, 0x00}); // mov ecx, 0x402000
+  Emit({0x8B, 0x01, 0xC3});             // mov eax, [ecx]; ret
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+  addPeSection(Img, ".rdata", 0x402000, {0x40, 0x10, 0x40, 0x00},
+               SegmentFlags::Readable);
+  addPeSection(Img, ".data", 0x403000, std::vector<uint8_t>(4, 0),
+               SegmentFlags::Readable | SegmentFlags::Writable);
+  recordAbsolutePointerRelocations(Img, {{0x40100E, 0x40102E, InvalidVA},
+                                         {0x40102E, 0x401012, InvalidVA},
+                                         {0x401032, 0x401019, InvalidVA},
+                                         {0x401036, 0x401020, InvalidVA},
+                                         {0x401042, 0x403000, InvalidVA},
+                                         {0x401046, 0x401040, InvalidVA},
+                                         {0x40104B, 0x402000, InvalidVA},
+                                         {0x402000, 0x401040, InvalidVA}});
+  coff_loader::recordRelocatedPointerRunsInCode(Img);
+  return Img;
+}
+
+} // namespace
+
+TEST(X86_32_FunctionDiscovery, SwitchTableAmongCodeBelongsToItsFunction) {
+  BinaryImage Img = makeSwitchTableAmongCode();
+  // The table is data the code reads, though .text holds it; the two fields
+  // of one instruction stay that instruction's operands.
+  EXPECT_TRUE(Img.DataInCode.count(0x40102E));
+  for (va_t Slot : {0x40102Eu, 0x401032u, 0x401036u}) {
+    EXPECT_TRUE(Img.CodePtrRelocSlots.count(Slot)) << std::hex << Slot;
+    EXPECT_FALSE(Img.CodeAddressRelocOperands.count(Slot)) << std::hex << Slot;
+  }
+  EXPECT_TRUE(Img.DataAddressRelocOperands.count(0x40100E));
+  EXPECT_TRUE(Img.DataAddressRelocOperands.count(0x401042));
+  EXPECT_TRUE(Img.CodeAddressRelocOperands.count(0x401046));
+
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  const auto Functions = Detector.detect(Img, Dec);
+  EXPECT_TRUE(hasEntry(Functions, 0x401000));
+  EXPECT_TRUE(hasEntry(Functions, 0x401040));
+  for (va_t Case : {0x401012u, 0x401019u, 0x401020u})
+    EXPECT_FALSE(hasEntry(Functions, Case))
+        << "0x" << std::hex << Case << " is a case of the switch whose table "
+        << "follows its code";
+
+  std::set<va_t> Entries;
+  for (const auto &F : Functions)
+    Entries.insert(F.first);
+  CFGBuilder CFG;
+  CFG.setKnownFuncEntries(&Entries);
+  const LowFunc Switch = CFG.build(Img, Dec, 0x401000, "switch_on_arg");
+  ASSERT_EQ(Switch.JumpTables.size(), 1u)
+      << "an aligned anchor past the misaligned table does not end it";
+  EXPECT_EQ(Switch.JumpTables.front().BaseAddr, 0x40102Eu);
+  EXPECT_EQ(std::set<va_t>(Switch.JumpTables.front().Targets.begin(),
+                           Switch.JumpTables.front().Targets.end()),
+            (std::set<va_t>{0x401012, 0x401019, 0x401020}));
 }
