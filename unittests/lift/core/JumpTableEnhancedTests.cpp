@@ -3570,6 +3570,51 @@ static fs::path recursiveSwitchX64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_jumptable_recursive.o";
 }
 
+static fs::path rbpTableBaseX64Obj() {
+  return fs::path(TEST_OBJ_DIR) / "test_jumptable_rbp_base.o";
+}
+
+// `rbp_dispatch` loads RBP with the table address before the read. A frame
+// register that holds a constant there is no frame base, so the stack-table
+// probe never runs: even with no stack-table budget, the table is the plain
+// relative table whose offsets start .rodata.
+TEST_F(JTE_X86_64, RBPLoadedWithATableAddressIsNoFrameBase) {
+  auto ImageOrErr = neverd::loadBinary(rbpTableBaseX64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  const neverd::Symbol *Function = Image.findSymbol("rbp_dispatch");
+  ASSERT_NE(Function, nullptr);
+  const neverd::Section *Rodata = nullptr;
+  for (const neverd::Section &Section : Image.Sections)
+    if (Section.Name == ".rodata")
+      Rodata = &Section;
+  ASSERT_NE(Rodata, nullptr);
+  std::vector<neverd::va_t> Expected;
+  for (size_t Case = 0; Case < 6; ++Case) {
+    const uint8_t *Bytes = Image.readVA(Rodata->VA + Case * 4, 4);
+    ASSERT_NE(Bytes, nullptr);
+    int32_t Entry = 0;
+    std::memcpy(&Entry, Bytes, sizeof(Entry));
+    Expected.push_back(Rodata->VA + static_cast<int64_t>(Entry));
+  }
+
+  for (size_t Budget :
+       {size_t{0}, size_t{neverd::limits::kMaxJumpTableStackEvidenceWork}}) {
+    SCOPED_TRACE(Budget);
+    neverd::Decoder Decoder;
+    ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+    neverd::CFGBuilder Builder;
+    Builder.setStackTableEvidenceBudgetForTesting(Budget);
+    const neverd::LowFunc Low =
+        Builder.build(Image, Decoder, Function->Addr, Function->Name);
+    ASSERT_EQ(Low.JumpTables.size(), 1u);
+    EXPECT_EQ(Low.JumpTables.front().BaseAddr, Rodata->VA);
+    EXPECT_EQ(Low.JumpTables.front().Targets, Expected);
+    EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+  }
+}
+
 // Every case of `evaluate` calls `evaluate`. Such a call enters at the
 // function's entry, as every invocation does, so it reaches the dispatch only
 // through the guard; only a call to an interior address is another entry.
