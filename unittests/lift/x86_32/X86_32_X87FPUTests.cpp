@@ -654,6 +654,45 @@ TEST(X87CallGraphCache, IndependentBuildersRetainTheSameCallAndReturnIR) {
   }
 }
 
+TEST(X87CallGraphCache, OwnedAndEqualInventoriesShareGraphsOthersDoNot) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  const BinaryImage Image = x87CallLoopImage(Arch::X64, BinaryFormat::ELF);
+  const std::set<va_t> Entries{0x1000, 0x1100, 0x1200};
+  const std::set<va_t> Copy = Entries;
+  const std::set<va_t> Other{0x1000, 0x1100};
+  auto Cache = createX87CallGraphCache(nullptr, nullptr, false,
+                                       X87CallGraphCacheLimits(), &Entries);
+  // Each build reports the cache's hits and graphs after it.
+  const auto Build = [&](const std::set<va_t> &Known, bool Shared,
+                         std::array<size_t, 3> *Stats = nullptr) {
+    Decoder Dec;
+    EXPECT_TRUE(Dec.init(Image));
+    CFGBuilder Builder;
+    Builder.setKnownFuncEntries(&Known);
+    if (Shared)
+      Builder.setX87CallGraphCache(Cache);
+    std::string Dump;
+    llvm::raw_string_ostream OS(Dump);
+    Pipeline::dumpLowIR({Builder.build(Image, Dec, 0x1000, "x87_call_loop")},
+                        OS);
+    if (Stats)
+      *Stats = Access::stats(Builder);
+    return Dump;
+  };
+  const std::string Cold = Build(Entries, false);
+  std::array<size_t, 3> First{}, Again{}, Equal{};
+  EXPECT_EQ(Build(Entries, true, &First), Cold);
+  ASSERT_GT(First[1], 0u);
+  // The owner's inventory matches by identity; an equal set it does not own
+  // matches by contents.  Both find the graphs the first build published.
+  EXPECT_EQ(Build(Entries, true, &Again), Cold);
+  EXPECT_GT(Again[0], First[0]);
+  EXPECT_EQ(Build(Copy, true, &Equal), Cold);
+  EXPECT_GT(Equal[0], Again[0]);
+  // Another inventory binds other graphs, as a cold build would.
+  EXPECT_EQ(Build(Other, true), Build(Other, false));
+}
+
 TEST(X87CallGraphCache,
      PublishedCodeReferencesRefreshTagsWithoutChangingRawGraphs) {
   using Access = detail::X87CallGraphCacheTestAccess;

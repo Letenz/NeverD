@@ -329,6 +329,8 @@ class X87CallGraphCache {
     std::optional<std::vector<va_t>> Entries;
     std::optional<std::vector<va_t>> ProtectedSlots;
     std::optional<std::vector<va_t>> UnsafeBranches;
+    // The cache's immutable inventory when Entries was frozen from it.
+    const std::set<va_t> *EntriesSource = nullptr;
   };
   struct Entry {
     va_t Address;
@@ -363,6 +365,7 @@ class X87CallGraphCache {
   size_t Hits = 0;
   const NoReturnCalleeProver *NonReentrantProver;
   const libc::NoReturnTargetIndex *NonReentrantTargets;
+  const std::set<va_t> *ImmutableEntries;
   std::list<std::shared_ptr<PendingGraph>> Pending;
   size_t PendingBytes = 0;
   size_t Leaders = 0, Waits = 0, NonWaitingMisses = 0;
@@ -396,10 +399,12 @@ class X87CallGraphCache {
 public:
   X87CallGraphCache(const NoReturnCalleeProver *Prover,
                     const libc::NoReturnTargetIndex *Targets, bool RetainBodies,
-                    const X87CallGraphCacheLimits &Limits)
+                    const X87CallGraphCacheLimits &Limits,
+                    const std::set<va_t> *Entries)
       : MaxGraphs(Limits.Entries), MaxBytes(Limits.GraphBytes),
         MaxSummaryBytes(Limits.BodyBytes), NonReentrantProver(Prover),
-        NonReentrantTargets(Targets), RetainCallRegisterBodies(RetainBodies) {}
+        NonReentrantTargets(Targets), ImmutableEntries(Entries),
+        RetainCallRegisterBodies(RetainBodies) {}
 
 private:
   bool canRetainSummary(const CFGBuilder &B) const {
@@ -662,7 +667,10 @@ private:
            C.NoReturnDepth == B.NoReturnCalleeDepth + 1 &&
            C.RelocationRoots == B.AbsoluteRelocationRoots &&
            C.CodeOwners == B.ExecutableCodeOwners &&
-           sameSet(C.Entries, B.KnownFuncEntries) &&
+           // The immutable inventory a context was frozen from still holds
+           // what it held; any other set is compared entry by entry.
+           ((C.EntriesSource && C.EntriesSource == B.KnownFuncEntries) ||
+            sameSet(C.Entries, B.KnownFuncEntries)) &&
            sameSet(C.ProtectedSlots, B.ProtectedJumpTableRelocationSlots) &&
            sameSet(C.UnsafeBranches, B.UnsafeJumpTableBranches);
   }
@@ -697,7 +705,7 @@ private:
         return std::nullopt;
     return Bytes;
   }
-  static Context freezeContext(const CFGBuilder &B) {
+  Context freezeContext(const CFGBuilder &B) const {
     return {B.CurrentImg,
             B.CurrentImg->Arch,
             B.CurrentImg->Mode,
@@ -711,7 +719,10 @@ private:
             B.ExecutableCodeOwners,
             freeze(B.KnownFuncEntries),
             freeze(B.ProtectedJumpTableRelocationSlots),
-            freeze(B.UnsafeJumpTableBranches)};
+            freeze(B.UnsafeJumpTableBranches),
+            ImmutableEntries && B.KnownFuncEntries == ImmutableEntries
+                ? ImmutableEntries
+                : nullptr};
   }
   Request acquire(const CFGBuilder &B, va_t Address) {
     std::unique_lock<std::mutex> Lock(Mutex);
@@ -924,10 +935,11 @@ std::shared_ptr<X87CallGraphCache>
 createX87CallGraphCache(const NoReturnCalleeProver *NonReentrantProver,
                         const libc::NoReturnTargetIndex *NonReentrantTargets,
                         bool RetainCallRegisterBodies,
-                        const X87CallGraphCacheLimits &Limits) {
-  return std::make_shared<X87CallGraphCache>(NonReentrantProver,
-                                             NonReentrantTargets,
-                                             RetainCallRegisterBodies, Limits);
+                        const X87CallGraphCacheLimits &Limits,
+                        const std::set<va_t> *ImmutableEntries) {
+  return std::make_shared<X87CallGraphCache>(
+      NonReentrantProver, NonReentrantTargets, RetainCallRegisterBodies, Limits,
+      ImmutableEntries);
 }
 
 std::array<size_t, 3> CFGBuilder::x87CallGraphCacheStatsForTesting() const {
