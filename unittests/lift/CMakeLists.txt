@@ -2595,6 +2595,7 @@ set(AARCH64_TEST_SOURCES
   aarch64/test_jumptable_index_identity_a64.s
   aarch64/test_jumptable_gcc_compact_a64.s
   aarch64/test_jumptable_inflate_gcc_a64.s
+  aarch64/test_jumptable_byte_loop_a64.s
   aarch64/test_jumptable_masked_lane_a64.s
   aarch64/test_pageoff_wrong_base_a64.s
   aarch64/test_pageoff_reaching_a64.s

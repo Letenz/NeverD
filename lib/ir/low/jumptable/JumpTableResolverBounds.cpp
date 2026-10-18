@@ -2932,13 +2932,41 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
     return 0;
   }
 
+  // Masks are proposed from the code between the entry and the dispatch, and
+  // elsewhere only by writes to the index register itself: a loop that
+  // fetches and masks its next opcode at the end of a handler writes the
+  // register the dispatch reads and jumps back.  A proposal is no evidence;
+  // the occurrence queries below decide which producers reach the index.
+  const TargetRegInfo &IndexTRI = getTargetRegInfo(CurrentImg->Arch);
+  std::optional<std::pair<uint64_t, uint16_t>> IndexContainer;
+  if (Info.IndexValueAtUse.isReg())
+    IndexContainer = IndexTRI.findWideReg(Info.IndexValueAtUse.Offset,
+                                          Info.IndexValueAtUse.Size);
+  auto proposesMasks = [&](va_t Addr,
+                           const InsnRecord &Insn) -> std::optional<bool> {
+    if (Addr >= CurrentFuncEntry && Addr <= Rec.Addr)
+      return true;
+    if (!IndexContainer)
+      return false;
+    if (!consumeWork(Insn.Ops.size()))
+      return std::nullopt;
+    return std::any_of(Insn.Ops.begin(), Insn.Ops.end(), [&](const LowOp &Op) {
+      return Op.Opcode == NdOp::INT_AND && Op.Output.isReg() &&
+             IndexTRI.findWideReg(Op.Output.Offset, Op.Output.Size) ==
+                 *IndexContainer;
+    });
+  };
   if (!consumeWork(orderedEvidenceLookupWork(Insns.size())))
     return failGraphIncomplete();
   size_t RetainedOpCount = 0;
-  for (auto It = Insns.lower_bound(CurrentFuncEntry);
-       It != Insns.end() && It->first <= Rec.Addr; ++It) {
+  for (auto It = Insns.begin(); It != Insns.end(); ++It) {
     if (!consumeWork(1))
       return failGraphIncomplete();
+    const std::optional<bool> Proposes = proposesMasks(It->first, It->second);
+    if (!Proposes)
+      return failGraphIncomplete();
+    if (!*Proposes)
+      continue;
     if (ReachableInstructions &&
         !consumeWork(orderedEvidenceLookupWork(ReachableInstructions->size())))
       return failGraphIncomplete();
@@ -2957,10 +2985,14 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
     return failGraphIncomplete();
   std::vector<LowOp> Ops;
   Ops.reserve(RetainedOpCount);
-  for (auto It = Insns.lower_bound(CurrentFuncEntry);
-       It != Insns.end() && It->first <= Rec.Addr; ++It) {
+  for (auto It = Insns.begin(); It != Insns.end(); ++It) {
     if (!consumeWork(1))
       return failGraphIncomplete();
+    const std::optional<bool> Proposes = proposesMasks(It->first, It->second);
+    if (!Proposes)
+      return failGraphIncomplete();
+    if (!*Proposes)
+      continue;
     if (ReachableInstructions &&
         !consumeWork(orderedEvidenceLookupWork(ReachableInstructions->size())))
       return failGraphIncomplete();
