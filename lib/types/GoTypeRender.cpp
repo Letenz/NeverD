@@ -262,6 +262,11 @@ uint32_t GoWriter::goAlign(const TypeExpr &Type, uint32_t Pack) const {
 }
 
 std::string GoWriter::function(const FunctionDef &Function) const {
+  // Go names every parameter or none: where C names some, the others are
+  // blank.
+  const bool Named = llvm::any_of(Function.Params, [](const Parameter &Param) {
+    return !Param.Name.empty();
+  });
   std::string Text = "func(";
   for (size_t I = 0; I < Function.Params.size(); ++I) {
     if (I)
@@ -269,10 +274,14 @@ std::string GoWriter::function(const FunctionDef &Function) const {
     const Parameter &Param = Function.Params[I];
     if (!Param.Name.empty())
       Text += Names.member(Param.Name) + " ";
+    else if (Named)
+      Text += "_ ";
     Text += Param.Type ? type(*Param.Type) : "int32";
   }
   if (Function.Variadic)
-    Text += Function.Params.empty() ? "...uintptr" : ", ...uintptr";
+    Text += Function.Params.empty() ? "...uintptr"
+            : Named                 ? ", _ ...uintptr"
+                                    : ", ...uintptr";
   Text += ")";
   if (Function.Return && !(Function.Return->Kind == TypeExprKind::Builtin &&
                            Function.Return->TheBuiltin == Builtin::Void))

@@ -904,6 +904,56 @@ TEST(TypeRender, ChecksLeaveTheFillersOut) {
   EXPECT_FALSE(contains(renderTypes(Back, {}, Options), "__filler0) =="));
 }
 
+TEST(TypeRender, TheWindowsRuntimesRecordsStayMinGWsUnderMinGW) {
+  // A Windows program's records of the C runtime, which MinGW's <stdint.h>
+  // declares too: under MinGW the header's own take other names, which
+  // leave MinGW's after it.
+  TypeLibrary Library(DataModel::LLP64);
+  ASSERT_TRUE(parseCTypes("struct tagLC_ID { unsigned short wLanguage; "
+                          "unsigned short wCountry; unsigned short "
+                          "wCodePage; };\n"
+                          "typedef long long time_t;\n"
+                          "struct uses { struct tagLC_ID id; time_t when; };\n",
+                          Library)
+                  .ok());
+  const std::string Text = renderTypes(Library, {}, in(Language::C));
+  for (const char *Expected :
+       {"#if defined(__MINGW32__)\n#pragma push_macro(\"tagLC_ID\")\n#define "
+        "tagLC_ID neverd_tagLC_ID\n#endif\n",
+        "#if defined(_WIN32)\n#pragma push_macro(\"time_t\")\n#define time_t "
+        "neverd_time_t\n#endif\n",
+        "#if defined(__MINGW32__)\n#pragma pop_macro(\"tagLC_ID\")\n#endif\n"})
+    EXPECT_TRUE(contains(Text, Expected)) << Expected << "\n" << Text;
+  // A name no compiler's headers declare keeps its own.
+  EXPECT_FALSE(contains(Text, "push_macro(\"uses\")")) << Text;
+  // Read back, the types keep their names.
+  TypeLibrary Back(DataModel::LLP64);
+  ASSERT_TRUE(parseCTypes(Text, Back).ok());
+  EXPECT_NE(Back.find("tagLC_ID"), nullptr);
+  EXPECT_EQ(Back.find("neverd_tagLC_ID"), nullptr);
+}
+
+TEST(TypeRender, KeywordBitfieldsAndPartlyNamedParametersRender) {
+  // A bit-field named type, Rust's r#type, takes the setter set_type; Go
+  // names every parameter of a function or none.
+  TypeLibrary Library(DataModel::LP64);
+  ASSERT_TRUE(parseCTypes("struct flags { unsigned type : 3; unsigned rest : "
+                          "5; };\n"
+                          "typedef void recorder(int, void *, unsigned type, "
+                          "int);\n"
+                          "typedef void printer(char *fmt, ...);\n",
+                          Library)
+                  .ok());
+  const std::string Rust = renderTypes(Library, {}, in(Language::Rust));
+  EXPECT_TRUE(contains(Rust, "pub fn set_type(&mut self")) << Rust;
+  EXPECT_FALSE(contains(Rust, "set_r#")) << Rust;
+  const std::string Go = renderTypes(Library, {}, in(Language::Go));
+  EXPECT_TRUE(
+      contains(Go, "func(_ int32, _ unsafe.Pointer, type_ uint32, _ int32)"))
+      << Go;
+  EXPECT_TRUE(contains(Go, "func(fmt *int8, _ ...uintptr)")) << Go;
+}
+
 TEST(TypeRender, RustImportsCoreVoidWhereItIsSpelled) {
   // An import nothing uses warns, which a check of warnings fails on.
   TypeLibrary Library;
@@ -939,6 +989,40 @@ TEST(TypeRender, NamesStepAroundKeywords) {
                        "pub r#type: u32,"));
   EXPECT_TRUE(
       contains(renderType(Library, Words, in(Language::Go)), "\ttype_ uint32"));
+}
+
+TEST(TypeRender, UnitsSpellReservedTypedefsInExactWidths) {
+  // Darwin's headers define __darwin_size_t as unsigned long, which
+  // uint64_t, an unsigned long long there, is not: a decompiled unit that
+  // defined it would not compile beside them, and spells what it stands
+  // for instead, as wide whatever system reads it.
+  TypeLibrary Library(DataModel::LP64);
+  ASSERT_TRUE(parseCTypes("typedef unsigned long __darwin_size_t;\n"
+                          "typedef struct _opaque *__darwin_handle_t;\n"
+                          "typedef __darwin_size_t length_t;\n"
+                          "struct buffer { __darwin_size_t size;\n"
+                          "  __darwin_handle_t owner; length_t used; };\n",
+                          Library)
+                  .ok());
+  const LocalType *Root = Library.find("buffer");
+  const EmbeddedC Embedded = renderEmbeddedC(Library, {Root}, in(Language::C));
+  EXPECT_FALSE(contains(Embedded.Text, "__darwin")) << Embedded.Text;
+  EXPECT_TRUE(contains(Embedded.Text, "uint64_t size;")) << Embedded.Text;
+  EXPECT_TRUE(contains(Embedded.Text, "typedef uint64_t length_t;"))
+      << Embedded.Text;
+  // The record the reserved typedef points to is declared, as one a
+  // definition points to is.
+  EXPECT_TRUE(contains(Embedded.Text, "struct _opaque;")) << Embedded.Text;
+  EXPECT_TRUE(llvm::is_contained(Embedded.DeclaredTypes, "_opaque"));
+  EXPECT_FALSE(llvm::is_contained(Embedded.Types, "__darwin_size_t"));
+  // The code beside the definitions spells it so too.
+  EXPECT_EQ(spellType(Library, *makeNamed("__darwin_size_t", TypeKind::Typedef),
+                      "n", in(Language::C)),
+            "uint64_t n");
+  // A view of the library shows the typedef as the library has it.
+  EXPECT_TRUE(contains(
+      renderType(Library, *Library.find("__darwin_size_t"), in(Language::C)),
+      "typedef uint64_t __darwin_size_t;"));
 }
 
 TEST(TypeRender, NamesThatAreNoIdentifiersCompile) {

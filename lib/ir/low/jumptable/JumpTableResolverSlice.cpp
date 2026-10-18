@@ -81,6 +81,19 @@ bool detail::recordUniqueJumpTableProofPoint(
 
 namespace {
 
+/// The alignment `and sp, -Alignment` applies: a scalar mask whose value at
+/// the operation's width is minus a power of two.
+std::optional<uint64_t> stackAlignment(const NdVar &Mask, uint16_t Width) {
+  const std::optional<int64_t> Value = stackSignedDelta(Mask, Width);
+  if (!Value || *Value >= -1 || *Value == std::numeric_limits<int64_t>::min())
+    return std::nullopt;
+  const uint64_t Alignment = static_cast<uint64_t>(-*Value);
+  if (!std::has_single_bit(Alignment) ||
+      Alignment > detail::AffineFrameState::MaxAlignment)
+    return std::nullopt;
+  return Alignment;
+}
+
 size_t orderedSetLookupWork(size_t Count) {
   // The evidence charge is 1 + ceil(log2(Count)), including one unit for an
   // empty lookup. Compute it without walking the tree height for every debit.
@@ -5889,6 +5902,21 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     const auto Delta = stackSignedDelta(Constant, ArithmeticSize);
     return Delta ? FrameStates.adjust(Base, *Delta, Subtract) : frameInvalid();
   };
+  // `and sp, -2^k` realigns the frame. Its result is a new anchor, not an
+  // offset of its input: the distance is known only within the alignment.
+  auto alignFrame = [&](int Block, int Before, const LowOp &Def,
+                        unsigned Depth) {
+    if (Def.NumInputs < 2 || !CurrentImg ||
+        Def.Output.Size != CurrentImg->getPointerSize())
+      return frameInvalid();
+    for (unsigned MaskSide = 0; MaskSide < 2; ++MaskSide)
+      if (const auto Alignment =
+              stackAlignment(Def.Inputs[MaskSide], Def.Output.Size))
+        return FrameStates.align(
+            resolveFrameVar(Block, Before, Def.Inputs[1 - MaskSide], Depth + 1),
+            *Alignment);
+    return frameInvalid();
+  };
 
   resolveFrameVar = [&](int Block, int Before, const NdVar &Value,
                         unsigned Depth) -> FrameResult {
@@ -5947,6 +5975,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         Result = adjustFrame(
             resolveFrameVar(Block, DefIndex, Def.Inputs[1], Depth + 1),
             Def.Inputs[0], Def.Output.Size, false);
+    } else if (Def.Opcode == NdOp::INT_AND) {
+      Result = alignFrame(Block, DefIndex, Def, Depth);
     }
     const std::optional<bool> Guarded = instructionIsGuarded(Def.Addr);
     if (!Guarded)
@@ -6076,6 +6106,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
           Result =
               adjustFrame(resolveFrameVar(Block, I, Def.Inputs[1], Depth + 1),
                           Def.Inputs[0], Def.Output.Size, false);
+      } else if (Def.Opcode == NdOp::INT_AND) {
+        Result = alignFrame(Block, I, Def, Depth);
       }
       const std::optional<bool> Guarded = instructionIsGuarded(Def.Addr);
       if (!Guarded) {
@@ -6137,6 +6169,58 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     return FrameStates.define(Reference, Result) ? Reference : frameInvalid();
   };
 
+  // A realigned frame's cells are keyed by their anchor, a base no register
+  // number can collide with.
+  constexpr uint64_t RealignedFrameBase = uint64_t{1} << 63;
+  auto frameBaseOf = [&](uint32_t Anchor) {
+    return Anchor ? RealignedFrameBase | Anchor : TRI.StackPointer;
+  };
+  // Whether two frame cells may share a byte. Cells of one base compare
+  // exactly; otherwise each lies within the incoming-SP bounds of its anchor.
+  auto frameCellsMayOverlap = [&](uint64_t BaseA, int64_t OffsetA,
+                                  uint64_t SizeA, uint64_t BaseB,
+                                  int64_t OffsetB, uint64_t SizeB) {
+    using Span = std::pair<int64_t, int64_t>;
+    const auto span = [&](uint64_t Base, int64_t Offset,
+                          uint64_t Size) -> std::optional<Span> {
+      std::optional<Span> Bounds;
+      if (Base == TRI.StackPointer)
+        Bounds = Span{0, 0};
+      else if ((Base & RealignedFrameBase) &&
+               (Base & ~RealignedFrameBase) <=
+                   std::numeric_limits<uint32_t>::max())
+        Bounds = FrameStates.anchorBounds(
+            static_cast<uint32_t>(Base & ~RealignedFrameBase));
+      if (!Bounds ||
+          Size > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+        return std::nullopt;
+      const auto Begin = stackCheckedOffset(Bounds->first, Offset, false);
+      const auto High = stackCheckedOffset(Bounds->second, Offset, false);
+      const auto End =
+          High ? stackCheckedOffset(*High, static_cast<int64_t>(Size), false)
+               : std::nullopt;
+      if (!Begin || !End)
+        return std::nullopt;
+      return Span{*Begin, *End};
+    };
+    if (BaseA == BaseB) {
+      const auto EndA =
+          stackCheckedOffset(OffsetA,
+                             static_cast<int64_t>(std::min<uint64_t>(
+                                 SizeA, std::numeric_limits<int64_t>::max())),
+                             false);
+      const auto EndB =
+          stackCheckedOffset(OffsetB,
+                             static_cast<int64_t>(std::min<uint64_t>(
+                                 SizeB, std::numeric_limits<int64_t>::max())),
+                             false);
+      return !EndA || !EndB || (OffsetA < *EndB && OffsetB < *EndA);
+    }
+    const auto A = span(BaseA, OffsetA, SizeA);
+    const auto B = span(BaseB, OffsetB, SizeB);
+    return !A || !B || (A->first < B->second && B->first < A->second);
+  };
+
   auto canonicalFrameSlotKey = [&](int Block, int FromIdx, const NdVar &Address,
                                    uint64_t &BaseReg, int64_t &Offset) {
     if (Block < 0 || Block >= static_cast<int>(Graph.Blocks.size()))
@@ -6155,7 +6239,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                                           /*Depth=*/0));
     if (AddressState.K != FrameResultKind::Value)
       return false;
-    BaseReg = TRI.StackPointer;
+    BaseReg = frameBaseOf(AddressState.Anchor);
     Offset = AddressState.Offset;
     return true;
   };
@@ -6222,9 +6306,14 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   // zero extension from at most two bytes, optionally scaled by a small
   // constant.  A path back to a root, a partial or predicated write, or a call
   // on the way leaves the index unbounded.
+  struct FrameStoreRange {
+    uint64_t Base;
+    int64_t Begin;
+    int64_t End;
+  };
   auto boundedFrameStoreRange =
       [&](int Block, int Before, const NdVar &Address,
-          uint16_t StoreSize) -> std::optional<std::pair<int64_t, int64_t>> {
+          uint16_t StoreSize) -> std::optional<FrameStoreRange> {
     if (Block < 0 || Block >= static_cast<int>(Graph.Blocks.size()) ||
         StoreSize == 0)
       return std::nullopt;
@@ -6347,6 +6436,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       bool Frame = false;
       int64_t Offset = 0;
       uint64_t Span = 0;
+      uint64_t Base = InvalidVA;
     };
     std::function<std::optional<Terms>(const NdVar &, int, unsigned)> split =
         [&](const NdVar &V, int From, unsigned Depth) -> std::optional<Terms> {
@@ -6359,7 +6449,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       uint64_t FrameBase = InvalidVA;
       int64_t FrameOffset = 0;
       if (canonicalFrameSlotKey(Block, From, V, FrameBase, FrameOffset))
-        return Terms{true, FrameOffset, 0};
+        return Terms{true, FrameOffset, 0, FrameBase};
       if (const int D = localDef(From, V); D >= 0) {
         const LowOp &Def = Ops[D];
         // COPY and the 32-to-64-bit address zero extension transport the
@@ -6377,19 +6467,20 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
               Left->Span + Right->Span > MaxIndexSpan)
             return std::nullopt;
           return Terms{Left->Frame || Right->Frame,
-                       Left->Offset + Right->Offset, Left->Span + Right->Span};
+                       Left->Offset + Right->Offset, Left->Span + Right->Span,
+                       Left->Frame ? Left->Base : Right->Base};
         }
       }
       if (const auto Max = indexMax(V, Block, From, Depth + 1))
-        return Terms{false, 0, *Max};
+        return Terms{false, 0, *Max, InvalidVA};
       return std::nullopt;
     };
     const auto Store = split(Address, Before, 0);
     if (!Store || !Store->Frame || Store->Span > MaxIndexSpan)
       return std::nullopt;
-    return std::make_pair(Store->Offset, Store->Offset +
-                                             static_cast<int64_t>(Store->Span) +
-                                             static_cast<int64_t>(StoreSize));
+    return FrameStoreRange{Store->Base, Store->Offset,
+                           Store->Offset + static_cast<int64_t>(Store->Span) +
+                               static_cast<int64_t>(StoreSize)};
   };
 
   // Calls obey the platform ABI: without a current-frame-derived argument,
@@ -6607,11 +6698,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
             Address.Offset > std::numeric_limits<int64_t>::max() -
                                  static_cast<int64_t>(PointerSize))
           return std::nullopt;
-        const int64_t SlotEnd = SlotOffset + static_cast<int64_t>(SlotSize);
-        const int64_t AddressEnd =
-            Address.Offset + static_cast<int64_t>(PointerSize);
-        return SlotBase == TRI.StackPointer && Address.Offset < SlotEnd &&
-               SlotOffset < AddressEnd;
+        return frameCellsMayOverlap(frameBaseOf(Address.Anchor), Address.Offset,
+                                    PointerSize, SlotBase, SlotOffset,
+                                    SlotSize);
       }
       return mayDependOnCurrentFrameAddress(Block, Before, Value, 0);
     };
@@ -6821,7 +6910,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         ResolverRootKey Root;
         if (!makeResolverRootKey(Root, "MCPY",
                                  {Op.Addr, static_cast<uint64_t>(Op.Seq),
-                                  static_cast<uint64_t>(SlotOffset), Size},
+                                  SlotBase, static_cast<uint64_t>(SlotOffset),
+                                  Size},
                                  consumeEvidence, &EvidenceBudgetExhausted)) {
           Result = resolverInvalid();
           break;
@@ -6933,10 +7023,11 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                       : Op.Output.Size;
           const auto Written =
               boundedFrameStoreRange(Block, I - 1, Address, WriteSize);
-          const std::optional<int64_t> SlotEnd =
-              stackCheckedOffset(SlotOffset, static_cast<int64_t>(Size), false);
-          if (!Written || !SlotEnd ||
-              (Written->second > SlotOffset && *SlotEnd > Written->first)) {
+          if (!Written || Written->End < Written->Begin ||
+              frameCellsMayOverlap(
+                  Written->Base, Written->Begin,
+                  static_cast<uint64_t>(Written->End - Written->Begin),
+                  SlotBase, SlotOffset, Size)) {
             // The ABI fact that makes calls transparent to a private cell
             // covers this store too: while no current-frame address can reach
             // the cell, a pointer no such address flows into cannot name it.
@@ -6965,20 +7056,22 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         }
         continue;
       }
-      // SP and FP are distinct register containers but may name the same
-      // physical frame slot after a prologue adjustment.  Until this resolver
-      // has a canonical cross-base frame key, a write through the other frame
-      // base is a may-alias barrier rather than evidence that can be skipped.
-      if (StoreBase != SlotBase) {
-        Found = true;
-        Result = resolverInvalid();
-        break;
-      }
       const NdVar &Stored =
           IsStore ? (Op.NumInputs >= 3 ? Op.Inputs[2] : Op.Inputs[1])
                   : Op.Output;
       const uint16_t StoredSize = Stored.Size;
       if (StoredSize == 0) {
+        Found = true;
+        Result = resolverInvalid();
+        break;
+      }
+      // Every key is canonical to the incoming SP or to one realignment's
+      // anchor.  A cell of another anchor is skipped only when the bounds of
+      // both anchors keep the two cells apart; any other write may alias.
+      if (StoreBase != SlotBase) {
+        if (!frameCellsMayOverlap(StoreBase, StoreOffset, StoredSize, SlotBase,
+                                  SlotOffset, Size))
+          continue;
         Found = true;
         Result = resolverInvalid();
         break;

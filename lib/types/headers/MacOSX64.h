@@ -35,13 +35,21 @@
 #endif
 #endif
 
+#ifndef NEVERD_GNU_STRUCT
+#if defined(__MINGW32__) && (defined(__i386__) || defined(__x86_64__))
+#define NEVERD_GNU_STRUCT __attribute__((gcc_struct))
+#else
+#define NEVERD_GNU_STRUCT
+#endif
+#endif
+
 #if !defined(__cplusplus) && !defined(static_assert)
 #define static_assert _Static_assert
 #endif
 
 static_assert(sizeof(long) == 8, "these types need a 64-bit long");
 
-union __mbstate_t;
+typedef union __mbstate_t __mbstate_t;
 struct __darwin_pthread_handler_rec;
 struct _opaque_pthread_attr_t;
 struct _opaque_pthread_cond_t;
@@ -111,12 +119,12 @@ struct rusage_info_v6;
 struct rlimit;
 struct proc_rlimit_control_wakeupmon;
 union wait;
-struct div_t;
-struct ldiv_t;
-struct lldiv_t;
+typedef struct div_t div_t;
+typedef struct ldiv_t ldiv_t;
+typedef struct lldiv_t lldiv_t;
 struct _malloc_zone_t;
 struct accessx_descriptor;
-struct fd_set;
+typedef struct fd_set fd_set;
 struct timespec;
 struct fssearchblock;
 struct searchstate;
@@ -134,17 +142,17 @@ struct fspecread;
 struct fattributiontag;
 struct log2phys;
 struct _filesec;
-struct _RuneEntry;
-struct _RuneRange;
-struct _RuneCharClass;
-struct _RuneLocale;
+typedef struct _RuneEntry _RuneEntry;
+typedef struct _RuneRange _RuneRange;
+typedef struct _RuneCharClass _RuneCharClass;
+typedef struct _RuneLocale _RuneLocale;
 struct tm;
 struct _xlocale;
 struct lconv;
-struct imaxdiv_t;
+typedef struct imaxdiv_t imaxdiv_t;
 struct dirent;
 struct _telldir;
-struct DIR;
+typedef struct DIR DIR;
 struct dl_info;
 struct sched_param;
 struct pthread_override_s;
@@ -154,10 +162,10 @@ struct winsize;
 struct passwd;
 struct group;
 struct stat;
-struct glob_t;
+typedef struct glob_t glob_t;
 struct re_guts;
-struct regex_t;
-struct regmatch_t;
+typedef struct regex_t regex_t;
+typedef struct regmatch_t regmatch_t;
 struct option;
 struct mach_port_status;
 struct mach_port_limits;
@@ -166,33 +174,33 @@ struct mach_port_guard_info;
 struct mach_port_qos;
 struct mach_service_port_info;
 struct mach_port_options;
-struct mach_msg_type_descriptor_t;
-struct mach_msg_port_descriptor_t;
-struct mach_msg_ool_descriptor32_t;
-struct mach_msg_ool_descriptor64_t;
-struct mach_msg_ool_descriptor_t;
-struct mach_msg_ool_ports_descriptor32_t;
-struct mach_msg_ool_ports_descriptor64_t;
-struct mach_msg_ool_ports_descriptor_t;
-struct mach_msg_guarded_port_descriptor32_t;
-struct mach_msg_guarded_port_descriptor64_t;
-struct mach_msg_guarded_port_descriptor_t;
-union mach_msg_descriptor_t;
-struct mach_msg_body_t;
-struct mach_msg_header_t;
-struct mach_msg_base_t;
-struct mach_msg_trailer_t;
-struct mach_msg_seqno_trailer_t;
-struct security_token_t;
-struct mach_msg_security_trailer_t;
-struct audit_token_t;
-struct mach_msg_audit_trailer_t;
-struct mach_msg_context_trailer_t;
-struct msg_labels_t;
-struct mach_msg_mac_trailer_t;
-struct mach_msg_empty_send_t;
-struct mach_msg_empty_rcv_t;
-union mach_msg_empty_t;
+typedef struct mach_msg_type_descriptor_t mach_msg_type_descriptor_t;
+typedef struct mach_msg_port_descriptor_t mach_msg_port_descriptor_t;
+typedef struct mach_msg_ool_descriptor32_t mach_msg_ool_descriptor32_t;
+typedef struct mach_msg_ool_descriptor64_t mach_msg_ool_descriptor64_t;
+typedef struct mach_msg_ool_descriptor_t mach_msg_ool_descriptor_t;
+typedef struct mach_msg_ool_ports_descriptor32_t mach_msg_ool_ports_descriptor32_t;
+typedef struct mach_msg_ool_ports_descriptor64_t mach_msg_ool_ports_descriptor64_t;
+typedef struct mach_msg_ool_ports_descriptor_t mach_msg_ool_ports_descriptor_t;
+typedef struct mach_msg_guarded_port_descriptor32_t mach_msg_guarded_port_descriptor32_t;
+typedef struct mach_msg_guarded_port_descriptor64_t mach_msg_guarded_port_descriptor64_t;
+typedef struct mach_msg_guarded_port_descriptor_t mach_msg_guarded_port_descriptor_t;
+typedef union mach_msg_descriptor_t mach_msg_descriptor_t;
+typedef struct mach_msg_body_t mach_msg_body_t;
+typedef struct mach_msg_header_t mach_msg_header_t;
+typedef struct mach_msg_base_t mach_msg_base_t;
+typedef struct mach_msg_trailer_t mach_msg_trailer_t;
+typedef struct mach_msg_seqno_trailer_t mach_msg_seqno_trailer_t;
+typedef struct security_token_t security_token_t;
+typedef struct mach_msg_security_trailer_t mach_msg_security_trailer_t;
+typedef struct audit_token_t audit_token_t;
+typedef struct mach_msg_audit_trailer_t mach_msg_audit_trailer_t;
+typedef struct mach_msg_context_trailer_t mach_msg_context_trailer_t;
+typedef struct msg_labels_t msg_labels_t;
+typedef struct mach_msg_mac_trailer_t mach_msg_mac_trailer_t;
+typedef struct mach_msg_empty_send_t mach_msg_empty_send_t;
+typedef struct mach_msg_empty_rcv_t mach_msg_empty_rcv_t;
+typedef union mach_msg_empty_t mach_msg_empty_t;
 struct x86_state_hdr;
 struct x86_thread_state;
 struct x86_float_state;
@@ -364,7 +372,7 @@ struct host_load_info;
 struct host_cpu_load_info;
 struct host_preferred_user_arch;
 struct mach_vm_range;
-struct mach_vm_range_recipe_v1_t;
+typedef struct mach_vm_range_recipe_v1_t mach_vm_range_recipe_v1_t;
 struct memory_object_perf_info;
 struct memory_object_attr_info;
 struct memory_object_behave_info;
@@ -400,7 +408,7 @@ struct task_power_info;
 struct task_vm_info;
 struct task_trace_memory_info;
 struct task_wait_state_info;
-struct gpu_energy_data;
+typedef struct gpu_energy_data gpu_energy_data;
 struct task_power_info_v2;
 struct task_flags_info;
 struct task_security_config_info;
@@ -438,18 +446,18 @@ struct kmod_info_32_v1;
 struct kmod_info_64_v1;
 struct dyld_kernel_image_info;
 struct dyld_kernel_process_info;
-struct malloc_introspection_t;
-struct malloc_type_layout_semantics_v0_t;
-struct malloc_type_summary_v0_t;
-union malloc_type_descriptor_v0_t;
-struct vm_range_t;
-struct malloc_statistics_t;
+typedef struct malloc_introspection_t malloc_introspection_t;
+typedef struct malloc_type_layout_semantics_v0_t malloc_type_layout_semantics_v0_t;
+typedef struct malloc_type_summary_v0_t malloc_type_summary_v0_t;
+typedef union malloc_type_descriptor_v0_t malloc_type_descriptor_v0_t;
+typedef struct vm_range_t vm_range_t;
+typedef struct malloc_statistics_t malloc_statistics_t;
 struct mstats;
 struct image_offset;
 struct _ftsent;
-struct FTS;
+typedef struct FTS FTS;
 struct FTW;
-struct wordexp_t;
+typedef struct wordexp_t wordexp_t;
 struct ctl_event_data;
 struct ctl_info;
 struct sockaddr_ctl;
@@ -557,12 +565,13 @@ struct note_command;
 struct __NSObjectFileImage;
 struct __NSModule;
 struct __NSSymbol;
-struct NSLinkEditErrorHandlers;
+typedef struct NSLinkEditErrorHandlers NSLinkEditErrorHandlers;
 struct os_unfair_lock_s;
-struct OSFifoQueueHead;
-struct OSQueueHead;
+typedef struct OSFifoQueueHead OSFifoQueueHead;
+typedef struct OSQueueHead OSQueueHead;
 struct mach_timebase_info;
 
+#pragma neverd_header("stdlib.h")
 // idtype_t: 4 bytes
 enum idtype_t
 {
@@ -570,7 +579,9 @@ enum idtype_t
     P_PID = 1,
     P_PGID = 2,
 };
+typedef enum idtype_t idtype_t;
 
+#pragma neverd_header("fcntl.h")
 // filesec_property_t: 4 bytes
 enum filesec_property_t
 {
@@ -583,7 +594,9 @@ enum filesec_property_t
     FILESEC_ACL_RAW = 100,
     FILESEC_ACL_ALLOCSIZE = 101,
 };
+typedef enum filesec_property_t filesec_property_t;
 
+#pragma neverd_header("wchar.h")
 // clockid_t: 4 bytes
 enum clockid_t
 {
@@ -596,7 +609,9 @@ enum clockid_t
     _CLOCK_PROCESS_CPUTIME_ID = 12,
     _CLOCK_THREAD_CPUTIME_ID = 16,
 };
+typedef enum clockid_t clockid_t;
 
+#pragma neverd_header("spawn.h")
 // mpo_flags_t: 4 bytes
 enum mpo_flags_t : unsigned int
 {
@@ -609,6 +624,7 @@ enum mpo_flags_t : unsigned int
     MPO_EXCEPTION_PORT = 0x8000,
     MPO_CONNECTION_PORT_WITH_PORT_ARRAY = 0x10000,
 };
+typedef enum mpo_flags_t mpo_flags_t;
 
 // mach_port_guard_exception_codes: 4 bytes
 enum mach_port_guard_exception_codes
@@ -716,13 +732,16 @@ enum ipc_info_object_type_t : unsigned int
     IPC_OTYPE_THREAD_RESUME = 0x36,
     IPC_OTYPE_UNKNOWN = 0xFFFFFFFF,
 };
+typedef enum ipc_info_object_type_t ipc_info_object_type_t;
 
+#pragma neverd_header("search.h")
 // ACTION: 4 bytes
 enum ACTION
 {
     FIND = 0,
     ENTER = 1,
 };
+typedef enum ACTION ACTION;
 
 // VISIT: 4 bytes
 enum VISIT
@@ -732,7 +751,9 @@ enum VISIT
     endorder = 2,
     leaf = 3,
 };
+typedef enum VISIT VISIT;
 
+#pragma neverd_header("sys/uio.h")
 // uio_rw: 4 bytes
 enum uio_rw
 {
@@ -740,6 +761,7 @@ enum uio_rw
     UIO_WRITE = 1,
 };
 
+#pragma neverd_header("sys/sysctl.h")
 // audit_session_flags: 4 bytes
 enum audit_session_flags
 {
@@ -751,6 +773,7 @@ enum audit_session_flags
     AU_SESSION_FLAG_HAS_AUTHENTICATED = 0x4000,
 };
 
+#pragma neverd_header("sys/mount.h")
 // graftdmg_type_t: 4 bytes
 enum graftdmg_type_t : unsigned int
 {
@@ -764,6 +787,7 @@ enum graftdmg_type_t : unsigned int
     GRAFTDMG_CRYPTEX_MOBILE_ASSET_WITH_CODE = 9,
     GRAFTDMG_CRYPTEX_MAX = 9,
 };
+typedef enum graftdmg_type_t graftdmg_type_t;
 
 // cryptex_auth_type_t: 4 bytes
 enum cryptex_auth_type_t : unsigned int
@@ -775,7 +799,9 @@ enum cryptex_auth_type_t : unsigned int
     CRYPTEX_AUTH_MOBILE_ASSET_WITH_CODE = 9,
     CRYPTEX_AUTH_MAX = 9,
 };
+typedef enum cryptex_auth_type_t cryptex_auth_type_t;
 
+#pragma neverd_header("malloc/malloc.h")
 // virtual_memory_guard_exception_code_t: 4 bytes
 enum virtual_memory_guard_exception_code_t : unsigned int
 {
@@ -798,6 +824,7 @@ enum virtual_memory_guard_exception_code_t : unsigned int
     kGUARD_EXC_GUARD_OBJECT_ASYNC_USER_FAULT = 203,
     kGUARD_EXC_GUARD_OBJECT_ASYNC_KERN_FAULT = 204,
 };
+typedef enum virtual_memory_guard_exception_code_t virtual_memory_guard_exception_code_t;
 
 // mach_vm_range_flavor_t: 4 bytes
 enum mach_vm_range_flavor_t : unsigned int
@@ -805,12 +832,14 @@ enum mach_vm_range_flavor_t : unsigned int
     MACH_VM_RANGE_FLAVOR_INVALID = 0,
     MACH_VM_RANGE_FLAVOR_V1 = 1,
 };
+typedef enum mach_vm_range_flavor_t mach_vm_range_flavor_t;
 
 // mach_vm_range_flags_t: 8 bytes
 enum mach_vm_range_flags_t : unsigned long long
 {
     MACH_VM_RANGE_NONE = 0,
 };
+typedef enum mach_vm_range_flags_t mach_vm_range_flags_t;
 
 // mach_vm_range_tag_t: 2 bytes
 enum mach_vm_range_tag_t : unsigned short
@@ -819,6 +848,7 @@ enum mach_vm_range_tag_t : unsigned short
     MACH_VM_RANGE_DATA = 1,
     MACH_VM_RANGE_FIXED = 2,
 };
+typedef enum mach_vm_range_tag_t mach_vm_range_tag_t;
 
 // task_inspect_flavor: 4 bytes
 enum task_inspect_flavor
@@ -873,6 +903,7 @@ enum malloc_zone_malloc_options_t : unsigned long long
     MALLOC_ZONE_MALLOC_OPTION_CLEAR = 1,
     MALLOC_ZONE_MALLOC_OPTION_CANONICAL_TAG = 2,
 };
+typedef enum malloc_zone_malloc_options_t malloc_zone_malloc_options_t;
 
 // malloc_type_callsite_flags_v0_t: 4 bytes
 enum malloc_type_callsite_flags_v0_t
@@ -881,6 +912,7 @@ enum malloc_type_callsite_flags_v0_t
     MALLOC_TYPE_CALLSITE_FLAGS_V0_FIXED_SIZE = 1,
     MALLOC_TYPE_CALLSITE_FLAGS_V0_ARRAY = 2,
 };
+typedef enum malloc_type_callsite_flags_v0_t malloc_type_callsite_flags_v0_t;
 
 // malloc_type_kind_v0_t: 4 bytes
 enum malloc_type_kind_v0_t
@@ -890,7 +922,9 @@ enum malloc_type_kind_v0_t
     MALLOC_TYPE_KIND_V0_SWIFT = 2,
     MALLOC_TYPE_KIND_V0_CXX = 3,
 };
+typedef enum malloc_type_kind_v0_t malloc_type_kind_v0_t;
 
+#pragma neverd_header("mach-o/dyld.h")
 // NXByteOrder: 4 bytes
 enum NXByteOrder
 {
@@ -916,6 +950,7 @@ enum NSObjectFileImageReturnCode
     NSObjectFileImageFormat = 4,
     NSObjectFileImageAccess = 5,
 };
+typedef enum NSObjectFileImageReturnCode NSObjectFileImageReturnCode;
 
 // NSLinkEditErrors: 4 bytes
 enum NSLinkEditErrors
@@ -929,6 +964,7 @@ enum NSLinkEditErrors
     NSLinkEditMultiplyDefinedError = 6,
     NSLinkEditUndefinedError = 7,
 };
+typedef enum NSLinkEditErrors NSLinkEditErrors;
 
 // NSOtherErrorNumbers: 4 bytes
 enum NSOtherErrorNumbers
@@ -939,24 +975,30 @@ enum NSOtherErrorNumbers
     NSOtherErrorLazyInit = 3,
     NSOtherErrorInvalidArgs = 4,
 };
+typedef enum NSOtherErrorNumbers NSOtherErrorNumbers;
 
+#pragma neverd_header("os/lock.h")
 // os_unfair_lock_flags_t: 4 bytes
 enum os_unfair_lock_flags_t : unsigned int
 {
     OS_UNFAIR_LOCK_FLAG_NONE = 0x0,
     OS_UNFAIR_LOCK_FLAG_ADAPTIVE_SPIN = 0x40000,
 };
+typedef enum os_unfair_lock_flags_t os_unfair_lock_flags_t;
 
+#pragma neverd_header("stdio.h")
 typedef unsigned long __darwin_size_t;
 
 typedef __darwin_size_t size_t;
 
+#pragma neverd_header()
 typedef long ptrdiff_t;
 
 typedef __int128 __int128_t;
 
 typedef unsigned __int128 __uint128_t;
 
+#pragma neverd_header("stdio.h")
 typedef signed char __int8_t;
 
 typedef unsigned char __uint8_t;
@@ -986,7 +1028,7 @@ union __mbstate_t
     long long _mbstateL;
 };
 
-typedef union __mbstate_t __darwin_mbstate_t;
+typedef __mbstate_t __darwin_mbstate_t;
 
 typedef long __darwin_ptrdiff_t;
 
@@ -1181,9 +1223,11 @@ struct __sbuf
     int _size;
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __sFILEX;
 
+#pragma neverd_header("stdio.h")
 // __sFILE: 0x98 (152) bytes
 struct __sFILE
 {
@@ -1215,6 +1259,7 @@ typedef __darwin_off_t off_t;
 
 typedef __darwin_ssize_t ssize_t;
 
+#pragma neverd_header("stdlib.h")
 typedef __darwin_pid_t pid_t;
 
 typedef __darwin_id_t id_t;
@@ -1243,7 +1288,7 @@ struct __darwin_i386_thread_state
 };
 
 // __darwin_fp_control: 0x2 (2) bytes
-struct __darwin_fp_control
+struct NEVERD_GNU_STRUCT __darwin_fp_control
 {
     unsigned short __invalid : 1;
     unsigned short __denorm : 1;
@@ -1259,7 +1304,7 @@ struct __darwin_fp_control
 typedef struct __darwin_fp_control __darwin_fp_control_t;
 
 // __darwin_fp_status: 0x2 (2) bytes
-struct __darwin_fp_status
+struct NEVERD_GNU_STRUCT __darwin_fp_status
 {
     unsigned short __invalid : 1;
     unsigned short __denorm : 1;
@@ -1488,7 +1533,7 @@ struct __x86_instruction_state
 };
 
 // __last_branch_record: 0x18 (24) bytes
-struct __last_branch_record
+struct NEVERD_GNU_STRUCT __last_branch_record
 {
     __uint64_t __from_ip;
     __uint64_t __to_ip;
@@ -1500,7 +1545,7 @@ struct __last_branch_record
 };
 
 // __last_branch_state: 0x308 (776) bytes
-struct __last_branch_state
+struct NEVERD_GNU_STRUCT __last_branch_state
 {
     int __lbr_count;
     __uint32_t __lbr_supported_tsx : 1;
@@ -2286,14 +2331,14 @@ struct proc_rlimit_control_wakeupmon
 union wait
 {
     int w_status;
-    struct
+    struct NEVERD_GNU_STRUCT
     {
         unsigned int w_Termsig : 7;
         unsigned int w_Coredump : 1;
         unsigned int w_Retcode : 8;
         unsigned int w_Filler : 16;
     } w_T;
-    struct
+    struct NEVERD_GNU_STRUCT
     {
         unsigned int w_Stopval : 8;
         unsigned int w_Stopsig : 8;
@@ -2328,8 +2373,10 @@ struct lldiv_t
 
 typedef unsigned long long malloc_type_id_t;
 
+#pragma neverd_header("spawn.h")
 typedef unsigned int boolean_t;
 
+#pragma neverd_header("malloc/malloc.h")
 // _malloc_zone_t: 0xC8 (200) bytes
 struct _malloc_zone_t
 {
@@ -2345,7 +2392,7 @@ struct _malloc_zone_t
     const char *zone_name;
     unsigned int (*batch_malloc)(struct _malloc_zone_t *zone, size_t size, void **results, unsigned int num_requested);
     void (*batch_free)(struct _malloc_zone_t *zone, void **to_be_freed, unsigned int num_to_be_freed);
-    struct malloc_introspection_t *introspect;
+    malloc_introspection_t *introspect;
     unsigned int version;
     void *(*memalign)(struct _malloc_zone_t *zone, size_t alignment, size_t size);
     void (*free_definite_size)(struct _malloc_zone_t *zone, void *ptr, size_t size);
@@ -2362,14 +2409,17 @@ struct _malloc_zone_t
 
 typedef struct _malloc_zone_t malloc_zone_t;
 
+#pragma neverd_header("stdlib.h")
 typedef __darwin_dev_t dev_t;
 
 typedef __darwin_mode_t mode_t;
 
+#pragma neverd_header("string.h")
 typedef __darwin_size_t rsize_t;
 
 typedef int errno_t;
 
+#pragma neverd_header("unistd.h")
 // accessx_descriptor: 0x10 (16) bytes
 struct accessx_descriptor
 {
@@ -2401,10 +2451,12 @@ typedef __darwin_suseconds_t suseconds_t;
 
 typedef __darwin_uuid_t uuid_t;
 
+#pragma neverd_header("semaphore.h")
 typedef unsigned long u_long;
 
 typedef unsigned short u_short;
 
+#pragma neverd_header("sys/mount.h")
 typedef u_int32_t attrgroup_t;
 
 // attrlist: 0x18 (24) bytes
@@ -2434,8 +2486,10 @@ struct fssearchblock
     struct attrlist searchattrs;
 };
 
+#pragma neverd_header("semaphore.h")
 typedef unsigned char u_char;
 
+#pragma neverd_header("sys/mount.h")
 // searchstate: 0x22C (556) bytes, packed to 1
 #pragma pack(push, 1)
 struct searchstate
@@ -2446,6 +2500,7 @@ struct searchstate
 };
 #pragma pack(pop)
 
+#pragma neverd_header("fcntl.h")
 // flock: 0x18 (24) bytes
 struct flock
 {
@@ -2577,11 +2632,14 @@ struct log2phys
 };
 #pragma pack(pop)
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct _filesec;
 
+#pragma neverd_header("fcntl.h")
 typedef struct _filesec *filesec_t;
 
+#pragma neverd_header("ctype.h")
 typedef __darwin_wint_t wint_t;
 
 // _RuneEntry: 0x18 (24) bytes
@@ -2597,7 +2655,7 @@ struct _RuneEntry
 struct _RuneRange
 {
     int __nranges;
-    struct _RuneEntry *__ranges;
+    _RuneEntry *__ranges;
 };
 
 // _RuneCharClass: 0x14 (20) bytes
@@ -2618,15 +2676,16 @@ struct _RuneLocale
     __uint32_t __runetype[256];
     __darwin_rune_t __maplower[256];
     __darwin_rune_t __mapupper[256];
-    struct _RuneRange __runetype_ext;
-    struct _RuneRange __maplower_ext;
-    struct _RuneRange __mapupper_ext;
+    _RuneRange __runetype_ext;
+    _RuneRange __maplower_ext;
+    _RuneRange __mapupper_ext;
     void *__variable;
     int __variable_len;
     int __ncharclasses;
-    struct _RuneCharClass *__charclasses;
+    _RuneCharClass *__charclasses;
 };
 
+#pragma neverd_header("wchar.h")
 typedef __darwin_mbstate_t mbstate_t;
 
 typedef __darwin_clock_t clock_t;
@@ -2649,11 +2708,14 @@ struct tm
 
 typedef __darwin_wctype_t wctype_t;
 
+#pragma neverd_header("wctype.h")
 typedef __darwin_wctrans_t wctrans_t;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct _xlocale;
 
+#pragma neverd_header("locale.h")
 typedef struct _xlocale *locale_t;
 
 // lconv: 0x60 (96) bytes
@@ -2685,12 +2747,15 @@ struct lconv
     char int_n_sign_posn;
 };
 
+#pragma neverd_header("signal.h")
 typedef __darwin_pthread_t pthread_t;
 
+#pragma neverd_header("setjmp.h")
 typedef int jmp_buf[37];
 
 typedef int sigjmp_buf[38];
 
+#pragma neverd_header("inttypes.h")
 // imaxdiv_t: 0x10 (16) bytes
 struct imaxdiv_t
 {
@@ -2698,6 +2763,7 @@ struct imaxdiv_t
     intmax_t rem;
 };
 
+#pragma neverd_header("dirent.h")
 typedef __darwin_ino_t ino_t;
 
 // dirent: 0x418 (1048) bytes
@@ -2711,9 +2777,11 @@ struct dirent
     char d_name[1024];
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct _telldir;
 
+#pragma neverd_header("dirent.h")
 // DIR: 0x88 (136) bytes
 struct DIR
 {
@@ -2729,6 +2797,7 @@ struct DIR
     struct _telldir *__dd_td;
 };
 
+#pragma neverd_header("dlfcn.h")
 // dl_info: 0x20 (32) bytes
 struct dl_info
 {
@@ -2740,6 +2809,7 @@ struct dl_info
 
 typedef struct dl_info Dl_info;
 
+#pragma neverd_header("pthread.h")
 // sched_param: 0x8 (8) bytes
 struct sched_param
 {
@@ -2765,15 +2835,18 @@ typedef __darwin_pthread_rwlockattr_t pthread_rwlockattr_t;
 
 typedef unsigned int qos_class_t;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct pthread_override_s;
 
+#pragma neverd_header("pthread.h")
 typedef struct pthread_override_s *pthread_override_t;
 
 typedef __darwin_mach_port_t mach_port_t;
 
 typedef int (*pthread_jit_write_callback_t)(void *ctx);
 
+#pragma neverd_header("semaphore.h")
 typedef unsigned int u_int;
 
 typedef unsigned short ushort;
@@ -2818,6 +2891,7 @@ typedef __darwin_fsfilcnt_t fsfilcnt_t;
 
 typedef int sem_t;
 
+#pragma neverd_header("poll.h")
 // pollfd: 0x8 (8) bytes
 struct pollfd
 {
@@ -2828,6 +2902,7 @@ struct pollfd
 
 typedef unsigned int nfds_t;
 
+#pragma neverd_header("termios.h")
 typedef unsigned long tcflag_t;
 
 typedef unsigned char cc_t;
@@ -2855,6 +2930,7 @@ struct winsize
     unsigned short ws_ypixel;
 };
 
+#pragma neverd_header("pwd.h")
 // passwd: 0x48 (72) bytes
 struct passwd
 {
@@ -2872,6 +2948,7 @@ struct passwd
 
 typedef __darwin_uuid_string_t uuid_string_t;
 
+#pragma neverd_header("grp.h")
 // group: 0x20 (32) bytes
 struct group
 {
@@ -2881,6 +2958,7 @@ struct group
     char **gr_mem;
 };
 
+#pragma neverd_header("sys/stat.h")
 // stat: 0x90 (144) bytes
 struct stat
 {
@@ -2904,6 +2982,7 @@ struct stat
     __int64_t st_qspare[2];
 };
 
+#pragma neverd_header("glob.h")
 // glob_t: 0x58 (88) bytes
 struct glob_t
 {
@@ -2924,11 +3003,14 @@ struct glob_t
     int (*gl_stat)(const char *, struct stat *);
 };
 
+#pragma neverd_header("regex.h")
 typedef __darwin_off_t regoff_t;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct re_guts;
 
+#pragma neverd_header("regex.h")
 // regex_t: 0x20 (32) bytes
 struct regex_t
 {
@@ -2945,6 +3027,7 @@ struct regmatch_t
     regoff_t rm_eo;
 };
 
+#pragma neverd_header("getopt.h")
 // option: 0x20 (32) bytes
 struct option
 {
@@ -2954,6 +3037,7 @@ struct option
     int val;
 };
 
+#pragma neverd_header("spawn.h")
 typedef void *posix_spawnattr_t;
 
 typedef void *posix_spawn_file_actions_t;
@@ -3054,7 +3138,7 @@ typedef integer_t *mach_port_info_t;
 typedef int mach_port_flavor_t;
 
 // mach_port_qos: 0x8 (8) bytes
-struct mach_port_qos
+struct NEVERD_GNU_STRUCT mach_port_qos
 {
     unsigned int name : 1;
     unsigned int prealloc : 1;
@@ -3115,7 +3199,7 @@ typedef unsigned int mach_msg_descriptor_type_t;
 
 // mach_msg_type_descriptor_t: 0xC (12) bytes, packed to 4
 #pragma pack(push, 4)
-struct mach_msg_type_descriptor_t
+struct NEVERD_GNU_STRUCT mach_msg_type_descriptor_t
 {
     natural_t pad1;
     mach_msg_size_t pad2;
@@ -3126,7 +3210,7 @@ struct mach_msg_type_descriptor_t
 
 // mach_msg_port_descriptor_t: 0xC (12) bytes, packed to 4
 #pragma pack(push, 4)
-struct mach_msg_port_descriptor_t
+struct NEVERD_GNU_STRUCT mach_msg_port_descriptor_t
 {
     mach_port_t name;
     mach_msg_size_t pad1;
@@ -3138,7 +3222,7 @@ struct mach_msg_port_descriptor_t
 
 // mach_msg_ool_descriptor32_t: 0xC (12) bytes, packed to 4
 #pragma pack(push, 4)
-struct mach_msg_ool_descriptor32_t
+struct NEVERD_GNU_STRUCT mach_msg_ool_descriptor32_t
 {
     unsigned int address;
     mach_msg_size_t size;
@@ -3151,7 +3235,7 @@ struct mach_msg_ool_descriptor32_t
 
 // mach_msg_ool_descriptor64_t: 0x10 (16) bytes, packed to 4
 #pragma pack(push, 4)
-struct mach_msg_ool_descriptor64_t
+struct NEVERD_GNU_STRUCT mach_msg_ool_descriptor64_t
 {
     unsigned long long address;
     boolean_t deallocate : 8;
@@ -3164,7 +3248,7 @@ struct mach_msg_ool_descriptor64_t
 
 // mach_msg_ool_descriptor_t: 0x10 (16) bytes, packed to 4
 #pragma pack(push, 4)
-struct mach_msg_ool_descriptor_t
+struct NEVERD_GNU_STRUCT mach_msg_ool_descriptor_t
 {
     void *address;
     boolean_t deallocate : 8;
@@ -3177,7 +3261,7 @@ struct mach_msg_ool_descriptor_t
 
 // mach_msg_ool_ports_descriptor32_t: 0xC (12) bytes, packed to 4
 #pragma pack(push, 4)
-struct mach_msg_ool_ports_descriptor32_t
+struct NEVERD_GNU_STRUCT mach_msg_ool_ports_descriptor32_t
 {
     unsigned int address;
     mach_msg_size_t count;
@@ -3190,7 +3274,7 @@ struct mach_msg_ool_ports_descriptor32_t
 
 // mach_msg_ool_ports_descriptor64_t: 0x10 (16) bytes, packed to 4
 #pragma pack(push, 4)
-struct mach_msg_ool_ports_descriptor64_t
+struct NEVERD_GNU_STRUCT mach_msg_ool_ports_descriptor64_t
 {
     unsigned long long address;
     boolean_t deallocate : 8;
@@ -3203,7 +3287,7 @@ struct mach_msg_ool_ports_descriptor64_t
 
 // mach_msg_ool_ports_descriptor_t: 0x10 (16) bytes, packed to 4
 #pragma pack(push, 4)
-struct mach_msg_ool_ports_descriptor_t
+struct NEVERD_GNU_STRUCT mach_msg_ool_ports_descriptor_t
 {
     void *address;
     boolean_t deallocate : 8;
@@ -3216,7 +3300,7 @@ struct mach_msg_ool_ports_descriptor_t
 
 // mach_msg_guarded_port_descriptor32_t: 0xC (12) bytes, packed to 4
 #pragma pack(push, 4)
-struct mach_msg_guarded_port_descriptor32_t
+struct NEVERD_GNU_STRUCT mach_msg_guarded_port_descriptor32_t
 {
     unsigned int context;
     mach_port_name_t name;
@@ -3228,7 +3312,7 @@ struct mach_msg_guarded_port_descriptor32_t
 
 // mach_msg_guarded_port_descriptor64_t: 0x10 (16) bytes, packed to 4
 #pragma pack(push, 4)
-struct mach_msg_guarded_port_descriptor64_t
+struct NEVERD_GNU_STRUCT mach_msg_guarded_port_descriptor64_t
 {
     unsigned long long context;
     mach_msg_guard_flags_t flags : 16;
@@ -3240,7 +3324,7 @@ struct mach_msg_guarded_port_descriptor64_t
 
 // mach_msg_guarded_port_descriptor_t: 0x10 (16) bytes, packed to 4
 #pragma pack(push, 4)
-struct mach_msg_guarded_port_descriptor_t
+struct NEVERD_GNU_STRUCT mach_msg_guarded_port_descriptor_t
 {
     mach_port_context_t context;
     mach_msg_guard_flags_t flags : 16;
@@ -3254,11 +3338,11 @@ struct mach_msg_guarded_port_descriptor_t
 #pragma pack(push, 4)
 union mach_msg_descriptor_t
 {
-    struct mach_msg_port_descriptor_t port;
-    struct mach_msg_ool_descriptor_t out_of_line;
-    struct mach_msg_ool_ports_descriptor_t ool_ports;
-    struct mach_msg_type_descriptor_t type;
-    struct mach_msg_guarded_port_descriptor_t guarded_port;
+    mach_msg_port_descriptor_t port;
+    mach_msg_ool_descriptor_t out_of_line;
+    mach_msg_ool_ports_descriptor_t ool_ports;
+    mach_msg_type_descriptor_t type;
+    mach_msg_guarded_port_descriptor_t guarded_port;
 };
 #pragma pack(pop)
 
@@ -3287,8 +3371,8 @@ struct mach_msg_header_t
 #pragma pack(push, 4)
 struct mach_msg_base_t
 {
-    struct mach_msg_header_t header;
-    struct mach_msg_body_t body;
+    mach_msg_header_t header;
+    mach_msg_body_t body;
 };
 #pragma pack(pop)
 
@@ -3332,7 +3416,7 @@ struct mach_msg_security_trailer_t
     mach_msg_trailer_type_t msgh_trailer_type;
     mach_msg_trailer_size_t msgh_trailer_size;
     mach_port_seqno_t msgh_seqno;
-    struct security_token_t msgh_sender;
+    security_token_t msgh_sender;
 };
 #pragma pack(pop)
 
@@ -3351,8 +3435,8 @@ struct mach_msg_audit_trailer_t
     mach_msg_trailer_type_t msgh_trailer_type;
     mach_msg_trailer_size_t msgh_trailer_size;
     mach_port_seqno_t msgh_seqno;
-    struct security_token_t msgh_sender;
-    struct audit_token_t msgh_audit;
+    security_token_t msgh_sender;
+    audit_token_t msgh_audit;
 };
 #pragma pack(pop)
 
@@ -3363,8 +3447,8 @@ struct mach_msg_context_trailer_t
     mach_msg_trailer_type_t msgh_trailer_type;
     mach_msg_trailer_size_t msgh_trailer_size;
     mach_port_seqno_t msgh_seqno;
-    struct security_token_t msgh_sender;
-    struct audit_token_t msgh_audit;
+    security_token_t msgh_sender;
+    audit_token_t msgh_audit;
     mach_port_context_t msgh_context;
 };
 #pragma pack(pop)
@@ -3386,17 +3470,17 @@ struct mach_msg_mac_trailer_t
     mach_msg_trailer_type_t msgh_trailer_type;
     mach_msg_trailer_size_t msgh_trailer_size;
     mach_port_seqno_t msgh_seqno;
-    struct security_token_t msgh_sender;
-    struct audit_token_t msgh_audit;
+    security_token_t msgh_sender;
+    audit_token_t msgh_audit;
     mach_port_context_t msgh_context;
     mach_msg_filter_id msgh_ad;
-    struct msg_labels_t msgh_labels;
+    msg_labels_t msgh_labels;
 };
 #pragma pack(pop)
 
-typedef struct mach_msg_mac_trailer_t mach_msg_max_trailer_t;
+typedef mach_msg_mac_trailer_t mach_msg_max_trailer_t;
 
-typedef struct mach_msg_security_trailer_t mach_msg_format_0_trailer_t;
+typedef mach_msg_security_trailer_t mach_msg_format_0_trailer_t;
 
 typedef integer_t mach_msg_options_t;
 
@@ -3404,7 +3488,7 @@ typedef integer_t mach_msg_options_t;
 #pragma pack(push, 4)
 struct mach_msg_empty_send_t
 {
-    struct mach_msg_header_t header;
+    mach_msg_header_t header;
 };
 #pragma pack(pop)
 
@@ -3412,8 +3496,8 @@ struct mach_msg_empty_send_t
 #pragma pack(push, 4)
 struct mach_msg_empty_rcv_t
 {
-    struct mach_msg_header_t header;
-    struct mach_msg_trailer_t trailer;
+    mach_msg_header_t header;
+    mach_msg_trailer_t trailer;
 };
 #pragma pack(pop)
 
@@ -3421,8 +3505,8 @@ struct mach_msg_empty_rcv_t
 #pragma pack(push, 4)
 union mach_msg_empty_t
 {
-    struct mach_msg_empty_send_t send;
-    struct mach_msg_empty_rcv_t rcv;
+    mach_msg_empty_send_t send;
+    mach_msg_empty_rcv_t rcv;
 };
 #pragma pack(pop)
 
@@ -3665,8 +3749,10 @@ typedef integer_t cpu_subtype_t;
 
 typedef integer_t cpu_threadtype_t;
 
+#pragma neverd_header("langinfo.h")
 typedef __darwin_nl_item nl_item;
 
+#pragma neverd_header("netdb.h")
 typedef __darwin_socklen_t socklen_t;
 
 typedef __uint8_t sa_family_t;
@@ -3959,6 +4045,7 @@ struct rpcent
     int r_number;
 };
 
+#pragma neverd_header("ifaddrs.h")
 // ifaddrs: 0x38 (56) bytes
 struct ifaddrs
 {
@@ -3980,6 +4067,7 @@ struct ifmaddrs
     struct sockaddr *ifma_lladdr;
 };
 
+#pragma neverd_header("search.h")
 // entry: 0x10 (16) bytes
 struct entry
 {
@@ -3989,6 +4077,7 @@ struct entry
 
 typedef struct entry ENTRY;
 
+#pragma neverd_header("utime.h")
 // utimbuf: 0x10 (16) bytes
 struct utimbuf
 {
@@ -3996,6 +4085,7 @@ struct utimbuf
     time_t modtime;
 };
 
+#pragma neverd_header("utmpx.h")
 // timeval64: 0x10 (16) bytes
 struct timeval64
 {
@@ -4048,9 +4138,11 @@ struct lastlogx
     char ll_host[256];
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct utmp;
 
+#pragma neverd_header("sys/stat.h")
 // ostat: 0x60 (96) bytes
 struct ostat
 {
@@ -4094,6 +4186,7 @@ struct stat64
     __int64_t st_qspare[2];
 };
 
+#pragma neverd_header("sys/statvfs.h")
 // statvfs: 0x40 (64) bytes
 struct statvfs
 {
@@ -4110,6 +4203,7 @@ struct statvfs
     unsigned long f_namemax;
 };
 
+#pragma neverd_header("sys/times.h")
 // tms: 0x20 (32) bytes
 struct tms
 {
@@ -4119,6 +4213,7 @@ struct tms
     clock_t tms_cstime;
 };
 
+#pragma neverd_header("sys/ioctl.h")
 // ttysize: 0x8 (8) bytes
 struct ttysize
 {
@@ -4211,9 +4306,11 @@ struct if_data64
 };
 #pragma pack(pop)
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct ifnet_interface_advisory;
 
+#pragma neverd_header("sys/ioctl.h")
 // ifqueue: 0x20 (32) bytes
 struct ifqueue
 {
@@ -4422,6 +4519,7 @@ struct if_nameindex
     char *if_name;
 };
 
+#pragma neverd_header("sys/un.h")
 // sockaddr_un: 0x6A (106) bytes
 struct sockaddr_un
 {
@@ -4430,6 +4528,7 @@ struct sockaddr_un
     char sun_path[104];
 };
 
+#pragma neverd_header("sys/event.h")
 // kevent: 0x20 (32) bytes, packed to 4
 #pragma pack(push, 4)
 struct kevent
@@ -4455,15 +4554,18 @@ struct kevent64_s
     unsigned long long ext[2];
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct knote;
 
+#pragma neverd_header("sys/event.h")
 // klist: 0x8 (8) bytes
 struct klist
 {
     struct knote *slh_first;
 };
 
+#pragma neverd_header("sys/utsname.h")
 // utsname: 0x500 (1280) bytes
 struct utsname
 {
@@ -4474,16 +4576,21 @@ struct utsname
     char machine[256];
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct ucred;
 
+#pragma neverd_header("sys/file.h")
 typedef struct ucred *kauth_cred_t;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct posix_cred;
 
+#pragma neverd_header("sys/file.h")
 typedef struct posix_cred *posix_cred_t;
 
+#pragma neverd_header("sys/sysctl.h")
 typedef uid_t au_id_t;
 
 typedef pid_t au_asid_t;
@@ -4593,9 +4700,11 @@ struct au_expire_after
 
 typedef struct au_expire_after au_expire_after_t;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct au_token;
 
+#pragma neverd_header("sys/sysctl.h")
 typedef struct au_token token_t;
 
 // au_qctrl: 0x14 (20) bytes
@@ -4649,9 +4758,11 @@ struct au_evclass_map
 
 typedef struct au_evclass_map au_evclass_map_t;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct label;
 
+#pragma neverd_header("sys/sysctl.h")
 // xucred: 0x4C (76) bytes
 struct xucred
 {
@@ -4661,6 +4772,7 @@ struct xucred
     gid_t cr_groups[16];
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct session;
 
@@ -4673,6 +4785,7 @@ struct proc;
 // Declared only: its members are unknown.
 struct proc_ident;
 
+#pragma neverd_header("sys/sysctl.h")
 // vmspace: 0x40 (64) bytes
 struct vmspace
 {
@@ -4682,6 +4795,7 @@ struct vmspace
     caddr_t dummy4[3];
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct sigacts;
 
@@ -4691,6 +4805,7 @@ struct vnode;
 // Declared only: its members are unknown.
 struct user;
 
+#pragma neverd_header("sys/sysctl.h")
 // extern_proc: 0x128 (296) bytes
 struct extern_proc
 {
@@ -4821,6 +4936,7 @@ struct loadavg
     long fscale;
 };
 
+#pragma neverd_header("sys/sem.h")
 // ipc_perm: 0x18 (24) bytes, packed to 4
 #pragma pack(push, 4)
 struct ipc_perm
@@ -4877,6 +4993,7 @@ union semun
 
 typedef union semun semun_t;
 
+#pragma neverd_header("sys/shm.h")
 typedef unsigned short shmatt_t;
 
 // __shmid_ds_new: 0x4C (76) bytes, packed to 4
@@ -4895,6 +5012,7 @@ struct __shmid_ds_new
 };
 #pragma pack(pop)
 
+#pragma neverd_header("sys/msg.h")
 typedef unsigned long msgqnum_t;
 
 typedef unsigned long msglen_t;
@@ -4949,6 +5067,7 @@ struct msginfo
     int msgseg;
 };
 
+#pragma neverd_header("sys/mount.h")
 typedef u_int32_t text_encoding_t;
 
 typedef u_int32_t fsobj_type_t;
@@ -5052,9 +5171,11 @@ union graft_args
 
 typedef union graft_args graftdmg_args_un;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct mount;
 
+#pragma neverd_header("sys/mount.h")
 typedef struct mount *mount_t;
 
 typedef struct vnode *vnode_t;
@@ -5181,12 +5302,13 @@ struct fhandle
 
 typedef struct fhandle fhandle_t;
 
+#pragma neverd_header("netinet/tcp.h")
 typedef __uint32_t tcp_seq;
 
 typedef __uint32_t tcp_cc;
 
 // tcphdr: 0x14 (20) bytes
-struct tcphdr
+struct NEVERD_GNU_STRUCT tcphdr
 {
     unsigned short th_sport;
     unsigned short th_dport;
@@ -5201,7 +5323,7 @@ struct tcphdr
 };
 
 // tcp_connection_info: 0x70 (112) bytes
-struct tcp_connection_info
+struct NEVERD_GNU_STRUCT tcp_connection_info
 {
     u_int8_t tcpi_state;
     u_int8_t tcpi_snd_wscale;
@@ -5244,6 +5366,7 @@ struct tcp_connection_info
     u_int64_t tcpi_txretransmitpackets;
 };
 
+#pragma neverd_header("aio.h")
 // aiocb: 0x50 (80) bytes
 struct aiocb
 {
@@ -5256,6 +5379,7 @@ struct aiocb
     int aio_lio_opcode;
 };
 
+#pragma neverd_header("malloc/malloc.h")
 // vm_statistics: 0x3C (60) bytes
 struct vm_statistics
 {
@@ -5537,16 +5661,16 @@ typedef struct mach_vm_range *mach_vm_range_t;
 
 // mach_vm_range_recipe_v1_t: 0x18 (24) bytes, packed to 1
 #pragma pack(push, 1)
-struct mach_vm_range_recipe_v1_t
+struct NEVERD_GNU_STRUCT mach_vm_range_recipe_v1_t
 {
-    enum mach_vm_range_flags_t flags : 48;
-    enum mach_vm_range_tag_t range_tag : 8;
+    mach_vm_range_flags_t flags : 48;
+    mach_vm_range_tag_t range_tag : 8;
     unsigned char vm_tag : 8;
     struct mach_vm_range range;
 };
 #pragma pack(pop)
 
-typedef struct mach_vm_range_recipe_v1_t mach_vm_range_recipe_t;
+typedef mach_vm_range_recipe_v1_t mach_vm_range_recipe_t;
 
 typedef unsigned char *mach_vm_range_recipes_raw_t;
 
@@ -6192,14 +6316,14 @@ struct gpu_energy_data
 };
 #pragma pack(pop)
 
-typedef struct gpu_energy_data *gpu_energy_data_t;
+typedef gpu_energy_data *gpu_energy_data_t;
 
 // task_power_info_v2: 0x60 (96) bytes, packed to 4
 #pragma pack(push, 4)
 struct task_power_info_v2
 {
     task_power_info_data_t cpu_energy;
-    struct gpu_energy_data gpu_energy;
+    gpu_energy_data gpu_energy;
     unsigned long long task_ptime;
     unsigned long long task_pset_switches;
 };
@@ -6706,15 +6830,6 @@ typedef struct vm_page_info_basic vm_page_info_basic_data_t;
 
 typedef int kmod_t;
 
-// kmod_reference: 0x10 (16) bytes, packed to 4
-#pragma pack(push, 4)
-struct kmod_reference
-{
-    struct kmod_reference *next;
-    struct kmod_info *info;
-};
-#pragma pack(pop)
-
 typedef struct kmod_reference kmod_reference_t;
 
 typedef kern_return_t kmod_start_func_t(struct kmod_info *ki, void *data);
@@ -6737,6 +6852,15 @@ struct kmod_info
     vm_size_t hdr_size;
     kmod_start_func_t *start;
     kmod_stop_func_t *stop;
+};
+#pragma pack(pop)
+
+// kmod_reference: 0x10 (16) bytes, packed to 4
+#pragma pack(push, 4)
+struct kmod_reference
+{
+    struct kmod_reference *next;
+    struct kmod_info *info;
 };
 #pragma pack(pop)
 
@@ -6991,7 +7115,7 @@ typedef char *labelstr_t;
 
 typedef kern_return_t memory_reader_t(task_t remote_task, vm_address_t remote_address, vm_size_t size, void **local_memory);
 
-typedef void vm_range_recorder_t(task_t, void *, unsigned int type, struct vm_range_t *, unsigned int);
+typedef void vm_range_recorder_t(task_t, void *, unsigned int type, vm_range_t *, unsigned int);
 
 typedef void print_task_printer_t(const char *fmt, ...);
 
@@ -7005,7 +7129,7 @@ struct malloc_introspection_t
     void (*log)(malloc_zone_t *zone, void *address);
     void (*force_lock)(malloc_zone_t *zone);
     void (*force_unlock)(malloc_zone_t *zone);
-    void (*statistics)(malloc_zone_t *zone, struct malloc_statistics_t *stats);
+    void (*statistics)(malloc_zone_t *zone, malloc_statistics_t *stats);
     boolean_t (*zone_locked)(malloc_zone_t *zone);
     boolean_t (*enable_discharge_checking)(malloc_zone_t *zone);
     void (*disable_discharge_checking)(malloc_zone_t *zone);
@@ -7013,12 +7137,12 @@ struct malloc_introspection_t
     void *enumerate_unavailable_without_blocks;
     void (*reinit_lock)(malloc_zone_t *zone);
     void (*print_task)(task_t task, unsigned int level, vm_address_t zone_address, memory_reader_t reader, print_task_printer_t printer);
-    void (*task_statistics)(task_t task, vm_address_t zone_address, memory_reader_t reader, struct malloc_statistics_t *stats);
+    void (*task_statistics)(task_t task, vm_address_t zone_address, memory_reader_t reader, malloc_statistics_t *stats);
     unsigned int zone_type;
 };
 
 // malloc_type_layout_semantics_v0_t: 0x2 (2) bytes
-struct malloc_type_layout_semantics_v0_t
+struct NEVERD_GNU_STRUCT malloc_type_layout_semantics_v0_t
 {
     bool contains_data_pointer : 1;
     bool contains_struct_pointer : 1;
@@ -7031,14 +7155,14 @@ struct malloc_type_layout_semantics_v0_t
 };
 
 // malloc_type_summary_v0_t: 0x4 (4) bytes
-struct malloc_type_summary_v0_t
+struct NEVERD_GNU_STRUCT malloc_type_summary_v0_t
 {
     unsigned int version : 4;
     unsigned int reserved_0 : 2;
-    enum malloc_type_callsite_flags_v0_t callsite_flags : 4;
-    enum malloc_type_kind_v0_t type_kind : 2;
+    malloc_type_callsite_flags_v0_t callsite_flags : 4;
+    malloc_type_kind_v0_t type_kind : 2;
     unsigned int reserved_1 : 4;
-    struct malloc_type_layout_semantics_v0_t layout_semantics;
+    malloc_type_layout_semantics_v0_t layout_semantics;
 };
 
 // malloc_type_descriptor_v0_t: 0x8 (8) bytes
@@ -7047,7 +7171,7 @@ union malloc_type_descriptor_v0_t
     struct
     {
         unsigned int hash;
-        struct malloc_type_summary_v0_t summary;
+        malloc_type_summary_v0_t summary;
     };
     malloc_type_id_t type_id;
 };
@@ -7078,6 +7202,7 @@ struct mstats
     size_t bytes_free;
 };
 
+#pragma neverd_header("execinfo.h")
 // image_offset: 0x14 (20) bytes
 struct image_offset
 {
@@ -7085,6 +7210,7 @@ struct image_offset
     unsigned int offset;
 };
 
+#pragma neverd_header("fts.h")
 // _ftsent: 0x70 (112) bytes
 struct _ftsent
 {
@@ -7127,6 +7253,7 @@ struct FTS
 
 typedef struct _ftsent FTSENT;
 
+#pragma neverd_header("ftw.h")
 // FTW: 0x8 (8) bytes
 struct FTW
 {
@@ -7134,6 +7261,7 @@ struct FTW
     int level;
 };
 
+#pragma neverd_header("wordexp.h")
 // wordexp_t: 0x18 (24) bytes
 struct wordexp_t
 {
@@ -7142,6 +7270,7 @@ struct wordexp_t
     size_t we_offs;
 };
 
+#pragma neverd_header("libproc.h")
 // ctl_event_data: 0x8 (8) bytes
 struct ctl_event_data
 {
@@ -7777,6 +7906,7 @@ struct channel_fdinfo
     struct proc_channel_info channelinfo;
 };
 
+#pragma neverd_header("mach-o/dyld.h")
 typedef unsigned long NXSwappedFloat;
 
 typedef unsigned long long NXSwappedDouble;
@@ -8084,7 +8214,7 @@ struct dylib_module_64
 };
 
 // dylib_reference: 0x4 (4) bytes
-struct dylib_reference
+struct NEVERD_GNU_STRUCT dylib_reference
 {
     unsigned int isym : 24;
     unsigned int flags : 8;
@@ -8100,7 +8230,7 @@ struct twolevel_hints_command
 };
 
 // twolevel_hint: 0x4 (4) bytes
-struct twolevel_hint
+struct NEVERD_GNU_STRUCT twolevel_hint
 {
     unsigned int isub_image : 8;
     unsigned int itoc : 24;
@@ -8291,19 +8421,25 @@ struct note_command
     unsigned long long size;
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __NSObjectFileImage;
 
+#pragma neverd_header("mach-o/dyld.h")
 typedef struct __NSObjectFileImage *NSObjectFileImage;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __NSModule;
 
+#pragma neverd_header("mach-o/dyld.h")
 typedef struct __NSModule *NSModule;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __NSSymbol;
 
+#pragma neverd_header("mach-o/dyld.h")
 typedef struct __NSSymbol *NSSymbol;
 
 // NSLinkEditErrorHandlers: 0x18 (24) bytes
@@ -8311,9 +8447,10 @@ struct NSLinkEditErrorHandlers
 {
     void (*undefined)(const char *symbolName);
     NSModule (*multiple)(NSSymbol s, NSModule oldModule, NSModule newModule);
-    void (*linkEdit)(enum NSLinkEditErrors errorClass, int errorNumber, const char *fileName, const char *errorString);
+    void (*linkEdit)(NSLinkEditErrors errorClass, int errorNumber, const char *fileName, const char *errorString);
 };
 
+#pragma neverd_header("os/lock.h")
 // os_unfair_lock_s: 0x4 (4) bytes
 struct os_unfair_lock_s
 {
@@ -8324,6 +8461,7 @@ typedef struct os_unfair_lock_s os_unfair_lock;
 
 typedef struct os_unfair_lock_s *os_unfair_lock_t;
 
+#pragma neverd_header("libkern/OSAtomic.h")
 typedef long long OSAtomic_int64_aligned64_t;
 
 // OSFifoQueueHead: 0x20 (32) bytes
@@ -8343,6 +8481,7 @@ struct DECLSPEC_ALIGN(16) OSQueueHead
     long opaque2;
 };
 
+#pragma neverd_header("mach/mach_time.h")
 // mach_timebase_info: 0x8 (8) bytes
 struct mach_timebase_info
 {
@@ -8359,17 +8498,17 @@ const struct mach_header *NSAddImage(const char *image_name, unsigned int option
 bool NSAddLibrary(const char *pathName);
 bool NSAddLibraryWithSearching(const char *pathName);
 void *NSAddressOfSymbol(NSSymbol symbol);
-enum NSObjectFileImageReturnCode NSCreateObjectFileImageFromFile(const char *pathName, NSObjectFileImage *objectFileImage);
-enum NSObjectFileImageReturnCode NSCreateObjectFileImageFromMemory(const void *address, size_t size, NSObjectFileImage *objectFileImage);
+NSObjectFileImageReturnCode NSCreateObjectFileImageFromFile(const char *pathName, NSObjectFileImage *objectFileImage);
+NSObjectFileImageReturnCode NSCreateObjectFileImageFromMemory(const void *address, size_t size, NSObjectFileImage *objectFileImage);
 bool NSDestroyObjectFileImage(NSObjectFileImage objectFileImage);
 void *NSGetSectionDataInObjectFileImage(NSObjectFileImage objectFileImage, const char *segmentName, const char *sectionName, size_t *size);
-void NSInstallLinkEditErrorHandlers(const struct NSLinkEditErrorHandlers *handlers);
+void NSInstallLinkEditErrorHandlers(const NSLinkEditErrorHandlers *handlers);
 bool NSIsSymbolDefinedInObjectFileImage(NSObjectFileImage objectFileImage, const char *symbolName);
 bool NSIsSymbolNameDefined(const char *symbolName);
 bool NSIsSymbolNameDefinedInImage(const struct mach_header *image, const char *symbolName);
 bool NSIsSymbolNameDefinedWithHint(const char *symbolName, const char *libraryNameHint);
 const char *NSLibraryNameForModule(NSModule m);
-void NSLinkEditError(enum NSLinkEditErrors *c, int *errorNumber, const char **fileName, const char **errorString);
+void NSLinkEditError(NSLinkEditErrors *c, int *errorNumber, const char **fileName, const char **errorString);
 NSModule NSLinkModule(NSObjectFileImage objectFileImage, const char *moduleName, unsigned int options);
 NSSymbol NSLookupAndBindSymbol(const char *symbolName);
 NSSymbol NSLookupAndBindSymbolWithHint(const char *symbolName, const char *libraryNameHint);
@@ -8442,10 +8581,10 @@ int OSAtomicDecrement32(volatile int *__theValue);
 int OSAtomicDecrement32Barrier(volatile int *__theValue);
 long long OSAtomicDecrement64(volatile OSAtomic_int64_aligned64_t *__theValue);
 long long OSAtomicDecrement64Barrier(volatile OSAtomic_int64_aligned64_t *__theValue);
-void *OSAtomicDequeue(struct OSQueueHead *__list, size_t __offset);
-void OSAtomicEnqueue(struct OSQueueHead *__list, void *__new, size_t __offset);
-void *OSAtomicFifoDequeue(struct OSFifoQueueHead *__list, size_t __offset);
-void OSAtomicFifoEnqueue(struct OSFifoQueueHead *__list, void *__new, size_t __offset);
+void *OSAtomicDequeue(OSQueueHead *__list, size_t __offset);
+void OSAtomicEnqueue(OSQueueHead *__list, void *__new, size_t __offset);
+void *OSAtomicFifoDequeue(OSFifoQueueHead *__list, size_t __offset);
+void OSAtomicFifoEnqueue(OSFifoQueueHead *__list, void *__new, size_t __offset);
 int OSAtomicIncrement32(volatile int *__theValue);
 int OSAtomicIncrement32Barrier(volatile int *__theValue);
 long long OSAtomicIncrement64(volatile OSAtomic_int64_aligned64_t *__theValue);
@@ -8500,16 +8639,16 @@ __darwin_ct_rune_t ___toupper_l(__darwin_ct_rune_t, locale_t);
 _Noreturn void __assert_rtn(const char *, const char *, int, const char *);
 int __darwin_check_fd_set(int _a, const void *_b);
 int __darwin_check_fd_set_overflow(int, const void *, int);
-void __darwin_fd_clr(int _fd, struct fd_set *const _p);
-int __darwin_fd_isset(int _fd, const struct fd_set *_p);
-void __darwin_fd_set(int _fd, struct fd_set *const _p);
+void __darwin_fd_clr(int _fd, fd_set *const _p);
+int __darwin_fd_isset(int _fd, const fd_set *_p);
+void __darwin_fd_set(int _fd, fd_set *const _p);
 int *__error(void);
 __darwin_ct_rune_t __isctype(__darwin_ct_rune_t _c, unsigned long _f);
 int __istype(__darwin_ct_rune_t _c, unsigned long _f);
 int __istype_l(__darwin_ct_rune_t _c, unsigned long _f, locale_t _l);
 int __maskrune(__darwin_ct_rune_t, unsigned long);
 int __maskrune_l(__darwin_ct_rune_t, unsigned long, locale_t);
-struct DIR *__opendir2(const char *, int) __asm__("__opendir2$INODE64");
+DIR *__opendir2(const char *, int) __asm__("__opendir2$INODE64");
 unsigned int __sigbits(int __signo);
 int __snprintf_chk(char *, size_t __maxlen, int, size_t, const char *, ...);
 int __sprintf_chk(char *, int, size_t, const char *, ...);
@@ -8638,12 +8777,12 @@ int chown(const char *, uid_t, gid_t);
 int chroot(const char *);
 void clearerr(FILE *);
 clock_t clock(void);
-int clock_getres(enum clockid_t __clock_id, struct timespec *__res);
-int clock_gettime(enum clockid_t __clock_id, struct timespec *__tp);
-__uint64_t clock_gettime_nsec_np(enum clockid_t __clock_id);
-int clock_settime(enum clockid_t __clock_id, const struct timespec *__tp);
+int clock_getres(clockid_t __clock_id, struct timespec *__res);
+int clock_gettime(clockid_t __clock_id, struct timespec *__tp);
+__uint64_t clock_gettime_nsec_np(clockid_t __clock_id);
+int clock_settime(clockid_t __clock_id, const struct timespec *__tp);
 int close(int);
-int closedir(struct DIR *);
+int closedir(DIR *);
 void closelog(void);
 size_t confstr(int, char *, size_t __len);
 int connect(int, const struct sockaddr *, socklen_t);
@@ -8660,11 +8799,11 @@ char *devname_r(dev_t, mode_t, char *buf, int len);
 double difftime(time_t, time_t);
 int digittoint(int _c);
 int digittoint_l(int c, locale_t l);
-int dirfd(struct DIR *dirp);
+int dirfd(DIR *dirp);
 char *dirname(char *);
 char *dirname_r(const char *, char *);
 int disconnectx(int, sae_associd_t, sae_connid_t);
-struct div_t div(int, int);
+div_t div(int, int);
 int dladdr(const void *, Dl_info *);
 int dlclose(void *__handle);
 char *dlerror(void);
@@ -8716,9 +8855,9 @@ int fchownat(int, const char *, uid_t, gid_t, int);
 int fclose(FILE *);
 int fcntl(int, int, ...);
 char *fcvt(double, int, int *, int *);
-int fdclosedir(struct DIR *);
+int fdclosedir(DIR *);
 FILE *fdopen(int, const char *);
-struct DIR *fdopendir(int) __asm__("fdopendir$INODE64");
+DIR *fdopendir(int) __asm__("fdopendir$INODE64");
 int fdscandir(int, struct dirent ***, int (*)(const struct dirent *), int (*)(const struct dirent **, const struct dirent **)) __asm__("fdscandir$INODE64");
 int feof(FILE *);
 int ferror(FILE *);
@@ -8744,11 +8883,11 @@ int fhopen(const struct fhandle *, int);
 int fileno(FILE *);
 filesec_t filesec_dup(filesec_t);
 void filesec_free(filesec_t);
-int filesec_get_property(filesec_t, enum filesec_property_t, void *);
+int filesec_get_property(filesec_t, filesec_property_t, void *);
 filesec_t filesec_init(void);
-int filesec_query_property(filesec_t, enum filesec_property_t, int *);
-int filesec_set_property(filesec_t, enum filesec_property_t, const void *);
-int filesec_unset_property(filesec_t, enum filesec_property_t);
+int filesec_query_property(filesec_t, filesec_property_t, int *);
+int filesec_set_property(filesec_t, filesec_property_t, const void *);
+int filesec_unset_property(filesec_t, filesec_property_t);
 ssize_t flistxattr(int fd, char *namebuff, size_t size, int options);
 int flock(int, int);
 void flockfile(FILE *);
@@ -8804,11 +8943,11 @@ off_t ftello(FILE *__stream);
 key_t ftok(const char *, int);
 int ftruncate(int, off_t);
 int ftrylockfile(FILE *);
-FTSENT *fts_children(struct FTS *, int) __asm__("fts_children$INODE64");
-int fts_close(struct FTS *) __asm__("fts_close$INODE64");
-struct FTS *fts_open(char *const *, int, int (*)(const FTSENT **, const FTSENT **)) __asm__("fts_open$INODE64");
-FTSENT *fts_read(struct FTS *) __asm__("fts_read$INODE64");
-int fts_set(struct FTS *, FTSENT *, int) __asm__("fts_set$INODE64");
+FTSENT *fts_children(FTS *, int) __asm__("fts_children$INODE64");
+int fts_close(FTS *) __asm__("fts_close$INODE64");
+FTS *fts_open(char *const *, int, int (*)(const FTSENT **, const FTSENT **)) __asm__("fts_open$INODE64");
+FTSENT *fts_read(FTS *) __asm__("fts_read$INODE64");
+int fts_set(FTS *, FTSENT *, int) __asm__("fts_set$INODE64");
 int ftw(const char *, int (*)(const char *, const struct stat *, int), int) __asm__("ftw$INODE64");
 void funlockfile(FILE *);
 int funmount(int, int);
@@ -8943,8 +9082,8 @@ wint_t getwchar_l(locale_t);
 char *getwd(char *);
 int getwgroups_np(int *, uuid_t);
 ssize_t getxattr(const char *path, const char *name, void *value, size_t size, u_int32_t position, int options);
-int glob(const char *, int, int (*)(const char *, int), struct glob_t *) __asm__("glob$INODE64");
-void globfree(struct glob_t *);
+int glob(const char *, int, int (*)(const char *, int), glob_t *) __asm__("glob$INODE64");
+void globfree(glob_t *);
 struct tm *gmtime(const time_t *);
 struct tm *gmtime_r(const time_t *, struct tm *);
 int grantpt(int);
@@ -8953,14 +9092,14 @@ int hcreate(size_t);
 void hdestroy(void);
 int heapsort(void *__base, size_t __nel, size_t __width, int (*__compar)(const void *, const void *));
 void herror(const char *);
-ENTRY *hsearch(ENTRY, enum ACTION);
+ENTRY *hsearch(ENTRY, ACTION);
 const char *hstrerror(int);
 void if_freenameindex(struct if_nameindex *);
 char *if_indextoname(unsigned int, char *);
 struct if_nameindex *if_nameindex(void);
 unsigned int if_nametoindex(const char *);
 intmax_t imaxabs(intmax_t j);
-struct imaxdiv_t imaxdiv(intmax_t __numer, intmax_t __denom);
+imaxdiv_t imaxdiv(intmax_t __numer, intmax_t __denom);
 char *index(const char *, int);
 int inet6_opt_append(void *, socklen_t, int, __uint8_t, socklen_t, __uint8_t, void **);
 int inet6_opt_find(void *, socklen_t, int, __uint8_t, socklen_t *, void **);
@@ -9099,7 +9238,7 @@ int lchflags(const char *, __uint32_t);
 int lchmod(const char *, mode_t);
 int lchown(const char *, uid_t, gid_t);
 void lcong48(unsigned short *);
-struct ldiv_t ldiv(long, long);
+ldiv_t ldiv(long, long);
 void *lfind(const void *, const void *, size_t *, size_t, int (*)(const void *, const void *));
 int link(const char *, const char *);
 int linkat(int, const char *, int, const char *, int);
@@ -9107,7 +9246,7 @@ int lio_listio(int mode, struct aiocb *const *aiocblist, int nent, struct sigeve
 int listen(int, int);
 ssize_t listxattr(const char *path, char *namebuff, size_t size, int options);
 long long llabs(long long);
-struct lldiv_t lldiv(long long, long long);
+lldiv_t lldiv(long long, long long);
 struct lconv *localeconv(void);
 struct lconv *localeconv_l(locale_t);
 struct tm *localtime(const time_t *);
@@ -9127,8 +9266,8 @@ unsigned long long mach_absolute_time(void);
 unsigned long long mach_approximate_time(void);
 unsigned long long mach_continuous_approximate_time(void);
 unsigned long long mach_continuous_time(void);
-mach_msg_return_t mach_msg(struct mach_msg_header_t *msg, mach_msg_option_t option, mach_msg_size_t send_size, mach_msg_size_t rcv_size, mach_port_name_t rcv_name, mach_msg_timeout_t timeout, mach_port_name_t notify);
-mach_msg_return_t mach_msg_overwrite(struct mach_msg_header_t *msg, mach_msg_option_t option, mach_msg_size_t send_size, mach_msg_size_t rcv_size, mach_port_name_t rcv_name, mach_msg_timeout_t timeout, mach_port_name_t notify, struct mach_msg_header_t *rcv_msg, mach_msg_size_t rcv_limit);
+mach_msg_return_t mach_msg(mach_msg_header_t *msg, mach_msg_option_t option, mach_msg_size_t send_size, mach_msg_size_t rcv_size, mach_port_name_t rcv_name, mach_msg_timeout_t timeout, mach_port_name_t notify);
+mach_msg_return_t mach_msg_overwrite(mach_msg_header_t *msg, mach_msg_option_t option, mach_msg_size_t send_size, mach_msg_size_t rcv_size, mach_port_name_t rcv_name, mach_msg_timeout_t timeout, mach_port_name_t notify, mach_msg_header_t *rcv_msg, mach_msg_size_t rcv_limit);
 kern_return_t mach_timebase_info(mach_timebase_info_t info);
 kern_return_t mach_voucher_deallocate(mach_port_name_t voucher);
 kern_return_t mach_wait_until(unsigned long long deadline);
@@ -9156,7 +9295,7 @@ void *malloc_type_valloc(size_t size, malloc_type_id_t type_id);
 void *malloc_type_zone_calloc(malloc_zone_t *zone, size_t count, size_t size, malloc_type_id_t type_id);
 void malloc_type_zone_free(malloc_zone_t *zone, void *ptr, malloc_type_id_t type_id);
 void *malloc_type_zone_malloc(malloc_zone_t *zone, size_t size, malloc_type_id_t type_id);
-void *malloc_type_zone_malloc_with_options(malloc_zone_t *zone, size_t alignment, size_t size, malloc_type_id_t type_id, enum malloc_zone_malloc_options_t opts);
+void *malloc_type_zone_malloc_with_options(malloc_zone_t *zone, size_t alignment, size_t size, malloc_type_id_t type_id, malloc_zone_malloc_options_t opts);
 void *malloc_type_zone_memalign(malloc_zone_t *zone, size_t alignment, size_t size, malloc_type_id_t type_id);
 void *malloc_type_zone_realloc(malloc_zone_t *zone, void *ptr, size_t size, malloc_type_id_t type_id);
 void *malloc_type_zone_valloc(malloc_zone_t *zone, size_t size, malloc_type_id_t type_id);
@@ -9172,14 +9311,14 @@ void malloc_zone_free(malloc_zone_t *zone, void *ptr);
 malloc_zone_t *malloc_zone_from_ptr(const void *ptr);
 void malloc_zone_log(malloc_zone_t *zone, void *address);
 void *malloc_zone_malloc(malloc_zone_t *zone, size_t size);
-void *malloc_zone_malloc_with_options(malloc_zone_t *zone, size_t align, size_t size, enum malloc_zone_malloc_options_t opts);
+void *malloc_zone_malloc_with_options(malloc_zone_t *zone, size_t align, size_t size, malloc_zone_malloc_options_t opts);
 void *malloc_zone_memalign(malloc_zone_t *zone, size_t alignment, size_t size);
 size_t malloc_zone_pressure_relief(malloc_zone_t *zone, size_t goal);
 void malloc_zone_print(malloc_zone_t *zone, boolean_t verbose);
 void malloc_zone_print_ptr_info(void *ptr);
 void *malloc_zone_realloc(malloc_zone_t *zone, void *ptr, size_t size);
 void malloc_zone_register(malloc_zone_t *zone);
-void malloc_zone_statistics(malloc_zone_t *zone, struct malloc_statistics_t *stats);
+void malloc_zone_statistics(malloc_zone_t *zone, malloc_statistics_t *stats);
 void malloc_zone_unregister(malloc_zone_t *zone);
 void *malloc_zone_valloc(malloc_zone_t *zone, size_t size);
 int mblen(const char *__s, size_t __n);
@@ -9266,13 +9405,13 @@ FILE *open_wmemstream(int **__bufp, size_t *__sizep);
 int openat(int, const char *, int, ...);
 int openat_authenticated_np(int, const char *, int, int);
 int openat_dprotected_np(int, const char *, int, int, int, ...);
-struct DIR *opendir(const char *) __asm__("opendir$INODE64");
+DIR *opendir(const char *) __asm__("opendir$INODE64");
 void openlog(const char *, int, int);
 int openx_np(const char *, int, filesec_t);
 void os_unfair_lock_assert_not_owner(const os_unfair_lock *lock);
 void os_unfair_lock_assert_owner(const os_unfair_lock *lock);
 void os_unfair_lock_lock(os_unfair_lock_t lock);
-void os_unfair_lock_lock_with_flags(os_unfair_lock_t lock, enum os_unfair_lock_flags_t flags);
+void os_unfair_lock_lock_with_flags(os_unfair_lock_t lock, os_unfair_lock_flags_t flags);
 bool os_unfair_lock_trylock(os_unfair_lock_t lock);
 void os_unfair_lock_unlock(os_unfair_lock_t lock);
 long pathconf(const char *, int);
@@ -9338,7 +9477,7 @@ int proc_pidfdinfo(int pid, int fd, int flavor, void *buffer, int buffersize);
 int proc_pidfileportinfo(int pid, unsigned int fileport, int flavor, void *buffer, int buffersize);
 int proc_pidinfo(int pid, int flavor, unsigned long long arg, void *buffer, int buffersize);
 int proc_pidpath(int pid, void *buffer, unsigned int buffersize);
-int proc_pidpath_audittoken(struct audit_token_t *audittoken, void *buffer, unsigned int buffersize);
+int proc_pidpath_audittoken(audit_token_t *audittoken, void *buffer, unsigned int buffersize);
 int proc_regionfilename(int pid, unsigned long long address, void *buffer, unsigned int buffersize);
 int proc_set_csm(unsigned int flags);
 int proc_set_dirty(pid_t pid, bool dirty);
@@ -9346,16 +9485,16 @@ int proc_set_no_smt(void);
 int proc_setpcontrol(const int control);
 int proc_setthread_csm(unsigned int flags);
 int proc_setthread_no_smt(void);
-int proc_signal_delegate(struct audit_token_t instigator, struct audit_token_t target, int sig);
-int proc_signal_with_audittoken(struct audit_token_t *audittoken, int sig);
+int proc_signal_delegate(audit_token_t instigator, audit_token_t target, int sig);
+int proc_signal_with_audittoken(audit_token_t *audittoken, int sig);
 int proc_terminate(pid_t pid, int *sig);
 int proc_terminate_all_rsr(int sig);
-int proc_terminate_delegate(struct audit_token_t instigator, struct audit_token_t target, int *sig);
-int proc_terminate_with_audittoken(struct audit_token_t *audittoken, int *sig);
+int proc_terminate_delegate(audit_token_t instigator, audit_token_t target, int *sig);
+int proc_terminate_with_audittoken(audit_token_t *audittoken, int *sig);
 int proc_track_dirty(pid_t pid, unsigned int flags);
 int proc_udata_info(int pid, int flavor, void *buffer, int buffersize);
 int profil(char *, size_t __bufsiz, unsigned long, unsigned int);
-int pselect(int, struct fd_set *, struct fd_set *, struct fd_set *, const struct timespec *, const sigset_t *) __asm__("pselect$1050");
+int pselect(int, fd_set *, fd_set *, fd_set *, const struct timespec *, const sigset_t *) __asm__("pselect$1050");
 void psignal(int, const char *);
 void psort(void *__base, size_t __nel, size_t __width, int (*__compar)(const void *, const void *));
 void psort_r(void *__base, size_t __nel, size_t __width, void *, int (*__compar)(void *, const void *, const void *));
@@ -9498,8 +9637,8 @@ long random(void);
 int rcmd(char **, int, const char *, const char *, const char *, int *);
 int rcmd_af(char **, int, const char *, const char *, const char *, int *, int);
 ssize_t read(int, void *, size_t __nbyte);
-struct dirent *readdir(struct DIR *) __asm__("readdir$INODE64");
-int readdir_r(struct DIR *, struct dirent *, struct dirent **) __asm__("readdir_r$INODE64");
+struct dirent *readdir(DIR *) __asm__("readdir$INODE64");
+int readdir_r(DIR *, struct dirent *, struct dirent **) __asm__("readdir_r$INODE64");
 ssize_t readlink(const char *, char *, size_t __bufsize);
 ssize_t readlinkat(int, const char *, char *, size_t);
 ssize_t readv(int, const struct iovec *, int);
@@ -9510,20 +9649,20 @@ int reboot(int);
 ssize_t recv(int, void *, size_t, int);
 ssize_t recvfrom(int, void *, size_t, int, struct sockaddr *, socklen_t *);
 ssize_t recvmsg(int, struct msghdr *, int);
-int regcomp(struct regex_t *, const char *, int);
-int regcomp_l(struct regex_t *, const char *, int, locale_t);
-size_t regerror(int, const struct regex_t *, char *, size_t __errbuf_size);
-int regexec(const struct regex_t *, const char *, size_t __nmatch, struct regmatch_t *__pmatch, int);
-void regfree(struct regex_t *);
-int regncomp(struct regex_t *, const char *, size_t __len, int);
-int regncomp_l(struct regex_t *, const char *, size_t __len, int, locale_t);
-int regnexec(const struct regex_t *, const char *, size_t __len, size_t __nmatch, struct regmatch_t *__pmatch, int);
-int regwcomp(struct regex_t *, const int *, int);
-int regwcomp_l(struct regex_t *, const int *, int, locale_t);
-int regwexec(const struct regex_t *, const int *, size_t __nmatch, struct regmatch_t *__pmatch, int);
-int regwncomp(struct regex_t *, const int *, size_t __len, int);
-int regwnexec(const struct regex_t *, const int *, size_t __len, size_t __nmatch, struct regmatch_t *__pmatch, int);
-int regwnexec_l(const struct regex_t *, const int *, size_t __len, size_t __nmatch, struct regmatch_t *__pmatch, int, locale_t);
+int regcomp(regex_t *, const char *, int);
+int regcomp_l(regex_t *, const char *, int, locale_t);
+size_t regerror(int, const regex_t *, char *, size_t __errbuf_size);
+int regexec(const regex_t *, const char *, size_t __nmatch, regmatch_t *__pmatch, int);
+void regfree(regex_t *);
+int regncomp(regex_t *, const char *, size_t __len, int);
+int regncomp_l(regex_t *, const char *, size_t __len, int, locale_t);
+int regnexec(const regex_t *, const char *, size_t __len, size_t __nmatch, regmatch_t *__pmatch, int);
+int regwcomp(regex_t *, const int *, int);
+int regwcomp_l(regex_t *, const int *, int, locale_t);
+int regwexec(const regex_t *, const int *, size_t __nmatch, regmatch_t *__pmatch, int);
+int regwncomp(regex_t *, const int *, size_t __len, int);
+int regwnexec(const regex_t *, const int *, size_t __len, size_t __nmatch, regmatch_t *__pmatch, int);
+int regwnexec_l(const regex_t *, const int *, size_t __len, size_t __nmatch, regmatch_t *__pmatch, int, locale_t);
 int remove(const char *);
 int removexattr(const char *path, const char *name, int options);
 void remque(void *);
@@ -9533,7 +9672,7 @@ int renameatx_np(int, const char *, int, const char *, unsigned int);
 int renamex_np(const char *, const char *, unsigned int);
 int revoke(const char *);
 void rewind(FILE *);
-void rewinddir(struct DIR *) __asm__("rewinddir$INODE64");
+void rewinddir(DIR *) __asm__("rewinddir$INODE64");
 char *rindex(const char *, int);
 int rmdir(const char *);
 int rpmatch(const char *);
@@ -9550,8 +9689,8 @@ int sched_get_priority_min(int);
 int sched_yield(void);
 int searchfs(const char *, struct fssearchblock *, unsigned long *, unsigned int, unsigned int, struct searchstate *);
 unsigned short *seed48(unsigned short *);
-void seekdir(struct DIR *, long) __asm__("seekdir$INODE64");
-int select(int, struct fd_set *, struct fd_set *, struct fd_set *, struct timeval *) __asm__("select$1050");
+void seekdir(DIR *, long) __asm__("seekdir$INODE64");
+int select(int, fd_set *, fd_set *, fd_set *, struct timeval *) __asm__("select$1050");
 int sem_close(sem_t *);
 int sem_destroy(sem_t *);
 int sem_getvalue(sem_t *, int *);
@@ -9776,7 +9915,7 @@ int tcsendbreak(int, int);
 int tcsetattr(int, int, const struct termios *);
 int tcsetpgrp(int, pid_t);
 void *tdelete(const void *, void **, int (*)(const void *, const void *));
-long telldir(struct DIR *) __asm__("telldir$INODE64");
+long telldir(DIR *) __asm__("telldir$INODE64");
 char *tempnam(const char *__dir, const char *__prefix);
 void *tfind(const void *, void *const *, int (*)(const void *, const void *));
 time_t time(time_t *);
@@ -9804,7 +9943,7 @@ void *tsearch(const void *, void **, int (*)(const void *, const void *));
 char *ttyname(int);
 int ttyname_r(int, char *, size_t __len);
 int ttyslot(void);
-void twalk(const void *, void (*)(const void *, enum VISIT, int));
+void twalk(const void *, void (*)(const void *, VISIT, int));
 void tzset(void);
 void tzsetwall(void);
 useconds_t ualarm(useconds_t, useconds_t);
@@ -9881,7 +10020,7 @@ int vwscanf_l(locale_t, const int *, char *);
 pid_t wait(int *);
 pid_t wait3(int *, int, struct rusage *);
 pid_t wait4(pid_t, int *, int, struct rusage *);
-int waitid(enum idtype_t, id_t, siginfo_t *, int);
+int waitid(idtype_t, id_t, siginfo_t *, int);
 pid_t waitpid(pid_t, int *, int);
 void warn(const char *, ...);
 void warnc(int, const char *, ...);
@@ -9959,8 +10098,8 @@ int wmemcmp(const int *, const int *, size_t __n);
 int *wmemcpy(int *, const int *, size_t __n);
 int *wmemmove(int *, const int *, size_t __n);
 int *wmemset(int *, int, size_t __n);
-int wordexp(const char *, struct wordexp_t *, int);
-void wordfree(struct wordexp_t *);
+int wordexp(const char *, wordexp_t *, int);
+void wordfree(wordexp_t *);
 int wprintf(const int *, ...);
 int wprintf_l(locale_t, const int *, ...);
 ssize_t write(int __fd, const void *__buf, size_t __nbyte);

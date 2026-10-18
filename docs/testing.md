@@ -626,8 +626,12 @@ the armhf and arm64 cross packages (`--sysroot linux-arm64=<cache>/arm64/usr/aar
 `--sysroot linux-arm=<cache>/armhf/usr/arm-linux-gnueabihf`), bionic,
 libnativehelper and system/logging at the commits the Android libraries name
 (`--bionic <cache>/bionic --libnativehelper <cache>/libnativehelper --liblog <cache>/logging`)
-and musl's release (`--musl <cache>/musl`), where `<cache>` is
-`~/.cache/neverd-render-toolchains`.
+and musl's release (`--musl <cache>/musl`), and Apple's projects at the tags
+the Darwin libraries name (`scripts/generate_darwin_types.py --darwin
+<cache>/darwin`), where `<cache>` is `~/.cache/neverd-render-toolchains`. It
+installs Apple's headers as those libraries read them into
+`<cache>/darwin-sdk` and records what clang takes to read them for each
+library's target.
 
 Check each library with its system library, whose types its own system's
 headers give:
@@ -643,7 +647,9 @@ python3 scripts/check_type_renders.py --neverd build/bin/neverd \
 
 Every spelling compiles on the library's own system, where the C library's
 types come from its headers: the host's glibc for x64 and x86, the fetched
-sysroots for ARM, bionic for Android, and zig's musl for musl. Its portable
+sysroots for ARM, bionic for Android, zig's musl for musl, and Apple's
+installed headers for macOS and iOS (`--system-library macos-arm64` and so
+on). Its portable
 C also compiles on every other system of its pointer width, where the
 header defines them: MinGW with mingw-w64's headers, Microsoft's target with
 clang's own, macOS and musl with zig's, glibc and bionic. Microsoft's
@@ -752,6 +758,10 @@ python3 scripts/compare_prototypes_with_ida.py --neverd build/bin/neverd \
 ```
 
 Declared types are covered at each layer:
+- `SessionCAPITest.LibSystemsTypesComeFromApplesHeaders`: a macOS
+  program's header takes libSystem's types from Apple's headers on macOS;
+  `TypeRender.TheWindowsRuntimesRecordsStayMinGWsUnderMinGW` the Windows C
+  runtime's records a Windows program joins;
 - `SessionCAPITest.TheCLibrarysTypesComeFromTheSystemsHeaders`: the DWARF
   of `dwarf_libc.{x64,x86}.o`, built as `dwarf_libc.c` says, whose C header
   includes glibc's headers for glibc's types where the compiler has them;

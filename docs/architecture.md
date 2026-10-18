@@ -297,8 +297,11 @@ recognize a routine by its bytes and only name it. A platform or an
 architecture joins by a header under `lib/types/headers/`, a row of
 `HeaderLibraries.def` naming its data model, the record ABI its records are
 laid out by (a 32-bit Linux program's i386 System V ABI or AAPCS32, which
-its data model alone does not say) and the spelling its headers name
-builtins in, which shows its declarations as they read (Windows' `ULONG`),
+its data model alone does not say) and the spelling its declarations are
+shown in, which states every builtin's width whatever system reads them:
+Windows' `ULONG`, which Windows fixes at 32 bits on every architecture, or
+exact widths elsewhere (`int64_t` for a 64-bit Darwin `long`, which a reader
+on Windows, where `long` is 32 bits, would misread),
 and rows of `HeaderLibraryImages.def`: how an image's headers tell its kind
 (a PE's subsystem, the C library an ELF image under Linux runs on), and the
 libraries an image of each kind and architecture joins, in order. Its calling convention's rules then place
@@ -369,7 +372,8 @@ model and record ABI are the program's:
   out and reported (`conflicts`).
 
 A C or C++ header rendered for a program joined to a library of a system's
-headers (`HeaderLibrarySystems.def`: glibc's, bionic's and musl's) takes
+headers (`HeaderLibrarySystems.def`: glibc's, bionic's, musl's and Apple's
+libSystem, whose platform `<TargetConditionals.h>` tells) takes
 that C library's types from the system's own headers where the compiler that
 reads it has them, rather than defining them again, and defines them itself
 everywhere else, Windows and macOS among them (`RenderOptions::SystemLibrary`,
@@ -393,7 +397,10 @@ program's own DWARF definition of `struct stat` is one too.
   (`#define X neverd_X`, kept with `push_macro`), so that the program's
   layouts hold and the names stay the compiler's after them; member names a
   C library's `<sys/cdefs.h>` defines as macros (`__unused`) are undefined
-  meanwhile. The C parser reads such a rename as the system's own name.
+  meanwhile. The C parser reads such a rename as the system's own name. The
+  program's own types take the table's names likewise, wherever the header
+  is read: a Windows program's records of the C runtime, `tagLC_ID` among
+  them, stay MinGW's under MinGW.
 - Their size and offset checks stand after both, in C where the system
   declares them, as glibc's C++ declares some otherwise.
 - A record C names only through a typedef (`typedef struct { ... } X`, or
@@ -491,7 +498,12 @@ records:
   declared types has, defines none, and LLVM-C keeps its machine types
   there. `renderEmbeddedC` renders them in exact
   widths, with their checks, each under a guard of its own so that units
-  concatenate. A record whose members the unit, or the debug information
+  concatenate. A typedef of a name C reserves for the implementation (a
+  leading underscore and an uppercase letter or another underscore, as
+  Darwin's `__darwin_size_t`) is spelled as what it stands for, not
+  defined: the system headers the unit includes define it in their own
+  spelling, `unsigned long` on Darwin, which `uint64_t`, an
+  `unsigned long long` there, is not. A record whose members the unit, or the debug information
   anywhere in the session, names otherwise than the library does stays
   declared only: its definition would disagree with the code.
 - HighC asks for the records and enumerations its types reach before it
@@ -3946,6 +3958,19 @@ and an MSR clobbers `cc`. A banked register's MRS or MSR, and an
 UNPREDICTABLE CPS, fail clearly. Saturating instructions set Q, which the
 lift does not model, so an MRS after one reads the Q the translated code
 left in the machine.
+
+A call to a compiler runtime routine whose whole contract one intrinsic
+models (`RuntimeRoutineIntrinsics.def`) is that intrinsic, which
+`liftRuntimeRoutineCalls` substitutes before SSA. It applies whether the
+routine is an import (its stub, its slot, or an object's extern item) or a
+function the image defines. The Arm run-time ABI's `__aeabi_read_tp`
+returns the thread pointer and corrupts only r0, ip, lr and the flags, so
+clang's `-mtp=soft` TLS access keeps values in r1-r3 across it. As an
+ordinary call it took phantom arguments, and its clobbers lost those
+values. As `ArmThreadPointer` it takes no argument and writes only r0, and
+both C routes print `(uint32_t)__builtin_thread_pointer()`, which LLVM
+(`llvm.thread.pointer`) lowers to an MRC or to the same call as the target
+needs.
 
 An SMC or HVC #0 follows Arm's SMC Calling Convention: the lift binds its
 results in x0-x3 (r0-r3) as the outputs of a multi-output intrinsic, and

@@ -1107,6 +1107,11 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
   case I::ArmMsr:
   case I::ArmCps:
     return renderArmStatusInstruction(Id, Ops, ResultBytes);
+  case I::ArmThreadPointer:
+    // The builtin's `void *` is the word the routine returns in r0.
+    if (!Ops.empty())
+      throw std::invalid_argument("ARM thread pointer read with operands");
+    return "(uint32_t)__builtin_thread_pointer()";
   case I::ArmMrc:
   case I::ArmMcr:
   case I::ArmMrrc:

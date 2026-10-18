@@ -22,7 +22,9 @@ check_type_renders.py --toolchains reads:
   generated from);
 - the NDK's <jni.h> and <android/log.h>, and musl's sources, from which
   scripts/generate_linux_types.py reads the Android and musl libraries
-  again;
+  again, and the projects of Apple's whose headers
+  scripts/generate_darwin_types.py reads, at the tags the Darwin libraries
+  name;
 - zig, whose C compiler holds the C library headers of macOS and musl,
   which a header of Linux types compiles against as another system's;
 - Lua 5.4, which the Lua renders run on, built from lua.org's sources;
@@ -104,6 +106,9 @@ ANDROID_TREES = {
     "logging": ("platform/system/logging", "system/logging",
                 "liblog/include"),
 }
+# Apple's projects whose headers the Darwin libraries read, each cloned at
+# the tag the libraries name.
+APPLE = "https://github.com/apple-oss-distributions/"
 # musl's sources, of the release the musl libraries name, with the SHA-256
 # Debian's copy of it lists.
 MUSL = ("https://musl.libc.org/releases/musl-1.2.5.tar.gz",
@@ -323,6 +328,58 @@ def fetch_android_tree(root, key, force):
     return str(checkout)
 
 
+def darwin_tags():
+    """The tag of each of Apple's projects the Darwin libraries were
+    generated from, which their header names."""
+    header = REPOSITORY / "lib" / "types" / "headers" / "MacOSARM64.h"
+    text = re.sub(r"\n//\s*", " ", header.read_text(encoding="utf-8"))
+    match = re.search(r"from the headers of (.*?) \(https://github.com/"
+                      r"apple-oss-distributions\)", text)
+    if not match:
+        raise RuntimeError(f"{header} names no tags of Apple's projects")
+    return [tag.strip() for tag in match.group(1).split(",")]
+
+
+def fetch_darwin(root, force):
+    """A checkout of each of Apple's projects at its tag, as
+    generate_darwin_types.py --darwin reads them."""
+    directory = root / "darwin"
+    git = shutil.which("git")
+    if not git:
+        raise RuntimeError("git not found")
+    for tag in darwin_tags():
+        project = tag.rsplit("-", 1)[0]
+        checkout = directory / project
+        if not force and checkout.is_dir():
+            described = subprocess.run(
+                [git, "-C", checkout, "describe", "--tags", "--exact-match"],
+                capture_output=True, text=True)
+            if described.stdout.strip() == tag:
+                continue
+        shutil.rmtree(checkout, ignore_errors=True)
+        directory.mkdir(parents=True, exist_ok=True)
+        run([git, "clone", "--quiet", "--depth", "1", "--branch", tag,
+             APPLE + project, checkout])
+    return str(directory)
+
+
+def install_darwin(root):
+    """Apple's headers installed as the Darwin libraries read them, and what
+    clang takes to read them for each library's target, by its name."""
+    sys.path.insert(0, str(REPOSITORY / "scripts"))
+    import generate_darwin_types as darwin
+    checkouts = {project: root / "darwin" / project
+                 for project in darwin.PROJECTS}
+    include = root / "darwin-sdk" / "sdk" / "include"
+    shutil.rmtree(include.parent, ignore_errors=True)
+    darwin.install(checkouts, include)
+    clang = shutil.which("clang")
+    if not clang:
+        raise RuntimeError("clang not found")
+    return {name: darwin.clang_options(clang, checkouts, target, include)
+            for name, target in sorted(darwin.TARGETS.items())}
+
+
 def fetch_musl(root, force):
     """musl's sources, which install their headers for each architecture."""
     url, digest = MUSL
@@ -480,6 +537,11 @@ def main():
                for key in ANDROID_TREES},
             "musl": fetch_musl(root, arguments.force)}
 
+    def darwin_sources():
+        manifest.setdefault("sources", {})["darwin"] = fetch_darwin(
+            root, arguments.force)
+        manifest["sysroots"]["darwin"] = install_darwin(root)
+
     def zig():
         manifest["zig"] = str(fetch_zig(root, arguments.force))
 
@@ -495,6 +557,7 @@ def main():
     step("Wine and Python for 32-bit Windows", win32)
     step("bionic's headers", bionic)
     step("the NDK's other headers and musl's sources", generator_sources)
+    step("Apple's projects the Darwin libraries read", darwin_sources)
     step("zig", zig)
     step("Lua", lua)
     step("TypeScript", typescript)

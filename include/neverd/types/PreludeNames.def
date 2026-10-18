@@ -7,11 +7,13 @@
 /// \file
 /// The names the headers a C or C++ header NeverD renders includes first
 /// (<stdbool.h>, <stddef.h>, <stdint.h>) declare with the compiler's own C
-/// library, which a system's types it defines itself may name otherwise
-/// (HeaderLibrarySystems.def): where the compiler is not the program's
-/// system, such a type takes another name for the header's own definitions,
-/// and the name stays the compiler's after them.  Reserved names, `__x`
-/// and `_X`, are any C library's to declare, and always take another.
+/// library, which a type the header defines may name otherwise: the
+/// program's own, as the Windows C runtime's records a Windows program
+/// joins, or a system's where the compiler is not the program's system
+/// (HeaderLibrarySystems.def).  Such a type takes another name for the
+/// header's own definitions, and the name stays the compiler's after them.
+/// A system's reserved names, `__x` and `_X`, are any C library's to
+/// declare, and always take another.
 ///
 /// NEVERD_PRELUDE_TYPE(Name, Declared)
 ///   A type the compiler's headers declare where Declared holds: "1" for
@@ -56,12 +58,27 @@ NEVERD_PRELUDE_TYPE(uint_fast16_t, "1")
 NEVERD_PRELUDE_TYPE(uint_fast32_t, "1")
 NEVERD_PRELUDE_TYPE(uint_fast64_t, "1")
 // The Windows C runtimes' <corecrt.h>, which MinGW's <stdint.h> and
-// Microsoft's <stddef.h> include.
+// Microsoft's <stddef.h> include, Microsoft's and MinGW's both.
 NEVERD_PRELUDE_TYPE(wint_t, "defined(_WIN32)")
 NEVERD_PRELUDE_TYPE(wctype_t, "defined(_WIN32)")
 NEVERD_PRELUDE_TYPE(time_t, "defined(_WIN32)")
+NEVERD_PRELUDE_TYPE(__time32_t, "defined(_WIN32)")
+NEVERD_PRELUDE_TYPE(__time64_t, "defined(_WIN32)")
 NEVERD_PRELUDE_TYPE(mbstate_t, "defined(_WIN32)")
-NEVERD_PRELUDE_TYPE(ssize_t, "defined(_WIN32)")
+NEVERD_PRELUDE_TYPE(errno_t, "defined(_WIN32)")
+NEVERD_PRELUDE_TYPE(rsize_t, "defined(_WIN32)")
+NEVERD_PRELUDE_TYPE(_locale_t, "defined(_WIN32)")
+// MinGW's alone.
+NEVERD_PRELUDE_TYPE(ssize_t, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(tagLC_ID, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(LC_ID, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(LPLC_ID, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(threadlocaleinfostruct, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(threadlocinfo, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(pthreadlocinfo, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(pthreadmbcinfo, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(localeinfo_struct, "defined(__MINGW32__)")
+NEVERD_PRELUDE_TYPE(_locale_tstruct, "defined(__MINGW32__)")
 
 // <sys/cdefs.h>'s, which their <stdint.h> includes.
 NEVERD_PRELUDE_MACRO(__unused)

@@ -66,3 +66,4 @@ C(Intrinsic::ArmCrc32ch,       "__crc32ch");
 C(Intrinsic::ArmCrc32cw,       "__crc32cw");
 C(Intrinsic::ArmRbit,          "__rbit");
 C(Intrinsic::ArmLinuxSyscall,  "neverd_arm_linux_syscall");
+C(Intrinsic::ArmThreadPointer, "__builtin_thread_pointer");

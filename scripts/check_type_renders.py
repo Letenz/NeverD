@@ -123,7 +123,15 @@ SYSTEMS = {
     "musl-x86": ("zig", "x86-linux-musl", None),
     "musl-arm64": ("zig", "aarch64-linux-musl", None),
     "musl-arm": ("zig", "arm-linux-musleabihf", None),
+    # Apple's headers as the Darwin libraries read them (the toolchains'
+    # darwin-sdk), whose clang options name the target.
+    "macos-x64": ("clang", "x86_64-apple-macos", "darwin:macos-x64"),
+    "macos-arm64": ("clang", "arm64-apple-macos", "darwin:macos-arm64"),
+    "ios-arm64": ("clang", "arm64-apple-ios", "darwin:ios-arm64"),
 }
+# zig's target of the system a library is of, whose headers zig holds at
+# another version than the library read: no other system's.
+SAME_SYSTEM = {"macos-x64": "x86_64-macos", "macos-arm64": "aarch64-macos"}
 # The other systems of each pointer width a library's portable C compiles
 # for, defining its C library's types itself: Windows' two compilers,
 # macOS's, and Linux's on the other C libraries.
@@ -237,7 +245,8 @@ class Checker:
                         8 if TARGETS[model][0].startswith(("x86_64",
                                                            "aarch64",
                                                            "arm64"))
-                        else 4] if other[1] != own[1]]
+                        else 4] if other[1] != own[1] and other[1] !=
+                        SAME_SYSTEM.get(self.arguments.system_library)]
                         if spelling == "portable" else [])
                 for unit_language, standard, name in units:
                     unit = self.work / name
@@ -277,6 +286,13 @@ class Checker:
         # host without a 32-bit C++ library still has.
         if language != "c":
             command.append("-nostdinc++")
+        if extra and extra.startswith("darwin:"):
+            options = self.toolchains.get("sysroots", {}).get(
+                "darwin", {}).get(extra.split(":", 1)[1])
+            if not options:
+                self.skip(f"C for {target}", FETCH)
+                return None
+            return [command[0], *options, *command[2:]]
         if extra in ("arm64", "armhf"):
             sysroot = self.toolchains.get("sysroots", {}).get(extra)
             if not sysroot:

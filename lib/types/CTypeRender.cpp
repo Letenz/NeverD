@@ -51,6 +51,21 @@ const char *conventionSpelling(CallingConvention Convention) {
 }
 
 /// A builtin as exact-width C spells it for \p Library's program.
+/// The type a typedef of \p Name stands for, where C reserves the name for
+/// the implementation (a leading underscore and an uppercase letter or
+/// another underscore): a decompiled unit spells it in the target's exact
+/// widths rather than defining it, as <stdint.h> on Darwin defines
+/// __darwin_time_t as long, which int64_t, a long long there, is not.
+const TypeExpr *reservedTypedef(const TypeLibrary &Library,
+                                llvm::StringRef Name) {
+  if (Name.size() < 2 || Name[0] != '_' ||
+      !(Name[1] == '_' || llvm::isUpper(Name[1])))
+    return nullptr;
+  const LocalType *Local = Library.find(Name);
+  return Local && Local->Kind == TypeKind::Typedef ? Local->Target.get()
+                                                   : nullptr;
+}
+
 std::string portableBuiltin(Builtin Type, const TypeLibrary &Library) {
   const BuiltinInfo &Info = builtinInfo(Type);
   const unsigned Bytes = Library.builtinBytes(Type);
@@ -148,6 +163,11 @@ public:
   /// Whether a type rendered so far is followed by checks.
   bool asserts() const { return Asserted; }
   const NameSpelling &names() const { return Names; }
+  /// In a decompiled unit, the type a typedef of a name the implementation
+  /// reserves stands for (reservedTypedef); none elsewhere.
+  const TypeExpr *spelledThrough(llvm::StringRef Name) const {
+    return Embedded ? reservedTypedef(Library, Name) : nullptr;
+  }
 
 private:
   void record(const LocalType &Type, std::string &Out);
@@ -167,6 +187,8 @@ private:
   /// its own or the system's, lets it: `typedef struct { ... } X` leaves
   /// the record no tag of its own.  Decompiled code keeps the tags.
   bool bare(const LocalType &Type) const;
+  /// Whether a typedef of its name, its own or the system's, names \p Type.
+  bool typedefNamed(const LocalType &Type) const;
   /// The typedef that names \p Type by its name alone, where C does so.
   std::string bareTypedef(const LocalType &Type) const;
   /// "struct" or "union", with the alignment \p Record declares.
@@ -254,8 +276,22 @@ std::string CWriter::declare(const TypeExpr &Type,
   case TypeExprKind::Builtin:
     return spaced(Qualifiers + builtin(Type.TheBuiltin));
   case TypeExprKind::Named: {
+    if (const TypeExpr *Target = spelledThrough(Type.Name)) {
+      if (!Type.Const && !Type.Volatile)
+        return declare(*Target, std::move(Declarator));
+      TypeExpr Qualified = *Target;
+      Qualified.Const |= Type.Const;
+      Qualified.Volatile |= Type.Volatile;
+      return declare(Qualified, std::move(Declarator));
+    }
     std::string Base = Qualifiers;
-    if (!Cpp) {
+    const LocalType *Shared = Cpp ? Library.find(Type.Name) : nullptr;
+    if (Shared && !Embedded && Shared->Record &&
+        Library.findPrototype(Type.Name) && !typedefNamed(*Shared)) {
+      // C++ names it by its tag where a routine of its name hides it, as
+      // stat() does struct stat.
+      Base += Shared->Kind == TypeKind::Union ? "union " : "struct ";
+    } else if (!Cpp) {
       // The tag the library's type takes now: a type of another kind may
       // have replaced the one the reference was read with, as a program's
       // own union does a header's structure of the name.
@@ -470,15 +506,19 @@ bool CWriter::holdsLooseScalars(const RecordDef &Record) const {
   return false;
 }
 
+bool CWriter::typedefNamed(const LocalType &Type) const {
+  if (Type.TypedefNamed)
+    return true;
+  const LocalType *Own = System ? System->find(Type.Name) : nullptr;
+  return Own && Own->TypedefNamed;
+}
+
 bool CWriter::bare(const LocalType &Type) const {
   if (Embedded || Cpp ||
       (Type.Kind != TypeKind::Struct && Type.Kind != TypeKind::Union &&
        Type.Kind != TypeKind::Enum))
     return false;
-  if (Type.TypedefNamed)
-    return true;
-  const LocalType *Own = System ? System->find(Type.Name) : nullptr;
-  return Own && Own->TypedefNamed;
+  return typedefNamed(Type);
 }
 
 std::string CWriter::bareTypedef(const LocalType &Type) const {
@@ -1128,6 +1168,16 @@ writeDefinitions(CWriter &Writer, const TypeLibrary &Library,
   std::function<void(const LocalType &)> Emit = [&](const LocalType &Type) {
     if (!Defined.contains(Type.Name) || !Done.insert(Type.Name).second)
       return;
+    // A typedef the unit spells through defines nothing; what it stands for
+    // is defined as anything the unit names is.
+    if (Writer.spelledThrough(Type.Name)) {
+      std::vector<std::string> Named;
+      mentionedTypes(Type, Named);
+      for (const std::string &Name : Named)
+        if (const LocalType *Found = Library.find(Name))
+          Emit(*Found);
+      return;
+    }
     // What it holds by value, and the typedefs and enumerations it names
     // anywhere: C declares neither ahead of its definition.  A typedef of
     // a record by its tag declares the record as it names it, and needs no
@@ -1200,13 +1250,18 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
   const std::vector<const LocalType *> Order =
       writeDefinitions(Writer, Library, All, Defined, /*Guarded=*/true,
                        /*Pragmas=*/false, Enums, Body);
-  // The records the definitions only point to, declared.
+  // The records the definitions only point to, declared, through the
+  // typedefs the unit spells through too.
   std::string Declarations;
   llvm::StringSet<> Declared;
   const NameSpelling &Names = Writer.names();
   for (const LocalType *Type : Order) {
     std::vector<std::string> Named;
     mentionedTypes(*Type, Named);
+    llvm::StringSet<> Through;
+    for (size_t I = 0; I < Named.size(); ++I)
+      if (Writer.spelledThrough(Named[I]) && Through.insert(Named[I]).second)
+        mentionedTypes(*Library.find(Named[I]), Named);
     for (const std::string &Name : Named)
       if (const LocalType *Found = Library.find(Name);
           Found && !Defined.contains(Name) &&
@@ -1266,11 +1321,10 @@ bool preludeMacro(llvm::StringRef Name) {
   return false;
 }
 
-/// Whether C reserves \p Name to its implementations: __x and _X.
-bool reservedName(llvm::StringRef Name) {
-  return Name.size() > 1 && Name[0] == '_' &&
-         (Name[1] == '_' || llvm::isUpper(Name[1]));
-}
+/// Whether C reserves \p Name, a type's, to its implementations: every
+/// name a file declares that begins with an underscore, as macOS's
+/// _opaque_pthread_t does.
+bool reservedName(llvm::StringRef Name) { return Name.starts_with("_"); }
 
 /// The names \p Record's members take, in records in place too.
 void memberNames(const RecordDef &Record, std::set<std::string> &Names) {
@@ -1462,6 +1516,23 @@ std::string renderCHeader(const TypeLibrary &Library,
                             Name + " neverd_" + Name + "\n";
       Restores[Condition] += "#pragma pop_macro(\"" + Name + "\")\n";
     }
+  // The program's own types defined here likewise, where the compiler's
+  // headers declare their names, as MinGW's do the Windows C runtime's
+  // records a Windows program joins.
+  std::map<std::string, std::string> OwnRenames, OwnRestores;
+  // The source a library NeverD ships holds is NeverD's to read alone,
+  // which needs none of what other compilers do.
+  const bool Shipped = Options.HeaderPragmas;
+  for (const LocalType *Type :
+       Shipped ? llvm::ArrayRef<const LocalType *>() : llvm::ArrayRef(Own)) {
+    const std::string Name = Writer.names().type(Type->Name);
+    if (const std::optional<llvm::StringRef> Declared = preludeType(Name)) {
+      OwnRenames[Declared->str()] += "#pragma push_macro(\"" + Name +
+                                     "\")\n#define " + Name + " neverd_" +
+                                     Name + "\n";
+      OwnRestores[Declared->str()] += "#pragma pop_macro(\"" + Name + "\")\n";
+    }
+  }
   // And may define the name of a member as a macro.
   std::set<std::string> Members;
   for (const auto *Order : {&TheirDone, &Done})
@@ -1471,7 +1542,7 @@ std::string renderCHeader(const TypeLibrary &Library,
   // after the system's headers have read them, and before the definitions.
   std::string Undefines, Redefines;
   for (const std::string &Member : Members)
-    if (preludeMacro(Member)) {
+    if (!Shipped && preludeMacro(Member)) {
       Undefines +=
           "#pragma push_macro(\"" + Member + "\")\n#undef " + Member + "\n";
       Redefines += "#pragma pop_macro(\"" + Member + "\")\n";
@@ -1492,6 +1563,15 @@ std::string renderCHeader(const TypeLibrary &Library,
     for (const auto &[Condition, Lines] : Restores)
       Show += under(Condition, Lines);
     Show += "#endif\n";
+  }
+  if (!OwnRenames.empty()) {
+    Hide += "\n// The names the types defined here take where the compiler's "
+            "own headers\n// declare them otherwise.\n";
+    for (const auto &[Condition, Lines] : OwnRenames)
+      Hide += under(Condition, Lines);
+    Show += "\n";
+    for (const auto &[Condition, Lines] : OwnRestores)
+      Show += under(Condition, Lines);
   }
   if (!Redefines.empty())
     Show += "\n" + Redefines;

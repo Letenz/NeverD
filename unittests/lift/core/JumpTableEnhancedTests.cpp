@@ -668,6 +668,54 @@ TEST_F(JTE_X86_32, DynamicStackStoreMayOverwriteTheSpilledGOTBase) {
   EXPECT_TRUE(Low.JumpTables.empty());
 }
 
+static neverd::LowFunc buildI386Function(const char *Object, const char *Name) {
+  auto ImageOrErr = neverd::loadBinary(fs::path(TEST_OBJ_DIR) / Object);
+  if (!ImageOrErr) {
+    ADD_FAILURE() << llvm::toString(ImageOrErr.takeError());
+    return {};
+  }
+  const neverd::Symbol *Function = ImageOrErr->findSymbol(Name);
+  neverd::Decoder Decoder;
+  if (!Function || !Decoder.init(ImageOrErr->Arch, ImageOrErr->Mode)) {
+    ADD_FAILURE() << Name << " cannot be decoded";
+    return {};
+  }
+  neverd::CFGBuilder Builder;
+  return Builder.build(*ImageOrErr, Decoder, Function->Addr, Function->Name);
+}
+
+TEST_F(JTE_X86_32, RealignedFrameKeepsItsSpilledGOTBase) {
+  // `and $-16, %esp` (`$-4` in the leaf) anchors the frame: the GOT spill and
+  // its reload are the same cell of the aligned frame, which no escape or
+  // store reaches.
+  for (const char *Name :
+       {"jt_i386_realigned_loop", "jt_i386_realigned_lexer"}) {
+    SCOPED_TRACE(Name);
+    const neverd::LowFunc Low =
+        buildI386Function("test_jumptable_realigned_frame_i386.o", Name);
+    ASSERT_EQ(Low.JumpTables.size(), 1u);
+    EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+  }
+}
+
+TEST_F(JTE_X86_32, StoreAboveTheAlignedFrameLeavesItsSpill) {
+  // 8(%ebp), the incoming argument, lies above every cell the aligned frame
+  // may hold, so the store cannot reach the spill at 8(%esp).
+  const neverd::LowFunc Low = buildI386Function(
+      "test_jumptable_realigned_alias_i386.o", "jt_i386_realigned_arg_store");
+  ASSERT_EQ(Low.JumpTables.size(), 1u);
+  EXPECT_EQ(Low.JumpTables.front().Targets.size(), 4u);
+}
+
+TEST_F(JTE_X86_32, StoreWithinTheAlignmentSlackMayOverwriteTheSpill) {
+  // -12(%ebp) may be the very cell 8(%esp) names, depending on the alignment
+  // the caller left.
+  const neverd::LowFunc Low = buildI386Function(
+      "test_jumptable_realigned_alias_i386.o", "jt_i386_realigned_alias_store");
+  EXPECT_TRUE(Low.hasCompleteInstructionLift());
+  EXPECT_TRUE(Low.JumpTables.empty());
+}
+
 TEST_F(JTE_X86_32, O0ThreeSwitchLoopsReuseCanonicalFrameSpill) {
   auto ImageOrErr = neverd::loadBinary(fs::path(TEST_OBJ_DIR) /
                                        "test_i386_three_switch_loops.o");

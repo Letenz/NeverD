@@ -53,6 +53,17 @@ NEVERD_HEADER_SYSTEM(MuslLinux, "musl",
                      "!defined(__UCLIBC__)",
                      "features.h", "_GNU_SOURCE", "")
 
+// Apple's: libSystem, whose platform <TargetConditionals.h> tells, which
+// clang defines too; the iOS library holds the simulator's.
+NEVERD_HEADER_SYSTEM(MacOS, "libSystem", "defined(__APPLE__)",
+                     "defined(TARGET_OS_OSX) && TARGET_OS_OSX",
+                     "TargetConditionals.h", "", "")
+NEVERD_HEADER_SYSTEM(IOS, "libSystem", "defined(__APPLE__)",
+                     "defined(TARGET_OS_IOS) && TARGET_OS_IOS && "
+                     "!(defined(TARGET_OS_MACCATALYST) && "
+                     "TARGET_OS_MACCATALYST)",
+                     "TargetConditionals.h", "", "")
+
 NEVERD_HEADER_SYSTEM_ARCH(X64, "defined(__x86_64__) && !defined(__ILP32__)")
 NEVERD_HEADER_SYSTEM_ARCH(X86, "defined(__i386__)")
 NEVERD_HEADER_SYSTEM_ARCH(AArch64,
