@@ -898,6 +898,23 @@ private:
 
   std::optional<uint64_t> traceSSAConst(const MedVar &V) const;
 
+  /// i386 PIC reads data at a displacement from the GOT address a get-PC
+  /// sequence computes: `(GOT + index) + disp`, `(GOT + disp) + index` or
+  /// `GOT + disp`.  The GOT is a displacement base, never the data, so the
+  /// data's base is GOT + disp.  Only a linked image whose GOT is known, and
+  /// a GOT term that folds to it, match.
+  struct I386GotRelativeAccess {
+    uint64_t Base = 0;
+    std::optional<MedVar> Index;
+  };
+  std::optional<I386GotRelativeAccess>
+  matchI386GotRelative(const MedVar &Address) const;
+  /// A read of read-only data at a displacement from the GOT: the data's
+  /// global, indexed when the address adds one; null for anything else.
+  llvm::Value *tryResolveI386GotRelativeReadOnlyPtr(const MedVar &AddrVar,
+                                                    uint16_t SizeHint,
+                                                    llvm::IRBuilder<> &Builder);
+
   /// Conservatively fold a side-effect-free integer SSA expression used as a
   /// control condition. Width changes, subpieces, arithmetic/bitwise ops,
   /// comparisons, boolean ops, and a SELECT with a proven condition are

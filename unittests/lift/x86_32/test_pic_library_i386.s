@@ -18,6 +18,11 @@
 // keeps it in %ebx only for its PLT call.  A label marks each pop.
 //   int clang_reload(int c) { return tolower(c) + factor; }
 // spills the GOT address before its PLT call and reloads it to read `factor`.
+//   static const int table[8] = {3, 1, 4, 1, 5, 9, 2, 6};
+//   int gcc_lookup(int i) { return table[i & 7]; }
+// `gcc_lookup` adds the index to the GOT register its thunk loads,
+// `clang_lookup` to the address its call/pop leaves, before the GOTOFF
+// displacement of `table`.
 
 	.text
 	.p2align 4
@@ -172,6 +177,46 @@ clang_reload_pop:
 	retl
 	.cfi_endproc
 	.size	clang_reload, .-clang_reload
+
+	.p2align 4
+	.globl	gcc_lookup
+	.type	gcc_lookup, @function
+gcc_lookup:
+	.cfi_startproc
+	call	__x86.get_pc_thunk.dx
+	addl	$_GLOBAL_OFFSET_TABLE_, %edx
+	movl	4(%esp), %eax
+	andl	$7, %eax
+	movl	table@GOTOFF(%edx,%eax,4), %eax
+	ret
+	.cfi_endproc
+	.size	gcc_lookup, .-gcc_lookup
+
+	.p2align 4
+	.globl	clang_lookup
+	.type	clang_lookup, @function
+clang_lookup:
+	.cfi_startproc
+	calll	.Llookup_pc
+	.cfi_adjust_cfa_offset 4
+.Llookup_pc:
+	popl	%ecx
+	.cfi_adjust_cfa_offset -4
+.Llookup_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Llookup_got-.Llookup_pc), %ecx
+	movl	4(%esp), %eax
+	andl	$7, %eax
+	movl	table@GOTOFF(%ecx,%eax,4), %eax
+	retl
+	.cfi_endproc
+	.size	clang_lookup, .-clang_lookup
+
+	.section	.rodata
+	.p2align 2
+	.type	table, @object
+	.size	table, 32
+table:
+	.long	3, 1, 4, 1, 5, 9, 2, 6
 
 	.data
 	.p2align 2

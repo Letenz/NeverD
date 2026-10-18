@@ -18,6 +18,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/support/Diagnostic.h"
 
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Instructions.h"
@@ -1388,6 +1389,36 @@ MedLLVMEmitter::tryResolveIndexedGlobalPtr(const MedVar &AddrVar,
   if (!IdxVal)
     return nullptr;
   return Builder.CreateGEP(llvm::Type::getInt8Ty(*Ctx), G, IdxVal, "tblptr");
+}
+
+llvm::Value *MedLLVMEmitter::tryResolveI386GotRelativeReadOnlyPtr(
+    const MedVar &AddrVar, uint16_t SizeHint, llvm::IRBuilder<> &Builder) {
+  const auto Got = matchI386GotRelative(AddrVar);
+  if (!Got)
+    return nullptr;
+  // Writable data keeps the writable-run resolver, which aliases its other
+  // accesses (writableDataSegOf places it by the same sum), and a table of
+  // relocated pointers the pointer-table resolvers, which rebuild its slots.
+  if (segHasPtrRelocSlots(Img->getSegmentFor(Got->Base)))
+    return nullptr;
+  llvm::Constant *G = tryResolveGlobalData(Got->Base, SizeHint);
+  // The global may be a whole run the base lies inside, as a GEP into it.
+  auto *GV =
+      G ? llvm::dyn_cast<llvm::GlobalVariable>(llvm::getUnderlyingObject(G))
+        : nullptr;
+  if (!GV || !GV->isConstant())
+    return nullptr;
+  if (!Got->Index)
+    return G;
+  llvm::Value *Index = getVar(*Got->Index, Builder);
+  if (!Index)
+    return nullptr;
+  auto *IdxTy = llvm::IntegerType::get(*Ctx, 32);
+  if (Index->getType()->isPointerTy())
+    Index = Builder.CreatePtrToInt(Index, IdxTy);
+  else if (Index->getType() != IdxTy)
+    Index = Builder.CreateZExtOrTrunc(Index, IdxTy);
+  return Builder.CreateGEP(llvm::Type::getInt8Ty(*Ctx), G, Index, "gotrelptr");
 }
 
 } // namespace neverd
