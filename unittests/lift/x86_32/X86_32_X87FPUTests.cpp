@@ -1,3 +1,4 @@
+#include "../../LLVMHostFixture.h"
 #include "NeverDLiftFixture.h"
 
 #include "neverd/Limits.h"
@@ -431,7 +432,7 @@ int test_main(void) {
         const auto IRPath = tmpFile("examine.ll");
         std::string IR;
         llvm::raw_string_ostream OS(IR);
-        Lift.LlvmModule->print(OS, nullptr);
+        neverd::test::printHostCompilerFixture(*Lift.LlvmModule, OS);
         std::ofstream(IRPath) << IR;
         Options.LiftMode = false;
         auto High = Pipeline().run(Image, Context, Options);
@@ -2383,7 +2384,7 @@ TEST_F(X86_32_X87FPU, NativeAndLiftedCallLoopsReturnTheIndependentSum) {
         const auto LLVMFile = tmpFile("call-loop.ll");
         std::string IR;
         llvm::raw_string_ostream OS(IR);
-        Result.LlvmModule->print(OS, nullptr);
+        neverd::test::printHostCompilerFixture(*Result.LlvmModule, OS);
         std::ofstream(LLVMFile) << IR;
         Options.LiftMode = false;
         auto High = Pipeline().run(Image, Context, Options);

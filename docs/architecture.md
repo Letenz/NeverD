@@ -368,8 +368,11 @@ builtin spellings each language takes and which it takes unless asked;
 an agent reads one object.
 
 `SessionSidecar.cpp` owns the shared atomic write for Session sidecars. Type
-declaration and persistence adapters use that same private helper. Private
-Session LLVM tests compile their actual type/debug owners and sidecar helper
+declaration and persistence adapters use that same private helper. It also owns
+recording the project's input after a successful sidecar write.
+The same owner supplies private input/hash observations to the information
+queries, without a dependency on UI adapters. Private Session LLVM tests
+compile their actual type/debug owners and sidecar helper
 directly; the shared SDK keeps its existing public C boundary.
 
 The decompiler reads the local types through `LocalTypesDebugContext`
@@ -4793,6 +4796,13 @@ LLVM Support. All transports share its physical x87 state and FXSAVE64 layout;
 Unicorn does not depend on KVM/WHP. KVM and WHP transfer the complete FP/SSE
 state through XSAVE packets; the ISA codec owns the shared layout and init-state
 rules. Unicorn converts its full tag word at its boundary.
+The portable Unicorn adapter enforces its admitted absolute deadline in the
+mandatory instruction hook, before observers and again before guest effects.
+It disables Unicorn's optional per-entry timer thread, so short scheduling
+slices do not wait for a host timer to retire. A timed-out CPU remains resumable
+under a newly admitted CPU budget; the owning workload still retains its
+original `ExecutionBudget`.
+
 CPU snapshots preserve x87 control/status, the physical nonempty `FPTag` mask,
 TOP, opcode,
 instruction/data pointers and all eight 80-bit payloads. This state contract
@@ -6505,6 +6515,8 @@ The operation-scoped code-owner index also records exact primary-to-fragment rel
 The source ABI explicitly records 32-bit sign or zero extension for narrow integer register parameters on Darwin ARM64 and x86_64. HighIR preserves that carrier through saved copies while retaining the original source parameter type. Reads beyond 32 bits, stack padding and registers clobbered by calls remain unknown. This follows Apple’s [ARM64](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms) and [Intel](https://developer.apple.com/documentation/xcode/writing-64-bit-intel-code-for-apple-platforms) calling conventions; observed native low-byte values alone provide no extension evidence.
 
 At a bound Darwin ARM64 call, a 1- or 2-byte integer register argument reads the complete 32-bit `Wn` carrier before SSA and then extracts only its declared low bytes. This keeps converging `Wn` definitions in one SSA web without claiming that the call observes extra source bytes. x86-64 keeps its separate partial-register rules.
+
+Before SSA, source-call binding replaces a complete generic register-argument summary with the validated source ABI's argument order and lanes. The shared physical call-occurrence key must identify an original LowIR call with only its target operand; prototype argument counts alone do not authorize reconstruction. This also covers SysV x86-64 calls whose integer/vector uses were already published and Swift calls with a dedicated context register. Binding failure retains the generic operands. Explicit LowIR arguments and exact formatted calls keep their own contracts; source hints remain disabled for lifting and patching.
 
 Before an AAPCS64 call clobbers a full `Q8`–`Q15` carrier, MedIR materializes the low `D` view established by the latest full-vector write. The call preserves that exact 64-bit value while the upper half remains unknown. HighIR keeps ARM `FMINNM`/`FMAXNM` as IEEE number-selecting operations, and HighC emits the matching typed compiler builtins.
 

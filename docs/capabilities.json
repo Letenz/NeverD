@@ -246,6 +246,7 @@
           "neverd_unwind_frame_json",
           "neverd_version",
           "neverd_version_number",
+          "neverd_warm_functions_json",
           "neverd_xrefs_from_json",
           "neverd_xrefs_scan",
           "neverd_xrefs_to_json"
@@ -1367,6 +1368,7 @@
           "neverd types --pdb",
           "neverd types --pdb-unverified",
           "neverd types --prototypes",
+          "neverd types --record-abi",
           "neverd types --spelling",
           "neverd types --symbol-path",
           "neverd types --type",
@@ -1471,6 +1473,7 @@
           "neverd_type_declarations_json",
           "neverd_types_languages_json",
           "neverd_unwind_frame_json",
+          "neverd_warm_functions_json",
           "neverd_xrefs_from_json",
           "neverd_xrefs_to_json"
         ]

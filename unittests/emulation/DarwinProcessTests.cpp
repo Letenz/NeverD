@@ -1277,7 +1277,7 @@ TEST_P(DarwinProcess, AttributeNamesPreserveReferencesAndRetainedIdentity) {
   Options.DarwinFiles = darwin_test::attributeNamesOptions();
   Options.Arguments[2] = "/data";
   Options.InstructionQuantum = 1024;
-  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Limits.TimeoutMicroseconds = BatchedProcessTimeoutMicroseconds;
   for (const char *Mode : {"attribute-names", "attribute-names-values",
                            "attribute-names-unsupported"}) {
     SCOPED_TRACE(Mode);
@@ -2144,6 +2144,7 @@ TEST_P(DarwinProcess, LoginBufferPreservesExactBytesZeroLengthAndAuthority) {
     EXPECT_EQ(Missing->Diagnostic,
               "Darwin login buffer observation is not configured");
     EXPECT_EQ(Missing->StandardOutput, "!");
+    ASSERT_FALSE(Missing->Services.empty()) << Missing->Diagnostic;
     EXPECT_EQ(Missing->Services.back().Number, Class + 49);
     EXPECT_FALSE(Missing->Services.back().Result);
   }
@@ -3210,7 +3211,7 @@ TEST_P(DarwinProcess,
 TEST_P(DarwinProcess,
        CreatedDirectoryFileSystemsKeepActualParentAndHeldLifetime) {
   Options.InstructionQuantum = 1024;
-  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Limits.TimeoutMicroseconds = BatchedProcessTimeoutMicroseconds;
   Options.Arguments[2] = "/child";
   Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
   Options.DarwinTime.reset();
@@ -3684,7 +3685,7 @@ TEST_P(DarwinProcess,
 TEST_P(DarwinProcess,
        CreatedRegularAttributesKeepIndependentProvidersAndObjectState) {
   Options.InstructionQuantum = 1024;
-  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Limits.TimeoutMicroseconds = BatchedProcessTimeoutMicroseconds;
   Options.Arguments[2] = "/data";
   Options.DarwinSystem.emplace().Credentials =
       darwin_test::createdAttributeCredentials();

@@ -109,6 +109,107 @@ class CiConfigurationTests(unittest.TestCase):
                     self.assertEqual(properties.get("RUN_SERIAL", False),
                                      test["name"] in serial)
 
+    def test_driver_batch_timeouts_preserve_exact_method_and_backend_boundaries(self):
+        execution = ROOT / "unittests" / "emulation" / "DriverBatchTestExecution.cmake"
+        methods = (
+            "Backends/KernelFileObjectExecution.OriginalBufferedNativeFileTransfers",
+            "Backends/KernelIntegerFormattingExecution.OriginalImportsAndLookupPreserveAllValueBits",
+        )
+        variants = ("whpLegacyPreferred", "whpLegacyRebased",
+                    "whpCheckedPreferred", "whpCheckedRebased")
+        selected = {f"{method}/{variant}" for method in methods for variant in variants}
+        neighbors = {
+            f"{method}/{backend}LegacyPreferred"
+            for method in methods for backend in ("unicorn", "kvm", "hvf")
+        } | {name + "Extra" for name in selected} | {
+            "Other/KernelFileObjectExecution.OriginalBufferedNativeFileTransfers/whpLegacyPreferred",
+            "Backends/KernelFileObjectExecution.OriginalDriverQueriesBufferedFileInformation/whpLegacyPreferred",
+        }
+        for annotated in (False, True):
+            with self.subTest(annotated=annotated), tempfile.TemporaryDirectory(
+                    prefix="neverd-driver-batch-policy-") as directory:
+                root = Path(directory)
+                original = sorted(selected | neighbors)
+                names = [name + ("  # GetParam() = bytes" if annotated else "")
+                         for name in original]
+                source = ""
+                for name in names:
+                    source += f'add_test("{name}" "{Path(sys.executable).as_posix()}")\n'
+                    source += f'set_tests_properties("{name}" PROPERTIES TIMEOUT 30)\n'
+                source += "set(NeverDNativeDriverTests_TESTS "
+                source += " ".join(f'"{name}"' for name in names) + ")\n"
+                source += f'include("{execution.as_posix()}")\n'
+                (root / "CTestTestfile.cmake").write_text(source, encoding="utf-8")
+                result = subprocess.run(
+                    ["ctest", "--test-dir", str(root), "--show-only=json-v1"],
+                    capture_output=True, text=True, timeout=30,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn("CMP0057", result.stderr)
+                tests = json.loads(result.stdout)["tests"]
+                self.assertEqual({test["name"] for test in tests}, set(names))
+                for test in tests:
+                    name = test["name"].split("  # GetParam() = ", 1)[0]
+                    props = {p["name"]: p["value"] for p in test["properties"]}
+                    if name in selected:
+                        guest_allowance = 18 * 5 if "FileObject" in name else 4 * 30
+                        self.assertGreater(props["TIMEOUT"], guest_allowance)
+                        self.assertLessEqual(props["TIMEOUT"], 180)
+                    else:
+                        self.assertEqual(props["TIMEOUT"], 30)
+                    self.assertFalse(props.get("RUN_SERIAL", False))
+
+    def test_darwin_batch_timeouts_cover_guests_without_changing_neighbor_cases(self):
+        execution = ROOT / "unittests" / "emulation" / "DarwinTestExecution.cmake"
+        guest_counts = {
+            "CreatedDirectoryFileSystemsKeepActualParentAndHeldLifetime": 8,
+            "CreatedRegularAttributesKeepIndependentProvidersAndObjectState": 20,
+            "AttributeNamesPreserveReferencesAndRetainedIdentity": 3,
+        }
+        profiles = ("MacOSARM64_hvf", "IOSARM64_hvf", "SimulatorARM64_hvf",
+                    "MacOSARM64_unicorn", "MacOSX64_whp", "MacOSX64_kvm")
+        selected = {
+            f"Transports/DarwinProcess.{method}/{profile}": guests * 20
+            for method, guests in guest_counts.items() for profile in profiles
+        }
+        neighbors = {name.replace("/MacOSARM64_hvf", "Extra/MacOSARM64_hvf")
+                     for name in selected if name.endswith("/MacOSARM64_hvf")} | {
+            "Other/DarwinProcess.CreatedDirectoryFileSystemsKeepActualParentAndHeldLifetime/MacOSARM64_hvf",
+            "Transports/DarwinProcess.CreatedRegularSynchronizationKeepsIndependentProvidersAndState/MacOSARM64_hvf",
+        }
+        previous = {
+            "Transports/DarwinProcess.ImmediateSelectPreservesBitmapsCopiesAndProviderPremises/MacOSARM64_hvf": 120,
+            "Transports/DarwinProcess.SymbolicFileSystemsKeepOwnSnapshotAndFollowedTargetSeparate/MacOSARM64_hvf": 240,
+        }
+        with tempfile.TemporaryDirectory(prefix="neverd-darwin-batch-policy-") as directory:
+            root = Path(directory)
+            names = sorted(set(selected) | neighbors | set(previous))
+            source = ""
+            for name in names:
+                source += f'add_test("{name}" "{Path(sys.executable).as_posix()}")\n'
+                source += f'set_tests_properties("{name}" PROPERTIES TIMEOUT 30)\n'
+            source += "set(NeverDDarwinProcessTests_TESTS "
+            source += " ".join(f'"{name}"' for name in names) + ")\n"
+            source += f'include("{execution.as_posix()}")\n'
+            (root / "CTestTestfile.cmake").write_text(source, encoding="utf-8")
+            result = subprocess.run(
+                ["ctest", "--test-dir", str(root), "--show-only=json-v1"],
+                capture_output=True, text=True, timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            tests = json.loads(result.stdout)["tests"]
+            self.assertEqual({test["name"] for test in tests}, set(names))
+            for test in tests:
+                name = test["name"]
+                props = {p["name"]: p["value"] for p in test["properties"]}
+                if name in selected:
+                    self.assertGreater(props["TIMEOUT"], selected[name])
+                    self.assertLessEqual(props["TIMEOUT"], selected[name] + 30)
+                    self.assertEqual(props["TIMEOUT"] % 30, 0)
+                else:
+                    self.assertEqual(props["TIMEOUT"], previous.get(name, 30))
+                self.assertFalse(props.get("RUN_SERIAL", False))
+
     def test_mobile_focused_inventory_executes_on_every_runner(self):
         source = WORKFLOW.read_text(encoding="utf-8")
         step = self.workflow_step_containing(source, "focused contract has missing")
@@ -304,6 +405,7 @@ class CiConfigurationTests(unittest.TestCase):
         self.assertEqual(
             verify_step.count("scripts.tests.test_audit_ci_test_results"), 1
         )
+        self.assertEqual(verify_step.count("scripts.tests.test_ci_test_reuse"), 1)
         self.assertEqual(
             verify_step.count("scripts.tests.test_neverd_bench_harness"), 1
         )
