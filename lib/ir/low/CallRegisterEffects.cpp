@@ -13,6 +13,7 @@
 #include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/StackProbeIndex.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ELF/ELFOperatingSystem.h"
@@ -500,6 +501,7 @@ void summarizeIncomingStackReads(const BinaryImage &Img, CallRegisterBodyView F,
                                  const std::map<int, size_t> &IndexOfId,
                                  const std::set<va_t> &BlockStarts,
                                  const std::map<va_t, va_t> *ArgumentSources,
+                                 const libc::StackProbeIndex *StackProbes,
                                  LocalRegisterEffect &Effect) {
   if (Img.Arch != Arch::X64) {
     Effect.UnknownStackReads = true;
@@ -717,7 +719,7 @@ void summarizeIncomingStackReads(const BinaryImage &Img, CallRegisterBodyView F,
       if (!LeavesFunction)
         continue;
       if (Op.Opcode == NdOp::CALL && DirectTarget && !TailCall &&
-          libc::stackProbeEffect(Img, Op.Inputs[0].Offset) ==
+          libc::stackProbeEffect(Img, Op.Inputs[0].Offset, StackProbes) ==
               libc::StackProbeEffect::Probe)
         continue;
       Unknown |= ArgumentsEscape();
@@ -871,16 +873,18 @@ LocalRegisterEffect
 localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
                     const libc::NoReturnTargetIndex *NoReturnTargets,
                     const std::map<va_t, GPRReadWidths> *FixedCallReads,
-                    const std::map<va_t, va_t> *ArgumentSources) {
+                    const std::map<va_t, va_t> *ArgumentSources,
+                    const libc::StackProbeIndex *StackProbes) {
   return localRegisterEffect(Img, CallRegisterBodyView(F), NoReturnTargets,
-                             FixedCallReads, ArgumentSources);
+                             FixedCallReads, ArgumentSources, StackProbes);
 }
 
 LocalRegisterEffect
 localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
                     const libc::NoReturnTargetIndex *NoReturnTargets,
                     const std::map<va_t, GPRReadWidths> *FixedCallReads,
-                    const std::map<va_t, va_t> *ArgumentSources) {
+                    const std::map<va_t, va_t> *ArgumentSources,
+                    const libc::StackProbeIndex *StackProbes) {
   LocalRegisterEffect Effect;
   if (!F.Complete || F.UnsafeIndirectBranches || F.Blocks.empty()) {
     Effect.Unknown = true;
@@ -950,7 +954,7 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
            (TailCall && EntersNoReturnFunction));
       // A stack probe changes no register its caller can observe.
       if (Op.Opcode == NdOp::CALL && DirectTarget && !TailCall &&
-          libc::stackProbeEffect(Img, Op.Inputs[0].Offset) ==
+          libc::stackProbeEffect(Img, Op.Inputs[0].Offset, StackProbes) ==
               libc::StackProbeEffect::Probe)
         continue;
       // A vector register widened from its own low bytes (`vzeroupper`, or
@@ -1129,7 +1133,7 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
     }
   }
   summarizeIncomingStackReads(Img, F, IndexOfId, BlockStarts, ArgumentSources,
-                              Effect);
+                              StackProbes, Effect);
   return Effect;
 }
 
