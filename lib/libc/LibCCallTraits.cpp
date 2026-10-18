@@ -557,6 +557,14 @@ bool variadicIn(const LibCVariadicForward &Forward, LibCVariant Variant) {
   }
 }
 
+std::string_view forwardFixedType(const LibCVariadicForward &Forward,
+                                  size_t Index, LibCVariant Variant) {
+  if (const auto Types = variant_rows::forwardFixed(Forward.Name, Variant);
+      Types && Index < Types->size())
+    return (*Types)[Index];
+  return Forward.Fixed[Index];
+}
+
 const LibCVariadicForward *libcVariadicForward(std::string_view Name) {
   using Kind = LibCVariadicForward::Kind;
 #define NEVERD_FIXED_PARAMETERS(...)                                           \

@@ -101,11 +101,13 @@ inline std::string stubParameterName(const libc::LibCVariadicForward &Forward,
 /// Writes \p Stub, a stub of the variadic import \p Import that jumps through
 /// \p Slot where the format names the slot, as a function that passes every
 /// argument it receives on through \p Forward, or, with no form C can pass
-/// them to, as the note that the stub is the import.
+/// them to, as the note that the stub is the import.  Its fixed parameters
+/// are of the types the headers of C library \p Variant give them.
 inline void writeVariadicImportStub(llvm::raw_ostream &OS, llvm::StringRef Stub,
                                     llvm::StringRef Import,
                                     llvm::StringRef Slot,
-                                    const libc::LibCVariadicForward *Forward) {
+                                    const libc::LibCVariadicForward *Forward,
+                                    libc::LibCVariant Variant) {
   using Kind = libc::LibCVariadicForward::Kind;
   OS << "/* " << Stub << " jumps to the import " << Import;
   if (!Slot.empty())
@@ -137,7 +139,7 @@ inline void writeVariadicImportStub(llvm::raw_ostream &OS, llvm::StringRef Stub,
   for (size_t I = 0; I < F.FixedCount; ++I) {
     if (F.TheKind == Kind::Sentinel && I > 0)
       break;
-    OS << (I ? ", " : "") << F.Fixed[I];
+    OS << (I ? ", " : "") << libc::forwardFixedType(F, I, Variant);
   }
   switch (F.TheKind) {
   case Kind::VaList:
@@ -158,7 +160,8 @@ inline void writeVariadicImportStub(llvm::raw_ostream &OS, llvm::StringRef Stub,
   OS << F.Return << " " << Stub << "(";
   for (size_t I = 0; I < F.FixedCount; ++I) {
     const std::string Name = stubParameterName(F, I);
-    OS << (I ? ", " : "") << stubDeclarator(F.Fixed[I], Name);
+    OS << (I ? ", " : "")
+       << stubDeclarator(libc::forwardFixedType(F, I, Variant), Name);
     Names += (I ? ", " : "") + Name;
   }
   const std::string Last = stubParameterName(F, F.FixedCount - 1);

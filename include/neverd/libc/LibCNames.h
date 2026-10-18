@@ -285,6 +285,13 @@ const LibCVariadicForward *libcVariadicForward(std::string_view Name);
 /// takes its address and datum variadic and FreeBSD's fixed.
 bool variadicIn(const LibCVariadicForward &Forward, LibCVariant Variant);
 
+/// The C type of fixed parameter \p Index of \p Forward's routine as the
+/// headers of C library \p Variant declare it (LibCVariants.def): the GNU C
+/// Library's ptrace takes its request as an enumeration, bionic's and musl's
+/// as an int.
+std::string_view forwardFixedType(const LibCVariadicForward &Forward,
+                                  size_t Index, LibCVariant Variant);
+
 /// ABI category of one fixed parameter in a known variadic function.  Pointer
 /// parameters must be symbolized before code generation; integer parameters
 /// must remain scalar values even when a small constant happens to overlap a
