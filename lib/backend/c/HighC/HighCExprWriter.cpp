@@ -3283,19 +3283,24 @@ std::string HighCWriter::typedArgumentText(const HighExpr &E,
   // C converts an integer argument by the signedness of its own type, so an
   // extension to a wider parameter cannot pass its narrower source unless
   // that source extends the same way.
-  if (Expected && Expected->Kind == NdTypeKind::Int && !Expected->IsEnum) {
-    const HighExpr &Source = lowBytesSource(E, Expected->Size);
-    if (Source.Kind == ExprKind::UnaryOp &&
-        (Source.Op == NdOp::INT_ZEXT || Source.Op == NdOp::INT_SEXT) &&
-        !Source.Operands.empty() && Source.Operands[0] &&
-        Source.Operands[0]->Kind != ExprKind::Const &&
-        Source.Operands[0]->Type &&
-        Source.Operands[0]->Type->Size < Expected->Size) {
-      if (auto Converted = implicitIntegerConversion(E, Expected))
-        return *Converted;
-      return exprStr(E);
-    }
-  }
+  auto WideningExtension = [&](const HighExpr &Value) {
+    if (!Expected || Expected->Kind != NdTypeKind::Int || Expected->IsEnum)
+      return false;
+    const HighExpr &Source = lowBytesSource(Value, Expected->Size);
+    return Source.Kind == ExprKind::UnaryOp &&
+           (Source.Op == NdOp::INT_ZEXT || Source.Op == NdOp::INT_SEXT) &&
+           !Source.Operands.empty() && Source.Operands[0] &&
+           Source.Operands[0]->Kind != ExprKind::Const &&
+           Source.Operands[0]->Type &&
+           Source.Operands[0]->Type->Size < Expected->Size;
+  };
+  auto ExtendedArgument = [&](const HighExpr &Value) {
+    if (auto Converted = implicitIntegerConversion(Value, Expected))
+      return *Converted;
+    return exprStr(Value);
+  };
+  if (WideningExtension(E))
+    return ExtendedArgument(E);
   const HighExpr *Inner = peelIntegerViewOps(&E);
   if (!Inner)
     Inner = &E;
@@ -3307,6 +3312,10 @@ std::string HighCWriter::typedArgumentText(const HighExpr &E,
     auto Fwd = ValueForward.find(Name);
     if (Fwd == ValueForward.end() || !Fwd->second || Fwd->second == Inner)
       break;
+    // So does a forwarded definition: peeling its extension would pass the
+    // narrower source's own conversion instead.
+    if (WideningExtension(*Fwd->second))
+      return ExtendedArgument(*Fwd->second);
     const HighExpr *Next = peelIntegerViewOps(Fwd->second);
     if (!Next || Next == Inner)
       break;
