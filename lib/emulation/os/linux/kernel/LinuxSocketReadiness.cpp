@@ -15,7 +15,7 @@ LinuxFiles::Readiness LinuxFiles::socketReadiness(const OpenSocket &Socket,
   const bool Datagram = (Socket.Flags & 0xf) == 2;
   Readiness R;
   auto Unknown = [&]() {
-    R.Unknown = "socket select readiness has no offline observation";
+    R.Unknown = "socket readiness has no offline observation";
     return R;
   };
   if ((Datagram ? !Socket.Datagram : !Socket.Connection) || (Wanted & 4))
@@ -69,20 +69,4 @@ LinuxFiles::Readiness LinuxFiles::socketReadiness(const OpenSocket &Socket,
   return Unknown();
 }
 
-std::optional<std::optional<uint64_t>>
-LinuxFiles::receiveBeforeReady(const OpenSocket &Socket, uint32_t Flags,
-                               ProcessResult &Result) const {
-  const auto R = socketReadiness(Socket, 1);
-  // Ordinary untimed completion/error admission keeps its existing owner.
-  // A finite future arrival or quiet boundary is positive evidence of absence.
-  if (R.Unknown || (R.Available & 1))
-    return std::nullopt;
-  if ((Flags & 0x40) || (Socket.Flags & OpenNonBlock))
-    return std::optional<uint64_t>(uint64_t(0) - 11);
-  return std::optional<std::optional<uint64_t>>(
-      std::in_place,
-      unsupported(
-          Result,
-          "blocking receive before readiness requires a wait contract"));
-}
 } // namespace neverd::emulation::linux_model

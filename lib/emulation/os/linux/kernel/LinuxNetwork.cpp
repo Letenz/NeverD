@@ -144,12 +144,18 @@ bool LinuxFiles::isSocket(uint32_t FD) const {
 llvm::Expected<std::optional<uint64_t>>
 LinuxFiles::network(ServiceKind Kind, const ProcessServiceEvent &Event,
                     const std::optional<LinuxNetworkOptions> &Network,
-                    ProcessResult &Result) {
+                    ProcessResult &Result, ThreadContext *Thread) {
   using Reply = std::optional<uint64_t>;
   const auto &A = Event.Arguments;
   if (!Options || !Network)
     return unsupported(Result,
                        "socket services require linux_files and linux_network");
+  if (Kind == ServiceKind::ReceiveFrom) {
+    // recvfrom imports the user extent before looking up the descriptor.
+    auto Admitted = receiveBuffer(A[1], A[2], Result);
+    if (!Admitted || *Admitted)
+      return Admitted;
+  }
   if (Kind == ServiceKind::Socket) {
     const uint32_t Family = A[0], Type = A[1], Protocol = A[2];
     const auto BaseType = Type & ~uint32_t(OpenCloseOnExec | OpenNonBlock);
@@ -287,6 +293,9 @@ LinuxFiles::network(ServiceKind Kind, const ProcessServiceEvent &Event,
     Socket->Connection = &C;
     return Reply(0);
   }
+  if (Kind == ServiceKind::ReceiveFrom)
+    return receiveSocket(I->second, A[1], A[2], Result, Thread, uint32_t(A[3]),
+                         A[4], A[5]);
   if (Datagram) {
     if (Kind == ServiceKind::SendTo && A[4])
       return unsupported(
@@ -309,10 +318,9 @@ LinuxFiles::network(ServiceKind Kind, const ProcessServiceEvent &Event,
 
 std::optional<uint64_t>
 LinuxFiles::receiveSocketError(OpenSocket &Socket,
-                               const LinuxNetworkReceive &Event, uint32_t Flags,
-                               ProcessResult &Result) {
-  if (Event.Error == 11 && !(Flags & 0x40) && !(Socket.Flags & OpenNonBlock) &&
-      !Socket.ReceiveTimeoutSeconds)
+                               const LinuxNetworkReceive &Event,
+                               bool MayReturnAgain, ProcessResult &Result) {
+  if (Event.Error == 11 && !MayReturnAgain)
     return unsupported(Result,
                        "EAGAIN receive requires nonblocking or timeout state");
   ++Socket.ReceiveEvent;
@@ -333,9 +341,6 @@ LinuxFiles::transferSocket(OpenSocket &Socket, bool Send, uint64_t Address,
     return Reply(uint64_t(0) - InvalidArgument);
   if (!Size)
     return Reply(0);
-  if (!Send)
-    if (auto Early = receiveBeforeReady(Socket, Flags, Result))
-      return *Early;
   const auto &C = *Socket.Connection;
   const LinuxNetworkReceive *Event = nullptr;
   if (!Send && !C.ReceiveEvents.empty() &&
@@ -344,8 +349,7 @@ LinuxFiles::transferSocket(OpenSocket &Socket, bool Send, uint64_t Address,
     if (Socket.Sent < Event->AfterSend)
       return unsupported(Result,
                          "TCP receive event awaits declared outgoing bytes");
-    if (Event->Error)
-      return receiveSocketError(Socket, *Event, Flags, Result);
+    assert(!Event->Error && "receive errors complete before data transfer");
   }
   const auto &Bytes = Send ? C.ExpectedSend : Event ? Event->Bytes : C.Receive;
   auto &Position = Send ? Socket.Sent : Socket.Received;
