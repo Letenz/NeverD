@@ -26,7 +26,8 @@ prototypes they declare as the C NeverD reads back:
    pointer is no type local types hold.
 3. The lines of clang's own headers are dropped, as for Linux
    (generate_linux_types.system_lines), with the typedef the headers give
-   wchar_t, which is the compiler's.  An assembler name loses the underscore
+   wchar_t, which is the compiler's, and each declaration follows the
+   `#pragma neverd_header` of the header the unit included it through.  An assembler name loses the underscore
    Mach-O gives every C name, so that a routine takes its prototype under
    the name a program imports it by (`stat$INODE64` on x64).
 4. `neverd types --data-model --record-abi --keep-going --all --prototypes`
@@ -357,8 +358,8 @@ def generate(arguments, name, target, checkouts, read):
         rendered = work / "rendered.h"
         linux.neverd_types(arguments, target, "--declare", str(source),
                            "--keep-going", "--all", "--prototypes",
-                           "--spelling", "keywords", "--no-offsets", "-o",
-                           str(rendered))
+                           "--spelling", "keywords", "--no-offsets",
+                           "--header-pragmas", "-o", str(rendered))
         body = rendered.read_text(encoding="utf-8")
 
     tags = ", ".join(tag for project, tag in sorted(arguments.tags.items()))

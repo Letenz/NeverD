@@ -369,7 +369,8 @@ model and record ABI are the program's:
   out and reported (`conflicts`).
 
 A C or C++ header rendered for a program joined to a library of a system's
-headers (`HeaderLibrarySystems.def`: glibc's, bionic's and musl's) takes
+headers (`HeaderLibrarySystems.def`: glibc's, bionic's, musl's and Apple's
+libSystem, whose platform `<TargetConditionals.h>` tells) takes
 that C library's types from the system's own headers where the compiler that
 reads it has them, rather than defining them again, and defines them itself
 everywhere else, Windows and macOS among them (`RenderOptions::SystemLibrary`,
@@ -393,7 +394,10 @@ program's own DWARF definition of `struct stat` is one too.
   (`#define X neverd_X`, kept with `push_macro`), so that the program's
   layouts hold and the names stay the compiler's after them; member names a
   C library's `<sys/cdefs.h>` defines as macros (`__unused`) are undefined
-  meanwhile. The C parser reads such a rename as the system's own name.
+  meanwhile. The C parser reads such a rename as the system's own name. The
+  program's own types take the table's names likewise, wherever the header
+  is read: a Windows program's records of the C runtime, `tagLC_ID` among
+  them, stay MinGW's under MinGW.
 - Their size and offset checks stand after both, in C where the system
   declares them, as glibc's C++ declares some otherwise.
 - A record C names only through a typedef (`typedef struct { ... } X`, or

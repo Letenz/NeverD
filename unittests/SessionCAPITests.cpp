@@ -4493,6 +4493,32 @@ TEST_F(SessionCAPITest, TheCLibrarysTypesComeFromTheSystemsHeaders) {
   }
 }
 
+TEST_F(SessionCAPITest, LibSystemsTypesComeFromApplesHeaders) {
+  // A macOS program joins libSystem's library, whose types its C header
+  // takes from Apple's headers where the compiler targets macOS.
+  std::ifstream Input(std::filesystem::path(__FILE__).parent_path() / "safety" /
+                          "fixtures" / "binaries" / "safety_cases_macho_arm64",
+                      std::ios::binary);
+  const std::string Program =
+      write("safety_cases_macho_arm64",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Program.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const std::string Source = takeString(neverd_local_types_source(
+      Session, R"({"language":"c","types":["stat"],"asserts":true})"));
+  for (const char *Expected :
+       {"#if !defined(NEVERD_OWN_LIBC_TYPES) && defined(__APPLE__) && \\\n"
+        "    defined(__aarch64__) && !defined(__ILP32__)\n",
+        "#include <TargetConditionals.h>\n",
+        "#if defined(TARGET_OS_OSX) && TARGET_OS_OSX\n",
+        "#define NEVERD_LIBC_FROM_SYSTEM 1\n",
+        "#if defined(NEVERD_LIBC_FROM_SYSTEM)\n#include <"})
+    EXPECT_NE(Source.find(Expected), std::string::npos) << Expected << "\n"
+                                                        << Source;
+  // libSystem's headers need no feature macro of the program's.
+  EXPECT_EQ(Source.find("_GNU_SOURCE"), std::string::npos) << Source;
+}
+
 TEST_F(SessionCAPITest, AppleARMProgramsKeepALongDoubleThatIsADouble) {
   // Apple's 64-bit ARM lays records out as the Itanium ABI does, with a long
   // double that is a double, which the 64-bit System V targets' is not.
