@@ -2160,3 +2160,10 @@ ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-o
 cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
 ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
 ```
+
+`NeverDX86NativeStateAuditTests` строго сверяет машинные байты и детали декодера для канонического x64 REP MOVSQ и классического LDMXCSR. Квитанции неопределённых выходов связывают весь диапазон операций. Независимые эталоны полного состояния и последовательного копирования проверяют перекрытие, нулевой счётчик, адресацию, отсутствующие байты и резервные биты. Прежние доказательства счётчика, направления, памяти, эффективной маски MXCSR и допустимости остаются обязательными. Этот аудит не подтверждает перезапуск после частичного отказа или сохранность непрозрачного состояния.
+
+```sh
+cmake --build build-release --target NeverDX86NativeStateAuditTests
+ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
+```
