@@ -10,6 +10,10 @@
 
 #include "FiniteQueryCache.h"
 
+namespace neverd::symbolic {
+class MBARewriteCache;
+} // namespace neverd::symbolic
+
 namespace neverd::analysis::detail {
 
 enum class FrameOffsetStatus {
@@ -36,6 +40,10 @@ struct FrameOffset {
 struct FrameOffsetNormalization {
   uint64_t MaxWork = 0;
   uint64_t WorkUsed = 0;
+  /// Optional exact derivations owned by this proof's symbolic context. The
+  /// caller keeps the context and cache alive across calls; no predicate or
+  /// finite-domain evidence is retained here. Hits still consume MBA work.
+  symbolic::MBARewriteCache *Rewrites = nullptr;
 };
 
 /// Prove Value == Root + Offset under Predicate, preserving Root's identity.
