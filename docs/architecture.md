@@ -343,6 +343,18 @@ name (`machOCommandPlatform`, `MachOPlatform.h`, which the emulator's images
 read too), and `darwinPlatform` (`DarwinOperatingSystem.h`) tells macOS
 programs from iOS ones; a program for Mac Catalyst, tvOS or watchOS, or one
 that names no platform or several, joins no library.
+`scripts/generate_freebsd_types.py` renders what FreeBSD's headers declare
+for a program into `FreeBSDX64.h`, `FreeBSDX86.h`, `FreeBSDARM64.h` and
+`FreeBSDARM.h`, from the /usr/include of FreeBSD 15.1-RELEASE's base.txz for
+amd64 and arm64: a 32-bit program reads the 64-bit base's headers, whose
+machine headers that differ take their i386 and arm forms, as FreeBSD builds
+its 32-bit libraries. The loader tells a FreeBSD program by the OS ABI byte
+FreeBSD's toolchains brand it with, or the ABI tag note naming the FreeBSD
+version it was built for (`runsUnderFreeBSD`, `ELFOperatingSystem.h`), which
+an image without the brand carries too; such a program runs under no Linux
+(`runsUnderLinux`), and joins its architecture's library
+(`NEVERD_HEADER_ELF_SYSTEM`), and the call model takes FreeBSD's C library's
+declarations (`LibCVariant::FreeBSD`).
 `scripts/generate_uefi_types.py` renders what EDK II's MdePkg declares for a
 UEFI module into `UefiX64.h`, `UefiX86.h` and `UefiARM64.h`: the UEFI and
 PI specifications, every protocol, GUID and industry standard, and the
@@ -362,8 +374,9 @@ names to an image (an x64 or x86 PE of the native subsystem joins its
 kernel's; one of the Windows GUI or console subsystem joins its user mode's,
 then, on x64 and x86, its kernel's for the few ntdll exports only the
 kernel's headers declare, such as `RtlIsNameLegalDOS8Dot3`; a Linux
-program on glibc, bionic or musl joins its architecture's, a Mach-O program
-its platform's, a UEFI module MdePkg's) after the program's debug
+program on glibc, bionic or musl joins its architecture's, a FreeBSD
+program FreeBSD's, a Mach-O program its platform's, a UEFI module
+MdePkg's) after the program's debug
 information and before the user's declarations, where the library's data
 model and record ABI are the program's:
 - a header type joins only where the program has no type of its name;
@@ -389,8 +402,8 @@ the call analysis, MedIR's ABI pass and both C writers read it from layers
 that do not link the type libraries, as LLVM's TargetLibraryInfo stands
 beside the declarations Clang reads from headers. Its tables follow the GNU C
 Library's declarations. The C library a program links (`LibCVariant`: GNU,
-musl, bionic, Darwin's libSystem or a Windows C runtime, which
-`libcVariantOf` reads from the image) selects what `LibCVariants.def` gives
+musl, bionic, Darwin's libSystem, FreeBSD's libc or a Windows C runtime,
+which `libcVariantOf` reads from the image) selects what `LibCVariants.def` gives
 a routine another library declares otherwise: Darwin's `sendfile` takes six
 arguments, and its `shm_open` is variadic, whose mode Apple's AArch64
 convention passes on the stack. On Darwin a routine's suffixed variants

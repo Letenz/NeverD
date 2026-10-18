@@ -25,6 +25,10 @@
 ///   A Mach-O image built for the platform (DarwinPlatform,
 ///   DarwinOperatingSystem.h) is of the kind.
 ///
+/// NEVERD_HEADER_ELF_SYSTEM(System, Kind)
+///   An ELF image that runs under the system other than Linux (ELFSystem,
+///   ELFOperatingSystem.h) is of the kind.
+///
 /// NEVERD_HEADER_PE_ENTRY_TYPE(Subsystem, Type)
 ///   The entry point of a PE image of the subsystem has the function type
 ///   the joined libraries' pointer type Type points to.
@@ -47,6 +51,9 @@
 #endif
 #ifndef NEVERD_HEADER_DARWIN_PLATFORM
 #define NEVERD_HEADER_DARWIN_PLATFORM(Platform, Kind)
+#endif
+#ifndef NEVERD_HEADER_ELF_SYSTEM
+#define NEVERD_HEADER_ELF_SYSTEM(System, Kind)
 #endif
 #ifndef NEVERD_HEADER_PE_ENTRY_TYPE
 #define NEVERD_HEADER_PE_ENTRY_TYPE(Subsystem, Type)
@@ -72,6 +79,7 @@ NEVERD_HEADER_IMAGE_KIND(IOS)
 // UEFI applications, drivers and the other modules of a platform's
 // firmware, which EDK II's MdePkg declares.
 NEVERD_HEADER_IMAGE_KIND(UEFI)
+NEVERD_HEADER_IMAGE_KIND(FreeBSD)
 
 NEVERD_HEADER_PE_SUBSYSTEM(1, WindowsKernel) // IMAGE_SUBSYSTEM_NATIVE
 NEVERD_HEADER_PE_SUBSYSTEM(2, WindowsUser)   // IMAGE_SUBSYSTEM_WINDOWS_GUI
@@ -95,6 +103,8 @@ NEVERD_HEADER_LINUX_LIBC(Musl, MuslLinux)
 
 NEVERD_HEADER_DARWIN_PLATFORM(MacOS, MacOS)
 NEVERD_HEADER_DARWIN_PLATFORM(IOS, IOS)
+
+NEVERD_HEADER_ELF_SYSTEM(FreeBSD, FreeBSD)
 
 NEVERD_HEADER_LIBRARY_IMAGE(WindowsKernel, X64, WindowsKernelX64)
 NEVERD_HEADER_LIBRARY_IMAGE(WindowsUser, X64, WindowsUserX64)
@@ -128,10 +138,15 @@ NEVERD_HEADER_LIBRARY_IMAGE(IOS, AArch64, IOSARM64)
 NEVERD_HEADER_LIBRARY_IMAGE(UEFI, X64, UefiX64)
 NEVERD_HEADER_LIBRARY_IMAGE(UEFI, X86, UefiX86)
 NEVERD_HEADER_LIBRARY_IMAGE(UEFI, AArch64, UefiARM64)
+NEVERD_HEADER_LIBRARY_IMAGE(FreeBSD, X64, FreeBSDX64)
+NEVERD_HEADER_LIBRARY_IMAGE(FreeBSD, X86, FreeBSDX86)
+NEVERD_HEADER_LIBRARY_IMAGE(FreeBSD, AArch64, FreeBSDARM64)
+NEVERD_HEADER_LIBRARY_IMAGE(FreeBSD, ARM, FreeBSDARM)
 
 #undef NEVERD_HEADER_IMAGE_KIND
 #undef NEVERD_HEADER_PE_SUBSYSTEM
 #undef NEVERD_HEADER_LINUX_LIBC
 #undef NEVERD_HEADER_DARWIN_PLATFORM
+#undef NEVERD_HEADER_ELF_SYSTEM
 #undef NEVERD_HEADER_PE_ENTRY_TYPE
 #undef NEVERD_HEADER_LIBRARY_IMAGE

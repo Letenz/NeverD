@@ -161,6 +161,12 @@ std::optional<HeaderImageKind> headerImageKind(const Session &S) {
     return HeaderImageKind::Kind;
 #include "neverd/types/HeaderLibraryImages.def"
   }
+  if (const std::optional<ELFSystem> System = elfSystem(S.Img)) {
+#define NEVERD_HEADER_ELF_SYSTEM(Name, Kind)                                   \
+  if (*System == ELFSystem::Name)                                              \
+    return HeaderImageKind::Kind;
+#include "neverd/types/HeaderLibraryImages.def"
+  }
   return std::nullopt;
 }
 

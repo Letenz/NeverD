@@ -71,6 +71,15 @@ NEVERD_HEADER_LIBRARY(MacOSARM64, "macos-arm64", MacOSARM64, LP64, AppleARM64,
 NEVERD_HEADER_LIBRARY(IOSARM64, "ios-arm64", IOSARM64, LP64, AppleARM64,
                       Portable)
 
+NEVERD_HEADER_LIBRARY(FreeBSDX64, "freebsd-x64", FreeBSDX64, LP64, Itanium,
+                      Portable)
+NEVERD_HEADER_LIBRARY(FreeBSDX86, "freebsd-x86", FreeBSDX86, ILP32, I386SystemV,
+                      Portable)
+NEVERD_HEADER_LIBRARY(FreeBSDARM64, "freebsd-arm64", FreeBSDARM64, LP64,
+                      Itanium, Portable)
+NEVERD_HEADER_LIBRARY(FreeBSDARM, "freebsd-arm", FreeBSDARM, ILP32, AAPCS32,
+                      Portable)
+
 NEVERD_HEADER_LIBRARY(UefiX64, "uefi-x64", UefiX64, LLP64, Microsoft, Portable)
 NEVERD_HEADER_LIBRARY(UefiX86, "uefi-x86", UefiX86, ILP32, Microsoft, Portable)
 NEVERD_HEADER_LIBRARY(UefiARM64, "uefi-arm64", UefiARM64, LLP64, Microsoft,

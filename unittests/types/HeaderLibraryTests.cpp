@@ -428,6 +428,61 @@ TEST(HeaderLibrary, TheDarwinLibrariesLayRecordsOutAsLibSystemDoes) {
   }
 }
 
+TEST(HeaderLibrary, TheFreeBSDLibrariesLayRecordsOutAsFreeBSDDoes) {
+  // FreeBSD's records as clang lays them out against FreeBSD 15.1's headers
+  // for each architecture: the 64-bit inode stat i386 shortens by its 32-bit
+  // time_t, a pthread_mutex_t that points to the mutex, and kqueue's kevent.
+  struct Expected {
+    HeaderLibrary Library;
+    uint64_t Stat, StatSize, Timespec, Mutex, File, FileOffset, Sigaction,
+        Kevent, JmpBuf;
+  };
+  const Expected Libraries[] = {
+      {HeaderLibrary::FreeBSDX64, 224, 112, 16, 8, 312, 144, 32, 64, 96},
+      {HeaderLibrary::FreeBSDX86, 208, 96, 8, 4, 236, 80, 24, 56, 48},
+      {HeaderLibrary::FreeBSDARM64, 224, 112, 16, 8, 312, 144, 32, 64, 512},
+      {HeaderLibrary::FreeBSDARM, 224, 112, 16, 4, 240, 80, 24, 64, 260},
+  };
+  for (const Expected &E : Libraries) {
+    SCOPED_TRACE(headerLibraryName(E.Library).str());
+    std::string Error;
+    const TypeLibrary *Types = headerLibrary(E.Library, &Error);
+    ASSERT_NE(Types, nullptr) << Error;
+    const auto Check = [](const char *What, uint64_t Value) {
+      return "_Static_assert(" + std::string(What) +
+             " == " + std::to_string(Value) + ", \"" + What + "\");\n";
+    };
+    const std::string Assertions =
+        Check("sizeof(struct stat)", E.Stat) +
+        Check("__builtin_offsetof(struct stat, st_size)", E.StatSize) +
+        Check("sizeof(struct timespec)", E.Timespec) +
+        Check("sizeof(pthread_mutex_t)", E.Mutex) +
+        Check("sizeof(FILE)", E.File) +
+        Check("__builtin_offsetof(FILE, _offset)", E.FileOffset) +
+        Check("sizeof(struct sigaction)", E.Sigaction) +
+        Check("sizeof(struct dirent)", 280) +
+        Check("sizeof(struct kevent)", E.Kevent) +
+        Check("sizeof(jmp_buf)", E.JmpBuf) +
+        Check("sizeof(struct sockaddr_storage)", 128);
+    // A copy, which the assertions read without changing the library.
+    TypeLibrary Layout = *Types;
+    const ParseResult Laid = parseCTypes(Assertions, Layout);
+    EXPECT_TRUE(Laid.Problems.empty()) << Laid.Problems.front().Message;
+
+    const auto Params = [&](const char *Name) -> size_t {
+      const FunctionDef *Function = Types->findPrototype(Name);
+      return Function ? Function->Params.size() : size_t(-1);
+    };
+    EXPECT_EQ(Params("stat"), 2u);
+    EXPECT_EQ(Params("kevent"), 6u);
+    EXPECT_EQ(Params("sendfile"), 7u);
+    EXPECT_EQ(Params("cap_enter"), 0u);
+    EXPECT_EQ(Params("sysctlbyname"), 5u);
+    ASSERT_NE(Types->findPrototype("abort2"), nullptr);
+    EXPECT_TRUE(Types->findPrototype("abort2")->NoReturn);
+  }
+}
+
 TEST(HeaderLibrary, TheUefiLibrariesLayOutTheFirmwaresTables) {
   // The tables a UEFI module is given and the protocols it locates, as clang
   // lays them out against MdePkg for each architecture.  The library classes

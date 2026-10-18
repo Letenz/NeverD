@@ -4,6 +4,9 @@
 // tables.
 
 LIBC_NO_RETURN_SYMBOL("abort")
+// FreeBSD's abort with a reason, and C11 Annex K's constraint handler.
+LIBC_NO_RETURN_SYMBOL("abort2")
+LIBC_NO_RETURN_SYMBOL("abort_handler_s")
 LIBC_NO_RETURN_SYMBOL("exit")
 // glibc and musl call exit() with main's result; `_start` follows the call
 // with a `hlt` that only marks unreachable code.

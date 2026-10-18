@@ -30,6 +30,8 @@ LibCVariant libcVariantOf(const BinaryImage &Image) {
   const BinaryFormat Format = Image.abiFormat();
   if (Format != BinaryFormat::ELF)
     return libcVariantOf(Format);
+  if (runsUnderFreeBSD(Image))
+    return LibCVariant::FreeBSD;
   if (const std::optional<LinuxLibC> LibC = linuxLibC(Image))
     switch (*LibC) {
     case LinuxLibC::GNU:
@@ -60,10 +62,17 @@ std::string_view routineOfSymbol(std::string_view Name, LibCVariant Variant) {
 }
 
 namespace variant_rows {
+namespace {
+/// Whether the C names \p Name and \p Routine name one routine, the tables
+/// looking names up without their leading underscores.
+bool sameRoutine(std::string_view Name, std::string_view Routine) {
+  return stripLeadingUnderscores(Name) == stripLeadingUnderscores(Routine);
+}
+} // namespace
 
 std::optional<LibCArity> arity(std::string_view Name, LibCVariant Variant) {
 #define NEVERD_LIBC_VARIANT_ARITY(Library, Routine, Integers, Floats)          \
-  if (Variant == LibCVariant::Library && Name == Routine) {                    \
+  if (Variant == LibCVariant::Library && sameRoutine(Name, Routine)) {         \
     LibCArity Arity;                                                           \
     Arity.IntArgs = Integers;                                                  \
     Arity.FpArgs = Floats;                                                     \
@@ -77,7 +86,7 @@ std::optional<llvm::ArrayRef<VarArgFixedParamKind>>
 variadic(std::string_view Name, LibCVariant Variant) {
   using enum VarArgFixedParamKind;
 #define NEVERD_LIBC_VARIANT_VARIADIC(Library, Routine, ...)                    \
-  if (Variant == LibCVariant::Library && Name == Routine) {                    \
+  if (Variant == LibCVariant::Library && sameRoutine(Name, Routine)) {         \
     static constexpr VarArgFixedParamKind Kinds[] = {__VA_ARGS__};             \
     return llvm::ArrayRef<VarArgFixedParamKind>(Kinds);                        \
   }
@@ -87,7 +96,7 @@ variadic(std::string_view Name, LibCVariant Variant) {
 
 std::optional<LibCResult> result(std::string_view Name, LibCVariant Variant) {
 #define NEVERD_LIBC_VARIANT_RESULT(Library, Routine, Kind)                     \
-  if (Variant == LibCVariant::Library && Name == Routine)                      \
+  if (Variant == LibCVariant::Library && sameRoutine(Name, Routine))           \
     return LibCResult::Kind;
 #include "neverd/libc/LibCVariants.def"
   return std::nullopt;
@@ -96,7 +105,7 @@ std::optional<LibCResult> result(std::string_view Name, LibCVariant Variant) {
 std::optional<Pointers> pointers(std::string_view Name, LibCVariant Variant) {
 #define NEVERD_LIBC_VARIANT_POINTERS(Library, Routine, Objects, Function,      \
                                      FunctionType)                             \
-  if (Variant == LibCVariant::Library && Name == Routine)                      \
+  if (Variant == LibCVariant::Library && sameRoutine(Name, Routine))           \
     return Pointers{Objects, Function, FunctionType};
 #include "neverd/libc/LibCVariants.def"
   return std::nullopt;
