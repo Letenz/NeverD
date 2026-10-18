@@ -5039,21 +5039,29 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
         Prototype
             ? c_library::typeSpelling(Prototype->Params[ArgIdx], Opts.TheArch)
             : std::string();
+    // A zero is C's null pointer constant, which any pointer parameter
+    // takes as it is (`RaiseException(code, 0, 0, 0)`).
+    const auto *Constant =
+        llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(ArgIdx));
+    const bool Null = Constant && Constant->isZero();
     // A header's pointer parameter takes the integer that holds an address
     // converted, an object's or a function's (qsort's comparison).
     if (HeaderInteger && libc::isObjectPointerParameter(Library.Name, ArgIdx))
-      Argument = "(void *)(uintptr_t)(" + Argument + ")";
+      Argument = Null ? "0" : "(void *)(uintptr_t)(" + Argument + ")";
     else if (const auto Function =
                  HeaderInteger
                      ? libc::functionPointerParameter(Library.Name, ArgIdx)
                      : std::nullopt)
-      Argument =
-          "(" + std::string(*Function) + ")(uintptr_t)(" + Argument + ")";
+      Argument = Null ? "0"
+                      : "(" + std::string(*Function) + ")(uintptr_t)(" +
+                            Argument + ")";
     // A parameter the runtime's tables type takes an integer converted to
     // its pointer, and an address converted to its integer.
     else if (Prototype &&
              (libc::isPointerType(Param) ? Integer : PointerSpelling))
-      Argument = "(" + Param + ")(uintptr_t)(" + Argument + ")";
+      Argument = Null && Integer
+                     ? "0"
+                     : "(" + Param + ")(uintptr_t)(" + Argument + ")";
     // An address, such as a string literal, passed where the callee is
     // declared to take an integer converts to it.
     else if (PointerSpelling &&
