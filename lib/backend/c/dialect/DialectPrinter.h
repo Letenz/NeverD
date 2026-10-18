@@ -135,6 +135,10 @@ protected:
   /// The bytes a narrow string literal spells, its parts joined, without its
   /// terminator; none for another kind of string.
   static std::optional<std::string> stringBytes(const Expr *E);
+  /// The bytes an initializer list of an array of \p Count bytes gives, in
+  /// order and at their designated indexes, up to its last one; none when an
+  /// element is not a byte constant.
+  static std::optional<std::string> listBytes(const Expr *Init, uint64_t Count);
   /// Whether \p Ty is an array of a known number of bytes (unsigned 8-bit
   /// integers), as the emitter declares an image's bytes.
   static bool byteArray(const CType *Ty);
