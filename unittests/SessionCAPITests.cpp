@@ -5623,6 +5623,62 @@ TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
   }
 }
 
+TEST_F(SessionCAPITest, FreeBSDProgramsJoinTheirArchitecturesLibrary) {
+  // An ELF program FreeBSD's toolchain brands (its OS ABI byte, and the ABI
+  // tag note naming FreeBSD 15.1) joins the FreeBSD library of its
+  // architecture, laid out by its data model and record ABI, and no Linux
+  // one: struct stat is as large as clang makes it for each target, i386's
+  // the smaller by its 32-bit time_t.  Each was built as linux_libc_calls.c
+  // says for its Linux sibling, with clang --target=<arch>-unknown-freebsd15.1
+  // and the sysroot of FreeBSD 15.1-RELEASE's base.txz, and lib32.txz for the
+  // 32-bit ones.
+  struct Program {
+    const char *File, *Library, *Model, *ABI;
+    int64_t StatSize;
+  };
+  const Program Programs[] = {
+      {"freebsd_libc_calls_x64", "freebsd-x64", "LP64", "itanium", 224},
+      {"freebsd_libc_calls_x86", "freebsd-x86", "ILP32", "i386-sysv", 208},
+      {"freebsd_libc_calls_arm64", "freebsd-arm64", "LP64", "itanium", 224},
+      {"freebsd_libc_calls_arm", "freebsd-arm", "ILP32", "aapcs32", 224},
+  };
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  for (const Program &P : Programs) {
+    SCOPED_TRACE(P.File);
+    std::ifstream Input(Fixtures / P.File, std::ios::binary);
+    const std::string Path =
+        write(P.File, std::string(std::istreambuf_iterator<char>(Input), {}));
+    neverd_session_t FreeBSD = neverd_session_create();
+    ASSERT_NE(FreeBSD, nullptr);
+    const auto Destroy =
+        llvm::make_scope_exit([&] { neverd_session_destroy(FreeBSD); });
+    ASSERT_EQ(neverd_session_load(FreeBSD, Path.c_str()), 1)
+        << takeString(neverd_last_error(FreeBSD));
+    ASSERT_GE(neverd_session_discover_functions(FreeBSD), 0)
+        << takeString(neverd_last_error(FreeBSD));
+    auto Parsed = llvm::json::parse(
+        takeString(neverd_local_types_json(FreeBSD, nullptr)));
+    ASSERT_TRUE(static_cast<bool>(Parsed));
+    const llvm::json::Object &Types = *Parsed->getAsObject();
+    EXPECT_EQ(Types.getString("dataModel"), P.Model);
+    EXPECT_EQ(Types.getString("recordABI"), P.ABI);
+    const llvm::json::Array *Headers = Types.getArray("headers");
+    ASSERT_TRUE(Headers && Headers->size() == 1u);
+    EXPECT_EQ((*Headers)[0].getAsObject()->getString("name"), P.Library);
+    auto Stat = llvm::json::parse(
+        takeString(neverd_local_type_json(FreeBSD, "stat", nullptr)));
+    ASSERT_TRUE(static_cast<bool>(Stat));
+    EXPECT_EQ(Stat->getAsObject()->getInteger("size"), P.StatSize);
+
+    const int Index = neverd_func_find_by_name(FreeBSD, "Number");
+    ASSERT_GE(Index, 0);
+    const std::string HighC = takeString(
+        neverd_decompile(FreeBSD, neverd_func_entry(FreeBSD, Index)));
+    EXPECT_NE(HighC.find("strtol("), std::string::npos) << HighC;
+  }
+}
+
 TEST_F(SessionCAPITest, DarwinCallsPassWhatLibSystemDeclares) {
   // libSystem declares some routines otherwise than glibc does, and Apple's
   // AArch64 convention passes a variadic routine's named parameters in

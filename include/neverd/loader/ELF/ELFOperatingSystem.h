@@ -16,12 +16,34 @@
 
 namespace neverd {
 
+/// Whether \p Image runs under FreeBSD: an ELF image whose OS ABI byte is
+/// FreeBSD's, as FreeBSD's toolchains brand it, or that carries FreeBSD's
+/// ABI tag note.
+inline bool runsUnderFreeBSD(const BinaryImage &Image) {
+  return Image.isELF() && Image.ELFMetadata &&
+         (Image.ELFMetadata->OSABI == llvm::ELF::ELFOSABI_FREEBSD ||
+          Image.ELFMetadata->FreeBSDVersion.has_value());
+}
+
+/// The systems other than Linux whose ELF images NeverD tells apart.
+enum class ELFSystem : uint8_t { FreeBSD };
+
+/// The system other than Linux \p Image runs under; none for Linux's and
+/// for one NeverD does not tell apart.
+inline std::optional<ELFSystem> elfSystem(const BinaryImage &Image) {
+  if (runsUnderFreeBSD(Image))
+    return ELFSystem::FreeBSD;
+  return std::nullopt;
+}
+
 /// Whether \p Image runs under Linux: an ELF image whose OS ABI byte is the
-/// System V default that Linux toolchains write, or GNU/Linux.
+/// System V default that Linux toolchains write, or GNU/Linux, and that is
+/// not FreeBSD's.
 inline bool runsUnderLinux(const BinaryImage &Image) {
   return Image.isELF() && Image.ELFMetadata &&
          (Image.ELFMetadata->OSABI == llvm::ELF::ELFOSABI_NONE ||
-          Image.ELFMetadata->OSABI == llvm::ELF::ELFOSABI_GNU);
+          Image.ELFMetadata->OSABI == llvm::ELF::ELFOSABI_GNU) &&
+         !runsUnderFreeBSD(Image);
 }
 
 /// The C libraries a program under Linux runs on, whose headers lay its

@@ -16,7 +16,15 @@
 //     $L/libc_nonshared.a $L/crtn.o
 // and for linux_libc_calls_arm the same with --target=arm-linux-gnueabihf,
 // the libc6-dev-armhf-cross and libc6-armhf-cross packages' sysroot and
-// -Wl,--dynamic-linker=/lib/ld-linux-armhf.so.3.
+// -Wl,--dynamic-linker=/lib/ld-linux-armhf.so.3.  freebsd_libc_calls_x64,
+// _x86, _arm64 and _arm are built from it for FreeBSD 15.1:
+//   clang --target=x86_64-unknown-freebsd15.1 --sysroot=BASE -O1 \
+//     -fno-stack-protector -fuse-ld=lld -o freebsd_libc_calls_x64 \
+//     linux_libc_calls.c
+// where BASE holds base.txz of releases/amd64/15.1-RELEASE unpacked, with
+// i386-unknown-freebsd15.1 and a BASE whose usr/lib and usr/lib32 are the
+// amd64 base's lib32.txz's usr/lib32 for x86, and aarch64- and
+// armv7-unknown-freebsd15.1-gnueabihf with the arm64 base likewise.
 #define _GNU_SOURCE
 #include <stdlib.h>
 #include <sys/stat.h>

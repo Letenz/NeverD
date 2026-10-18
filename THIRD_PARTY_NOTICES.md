@@ -337,6 +337,24 @@ function declarations. The license, and each notice the headers state, are
 in [LICENSES/darwin-headers.txt](LICENSES/darwin-headers.txt). Generated on
 2026-10-18.
 
+## FreeBSD type libraries
+
+`lib/types/headers/FreeBSDX64.h`, `FreeBSDX86.h`, `FreeBSDARM64.h` and
+`FreeBSDARM.h` hold the types and prototypes that FreeBSD's headers declare
+for x64, x86, ARM64 and ARM programs, as
+`scripts/generate_freebsd_types.py` renders them from the headers that
+FreeBSD 15.1-RELEASE's base.txz for amd64 and arm64 installs in
+/usr/include (https://download.freebsd.org/releases/), whose 32-bit
+machine headers serve x86 and ARM programs. The headers are Copyright The
+Regents of the University of California, The FreeBSD Foundation and many
+others, under BSD licenses: most under the 2-clause and 3-clause licenses,
+and a few under the 4-clause license, whose acknowledgements their notices
+keep. The libraries hold only what NeverD reads from the headers and renders
+again: data structure layouts, the values of enumerations and function
+declarations. Each notice the headers state is in
+[LICENSES/freebsd-headers.txt](LICENSES/freebsd-headers.txt). Generated on
+2026-10-18.
+
 ## musl type libraries
 
 `lib/types/headers/MuslX64.h`, `MuslX86.h`, `MuslARM64.h` and `MuslARM.h`

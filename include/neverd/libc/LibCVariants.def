@@ -58,6 +58,16 @@ NEVERD_LIBC_VARIANT_RESULT(Musl, "strerror_r", Value)
 // bionic: BSD's setlinebuf.
 NEVERD_LIBC_VARIANT_RESULT(Bionic, "setlinebuf", Value)
 
+// FreeBSD's libc: BSD's sendfile and setlinebuf, POSIX's strerror_r, a
+// pthread_t that points to the thread, and an __assert that names the
+// function too.
+NEVERD_LIBC_VARIANT_ARITY(FreeBSD, "__assert", 4, 0)
+NEVERD_LIBC_VARIANT_ARITY(FreeBSD, "sendfile", 7, 0)
+NEVERD_LIBC_VARIANT_POINTERS(FreeBSD, "sendfile", (1 << 4) | (1 << 5), -1, "")
+NEVERD_LIBC_VARIANT_RESULT(FreeBSD, "pthread_self", Pointer)
+NEVERD_LIBC_VARIANT_RESULT(FreeBSD, "setlinebuf", Value)
+NEVERD_LIBC_VARIANT_RESULT(FreeBSD, "strerror_r", Value)
+
 #undef NEVERD_LIBC_VARIANT_ARITY
 #undef NEVERD_LIBC_VARIANT_VARIADIC
 #undef NEVERD_LIBC_VARIANT_RESULT

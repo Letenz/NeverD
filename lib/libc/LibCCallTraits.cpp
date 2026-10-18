@@ -541,6 +541,22 @@ const LibCPrintfFormat *libcPrintfFormat(std::string_view Name) {
   return nullptr;
 }
 
+bool variadicIn(const LibCVariadicForward &Forward, LibCVariant Variant) {
+  switch (Forward.Format) {
+  case BinaryFormat::Unknown:
+    return true;
+  case BinaryFormat::ELF:
+    return Variant == LibCVariant::GNU || Variant == LibCVariant::Musl ||
+           Variant == LibCVariant::Bionic;
+  case BinaryFormat::MachO:
+    return Variant == LibCVariant::Darwin;
+  case BinaryFormat::COFF:
+    return Variant == LibCVariant::Windows;
+  default:
+    return false;
+  }
+}
+
 const LibCVariadicForward *libcVariadicForward(std::string_view Name) {
   using Kind = LibCVariadicForward::Kind;
 #define NEVERD_FIXED_PARAMETERS(...)                                           \

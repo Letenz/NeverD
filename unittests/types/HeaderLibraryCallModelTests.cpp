@@ -126,6 +126,8 @@ libc::LibCVariant variantOf(HeaderLibrary Library) {
     return libc::LibCVariant::Bionic;
   if (Name.starts_with("musl-"))
     return libc::LibCVariant::Musl;
+  if (Name.starts_with("freebsd-"))
+    return libc::LibCVariant::FreeBSD;
   return libc::libcVariantOf(formatOf(Library));
 }
 
@@ -263,8 +265,7 @@ std::vector<Disagreement> disagreements() {
                                   (Function.Variadic ? " variadic" : ""));
       if (const libc::LibCVariadicForward *Forward =
               libc::libcVariadicForward(Name);
-          Forward && (Forward->Format == BinaryFormat::Unknown ||
-                      Forward->Format == Format)) {
+          Forward && libc::variadicIn(*Forward, Variant)) {
         if (!Function.Variadic)
           Note("forward-not-variadic", std::string(Forward->Target));
         else if (Forward->FixedCount != Params.size())

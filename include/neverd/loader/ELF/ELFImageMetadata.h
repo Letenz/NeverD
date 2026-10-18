@@ -35,6 +35,9 @@ struct ELFImageMetadata {
   /// The Android API level an NDK-built image's identification note
   /// names, none without the note.
   std::optional<uint32_t> AndroidApiLevel;
+  /// The FreeBSD version (__FreeBSD_version) the ABI tag note of an image
+  /// built for FreeBSD names, none without the note.
+  std::optional<uint32_t> FreeBSDVersion;
 };
 } // namespace neverd
 #endif
