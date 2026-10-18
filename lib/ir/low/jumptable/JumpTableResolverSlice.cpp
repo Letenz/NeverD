@@ -8107,9 +8107,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   // resolveValue names a register entering a CFG root block
   // "L:<block>:<register offset>:<width>".  Two such roots of one block whose
   // registers share a container and start at the same byte are two reads of
-  // one value: the narrower root is the wider one's low bytes.
-  auto entryRootIsLowLaneOf = [&](const ResolverValue &Narrow,
-                                  const ResolverValue &Wide) {
+  // one register: their common low bytes are equal.
+  auto entryRootsShareLowBytes = [&](const ResolverValue &A,
+                                     const ResolverValue &B) {
     auto fields = [](std::string_view Root, std::array<uint64_t, 3> &Out) {
       if (!Root.starts_with("L:"))
         return false;
@@ -8128,28 +8128,61 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       }
       return Next == End;
     };
-    if (!Narrow || !Wide || Narrow->K != ResolverValueExpr::Kind::Root ||
-        Wide->K != ResolverValueExpr::Kind::Root ||
-        Narrow->Size >= Wide->Size ||
-        !consumeMatchWork(Narrow->Root.size() + Wide->Root.size()))
+    if (!A || !B || A->K != ResolverValueExpr::Kind::Root ||
+        B->K != ResolverValueExpr::Kind::Root ||
+        !consumeMatchWork(A->Root.size() + B->Root.size()))
       return false;
-    std::array<uint64_t, 3> NarrowFields{}, WideFields{};
-    if (!fields(Narrow->Root, NarrowFields) ||
-        !fields(Wide->Root, WideFields) || NarrowFields[0] != WideFields[0] ||
-        NarrowFields[2] != Narrow->Size || WideFields[2] != Wide->Size)
+    std::array<uint64_t, 3> AFields{}, BFields{};
+    if (!fields(A->Root, AFields) || !fields(B->Root, BFields) ||
+        AFields[0] != BFields[0] || AFields[2] != A->Size ||
+        BFields[2] != B->Size)
       return false;
-    const LaneView NarrowView =
-        viewOf(NdVar::reg(NarrowFields[1], Narrow->Size));
-    const LaneView WideView = viewOf(NdVar::reg(WideFields[1], Wide->Size));
-    return sameContainer(NarrowView, WideView) &&
-           NarrowView.Begin == WideView.Begin;
+    const LaneView AView = viewOf(NdVar::reg(AFields[1], A->Size));
+    const LaneView BView = viewOf(NdVar::reg(BFields[1], B->Size));
+    return sameContainer(AView, BView) && AView.Begin == BView.Begin;
+  };
+  // Whether A and B have equal low N bytes.  A low slice keeps the low bytes
+  // of its input, and so does an extension of an input at least N bytes wide,
+  // so both are seen through first.
+  auto sameLowBytes = [&](const ResolverValue &A, const ResolverValue &B,
+                          uint16_t N, bool RequireExactAddressOwner) {
+    auto source = [&](ResolverValue Value) {
+      while (Value && Value->Input && Value->Input->Size >= N &&
+             ((Value->K == ResolverValueExpr::Kind::Slice &&
+               Value->SliceOffset == 0) ||
+              Value->K == ResolverValueExpr::Kind::ZeroExtend ||
+              Value->K == ResolverValueExpr::Kind::SignExtend)) {
+        if (!consumeMatchWork())
+          return ResolverValue{};
+        Value = Value->Input;
+      }
+      return Value;
+    };
+    const ResolverValue SA = source(A);
+    const ResolverValue SB = source(B);
+    if (!SA || !SB || SA->Size < N || SB->Size < N)
+      return false;
+    if ((SA->Size == SB->Size &&
+         sameAllowedValue(SA, SB, RequireExactAddressOwner)) ||
+        entryRootsShareLowBytes(SA, SB))
+      return true;
+    auto lowBytes = [&](const ResolverValue &Value) {
+      return Value->Size == N ? Value
+                              : resolverSlice(Value, 0, N, consumeMatchWork,
+                                              &MatchBudgetExhausted);
+    };
+    const ResolverValue LA = lowBytes(SA);
+    const ResolverValue LB = lowBytes(SB);
+    return LA && LB && sameAllowedValue(LA, LB, RequireExactAddressOwner);
   };
   // A mask that fits in N bytes clears every bit above them, so `x & c` is the
-  // zero extension of the N-byte `x' & c`, where x' is x's low N bytes.
-  // Compilers compare a 32-bit masked register and index with the 64-bit mask
-  // of the same register: `and w8,w1,#0xf; cmp w8,#0xc` before
-  // `and x8,x1,#0xf` in libc++abi's readEncodedPointer.  Sign extension does
-  // not commute this way, so only zero extension may use it.
+  // zero extension of the N-byte `x' & c`, where x' has x's low N bytes.
+  // Compilers compare a narrow masked register and index with the wider mask
+  // of the same register: libc++abi's readEncodedPointer has
+  // `and w8,w1,#0xf; cmp w8,#0xc` before `and x8,x1,#0xf` on AArch64, and
+  // `andb $0xf,%al; cmpb $0xc,%al` before `movzbl %sil,%eax; andl $0xf,%eax`
+  // on x86-64.  Sign extension does not commute this way, so only zero
+  // extension may use it; a zero extension of the wider mask keeps its value.
   auto maskedLaneZeroExtends = [&](const ResolverValue &Narrow,
                                    const ResolverValue &Wide,
                                    bool RequireExactAddressOwner) {
@@ -8177,20 +8210,22 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       }
       return std::nullopt;
     };
-    if (!Narrow || !Wide || Narrow->Size >= Wide->Size || !consumeMatchWork(4))
+    if (!Narrow || !Wide || Narrow->Size > Wide->Size || !consumeMatchWork(4))
       return false;
+    ResolverValue WideAnd = Wide;
+    while (WideAnd && WideAnd->K == ResolverValueExpr::Kind::ZeroExtend &&
+           WideAnd->Input && WideAnd->Input->Size >= Narrow->Size) {
+      if (!consumeMatchWork())
+        return false;
+      WideAnd = WideAnd->Input;
+    }
     ResolverValue NarrowInput, WideInput;
     const std::optional<uint64_t> NarrowMask = maskOf(Narrow, NarrowInput);
-    const std::optional<uint64_t> WideMask = maskOf(Wide, WideInput);
-    if (!NarrowMask || !WideMask || *NarrowMask != *WideMask ||
-        (*WideMask & ~resolverWidthMask(Narrow->Size)) != 0)
-      return false;
-    if (entryRootIsLowLaneOf(NarrowInput, WideInput))
-      return true;
-    const ResolverValue LowBytes = resolverSlice(
-        WideInput, 0, Narrow->Size, consumeMatchWork, &MatchBudgetExhausted);
-    return LowBytes &&
-           sameAllowedValue(NarrowInput, LowBytes, RequireExactAddressOwner);
+    const std::optional<uint64_t> WideMask = maskOf(WideAnd, WideInput);
+    return NarrowMask && WideMask && *NarrowMask == *WideMask &&
+           (*WideMask & ~resolverWidthMask(Narrow->Size)) == 0 &&
+           sameLowBytes(NarrowInput, WideInput, Narrow->Size,
+                        RequireExactAddressOwner);
   };
 
   // Exact modulo-recipe queries are attacker-shaped proposals collected from
