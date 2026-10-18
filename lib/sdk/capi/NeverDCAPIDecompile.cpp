@@ -220,36 +220,73 @@ std::optional<std::string> missingARMModeReason(const BinaryImage &Img,
          arm_mode_cli::Thumb;
 }
 
+/// The audit's disposition and the evidence for it: `rejected-incomplete;
+/// decode failure at 0xC`.
+std::string auditReason(const PipelineFunctionAudit &Audit) {
+  std::string Reason = pipelineFunctionDispositionName(Audit.Disposition);
+  auto Name = [&](const char *What, const std::vector<va_t> &Addrs) {
+    if (Addrs.empty())
+      return;
+    Reason += std::string("; ") + What + " at";
+    for (size_t I = 0; I < Addrs.size() && I < 4; ++I)
+      Reason += " 0x" + llvm::utohexstr(Addrs[I]);
+    if (Addrs.size() > 4)
+      Reason += " ...";
+  };
+  std::vector<va_t> Unsupported;
+  for (va_t Addr : Audit.UnsupportedInstructions)
+    if (!llvm::is_contained(Audit.UnprovenReturns, Addr))
+      Unsupported.push_back(Addr);
+  Name("unsupported instruction", Unsupported);
+  Name("return that may pop an address the function pushed",
+       Audit.UnprovenReturns);
+  Name("decode failure", Audit.DecodeFailures);
+  return Reason;
+}
+
 /// Why \p Entry has no HighIR, naming the pipeline's audit disposition when
 /// it recorded one (for example a rejected or absorbed candidate).
 std::string missingHighFunctionReason(const PipelineResult &Result,
                                       neverd_va_t Entry) {
-  for (const PipelineFunctionAudit &Audit : Result.FunctionAudits) {
-    if (Audit.Entry != Entry ||
-        Audit.Disposition == PipelineFunctionDisposition::Accepted)
-      continue;
-    std::string Reason = std::string("function not found in HighIR (") +
-                         pipelineFunctionDispositionName(Audit.Disposition);
-    auto Name = [&](const char *What, const std::vector<va_t> &Addrs) {
-      if (Addrs.empty())
-        return;
-      Reason += std::string("; ") + What + " at";
-      for (size_t I = 0; I < Addrs.size() && I < 4; ++I)
-        Reason += " 0x" + llvm::utohexstr(Addrs[I]);
-      if (Addrs.size() > 4)
-        Reason += " ...";
-    };
-    std::vector<va_t> Unsupported;
-    for (va_t Addr : Audit.UnsupportedInstructions)
-      if (!llvm::is_contained(Audit.UnprovenReturns, Addr))
-        Unsupported.push_back(Addr);
-    Name("unsupported instruction", Unsupported);
-    Name("return that may pop an address the function pushed",
-         Audit.UnprovenReturns);
-    Name("decode failure", Audit.DecodeFailures);
-    return Reason + ")";
-  }
+  for (const PipelineFunctionAudit &Audit : Result.FunctionAudits)
+    if (Audit.Entry == Entry &&
+        Audit.Disposition != PipelineFunctionDisposition::Accepted)
+      return "function not found in HighIR (" + auditReason(Audit) + ")";
   return "function not found in HighIR";
+}
+
+/// A note for each function the pipeline refused, with why, which a whole
+/// unit begins with: a refused function is otherwise missing from it with
+/// no word, where asking for it alone names the reason.
+std::string refusedFunctionNotes(const PipelineResult &Result) {
+  std::vector<const PipelineFunctionAudit *> Refused;
+  for (const PipelineFunctionAudit &Audit : Result.FunctionAudits)
+    switch (Audit.Disposition) {
+    case PipelineFunctionDisposition::RejectedLowIR:
+    case PipelineFunctionDisposition::RejectedIncomplete:
+    case PipelineFunctionDisposition::RejectedUnwindlessNonLeaf:
+    case PipelineFunctionDisposition::MedIRFailed:
+      Refused.push_back(&Audit);
+      break;
+    default:
+      break;
+    }
+  llvm::sort(Refused,
+             [](const auto *A, const auto *B) { return A->Entry < B->Entry; });
+  std::string Notes;
+  for (const PipelineFunctionAudit *Audit : Refused) {
+    std::string Name = Audit->Name.empty()
+                           ? "sub_" + llvm::utohexstr(Audit->Entry)
+                           : Audit->Name;
+    // A name cannot end the comment it stands in.
+    for (size_t At = Name.find("*/"); At != std::string::npos;
+         At = Name.find("*/", At))
+      Name.replace(At, 2, "* /");
+    Notes += "/* neverd.not-decompiled: " + Name + " at 0x" +
+             llvm::utohexstr(Audit->Entry) + ": " + auditReason(*Audit) +
+             " */\n";
+  }
+  return Notes.empty() ? Notes : Notes + "\n";
 }
 } // namespace
 
@@ -1773,6 +1810,8 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     return nullptr;
   }
 
+  // A function the pipeline refused is named at the unit's head.
+  OS << refusedFunctionNotes(R.Result);
   // Data takes the names a session's listing of the image gives it.
   const std::optional<DataAccessWidths> AccessWidths =
       collectDataAccessWidths(R.Img, runFunctions(R));

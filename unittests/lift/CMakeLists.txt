@@ -2637,6 +2637,7 @@ set(ARM32_TEST_SOURCES
   arm32/test_predicated_pop_arm.s
   arm32/test_inline_state_domain_arm.s
   arm32/test_frame_pointer_void_arm.s
+  arm32/test_refused_functions_arm.s
   arm32/test_arm_rel32_reaching.s
   arm32/test_arm_rel32_multiple_sources.s
   arm32/test_arm_relocation_free_literal.s
