@@ -507,7 +507,8 @@ void LLVMCWriter::writeRecordDefinitions(std::string &Text) {
     for (const std::string &Tag : RecordPointerTags) {
       if (Defined.count(Tag))
         continue;
-      if (Held(Tag) || libc::isKnownFunction(Tag)) {
+      if (Held(Tag) || libc::isKnownFunction(Tag) ||
+          libc::headerOfDataObject(Tag)) {
         spellTagUses(Text, Tag, "struct");
         continue;
       }

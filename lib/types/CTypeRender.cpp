@@ -1105,6 +1105,56 @@ bool isIdentifier(llvm::StringRef Name) {
 
 namespace {
 
+/// The system's own definition of \p Type, of \p Library, as a header of
+/// \p System gives it (LocalType::Header) and lays it out as the program
+/// does: a type of the same kind and size whose named members are where the
+/// program's are.  Null for a type the program defines its own way, or
+/// where the system gives none.  A record the header names by a typedef
+/// alone (`typedef struct {...} pthread_mutex_t;`) stays the program's: a
+/// unit declares a typedef of each record it names by its tag's name, which
+/// would contradict the header's.
+const LocalType *systemsOwn(const TypeLibrary &Library, const LocalType &Type,
+                            const TypeLibrary *System) {
+  const LocalType *Their = System ? System->find(Type.Name) : nullptr;
+  if (!Their || Their->Header.empty() || Their->Kind != Type.Kind ||
+      Their->TypedefNamed)
+    return nullptr;
+  if (Their == &Type)
+    return Their;
+  switch (Type.Kind) {
+  case TypeKind::Struct:
+  case TypeKind::Union: {
+    if (!Type.Record || !Their->Record || !Type.Record->Defined ||
+        !Their->Record->Defined || Type.Record->Size != Their->Record->Size)
+      return nullptr;
+    std::set<std::pair<uint64_t, std::string>> Members;
+    for (const FlatMember &Flat : flattenMembers(*Their->Record))
+      if (!Flat.BitWidth && !Flat.Name.empty())
+        Members.emplace(Flat.BitOffset / 8, Flat.Name);
+    for (const FlatMember &Flat : flattenMembers(*Type.Record))
+      if (!Flat.BitWidth && !Flat.Name.empty() && !isFillerName(Flat.Name) &&
+          !Members.count({Flat.BitOffset / 8, Flat.Name}))
+        return nullptr;
+    return Their;
+  }
+  case TypeKind::Typedef: {
+    if (!Type.Target || !Their->Target)
+      return nullptr;
+    const std::optional<uint64_t> OwnSize = Library.sizeOf(*Type.Target);
+    const std::optional<uint64_t> TheirSize = System->sizeOf(*Their->Target);
+    return OwnSize && TheirSize && *OwnSize == *TheirSize ? Their : nullptr;
+  }
+  case TypeKind::Enum:
+    return Type.Enum && Their->Enum &&
+                   Library.builtinBytes(Type.Enum->Underlying) ==
+                       System->builtinBytes(Their->Enum->Underlying)
+               ? Their
+               : nullptr;
+  default:
+    return nullptr;
+  }
+}
+
 /// The types a rendering of \p Roots defines: the roots, what they hold by
 /// value, and the typedefs and enumerations any of these names, which C
 /// cannot declare; what they only point to is declared.
@@ -1235,7 +1285,7 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
   EmbeddedC Result;
   if (Roots.empty())
     return Result;
-  const llvm::StringSet<> Defined = definedFor(Library, Roots);
+  llvm::StringSet<> Defined = definedFor(Library, Roots);
   std::vector<const LocalType *> All;
   for (const LocalType *Type : neededTypes(Library, Roots,
                                            /*ThroughPointers=*/false))
@@ -1244,8 +1294,29 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
   for (const LocalType *Type : Library.types())
     if (Defined.contains(Type->Name) && !llvm::is_contained(All, Type))
       All.push_back(Type);
+  // The system's own types, which a unit that includes its headers has from
+  // them: the unit includes the headers and checks that they lay each type
+  // out as the program does, and defines the rest.
+  const TypeLibrary *System =
+      Options.SystemLibrary && headerLibrarySystem(*Options.SystemLibrary)
+          ? headerLibrary(*Options.SystemLibrary)
+          : nullptr;
+  std::vector<const LocalType *> Theirs;
+  std::set<std::string> TheirHeaders;
+  llvm::erase_if(All, [&](const LocalType *Type) {
+    const LocalType *Their = systemsOwn(Library, *Type, System);
+    if (!Their)
+      return false;
+    Theirs.push_back(Type);
+    TheirHeaders.insert(Their->Header);
+    Defined.erase(Type->Name);
+    return true;
+  });
   CWriter Writer(Library, Options, /*Embedded=*/true, /*Prelude=*/false,
                  Spelled);
+  std::string TheirChecks;
+  for (const LocalType *Type : Theirs)
+    Writer.checks(*Type, TheirChecks);
   std::string Enums, Body;
   const std::vector<const LocalType *> Order =
       writeDefinitions(Writer, Library, All, Defined, /*Guarded=*/true,
@@ -1292,12 +1363,24 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
       break;
     }
   }
+  // The system's types are the program's too, which another language's
+  // spelling of the unit defines.
+  for (const LocalType *Type : Theirs)
+    Result.Types.push_back(Type->Name);
   Result.Text = "// " + std::to_string(Order.size()) +
                 " types, from the program's local types.\n";
+  if (!TheirHeaders.empty()) {
+    Result.Text += "// " + std::to_string(Theirs.size()) +
+                   " more, from the system's headers.\n";
+    for (const std::string &Header : TheirHeaders)
+      Result.Text += "#include <" + Header + ">\n";
+  }
   Result.Text += prelude(Writer, Library, Options);
   if (!Declarations.empty())
     Result.Text += "\n" + Declarations;
   Result.Text += "\n" + Enums + Body;
+  if (!TheirChecks.empty())
+    Result.Text += "\n" + TheirChecks;
   return Result;
 }
 

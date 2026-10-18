@@ -1213,3 +1213,43 @@ TEST(TypeRender, RustAndGoProgramsTypesCompileAsC) {
   EXPECT_TRUE(contains(Padded, "unsafe.Offsetof(Padded{}.x)")) << Padded;
   EXPECT_FALSE(contains(Padded, "unsafe.Offsetof(Padded{}._)")) << Padded;
 }
+
+TEST(TypeRender, UnitsTakeTheSystemsOwnTypesFromItsHeaders) {
+  // A decompiled unit includes the C library's headers, which define what a
+  // program's record holds, struct stat: defined again, it would not
+  // compile beside them.  The unit includes its header instead and checks
+  // that the header lays it out as the program does.  A record of glibc's
+  // name that the program lays out its own way stays the program's.
+  TypeLibrary Library(DataModel::LP64);
+  const TypeLibrary *Glibc = headerLibrary(HeaderLibrary::LinuxX64);
+  ASSERT_NE(Glibc, nullptr);
+  ASSERT_NE(Glibc->find("stat"), nullptr);
+  const std::string Header = Glibc->find("stat")->Header;
+  ASSERT_FALSE(Header.empty());
+  mergeHeaderTypes(Library, *Glibc);
+  ASSERT_TRUE(
+      parseCTypes("struct record { struct stat info; long count; };\n", Library)
+          .ok());
+  RenderOptions Options = in(Language::C);
+  Options.SystemLibrary = HeaderLibrary::LinuxX64;
+  Options.Asserts = true;
+  const LocalType *Record = Library.find("record");
+  const EmbeddedC Embedded = renderEmbeddedC(Library, {Record}, Options);
+  EXPECT_TRUE(contains(Embedded.Text, "#include <" + Header + ">\n"))
+      << Embedded.Text;
+  EXPECT_FALSE(contains(Embedded.Text, " st_ino;")) << Embedded.Text;
+  EXPECT_TRUE(contains(Embedded.Text, "count;")) << Embedded.Text;
+  EXPECT_TRUE(
+      contains(Embedded.Text, "static_assert(sizeof(struct stat) == 0x90"))
+      << Embedded.Text;
+  EXPECT_TRUE(contains(Embedded.Text, "offsetof(struct stat, st_ino)"))
+      << Embedded.Text;
+  EXPECT_TRUE(llvm::is_contained(Embedded.Types, "stat"));
+
+  TypeLibrary Own(DataModel::LP64);
+  ASSERT_TRUE(parseCTypes("struct stat { int mine; };\n", Own).ok());
+  const LocalType *Mine = Own.find("stat");
+  const EmbeddedC Kept = renderEmbeddedC(Own, {Mine}, Options);
+  EXPECT_FALSE(contains(Kept.Text, "#include <" + Header + ">")) << Kept.Text;
+  EXPECT_TRUE(contains(Kept.Text, "mine;")) << Kept.Text;
+}

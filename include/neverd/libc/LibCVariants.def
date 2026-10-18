@@ -58,15 +58,17 @@ NEVERD_LIBC_VARIANT_RESULT(Darwin, "setlinebuf", Value)
 NEVERD_LIBC_VARIANT_RESULT(Darwin, "pthread_self", Pointer)
 NEVERD_LIBC_VARIANT_RESULT(Darwin, "strerror_r", Value)
 
-// musl: POSIX's strerror_r, a pthread_t that points to the thread, and a
-// ptrace request that is an int, which glibc's headers declare an
-// enumeration.
+// musl: POSIX's strerror_r, a pthread_t that points to the thread, and
+// ptrace and ioctl requests that are ints, which glibc's headers declare an
+// enumeration and an unsigned long.
 NEVERD_LIBC_VARIANT_RESULT(Musl, "pthread_self", Pointer)
 NEVERD_LIBC_VARIANT_RESULT(Musl, "strerror_r", Value)
+NEVERD_LIBC_VARIANT_FORWARD_FIXED(Musl, "ioctl", "int", "int")
 NEVERD_LIBC_VARIANT_FORWARD_FIXED(Musl, "ptrace", "int")
 
-// bionic: BSD's setlinebuf, and musl's ptrace request.
+// bionic: BSD's setlinebuf, and musl's ptrace and ioctl requests.
 NEVERD_LIBC_VARIANT_RESULT(Bionic, "setlinebuf", Value)
+NEVERD_LIBC_VARIANT_FORWARD_FIXED(Bionic, "ioctl", "int", "int")
 NEVERD_LIBC_VARIANT_FORWARD_FIXED(Bionic, "ptrace", "int")
 
 // FreeBSD's libc: BSD's sendfile and setlinebuf, POSIX's strerror_r, a

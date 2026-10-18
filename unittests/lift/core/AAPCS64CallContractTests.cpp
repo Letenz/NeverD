@@ -222,18 +222,26 @@ TEST(AAPCS64CallContract, PLTEntriesOfVariadicSystemCallsPassTheirArgsOn) {
 }
 
 TEST(AAPCS64CallContract, PLTEntriesPassArgumentsOnAsTheirCLibraryDeclares) {
-  // Bionic's ptrace takes its request as an int, which glibc's headers
-  // declare an enumeration: the entry declares it as <sys/ptrace.h> does.
-  constexpr va_t Trace = Plt;
-  BinaryImage Img = makeImage({{Trace, pltEntry(Trace, Got)}}, {}, {"ptrace"});
+  // Bionic's ptrace and ioctl take their requests as ints, which glibc's
+  // headers declare an enumeration and an unsigned long: the entries declare
+  // them as <sys/ptrace.h> and <sys/ioctl.h> do.
+  constexpr va_t Trace = Plt, Control = Plt + 0x10;
+  BinaryImage Img = makeImage(
+      {{Trace, pltEntry(Trace, Got)}, {Control, pltEntry(Control, Got + 8)}},
+      {}, {"ptrace", "ioctl"});
   Img.ELFMetadata.emplace();
   Img.ELFMetadata->Interpreter = "/system/bin/linker64";
-  const std::string Source = highC(Img, {Trace});
+  const std::string Source = highC(Img, {Trace, Control});
   EXPECT_NE(Source.find("extern long ptrace(int, ...);"), std::string::npos)
       << Source;
   EXPECT_NE(Source.find("long sub_10100(int arg0, ...) {"), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("__ptrace_request"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("extern int ioctl(int, int, ...);"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("int sub_10110(int arg0, int arg1, ...) {"),
+            std::string::npos)
+      << Source;
 }
 
 TEST(AAPCS64CallContract, APLTEntryInLLVMCCallsItsImportByName) {

@@ -1713,13 +1713,15 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     OS << "\n";
   // The unit spells the records the definitions name by their names alone
   // too, as where a member it reads gives a local its type, unless an
-  // ordinary identifier of the unit's holds the name.
+  // ordinary identifier of the unit's or of a C library header's holds the
+  // name, as <time.h>'s timezone does struct timezone's.
   bool Typedefs = false;
   for (const auto &[Tag, Union] : RecordDefinitions.Tags) {
     const std::string Name = cNamedTypeSpelling(Tag);
     if (Name.empty() || RecordTypedefs.count(Name))
       continue;
-    if (GlobalIdentifierAllocator.holds(Name) || CallTargets.count(Name)) {
+    if (GlobalIdentifierAllocator.holds(Name) || CallTargets.count(Name) ||
+        libc::headerOfDataObject(Name)) {
       TagRecords.emplace(Name, Union);
       continue;
     }

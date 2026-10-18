@@ -1023,7 +1023,9 @@ function and an object of one name, keep their C identifiers. C declares a
 record by the last component of its C++ name (`std::__ndk1::__sp_mut` is
 `__sp_mut`), which the C++ view names back, and spells one whose name a
 function of the unit or of the C library has by its tag (`struct stat`,
-`struct stat64`): no typedef can declare the name beside the function. The C
+`struct stat64`), or an object a C library header declares (`struct
+timezone` beside <time.h>'s `timezone`, `LibCDataObjects.def`): no typedef
+can declare the name beside the function or the object. The C
 the views read is C a compiler accepts. A local takes no name the unit gives
 a function, an object or a typedef at file scope (`td_ta_event_getmsg`'s
 result is no `msg` where the code calls `msg()`), and a bitwise, shift or
@@ -1041,8 +1043,8 @@ the routine's header declares, and the stub otherwise. Both C routes spell
 x86's `ud2` `__builtin_trap()` and its `int3` `__builtin_debugtrap()` where no
 Windows header declares `__debugbreak`, and a variadic import's stub declares
 its fixed parameters as the program's C library does
-(`NEVERD_LIBC_VARIANT_FORWARD_FIXED`: bionic's and musl's ptrace request is an
-int, glibc's an enumeration). The GUI offers a separate C choice for non-C
+(`NEVERD_LIBC_VARIANT_FORWARD_FIXED`: bionic's and musl's ptrace and ioctl
+requests are ints, glibc's an enumeration and an unsigned long). The GUI offers a separate C choice for non-C
 images and omits it when only C is offered.
 
 The reader reads the definitions a unit holds of the program's local types:
@@ -1101,7 +1103,12 @@ of two branches keeps none (`withMergedCallSites`). A call of no single
 instruction, a jump into a scope, or a covered call in a handler's code keeps
 the pad in place. In C, every landing pad of the
 call-site table keeps its label, so a pad that only runs cleanups is not read
-as dead code after a return.
+as dead code after a return. A pad stores the exception object and selector
+the unwinder hands it: HighC prints a store of an unread call result as the
+call (`var_m30 = f()`, as x86 code spills a result right after the call), but
+never at a statement that a jump or the unwinder enters, after a call that
+never returns, or of the exception values, which no call returns
+(`collectUnusedCallStoreAlias`).
 
 DWARF subprogram extents are collected, sorted and swept once before publication
 instead of comparing every pair during ingestion. Duplicate entries, overlaps
@@ -2887,7 +2894,15 @@ pointer). Gaps are named `gapXX` by offset. A debug object of another type (a
 record, an array, a pointer or an enumeration) keeps its bytes raw, and a debug
 integer must have the access width. `frame_base`, the entry stack pointer's
 address in the storage, is declared only when the body reads it: for such raw
-bytes and for displacements outside the storage. Every access reaches the same
+bytes and for displacements outside the storage. The storage is aligned to
+sixteen bytes, and the entry stack pointer sits in it at the phase the target's
+callers keep (`syntheticEntryStackResidue`): 8 mod 16 on x86-64, and 12 mod 16
+on i386 under the System V psABI and on Darwin. A slot in which the code keeps
+a vector with `movaps` is then as aligned in C as on the machine, so its
+alignment guard holds there too. An address prints as the object the unit
+defines there, not as a string the object's first bytes spell, wherever the
+object holds more than that string (`(uintptr_t)&LCPI0_2 & 15`, not
+`L"\t" & 15`; `objectOutgrowsLiteral`). Every access reaches the same
 object, so a member and the bytes around it always alias. The record's tag is
 `frame_<entry>`: the C++, Go and Rust views parse the HighC text into one
 namespace of record tags, and the Go and Rust views print the record's type

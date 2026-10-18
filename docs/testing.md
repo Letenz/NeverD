@@ -572,6 +572,13 @@ stub's routine by its name, `HighCPointerAddresses.TrapsUseTheBuiltinsTheirHeade
 spells x86 traps for ELF and COFF, and
 `AAPCS64CallContract.PLTEntriesPassArgumentsOnAsTheirCLibraryDeclares` declares
 bionic's ptrace request an int.
+`HighCStoreForwarding.ALandingPadStoresTheExceptionTheUnwinderHandsIt` keeps a
+landing pad's store of `eh_exception` after a call that returns and one that
+does not. `TypeRender.UnitsTakeTheSystemsOwnTypesFromItsHeaders` takes glibc's
+struct stat from its header with checks of its layout and keeps a record of
+the name the program lays out its own way, and
+`HighCPointerAddresses.RecordsNamedLikeLibraryObjectsAreSpelledByTags` spells
+`struct timezone` beside <time.h>'s object.
 `ReadsTheDefinitionsOfTheProgramsTypes` reads a unit's
 local types definitions back in C as written, whole in C++, and in Rust and
 Go as far as their structures lay them out, saying why for the rest.

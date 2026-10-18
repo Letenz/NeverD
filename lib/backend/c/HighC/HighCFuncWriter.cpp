@@ -4316,8 +4316,13 @@ void HighCWriter::collectUnusedCallStoreAlias(const HighFunc &Func) {
                             (Size == 4 && Cur->Var.Size == 8) ||
                             (Size == 8 && Cur->Var.Size == 4);
         // The entry stack pointer is never assigned either, but the frame
-        // storage defines it: it is no call's result.
+        // storage defines it: it is no call's result.  Nor are the exception
+        // object and selector the unwinder hands a landing pad, or the code
+        // an SEH filter receives.
         if (Name.empty() || Cur->Var.Kind == MedVar::Param ||
+            Cur->Var.Kind == MedVar::EHException ||
+            Cur->Var.Kind == MedVar::EHSelector ||
+            Cur->Var.Kind == MedVar::SEHExceptionCode ||
             isReservedParamDisplayName(Name) || Assigned.count(Name) ||
             ValueForward.count(Name) || FieldForward.count(Name) || !SizeOk ||
             isSyntheticEntryStackPointer(Cur->Var, Func, Opts.TheArch))
@@ -4371,8 +4376,12 @@ void HighCWriter::collectUnusedCallStoreAlias(const HighFunc &Func) {
             continue;
           if (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi)
             continue;
+          // A call that never returns leaves no result for what follows, and
+          // a statement a jump or the unwinder enters stores what reaches it
+          // from there too.
           const HighStmt *N = NextPrinted(I);
-          if (!N)
+          if (!N || isNoreturnCallExpr(*S.Val) ||
+              (N->Addr && GotoTargets.count(N->Addr)))
             continue;
           const HighExpr *Val = nullptr;
           if (N->Kind == StmtKind::Store && N->StoreVal)
