@@ -8570,4 +8570,28 @@ TEST_F(SessionCAPITest, PersistedAddressEncodingsKeepCanonicalSaveRoundTrips) {
   }
 }
 
+
+#ifndef _WIN32
+TEST_F(SessionCAPITest, ProjectPreparationReportsSetupFailures) {
+  const auto Input = write("project-input.bin", "input");
+  const auto Folder = neverd::project_files::folder(Input);
+  std::filesystem::create_directories(Folder / "local");
+  const auto Setup = Folder / ".gitignore";
+  // A missing target parent makes file creation fail without relying on
+  // permission bits (which privileged test processes can bypass).
+  std::filesystem::create_symlink(Folder / "missing" / "ignore", Setup);
+  EXPECT_EQ(neverd::project_files::prepare(Input),
+            std::make_error_code(std::errc::io_error));
+  EXPECT_FALSE(std::filesystem::exists(Folder / ".gitattributes"));
+  std::filesystem::remove(Setup);
+  // A self-referential link makes the existence query itself fail.
+  std::filesystem::create_symlink(Setup.filename(), Setup);
+  EXPECT_TRUE(neverd::project_files::prepare(Input));
+  std::filesystem::remove(Setup);
+  EXPECT_FALSE(neverd::project_files::prepare(Input));
+  EXPECT_TRUE(std::filesystem::is_regular_file(Setup));
+  EXPECT_TRUE(std::filesystem::is_regular_file(Folder / ".gitattributes"));
+}
+#endif
+
 } // namespace
