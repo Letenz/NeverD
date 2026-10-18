@@ -2118,3 +2118,10 @@ ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-o
 cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
 ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
 ```
+
+تتحقق `NeverDX86NativeStateAuditTests` بدقة من بايتات التعليمات وتفاصيل فك الترميز لصيغة x64 القياسية REP MOVSQ وتعليمة LDMXCSR التقليدية. تربط إيصالات المخرجات غير المحددة نطاق العمليات الكامل. تغطي مراجع مستقلة للحالة الكاملة والنسخ المرتب التداخل والعدد الصفري وصيغ العنونة والبايتات المفقودة والبتات المحجوزة. تظل إثباتات العدد والاتجاه والذاكرة وقناع MXCSR الفعال وصلاحية القيمة مطلوبة. لا يثبت هذا التدقيق الاستئناف بعد خطأ جزئي أو الحفاظ على الحالة المعتمة.
+
+```sh
+cmake --build build-release --target NeverDX86NativeStateAuditTests
+ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
+```

@@ -2082,3 +2082,10 @@ ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-o
 cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
 ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
 ```
+
+`NeverDX86NativeStateAuditTests`는 표준 x64 REP MOVSQ와 레거시 LDMXCSR의 명령 바이트 및 디코더 세부 정보를 엄격히 검증합니다. 전체 연산 범위는 정의되지 않은 출력 증명 기록에 연결됩니다. 독립적인 전체 상태 및 순차 복사 오라클은 겹침, 0회 복사, 주소 형식, 누락 바이트, 예약 비트를 검사합니다. 실행에는 기존 횟수/방향, 메모리, 유효 MXCSR 마스크 및 값의 유효성 증명이 필요합니다. 이 감사는 부분 오류 후 재시작이나 불투명 상태 보존을 증명하지 않습니다.
+
+```sh
+cmake --build build-release --target NeverDX86NativeStateAuditTests
+ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
+```

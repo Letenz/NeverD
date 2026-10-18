@@ -2057,3 +2057,10 @@ ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-o
 cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
 ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
 ```
+
+`NeverDX86NativeStateAuditTests` 检查规范 x64 REP MOVSQ 与传统 LDMXCSR 的原生字节及解码详情严格准入，完整操作范围仍绑定到未定义输出凭据。独立完整状态和有序复制预期覆盖重叠、零次数、地址形式、缺失字节与保留位。执行仍需现有次数／方向、内存、有效 MXCSR 掩码及合法性证明；该审计不证明部分故障后的重启或不透明状态保持。
+
+```sh
+cmake --build build-release --target NeverDX86NativeStateAuditTests
+ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
+```
