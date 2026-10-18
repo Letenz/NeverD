@@ -4,9 +4,10 @@
 
 # Testing NeverD
 
-`NeverDSymMBAObservedWindowTests` checks bounded observed-bit normalization,
-packed flags, extension windows, arithmetic carries and partial budgets with
-exhaustive narrow oracles and wide bit-vector equivalence proofs.
+`NeverDDirectTailCallMetadataTests` builds real x86, x64 and AArch64 CFGs and
+validates direct tail-call targets at strict instruction boundaries. It covers
+fallthrough and conditional transfers into known functions, an existing direct
+jump, ordinary calls and indirect tail calls.
 
 `AndroidFDSet.*` checks Bionic checked descriptor bitmaps at O0/O2 with ordinary,
 packed and RELR relocations on available CPU backends. Independent byte oracles
