@@ -1052,6 +1052,24 @@ cl::opt<bool> TypesHeaderPragmas(
              "declares it (#pragma neverd_header), as the libraries NeverD "
              "ships keep it"),
     cl::sub(TypesCmd));
+cl::opt<bool> TypesLibraries(
+    "libraries",
+    cl::desc("List the type libraries the program's types join, in the order "
+             "they join, then the others whose records lay out as the "
+             "program's, as the workbench's Type libraries window (Shift+F11) "
+             "does"),
+    cl::sub(TypesCmd));
+cl::list<std::string> TypesAddLibrary(
+    "add-library",
+    cl::desc("Join this type library to the program's types, one whose "
+             "records lay out as the program's, or take back one of the "
+             "program's left out; the project keeps the choice"),
+    cl::value_desc("library"), cl::sub(TypesCmd));
+cl::list<std::string> TypesRemoveLibrary(
+    "remove-library",
+    cl::desc("Leave this type library out of the program's types, or take "
+             "back one added; the project keeps the choice"),
+    cl::value_desc("library"), cl::sub(TypesCmd));
 cl::opt<bool>
     TypesDecimalOffsets("decimal-offsets",
                         cl::desc("Show offsets in decimal rather than hex"),

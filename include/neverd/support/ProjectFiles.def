@@ -33,6 +33,8 @@ NEVERD_PROJECT_FILE(Load, "load.json", ".neverd-load.json", true)
 NEVERD_PROJECT_FILE(Bookmarks, "bookmarks.json", ".neverd-bookmarks.json", true)
 // The PDB, DWARF, MAP and symbol table choices.
 NEVERD_PROJECT_FILE(DebugFiles, "debug.json", ".neverd-debug.json", true)
+// The type libraries joined beyond the image's own, and those left out.
+NEVERD_PROJECT_FILE(TypeLibraries, "libraries.json", "", true)
 // Each user's own: undo history, a save's write-ahead journal, where the
 // user was and how the desktop was laid out, and the writer lock.
 NEVERD_PROJECT_FILE(History, "local/history.json", ".neverd-history.json",

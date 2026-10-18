@@ -167,6 +167,26 @@ command fails. A `types.json` changed outside the worker is a foreign edit,
 as the other tables are. Both are listed in `capabilities` when the engine has
 them.
 
+`type_libraries` returns the type libraries NeverD ships, as IDA's type
+libraries window lists them, through `neverd_type_libraries_json`:
+`{libraries:[{name,dataModel,recordABI,compatible,image,joined,types?,
+prototypes?,conflicts?,error?}],added,removed}`. `image` says whether the
+program's kind and architecture join a library, `compatible` whether its
+records lay out as the program's, and `joined` whether its types join the
+program's now: the image's but those `removed`, then those `added`, in that
+order, each where no type before it declares the name, so order decides which
+library gives a name two declare. The libraries joined are listed first, in
+the order they join, then the others. `type_libraries_set {added?,removed?}` is a
+writer command that sets the choice whole, each a list of library names: an
+added library must be compatible and none of the image's, a removed one the
+image's. The worker writes it to the project folder's `libraries.json` under
+the writer lock it holds, and the engine reads that again with the binary, so
+an analysis replica and the next session join the same libraries; it is no
+step of undo history, as a debug file's choice is none. The program's types are read anew and the analysis starts
+over. `project_sync` reads a `libraries.json` changed outside the worker and
+says so as `type_libraries`. Both are listed in `capabilities` when the
+engine has them.
+
 `dwarf_reference {path}` needs no open binary either: it returns the SDK's
 `neverd_dwarf_reference_json`, `{dwarf:null}` or `{dwarf:{path,location}}` --
 the file that holds an ELF or Mach-O image's DWARF, with location `input` (the

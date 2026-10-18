@@ -155,6 +155,12 @@ public:
   bool declaresLocalTypes() const {
     return capabilities_.contains(QStringLiteral("local_types_declare"));
   }
+  /// Whether the worker lists the type libraries and takes the user's
+  /// choice of them (type_libraries, type_libraries_set).
+  bool choosesTypeLibraries() const {
+    return capabilities_.contains(QStringLiteral("type_libraries")) &&
+           capabilities_.contains(QStringLiteral("type_libraries_set"));
+  }
   /// Whether the worker finds the PDB a PE names before opening it
   /// (pdb_reference), and opens a PE without it.
   bool findsPdbFiles() const {
@@ -333,6 +339,11 @@ public:
   /// Removes the local types \p names; \p done has the types removed and
   /// those that still name one.
   void forgetTypes(const QStringList &names, Reply done, Failure failed = {});
+  /// Joins the type libraries \p added beyond the image's own and leaves
+  /// out the image's \p removed, the whole choice, which the project keeps;
+  /// \p done has the libraries as type_libraries lists them.
+  void setTypeLibraries(const QStringList &added, const QStringList &removed,
+                        Reply done, Failure failed = {});
 
   // MCP bridge.
   void externalQuery(const QString &id, const QString &operation,

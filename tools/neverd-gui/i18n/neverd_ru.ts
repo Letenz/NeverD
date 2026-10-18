@@ -911,6 +911,14 @@
         <source>Set t&amp;ype...</source>
         <translation>Задать тип(&amp;Y)...</translation>
     </message>
+    <message>
+        <source>Type libr&amp;aries</source>
+        <translation>Библиотеки типо&amp;в</translation>
+    </message>
+    <message>
+        <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
+        <translation>Показать библиотеки типов, присоединённые к типам программы, и добавить или исключить одну</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2447,6 +2455,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
         <translation>Файлы DWARF (*.debug *.dSYM);;Все файлы (*)</translation>
+    </message>
+    <message>
+        <source>Type Libraries</source>
+        <translation>Библиотеки типов</translation>
     </message>
 </context>
 <context>
@@ -4359,6 +4371,121 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>Использовать тип &amp;анализа</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypeLibrariesView</name>
+    <message>
+        <source>Add a type library</source>
+        <translation>Добавить библиотеку типов</translation>
+    </message>
+    <message>
+        <source>Leave the selected library out</source>
+        <translation>Исключить выбранную библиотеку</translation>
+    </message>
+    <message>
+        <source>Library</source>
+        <translation>Библиотека</translation>
+    </message>
+    <message>
+        <source>Origin</source>
+        <translation>Источник</translation>
+    </message>
+    <message>
+        <source>Data model</source>
+        <translation>Модель данных</translation>
+    </message>
+    <message>
+        <source>Record ABI</source>
+        <translation>ABI раскладки записей</translation>
+    </message>
+    <message>
+        <source>Types</source>
+        <translation>Типы</translation>
+    </message>
+    <message>
+        <source>Prototypes</source>
+        <translation>Прототипы</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>Конфликты</translation>
+    </message>
+    <message>
+        <source>Add a type library...</source>
+        <translation>Добавить библиотеку типов...</translation>
+    </message>
+    <message>
+        <source>Leave the library out</source>
+        <translation>Исключить библиотеку</translation>
+    </message>
+    <message>
+        <source>Open a program to see the type libraries its types join.</source>
+        <translation>Откройте программу, чтобы увидеть библиотеки типов, присоединённые к её типам.</translation>
+    </message>
+    <message>
+        <source>This engine joins no type libraries.</source>
+        <translation>Этот движок не присоединяет библиотеки типов.</translation>
+    </message>
+    <message>
+        <source>The program</source>
+        <translation>Программа</translation>
+    </message>
+    <message>
+        <source>Added</source>
+        <translation>Добавлена</translation>
+    </message>
+    <message>
+        <source>%1 joined nothing: %2</source>
+        <translation>%1 ничего не добавила: %2</translation>
+    </message>
+    <message>
+        <source>Left out, as the program sizes a type they hold otherwise: %1</source>
+        <translation>Исключены, так как программа задаёт другой размер содержащемуся в них типу: %1</translation>
+    </message>
+    <message>
+        <source>1 type library joins the program&apos;s types.</source>
+        <translation>1 библиотека типов присоединена к типам программы.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n type libraries join the program&apos;s types.</source>
+        <translation>
+            <numerusform>%n библиотека типов присоединена к типам программы.</numerusform>
+            <numerusform>%n библиотеки типов присоединены к типам программы.</numerusform>
+            <numerusform>%n библиотек типов присоединено к типам программы.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No type library joins the program&apos;s types.</source>
+        <translation>К типам программы не присоединена ни одна библиотека типов.</translation>
+    </message>
+    <message>
+        <source>Left out: %1.</source>
+        <translation>Исключены: %1.</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be listed: %1</source>
+        <translation>Не удалось перечислить библиотеки типов: %1</translation>
+    </message>
+    <message>
+        <source>Add a Type Library</source>
+        <translation>Добавление библиотеки типов</translation>
+    </message>
+    <message>
+        <source>Libraries whose records lay out as the program&apos;s:</source>
+        <translation>Библиотеки, записи которых размещаются так же, как у программы:</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Добавить</translation>
+    </message>
+    <message>
+        <source>Reading the program&apos;s types again...</source>
+        <translation>Повторное чтение типов программы...</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be changed: %1</source>
+        <translation>Не удалось изменить библиотеки типов: %1</translation>
     </message>
 </context>
 </TS>

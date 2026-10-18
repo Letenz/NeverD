@@ -371,6 +371,18 @@ model and record ABI are the program's:
 - a header record laid out with a type the program sizes otherwise is left
   out and reported (`conflicts`).
 
+A project changes which libraries join (`neverd_type_libraries_set`, the
+workbench's Type libraries window): it adds a library whose data model and
+record ABI are the program's, or leaves out one the image joins, and the
+program's types are read again. The engine owns the choice, as it owns the
+debug files chosen: the session reads `libraries.json` from the project when
+it loads, `neverd_type_libraries_save` writes it (the worker writes it under
+the writer lock it holds, as it writes `load.json`), and undo history leaves
+it out. The image's libraries join in their rows' order but those left out,
+then those added in the order the user added them;
+`neverd_type_libraries_json` lists every library with what it joined, for a
+program or none.
+
 The call model (`lib/libc`) answers what a routine takes and returns before
 a program joins a header library, and where none joins: function discovery,
 the call analysis, MedIR's ABI pass and both C writers read it from layers

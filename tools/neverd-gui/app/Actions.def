@@ -371,6 +371,12 @@ NEVERD_ACTION(ViewLocalTypes, QT_TRANSLATE_NOOP("Actions", "Local t&ypes"),
               QT_TRANSLATE_NOOP("Actions",
                                 "Show the program's types with their layouts "
                                 "and source"))
+NEVERD_ACTION(ViewTypeLibraries,
+              QT_TRANSLATE_NOOP("Actions", "Type libr&aries"), "Shift+F11",
+              "type_libraries",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Show the type libraries the program's types "
+                                "join, and add or remove one"))
 NEVERD_ACTION(ViewSegments, QT_TRANSLATE_NOOP("Actions", "S&egments"),
               "Shift+F7", "segments",
               QT_TRANSLATE_NOOP("Actions", "Show the segments window"))

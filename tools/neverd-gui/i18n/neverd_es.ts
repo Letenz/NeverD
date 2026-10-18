@@ -911,6 +911,14 @@
         <source>Set t&amp;ype...</source>
         <translation>Definir tipo(&amp;Y)...</translation>
     </message>
+    <message>
+        <source>Type libr&amp;aries</source>
+        <translation>&amp;Bibliotecas de tipos</translation>
+    </message>
+    <message>
+        <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
+        <translation>Mostrar las bibliotecas de tipos que se unen a los tipos del programa, y añadir o quitar una</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2441,6 +2449,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
         <translation>Archivos DWARF (*.debug *.dSYM);;Todos los archivos (*)</translation>
+    </message>
+    <message>
+        <source>Type Libraries</source>
+        <translation>Bibliotecas de tipos</translation>
     </message>
 </context>
 <context>
@@ -4332,6 +4344,120 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>Usar el tipo del &amp;análisis</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypeLibrariesView</name>
+    <message>
+        <source>Add a type library</source>
+        <translation>Añadir una biblioteca de tipos</translation>
+    </message>
+    <message>
+        <source>Leave the selected library out</source>
+        <translation>Dejar fuera la biblioteca seleccionada</translation>
+    </message>
+    <message>
+        <source>Library</source>
+        <translation>Biblioteca</translation>
+    </message>
+    <message>
+        <source>Origin</source>
+        <translation>Origen</translation>
+    </message>
+    <message>
+        <source>Data model</source>
+        <translation>Modelo de datos</translation>
+    </message>
+    <message>
+        <source>Record ABI</source>
+        <translation>ABI de disposición</translation>
+    </message>
+    <message>
+        <source>Types</source>
+        <translation>Tipos</translation>
+    </message>
+    <message>
+        <source>Prototypes</source>
+        <translation>Prototipos</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>Conflictos</translation>
+    </message>
+    <message>
+        <source>Add a type library...</source>
+        <translation>Añadir una biblioteca de tipos...</translation>
+    </message>
+    <message>
+        <source>Leave the library out</source>
+        <translation>Dejar fuera la biblioteca</translation>
+    </message>
+    <message>
+        <source>Open a program to see the type libraries its types join.</source>
+        <translation>Abra un programa para ver las bibliotecas de tipos que se unen a sus tipos.</translation>
+    </message>
+    <message>
+        <source>This engine joins no type libraries.</source>
+        <translation>Este motor no une bibliotecas de tipos.</translation>
+    </message>
+    <message>
+        <source>The program</source>
+        <translation>El programa</translation>
+    </message>
+    <message>
+        <source>Added</source>
+        <translation>Añadida</translation>
+    </message>
+    <message>
+        <source>%1 joined nothing: %2</source>
+        <translation>%1 no aportó nada: %2</translation>
+    </message>
+    <message>
+        <source>Left out, as the program sizes a type they hold otherwise: %1</source>
+        <translation>Excluidos porque el programa da otro tamaño a un tipo que contienen: %1</translation>
+    </message>
+    <message>
+        <source>1 type library joins the program&apos;s types.</source>
+        <translation>1 biblioteca de tipos se une a los tipos del programa.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n type libraries join the program&apos;s types.</source>
+        <translation>
+            <numerusform>%n biblioteca de tipos se une a los tipos del programa.</numerusform>
+            <numerusform>%n bibliotecas de tipos se unen a los tipos del programa.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No type library joins the program&apos;s types.</source>
+        <translation>Ninguna biblioteca de tipos se une a los tipos del programa.</translation>
+    </message>
+    <message>
+        <source>Left out: %1.</source>
+        <translation>Excluidas: %1.</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be listed: %1</source>
+        <translation>No se pudieron listar las bibliotecas de tipos: %1</translation>
+    </message>
+    <message>
+        <source>Add a Type Library</source>
+        <translation>Añadir una biblioteca de tipos</translation>
+    </message>
+    <message>
+        <source>Libraries whose records lay out as the program&apos;s:</source>
+        <translation>Bibliotecas cuyos registros se disponen como los del programa:</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Añadir</translation>
+    </message>
+    <message>
+        <source>Reading the program&apos;s types again...</source>
+        <translation>Volviendo a leer los tipos del programa...</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be changed: %1</source>
+        <translation>No se pudieron cambiar las bibliotecas de tipos: %1</translation>
     </message>
 </context>
 </TS>

@@ -911,6 +911,14 @@
         <source>Set t&amp;ype...</source>
         <translation>Imposta tipo(&amp;Y)...</translation>
     </message>
+    <message>
+        <source>Type libr&amp;aries</source>
+        <translation>&amp;Librerie di tipi</translation>
+    </message>
+    <message>
+        <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
+        <translation>Mostra le librerie di tipi unite ai tipi del programma, e aggiungine o escludine una</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2441,6 +2449,10 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
     <message>
         <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
         <translation>File DWARF (*.debug *.dSYM);;Tutti i file (*)</translation>
+    </message>
+    <message>
+        <source>Type Libraries</source>
+        <translation>Librerie di tipi</translation>
     </message>
 </context>
 <context>
@@ -4332,6 +4344,120 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>Usa il tipo dell&apos;&amp;analisi</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypeLibrariesView</name>
+    <message>
+        <source>Add a type library</source>
+        <translation>Aggiungi una libreria di tipi</translation>
+    </message>
+    <message>
+        <source>Leave the selected library out</source>
+        <translation>Escludi la libreria selezionata</translation>
+    </message>
+    <message>
+        <source>Library</source>
+        <translation>Libreria</translation>
+    </message>
+    <message>
+        <source>Origin</source>
+        <translation>Origine</translation>
+    </message>
+    <message>
+        <source>Data model</source>
+        <translation>Modello dei dati</translation>
+    </message>
+    <message>
+        <source>Record ABI</source>
+        <translation>ABI di disposizione</translation>
+    </message>
+    <message>
+        <source>Types</source>
+        <translation>Tipi</translation>
+    </message>
+    <message>
+        <source>Prototypes</source>
+        <translation>Prototipi</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>Conflitti</translation>
+    </message>
+    <message>
+        <source>Add a type library...</source>
+        <translation>Aggiungi una libreria di tipi...</translation>
+    </message>
+    <message>
+        <source>Leave the library out</source>
+        <translation>Escludi la libreria</translation>
+    </message>
+    <message>
+        <source>Open a program to see the type libraries its types join.</source>
+        <translation>Apri un programma per vedere le librerie di tipi unite ai suoi tipi.</translation>
+    </message>
+    <message>
+        <source>This engine joins no type libraries.</source>
+        <translation>Questo motore non unisce librerie di tipi.</translation>
+    </message>
+    <message>
+        <source>The program</source>
+        <translation>Il programma</translation>
+    </message>
+    <message>
+        <source>Added</source>
+        <translation>Aggiunta</translation>
+    </message>
+    <message>
+        <source>%1 joined nothing: %2</source>
+        <translation>%1 non ha aggiunto nulla: %2</translation>
+    </message>
+    <message>
+        <source>Left out, as the program sizes a type they hold otherwise: %1</source>
+        <translation>Esclusi perché il programma dà un&apos;altra dimensione a un tipo che contengono: %1</translation>
+    </message>
+    <message>
+        <source>1 type library joins the program&apos;s types.</source>
+        <translation>1 libreria di tipi è unita ai tipi del programma.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n type libraries join the program&apos;s types.</source>
+        <translation>
+            <numerusform>%n libreria di tipi è unita ai tipi del programma.</numerusform>
+            <numerusform>%n librerie di tipi sono unite ai tipi del programma.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No type library joins the program&apos;s types.</source>
+        <translation>Nessuna libreria di tipi è unita ai tipi del programma.</translation>
+    </message>
+    <message>
+        <source>Left out: %1.</source>
+        <translation>Escluse: %1.</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be listed: %1</source>
+        <translation>Impossibile elencare le librerie di tipi: %1</translation>
+    </message>
+    <message>
+        <source>Add a Type Library</source>
+        <translation>Aggiungi una libreria di tipi</translation>
+    </message>
+    <message>
+        <source>Libraries whose records lay out as the program&apos;s:</source>
+        <translation>Librerie i cui record sono disposti come quelli del programma:</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Aggiungi</translation>
+    </message>
+    <message>
+        <source>Reading the program&apos;s types again...</source>
+        <translation>Rilettura dei tipi del programma...</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be changed: %1</source>
+        <translation>Impossibile modificare le librerie di tipi: %1</translation>
     </message>
 </context>
 </TS>

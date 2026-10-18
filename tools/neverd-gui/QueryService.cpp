@@ -56,6 +56,7 @@ bool readable(const QString &operation) {
                                         "local_type",
                                         "local_types_source",
                                         "local_types_fit",
+                                        "type_libraries",
                                         "search"};
   return cacheable(operation) || operations.contains(operation);
 }
@@ -85,7 +86,8 @@ bool command(const QString &operation) {
                                         "contribution_register",
                                         "contribution_unregister",
                                         "local_types_declare",
-                                        "local_types_forget"};
+                                        "local_types_forget",
+                                        "type_libraries_set"};
   return operations.contains(operation);
 }
 
