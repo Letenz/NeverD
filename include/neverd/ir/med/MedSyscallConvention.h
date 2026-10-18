@@ -55,6 +55,14 @@ const SyscallConvention *modeledSyscallConvention(Intrinsic Modeled);
 /// Every convention, for a consumer that recognizes a call lowered from one.
 llvm::ArrayRef<const SyscallConvention *> syscallConventions();
 
+/// The registers an SMC or HVC #0 reads under the SMC Calling Convention on
+/// \p TheArch: the function identifier, then its arguments (x0-x7, r0-r3).
+/// It returns its results in the first four, which the lift binds.  Arm
+/// defines the convention whatever the operating system; empty for another
+/// intrinsic or immediate.
+llvm::ArrayRef<uint64_t> smcccArgumentRegisters(Arch TheArch, Intrinsic Lifted,
+                                                uint64_t Immediate);
+
 } // namespace neverd
 
 #endif // NEVERD_IR_MED_MEDSYSCALLCONVENTION_H

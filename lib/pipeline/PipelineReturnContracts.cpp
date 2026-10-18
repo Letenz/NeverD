@@ -83,6 +83,8 @@ enum class ReturnedValue : uint8_t {
 struct FunctionFacts {
   const MedFunc *Func = nullptr;
   std::map<ValueKey, const MedOp *> Defs;
+  /// The intrinsic each bound output of a multi-output intrinsic comes from.
+  std::map<ValueKey, const MedOp *> IntrinsicOutputDefs;
   std::map<ValueKey, const PhiNode *> Phis;
   /// Values an operation other than a return reads.
   std::set<ValueKey> Read;
@@ -171,6 +173,9 @@ FunctionFacts collectFacts(const MedFunc &Func, const TargetRegInfo &TRI,
           llvm::any_of(Op.IntrinsicOutputs, WritesReturn);
       if (Op.Output.Size && !Op.Output.isConst())
         Facts.Defs.emplace(keyOf(Op.Output), &Op);
+      for (const MedVar &Output : Op.IntrinsicOutputs)
+        if (!Output.isConst())
+          Facts.IntrinsicOutputDefs.emplace(keyOf(Output), &Op);
       if (Op.Opcode == NdOp::RETURN) {
         const auto Returned = returnRegisterAt(
             Func, Block, static_cast<size_t>(&Op - Block.Ops.data()), TRI,
@@ -391,6 +396,16 @@ private:
         (void)Predecessor;
         classify(F, Arm, Paths, Seen, Depth + 1);
       }
+      return;
+    }
+    // An SMC or HVC's result under the SMC Calling Convention, as a system
+    // call's, is a value where a caller reads it.
+    if (const auto Bound = F.IntrinsicOutputDefs.find(keyOf(Value));
+        Bound != F.IntrinsicOutputDefs.end() && Bound->second->NumInputs >= 1 &&
+        Bound->second->Inputs[0].isConst() &&
+        intrinsicReturnsSmcccResults(
+            static_cast<Intrinsic>(Bound->second->Inputs[0].ConstVal))) {
+      Paths.push_back(ReturnedValue::SystemCallResult);
       return;
     }
     const auto Def = F.Defs.find(keyOf(Value));

@@ -3759,6 +3759,15 @@ LLVM emitters run each as that inline assembly, which LLVM C reads back the
 same way. SYSP, MRRS and MSRR move a register pair no intrinsic carries,
 and fail clearly.
 
+An SMC or HVC #0 follows Arm's SMC Calling Convention: the lift binds its
+results in x0-x3 (r0-r3) as the outputs of a multi-output intrinsic, and
+LowToMed gives it the registers it reads, its function identifier and
+arguments in x0-x7, or r0-r3 on ARM, whose procedure call standard preserves
+r4-r7 (`smcccArgumentRegisters`, `MedSmcccConvention.cpp`). Both C routes pin
+each value to its register for the instruction; a function returns a result
+its caller reads, as with a system call. An SMC or HVC of another immediate
+keeps no register contract.
+
 `ir/FloatConversion.h` owns the result policy for scalar float-to-integer
 operations: saturation for the non-x86 path and x86 indefinite results for
 invalid conversions. HighC and the LLVM lowering select that same policy;

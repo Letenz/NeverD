@@ -633,6 +633,47 @@ llvm::SmallVector<const char *, 3> getARMIntrinsicHeaders() {
   return {"arm_acle.h", "arm_neon.h"};
 }
 
+namespace {
+/// An SMC or HVC #0 under the SMC Calling Convention: its function identifier
+/// and arguments in x0-x7 (r0-r3) and its results in x0-x3 (r0-r3), which
+/// register variables pin for the instruction.  \p Operands are the
+/// immediate, then the argument registers.
+std::string renderSmcccCall(Intrinsic IID, const std::vector<MedVar> &Outputs,
+                            const std::vector<ExprPtr> &Operands,
+                            std::function<std::string(const HighExpr &)> ExprFn,
+                            std::function<std::string(const MedVar &)> VarFn,
+                            const IsAliveFn &IsAlive) {
+  const size_t Arguments = Operands.empty() ? 0 : Operands.size() - 1;
+  if (Outputs.size() != 4 || (Arguments != 4 && Arguments != 8))
+    return {};
+  const bool AArch64 = IID == Intrinsic::Smc || IID == Intrinsic::Hvc;
+  const std::string Type = AArch64 ? "uint64_t" : "uint32_t";
+  const std::string Register = AArch64 ? "x" : "r";
+  const auto Name = [&](size_t Index) {
+    return "_nd_smccc_" + Register + std::to_string(Index);
+  };
+  std::string Result = "{\n";
+  for (size_t Index = 0; Index < Arguments; ++Index)
+    Result += "    register " + Type + " " + Name(Index) + " __asm__(\"" +
+              Register + std::to_string(Index) + "\") = (" + Type + ")(" +
+              ExprFn(*Operands[Index + 1]) + ");\n";
+  Result +=
+      "    __asm__ volatile(\"" + intrinsicInstructionText(IID, 0) + "\"\n";
+  Result += "        : \"+r\"(" + Name(0) + "), \"+r\"(" + Name(1) +
+            "), \"+r\"(" + Name(2) + "), \"+r\"(" + Name(3) + ")\n";
+  std::string Inputs;
+  for (size_t Index = 4; Index < Arguments; ++Index)
+    Inputs += (Inputs.empty() ? "\"r\"(" : ", \"r\"(") + Name(Index) + ")";
+  Result += "        : " + Inputs + "\n";
+  Result += "        : \"memory\");\n";
+  for (size_t Index = 0; Index < 4; ++Index)
+    if (isAlive(Outputs[Index], IsAlive))
+      Result += "    " + VarFn(Outputs[Index]) + " = " + Name(Index) + ";\n";
+  Result += "}\n";
+  return Result;
+}
+} // namespace
+
 std::string
 renderARMMultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
                      const std::vector<ExprPtr> &Operands,
@@ -649,6 +690,11 @@ renderARMMultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
                                  IsAlive);
   case I::A64_MopsCpyFP:
     return renderMopsCopyPrologue(Outputs, Operands, ExprFn, VarFn, IsAlive);
+  case I::Smc:
+  case I::Hvc:
+  case I::ArmSmc:
+  case I::ArmHvc:
+    return renderSmcccCall(IID, Outputs, Operands, ExprFn, VarFn, IsAlive);
   default:
     return {};
   }

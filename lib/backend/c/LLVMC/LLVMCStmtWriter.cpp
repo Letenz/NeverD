@@ -4327,6 +4327,55 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   if (ResultLive && InferredVoid)
     ResultLive = isCallResultLive(Analysis, &Call);
 
+  // An SMC or HVC #0 under the SMC Calling Convention takes its function
+  // identifier and arguments in x0-x7 (r0-r3) and hands back x0-x3 (r0-r3),
+  // which register variables pin for the instruction.
+  if ((Opts.TheArch == Arch::AArch64 || Opts.TheArch == Arch::ARM) &&
+      (AsmStr == "smc #0x0" || AsmStr == "hvc #0x0")) {
+    const bool AArch64 = Opts.TheArch == Arch::AArch64;
+    const std::string Prefix = AArch64 ? "x" : "r";
+    const unsigned Arguments = AArch64 ? 8 : 4;
+    std::string Expected;
+    for (unsigned Index = 0; Index < 4; ++Index)
+      Expected += "={" + Prefix + std::to_string(Index) + "},";
+    Expected += "0,1,2,3";
+    for (unsigned Index = 4; Index < Arguments; ++Index)
+      Expected += ",{" + Prefix + std::to_string(Index) + "}";
+    Expected += ",~{memory}";
+    if (Call.arg_size() == Arguments && Call.getType()->isStructTy() &&
+        IA->getConstraintString() == Expected) {
+      const char *Type = AArch64 ? "uint64_t" : "uint32_t";
+      std::vector<std::string> Names;
+      for (unsigned Index = 0; Index < Arguments; ++Index)
+        Names.push_back(freshVar("smccc_" + Prefix + std::to_string(Index)));
+      emitIndent(Indent);
+      OS << "{\n";
+      for (unsigned Index = 0; Index < Arguments; ++Index) {
+        emitIndent(Indent + 1);
+        OS << "register " << Type << " " << Names[Index] << " __asm__(\""
+           << Prefix << Index << "\") = " << valueStr(Call.getArgOperand(Index))
+           << ";\n";
+      }
+      emitIndent(Indent + 1);
+      OS << "__asm__ volatile(\"" << AsmStr << "\" : \"+r\"(" << Names[0]
+         << "), \"+r\"(" << Names[1] << "), \"+r\"(" << Names[2] << "), \"+r\"("
+         << Names[3] << ") :";
+      for (unsigned Index = 4; Index < Arguments; ++Index)
+        OS << (Index == 4 ? " \"r\"(" : ", \"r\"(") << Names[Index] << ")";
+      OS << " : \"memory\");\n";
+      if (ResultLive)
+        for (unsigned Index = 0; Index < 4; ++Index) {
+          emitIndent(Indent + 1);
+          OS << Name << ".field_" << Index << " = " << Names[Index] << ";\n";
+        }
+      emitIndent(Indent);
+      OS << "}\n";
+      return true;
+    }
+    if (!Call.getType()->isVoidTy())
+      llvm::report_fatal_error("invalid SMC Calling Convention C projection");
+  }
+
   // The native Linux x64 SYSCALL contract has seven scalar register inputs
   // and two register outputs.  Keep r10/r8/r9 and r11 fixed in C, since the
   // generic SysV call ABI would put the fourth argument in rcx instead.
