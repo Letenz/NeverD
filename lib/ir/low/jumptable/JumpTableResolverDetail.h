@@ -51,6 +51,14 @@ struct BinaryImage;
 struct RelocatedAddressField;
 struct TargetRegInfo;
 
+/// i386 ELF PIC code adds each switch-table entry to the address of
+/// `_GLOBAL_OFFSET_TABLE_`, which a get-PC sequence plus a GOTPC add leaves in
+/// a register.  A linked image keeps no GOTPC relocation; this is the address
+/// its DT_PLTGOT (GNU ld and lld: the start of .got.plt) or its
+/// `_GLOBAL_OFFSET_TABLE_` symbol records.  Defined in
+/// JumpTableResolverX86.cpp; empty for every other image.
+std::optional<va_t> linkedI386GlobalOffsetTable(const BinaryImage &Img);
+
 /// True only when one exact LOAD occurrence eligible to provide a jump-table
 /// target belongs to the ordinary process-image address space.  Segment
 /// offsets may numerically collide with image VAs but can never authenticate

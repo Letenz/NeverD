@@ -153,6 +153,7 @@ add_neverd_component_library(NeverDIRLow
   jumptable/JumpTableProofState.cpp
   jumptable/JumpTableResolverGroup.cpp
   jumptable/JumpTableResolverARM.cpp
+  jumptable/JumpTableResolverX86.cpp
   jumptable/JumpTableResolverBounds.cpp
   jumptable/JumpTableResolverEmu.cpp
   jumptable/JumpTableResolverExtract.cpp

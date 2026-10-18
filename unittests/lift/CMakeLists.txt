@@ -389,6 +389,7 @@ add_neverd_unittest(NeverDLiftTests
   core/JumpTableFiniteSelectorTests.cpp
   core/JumpTableJoinedGuardTests.cpp
   core/JumpTableFixedAddressTests.cpp
+  core/JumpTableLinkedI386GOTTests.cpp
   core/JumpTableSharedAbsoluteTests.cpp
   core/ModuleJumpTableBudgetTests.cpp
   core/ModuleAdjacentTableTests.cpp
@@ -1164,6 +1165,7 @@ add_neverd_unittest(NeverDJumpTableTests
   core/JumpTableFiniteSelectorTests.cpp
   core/JumpTableJoinedGuardTests.cpp
   core/JumpTableFixedAddressTests.cpp
+  core/JumpTableLinkedI386GOTTests.cpp
   core/JumpTableSharedAbsoluteTests.cpp
   core/ModuleJumpTableBudgetTests.cpp
   core/ModuleAdjacentTableTests.cpp
@@ -3678,6 +3680,25 @@ if(LLD_EXEC)
     DEPENDS ${pic_library_i386_obj}
     COMMENT "Linking i386 PIC library fixture")
   list(APPEND ELF_EXECUTABLES ${pic_library_i386_obj} ${pic_library_i386_so})
+
+  # Switch tables of an i386 shared library, relative to its GOT address.
+  set(pic_switch_i386_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/x86_32/test_pic_switch_i386.s")
+  set(pic_switch_i386_obj "${CMAKE_CURRENT_BINARY_DIR}/test_pic_switch_i386.o")
+  set(pic_switch_i386_so "${CMAKE_CURRENT_BINARY_DIR}/test_pic_switch_i386.so")
+  add_custom_command(
+    OUTPUT ${pic_switch_i386_obj}
+    COMMAND ${CLANG_EXEC} -target i386-linux-gnu -c ${pic_switch_i386_src}
+            -o ${pic_switch_i386_obj}
+    DEPENDS ${pic_switch_i386_src}
+    COMMENT "Compiling i386 PIC switch fixture")
+  add_custom_command(
+    OUTPUT ${pic_switch_i386_so}
+    COMMAND ${LLD_EXEC} -shared -m elf_i386 -o ${pic_switch_i386_so}
+            ${pic_switch_i386_obj}
+    DEPENDS ${pic_switch_i386_obj}
+    COMMENT "Linking i386 PIC switch fixture")
+  list(APPEND ELF_EXECUTABLES ${pic_switch_i386_obj} ${pic_switch_i386_so})
 
   set(native_pointer_elf_src
       "${CMAKE_CURRENT_SOURCE_DIR}/format/test_elf_pointer_reloc_x64.s")

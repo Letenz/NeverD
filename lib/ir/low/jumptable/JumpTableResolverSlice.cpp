@@ -10042,6 +10042,12 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
   }
   const va_t ExpectedAnchor =
       Info.HasTargetBase ? Info.TargetBase : Info.BaseAddr;
+  // A linked i386 image materializes its GOT address from a get-PC value and
+  // a scalar GOTPC immediate, so that exact anchor carries no address
+  // provenance.
+  const bool LinkedI386GOTAnchor =
+      Info.IsRelative && Info.HasTargetBase &&
+      linkedI386GlobalOffsetTable(*CurrentImg) == Info.TargetBase;
   const size_t InitialDerivedCount = Derived.size();
 
   auto alternativesFor = [&](uint8_t State)
@@ -10285,11 +10291,19 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
                       static_cast<va_t>(Anchor.Offset) != ExpectedAnchor)
                     continue;
                 } else if (Anchor.isReg() || Anchor.isTemp()) {
-                  const std::array<JumpTableValueOccurrence, 1>
-                      AnchorAlternative = {JumpTableValueOccurrence{
-                          NdVar::address(ExpectedAnchor, Anchor.Size),
-                          InvalidVA, -1, /*DefinedAtPoint=*/false}};
-                  auto AnchorQuery = addQuery(Anchor, Op, AnchorAlternative);
+                  const std::array<JumpTableValueOccurrence, 2>
+                      AnchorAlternatives = {
+                          JumpTableValueOccurrence{
+                              NdVar::address(ExpectedAnchor, Anchor.Size),
+                              InvalidVA, -1, /*DefinedAtPoint=*/false},
+                          JumpTableValueOccurrence{
+                              NdVar::scalar(ExpectedAnchor, Anchor.Size),
+                              InvalidVA, -1, /*DefinedAtPoint=*/false}};
+                  auto AnchorQuery =
+                      addQuery(Anchor, Op,
+                               llvm::ArrayRef<JumpTableValueOccurrence>(
+                                   AnchorAlternatives.data(),
+                                   LinkedI386GOTAnchor ? 2 : 1));
                   if (!AnchorQuery)
                     return false;
                   QueryIndices[QueryCount++] = *AnchorQuery;
@@ -11174,14 +11188,21 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
     return pushQuery(Queries, Candidate, Use, *Alternatives, AllowZeroExtension,
                      AllowSignExtension);
   };
+  // A linked i386 image computes its GOT address from a get-PC value and a
+  // scalar GOTPC immediate, so that exact base carries no address provenance.
+  const std::optional<va_t> LinkedI386GOT =
+      linkedI386GlobalOffsetTable(*CurrentImg);
   auto pushSingleBaseQuery = [&](std::vector<JumpTableValueQuery> &Queries,
                                  const NdVar &Candidate, const LowOp &Use,
                                  va_t Base, uint16_t Size) {
-    const JumpTableValueOccurrence Alternative{NdVar::address(Base, Size),
-                                               InvalidVA, -1,
-                                               /*DefinedAtPoint=*/false};
+    const std::array<JumpTableValueOccurrence, 2> Alternatives = {
+        JumpTableValueOccurrence{NdVar::address(Base, Size), InvalidVA, -1,
+                                 /*DefinedAtPoint=*/false},
+        JumpTableValueOccurrence{NdVar::scalar(Base, Size), InvalidVA, -1,
+                                 /*DefinedAtPoint=*/false}};
     return pushQuery(Queries, Candidate, Use,
-                     llvm::ArrayRef<JumpTableValueOccurrence>(Alternative));
+                     llvm::ArrayRef<JumpTableValueOccurrence>(
+                         Alternatives.data(), LinkedI386GOT == Base ? 2 : 1));
   };
   auto pushIndex = [&](std::vector<size_t> &Indices, size_t Index) {
     if (!ensureAppendCapacity(Indices) || !consumeWork())
