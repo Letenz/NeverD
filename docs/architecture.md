@@ -297,8 +297,11 @@ recognize a routine by its bytes and only name it. A platform or an
 architecture joins by a header under `lib/types/headers/`, a row of
 `HeaderLibraries.def` naming its data model, the record ABI its records are
 laid out by (a 32-bit Linux program's i386 System V ABI or AAPCS32, which
-its data model alone does not say) and the spelling its headers name
-builtins in, which shows its declarations as they read (Windows' `ULONG`),
+its data model alone does not say) and the spelling its declarations are
+shown in, which states every builtin's width whatever system reads them:
+Windows' `ULONG`, which Windows fixes at 32 bits on every architecture, or
+exact widths elsewhere (`int64_t` for a 64-bit Darwin `long`, which a reader
+on Windows, where `long` is 32 bits, would misread),
 and rows of `HeaderLibraryImages.def`: how an image's headers tell its kind
 (a PE's subsystem, the C library an ELF image under Linux runs on), and the
 libraries an image of each kind and architecture joins, in order. Its calling convention's rules then place
@@ -495,7 +498,12 @@ records:
   declared types has, defines none, and LLVM-C keeps its machine types
   there. `renderEmbeddedC` renders them in exact
   widths, with their checks, each under a guard of its own so that units
-  concatenate. A record whose members the unit, or the debug information
+  concatenate. A typedef of a name C reserves for the implementation (a
+  leading underscore and an uppercase letter or another underscore, as
+  Darwin's `__darwin_size_t`) is spelled as what it stands for, not
+  defined: the system headers the unit includes define it in their own
+  spelling, `unsigned long` on Darwin, which `uint64_t`, an
+  `unsigned long long` there, is not. A record whose members the unit, or the debug information
   anywhere in the session, names otherwise than the library does stays
   declared only: its definition would disagree with the code.
 - HighC asks for the records and enumerations its types reach before it
