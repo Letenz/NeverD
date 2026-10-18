@@ -1032,7 +1032,16 @@ result is no `msg` where the code calls `msg()`), and a bitwise, shift or
 multiplicative operator, an integer local and integer memory take a pointer as
 its address, an integer (`(uintptr_t)p & ~0xFF`): a local the text declares a
 pointer, a typed record's pointer member, a pointer object, or a value
-forwarded from one. A function the image defines under the name of a routine
+forwarded from one. So does an integer result returning one, integer memory
+taking a member's address (`&s->bl_tree[18]`), and an integer local taking a
+call's pointer result. A local the text declares a pointer takes an integer,
+as an indirect call's result, as the address it is. A C library routine
+takes a pointer to a typedef of its header's (bionic's long time_t, which the
+unit's exact widths call int32_t) and an array parameter (jmp_buf) through
+void *, as it takes a pointer to a record of its header's. An indirect call
+whose callee is unknown names its own instruction (`lowerCallInd`), where
+debug information finds its caller: it takes no signature from there
+(`debugFunctionCalled`), so the caller's `void *` result is not the call's. A function the image defines under the name of a routine
 a C library declares is the image's copy of it and takes its address in
 HighC as in LLVM C (`strlen_5B130`): a C++ function whose C identifier would
 be the name (`sigaddset(unsigned long*, int)`), a routine of the call model's
