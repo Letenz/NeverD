@@ -1,0 +1,86 @@
+//===- SymMBAKnownFactTests.cpp - Symbolic regressions ----------------===//
+
+#include "gtest/gtest.h"
+
+#include "neverd/solver/BitVectorSolver.h"
+#include "neverd/symbolic/SymMBA.h"
+
+#include <algorithm>
+#include <set>
+
+using namespace neverd::symbolic;
+
+static SymRef simplifyWindow(SymContext &C, SymRef Root,
+                             MBAOptions Options = {}) {
+  return simplifyMBADeep(C, Root, Options).Expr;
+}
+
+TEST(SymMBAKnownFacts, KnownMaskBitsReuseExistingFacts) {
+  SymContext C;
+  auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+  auto Source = C.mkZExt(C.mkUDiv(X, Y), 64);
+  auto Flag = C.mkConst(64, 256);
+  auto Root = C.mkOr(Source, Flag);
+  EXPECT_EQ(simplifyWindow(C, Root), C.mkAdd(Source, Flag));
+  auto Signed = C.mkSExt(C.mkUDiv(X, Y), 64);
+  auto Other = C.mkOr(Signed, Flag);
+  auto Result = simplifyWindow(C, Other);
+  neverd::solver::BitVectorSolver Proof(C);
+  EXPECT_EQ(Proof.check(C.mkNe(Other, Result)),
+            neverd::solver::SatResult::Unsat);
+  EXPECT_EQ(Proof.check(C.mkNe(Other, C.mkAdd(Signed, Flag))),
+            neverd::solver::SatResult::Sat);
+}
+
+TEST(SymMBAKnownFacts, KnownPredicatesReuseExistingFacts) {
+  SymContext C;
+  auto X = C.mkVar("x", 64), Y = C.mkVar("y", 64);
+  auto Base =
+      C.mkAdd(C.mkAnd(X, C.mkConst(64, 7)), C.mkAnd(Y, C.mkConst(64, 15)));
+  auto Count = C.mkConst(64, 4);
+  auto Roundtrip = C.mkEq(Base, C.mkAShr(C.mkShl(Base, Count), Count));
+  auto Ordering = C.mkUle(Base, C.mkMul(Base, C.mkConst(64, 5)));
+  for (auto Root : {Roundtrip, Ordering}) {
+    EXPECT_EQ(simplifyWindow(C, Root), C.mkConst(1, 1));
+    neverd::solver::BitVectorSolver Proof(C);
+    EXPECT_EQ(Proof.check(C.mkNot(Root)), neverd::solver::SatResult::Unsat);
+  }
+  auto Unbounded = C.mkEq(X, C.mkAShr(C.mkShl(X, Count), Count));
+  auto Reduced = simplifyWindow(C, Unbounded);
+  EXPECT_NE(Reduced, C.mkConst(1, 1));
+  neverd::solver::BitVectorSolver Proof(C);
+  EXPECT_EQ(Proof.check(C.mkNe(Unbounded, Reduced)),
+            neverd::solver::SatResult::Unsat);
+}
+
+TEST(SymMBAKnownFacts, PartialBudgetsPreserveIndependentEvaluations) {
+  SymContext C;
+  auto X = C.mkVar("x", 4), Y = C.mkVar("y", 4);
+  auto Source = C.mkZExt(C.mkUDiv(X, Y), 12);
+  auto Root = C.mkOr(Source, C.mkConst(12, 64));
+  for (unsigned Work : {0u, 1u, 3u, 16u, 64u, 10000u}) {
+    MBAOptions Options;
+    Options.MaxWork = Work;
+    auto Result = simplifyMBADeep(C, Root, Options);
+    EXPECT_LE(Result.Work, Work);
+    if (!Work)
+      EXPECT_EQ(Result.Expr, Root);
+    for (unsigned A = 0; A != 16; ++A)
+      for (unsigned B = 0; B != 16; ++B) {
+        uint64_t Inputs[] = {A, B};
+        EXPECT_EQ(C.evalU64(Result.Expr, Inputs), (B ? A / B : 15) | 64u);
+      }
+  }
+}
+
+TEST(SymMBAKnownFacts, MissingFactStorageKeepsTheOriginalSemantics) {
+  SymContext C;
+  auto X = C.mkVar("x", 64);
+  auto Root = C.mkOr(C.mkZExt(C.mkExtract(X, 0, 8), 64), C.mkConst(64, 256));
+  MBAOptions Options;
+  Options.MaxTableBytes = 0;
+  auto Result = simplifyMBADeep(C, Root, Options);
+  neverd::solver::BitVectorSolver Proof(C);
+  EXPECT_EQ(Proof.check(C.mkNe(Root, Result.Expr)),
+            neverd::solver::SatResult::Unsat);
+}
