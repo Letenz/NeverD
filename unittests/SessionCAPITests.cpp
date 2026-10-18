@@ -5421,22 +5421,15 @@ TEST_F(SessionCAPITest, UefiApplicationsJoinTheirFirmwaresLibrary) {
   // A UEFI application joins its architecture's MdePkg library, and its
   // entry takes the specification's EFI_IMAGE_ENTRY_POINT: the system
   // table it reaches the console and the boot services through is typed,
-  // and each call reads its protocol's pointer once, then the slot.
+  // and each call reads the protocol's member, which its records name.
   struct Program {
     const char *File, *Library, *Model;
     int64_t SystemTable;
-    const char *OutputString, *HandleProtocol;
   };
   const Program Programs[] = {
-      {"uefi_calls_x64.efi", "uefi-x64", "LLP64", 120,
-       "*(void **)((uintptr_t)((SystemTable->ConOut)) + 8)",
-       "*(void **)((uintptr_t)((SystemTable->BootServices)) + 0x98)"},
-      {"uefi_calls_x86.efi", "uefi-x86", "ILP32", 72,
-       "*(void **)((uintptr_t)((SystemTable->ConOut)) + 4)",
-       "*(void **)((uintptr_t)((SystemTable->BootServices)) + 0x58)"},
-      {"uefi_calls_arm64.efi", "uefi-arm64", "LLP64", 120,
-       "*(void **)((uintptr_t)((SystemTable->ConOut)) + 8)",
-       "*(void **)((uintptr_t)((SystemTable->BootServices)) + 0x98)"},
+      {"uefi_calls_x64.efi", "uefi-x64", "LLP64", 120},
+      {"uefi_calls_x86.efi", "uefi-x86", "ILP32", 72},
+      {"uefi_calls_arm64.efi", "uefi-arm64", "LLP64", 120},
   };
   const auto Fixtures =
       std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
@@ -5474,8 +5467,12 @@ TEST_F(SessionCAPITest, UefiApplicationsJoinTheirFirmwaresLibrary) {
         HighC.find("(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)"),
         std::string::npos)
         << HighC;
-    EXPECT_NE(HighC.find(P.OutputString), std::string::npos) << HighC;
-    EXPECT_NE(HighC.find(P.HandleProtocol), std::string::npos) << HighC;
+    EXPECT_NE(HighC.find("(SystemTable->ConOut->OutputString))("),
+              std::string::npos)
+        << HighC;
+    EXPECT_NE(HighC.find("(SystemTable->BootServices->HandleProtocol))("),
+              std::string::npos)
+        << HighC;
     EXPECT_EQ(HighC.find("*(void **)(SystemTable->"), std::string::npos)
         << HighC;
   }
@@ -5486,7 +5483,7 @@ TEST_F(SessionCAPITest, CallsThroughTypedMembersReadEachPointerOnce) {
   // to; t->boot->reset the slot t->boot points to.  The member at an
   // address is what the address holds, one load more than the address:
   // printing it where the call reads the address read through the wrong
-  // pointer.
+  // pointer.  The slots print as the members they are.
   std::ifstream Input(std::filesystem::path(__FILE__).parent_path() / "types" /
                           "fixtures" / "member_calls_x64",
                       std::ios::binary);
@@ -5500,10 +5497,10 @@ TEST_F(SessionCAPITest, CallsThroughTypedMembersReadEachPointerOnce) {
   ASSERT_GE(Index, 0);
   const std::string HighC =
       takeString(neverd_decompile(Session, neverd_func_entry(Session, Index)));
-  EXPECT_NE(HighC.find("*(void **)((uintptr_t)((t->out)) + 8)"),
-            std::string::npos)
+  EXPECT_NE(HighC.find("(t->out->write))(t->out, \"hi\")"), std::string::npos)
       << HighC;
-  EXPECT_NE(HighC.find("**(void ***)(&t->boot)"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("(t->boot->reset))(handle, "), std::string::npos)
+      << HighC;
   EXPECT_EQ(HighC.find("*(void **)(t->out)"), std::string::npos) << HighC;
 }
 
