@@ -1139,6 +1139,7 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   bool CandidateAwaitingSiblingRuntimeCertificate = false;
   struct CandidateEvidenceOutcome {
     std::set<va_t> &IncompleteBranches;
+    std::set<va_t> &ShapeClaimedBranches;
     va_t BranchAddr;
     const size_t Initial;
     const size_t &Remaining;
@@ -1167,6 +1168,8 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
                                       ExhaustedBeforeDedicatedRefund ||
                                       (!Published && Remaining == 0);
       const bool EvidenceIncomplete = AnalysisIncomplete || ResourceIncomplete;
+      if ((ShapeClaimed || I386GOTOFFShapeClaimed) && IncompleteInsertPrepaid)
+        ShapeClaimedBranches.insert(BranchAddr);
       // Resource exhaustion cannot distinguish a callback-shaped tail jump
       // from a table whose proof ran out of work, so preserve the original
       // branch fail-closed.  A completed semantic rejection is different: it
@@ -1235,6 +1238,7 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
       }
     }
   } CandidateOutcome{IndexDomainEvidenceIncompleteBranches,
+                     ShapeClaimedBranches,
                      Rec.Addr,
                      InitialCandidateEvidenceBudget,
                      CandidateEvidenceBudget,
@@ -1442,7 +1446,15 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
       LookupWork > std::numeric_limits<size_t>::max() - NodeAndCleanupWork
           ? std::numeric_limits<size_t>::max()
           : LookupWork + NodeAndCleanupWork;
-  if (!consumeIncompleteBranchMarkerEvidence(MarkerWork))
+  // The same account remembers a claimed table shape for the rest of the
+  // build (ShapeClaimedBranches).
+  const size_t ShapeLookupWork = orderedLookupWork(ShapeClaimedBranches.size());
+  const size_t ShapeMarkerWork =
+      ShapeLookupWork > std::numeric_limits<size_t>::max() - NodeAndCleanupWork
+          ? std::numeric_limits<size_t>::max()
+          : ShapeLookupWork + NodeAndCleanupWork;
+  if (!consumeIncompleteBranchMarkerEvidence(MarkerWork) ||
+      !consumeIncompleteBranchMarkerEvidence(ShapeMarkerWork))
     return {};
   IncompleteBranchInsertPrepaid = true;
   auto insertIncompleteBranchOnce = [&]() {

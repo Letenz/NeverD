@@ -961,6 +961,7 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
   LostValidatedJumpTableBranches.clear();
   StackTableEvidenceIncompleteBranches.clear();
   IndexDomainEvidenceIncompleteBranches.clear();
+  ShapeClaimedBranches.clear();
   ValidatedPhysicalJumpTableBranches.clear();
   CandidateFixedPointExplorationTargets.clear();
   MaxCandidateFixedPointExplorationTargetCountForTesting = 0;
@@ -4578,7 +4579,11 @@ void CFGBuilder::multiStageResolve(const BinaryImage &Img, Decoder &Dec,
     bool RefreshedProofMetadata = false;
     recoverGuardedJumpTableGroup(Img, Func, CandidateAddrs, MadeProgress,
                                  RefreshedProofMetadata);
-    for (va_t UA : CandidateAddrs) {
+    // Candidates from this position on have not run in this stage.
+    size_t UnevaluatedFrom = 0;
+    for (size_t CandidateIndex = 0; CandidateIndex < CandidateAddrs.size();
+         ++CandidateIndex) {
+      const va_t UA = CandidateAddrs[CandidateIndex];
       if (CandidateProposalStageEvidenceIncomplete)
         break;
       if (guardedGroupContains(UA))
@@ -4610,6 +4615,7 @@ void CFGBuilder::multiStageResolve(const BinaryImage &Img, Decoder &Dec,
               {1, OrderedLookupWork(StrongJumpTableProposalOutcomes.size())},
           }))
         break;
+      UnevaluatedFrom = CandidateIndex + 1;
       auto It = Insns.find(UA);
       if (It == Insns.end())
         continue;
@@ -4659,6 +4665,10 @@ void CFGBuilder::multiStageResolve(const BinaryImage &Img, Decoder &Dec,
         Targets = resolveJumpTable(Img, It->second);
       }
       JumpTableProofContextComplete = false;
+      if (ExhaustProposalStageAfterCandidateForTesting == UA) {
+        CandidateProposalStageEvidenceRemaining = 0;
+        CandidateProposalStageEvidenceIncomplete = true;
+      }
       if (CandidateProposalStageEvidenceIncomplete)
         break;
       auto NewInfo = ResolvedTableInfo.find(UA);
@@ -4797,6 +4807,18 @@ void CFGBuilder::multiStageResolve(const BinaryImage &Img, Decoder &Dec,
       rebuildBlocks(Func);
     };
     if (CandidateProposalStageEvidenceIncomplete) {
+      // The shared stage ran out before the rest of its inventory ran.  A
+      // branch claimed as table-shaped earlier in this build is undecided for
+      // the same reason as a candidate whose own proof ran out, and keeps its
+      // opaque identity across the bounded retries in the same way.  The
+      // stage reserved one marker per inventoried candidate.
+      for (size_t I = UnevaluatedFrom; I < CandidateAddrs.size(); ++I) {
+        const va_t UA = CandidateAddrs[I];
+        const auto It = Insns.find(UA);
+        if (It != Insns.end() && It->second.JumpTableTargets.empty() &&
+            ShapeClaimedBranches.count(UA) && !guardedGroupContains(UA))
+          IndexDomainEvidenceIncompleteBranches.insert(UA);
+      }
       RollBackIncompleteProposalStage();
       continue;
     }

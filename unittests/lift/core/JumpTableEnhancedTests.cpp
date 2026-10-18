@@ -294,6 +294,10 @@ static fs::path i386GOTPCModelObj() {
   return fs::path(TEST_OBJ_DIR) / "test_i386_gotpc_model.o";
 }
 
+static fs::path i386GOTOFFStageAbortObj() {
+  return fs::path(TEST_OBJ_DIR) / "test_i386_gotoff_stage_abort.o";
+}
+
 static fs::path i386GOTOFFForcepeelObj() {
   return fs::path(TEST_OBJ_DIR) / "test_i386_gotoff_forcepeel.o";
 }
@@ -3532,6 +3536,51 @@ TEST_F(JTE_X86_32, PreScaledGOTOFFRequiresExactFieldAndModelZeroOrigin) {
   EXPECT_TRUE(Literal.JumpTables.empty())
       << "an exact pre-scaled GOTOFF field still requires the exact base input "
          "to reach the model-zero occurrence";
+}
+
+// A completed proposal stage rejects the second dispatch, whose %ebx one path
+// replaced, and the branch becomes a tail call.  A stage that runs out of
+// evidence after the first dispatch never reaches the second.  The second
+// was claimed as a GOTOFF table shape before, so it stays an opaque, unsafe
+// branch, as a candidate whose own proof ran out does.
+TEST_F(JTE_X86_32, StageAbortKeepsAnUnreachedTableShapeOpaque) {
+  auto ImageOrErr = neverd::loadBinary(i386GOTOFFStageAbortObj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  const neverd::BinaryImage &Image = *ImageOrErr;
+  const neverd::Symbol *Function =
+      Image.findSymbol("jt_i386_gotoff_stage_pair");
+  const neverd::Symbol *First =
+      Image.findSymbol("jt_i386_gotoff_stage_pair_first");
+  const neverd::Symbol *Second =
+      Image.findSymbol("jt_i386_gotoff_stage_pair_second");
+  ASSERT_NE(Function, nullptr);
+  ASSERT_NE(First, nullptr);
+  ASSERT_NE(Second, nullptr);
+
+  auto Build = [&](bool AbortAfterFirst) {
+    neverd::Decoder Decoder;
+    EXPECT_TRUE(Decoder.init(neverd::Arch::X86));
+    neverd::CFGBuilder Builder;
+    if (AbortAfterFirst)
+      Builder.setExhaustProposalStageAfterCandidateForTesting(First->Addr);
+    return Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  };
+  auto HasOpcodeAt = [&](const neverd::LowFunc &Low, neverd::NdOp Opcode) {
+    for (const neverd::LowBlock &Block : Low.Blocks)
+      for (const neverd::LowOp &Op : Block.Ops)
+        if (Op.Addr == Second->Addr && Op.Opcode == Opcode)
+          return true;
+    return false;
+  };
+
+  const neverd::LowFunc Completed = Build(/*AbortAfterFirst=*/false);
+  EXPECT_TRUE(HasOpcodeAt(Completed, neverd::NdOp::INDIR_CALL));
+
+  const neverd::LowFunc Aborted = Build(/*AbortAfterFirst=*/true);
+  EXPECT_TRUE(HasOpcodeAt(Aborted, neverd::NdOp::INDIR_BR));
+  EXPECT_FALSE(HasOpcodeAt(Aborted, neverd::NdOp::INDIR_CALL));
+  EXPECT_EQ(Aborted.UnsafeIndirectBranchAddresses.count(Second->Addr), 1u);
 }
 
 TEST_F(JTE_X86_32, GOTPCModelBudgetExhaustionPublishesNoPartialProof) {

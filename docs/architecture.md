@@ -2255,6 +2255,13 @@ queries retain their existing conditional-root policy.
 Numerical coordinate membership supplies neither input known bits nor negative
 dependency/origin authority. Other architecture/format admission remains with
 its existing proof owners.
+A proposal stage that exhausts its shared evidence rolls back and is retried.
+A candidate the stage never reached is as undecided as one whose own proof ran
+out: when an earlier resolution in the same build claimed it as table-shaped
+(`ShapeClaimedBranches`), it keeps the same opaque, unsafe branch identity
+across the retries, and only a completed stage can drop it. Otherwise one
+expensive candidate early in the inventory would let the ones after it fall
+back to tail calls.
 
 The AArch64 compact table (`tryAArch64CompactTable`) traces the shifted entry
 back to its byte or halfword load through copies, zero and sign extensions and
