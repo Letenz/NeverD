@@ -23,6 +23,20 @@ void replaceAll(std::string &Text, llvm::StringRef From, llvm::StringRef To) {
   }
 }
 
+/// Where \p Source defines the function whose header starts with \p Header:
+/// the header's line that opens its body.  A whole module declares each
+/// definition before the bodies (DefinitionDeclarations), which a unit of
+/// one function leaves out.
+size_t definitionAt(llvm::StringRef Source, llvm::StringRef Header) {
+  for (size_t At = Source.find(Header); At != llvm::StringRef::npos;
+       At = Source.find(Header, At + 1)) {
+    const size_t End = Source.find('\n', At);
+    if (Source.slice(At, End).rtrim().ends_with("{"))
+      return At;
+  }
+  return llvm::StringRef::npos;
+}
+
 std::string emit(const std::string &IR) {
   llvm::LLVMContext Context;
   llvm::SMDiagnostic Error;
@@ -46,7 +60,8 @@ std::string emit(const std::string &IR) {
   EXPECT_TRUE(neverd::LLVMCEmitter().emit(*M, Out, Options));
   EXPECT_TRUE(neverd::LLVMCEmitter().emit(*M, SelectedOut, Options, nullptr,
                                           nullptr, M->getFunction("exercise")));
-  auto At = Whole.find(" exercise("), SelectedAt = Selected.find(" exercise(");
+  auto At = definitionAt(Whole, " exercise("),
+       SelectedAt = definitionAt(Selected, " exercise(");
   EXPECT_NE(At, std::string::npos);
   EXPECT_NE(SelectedAt, std::string::npos);
   if (At != std::string::npos && SelectedAt != std::string::npos)

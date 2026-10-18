@@ -24,6 +24,9 @@ void Program::addAndroidFramework() {
         {"android/content/ContextWrapper", "android/content/Context"},
         {"android/app/Application", "android/content/ContextWrapper"},
         {"android/app/ContextImpl", "android/content/Context"},
+        {"java/io/File", "java/lang/Object"},
+        {"java/io/Serializable", "java/lang/Object"},
+        {"java/lang/Comparable", "java/lang/Object"},
         {"java/lang/ClassLoader", "java/lang/Object"},
         {"java/lang/BootClassLoader", "java/lang/ClassLoader"},
         {"dalvik/system/BaseDexClassLoader", "java/lang/ClassLoader"},
@@ -43,12 +46,16 @@ void Program::addAndroidFramework() {
         std::string_view(name) == "java/lang/BootClassLoader")
       type.access.erase("public");
     if (std::string_view(name) == "android/content/ComponentCallbacks" ||
-        std::string_view(name) == "android/content/ComponentCallbacks2")
+        std::string_view(name) == "android/content/ComponentCallbacks2" ||
+        std::string_view(name) == "java/io/Serializable" ||
+        std::string_view(name) == "java/lang/Comparable")
       type.access.insert({"abstract", "interface"});
     if (std::string_view(name) == "android/content/ComponentCallbacks2")
       type.interfaces.push_back("Landroid/content/ComponentCallbacks;");
     if (std::string_view(name) == "android/app/Application")
       type.interfaces.push_back("Landroid/content/ComponentCallbacks2;");
+    if (std::string_view(name) == "java/io/File")
+      type.interfaces = {"Ljava/io/Serializable;", "Ljava/lang/Comparable;"};
     type.source_id = "android-api28-framework";
     classes.emplace(type.name, std::move(type));
   }
@@ -70,6 +77,23 @@ AndroidFramework::AndroidFramework(
         name.size() > 1024 || name.find('\0') != std::string::npos)
       throw Error("invalid Android application package snapshot");
     (void)javaStringBytes(name);
+  }
+  if (snapshot->files_directory) {
+    auto &path = *snapshot->files_directory;
+    if (snapshot->phase != Phase::Application || path.empty() ||
+        path.front() != '/' || path.size() > 4095 ||
+        path.find('\0') != std::string::npos)
+      throw Error("invalid Android files directory snapshot");
+    (void)javaStringBytes(path);
+    // File's Unix lexical normalization only. Dot components are not resolved
+    // and no host filesystem or user.dir property participates.
+    std::string normalized;
+    for (char byte : path)
+      if (byte != '/' || normalized.empty() || normalized.back() != '/')
+        normalized.push_back(byte);
+    if (normalized.size() > 1 && normalized.back() == '/')
+      normalized.pop_back();
+    path = std::move(normalized);
   }
 }
 
@@ -122,6 +146,17 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
     return type.starts_with("Ljava/") || type.starts_with("Ljavax/") ||
            type.starts_with("Landroid/") || type.starts_with("Ldalvik/");
   };
+  auto string = [&](std::string_view text) -> uint32_t {
+    auto bytes = javaStringBytes(text);
+    for (size_t i = 0; i < bytes.size(); i += 2)
+      tick();
+    auto object =
+        heap.allocate(Object::String, "java/lang/String", bytes.size());
+    auto id = ref(object);
+    object->Bytes = std::move(bytes);
+    object->Length = object->Bytes.size() / 2;
+    return id;
+  };
   auto execute = [&]() -> uint64_t {
     if (!snapshot || !program.containsClass("Landroid/app/ActivityThread;"))
       return unsupported(
@@ -142,6 +177,7 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
     case BaseContext:
     case ContextClassLoader:
     case PackageName:
+    case FilesDirectory:
       if (!receiver || (receiver != application && receiver != context))
         return unsupported("unmodeled Android Context instance");
       if (method.Op == ApplicationContext)
@@ -150,6 +186,15 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
         return identity(context, "android/app/ContextImpl");
       if (method.Op == ContextClassLoader)
         return appLoader();
+      if (method.Op == FilesDirectory) {
+        if (!snapshot->files_directory)
+          return unsupported("Android files directory is not supplied");
+        // Existing-directory projection: no directory creation or permission
+        // effects are fabricated from a package name or path spelling.
+        if (!files_path)
+          files_path = string(*snapshot->files_directory);
+        return identity(files_directory, "java/io/File");
+      }
       if (!snapshot->package_name)
         return unsupported("Android application package name is not supplied");
       if (!package) {
@@ -163,6 +208,24 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
         text->Length = text->Bytes.size() / 2;
       }
       return package;
+    case FilePath:
+    case FileName:
+    case FileParent:
+    case FileIsAbsolute: {
+      if (!receiver || receiver != files_directory)
+        return unsupported("unmodeled Java File instance");
+      if (method.Op == FilePath)
+        return files_path;
+      if (method.Op == FileIsAbsolute)
+        return 1;
+      const auto &path = *snapshot->files_directory;
+      const auto slash = path.rfind('/');
+      if (method.Op == FileName)
+        return string(std::string_view(path).substr(slash + 1));
+      if (path == "/")
+        return 0;
+      return string(std::string_view(path).substr(0, slash ? slash : 1));
+    }
     case SystemClassLoader:
       return identity(system_loader, "dalvik/system/PathClassLoader");
     case LoaderParent:

@@ -31,6 +31,83 @@ protected:
     return result.value;
   }
 };
+TEST_F(AndroidFrameworkTest, FilesDirectoryRetainsFileAndStringIdentities) {
+  for (const char *input :
+       {"/data/user/0/example/files", "//data///files/", "/"}) {
+    Runtime state(program, heap,
+                  AndroidApplicationSnapshot{Phase::Application, {}, input});
+    auto invoke = [&](LibraryOperation op, uint64_t receiver = 0) {
+      auto r = state.library(operation(op), receiver, {}, Admit);
+      EXPECT_EQ(r.stop, ExecutionStop::Returned) << r.diagnostic;
+      return r.value;
+    };
+    auto app = invoke(CurrentApplication);
+    auto base = invoke(BaseContext, app);
+    auto file = invoke(FilesDirectory, app);
+    EXPECT_EQ(invoke(FilesDirectory, base), file);
+    EXPECT_EQ(heap->get(file)->ClassName, "java/io/File");
+    EXPECT_TRUE(program.assignable("Ljava/io/File;", "Ljava/io/Serializable;"));
+    EXPECT_TRUE(program.assignable("Ljava/io/File;", "Ljava/lang/Comparable;"));
+    auto path = invoke(FilePath, file);
+    EXPECT_EQ(invoke(FilePath, file), path);
+    EXPECT_EQ(invoke(FileIsAbsolute, file), 1u);
+    std::string expected = input;
+    if (expected.starts_with("//"))
+      expected = "/data/files";
+    EXPECT_EQ(heap->get(path)->Bytes, javaStringBytes(expected));
+    const auto name = invoke(FileName, file);
+    EXPECT_EQ(heap->get(name)->Bytes,
+              javaStringBytes(expected == "/" ? "" : "files"));
+    const auto parent = invoke(FileParent, file);
+    if (expected == "/")
+      EXPECT_EQ(parent, 0u);
+    else
+      EXPECT_EQ(heap->get(parent)->Bytes,
+                javaStringBytes(expected.substr(0, expected.rfind('/'))));
+  }
+}
+TEST_F(AndroidFrameworkTest,
+       FilesDirectoryDoesNotManufactureMissingStateOrForeignFiles) {
+  auto app = call(CurrentApplication);
+  auto missing = runtime.library(operation(FilesDirectory), app, {}, Admit);
+  EXPECT_EQ(missing.stop, ExecutionStop::Unsupported);
+  EXPECT_NE(missing.diagnostic.find("files directory"), std::string::npos);
+  Runtime state(program, heap,
+                AndroidApplicationSnapshot{Phase::Application, {}, "/files"});
+  auto foreign = heap->allocate(Object::Instance, "java/io/File", 0);
+  auto invalid =
+      state.library(operation(FilePath), foreign->Identity, {}, Admit);
+  EXPECT_EQ(invalid.stop, ExecutionStop::Unsupported);
+  Runtime nullable(
+      program, heap,
+      AndroidApplicationSnapshot{Phase::Application, {}, "/files"});
+  EXPECT_EQ(nullable.library(operation(FilePath), 0, {}, Admit).stop,
+            ExecutionStop::Thrown);
+}
+TEST_F(AndroidFrameworkTest, FilesDirectoryValidatesPhaseTextAndBudget) {
+  for (const char *path : {"", "relative", "\xff"}) {
+    EXPECT_THROW(
+        Runtime(program, heap,
+                AndroidApplicationSnapshot{Phase::Application, {}, path}),
+        Error);
+  }
+  EXPECT_THROW(
+      Runtime(program, heap,
+              AndroidApplicationSnapshot{Phase::Attached, {}, "/files"}),
+      Error);
+  Runtime state(program, heap,
+                AndroidApplicationSnapshot{Phase::Application, {}, "/files"});
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+  unsigned steps = 0;
+  auto r = state.library(operation(FilesDirectory), app, {}, [&] {
+    return ++steps <= 2 ? ExecutionStop::Returned
+                        : ExecutionStop::InstructionLimit;
+  });
+  EXPECT_EQ(r.stop, ExecutionStop::InstructionLimit);
+  EXPECT_EQ(state.library(operation(FilesDirectory), app, {}, Admit).stop,
+            r.stop);
+}
+
 TEST_F(AndroidFrameworkTest, PhaseIsExplicitAndAnUnknownStopIsTerminal) {
   Runtime unknown(program, heap);
   auto result = unknown.library(operation(CurrentActivityThread), 0, {}, Admit);
@@ -164,6 +241,52 @@ TEST_F(AndroidFrameworkTest, DexAndLibraryCallsShareTheApplicationIdentity) {
     EXPECT_EQ(dex.stop, ExecutionStop::Returned) << dex.diagnostic;
     EXPECT_EQ(dex.value, direct.value);
   }
+}
+TEST_F(AndroidFrameworkTest, DexAndNativeFileAccessShareTheSameObjects) {
+  Class reader;
+  reader.name = "Ltest/FileReader;";
+  reader.superclass = "Ljava/lang/Object;";
+  reader.access = {"public"};
+  Method method;
+  method.reference = {
+      reader.name, "path", {"Landroid/content/Context;"}, "Ljava/lang/String;"};
+  method.access = {"public", "static"};
+  method.registers = 1;
+  Instruction get;
+  get.opcode = "invoke-virtual";
+  get.registers = {0};
+  get.reference = MethodRef{
+      "Landroid/content/Context;", "getFilesDir", {}, "Ljava/io/File;"};
+  Instruction move;
+  move.pc = 3;
+  move.opcode = "move-result-object";
+  move.registers = {0};
+  Instruction path = get;
+  path.pc = 4;
+  path.reference =
+      MethodRef{"Ljava/io/File;", "getAbsolutePath", {}, "Ljava/lang/String;"};
+  Instruction move2 = move;
+  move2.pc = 7;
+  Instruction ret;
+  ret.pc = 8;
+  ret.opcode = "return-object";
+  ret.registers = {0};
+  method.instructions = {get, move, path, move2, ret};
+  reader.methods.push_back(method);
+  Program code({reader}, Properties{});
+  ASSERT_TRUE(code.knownReference("Ljava/io/File;"));
+  ASSERT_FALSE(code.unsupportedClass("Ljava/io/File;"));
+  Runtime state(
+      code, heap,
+      AndroidApplicationSnapshot{Phase::Application, {}, "/data/files"});
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+  auto file = state.library(operation(FilesDirectory), app, {}, Admit).value;
+  auto direct = state.library(operation(FilePath), file, {}, Admit);
+  const uint64_t args[]{app};
+  auto dex =
+      state.execute(*code.findStatic(method.reference), args, Admit, 65536);
+  EXPECT_EQ(dex.stop, ExecutionStop::Returned) << dex.diagnostic;
+  EXPECT_EQ(dex.value, direct.value);
 }
 TEST_F(AndroidFrameworkTest, LoadClassDoesNotRunSuppliedClassInitialization) {
   Class type;

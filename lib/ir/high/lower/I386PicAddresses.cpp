@@ -19,6 +19,11 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include <algorithm>
+#include <iterator>
+#include <set>
+#include <utility>
+
 namespace neverd {
 
 void MedToHighConverter::collectI386GotBase(const MedFunc &Med) {
@@ -59,6 +64,112 @@ void MedToHighConverter::collectI386GotBase(const MedFunc &Med) {
         }
       }
   }
+}
+
+void MedToHighConverter::collectI386GetPcValues(const MedFunc &Med) {
+  // LowToMed binds a call-next/POP only where the raw PC is authenticated:
+  // outside an unlinked ELF object, whose GOTPC model replaces it.  Reading
+  // the bound value as that PC leaves the call's pushed slot without a
+  // reader, so the slot does not survive as a local.
+  I386GetPcValues.clear();
+  std::set<VarKey> Conflicting;
+  for (const MedI386GetPcModel &Model : Med.I386GetPcModels)
+    for (const MedVar *Value : {&Model.Output, &Model.Value}) {
+      if (!Value->Size || Value->isConst())
+        continue;
+      const VarKey Key = varKey(*Value);
+      const auto [It, Inserted] = I386GetPcValues.try_emplace(
+          Key, std::make_pair(Model.PCValue, Value->Size));
+      if (!Inserted && It->second != std::make_pair(Model.PCValue, Value->Size))
+        Conflicting.insert(Key);
+    }
+  for (const VarKey &Key : Conflicting)
+    I386GetPcValues.erase(Key);
+
+  // The pop read the call's push through the same stack pointer value; once
+  // the pop reads as the PC, nothing reads the slot, which lies below the
+  // stack pointer after the pop.
+  I386GetPcPushes.clear();
+  if (TargetArch != Arch::X86)
+    return;
+  // A pop whose value nothing used is gone, and so is its read of the slot:
+  // the push of `call $+5` then has no reader at all.  The `pop r32` right
+  // after the call is the slot's only reader, since i386 code keeps nothing
+  // below its stack pointer; a load of the slot that survived keeps it.
+  std::set<VarKey> ReadSlots;
+  for (const MedBlock &Block : Med.Blocks)
+    for (const MedOp &Op : Block.Ops)
+      if (Op.Opcode == NdOp::LOAD && Op.NumInputs >= 1 &&
+          !Op.Inputs[0].isConst() && !I386GetPcValues.count(varKey(Op.Output)))
+        ReadSlots.insert(varKey(Op.Inputs[0]));
+  constexpr uint8_t CallNext[] = {0xE8, 0, 0, 0, 0};
+  constexpr uint8_t PopOpcode = 0x58, PopRegisterMask = 0x07;
+  for (const MedBlock &Block : Med.Blocks)
+    for (const MedOp &Op : Block.Ops) {
+      if (Op.Opcode != NdOp::STORE || Op.NumInputs < 2 ||
+          Op.Inputs[0].isConst() || ReadSlots.count(varKey(Op.Inputs[0])) ||
+          !Op.Inputs[1].isConst() || Op.Inputs[1].Size != 4 ||
+          Op.Addr == InvalidVA ||
+          Op.Inputs[1].ConstVal != Op.Addr + sizeof(CallNext) || !Image)
+        continue;
+      const uint8_t *Bytes = Image->readVA(Op.Addr, sizeof(CallNext) + 1);
+      if (Bytes &&
+          std::equal(std::begin(CallNext), std::end(CallNext), Bytes) &&
+          (Bytes[sizeof(CallNext)] & ~PopRegisterMask) == PopOpcode)
+        I386GetPcPushes.insert({Op.Addr, Op.OriginSeq});
+    }
+  for (const MedI386GetPcModel &Model : Med.I386GetPcModels) {
+    if (!I386GetPcValues.count(varKey(Model.Value)))
+      continue;
+    const MedOp *Pop = uniqueMedDefinition(Model.Value);
+    if (!Pop || Pop->Opcode != NdOp::LOAD || Pop->NumInputs != 1 ||
+        Pop->Inputs[0].isConst())
+      continue;
+    const VarKey Slot = varKey(Pop->Inputs[0]);
+    for (const MedBlock &Block : Med.Blocks)
+      for (const MedOp &Op : Block.Ops)
+        if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
+            !Op.Inputs[0].isConst() && varKey(Op.Inputs[0]) == Slot &&
+            Op.Inputs[1].isConst() && Op.Inputs[1].Size == Model.Value.Size &&
+            Op.Inputs[1].ConstVal == Model.PCValue)
+          I386GetPcPushes.insert({Op.Addr, Op.OriginSeq});
+  }
+}
+
+ExprPtr MedToHighConverter::i386GetPcSum(const MedOp &Op) const {
+  if (I386GetPcValues.empty() ||
+      (Op.Opcode != NdOp::INT_ADD && Op.Opcode != NdOp::INT_SUB) ||
+      Op.NumInputs != 2 || Op.Output.Size == 0 ||
+      Op.Output.Size > sizeof(uint64_t))
+    return nullptr;
+  auto PC = [&](const MedVar &V) -> std::optional<uint64_t> {
+    if (V.isConst())
+      return std::nullopt;
+    const auto It = I386GetPcValues.find(varKey(V));
+    if (It == I386GetPcValues.end() || It->second.second != V.Size)
+      return std::nullopt;
+    return It->second.first;
+  };
+  auto Scalar = [](const MedVar &V) -> std::optional<uint64_t> {
+    if (!V.isConst() || (V.Provenance != ConstantAddressProvenance::Unknown &&
+                         V.Provenance != ConstantAddressProvenance::Scalar))
+      return std::nullopt;
+    return V.ConstVal;
+  };
+  std::optional<uint64_t> Value;
+  if (const auto Base = PC(Op.Inputs[0]), Offset = Scalar(Op.Inputs[1]);
+      Base && Offset)
+    Value = Op.Opcode == NdOp::INT_ADD ? *Base + *Offset : *Base - *Offset;
+  else if (const auto Offset = Scalar(Op.Inputs[0]), Base = PC(Op.Inputs[1]);
+           Op.Opcode == NdOp::INT_ADD && Base && Offset)
+    Value = *Offset + *Base;
+  if (!Value)
+    return nullptr;
+  const uint64_t Mask = Op.Output.Size >= sizeof(uint64_t)
+                            ? ~uint64_t{0}
+                            : (uint64_t{1} << (8 * Op.Output.Size)) - 1;
+  return HighExpr::makeConst(*Value & Mask, Op.Output.Size,
+                             ConstantAddressProvenance::Scalar);
 }
 
 std::optional<unsigned>

@@ -97,6 +97,7 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::PSelect:
     return Files.select(Event, Result, Thread);
   case ServiceKind::Getdents64:
+  case ServiceKind::Getcwd:
   case ServiceKind::Open:
   case ServiceKind::OpenAt:
   case ServiceKind::Access:

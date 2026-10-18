@@ -13,6 +13,13 @@ two native threads, global/local reference deletion and detach/reattach against
 the same process objects. `ProcessReport.AndroidApplicationSnapshot*` checks
 strict JSON input. These tests use synthetic inputs without a phone, host JVM
 or network; they do not establish arbitrary framework lifecycle equivalence.
+The File cases check retained JNI references across detach, shared DEX/library
+objects, exact path/name/parent strings, missing input, foreign instances and
+terminal budget refusal. `LinuxFileNamespace.WorkingDirectory*` independently
+checks both LP64 ABIs, output bounds, root and unknown snapshots.
+`AndroidFiles.*WorkingDirectory*` executes raw, syscall and Bionic callers at
+O0/O2 across relocation packing, including guest allocation/free and errno.
+`ProcessReport.GuestDirectoriesAreExplicitAndTyped` checks JSON boundaries.
 
 `NeverDDirectTailCallMetadataTests` builds real x86, x64 and AArch64 CFGs and
 validates direct tail-call targets at strict instruction boundaries. It covers

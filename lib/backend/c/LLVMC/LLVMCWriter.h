@@ -772,6 +772,10 @@ public:
   /// The C function-pointer type of \p Call's callee, from the call's own
   /// type and convention.  \p Strict refuses what shown C may approximate.
   std::string indirectCalleeType(const llvm::CallBase &Call, bool Strict);
+  /// The parameters an indirect \p Call's callee takes where it loads the
+  /// callee from a typed record's member that points to a function, as
+  /// SystemTable->ConOut->OutputString does; none otherwise.
+  std::optional<unsigned> typedSlotParamCount(const llvm::CallBase &Call) const;
   std::string preservedIndirectCalleeStr(const llvm::CallBase &Call);
   std::string atomicRMWText(const llvm::AtomicRMWInst &AI);
   std::string ctorThisAddress(const llvm::CallBase &Call);

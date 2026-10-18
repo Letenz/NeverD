@@ -1498,6 +1498,36 @@ TEST(ProcessReport, JNIClassLoaderDeclarationsAndRetainedNativeBindings) {
   EXPECT_EQ(B->getString("address"), "ffffffffffffffff");
 }
 
+TEST(ProcessReport, GuestDirectoriesAreExplicitAndTyped) {
+  auto Parsed = processOptionsFromJSON(R"({"linux_files":{"files":[],
+    "directories":["/work","/app/files"],"working_directory":"/work"},
+    "android":{"jni":true,"application_snapshot":{"phase":"application",
+    "files_directory":"/app/files"}}})");
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  EXPECT_EQ(Parsed->LinuxFiles->WorkingDirectory, "/work");
+  EXPECT_EQ(Parsed->Android->Application->files_directory, "/app/files");
+  for (const char *Value : {"null", "12", R"("")", R"("relative")",
+                            R"("/absent")", R"("//work")"}) {
+    auto Bad = processOptionsFromJSON(
+        std::string(
+            R"({"linux_files":{"files":[],"directories":["/work"],"working_directory":)") +
+        Value + "}}");
+    EXPECT_FALSE(bool(Bad)) << Value;
+    llvm::consumeError(Bad.takeError());
+  }
+  for (const char *Input :
+       {R"({"phase":"attached","files_directory":"/work"})",
+        R"({"phase":"application","files_directory":null})",
+        R"({"phase":"application","files_directory":""})",
+        R"({"phase":"application","files_directory":"relative"})",
+        R"({"phase":"application","files_directory":"/a\u0000b"})"}) {
+    auto Bad = processOptionsFromJSON(
+        std::string(R"({"android":{"application_snapshot":)") + Input + "}}");
+    EXPECT_FALSE(bool(Bad)) << Input;
+    llvm::consumeError(Bad.takeError());
+  }
+}
+
 TEST(ProcessReport, AndroidApplicationSnapshotIsExplicitAndStrict) {
   auto Parsed = processOptionsFromJSON(R"({"android":{"jni":true,
     "application_snapshot":{"phase":"application","package_name":"test.app"}}})");

@@ -63,7 +63,9 @@ normalizeFrameExpression(SymContext &Ctx, SymRef Value,
   // Never interpret a large caller budget as MBA's unlimited sentinel.
   Options.MaxWork = static_cast<size_t>(
       std::min<uint64_t>(Remaining, std::numeric_limits<size_t>::max() - 1));
-  const auto Result = simplifyMBADeep(Ctx, Value, Options);
+  const auto Result =
+      Budget.Rewrites ? simplifyMBADeep(Ctx, Value, Options, *Budget.Rewrites)
+                      : simplifyMBADeep(Ctx, Value, Options);
   Budget.WorkUsed += Result.Work;
   // The context bound gates publication, not peak allocation inside MBA.
   if (Ctx.numNodes() > MaxSymbolicNodes || !Result.Expr ||

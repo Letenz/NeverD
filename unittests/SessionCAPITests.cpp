@@ -5785,6 +5785,11 @@ TEST_F(SessionCAPITest, UefiApplicationsJoinTheirFirmwaresLibrary) {
     // A call through a member passes the parameters its type declares: on
     // x86 the word the caller pushed to make room on the stack is none.
     EXPECT_EQ(HighC.find("unknown register"), std::string::npos) << HighC;
+    const std::string LLVMC = takeString(
+        neverd_decompile_llvm(Uefi, neverd_session_entry_addr(Uefi)));
+    EXPECT_NE(LLVMC.find("(SystemTable->ConOut->OutputString))("),
+              std::string::npos)
+        << LLVMC;
   }
 }
 
@@ -5812,6 +5817,14 @@ TEST_F(SessionCAPITest, CallsThroughTypedMembersReadEachPointerOnce) {
   EXPECT_NE(HighC.find("(t->boot->reset))(handle, "), std::string::npos)
       << HighC;
   EXPECT_EQ(HighC.find("*(void **)(t->out)"), std::string::npos) << HighC;
+  // LLVM-C reads them so too: it read the table pointer at the member's
+  // value, a function's code, and called what the code held there.
+  const std::string LLVMC = takeString(
+      neverd_decompile_llvm(Session, neverd_func_entry(Session, Index)));
+  EXPECT_NE(LLVMC.find("(t->out->write))("), std::string::npos) << LLVMC;
+  EXPECT_NE(LLVMC.find("(t->boot->reset))("), std::string::npos) << LLVMC;
+  EXPECT_EQ(LLVMC.find("*(void **)(t->out)"), std::string::npos) << LLVMC;
+  EXPECT_EQ(LLVMC.find("**(void ***)(t->boot)"), std::string::npos) << LLVMC;
 }
 
 TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
@@ -7371,6 +7384,53 @@ TEST_F(SessionCAPITest, SelectionsKeepTheFunctionListARebuildWouldMake) {
   EXPECT_GE(neverd_func_find_by_addr(Session, Entry + 0x48), 0);
   EXPECT_TRUE(SessionTestAccess::keepsFunctionList(State));
   EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
+}
+
+TEST_F(SessionCAPITest, SessionCReadsTheImageFunctionNamesItsSymbolsHold) {
+  using neverd::sdk::SessionTestAccess;
+  const auto Path = write("own-names.elf", makeAnalysisCacheELF(false));
+  // A function of the image named like a C library routine is the image's
+  // own: its caller's C declares it rather than including its header.
+  const auto NameCallee = [](neverd_session_t Target, llvm::StringRef Name) {
+    auto &State = *neverd::sdk::toSession(Target);
+    auto Named =
+        neverd::Symbol::makeFunc(neverd_session_entry_addr(Target) + 0x40, 6);
+    Named.Name = Name.str();
+    Named.Origin = neverd::NameOrigin::Stated;
+    State.Img.Symbols.push_back(std::move(Named));
+  };
+  const auto Fresh = [&](llvm::ArrayRef<llvm::StringRef> Names) {
+    neverd_session_t Other = neverd_session_create();
+    EXPECT_EQ(neverd_session_load(Other, Path.c_str()), 1);
+    const auto Entry = seedAnalysisCacheSymbols(Other);
+    for (llvm::StringRef Name : Names)
+      NameCallee(Other, Name);
+    SessionTestAccess::resetFunctions(*neverd::sdk::toSession(Other));
+    auto Text = takeString(neverd_decompile(Other, Entry));
+    neverd_session_destroy(Other);
+    return Text;
+  };
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Entry = seedAnalysisCacheSymbols(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  const auto Unnamed = takeString(neverd_decompile(Session, Entry));
+  ASSERT_FALSE(Unnamed.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_EQ(Unnamed, Fresh({}));
+  // A symbol the image gains is read again at the next emission: the
+  // callee it names is the image's own, which no header declares.
+  NameCallee(Session, "strlen");
+  SessionTestAccess::resetFunctions(State);
+  SessionTestAccess::selectFunction(State, Entry);
+  const auto Own = takeString(neverd_decompile(Session, Entry));
+  EXPECT_NE(Own.find("strlen("), std::string::npos) << Own;
+  EXPECT_EQ(Own.find("#include <string.h>"), std::string::npos) << Own;
+  // Any other change to the symbols goes with retiring the pipeline, which
+  // drops the names read before, even when the table keeps its size.
+  for (auto &Sym : State.Img.Symbols)
+    if (Sym.Name == "strlen")
+      Sym.Name = "strcpy";
+  SessionTestAccess::clearPipeline(State);
+  EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Fresh({"strcpy"}));
 }
 
 TEST_F(SessionCAPITest, AnalysisCacheSurvivesOnlyFunctionNavigation) {

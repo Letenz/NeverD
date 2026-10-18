@@ -43460,6 +43460,41 @@ TEST(HighCPointerAddresses, UnwindlessNonLeafCandidateIsNotAFunction) {
   EXPECT_EQ(DispositionOf(Leaf), PipelineFunctionDisposition::Accepted);
 }
 
+TEST(HighCPointerAddresses, OnlyAPrimaryUnwindRecordVouchesForANonLeafStart) {
+  constexpr va_t Primary = 0x140001000;
+  constexpr va_t NonLeaf = 0x140001010;
+  std::vector<uint8_t> Code = {0xc3};
+  Code.resize(0x10, 0xcc);
+  Code.insert(Code.end(), {0x54, 0x5c, 0xc3}); // push rsp; pop rsp; ret
+  const auto DispositionOf = [&](std::vector<std::pair<va_t, va_t>> Ranges,
+                                 std::set<va_t> Continuations) {
+    BinaryImage Img = makeCodeFixture(Primary, Code);
+    Img.KnownCodeRanges = std::move(Ranges);
+    Img.ContinuationCodeStarts = std::move(Continuations);
+    llvm::LLVMContext Ctx;
+    PipelineOptions Opts;
+    Opts.EmitDumpOutput = false;
+    Opts.OnlyFunctionEntries.insert(NonLeaf);
+    auto Result = Pipeline().run(Img, Ctx, Opts);
+    for (const auto &Audit : Result.FunctionAudits)
+      if (Audit.Entry == NonLeaf)
+        return Audit.Disposition;
+    return PipelineFunctionDisposition::Candidate;
+  };
+  const std::pair<va_t, va_t> Other{Primary, Primary + 1};
+  const std::pair<va_t, va_t> Own{NonLeaf, NonLeaf + 3};
+  // A record that starts at the candidate vouches for it, in whatever order
+  // the ranges are listed; one that continues another function does not.
+  EXPECT_EQ(DispositionOf({Other, Own}, {}),
+            PipelineFunctionDisposition::Accepted);
+  EXPECT_EQ(DispositionOf({Own, Other}, {}),
+            PipelineFunctionDisposition::Accepted);
+  EXPECT_EQ(DispositionOf({Other, Own}, {NonLeaf}),
+            PipelineFunctionDisposition::RejectedUnwindlessNonLeaf);
+  EXPECT_EQ(DispositionOf({Own, Other}, {NonLeaf}),
+            PipelineFunctionDisposition::RejectedUnwindlessNonLeaf);
+}
+
 TEST(HighCPointerAddresses, CalleeBranchToAnotherFunctionCountsItsWrites) {
   // The callee leaves through `jz g` to a separate function that clears
   // EDX.  The CFG keeps no block for g, so the summary must follow it.

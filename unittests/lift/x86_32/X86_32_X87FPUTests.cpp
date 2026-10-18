@@ -693,6 +693,36 @@ TEST(X87CallGraphCache, OwnedAndEqualInventoriesShareGraphsOthersDoNot) {
   EXPECT_EQ(Build(Other, true), Build(Other, false));
 }
 
+TEST(X87CallGraphCache, ContextsBorrowTheOwnedInventoryInsteadOfCopyingIt) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  const BinaryImage Image = x87CallLoopImage(Arch::X64, BinaryFormat::ELF);
+  const std::set<va_t> Entries{0x1000, 0x1100, 0x1200};
+  // One build in a cache that owns the inventory, one in a cache that does
+  // not; each reports the cache's hits, graphs and retained bytes.
+  const auto Build = [&](const std::set<va_t> *Owned,
+                         std::array<size_t, 3> &Stats) {
+    auto Cache = createX87CallGraphCache(nullptr, nullptr, false,
+                                         X87CallGraphCacheLimits(), Owned);
+    Decoder Dec;
+    EXPECT_TRUE(Dec.init(Image));
+    CFGBuilder Builder;
+    Builder.setKnownFuncEntries(&Entries);
+    Builder.setX87CallGraphCache(Cache);
+    std::string Dump;
+    llvm::raw_string_ostream OS(Dump);
+    Pipeline::dumpLowIR({Builder.build(Image, Dec, 0x1000, "x87_call_loop")},
+                        OS);
+    Stats = Access::stats(Builder);
+    return Dump;
+  };
+  std::array<size_t, 3> Borrowed{}, Copied{};
+  EXPECT_EQ(Build(&Entries, Borrowed), Build(nullptr, Copied));
+  ASSERT_GT(Borrowed[1], 0u);
+  EXPECT_EQ(Borrowed[1], Copied[1]);
+  // The same graphs; only the context that copies the inventory holds it.
+  EXPECT_GE(Copied[2], Borrowed[2] + Entries.size() * sizeof(va_t));
+}
+
 TEST(X87CallGraphCache,
      PublishedCodeReferencesRefreshTagsWithoutChangingRawGraphs) {
   using Access = detail::X87CallGraphCacheTestAccess;
