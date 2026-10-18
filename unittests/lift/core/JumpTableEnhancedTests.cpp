@@ -3726,6 +3726,10 @@ TEST_F(JTE_X86_64, CallsToATailCalledEntryKeepTheRelativeTable) {
   EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
 }
 
+static fs::path maskedByteX64Obj() {
+  return fs::path(TEST_OBJ_DIR) / "test_jumptable_masked_byte.o";
+}
+
 static fs::path guardChainX64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_jumptable_guard_chain.o";
 }
@@ -3749,6 +3753,43 @@ TEST_F(JTE_X86_64, TableBehindALongCompareChainKeepsItsBound) {
   ASSERT_NE(Rodata, nullptr);
   std::vector<neverd::va_t> Expected;
   for (size_t Case = 0; Case < 8; ++Case) {
+    const uint8_t *Bytes = Image.readVA(Rodata->VA + Case * 4, 4);
+    ASSERT_NE(Bytes, nullptr);
+    int32_t Entry = 0;
+    std::memcpy(&Entry, Bytes, sizeof(Entry));
+    Expected.push_back(Rodata->VA + static_cast<int64_t>(Entry));
+  }
+
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const neverd::LowFunc Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  ASSERT_EQ(Low.JumpTables.size(), 1u);
+  EXPECT_EQ(Low.JumpTables.front().BaseAddr, Rodata->VA);
+  EXPECT_EQ(Low.JumpTables.front().Targets, Expected);
+  EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+}
+
+// `masked_byte_dispatch` bounds `sil & 0xf` with `andb $0xf,%al; cmpb $0xc,%al;
+// ja`, then indexes its 13-entry table with `movzbl %sil,%eax; andl $0xf,%eax`.
+// The guard's byte is the low byte of that index, so the table keeps the
+// guard's 13 entries, not the 16 the mask allows: the words after the table
+// are no entries.
+TEST_F(JTE_X86_64, MaskedByteGuardBoundsAWideMaskIndex) {
+  auto ImageOrErr = neverd::loadBinary(maskedByteX64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  const neverd::Symbol *Function = Image.findSymbol("masked_byte_dispatch");
+  ASSERT_NE(Function, nullptr);
+  const neverd::Section *Rodata = nullptr;
+  for (const neverd::Section &Section : Image.Sections)
+    if (Section.Name == ".rodata")
+      Rodata = &Section;
+  ASSERT_NE(Rodata, nullptr);
+  std::vector<neverd::va_t> Expected;
+  for (size_t Case = 0; Case < 13; ++Case) {
     const uint8_t *Bytes = Image.readVA(Rodata->VA + Case * 4, 4);
     ASSERT_NE(Bytes, nullptr);
     int32_t Entry = 0;

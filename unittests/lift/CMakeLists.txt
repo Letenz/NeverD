@@ -2523,6 +2523,7 @@ set(X86_64_TEST_SOURCES
   x86_64/test_jumptable_rbp_base.s
   x86_64/test_jumptable_tail_stub.s
   x86_64/test_jumptable_guard_chain.c
+  x86_64/test_jumptable_masked_byte.s
   x86_64/test_jumptable_inclusive_postload_clobber.s
   x86_64/test_jumptable_inclusive_postload_unrelated.s
   x86_64/test_jumptable_inclusive_preload_alias.s
