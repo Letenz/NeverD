@@ -382,11 +382,13 @@ unsigned MedToHighConverter::importFixedArgCount(size_t CallIdx,
   // `g_printf(fmt, ...)`.
   if (!libc::isKnownFunction(Name))
     return 0;
-  if (const unsigned Fixed = libc::varArgFixedCount(Name))
+  if (const unsigned Fixed =
+          libc::varArgFixedCount(Name, libc::libcVariantOf(*Image)))
     return Fixed;
-  const auto Arity = importNamesAreCNames(Image->Format)
-                         ? libc::libcArity(Name)
-                         : libc::libcArityForSymbol(Name);
+  const auto Arity =
+      importNamesAreCNames(Image->Format)
+          ? libc::libcArity(Name, libc::libcVariantOf(*Image))
+          : libc::libcArityForSymbol(Name, libc::libcVariantOf(*Image));
   return Arity && Arity->FpArgs == 0 && Arity->IntArgs > 0
              ? static_cast<unsigned>(Arity->IntArgs)
              : 0;
@@ -1285,7 +1287,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       // stores for a later call are not arguments of this one.
       N = *Count;
     } else {
-      const auto Arity = libc::libcArityForSymbol(Name);
+      const auto Arity = libc::libcArityForSymbol(
+          Name, Image ? libc::libcVariantOf(*Image) : libc::LibCVariant::GNU);
       if (!Arity)
         return Collected;
       N = static_cast<size_t>(std::max(0, Arity->IntArgs) +

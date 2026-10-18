@@ -39,6 +39,13 @@ install(RUNTIME_DEPENDENCY_SET neverd_web_product_runtime
   PRE_EXCLUDE_REGEXES "[Aa][Pp][Ii]-[Mm][Ss]-.*" "[Ee][Xx][Tt]-[Mm][Ss]-.*"
   POST_EXCLUDE_REGEXES ".*[/\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\].*"
   RUNTIME DESTINATION bin COMPONENT WebProduct)
+if(NEVERD_MIMALLOC_ENABLED)
+  # CMake's runtime dependency set omits targets built by this project.
+  # Component-only installs must carry the allocator and its redirector too.
+  install(FILES "$<TARGET_FILE:mimalloc>"
+    "$<TARGET_PROPERTY:mimalloc,NEVERD_REDIRECT_DLL>"
+    DESTINATION bin COMPONENT WebProduct)
+endif()
 # ICU data is loaded by ICU itself and need not appear in the engine's import
 # table. Always stage the exact data DLL alongside its exact 77.1 consumer.
 install(FILES "${_neverd_product_icu_root}/bin64/icuuc77.dll" "${_neverd_product_icu_root}/bin64/icudt77.dll"

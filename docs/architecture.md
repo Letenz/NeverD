@@ -291,8 +291,8 @@ the program's types.
 Header libraries (`HeaderLibraries.def`, `HeaderLibrary.h`) give a program
 the system's types and prototypes that its debug information lacks: the
 Windows kernel's PDB names records, but no typedefs and no prototypes.
-They are the one source of what a known routine takes and returns, as IDA's
-type libraries are beside its signatures: signatures (`signatures/`)
+They are the one source of a known routine's declaration, which the call
+model's tables agree with, as IDA's type libraries are beside its signatures: signatures (`signatures/`)
 recognize a routine by its bytes and only name it. A platform or an
 architecture joins by a header under `lib/types/headers/`, a row of
 `HeaderLibraries.def` naming its data model, the record ABI its records are
@@ -382,6 +382,27 @@ it out. The image's libraries join in their rows' order but those left out,
 then those added in the order the user added them;
 `neverd_type_libraries_json` lists every library with what it joined, for a
 program or none.
+
+The call model (`lib/libc`) answers what a routine takes and returns before
+a program joins a header library, and where none joins: function discovery,
+the call analysis, MedIR's ABI pass and both C writers read it from layers
+that do not link the type libraries, as LLVM's TargetLibraryInfo stands
+beside the declarations Clang reads from headers. Its tables follow the GNU C
+Library's declarations. The C library a program links (`LibCVariant`: GNU,
+musl, bionic, Darwin's libSystem or a Windows C runtime, which
+`libcVariantOf` reads from the image) selects what `LibCVariants.def` gives
+a routine another library declares otherwise: Darwin's `sendfile` takes six
+arguments, and its `shm_open` is variadic, whose mode Apple's AArch64
+convention passes on the stack. On Darwin a routine's suffixed variants
+(`syslog$DARWIN_EXTSN`, `fcntl$NOCANCEL`) take its facts
+(`routineOfSymbol`). Every lookup names the variant. The header libraries
+hold the declarations themselves, and for every routine both know the
+tables agree with each library (`HeaderLibraryCallModelTests`): its arity,
+whether it is variadic and after how many named parameters, its result, and
+which parameters point to objects or to functions. The tables keep what no
+declaration says: routines that never return or return twice where a header
+does not mark them, format strings, fortified forms, the va_list forms
+variadic routines pass on to, and what copies and stack probes do.
 
 A C or C++ header rendered for a program joined to a library of a system's
 headers (`HeaderLibrarySystems.def`: glibc's, bionic's, musl's and Apple's
@@ -760,11 +781,18 @@ Cancelling its final subscriber retires the process, since a synchronous C API
 analysis call cannot be interrupted safely. Replica revisions and analysis
 discovery never advance the writable project's state. All workers use the
 same public C API; this split does not duplicate engine semantics.
-The 64-bit Linux worker embeds a pinned mimalloc allocator in its executable.
-Its C++ code and loaded SDK use that one process heap, including cross-thread
-releases. No allocator replacement is exported by the SDK itself. Other hosts,
-allocation-sanitizer builds and `NEVERD_WORKER_MIMALLOC=OFF` use the platform
-allocator. The build keeps the worker's existing CPU instruction requirements.
+The process allocator is selected by `cmake/NeverDMimalloc.cmake` at the
+executable boundary. On Linux and macOS, NeverD tools and the headless worker
+embed one mimalloc object with standard allocation overrides; component
+archives, plugins and `libneverd` do not embed another allocator. Shared-library
+analysis allocations use the executable's process allocator. Windows MSVC ABI
+executables instead import a shared mimalloc before their other dependencies;
+the matching redirection DLL overrides the dynamic CRT (`/MD` or `/MDd`),
+including later-loaded plugins. Both runtime DLLs travel with the executable.
+Applications embedding the SDK continue to own their allocator policy. On macOS, dependency
+initializers can allocate before the executable registers its malloc zone;
+those existing system allocations must remain valid through process shutdown.
+Allocator selection does not alter lifted-program semantics or generated code.
 Function preparation uses `neverd_prepare_function_view`, which shares the
 source route's ARM mode, exception-handler discovery and analysis-scope checks
 without emitting C. Source, IR and CFG views consume that prepared pipeline.
@@ -2287,6 +2315,13 @@ queries retain their existing conditional-root policy.
 Numerical coordinate membership supplies neither input known bits nor negative
 dependency/origin authority. Other architecture/format admission remains with
 its existing proof owners.
+A proposal stage that exhausts its shared evidence rolls back and is retried.
+A candidate the stage never reached is as undecided as one whose own proof ran
+out: when an earlier resolution in the same build claimed it as table-shaped
+(`ShapeClaimedBranches`), it keeps the same opaque, unsafe branch identity
+across the retries, and only a completed stage can drop it. Otherwise one
+expensive candidate early in the inventory would let the ones after it fall
+back to tail calls.
 
 The AArch64 compact table (`tryAArch64CompactTable`) traces the shifted entry
 back to its byte or halfword load through copies, zero and sign extensions and
@@ -2664,6 +2699,13 @@ encoding, with bounded NOP padding. Its own HighC, LLVM and LLVM C bodies retain
 that instruction sequence in a naked helper, preserving the selected register,
 stack and flags. Caller rewriting continues to require CFG-authenticated
 occurrences; helper names alone prove nothing.
+A call to such a helper is lifted as a copy of its return address into the
+register the helper loads. That copy seeds an object file's GOTPC model as a
+call/pop does (`completeExactI386GOTBaseModels`), and needs no proof about the
+stack: the literal is the exact PC however control reaches the call. GCC adds
+the GOTPC immediate right after the call; when nothing else enters that add and
+none of its ops before the sum writes the register, the model needs no graph
+query either.
 An i386 ELF PIC switch reads a table of `case@GOTOFF` words through the
 register a get-PC sequence and an `add $_GLOBAL_OFFSET_TABLE_` filled, then adds
 the entry back to that register. A linked image keeps no relocation for either,
@@ -6513,7 +6555,7 @@ libraries supplied by the CMake helper.
 | `lib/debug` | DWARF, PDB, and linker-map debug contexts | IR |
 | `lib/types` | Local types: the type library, PDB type import with anonymous nesting and inferred packing, and rendering as C, C++, Rust, Go, Python, JavaScript and Lua | LLVM DebugInfo PDB |
 | `lib/sigs` | Signature parsing, databases, and matching | Loader |
-| `lib/libc` | Known libc names and call-model support | Standalone component |
+| `lib/libc` | The call model of library routines for each C library (arity, named parameters of variadic routines, results, no-return, formats), checked against the header libraries | Loader |
 | `lib/symbolic` | Width-exact symbolic execution, bounded path exploration, stable control-decision histories, and the exact concrete shadow | LowIR |
 | `lib/solver` | Bounded bit-vector encoding, incremental SAT solving, models, and typed unknown/invalid outcomes | Symbolic |
 | `lib/concolic` | Exact-prefix conditional branch flips with register-model projection and fresh replay receipts | Symbolic, Solver |
@@ -7977,6 +8019,12 @@ semantics. Guest storage uses the existing allocator and address-space authority
 shared by descriptor aliases and raw/Bionic calls. JSON adapters supply no
 alternate semantics or service responses. JNI object limits and Binder stream
 admission fail explicitly rather than borrowing a host VM or driver.
+`AndroidJNIRegistration` retains native bindings in the workload JNI owner and
+reports a sorted snapshot; the shared Program resolves declarations through the
+class/superclass chain without initializing them. The JSON adapter supplies
+explicit negative loader outcomes only; unknown inputs never imply absence.
+Neither FindClass nor registration executes a class initializer. Native method
+execution remains a separate unsupported contract.
 `AndroidJNIMethods` owns JNI method identities and descriptor/argument binding;
 all JNI call forms and explicit DEX methods reuse it and Bionic's GP argument reader.
 The finite intrinsic catalogue and value semantics live in `dalvik::Library`;

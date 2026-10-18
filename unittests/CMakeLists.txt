@@ -14,6 +14,8 @@ FetchContent_MakeAvailable(googletest)
 enable_testing()
 include(GoogleTest)
 
+add_subdirectory(allocator)
+
 # Cross-target compiler fixtures require Clang's driver and GNU inline-assembly
 # syntax.  Detect it once for the complete test tree; do not silently treat the
 # configured C compiler as equivalent (notably cl.exe and GCC-only installs).

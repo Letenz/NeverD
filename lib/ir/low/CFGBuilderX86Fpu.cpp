@@ -1012,9 +1012,11 @@ class X87CallEffectIndex {
             libc::libcPrototype(Name.str(), Image.abiFormat())) {
       Floating = libc::isFloatingType(Prototype->Return);
       LongDouble = Prototype->Return == "long double";
-    } else if (const auto Arity = importNamesAreCNames(Image.Format)
-                                      ? libc::libcArity(Name.str())
-                                      : libc::libcArityForSymbol(Name.str())) {
+    } else if (const auto Arity =
+                   importNamesAreCNames(Image.Format)
+                       ? libc::libcArity(Name.str(), libc::libcVariantOf(Image))
+                       : libc::libcArityForSymbol(Name.str(),
+                                                  libc::libcVariantOf(Image))) {
       Floating = libc::floatReturnBytes(*Arity) != 0;
       LongDouble = Arity->FpRetLongDouble;
       Complex = Arity->FpRetComplex;

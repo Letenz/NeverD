@@ -295,6 +295,17 @@ class Allowance:
 
 ALLOWED: tuple[Allowance, ...] = (
     Allowance(
+        path="cmake/NeverDMimalloc.cmake",
+        rule="provenance-phrase",
+        reason=(
+            "The allocator integration credits NeverC contributors and "
+            "AGPL-3.0-only, with a source permalink at revision "
+            "52e83efb3e3902c97130b9e3c83611080fa18ac4. "
+            "THIRD_PARTY_NOTICES.md records the source file and the changes "
+            "to allocator linkage, ownership and sanitizer detection."
+        ),
+    ),
+    Allowance(
         path="lib/web/desktop/tauri/PHF.cpp",
         rule="provenance-phrase",
         reason=(

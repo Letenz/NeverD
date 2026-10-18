@@ -11,6 +11,8 @@
 
 #include "neverd/libc/LibCNames.h"
 
+#include "LibCVariantRows.h"
+
 #include "neverd/libc/LibCAssert.h"
 #include "neverd/libc/LibCComplex.h"
 #include "neverd/libc/LibCCtype.h"
@@ -315,7 +317,15 @@ const char *headerFor(std::string_view Name) {
   return It->second.c_str();
 }
 
-std::optional<LibCArity> libcArity(std::string_view Name) {
+std::optional<LibCArity> libcArity(std::string_view Name, LibCVariant Variant) {
+  Name = routineOfSymbol(Name, Variant);
+  if (Variant != LibCVariant::GNU) {
+    if (std::optional<LibCArity> Arity = variant_rows::arity(Name, Variant))
+      return Arity;
+    // A routine variadic there takes no fixed arguments alone.
+    if (variant_rows::variadic(Name, Variant))
+      return std::nullopt;
+  }
   const auto &Map = getArityRegistry().Map;
   auto It = Map.find(Name);
   if (It == Map.end())
@@ -336,11 +346,19 @@ const LibCPrototype *libcPrototype(std::string_view Name, BinaryFormat Format) {
 }
 
 std::optional<LibCResult> libcResult(std::string_view Name,
-                                     BinaryFormat Format) {
+                                     LibCVariant Variant) {
+  Name = routineOfSymbol(Name, Variant);
+  // A Windows C runtime's own prototypes are COFF's (LibCPrototype::Format).
+  const BinaryFormat Format = Variant == LibCVariant::Windows
+                                  ? BinaryFormat::COFF
+                                  : BinaryFormat::Unknown;
   if (const LibCPrototype *Prototype = libcPrototype(Name, Format))
     return Prototype->Return == "void"        ? LibCResult::Void
            : isPointerType(Prototype->Return) ? LibCResult::Pointer
                                               : LibCResult::Value;
+  if (const std::optional<LibCResult> Result =
+          variant_rows::result(Name, Variant))
+    return Result;
   static const std::unordered_map<std::string_view, LibCResult> Kinds = {
 #define NEVERD_LIBC_RETURN_KIND(NAME, KIND) {NAME, LibCResult::KIND},
 #include "neverd/libc/LibCReturnKinds.inc"
@@ -353,8 +371,8 @@ std::optional<LibCResult> libcResult(std::string_view Name,
 }
 
 std::optional<bool> libcReturnsValue(std::string_view Name,
-                                     BinaryFormat Format) {
-  const std::optional<LibCResult> Result = libcResult(Name, Format);
+                                     LibCVariant Variant) {
+  const std::optional<LibCResult> Result = libcResult(Name, Variant);
   if (!Result)
     return std::nullopt;
   return *Result != LibCResult::Void;
@@ -377,7 +395,8 @@ bool returnsDoubleWord(std::string_view Name) {
   return Names.count(Name) != 0;
 }
 
-std::optional<LibCArity> libcArityForSymbol(std::string_view Name) {
+std::optional<LibCArity> libcArityForSymbol(std::string_view Name,
+                                            LibCVariant Variant) {
   // Mach-O prepends one underscore to the C identifier `__error`, producing
   // `___error`.  Do not normalize it to `error`: GNU error(3) is a distinct
   // variadic function, while Darwin __error(void) takes no arguments.
@@ -385,7 +404,7 @@ std::optional<LibCArity> libcArityForSymbol(std::string_view Name) {
     return LibCArity{};
   while (!Name.empty() && Name.front() == '_')
     Name.remove_prefix(1);
-  return libcArity(Name);
+  return libcArity(Name, Variant);
 }
 
 } // namespace neverd::libc

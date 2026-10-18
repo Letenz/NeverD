@@ -899,6 +899,12 @@ public:
   void setFiniteSetSymbolEvidenceBudgetForTesting(std::optional<size_t> Limit) {
     FiniteSetSymbolEvidenceBudgetForTesting = Limit;
   }
+  /// Exhaust every proposal stage right after the candidate at \p Addr
+  /// resolves, so the candidates after it never run in a stage.
+  void
+  setExhaustProposalStageAfterCandidateForTesting(std::optional<va_t> Addr) {
+    ExhaustProposalStageAfterCandidateForTesting = Addr;
+  }
   /// Force the first recursively discovered (not stage-inventoried) jump-table
   /// probe to exhaust its candidate account.  This generic transaction hook
   /// verifies that nested resource failure aborts and rolls back its stage.
@@ -2635,6 +2641,7 @@ private:
   bool ProposalStageForcedCommitTailRollbackPreservedStateForTesting = false;
   bool ProposalStageRollbackMutatedQuarantineForTesting = false;
   bool ExhaustUntrackedJumpTableCandidateForTesting = false;
+  std::optional<va_t> ExhaustProposalStageAfterCandidateForTesting;
   bool UntrackedJumpTableCandidateExhaustedThisStageForTesting = false;
   bool UntrackedJumpTableCandidateRollbackObservedForTesting = false;
   va_t ForcedUntrackedJumpTableCandidateAddrForTesting = InvalidVA;
@@ -2817,6 +2824,11 @@ private:
   /// for either a switch or a function-pointer tail call, so retain the source
   /// INDIR_BR identity and publish it as unsafe.
   std::set<va_t> IndexDomainEvidenceIncompleteBranches;
+  /// Indirect jumps some resolution in this build claimed as table-shaped.
+  /// A proposal stage that runs out of shared evidence before reaching such a
+  /// branch leaves it as undecided as a candidate whose own proof ran out, so
+  /// it receives the same IndexDomainEvidenceIncompleteBranches marker.
+  std::set<va_t> ShapeClaimedBranches;
   /// Indirect jumps whose exact physical LOAD/address roles and local table
   /// destinations prove dispatch identity even when selector-domain recovery
   /// is definitively rejected.  This certificate preserves branch semantics;

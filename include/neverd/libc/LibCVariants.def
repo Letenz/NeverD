@@ -1,0 +1,64 @@
+//===- LibCVariants.def - Where C libraries declare otherwise ---*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// The call model's tables follow the GNU C Library's declarations.  A
+// routine another C library (LibCVariant) declares otherwise takes, for that
+// library, what a row here gives, as its headers declare it; the header
+// libraries hold those declarations, and HeaderLibraryCallModelTests checks
+// the tables against every one.
+//
+// NEVERD_LIBC_VARIANT_ARITY(Variant, Name, IntArgs, FpArgs)
+//   The routine takes these arguments there.
+// NEVERD_LIBC_VARIANT_VARIADIC(Variant, Name, Kinds...)
+//   The routine is variadic there, after fixed parameters of these
+//   VarArgFixedParamKinds.
+// NEVERD_LIBC_VARIANT_RESULT(Variant, Name, Result)
+//   What the routine returns there (LibCResult).
+// NEVERD_LIBC_VARIANT_POINTERS(Variant, Name, ObjectPointers, FunctionPointer,
+//                              Type)
+//   Its parameters there: those that point to objects, by position, and the
+//   one that points to a function (-1 for none), of C type Type.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_LIBC_VARIANT_ARITY
+#define NEVERD_LIBC_VARIANT_ARITY(Variant, Name, IntArgs, FpArgs)
+#endif
+#ifndef NEVERD_LIBC_VARIANT_VARIADIC
+#define NEVERD_LIBC_VARIANT_VARIADIC(Variant, Name, ...)
+#endif
+#ifndef NEVERD_LIBC_VARIANT_RESULT
+#define NEVERD_LIBC_VARIANT_RESULT(Variant, Name, Result)
+#endif
+#ifndef NEVERD_LIBC_VARIANT_POINTERS
+#define NEVERD_LIBC_VARIANT_POINTERS(Variant, Name, ObjectPointers,            \
+                                     FunctionPointer, Type)
+#endif
+
+// Darwin's libSystem: BSD's sendfile, qsort_r and setlinebuf, and
+// pthread_setname_np naming only the calling thread.
+NEVERD_LIBC_VARIANT_ARITY(Darwin, "pthread_setname_np", 1, 0)
+NEVERD_LIBC_VARIANT_ARITY(Darwin, "sendfile", 6, 0)
+NEVERD_LIBC_VARIANT_POINTERS(Darwin, "sendfile", (1 << 3) | (1 << 4), -1, "")
+NEVERD_LIBC_VARIANT_VARIADIC(Darwin, "shm_open", Pointer, Integer)
+NEVERD_LIBC_VARIANT_POINTERS(Darwin, "qsort_r", (1 << 0) | (1 << 3), 4,
+                             "int (*)(void *, const void *, const void *)")
+NEVERD_LIBC_VARIANT_RESULT(Darwin, "freelocale", Value)
+NEVERD_LIBC_VARIANT_RESULT(Darwin, "setlinebuf", Value)
+NEVERD_LIBC_VARIANT_RESULT(Darwin, "pthread_self", Pointer)
+NEVERD_LIBC_VARIANT_RESULT(Darwin, "strerror_r", Value)
+
+// musl: POSIX's strerror_r, and a pthread_t that points to the thread.
+NEVERD_LIBC_VARIANT_RESULT(Musl, "pthread_self", Pointer)
+NEVERD_LIBC_VARIANT_RESULT(Musl, "strerror_r", Value)
+
+// bionic: BSD's setlinebuf.
+NEVERD_LIBC_VARIANT_RESULT(Bionic, "setlinebuf", Value)
+
+#undef NEVERD_LIBC_VARIANT_ARITY
+#undef NEVERD_LIBC_VARIANT_VARIADIC
+#undef NEVERD_LIBC_VARIANT_RESULT
+#undef NEVERD_LIBC_VARIANT_POINTERS

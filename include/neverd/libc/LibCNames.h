@@ -12,6 +12,7 @@
 // APIs are implemented in LibCNames.cpp and LibCCallTraits.cpp respectively.
 
 #include "neverd/Common.h"
+#include "neverd/libc/LibCVariant.h"
 
 #include <array>
 #include <cstdint>
@@ -170,12 +171,13 @@ inline constexpr std::string_view kWinapiMarker = "WINAPI ";
 /// format \p Format, or null.
 const LibCPrototype *libcPrototype(std::string_view Name, BinaryFormat Format);
 
-/// Whether the routine C name \p Name links to in an image of object format
-/// \p Format returns a value, as its C declaration says: the prototype above
-/// or, for a routine a C library header declares, the declared result
-/// (LibCReturnKinds.inc).  Unknown for a routine neither declares.
+/// Whether the routine C name \p Name links to in a program of C library
+/// \p Variant returns a value, as its C declaration says: the prototype
+/// above or, for a routine a C library header declares, the declared result
+/// (LibCReturnKinds.inc, LibCVariants.def).  Unknown for a routine neither
+/// declares.
 std::optional<bool> libcReturnsValue(std::string_view Name,
-                                     BinaryFormat Format);
+                                     LibCVariant Variant);
 
 /// The C library header that declares the data object C name \p Name
 /// (LibCDataObjects.def): "stdio.h" for `stdout`; null for any other name.
@@ -192,7 +194,8 @@ bool returnsDoubleWord(std::string_view Name);
 /// for an unknown function, a variadic function (use varArgFixedCount instead),
 /// or a function whose arity is intentionally not modelled (mixed int/FP forms
 /// like ldexp/frexp).  Name must have its leading underscores already stripped.
-std::optional<LibCArity> libcArity(std::string_view Name);
+/// \p Variant is the C library whose declaration is meant (LibCVariants.def).
+std::optional<LibCArity> libcArity(std::string_view Name, LibCVariant Variant);
 
 /// A Windows kernel routine's documented parameters
 /// (WindowsKernelRoutines.inc): the bytes the Win64 ABI passes for each, in
@@ -213,7 +216,8 @@ bool isIndirectCallDispatchThunk(std::string_view Name);
 /// The fixed arity for a symbol name as it appears in an object or executable.
 /// This preserves platform-decorated spellings whose leading underscores are
 /// semantically significant before falling back to the canonical registry.
-std::optional<LibCArity> libcArityForSymbol(std::string_view Name);
+std::optional<LibCArity> libcArityForSymbol(std::string_view Name,
+                                            LibCVariant Variant);
 
 /// True if Name is a known libc/POSIX library function.
 bool isKnownFunction(std::string_view Name);
@@ -221,10 +225,10 @@ bool isKnownFunction(std::string_view Name);
 /// Returns e.g. "stdlib.h", or nullptr if not a known libc function.
 const char *headerFor(std::string_view Name);
 
-/// If Name is a known variadic C function (printf, fprintf, etc.),
-/// returns the number of fixed parameters before the '...'. Returns 0
-/// if the function is not variadic.
-unsigned varArgFixedCount(std::string_view Name);
+/// If Name is a known variadic C function (printf, fprintf, etc.) of C
+/// library \p Variant, returns the number of fixed parameters before the
+/// '...'. Returns 0 if the function is not variadic.
+unsigned varArgFixedCount(std::string_view Name, LibCVariant Variant);
 
 /// A printf-family routine (LibCPrintfFormats.inc): its return type and the
 /// C types of its fixed parameters, the last of which is the format whose
@@ -288,9 +292,10 @@ enum class VarArgFixedParamKind {
 };
 
 /// Return the ABI category of fixed parameter \p Index for a known variadic
-/// libc/POSIX function.  Names may retain platform-leading underscores.
-VarArgFixedParamKind varArgFixedParamKind(std::string_view Name,
-                                          unsigned Index);
+/// libc/POSIX function of C library \p Variant.  Names may retain
+/// platform-leading underscores.
+VarArgFixedParamKind varArgFixedParamKind(std::string_view Name, unsigned Index,
+                                          LibCVariant Variant);
 
 /// True if Name is a known va_list-consuming function: the v-prefixed printf /
 /// scanf family (vprintf, vfprintf, vsnprintf, vscanf, ...) and their fortified
@@ -306,15 +311,18 @@ bool isVaListConsumer(std::string_view Name);
 bool isCStringParameter(std::string_view Name, unsigned Index);
 
 /// The C type of parameter \p Index of the standard C or POSIX function
-/// \p Name when it takes a function (`qsort`'s comparison), or nullopt.
-/// Leading underscores are ignored.
+/// \p Name of C library \p Variant when it takes a function (`qsort`'s
+/// comparison), or nullopt.  Leading underscores are ignored.
 std::optional<std::string_view> functionPointerParameter(std::string_view Name,
-                                                         unsigned Index);
+                                                         unsigned Index,
+                                                         LibCVariant Variant);
 
 /// Whether parameter \p Index of the standard C or POSIX function \p Name
-/// takes an object pointer (`memcpy`'s destination, `fputs`'s stream), which
-/// C does not convert an integer to.  Leading underscores are ignored.
-bool isObjectPointerParameter(std::string_view Name, unsigned Index);
+/// of C library \p Variant takes an object pointer (`memcpy`'s destination,
+/// `fputs`'s stream), which C does not convert an integer to.  Leading
+/// underscores are ignored.
+bool isObjectPointerParameter(std::string_view Name, unsigned Index,
+                              LibCVariant Variant);
 
 /// What a compiler stack-probe helper does (StackProbeRoutines.inc).
 enum class StackProbeEffect : uint8_t {

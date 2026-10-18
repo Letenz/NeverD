@@ -9,6 +9,8 @@
 #     [LINK_COMPONENTS comp1 ...]
 #     [LINK_LIBS lib1 ...])
 
+include(${CMAKE_CURRENT_LIST_DIR}/NeverDMimalloc.cmake)
+
 # Global list that accumulates every component library target.
 define_property(GLOBAL PROPERTY NEVERD_COMPONENT_LIBS
   BRIEF_DOCS "List of all NeverD component library targets"
@@ -85,6 +87,7 @@ function(add_neverd_tool name)
     ${ARGN})
 
   add_executable(${name} ${ARG_UNPARSED_ARGUMENTS})
+  neverd_link_mimalloc(${name})
 
   target_compile_features(${name} PRIVATE cxx_std_20)
 
@@ -153,6 +156,7 @@ function(add_neverd_unittest name)
   endif()
 
   add_executable(${name} ${ARG_UNPARSED_ARGUMENTS})
+  neverd_link_mimalloc(${name})
 
   target_compile_features(${name} PRIVATE cxx_std_20)
 

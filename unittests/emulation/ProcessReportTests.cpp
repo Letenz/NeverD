@@ -1467,6 +1467,37 @@ TEST(ProcessReport, RetainsOptionalFaultCauseAndFullWidthProcessorCode) {
 #undef NEVERD_FAULT_REPORT_CASE
 }
 
+TEST(ProcessReport, JNIClassLoaderDeclarationsAndRetainedNativeBindings) {
+  auto O = processOptionsFromJSON(R"({"android":{"jni":true,
+    "jni_class_lookup_failures":{"fixture/Absent":"java/lang/ClassNotFoundException"}}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->Android);
+  EXPECT_EQ(O->Android->JNIClassLookupFailures.at("fixture/Absent"),
+            "java/lang/ClassNotFoundException");
+  for (const char *Invalid : {"true", "[]", "null", R"({"C":7})"}) {
+    auto Bad = processOptionsFromJSON(
+        std::string("{\"android\":{\"jni_class_lookup_failures\":") + Invalid +
+        "}}");
+    ASSERT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+  ProcessResult R{ProcessProfile::AndroidNativeAArch64,
+                  GuestArchitecture::AArch64,
+                  ExecutionBackendKind::Unicorn,
+                  {}};
+  R.JNIRegistrations = {{"fixture/Native", "call", "(I)J", UINT64_MAX}};
+  auto J = llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+  const auto *Bindings =
+      J.getAsObject()->getObject("android")->getArray("jni_registrations");
+  ASSERT_NE(Bindings, nullptr);
+  ASSERT_EQ(Bindings->size(), 1u);
+  const auto *B = Bindings->front().getAsObject();
+  EXPECT_EQ(B->getString("class"), "fixture/Native");
+  EXPECT_EQ(B->getString("name"), "call");
+  EXPECT_EQ(B->getString("signature"), "(I)J");
+  EXPECT_EQ(B->getString("address"), "ffffffffffffffff");
+}
+
 TEST(ProcessReport, RejectsMalformedRequestsBeforeWorkloadConstruction) {
 #define NEVERD_PROCESS_INVALID_JSON(Name, Text)                                \
   {                                                                            \

@@ -8,6 +8,7 @@
 #define NEVERD_LIBC_LIBCRESULT_H
 
 #include "neverd/Common.h"
+#include "neverd/libc/LibCVariant.h"
 
 #include <cstdint>
 #include <optional>
@@ -19,13 +20,13 @@ namespace neverd::libc {
 /// pointer (to an object or to a function), or another value.
 enum class LibCResult : uint8_t { Void, Value, Pointer };
 
-/// What the routine C name \p Name links to in an image of object format
-/// \p Format returns, as its C declaration says: the runtime tables'
+/// What the routine C name \p Name links to in a program of C library
+/// \p Variant returns, as its C declaration says: the runtime tables'
 /// prototype (libcPrototype) or, for a routine a C library header declares,
-/// the declared result (LibCReturnKinds.inc).  Unknown for a routine neither
-/// declares.
+/// the declared result (LibCReturnKinds.inc, LibCVariants.def).  Unknown for
+/// a routine neither declares.
 std::optional<LibCResult> libcResult(std::string_view Name,
-                                     BinaryFormat Format);
+                                     LibCVariant Variant);
 
 } // namespace neverd::libc
 

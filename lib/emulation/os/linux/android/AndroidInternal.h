@@ -137,6 +137,7 @@ public:
   bool timedOut() const { return Expired; }
   BionicResult invoke(NativeCallEvent &Call);
   BionicResult finishCallback(const GuestCallback &Callback);
+  void reportJNIRegistrations();
   BionicResult resumeMutex(uint64_t Address, uint16_t Attributes);
   /// Complete a shared kernel result using the current thread's libc errno.
   BionicResult kernelResult(std::optional<uint64_t> Returned);
@@ -183,6 +184,7 @@ private:
   BionicResult jniCall(const NativeCallEvent &Call);
   BionicResult jniVM(const NativeCallEvent &Call);
   BionicResult jniObjects(unsigned Slot, const NativeCallEvent &Call);
+  BionicResult jniRegistration(unsigned Slot, const NativeCallEvent &Call);
   BionicResult jniStrings(unsigned Slot, const NativeCallEvent &Call);
   BionicResult jniArrays(unsigned Slot, const NativeCallEvent &Call);
   bool jniAssignable(llvm::StringRef Source, llvm::StringRef Destination) const;
@@ -204,7 +206,9 @@ private:
   llvm::Expected<std::shared_ptr<JNIObject>> jniClass(llvm::StringRef Name);
   llvm::Expected<std::shared_ptr<JNIObject>>
   jniNewObject(JNIObject::Kind Kind, llvm::StringRef Class, uint64_t Bytes);
-  llvm::Error jniException(llvm::StringRef Class);
+  llvm::Error
+  jniException(llvm::StringRef Class,
+               std::optional<llvm::StringRef> Message = std::nullopt);
   llvm::Expected<uint64_t> jniBorrow(std::shared_ptr<JNIObject> Object,
                                      llvm::ArrayRef<uint8_t> Bytes,
                                      uint64_t IsCopy, unsigned Slot);

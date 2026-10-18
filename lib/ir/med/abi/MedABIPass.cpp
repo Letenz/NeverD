@@ -448,6 +448,8 @@ void recoverCallAbi(
   const auto &TRI = getTargetRegInfo(TheArch);
   const AbiSpillContext SpillContext{Func, TRI, FrameLocalLeafCallees};
   const BinaryFormat Fmt = Img ? Img->abiFormat() : BinaryFormat::Unknown;
+  const libc::LibCVariant LibC =
+      Img ? libc::libcVariantOf(*Img) : libc::libcVariantOf(Fmt);
   const auto SEHReturns = TheArch == Arch::X86 && Fmt == BinaryFormat::COFF
                               ? getRegistrationSEHReturns(Func)
                               : std::nullopt;
@@ -799,9 +801,10 @@ void recoverCallAbi(
           TargetSection->Name == section_names::macho::ObjCStubs;
       std::optional<libc::LibCArity> ExternalArity;
       if (!CI.IsIndirect || IsIndirectImport)
-        ExternalArity = libc::libcArityForSymbol(CI.TargetName);
+        ExternalArity = libc::libcArityForSymbol(CI.TargetName, LibC);
       else if (VariableCallee && !VariableCallee->ImportName.empty())
-        ExternalArity = libc::libcArityForSymbol(VariableCallee->ImportName);
+        ExternalArity =
+            libc::libcArityForSymbol(VariableCallee->ImportName, LibC);
       // An import the tables do not know, whose prototype the program's types
       // declare, or whose stdcall thunk spells its argument bytes, publishes
       // the integer arguments it takes in its summary
@@ -944,7 +947,7 @@ void recoverCallAbi(
       int DarwinVarArgBase = -1;
       if (VariadicOnStack && !CI.IsIndirect) {
         llvm::StringRef Bare = stripLeadingUnderscores(CI.TargetName);
-        if (unsigned NF = libc::varArgFixedCount(Bare); NF > 0)
+        if (unsigned NF = libc::varArgFixedCount(Bare, LibC); NF > 0)
           DarwinVarArgBase = static_cast<int>(NF);
         // A user-defined intra-module variadic callee (detected by
         // detectVariadicForwarders) follows the same Darwin convention: its

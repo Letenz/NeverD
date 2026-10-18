@@ -19,15 +19,32 @@ No external JSON executable or language runtime is invoked.
 
 ## mimalloc
 
-The 64-bit Linux worker embeds the unchanged mimalloc 3.5.3 allocator from
-[Microsoft Research](https://github.com/microsoft/mimalloc/tree/v3.5.3), under
-its [MIT license](LICENSES/mimalloc/LICENSE). The source archive is pinned by
-SHA-256 `3b4a15153a59905995f7070296ed604bb5ccc00cabb8b93446931aff77224d47`.
-Its notice is staged beside the worker and installed under
-`share/neverd/licenses/mimalloc`. The allocator is embedded in the executable;
-the SDK continues to use its host's allocator. `NEVERD_WORKER_MIMALLOC=OFF`
-selects the platform allocator. Allocation-sanitizer builds use that setting.
-The build preserves the existing minimum CPU instruction set.
+Linux and macOS executables optionally embed the mimalloc 3.3.2
+single-object allocator from Microsoft Research and Daan Leijen, under the MIT
+license. Windows MSVC ABI builds instead ship its shared allocator and the
+architecture-matched redirection DLL from the same release archive.
+The [upstream release](https://github.com/microsoft/mimalloc/tree/v3.3.2)
+archive is pinned by SHA-256
+`ca02384e007f46950598500dfaebde5ff9948c1d231f5a81b058799afa64bbbb`.
+The original notice is preserved in [LICENSES/mimalloc/LICENSE](LICENSES/mimalloc/LICENSE),
+staged beside enabled executables and installed under `share/neverd/licenses/mimalloc`.
+
+`cmake/PatchMimalloc.cmake` backports only the macOS malloc-zone `reinit_lock`
+callback from upstream's
+[`v3.5.3/src/prim/osx/alloc-override-zone.c`](https://github.com/microsoft/mimalloc/blob/v3.5.3/src/prim/osx/alloc-override-zone.c).
+This fixes a null callback during `fork()`. The downloaded source retains its
+MIT notice and receives a dated NeverD modification comment. The integration
+keeps 3.3.2 because embedded Python regressions pass with this narrow backport,
+while unmodified 3.5.3 and 3.5.4 fail those tests on the macOS development host.
+
+The executable-level integration follows NeverC's host allocator design in
+`neverc/cmake/modules/AddMimalloc.cmake` at revision
+`52e83efb3e3902c97130b9e3c83611080fa18ac4` (Copyright (C) 2026 NeverC contributors,
+AGPL-3.0-only, [project source](https://github.com/NeverSight/NeverC)). NeverD
+uses object linkage on Unix and DLL redirection on Windows, confines allocator
+selection to executables, verifies
+archive bytes and expands sanitizer detection. No NeverC compiler or generated
+program runtime is included.
 
 ## Ada URL parser
 

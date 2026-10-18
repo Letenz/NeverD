@@ -703,8 +703,9 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     const auto It =
         ImportedSymbolPlaceholders.find(KnownTarget->getName().str());
     if (It != ImportedSymbolPlaceholders.end() && It->second == KnownTarget &&
-        (libc::libcArityForSymbol(It->first) ||
-         libc::varArgFixedCount(stripLeadingUnderscores(It->first))))
+        (libc::libcArityForSymbol(It->first, TargetLibC) ||
+         libc::varArgFixedCount(stripLeadingUnderscores(It->first),
+                                TargetLibC)))
       IndirectImportName = It->first;
   }
 
@@ -788,10 +789,11 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   if (Op.Opcode == NdOp::CALL || !IndirectImportName.empty()) {
     std::string CalleeName = resolveCalleeName();
     if (!IndirectImportName.empty()) {
-      const auto Arity = libc::libcArityForSymbol(CalleeName);
+      const auto Arity = libc::libcArityForSymbol(CalleeName, TargetLibC);
       const unsigned Required =
           Arity ? Arity->IntArgs + Arity->FpArgs
-                : libc::varArgFixedCount(stripLeadingUnderscores(CalleeName));
+                : libc::varArgFixedCount(stripLeadingUnderscores(CalleeName),
+                                         TargetLibC);
       if (Args.size() < Required) {
         syncError() << "med_llvm_emitter: resolved indirect call to "
                     << CalleeName << " lacks recovered arguments\n";
@@ -839,13 +841,13 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
                   : (kAutoFuncPrefix + llvm::utohexstr(CallAddr)).str();
       } else if (!CalleeName.empty()) {
         llvm::StringRef Bare = stripLeadingUnderscores(CalleeName);
-        NamedNumFixed = libc::varArgFixedCount(Bare);
+        NamedNumFixed = libc::varArgFixedCount(Bare, TargetLibC);
         NumFixed = NamedNumFixed;
       }
 
       if (!CalleeName.empty() && NamedNumFixed == 0)
-        NamedNumFixed =
-            libc::varArgFixedCount(stripLeadingUnderscores(CalleeName));
+        NamedNumFixed = libc::varArgFixedCount(
+            stripLeadingUnderscores(CalleeName), TargetLibC);
 
       bool IsKnownVarArg = (NumFixed > 0);
       const bool IsStructurallyRecoveredVarArg =
@@ -857,7 +859,8 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         if (!Callee) {
           std::vector<llvm::Type *> FixedTypes;
           for (unsigned I = 0; I < NumFixed && I < Args.size(); ++I) {
-            const auto Kind = libc::varArgFixedParamKind(CalleeName, I);
+            const auto Kind =
+                libc::varArgFixedParamKind(CalleeName, I, TargetLibC);
             if (IsStructurallyRecoveredVarArg ||
                 Kind == libc::VarArgFixedParamKind::Unknown) {
               FixedTypes.push_back(ArgTypes[I]);
@@ -880,7 +883,7 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         for (unsigned I = 0;
              !IsStructurallyRecoveredVarArg && I < NumFixed && I < Args.size();
              ++I) {
-          if (libc::varArgFixedParamKind(CalleeName, I) ==
+          if (libc::varArgFixedParamKind(CalleeName, I, TargetLibC) ==
                   libc::VarArgFixedParamKind::Pointer &&
               Args[I]->getType()->isIntegerTy()) {
             llvm::Value *Sym =
@@ -910,7 +913,7 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       // integer/vector registers (pow reads garbage d0/d1) and the double
       // result is read from x0 -- patched math returns wrong values.
       if (!Callee && !CalleeName.empty()) {
-        auto Arity = libc::libcArityForSymbol(CalleeName);
+        auto Arity = libc::libcArityForSymbol(CalleeName, TargetLibC);
         // A known libc function whose RESULT is floating-point.  Three shapes
         // are modelled: (a) all-FP-args (sqrt/pow), (b) FP-first mixed int/FP
         // (ldexp/frexp), and (c) integer/pointer args with an FP return
@@ -1146,9 +1149,9 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       if (AI < CalleeTy->getNumParams()) {
         auto *Want = CalleeTy->getParamType(AI);
         const auto FixedKind =
-            CalleeTy->isVarArg()
-                ? libc::varArgFixedParamKind(Callee->getName().str(), AI)
-                : libc::VarArgFixedParamKind::Unknown;
+            CalleeTy->isVarArg() ? libc::varArgFixedParamKind(
+                                       Callee->getName().str(), AI, TargetLibC)
+                                 : libc::VarArgFixedParamKind::Unknown;
         // Symbolize a pointer-width integer arg resolving to a global address
         // when the callee param is itself an integer.  A callee recovered
         // with integer params (e.g. a variadic call whose args were recovered
@@ -1436,7 +1439,7 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         Callee->addFnAttr(*ControlAttribute);
     }
     const auto ReturnsValue = [&](llvm::StringRef Name) {
-      return libc::libcReturnsValue(Name, TargetFormat).value_or(false);
+      return libc::libcReturnsValue(Name, TargetLibC).value_or(false);
     };
     if (!Routine.empty() &&
         (ReturnsValue(Routine) ||

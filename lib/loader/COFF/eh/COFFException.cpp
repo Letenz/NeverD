@@ -179,17 +179,25 @@ void ensureExceptionHandlers(BinaryImage &Img, const std::set<va_t> &Entries) {
   // is a GS wrapper: every frame that installs an unnamed handler asks, and a
   // stripped image's CxxFrameHandler3 is one that thousands of frames share.
   std::unordered_map<va_t, std::optional<ExceptionPersonality>> GSWrapperBase;
+  // The loop below acts only on records whose tables are still undecoded;
+  // after a full load there are none, and the image-wide scans that serve
+  // their decoding would be built for nothing on every call.
+  const bool Undecoded = llvm::any_of(
+      Img.ExceptionMetadata.Functions,
+      [](const ExceptionFunction &F) { return !F.LanguageTablesResolved; });
   const std::set<va_t> UnnamedMinGW =
-      findUnnamedMinGWPersonalities(Img, PersonalityCache);
+      Undecoded ? findUnnamedMinGWPersonalities(Img, PersonalityCache)
+                : std::set<va_t>();
   const bool DecodeAll = Wanted.empty();
   detail::CxxFuncInfoGroups CxxGroups;
   const detail::CxxFuncInfoGroups *CxxGroupPtr = nullptr;
-  if (DecodeAll) {
+  if (DecodeAll && Undecoded) {
     CxxGroups = detail::buildCxxFuncInfoGroups(Img);
     CxxGroupPtr = &CxxGroups;
   }
   const detail::PrimaryFunctionByBegin PrimaryByBegin =
-      detail::indexPrimaryFunctionsByBegin(Img);
+      Undecoded ? detail::indexPrimaryFunctionsByBegin(Img)
+                : detail::PrimaryFunctionByBegin();
 
   bool Progress = true;
   while (Progress) {
