@@ -4893,8 +4893,8 @@ void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
   if (ResultLive && !valueFeedsPrintedUse(&Call)) {
     const LibraryCallee Library = libraryCallee(Call);
     if (calleeReturnsNothing(Call) ||
-        (Library &&
-         libc::libcResult(Library.Name, Opts.Format) == libc::LibCResult::Void))
+        (Library && libc::libcResult(Library.Name, libcVariant()) ==
+                        libc::LibCResult::Void))
       ResultLive = false;
   }
   if (ResultLive)
@@ -5099,12 +5099,13 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
     const bool Null = Constant && Constant->isZero();
     // A header's pointer parameter takes the integer that holds an address
     // converted, an object's or a function's (qsort's comparison).
-    if (HeaderInteger && libc::isObjectPointerParameter(Library.Name, ArgIdx))
+    if (HeaderInteger &&
+        libc::isObjectPointerParameter(Library.Name, ArgIdx, libcVariant()))
       Argument = Null ? "0" : "(void *)(uintptr_t)(" + Argument + ")";
     else if (const auto Function =
-                 HeaderInteger
-                     ? libc::functionPointerParameter(Library.Name, ArgIdx)
-                     : std::nullopt)
+                 HeaderInteger ? libc::functionPointerParameter(
+                                     Library.Name, ArgIdx, libcVariant())
+                               : std::nullopt)
       Argument = Null ? "0"
                       : "(" + std::string(*Function) + ")(uintptr_t)(" +
                             Argument + ")";

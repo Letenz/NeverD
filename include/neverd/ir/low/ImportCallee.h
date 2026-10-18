@@ -194,7 +194,7 @@ importOwnRoutine(const BinaryImage &Img,
   }
   if (!Imp || !Imp->IATAddr)
     return std::nullopt;
-  if (libc::libcArityForSymbol(Imp->Name) ||
+  if (libc::libcArityForSymbol(Imp->Name, libc::libcVariantOf(Img)) ||
       libc::libcPrototype(cNameOfStatedName(Imp->Name, Img.Format, Img.Arch),
                           Img.abiFormat()))
     return std::nullopt;

@@ -13,6 +13,7 @@
 #define NEVERD_BACKEND_C_CEMITTEROPTIONS_H
 
 #include "neverd/Common.h"
+#include "neverd/libc/LibCVariant.h"
 
 #include <functional>
 #include <map>
@@ -96,6 +97,11 @@ struct CEmitterOptions {
   /// rdata C/wchar literals, and name image-backed data objects
   /// instead of emitting raw virtual addresses.
   const BinaryImage *Image = nullptr;
+  /// The C library whose declarations the program's calls follow: the
+  /// image's (libc::libcVariantOf), else its format's.
+  libc::LibCVariant libcVariant() const {
+    return Image ? libc::libcVariantOf(*Image) : libc::libcVariantOf(Format);
+  }
   /// The names the user gave addresses, which name image data ahead of debug
   /// information and symbols.
   const std::map<va_t, std::string> *UserNames = nullptr;

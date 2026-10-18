@@ -5521,6 +5521,51 @@ TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
   }
 }
 
+TEST_F(SessionCAPITest, DarwinCallsPassWhatLibSystemDeclares) {
+  // libSystem declares some routines otherwise than glibc does, and Apple's
+  // AArch64 convention passes a variadic routine's named parameters in
+  // registers and the rest on the stack: fcntl's command is in x1 and its
+  // flags on the stack, and shm_open's mode on the stack.  Each call passes
+  // what the code puts in each place, in both C backends.
+  struct Call {
+    const char *Function, *HighC, *LLVMC;
+  };
+  const Call Calls[] = {
+      {"_SetFlags", "fcntl(arg0, 4, arg1)", "fcntl(arg0, 4, arg1)"},
+      {"_Request", "ioctl(arg0, arg1, arg2)", "ioctl(arg0, arg1, "},
+      {"_OpenAt", "openat(arg0, (void *)(uintptr_t)arg1, 0x201, arg2)",
+       "0x201, arg2)"},
+      {"_Shared", "shm_open((void *)(uintptr_t)arg0, 0x202, 0x180)",
+       "0x202, 0x180)"},
+      {"_Send", "sendfile(arg0, arg1, 0, (int64_t*)(uintptr_t)arg2, 0, 0)",
+       "sendfile(arg0, arg1, 0, (void *)(uintptr_t)(arg2), 0, 0)"},
+  };
+  const auto Fixture = std::filesystem::path(__FILE__).parent_path() / "types" /
+                       "fixtures" / "darwin_variadic_calls_arm64";
+  std::ifstream Input(Fixture, std::ios::binary);
+  const std::string Path =
+      write("darwin_variadic_calls_arm64",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  neverd_session_t Darwin = neverd_session_create();
+  ASSERT_NE(Darwin, nullptr);
+  const auto Destroy =
+      llvm::make_scope_exit([&] { neverd_session_destroy(Darwin); });
+  ASSERT_EQ(neverd_session_load(Darwin, Path.c_str()), 1)
+      << takeString(neverd_last_error(Darwin));
+  ASSERT_GE(neverd_session_discover_functions(Darwin), 0)
+      << takeString(neverd_last_error(Darwin));
+  for (const Call &C : Calls) {
+    SCOPED_TRACE(C.Function);
+    const int Index = neverd_func_find_by_name(Darwin, C.Function);
+    ASSERT_GE(Index, 0);
+    const neverd_va_t Entry = neverd_func_entry(Darwin, Index);
+    const std::string HighC = takeString(neverd_decompile(Darwin, Entry));
+    EXPECT_NE(HighC.find(C.HighC), std::string::npos) << HighC;
+    const std::string LLVMC = takeString(neverd_decompile_llvm(Darwin, Entry));
+    EXPECT_NE(LLVMC.find(C.LLVMC), std::string::npos) << LLVMC;
+  }
+}
+
 TEST_F(SessionCAPITest, UefiApplicationsJoinTheirFirmwaresLibrary) {
   // A UEFI application joins its architecture's MdePkg library, and its
   // entry takes the specification's EFI_IMAGE_ENTRY_POINT: the system

@@ -293,7 +293,7 @@ private:
     const std::string CName =
         cNameOfStatedName(Name, Img.Format, Img.Arch).str();
     if (const std::optional<bool> Returns =
-            libc::libcReturnsValue(CName, Img.abiFormat()))
+            libc::libcReturnsValue(CName, libc::libcVariantOf(Img)))
       return !*Returns;
     if (Dbg)
       if (const std::optional<FunctionSym> Declared =

@@ -805,6 +805,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   ensureImportStorageSnapshot();
   TargetArch = TheArch;
   TargetFormat = Fmt;
+  TargetLibC = Img ? libc::libcVariantOf(*Img) : libc::libcVariantOf(Fmt);
   MergeableGlobals = MergeableGlobals_;
   UnhandledValueIntrinsicCount = 0;
   AddressProvenanceWork = {};

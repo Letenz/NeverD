@@ -3298,9 +3298,10 @@ ImportPrototypeArguments importPrototypeArguments(
     }
     // A PE import entry is the C name: MSVC's `_pipe(fds, size, mode)` is
     // not POSIX `pipe(fds)`, which stripping its underscore would reach.
-    const auto Arity = importNamesAreCNames(Img.Format)
-                           ? libc::libcArity(Name)
-                           : libc::libcArityForSymbol(Name);
+    const auto Arity =
+        importNamesAreCNames(Img.Format)
+            ? libc::libcArity(Name, libc::libcVariantOf(Img))
+            : libc::libcArityForSymbol(Name, libc::libcVariantOf(Img));
     if (!Arity || Arity->IntArgs < 0)
       return DeclaredArguments(Name);
     Arguments Result;
@@ -3344,9 +3345,10 @@ ImportPrototypeArguments importPrototypeArguments(
     if (const libc::LibCPrototype *Prototype =
             libc::libcPrototype(Name, Img.Format))
       return libc::floatReturnBytes(*Prototype);
-    const auto Arity = importNamesAreCNames(Img.Format)
-                           ? libc::libcArity(Name)
-                           : libc::libcArityForSymbol(Name);
+    const auto Arity =
+        importNamesAreCNames(Img.Format)
+            ? libc::libcArity(Name, libc::libcVariantOf(Img))
+            : libc::libcArityForSymbol(Name, libc::libcVariantOf(Img));
     if (Arity)
       return libc::floatReturnBytes(*Arity);
     if (const std::optional<FunctionSym> Function = Declared(Name);

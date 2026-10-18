@@ -43,6 +43,7 @@
 #include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/ir/med/MedMutableSource.h"
+#include "neverd/libc/LibCVariant.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/DataSymbolBinding.h"
 
@@ -2088,6 +2089,8 @@ private:
   std::set<va_t> ModuleSuppressibleJumpTableRelocationSlots;
   Arch TargetArch = Arch::X64;
   BinaryFormat TargetFormat = BinaryFormat::Unknown;
+  /// The C library whose declarations the program's calls follow.
+  libc::LibCVariant TargetLibC = libc::LibCVariant::GNU;
 
   llvm::Function *CurFunc = nullptr;
   const MedFunc *CurMedFunc = nullptr;

@@ -3025,7 +3025,9 @@ private:
             Formatted = Effects.family() == CallEffectFamily::FormattedInput
                             ? safety::detail::formattedSourceName(Name)
                             : std::nullopt) {
-      const unsigned FixedCount = libc::varArgFixedCount(Formatted->first);
+      const unsigned FixedCount = libc::varArgFixedCount(
+          Formatted->first,
+          In.Img ? libc::libcVariantOf(*In.Img) : libc::LibCVariant::GNU);
       return ArgIndex < static_cast<int>(FixedCount)
                  ? (argumentHasPointerWidth(CI, ArgIndex) ? CallUse::Definite
                                                           : CallUse::Possible)
