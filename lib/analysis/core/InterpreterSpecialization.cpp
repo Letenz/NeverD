@@ -21,10 +21,12 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/symbolic/SymExec.h"
+#include "neverd/symbolic/SymMBA.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/SaveAndRestore.h"
 
 #include <algorithm>
 #include <deque>
@@ -843,6 +845,8 @@ private:
   const size_t ManualSlots;
   ControlRefinement &Refinement;
   SpecializationResult Result;
+  // Borrowed only while evaluate() owns the matching context and cache.
+  MBARewriteCache *FrameRewrites = nullptr;
   std::vector<Node> Nodes;
   std::map<ContextKey, int> Indices;
   std::map<std::pair<va_t, InstructionMode>, uint32_t> ContextCounts;
@@ -929,6 +933,7 @@ std::optional<uint64_t> Specializer::frameOffset(SymContext &Ctx,
   if (Proof == FrameOffsetProof::Optional && !CandidateMask)
     return std::nullopt;
   detail::FrameOffsetNormalization Normalization;
+  Normalization.Rewrites = FrameRewrites;
   Normalization.MaxWork =
       std::min(Options.MaxFrameOffsetNormalizationWorkPerProof,
                Result.EvaluatedOperations < Options.MaxOperations
@@ -2189,6 +2194,12 @@ bool Specializer::evaluate(int Id) {
   DemandCursor = Draft.Key.Cursor;
   Draft.Incoming = Nodes[Id].Incoming;
   SymContext Ctx;
+  // A node may normalize several related addresses, including across chained
+  // transfers. Only exact context-local derivations survive those queries;
+  // reevaluation and projection start with a new cache and symbolic context.
+  MBARewriteCache Rewrites(Ctx);
+  llvm::SaveAndRestore<MBARewriteCache *> RestoreFrameRewrites(FrameRewrites,
+                                                               &Rewrites);
   SymState State(Ctx, Options.ByteOrder);
   const SymRef FrameRoot =
       Options.FrameBaseRegister ? Ctx.mkFreshVar(64, "entry_frame") : SymRef();
