@@ -197,6 +197,16 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         Remaining -= Size;
         Out.LogRecords->push_back(std::move(R));
       }
+    } else if (Name == field::JNIClassLookupFailures) {
+      const auto *Failures = V.getAsObject();
+      if (!Failures || Failures->size() > 4096)
+        return invalid(Name);
+      for (const auto &[Class, Exception] : *Failures) {
+        auto Type = string(Exception, Name);
+        if (!Type)
+          return Type.takeError();
+        Out.JNIClassLookupFailures.emplace(Class.str(), std::move(*Type));
+      }
     } else if (Name == field::DexImages) {
       const auto *Images = V.getAsArray();
       if (!Images || Images->size() > 16)
@@ -386,6 +396,16 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
                          {field::Trace, std::move(Trace)},
                          {field::TraceTruncated, Result.TraceTruncated},
                          {field::Memory, std::move(Memory)}};
+  if (!Result.JNIRegistrations.empty()) {
+    llvm::json::Array Bindings;
+    for (const auto &Binding : Result.JNIRegistrations)
+      Bindings.push_back(
+          llvm::json::Object{{field::JNIClass, Binding.Class},
+                             {field::Name, Binding.Name},
+                             {field::JNISignature, Binding.Signature},
+                             {field::Address, bits(Binding.Address)}});
+    Out[field::JNIRegistrations] = std::move(Bindings);
+  }
   if (Result.ExecutionObservationsEnabled) {
     llvm::json::Array Observations;
     for (const auto &Record : Result.ExecutionObservations) {

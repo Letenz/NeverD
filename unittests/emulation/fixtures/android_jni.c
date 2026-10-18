@@ -1000,3 +1000,122 @@ int jni_string_intern_identity(void) {
   C(e, void, 22, global);
   return 0;
 }
+
+/* Lookup failure is an explicit external-loader result, not a missing DEX
+ * guess. */
+int jni_explicit_lookup_failure(const char *type) {
+  Handle e = attach();
+  CHECK(e);
+  CHECK(!C(e, Ref, 6, "fixture/Absent"));
+  CHECK(C(e, int, 228));
+  Ref thrown = C(e, Ref, 15);
+  CHECK(thrown);
+  C(e, void, 17);
+  Ref klass = C(e, Ref, 6, type);
+  CHECK(C(e, int, 32, thrown, klass));
+  Ref wrong = C(e, Ref, 6, "java/lang/RuntimeException");
+  CHECK(!C(e, int, 32, thrown, wrong));
+  CHECK(!C(e, Ref, 6, "fixture/Absent"));
+  Ref second = C(e, Ref, 15);
+  C(e, void, 17);
+  CHECK(!C(e, int, 24, thrown, second));
+  C(e, void, 23, second);
+  C(e, void, 23, thrown);
+  CHECK(!C(e, int, 228));
+  CHECK(!C(vm, int, 5));
+  return 0;
+}
+struct NativeBinding {
+  const char *name, *signature;
+  U64 target;
+};
+static int registration_error(Handle e, const char *expected) {
+  CHECK(C(e, int, 228));
+  Ref exception = C(e, Ref, 15);
+  C(e, void, 17);
+  Ref type = C(e, Ref, 6, "java/lang/NoSuchMethodError");
+  CHECK(C(e, int, 32, exception, type));
+  Ref parent = C(e, Ref, 6, "java/lang/IncompatibleClassChangeError");
+  CHECK(C(e, int, 32, exception, parent));
+  Ref get_message = C(e, Ref, 33, type, "getMessage", "()Ljava/lang/String;");
+  Ref message = C(e, Ref, 34, exception, get_message);
+  const char *text = C(e, const char *, 169, message, (void *)0);
+  unsigned i = 0;
+  do {
+    CHECK(text[i] == expected[i]);
+  } while (expected[i++]);
+  C(e, void, 170, message, text);
+  return 0;
+}
+int jni_native_registration(unsigned mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref child = C(e, Ref, 6, "registration/Child");
+  Ref parent = C(e, Ref, 6, "registration/Parent");
+  Ref deferred = C(e, Ref, 6, "registration/Deferred");
+  /* Deferred.<clinit> throws: neither FindClass nor registration may run it. */
+  CHECK(child && parent && deferred && !C(e, int, 228));
+  struct NativeBinding all[] = {{"alpha", "(I)I", 0x12340000},
+                                {"beta", "(J)J", 0x12340004},
+                                {"child", "()V", 0x12340008}};
+  CHECK(!C(e, int, 215, child, all, 3));
+  struct NativeBinding after = {"after", "()V", 0x1234000c};
+  CHECK(!C(e, int, 215, deferred, &after, 1));
+  CHECK(!C(e, int, 228));
+  CHECK(!C(e, int, 215, child, (void *)0, 0));
+  if (mode == 3) {
+    struct NativeBinding bad[] = {{"alpha", "!(I)I", 0x12340010},
+                                  {"missing", "()V", 0x12340014}};
+    CHECK(C(e, int, 215, child, bad, 2) == -1);
+    CHECK(!registration_error(
+        e,
+        "no static or non-static method \"Lregistration/Child;.missing()V\""));
+    struct NativeBinding ordinary = {"ordinary", "()V", 0x12340018};
+    CHECK(C(e, int, 215, child, &ordinary, 1) == -1);
+    CHECK(!registration_error(
+        e, "no native method \"Lregistration/Child;.ordinary()V\""));
+  } else if (mode == 4) {
+    struct NativeBinding twice[] = {{"alpha", "(I)I", 0x12340010},
+                                    {"alpha", "(I)I", 0x12340014}};
+    CHECK(!C(e, int, 215, parent, twice, 2));
+  } else if (mode == 5) {
+    CHECK(!C(e, Ref, 113, deferred, "after", "()V"));
+    CHECK(C(e, int, 228));
+    Ref exception = C(e, Ref, 15);
+    C(e, void, 17);
+    Ref type = C(e, Ref, 6, "java/lang/ExceptionInInitializerError");
+    CHECK(C(e, int, 32, exception, type));
+    /* Resolution of an erroneous class still returns its class identity. */
+    Ref again = C(e, Ref, 6, "registration/Deferred");
+    CHECK(C(e, int, 24, deferred, again));
+  } else if (mode >= 6) {
+    if (mode == 6)
+      C(e, int, 215, child, all, -1);
+    if (mode == 7)
+      C(e, int, 215, child, (void *)0, 1);
+    if (mode == 8)
+      C(e, int, 215, (Ref)0, all, 1);
+    if (mode == 9) {
+      all[0].target = 0x1234001c;
+      all[1].target = 0;
+      C(e, int, 215, child, all, 2);
+    }
+    if (mode == 10) {
+      all[0].target = 0x1234001c;
+      all[1].signature = "invalid";
+      C(e, int, 215, child, all, 2);
+    }
+    if (mode == 11)
+      C(e, int, 215, child, all, 4097);
+    return 999;
+  }
+  if (mode == 1)
+    CHECK(!C(e, int, 216, child));
+  if (mode == 2)
+    CHECK(!C(e, int, 216, parent));
+  CHECK(!C(vm, int, 5));
+  e = attach();
+  CHECK(e && !C(e, int, 228));
+  CHECK(!C(vm, int, 5));
+  return 0;
+}

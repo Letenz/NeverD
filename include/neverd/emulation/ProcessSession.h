@@ -122,6 +122,7 @@ struct ProcessResult {
   std::optional<uint64_t> ReturnValue;
   bool InitializersEnabled = false, TraceTruncated = false;
   std::vector<NativeCallEvent> NativeCalls;
+  std::vector<NativeJNIRegistration> JNIRegistrations;
   std::vector<uint64_t> Trace;
   std::vector<NativeMemorySnapshot> MemorySnapshots;
   std::vector<NativeThreadSnapshot> NativeThreads;

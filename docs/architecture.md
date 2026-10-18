@@ -8007,6 +8007,12 @@ semantics. Guest storage uses the existing allocator and address-space authority
 shared by descriptor aliases and raw/Bionic calls. JSON adapters supply no
 alternate semantics or service responses. JNI object limits and Binder stream
 admission fail explicitly rather than borrowing a host VM or driver.
+`AndroidJNIRegistration` retains native bindings in the workload JNI owner and
+reports a sorted snapshot; the shared Program resolves declarations through the
+class/superclass chain without initializing them. The JSON adapter supplies
+explicit negative loader outcomes only; unknown inputs never imply absence.
+Neither FindClass nor registration executes a class initializer. Native method
+execution remains a separate unsupported contract.
 `AndroidJNIMethods` owns JNI method identities and descriptor/argument binding;
 all JNI call forms and explicit DEX methods reuse it and Bionic's GP argument reader.
 The finite intrinsic catalogue and value semantics live in `dalvik::Library`;

@@ -10,6 +10,7 @@
 #define NEVERD_EMULATION_ANDROIDJNI_H
 
 #include "neverd/dalvik/Runtime.h"
+#include "neverd/emulation/AndroidNative.h"
 
 #include "llvm/ADT/StringRef.h"
 
@@ -64,6 +65,7 @@ struct JNIState {
   std::shared_ptr<mobile::dalvik::Runtime> DexRuntime;
   std::map<uint64_t, const mobile::dalvik::Method *> DexMethods;
   std::map<uint64_t, const mobile::dalvik::Field *> DexFields;
+  std::map<std::string, NativeJNIRegistration> Registrations;
   std::shared_ptr<mobile::dalvik::Heap> Heap;
   uint64_t NextEnvironment = 0, NextReference = 1, NextFrame = 1;
 };

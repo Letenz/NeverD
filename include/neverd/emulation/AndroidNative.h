@@ -128,6 +128,11 @@ struct AndroidNativeOptions {
   /// share this workload VM. Scalar API 28 Build.VERSION fields project the
   /// explicit Properties snapshot; framework services are not inferred.
   bool JNI = false;
+  /// Explicit negative results from the workload's class loader. Keys are
+  /// slash-separated non-array names, values are ClassNotFoundException or
+  /// NoClassDefFoundError binary names. Unlisted unknown classes still stop.
+  /// These declarations cannot shadow intrinsic or supplied DEX classes.
+  std::map<std::string, std::string> JNIClassLookupFailures;
   /// Complete explicit DEX 035/037/038/039 images (Android API 28). No host
   /// classpath is consulted. Requires JNI; bounded integral static bodies only.
   std::vector<std::vector<uint8_t>> DexImages;
@@ -147,6 +152,11 @@ struct NativeThreadSnapshot {
   uint64_t ID, Handle, TLS, StackBase, StackSize, GuardSize;
   bool Finished = false, Detached = false, Retired = false, Waiting = false;
   std::optional<uint64_t> ReturnValue;
+};
+/// Retained RegisterNatives binding, independent of JNI reference lifetime.
+struct NativeJNIRegistration {
+  std::string Class, Name, Signature;
+  uint64_t Address;
 };
 struct NativeTraceThread {
   uint64_t Index, ID;
