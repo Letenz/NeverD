@@ -106,7 +106,7 @@ jobs:
       - name: Require every focused C++ case to execute and pass
         run: |
           python - <<'PY'
-          import json, os, subprocess
+          import json, os, subprocess, sys
           from pathlib import Path
           import xml.etree.ElementTree as ET
           from scripts.run_lift_qualification import audit
@@ -115,12 +115,15 @@ jobs:
           cache = Path('build-abi/CMakeCache.txt').read_text()
           assert 'NEVERD_ENABLE_MIMALLOC:BOOL=ON' in cache
           suffix = '.exe' if os.name == 'nt' else ''
+          # The stderr descriptor checks are compiled only on their hosts.
+          pipeline_minimum = 40 + (os.name != 'nt') + (sys.platform == 'linux')
           for owner, minimum in (('NeverDFPParameterMaskTests', 180),
-                                  ('NeverDPipelineOutcomeTests', 41),
+                                  ('NeverDPipelineOutcomeTests', pipeline_minimum),
                                   ('NeverDSupportThreadTests', 12),
                                   ('NeverDHighControlFlowTests', 420)):
               binary = Path('build-abi/bin') / (owner + suffix)
               listed = subprocess.check_output([str(binary), '--gtest_list_tests'], text=True)
+              (output / (owner + '.inventory.txt')).write_text(listed)
               names, suite = [], ''
               for line in listed.splitlines():
                   value = line.split(' #', 1)[0].strip()
@@ -128,7 +131,14 @@ jobs:
                       suite = value
                   elif line.startswith('  ') and suite:
                       names.append(suite + value.split()[0])
-              assert len(names) >= minimum and len(set(names)) == len(names)
+              assert len(names) >= minimum, (owner, len(names), minimum)
+              assert len(set(names)) == len(names), (owner, 'duplicate test identity')
+              if owner == 'NeverDPipelineOutcomeTests':
+                  for name, supported in (
+                      ('ClosedStderrPreservesNativeResult', os.name != 'nt'),
+                      ('FullStderrPreservesNativeResult', sys.platform == 'linux'),
+                  ):
+                      assert (('PipelineStageTrace.' + name) in names) == supported
               if owner == 'NeverDFPParameterMaskTests':
                   for name in ('FrameLocalLeafSummaryKeepsDefinitionIdentityAndDepth',
                                'FrameLocalLeafSummaryDoesNotReuseAnotherFunctionOrInvocation'):
