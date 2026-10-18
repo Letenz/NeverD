@@ -5447,6 +5447,15 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   ResolverBlockMemo<ValueKey, ResolverMemoEntry> ValueMemo;
   ResolverBlockMemo<MemoryKey, ResolverMemoEntry> MemoryMemo;
   std::map<LaneKey, std::optional<bool>> FrameAddressTaintMemo;
+  // Lookups that met a walk still in progress.  A false whose walk met none
+  // is final and stays cached; one that met any may still turn true once the
+  // ancestor finds a frame seed on another arm.
+  size_t FrameAddressTaintPendingHits = 0;
+  // Remaining taint-walk steps for this candidate's whole private-frame audit.
+  // A dispatch that is not the spilled-GOT shape can drive the walk for
+  // millions of steps; cutting it off here keeps that branch unresolved
+  // rather than spending the general evidence budget on it.
+  size_t PrivateFrameTaintWork = limits::kMaxJumpTablePrivateFrameTaintWork;
   bool QueryResolverAnalysisIncomplete = false;
   bool QueryResolverDepthExceeded = false;
   auto markResolverDepthIncomplete = [&] {
@@ -6496,6 +6505,11 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   mayDependOnCurrentFrameAddress = [&](int Block, int Before,
                                        const NdVar &Value,
                                        unsigned Depth) -> std::optional<bool> {
+    if (PrivateFrameTaintWork == 0) {
+      QueryResolverAnalysisIncomplete = true;
+      return std::nullopt;
+    }
+    --PrivateFrameTaintWork;
     if (Value.isConst() || Value.Size == 0)
       return false;
     if (!Value.isReg() && !Value.isTemp())
@@ -6530,14 +6544,25 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     if (!consumeMemoLookup(LaneKeyWork, FrameAddressTaintMemo.size()))
       return std::nullopt;
     auto MemoIt = FrameAddressTaintMemo.find(Key);
-    if (MemoIt != FrameAddressTaintMemo.end())
+    if (MemoIt != FrameAddressTaintMemo.end()) {
       // A recursive exact state with no discovered frame seed contributes no
-      // new taint.  Completed false states are deliberately not cached below:
-      // an ancestor may still discover a frame seed on another incoming arm.
+      // new taint, but it leaves every enclosing false provisional.
+      if (!MemoIt->second)
+        ++FrameAddressTaintPendingHits;
       return MemoIt->second.value_or(false);
+    }
     if (!consumeMemoInsert(LaneKeyWork, FrameAddressTaintMemo.size()))
       return std::nullopt;
     MemoIt = FrameAddressTaintMemo.try_emplace(Key, std::nullopt).first;
+    const size_t PendingHitsAtEntry = FrameAddressTaintPendingHits;
+    // Cache a settled answer; erase a provisional false.
+    auto finish = [&](bool Tainted) {
+      if (Tainted || FrameAddressTaintPendingHits == PendingHitsAtEntry)
+        MemoIt->second = Tainted;
+      else
+        FrameAddressTaintMemo.erase(MemoIt);
+      return Tainted;
+    };
 
     const ResolverFlowBlock &B = Graph.Blocks[Block];
     const LaneView Query = viewOf(Value);
@@ -6626,11 +6651,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         }
         Tainted |= *Old;
       }
-      if (Tainted)
-        MemoIt->second = true;
-      else
-        FrameAddressTaintMemo.erase(MemoIt);
-      return Tainted;
+      return finish(Tainted);
     }
 
     bool Tainted = false;
@@ -6653,27 +6674,70 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       }
       Tainted |= *Incoming;
     }
-    if (Tainted)
-      MemoIt->second = true;
-    else
-      FrameAddressTaintMemo.erase(MemoIt);
-    return Tainted;
+    return finish(Tainted);
   };
 
-  using PrivateFrameSlotKey = std::tuple<uint64_t, int64_t, uint16_t>;
-  constexpr size_t PrivateFrameSlotKeyWork = 3;
+  // A cell's audit depends only on the graph and on the use whose reaching
+  // blocks it scans (-1: every block), so it outlives one query.
+  using PrivateFrameSlotKey = std::tuple<uint64_t, int64_t, uint16_t, int>;
+  constexpr size_t PrivateFrameSlotKeyWork = 4;
   std::map<PrivateFrameSlotKey, bool> PrivateFrameAuditMemo;
+  // The blocks that can reach the active query's use, empty until the first
+  // audit asks.  An escape anywhere else cannot precede a read the query
+  // resolves: every call, store or load its walk visits lies on a path to
+  // that use, and no execution that leaves such a block (a landing pad that
+  // resumes unwinding) comes back to it.
+  std::vector<bool> ReachesActiveUse;
+  int ActiveUseBlock = -1;
+  auto activeUseReachers = [&]() -> std::optional<bool> {
+    if (!ReachesActiveUse.empty())
+      return true;
+    if (!ActiveValueQuery ||
+        !consumeEvidence(orderedSetLookupWork(Graph.PointToOp.size())))
+      return std::nullopt;
+    const auto Use = Graph.PointToOp.find(
+        {ActiveValueQuery->UseAddr, ActiveValueQuery->UseSeq});
+    if (Use == Graph.PointToOp.end())
+      return false;
+    const int UseBlock = Use->second.first;
+    if (UseBlock < 0 || UseBlock >= static_cast<int>(Graph.Blocks.size()) ||
+        !consumeEvidence(Graph.Blocks.size()))
+      return false;
+    std::vector<bool> Reaches(Graph.Blocks.size(), false);
+    std::vector<int> Work{UseBlock};
+    Reaches[UseBlock] = true;
+    while (!Work.empty()) {
+      const int Block = Work.back();
+      Work.pop_back();
+      for (int Pred : Graph.Blocks[Block].Preds) {
+        if (!consumeEvidence())
+          return std::nullopt;
+        if (Pred < 0 || Pred >= static_cast<int>(Reaches.size()))
+          return false;
+        if (!Reaches[Pred]) {
+          Reaches[Pred] = true;
+          Work.push_back(Pred);
+        }
+      }
+    }
+    ReachesActiveUse = std::move(Reaches);
+    ActiveUseBlock = UseBlock;
+    return true;
+  };
   auto currentFrameAddressesRemainPrivate =
       [&](uint64_t SlotBase, int64_t SlotOffset,
           uint16_t SlotSize) -> std::optional<bool> {
-    const PrivateFrameSlotKey Key{SlotBase, SlotOffset, SlotSize};
+    const std::optional<bool> Reachers = activeUseReachers();
+    if (!Reachers)
+      return std::nullopt;
+    const PrivateFrameSlotKey Key{SlotBase, SlotOffset, SlotSize,
+                                  *Reachers ? ActiveUseBlock : -1};
     if (!consumeMemoLookup(PrivateFrameSlotKeyWork,
                            PrivateFrameAuditMemo.size()))
       return std::nullopt;
     const auto Cached = PrivateFrameAuditMemo.find(Key);
     if (Cached != PrivateFrameAuditMemo.end())
       return Cached->second;
-    FrameAddressTaintMemo.clear();
     auto publishResult = [&](bool Result) -> std::optional<bool> {
       if (!consumeMemoInsert(PrivateFrameSlotKeyWork,
                              PrivateFrameAuditMemo.size()))
@@ -6708,6 +6772,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       return std::nullopt;
     for (int Block = 0; Block < static_cast<int>(Graph.Blocks.size());
          ++Block) {
+      if (*Reachers && !ReachesActiveUse[Block])
+        continue;
       const ResolverFlowBlock &B = Graph.Blocks[Block];
       for (int I = 0; I < static_cast<int>(B.Ops.size()); ++I) {
         if (!consumeEvidence())
@@ -9355,6 +9421,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       ++ResolverMemoGeneration;
       FrameMemo.clear();
       FrameStates.clear();
+      PrivateFrameAuditMemo.clear();
+      FrameAddressTaintMemo.clear();
       QueryResolverAnalysisIncomplete = false;
     }
     QueryResolverDepthExceeded = false;
@@ -9364,8 +9432,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     }
     const JumpTableValueQuery &Query = Queries[QueryIndex];
     ActiveValueQuery = &Query;
-    PrivateFrameAuditMemo.clear();
-    FrameAddressTaintMemo.clear();
+    ReachesActiveUse.clear();
+    ActiveUseBlock = -1;
     const bool OccurrenceRootMode =
         Query.UseDefinedAlternativesAsOccurrenceRoots;
     if (OccurrenceRootMode && !prepareDefinedOccurrenceRoots()) {
@@ -10137,7 +10205,8 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
       Info.HasTargetBase ? Info.TargetBase : Info.BaseAddr;
   // A linked i386 image materializes its GOT address from a get-PC value and
   // a scalar GOTPC immediate, so that exact anchor carries no address
-  // provenance.
+  // provenance.  Like the GOT model of an object, it may be reloaded from a
+  // private frame spill that calls and foreign stores cannot reach.
   const bool LinkedI386GOTAnchor =
       Info.IsRelative && Info.HasTargetBase &&
       linkedI386GlobalOffsetTable(*CurrentImg) == Info.TargetBase;
@@ -10212,7 +10281,7 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
       Query.UseDefinedAlternativesAsOccurrenceRoots =
           RestrictToLexicalTargetRegion || UseDefinedAlternativesAsRoots;
       Query.AllowPrivateFrameMemoryAcrossCalls =
-          I386GOTOFFPrivateFrameModelAuthenticated;
+          I386GOTOFFPrivateFrameModelAuthenticated || LinkedI386GOTAnchor;
       Query.Alternatives.reserve(Alternatives.size());
       Query.Alternatives.insert(Query.Alternatives.end(), Alternatives.begin(),
                                 Alternatives.end());
@@ -10534,7 +10603,7 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
   FinalQuery.UseDefinedAlternativesAsOccurrenceRoots =
       UsedLexicalTargetRegion || UseDefinedAlternativesAsRoots;
   FinalQuery.AllowPrivateFrameMemoryAcrossCalls =
-      I386GOTOFFPrivateFrameModelAuthenticated;
+      I386GOTOFFPrivateFrameModelAuthenticated || LinkedI386GOTAnchor;
   FinalQuery.Alternatives = std::move(*FinalAlternatives);
   FinalQueries.push_back(std::move(FinalQuery));
   bool FinalQueryComplete = true;
@@ -10941,6 +11010,20 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
   const size_t MaxProofQueries =
       AggregateEvidenceBudget ? limits::kMaxJumpTableRoleMatchEvidenceWork
                               : limits::kMaxJumpTableEntries;
+  // A linked i386 image computes its GOT address from a get-PC value and a
+  // scalar GOTPC immediate, so that exact base carries no address provenance.
+  // Like the GOT model of an object, a table read through it may reload it
+  // from a private frame spill that calls and foreign stores cannot reach.
+  const std::optional<va_t> LinkedI386GOT =
+      linkedI386GlobalOffsetTable(*CurrentImg);
+  if (LinkedI386GOT && !consumeWork(Info.LoadRoles.size()))
+    return false;
+  const bool LinkedI386GOTBase =
+      LinkedI386GOT &&
+      std::any_of(
+          Info.LoadRoles.begin(), Info.LoadRoles.end(), [&](const auto &Role) {
+            return Role.DisplacedAddress.ExpectedRuntimeBase == *LinkedI386GOT;
+          });
   auto pushQuery = [&](std::vector<JumpTableValueQuery> &Queries,
                        const NdVar &Candidate, const LowOp &Use,
                        llvm::ArrayRef<JumpTableValueOccurrence> Alternatives,
@@ -10962,7 +11045,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
     Query.UseDefinedAlternativesAsOccurrenceRoots =
         UseDefinedAlternativesAsRoots;
     Query.AllowPrivateFrameMemoryAcrossCalls =
-        I386GOTOFFPrivateFrameModelAuthenticated;
+        I386GOTOFFPrivateFrameModelAuthenticated || LinkedI386GOTBase;
     Query.Alternatives.reserve(Alternatives.size());
     Query.Alternatives.insert(Query.Alternatives.end(), Alternatives.begin(),
                               Alternatives.end());
@@ -11281,10 +11364,6 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
     return pushQuery(Queries, Candidate, Use, *Alternatives, AllowZeroExtension,
                      AllowSignExtension);
   };
-  // A linked i386 image computes its GOT address from a get-PC value and a
-  // scalar GOTPC immediate, so that exact base carries no address provenance.
-  const std::optional<va_t> LinkedI386GOT =
-      linkedI386GlobalOffsetTable(*CurrentImg);
   auto pushSingleBaseQuery = [&](std::vector<JumpTableValueQuery> &Queries,
                                  const NdVar &Candidate, const LowOp &Use,
                                  va_t Base, uint16_t Size) {

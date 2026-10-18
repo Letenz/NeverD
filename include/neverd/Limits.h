@@ -488,6 +488,16 @@ constexpr int64_t kMaxFrameSize = 16 * 1024 * 1024; // 16 MiB
 /// indirect-tail frame guard. Exhaustion retains the original indirect branch.
 constexpr size_t kMaxIndirectTailFrameWork = 262144;
 
+/// Taint-walk steps across one candidate's whole private-frame audit, the
+/// proof that a reloaded i386 GOT base is spilled to a cell no current-frame
+/// address can reach.  Measured cases: a clang -O0 PIC switch that resolves
+/// (an aligned frame, foreign stores and a call in the loop) settles in about
+/// 4,700 steps; a large libstdc++ function whose dispatch is not this shape
+/// drives the walk past 31,000,000 before the general evidence budget would
+/// stop it.  This cuts the latter off early (the dispatch stays unresolved)
+/// while leaving the former a wide margin.
+constexpr size_t kMaxJumpTablePrivateFrameTaintWork = 262144;
+
 /// Cumulative decoded-prologue and protected-prefix work for one SEH query.
 constexpr size_t kMaxSEHEstablisherFrameWork = 1048576;
 
