@@ -69,7 +69,7 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Connect:
   case ServiceKind::SendTo:
   case ServiceKind::ReceiveFrom:
-    return Files.network(Kind, Event, Options.LinuxNetwork, Result);
+    return Files.network(Kind, Event, Options.LinuxNetwork, Result, Thread);
   case ServiceKind::PidFDOpen:
     if (Options.LinuxKernel && Options.LinuxKernel->GKI) {
       return Files.openProcessDescriptor(Event.Arguments[0], Event.Arguments[1],
@@ -109,7 +109,7 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::FstatAt:
   case ServiceKind::StatFS:
   case ServiceKind::FstatFS:
-    return Files.handle(Kind, Event, Result);
+    return Files.handle(Kind, Event, Result, Thread);
   case ServiceKind::Time:
   case ServiceKind::GetTimeOfDay:
   case ServiceKind::ClockGetTime:

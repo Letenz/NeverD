@@ -296,13 +296,16 @@ TEST_P(LinuxSelect, TimedInputCannotBeReadEarlyOrConsumedByQueries) {
   ASSERT_EQ(socket(), 3u);
   EXPECT_EQ(call(ServiceKind::ReceiveFrom, 3, Base + 128, 1, 0x40),
             uint64_t(-11));
-  EXPECT_FALSE(call(ServiceKind::Read, 3, Base + 128, 1));
+  linux_model::ThreadContext Reader;
+  EXPECT_FALSE(require(Kernel->handle(
+      ServiceKind::Read, {0, 0, {3, Base + 128, 1, 0, 0, 0}, {}}, &Reader)));
+  ASSERT_TRUE(Reader.Pending);
   EXPECT_EQ(Kernel->clock().elapsed(), 0u);
   EXPECT_EQ(word(Base + 128), 0u);
   word(Base + 64, 8);
   EXPECT_EQ(select(4, Base + 64, 0, 0, 0), 1u); // Infinite wait has an event.
   EXPECT_EQ(Kernel->clock().elapsed(), 7u);
-  EXPECT_EQ(call(ServiceKind::Read, 3, Base + 128, 1), 1u);
+  EXPECT_EQ(require(Reader.Pending->resume(Report)), 1u);
   EXPECT_EQ(word(Base + 128), 9u);
   word(Base + 104, 5);
   EXPECT_EQ(select(4, Base + 64), 0u);

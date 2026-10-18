@@ -62,7 +62,7 @@ uint32_t LinuxFiles::outputTarget(uint32_t FD) const {
 
 llvm::Expected<std::optional<uint64_t>>
 LinuxFiles::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
-                   ProcessResult &Result) {
+                   ProcessResult &Result, ThreadContext *Thread) {
   if (!Options)
     return unsupported(Result, FileInputsMissing);
   const auto &[A0, A1, A2, A3, A4, A5] = Event.Arguments;
@@ -86,7 +86,7 @@ LinuxFiles::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Dup3:
     return duplicate(Kind, A0, A1, A2, Result);
   case ServiceKind::Read:
-    return readDescriptor(A0, A1, A2, Result);
+    return readDescriptor(A0, A1, A2, Result, Thread);
   case ServiceKind::Getdents64:
     return directoryEntries(A0, A1, A2, Result);
   case ServiceKind::Ioctl:

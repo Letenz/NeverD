@@ -7974,3 +7974,13 @@ alone converts errors using the resumed thread's errno. Unknown observations
 and changed descriptor owners remain explicit stops.
 Android's raw and variadic syscall routes reuse this kernel owner; checked
 Bionic bitmap helpers own only guest memory operations and FORTIFY checks.
+
+`LinuxSocketReceive::ReceiveWait` retains the original socket description,
+scalar receive arguments and timeout independently of descriptor-number reuse.
+It projects the same arrival cursors as select, admits explicit receive errors
+without turning them into poll observations, and delegates completed copies to
+the existing TCP/UDP transfer owners. Competing reads can change the next wake
+but cannot reset a suspended deadline. Guest memory access is revalidated at
+completion. Raw read/recvfrom and Bionic read/recv/recvfrom all enter this owner
+and finish their original scheduler event once; no import adapter waits or
+advances a separate clock.

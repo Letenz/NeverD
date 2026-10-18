@@ -20,19 +20,15 @@ LinuxFiles::transferDatagram(OpenSocket &Socket, bool Send, uint64_t Address,
                              uint64_t PeerLength) {
   using Reply = std::optional<uint64_t>;
   constexpr uint32_t Peek = 2, Truncate = 0x20, DontWait = 0x40,
-                     WaitAll = 0x100, NoSignal = 0x4000;
-  const uint32_t Allowed =
-      Send ? DontWait | NoSignal : Peek | Truncate | DontWait | WaitAll;
-  if (Flags & ~Allowed)
+                     NoSignal = 0x4000;
+  // Receive flag admission belongs to receiveSocket, before suspension.
+  if (Send && (Flags & ~(DontWait | NoSignal)))
     return unsupported(Result, "unmodeled UDP transfer flags");
   if (!Socket.Datagram)
     return unsupported(Result,
                        "UDP transfer requires an explicit connected route");
   if (Size > MaxSignedIOSize)
     return Reply(uint64_t(0) - InvalidArgument);
-  if (!Send)
-    if (auto Early = receiveBeforeReady(Socket, Flags, Result))
-      return *Early;
   const auto &C = *Socket.Datagram;
   const LinuxNetworkReceive *Event = nullptr;
   if (Send) {
@@ -48,8 +44,7 @@ LinuxFiles::transferDatagram(OpenSocket &Socket, bool Send, uint64_t Address,
     if (Socket.Sent < Event->AfterSend)
       return unsupported(
           Result, "UDP receive event awaits declared outgoing datagrams");
-    if (Event->Error)
-      return receiveSocketError(Socket, *Event, Flags, Result);
+    assert(!Event->Error && "receive errors complete before data transfer");
   }
   const auto &Bytes = Send ? C.ExpectedSend[Socket.Sent] : Event->Bytes;
   const auto Count = std::min<uint64_t>(Size, Bytes.size());

@@ -59,6 +59,16 @@ exact timeout ties, shared-memory mutation during waits, output permissions
 changed by another thread, raw versus libc errno, and exactly one completion
 of the original call. No case opens a host socket.
 
+`LinuxReceive.*` checks direct blocking TCP/UDP receives on x64/AArch64: partial
+reads, delayed EOF, timeout/arrival ties, bounded silence, nonblocking and
+negative timeouts, retained sockets after FD reuse, alias competition, captured
+deadlines, late memory permissions and UDP peer lengths, and atomic refusal on
+clock overflow. `AndroidReceive.*` executes independent raw SVC, variadic
+syscall and libc read/recv/recvfrom callers at O0/O2 across relocation formats
+and available CPU backends. Two guest threads check sleep/arrival ordering,
+timeout changes, close/reuse, competing consumers, errno ownership and one
+completion of the original call. All network input is synthetic and offline.
+
 `AArch64SIMD.RegisterShifts*` checks baseline USHL/SSHL scalar D and fixed
 vectors against independent bit selection, including signed low-byte amounts,
 oversized shifts, destination aliases, cleared upper lanes, complete register
