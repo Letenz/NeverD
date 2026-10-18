@@ -7746,6 +7746,11 @@ elided address operations. `APointerSpilledAcrossALoopsCallsKeepsItsTable`
 walks an integer array in `.rdata` beside a code pointer with a pointer kept
 in a frame slot across a call (`add dword ptr [ebp-4], 4`), and fails as an
 ambiguous pointer table without the frame-slot recurrence.
+`ANestedLoopsSpilledIndexStaysAnOffset` keeps an outer loop's index in a frame
+slot and an inner loop's record pointer `&table[i]` in another, around a call
+with a pushed argument; it is refused the same way without the affine frame
+keys, as the inner loop's merge on the outer back edge leaves its pushes
+unkeyed.
 `I386CallContract.ABlockPhiIsNoArgumentPastAnEarlierCallInItsBlock` joins a
 callback's address and an import call's leftover in EDX, calls the import
 again in the join block, then a routine reading ECX and EDX: the argument is

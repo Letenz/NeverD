@@ -933,3 +933,63 @@ TEST(X86_32_FunctionDiscovery, APointerSpilledAcrossALoopsCallsKeepsItsTable) {
   ASSERT_NE(Result.LlvmModule, nullptr);
   EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
 }
+
+TEST(X86_32_FunctionDiscovery, ANestedLoopsSpilledIndexStaysAnOffset) {
+  // An outer loop keeps its index in a frame slot and an inner loop its
+  // record pointer, `&table[i]` advanced by 4, across a call that takes a
+  // pushed argument.  Each loop header merges ESP, and the inner loop's merge
+  // lies on the outer one's back edge; every value it merges is the frame's
+  // own ESP, so the pushes stay frame slots apart from the two spills.
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  std::vector<uint8_t> Text;
+  auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Text.insert(Text.end(), Bytes);
+  };
+  Emit({0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x0C}); // push ebp; mov ebp, esp; sub
+  Emit({0xC7, 0x45, 0xFC, 0x00, 0x00, 0x00, 0x00}); // mov [ebp-4], 0
+  Emit({0x8B, 0x45, 0xFC});             // 0x40100D: mov eax, [ebp-4]
+  Emit({0x6B, 0xC0, 0x0C});             // imul eax, eax, 12
+  Emit({0x05, 0x00, 0x20, 0x40, 0x00}); // add eax, 0x402000
+  Emit({0x89, 0x45, 0xF8});             // mov [ebp-8], eax
+  Emit({0xC7, 0x45, 0xF4, 0x00, 0x00, 0x00, 0x00}); // mov [ebp-0Ch], 0
+  Emit({0x8B, 0x45, 0xF8});                   // 0x401022: mov eax, [ebp-8]
+  Emit({0x8B, 0x00, 0x50});                   // mov eax, [eax]; push eax
+  Emit({0xE8, 0x33, 0x00, 0x00, 0x00});       // call 0x401060
+  Emit({0x83, 0xC4, 0x04});                   // add esp, 4
+  Emit({0x83, 0x45, 0xF8, 0x04});             // add [ebp-8], 4
+  Emit({0xFF, 0x45, 0xF4});                   // inc [ebp-0Ch]
+  Emit({0x83, 0x7D, 0xF4, 0x03, 0x7C, 0xE5}); // cmp [ebp-0Ch], 3; jl
+  Emit({0xFF, 0x45, 0xFC});                   // inc [ebp-4]
+  Emit({0x83, 0x7D, 0xFC, 0x02, 0x7C, 0xC7}); // cmp [ebp-4], 2; jl
+  Emit({0x8B, 0xE5, 0x5D, 0xC3});             // mov esp, ebp; pop; ret
+  Text.resize(0x60, 0xCC);
+  Emit({0x8B, 0x44, 0x24, 0x04, 0xC3}); // 0x401060: mov eax, [esp+4]; ret
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+  // Two records of three integers, then the helper's address.
+  std::vector<uint8_t> Rdata;
+  for (uint32_t Word : {5u, 15u, 30u, 7u, 8u, 9u, 0x401060u})
+    for (unsigned Byte = 0; Byte < 4; ++Byte)
+      Rdata.push_back(static_cast<uint8_t>(Word >> (8 * Byte)));
+  addPeSection(Img, ".rdata", 0x402000, std::move(Rdata),
+               SegmentFlags::Readable);
+  recordAbsolutePointerRelocations(
+      Img, {{0x401014, 0x402000, InvalidVA}, {0x402018, 0x401060, InvalidVA}});
+  ASSERT_TRUE(Img.CodePtrRelocSlots.count(0x402018));
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.LiftMode = true;
+  Opts.OnlyFunctionEntries = {0x401000, 0x401060};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_NE(Result.LlvmModule, nullptr);
+  EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+}

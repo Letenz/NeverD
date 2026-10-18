@@ -2398,6 +2398,16 @@ values stored to it (`collectFrameReloadSources`). As a PHI's recurrent arm
 does, a stored value that is the slot's reload advanced by a stable offset
 (`slot = &table[0]; ...; slot = slot + 4`, a loop's pointer spilled across the
 calls in its body) carries the role of the initializers, which alone prove it.
+A frame slot's key follows the stack pointer through each loop header that
+merges it, where a call's pushed arguments are popped on the way back
+(`canonicalFrameSlotKey`). The walk from one value closes a cycle only back
+to that value, and an inner loop's merge on an outer loop's back edge is a
+cycle that avoids it; every push in the inner loop then had no key and made
+each reload in it incomplete. An unbound walk that fails without running out
+therefore takes the function's affine frame keys (`affineFrameKey`): one
+optimistic fixed point over copies, extensions, constant additions and PHIs
+from the frame roots, under the walk's edge feasibility, which closes every
+cycle at once. A PHI that settled while an arm stayed unreached has no key.
 
 MedIR binds a switch selector to its dispatch block as well as its machine
 address. CFG products can copy one instruction into distinct SSA lifetimes;

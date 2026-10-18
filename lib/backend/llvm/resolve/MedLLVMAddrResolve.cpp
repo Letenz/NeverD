@@ -1234,6 +1234,8 @@ void MedLLVMEmitter::invalidateFeasibleEdgeDependentCaches() const {
   SharedBudgetFrameSlotCache.clear();
   BoundFrameSlotCacheFor = nullptr;
   BoundFrameSlotCache.clear();
+  AffineFrameKeysFor = nullptr;
+  AffineFrameKeys.clear();
   IndexedGlobalBaseCacheFor = nullptr;
   IndexedGlobalBaseCache.clear();
   InductionBasesFor = nullptr;

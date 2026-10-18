@@ -1949,6 +1949,33 @@ private:
   mutable std::unordered_map<
       BoundFrameSlotQuery, std::optional<med_llvm::SlotKey>, FrameSlotQueryHash>
       BoundFrameSlotCache;
+  /// The slot key of each value an affine chain from a frame root reaches on
+  /// every feasible path of the function being emitted (affineFrameKey).
+  struct AffineFrameKey {
+    med_llvm::SlotKey Key;
+    /// The root is the entry stack pointer, rather than a live-in frame
+    /// pointer or a runtime definition.
+    bool EntryStackPointer = false;
+  };
+  struct AffineFrameKeyHash {
+    size_t operator()(const AddressProvenanceVarKey &K) const {
+      return llvm::hash_value(K);
+    }
+  };
+  mutable const MedFunc *AffineFrameKeysFor = nullptr;
+  mutable uint64_t AffineFrameKeysGeneration = 0;
+  mutable std::unordered_map<AddressProvenanceVarKey, AffineFrameKey,
+                             AffineFrameKeyHash>
+      AffineFrameKeys;
+  /// The slot key of \p V among the function's affine frame keys, solved
+  /// once per function and feasible-edge generation by an optimistic fixed
+  /// point, which closes every stack-pointer cycle at once; nullopt for a
+  /// value no such chain reaches, and under \p RequireEntryStackPointer for
+  /// one rooted elsewhere.  canonicalFrameSlotKey's walk closes a cycle only
+  /// back to the value it resolves, so an inner loop's merge on an outer
+  /// loop's back edge defeats it.
+  std::optional<med_llvm::SlotKey>
+  affineFrameKey(const MedVar &V, bool RequireEntryStackPointer) const;
   // A failed select/PHI table audit has no LLVM value to cache, but its
   // MedIR result is independent of the current IRBuilder.
   mutable const MedFunc *SelectMergeFailureCacheFor = nullptr;
