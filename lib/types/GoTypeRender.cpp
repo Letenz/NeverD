@@ -481,8 +481,10 @@ void GoWriter::asserts(
   Out +=
       "\nvar _ = [1]int{}[unsafe.Sizeof(" + Name + "{})-" + hex(Size) + "]\n";
   for (const auto &[Field, Byte] : Offsets)
-    Out += "var _ = [1]int{}[unsafe.Offsetof(" + Name + "{}." + Field + ")-" +
-           hex(Byte) + "]\n";
+    // A blank field, as Go's own types hold, is no field Go reaches.
+    if (Field != "_")
+      Out += "var _ = [1]int{}[unsafe.Offsetof(" + Name + "{}." + Field + ")-" +
+             hex(Byte) + "]\n";
 }
 
 void GoWriter::unionStorage(const RecordPlan &Plan, std::string &Out) {
