@@ -7,8 +7,8 @@
 ///
 /// \file
 /// ARM (32-bit) side-effect intrinsic emission: barriers (DMB/DSB/ISB),
-/// supervisor calls, breakpoints, exclusive monitors, and coprocessor
-/// register writes.
+/// supervisor calls, breakpoints, exclusive monitors, coprocessor register
+/// writes, and status register writes (MSR, CPS).
 ///
 /// Value-producing intrinsics (RBIT) live in MedLLVMARMValueEmitter.cpp.
 ///
@@ -127,6 +127,32 @@ bool MedLLVMEmitter::emitARMSideeffect(const MedOp &Op, Intrinsic IC,
                                  llvm::Type::getVoidTy(*Ctx), {ValueTy}, false),
                              Asm, "r,~{memory}", /*hasSideEffects=*/true),
         {Builder.CreateZExtOrTrunc(getVar(Op.Inputs[2], Builder), ValueTy)});
+    return true;
+  }
+  // An MSR runs as itself with the word it writes (`msr cpsr_c, $0`), and a
+  // CPS alone (`cpsid i`).
+  if (IC == Intrinsic::ArmMsr || IC == Intrinsic::ArmCps) {
+    const bool Writes = IC == Intrinsic::ArmMsr;
+    const std::string Asm =
+        Op.NumInputs == (Writes ? 3 : 2) && Op.Inputs[1].isConst()
+            ? armStatusInstructionAsm(IC, Op.Inputs[1].ConstVal)
+            : std::string();
+    if (Asm.empty())
+      llvm::report_fatal_error("ARM status register write without its field");
+    llvm::SmallVector<llvm::Value *, 1> Arguments;
+    if (Writes)
+      Arguments.push_back(Builder.CreateZExtOrTrunc(
+          getVar(Op.Inputs[2], Builder), Builder.getInt32Ty()));
+    auto *Type = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*Ctx),
+        Writes ? llvm::ArrayRef<llvm::Type *>(Builder.getInt32Ty())
+               : llvm::ArrayRef<llvm::Type *>(),
+        false);
+    Builder.CreateCall(
+        llvm::InlineAsm::get(Type, Asm,
+                             Writes ? "r,~{memory},~{cpsr}" : "~{memory}",
+                             /*hasSideEffects=*/true),
+        Arguments);
     return true;
   }
   if (emitARMBarrier(Op, IC, Builder))

@@ -81,13 +81,63 @@ inline std::optional<uint64_t> coprocessorTransferField(const cs_arm &ARM,
              : std::nullopt;
 }
 
-/// Whether \p Op is a register a coprocessor transfer moves: r0-r12, SP or
-/// LR.  An MRC to PC is the form that writes the condition flags
-/// (`mrc p14, #0, apsr_nzcv, c0, c1, #0`); elsewhere PC is UNPREDICTABLE.
-inline bool coprocessorTransferRegister(const cs_arm_op &Op) {
+/// Whether \p Op is a register a coprocessor or status register transfer
+/// moves: r0-r12, SP or LR.  An MRC to PC is the form that writes the
+/// condition flags (`mrc p14, #0, apsr_nzcv, c0, c1, #0`); elsewhere PC is
+/// UNPREDICTABLE.
+inline bool isTransferRegister(const cs_arm_op &Op) {
   return Op.type == ARM_OP_REG &&
          ((Op.reg >= ARM_REG_R0 && Op.reg <= ARM_REG_R12) ||
           Op.reg == ARM_REG_SP || Op.reg == ARM_REG_LR);
+}
+
+/// The field of an MSR's destination \p Op: its mask (c 1, x 2, s 4, f 8),
+/// with ArmMsrSpsr for an SPSR.  CPSR, and APSR as A-profile code spells it
+/// (`apsr_nzcvq`, `apsr_g`), are one register.  None for a banked register,
+/// an M-profile one, or no field.
+inline std::optional<uint64_t> msrField(const cs_arm_op &Op) {
+  const unsigned Mask = Op.sysop.msr_mask;
+  if (Mask == 0 || Mask > 0xF)
+    return std::nullopt;
+  switch (Op.type) {
+  case ARM_OP_SPSR:
+    return ArmMsrSpsr | Mask;
+  case ARM_OP_CPSR:
+    return Mask;
+  case ARM_OP_SYSREG:
+    switch (Op.sysop.reg.mclasssysreg) {
+    case ARM_MCLASSSYSREG_APSR_NZCVQ:
+    case ARM_MCLASSSYSREG_APSR_G:
+    case ARM_MCLASSSYSREG_APSR_NZCVQG:
+      return Mask;
+    default:
+      return std::nullopt;
+    }
+  default:
+    return std::nullopt;
+  }
+}
+
+/// The armCpsField of a CPS: `cpsid i` disables IRQs, `cps #0x13` enters
+/// Supervisor mode.  None for an UNPREDICTABLE form armStatusInstructionAsm
+/// has no text for (`cpsid none, #0x13`).
+inline std::optional<uint64_t> cpsField(const cs_arm &ARM) {
+  const unsigned Imod = ARM.cps_mode == ARM_CPSMODE_IE   ? 2
+                        : ARM.cps_mode == ARM_CPSMODE_ID ? 3
+                                                         : 0;
+  const unsigned Masks =
+      ARM.cps_flag == ARM_CPSFLAG_NONE ? 0 : unsigned(ARM.cps_flag) & 7;
+  const bool ChangesMode = ARM.op_count == 1;
+  if (ARM.op_count > 1 ||
+      (ChangesMode && (ARM.operands[0].type != ARM_OP_IMM ||
+                       ARM.operands[0].imm < 0 || ARM.operands[0].imm > 0x1F)))
+    return std::nullopt;
+  const uint64_t Field =
+      armCpsField(Imod, Masks, ChangesMode,
+                  ChangesMode ? static_cast<unsigned>(ARM.operands[0].imm) : 0);
+  if (armStatusInstructionAsm(Intrinsic::ArmCps, Field).empty())
+    return std::nullopt;
+  return Field;
 }
 
 //===----------------------------------------------------------------------===//

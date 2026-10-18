@@ -196,6 +196,121 @@ TEST(MachineInstructionText, ARMKeepsCoprocessorTransfers) {
   }
 }
 
+TEST(MachineInstructionText, ARMKeepsStatusRegisterFields) {
+  // An MRS keeps the register it reads, an MSR the fields the machine keeps
+  // (the flags and GE are lifted), a CPS its masks and mode.
+  const struct {
+    InstructionMode Mode;
+    std::vector<uint8_t> Bytes;
+    Intrinsic Id;
+    uint64_t Field;
+    const char *Asm;
+  } Cases[] = {
+      {InstructionMode::ARM,
+       {0x00, 0x00, 0x0f, 0xe1},
+       Intrinsic::ArmMrs,
+       ArmMrsApsr,
+       "mrs $0, apsr"},
+      {InstructionMode::Thumb,
+       {0xef, 0xf3, 0x00, 0x80},
+       Intrinsic::ArmMrs,
+       ArmMrsApsr,
+       "mrs $0, apsr"},
+      {InstructionMode::ARM,
+       {0x00, 0x00, 0x4f, 0xe1},
+       Intrinsic::ArmMrs,
+       ArmMrsSpsr,
+       "mrs $0, spsr"},
+      {InstructionMode::ARM,
+       {0x00, 0xf0, 0x21, 0xe1},
+       Intrinsic::ArmMsr,
+       0x1,
+       "msr cpsr_c, $0"},
+      {InstructionMode::ARM,
+       {0xd3, 0xf0, 0x21, 0xe3},
+       Intrinsic::ArmMsr,
+       0x1,
+       "msr cpsr_c, $0"},
+      {InstructionMode::ARM,
+       {0x00, 0xf0, 0x29, 0xe1},
+       Intrinsic::ArmMsr,
+       0x9,
+       "msr cpsr_fc, $0"},
+      // The f field also writes Q, which the machine keeps.
+      {InstructionMode::ARM,
+       {0x00, 0xf0, 0x28, 0xe1},
+       Intrinsic::ArmMsr,
+       0x8,
+       "msr cpsr_f, $0"},
+      {InstructionMode::ARM,
+       {0x00, 0xf0, 0x6f, 0xe1},
+       Intrinsic::ArmMsr,
+       0x1F,
+       "msr spsr_fsxc, $0"},
+      {InstructionMode::ARM,
+       {0x80, 0x00, 0x0c, 0xf1},
+       Intrinsic::ArmCps,
+       0x680,
+       "cpsid i"},
+      {InstructionMode::Thumb,
+       {0x72, 0xb6},
+       Intrinsic::ArmCps,
+       0x680,
+       "cpsid i"},
+      {InstructionMode::ARM,
+       {0xc0, 0x00, 0x08, 0xf1},
+       Intrinsic::ArmCps,
+       0x4C0,
+       "cpsie if"},
+      {InstructionMode::ARM,
+       {0x13, 0x00, 0x02, 0xf1},
+       Intrinsic::ArmCps,
+       0x33,
+       "cps #0x13"},
+      {InstructionMode::ARM,
+       {0xd3, 0x00, 0x0e, 0xf1},
+       Intrinsic::ArmCps,
+       0x6F3,
+       "cpsid if, #0x13"},
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Asm);
+    const Lifted Result = liftOne(Arch::ARM, Case.Mode, Case.Bytes);
+    EXPECT_EQ(Result.Id, Case.Id);
+    EXPECT_EQ(Result.Operand, Case.Field);
+    EXPECT_EQ(armStatusInstructionAsm(Case.Id, Case.Field), Case.Asm);
+  }
+  // GE is lifted whole: `msr apsr_g, r0` leaves the machine alone.
+  EXPECT_EQ(
+      liftOne(Arch::ARM, InstructionMode::ARM, {0x00, 0xf0, 0x24, 0xe1}).Id,
+      Intrinsic::None);
+  // Fields no such instruction has.
+  EXPECT_EQ(armStatusInstructionAsm(Intrinsic::ArmMrs, 2), "");
+  EXPECT_EQ(armStatusInstructionAsm(Intrinsic::ArmMsr, 0), "");
+  EXPECT_EQ(armStatusInstructionAsm(Intrinsic::ArmMsr, 0x21), "");
+  EXPECT_EQ(
+      armStatusInstructionAsm(Intrinsic::ArmCps, armCpsField(3, 0, true, 0x13)),
+      "");
+  EXPECT_EQ(
+      armStatusInstructionAsm(Intrinsic::ArmCps, armCpsField(0, 2, false, 0)),
+      "");
+
+  // CPSID without a mask to change and a banked register's MSR have no
+  // typed lift.
+  Decoder Decode;
+  ASSERT_TRUE(Decode.init(Arch::ARM, InstructionMode::ARM));
+  for (const std::vector<uint8_t> &Bytes :
+       {std::vector<uint8_t>{0x13, 0x00, 0x0e, 0xf1},
+        std::vector<uint8_t>{0x00, 0xf2, 0x29, 0xe1}}) {
+    DecodedInsn Instruction;
+    ASSERT_EQ(Decode.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000,
+                                      Instruction),
+              4);
+    std::vector<LowOp> Ops;
+    EXPECT_THROW(Decode.liftToLow(Instruction, Ops), UnliftedInstruction);
+  }
+}
+
 TEST(MachineInstructionText, X86KeepsTheSanitizerCheckOfUD1) {
   // clang's -fsanitize-trap raises `ud1 eax, [eax + kind]`.
   expectLifted(Arch::X86, InstructionMode::Default, {0x0f, 0xb9, 0x40, 0x15},

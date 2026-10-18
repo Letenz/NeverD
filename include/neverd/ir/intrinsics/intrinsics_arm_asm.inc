@@ -96,3 +96,4 @@ A(Intrinsic::ArmLdc2l,     "ldc2l");
 A(Intrinsic::ArmStc2,      "stc2");
 A(Intrinsic::ArmStc2l,     "stc2l");
 A(Intrinsic::ArmLinuxSyscall, "svc");
+A(Intrinsic::ArmCps,       "cps");

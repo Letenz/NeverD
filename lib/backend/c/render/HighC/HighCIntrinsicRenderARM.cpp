@@ -101,6 +101,33 @@ std::string renderA64SystemInstruction(Intrinsic Id,
   return "__asm__ volatile(\"" + Template + "\" ::: \"memory\")";
 }
 
+/// An ARM status register instruction the lift kept the field of as
+/// \p Ops[0], as the `asm` statement that runs it: an MRS as a statement
+/// expression of the word it reads, an MSR with the word it writes, a CPS
+/// alone.  C and ACLE have no spelling of their own for these on AArch32.
+std::string renderArmStatusInstruction(Intrinsic Id,
+                                       const std::vector<std::string> &Ops,
+                                       uint16_t ResultBytes) {
+  const bool Writes = Id == Intrinsic::ArmMsr;
+  const std::optional<uint64_t> Field =
+      Ops.size() == (Writes ? 2u : 1u) ? constantOperand(Ops[0]) : std::nullopt;
+  std::string Template =
+      Field ? armStatusInstructionAsm(Id, *Field) : std::string();
+  if (Template.empty() || (Id == Intrinsic::ArmMrs) != (ResultBytes == 4))
+    throw std::invalid_argument(
+        "ARM status register instruction without its field");
+  // The `$0` of the assembly is GNU C's `%0`.
+  if (const size_t Operand = Template.find("$0"); Operand != std::string::npos)
+    Template[Operand] = '%';
+  if (Id == Intrinsic::ArmMrs)
+    return "({ uint32_t __status; __asm__ volatile(\"" + Template +
+           "\" : \"=r\"(__status) : : \"memory\"); __status; })";
+  if (Writes)
+    return "__asm__ volatile(\"" + Template + "\" : : \"r\"((uint32_t)(" +
+           Ops[1] + ")) : \"memory\", \"cc\")";
+  return "__asm__ volatile(\"" + Template + "\" ::: \"memory\")";
+}
+
 /// The C type an exclusive access of \p Size bytes moves, or null for a
 /// size no exclusive access has.
 const char *exclusiveAccessType(llvm::StringRef Size) {
@@ -1076,6 +1103,10 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
   case I::Tlbi:
   case I::At:
     return renderA64SystemInstruction(Id, Ops, ResultBytes, HasCIntrinsics);
+  case I::ArmMrs:
+  case I::ArmMsr:
+  case I::ArmCps:
+    return renderArmStatusInstruction(Id, Ops, ResultBytes);
   case I::ArmMrc:
   case I::ArmMcr:
   case I::ArmMrrc:

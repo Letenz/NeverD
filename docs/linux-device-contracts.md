@@ -237,9 +237,14 @@ without executing or copying its implementation or contacting a host driver.
 SET_CONTEXT_MGR registers one context-manager open per declared device. A second
 registration returns EBUSY. Separate opens have distinct Binder process owners,
 even within this one emulated process. A read-only MAP_PRIVATE (optionally
-MAP_NORESERVE), offset-zero arena of at most 64 KiB supplies receiver buffers;
+MAP_NORESERVE), offset-zero arena of at most 4 MiB supplies receiver buffers;
 only one mapping per open is admitted. The memory owner retains each buffer's
 mapping identity, permissions and lifetime.
+Lengths are page-rounded before the limit check, and receive pages share the
+process memory budget. Allocation refusal leaves the open available for a
+smaller retry. A larger mapping does not raise the 64 KiB per-transaction limit.
+Requests beyond 4 MiB still stop: the driver's oversized-VMA truncation is not
+modeled. The arena bound follows the pinned driver's `binder_mmap` limit above.
 
 BC_TRANSACTION to handle zero copies an object-free payload into the registered
 peer's arena. An entered/registered guest looper receives BR_TRANSACTION, runs
