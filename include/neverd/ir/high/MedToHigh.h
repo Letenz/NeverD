@@ -283,6 +283,12 @@ public:
       std::function<void(const MedOp &, const HighStmt &)> Observer) {
     StatementObserver = std::move(Observer);
   }
+  /// Forget what the observers recorded for the function being converted.
+  /// With it, convert() lets the observers watch the conversion it most
+  /// likely keeps instead of converting once more only for them.
+  void setObservationReset(std::function<void()> Reset) {
+    ObservationReset = std::move(Reset);
+  }
 
   void setFuncNames(const std::map<va_t, std::string> *Names) {
     FuncNames = Names;
@@ -546,6 +552,7 @@ private:
   std::function<void(const MedOp &, const ExprPtr &)> ExpressionObserver;
   std::function<void(const ExprPtr &, const ExprPtr &)> ExpressionCloneObserver;
   std::function<void(const MedOp &, const HighStmt &)> StatementObserver;
+  std::function<void()> ObservationReset;
   Arch TargetArch = Arch::Unknown;
   const std::map<va_t, std::string> *FuncNames = nullptr;
   const std::map<va_t, std::string> *ResolvedCalleeNames = nullptr;
