@@ -7053,6 +7053,33 @@ TEST_F(SessionCAPITest, FunctionViewRejectsUnknownPreparationWithoutMutation) {
   EXPECT_EQ(neverd_prepare_function_view(nullptr, Entry, "llvm"), 0);
 }
 
+TEST_F(SessionCAPITest, SelectedRunsPublishOnlyFunctionsTheListLacks) {
+  const auto Path = write("published.elf", makeAnalysisCacheELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Entry = seedAnalysisCacheSymbols(Session);
+  const auto Listed = [&] {
+    std::vector<neverd_va_t> Entries;
+    for (int I = 0; I < neverd_func_count(Session); ++I)
+      Entries.push_back(neverd_func_entry(Session, I));
+    return Entries;
+  };
+  const auto Before = Listed();
+  ASSERT_FALSE(Before.empty());
+  ASSERT_TRUE(std::is_sorted(Before.begin(), Before.end()));
+  // A run of a listed function leaves the list as it was.
+  ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
+  EXPECT_EQ(Listed(), Before);
+  // A run that lifts an entry the list lacks publishes it, in order.
+  ASSERT_EQ(neverd_prepare_function(Session, Entry + 0x20), 1);
+  auto With = Before;
+  With.insert(std::upper_bound(With.begin(), With.end(), Entry + 0x20),
+              Entry + 0x20);
+  EXPECT_EQ(Listed(), With);
+  // The next selection lists the image's functions again.
+  ASSERT_EQ(neverd_prepare_function(Session, Entry + 0x10), 1);
+  EXPECT_EQ(Listed(), Before);
+}
+
 TEST_F(SessionCAPITest, AnalysisCacheSurvivesOnlyFunctionNavigation) {
   const auto Path = write("cache.elf", makeAnalysisCacheELF(false));
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
