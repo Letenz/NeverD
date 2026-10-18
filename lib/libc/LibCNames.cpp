@@ -64,6 +64,7 @@
 #include "neverd/libc/sys/LibCIpc.h"
 #include "neverd/libc/sys/LibCMman.h"
 #include "neverd/libc/sys/LibCPrctl.h"
+#include "neverd/libc/sys/LibCPtrace.h"
 #include "neverd/libc/sys/LibCRandom.h"
 #include "neverd/libc/sys/LibCResource.h"
 #include "neverd/libc/sys/LibCSelect.h"
@@ -152,6 +153,7 @@ struct Registry {
     registerFunctions(All, ToHeader, kSysIpcFunctions, kSysIpcHeader);
     registerFunctions(All, ToHeader, kSysMmanFunctions, kSysMmanHeader);
     registerFunctions(All, ToHeader, kSysPrctlFunctions, kSysPrctlHeader);
+    registerFunctions(All, ToHeader, kSysPtraceFunctions, kSysPtraceHeader);
     registerFunctions(All, ToHeader, kSysRandomFunctions, kSysRandomHeader);
     registerFunctions(All, ToHeader, kSysResourceFunctions, kSysResourceHeader);
     registerFunctions(All, ToHeader, kSysSelectFunctions, kSysSelectHeader);

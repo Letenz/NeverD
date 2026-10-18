@@ -432,6 +432,18 @@ TEST(TypeRender, JavaScriptExtendsSignsAndNamesWhatItDeclares) {
   // Sixteen bytes read as one bigint from two halves.
   EXPECT_TRUE(contains(Text, "  get Wide() { return this.#wide("));
   EXPECT_TRUE(contains(Text, "  #wide(at, signed) {"));
+
+  // A type TypeScript names itself, as the Windows headers' `boolean`, an
+  // unsigned char, takes a name of its own in JSDoc.
+  TypeLibrary Windows;
+  ASSERT_TRUE(parseCTypes("typedef unsigned char boolean;\n"
+                          "typedef boolean BOOLEAN;\n"
+                          "struct FLAGS { BOOLEAN On; };\n",
+                          Windows)
+                  .ok());
+  const std::string Flags = renderTypes(Windows, {}, in(Language::JavaScript));
+  EXPECT_TRUE(contains(Flags, "/** @typedef {number} boolean_ */\n")) << Flags;
+  EXPECT_TRUE(contains(Flags, "/** @typedef {boolean_} BOOLEAN */\n")) << Flags;
 }
 
 TEST_F(TypeRenderFixture, LuaReadsRecordsThroughStringUnpack) {
@@ -900,4 +912,16 @@ TEST(TypeRender, RustAndGoProgramsTypesCompileAsC) {
   ASSERT_NE(Row, std::string::npos) << C;
   ASSERT_NE(Cell, std::string::npos) << C;
   EXPECT_LT(Row, Cell) << C;
+
+  // A blank field, as Go's own types hold, is no field Go's checks reach.
+  TypeLibrary Go(DataModel::LP64);
+  Go.define(structure("Padded", 8,
+                      {member("_", makeBuiltin(Builtin::UInt), 0),
+                       member("x", makeBuiltin(Builtin::UInt), 4)}));
+  RenderOptions GoOptions = in(Language::Go);
+  GoOptions.Asserts = true;
+  const std::string Padded = renderTypes(Go, {}, GoOptions);
+  EXPECT_TRUE(contains(Padded, "\t_ uint32")) << Padded;
+  EXPECT_TRUE(contains(Padded, "unsafe.Offsetof(Padded{}.x)")) << Padded;
+  EXPECT_FALSE(contains(Padded, "unsafe.Offsetof(Padded{}._)")) << Padded;
 }

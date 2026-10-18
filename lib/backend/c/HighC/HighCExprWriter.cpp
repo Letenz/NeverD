@@ -30,6 +30,7 @@
 #include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/DataSymbolBinding.h"
 #include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -1403,6 +1404,22 @@ std::string HighCWriter::callIdentifier(const HighExpr &E) const {
 bool HighCWriter::isVariadicImportStub(const HighFunc &Func) const {
   return Opts.Image &&
          !c_stub::variadicImportOfStub(*Opts.Image, Func.Entry).empty();
+}
+
+const HighFunc *
+HighCWriter::variadicOwnRoutineOfStub(const HighFunc &Func) const {
+  if (!Opts.Image || !Func.Entry)
+    return nullptr;
+  const Import *Imp = Opts.Image->findImportStubAt(Func.Entry);
+  const std::optional<va_t> Routine =
+      Imp ? ownRoutineOfImport(*Opts.Image, *Imp) : std::nullopt;
+  if (!Routine || *Routine == Func.Entry)
+    return nullptr;
+  const auto It = DefinedFunctionsByAddress.find(*Routine);
+  return It != DefinedFunctionsByAddress.end() && It->second &&
+                 It->second->IsVariadic
+             ? It->second
+             : nullptr;
 }
 
 const HighFunc *HighCWriter::calledDefinition(const HighExpr &E) const {

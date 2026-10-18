@@ -23,6 +23,7 @@
 #include "neverd/ir/med/MedIntrinsicOutputs.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/DataSymbolBinding.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -120,7 +121,18 @@ void MedToHighConverter::lowerCall(HighFunc &Func, const MedBlock &CurBlock,
   va_t Target = 0;
   if (CurOp.NumInputs >= 1 && CurOp.Inputs[0].isConst())
     Target = CurOp.Inputs[0].ConstVal;
-  std::string Callee = calleeDisplayName(Target);
+  // The stub of a symbol the image defines itself, `g@plt`, jumps through the
+  // slot the loader starts at that routine: the call reaches the routine, by
+  // the name the slot is bound by (__lttf2 and __letf2 may name one routine).
+  std::string Callee;
+  if (Image && Target)
+    if (const Import *Imp = Image->findImportStubAt(Target))
+      if (const std::optional<va_t> Own = ownRoutineOfImport(*Image, *Imp)) {
+        Target = *Own;
+        Callee = Imp->Name;
+      }
+  if (Callee.empty())
+    Callee = calleeDisplayName(Target);
 
   size_t CallIdx = 0;
   for (size_t K = 0; K < CurBlock.Ops.size(); ++K) {

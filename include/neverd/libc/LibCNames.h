@@ -266,6 +266,9 @@ struct LibCVariadicForward {
   uint8_t Count = 0;
   std::string_view Type;
   bool Environment = false;
+  /// The only object format whose C library declares the routine variadic,
+  /// or Unknown for every format's.
+  BinaryFormat Format = BinaryFormat::Unknown;
 };
 
 /// How a function passes its arguments on to the variadic routine C name

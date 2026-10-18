@@ -414,6 +414,9 @@ public:
   /// Whether \p Func is the stub of a variadic C library import, which a
   /// call runs as a call through the import's slot.
   bool isVariadicImportStub(const HighFunc &Func) const;
+  /// The variadic routine this file defines that the stub \p Func jumps to,
+  /// through the slot of a symbol the image defines itself, or null.
+  const HighFunc *variadicOwnRoutineOfStub(const HighFunc &Func) const;
   std::string renderCallExpr(const HighExpr &E);
   std::string renderSourceCallExpr(const HighExpr &E);
   const HighFunc *sourceCallDefinition(const SourceCallTypeHint &Hint,

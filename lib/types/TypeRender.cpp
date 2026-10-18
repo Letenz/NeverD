@@ -240,8 +240,30 @@ constexpr const char *PythonPredeclared[] = {"ctypes", "enum", "property"};
 /// What a JavaScript module of local types reads from the global scope and
 /// declares itself, which a type of the same name would hide.
 constexpr const char *JavaScriptPredeclared[] = {
-    "ArrayBuffer", "BigInt", "DataView",   "Infinity",   "NaN",   "Number",
-    "Object",      "check",  "RangeError", "Uint8Array", "index", "undefined",
+    "ArrayBuffer",
+    "BigInt",
+    "DataView",
+    "Infinity",
+    "NaN",
+    "Number",
+    "Object",
+    "check",
+    "RangeError",
+    "Uint8Array",
+    "index",
+    "undefined",
+    // The types TypeScript names itself, which the module's JSDoc spells: a
+    // program's own `boolean`, as the Windows headers declare, would read
+    // as TypeScript's.
+    "any",
+    "bigint",
+    "boolean",
+    "never",
+    "number",
+    "object",
+    "string",
+    "symbol",
+    "unknown",
 };
 
 /// Rust's primitive types, which a type of the same name would hide.

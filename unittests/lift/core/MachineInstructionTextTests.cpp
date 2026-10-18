@@ -487,4 +487,25 @@ entry:
   EXPECT_EQ(C.find("$0"), std::string::npos) << C;
 }
 
+TEST(MachineInstructionText, LLVMCPortIoTakesThePortFirst) {
+  // AT&T assembly writes OUT's data first; MSVC's intrinsics take the port
+  // first, an immediate one as the byte the instruction holds.
+  const std::string C = llvmC(R"(
+define i8 @port_io(i16 %port, i32 %value) {
+entry:
+  %byte = call i8 asm sideeffect "inb $1, $0", "={ax},N,~{memory}"(i8 96)
+  call void asm sideeffect "outb $0, $1", "{ax},N,~{memory}"(i8 %byte, i8 -128)
+  call void asm sideeffect "outl $0, $1", "{ax},{dx},~{memory}"(i32 %value, i16 %port)
+  %word = call i16 asm sideeffect "inw $1, $0", "={ax},{dx},~{memory}"(i16 %port)
+  ret i8 %byte
+}
+)",
+                              Arch::X64);
+  EXPECT_NE(C.find("__inbyte(0x60)"), std::string::npos) << C;
+  EXPECT_NE(C.find("__outbyte(0x80, "), std::string::npos) << C;
+  EXPECT_NE(C.find("__outdword(port, value)"), std::string::npos) << C;
+  EXPECT_NE(C.find("__inword(port)"), std::string::npos) << C;
+  EXPECT_EQ(C.find("-128"), std::string::npos) << C;
+}
+
 } // namespace

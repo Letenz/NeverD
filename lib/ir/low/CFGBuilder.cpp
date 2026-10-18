@@ -2358,6 +2358,7 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
                 Img.ExceptionMetadata.findFunction(CurrentFuncEntry))
           registration_state::restoreAdjacentSEHFinallyCall(Img, *EH, Rec.Addr,
                                                             Rec.Size, Rec.Ops);
+      rewriteI386PLTJump(Img, Rec);
       classifyInsn(Rec);
       if (Rec.IsCall && !Rec.IsIndirect && Rec.Immediate)
         rewriteGetPcThunkCall(Img, Rec, Next);

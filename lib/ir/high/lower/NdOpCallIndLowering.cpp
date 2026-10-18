@@ -17,6 +17,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/DataSymbolBinding.h"
 #include "neverd/loader/MachO/ImmutableNativeCalls.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -117,6 +118,12 @@ static bool tryResolveLoadedSlot(va_t Slot,
     Out.Name = std::move(Name);
     Out.Addr = Slot;
     Out.IsIndirect = false;
+    // The slot of a symbol the image defines itself, which the loader starts
+    // at that routine, reaches the routine, by the name the slot is bound by
+    // (__lttf2 and __letf2 may name one routine).
+    if (DirectorySlot)
+      if (const std::optional<va_t> Own = ownRoutineOfImport(*Image, *Imp))
+        Out.Addr = *Own;
     return true;
   }
   // Without an image the caller's names are its only slot evidence.
