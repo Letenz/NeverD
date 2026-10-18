@@ -1635,7 +1635,8 @@ localTypesOf(Session *S, const char *InputPath, PipelineRunner &R,
   return std::make_unique<LocalTypesDebugContext>(
       R.Dbg ? *R.Dbg : NoDebugInformation,
       std::make_shared<types::TypeLibrary>(*Library), std::move(Declarations),
-      &R.Img, std::move(Headers), S->SigDB.buildNameMap());
+      &R.Img, std::move(Headers), S->SigDB.buildNameMap(),
+      S->LocalTypeEntryType);
 }
 
 static const char *decompileAllImpl(neverd_session_t Sess,

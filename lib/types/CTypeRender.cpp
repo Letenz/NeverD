@@ -908,6 +908,25 @@ llvm::StringSet<> definedFor(const TypeLibrary &Library,
   return Defined;
 }
 
+/// The record \p Type names, if it is a typedef, or a chain of them, of a
+/// structure or union by its tag.
+const LocalType *typedefRecord(const TypeLibrary &Library,
+                               const LocalType &Type) {
+  const LocalType *At = &Type;
+  for (unsigned Depth = 0;
+       Depth < 16 && At->Kind == TypeKind::Typedef && At->Target &&
+       At->Target->Kind == TypeExprKind::Named;
+       ++Depth) {
+    const LocalType *Next = Library.find(At->Target->Name);
+    if (!Next)
+      return nullptr;
+    if (Next->Kind == TypeKind::Struct || Next->Kind == TypeKind::Union)
+      return Next;
+    At = Next;
+  }
+  return nullptr;
+}
+
 /// The definitions of \p All that \p Defined holds, enumerations into
 /// \p Enums and the rest into \p Body, each after what it holds by value
 /// and the typedefs and enumerations it names; \p Guarded wraps each in a
@@ -923,9 +942,18 @@ writeDefinitions(CWriter &Writer, const TypeLibrary &Library,
     if (!Defined.contains(Type.Name) || !Done.insert(Type.Name).second)
       return;
     // What it holds by value, and the typedefs and enumerations it names
-    // anywhere: C declares neither ahead of its definition.
+    // anywhere: C declares neither ahead of its definition.  A typedef of
+    // a record by its tag declares the record as it names it, and needs no
+    // definition before it; in EDK II's EFI_PEI_NOTIFY_DESCRIPTOR it cannot
+    // have one, as the record holds a function pointer whose parameter the
+    // typedef names.  What holds such a typedef by value holds the record.
     std::vector<std::string> Needs;
-    valueDependencies(Type, Needs);
+    if (!typedefRecord(Library, Type))
+      valueDependencies(Type, Needs);
+    for (size_t I = 0, ByValue = Needs.size(); I < ByValue; ++I)
+      if (const LocalType *Found = Library.find(Needs[I]))
+        if (const LocalType *Record = typedefRecord(Library, *Found))
+          Needs.push_back(Record->Name);
     std::vector<std::string> Named;
     mentionedTypes(Type, Named);
     for (const std::string &Name : Named)
