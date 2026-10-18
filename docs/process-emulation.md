@@ -64,7 +64,11 @@ output = bytes.fromhex(report["stdout_hex"])
 
 ## Options and results
 
-Options are a JSON object of at most 64 KiB. Unknown fields, null field values,
+Options are a JSON object with at most 64 KiB of request text, excluding two
+hexadecimal characters per validated `android.dex_images` byte. That explicit
+DEX allowance raises the total wire ceiling to 2112 KiB; it does not enlarge
+other field budgets. JSON escape overhead still counts as request text.
+Unknown fields, null field values,
 invalid types, embedded NULs in strings and nonpositive limits are rejected.
 
 | Option | Default | Contract |

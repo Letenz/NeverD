@@ -253,6 +253,23 @@ foreach(_optimization O0 O2)
     list(APPEND _android_outputs "${_stdio_file}")
   endforeach()
 endforeach()
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  set(_dex_outputs)
+  foreach(_case 17-0 2048-0 2048-1 2049-1 4096-0 4097-0)
+    list(APPEND _dex_outputs "${_android_fixture_dir}/classes-${_case}.dex")
+  endforeach()
+  add_custom_command(OUTPUT ${_dex_outputs}
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/android_dex_classpath.py"
+      "${_android_fixture_dir}"
+    DEPENDS fixtures/android_dex_classpath.py
+      "${CMAKE_SOURCE_DIR}/scripts/benchmark_mobile_inventory.py"
+    VERBATIM)
+  list(APPEND _android_outputs ${_dex_outputs})
+  target_compile_definitions(NeverDAndroidNativeTests PRIVATE
+    NEVERD_ANDROID_DEX_FIXTURE_DIR="${_android_fixture_dir}")
+endif()
 add_custom_target(NeverDAndroidFixtures DEPENDS ${_android_outputs})
 add_dependencies(NeverDAndroidNativeTests NeverDAndroidFixtures)
 target_compile_definitions(NeverDAndroidNativeTests PRIVATE

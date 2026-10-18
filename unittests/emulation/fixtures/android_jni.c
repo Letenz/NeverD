@@ -8,6 +8,7 @@ typedef U64 Ref;
 extern int JNI_GetCreatedJavaVMs(Handle *, int, int *);
 extern int pthread_create(U64 *, const void *, void *(*)(void *), void *);
 extern int pthread_join(U64, void **);
+extern int __system_property_get(const char *, char *);
 #define C(E, R, S, ...) (((R (*)(Handle, ...))(*E)[S])(E, ##__VA_ARGS__))
 #define CHECK(X)                                                               \
   do {                                                                         \
@@ -22,6 +23,70 @@ static Handle attach(void) {
       C(vm, int, 4, &env, (void *)0))
     return 0;
   return env;
+}
+int jni_build_version(int expected_sdk, int distinct) {
+  Handle e = attach();
+  CHECK(e);
+  Ref klass = C(e, Ref, 6, "android/os/Build$VERSION");
+  Ref release_id = C(e, Ref, 144, klass, "RELEASE", "Ljava/lang/String;");
+  Ref incremental_id =
+      C(e, Ref, 144, klass, "INCREMENTAL", "Ljava/lang/String;");
+  Ref sdk_id = C(e, Ref, 144, klass, "SDK_INT", "I");
+  CHECK(release_id && incremental_id && sdk_id);
+  Ref release = C(e, Ref, 145, klass, release_id);
+  Ref again = C(e, Ref, 145, klass, release_id);
+  Ref incremental = C(e, Ref, 145, klass, incremental_id);
+  CHECK(C(e, int, 24, release, again));
+  CHECK(C(e, int, 24, release, incremental) == !distinct);
+  CHECK(C(e, int, 150, klass, sdk_id) == expected_sdk);
+  char property[92];
+  int length = __system_property_get("ro.build.version.release", property);
+  const char *expected = length ? property : "unknown";
+  const char *text = C(e, const char *, 169, release, (void *)0);
+  unsigned i = 0;
+  do {
+    CHECK(text[i] == expected[i]);
+  } while (expected[i++]);
+  C(e, void, 170, release, text);
+  Ref global = C(e, Ref, 21, release);
+  CHECK(!C(vm, int, 5));
+  e = attach();
+  CHECK(e);
+  klass = C(e, Ref, 6, "android/os/Build$VERSION");
+  CHECK(C(e, Ref, 144, klass, "RELEASE", "Ljava/lang/String;") == release_id);
+  again = C(e, Ref, 145, klass, release_id);
+  CHECK(C(e, int, 24, global, again));
+  C(e, void, 22, global);
+  CHECK(!C(vm, int, 5));
+  return 0;
+}
+int jni_dex_class_pair(const char *first, const char *last) {
+  Handle e = attach();
+  CHECK(e);
+  Ref a = C(e, Ref, 6, first);
+  Ref b = C(e, Ref, 6, last);
+  CHECK(a && b && !C(e, int, 24, a, b));
+  CHECK(!C(e, int, 228));
+  CHECK(!C(vm, int, 5));
+  return 0;
+}
+int jni_build_version_wrong_accessor(void) {
+  Handle e = attach();
+  Ref klass = C(e, Ref, 6, "android/os/Build$VERSION");
+  Ref id = C(e, Ref, 144, klass, "RELEASE", "Ljava/lang/String;");
+  return C(e, int, 150, klass, id);
+}
+int jni_build_version_write(void) {
+  Handle e = attach();
+  Ref klass = C(e, Ref, 6, "android/os/Build$VERSION");
+  Ref id = C(e, Ref, 144, klass, "SDK_INT", "I");
+  C(e, void, 159, klass, id, 999);
+  return 0;
+}
+int jni_build_version_unknown_field(void) {
+  Handle e = attach();
+  Ref klass = C(e, Ref, 6, "android/os/Build$VERSION");
+  return !C(e, Ref, 144, klass, "ACTIVE_CODENAMES", "[Ljava/lang/String;");
 }
 int jni_vm_lifecycle(void) {
   int count = 7;

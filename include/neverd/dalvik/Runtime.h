@@ -39,7 +39,12 @@ using AdmitInstruction = std::function<ExecutionStop()>;
 class Program {
 public:
   // Input declarations must come from the shared validated DEX reader.
-  explicit Program(std::vector<Class> declarations);
+  // Android opts into the API 28 read-only scalar Build.VERSION projection
+  // using its explicit property snapshot. This is not framework <clinit>
+  // execution or permission to replace platform declarations with DEX.
+  explicit Program(std::vector<Class> declarations,
+                   std::optional<std::map<std::string, std::string>>
+                       android_properties = std::nullopt);
   Program(const Program &) = delete;
   Program &operator=(const Program &) = delete;
   bool containsClass(std::string_view descriptor) const;
@@ -64,8 +69,16 @@ public:
                           const AdmitInstruction &admit,
                           uint64_t stack_bytes) const;
 
+  struct PlatformValue {
+    Literal value;
+    bool intern_string = false;
+  };
+  const PlatformValue *platformValue(const Field &field) const;
+
 private:
+  void addAndroidVersion(const std::map<std::string, std::string> &properties);
   ClassMap classes;
+  std::map<FieldRef, PlatformValue> platform_values;
 };
 
 // One workload's mutable class and object state over an immutable Program,

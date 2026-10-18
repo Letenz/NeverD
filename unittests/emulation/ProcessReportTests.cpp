@@ -1481,6 +1481,52 @@ TEST(ProcessReport, RejectsMalformedRequestsBeforeWorkloadConstruction) {
   EXPECT_FALSE(bool(Large));
   EXPECT_EQ(llvm::toString(Large.takeError()), field::TooLarge);
 }
+TEST(ProcessReport, DexWireBudgetPreservesTheMetadataAndDecodedByteBounds) {
+  const std::string Prefix = R"({"android":{"jni":true,"dex_images":[")";
+  const std::string Suffix = R"("]}})";
+  auto check = [&](std::string Text, bool Accepted) {
+    auto Options = processOptionsFromJSON(Text);
+    EXPECT_EQ(bool(Options), Accepted);
+    if (!Options) {
+      llvm::consumeError(Options.takeError());
+      return;
+    }
+    ASSERT_TRUE(Options->Android);
+    size_t Bytes = 0;
+    for (const auto &Image : Options->Android->DexImages) {
+      Bytes += Image.size();
+      EXPECT_TRUE(
+          llvm::all_of(Image, [](uint8_t Byte) { return Byte == 0xab; }));
+    }
+    EXPECT_EQ(Bytes, 1024u * 1024u);
+  };
+  std::string Hex;
+  for (unsigned I = 0; I < 1024 * 1024; ++I)
+    Hex += "ab";
+  const std::string Request = Prefix + Hex + Suffix;
+  ASSERT_GT(Request.size(), 65536u);
+  check(Request, true);
+  check(Request + std::string(field::JSONLimit - Request.size(), ' '), true);
+  check(Request + std::string(field::JSONLimit - Request.size() + 1, ' '),
+        false);
+  check(Prefix + Hex + "ab" + Suffix, false);
+  check(Prefix + Hex.substr(0, Hex.size() / 2) + "\",\"" +
+            Hex.substr(Hex.size() / 2) + Suffix,
+        true);
+  check(Prefix + Hex + "\",\"ab" + Suffix, false);
+  check(Prefix + "not-hex" + Hex + Suffix, false);
+  // Enlarging the outer parser allocation does not enlarge other input fields.
+  auto Exact = processOptionsFromJSON(
+      "{}" + std::string(field::JSONMetadataLimit - 2, ' '));
+  ASSERT_TRUE(bool(Exact)) << llvm::toString(Exact.takeError());
+  for (auto Text :
+       {"{}" + std::string(field::JSONMetadataLimit - 1, ' '),
+        std::string(R"({"arguments":[")") + std::string(65536, 'a') + "\"]}"}) {
+    auto Rejected = processOptionsFromJSON(Text);
+    ASSERT_FALSE(bool(Rejected));
+    EXPECT_EQ(llvm::toString(Rejected.takeError()), field::TooLarge);
+  }
+}
 TEST(ProcessReport, DarwinFileInputsAreLosslessAndRequireDarwinProfiles) {
   auto O = processOptionsFromJSON(R"({"darwin_files":{"files":[
     {"path":"/data","bytes_hex":"00FF78"}],"stdin_hex":"00ff",

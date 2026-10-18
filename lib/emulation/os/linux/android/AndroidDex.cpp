@@ -15,7 +15,7 @@ llvm::Error Bionic::initializeDex() {
   const auto &Native = *Options.Android;
   JNI.Heap = std::make_shared<mobile::dalvik::Heap>(Options.MemoryLimit / 2,
                                                     jni_abi::ObjectLimit);
-  if (Native.DexImages.empty())
+  if (Native.DexImages.empty() && !Native.JNI)
     return llvm::Error::success();
   if (!Native.JNI || Native.DexImages.size() > 16)
     return failure("DEX images require JNI and at most 16 explicit images");
@@ -41,7 +41,9 @@ llvm::Error Bionic::initializeDex() {
   if (Total > Options.MemoryLimit / 256)
     return failure("DEX input exceeds the process model storage budget");
   try {
-    mobile::Budget DecodeBudget({1, 16, Total});
+    // max_files bounds the shared reader's logical class inventory, not the
+    // number of input DEX images. Debit it across all images in this workload.
+    mobile::Budget DecodeBudget({1, 4096, std::max<uint64_t>(1, Total)});
     DecodeBudget.deadline =
         std::chrono::steady_clock::now() +
         std::chrono::microseconds(Budget.remainingMicroseconds());
@@ -52,10 +54,12 @@ llvm::Error Bionic::initializeDex() {
           std::string_view(reinterpret_cast<const char *>(Image.data()),
                            Image.size()),
           "supplied-dex-" + std::to_string(I), DecodeBudget);
+      DecodeBudget.limits.max_files -= Part.size();
       Classes.insert(Classes.end(), std::make_move_iterator(Part.begin()),
                      std::make_move_iterator(Part.end()));
     }
-    JNI.Dex = std::make_shared<mobile::dalvik::Program>(std::move(Classes));
+    JNI.Dex = std::make_shared<mobile::dalvik::Program>(std::move(Classes),
+                                                        Native.Properties);
     JNI.DexRuntime =
         std::make_shared<mobile::dalvik::Runtime>(*JNI.Dex, JNI.Heap);
   } catch (const mobile::Error &E) {

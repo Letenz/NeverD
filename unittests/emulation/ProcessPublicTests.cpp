@@ -3495,6 +3495,33 @@ TEST_F(ProcessPublic, DarwinDescriptorCapRejectsMalformedOptionsBeforeLoading) {
   }
 }
 
+TEST_F(ProcessPublic, DexWireAllowanceReachesSharedValidation) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / "jni-O2-relr.so")
+             .string();
+  const std::string Request =
+      std::string(
+          R"({"backend":"unicorn","android":{"entry_symbol":"jni_vm_lifecycle","initialize":false,"jni":true,"dex_images":[")") +
+      std::string(80000, '0') + R"("]}})";
+  ASSERT_GT(Request.size(), NEVERD_PROCESS_OPTIONS_JSON_METADATA_LIMIT);
+  ASSERT_LT(Request.size(), NEVERD_PROCESS_OPTIONS_JSON_LIMIT);
+  // Structurally admitted hex must reach the DEX validator;
+  // the larger wire allowance must not accept a fabricated executable.
+  EXPECT_EQ(neverd_emulate_process_json(Session, Path.c_str(),
+                                        AndroidNativeAArch64, Request.c_str()),
+            nullptr);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("requires DEX version"),
+            std::string::npos);
+  const auto Padded = "{}" + std::string(65536, ' ');
+  EXPECT_EQ(neverd_emulate_process_json(Session, Path.c_str(),
+                                        AndroidNativeAArch64, Padded.c_str()),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)), field::TooLarge);
+#endif
+}
+
 TEST_F(ProcessPublic, InvalidSetupDoesNotPoisonTheReusableSession) {
   EXPECT_EQ(
       neverd_emulate_process_json(nullptr, Path.c_str(), LinuxELF64, nullptr),

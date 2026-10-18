@@ -11,6 +11,8 @@
 #include "neverd/emulation/ExecutionConfiguration.h"
 #include "neverd/emulation/ProcessSession.h"
 
+#include "llvm/Support/MemoryBuffer.h"
+
 #include <tuple>
 
 namespace neverd::emulation {
@@ -55,6 +57,92 @@ TEST_P(AndroidJNI, VMThreadAttachmentAndVersions) {
   auto R = run("jni_vm_lifecycle");
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
   EXPECT_EQ(R.ReturnValue, 0u);
+}
+TEST_P(AndroidJNI, BuildVersionFieldsUseTheNativePropertySnapshot) {
+  Options.Android->Properties = {{"ro.build.version.release", "9.2"},
+                                 {"ro.build.version.incremental", "9.2"},
+                                 {"ro.build.version.sdk", "0x1c"}};
+  Options.Android->Arguments = {28, 1};
+  auto R = run("jni_build_version");
+  EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+}
+TEST_P(AndroidJNI, BuildVersionMissingAndEmptyPropertiesKeepPlatformDefaults) {
+  Options.Android->Properties = {{"ro.build.version.release", ""}};
+  Options.Android->Arguments = {0, 0};
+  auto R = run("jni_build_version");
+  EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+}
+TEST_P(AndroidJNI, BuildVersionRejectsWrongTypesWritesAndUnknownFields) {
+  for (const char *Entry :
+       {"jni_build_version_wrong_accessor", "jni_build_version_write",
+        "jni_build_version_unknown_field"}) {
+    auto R = run(Entry);
+    EXPECT_EQ(R.Stop, std::string_view(Entry).ends_with("unknown_field")
+                          ? ProcessStopReason::UnsupportedService
+                          : ProcessStopReason::RuntimeFailure)
+        << Entry << R.Diagnostic;
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_FALSE(R.NativeCalls.back().Result.has_value());
+  }
+}
+TEST_P(AndroidJNI, DexClassCapacityIsSeparateAndAggregate) {
+#ifndef NEVERD_ANDROID_DEX_FIXTURE_DIR
+  GTEST_SKIP() << "Python DEX fixture generator unavailable";
+#else
+  Options.MemoryLimit = 128 * 1024 * 1024;
+  auto image = [](const char *Name) {
+    auto File = llvm::MemoryBuffer::getFile(
+        (std::filesystem::path(NEVERD_ANDROID_DEX_FIXTURE_DIR) / Name)
+            .string());
+    if (!File) {
+      ADD_FAILURE() << File.getError().message();
+      return std::vector<uint8_t>{};
+    }
+    auto Bytes = (*File)->getBuffer();
+    return std::vector<uint8_t>(Bytes.begin(), Bytes.end());
+  };
+  auto Small = image("classes-17-0.dex");
+  auto Half = image("classes-2048-0.dex");
+  auto OtherHalf = image("classes-2048-1.dex");
+  auto Full = image("classes-4096-0.dex");
+  auto invoke = [&](std::vector<std::vector<uint8_t>> Images, const char *Last,
+                    const char *Error = nullptr) {
+    Options.Android->DexImages = std::move(Images);
+    Options.Android->EntrySymbol = "jni_dex_class_pair";
+    NativeMemoryRegion Region;
+    Region.Address = 0x20000000;
+    Region.Size = 4096;
+    Region.Bytes.resize(128);
+    const std::string First = "bench/d000/C000000";
+    std::copy(First.begin(), First.end(), Region.Bytes.begin());
+    const std::string LastName = Last;
+    std::copy(LastName.begin(), LastName.end(), Region.Bytes.begin() + 64);
+    Options.Android->Memory = {std::move(Region)};
+    Options.Android->Arguments = {0x20000000, 0x20000040};
+    auto R =
+        emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+    if (Error) {
+      ASSERT_FALSE(bool(R));
+      EXPECT_NE(llvm::toString(R.takeError()).find(Error), std::string::npos);
+      return;
+    }
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::Returned) << R->Diagnostic;
+    EXPECT_EQ(R->ReturnValue, 0u);
+  };
+  invoke({Small}, "bench/d000/C000016");
+  invoke({Full}, "other/d000/C004095");
+  invoke({Half, OtherHalf}, "other/d001/C002047");
+  invoke({image("classes-4097-0.dex")}, "", "class inventory");
+  invoke({Half, image("classes-2049-1.dex")}, "", "class inventory");
+  invoke({Full, OtherHalf}, "", "class inventory");
+  invoke({Small, Small}, "", "duplicate supplied DEX class");
+  invoke(std::vector<std::vector<uint8_t>>(17, Small), "", "at most 16");
+  Small.back() ^= 1;
+  invoke({Small}, "", "Invalid DEX");
+#endif
 }
 TEST_P(AndroidJNI, ModifiedUTF8UTF16AndRangeException) {
   auto R = run("jni_string_values");

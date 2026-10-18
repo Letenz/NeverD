@@ -196,6 +196,15 @@ llvm::Expected<ProcessOptions> processOptionsFromJSON(llvm::StringRef Text) {
 #undef NEVERD_PROCESS_OPTION_NUMBER
     return invalid(field::UnknownField, Name);
   }
+  // Only validated DEX payload bytes earn additional wire capacity. Strings,
+  // other binary fields, whitespace and escape overhead retain the old bound.
+  uint64_t EncodedDexBytes = 0;
+  if (Options.Android)
+    for (const auto &Image : Options.Android->DexImages)
+      EncodedDexBytes += Image.size() * 2;
+  if (EncodedDexBytes > Text.size() ||
+      Text.size() - EncodedDexBytes > field::JSONMetadataLimit)
+    return invalid(field::TooLarge);
   return Options;
 }
 
