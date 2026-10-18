@@ -9590,6 +9590,10 @@ static fs::path gccInflateA64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_jumptable_inflate_gcc_a64.o";
 }
 
+static fs::path maskedLaneA64Obj() {
+  return fs::path(TEST_OBJ_DIR) / "test_jumptable_masked_lane_a64.o";
+}
+
 static fs::path pageoffWrongBaseA64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_pageoff_wrong_base_a64.o";
 }
@@ -10164,6 +10168,43 @@ TEST_F(JTE_AArch64, ZlibInflateDispatchReachesEveryMode) {
     Expected.push_back(Anchor + static_cast<int64_t>(Entry) * 4);
   }
   EXPECT_EQ(Table.Targets, Expected);
+  EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+}
+
+// `masked_lane_dispatch` bounds `w1 & 0xf` with `cmp w8, #0xc; b.hi`, then
+// indexes its 13-entry table with `x1 & 0xf`, computed again from the whole
+// register. The guard's 32-bit mask is the low half of that index, so the
+// table keeps the guard's 13 entries, not the 16 the mask allows: the words
+// after the table are no entries.
+TEST_F(JTE_AArch64, MaskedLaneGuardBoundsAWideMaskIndex) {
+  auto ImageOrErr = neverd::loadBinary(maskedLaneA64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  const neverd::Symbol *Function = Image.findSymbol("masked_lane_dispatch");
+  ASSERT_NE(Function, nullptr);
+  const neverd::Section *Rodata = nullptr;
+  for (const neverd::Section &Section : Image.Sections)
+    if (Section.Name == ".rodata")
+      Rodata = &Section;
+  ASSERT_NE(Rodata, nullptr);
+  std::vector<neverd::va_t> Expected;
+  for (size_t Case = 0; Case < 13; ++Case) {
+    const uint8_t *Bytes = Image.readVA(Rodata->VA + Case * 4, 4);
+    ASSERT_NE(Bytes, nullptr);
+    int32_t Entry = 0;
+    std::memcpy(&Entry, Bytes, sizeof(Entry));
+    Expected.push_back(Rodata->VA + static_cast<int64_t>(Entry));
+  }
+
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const neverd::LowFunc Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  ASSERT_EQ(Low.JumpTables.size(), 1u);
+  EXPECT_EQ(Low.JumpTables.front().BaseAddr, Rodata->VA);
+  EXPECT_EQ(Low.JumpTables.front().Targets, Expected);
   EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
 }
 

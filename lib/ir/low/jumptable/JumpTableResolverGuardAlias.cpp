@@ -1352,11 +1352,19 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
       // producer (for example, a bit count). Retain the original query as a
       // fallback, only to be evaluated if the occurrence proof cannot bind
       // the index. Expanding it eagerly would revisit unrelated deep inputs
-      // even when the exact lane already proves the guard.
-      if (DefinedLane &&
+      // even when the exact lane already proves the guard.  A masked value
+      // has no occurrence identity with a mask the table use recomputes from
+      // the wider register (a W compare before an X index); only the value
+      // comparison sees that, so it gets the same fallback.
+      const bool ExtensionWriter =
+          DefinedLane &&
           (Def.Opcode == NdOp::INT_ZEXT || Def.Opcode == NdOp::INT_SEXT) &&
           Def.NumInputs == 1 && Def.Inputs[0].Size > V.Size &&
-          V.Offset == Def.Output.Offset) {
+          V.Offset == Def.Output.Offset;
+      const bool MaskedDefinition =
+          !DefinedLane && Def.Opcode == NdOp::INT_AND && Def.NumInputs == 2 &&
+          Def.Inputs[0].isConst() != Def.Inputs[1].isConst();
+      if (ExtensionWriter || MaskedDefinition) {
         if (!consumeGuardBuildWork(IndexAlternatives.size() + 2))
           return Finish({});
         ExtendedLaneQueries.emplace_back(Node, ProofQueries[Node->IndexQuery]);
