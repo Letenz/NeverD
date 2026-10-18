@@ -294,6 +294,11 @@ struct PipelineResult {
   /// (Windows on ARM64): a call to one passes that many and no other
   /// register.
   std::map<va_t, int> CallEntryArgumentCounts;
+  /// The imports, by the stub or slot a call names each by, whose prototype
+  /// the user declares and whose summary above it gives (userPrototype): a
+  /// call to one passes what it declares, however many arguments the arity
+  /// tables give a routine of the name.
+  std::set<va_t> CallUserPrototypes;
   /// Entries of indirect-call dispatchers (`_guard_dispatch_icall`): a call to
   /// one passes the argument registers its caller set.
   std::set<va_t> CallDispatchThunks;
@@ -687,7 +692,8 @@ private:
       const BinaryImage &Img, BinaryFormat Fmt, bool NoOpt, unsigned NumThreads,
       bool RecordSources = false,
       llvm::ArrayRef<sigs::LibraryRecognition> Recognitions = {},
-      const DebugContext *Dbg = nullptr, const SourceViewOptions &View = {});
+      const DebugContext *Dbg = nullptr, const SourceViewOptions &View = {},
+      const std::set<va_t> *UserPrototypeCallees = nullptr);
 
   /// Execute the common shard lifecycle. The emitter creates each module in
   /// its worker's context; only a complete linked module is returned in the

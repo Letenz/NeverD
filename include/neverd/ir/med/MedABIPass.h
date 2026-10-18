@@ -74,6 +74,10 @@ std::set<va_t> findFrameLocalLeafCallees(const std::vector<MedFunc> &Funcs,
 // \p PointerCallees gives the routine each function-pointer variable starts
 // at (collectPointerVariableCallees): a call through the variable passes that
 // routine's arguments, though it never takes its name.
+// \p UserPrototypeCallees holds the imports, by their stubs and slots, whose
+// prototype the user declares (PipelineResult::CallUserPrototypes): a call
+// to one passes what its summary counts, which the prototype gives, however
+// many arguments the arity tables give a routine of its name.
 // LowToMed runs before whole-program return types are known.  It can
 // therefore leave a scalar-FP call modeled as defining the integer return
 // register: when the result is read only by the next call's implicit XMM0/V0
@@ -101,7 +105,8 @@ void recoverCallAbi(
     const std::set<va_t> *FrameLocalLeafCallees = nullptr,
     const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs = nullptr,
     const std::set<va_t> *VectorArgumentCallees = nullptr,
-    const std::map<va_t, PointerVariableCallee> *PointerCallees = nullptr);
+    const std::map<va_t, PointerVariableCallee> *PointerCallees = nullptr,
+    const std::set<va_t> *UserPrototypeCallees = nullptr);
 
 /// The integer argument layout \p Func takes its register arguments in: its
 /// own register order (MedFunc::IntegerArgumentRegisters) where it has one,

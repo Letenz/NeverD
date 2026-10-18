@@ -307,6 +307,13 @@ public:
   void setVariadicVectorCallees(const std::map<va_t, int> *Entries) {
     VariadicVectorCallees = Entries;
   }
+  /// The imports, by the stub or slot a call names each by, whose prototype
+  /// the user declares (PipelineResult::CallUserPrototypes): a call to one
+  /// passes what call-ABI recovery gave it, however many arguments a
+  /// platform prototype or the arity tables give a routine of the name.
+  void setUserPrototypeCallees(const std::set<va_t> *Callees) {
+    UserPrototypeCallees = Callees;
+  }
 
   struct CallIndTarget {
     std::string Name = "indirect";
@@ -557,6 +564,7 @@ private:
   const std::map<va_t, std::string> *FuncNames = nullptr;
   const std::map<va_t, std::string> *ResolvedCalleeNames = nullptr;
   const std::map<va_t, int> *VariadicVectorCallees = nullptr;
+  const std::set<va_t> *UserPrototypeCallees = nullptr;
   int NextHighTempId = 0;
   std::optional<MedVar> SwiftErrorEntryInput;
   int ExprRecurseDepth = 0;

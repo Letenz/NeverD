@@ -15,6 +15,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/debug/DebugContext.h"
+#include "neverd/debug/UserPrototype.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
@@ -3131,6 +3132,10 @@ struct ImportPrototypeArguments {
   /// The integer arguments each import's prototype counts, where the setup
   /// of each call gives it its arguments (Windows on ARM64).
   std::map<va_t, int> Counts;
+  /// The imports listed by the prototype the user declares (userPrototype),
+  /// which takes only integer arguments: their calls pass what it declares,
+  /// however many the arity tables give a routine of the name.
+  std::set<va_t> UserDeclared;
 };
 
 /// The arguments of the libc imports that \p Funcs and the callees
@@ -3139,7 +3144,9 @@ struct ImportPrototypeArguments {
 /// import directory or not (importCalleeName).  A stub lifted as a function
 /// is keyed too.  A call in a function whose own summary is incomplete still
 /// passes its import's parameters.  Only a routine with a fixed prototype is
-/// listed: one of the image format's own runtime (LibCPrototype, such as the
+/// listed: the one the user declares (userPrototype), where it takes only
+/// integer arguments, which decides over the tables (UserDeclared); else one
+/// of the image format's own runtime (LibCPrototype, such as the
 /// Windows C runtime's `_initterm`), else one the arity tables give
 /// (LibCNames.h), by the exact name where the import entry is the C name,
 /// else one the program's types declare (\p Dbg's resolvePrototype), as the
@@ -3258,6 +3265,19 @@ ImportPrototypeArguments importPrototypeArguments(
     const std::optional<FunctionSym> Function = Declared(Name);
     return Function ? SignatureArguments(*Function) : std::nullopt;
   };
+  // The prototype the user declares for a routine of another module, where
+  // it takes only integer arguments: the user may declare a routine of a C
+  // library's name that a library of the program's own exports.
+  auto UserArguments =
+      [&](const std::string &Name) -> std::optional<Arguments> {
+    const std::optional<FunctionSym> Function =
+        userPrototype(Dbg, cNameOfStatedName(Name, Img.Format, Img.Arch));
+    std::optional<Arguments> Result =
+        Function ? SignatureArguments(*Function) : std::nullopt;
+    if (Result && !Result->Floats.empty())
+      return std::nullopt;
+    return Result;
+  };
   // A routine the image exports, whose name binds a prototype
   // (LocalTypesDebugContext), takes what that prototype declares from every
   // caller: its export binds the convention, which a compiler keeps for the
@@ -3374,10 +3394,14 @@ ImportPrototypeArguments importPrototypeArguments(
     std::optional<Arguments> Routine;
     // The summary of an exported routine's own body joins its prototype.
     bool Joins = false;
+    bool User = false;
     if (!Name.empty()) {
       if (const uint16_t Bytes = RoutineFloatReturn(Name))
         Result.FloatReturns[Addr] = Bytes;
-      Routine = RoutineArguments(Name);
+      Routine = UserArguments(Name);
+      User = Routine.has_value();
+      if (!Routine)
+        Routine = RoutineArguments(Name);
       if (!Routine)
         Routine = DecoratedArguments(Addr);
     } else {
@@ -3436,6 +3460,8 @@ ImportPrototypeArguments importPrototypeArguments(
       if (Routine->CalleePops && *Count > 0)
         Result.StackPops[Addr] = *Count * static_cast<int>(TRI.PointerSize);
     }
+    if (User)
+      Result.UserDeclared.insert(Addr);
   };
   for (const LowFunc &F : Funcs)
     for (const LowBlock &Block : F.Blocks)
@@ -3486,6 +3512,7 @@ void computeCallRegisterEffects(
   const std::map<va_t, PointerVariableCallee> PointerCallees =
       collectPointerVariableCallees(Img);
   Result.CallArgumentSources.clear();
+  Result.CallUserPrototypes.clear();
   for (const auto &[Slot, Callee] : PointerCallees)
     Result.CallArgumentSources.emplace(
         Slot, Callee.ImportName.empty() ? Callee.LocalEntry : Slot);
@@ -3504,15 +3531,16 @@ void computeCallRegisterEffects(
       Result.CallEntryStackArgs = std::move(Prototyped.StackArgs);
       Result.CallEntryStackSlots = std::move(Prototyped.StackSlots);
       Result.CallEntryStackPops = std::move(Prototyped.StackPops);
+      Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
     } else if (Convention && Convention->ImportArgumentsFromPrototype &&
                Convention->ArgumentsFromCallSetup) {
       // Where the setup of each call gives it its arguments (Windows on
       // ARM64), a prototyped import's declaration still counts them.
-      Result.CallEntryArgumentCounts =
-          importPrototypeArguments(Img, Result.LowFuncs, {},
-                                   /*StackArguments=*/true, Dbg,
-                                   /*RegisterArguments=*/true, &PointerCallees)
-              .Counts;
+      ImportPrototypeArguments Prototyped = importPrototypeArguments(
+          Img, Result.LowFuncs, {}, /*StackArguments=*/true, Dbg,
+          /*RegisterArguments=*/true, &PointerCallees);
+      Result.CallEntryArgumentCounts = std::move(Prototyped.Counts);
+      Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
     }
     return;
   }
@@ -3707,9 +3735,13 @@ void computeCallRegisterEffects(
     ImportPrototypeArguments Prototyped = importPrototypeArguments(
         Img, Result.LowFuncs, Effects, Convention->StackArgumentSummary, Dbg,
         /*RegisterArguments=*/true, &PointerCallees);
+    // The user's declaration of an import decides where no documented
+    // contract does.
     for (auto &[Addr, Widths] : Prototyped.Reads)
-      if (!DispatchThunks.count(Addr))
-        FixedEntryReads.try_emplace(Addr, Widths);
+      if (!DispatchThunks.count(Addr) &&
+          FixedEntryReads.try_emplace(Addr, Widths).second &&
+          Prototyped.UserDeclared.count(Addr))
+        Result.CallUserPrototypes.insert(Addr);
     for (auto &[Addr, Count] : Prototyped.StackArgs)
       if (!DispatchThunks.count(Addr))
         FixedEntryStackArgs.try_emplace(Addr, Count);
