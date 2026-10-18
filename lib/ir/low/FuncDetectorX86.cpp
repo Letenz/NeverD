@@ -171,6 +171,63 @@ void scanCodePointersX64(const BinaryImage &Img, Decoder &Dec,
   Dec.setText(KeptText);
 }
 
+void scanCodeAddressImmediatesX86(const BinaryImage &Img, Decoder &Dec,
+                                  std::vector<std::pair<va_t, va_t>> &Out) {
+  const auto &Fields = Img.CodeAddressRelocOperands;
+  if (Fields.empty())
+    return;
+  const bool KeptDetail = Dec.detailEnabled(), KeptText = Dec.textEnabled();
+  for (const Section &Sec : Img.Sections) {
+    if (Sec.Size == 0 || !Sec.isExecutable() || !Img.isCodeAddress(Sec.VA))
+      continue;
+    const Segment *Seg = Img.getSegmentFor(Sec.VA);
+    if (!Seg || Seg->Data.empty() || Sec.VA < Seg->VA ||
+        Sec.VA - Seg->VA >= Seg->Data.size())
+      continue;
+    const va_t End =
+        std::min<va_t>(Sec.VA + Sec.Size, Seg->VA + Seg->Data.size());
+    auto Field = Fields.lower_bound(Sec.VA);
+    for (va_t Cur = Sec.VA; Cur < End;) {
+      while (Field != Fields.end() && Field->first < Cur)
+        ++Field;
+      if (Field == Fields.end() || Field->first >= End)
+        break;
+      const uint8_t *Bytes = Seg->Data.data() + (Cur - Seg->VA);
+      const size_t Remain = static_cast<size_t>(End - Cur);
+      DecodedInsn DI;
+      Dec.setText(false);
+      Dec.setDetail(false);
+      const int Size = Dec.decodeOneLight(Bytes, Remain, Cur, DI);
+      if (Size <= 0) {
+        ++Cur;
+        continue;
+      }
+      const va_t Next = Cur + static_cast<va_t>(Size);
+      if (Field->first < Next) {
+        // Only operand detail, which comes with text, says which field of
+        // the instruction is its immediate.
+        Dec.setText(true);
+        Dec.setDetail(true);
+        if (Dec.decodeOneLight(Bytes, Remain, Cur, DI) == Size && DI.Raw &&
+            DI.Raw->detail) {
+          const cs_x86_encoding &Encoding = DI.Raw->detail->x86.encoding;
+          for (auto It = Field; It != Fields.end() && It->first < Next; ++It)
+            if (Encoding.imm_size == 4 &&
+                It->first == Cur + Encoding.imm_offset &&
+                It->second.Width == 4 &&
+                !It->second.PCRelativeFromInstructionEnd &&
+                It->second.Kind == RelocatedAddressFieldKind::Generic)
+              Out.emplace_back(Cur, normalizeCodeAddress(It->second.TargetVA,
+                                                         Img.Arch, Img.Mode));
+        }
+      }
+      Cur = Next;
+    }
+  }
+  Dec.setDetail(KeptDetail);
+  Dec.setText(KeptText);
+}
+
 void scanSegmentCallsX86(const BinaryImage &Img, Decoder &Dec,
                          const Segment *Seg, va_t Start, va_t End,
                          std::set<va_t> &Out) {

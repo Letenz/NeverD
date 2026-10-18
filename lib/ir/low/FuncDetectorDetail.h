@@ -59,6 +59,14 @@ std::optional<CallScanStep> stepCallsX86(const BinaryImage &Img, Decoder &Dec,
 void scanCodePointersX64(const BinaryImage &Img, Decoder &Dec,
                          std::set<va_t> &Out);
 
+/// The code an i386 instruction names through a relocated four-byte
+/// immediate, such as `push offset handler` or `mov [esi+10h], offset
+/// callback`: (instruction, target) pairs, in sweep order.  A relocated
+/// displacement names memory the instruction reads or writes, not code to
+/// run, and is left out.
+void scanCodeAddressImmediatesX86(const BinaryImage &Img, Decoder &Dec,
+                                  std::vector<std::pair<va_t, va_t>> &Out);
+
 void scanSegmentCallsX86(const BinaryImage &Img, Decoder &Dec,
                          const Segment *Seg, va_t Start, va_t End,
                          std::set<va_t> &Out);

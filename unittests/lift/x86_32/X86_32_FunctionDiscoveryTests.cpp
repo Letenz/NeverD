@@ -712,6 +712,48 @@ BinaryImage makeSwitchTableAmongCode() {
 
 } // namespace
 
+TEST(X86_32_FunctionDiscovery, CallbackStoredByARelocatedImmediateIsAFunction) {
+  // A linked i386 PE stores a callback into an object with
+  // `mov dword ptr [ecx+0x10], offset cb`, whose imm32 is a base relocation.
+  // The callback is a function the code only takes the address of; a target
+  // the storing function names inside itself stays its own label.
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  std::vector<uint8_t> Text;
+  auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Text.insert(Text.end(), Bytes);
+  };
+  // 0x401000: register_callback.
+  Emit({0x55, 0x8B, 0xEC});                         // push ebp; mov ebp, esp
+  Emit({0x8B, 0x4D, 0x08});                         // mov ecx, [ebp+8]
+  Emit({0xC7, 0x41, 0x10, 0x40, 0x10, 0x40, 0x00}); // mov [ecx+0x10], 0x401040
+  Emit({0x5D, 0xC3});                               // pop ebp; ret
+  Text.resize(0x40, 0xCC);
+  // 0x401040: the callback.
+  Emit({0x55, 0x8B, 0xEC, 0x33, 0xC0, 0x5D, 0xC3}); // frame; xor eax,eax; ret
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+  // The imm32 of the mov at 0x401009 is at 0x40100C.
+  Img.CodeAddressRelocOperands.emplace(
+      0x40100C, RelocatedAddressField{.EncodedValue = 0x401040,
+                                      .TargetVA = 0x401040,
+                                      .Width = 4,
+                                      .TargetOwnerVA = 0x401040});
+
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  const auto Functions = Detector.detect(Img, Dec);
+  EXPECT_TRUE(hasEntry(Functions, 0x401000));
+  EXPECT_TRUE(hasEntry(Functions, 0x401040))
+      << "a callback a relocated immediate names is a function of its own";
+}
+
 TEST(X86_32_FunctionDiscovery, SwitchTableAmongCodeBelongsToItsFunction) {
   BinaryImage Img = makeSwitchTableAmongCode();
   // The table is data the code reads, though .text holds it; the two fields
