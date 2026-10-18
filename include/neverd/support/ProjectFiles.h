@@ -81,10 +81,16 @@ inline std::error_code prepare(const std::filesystem::path &Input) {
       {".gitignore", GitIgnore}, {".gitattributes", GitAttributes}};
   for (const auto &[Name, Text] : Setup) {
     const std::filesystem::path File = Folder / Name;
-    if (std::filesystem::exists(File, Error) || Error)
+    const bool Exists = std::filesystem::exists(File, Error);
+    if (Error)
+      return Error;
+    if (Exists)
       continue;
     std::ofstream Out(File, std::ios::binary);
     Out.write(Text.data(), static_cast<std::streamsize>(Text.size()));
+    Out.close();
+    if (!Out)
+      return std::make_error_code(std::errc::io_error);
   }
   return {};
 }

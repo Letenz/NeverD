@@ -2,6 +2,12 @@ add_neverd_unittest(NeverDSymbolicTests
   SymConcreteTests.cpp
   SymDispatchTests.cpp
   SymExecTests.cpp
+  SymMemoryKnowledgeTests.cpp
+  SymLoadOriginBindingTests.cpp
+  SymMBARewriteCacheTests.cpp
+  SymBatchSubstitutionTests.cpp
+  SymConditionalControlTests.cpp
+  SymMBAKnownFactTests.cpp
   SymMBAObservedWindowTests.cpp
   SymIntegerIntrinsicTests.cpp
   SymSegmentedMemoryTests.cpp
@@ -78,5 +84,35 @@ target_include_directories(NeverDSymbolicSparseContextTests PRIVATE
 
 add_neverd_unittest(NeverDSymMBAObservedWindowTests
   SymMBAObservedWindowTests.cpp
+  LINK_COMPONENTS Symbolic Solver
+)
+
+add_neverd_unittest(NeverDSymMBAKnownFactTests
+  SymMBAKnownFactTests.cpp
+  LINK_COMPONENTS Symbolic Solver
+)
+
+add_neverd_unittest(NeverDSymConditionalControlTests
+  SymConditionalControlTests.cpp
+  LINK_COMPONENTS Symbolic Solver
+)
+
+add_neverd_unittest(NeverDSymBatchSubstitutionTests
+  SymBatchSubstitutionTests.cpp
+  LINK_COMPONENTS Symbolic Solver
+)
+
+add_neverd_unittest(NeverDSymMBARewriteCacheTests
+  SymMBARewriteCacheTests.cpp
+  LINK_COMPONENTS Symbolic Solver
+)
+
+add_neverd_unittest(NeverDSymLoadOriginBindingTests
+  SymLoadOriginBindingTests.cpp
+  LINK_COMPONENTS Symbolic Solver
+)
+
+add_neverd_unittest(NeverDSymMemoryKnowledgeTests
+  SymMemoryKnowledgeTests.cpp
   LINK_COMPONENTS Symbolic Solver
 )

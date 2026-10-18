@@ -199,6 +199,17 @@ public:
   /// should inspect `loadOrigins` instead.
   const LoadOrigin *loadOrigin(SymRef Value) const;
 
+  struct LoadOriginBinding {
+    SymRef Value;
+    LoadOrigin Origin;
+  };
+  /// Bind historical observations after a caller-proved value rebind. All
+  /// references belong to this context; each origin describes the complete
+  /// value. This never creates available memory facts or revives old bytes.
+  /// Conflicting origins remain a sorted union. Invalid values/addresses or
+  /// width mismatches reject the entire batch before publishing any history.
+  bool bindLoadOrigins(llvm::ArrayRef<LoadOriginBinding> Bindings);
+
   struct MemoryInputOrigin {
     SymRef Base;
     uint64_t Offset = 0;
@@ -225,6 +236,31 @@ public:
   /// Forget memory outright, every region of it.  What a callee with no
   /// summary may have done.
   void clobberMemory();
+
+  /// Available values, not a history of accesses. An invalid Base denotes
+  /// absolute memory; otherwise Offset is relative to its canonical region.
+  /// Keeping the displacement separate preserves aliases such as p and p+8.
+  struct MemoryFact {
+    SymRef Base;
+    uint64_t Offset = 0;
+    SymRef Value;
+  };
+  struct MemoryKnowledge {
+    const SymContext *Owner = nullptr;
+    llvm::endianness Order = llvm::endianness::little;
+    std::vector<MemoryFact> Facts;
+  };
+  /// Export only materialized bytes, in spans of at most eight bytes. This
+  /// does not read unknown bytes or recover facts from old load provenance.
+  MemoryKnowledge memoryKnowledge() const;
+  /// Replace memory knowledge after a caller-proved symbolic rebind. This is
+  /// not a program store: supplied regions coexist; future stores still apply
+  /// normal alias invalidation. Other bytes belong to a fresh unknown epoch.
+  /// Context/order/span errors and conflicting exact overlaps return false
+  /// without changing this state. Registers and temporaries are preserved.
+  /// All references must belong to Owner. Relative 64-bit region coordinates
+  /// wrap as normal loads/stores do; absolute addresses must not overflow.
+  bool restoreMemoryKnowledge(const MemoryKnowledge &Knowledge);
 
   //===--------------------------------------------------------------------===//
   // Whole-state operations

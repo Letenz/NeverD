@@ -36,6 +36,8 @@
 
 #include "SymMBADetail.h"
 
+#include "neverd/symbolic/SymKnownBits.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -46,6 +48,7 @@
 #include <cassert>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 namespace neverd::symbolic {
@@ -193,6 +196,103 @@ SymRef foldObservedWindow(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
   auto Part =
       projectBitWindow(Ctx, Source, 0, Mask.popcount(), Budget, Storage);
   return Ctx.mkZExt(Part, Ctx.width(Root));
+}
+
+SymRef foldKnownBits(SymContext &Ctx, SymRef Root, SymKnownBits &Known,
+                     WorkBudget &Budget, size_t &Storage) {
+  const auto Op = Ctx.op(Root);
+  if (Ctx.isConst(Root) || Ctx.isVar(Root) ||
+      Ctx.width(Root) > SymKnownBits::MaxWidth)
+    return Root;
+  const bool HasMask = (Op == SymOp::And || Op == SymOp::Or) &&
+                       Ctx.numOperands(Root) == 2 &&
+                       Ctx.isConst(Ctx.operand(Root, 0));
+  // Only ask for facts at the consumers that use them. Opaque boundaries keep
+  // the existing deep walk's guarantee of spending no region work there.
+  if (!HasMask && !isPredicate(Op))
+    return Root;
+  constexpr size_t FactBytes = 128;
+  unsigned Available = unsigned(
+      std::min<size_t>(SymKnownBits::MaxQueryWork, Storage / FactBytes));
+  while (Available && !Budget.canConsume(Available))
+    Available /= 2;
+  if (!Available)
+    return Root;
+  const auto Source = HasMask ? Ctx.operand(Root, 1) : Root;
+  if (HasMask && Ctx.numOperands(Source) == 0)
+    return Root;
+  unsigned Remaining = Available;
+  auto Bits = Known.query(Source, Remaining);
+  Budget.consume(Available - Remaining);
+  Storage -= (Available - Remaining) * FactBytes;
+  if (!HasMask)
+    return Bits && Bits->isConstant() ? Ctx.mkConst(Bits->One) : Root;
+  const unsigned Words = (Ctx.width(Root) - 1) / 64 + 1;
+  if (!Bits || Storage < Words * sizeof(uint64_t) || !Budget.consume(Words))
+    return Root;
+  Storage -= Words * sizeof(uint64_t);
+  const auto Mask = Ctx.constValue(Ctx.operand(Root, 0));
+  const auto Unknown = ~(Bits->Zero | Bits->One);
+  if (Op == SymOp::And) {
+    if ((Unknown & Mask).isZero())
+      return Ctx.mkConst(Bits->One & Mask);
+    return (Mask | Bits->Zero).isAllOnes() ? Source : Root;
+  }
+  if ((Unknown & ~Mask).isZero())
+    return Ctx.mkConst(Bits->One | Mask);
+  const auto Missing = Mask & ~Bits->One;
+  if (Missing.isZero())
+    return Source;
+  return (Missing & ~Bits->Zero).isZero()
+             ? Ctx.mkAdd(Source, Ctx.mkConst(Missing))
+             : Root;
+}
+
+SymRef foldConditionalControls(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                               size_t &Storage) {
+  auto Op = Ctx.op(Root);
+  if (Op == SymOp::Eq) {
+    for (unsigned I = 0; I < 2; ++I) {
+      auto Value = Ctx.operand(Root, I), Literal = Ctx.operand(Root, 1 - I);
+      if (Ctx.op(Value) != SymOp::Ite || !Ctx.isConst(Literal))
+        continue;
+      auto T = Ctx.operand(Value, 1), E = Ctx.operand(Value, 2);
+      if (Ctx.isConst(T) && Ctx.isConst(E) && Budget.consume(3))
+        return Ctx.mkIte(Ctx.operand(Value, 0), Ctx.mkEq(T, Literal),
+                         Ctx.mkEq(E, Literal));
+    }
+  }
+  if (Op != SymOp::Ite || Budget.exhausted() || Storage < 128)
+    return Root;
+  auto Condition = Ctx.operand(Root, 0);
+  std::vector<SymRef> Work{Ctx.operand(Root, 1), Ctx.operand(Root, 2)};
+  llvm::DenseSet<uint32_t> Seen;
+  bool Dependent = false;
+  unsigned Edges = 0;
+  while (!Work.empty()) {
+    auto Value = Work.back();
+    Work.pop_back();
+    if (!Seen.insert(Value.index()).second)
+      continue;
+    if (!Budget.consume() || Seen.size() > 64)
+      return Root;
+    Dependent |= Value == Condition;
+    auto Children = Ctx.operands(Value);
+    if (Children.size() > 128 - Edges)
+      return Root;
+    Edges += Children.size();
+    Work.insert(Work.end(), Children.begin(), Children.end());
+  }
+  const size_t Bytes = Seen.size() * 128;
+  if (!Dependent || Storage < Bytes || !Budget.consume(2 * Seen.size()))
+    return Root;
+  Storage -= Bytes;
+  auto T =
+      Ctx.substitute(Ctx.operand(Root, 1), {{Condition.index(), Ctx.mkOne(1)}});
+  auto E = Ctx.substitute(Ctx.operand(Root, 2),
+                          {{Condition.index(), Ctx.mkZero(1)}});
+  auto Result = Ctx.mkIte(Condition, T, E);
+  return doesNotGrow(Ctx, Result, Root) ? Result : Root;
 }
 
 //===----------------------------------------------------------------------===//
@@ -882,6 +982,14 @@ MBAResult simplifyMBA(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
 }
 
 MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
+  MBARewriteCache Disabled(Ctx, 0);
+  return simplifyMBADeep(Ctx, E, Opts, Disabled);
+}
+
+MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                          MBARewriteCache &Cache) {
+  if (Cache.Owner != &Ctx)
+    throw std::invalid_argument("MBA rewrite cache belongs to another context");
   MBAResult Result;
   Result.Expr = E;
   if (!E.isValid())
@@ -889,6 +997,20 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
   Result.SizeBefore = readingCost(Ctx, E);
   Result.SizeAfter = Result.SizeBefore;
   WorkBudget Budget(Opts.MaxWork);
+  if (auto Hit = Cache.Rewrites.find(E.index());
+      Hit != Cache.Rewrites.end() && Budget.consume()) {
+    if ((Opts.AllowGrowth || doesNotGrow(Ctx, Hit->second, E)) &&
+        agreeOnSamples(Ctx, E, Hit->second, Opts.VerifySamples)) {
+      Result.Expr = Hit->second;
+      Result.SizeAfter = readingCost(Ctx, Result.Expr);
+      Result.Changed = true;
+      Result.Outcome = MBAOutcome::Rewritten;
+      Result.Evidence = MBAEvidence::Derivation;
+      Result.Work = Budget.used();
+      ++Cache.ReusedRoots;
+      return Result;
+    }
+  }
   SolveReport FastRep;
   if (SymRef Fast = tryFastComplementarySum(Ctx, E, Opts, Budget, FastRep);
       Fast != E) {
@@ -898,6 +1020,9 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
     Result.Outcome = MBAOutcome::Rewritten;
     Result.Evidence = MBAEvidence::Derivation;
     Result.Work = Budget.used();
+    if (Cache.Rewrites.size() < Cache.Capacity &&
+        readingScore(Ctx, Fast) < readingScore(Ctx, E))
+      Cache.Rewrites.try_emplace(E.index(), Fast);
     return Result;
   }
 
@@ -910,8 +1035,19 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
   llvm::DenseMap<uint32_t, SymRef> Solved;
   bool Skipped = false;
   size_t RefinementStorage = Opts.MaxTableBytes;
+  SymKnownBits Known(Ctx);
+  std::vector<std::pair<uint32_t, SymRef>> PendingRewrites;
+  bool Reused = false;
   auto Remember = [&](uint32_t Index, SymRef Value, bool Complete) {
     Solved[Index] = Value;
+    constexpr size_t CacheEntryBytes = 128;
+    if (Complete && Value != SymRef(Index) &&
+        PendingRewrites.size() < Cache.Capacity - Cache.Rewrites.size() &&
+        RefinementStorage >= CacheEntryBytes && Budget.consume() &&
+        readingScore(Ctx, Value) < readingScore(Ctx, SymRef(Index))) {
+      RefinementStorage -= CacheEntryBytes;
+      PendingRewrites.emplace_back(Index, Value);
+    }
     // A replacement root was also visited by this layer. Remember it under
     // its own identity so a later candidate does not measure that same root
     // again merely because it was emitted under another original node.
@@ -928,6 +1064,12 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
 
   for (uint32_t Index : Order) {
     SymRef R(Index);
+    if (auto Hit = Cache.Rewrites.find(Index);
+        Hit != Cache.Rewrites.end() && Budget.consume()) {
+      Solved[Index] = Hit->second;
+      Reused = true;
+      continue;
+    }
     llvm::ArrayRef<SymRef> Ops = Ctx.operands(R);
 
     SymRef Rebuilt = R;
@@ -945,6 +1087,8 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
     }
 
     Rebuilt = foldObservedWindow(Ctx, Rebuilt, Budget, RefinementStorage);
+    Rebuilt = foldKnownBits(Ctx, Rebuilt, Known, Budget, RefinementStorage);
+    Rebuilt = foldConditionalControls(Ctx, Rebuilt, Budget, RefinementStorage);
     if (!canMeasureAtRoot(Ctx, Rebuilt)) {
       Solved[Index] = Rebuilt;
       continue;
@@ -1082,6 +1226,13 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
     return Result;
   }
 
+  if (!AnySampled) {
+    for (auto [Index, Value] : PendingRewrites)
+      if (Cache.Rewrites.size() < Cache.Capacity)
+        Cache.Rewrites.try_emplace(Index, Value);
+    if (Reused)
+      ++Cache.ReusedRoots;
+  }
   Result.Expr = Out;
   Result.SizeAfter = readingCost(Ctx, Out);
   Result.Changed = true;

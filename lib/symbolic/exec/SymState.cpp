@@ -394,6 +394,85 @@ void SymState::clobberMemory() {
   MemoryClobbered = true;
 }
 
+bool SymState::bindLoadOrigins(llvm::ArrayRef<LoadOriginBinding> Bindings) {
+  for (const auto &Binding : Bindings)
+    if (!Binding.Value || !Binding.Origin.Address || !Binding.Origin.Bytes ||
+        Binding.Value.index() >= Ctx->numNodes() ||
+        Binding.Origin.Address.index() >= Ctx->numNodes() ||
+        Ctx->width(Binding.Value) != unsigned(Binding.Origin.Bytes) * 8)
+      return false;
+  for (const auto &Binding : Bindings)
+    recordLoadOrigin(Binding.Value, Binding.Origin);
+  return true;
+}
+
+SymState::MemoryKnowledge SymState::memoryKnowledge() const {
+  MemoryKnowledge Out{Ctx, Order, {}};
+  auto Export = [&](SymRef Base, const Bank &B) {
+    auto It = B.Bytes.begin();
+    while (It != B.Bytes.end()) {
+      const uint64_t Offset = It->first;
+      llvm::SmallVector<SymRef, 8> Bytes;
+      while (It != B.Bytes.end() && Bytes.size() < 8 &&
+             Offset <= std::numeric_limits<uint64_t>::max() - Bytes.size() &&
+             It->first == Offset + Bytes.size()) {
+        Bytes.push_back(
+            Ctx->mkExtract(It->second.Value, It->second.Low, kByteBits));
+        ++It;
+      }
+      Out.Facts.push_back({Base, Offset, joinBytes(Bytes)});
+    }
+  };
+  Export({}, AbsoluteMemory);
+  for (const auto &[Base, B] : Regions)
+    Export(SymRef(Base), B);
+  return Out;
+}
+
+bool SymState::restoreMemoryKnowledge(const MemoryKnowledge &Knowledge) {
+  if (Knowledge.Owner != Ctx || Knowledge.Order != Order)
+    return false;
+  SymState Draft(*this);
+  Draft.clobberMemory();
+  // Historical load provenance remains true of unchanged value identities
+  // even when memory knowledge is replaced. It is not used to seed facts.
+  for (const auto &Fact : Knowledge.Facts) {
+    if (!Fact.Value || Fact.Value.index() >= Ctx->numNodes() ||
+        (Fact.Base && Fact.Base.index() >= Ctx->numNodes()))
+      return false;
+    const uint32_t Width = Ctx->width(Fact.Value);
+    if (!Width || Width % kByteBits ||
+        Width / kByteBits > std::numeric_limits<uint16_t>::max())
+      return false;
+    const uint16_t Bytes = uint16_t(Width / kByteBits);
+    // A rebind may make a base absolute or expose a constant displacement.
+    // Canonical region selection remains owned by locate(), as for loads.
+    Location Where = Fact.Base ? Draft.locate(Fact.Base) : Location{};
+    if (!Where.Base &&
+        Fact.Offset > std::numeric_limits<uint64_t>::max() - Where.Offset)
+      return false;
+    Where.Offset += Fact.Offset;
+    if (!validBankWrite(*Ctx, Where.Base, Where.Offset, Fact.Value))
+      return false;
+    Bank &B = Draft.bankFor(Where);
+    for (uint16_t I = 0; I < Bytes; ++I) {
+      const uint32_t Low = Order == llvm::endianness::little
+                               ? uint32_t(I) * kByteBits
+                               : Width - (uint32_t(I) + 1) * kByteBits;
+      auto Value = Ctx->mkExtract(Fact.Value, Low, kByteBits);
+      if (auto Found = B.Bytes.find(Where.Offset + I);
+          Found != B.Bytes.end() &&
+          Ctx->mkExtract(Found->second.Value, Found->second.Low, kByteBits) !=
+              Value)
+        return false;
+    }
+    if (!Draft.writeBank(B, Where.Offset, Fact.Value))
+      return false;
+  }
+  *this = std::move(Draft);
+  return true;
+}
+
 llvm::ArrayRef<SymState::LoadOrigin> SymState::loadOrigins(SymRef Value) const {
   auto It = LoadOrigins.find(Value.index());
   return It == LoadOrigins.end() ? llvm::ArrayRef<LoadOrigin>()

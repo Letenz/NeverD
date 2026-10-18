@@ -6,6 +6,7 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/SourceCallOccurrence.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/CFunctionParameterCalls.h"
@@ -201,6 +202,11 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
     V.TheArch = TargetArch;
     return V;
   };
+  std::set<SourceCallOccurrenceKey> UnboundCalls;
+  for (const auto &Block : Low.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (const auto Site = sourceCallOccurrenceKey(Op))
+        UnboundCalls.insert(*Site);
   for (auto &Block : Func.Blocks) {
     std::vector<MedOp> Ops;
     for (auto Op : Block.Ops) {
@@ -267,8 +273,22 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
                                                Error->Location.ValueBytes)));
           Op.HasSourceErrorResult = true;
         }
+      // Generic callee summaries can already have published integer/vector
+      // register uses (notably SysV x64). A validated source ABI owns their
+      // order and lanes. Only replace that complete summary shape; explicit
+      // LowIR arguments and exact formatted calls retain their own contract.
+      // Prototype argument counts can annotate explicit operands too: the
+      // original single-target call occurrence must authorize reconstruction.
+      const bool SummaryArguments =
+          !Op.ExactArguments && Op.CalleeRegisterArgs >= 0 &&
+          Op.NumInputs == 1u + Op.CalleeRegisterArgs +
+                              std::max<int>(0, Op.CalleeVectorArgs) &&
+          UnboundCalls.count({Op.Addr, Op.OriginSeq, Op.Opcode,
+                              Op.Inputs[0].isConst()
+                                  ? std::optional<va_t>(Op.Inputs[0].ConstVal)
+                                  : std::nullopt});
       if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
-          Op.NumInputs != 1) {
+          (Op.NumInputs != 1 && !SummaryArguments)) {
         Ops.push_back(std::move(Op));
         continue;
       }
@@ -359,6 +379,14 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
         Ops.push_back(std::move(Op));
         continue;
       }
+      // Do this only after every binding check succeeds, so an unavailable
+      // or invalid source declaration leaves the generic arguments intact.
+      Op.NumInputs = 1;
+      Op.CalleeRegisterArgs = -1;
+      Op.CalleeVectorArgs = -1;
+      Op.CalleeVectorSlots = 0;
+      Op.CalleeVectorArgWidths = 0;
+      Op.CalleeStackArgs = -1;
       for (size_t I = 0; I < Parameters.size(); ++I) {
         const auto &Location = Parameters[I].Location;
         MedVar Argument;
