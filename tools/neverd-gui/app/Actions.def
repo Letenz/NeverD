@@ -51,6 +51,11 @@ NEVERD_ACTION(FileLoadDwarf, QT_TRANSLATE_NOOP("Actions", "D&WARF file..."), "",
 NEVERD_ACTION(FileLoadMap, QT_TRANSLATE_NOOP("Actions", "&MAP file..."), "",
               "map_file",
               QT_TRANSLATE_NOOP("Actions", "Load names from a linker MAP file"))
+NEVERD_ACTION(FileLoadHeader, QT_TRANSLATE_NOOP("Actions", "C &header file..."),
+              "Ctrl+F9", "local_types_add",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Declare the types a C or C++ header "
+                                "declares, in the Local Types editor"))
 NEVERD_ACTION(
     FileLoadSignatures,
     QT_TRANSLATE_NOOP("Actions", "&FLIRT signature file..."), "", "signatures",

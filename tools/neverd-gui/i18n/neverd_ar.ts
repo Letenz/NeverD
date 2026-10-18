@@ -880,6 +880,14 @@
         <translation>تحميل الأسماء من ملف MAP الخاص بالرابط</translation>
     </message>
     <message>
+        <source>C &amp;header file...</source>
+        <translation>ملف ترويسة C(&amp;H)...</translation>
+    </message>
+    <message>
+        <source>Declare the types a C or C++ header declares, in the Local Types editor</source>
+        <translation>التصريح بالأنواع التي تصرّح بها ترويسة C أو C++، في محرر الأنواع المحلية</translation>
+    </message>
+    <message>
         <source>S&amp;tructure offset...</source>
         <translation>إزاحة البنية(&amp;T)...</translation>
     </message>
@@ -2421,6 +2429,26 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>MAP files (*.map);;All files (*)</source>
         <translation>ملفات MAP (*.map);;جميع الملفات (*)</translation>
+    </message>
+    <message>
+        <source>Parse C header file</source>
+        <translation>تحليل ملف ترويسة C</translation>
+    </message>
+    <message>
+        <source>C and C++ headers (*.h *.hh *.hpp *.hxx);;All files (*)</source>
+        <translation>ترويسات C وC++ (*.h *.hh *.hpp *.hxx);;كل الملفات (*)</translation>
+    </message>
+    <message>
+        <source>%1 is larger than 4 MiB.</source>
+        <translation>يتجاوز %1 حجم 4 MiB.</translation>
+    </message>
+    <message>
+        <source>Cannot read %1: %2</source>
+        <translation>تعذّرت قراءة %1: %2</translation>
+    </message>
+    <message>
+        <source>Parse %1</source>
+        <translation>تحليل %1</translation>
     </message>
     <message>
         <source>Load a MAP file of another build</source>

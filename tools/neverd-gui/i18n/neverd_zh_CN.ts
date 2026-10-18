@@ -880,6 +880,14 @@
         <translation>从链接器 MAP 文件加载名称</translation>
     </message>
     <message>
+        <source>C &amp;header file...</source>
+        <translation>C 头文件(&amp;H)...</translation>
+    </message>
+    <message>
+        <source>Declare the types a C or C++ header declares, in the Local Types editor</source>
+        <translation>在本地类型编辑器中声明 C 或 C++ 头文件所声明的类型</translation>
+    </message>
+    <message>
         <source>S&amp;tructure offset...</source>
         <translation>结构体偏移(&amp;T)...</translation>
     </message>
@@ -2391,6 +2399,26 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>MAP files (*.map);;All files (*)</source>
         <translation>MAP 文件 (*.map);;所有文件 (*)</translation>
+    </message>
+    <message>
+        <source>Parse C header file</source>
+        <translation>解析 C 头文件</translation>
+    </message>
+    <message>
+        <source>C and C++ headers (*.h *.hh *.hpp *.hxx);;All files (*)</source>
+        <translation>C/C++ 头文件 (*.h *.hh *.hpp *.hxx);;所有文件 (*)</translation>
+    </message>
+    <message>
+        <source>%1 is larger than 4 MiB.</source>
+        <translation>%1 超过 4 MiB。</translation>
+    </message>
+    <message>
+        <source>Cannot read %1: %2</source>
+        <translation>无法读取 %1：%2</translation>
+    </message>
+    <message>
+        <source>Parse %1</source>
+        <translation>解析 %1</translation>
     </message>
     <message>
         <source>Load a MAP file of another build</source>

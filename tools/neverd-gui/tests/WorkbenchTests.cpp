@@ -5506,6 +5506,52 @@ private slots:
         types->findChild<QLabel *>(QStringLiteral("localTypesSummary"));
     QVERIFY(summary);
     QTRY_VERIFY(summary->text().contains(QStringLiteral("Deleted OWNER")));
+
+    // Undo takes the deletion back, and redo makes it again.
+    QTRY_VERIFY(bench.action(ActionId::EditUndo)->isEnabled());
+    bench.action(ActionId::EditUndo)->trigger();
+    QTRY_COMPARE(list->model()->rowCount(), 4);
+    QTRY_VERIFY(bench.action(ActionId::EditRedo)->isEnabled());
+    bench.action(ActionId::EditRedo)->trigger();
+    QTRY_COMPARE(list->model()->rowCount(), 3);
+
+    // Ctrl+F9, as IDA parses a C header, opens the editor with a header
+    // file's declarations, which declare its types.
+    const QString header = directory.filePath(QStringLiteral("owner.h"));
+    {
+      QFile file(header);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("#pragma once\nstruct FROM_HEADER { int x; };\n");
+    }
+    QCOMPARE(bench.action(ActionId::FileLoadHeader)->shortcut(),
+             QKeySequence(QStringLiteral("Ctrl+F9")));
+    QString parsed;
+    QTimer files;
+    connect(&files, &QTimer::timeout, this, [&] {
+      QWidget *modal = QApplication::activeModalWidget();
+      if (auto *dialog = qobject_cast<QFileDialog *>(modal)) {
+        dialog->selectFile(header);
+        static_cast<QDialog *>(dialog)->accept();
+        return;
+      }
+      auto *dialog = qobject_cast<QDialog *>(modal);
+      auto *text = dialog ? dialog->findChild<QPlainTextEdit *>(
+                                QStringLiteral("declareEditor"))
+                          : nullptr;
+      auto *declare =
+          dialog ? dialog->findChild<QPushButton *>(QStringLiteral("declare"))
+                 : nullptr;
+      if (!text || !declare || !declare->isEnabled() || !parsed.isEmpty())
+        return;
+      parsed = text->toPlainText();
+      QTest::mouseClick(declare, Qt::LeftButton);
+    });
+    files.start(10);
+    QTRY_VERIFY(bench.action(ActionId::FileLoadHeader)->isEnabled());
+    bench.action(ActionId::FileLoadHeader)->trigger();
+    QTRY_VERIFY(parsed.contains(QStringLiteral("struct FROM_HEADER")));
+    QTRY_COMPARE(list->model()->rowCount(), 4);
+    files.stop();
   }
 
   void viewsNarrowPastTheirRows() {

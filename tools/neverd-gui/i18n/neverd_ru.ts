@@ -880,6 +880,14 @@
         <translation>Загрузить имена из MAP-файла компоновщика</translation>
     </message>
     <message>
+        <source>C &amp;header file...</source>
+        <translation>&amp;Заголовочный файл C...</translation>
+    </message>
+    <message>
+        <source>Declare the types a C or C++ header declares, in the Local Types editor</source>
+        <translation>Объявить типы, которые объявляет заголовок C или C++, в редакторе локальных типов</translation>
+    </message>
+    <message>
         <source>S&amp;tructure offset...</source>
         <translation>Смещение в с&amp;труктуре...</translation>
     </message>
@@ -2403,6 +2411,26 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>MAP files (*.map);;All files (*)</source>
         <translation>Файлы MAP (*.map);;Все файлы (*)</translation>
+    </message>
+    <message>
+        <source>Parse C header file</source>
+        <translation>Разбор заголовочного файла C</translation>
+    </message>
+    <message>
+        <source>C and C++ headers (*.h *.hh *.hpp *.hxx);;All files (*)</source>
+        <translation>Заголовки C и C++ (*.h *.hh *.hpp *.hxx);;Все файлы (*)</translation>
+    </message>
+    <message>
+        <source>%1 is larger than 4 MiB.</source>
+        <translation>%1 превышает 4 МиБ.</translation>
+    </message>
+    <message>
+        <source>Cannot read %1: %2</source>
+        <translation>Не удалось прочитать %1: %2</translation>
+    </message>
+    <message>
+        <source>Parse %1</source>
+        <translation>Разбор %1</translation>
     </message>
     <message>
         <source>Load a MAP file of another build</source>
