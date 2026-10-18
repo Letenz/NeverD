@@ -89,6 +89,11 @@ public:
           ImportEntryCNames.insert(Imp.Name);
   }
 
+  /// The C library whose declarations the program's calls follow.
+  libc::LibCVariant libcVariant() const {
+    return Img ? libc::libcVariantOf(*Img) : Opts.libcVariant();
+  }
+
   //--- Module-level (LLVMCEmitter.cpp) ---
   void writeModule(llvm::Module &Mod, const llvm::Function *Only = nullptr);
   void prepareFunctionIdentifiers(llvm::Module &Mod);

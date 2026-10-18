@@ -1,0 +1,112 @@
+name: Allocator compatibility
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - 'cmake/*Mimalloc*'
+      - 'cmake/AddNeverD.cmake'
+      - 'cmake/NeverDWorkerAllocator.cmake'
+      - 'tools/neverd-worker/CMakeLists.txt'
+      - 'unittests/CMakeLists.txt'
+      - 'unittests/allocator/**'
+      - 'scripts/tests/test_mimalloc*.py'
+      - '.github/workflows/allocator.yml'
+  pull_request:
+    paths:
+      - 'cmake/*Mimalloc*'
+      - 'cmake/AddNeverD.cmake'
+      - 'cmake/NeverDWorkerAllocator.cmake'
+      - 'tools/neverd-worker/CMakeLists.txt'
+      - 'unittests/CMakeLists.txt'
+      - 'unittests/allocator/**'
+      - 'scripts/tests/test_mimalloc*.py'
+      - '.github/workflows/allocator.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    name: ${{ matrix.runner }} allocator
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Test mimalloc, system allocator and sanitizer compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          for allocator in default OFF; do
+            if [ "$allocator" = default ]; then
+              allocator_flags=(-DNEVERD_TEST_EXPECT_MIMALLOC=ON)
+            else
+              allocator_flags=(-DNEVERD_ENABLE_MIMALLOC=OFF -DNEVERD_TEST_EXPECT_MIMALLOC=OFF)
+            fi
+            cmake -S unittests/allocator -B "build-allocator-$allocator" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release "${allocator_flags[@]}"
+            cmake --build "build-allocator-$allocator" --parallel 2
+            ctest --test-dir "build-allocator-$allocator" --output-on-failure --no-tests=error
+          done
+          cmake -S unittests/allocator -B build-allocator-asan -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_MIMALLOC=ON -DNEVERD_TEST_EXPECT_MIMALLOC=OFF \
+            -DCMAKE_C_FLAGS=-fsanitize=address,undefined \
+            -DCMAKE_CXX_FLAGS=-fsanitize=address,undefined
+          cmake --build build-allocator-asan --parallel 2
+          ctest --test-dir build-allocator-asan --output-on-failure --no-tests=error
+
+  windows:
+    name: Windows ${{ matrix.arch }} (${{ matrix.compiler }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+            compiler: cl
+          - runner: windows-latest
+            arch: x64
+            compiler: clang-cl
+          - runner: windows-11-arm
+            arch: arm64
+            compiler: cl
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: ${{ matrix.arch }}
+      - name: Configure dynamic CRT allocator tests
+        run: >-
+          cmake -S unittests/allocator -B build-allocator -G "Ninja Multi-Config"
+          -DNEVERD_TEST_EXPECT_MIMALLOC=ON
+          -DCMAKE_C_COMPILER=${{ matrix.compiler }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+      - name: Test Release and Debug, including installed DLLs
+        shell: pwsh
+        run: |
+          foreach ($configuration in @('Release', 'Debug')) {
+            cmake --build build-allocator --config $configuration
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            ctest --test-dir build-allocator -C $configuration --output-on-failure --no-tests=error
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+      - name: Test the system allocator build
+        shell: pwsh
+        run: |
+          cmake -S unittests/allocator -B build-allocator-off -G Ninja -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_MIMALLOC=OFF -DNEVERD_TEST_EXPECT_MIMALLOC=OFF -DCMAKE_C_COMPILER=${{ matrix.compiler }} -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build build-allocator-off
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ctest --test-dir build-allocator-off --output-on-failure --no-tests=error
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }

@@ -74,6 +74,26 @@ bool Session::synchronizeFunctions() {
     if (Img.Arch == Arch::EVM || !PipeRan || !PipeResult.Success ||
         NativeFunctionsSynchronized)
       return true;
+    const auto ByEntry = [](const FuncInfo &Left, const FuncInfo &Right) {
+      return Left.Entry < Right.Entry;
+    };
+    // A selected run lifts functions the list, kept in address order,
+    // already holds: find those there instead of indexing and sorting a list
+    // of tens of thousands after every run.
+    if (std::is_sorted(Functions.begin(), Functions.end(), ByEntry) &&
+        llvm::all_of(PipeResult.LowFuncs, [&](const LowFunc &Function) {
+          if (isDeletedFunction(Function.Entry))
+            return true;
+          const auto Found =
+              llvm::partition_point(Functions, [&](const FuncInfo &F) {
+                return F.Entry < Function.Entry;
+              });
+          return Found != Functions.end() && Found->Entry == Function.Entry;
+        })) {
+      NativeFunctionsSynchronized = true;
+      refreshFunctionNames();
+      return true;
+    }
     llvm::DenseMap<va_t, size_t> FunctionIndices;
     FunctionIndices.reserve(Functions.size() + PipeResult.LowFuncs.size());
     for (size_t Index = 0; Index < Functions.size(); ++Index)

@@ -100,6 +100,75 @@ reseeding, per-process isolation, two guest threads, dynamic provider lifetime,
 with ordinary, packed and RELR relocations on available CPU backends. Custom
 state generators retain an explicit unsupported test.
 
+## Allocator validation
+
+The allocator regression can run independently of LLVM:
+
+```bash
+cmake -S unittests/allocator -B build-allocator -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build-allocator
+ctest --test-dir build-allocator --output-on-failure
+```
+
+`NeverDAllocatorTests` exercises calloc/realloc, C++ containers, aligned new,
+cross-thread frees, fork children and allocation/free pairs crossing a
+shared-library boundary.
+Enabled builds check that ordinary allocation APIs actually return mimalloc
+memory. A dependency's pre-main allocation is allowed to predate registration
+of the macOS malloc zone, and must survive through shutdown. In a full NeverD
+build the test also checks sessions and strings allocated by the actual SDK:
+
+```bash
+cmake --build build-release --target NeverDAllocatorTests
+ctest --test-dir build-release/unittests/allocator --output-on-failure
+```
+
+`NeverDMimallocConfigure` checks explicit opt-out and suppression for combined,
+configuration-specific and LLVM sanitizer settings, plus Windows CRT/toolchain
+rejections, without fetching dependencies.
+Repeat the standalone runtime check with `-DNEVERD_ENABLE_MIMALLOC=OFF` and with
+`-DCMAKE_C_FLAGS=-fsanitize=address -DCMAKE_CXX_FLAGS=-fsanitize=address` to check
+the system-allocator paths.
+
+On Windows use an MSVC or clang-cl developer shell with the dynamic CRT:
+
+```powershell
+cmake -S unittests/allocator -B build-allocator -G "Ninja Multi-Config"
+cmake --build build-allocator --config Release
+ctest --test-dir build-allocator -C Release --output-on-failure
+cmake --build build-allocator --config Debug
+ctest --test-dir build-allocator -C Debug --output-on-failure
+```
+
+The Windows runtime test verifies CRT redirection, allocations during DLL
+initialization, `_aligned_malloc`, and transfers between the executable and a
+plugin loaded with `LoadLibrary`. A second invocation disables redirection via
+`MIMALLOC_DISABLE_REDIRECT=1` and verifies system allocation instead. The
+standalone install test relocates the executable, probe/plugin DLLs, allocator
+DLL and architecture-matched redirect DLL into a temporary prefix and runs
+there. `.github/workflows/allocator.yml` covers MSVC x64/ARM64 and clang-cl x64,
+Release/Debug and the compile-time opt-out. The full Windows CI profile also
+runs the allocator test against the actual SDK. The same focused workflow
+checks Linux and macOS with mimalloc enabled, disabled and under ASan/UBSan.
+The normal jobs leave `NEVERD_ENABLE_MIMALLOC` unset and require mimalloc to be
+active, so a regression in the default cannot pass by testing the system heap.
+Use native ARM64 binaries on
+Windows ARM64; x64 emulation needs a separately built ARM64EC allocator and is
+not covered by this integration.
+
+For performance comparisons, build the same revision and Release configuration
+with `NEVERD_ENABLE_MIMALLOC=OFF` and `ON`. Use `neverd-bench` on identical inputs
+and `--max-func` settings, separate `--out-dir` directories, and the same
+`NEVERD_SIGNATURE_CACHE` setting. Warm up both binaries, alternate several runs,
+and compare median wall time, peak RSS and the per-stage `*.nd.bench.json`
+timings. Check function counts, instruction counts and rejection/audit records
+for equality before attributing a speed difference to the allocator. Use
+`MIMALLOC_VERBOSE=1` for a separate activation check, not during timed runs.
+Decode-only results do not measure the allocation-heavy IR stages; an allocator
+change does not guarantee an improvement for every workload.
+
+
 ## MXCSR recovery checks
 
 `InterpreterSpecialization.MXCSR*` covers arbitrary entry state, exact memory values, reserved bits, DAZ, aliases, malformed forms, node projection and exact/short budgets. `PEFixedImageTest.RawMXCSR*` checks legacy/VEX native bytes and mask-bound receipts. The machine-state and native/LLVM refinement owners verify that unused capabilities cannot expand their interfaces.
@@ -327,11 +396,12 @@ their dispatcher when a third function queues, external graph snapshots survive
 interleaved requests, and opening another project retires both replicas.
 Cancelling view reads must preserve a queued project snapshot needed by a
 retained external analysis request.
-`NeverDWorkerAllocator` checks the embedded Linux allocator across the worker's
+`NeverDWorkerAllocator` checks the process allocator across the worker's
 C++ runtime, the shared SDK and libc, including reallocation, over-aligned
-objects and cross-thread release. Configure `NEVERD_WORKER_MIMALLOC=OFF` for
-the platform allocator; ASan/TSan/MSan configurations require that setting so
-their allocation interceptors remain authoritative. Real worker and workbench
+objects and cross-thread release. `NEVERD_ENABLE_MIMALLOC=OFF` selects the
+platform allocator throughout NeverD; the legacy `NEVERD_WORKER_MIMALLOC=OFF`
+option still disables it for the worker alone. Allocation-intercepting
+sanitizers suppress mimalloc automatically. Real worker and workbench
 integration checks run with the actual linked worker, without `LD_PRELOAD`.
 
 `NeverDWorkerAnalysisSnapshot` verifies read-only replica state,

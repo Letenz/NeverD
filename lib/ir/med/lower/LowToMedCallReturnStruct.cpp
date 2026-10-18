@@ -114,7 +114,8 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
       // field proof; only an exact executable import stub supplies this ABI.
       if (Image && Op.Opcode == NdOp::CALL && Op.Inputs[0].isConst())
         if (const Import *Imp = Image->findImportStubAt(Op.Inputs[0].ConstVal))
-          if (const auto Signature = libc::libcArityForSymbol(Imp->Name);
+          if (const auto Signature = libc::libcArityForSymbol(
+                  Imp->Name, libc::libcVariantOf(*Image));
               Signature && libc::floatReturnBytes(*Signature))
             continue;
 

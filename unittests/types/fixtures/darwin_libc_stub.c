@@ -17,3 +17,16 @@ int stat_inode64(const char *Path, void *Info) __asm("_stat$INODE64");
 int stat_inode64(const char *Path, void *Info) { return 0; }
 long read(int File, void *Buffer, unsigned long Count) { return 0; }
 long strtol(const char *Text, char **End, int Base) { return 0; }
+// darwin_variadic_calls.c's.
+int fcntl(int File, int Command, ...) { return 0; }
+int ioctl(int File, unsigned long Request, ...) { return 0; }
+int openat(int Directory, const char *Path, int Flags, ...) { return 0; }
+void syslog_extsn(int Priority, const char *Format,
+                  ...) __asm("_syslog$DARWIN_EXTSN");
+void syslog_extsn(int Priority, const char *Format, ...) {}
+int shm_open(const char *Name, int Flags, ...) { return 0; }
+int sendfile(int File, int Socket, long long Offset, long long *Length,
+             void *Headers, int Flags) {
+  return 0;
+}
+int pthread_setname_np(const char *Name) { return 0; }

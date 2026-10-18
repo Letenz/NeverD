@@ -85,6 +85,38 @@ cmake --build build-debug --parallel
 Never report decode or lift throughput from a Debug build. Use Release for
 benchmarks, or RelWithDebInfo when profiling needs symbols.
 
+### Process allocator
+
+Linux, macOS and Windows MSVC/clang-cl builds enable `NEVERD_ENABLE_MIMALLOC`
+by default. NeverD tools,
+the analysis worker and tests created through the common CMake helper use the
+hash-pinned mimalloc 3.3.2 allocator with a backported macOS fork fix, following
+NeverC's host allocator approach.
+On Unix the allocator is embedded once in each executable. Windows uses one
+mimalloc DLL and the matching architecture's `mimalloc-redirect*.dll` to redirect
+dynamic CRT allocation, including libneverd and native plugins. Both DLLs are
+staged beside executables and installed into `bin`; distribute them together.
+Windows requires `/MD` or `/MDd`; static CRT builds must disable mimalloc.
+The SDK library itself does not impose an allocator on embedding applications.
+Use a native ARM64 build on Windows ARM64: an x64 allocator DLL cannot redirect
+the ARM64EC CRT used for x64 emulation. MinGW builds retain the system allocator.
+See the [upstream Windows requirements](https://github.com/microsoft/mimalloc/blob/v3.3.2/bin/readme.md).
+
+Use `-DNEVERD_ENABLE_MIMALLOC=OFF` for a system-allocator baseline or when using
+an external allocator. The legacy `NEVERD_WORKER_MIMALLOC=OFF` option still
+disables it for the worker alone. CMake automatically suppresses mimalloc for address,
+thread, memory and leak sanitizer builds, including combined sanitizer flags
+and configuration-specific compiler/linker flags. UBSan alone remains compatible.
+Sanitizers added only through target-specific flags must also set the option OFF.
+On Windows, `MIMALLOC_DISABLE_REDIRECT=1` also allows a runtime system-allocator
+comparison without rebuilding; `MIMALLOC_VERBOSE=1` reports activation.
+Offline builds may supply the matching source with
+`-DFETCHCONTENT_SOURCE_DIR_NEVERD_MIMALLOC=/path/to/mimalloc-3.3.2`. On macOS,
+apply the callback fix to a disposable source copy first:
+`cmake -DNEVERD_MIMALLOC_SOURCE_DIR=/path/to/copy -P cmake/PatchMimalloc.cmake`.
+See [allocator validation](docs/testing.md#allocator-validation) for smoke tests
+and performance comparison guidance.
+
 ### Prebuilt LLVM on macOS
 
 Apple Silicon contributors can avoid compiling the LLVM fork locally:

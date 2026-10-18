@@ -1816,7 +1816,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   // floating ones first.
   const std::optional<libc::LibCArity> Arity =
       !Prototype && !Defined && E.IntrinsicId == Intrinsic::None
-          ? libc::libcArityForSymbol(Name)
+          ? libc::libcArityForSymbol(Name, Opts.libcVariant())
           : std::nullopt;
   const size_t ArityIntegers = Arity ? std::max(0, Arity->IntArgs) : 0;
   const size_t ArityFloats = Arity ? std::max(0, Arity->FpArgs) : 0;
@@ -2026,7 +2026,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     // signature is not the one the parameter names.
     if (!HeaderCallee.empty())
       if (const auto Type = libc::functionPointerParameter(
-              HeaderCallee, static_cast<unsigned>(I))) {
+              HeaderCallee, static_cast<unsigned>(I), Opts.libcVariant())) {
         const HighExpr *Value = unwrapIntegerView(Op);
         if (!Value || Value->Kind != ExprKind::Const || Value->ConstVal != 0)
           Arg = "(" + std::string(*Type) + ")" +
@@ -2035,8 +2035,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     // Its object pointer parameter takes a machine integer converted to a
     // pointer, which C does not do itself; any object pointer converts on.
     if (!HeaderCallee.empty() && !PointerArgument &&
-        libc::isObjectPointerParameter(HeaderCallee,
-                                       static_cast<unsigned>(I)) &&
+        libc::isObjectPointerParameter(HeaderCallee, static_cast<unsigned>(I),
+                                       Opts.libcVariant()) &&
         printsAsInteger(Imm ? *Imm : *Op, Arg))
       Arg = "(void *)(uintptr_t)" + castOperand(Arg);
     // A callee printed in this file has a prototype: convert between pointer
@@ -2247,10 +2247,12 @@ bool HighCWriter::takesPointerArgument(const HighExpr &E, size_t Index,
   // any pointer, a function-pointer parameter a function and a string
   // parameter a narrow string.
   if (const llvm::StringRef Symbol = headerDeclaredCallee(E); !Symbol.empty()) {
-    if (const unsigned Fixed = libc::varArgFixedCount(Symbol.str());
+    if (const unsigned Fixed =
+            libc::varArgFixedCount(Symbol.str(), Opts.libcVariant());
         Fixed && Index >= Fixed)
       return true;
-    if (libc::functionPointerParameter(Symbol, static_cast<unsigned>(Index)))
+    if (libc::functionPointerParameter(Symbol, static_cast<unsigned>(Index),
+                                       Opts.libcVariant()))
       return true;
     return NarrowString &&
            libc::isCStringParameter(Symbol.str(), static_cast<unsigned>(Index));
@@ -2507,7 +2509,7 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
       return NdType::makeFloat(Bytes);
     return {};
   }
-  if (const auto Arity = libc::libcArityForSymbol(Name))
+  if (const auto Arity = libc::libcArityForSymbol(Name, Opts.libcVariant()))
     if (const uint16_t Bytes = libc::floatReturnBytes(*Arity))
       return NdType::makeFloat(Bytes);
   if (E.Type && E.Type->Kind == NdTypeKind::Float)
@@ -3014,9 +3016,9 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
 std::optional<libc::LibCArity>
 HighCWriter::knownArity(llvm::StringRef Symbol,
                         llvm::StringRef Identifier) const {
-  if (auto Arity = libc::libcArityForSymbol(Symbol))
+  if (auto Arity = libc::libcArityForSymbol(Symbol, Opts.libcVariant()))
     return Arity;
-  if (auto Arity = libc::libcArity(Identifier))
+  if (auto Arity = libc::libcArity(Identifier, Opts.libcVariant()))
     return Arity;
   // Where the tables know none, as the call analysis takes it: the slots
   // the call pushes, a 64-bit argument's two included.

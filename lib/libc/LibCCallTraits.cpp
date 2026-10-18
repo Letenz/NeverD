@@ -9,6 +9,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "LibCVariantRows.h"
+
 #include "neverd/Common.h"
 #include "neverd/libc/LibCFortify.h"
 #include "neverd/libc/LibCNames.h"
@@ -73,9 +75,14 @@ std::string_view isoAliasTarget(std::string_view Name) {
 
 } // anonymous namespace
 
-unsigned varArgFixedCount(std::string_view Name) {
+unsigned varArgFixedCount(std::string_view Name, LibCVariant Variant) {
+  Name = routineOfSymbol(Name, Variant);
   if (const std::string_view Standard = isoAliasTarget(Name); Standard != Name)
-    return varArgFixedCount(Standard);
+    return varArgFixedCount(Standard, Variant);
+  if (Variant != LibCVariant::GNU)
+    if (const auto Kinds =
+            variant_rows::variadic(stripLeadingUnderscores(Name), Variant))
+      return Kinds->size();
   // Modern Darwin linkers specialize Objective-C dispatch through local
   // `_objc_msgSend$<selector>` stubs.  The stub materializes `_cmd` in x1,
   // while the caller supplies the receiver in x0 and one argument per colon
@@ -93,6 +100,11 @@ unsigned varArgFixedCount(std::string_view Name) {
         ++Fixed;
     return Fixed;
   }
+
+  // A routine that takes its further arguments as a va_list is not variadic,
+  // whatever its name ends in: obstack_vprintf, Darwin's __svfscanf.
+  if (isVaListConsumer(stripLeadingUnderscores(Name)))
+    return 0;
 
   // Fortified _FORTIFY_SOURCE variants: __<core>_chk.  clang emits these for
   // the buffer-bounded printf family when the destination size is known
@@ -139,10 +151,15 @@ unsigned varArgFixedCount(std::string_view Name) {
   return irregularVarArgFixedKinds(Name).size();
 }
 
-VarArgFixedParamKind varArgFixedParamKind(std::string_view Name,
-                                          unsigned Index) {
-  Name = isoAliasTarget(stripLeadingUnderscores(Name));
-  const unsigned FixedCount = varArgFixedCount(Name);
+VarArgFixedParamKind varArgFixedParamKind(std::string_view Name, unsigned Index,
+                                          LibCVariant Variant) {
+  Name =
+      isoAliasTarget(stripLeadingUnderscores(routineOfSymbol(Name, Variant)));
+  if (Variant != LibCVariant::GNU)
+    if (const auto Kinds = variant_rows::variadic(Name, Variant))
+      return Index < Kinds->size() ? (*Kinds)[Index]
+                                   : VarArgFixedParamKind::Unknown;
+  const unsigned FixedCount = varArgFixedCount(Name, Variant);
   if (Index >= FixedCount)
     return VarArgFixedParamKind::Unknown;
 
@@ -193,9 +210,8 @@ VarArgFixedParamKind varArgFixedParamKind(std::string_view Name,
     }
   }
 
-  // The irregular registry intentionally carries only the fixed prefix the
-  // recovery pass can prove.  Classify that prefix without guessing the types
-  // of any optional tail arguments.
+  // The irregular registry lists every fixed parameter its declaration names,
+  // and no optional tail argument.
   const llvm::ArrayRef<VarArgFixedParamKind> Irregular =
       irregularVarArgFixedKinds(Name);
   return Index < Irregular.size() ? Irregular[Index]
@@ -239,7 +255,8 @@ bool isCStringParameter(std::string_view Name, unsigned Index) {
 }
 
 std::optional<std::string_view> functionPointerParameter(std::string_view Name,
-                                                         unsigned Index) {
+                                                         unsigned Index,
+                                                         LibCVariant Variant) {
   struct FunctionPointerParam {
     std::string_view Name;
     unsigned Index;
@@ -250,14 +267,21 @@ std::optional<std::string_view> functionPointerParameter(std::string_view Name,
 #include "neverd/libc/LibCFunctionPointerParams.inc"
 #undef LIBC_FUNCTION_POINTER_PARAM
   };
-  const std::string_view Bare = stripLeadingUnderscores(Name);
+  const std::string_view Bare =
+      stripLeadingUnderscores(routineOfSymbol(Name, Variant));
+  if (Variant != LibCVariant::GNU)
+    if (const auto Pointers = variant_rows::pointers(Bare, Variant))
+      return Pointers->FunctionPointer == static_cast<int>(Index)
+                 ? std::optional<std::string_view>(Pointers->Type)
+                 : std::nullopt;
   for (const FunctionPointerParam &Param : FunctionPointerParams)
     if (Param.Index == Index && Param.Name == Bare)
       return Param.Type;
   return std::nullopt;
 }
 
-bool isObjectPointerParameter(std::string_view Name, unsigned Index) {
+bool isObjectPointerParameter(std::string_view Name, unsigned Index,
+                              LibCVariant Variant) {
   // Each function's object pointer parameters, as a mask of positions.
   static const std::unordered_map<std::string_view, uint64_t> Masks = [] {
     std::unordered_map<std::string_view, uint64_t> Map;
@@ -269,7 +293,12 @@ bool isObjectPointerParameter(std::string_view Name, unsigned Index) {
   }();
   if (Index >= 64)
     return false;
-  const auto It = Masks.find(stripLeadingUnderscores(Name));
+  const std::string_view Bare =
+      stripLeadingUnderscores(routineOfSymbol(Name, Variant));
+  if (Variant != LibCVariant::GNU)
+    if (const auto Pointers = variant_rows::pointers(Bare, Variant))
+      return Pointers->ObjectPointers >> Index & 1;
+  const auto It = Masks.find(Bare);
   return It != Masks.end() && (It->second >> Index & 1);
 }
 
