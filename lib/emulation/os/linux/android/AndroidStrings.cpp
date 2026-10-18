@@ -13,6 +13,40 @@
 #include <array>
 
 namespace neverd::emulation::android_model {
+BionicResult Bionic::copyBoundedString(const NativeCallEvent &Call) {
+  const auto &A = Call.Arguments;
+  const uint64_t Count = A[2];
+  if (!Count)
+    return value(A[0]);
+  if (auto E = access(A[0], Count, Write))
+    return std::move(E);
+  // Stage the entire effect. Read only through the first NUL (or Count),
+  // while still writing exactly Count bytes, including zero padding.
+  std::vector<uint8_t> Bytes(Count, 0);
+  uint64_t ReadCount = 0;
+  for (uint64_t I = 0; I < Count; ++I) {
+    if (A[1] > UINT64_MAX - I)
+      return failure(diagnostic::StringAddressOverflow);
+    auto C = byte(A[1] + I);
+    if (!C)
+      return C.takeError();
+    Bytes[I] = *C;
+    ReadCount = I + 1;
+    if (!*C)
+      break;
+  }
+  // Overlap has no defined C result. Include padding in the destination
+  // extent, but do not require Count readable bytes after a source NUL.
+  if (A[0] <= A[1] ? A[1] - A[0] < Count : A[0] - A[1] < ReadCount)
+    return failure(diagnostic::StringCopyOverlap);
+  // Recheck the deadline after staging, before publishing any guest bytes.
+  if (auto E = access(A[0], Count, Write))
+    return std::move(E);
+  if (auto E = CPU.write(A[0], Bytes))
+    return std::move(E);
+  return value(A[0]);
+}
+
 BionicResult Bionic::decimalInteger(const NativeCallEvent &Call) {
   const bool Narrow = Call.Name == symbol::Atoi;
   auto Parsed =
