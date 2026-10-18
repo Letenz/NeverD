@@ -177,6 +177,7 @@ std::string spellType(const TypeLibrary &Library, const TypeExpr &Type,
 
 namespace render {
 class CSpeller;
+class NameSpelling;
 } // namespace render
 
 /// Spells types as spellType does, the library's names spelled once for
@@ -191,6 +192,22 @@ public:
 
 private:
   std::unique_ptr<render::CSpeller> Speller;
+};
+
+/// Renders records as renderEmbeddedC does, the library's names spelled once
+/// for every call: each unit a session decompiles embeds a few types of a
+/// library that can hold tens of thousands.  It reads \p Library, which must
+/// outlive it and stay as it is.
+class EmbeddedCRenderer {
+public:
+  EmbeddedCRenderer(const TypeLibrary &Library, const RenderOptions &Options);
+  ~EmbeddedCRenderer();
+  EmbeddedC render(llvm::ArrayRef<const LocalType *> Roots) const;
+
+private:
+  const TypeLibrary &Library;
+  RenderOptions Options;
+  std::unique_ptr<render::NameSpelling> Names;
 };
 
 /// \p Types and every type they need, in an order that compiles, after what
