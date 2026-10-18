@@ -2032,8 +2032,14 @@ private slots:
     bench.session.save();
     QTRY_VERIFY_WITH_TIMEOUT(!bench.session.dirty(), OpenTimeoutMs);
     QVERIFY(!QFileInfo::exists(path + ".nddb"));
+    // The file appears as the database starts to be written; the session
+    // counts the write until it is done, and a restart before then asks to
+    // save first.
+    QSignalSpy packed(&bench.session, &Session::databaseSaved);
     bench.session.packDatabase(path + ".nddb");
-    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(path + ".nddb"), OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(packed.size(), 1, OpenTimeoutMs);
+    QVERIFY(packed.first().first().toBool());
+    QVERIFY(QFileInfo::exists(path + ".nddb"));
     QString databaseError;
     const auto stored = ProjectDatabase::read(path + ".nddb", &databaseError);
     QVERIFY2(stored.has_value(), qPrintable(databaseError));
