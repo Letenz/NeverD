@@ -2207,3 +2207,10 @@ ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-o
 cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
 ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
 ```
+
+`NeverDX86NativeStateAuditTests` vérifie strictement les octets natifs et les détails du décodeur pour REP MOVSQ x64 canonique et LDMXCSR classique. Les reçus des sorties indéfinies lient toutes les opérations. Des oracles indépendants d’état complet et de copie ordonnée couvrent chevauchement, compte nul, adressage, octets manquants et bits réservés. Les preuves existantes du compte, de la direction, de la mémoire, du masque MXCSR effectif et de la validité restent nécessaires. Cet audit ne certifie ni la reprise après faute partielle ni la conservation de l’état opaque.
+
+```sh
+cmake --build build-release --target NeverDX86NativeStateAuditTests
+ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
+```
