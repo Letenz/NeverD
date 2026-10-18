@@ -130,7 +130,15 @@ public:
   /// Records the functions and objects the text names in the source map
   /// (HighCSourceNames.cpp).
   void recordSourceNames(const std::vector<HighFunc> &Funcs);
-  void writeSourceRecordDeclarations(const std::vector<HighFunc> &Funcs);
+  /// Declares a typedef of their own name for the records the signatures
+  /// point to, unless an ordinary identifier of the unit holds the name: a
+  /// routine it calls (\p CallTargets) or defines, or an object, as glibc's
+  /// stat is a function beside its struct stat.  A routine a header the
+  /// unit includes declares (calleeHeaders) leaves its records to the
+  /// header, whose names for them the unit does not know: bionic's
+  /// pthread_mutex_t is a typedef of an unnamed record.
+  void writeSourceRecordDeclarations(const std::vector<HighFunc> &Funcs,
+                                     const std::set<std::string> &CallTargets);
   /// The records the unit declares a typedef of their own name for, which
   /// it can spell by that name alone.
   std::set<std::string> RecordTypedefs;
@@ -1363,6 +1371,10 @@ public:
   /// The prototype of the external function a call target \p Name names
   /// (writeForwardDecls), by the one symbol its calls link to.
   const libc::LibCPrototype *externalPrototype(const std::string &Name) const;
+  /// The headers that declare the external function \p Name, which a unit
+  /// that calls it includes: its C library header, and the one its prototype
+  /// names types from.
+  std::vector<std::string> calleeHeaders(const std::string &Name) const;
   /// The C type \p Type of a prototype on this target: `WINAPI` is stdcall
   /// on 32-bit x86 and nothing elsewhere.
   std::string prototypeType(std::string_view Type) const;

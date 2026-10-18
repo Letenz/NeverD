@@ -25,4 +25,8 @@ LIBC_NO_RETURN_SYMBOL("assert_perror_fail")
 // noreturn, and bionic's __assert2, which its assert calls.
 LIBC_NO_RETURN_SYMBOL("assert")
 LIBC_NO_RETURN_SYMBOL("assert2")
+// The NDK's <android/log.h>: __android_log_assert logs and aborts, as the
+// default aborter it calls does.
+LIBC_NO_RETURN_SYMBOL("android_log_assert")
+LIBC_NO_RETURN_SYMBOL("android_log_default_aborter")
 LIBC_NO_RETURN_SYMBOL("stack_chk_fail")

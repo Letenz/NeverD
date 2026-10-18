@@ -296,20 +296,24 @@ Library's headers declare for a program built with `_GNU_SOURCE` into
 `LinuxX64.h`, `LinuxX86.h`, `LinuxARM64.h` and `LinuxARM.h`; a routine glibc
 gives an assembler name (`__isoc23_strtol` for strtol, as glibc 2.38 names
 it) takes its prototype under that name too, which a program imports. It
-renders what bionic's headers declare for Android API level 35 into
-`AndroidX64.h`, `AndroidX86.h`, `AndroidARM64.h` and `AndroidARM.h`, whose
-32-bit records glibc's do not describe (bionic's `pthread_mutex_t` is one
-word there). The loader records the dynamic linker an ELF image asks for
-and Android's identification note, and `linuxLibC` (`ELFOperatingSystem.h`)
-tells glibc's programs from bionic's (Android's linker, or the note an
-APK's native library carries alone) and musl's, which no library
-describes. The build embeds each file in a unit of its own, and
+renders what bionic's headers and the NDK's `<jni.h>` and `<android/log.h>`
+declare for Android API level 35 into `AndroidX64.h`, `AndroidX86.h`,
+`AndroidARM64.h` and `AndroidARM.h`, whose 32-bit records glibc's do not
+describe (bionic's `pthread_mutex_t` is one word there), and what musl's
+declare into `MuslX64.h`, `MuslX86.h`, `MuslARM64.h` and `MuslARM.h`, whose
+32-bit `time_t` is 64 bits: musl's `__REDIR` gives a 32-bit program's `stat`
+the name `__stat_time64`, which takes its prototype too. The loader records
+the dynamic linker an ELF image asks for and Android's identification note,
+and `linuxLibC` (`ELFOperatingSystem.h`) tells glibc's programs from
+bionic's (Android's linker, or the note an APK's native library carries
+alone) and musl's (musl's linker). The build embeds each file in a unit of
+its own, and
 `headerLibrary` reads each once. The C API joins the libraries the table
 names to an image (an x64 or x86 PE of the native subsystem joins its
 kernel's; one of the Windows GUI or console subsystem joins its user mode's,
 then, on x64 and x86, its kernel's for the few ntdll exports only the
 kernel's headers declare, such as `RtlIsNameLegalDOS8Dot3`; a Linux
-program on glibc or bionic joins its architecture's) after the program's debug
+program on glibc, bionic or musl joins its architecture's) after the program's debug
 information and before the user's declarations, where the library's data
 model and record ABI are the program's:
 - a header type joins only where the program has no type of its name;

@@ -1636,7 +1636,7 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   // the same headers and prototypes.
   for (auto &F : Funcs)
     collectCallTargets(F.Body, CallTargets);
-  writeSourceRecordDeclarations(Funcs);
+  writeSourceRecordDeclarations(Funcs, CallTargets);
   // A function whose address the code takes is declared as a callee is.
   CallTargets.insert(AddressTakenFunctions.begin(),
                      AddressTakenFunctions.end());
@@ -1653,12 +1653,8 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   for (auto &Name : CallTargets) {
     if (isOwnFunctionName(Name, Funcs))
       continue;
-    if (const char *Hdr = libc::headerFor(Name))
-      Headers.insert(Hdr);
-    // A C library prototype can name a type a header declares.
-    if (const libc::LibCPrototype *Prototype = externalPrototype(Name);
-        Prototype && !Prototype->Header.empty())
-      Headers.insert(std::string(Prototype->Header));
+    for (std::string &Header : calleeHeaders(Name))
+      Headers.insert(std::move(Header));
   }
   if (NeedsObjCRuntime) {
     Headers.insert("objc/message.h");

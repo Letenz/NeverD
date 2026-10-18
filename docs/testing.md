@@ -521,13 +521,18 @@ declares, and checks that another function's text stays as it was.
 `TypeParse.SizesAMemberReachedThroughANullPointer` reads
 `sizeof(((T *)0)->Member)`, as phnt's `RTL_FIELD_SIZE` spells it, and
 `TypeParse.ARoutineTakesItsPrototypeUnderItsAssemblerName` reads glibc's
-`__REDIRECT` (`__isoc23_strtol`) and C99's qualified parameter arrays.
+`__REDIRECT` (`__isoc23_strtol`), musl's `__REDIR` (`__typeof__(stat)`) and
+C99's qualified parameter arrays, and
+`TypeParse.AnLP64ParameterPassesItsVaListByAddress` each C library's name
+for the compiler's `va_list`.
 `HeaderLibrary.*` reads the embedded libraries and checks how a header
 library joins a program's types;
 `HeaderLibrary.TheLinuxLibrariesLayRecordsOutAsGlibcDoes` checks the sizes
 and offsets clang measures for glibc's `stat`, `timespec`,
 `pthread_mutex_t`, `FILE`, `sigaction` and `dirent` on each architecture,
-`HeaderLibrary.TheAndroidLibrariesLayRecordsOutAsBionicDoes` bionic's,
+`HeaderLibrary.TheAndroidLibrariesLayRecordsOutAsBionicDoes` bionic's and
+the NDK's JNI records,
+`HeaderLibrary.TheMuslLibrariesLayRecordsOutAsMuslDoes` musl's,
 `SessionCAPITest.LinuxProgramsJoinTheirGlibcLibrary` decompiles
 `unittests/types/fixtures/linux_libc_calls_{x64,x86,arm64,arm}`, built as
 `linux_libc_calls.c` says, and
@@ -535,6 +540,9 @@ and offsets clang measures for glibc's `stat`, `timespec`,
 `android_libc_calls_arm64`, a program that asks for Android's linker, and
 `android_libc_calls_arm`, a library only the NDK's note marks, built as
 `android_libc_calls.c` says;
+`SessionCAPITest.MuslProgramsJoinTheirMuslLibrary` loads
+`musl_libc_calls_{x64,x86}`, `linux_libc_calls.c` built against musl's
+headers as `musl_libc_stub.c` says;
 `HeaderLibrary.TheUserLibrariesDeclareNtdllsNativeAPI` checks phnt's
 routines and the PEB, TEB and loader records each user mode library lays
 out. The user mode libraries read a checkout of
@@ -561,8 +569,14 @@ installs them: the host's for x64 and x86 (libc6-dev, libc6-dev-i386),
 `scripts/generate_linux_types.py --sysroot linux-arm=<directory>`. The
 Android libraries read a checkout of bionic
 (`--bionic <checkout>`, of https://android.googlesource.com/platform/bionic;
-its libc/include, libc/kernel and libc/NOTICE are all they need), and name
-its commit. Check the x64 and x86 Linux ones with their record ABIs:
+its libc/include, libc/kernel and libc/NOTICE are all they need), with the
+NDK's `<jni.h>` from libnativehelper (`--libnativehelper <checkout>`, of
+https://android.googlesource.com/platform/libnativehelper) and
+`<android/log.h>` from system/logging (`--liblog <checkout>`, of
+https://android.googlesource.com/platform/system/logging), and name their
+commits. The musl libraries read a checkout of musl (`--musl <checkout>`,
+of https://git.musl-libc.org/git/musl), whose headers it installs for each
+architecture in a build directory of its own, and name its version. Check the x64 and x86 Linux ones with their record ABIs:
 
 ```sh
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \

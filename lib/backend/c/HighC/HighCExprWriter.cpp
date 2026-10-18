@@ -2199,6 +2199,18 @@ HighCWriter::externalPrototype(const std::string &Name) const {
                                 : llvm::StringRef(Name));
 }
 
+std::vector<std::string>
+HighCWriter::calleeHeaders(const std::string &Name) const {
+  std::vector<std::string> Headers;
+  if (const char *Header = libc::headerFor(Name))
+    Headers.push_back(Header);
+  // A C library prototype can name a type a header declares.
+  if (const libc::LibCPrototype *Prototype = externalPrototype(Name);
+      Prototype && !Prototype->Header.empty())
+    Headers.push_back(std::string(Prototype->Header));
+  return Headers;
+}
+
 std::string HighCWriter::prototypeType(std::string_view Type) const {
   return c_library::typeSpelling(Type, Opts.TheArch);
 }

@@ -133,7 +133,11 @@ bool HighCWriter::memberOfDefinedRecord(const HighExpr &Addr) const {
 }
 
 void HighCWriter::writeSourceRecordDeclarations(
-    const std::vector<HighFunc> &Funcs) {
+    const std::vector<HighFunc> &Funcs,
+    const std::set<std::string> &CallTargets) {
+  std::set<std::string> Defined;
+  for (const HighFunc &Function : Funcs)
+    Defined.insert(Function.Name);
   std::set<std::string> Declared;
   std::set<const NdType *> Seen;
   std::function<void(const TypeRef &)> Visit = [&](const TypeRef &Type) {
@@ -149,7 +153,10 @@ void HighCWriter::writeSourceRecordDeclarations(
         const char *Keyword = Tag != RecordDefinitions.Tags.end() && Tag->second
                                   ? "union"
                                   : "struct";
-        if (Declared.insert(Name).second) {
+        const bool Ordinary =
+            CallTargets.count(Name) || AddressTakenFunctions.count(Name) ||
+            Defined.count(Name) || GlobalIdentifierAllocator.holds(Name);
+        if (!Ordinary && Declared.insert(Name).second) {
           OS << "typedef " << Keyword << " " << Name << " " << Name << ";\n";
           RecordTypedefs.insert(Name);
         }
@@ -171,7 +178,9 @@ void HighCWriter::writeSourceRecordDeclarations(
         Signature(*Found);
   }
   for (const auto &[Name, Function] : DebugExternSigs)
-    Signature(Function);
+    if (!CallTargets.count(Name) || isOwnFunctionName(Name, Funcs) ||
+        calleeHeaders(Name).empty())
+      Signature(Function);
   if (!Declared.empty())
     OS << "\n";
 }
