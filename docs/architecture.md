@@ -3959,6 +3959,19 @@ UNPREDICTABLE CPS, fail clearly. Saturating instructions set Q, which the
 lift does not model, so an MRS after one reads the Q the translated code
 left in the machine.
 
+A call to a compiler runtime routine whose whole contract one intrinsic
+models (`RuntimeRoutineIntrinsics.def`) is that intrinsic, which
+`liftRuntimeRoutineCalls` substitutes before SSA. It applies whether the
+routine is an import (its stub, its slot, or an object's extern item) or a
+function the image defines. The Arm run-time ABI's `__aeabi_read_tp`
+returns the thread pointer and corrupts only r0, ip, lr and the flags, so
+clang's `-mtp=soft` TLS access keeps values in r1-r3 across it. As an
+ordinary call it took phantom arguments, and its clobbers lost those
+values. As `ArmThreadPointer` it takes no argument and writes only r0, and
+both C routes print `(uint32_t)__builtin_thread_pointer()`, which LLVM
+(`llvm.thread.pointer`) lowers to an MRC or to the same call as the target
+needs.
+
 An SMC or HVC #0 follows Arm's SMC Calling Convention: the lift binds its
 results in x0-x3 (r0-r3) as the outputs of a multi-output intrinsic, and
 LowToMed gives it the registers it reads, its function identifier and

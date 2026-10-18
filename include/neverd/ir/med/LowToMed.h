@@ -15,6 +15,7 @@
 #ifndef NEVERD_IR_MED_LOWTOMED_H
 #define NEVERD_IR_MED_LOWTOMED_H
 
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/FormattedCall.h"
 #include "neverd/ir/low/LowIR.h"
@@ -306,6 +307,11 @@ private:
   /// Runs before buildSsa; no-op when StackProbeSlots is null/empty.  See
   /// setStackProbeSlots.
   void neutralizeStackProbeCalls(MedFunc &Func);
+  /// Rewrite each direct call to a runtime routine whose whole contract an
+  /// intrinsic models (RuntimeRoutineIntrinsics.def), `bl __aeabi_read_tp`,
+  /// into that intrinsic: it takes no argument and clobbers no register but
+  /// its result.  Runs before buildSsa.
+  void liftRuntimeRoutineCalls(MedFunc &Func);
   /// Record which GPRs a direct call's callee never writes.
   void applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp);
   /// Bind the arguments of a formatted call as its inputs, adding to \p MB
@@ -392,6 +398,11 @@ private:
   /// Null/empty until the pipeline (which has the loaded import tables)
   /// provides it.  Mach-O only.
   const std::set<va_t> *StackProbeSlots = nullptr;
+
+  /// The addresses that name a runtime routine one intrinsic models (its
+  /// imports' stubs and slots, and its symbols), with that intrinsic; built
+  /// from Image on first use.  See liftRuntimeRoutineCalls.
+  std::optional<std::map<va_t, Intrinsic>> RuntimeRoutineCalls;
 
   /// Direct-call targets proven to return i64 in the register pair; see
   /// setI64Callees.  Null until the pipeline re-converts an i64-accumulator
