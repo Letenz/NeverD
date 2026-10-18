@@ -3087,6 +3087,14 @@ either stays inside the jumping function. A guessed entry that another function
 absorbed this way is audited as `AbsorbedFunctionChunk` rather than decompiled
 twice.
 
+A whole unit (`neverd_decompile_all`, in every language) begins with a
+`/* neverd.not-decompiled: NAME at 0xENTRY: REASON */` line for each function
+the pipeline refused (`RejectedLowIR`, `RejectedIncomplete`,
+`RejectedUnwindlessNonLeaf`, `MedIRFailed`), where it would otherwise be
+missing with no word. The reason is the audit's disposition and its evidence,
+as `--func` reports it for that function (`rejected-incomplete; decode failure
+at 0xC`).
+
 An x86 function whose whole body is one direct unconditional jump, after an
 optional `endbr` marker, passes its caller's return address, stack and
 arguments on untouched, so function detection makes the jump target an entry
