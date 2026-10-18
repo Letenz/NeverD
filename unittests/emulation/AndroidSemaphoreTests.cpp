@@ -135,6 +135,10 @@ TEST_P(AndroidSemaphore, DisabledWaitAndUnsupportedTimedWaitDoNotSucceed) {
 TEST_P(AndroidSemaphore, PendingWaitsKeepFailureAndDeadlockVisible) {
   Options.Android->ThreadLimit = 2;
   Options.InstructionQuantum = 100000;
+  // Reach the intended guest failure after a full polling quantum on busy
+  // hosts. This checks pending state, not the host execution deadline; retain
+  // the instruction bound and use the same allowance as the wake tests above.
+  Options.Limits.TimeoutMicroseconds = 30000000;
   for (uint64_t Mode : {0, 1, 2, 3}) {
     auto R = run("semaphore_wait_failure", {Buffer, Mode});
     EXPECT_EQ(R.Stop, Mode ? ProcessStopReason::RuntimeFailure
