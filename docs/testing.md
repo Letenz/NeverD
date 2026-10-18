@@ -30,6 +30,13 @@ match, empty/overlapping inputs, high bytes, page ends, errno and dynamic librar
 closure; `AndroidSearchMemory.*` checks memory/time bounds. The strict directory
 JSON check is `ProcessReport.DirectoryCreationRequiresCompleteBoundedMetadata`.
 
+`AndroidStringCopy.*` checks `strncpy` using independent AArch64 callers at
+O0/O2 across three relocation formats and available CPU backends: exact padding,
+truncation, high bytes, errno, full-width and zero counts, page ends, read-only
+source/destination, overlap and dynamic provider lifetime.
+`AndroidStringCopyMemory.*` checks atomic refusal, memory limits and timeout
+against complete guarded guest bytes. No host libc copy is used as the oracle.
+
 `NeverDDirectTailCallMetadataTests` builds real x86, x64 and AArch64 CFGs and
 validates direct tail-call targets at strict instruction boundaries. It covers
 fallthrough and conditional transfers into known functions, an existing direct

@@ -147,6 +147,17 @@ model. Symbol versions are not used to select alternate implementations.
 The supported Bionic subset is:
 
 - `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `strnlen`, `strcmp`, `strncmp`.
+- `strncpy` copies at most the requested count through the first NUL, then pads
+  the destination to exactly that count with zeros. Truncated copies need not
+  terminate. It returns the original destination and retains errno; zero count
+  accesses neither pointer. The full LP64 count is bounded by the process memory
+  limit. Source reads stop at NUL or count, including page-end strings. The
+  model stages all bytes and refuses overlapping accessed ranges, inaccessible
+  memory or an expired budget before committing guest writes. This atomic
+  refusal is a model diagnostic, not native fault/undefined-behavior emulation.
+  Checked `__strncpy_chk`/`__strncpy_chk2` entry points remain unsupported.
+  The valid-call contract follows the pinned API 28
+  [Bionic implementation](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/upstream-openbsd/lib/libc/string/strncpy.c).
 - `__FD_SET_chk`, `__FD_CLR_chk`, `__FD_ISSET_chk`, using the Bionic LP64
   1024-bit descriptor bitmap. The signed low 32-bit descriptor must be 0..1023,
   then the full-width object extent must be at least 128 bytes. Invalid values

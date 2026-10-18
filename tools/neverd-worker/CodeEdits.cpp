@@ -745,9 +745,9 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
       continue;
     if (!identifier(token.text) || member(ts, i))
       continue;
-    Json name = {{"begin_byte", token.begin},
-                 {"end_byte", token.end},
-                 {"original", token.text}};
+    // Most identifiers name nothing (a hex literal's digits read as one), so
+    // a name is filled in only once a kind below claims the identifier.
+    Json name = Json::object();
     std::string display = token.text;
     if (definition == i) {
       name["address"] = hexAddress(function);
@@ -778,6 +778,9 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
         display = *shown;
     } else
       continue;
+    name["begin_byte"] = token.begin;
+    name["end_byte"] = token.end;
+    name["original"] = token.text;
     if (display != token.text) {
       // Never collide a local alias with any other identifier in the view.
       if (name.at("kind") == "local" && identifiers.contains(display))

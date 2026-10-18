@@ -1109,22 +1109,30 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   // An outgoing stack argument is placed by the stack pointer the call is
   // made with (CallArgCollectionX86.cpp): the last one its block defines, or
   // else the one reaching the block.
-  {
-    MedVar CallStack;
-    bool Known = false;
-    for (size_t J = CallIdx; J-- > 0;)
-      if (const MedOp &Op = Ops[J]; Op.Output.Kind == MedVar::Reg &&
-                                    Op.Output.RegOff == SpRegOff &&
-                                    Op.Output.Size) {
-        CallStack = Op.Output;
-        Known = true;
-        break;
-      }
-    if (!Known)
-      Known = reachingRegAtBlockEntry(CurBlock, SpRegOff, CallStack);
-    if (Known)
-      Scan.CallStackEntryOffset = EntryOffsetOf(CallStack);
-  }
+  MedVar CallStack;
+  bool CallStackKnown = false;
+  for (size_t J = CallIdx; J-- > 0;)
+    if (const MedOp &Op = Ops[J]; Op.Output.Kind == MedVar::Reg &&
+                                  Op.Output.RegOff == SpRegOff &&
+                                  Op.Output.Size) {
+      CallStack = Op.Output;
+      CallStackKnown = true;
+      break;
+    }
+  if (!CallStackKnown)
+    CallStackKnown = reachingRegAtBlockEntry(CurBlock, SpRegOff, CallStack);
+  if (CallStackKnown)
+    Scan.CallStackEntryOffset = EntryOffsetOf(CallStack);
+  // A frame realigned by `and esp, -16` relates the two only through its
+  // alignment, as call-ABI recovery's call-SP map does (MedABIPass.cpp).
+  auto CallStackOffsetOf =
+      [&](const MedVar &Address) -> std::optional<int64_t> {
+    if (!CurMed || !CallStackKnown)
+      return std::nullopt;
+    indexMedDefinitions();
+    return EntryStackOffsets->offsetFrom(Address, CallStack);
+  };
+  Scan.CallStackOffsetOf = CallStackOffsetOf;
   // A stack slot below the stack pointer an address is made from, another
   // pointer (read from memory, or a register this function received), or a
   // fixed address holds no outgoing argument.  An address this cannot
