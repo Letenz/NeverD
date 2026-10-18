@@ -491,6 +491,10 @@ public:
   std::optional<std::string> typedMemberAddress(const HighExpr &Addr) const;
   TypeRef typedMemberType(const HighExpr &Addr, uint16_t AccessSize = 0,
                           NdAccessClass Class = NdAccessClass::Unknown) const;
+  /// The function type of the typed member an indirect call's \p Callee
+  /// loads its target from (indirectCalleeStr prints it as the member), or
+  /// null.
+  TypeRef typedSlotFunction(const HighExpr &Callee) const;
   /// Whether \p Addr is a member of a record the unit defines from the
   /// program's local types (RecordDefinitions).
   bool memberOfDefinedRecord(const HighExpr &Addr) const;

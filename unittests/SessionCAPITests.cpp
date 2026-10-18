@@ -5624,6 +5624,9 @@ TEST_F(SessionCAPITest, UefiApplicationsJoinTheirFirmwaresLibrary) {
         << HighC;
     EXPECT_EQ(HighC.find("*(void **)(SystemTable->"), std::string::npos)
         << HighC;
+    // A call through a member passes the parameters its type declares: on
+    // x86 the word the caller pushed to make room on the stack is none.
+    EXPECT_EQ(HighC.find("unknown register"), std::string::npos) << HighC;
   }
 }
 
