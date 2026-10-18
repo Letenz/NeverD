@@ -5512,7 +5512,8 @@ TEST_F(SessionCAPITest, MuslProgramsJoinTheirMuslLibrary) {
   // which takes stat's prototype.  <sys/stat.h> declares stat, whose record
   // the call reaches through void *, and no typedef names the record as the
   // function; the output declares __stat_time64 itself, with the record's
-  // type, which a typedef names.
+  // type.  A typedef names the record, which is still spelled by its tag:
+  // the C library has a function of its name.
   struct Program {
     const char *File, *Library, *Model, *ABI;
     int64_t StatSize;
@@ -5523,7 +5524,7 @@ TEST_F(SessionCAPITest, MuslProgramsJoinTheirMuslLibrary) {
       {"musl_libc_calls_x64", "musl-x64", "LP64", "itanium", 144,
        "stat((char*)(uintptr_t)arg0, (void*)&", false},
       {"musl_libc_calls_x86", "musl-x86", "ILP32", "i386-sysv", 144,
-       "__stat_time64((char*)(uintptr_t)arg0, (stat*)&", true},
+       "__stat_time64((char*)(uintptr_t)arg0, (struct stat*)&", true},
   };
   const auto Fixtures =
       std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
@@ -5577,8 +5578,8 @@ TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
   };
   const Program Programs[] = {
       {"darwin_libc_calls_x64", "macos-x64", "itanium",
-       "stat_INODE64((char*)(uintptr_t)arg0, (stat*)&",
-       "extern int32_t stat_INODE64(char* arg0, stat* arg1) "
+       "stat_INODE64((char*)(uintptr_t)arg0, (struct stat*)&",
+       "extern int32_t stat_INODE64(char* arg0, struct stat* arg1) "
        "__asm__(\"_stat$INODE64\");"},
       {"darwin_libc_calls_arm64", "macos-arm64", "apple-arm64",
        "stat((char*)(uintptr_t)arg0, (void*)&", "#include <sys/stat.h>"},
@@ -5621,6 +5622,64 @@ TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
     EXPECT_NE(HighC.find(P.Call), std::string::npos) << HighC;
     EXPECT_NE(HighC.find(P.Declaration), std::string::npos) << HighC;
   }
+}
+
+TEST_F(SessionCAPITest, AProgramsOwnDeclarationOfAnImportDecides) {
+  // The user declares the routine a program imports as read with one
+  // parameter, as a library of its own may export it: every call passes
+  // that one, in both C backends, whatever the C library's read takes.
+  // The arguments the call to read in Read's body passes, by their text.
+  auto ReadArguments = [](llvm::StringRef Text) {
+    std::vector<std::string> Arguments;
+    size_t At = Text.find("Read(");
+    while (At != llvm::StringRef::npos) {
+      At = Text.find("read(", At + 1);
+      if (At == llvm::StringRef::npos ||
+          (!llvm::isAlnum(Text[At - 1]) && Text[At - 1] != '_'))
+        break;
+    }
+    if (At == llvm::StringRef::npos)
+      return Arguments;
+    std::string Argument;
+    int Depth = 0;
+    for (const char C : Text.drop_front(At + 5)) {
+      if (Depth == 0 && (C == ',' || C == ')')) {
+        Arguments.push_back(llvm::StringRef(Argument).trim().str());
+        Argument.clear();
+        if (C == ')')
+          break;
+        continue;
+      }
+      Depth += C == '(' ? 1 : C == ')' ? -1 : 0;
+      Argument += C;
+    }
+    return Arguments;
+  };
+  std::ifstream Input(std::filesystem::path(__FILE__).parent_path() / "types" /
+                          "fixtures" / "linux_libc_calls_x64",
+                      std::ios::binary);
+  const std::string Path =
+      write("linux_libc_calls_x64",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  ASSERT_GE(neverd_session_discover_functions(Session), 0);
+  const int Index = neverd_func_find_by_name(Session, "Read");
+  ASSERT_GE(Index, 0);
+  const neverd_va_t Entry = neverd_func_entry(Session, Index);
+  const std::string Before = takeString(neverd_decompile(Session, Entry));
+  EXPECT_EQ(ReadArguments(Before).size(), 3u) << Before;
+  const std::string Declared = takeString(
+      neverd_local_types_declare(Session, "long read(int File);", nullptr));
+  ASSERT_NE(Declared.find("\"read\""), std::string::npos) << Declared;
+  const std::string HighC = takeString(neverd_decompile(Session, Entry));
+  const std::vector<std::string> HighCArguments = ReadArguments(HighC);
+  ASSERT_EQ(HighCArguments.size(), 1u) << HighC;
+  EXPECT_NE(HighCArguments[0].find("arg0"), std::string::npos) << HighC;
+  const std::string LLVMC = takeString(neverd_decompile_llvm(Session, Entry));
+  const std::vector<std::string> LLVMCArguments = ReadArguments(LLVMC);
+  ASSERT_EQ(LLVMCArguments.size(), 1u) << LLVMC;
+  EXPECT_NE(LLVMCArguments[0].find("arg0"), std::string::npos) << LLVMC;
 }
 
 TEST_F(SessionCAPITest, FreeBSDProgramsJoinTheirArchitecturesLibrary) {
