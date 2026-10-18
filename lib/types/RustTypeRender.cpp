@@ -49,6 +49,8 @@ public:
   void opaque(const LocalType &Type, std::string &Out) const;
   /// The builtins rendered so far by their Windows names.
   const std::set<Builtin> &aliased() const { return Aliased; }
+  /// Whether a type rendered so far spells c_void.
+  bool usesVoid() const { return Void; }
   /// The definition of the type long double takes where it is no float
   /// Rust has, which the types use: bytes aligned as C aligns them.
   std::string longDouble() const;
@@ -86,6 +88,8 @@ private:
   const NameSpelling Names;
   mutable std::set<Builtin> Aliased;
   mutable bool LongDouble = false;
+  /// Whether the types spell core's c_void, which the module then imports.
+  mutable bool Void = false;
   unsigned Digits = 1;
   /// The outer record's offset of the record being written, in bytes.
   uint64_t Base = 0;
@@ -143,6 +147,7 @@ std::string RustWriter::exact(Builtin Type, bool Pointee) const {
   const unsigned Bytes = Library.builtinBytes(Type);
   switch (Info.Class) {
   case BuiltinClass::Void:
+    Void |= Pointee;
     return Pointee ? "c_void" : "()";
   case BuiltinClass::Bool:
     return "bool";
@@ -206,8 +211,10 @@ std::string RustWriter::type(const TypeExpr &Type, bool Pointee) const {
   case TypeExprKind::Named:
     return Names.type(Type.Name);
   case TypeExprKind::Pointer: {
-    if (!Type.Element)
+    if (!Type.Element) {
+      Void = true;
       return "*mut c_void";
+    }
     const TypeExpr &Target = *Type.Element;
     // A function pointer may be null: Option of the fn type.
     if (Target.Kind == TypeExprKind::Function && Target.Function)
@@ -617,8 +624,10 @@ std::string renderRustModule(const TypeLibrary &Library,
   std::string Out = "// " + std::to_string(Types.size()) +
                     " types, rendered by NeverD.\n"
                     "#![allow(non_camel_case_types, non_snake_case, "
-                    "non_upper_case_globals, dead_code)]\n\n"
-                    "use core::ffi::c_void;\n";
+                    "non_upper_case_globals, dead_code)]\n";
+  // core's c_void, where the types point to it; an unused import warns.
+  if (Writer.usesVoid())
+    Out += "\nuse core::ffi::c_void;\n";
   // The Windows names the types use, as the headers declare them, at the
   // program's widths.
   if (!Writer.aliased().empty()) {
