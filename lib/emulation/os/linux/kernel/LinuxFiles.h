@@ -18,6 +18,7 @@ namespace neverd::emulation::linux_model {
 class LinuxMemory;
 class LinuxClock;
 bool isCanonicalFilePath(llvm::StringRef Path);
+bool isDeclaredDirectory(const LinuxFileOptions &Options, llvm::StringRef Path);
 llvm::Error validateFileOptions(const LinuxFileOptions &Options);
 llvm::Error validateDeviceOptions(const LinuxDeviceOptions &Options,
                                   uint64_t &Bytes, uint64_t &Transactions);
@@ -265,6 +266,8 @@ private:
   llvm::Expected<std::optional<uint64_t>>
   open(uint64_t Address, uint32_t Flags, ProcessResult &Result,
        uint32_t Directory = AtCurrentDirectory);
+  llvm::Expected<std::optional<uint64_t>>
+  getWorkingDirectory(uint64_t Address, uint64_t Size, ProcessResult &Result);
   llvm::Expected<uint64_t> read(OpenFile &File, uint64_t Address,
                                 uint64_t Size);
   uint64_t seek(OpenFile &File, uint64_t Offset, uint32_t Whence);

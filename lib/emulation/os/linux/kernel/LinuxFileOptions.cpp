@@ -11,7 +11,16 @@
 #include <set>
 
 namespace neverd::emulation::linux_model {
+bool isDeclaredDirectory(const LinuxFileOptions &Options,
+                         llvm::StringRef Path) {
+  return Path == "/" ||
+         (Path.size() < FilePathLimit && isCanonicalFilePath(Path) &&
+          llvm::is_contained(Options.Directories, Path));
+}
 llvm::Error validateFileOptions(const LinuxFileOptions &Options) {
+  if (Options.WorkingDirectory &&
+      !isDeclaredDirectory(Options, *Options.WorkingDirectory))
+    return failure("Linux working directory requires a declared directory");
   if (Options.IoctlTrace) {
     const auto &T = *Options.IoctlTrace;
     if (!T.EventLimit || T.EventLimit > 4096 || !T.ByteLimit ||

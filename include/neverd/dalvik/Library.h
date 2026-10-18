@@ -45,7 +45,12 @@ enum LibraryOperation {
   ClassLoaderOf,
   LoaderParent,
   SystemClassLoader,
-  LoadClass
+  LoadClass,
+  FilesDirectory,
+  FilePath,
+  FileName,
+  FileParent,
+  FileIsAbsolute
 };
 struct LibraryMethod {
   const char *Class, *Name, *Signature;

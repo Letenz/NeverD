@@ -200,6 +200,17 @@ TEST_P(AndroidFiles, FileSystemQueriesPreserveCursorsAndLookupErrorPrecedence) {
   returned(run("files_filesystem_status"));
   returned(run("files_filesystem_status_bionic"));
 }
+TEST_P(AndroidFiles, WorkingDirectoryRawAndBionicShareBytesButNotReturnABI) {
+  Options.LinuxFiles->Directories.push_back("/fixture");
+  Options.LinuxFiles->WorkingDirectory = "/fixture";
+  returned(run("files_cwd_bionic"));
+}
+TEST_P(AndroidFiles, MissingWorkingDirectoryRemainsUnknown) {
+  auto R = run("files_cwd_unknown");
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("working directory is not supplied"),
+            std::string::npos);
+}
 TEST_P(AndroidFiles, RepeatedSeparatorsUseTheSharedFileNamespace) {
   returned(run("files_repeated_slashes"));
   returned(run("files_repeated_slashes_bionic"));
