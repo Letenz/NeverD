@@ -620,26 +620,37 @@ clang takes to read them for each target, as the Darwin fixtures were
 built. The UEFI libraries read a checkout of EDK II
 (`scripts/generate_uefi_types.py --edk2 <checkout>`, of
 https://github.com/tianocore/edk2; MdePkg/Include and License.txt are all
-they need) and name its commit. Check the x64 and x86 Linux ones with their record ABIs:
+they need) and name its commit. `scripts/fetch_render_toolchains.py`
+fetches what the ARM, Android and musl ones read besides the host's glibc:
+the armhf and arm64 cross packages (`--sysroot linux-arm64=<cache>/arm64/usr/aarch64-linux-gnu`,
+`--sysroot linux-arm=<cache>/armhf/usr/arm-linux-gnueabihf`), bionic,
+libnativehelper and system/logging at the commits the Android libraries name
+(`--bionic <cache>/bionic --libnativehelper <cache>/libnativehelper --liblog <cache>/logging`)
+and musl's release (`--musl <cache>/musl`), where `<cache>` is
+`~/.cache/neverd-render-toolchains`.
+
+Check each library with its system library, whose types its own system's
+headers give:
 
 ```sh
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
-  --declare lib/types/headers/LinuxX64.h --data-model LP64
+  --declare lib/types/headers/LinuxX64.h --data-model LP64 \
+  --system-library linux-x64
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \
   --declare lib/types/headers/LinuxX86.h --data-model ILP32 \
-  --record-abi i386-sysv
+  --record-abi i386-sysv --system-library linux-x86
 ```
 
-Their C in the keywords spelling, which the libraries name builtins in,
-compiles, as do Go, JavaScript and, for x64, Rust and Python. Their portable
-and windows spellings and their C++ do not compile against a glibc host's
-own headers, which declare glibc's reserved `__` types as well: `__off_t` is
-`long` there, `int32_t` in the portable spelling, and C++ takes the
-`struct __fsid_t` a typedef of glibc's anonymous record names. On x64 the
-prototypes unit warns where it redeclares `vprintf` and its kin, whose
-va_list the library passes as the address it is. The checker builds for
-x86's targets only: `HeaderLibrary.TheLinuxLibrariesLayRecordsOutAsGlibcDoes`
-checks the ARM libraries' layouts against clang's.
+Every spelling compiles on the library's own system, where the C library's
+types come from its headers: the host's glibc for x64 and x86, the fetched
+sysroots for ARM, bionic for Android, and zig's musl for musl. Its portable
+C also compiles on every other system of its pointer width, where the
+header defines them: MinGW with mingw-w64's headers, Microsoft's target with
+clang's own, macOS and musl with zig's, glibc and bionic. Microsoft's
+compilers lay GNU's bit-fields out otherwise, which the checks of glibc's
+`_IO_FILE` and `fenv_t` and musl's `fenv_t` report there: those are the
+failures the Linux libraries keep. With a system library the prototypes
+unit compiles on that system, which declares them.
 
 With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
 ntoskrnl.exe and its PDB,
@@ -741,6 +752,12 @@ python3 scripts/compare_prototypes_with_ida.py --neverd build/bin/neverd \
 ```
 
 Declared types are covered at each layer:
+- `SessionCAPITest.TheCLibrarysTypesComeFromTheSystemsHeaders`: the DWARF
+  of `dwarf_libc.{x64,x86}.o`, built as `dwarf_libc.c` says, whose C header
+  includes glibc's headers for glibc's types where the compiler has them;
+  `TypeRender.TheCLibrarysTypesComeFromItsHeadersOnItsSystem`,
+  `TypeParse.HeaderPragmasNameTheSystemHeaderOfTheTypesAfterThem` and
+  `TypeRender.I386RecordsLayOutAsI386OnEveryCompiler` the parts;
 - `SessionCAPITest.MinGWProgramsKeepTheX87LongDouble`: the DWARF of
   `mingw_types.{x64,x86,msvc}.exe`, built as `mingw_types.c` says, read under
   MinGW's record ABI on x64 and x86 and under Microsoft's for clang-cl's,
@@ -789,8 +806,10 @@ i386 packages, which runs on the host's 32-bit C library; Python for 32-bit
 ARM and 32-bit Windows from python-build-standalone, run by qemu-arm against
 the armhf C library of Debian's cross packages and by Wine; the C
 libraries' headers of armhf and arm64 Linux and of Android (bionic, at the
-commit the Android libraries name); Lua 5.4, built from lua.org's sources;
-and TypeScript's compiler, from npm. The checker takes a Lua or a `tsc` it
+commit the Android libraries name) and the NDK's other headers and musl's
+sources, which their generator reads too; zig, whose C compiler holds
+macOS's and musl's headers; Lua 5.4, built from lua.org's sources; and
+TypeScript's compiler, from npm. The checker takes a Lua or a `tsc` it
 finds first, and these where it finds none. It needs an x86-64 Debian or
 Ubuntu host with dpkg, apt-get, Wine, make, a C compiler and npm; a part it
 cannot fetch is reported, and the checker skips what it would have checked,

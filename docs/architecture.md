@@ -368,6 +368,50 @@ model and record ABI are the program's:
 - a header record laid out with a type the program sizes otherwise is left
   out and reported (`conflicts`).
 
+A C or C++ header rendered for a program joined to a library of a system's
+headers (`HeaderLibrarySystems.def`: glibc's, bionic's and musl's) takes
+that C library's types from the system's own headers where the compiler that
+reads it has them, rather than defining them again, and defines them itself
+everywhere else, Windows and macOS among them (`RenderOptions::SystemLibrary`,
+`renderCHeader`). A C library type is one whose name the library has: the
+program's own DWARF definition of `struct stat` is one too.
+- A probe ahead of every include defines `_GNU_SOURCE`, with which the
+  libraries were read, and `NEVERD_LIBC_FROM_SYSTEM` where the compiler
+  targets the library's platform and architecture and its C library is the
+  library's (`__GLIBC__`, `__BIONIC__`, or neither for musl). It fails
+  clearly where glibc's or bionic's headers came first without
+  `_GNU_SOURCE`; `NEVERD_OWN_LIBC_TYPES` asks for the definitions instead.
+- There, the header includes the headers its C library types come from:
+  each type of a library follows `#pragma neverd_header("stdio.h")`, the
+  header of the unit `generate_linux_types.py` reads (`UNIT_HEADERS`) that
+  brought it in, which the C parser keeps on the type (`LocalType::Header`).
+  The library's prototypes are declared only where its headers do not.
+- Elsewhere the definitions stand. The compiler's own headers may declare
+  some of their names otherwise (`PreludeNames.def`): reserved names, C's
+  `<stddef.h>` and `<stdint.h>` names, and those the Windows C runtimes'
+  `<corecrt.h>` declares take other names for the header's definitions
+  (`#define X neverd_X`, kept with `push_macro`), so that the program's
+  layouts hold and the names stay the compiler's after them; member names a
+  C library's `<sys/cdefs.h>` defines as macros (`__unused`) are undefined
+  meanwhile. The C parser reads such a rename as the system's own name.
+- Their size and offset checks stand after both, in C where the system
+  declares them, as glibc's C++ declares some otherwise.
+- A record C names only through a typedef (`typedef struct { ... } X`, or
+  `typedef struct X X`; `LocalType::TypedefNamed`, which the C parser and
+  the DWARF import keep) is declared `typedef struct X X;` and named `X`,
+  as the system's headers name it.
+- The i386 System V ABI aligns long long and double to four in a record:
+  such a record of i386's takes `#pragma pack(push, 4)`, which changes
+  nothing there and keeps the layout on compilers that align them to eight;
+  the parser reads that pack back as none. A record of GNU's bit-fields
+  takes `NEVERD_GNU_STRUCT`, MinGW's `gcc_struct`. Microsoft's compilers
+  lay bit-fields out no other way, so a few records glibc and musl declare
+  with them, `_IO_FILE` and `fenv_t`, take another layout there, which the
+  checks report.
+- A typedef of an array of a record whose members are unknown, as ARM's
+  glibc gives `jmp_buf` where local types do not hold its `__jmp_buf`, is
+  said in a comment, as are the prototypes that take it.
+
 `TypeFit.h` judges which records a pointer points at by what the code
 does through it, as an analyst checks a guess against the code.
 `memberAt` lands an access of some bytes at an offset on the member that

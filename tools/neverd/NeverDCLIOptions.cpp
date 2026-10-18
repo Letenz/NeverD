@@ -1038,6 +1038,20 @@ cl::opt<bool> TypesAsserts(
              "or that each JavaScript or Lua accessor stays within its "
              "record"),
     cl::sub(TypesCmd));
+cl::opt<std::string> TypesSystemLibrary(
+    "system-library",
+    cl::desc("In C and C++, take the types and prototypes of this library of "
+             "a system's headers (linux-x64, android-arm, musl-x86, ...) from "
+             "those headers where the compiler has them, and define them only "
+             "where it does not, or none; by default a program's own, and "
+             "none for --declare files"),
+    cl::init(""), cl::value_desc("library"), cl::sub(TypesCmd));
+cl::opt<bool> TypesHeaderPragmas(
+    "header-pragmas",
+    cl::desc("In C and C++, put each type after the system header that "
+             "declares it (#pragma neverd_header), as the libraries NeverD "
+             "ships keep it"),
+    cl::sub(TypesCmd));
 cl::opt<bool>
     TypesDecimalOffsets("decimal-offsets",
                         cl::desc("Show offsets in decimal rather than hex"),

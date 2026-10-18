@@ -54,6 +54,21 @@ uint64_t packToken(PackAction Action, uint64_t Value) {
   return (uint64_t(Action) << 32) | Value;
 }
 
+/// The value of a #pragma neverd_header token, whose text is the header.
+constexpr uint64_t HeaderPragma = uint64_t(0xFF) << 32;
+
+/// Whether \p A and \p B lay their members out alike.
+bool sameLayout(const RecordDef &A, const RecordDef &B) {
+  if (A.Size != B.Size || A.Alignment != B.Alignment ||
+      A.Members.size() != B.Members.size())
+    return false;
+  for (size_t I = 0; I < A.Members.size(); ++I)
+    if (A.Members[I].BitOffset != B.Members[I].BitOffset ||
+        A.Members[I].StorageBitOffset != B.Members[I].StorageBitOffset)
+      return false;
+  return true;
+}
+
 const char *const Punctuators[] = {
     "...", "::", "<<", ">>", "<=", ">=", "==", "!=", "&&", "||", "->", "{",
     "}",   "(",  ")",  "[",  "]",  ";",  ",",  "*",  "&",  ":",  "=",  "<",
@@ -299,6 +314,28 @@ private:
     const llvm::StringRef Name =
         Rest.take_while([](char C) { return llvm::isAlnum(C) || C == '_'; });
     Rest = Rest.drop_front(Name.size()).ltrim();
+    // The system header the declarations after it come from, as NeverD's
+    // libraries of a system's headers name it: neverd_header("stdio.h"),
+    // or neverd_header() for none.
+    if (Name == "pragma" && Rest.starts_with("neverd_header")) {
+      llvm::StringRef Arguments = Rest.drop_front(13).trim();
+      if (!Arguments.consume_front("(") || !Arguments.consume_back(")") ||
+          (!(Arguments = Arguments.trim()).empty() &&
+           (!Arguments.consume_front("\"") || !Arguments.consume_back("\"") ||
+            Arguments.contains('"') || Arguments.contains('\\')))) {
+        problem(L, Col,
+                "#pragma neverd_header takes a header's name in quotes");
+        return;
+      }
+      Token Pragma;
+      Pragma.Kind = TokenKind::Pragma;
+      Pragma.Text = Arguments.str();
+      Pragma.Value = HeaderPragma;
+      Pragma.Line = L;
+      Pragma.Column = Col;
+      Tokens.push_back(std::move(Pragma));
+      return;
+    }
     if (Name == "pragma" && Rest.starts_with("pack")) {
       llvm::StringRef Arguments = Rest.drop_front(4).trim();
       if (!Arguments.consume_front("(") || !Arguments.consume_back(")")) {
@@ -377,6 +414,12 @@ private:
       Lexer Inner(Body, Ignored);
       std::vector<Token> Replacement = Inner.run();
       Replacement.pop_back();
+      // A header NeverD renders names a system's types otherwise for
+      // another system's compilers (#define X neverd_X); the declarations
+      // read are the system's.
+      if (Replacement.size() == 1 && Replacement[0].Kind == TokenKind::Word &&
+          Replacement[0].Text == "neverd_" + Macro.str())
+        return;
       Macros[Macro] = std::move(Replacement);
       return;
     }
@@ -546,6 +589,16 @@ public:
       if (Failed)
         recover(Start);
     }
+    // A record a typedef of its name names, wherever it is defined.
+    for (const auto &Entry : SameNamed)
+      if (const LocalType *Named = Library.find(Entry.getKey());
+          Named && !Named->TypedefNamed &&
+          (Named->Kind == TypeKind::Struct || Named->Kind == TypeKind::Union ||
+           Named->Kind == TypeKind::Enum)) {
+        LocalType Marked = *Named;
+        Marked.TypedefNamed = true;
+        Library.define(std::move(Marked));
+      }
   }
 
 private:
@@ -695,7 +748,15 @@ private:
   // The pack in force.
   uint32_t Pack = 0;
   std::vector<uint32_t> PackStack;
+  // The system header the declarations come from (#pragma neverd_header).
+  std::string Header;
+  // The names `typedef struct X X` gives a record, enumeration or union.
+  llvm::StringSet<> SameNamed;
   void pragma(const Token &Pragma) {
+    if (Pragma.Value == HeaderPragma) {
+      Header = Pragma.Text;
+      return;
+    }
     const auto Action = PackAction(Pragma.Value >> 32);
     const auto Value = uint32_t(Pragma.Value);
     switch (Action) {
@@ -980,6 +1041,9 @@ private:
       Local.Name = Name;
       Local.Kind = Kind;
       Local.Origin = Options.Origin;
+      Local.Header = Header;
+      // typedef struct { ... } X names the record by X alone.
+      Local.TypedefNamed = true;
       if (Kind == TypeKind::Enum)
         Local.Enum = Type->Enum;
       else
@@ -1044,9 +1108,12 @@ private:
     if (builtinWords().count(Name) || builtinKeyword(Name) ||
         exactLongDoubleBytes(Name))
       return;
-    // typedef struct X X names the record by itself.
-    if (Type->Kind == TypeExprKind::Named && Type->Name == Name)
+    // typedef struct X X names the record by itself, which C may then name
+    // by X alone.
+    if (Type->Kind == TypeExprKind::Named && Type->Name == Name) {
+      SameNamed.insert(Name);
       return;
+    }
     if (const LocalType *Existing = Library.find(Name);
         Existing && Existing->Kind != TypeKind::Typedef &&
         Existing->Kind != TypeKind::Function && Existing->Record &&
@@ -1057,6 +1124,7 @@ private:
     LocalType Local;
     Local.Name = Name;
     Local.Origin = Options.Origin;
+    Local.Header = Header;
     if (Type->Kind == TypeExprKind::Function && Type->Function) {
       Local.Kind = TypeKind::Function;
       Local.Function = Type->Function;
@@ -1481,6 +1549,18 @@ private:
       fail(Open, llvm::toString(Laid.takeError()));
       return nullptr;
     }
+    // A pack of the ABI's own limit that lays the record out as it would be
+    // anyway, as C NeverD renders for other compilers holds i386's records
+    // to four, is no packing of the record's own.
+    if (Draft.Pack && Draft.Pack == scalarAlignLimitOf(Library.recordABI())) {
+      DraftRecord Loose = Draft;
+      Loose.Pack = 0;
+      llvm::Expected<RecordDef> Unpacked = layOutRecord(Library, Loose);
+      if (Unpacked && sameLayout(*Unpacked, *Laid))
+        Laid->Pack = 0;
+      else if (!Unpacked)
+        llvm::consumeError(Unpacked.takeError());
+    }
     auto Def = std::make_shared<RecordDef>(std::move(*Laid));
     if (Name.empty())
       return makeRecord(std::move(Def));
@@ -1488,6 +1568,7 @@ private:
     Local.Name = Name;
     Local.Kind = Kind;
     Local.Origin = Options.Origin;
+    Local.Header = Header;
     Local.Record = std::move(Def);
     Library.define(std::move(Local));
     note(Result.Types, NotedTypes, Name);
@@ -1675,6 +1756,7 @@ private:
     Local.Name = Name;
     Local.Kind = TypeKind::Enum;
     Local.Origin = Options.Origin;
+    Local.Header = Header;
     Local.Enum = std::move(Def);
     Library.define(std::move(Local));
     note(Result.Types, NotedTypes, Name);
