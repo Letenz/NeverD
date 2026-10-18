@@ -1046,6 +1046,10 @@ std::string HighCWriter::storedValueText(const HighExpr &Value,
     if (printedPointerSource(Value))
       if (const std::string Text = exprStr(Value); printsPointer(Value, Text))
         return "(" + typeToC(To) + ")(uintptr_t)(" + Text + ")";
+    // Or the address of a typed record's member (`&s->bl_tree[18]`).
+    if (const HighExpr *Inner = peelIntegerViewOps(&Value);
+        Inner && Inner->Kind == ExprKind::BinOp && typedMemberAddress(*Inner))
+      return "(" + typeToC(To) + ")(uintptr_t)(" + exprStr(Value) + ")";
   }
   if (Ordering == NdMemoryOrdering::None && Value.Type &&
       Value.Type->Kind == NdTypeKind::Int)
@@ -1670,7 +1674,7 @@ std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
     }
   }
   if (DebugName.empty() && E.CallAddr) {
-    if (auto FS = Dbg->resolveFunction(E.CallAddr); FS && !FS->Name.empty())
+    if (auto FS = debugFunctionCalled(E); FS && !FS->Name.empty())
       DebugName = FS->Name;
     else if (auto Data = Dbg->resolveDataObject(E.CallAddr);
              Data && !Data->Name.empty())
@@ -1972,15 +1976,42 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     }
     if (Callee) {
       // A callee this file defines takes what its prototype declares.  A
-      // record the header declaring the callee defines, which the unit does
-      // not name, is reached through void *, which converts to it.
-      if (TypeRef Expected = Defined ? emittedParamTypeAt(*Defined, I)
-                                     : expectedDebugCallArgType(*Callee, I)) {
-        if (!Defined && headerRecordOfCallee(E, Expected))
-          Expected =
-              Expected->Kind == NdTypeKind::Ptr ? NdType::makePtr() : nullptr;
+      // record or a typedef the header declaring the callee defines, which
+      // the unit does not name (bionic's long time_t, where the unit's
+      // exact widths say int32_t), is reached through void *, which
+      // converts to it.
+      const TypeRef Declared = !Defined && I < Callee->Params.size()
+                                   ? Callee->Params[I].second
+                                   : nullptr;
+      const bool Array = Declared && Declared->Kind == NdTypeKind::Array;
+      TypeRef Expected = Defined ? emittedParamTypeAt(*Defined, I)
+                                 : expectedDebugCallArgType(*Callee, I);
+      // An array parameter is the pointer to its element that C passes.
+      if (!Expected && Array)
+        Expected = NdType::makePtr(Declared->ElemType);
+      if (Expected) {
+        // The pointer to a typedef, or the array a parameter declares
+        // (jmp_buf), converts explicitly, as no pointer of the unit's own
+        // types does.
+        const bool Typedef =
+            Array || (Expected->Kind == NdTypeKind::Ptr && Expected->Pointee &&
+                      Expected->Pointee->Kind == NdTypeKind::Int &&
+                      !Expected->Pointee->TypedefName.empty());
+        const bool Header =
+            !Defined && headerTypeOfCallee(E, Array ? Declared : Expected);
+        if (Header)
+          Expected = Expected->Kind == NdTypeKind::Ptr || Array
+                         ? NdType::makePtr()
+                         : nullptr;
         if (Expected) {
-          S += exprStrAsTypedArg(*Op, Expected);
+          std::string Text = exprStrAsTypedArg(*Op, Expected);
+          if (Header && Typedef && Text != "0" &&
+              !llvm::StringRef(Text).starts_with("(void*)"))
+            Text =
+                "(void*)" +
+                std::string(printsAsInteger(*Op, Text) ? "(uintptr_t)" : "") +
+                castOperand(Text);
+          S += Text;
           continue;
         }
       }
@@ -2227,13 +2258,20 @@ bool HighCWriter::debugDeclaresCallee(const HighExpr &E) const {
   return !libc::isKnownFunction(Symbol.str()) || !includesHeaderOf(Symbol);
 }
 
-bool HighCWriter::headerRecordOfCallee(const HighExpr &E,
-                                       const TypeRef &Type) const {
+bool HighCWriter::headerTypeOfCallee(const HighExpr &E,
+                                     const TypeRef &Type) const {
   TypeRef Pointee = Type;
   while (Pointee && Pointee->Kind == NdTypeKind::Ptr)
     Pointee = Pointee->Pointee;
-  if (!Pointee || Pointee->Kind != NdTypeKind::Struct || Pointee->IsEnum ||
-      Pointee->SourceName.empty() || E.Kind != ExprKind::Call ||
+  const bool Record = Pointee && Pointee->Kind == NdTypeKind::Struct &&
+                      !Pointee->IsEnum && !Pointee->SourceName.empty();
+  const bool Typedef = Pointee && Pointee != Type &&
+                       Pointee->Kind == NdTypeKind::Int &&
+                       !Pointee->TypedefName.empty();
+  // An array parameter, as jmp_buf is, is a pointer to the header's element,
+  // which may be long where the unit's exact widths say int32_t.
+  const bool Array = Type && Type->Kind == NdTypeKind::Array;
+  if ((!Record && !Typedef && !Array) || E.Kind != ExprKind::Call ||
       E.IsIndirectCall || E.CallTarget.empty() || calledDefinition(E))
     return false;
   llvm::StringRef Symbol = E.CallTarget;
@@ -2480,6 +2518,20 @@ TypeRef HighCWriter::printedPointerType(const HighExpr &Value) const {
              : nullptr;
 }
 
+std::optional<FunctionSym>
+HighCWriter::debugFunctionCalled(const HighExpr &E) const {
+  if (!Dbg || !E.CallAddr)
+    return std::nullopt;
+  std::optional<FunctionSym> Function = Dbg->resolveFunction(E.CallAddr);
+  // An indirect call whose callee is unknown names its own instruction
+  // (lowerCallInd), which debug information reads as inside its caller: the
+  // function it gives is the caller, not the callee.
+  if (Function && E.IsIndirectCall && Function->Addr &&
+      Function->Addr != E.CallAddr)
+    return std::nullopt;
+  return Function;
+}
+
 std::optional<FunctionSym> HighCWriter::debugCallee(const HighExpr &E) const {
   if (!Dbg)
     return std::nullopt;
@@ -2504,7 +2556,7 @@ std::optional<FunctionSym> HighCWriter::debugCallee(const HighExpr &E) const {
     }
   }
   if (E.CallAddr)
-    if (auto FS = Dbg->resolveFunction(E.CallAddr); FS) {
+    if (auto FS = debugFunctionCalled(E); FS) {
       if (!FS->Params.empty())
         return FS;
       const std::string Name = callIdentifier(E);
@@ -3203,14 +3255,13 @@ TypeRef HighCWriter::displayCallArgType(const HighExpr &Call,
                                         size_t Index) const {
   auto FromFS = [&](const FunctionSym &FS) -> TypeRef {
     TypeRef Ty = cDisplayType(expectedDebugCallArgType(FS, Index));
-    return isNamedPointerDisplay(Ty) && !headerRecordOfCallee(Call, Ty)
+    return isNamedPointerDisplay(Ty) && !headerTypeOfCallee(Call, Ty)
                ? Ty
                : TypeRef{};
   };
-  if (Dbg && Call.CallAddr)
-    if (auto FS = Dbg->resolveFunction(Call.CallAddr))
-      if (TypeRef Ty = FromFS(*FS))
-        return Ty;
+  if (auto FS = debugFunctionCalled(Call))
+    if (TypeRef Ty = FromFS(*FS))
+      return Ty;
   if (auto FS = debugCallee(Call))
     if (TypeRef Ty = FromFS(*FS))
       return Ty;
@@ -3475,8 +3526,16 @@ std::string HighCWriter::typedArgumentText(const HighExpr &E,
       Inner = &E;
     if (Inner->Kind == ExprKind::Load && !Inner->Operands.empty() &&
         Inner->Operands[0]) {
-      if (auto Slot = namedFrameSlot(*Inner->Operands[0]))
+      // A slot the unit declares an integer holds the address as one.
+      if (auto Slot = namedFrameSlot(*Inner->Operands[0])) {
+        const auto Disp = frameDisplacement(*Inner->Operands[0]);
+        const auto Held = Disp ? FrameSlots.find(*Disp) : FrameSlots.end();
+        if (Held != FrameSlots.end() && Held->second.Type &&
+            Held->second.Type->Kind == NdTypeKind::Int)
+          return "(" + typeToC(Expected) + ")(uintptr_t)" +
+                 copyForwardName(*Slot);
         return copyForwardName(*Slot);
+      }
     }
     if (auto Slot = namedFrameSlot(*Inner))
       return "&" + *Slot;
@@ -6107,7 +6166,12 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
       Expr.Type->Size == FuncReturnType->Size)
     if (auto Converted = implicitIntegerConversion(Expr, FuncReturnType))
       return *Converted;
-  return exprStr(Expr);
+  // A pointer a local, a member or an object holds returns as the address
+  // it is, which the integer result takes.
+  std::string Text = exprStr(Expr);
+  if (printsPointer(Expr, Text))
+    return "(" + typeToC(FuncReturnType) + ")(uintptr_t)" + castOperand(Text);
+  return Text;
 }
 
 std::string HighCWriter::printedForwardedVar(const std::string &Name,

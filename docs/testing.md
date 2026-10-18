@@ -579,6 +579,12 @@ struct stat from its header with checks of its layout and keeps a record of
 the name the program lays out its own way, and
 `HighCPointerAddresses.RecordsNamedLikeLibraryObjectsAreSpelledByTags` spells
 `struct timezone` beside <time.h>'s object.
+`PointerLocalsTakeIntegersAsAddresses`, `IntegerResultsReturnPointersAsAddresses`,
+`IndirectCallResultsConvertToPointerLocals` and
+`PointersToHeaderTypedefsPassThroughVoidPointers` compile the conversions
+between pointers and integers that locals, results and a C library routine's
+typedef parameters need, and `IndirectCallsTakeNoSignatureFromTheirCaller`
+keeps the caller's signature off an indirect call inside it.
 `ReadsTheDefinitionsOfTheProgramsTypes` reads a unit's
 local types definitions back in C as written, whole in C++, and in Rust and
 Go as far as their structures lay them out, saying why for the rest.

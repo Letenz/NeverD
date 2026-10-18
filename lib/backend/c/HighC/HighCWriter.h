@@ -607,6 +607,10 @@ public:
   /// True when \p E prints as an unsigned integer of exactly \p Width bytes.
   /// Widening views and untyped add/sub/mul stay wrapped.
   bool isSameWidthUnsigned(const HighExpr &E, uint16_t Width) const;
+  /// The debug information's function at the address call \p E names,
+  /// none for an indirect call whose callee is unknown, which names its own
+  /// instruction: debug information gives the caller there.
+  std::optional<FunctionSym> debugFunctionCalled(const HighExpr &E) const;
   std::optional<FunctionSym> debugCallee(const HighExpr &E) const;
   /// The pointer type a local is declared with where a typed call's pointer
   /// result declares it (collectCallResultNames, emitLocalDecls), whatever
@@ -641,10 +645,12 @@ public:
   /// prototype of a C library routine the unit includes.
   bool debugDeclaresCallee(const HighExpr &E) const;
   /// Whether \p Type names a record a C library header the unit includes
-  /// for \p E's callee declares: the header's `struct stat`, which the unit
+  /// for \p E's callee declares, points to a typedef of it, or is an array
+  /// it gives a parameter: the header's `struct stat`, which the unit
   /// neither defines nor names by a typedef, and which a function of the
-  /// same name would hide.
-  bool headerRecordOfCallee(const HighExpr &E, const TypeRef &Type) const;
+  /// same name would hide, its time_t, or its jmp_buf, which may be long
+  /// where the unit's exact widths say int32_t.
+  bool headerTypeOfCallee(const HighExpr &E, const TypeRef &Type) const;
   /// Whether the unit includes the standard header that declares the C
   /// library routine \p Name (libc::headerFor).
   bool includesHeaderOf(llvm::StringRef Name) const;

@@ -2553,10 +2553,9 @@ TypeRef HighCWriter::enumTypeForCallArg(const HighExpr &Call, size_t Index,
   // Site FunctionSym first. debugCallee falls back to the colliding stem
   // winner when that site has no S_LOCAL params, which would hide an
   // enum overload behind a pointer prototype.
-  if (Dbg && Call.CallAddr)
-    if (auto FS = Dbg->resolveFunction(Call.CallAddr))
-      if (TypeRef Ty = Consider(*FS))
-        return Ty;
+  if (auto FS = debugFunctionCalled(Call))
+    if (TypeRef Ty = Consider(*FS))
+      return Ty;
   if (auto FS = debugCallee(Call))
     if (TypeRef Ty = Consider(*FS))
       return Ty;
