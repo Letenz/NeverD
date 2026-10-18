@@ -2620,6 +2620,19 @@ agree. Borrowed RBP fields, negative displacements and both signed and unsigned
 index extensions are covered; changed bases/offsets, partial reloads, stores,
 calls and memory barriers must not recover a table from the earlier guard.
 
+`JTE_X86_32.StageAbortKeepsAnUnreachedTableShapeOpaque`
+(`test_i386_gotoff_stage_abort.s`) exhausts every proposal stage right after
+the first of two GOTOFF dispatches resolves. A completed stage rejects the
+second, whose GOT register one path replaced, and lowers it as a tail call; an
+aborted one must keep it an unsafe `INDIR_BR`. The test fails without the
+stage-abort marker.
+
+`JTE_X86_32.GetPcThunkCallSeedsTheGOTModel` assembles GCC's object-file
+switches (`test_i386_gotpc_thunk.s`): a get-PC thunk call followed by the GOTPC
+add, with a separate or fused GOTOFF table read. Each must publish one GOT-base
+model and its exact cases. `GetPcThunkSeedsOnlyTheRegisterItLoads` adds the GOT
+to a register the thunk did not load and must publish neither.
+
 `LinkedI386GOTTable.*` in `NeverDJumpTableTests` links an i386 shared library
 with ld.lld (`test_pic_switch_i386.s`) and requires the exact cases of GCC's
 thunk with a separate or fused add, clang's call/pop, and a GOT register kept

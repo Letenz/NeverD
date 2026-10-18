@@ -14,7 +14,8 @@
 /// leaving every other register, the flags and the stack pointer as they
 /// were.  CFG construction lifts the call as that copy, so no calling
 /// convention clobbers the caller's scratch registers across it or keeps the
-/// register it loads.
+/// register it loads.  The copy is recorded as a get-PC occurrence, so an
+/// object file's GOTPC add after it can take the GOT-base model.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -46,6 +47,16 @@ void CFGBuilder::rewriteGetPcThunkCall(const BinaryImage &Img, InsnRecord &Rec,
   Rec.IsCall = false;
   Rec.Immediate.reset();
   CallTargets.erase(Target);
+
+  I386GetPcOccurrence Occurrence;
+  Occurrence.CallInstructionAddr = Rec.Addr;
+  Occurrence.InstructionAddr = Rec.Addr;
+  Occurrence.OpSeq = Copy.Seq;
+  Occurrence.PCValue = static_cast<uint32_t>(Next);
+  Occurrence.OutputOpcode = NdOp::COPY;
+  Occurrence.OutputWitness = Copy.Output;
+  Occurrence.InputWitness = Copy.Inputs[0];
+  I386GetPcOccurrences.push_back(Occurrence);
 }
 
 } // namespace neverd
