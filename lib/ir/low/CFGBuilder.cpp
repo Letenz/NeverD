@@ -2589,6 +2589,9 @@ void CFGBuilder::completeExactI386GOTBaseModels(const BinaryImage &Img) {
     const I386GetPcOccurrence *Seed = nullptr;
     size_t QueryIndex = 0;
   };
+  // A model whose base input the add's own instruction proves needs no
+  // graph query.
+  constexpr size_t LocallyProvenModel = std::numeric_limits<size_t>::max();
   std::vector<JumpTableValueQuery> Queries;
   std::vector<PendingModel> Pending;
 
@@ -2618,6 +2621,47 @@ void CFGBuilder::completeExactI386GOTBaseModels(const BinaryImage &Img) {
              {1, OrderedLookupWork(PersistentCFGRoots.size())},
              {2, OrderedLookupWork(Insns.size())}}))
       return;
+    // A get-PC thunk call is lifted as `COPY reg, <return address>` at the
+    // call itself.  That literal is the exact PC however control reaches the
+    // call, so the seed needs none of the POP's stack proof below, only the
+    // unchanged rewritten instruction.
+    if (GetPc.CallInstructionAddr == GetPc.InstructionAddr &&
+        GetPc.CallInstructionAddr != InvalidVA) {
+      const auto RecIt = Insns.find(GetPc.InstructionAddr);
+      if (GetPc.OutputOpcode != NdOp::COPY || !GetPc.OutputWitness.isReg() ||
+          GetPc.OutputWitness.Size != 4 || !GetPc.InputWitness.isConst() ||
+          GetPc.InputWitness.Size != 4 ||
+          static_cast<uint32_t>(GetPc.InputWitness.Offset) != GetPc.PCValue ||
+          !PublishedReachableInsns.count(GetPc.InstructionAddr) ||
+          RecIt == Insns.end() || RecIt->second.IsInstructionGuard ||
+          RecIt->second.IsCall || RecIt->second.Size == 0 ||
+          RecIt->second.Size > InvalidVA - GetPc.InstructionAddr ||
+          GetPc.InstructionAddr + RecIt->second.Size != GetPc.PCValue ||
+          RecIt->second.Ops.size() != 1)
+        continue;
+      const LowOp &Copy = RecIt->second.Ops.front();
+      if (Copy.Opcode != NdOp::COPY || Copy.Addr != GetPc.InstructionAddr ||
+          Copy.Seq != GetPc.OpSeq || Copy.Output != GetPc.OutputWitness ||
+          Copy.NumInputs != 1 || Copy.Inputs[0] != GetPc.InputWitness)
+        continue;
+      const SeedIdentity Identity =
+          std::make_tuple(GetPc.InstructionAddr, GetPc.OpSeq,
+                          static_cast<uint8_t>(GetPc.OutputWitness.Space),
+                          GetPc.OutputWitness.Offset, GetPc.OutputWitness.Size,
+                          static_cast<uint8_t>(GetPc.OutputWitness.Provenance),
+                          GetPc.OutputWitness.AddressOwnerVA);
+      if (!ConsumeProducts(
+              {{SeedIdentityWork, OrderedLookupWork(SeenSeedPoints.size())},
+               {SeedIdentityWork, 2},
+               {1, 2},
+               {1, OrderedLookupWork(SeedsByPC.size())},
+               {1, 7}}))
+        return;
+      if (!SeenSeedPoints.insert(Identity).second)
+        return;
+      SeedsByPC[GetPc.PCValue].push_back(&GetPc);
+      continue;
+    }
     if (GetPc.OutputOpcode != NdOp::COPY || GetPc.OutputWitness.Size != 4 ||
         (!GetPc.OutputWitness.isReg() && !GetPc.OutputWitness.isTemp()) ||
         !GetPc.InputWitness.isTemp() || GetPc.InputWitness.Size != 4 ||
@@ -2874,6 +2918,45 @@ void CFGBuilder::completeExactI386GOTBaseModels(const BinaryImage &Img) {
     const I386GetPcOccurrence &Seed = *Seeds->second.front();
     if (!Consume(2))
       return;
+    // GCC adds the GOTPC immediate right after its thunk call, which is lifted
+    // as a copy of the very address the field expects.  When nothing else
+    // enters the add and none of its ops before the sum writes the base
+    // register, that register holds the copy, without a graph query.
+    if (Seed.CallInstructionAddr == Seed.InstructionAddr &&
+        Seed.PCValue == Operand.InstructionAddr && Base.isReg() &&
+        Base == Seed.OutputWitness) {
+      bool BaseWritten = false;
+      for (const LowOp &Op : InsnIt->second.Ops) {
+        if (!Consume())
+          return;
+        if (&Op == Candidate)
+          break;
+        BaseWritten |= Op.Output.isReg() && Op.Output.Size != 0 &&
+                       Op.Output.Offset < Base.Offset + Base.Size &&
+                       Base.Offset < Op.Output.Offset + Op.Output.Size;
+      }
+      bool HasAlternateEntry =
+          PersistentCFGRoots.count(Operand.InstructionAddr) != 0;
+      for (const auto &[Addr, Rec] : Insns) {
+        if (HasAlternateEntry)
+          break;
+        if (!Consume() || !Consume(Rec.JumpTableTargets.size()))
+          return;
+        HasAlternateEntry =
+            (Addr != Seed.InstructionAddr && Rec.Size != 0 &&
+             Rec.Size <= InvalidVA - Addr &&
+             Addr + Rec.Size == Operand.InstructionAddr) ||
+            Rec.BranchTarget == Operand.InstructionAddr ||
+            (Rec.IsCall && Rec.Immediate &&
+             *Rec.Immediate == Operand.InstructionAddr) ||
+            llvm::is_contained(Rec.JumpTableTargets, Operand.InstructionAddr);
+      }
+      if (!BaseWritten && !HasAlternateEntry) {
+        Pending.push_back(
+            {Operand.FieldVA, Candidate, &Seed, LocallyProvenModel});
+        continue;
+      }
+    }
     JumpTableValueQuery Query;
     Query.Candidate = Base;
     Query.UseAddr = Candidate->Addr;
@@ -2885,7 +2968,7 @@ void CFGBuilder::completeExactI386GOTBaseModels(const BinaryImage &Img) {
     Queries.push_back(std::move(Query));
   }
 
-  if (Queries.empty())
+  if (Pending.empty())
     return;
   // Reserve the transactional commit tail before the graph resolver sees the
   // remaining balance.  A complete query must still scan every pending model
@@ -2893,19 +2976,23 @@ void CFGBuilder::completeExactI386GOTBaseModels(const BinaryImage &Img) {
   // propagation has consumed the final evidence unit.
   if (!ConsumeProducts({{Pending.size(), 1}, {1, 1}}))
     return;
-  bool AnalysisComplete = false;
-  const std::vector<bool> Matches = tableValuesMatchAtUses(
-      Queries, &AnalysisComplete, /*QueryAnalysisComplete=*/nullptr,
-      /*CandidateBranchOverride=*/InvalidVA,
-      /*CandidateTargetsOverride=*/nullptr, &EvidenceWork);
-  if (!AnalysisComplete || Matches.size() != Queries.size()) {
-    I386GOTModelEvidenceIncomplete = true;
-    return;
+  std::vector<bool> Matches;
+  if (!Queries.empty()) {
+    bool AnalysisComplete = false;
+    Matches = tableValuesMatchAtUses(
+        Queries, &AnalysisComplete, /*QueryAnalysisComplete=*/nullptr,
+        /*CandidateBranchOverride=*/InvalidVA,
+        /*CandidateTargetsOverride=*/nullptr, &EvidenceWork);
+    if (!AnalysisComplete || Matches.size() != Queries.size()) {
+      I386GOTModelEvidenceIncomplete = true;
+      return;
+    }
   }
 
   for (const PendingModel &Model : Pending) {
-    if (!Model.Op || !Model.Seed || Model.QueryIndex >= Matches.size() ||
-        !Matches[Model.QueryIndex])
+    if (!Model.Op || !Model.Seed ||
+        (Model.QueryIndex != LocallyProvenModel &&
+         (Model.QueryIndex >= Matches.size() || !Matches[Model.QueryIndex])))
       continue;
     RelocatedInstructionScalarModelOccurrence Occurrence;
     Occurrence.FieldVA = Model.FieldVA;

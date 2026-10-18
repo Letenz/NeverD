@@ -2639,6 +2639,13 @@ encoding, with bounded NOP padding. Its own HighC, LLVM and LLVM C bodies retain
 that instruction sequence in a naked helper, preserving the selected register,
 stack and flags. Caller rewriting continues to require CFG-authenticated
 occurrences; helper names alone prove nothing.
+A call to such a helper is lifted as a copy of its return address into the
+register the helper loads. That copy seeds an object file's GOTPC model as a
+call/pop does (`completeExactI386GOTBaseModels`), and needs no proof about the
+stack: the literal is the exact PC however control reaches the call. GCC adds
+the GOTPC immediate right after the call; when nothing else enters that add and
+none of its ops before the sum writes the register, the model needs no graph
+query either.
 An i386 ELF PIC switch reads a table of `case@GOTOFF` words through the
 register a get-PC sequence and an `add $_GLOBAL_OFFSET_TABLE_` filled, then adds
 the entry back to that register. A linked image keeps no relocation for either,
