@@ -63,6 +63,7 @@ constexpr bool intrinsicWritesOnlyItsOutput(Intrinsic Id) {
   case Intrinsic::ArmMrs:
   case Intrinsic::ArmMrc:
   case Intrinsic::ArmMrrc:
+  case Intrinsic::ArmThreadPointer:
   case Intrinsic::A64_GetFPSR:
   case Intrinsic::A64_GetFPCR:
     return true;
@@ -81,6 +82,7 @@ constexpr bool intrinsicReadsSystemRegister(Intrinsic Id) {
   case Intrinsic::ArmMrs:
   case Intrinsic::ArmMrc:
   case Intrinsic::ArmMrrc:
+  case Intrinsic::ArmThreadPointer:
   case Intrinsic::ReadCr0:
   case Intrinsic::ReadCr2:
   case Intrinsic::ReadCr3:

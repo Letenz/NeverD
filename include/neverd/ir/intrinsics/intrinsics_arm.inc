@@ -88,3 +88,7 @@ ArmLinuxSyscall,
 
 // A CPS, with its armCpsField (IntrinsicInstructionText.h).
 ArmCps,
+
+// The thread pointer, as __aeabi_read_tp returns it
+// (RuntimeRoutineIntrinsics.def).
+ArmThreadPointer,
