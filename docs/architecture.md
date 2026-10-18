@@ -3170,6 +3170,20 @@ forwarders. `MedSSA` publishes an explicit unspecified PHI input when a
 predecessor has no reaching definition, preventing constant propagation from
 borrowing a sibling's first version-zero write.
 
+A caller proposes a pair in three ways:
+- it reads both halves after the call (`modelCallWideIntReturn`);
+- it reads the high register after a direct call to an in-module function
+  before anything redefines it (`(uint32_t)(f() >> 32)`);
+- it passes the high register unchanged to the next call, whose callee takes
+  it as a parameter (ARM's `add64(add64(a, b), c)`).
+
+The high register is caller-saved, so nothing else of the caller's can be
+there, and the callee's body must still confirm the pair: a callee that
+leaves r1 alone, as `__aeabi_read_tp` does, fails. A function that returns
+whatever a pair returner left (`return add64(...)`) is no pair returner
+without such a caller: `return (int)(long long)x;` leaves
+`__aeabi_f2lz`'s high half in r1 the same way.
+
 `TargetRegInfo::floatingParamRegs(format)` owns the default ABI's floating
 argument bank. Entry recovery, outgoing call recovery, module propagation and
 LLVM emission use the same query. Win64 has four positional floating slots
