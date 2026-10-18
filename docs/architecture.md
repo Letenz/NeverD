@@ -3823,6 +3823,26 @@ the unconditional MRC2 family, CDP, LDC and STC fail clearly. Capstone's
 `CS_MODE_V8` applies the Armv8.1-M rule against CP14 and CP15 only to
 M-class code (NeverSight/capstone#15), so A-profile code decodes them.
 
+ARM status register access follows its fields. The lift keeps N, Z, C, V
+and GE as flags (`ARMApsrFlags.def`), and the machine keeps the rest: Q,
+and the mode, interrupt-mask and other control bits a privileged mode
+reads. An MSR writes the fields of its mask (c 1, x 2, s 4, f 8): N, Z, C
+and V from bits 31:28 for f, GE from bits 19:16 for s, and `ArmMsr` with
+the machine's part (Q with f, and the c and x fields), so
+`msr cpsr_c, #0xd3` enters Supervisor mode and leaves the flags a
+comparison set. An MSR of SPSR is the machine's whole. An MRS of APSR merges
+the flags into the machine's word (`ArmMrs`), as x86's PUSHF does; where
+the function never set a flag since entry, which the procedure call
+standard leaves UNKNOWN, `foldMachineFlagsIntoStatusImages` takes that bit
+from the machine's word, so a kernel's `mrs r0, cpsr; cpsid i` reads CPSR
+whole. An MRS of SPSR is the machine's. CPS keeps its imod, masks and mode
+as one field (`armCpsField`). Both C routes run these as the instruction
+(`armStatusInstructionAsm`: `msr cpsr_c, %0`, `mrs %0, spsr`, `cpsid i`),
+and an MSR clobbers `cc`. A banked register's MRS or MSR, and an
+UNPREDICTABLE CPS, fail clearly. Saturating instructions set Q, which the
+lift does not model, so an MRS after one reads the Q the translated code
+left in the machine.
+
 An SMC or HVC #0 follows Arm's SMC Calling Convention: the lift binds its
 results in x0-x3 (r0-r3) as the outputs of a multi-output intrinsic, and
 LowToMed gives it the registers it reads, its function identifier and

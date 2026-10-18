@@ -1,22 +1,26 @@
-//===- LowToMedX86Flags.cpp - Machine flags in x86 PUSHF images -----------===//
+//===- LowToMedMachineFlags.cpp - Machine flags in status images ---------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// The x86 lifter builds a PUSHF image from the machine flags (Pushf): it
-/// clears each modelled flag's bit and merges in that flag's value, which
-/// carries the computation that set the flag and which a C translation cannot
-/// reproduce in its own flags.  Where no modelled instruction has defined a
-/// flag since its root was entered, or since an unmodelled effect left it,
-/// the machine still holds that bit, so the image takes it from the machine
-/// value exactly as __readeflags returns it.
+/// The x86 lifter builds a PUSHF image, and the ARM lifter the APSR word an
+/// MRS reads, from the machine's status word (Pushf, ArmMrs): it clears each
+/// modelled flag's bit and merges in that flag's value, which carries the
+/// computation that set the flag and which a C translation cannot reproduce
+/// in its own flags.  Where no modelled instruction has defined a flag since
+/// its root was entered, or since an unmodelled effect left it, the machine
+/// still holds that bit, so the image takes it from the machine value exactly
+/// as __readeflags, or the MRS, returns it.  On entry the ARM procedure call
+/// standard leaves the flags UNKNOWN, as the machine's are.
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/lift/ARMRegs.h"
 #include "neverd/lift/X86Regs.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -95,11 +99,11 @@ struct ValueGraph {
   /// True when the machine holds flag value \p V: no modelled instruction
   /// defined it since its root was entered (the incoming version, or copies
   /// of it), an unmodelled effect left it unspecified, or every path brings
-  /// one of those.
+  /// one of those.  ARM's GE flags lie outside its flag range, as registers.
   bool machineHolds(const MedVar &V, std::set<ValueKey> &Seen) const {
     if (V.Kind == MedVar::Unspecified)
       return true;
-    if (V.Kind != MedVar::Flag)
+    if (V.Kind != MedVar::Flag && V.Kind != MedVar::Reg)
       return false;
     if (!Seen.insert(keyOf(V)).second)
       return true;
@@ -130,25 +134,54 @@ struct ValueGraph {
   }
 };
 
-bool isPushf(const MedOp &Op) {
-  return !Op.Dead && Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == 1 &&
-         Op.Inputs[0].isConst() &&
-         Op.Inputs[0].ConstVal == static_cast<uint64_t>(Intrinsic::Pushf) &&
-         Op.Output.Kind == MedVar::Temp && Op.Output.Size != 0 &&
-         Op.Output.Size <= 8;
-}
+/// A modelled flag and its bit in a status image.
+struct ModelledBit {
+  uint64_t Flag;
+  unsigned Bit;
+};
 
-std::optional<unsigned> eflagsBit(uint64_t Flag) {
-  for (const x86reg::EFlagsBit &Entry : x86reg::EFlagsBits)
-    if (Entry.Flag == Flag)
-      return Entry.Bit;
+constexpr ModelledBit X86EFlagsBits[] = {
+#define NEVERD_X86_EFLAGS_BIT(Flag, Bit) {x86reg::Flag, Bit},
+#include "neverd/lift/X86EFlags.def"
+};
+
+constexpr ModelledBit ARMApsrBits[] = {
+#define NEVERD_ARM_APSR_BIT(Flag, Bit) {armreg::Flag, Bit},
+#include "neverd/lift/ARMApsrFlags.def"
+};
+
+/// A status word an intrinsic reads from the machine, into which the lifter
+/// merges the flags it models.
+struct StatusImage {
+  llvm::ArrayRef<ModelledBit> Bits;
+  /// A flag C keeps clear, as the machine does whenever the modelled one is.
+  std::optional<uint64_t> ClearFlag;
+
+  std::optional<unsigned> bitOf(uint64_t Flag) const {
+    for (const ModelledBit &Entry : Bits)
+      if (Entry.Flag == Flag)
+        return Entry.Bit;
+    return std::nullopt;
+  }
+  bool isModelledBit(unsigned Bit) const {
+    return llvm::any_of(
+        Bits, [&](const ModelledBit &Entry) { return Entry.Bit == Bit; });
+  }
+};
+
+/// The status image \p Op reads: x86's PUSHF, or an ARM MRS of APSR.
+std::optional<StatusImage> statusImage(const MedOp &Op) {
+  if (Op.Dead || Op.Opcode != NdOp::INTRINSIC || Op.NumInputs == 0 ||
+      !Op.Inputs[0].isConst() || Op.Output.Kind != MedVar::Temp ||
+      Op.Output.Size == 0 || Op.Output.Size > 8)
+    return std::nullopt;
+  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+  if (Id == Intrinsic::Pushf && Op.NumInputs == 1)
+    return StatusImage{X86EFlagsBits, x86reg::DF};
+  if (Id == Intrinsic::ArmMrs && Op.NumInputs == 2 && Op.Inputs[1].isConst() &&
+      Op.Inputs[1].ConstVal == ArmMrsApsr && Op.Output.Size == 4)
+    return StatusImage{ARMApsrBits, std::nullopt};
   return std::nullopt;
-}
-
-bool isModelledBit(unsigned Bit) {
-  return llvm::any_of(x86reg::EFlagsBits, [&](const x86reg::EFlagsBit &Entry) {
-    return Entry.Bit == Bit;
-  });
 }
 
 /// One modelled flag merged into a PUSHF image: `Next = Prev | zext(Flag) <<
@@ -177,8 +210,8 @@ std::optional<FlagTerm> matchFlagTerm(const ValueGraph &Graph, MedOp &Merge,
   if (!Extend || Extend->Opcode != NdOp::INT_ZEXT || Extend->NumInputs != 1)
     return std::nullopt;
   const MedVar &Flag = Extend->Inputs[0];
-  if (Flag.Kind != MedVar::Flag && Flag.Kind != MedVar::Const &&
-      Flag.Kind != MedVar::Unspecified)
+  if (Flag.Kind != MedVar::Flag && Flag.Kind != MedVar::Reg &&
+      Flag.Kind != MedVar::Const && Flag.Kind != MedVar::Unspecified)
     return std::nullopt;
   return FlagTerm{&Merge, Prev, Flag,
                   static_cast<unsigned>(Shift->Inputs[1].ConstVal)};
@@ -186,18 +219,18 @@ std::optional<FlagTerm> matchFlagTerm(const ValueGraph &Graph, MedOp &Merge,
 
 } // namespace
 
-void foldMachineFlagsIntoPushfImages(MedFunc &Func) {
-  std::vector<MedOp *> Pushfs;
+void foldMachineFlagsIntoStatusImages(MedFunc &Func) {
+  std::vector<std::pair<MedOp *, StatusImage>> Reads;
   for (MedBlock &Block : Func.Blocks)
     for (MedOp &Op : Block.Ops)
-      if (isPushf(Op))
-        Pushfs.push_back(&Op);
-  if (Pushfs.empty())
+      if (std::optional<StatusImage> Image = statusImage(Op))
+        Reads.emplace_back(&Op, *Image);
+  if (Reads.empty())
     return;
 
   const ValueGraph Graph(Func);
-  for (MedOp *Pushf : Pushfs) {
-    const MedVar Machine = Pushf->Output;
+  for (const auto &[Read, Status] : Reads) {
+    const MedVar Machine = Read->Output;
     MedOp *Clear = Graph.soleUser(Machine);
     if (!Clear || Clear->Opcode != NdOp::INT_AND || Clear->NumInputs != 2 ||
         keyOf(Clear->Inputs[0]) != keyOf(Machine) ||
@@ -220,19 +253,20 @@ void foldMachineFlagsIntoPushfImages(MedFunc &Func) {
                                   : (uint64_t{1} << (Machine.Size * 8)) - 1;
     uint64_t Kept = Clear->Inputs[1].ConstVal & SizeMask;
     for (const FlagTerm &Term : Terms) {
-      // Only the lifter's own shape: a modelled flag at its EFLAGS position,
-      // cleared from the machine value.
+      // Only the lifter's own shape: a modelled flag at its position in the
+      // image, cleared from the machine value.
       if (Term.Flag.Kind == MedVar::Const || Term.Bit >= Machine.Size * 8)
         continue;
       const uint64_t Bit = uint64_t{1} << Term.Bit;
-      if ((Term.Flag.Kind == MedVar::Flag
-               ? eflagsBit(Term.Flag.RegOff) != Term.Bit
-               : !isModelledBit(Term.Bit)) ||
+      const bool Register =
+          Term.Flag.Kind == MedVar::Flag || Term.Flag.Kind == MedVar::Reg;
+      if ((Register ? Status.bitOf(Term.Flag.RegOff) != Term.Bit
+                    : !Status.isModelledBit(Term.Bit)) ||
           (Kept & Bit))
         continue;
       std::set<ValueKey> Seen;
       bool FromMachine;
-      if (Term.Flag.Kind == MedVar::Flag && Term.Flag.RegOff == x86reg::DF)
+      if (Register && Term.Flag.RegOff == Status.ClearFlag)
         // C keeps DF clear outside its own string operations, as the
         // machine does whenever the modelled DF is zero.
         FromMachine = Graph.isZero(Term.Flag, Seen);

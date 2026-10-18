@@ -82,7 +82,7 @@ std::string renderX86SegmentedLoad(
 
 //--- Arch-specific (LLVMCIntrinsicRenderARM.cpp) ---
 const char *lookupArmAsmToC(const char *Mnem);
-InlineAsmRender renderARMInlineAsm(const std::string &AsmStr,
+InlineAsmRender renderARMInlineAsm(Arch TheArch, const std::string &AsmStr,
                                    const std::string &Mnemonic,
                                    const std::string &ResultName,
                                    bool ResultLive,

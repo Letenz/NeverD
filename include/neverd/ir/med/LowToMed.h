@@ -419,10 +419,11 @@ private:
 void modelCallWideIntReturn(MedFunc &Func, Arch TheArch,
                             const std::set<va_t> *ForceI64Callees = nullptr);
 
-/// Take each x86 PUSHF image bit whose modelled flag no instruction defined
-/// since its root was entered, or since an unmodelled effect left it, from
-/// the machine flags the PUSHF read.  Runs on SSA MedIR.
-void foldMachineFlagsIntoPushfImages(MedFunc &Func);
+/// Take each bit of a status image (an x86 PUSHF, an ARM MRS of APSR) whose
+/// modelled flag no instruction defined since its root was entered, or since
+/// an unmodelled effect left it, from the machine word the instruction read.
+/// Runs on SSA MedIR.
+void foldMachineFlagsIntoStatusImages(MedFunc &Func);
 
 /// Verify MedFunc structural invariants.  Returns true if OK in every build
 /// mode so pipeline completeness reports cannot silently skip malformed IR.

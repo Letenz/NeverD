@@ -102,6 +102,31 @@ std::string armCoprocessorInstructionAsm(Intrinsic Id, uint64_t Field);
 std::optional<std::pair<Intrinsic, uint64_t>>
 armCoprocessorAsmField(llvm::StringRef Text);
 
+/// The status register an ARM MRS (`ArmMrs`) reads, its field.
+constexpr uint64_t ArmMrsApsr = 0;
+constexpr uint64_t ArmMrsSpsr = 1;
+
+/// The field an ARM MSR (`ArmMsr`) keeps: the fields of its mask (c 1, x 2,
+/// s 4, f 8), with ArmMsrSpsr for an SPSR.
+constexpr uint64_t ArmMsrSpsr = 0x10;
+
+/// The field an ARM CPS (`ArmCps`) keeps: its imod (2 enables the masks, 3
+/// disables them, 0 changes only the mode), the A, I and F masks it changes
+/// (4, 2, 1) and, when \p ChangesMode, the mode it enters (`cpsid i` is
+/// 0x680, `cps #0x13` 0x33).
+constexpr uint64_t armCpsField(unsigned Imod, unsigned Masks, bool ChangesMode,
+                               unsigned Mode) {
+  return uint64_t(Imod) << 9 | uint64_t(Masks) << 6 |
+         uint64_t(ChangesMode) << 5 | Mode;
+}
+
+/// The assembly of the ARM status register instruction \p Id (ArmMrs,
+/// ArmMsr or ArmCps) with \p Field, with `$0` for its register:
+/// `mrs $0, apsr`, `mrs $0, spsr`, `msr cpsr_fc, $0`, `msr spsr_fsxc, $0`,
+/// `cpsid if`, `cpsie i, #0x13`, `cps #0x13`.  Empty for a field no such
+/// instruction has.
+std::string armStatusInstructionAsm(Intrinsic Id, uint64_t Field);
+
 } // namespace neverd
 
 #endif // NEVERD_IR_INTRINSICS_INTRINSICINSTRUCTIONTEXT_H

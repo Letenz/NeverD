@@ -41,11 +41,12 @@ const char *lookupArmAsmToC(const char *Mnem) {
   return nullptr;
 }
 
-InlineAsmRender renderARMInlineAsm(const std::string &AsmStr,
+InlineAsmRender renderARMInlineAsm(Arch TheArch, const std::string &AsmStr,
                                    const std::string &Mnemonic,
                                    const std::string &ResultName,
                                    bool ResultLive,
                                    const std::vector<std::string> &Args) {
+  const bool AArch64 = TheArch == Arch::AArch64;
   if (Mnemonic == "sel" && Args.size() >= 2) {
     std::string Result;
     if (ResultLive && !ResultName.empty())
@@ -67,23 +68,25 @@ InlineAsmRender renderARMInlineAsm(const std::string &AsmStr,
                   (Option.empty() ? "" : " /* " + AsmStr + " */") + "\n",
               true};
   }
-  // A system register as ACLE names it: `mrs $0, tpidr_el0` reads
+  // An AArch64 system register as ACLE names it: `mrs $0, tpidr_el0` reads
   // __arm_rsr64("tpidr_el0"), and `msr tpidr_el0, $0` writes __arm_wsr64.
+  // AArch32's status registers (`mrs $0, apsr`) are no such register.
   const auto isRegisterName = [](llvm::StringRef Name) {
     return !Name.empty() && llvm::all_of(Name, [](char C) {
       return llvm::isAlnum(C) || C == '_';
     });
   };
-  if (llvm::StringRef Register = AsmStr; Register.consume_front("mrs $0, ") &&
-                                         Args.empty() &&
-                                         isRegisterName(Register))
+  if (llvm::StringRef Register = AsmStr;
+      AArch64 && Register.consume_front("mrs $0, ") && Args.empty() &&
+      isRegisterName(Register))
     return {(ResultLive && !ResultName.empty() ? ResultName + " = "
                                                : std::string()) +
                 "__arm_rsr64(\"" + Register.str() + "\");\n",
             true};
   if (llvm::StringRef Register = AsmStr;
-      Register.consume_front("msr ") && Register.consume_back(", $0") &&
-      Args.size() == 1 && isRegisterName(Register))
+      AArch64 && Register.consume_front("msr ") &&
+      Register.consume_back(", $0") && Args.size() == 1 &&
+      isRegisterName(Register))
     return {"__arm_wsr64(\"" + Register.str() + "\", " + Args[0] + ");\n",
             true};
 
@@ -127,9 +130,12 @@ InlineAsmRender renderARMInlineAsm(const std::string &AsmStr,
     Template += AsmStr[I];
   }
   const bool HasOutput = Operands > Args.size();
-  // An output nothing reads still needs a place to go.
+  // An output nothing reads still needs a place to go, in a register.
   const bool ScratchOutput = HasOutput && (!ResultLive || ResultName.empty());
-  std::string Result = ScratchOutput ? "{ uint64_t result; " : "";
+  std::string Result = ScratchOutput ? std::string("{ ") +
+                                           (AArch64 ? "uint64_t" : "uint32_t") +
+                                           " result; "
+                                     : "";
   Result += "__asm__ volatile(\"" + Template + "\"";
   if (HasOutput || !Args.empty()) {
     Result += " : ";
@@ -143,7 +149,9 @@ InlineAsmRender renderARMInlineAsm(const std::string &AsmStr,
   } else {
     Result += " :::";
   }
-  Result += " \"memory\");";
+  // An AArch32 MSR writes the condition flags.
+  Result +=
+      !AArch64 && Mnemonic == "msr" ? " \"memory\", \"cc\");" : " \"memory\");";
   Result += ScratchOutput ? " }\n" : "\n";
   return {Result, false};
 }
