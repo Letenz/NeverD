@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: mobile-swift-toolchain-qualification
-  cancel-in-progress: false
+  group: mobile-swift-toolchain-qualification-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   qualify:

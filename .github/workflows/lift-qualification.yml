@@ -26,7 +26,7 @@ permissions:
 
 concurrency:
   group: lift-native-qualification-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   linux-x64:

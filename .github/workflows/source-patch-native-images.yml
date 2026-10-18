@@ -19,6 +19,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: source-patch-native-images-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   native-processes:
     runs-on: ${{ matrix.os }}

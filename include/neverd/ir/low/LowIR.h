@@ -815,6 +815,9 @@ struct RelocatedInstructionScalarOperandOccurrence {
 /// CFG proof must establish that the adjacent call's exact stack push is the
 /// POP's sole reaching predecessor before publishing a scalar model.  A
 /// role-neutral Address constant with the same numeric value is not equivalent.
+/// A call to a get-PC thunk is lifted as `COPY reg, <return address>` at the
+/// call itself; its occurrence names that call as both CallInstructionAddr and
+/// InstructionAddr, with the literal as InputWitness.
 struct I386GetPcOccurrence {
   va_t CallInstructionAddr = InvalidVA;
   va_t InstructionAddr = InvalidVA;

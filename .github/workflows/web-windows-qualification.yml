@@ -38,6 +38,12 @@ on:
 permissions:
   contents: read
 
+# Reusable calls retain the caller's workflow name and event. Isolate callers
+# and manual publication runs; only repeated push/PR checks supersede each other.
+concurrency:
+  group: web-windows-qualification-${{ github.workflow }}-${{ (github.event_name == 'push' || github.event_name == 'pull_request') && (github.event.pull_request.number || github.ref) || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   windows:
     name: Native Windows x64 and relocated product

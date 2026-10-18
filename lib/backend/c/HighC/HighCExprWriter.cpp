@@ -2228,7 +2228,7 @@ HighCWriter::calleeHeaders(const std::string &Name) const {
 }
 
 std::string HighCWriter::prototypeType(std::string_view Type) const {
-  return c_library::typeSpelling(Type, Opts.TheArch);
+  return c_library::typeSpelling(Type, Opts.TheArch, Opts.Format);
 }
 
 bool HighCWriter::takesPointerArgument(const HighExpr &E, size_t Index,

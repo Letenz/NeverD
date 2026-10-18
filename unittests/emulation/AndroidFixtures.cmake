@@ -255,7 +255,7 @@ foreach(_optimization O0 O2)
 endforeach()
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
-  set(_dex_outputs)
+  set(_dex_outputs "${_android_fixture_dir}/registration.dex")
   foreach(_case 17-0 2048-0 2048-1 2049-1 4096-0 4097-0)
     list(APPEND _dex_outputs "${_android_fixture_dir}/classes-${_case}.dex")
   endforeach()
@@ -263,7 +263,7 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/android_dex_classpath.py"
       "${_android_fixture_dir}"
-    DEPENDS fixtures/android_dex_classpath.py
+    DEPENDS fixtures/android_dex_classpath.py fixtures/android_jni_registration_dex.py
       "${CMAKE_SOURCE_DIR}/scripts/benchmark_mobile_inventory.py"
     VERBATIM)
   list(APPEND _android_outputs ${_dex_outputs})

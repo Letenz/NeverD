@@ -2303,6 +2303,13 @@ queries retain their existing conditional-root policy.
 Numerical coordinate membership supplies neither input known bits nor negative
 dependency/origin authority. Other architecture/format admission remains with
 its existing proof owners.
+A proposal stage that exhausts its shared evidence rolls back and is retried.
+A candidate the stage never reached is as undecided as one whose own proof ran
+out: when an earlier resolution in the same build claimed it as table-shaped
+(`ShapeClaimedBranches`), it keeps the same opaque, unsafe branch identity
+across the retries, and only a completed stage can drop it. Otherwise one
+expensive candidate early in the inventory would let the ones after it fall
+back to tail calls.
 
 The AArch64 compact table (`tryAArch64CompactTable`) traces the shifted entry
 back to its byte or halfword load through copies, zero and sign extensions and
@@ -2680,6 +2687,13 @@ encoding, with bounded NOP padding. Its own HighC, LLVM and LLVM C bodies retain
 that instruction sequence in a naked helper, preserving the selected register,
 stack and flags. Caller rewriting continues to require CFG-authenticated
 occurrences; helper names alone prove nothing.
+A call to such a helper is lifted as a copy of its return address into the
+register the helper loads. That copy seeds an object file's GOTPC model as a
+call/pop does (`completeExactI386GOTBaseModels`), and needs no proof about the
+stack: the literal is the exact PC however control reaches the call. GCC adds
+the GOTPC immediate right after the call; when nothing else enters that add and
+none of its ops before the sum writes the register, the model needs no graph
+query either.
 An i386 ELF PIC switch reads a table of `case@GOTOFF` words through the
 register a get-PC sequence and an `add $_GLOBAL_OFFSET_TABLE_` filled, then adds
 the entry back to that register. A linked image keeps no relocation for either,
@@ -7993,6 +8007,12 @@ semantics. Guest storage uses the existing allocator and address-space authority
 shared by descriptor aliases and raw/Bionic calls. JSON adapters supply no
 alternate semantics or service responses. JNI object limits and Binder stream
 admission fail explicitly rather than borrowing a host VM or driver.
+`AndroidJNIRegistration` retains native bindings in the workload JNI owner and
+reports a sorted snapshot; the shared Program resolves declarations through the
+class/superclass chain without initializing them. The JSON adapter supplies
+explicit negative loader outcomes only; unknown inputs never imply absence.
+Neither FindClass nor registration executes a class initializer. Native method
+execution remains a separate unsupported contract.
 `AndroidJNIMethods` owns JNI method identities and descriptor/argument binding;
 all JNI call forms and explicit DEX methods reuse it and Bionic's GP argument reader.
 The finite intrinsic catalogue and value semantics live in `dalvik::Library`;

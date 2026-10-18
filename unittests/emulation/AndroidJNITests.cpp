@@ -144,6 +144,105 @@ TEST_P(AndroidJNI, DexClassCapacityIsSeparateAndAggregate) {
   invoke({Small}, "", "Invalid DEX");
 #endif
 }
+TEST_P(AndroidJNI, ExplicitClassLookupFailuresPreserveExceptionsAndUnknowns) {
+  for (const std::string Type :
+       {"java/lang/ClassNotFoundException", "java/lang/NoClassDefFoundError"}) {
+    Options.Android->JNIClassLookupFailures = {{"fixture/Absent", Type}};
+    NativeMemoryRegion Region;
+    Region.Address = 0x20000000;
+    Region.Size = 4096;
+    Region.Bytes.assign(Type.begin(), Type.end());
+    Region.Bytes.push_back(0);
+    Options.Android->Memory = {Region};
+    Options.Android->Arguments = {Region.Address};
+    auto R = run("jni_explicit_lookup_failure");
+    EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+    EXPECT_EQ(R.ReturnValue, 0u);
+  }
+  Options.Android->JNIClassLookupFailures.clear();
+  auto Unknown = run("jni_explicit_lookup_failure");
+  EXPECT_EQ(Unknown.Stop, ProcessStopReason::RuntimeFailure);
+  EXPECT_NE(Unknown.Diagnostic.find("unmodeled class: fixture/Absent"),
+            std::string::npos);
+}
+TEST_P(AndroidJNI, RejectsContradictoryClassLoaderDeclarations) {
+  for (const std::string Name : std::vector<std::string>{
+           "", "java/lang/String", "android/os/Build$VERSION", "bad.name",
+           "[Lfixture/Absent;", "/bad", "bad/", "bad//Name",
+           std::string("bad\0Name", 8)}) {
+    Options.Android->JNIClassLookupFailures = {
+        {Name, "java/lang/ClassNotFoundException"}};
+    Options.Android->EntrySymbol = "jni_vm_lifecycle";
+    auto R =
+        emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+    ASSERT_FALSE(bool(R)) << Name;
+    llvm::consumeError(R.takeError());
+  }
+  Options.Android->JNIClassLookupFailures = {
+      {"fixture/Absent", "java/lang/Error"}};
+  auto R = emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+  ASSERT_FALSE(bool(R));
+  llvm::consumeError(R.takeError());
+  Options.Android->JNIClassLookupFailures = {
+      {"fixture/Absent", "java/lang/ClassNotFoundException"}};
+  Options.Android->JNI = false;
+  R = emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+  ASSERT_FALSE(bool(R));
+  EXPECT_NE(llvm::toString(R.takeError()).find("require JNI"),
+            std::string::npos);
+}
+TEST_P(AndroidJNI,
+       NativeRegistrationsRetainPartialRebindingsAndDeclaringOwners) {
+#ifndef NEVERD_ANDROID_DEX_FIXTURE_DIR
+  GTEST_SKIP() << "Python DEX fixture generator unavailable";
+#else
+  auto File = llvm::MemoryBuffer::getFile(
+      (std::filesystem::path(NEVERD_ANDROID_DEX_FIXTURE_DIR) /
+       "registration.dex")
+          .string());
+  ASSERT_TRUE(bool(File));
+  auto Bytes = (*File)->getBuffer();
+  Options.Android->DexImages.emplace_back(Bytes.begin(), Bytes.end());
+  for (unsigned Mode = 0; Mode != 12; ++Mode) {
+    SCOPED_TRACE(Mode);
+    Options.Android->Arguments = {Mode};
+    auto R = run("jni_native_registration");
+    EXPECT_EQ(R.Stop, Mode < 6 ? ProcessStopReason::Returned
+                               : ProcessStopReason::RuntimeFailure)
+        << R.Diagnostic;
+    if (Mode < 6)
+      EXPECT_EQ(R.ReturnValue, 0u);
+    std::map<std::string, uint64_t> Bindings;
+    for (const auto &B : R.JNIRegistrations)
+      ASSERT_TRUE(
+          Bindings.emplace(B.Class + "." + B.Name + B.Signature, B.Address)
+              .second);
+    std::map<std::string, uint64_t> Expected = {
+        {"registration/Child.child()V", 0x12340008},
+        {"registration/Deferred.after()V", 0x1234000c},
+        {"registration/Parent.alpha(I)I", 0x12340000},
+        {"registration/Parent.beta(J)J", 0x12340004}};
+    if (Mode == 1)
+      Expected.erase("registration/Child.child()V");
+    if (Mode == 2) {
+      Expected.erase("registration/Parent.alpha(I)I");
+      Expected.erase("registration/Parent.beta(J)J");
+    }
+    if (Mode == 3 || Mode == 4)
+      Expected["registration/Parent.alpha(I)I"] =
+          Mode == 3 ? 0x12340010 : 0x12340014;
+    if (Mode == 9 || Mode == 10)
+      Expected["registration/Parent.alpha(I)I"] = 0x1234001c;
+    EXPECT_EQ(Bindings, Expected);
+  }
+  Options.Android->JNIClassLookupFailures = {
+      {"registration/Child", "java/lang/ClassNotFoundException"}};
+  auto R = emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+  ASSERT_FALSE(bool(R));
+  EXPECT_NE(llvm::toString(R.takeError()).find("shadows a known class"),
+            std::string::npos);
+#endif
+}
 TEST_P(AndroidJNI, ModifiedUTF8UTF16AndRangeException) {
   auto R = run("jni_string_values");
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;

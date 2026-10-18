@@ -548,14 +548,15 @@ TEST(CSymbolNames, StartupPassesMainThroughItsPrototype) {
       Img);
   // The routine no header declares has its C library prototype, and the
   // address of main reads as main, converted to the parameter's type.
-  EXPECT_NE(Source.find("extern int __libc_start_main(int (*)(int, char **, "
-                        "char **), int, char **, void (*)(void), void "
+  EXPECT_NE(Source.find("extern int32_t __libc_start_main(int32_t (*)(int32_t, "
+                        "char **, char **), int32_t, char **, void (*)(void), "
+                        "void "
                         "(*)(void), void (*)(void), void *)"),
             NotFound)
       << Source;
   EXPECT_NE(Source.find("extern int main();"), NotFound) << Source;
-  EXPECT_NE(Source.find("__libc_start_main((int (*)(int, char **, char "
-                        "**))main, 1, (char **)0x7000, 0, 0, 0, 0);"),
+  EXPECT_NE(Source.find("__libc_start_main((int32_t (*)(int32_t, char **, "
+                        "char **))main, 1, (char **)0x7000, 0, 0, 0, 0);"),
             NotFound)
       << Source;
   EXPECT_EQ(Source.find("0x1150"), NotFound) << Source;
@@ -656,7 +657,7 @@ TEST(CSymbolNames, CxxRuntimeRoutinesTakeTheirPrototypes) {
                                 HighExpr::makeConst(0, 8)}),
                  callStatement("__cxa_end_catch", 0x2010)})},
       Img);
-  EXPECT_NE(Source.find("extern int __cxa_atexit(void (*)(void *), void *, "
+  EXPECT_NE(Source.find("extern int32_t __cxa_atexit(void (*)(void *), void *, "
                         "void *);"),
             NotFound)
       << Source;
@@ -679,7 +680,7 @@ TEST(CSymbolNames, APointerResultKeepsTheMachineInteger) {
       emitFor({returnsCall("errno_slot", 0x1000,
                            HighExpr::makeCall("__errno_location", 0x2000, {}))},
               BinaryFormat::ELF, Arch::X64);
-  EXPECT_NE(Source.find("extern int *__errno_location(void);"), NotFound)
+  EXPECT_NE(Source.find("extern int32_t *__errno_location(void);"), NotFound)
       << Source;
   EXPECT_NE(Source.find("return (uintptr_t)__errno_location();"), NotFound)
       << Source;
@@ -730,7 +731,7 @@ TEST(CSymbolNames, WindowsRuntimeRoutinesTakeTheirPrototypesOnlyInPE) {
                     "(**)(void))0x3010);"),
             NotFound)
       << PE;
-  EXPECT_NE(PE.find("extern void _lock(int);"), NotFound) << PE;
+  EXPECT_NE(PE.find("extern void _lock(int32_t);"), NotFound) << PE;
   // An ELF `_lock` is a routine of its own: both arguments stay.
   const std::string ELF = emitFor(Funcs, BinaryFormat::ELF, Arch::X64);
   EXPECT_EQ(ELF.find("_initterm(void (**)"), NotFound) << ELF;
@@ -763,8 +764,9 @@ TEST(CSymbolNames, FortifiedRoutinesAreVariadicWhereGlibcDeclaresThem) {
                                         HighExpr::makeConst(0, 8),
                                         HighExpr::makeConst(5, 4)})})},
               BinaryFormat::ELF, Arch::X64);
-  EXPECT_NE(Source.find("extern int __printf_chk(int, const char *, ...);"),
-            NotFound)
+  EXPECT_NE(
+      Source.find("extern int32_t __printf_chk(int32_t, const char *, ...);"),
+      NotFound)
       << Source;
   EXPECT_NE(Source.find("__printf_chk(1, 0, 5);"), NotFound) << Source;
 }

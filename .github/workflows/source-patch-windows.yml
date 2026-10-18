@@ -81,11 +81,10 @@ on:
 permissions:
   contents: read
 
-# Dev moves frequently. A running qualification must retain its own SHA and
-# finish, rather than be cancelled by an unrelated later integration.
+# Qualify the newest revision of each PR or branch, as the main CI does.
 concurrency:
   group: source-patch-windows-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   native-pe:

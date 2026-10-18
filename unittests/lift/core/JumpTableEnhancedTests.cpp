@@ -294,6 +294,14 @@ static fs::path i386GOTPCModelObj() {
   return fs::path(TEST_OBJ_DIR) / "test_i386_gotpc_model.o";
 }
 
+static fs::path i386GOTOFFStageAbortObj() {
+  return fs::path(TEST_OBJ_DIR) / "test_i386_gotoff_stage_abort.o";
+}
+
+static fs::path i386GOTPCThunkObj() {
+  return fs::path(TEST_OBJ_DIR) / "test_i386_gotpc_thunk.o";
+}
+
 static fs::path i386GOTOFFForcepeelObj() {
   return fs::path(TEST_OBJ_DIR) / "test_i386_gotoff_forcepeel.o";
 }
@@ -3580,6 +3588,112 @@ TEST_F(JTE_X86_32, PreScaledGOTOFFRequiresExactFieldAndModelZeroOrigin) {
   EXPECT_TRUE(Literal.JumpTables.empty())
       << "an exact pre-scaled GOTOFF field still requires the exact base input "
          "to reach the model-zero occurrence";
+}
+
+// A completed proposal stage rejects the second dispatch, whose %ebx one path
+// replaced, and the branch becomes a tail call.  A stage that runs out of
+// evidence after the first dispatch never reaches the second.  The second
+// was claimed as a GOTOFF table shape before, so it stays an opaque, unsafe
+// branch, as a candidate whose own proof ran out does.
+TEST_F(JTE_X86_32, StageAbortKeepsAnUnreachedTableShapeOpaque) {
+  auto ImageOrErr = neverd::loadBinary(i386GOTOFFStageAbortObj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  const neverd::BinaryImage &Image = *ImageOrErr;
+  const neverd::Symbol *Function =
+      Image.findSymbol("jt_i386_gotoff_stage_pair");
+  const neverd::Symbol *First =
+      Image.findSymbol("jt_i386_gotoff_stage_pair_first");
+  const neverd::Symbol *Second =
+      Image.findSymbol("jt_i386_gotoff_stage_pair_second");
+  ASSERT_NE(Function, nullptr);
+  ASSERT_NE(First, nullptr);
+  ASSERT_NE(Second, nullptr);
+
+  auto Build = [&](bool AbortAfterFirst) {
+    neverd::Decoder Decoder;
+    EXPECT_TRUE(Decoder.init(neverd::Arch::X86));
+    neverd::CFGBuilder Builder;
+    if (AbortAfterFirst)
+      Builder.setExhaustProposalStageAfterCandidateForTesting(First->Addr);
+    return Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  };
+  auto HasOpcodeAt = [&](const neverd::LowFunc &Low, neverd::NdOp Opcode) {
+    for (const neverd::LowBlock &Block : Low.Blocks)
+      for (const neverd::LowOp &Op : Block.Ops)
+        if (Op.Addr == Second->Addr && Op.Opcode == Opcode)
+          return true;
+    return false;
+  };
+
+  const neverd::LowFunc Completed = Build(/*AbortAfterFirst=*/false);
+  EXPECT_TRUE(HasOpcodeAt(Completed, neverd::NdOp::INDIR_CALL));
+
+  const neverd::LowFunc Aborted = Build(/*AbortAfterFirst=*/true);
+  EXPECT_TRUE(HasOpcodeAt(Aborted, neverd::NdOp::INDIR_BR));
+  EXPECT_FALSE(HasOpcodeAt(Aborted, neverd::NdOp::INDIR_CALL));
+  EXPECT_EQ(Aborted.UnsafeIndirectBranchAddresses.count(Second->Addr), 1u);
+}
+
+// GCC reaches the GOT through a call to a get-PC thunk rather than call/pop.
+// The call is lifted as a copy of its return address, which seeds the GOTPC
+// model as the pop does.  Before, neither switch had a model, so both printed
+// as a call through the table entry.
+TEST_F(JTE_X86_32, GetPcThunkCallSeedsTheGOTModel) {
+  auto ImageOrErr = neverd::loadBinary(i386GOTPCThunkObj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  const neverd::BinaryImage &Image = *ImageOrErr;
+  for (const auto &[Name, Cases] :
+       {std::pair<std::string, unsigned>{"jt_i386_thunk_switch", 5},
+        {"jt_i386_thunk_fused_switch", 4}}) {
+    SCOPED_TRACE(Name);
+    const neverd::Symbol *Function = Image.findSymbol(Name);
+    const neverd::Symbol *Branch = Image.findSymbol(Name + "_branch");
+    ASSERT_NE(Function, nullptr);
+    ASSERT_NE(Branch, nullptr);
+    std::vector<neverd::va_t> Labels;
+    for (unsigned Case = 0; Case != Cases; ++Case) {
+      const neverd::Symbol *Label =
+          Image.findSymbol(Name + "_case" + std::to_string(Case));
+      ASSERT_NE(Label, nullptr);
+      Labels.push_back(Label->Addr);
+    }
+
+    neverd::Decoder Decoder;
+    ASSERT_TRUE(Decoder.init(neverd::Arch::X86));
+    neverd::CFGBuilder Builder;
+    const neverd::LowFunc Low =
+        Builder.build(Image, Decoder, Function->Addr, Function->Name);
+    EXPECT_EQ(Low.RelocatedInstructionScalarModelOccurrences.size(), 1u);
+    ASSERT_EQ(Low.JumpTables.size(), 1u);
+    EXPECT_EQ(Low.JumpTables.front().InsnAddr, Branch->Addr);
+    EXPECT_EQ(Low.JumpTables.front().Targets, Labels);
+  }
+}
+
+// The thunk loads %ebx, so its return address seeds only %ebx.  A GOTPC add
+// to %eax at the same address does not compute the GOT.
+TEST_F(JTE_X86_32, GetPcThunkSeedsOnlyTheRegisterItLoads) {
+  auto ImageOrErr = neverd::loadBinary(i386GOTPCThunkObj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  const neverd::BinaryImage &Image = *ImageOrErr;
+  const neverd::Symbol *Function =
+      Image.findSymbol("jt_i386_thunk_other_register");
+  const neverd::Symbol *Branch =
+      Image.findSymbol("jt_i386_thunk_other_register_branch");
+  ASSERT_NE(Function, nullptr);
+  ASSERT_NE(Branch, nullptr);
+
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(neverd::Arch::X86));
+  neverd::CFGBuilder Builder;
+  const neverd::LowFunc Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  EXPECT_TRUE(Low.RelocatedInstructionScalarModelOccurrences.empty());
+  for (const auto &Table : Low.JumpTables)
+    EXPECT_NE(Table.InsnAddr, Branch->Addr);
 }
 
 TEST_F(JTE_X86_32, GOTPCModelBudgetExhaustionPublishesNoPartialProof) {
