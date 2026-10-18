@@ -36,6 +36,8 @@ public:
   /// changed the files.
   bool current() const;
   std::string blockedReason() const { return blocked_; }
+  /// Refuses an edit while the history is blocked (blockedReason).
+  void requireUsable() const;
   void verifyLoadedState(const Json &state);
   static Json normalizedState(Json state);
   /// The state table a history command kind changes (UserStateTables.def),
@@ -59,6 +61,5 @@ private:
   void writeSidecars(const Json &state) const;
   Json document(const Json &state) const;
   void recover();
-  void requireUsable() const;
 };
 } // namespace neverd::worker

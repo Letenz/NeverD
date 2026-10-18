@@ -261,8 +261,11 @@ A source reads whole or not at all. The C API keeps the user's declarations
 in order and reads them again over the program's types whenever those are
 read anew, as after loading another PDB. A declaration that no longer reads
 is left out and reported (`declarationProblems`), never silently dropped.
-The worker writes the declarations to the project folder's `types.json` at once;
-they do not join undo history.
+The worker writes the declarations to the project folder's `types.json` at once,
+each a step of undo history: the history holds the file as a table whose rows
+lie at their places in the order made (`NEVERD_USER_STATE_ORDERED` in the
+worker's `UserStateTables.def`), and undo takes the last back off the file and
+the program's types.
 
 Header libraries (`HeaderLibraries.def`, `HeaderLibrary.h`) give a program
 the system's types and prototypes that its debug information lacks: the

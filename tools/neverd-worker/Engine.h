@@ -207,6 +207,13 @@ private:
   /// Whether the local types file holds other declarations than the
   /// Session's: git, another tool or a person changed it.
   bool localTypesChanged();
+  /// The Session's type declarations as the history's rows, each at its
+  /// place in the order made; none from an engine that keeps none.
+  Json typeDeclarationRows() const;
+  /// Read the type declarations again where the history's differ from the
+  /// Session's: true when they agree or loaded.  Changed declarations let
+  /// the analysis go, as declaring does.
+  bool reloadTypeDeclarations();
   /// Record which build of the input the project's files describe, after
   /// the worker wrote one of them.
   void recordProject();
