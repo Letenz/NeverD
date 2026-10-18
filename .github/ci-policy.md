@@ -18,7 +18,18 @@ macOS jobs. Workflow cancellation does not limit the jobs inside a matrix.
 - EVM Upstream Audit and Prebuilt LLVM Audit run on changes to their relevant
   source, pins, scripts, or workflow definitions. Their existing scheduled and
   manual triggers continue checking upstream drift independently of pushes.
-- Release qualification and publication workflows keep their existing policies.
+- Lift, source-patch, allocator, and standalone Web resource/Windows
+  qualifications also keep the newest run per PR or branch. The manual Swift
+  toolchain acquisition keeps the newest request per ref.
+- Reusable Web resource/Windows qualifications include the caller's workflow
+  name in their concurrency groups. Push/PR checks supersede earlier checks
+  from the same caller and PR/ref; other events use the run ID so independent
+  manual and publication runs cannot cancel or displace each other. Their group
+  prefixes differ from the caller's to avoid cancelling the parent workflow.
+- Windows Web product publication remains serialized per release tag without
+  interrupting an active publication. Python SDK release events retain their
+  non-cancelling policy. Other manual diagnostics and release-only reusable
+  workflows keep their existing policies.
 
 ## Optional GitHub scanning
 
