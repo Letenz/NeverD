@@ -83,6 +83,11 @@ bool GuestThreads::waitKernel() {
   return true;
 }
 
+void GuestThreads::waitNative(std::unique_ptr<NativeWait> Pending) {
+  assert(!current().Waiting && !current().Kernel.Pending);
+  current().Waiting = Wait{std::move(Pending), std::nullopt};
+}
+
 void GuestThreads::waitSemaphore(uint64_t Address, bool Shared) {
   auto &Waiting = current().Waiting;
   if (Waiting) {
@@ -114,7 +119,8 @@ bool GuestThreads::ready(const Wait &Pending) const {
           [&](const Sleep &S) { return S.Deadline <= Clock.elapsed(); },
           [](const std::unique_ptr<linux_model::KernelWait> &K) {
             return K->ready();
-          }),
+          },
+          [](const std::unique_ptr<NativeWait> &N) { return N->ready(); }),
       Pending.Operation);
 }
 
@@ -130,6 +136,9 @@ std::optional<uint64_t> GuestThreads::nextWake() const {
                  std::get_if<std::unique_ptr<linux_model::KernelWait>>(
                      &T.Waiting->Operation))
       Wake = (*K)->nextWake();
+    else if (const auto *N = std::get_if<std::unique_ptr<NativeWait>>(
+                 &T.Waiting->Operation))
+      Wake = (*N)->nextWake();
     if (Wake && (!Deadline || *Wake < *Deadline))
       Deadline = Wake;
   }
@@ -174,6 +183,9 @@ BionicResult GuestThreads::resumeWait(Bionic &LibC) {
                           if (!*R)
                             return std::optional<BionicValue>();
                           return value(**R);
+                        },
+                        [&](const std::unique_ptr<NativeWait> &N) {
+                          return N->resume(LibC);
                         }),
                     Pending.Operation);
 }

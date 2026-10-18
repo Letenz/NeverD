@@ -193,6 +193,7 @@ add_neverd_unittest(NeverDLinuxProcessTests
   LinuxPriorityTests.cpp
   LinuxNetworkTests.cpp
   LinuxSelectTests.cpp
+  LinuxPollTests.cpp
   LinuxReceiveTests.cpp
   LinuxKernelAvailabilityTests.cpp
   LinuxPIDFDTests.cpp
@@ -294,6 +295,8 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidFDSetTests.cpp
   AndroidReadinessTests.cpp
   AndroidReceiveTests.cpp
+  AndroidStreamWaitTests.cpp
+  AndroidPollTests.cpp
   AndroidThreadAttributeTests.cpp
   AndroidThreadTests.cpp
   AndroidTimeTests.cpp

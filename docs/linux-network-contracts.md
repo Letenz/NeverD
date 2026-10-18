@@ -73,7 +73,7 @@ negative seconds retain immediate-timeout state. Fractional timeouts stop
 because kernel tick rounding is not supplied. Short getters copy only the
 requested prefix and report its length. These options do not create peer
 readiness or advance the guest clock: stream completions remain explicit inputs. Cross-page partial faults, scatter/gather sockets,
-nonblocking TCP connect completion, general poll/epoll, other socket options,
+nonblocking TCP connect completion, edge-triggered epoll, other socket options,
 shutdown and real transport are not covered by this bounded contract.
 
 ## Ordered receive completions
@@ -221,10 +221,9 @@ Receive output memory is checked when data arrives. UDP peer length is read at
 completion, and existing payload/address/length copy order, PEEK/TRUNC, empty
 datagrams and partial-copy refusal remain in force. Zero-size `read` does not
 dequeue a datagram; zero-size UDP `recvfrom` can wait for and consume one.
-This does not add TCP WAITALL/PEEK, `poll`, `epoll`, signals or nonblocking
-connect completion.
-Buffered stdio wrappers still stop if their nested read would suspend; they
-cannot complete as a raw read without a separate buffering continuation.
+TCP WAITALL/PEEK, signals and nonblocking connect completion remain unsupported.
+Buffered stdio retains its own libc continuation over these same kernel reads;
+see [Android streams](android-native-emulation.md).
 The description lifetime and timeout behavior follow
 [Linux close](https://man7.org/linux/man-pages/man2/close.2.html),
 [receive](https://man7.org/linux/man-pages/man2/recv.2.html) and
@@ -248,3 +247,47 @@ Closing/replacing a watched FD during suspension is deliberately unsupported;
 reusing its number cannot silently attach the wait to a new description.
 These are bounded, explicit workload inputs, not measurements of a deployed
 server or promises that Android's entire networking stack is reproduced.
+
+
+## Poll and epoll waits
+
+The shared Linux descriptor owner implements LP64 `poll`, `ppoll`,
+`epoll_create`/`epoll_create1`, `epoll_ctl`, `epoll_wait` and `epoll_pwait`.
+AArch64 uses its native `ppoll`/`epoll_pwait` trap numbers; Android's `poll`,
+`ppoll`/`ppoll64` and epoll imports adapt to the same owner. No host socket,
+polling API or wall-clock wait supplies readiness.
+
+Ordinary IN/OUT and RDNORM/WRNORM queries use the socket's existing offline
+arrival and expected-send state. Regular files, directories and modeled proc
+files are immediately ready for ordinary reads/writes. Admitted live process
+descriptors retain their existing non-exited observation. Other descriptor
+kinds, priority/RDHUP queries and unobserved asynchronous errors remain
+unsupported. Receive EOF makes IN readable; it does not invent a full HUP.
+
+Poll copies fd/events at entry, counts nonzero revents entries (including
+duplicates), ignores negative fds and reports NVAL for invalid fds. Revents are
+written in array order after wake. A closed/reused descriptor during a pending
+poll stops explicitly. Zero timeouts query immediately; finite and infinite
+waits require a known future readiness or timeout event. Positive timeouts use
+virtual idle time. Raw ppoll updates the remaining timespec after revents;
+Android ppoll preserves its caller's timespec. Output faults retain earlier
+stores, with mixed-access fields refused explicitly. Temporary signal masks
+are unsupported.
+
+Epoll owns a shared interest set across dup. Registration identity includes
+both the original fd number and the open description: closing that number
+retains a watch while an alias or in-flight operation still owns the description.
+Last release removes it. Suspended waits retain their epoll set and observe
+subsequent ADD/MOD/DEL operations. Level-triggered delivery and ONESHOT with MOD
+rearming are supported, with deterministic round-robin delivery when maxevents
+truncates a ready set. Each successful output commits its own one-shot state;
+a later fault preserves earlier events. ARM64 padding is left untouched, while
+x64 uses its packed 12-byte event ABI. Regular-file registration returns EPERM.
+Nested epoll, edge/exclusive/wakeup modes and epoll fd polling remain explicit
+unsupported boundaries. Registration count is bounded by the model's 4096-entry
+budget; this is not an invented kernel ENOSPC result.
+
+Semantics are independently implemented from
+[Linux eventpoll](https://github.com/torvalds/linux/blob/v6.6/fs/eventpoll.c),
+[Linux select/poll](https://github.com/torvalds/linux/blob/v6.6/fs/select.c) and
+[Android's poll wrappers](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/poll.cpp).

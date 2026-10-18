@@ -68,9 +68,14 @@ public:
   openProcessDescriptor(uint32_t PID, uint32_t Flags,
                         const LinuxKernelOptions &Kernel, ProcessResult &Result,
                         bool DynamicThreads = false);
+  llvm::Expected<std::optional<uint64_t>> poll(ServiceKind Kind,
+                                               const ProcessServiceEvent &Event,
+                                               ProcessResult &Result,
+                                               ThreadContext *Thread = nullptr,
+                                               bool PreserveTimeout = false);
   llvm::Expected<std::optional<uint64_t>>
-  poll(const ProcessServiceEvent &Event,
-       const std::optional<LinuxKernelOptions> &Kernel, ProcessResult &Result);
+  epoll(ServiceKind Kind, const ProcessServiceEvent &Event,
+        ProcessResult &Result, ThreadContext *Thread = nullptr);
   llvm::Expected<std::optional<uint64_t>>
   select(const ProcessServiceEvent &Event, ProcessResult &Result,
          ThreadContext *Thread = nullptr);
@@ -141,6 +146,9 @@ private:
   Readiness socketReadiness(const OpenSocket &Socket, unsigned Wanted) const;
   class SelectWait;
   class ReceiveWait;
+  class PollWait;
+  class EpollWait;
+  struct EpollState;
   size_t NextConnection = 0;
   size_t NextDatagramConnection = 0;
   std::optional<uint64_t> receiveSocketError(OpenSocket &Socket,
@@ -155,9 +163,14 @@ private:
                    uint64_t Size, ProcessResult &Result, uint32_t Flags = 0,
                    uint64_t PeerAddress = 0, uint64_t PeerLength = 0);
   using OpenDevice = std::shared_ptr<LinuxDeviceState>;
-  using Descriptor =
-      std::variant<Stream, OpenFile, ProcessDescriptor, OpenDevice,
-                   OpenDirectory, OpenProcFile, OpenSocket>;
+  using Descriptor = std::variant<Stream, OpenFile, ProcessDescriptor,
+                                  OpenDevice, OpenDirectory, OpenProcFile,
+                                  OpenSocket, std::shared_ptr<EpollState>>;
+  Readiness descriptorReadiness(const Descriptor &Description,
+                                uint32_t Events) const;
+  llvm::Expected<std::optional<uint64_t>>
+  awaitDescriptors(std::unique_ptr<KernelWait> Pending, ProcessResult &Result,
+                   ThreadContext *Thread);
   /// Zero admits the extent, an errno rejects it, null preserves unsupported.
   std::optional<uint64_t> receiveBuffer(uint64_t Address, uint64_t Size,
                                         ProcessResult &Result) const;
@@ -237,8 +250,6 @@ private:
   static std::optional<uint64_t> unsupported(ProcessResult &Result,
                                              const char *Reason);
   uint32_t nextDescriptor() const;
-  std::optional<uint16_t> pollReadiness(int32_t FD,
-                                        ProcessResult &Result) const;
   llvm::Expected<Pathname> readPath(uint64_t Address, bool AllowEmpty = false);
   llvm::Expected<std::optional<uint64_t>> attributeNameError(uint64_t Address);
   static std::optional<ParsedPath> parsePath(llvm::StringRef Path);

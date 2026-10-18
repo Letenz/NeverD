@@ -46,7 +46,8 @@ std::optional<uint64_t> LinuxFiles::outputError(uint32_t FD) const {
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
     return uint64_t(0) - BadDescriptor;
-  if (std::holds_alternative<ProcessDescriptor>(*I->second))
+  if (std::holds_alternative<ProcessDescriptor>(*I->second) ||
+      std::holds_alternative<std::shared_ptr<EpollState>>(*I->second))
     return uint64_t(0) - InvalidArgument;
   const auto *S = std::get_if<Stream>(I->second.get());
   if (S && (*S == Stream::Output || *S == Stream::Error))

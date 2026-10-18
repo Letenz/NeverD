@@ -71,7 +71,8 @@ LinuxFiles::readDescriptor(uint32_t FD, uint64_t Address, uint64_t Size,
       return std::optional<uint64_t>(0);
     return receiveSocket(I->second, Address, Size, Result, Thread);
   }
-  if (std::holds_alternative<ProcessDescriptor>(*I->second))
+  if (std::holds_alternative<ProcessDescriptor>(*I->second) ||
+      std::holds_alternative<std::shared_ptr<EpollState>>(*I->second))
     return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
   if (std::holds_alternative<OpenDevice>(*I->second))
     return unsupported(Result, DeviceOperation);
@@ -102,6 +103,7 @@ LinuxFiles::seekDescriptor(uint32_t FD, uint64_t Offset, uint32_t Whence,
   if (Whence > SeekHole)
     return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
   if (std::holds_alternative<ProcessDescriptor>(*I->second) ||
+      std::holds_alternative<std::shared_ptr<EpollState>>(*I->second) ||
       std::holds_alternative<OpenSocket>(*I->second))
     return std::optional<uint64_t>(uint64_t(0) - IllegalSeek);
   if (std::holds_alternative<OpenDevice>(*I->second))
