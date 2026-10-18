@@ -377,9 +377,10 @@ NEVERD_PROCESS_REPORT_FIELD(Cause, "cause")
 NEVERD_PROCESS_REPORT_LIMIT(SchemaVersion, NEVERD_PROCESS_SCHEMA_VERSION, 1)
 // 1 MiB of explicit DEX bytes uses 2 MiB of hexadecimal text. Other request
 // text retains its separate 64 KiB ceiling, including JSON escape overhead.
-NEVERD_PROCESS_REPORT_LIMIT(JSONLimit, NEVERD_PROCESS_OPTIONS_JSON_LIMIT, 2162688)
+NEVERD_PROCESS_REPORT_LIMIT(JSONLimit, NEVERD_PROCESS_OPTIONS_JSON_LIMIT,
+                            2162688)
 NEVERD_PROCESS_REPORT_LIMIT(JSONMetadataLimit,
-                           NEVERD_PROCESS_OPTIONS_JSON_METADATA_LIMIT, 65536)
+                            NEVERD_PROCESS_OPTIONS_JSON_METADATA_LIMIT, 65536)
 #endif
 #ifdef NEVERD_PROCESS_REPORT_TEXT
 NEVERD_PROCESS_REPORT_TEXT(DarwinTimeOptions, "invalid darwin_time option: ")
@@ -415,8 +416,9 @@ NEVERD_PROCESS_REPORT_TEXT(
 NEVERD_PROCESS_REPORT_TEXT(Windows, "windows")
 NEVERD_PROCESS_REPORT_TEXT(Module, "module")
 NEVERD_PROCESS_REPORT_TEXT(EmptyOptions, "{}")
-NEVERD_PROCESS_REPORT_TEXT(TooLarge,
-                           "process options JSON exceeds 64 KiB of metadata or 2112 KiB total")
+NEVERD_PROCESS_REPORT_TEXT(
+    TooLarge,
+    "process options JSON exceeds 64 KiB of metadata or 2112 KiB total")
 NEVERD_PROCESS_REPORT_TEXT(ObjectRequired,
                            "process options must be a JSON object")
 NEVERD_PROCESS_REPORT_TEXT(UnknownField, "unknown process option: ")
