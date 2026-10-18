@@ -1996,8 +1996,45 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
         std::vector<MedVar> Sources;
         if (!collectFrameReloadSources(*Def, Sources) || Sources.empty())
           return scalarProof();
+        // The slot holds one of the values stored to it, as a PHI holds one
+        // of its arms.  A stored value that is this reload advanced by a
+        // stable offset (`slot = init; ...; slot = slot + 4`, a loop's pointer
+        // spilled across the calls in its body) is the recurrence of a PHI
+        // arm: the initializers give it their role and alone prove it.
+        auto reloadRecurs = [&](MedVar Source) {
+          for (int Step = 0; Step < 16 && !Source.isConst(); ++Step) {
+            if (addressProvenanceVarKey(Source) ==
+                addressProvenanceVarKey(Value))
+              return true;
+            const MedOp *SourceDef = lookupDef(Source);
+            if (!SourceDef)
+              return false;
+            if (auto Forwarded = pointerPreservingInput(*SourceDef);
+                Forwarded && Forwarded->Size == Source.Size) {
+              Source = *Forwarded;
+              continue;
+            }
+            if ((SourceDef->Opcode != NdOp::INT_ADD &&
+                 SourceDef->Opcode != NdOp::INT_SUB) ||
+                SourceDef->NumInputs != 2)
+              return false;
+            const bool OffsetFirst = SourceDef->Opcode == NdOp::INT_ADD &&
+                                     SourceDef->Inputs[0].isConst();
+            const MedVar &Offset = SourceDef->Inputs[OffsetFirst ? 0 : 1];
+            const MedVar &Pointer = SourceDef->Inputs[OffsetFirst ? 1 : 0];
+            if (!Offset.isConst() || !constantIsStableAddressOffset(Offset) ||
+                Pointer.Size != Source.Size)
+              return false;
+            Source = Pointer;
+          }
+          return false;
+        };
         std::optional<AddressProof> Merged;
+        bool SawInitialization = false;
         for (const MedVar &Source : Sources) {
+          if (reloadRecurs(Source))
+            continue;
+          SawInitialization = true;
           AddressProof SourceProof = proveAddressRole(
               Source, Depth + 1, Seen, /*DirectPhiConstant=*/false);
           if (SourceProof.Role == AddressRole::Invalid)
@@ -2010,6 +2047,8 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
                      Merged->Model != SourceProof.Model)))
             return invalidProof();
         }
+        if (!SawInitialization)
+          return invalidProof();
         return Merged ? *Merged : scalarProof();
       }
 
