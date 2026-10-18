@@ -21,7 +21,11 @@
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 
@@ -817,3 +821,65 @@ TEST(X86_32_FunctionDiscovery, SwitchTableAmongCodeBelongsToItsFunction) {
                            Switch.JumpTables.front().Targets.end()),
             (std::set<va_t>{0x401012, 0x401019, 0x401020}));
 }
+
+TEST(X86_32_FunctionDiscovery, SwitchTableAmongCodeLiftsPastTheMirrorLimit) {
+  // The table follows its dispatcher in a .text larger than the LLVM emitter
+  // mirrors as one global.  The recovered switch dispatches on its selector
+  // and omits the table LOAD, so the address that LOAD would read, and the
+  // table's base in it, are never formed and need no global.
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  std::vector<uint8_t> Text;
+  auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Text.insert(Text.end(), Bytes);
+  };
+  Emit({0x55, 0x8B, 0xEC});                         // push ebp; mov ebp, esp
+  Emit({0x8B, 0x45, 0x08});                         // mov eax, [ebp+8]
+  Emit({0x83, 0xF8, 0x02, 0x77, 0x1D});             // cmp eax, 2; ja 0x401028
+  Emit({0xFF, 0x24, 0x85, 0x2E, 0x10, 0x40, 0x00}); // jmp [eax*4+0x40102E]
+  Emit({0xB8, 0x0A, 0x00, 0x00, 0x00, 0x5D, 0xC3}); // 0x401012: case 0
+  Emit({0xB8, 0x14, 0x00, 0x00, 0x00, 0x5D, 0xC3}); // 0x401019: case 1
+  Emit({0xB8, 0x1E, 0x00, 0x00, 0x00, 0x5D, 0xC3}); // 0x401020: case 2
+  Emit({0x90, 0x33, 0xC0, 0x5D, 0xC3});             // nop; 0x401028: default
+  Emit({0x8B, 0xC0});                               // mov eax, eax
+  Emit({0x12, 0x10, 0x40, 0x00, 0x19, 0x10});       // 0x40102E: the table
+  Emit({0x40, 0x00, 0x20, 0x10, 0x40, 0x00});       //
+  Text.resize(limits::kMaxSingleGlobalEmbedLen + 0x1000, 0xCC);
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+  recordAbsolutePointerRelocations(Img, {{0x40100E, 0x40102E, InvalidVA},
+                                         {0x40102E, 0x401012, InvalidVA},
+                                         {0x401032, 0x401019, InvalidVA},
+                                         {0x401036, 0x401020, InvalidVA}});
+  coff_loader::recordRelocatedPointerRunsInCode(Img);
+  ASSERT_TRUE(Img.DataInCode.count(0x40102E));
+
+  for (bool NoOpt : {true, false}) {
+    SCOPED_TRACE(NoOpt);
+    llvm::LLVMContext Ctx;
+    PipelineOptions Opts;
+    Opts.EmitDumpOutput = false;
+    Opts.LiftMode = true;
+    Opts.NoOpt = NoOpt;
+    Opts.OnlyFunctionEntries = {0x401000};
+    const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    ASSERT_NE(Result.LlvmModule, nullptr);
+    EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+    if (!NoOpt)
+      continue; // the optimizer folds the cases' constants into arithmetic
+    bool Dispatches = false;
+    for (const llvm::Function &Function : *Result.LlvmModule)
+      for (const llvm::BasicBlock &Block : Function)
+        if (const auto *Switch =
+                llvm::dyn_cast_or_null<llvm::SwitchInst>(Block.getTerminator()))
+          Dispatches |= Switch->getNumCases() == 3;
+    EXPECT_TRUE(Dispatches) << "the three cases dispatch through a switch";
+  }
+}
+

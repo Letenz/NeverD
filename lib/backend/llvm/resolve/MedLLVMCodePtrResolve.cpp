@@ -1080,6 +1080,39 @@ MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
         HaveBase = true;
         Decomposed = true;
       }
+      // A table among the code is data the loader found between instructions
+      // (DataInCode), which the decomposition above refuses as bytes an
+      // executable section owns.  This certificate needs only the table's own
+      // base: match the address forwarding `base + index` alone.
+      if (!Decomposed && JT.HasBaseAddr && Img->DataInCode.count(JT.BaseAddr)) {
+        IndexTerms.clear();
+        MedVar Address = Load.Inputs[0];
+        for (int Step = 0; Step < 8 && !Address.isConst(); ++Step) {
+          const MedOp *Def = lookupDef(Address);
+          if (!Def)
+            break;
+          if (auto Forwarded = pointerPreservingInput(*Def)) {
+            Address = *Forwarded;
+            continue;
+          }
+          if (Def->Opcode == NdOp::INT_ADD && Def->NumInputs == 2)
+            for (int Side = 0; Side < 2 && !Decomposed; ++Side) {
+              const MedVar &Constant = Def->Inputs[Side];
+              const uint64_t Mask =
+                  Constant.Size == 0 || Constant.Size >= 8
+                      ? ~uint64_t(0)
+                      : (uint64_t(1) << (8 * Constant.Size)) - 1;
+              if (Constant.isConst() &&
+                  (Constant.ConstVal & Mask) == JT.BaseAddr &&
+                  !Def->Inputs[1 - Side].isConst()) {
+                IndexTerms.push_back(Def->Inputs[1 - Side]);
+                Base = JT.BaseAddr;
+                HaveBase = Decomposed = true;
+              }
+            }
+          break;
+        }
+      }
       if (!Decomposed || !HaveBase)
         continue;
       const bool OwnsBase =
@@ -1360,6 +1393,101 @@ MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
       return &JT;
   }
   return nullptr;
+}
+
+void MedLLVMEmitter::collectSuppressedTableAddressOps(const MedFunc &Func) {
+  SuppressedTableAddressOps.clear();
+  // Without SSA a register variable has no unique definition to follow.
+  if (Func.SkippedSSA)
+    return;
+
+  // Every read of a value, in operations and in the function's records of
+  // call arguments, selectors, address models and result fields.
+  using ValueKey = std::pair<int, int>;
+  std::map<ValueKey, unsigned> Uses;
+  auto use = [&](const MedVar &V) {
+    if (!V.isConst())
+      ++Uses[{V.Id, V.SSAVer}];
+  };
+  struct Definition {
+    int Block;
+    int Index;
+    const MedOp *Op;
+  };
+  std::map<ValueKey, Definition> Defs;
+  for (const MedBlock &Block : Func.Blocks) {
+    for (const PhiNode &Phi : Block.Phis)
+      for (const auto &Arg : Phi.Args)
+        use(Arg.second);
+    for (size_t I = 0; I < Block.Ops.size(); ++I) {
+      const MedOp &Op = Block.Ops[I];
+      if (Op.Dead)
+        continue;
+      for (uint8_t Input = 0; Input < Op.NumInputs; ++Input)
+        use(Op.Inputs[Input]);
+      if (!Op.Output.isConst() && Op.Output.Size > 0)
+        Defs[{Op.Output.Id, Op.Output.SSAVer}] = {Block.Id, static_cast<int>(I),
+                                                  &Op};
+    }
+  }
+  for (const MedCallInfo &Call : Func.CallInfos)
+    for (const MedVar &Arg : Call.Args)
+      use(Arg);
+  for (const auto &Entry : Func.SwitchSelectorPlans) {
+    use(Entry.second.Selector);
+    use(Entry.second.Condition);
+    for (const auto &Edge : Entry.second.EdgeSelectors)
+      use(Edge.second);
+  }
+  for (const MedScalarAddressModel &Model : Func.ScalarAddressModels)
+    use(Model.Value);
+  for (const MedI386GetPcModel &Model : Func.I386GetPcModels) {
+    use(Model.Output);
+    use(Model.Value);
+  }
+  for (const MedStructReturnCandidate &Candidate : Func.StructReturnCandidates)
+    for (const MedVar &Field : Candidate.Fields)
+      use(Field);
+  for (const MedCallClobber &Clobber : Func.CallClobbers)
+    use(Clobber.PreservedInput);
+
+  for (const MedBlock &Block : Func.Blocks)
+    for (const MedOp &Load : Block.Ops) {
+      if (Load.Dead || Load.Opcode != NdOp::LOAD || Load.NumInputs < 1 ||
+          Load.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+          !recoveredJumpTableForLoad(Load))
+        continue;
+      // Follow the address back while each value is a temporary its one
+      // consumer, the omitted LOAD or an operation already skipped, reads:
+      // copies and extensions forward it, and the addition of a constant
+      // (the table's base) forms it from the index, which the switch still
+      // reads and so is left alone.
+      MedVar Address = Load.Inputs[0];
+      while (!Address.isConst() && Address.Kind == MedVar::Temp) {
+        const ValueKey Key{Address.Id, Address.SSAVer};
+        const auto Def = Defs.find(Key);
+        if (Uses[Key] != 1 || Def == Defs.end())
+          break;
+        const MedOp &Op = *Def->second.Op;
+        const bool Forwards =
+            Op.NumInputs >= 1 &&
+            (Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT ||
+             Op.Opcode == NdOp::INT_SEXT ||
+             (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
+              Op.Inputs[1].isConst() && Op.Inputs[1].ConstVal == 0));
+        const bool AddsBase =
+            (Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
+            Op.NumInputs == 2 &&
+            (Op.Inputs[0].isConst() || Op.Inputs[1].isConst());
+        if (!Forwards && !AddsBase)
+          break;
+        SuppressedTableAddressOps.insert(
+            {Def->second.Block, Def->second.Index});
+        if (AddsBase)
+          break;
+        Address = Op.Inputs[0];
+      }
+    }
 }
 
 llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(

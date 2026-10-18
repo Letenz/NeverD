@@ -1216,6 +1216,17 @@ private:
   const JumpTable *jumpTableForLoad(const MedOp &Load,
                                     bool RequireTerminalExclusive) const;
 
+  /// Collect, for \p Func, the operations that only form the address of a
+  /// target LOAD recoveredJumpTableForLoad omits: the address's forwarding
+  /// copies and extensions, back to the addition of the table's base.  Each
+  /// one's value is used nowhere else, so emitOp skips it, and the base is
+  /// never materialized: a table placed among the code of a segment too large
+  /// to mirror has no global, and the switch dispatches on its selector.
+  void collectSuppressedTableAddressOps(const MedFunc &Func);
+  /// (block id, op index) of each operation collectSuppressedTableAddressOps
+  /// found in the function being emitted.
+  std::set<std::pair<int, int>> SuppressedTableAddressOps;
+
   /// Resolve a load/store whose address folds to a constant inside a segment
   /// holding relocated pointer slots — a *writable* function-pointer global
   /// (`static int (*fp)(int)=f; fp=cond?f:g;`) in plain .data, whose i386 PIC
