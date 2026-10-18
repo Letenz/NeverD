@@ -22,5 +22,8 @@ struct AndroidApplicationSnapshot {
   } phase = Phase::Unattached;
   // Unknown when absent. Only meaningful in the application phase.
   std::optional<std::string> package_name;
+  // Initialized, existing app-private files directory. No mkdir/chmod is
+  // inferred. Native workloads also require the same directory in LinuxFiles.
+  std::optional<std::string> files_directory;
 };
 } // namespace neverd::mobile::dalvik

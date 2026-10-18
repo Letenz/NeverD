@@ -24,6 +24,40 @@ static Handle attach(void) {
     return 0;
   return env;
 }
+int jni_application_files(void) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/app/ActivityThread");
+  Ref id =
+      C(e, Ref, 113, type, "currentApplication", "()Landroid/app/Application;");
+  Ref app = C(e, Ref, 114, type, id);
+  Ref context = C(e, Ref, 6, "android/content/Context");
+  Ref files_id = C(e, Ref, 33, context, "getFilesDir", "()Ljava/io/File;");
+  Ref file = C(e, Ref, 34, app, files_id);
+  CHECK(file);
+  Ref again = C(e, Ref, 34, app, files_id);
+  CHECK(C(e, int, 24, file, again));
+  Ref global = C(e, Ref, 21, file);
+  C(e, void, 23, file);
+  CHECK(!C(vm, int, 5));
+  e = attach();
+  CHECK(e);
+  Ref cls = C(e, Ref, 6, "java/io/File");
+  const char *Names[] = {"getPath", "getAbsolutePath", "toString"};
+  for (unsigned i = 0; i < 3; ++i) {
+    Ref path_id = C(e, Ref, 33, cls, Names[i], "()Ljava/lang/String;");
+    Ref path = C(e, Ref, 34, global, path_id);
+    const char *text = C(e, const char *, 169, path, (void *)0);
+    const char Expected[] = "/fixture/files";
+    CHECK(text);
+    for (unsigned j = 0; j < sizeof(Expected); ++j)
+      CHECK(text[j] == Expected[j]);
+    C(e, void, 170, path, text);
+  }
+  C(e, void, 22, global);
+  CHECK(!C(vm, int, 5));
+  return 0;
+}
 static Ref application_global, application_loader_global;
 static void *application_child(void *unused) {
   (void)unused;

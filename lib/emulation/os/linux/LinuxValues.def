@@ -183,6 +183,7 @@ NEVERD_LINUX_SERVICE(SignalAction, 13, 134, 4)
 NEVERD_LINUX_SERVICE(Mincore, 27, 232, 3)
 // Linux UAPI: x86-64 and asm-generic numbers, followed by fixed arity.
 NEVERD_LINUX_SERVICE(OpenAt, 257, 56, 4)
+NEVERD_LINUX_SERVICE(Getcwd, 79, 17, 2)
 NEVERD_LINUX_SERVICE(FaccessAt, 269, 48, 3)
 NEVERD_LINUX_SERVICE(MkdirAt, 258, 34, 3)
 NEVERD_LINUX_SERVICE(ReadlinkAt, 267, 78, 4)

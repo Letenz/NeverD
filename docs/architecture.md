@@ -8053,6 +8053,11 @@ boundary and heap; native thread detach never resets that process state. JSON
 supplies an optional snapshot, not inferred initialization or a second object
 owner. See [application snapshots](android-application-runtime.md) for the
 admitted methods, loader namespace and unsupported lifecycle transitions.
+The retained application files directory and File path values use the same
+heap. Native setup validates its declared directory against LinuxFiles; Dalvik
+does not acquire an independent host filesystem. LinuxFiles owns getcwd bytes
+and user-copy outcomes; Bionic alone owns pointer returns, errno and allocation
+lifetimes. Both cwd and application paths require explicit input.
 `LinuxBinderTransactions` routes object-free messages between guest-owned opens;
 LinuxMemory owns their read-only arenas and every service body remains guest code.
 It preserves admitted libbinder request/status flags at this shared transport

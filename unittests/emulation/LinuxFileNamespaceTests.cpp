@@ -76,6 +76,48 @@ protected:
   }
 };
 
+TEST_P(LinuxFileNamespace, WorkingDirectoryHasExactBytesAndKernelErrorOrder) {
+  Options.LinuxFiles->WorkingDirectory = "/empty";
+  EXPECT_EQ(call(ServiceKind::Getcwd, Base + 512, 7), 7u);
+  EXPECT_EQ(bytes(Base + 512, 8),
+            (std::vector<uint8_t>{'/', 'e', 'm', 'p', 't', 'y', 0, 0}));
+  for (uint64_t Size : {0u, 1u, 6u})
+    EXPECT_EQ(call(ServiceKind::Getcwd, UINT64_MAX, Size), uint64_t(-34));
+  EXPECT_EQ(call(ServiceKind::Getcwd, UINT64_MAX, 7), uint64_t(-14));
+  EXPECT_EQ(call(ServiceKind::Getcwd, Base + 1024, UINT64_MAX), 7u);
+  EXPECT_EQ(bytes(Base + 1024, 7), bytes(Base + 512, 7));
+  ProcessServiceEvent Raw{0,
+                          GetParam() == GuestArchitecture::X64 ? 79u : 17u,
+                          {Base + 1536, 7, 0, 0, 0, 0},
+                          {}};
+  EXPECT_EQ(llvm::cantFail(Kernel->handle(Raw)), 7u);
+  EXPECT_EQ(bytes(Base + 1536, 7), bytes(Base + 512, 7));
+  llvm::cantFail(
+      cpu().addressSpace()->protect(Base + 4096, 4096, Read | UserAccessible));
+  EXPECT_FALSE(call(ServiceKind::Getcwd, Base + 4093, 7));
+  EXPECT_EQ(Report.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(bytes(Base + 4093, 3), (std::vector<uint8_t>{0, 0, 0}));
+  Options.LinuxFiles->WorkingDirectory = "/";
+  EXPECT_EQ(call(ServiceKind::Getcwd, Base + 512, 2), 2u);
+  EXPECT_EQ(bytes(Base + 512, 2), (std::vector<uint8_t>{'/', 0}));
+}
+
+TEST_P(LinuxFileNamespace, WorkingDirectoryRequiresExplicitDirectoryIdentity) {
+  EXPECT_FALSE(call(ServiceKind::Getcwd, Base + 512, 16));
+  EXPECT_NE(Report.Diagnostic.find("not supplied"), std::string::npos);
+  for (const char *Path : {"", "relative", "/missing", "/files/data", "/files",
+                           "/empty/", "//empty", "/empty/.."}) {
+    Options.LinuxFiles->WorkingDirectory = Path;
+    auto E = linux_model::validateFileOptions(*Options.LinuxFiles);
+    EXPECT_TRUE(bool(E)) << Path;
+    llvm::consumeError(std::move(E));
+  }
+  Options.LinuxFiles->WorkingDirectory = "/empty";
+  auto E = linux_model::validateFileOptions(*Options.LinuxFiles);
+  EXPECT_FALSE(bool(E));
+  llvm::consumeError(std::move(E));
+}
+
 TEST_P(LinuxFileNamespace,
        RepeatedSeparatorsShareFileBytesAndCapturedMetadata) {
   const auto Writer = open("///files////data", 2);

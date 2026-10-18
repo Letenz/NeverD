@@ -198,6 +198,8 @@ NEVERD_ANDROID_CALL(Vsnprintf, "vsnprintf", format)
 NEVERD_ANDROID_CALL(Sprintf, "sprintf", format)
 NEVERD_ANDROID_CALL(Vsprintf, "vsprintf", format)
 
+NEVERD_ANDROID_CALL(Getcwd, "getcwd", getcwd)
+
 #ifdef NEVERD_ANDROID_UNDEF_SYMBOL
 #undef NEVERD_ANDROID_UNDEF_SYMBOL
 #undef NEVERD_ANDROID_SYMBOL

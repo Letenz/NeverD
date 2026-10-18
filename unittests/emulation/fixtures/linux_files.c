@@ -856,6 +856,56 @@ U64 files_repeated_slashes_bionic(void) {
   return 0;
 }
 
+extern char *getcwd(char *, U64);
+extern void free(void *);
+static int cwd_text(const char *p) {
+  static const char Text[] = "/fixture";
+  if (!p)
+    return 0;
+  for (unsigned I = 0; I < sizeof(Text); ++I)
+    if (p[I] != Text[I])
+      return 0;
+  return 1;
+}
+U64 files_cwd_bionic(void) {
+  char Text[24];
+  for (unsigned I = 0; I < sizeof(Text); ++I)
+    Text[I] = 'X';
+  *__errno() = 73;
+  CHECK(getcwd(Text, sizeof(Text)), Text);
+  CHECK(cwd_text(Text), 1);
+  CHECK(Text[9], 'X');
+  CHECK(*__errno(), 73);
+  CHECK(getcwd(Text, 0), 0);
+  CHECK(*__errno(), 22);
+  CHECK(getcwd((void *)1, 8), 0);
+  CHECK(*__errno(), 34);
+  CHECK(getcwd((void *)1, 9), 0);
+  CHECK(*__errno(), 14);
+  CHECK(getcwd((void *)0, 8), 0);
+  CHECK(*__errno(), 34);
+  *__errno() = 79;
+  char *Allocated = getcwd((void *)0, 24);
+  CHECK(cwd_text(Allocated), 1);
+  CHECK(*__errno(), 79);
+  free(Allocated);
+  Allocated = getcwd((void *)0, 0);
+  CHECK(cwd_text(Allocated), 1);
+  CHECK(*__errno(), 79);
+  free(Allocated);
+  CHECK(getcwd((void *)0, ~0UL), 0);
+  CHECK(*__errno(), 12);
+  *__errno() = 83;
+  CHECK(raw(17, (U64)Text, 9, 0, 0), 9);
+  CHECK(*__errno(), 83);
+  CHECK(syscall(17, Text, 8UL), -1);
+  CHECK(*__errno(), 34);
+  return 0;
+}
+U64 files_cwd_unknown(void) {
+  return (U64)getcwd((char *)Pages, sizeof(Pages));
+}
+
 U64 files_links_bionic(void) {
   for (unsigned Route = 0; Route != 3; ++Route) {
     *__errno() = 73;

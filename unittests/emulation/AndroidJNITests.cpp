@@ -100,6 +100,30 @@ TEST_P(AndroidJNI, ApplicationInputRequiresJNIAndValidPhaseMetadata) {
   EXPECT_NE(llvm::toString(Invalid.takeError()).find("package snapshot"),
             std::string::npos);
 }
+TEST_P(AndroidJNI,
+       ApplicationFilesUseDeclaredDirectoryAndRetainedFileIdentity) {
+  Options.Android->Application = mobile::dalvik::AndroidApplicationSnapshot{
+      mobile::dalvik::AndroidApplicationSnapshot::Phase::Application,
+      {},
+      "/fixture/files"};
+  Options.LinuxFiles.emplace();
+  Options.LinuxFiles->Directories = {"/fixture/files"};
+  auto R = run("jni_application_files");
+  EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+  Options.LinuxFiles->Directories.clear();
+  auto Invalid =
+      emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+  EXPECT_FALSE(bool(Invalid));
+  EXPECT_NE(
+      llvm::toString(Invalid.takeError()).find("declared Linux directory"),
+      std::string::npos);
+  Options.Android->Application->files_directory.reset();
+  auto Unknown = run("jni_application_files");
+  EXPECT_EQ(Unknown.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(Unknown.Diagnostic.find("files directory is not supplied"),
+            std::string::npos);
+}
 TEST_P(AndroidJNI, BuildVersionFieldsUseTheNativePropertySnapshot) {
   Options.Android->Properties = {{"ro.build.version.release", "9.2"},
                                  {"ro.build.version.incremental", "9.2"},

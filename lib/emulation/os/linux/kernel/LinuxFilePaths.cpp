@@ -4,11 +4,39 @@
 //
 //===----------------------------------------------------------------------===//
 #include "LinuxFiles.h"
+#include "LinuxUserMemory.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
 namespace neverd::emulation::linux_model {
+llvm::Expected<std::optional<uint64_t>>
+LinuxFiles::getWorkingDirectory(uint64_t Address, uint64_t Size,
+                                ProcessResult &Result) {
+  if (!Options->WorkingDirectory)
+    return unsupported(Result, "Linux working directory is not supplied");
+  const auto &Path = *Options->WorkingDirectory;
+  // Linux returns the terminating NUL in the count; capacity is checked
+  // before the user copy. The declared cwd is linked and reachable.
+  if (Size < Path.size() + 1)
+    return std::optional<uint64_t>(uint64_t(0) - RangeError);
+  std::vector<uint8_t> Bytes(Path.begin(), Path.end());
+  Bytes.push_back(0);
+  auto Stored = writeUserMemory(CPU, Layout, Address, Bytes);
+  if (!Stored)
+    return Stored.takeError();
+  switch (*Stored) {
+  case UserWriteResult::Stored:
+    return std::optional<uint64_t>(Bytes.size());
+  case UserWriteResult::BadAddress:
+    return std::optional<uint64_t>(uint64_t(0) - BadAddress);
+  case UserWriteResult::MixedAccess:
+    return unsupported(Result,
+                       "partial Linux getcwd output fault is unmodeled");
+  }
+  llvm_unreachable("unknown Linux user-copy outcome");
+}
+
 bool isCanonicalFilePath(llvm::StringRef Path) {
   if (!Path.consume_front("/") || Path.empty() || Path.contains('\0'))
     return false;
