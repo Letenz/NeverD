@@ -221,6 +221,21 @@ TEST(AAPCS64CallContract, PLTEntriesOfVariadicSystemCallsPassTheirArgsOn) {
       << Source;
 }
 
+TEST(AAPCS64CallContract, PLTEntriesPassArgumentsOnAsTheirCLibraryDeclares) {
+  // Bionic's ptrace takes its request as an int, which glibc's headers
+  // declare an enumeration: the entry declares it as <sys/ptrace.h> does.
+  constexpr va_t Trace = Plt;
+  BinaryImage Img = makeImage({{Trace, pltEntry(Trace, Got)}}, {}, {"ptrace"});
+  Img.ELFMetadata.emplace();
+  Img.ELFMetadata->Interpreter = "/system/bin/linker64";
+  const std::string Source = highC(Img, {Trace});
+  EXPECT_NE(Source.find("extern long ptrace(int, ...);"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("long sub_10100(int arg0, ...) {"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("__ptrace_request"), std::string::npos) << Source;
+}
+
 TEST(AAPCS64CallContract, APLTEntryInLLVMCCallsItsImportByName) {
   // The entry calls the word it loads from islower's slot.  Its function is
   // not islower, which it calls by that name as <ctype.h> declares it; the

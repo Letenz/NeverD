@@ -1430,6 +1430,19 @@ std::string HighCWriter::callIdentifier(const HighExpr &E) const {
         return Declared == ExternalFunctionIdentifiers.end() ? Slot
                                                              : Declared->second;
       }
+    // The routine takes the call's arguments as its header declares them;
+    // a call the stub's recovered signature gave fewer stays the stub's.
+    if (std::string Routine = headerRoutineOfStub(*It->second);
+        !Routine.empty()) {
+      const size_t Arguments = E.Operands.size();
+      const libc::LibCVariant Variant = Opts.libcVariant();
+      if (const unsigned Fixed = libc::varArgFixedCount(Routine, Variant))
+        return Arguments >= Fixed ? Routine : Name;
+      if (const auto Arity = libc::libcArity(Routine, Variant);
+          Arity &&
+          Arguments == static_cast<size_t>(Arity->IntArgs + Arity->FpArgs))
+        return Routine;
+    }
     return Name;
   }
   // A thunk named like the import it jumps to (`calloc: jmp [__imp_calloc]`)
@@ -1447,6 +1460,32 @@ std::string HighCWriter::callIdentifier(const HighExpr &E) const {
       !isVariadicImportStub(*At->second))
     return functionIdentifier(*At->second);
   return Name + "_" + llvm::utohexstr(E.CallAddr);
+}
+
+std::string HighCWriter::headerRoutineOfStub(const HighFunc &Func) const {
+  if (!Opts.Image || !Func.Entry)
+    return {};
+  const Import *Imp = Opts.Image->findImportStubAt(Func.Entry);
+  if (!Imp || Imp->Name.empty())
+    return {};
+  const std::string Routine =
+      cNameOfSymbol(symbolOfImportName(Imp->Name, Opts.Format, Opts.TheArch),
+                    Opts.Format, Opts.TheArch)
+          .str();
+  const auto Identifier = FunctionIdentifiers.find(&Func);
+  // A routine the user declares is called as the user declares it.
+  if (!copiesHeaderRoutine(Routine, Opts.Format) ||
+      userDeclaresCallee(Routine) || Identifier == FunctionIdentifiers.end() ||
+      Identifier->second == Routine)
+    return {};
+  return Routine;
+}
+
+bool HighCWriter::libraryDeclaresDefinition(const HighFunc &Func) const {
+  if (!Dbg || !Func.Entry)
+    return false;
+  const std::optional<FunctionSym> Declared = Dbg->resolveFunction(Func.Entry);
+  return Declared && Declared->PrototypeFromCLibrary;
 }
 
 bool HighCWriter::isVariadicImportStub(const HighFunc &Func) const {
@@ -1729,6 +1768,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
         });
     if (!Typed.empty())
       return Typed;
+    // ud2 and int3 are Microsoft's __ud2 and __debugbreak only where the
+    // unit includes <intrin.h>.
+    if (const char *Builtin = x86GnuTrapBuiltin(E.IntrinsicId, Opts.Format))
+      return std::string(Builtin) + "()";
 
     // A trap or a breakpoint whose code the intrinsic keeps spells as its
     // builtin, which takes no code: the statement prints the instruction

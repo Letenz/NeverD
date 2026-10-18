@@ -111,5 +111,16 @@ std::optional<Pointers> pointers(std::string_view Name, LibCVariant Variant) {
   return std::nullopt;
 }
 
+std::optional<llvm::ArrayRef<std::string_view>>
+forwardFixed(std::string_view Name, LibCVariant Variant) {
+#define NEVERD_LIBC_VARIANT_FORWARD_FIXED(Library, Routine, ...)               \
+  if (Variant == LibCVariant::Library && sameRoutine(Name, Routine)) {         \
+    static constexpr std::string_view Types[] = {__VA_ARGS__};                 \
+    return llvm::ArrayRef<std::string_view>(Types);                            \
+  }
+#include "neverd/libc/LibCVariants.def"
+  return std::nullopt;
+}
+
 } // namespace variant_rows
 } // namespace neverd::libc

@@ -1049,10 +1049,12 @@ TEST(CSymbolNames, AThunkNamedLikeItsImportCallsThroughTheSlot) {
               ReturnsValue)
         << Source;
     if (!ReturnsValue) {
+      // The image's own body under a header routine's name takes its
+      // address, as LLVM-C names it (copiesHeaderRoutine).
       EXPECT_NE(
           Source.find("void " +
                       cNameOfSymbol(Thunk, BinaryFormat::COFF, Target).str() +
-                      "("),
+                      "_1000("),
           NotFound)
           << Source;
       EXPECT_NE(Source.find("    " + std::string(Slot) + "("), NotFound)
@@ -1344,3 +1346,39 @@ TEST(CSymbolNames, MicrosoftImportsLinkByTheirDecoratedNames) {
 }
 
 } // namespace
+
+TEST(CSymbolNames, CopiesOfHeaderRoutinesStepAsideFromTheirNames) {
+  // A PLT stub named like the C library routine it jumps to, a C++ function
+  // whose identifier would be one (`sigaddset(unsigned long*, int)`), and a
+  // copy the image defines are not the routines <string.h> and <signal.h>
+  // declare: their definitions take their addresses, as LLVM-C's do, and a
+  // call to the stub reaches the routine by its own name.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = 0x1000;
+  Text.Size = 0x300;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(0x300, 0xC3);
+  Img.Segments.push_back(std::move(Text));
+  Import Imp;
+  Imp.Name = "strlen";
+  Imp.IATAddr = 0x4000;
+  Img.Imports.push_back(std::move(Imp));
+  ASSERT_TRUE(Img.recordImportStub(0x1000, 0));
+  std::vector<HighFunc> Funcs = {
+      function("strlen", 0x1000, {}), function("_Z9sigaddsetPmi", 0x1100, {}),
+      function("caller", 0x1200,
+               {callStatement("strlen", 0x1000, {HighExpr::makeConst(0, 8)}),
+                callStatement(
+                    "_Z9sigaddsetPmi", 0x1100,
+                    {HighExpr::makeConst(0, 8), HighExpr::makeConst(2, 4)})})};
+  const std::string Source = emitFor(Funcs, BinaryFormat::ELF, Arch::X64, &Img);
+  EXPECT_NE(Source.find("strlen_1000("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("sigaddset_1100("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("    strlen("), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("strlen_1000(0"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("    sigaddset_1100("), std::string::npos) << Source;
+}

@@ -1030,8 +1030,20 @@ result is no `msg` where the code calls `msg()`), and a bitwise, shift or
 multiplicative operator, an integer local and integer memory take a pointer as
 its address, an integer (`(uintptr_t)p & ~0xFF`): a local the text declares a
 pointer, a typed record's pointer member, a pointer object, or a value
-forwarded from one. The GUI offers a separate C choice for non-C images and
-omits it when only C is offered.
+forwarded from one. A function the image defines under the name of a routine
+a C library declares is the image's copy of it and takes its address in
+HighC as in LLVM C (`strlen_5B130`): a C++ function whose C identifier would
+be the name (`sigaddset(unsigned long*, int)`), a routine of the call model's
+tables, and one whose prototype the debug context takes from a C library's
+header library (`__strlen_chk`, `FunctionSym::PrototypeFromCLibrary`). A call
+to a stub of such a routine names the routine where it passes the arguments
+the routine's header declares, and the stub otherwise. Both C routes spell
+x86's `ud2` `__builtin_trap()` and its `int3` `__builtin_debugtrap()` where no
+Windows header declares `__debugbreak`, and a variadic import's stub declares
+its fixed parameters as the program's C library does
+(`NEVERD_LIBC_VARIANT_FORWARD_FIXED`: bionic's and musl's ptrace request is an
+int, glibc's an enumeration). The GUI offers a separate C choice for non-C
+images and omits it when only C is offered.
 
 The reader reads the definitions a unit holds of the program's local types:
 unions, anonymous structures and unions, bit-fields, enumerations,

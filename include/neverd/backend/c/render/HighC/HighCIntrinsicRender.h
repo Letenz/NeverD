@@ -153,6 +153,11 @@ bool armIntrinsicUsesCHeader(Intrinsic Id);
 /// a Windows target: REP MOVS/STOS, the flat LIDT/SIDT/INVLPG forms and an
 /// FS/GS MXCSR transfer through the segment accessors.
 bool x86UsesMsvcIntrinsicHeader(Intrinsic Id);
+/// The GNU builtin a trap or breakpoint of Microsoft's <intrin.h> spells as
+/// where a unit of format \p Format does not include that header: ud2 is
+/// `__builtin_trap`, which GCC and Clang lower to ud2, and int3
+/// `__builtin_debugtrap`.  Null for another intrinsic or a COFF unit.
+const char *x86GnuTrapBuiltin(Intrinsic Id, BinaryFormat Format);
 
 /// Whether an x86 intrinsic reads fixed registers and prints as an `__asm`
 /// block that loads them: the hypercalls, MONITOR/MWAIT and XSETBV.

@@ -655,6 +655,8 @@ LocalTypesDebugContext::resolvePrototype(llvm::StringRef Name) const {
       prototypeHeader(Name, Function->second.get());
   Signature->PrototypeLibrary = Header ? types::headerLibraryName(*Header).str()
                                        : UserPrototypeLibrary.str();
+  Signature->PrototypeFromCLibrary =
+      Header && types::headerLibrarySystem(*Header).has_value();
   types::RenderOptions Options;
   Options.Lang = types::Language::C;
   if (Header)
@@ -794,6 +796,7 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
   Typed.PlatformConvention = true;
   Typed.PrototypeLibrary = std::move(Known->PrototypeLibrary);
   Typed.PrototypeDeclaration = std::move(Known->PrototypeDeclaration);
+  Typed.PrototypeFromCLibrary = Known->PrototypeFromCLibrary;
   Typed.NoReturn = Known->NoReturn;
   return Typed;
 }

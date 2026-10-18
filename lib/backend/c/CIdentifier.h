@@ -16,6 +16,8 @@
 #define NEVERD_LIB_BACKEND_C_CIDENTIFIER_H
 
 #include "neverd/backend/c/MsvcCallee.h"
+#include "neverd/libc/LibCNames.h"
+#include "neverd/libc/MinGWHeaderFunctions.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/loader/SymbolSpelling.h"
 
@@ -427,6 +429,17 @@ inline llvm::StringRef cDefinitionName(llvm::StringRef Name,
     return Name.drop_front();
 #include "neverd/backend/c/CRuntimeDefinitions.def"
   return Name;
+}
+
+/// Whether a definition the image holds under \p Name, its C spelling, is
+/// the image's own copy of a routine a C header declares the name for, as a
+/// statically linked `strlen` or `atexit`, or one of mingw-w64's own
+/// routines a Windows program links (`__mingw_printf`).  It is not the
+/// routine the header declares, whose declaration keeps the name: the
+/// definition takes its address (`strlen_8048A10`), in HighC and LLVM-C.
+inline bool copiesHeaderRoutine(llvm::StringRef Name, BinaryFormat Format) {
+  return libc::isKnownFunction(Name) ||
+         (Format == BinaryFormat::COFF && libc::mingwHeadersDeclare(Name));
 }
 
 inline std::string

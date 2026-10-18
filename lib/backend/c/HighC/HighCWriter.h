@@ -434,6 +434,16 @@ public:
   /// Whether \p Func is the stub of a variadic C library import, which a
   /// call runs as a call through the import's slot.
   bool isVariadicImportStub(const HighFunc &Func) const;
+  /// The C library routine \p Func, an import's stub named like its import,
+  /// forwards to (`strlen: jmp *strlen@GOT`): a call to the stub reaches the
+  /// routine the header declares, by its name, while the stub's definition
+  /// takes its address (copiesHeaderRoutine).  Empty for another function.
+  std::string headerRoutineOfStub(const HighFunc &Func) const;
+  /// Whether a C library's headers declare the routine \p Func defines,
+  /// whose prototype the debug context takes from them
+  /// (FunctionSym::PrototypeFromCLibrary): its definition steps aside from
+  /// the name.
+  bool libraryDeclaresDefinition(const HighFunc &Func) const;
   /// The variadic routine this file defines that the stub \p Func jumps to,
   /// through the slot of a symbol the image defines itself, or null.
   const HighFunc *variadicOwnRoutineOfStub(const HighFunc &Func) const;

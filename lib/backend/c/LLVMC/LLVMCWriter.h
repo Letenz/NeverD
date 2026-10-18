@@ -797,6 +797,9 @@ public:
   const llvm::Function *OnlyFunction = nullptr;
   std::set<const llvm::GlobalValue *> SelectedGlobals;
   std::set<std::string> EmittedGlobalNames;
+  /// The routines writeImportCalleeDecls declares, ordinary identifiers a
+  /// record of the same name leaves to its tag (`struct stat64`).
+  std::set<std::string> DeclaredCalleeNames;
   /// When false, emit recovered statements without a C wrapper so analysis-only
   /// functions can nest the listing inside `#if 0` of the trap stub.
   bool EmitFunctionWrapper = true;

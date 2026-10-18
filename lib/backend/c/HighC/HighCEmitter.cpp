@@ -392,8 +392,16 @@ void HighCWriter::prepareFunctionIdentifiers(
     FunctionSymbolNames.emplace(&Func, SymbolName.str());
     const llvm::StringRef RenderedName =
         cDefinitionName(SymbolName, Opts.Format);
-    std::string Identifier =
-        GlobalIdentifierAllocator.allocate(RenderedName, "nd_function");
+    // The image's own copy of a C library routine steps aside from the
+    // header's name, as LLVM-C's does: by the identifier it would take, as a
+    // C++ `sigaddset(unsigned long*, int)` would take `sigaddset`, or by its
+    // prototype, which a C library's headers give (`__strlen_chk`).
+    std::string Stem =
+        canonicalizeCProjectionIdentifier(RenderedName, "nd_function");
+    if (Func.Entry && (copiesHeaderRoutine(Stem, Opts.Format) ||
+                       libraryDeclaresDefinition(Func)))
+      Stem += "_" + llvm::utohexstr(Func.Entry);
+    std::string Identifier = GlobalIdentifierAllocator.allocateVerbatim(Stem);
     FunctionIdentifiers.emplace(&Func, Identifier);
     DefinedFunctionsByIdentifier.emplace(Identifier, &Func);
     FunctionIdentifiersBySourceName.try_emplace(SourceName, Identifier);
@@ -1863,11 +1871,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
           Function.SourceTypeHint &&
                   I < Function.SourceTypeHint->Parameters.size()
               ? sourceParameterType(Function.SourceTypeHint->Parameters[I])
-              : typeToC(emittedParamTypeAt(Function, I));
+              : declaredAs(emittedParamTypeAt(Function, I), "");
     }
     if (ParamCount == 0)
       Declarator += "void";
-    OS << declarationToC(ReturnType, Declarator + ")") << ";\n";
+    OS << declaredAs(ReturnType, Declarator + ")") << ";\n";
   }
   CurrentFunc = nullptr;
   Analysis = {};
@@ -1887,13 +1895,13 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
           Function->SourceTypeHint &&
                   I < Function->SourceTypeHint->Parameters.size()
               ? sourceParameterType(Function->SourceTypeHint->Parameters[I])
-              : typeToC(emittedParamTypeAt(*Function, I));
+              : declaredAs(emittedParamTypeAt(*Function, I), "");
     }
     if (ParamCount == 0)
       Declarator += "void";
     if (Function->SourceTypeHint)
       OS << sourceConventionAttribute(Function->SourceTypeHint->Convention);
-    OS << declarationToC(ReturnType, Declarator + ")") << ";\n";
+    OS << declaredAs(ReturnType, Declarator + ")") << ";\n";
   }
   CurrentFunc = nullptr;
   Analysis = {};
@@ -1925,11 +1933,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
           Function->SourceTypeHint &&
                   I < Function->SourceTypeHint->Parameters.size()
               ? sourceParameterType(Function->SourceTypeHint->Parameters[I])
-              : typeToC(emittedParamTypeAt(*Function, I));
+              : declaredAs(emittedParamTypeAt(*Function, I), "");
     }
     if (ParamCount == 0)
       Declarator += "void";
-    OS << declarationToC(ReturnType, Declarator + ")") << ";\n";
+    OS << declaredAs(ReturnType, Declarator + ")") << ";\n";
   }
   CurrentFunc = nullptr;
   Analysis = {};
