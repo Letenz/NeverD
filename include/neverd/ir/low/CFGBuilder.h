@@ -1477,12 +1477,13 @@ private:
     /// its root, while comparisons retain the lane's exact offset and width.
     bool UseDefinedAlternativesAsOccurrenceRoots = false;
     /// The candidate is an exact i386 GOT-base model use whose reaching value
-    /// may be reloaded from a caller-frame spill.  Calls are transparent to
+    /// may be reloaded from a caller-frame spill.  Calls, and stores through
+    /// an address no current-frame address flows into, are transparent to
     /// that reload only after the value resolver proves that no current-frame
     /// address reaches a STORE, call argument, return, or side-effecting
     /// intrinsic anywhere in the candidate graph.  This is deliberately
-    /// query-local: ordinary frame-memory queries retain the opaque call
-    /// barrier.
+    /// query-local: ordinary frame-memory queries retain the opaque call and
+    /// unknown-store barriers.
     bool AllowPrivateFrameMemoryAcrossCalls = false;
     JumpTableValueRelation Relation = JumpTableValueRelation::MustEqual;
     /// UnsignedLessThan/UnsignedFeasibleSet's exclusive bound, or

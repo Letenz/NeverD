@@ -603,6 +603,71 @@ TEST_F(JTE_X86_32, WiderRingStoreMayOverwriteTheSpilledGOTBase) {
   EXPECT_TRUE(Low.JumpTables.empty());
 }
 
+static neverd::LowFunc buildI386ForeignStore(const char *Name) {
+  auto ImageOrErr = neverd::loadBinary(fs::path(TEST_OBJ_DIR) /
+                                       "test_jumptable_foreign_store_i386.o");
+  if (!ImageOrErr) {
+    ADD_FAILURE() << llvm::toString(ImageOrErr.takeError());
+    return {};
+  }
+  const neverd::Symbol *Function = ImageOrErr->findSymbol(Name);
+  neverd::Decoder Decoder;
+  if (!Function || !Decoder.init(ImageOrErr->Arch, ImageOrErr->Mode)) {
+    ADD_FAILURE() << Name << " cannot be decoded";
+    return {};
+  }
+  neverd::CFGBuilder Builder;
+  return Builder.build(*ImageOrErr, Decoder, Function->Addr, Function->Name);
+}
+
+TEST_F(JTE_X86_32, StoresThroughForeignPointersLeaveTheSpilledGOTBase) {
+  // Every iteration reloads the GOT base the prologue spilled.  The cases
+  // store through a loaded pointer or a global's GOT slot; no frame address
+  // escapes, so neither store can name the spill.
+  for (const char *Name :
+       {"jt_i386_foreign_store_loop", "jt_i386_global_store_loop"}) {
+    SCOPED_TRACE(Name);
+    const neverd::LowFunc Low = buildI386ForeignStore(Name);
+    ASSERT_EQ(Low.JumpTables.size(), 1u);
+    EXPECT_EQ(Low.JumpTables.front().Targets.size(), 8u);
+    EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+  }
+}
+
+TEST_F(JTE_X86_32, EscapedFrameAddressKeepsForeignStoresOpaque) {
+  // A variable element address escapes to memory and the cases store through
+  // the pointer read back, which may name the spill.
+  const neverd::LowFunc Low =
+      buildI386ForeignStore("jt_i386_escaped_frame_loop");
+  EXPECT_TRUE(Low.JumpTables.empty());
+}
+
+TEST_F(JTE_X86_32, UnboundedFrameIndexStoreMayOverwriteTheSpilledGOTBase) {
+  // No frame address escapes, but `cells[k] = 2` forms its address from the
+  // frame with an index nothing bounds, so it may name the spill.
+  const neverd::LowFunc Low = buildI386ForeignStore("jt_i386_frame_index_loop");
+  EXPECT_TRUE(Low.JumpTables.empty());
+}
+
+TEST_F(JTE_X86_32, DynamicStackStoreMayOverwriteTheSpilledGOTBase) {
+  // After `sub %ecx, %esp` the stack pointer has no canonical offset, but an
+  // address formed from it still lies in this frame and may name the spill.
+  auto ImageOrErr = neverd::loadBinary(fs::path(TEST_OBJ_DIR) /
+                                       "test_jumptable_dynamic_stack_i386.o");
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  const neverd::Symbol *Function =
+      ImageOrErr->findSymbol("jt_i386_dynamic_stack_store");
+  ASSERT_NE(Function, nullptr);
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(ImageOrErr->Arch, ImageOrErr->Mode));
+  neverd::CFGBuilder Builder;
+  const neverd::LowFunc Low =
+      Builder.build(*ImageOrErr, Decoder, Function->Addr, Function->Name);
+  EXPECT_TRUE(Low.hasCompleteInstructionLift());
+  EXPECT_TRUE(Low.JumpTables.empty());
+}
+
 TEST_F(JTE_X86_32, O0ThreeSwitchLoopsReuseCanonicalFrameSpill) {
   auto ImageOrErr = neverd::loadBinary(fs::path(TEST_OBJ_DIR) /
                                        "test_i386_three_switch_loops.o");

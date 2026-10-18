@@ -6423,9 +6423,11 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       if (Frame.K == FrameResultKind::Value)
         return true;
       // An incoming caller FP or another non-affine scalar is not thereby a
-      // current-frame address.  Only the canonical frame proof grants taint;
-      // an actual resolver resource/depth failure was handled above.
-      return false;
+      // current-frame address.  The stack pointer always addresses this
+      // activation's stack, though: after a dynamic adjustment it still names
+      // current-frame cells.  An actual resolver resource/depth failure was
+      // handled above.
+      return Value.Offset == TRI.StackPointer;
     }
     if (Depth > MaxResolverDepth) {
       markResolverDepthIncomplete();
@@ -6935,6 +6937,27 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
               stackCheckedOffset(SlotOffset, static_cast<int64_t>(Size), false);
           if (!Written || !SlotEnd ||
               (Written->second > SlotOffset && *SlotEnd > Written->first)) {
+            // The ABI fact that makes calls transparent to a private cell
+            // covers this store too: while no current-frame address can reach
+            // the cell, a pointer no such address flows into cannot name it.
+            std::optional<bool> Foreign = false;
+            if (ActiveValueQuery &&
+                ActiveValueQuery->AllowPrivateFrameMemoryAcrossCalls) {
+              Foreign = currentFrameAddressesRemainPrivate(SlotBase, SlotOffset,
+                                                           Size);
+              if (Foreign && *Foreign) {
+                const std::optional<bool> Derived =
+                    mayDependOnCurrentFrameAddress(Block, I, Address, 0);
+                Foreign =
+                    Derived ? std::optional<bool>{!*Derived} : std::nullopt;
+              }
+            }
+            if (!Foreign) {
+              Found = true;
+              break;
+            }
+            if (*Foreign)
+              continue;
             Found = true;
             Result = resolverInvalid();
             break;
