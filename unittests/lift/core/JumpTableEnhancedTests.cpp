@@ -3649,6 +3649,50 @@ TEST_F(JTE_X86_64, RBPLoadedWithATableAddressIsNoFrameBase) {
   }
 }
 
+static fs::path tailStubX64Obj() {
+  return fs::path(TEST_OBJ_DIR) / "test_jumptable_tail_stub.o";
+}
+
+// `cleanup_dispatch` jumps past its end, where padding falls into `helper`,
+// and it also calls `helper`. The graph models the edge into `helper` as a
+// tail call at helper's entry; that record holds none of this function's
+// code, so the call does not enter this function and its table stays.
+TEST_F(JTE_X86_64, CallsToATailCalledEntryKeepTheRelativeTable) {
+  auto ImageOrErr = neverd::loadBinary(tailStubX64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  const neverd::Symbol *Function = Image.findSymbol("cleanup_dispatch");
+  ASSERT_NE(Function, nullptr);
+  const neverd::Symbol *Helper = Image.findSymbol("helper");
+  ASSERT_NE(Helper, nullptr);
+  const neverd::Section *Rodata = nullptr;
+  for (const neverd::Section &Section : Image.Sections)
+    if (Section.Name == ".rodata")
+      Rodata = &Section;
+  ASSERT_NE(Rodata, nullptr);
+  std::vector<neverd::va_t> Expected;
+  for (size_t Case = 0; Case < 6; ++Case) {
+    const uint8_t *Bytes = Image.readVA(Rodata->VA + Case * 4, 4);
+    ASSERT_NE(Bytes, nullptr);
+    int32_t Entry = 0;
+    std::memcpy(&Entry, Bytes, sizeof(Entry));
+    Expected.push_back(Rodata->VA + static_cast<int64_t>(Entry));
+  }
+
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const std::set<neverd::va_t> FunctionEntries{Function->Addr, Helper->Addr};
+  Builder.setKnownFuncEntries(&FunctionEntries);
+  const neverd::LowFunc Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  ASSERT_EQ(Low.JumpTables.size(), 1u);
+  EXPECT_EQ(Low.JumpTables.front().BaseAddr, Rodata->VA);
+  EXPECT_EQ(Low.JumpTables.front().Targets, Expected);
+  EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+}
+
 // Every case of `evaluate` calls `evaluate`. Such a call enters at the
 // function's entry, as every invocation does, so it reaches the dispatch only
 // through the guard; only a call to an interior address is another entry.
