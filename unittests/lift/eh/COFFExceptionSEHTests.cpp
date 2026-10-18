@@ -22,6 +22,40 @@ namespace {
 using namespace neverd;
 using namespace neverd::coff_eh_test;
 
+TEST(ExceptionInfoIndex, RebuildKeepsAnIndexInOrderAndPlacesChangedRanges) {
+  ExceptionInfo Info;
+  const auto Add = [&](va_t Begin, va_t End) {
+    ExceptionFunction F;
+    F.CodeRange = {Begin, End};
+    Info.Functions.push_back(F);
+  };
+  Add(0x3000, 0x3010);
+  Add(0x1000, 0x1020);
+  Add(0x1000, 0x1010);
+  Add(0x2000, 0x2010);
+  Add(0x1000, 0x1010);
+  // By start, then size, then position.
+  Info.rebuildIndex();
+  const std::vector<size_t> Ordered{2, 4, 1, 3, 0};
+  EXPECT_EQ(Info.FunctionIndex, Ordered);
+  EXPECT_EQ(Info.MaxCodeSize, 0x20u);
+  Info.rebuildIndex();
+  EXPECT_EQ(Info.FunctionIndex, Ordered);
+  // A changed range and a new record are placed anew.
+  Info.Functions[0].CodeRange = {0x0800, 0x0810};
+  Info.rebuildIndex();
+  EXPECT_EQ(Info.FunctionIndex, (std::vector<size_t>{0, 2, 4, 1, 3}));
+  Add(0x2800, 0x2840);
+  Info.rebuildIndex();
+  EXPECT_EQ(Info.FunctionIndex, (std::vector<size_t>{0, 2, 4, 1, 3, 5}));
+  EXPECT_EQ(Info.MaxCodeSize, 0x40u);
+  EXPECT_EQ(Info.findFunction(0x2805), &Info.Functions[5]);
+  // An index that lost its order is rebuilt.
+  std::swap(Info.FunctionIndex[0], Info.FunctionIndex[5]);
+  Info.rebuildIndex();
+  EXPECT_EQ(Info.FunctionIndex, (std::vector<size_t>{0, 2, 4, 1, 3, 5}));
+}
+
 TEST(COFFExceptionParser, LoadOnlyFunctionEntriesSkipsUnrelatedLanguageTables) {
   BinaryImage Img = makeX64ExceptionImage(0x40);
   addPersonalityImport(Img, Img.Base + 0x11f0, "__C_specific_handler");
@@ -114,10 +148,8 @@ TEST(COFFExceptionParser, MarksFunctionPartialForEmptySEHScope) {
   EXPECT_FALSE(Decoded.canRegenerateLanguageMetadata());
   ASSERT_TRUE(Decoded.SEH.has_value());
   ASSERT_EQ(Decoded.SEH->Scopes.size(), 1u);
-  EXPECT_EQ(Decoded.SEH->Scopes[0].ParseStatus,
-            ExceptionParseStatus::Partial);
-  EXPECT_EQ(Decoded.SEH->Scopes[0].GuardedRange.Begin,
-            Img.Base + 0x1020);
+  EXPECT_EQ(Decoded.SEH->Scopes[0].ParseStatus, ExceptionParseStatus::Partial);
+  EXPECT_EQ(Decoded.SEH->Scopes[0].GuardedRange.Begin, Img.Base + 0x1020);
   EXPECT_EQ(Decoded.SEH->Scopes[0].GuardedRange.End, Img.Base + 0x1020);
 }
 
@@ -203,14 +235,14 @@ TEST(COFFExceptionParser, NormalizesOnlyExactAArch64ConstantTrueFilterThunks) {
     EXPECT_FALSE(Decoded.canRegenerateLanguageMetadata());
 
     const WindowsEHNativeSourceClassification IRSource =
-        classifyWindowsEHNativeSource(
-            Decoded, Arch::AArch64, BinaryFormat::COFF,
-            WindowsEHNativeCapability::IRLowering);
+        classifyWindowsEHNativeSource(Decoded, Arch::AArch64,
+                                      BinaryFormat::COFF,
+                                      WindowsEHNativeCapability::IRLowering);
     EXPECT_TRUE(IRSource.canLowerNativeIR());
     const WindowsEHNativeSourceClassification PatchSource =
-        classifyWindowsEHNativeSource(
-            Decoded, Arch::AArch64, BinaryFormat::COFF,
-            WindowsEHNativeCapability::OutputPatch);
+        classifyWindowsEHNativeSource(Decoded, Arch::AArch64,
+                                      BinaryFormat::COFF,
+                                      WindowsEHNativeCapability::OutputPatch);
     EXPECT_FALSE(PatchSource.canPatchOutput());
     EXPECT_EQ(PatchSource.Reason,
               WindowsEHNativeSourceReason::UnsupportedSEHCallbackABI);

@@ -165,13 +165,33 @@ struct ExceptionInfo {
   }
 
   void rebuildIndex() {
-    FunctionIndex.resize(Functions.size());
     MaxCodeSize = 0;
-    for (size_t I = 0; I < Functions.size(); ++I) {
+    for (const ExceptionFunction &F : Functions)
+      if (F.CodeRange.size() > MaxCodeSize)
+        MaxCodeSize = F.CodeRange.size();
+    // The order a rebuild makes: by start, then size, then position, which
+    // the stable sort keeps among equals.  An index already in it with one
+    // entry per record, as when no range changed since the last rebuild, is
+    // that order already.
+    const auto Before = [&](size_t A, size_t B) {
+      const auto &RA = Functions[A].CodeRange;
+      const auto &RB = Functions[B].CodeRange;
+      if (RA.Begin != RB.Begin)
+        return RA.Begin < RB.Begin;
+      if (RA.size() != RB.size())
+        return RA.size() < RB.size();
+      return A < B;
+    };
+    if (FunctionIndex.size() == Functions.size() &&
+        std::all_of(FunctionIndex.begin(), FunctionIndex.end(),
+                    [&](size_t I) { return I < Functions.size(); }) &&
+        std::adjacent_find(FunctionIndex.begin(), FunctionIndex.end(),
+                           [&](size_t A, size_t B) { return !Before(A, B); }) ==
+            FunctionIndex.end())
+      return;
+    FunctionIndex.resize(Functions.size());
+    for (size_t I = 0; I < Functions.size(); ++I)
       FunctionIndex[I] = I;
-      if (Functions[I].CodeRange.size() > MaxCodeSize)
-        MaxCodeSize = Functions[I].CodeRange.size();
-    }
     std::stable_sort(FunctionIndex.begin(), FunctionIndex.end(),
                      [&](size_t A, size_t B) {
                        const auto &RA = Functions[A].CodeRange;
