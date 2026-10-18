@@ -132,6 +132,19 @@ void addI386ELFFields(const BinaryImage &Img, const DecodedInsn &DI,
 
 } // namespace
 
+std::optional<unsigned> maxAdjacentX86RelocatedFields(Arch A, unsigned Width) {
+  // A four-byte displacement and immediate sit back to back in
+  // `mov dword ptr [disp32], imm32`, and no instruction holds a third.  Only
+  // x86-64's `mov r64, imm64` and its moffs64 forms hold an eight-byte field,
+  // one each.  The next instruction starts with an opcode byte, so none of its
+  // fields continues the run.
+  if (Width == 4)
+    return 2;
+  if (Width == 8 && A == Arch::X64)
+    return 1;
+  return std::nullopt;
+}
+
 void addX86Fields(const BinaryImage &Img, const DecodedInsn &DI,
                   InstructionRelocations &Result) {
   if (Img.isELF())

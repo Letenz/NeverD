@@ -165,6 +165,13 @@ void recordSymbolTableDataInCode(BinaryImage &Img);
 /// binding that the function it starts at rewrites stays a variable.
 void recordConstantCodeSlots(BinaryImage &Img);
 
+/// Record as pointer slots of data the runs of relocated pointers a linked
+/// image keeps among its code: more pointer-wide fields back to back than one
+/// instruction can hold (maxAdjacentRelocatedFields), which the base
+/// relocations took for instruction operands.  MSVC places an i386 switch's
+/// jump table so, after its function.
+void recordRelocatedPointerRunsInCode(BinaryImage &Img);
+
 /// Parse one delay-import descriptor from the already mapped image.  Supports
 /// current RVA descriptors and legacy VA descriptors, returning the number of
 /// imports appended.  Exposed separately for bounded synthetic-image tests.

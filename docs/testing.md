@@ -7548,6 +7548,18 @@ and its i386 build `mingw_text_data32.exe`, which keep a -1-headed pointer
 table in `.text` as GNU ld keeps `__CTOR_LIST__`: the table is data, the
 pointer to it in `.data` points to data, and its entry is a slot that holds
 code.
+`PointerRelocationBatch.PointerRunsAmongCodeAreData` records an i386 jump
+table's three relocated slots in `.text` as data slots and the displacement
+naming it as a data operand, and keeps the two fields of one
+`mov dword ptr [disp32], imm32` as operands.
+`TwoAdjacentEightBytePointersAreDataAmongX64Code` takes two eight-byte fields
+as data, and `PointerRunsAmongOtherCodeStayOperands` leaves an ARM literal pool
+and an object file's relocations alone.
+`X86_32_FunctionDiscovery.SwitchTableAmongCodeBelongsToItsFunction` builds a
+linked i386 image whose table follows its function two bytes past a four-byte
+boundary, with an aligned relocated `.rdata` pointer an instruction names past
+it: the cases stay the switch's labels rather than entries, and the CFG
+builder recovers all three. It fails without the run bound or the label rule.
 `SessionCAPITest.LLVMCReadsAPointerTableAmongCodeAsData` emits LLVM-C for the
 function that reads the table through `.data`, which was refused before.
 `NativePointerRelocationBoundary.MinGWPointerTableAmongCodeMirrorsItsFunction`

@@ -476,6 +476,21 @@ raw copy would reach one of its slots (`tryResolveGlobalData`). A mirror built
 while an earlier one's initializer resolved follows that initializer in the
 module, so whole-module LLVM-C declares each global an earlier initializer
 names before defining the globals in module order (`writeGlobals`).
+MSVC places an i386 switch's jump table in `.text` after its function, where
+the base relocations record its slots as instruction operands. No instruction
+holds more pointer-wide relocated fields back to back than
+`maxAdjacentRelocatedFields` gives (two of four bytes, in
+`mov dword ptr [disp32], imm32`; one of eight), so a longer run is data among
+the code (`recordRelocatedPointerRunsInCode`): its slots become pointer slots
+of data, the operands naming it name data, and its start joins `DataInCode`.
+Function detection keeps a target such a table names inside the function it
+follows as that function's label, which the jump-table resolver reads; a
+target outside it is an entry. Such a table roots no function's code
+(`exploreAddressTakenRoots`): the range of a function before the dispatcher
+reaches the dispatcher's cases when the dispatcher's entry is only a guess.
+A relocation run ends at the next table anchor among its own slots; an anchor
+past it names another object, aligned however its owner is
+(`boundCodePtrRunByNextAnchor`).
 MinGW's runtime defines a `__imp_X` variable for each function it supplies
 in place of an import (__MINGW_IMP_SYMBOL), initialized to that function, and
 calls through it. Such a variable of an x86 or x64 image's symbol table that

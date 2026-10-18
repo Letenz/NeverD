@@ -181,6 +181,12 @@ void CFGBuilder::exploreAddressTakenRoots(const BinaryImage &Img,
   const auto SafeSEHPointer =
       coff_loader::getCheckedX86SafeSEHTablePointer(Img);
   for (auto &[Target, Sources] : RelocationSources) {
+    // A pointer table among the code is read by the function dispatching
+    // through it, whose jump-table resolver recovers what it names; it roots
+    // no function's code.  The range of a function before the dispatcher
+    // reaches the dispatcher's cases when its entry is only a guess.
+    std::erase_if(
+        Sources, [&](va_t Slot) { return Img.hasExecutableCodeOwnerAt(Slot); });
     if (Exception && Exception->Registration &&
         (Exception->Encoding == ExceptionEncoding::X86ScopeTableEH3 ||
          Exception->Encoding == ExceptionEncoding::X86ScopeTableEH4))
