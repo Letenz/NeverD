@@ -2932,6 +2932,13 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
     return 0;
   }
 
+  const bool ProposeByteZeroExtensions =
+      Info.AuthenticatedGuardBound == 0 && Info.AuthenticatedModuloBound == 0;
+  auto isByteZeroExtension = [](const LowOp &Op) {
+    return Op.Opcode == NdOp::INT_ZEXT && Op.NumInputs >= 1 &&
+           Op.Inputs[0].Size == 1 && !Op.Inputs[0].isConst() &&
+           Op.Output.Size > 1;
+  };
   // Masks are proposed from the code between the entry and the dispatch, and
   // elsewhere only by writes to the index register itself: a loop that
   // fetches and masks its next opcode at the end of a handler writes the
@@ -2951,7 +2958,9 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
     if (!consumeWork(Insn.Ops.size()))
       return std::nullopt;
     return std::any_of(Insn.Ops.begin(), Insn.Ops.end(), [&](const LowOp &Op) {
-      return Op.Opcode == NdOp::INT_AND && Op.Output.isReg() &&
+      return (Op.Opcode == NdOp::INT_AND ||
+              (ProposeByteZeroExtensions && isByteZeroExtension(Op))) &&
+             Op.Output.isReg() &&
              IndexTRI.findWideReg(Op.Output.Offset, Op.Output.Size) ==
                  *IndexContainer;
     });
@@ -3008,7 +3017,8 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
     std::vector<uint32_t> Coordinates;
     bool CompleteDomain = false;
     bool NonContiguous = false;
-    JumpTableValueQuery ConstantProof;
+    // A zero extension's mask is its input width: it has no constant to prove.
+    std::optional<JumpTableValueQuery> ConstantProof;
   };
   std::vector<MaskCandidate> Candidates;
   std::vector<JumpTableValueOccurrence> RelevantMaskRoots;
@@ -3100,6 +3110,47 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
     if (!consumeWork(1))
       return FailIncomplete();
     const LowOp &Op = Ops[I];
+    // A zero extension from a byte bounds its output as `& 0xff` does.  Only
+    // an index that is exactly such an output proves its domain this way;
+    // functions zero-extend byte loads and flags everywhere, so these are no
+    // evidence that some other index depends on a mask.  They are proposed
+    // only when no guard or modulo proof bounds the index: such a domain is
+    // never wider than a byte's, and the proposals cost a proof each.
+    if (isByteZeroExtension(Op)) {
+      if (!ProposeByteZeroExtensions)
+        continue;
+      if (!consumeWork(orderedEvidenceLookupWork(Insns.size())))
+        return FailIncomplete();
+      const auto InsnIt = Insns.find(Op.Addr);
+      if (InsnIt == Insns.end())
+        continue;
+      constexpr uint32_t ByteMask = 0xff;
+      std::vector<uint32_t> Coordinates;
+      if (!consumeWork(ByteMask + 1))
+        return FailIncomplete();
+      for (uint32_t Value = 0; Value <= ByteMask; ++Value) {
+        if (!ensureAppendCapacity(Coordinates) || !consumeWork(1))
+          return FailIncomplete();
+        Coordinates.push_back(Value);
+      }
+      if (!consumeWork(InsnIt->second.Ops.size()))
+        return FailIncomplete();
+      const bool IncompleteProducer =
+          InsnIt->second.IsInstructionGuard ||
+          conditionalMergeOutput(Op, InsnIt->second).has_value();
+      if (!ensureAppendCapacity(Candidates) || !consumeWork(1))
+        return FailIncomplete();
+      Candidates.push_back({{Op.Output, Op.Addr, Op.Seq,
+                             /*DefinedAtPoint=*/true},
+                            Op.Inputs[0],
+                            ByteMask + 1,
+                            ByteMask,
+                            std::move(Coordinates),
+                            !IncompleteProducer,
+                            /*NonContiguous=*/false,
+                            /*ConstantProof=*/std::nullopt});
+      continue;
+    }
     if (Op.Opcode != NdOp::INT_AND || Op.NumInputs < 2 || Op.Output.Size == 0)
       continue;
     if (detail::isConstantOnlyScalarMask(Op))
@@ -3214,18 +3265,25 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
 
   std::vector<JumpTableValueQuery> ConstantQueries;
   // Each retained constant-proof query owns unclassified and scalar forms.
-  if (!consumeWorkProducts({{Candidates.size(), 3}}))
+  if (!consumeWorkProducts({{Candidates.size(), 3}, {Candidates.size(), 1}}))
     return FailIncomplete();
   ConstantQueries.reserve(Candidates.size());
   for (const MaskCandidate &Candidate : Candidates)
-    ConstantQueries.push_back(Candidate.ConstantProof);
-  std::vector<bool> ConstantsMatch;
+    if (Candidate.ConstantProof)
+      ConstantQueries.push_back(*Candidate.ConstantProof);
+  std::vector<bool> ConstantMatches;
   if (!ConstantQueries.empty()) {
     bool ConstantAnalysisComplete = false;
-    ConstantsMatch = matchAtUses(ConstantQueries, &ConstantAnalysisComplete);
-    if (!ConstantAnalysisComplete || ConstantsMatch.size() != Candidates.size())
+    ConstantMatches = matchAtUses(ConstantQueries, &ConstantAnalysisComplete);
+    if (!ConstantAnalysisComplete ||
+        ConstantMatches.size() != ConstantQueries.size())
       return FailIncomplete();
   }
+  std::vector<bool> ConstantsMatch;
+  ConstantsMatch.reserve(Candidates.size());
+  for (size_t I = 0, Next = 0; I < Candidates.size(); ++I)
+    ConstantsMatch.push_back(!Candidates[I].ConstantProof ||
+                             ConstantMatches[Next++]);
 
   // A negative translation after a mask is safe only when every feasible mask
   // coordinate is at least the translation magnitude.  Clang commonly proves

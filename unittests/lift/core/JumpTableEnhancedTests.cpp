@@ -3726,6 +3726,10 @@ TEST_F(JTE_X86_64, CallsToATailCalledEntryKeepTheRelativeTable) {
   EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
 }
 
+static fs::path byteSwitchX64Obj() {
+  return fs::path(TEST_OBJ_DIR) / "test_jumptable_byte_switch.o";
+}
+
 static fs::path maskedByteX64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_jumptable_masked_byte.o";
 }
@@ -3791,6 +3795,42 @@ TEST_F(JTE_X86_64, MaskedByteGuardBoundsAWideMaskIndex) {
   std::vector<neverd::va_t> Expected;
   for (size_t Case = 0; Case < 13; ++Case) {
     const uint8_t *Bytes = Image.readVA(Rodata->VA + Case * 4, 4);
+    ASSERT_NE(Bytes, nullptr);
+    int32_t Entry = 0;
+    std::memcpy(&Entry, Bytes, sizeof(Entry));
+    Expected.push_back(Rodata->VA + static_cast<int64_t>(Entry));
+  }
+
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const neverd::LowFunc Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  ASSERT_EQ(Low.JumpTables.size(), 1u);
+  EXPECT_EQ(Low.JumpTables.front().BaseAddr, Rodata->VA);
+  EXPECT_EQ(Low.JumpTables.front().Targets, Expected);
+  EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+}
+
+// `byte_switch` reads its 256-entry table with a zero-extended byte that it
+// spills and reloads, as clang -O0 does for a switch on an unsigned char that
+// covers every value. No compare and no mask bounds the index; the zero
+// extension does.
+TEST_F(JTE_X86_64, ByteZeroExtensionBoundsATableWithoutAGuard) {
+  auto ImageOrErr = neverd::loadBinary(byteSwitchX64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  const neverd::Symbol *Function = Image.findSymbol("byte_switch");
+  ASSERT_NE(Function, nullptr);
+  const neverd::Section *Rodata = nullptr;
+  for (const neverd::Section &Section : Image.Sections)
+    if (Section.Name == ".rodata")
+      Rodata = &Section;
+  ASSERT_NE(Rodata, nullptr);
+  std::vector<neverd::va_t> Expected;
+  for (size_t Byte = 0; Byte < 256; ++Byte) {
+    const uint8_t *Bytes = Image.readVA(Rodata->VA + Byte * 4, 4);
     ASSERT_NE(Bytes, nullptr);
     int32_t Entry = 0;
     std::memcpy(&Entry, Bytes, sizeof(Entry));
