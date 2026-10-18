@@ -35,6 +35,7 @@
 #include "neverd/types/TypeRender.h"
 
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/ScopeExit.h"
 
 #include <limits>
 #include <set>
@@ -344,9 +345,14 @@ static int prepareFunction(neverd_session_t Sess, neverd_va_t FuncEntry,
       return 0;
     }
     if (S->Img.Format == BinaryFormat::COFF) {
-      // Handler discovery can grow metadata. Until it exposes an immutable
-      // generation, do not carry borrowed CFG facts across this operation.
-      S->AnalysisCache.reset();
+      // Handler discovery can grow metadata that the borrowed CFG facts
+      // read.  When it adds anything, even if it then throws, they are
+      // dropped before any reads them again; nothing reads them during it.
+      const auto Before = coff_loader::exceptionHandlerState(S->Img);
+      const llvm::scope_exit Retire([&] {
+        if (coff_loader::exceptionHandlerState(S->Img) != Before)
+          S->AnalysisCache.reset();
+      });
       coff_loader::ensureExceptionHandlers(S->Img, {FuncEntry});
     }
 

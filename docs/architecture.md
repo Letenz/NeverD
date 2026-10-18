@@ -655,7 +655,9 @@ start, whose run adds its own entry and so keys another cache.
 Reload, function edits, signature matching and analysis-policy changes retire
 the cache while its image/debug owners are alive. Feature generations are
 checked even after navigation cleared the preceding pipeline result. COFF
-handler discovery conservatively retires facts before expanding metadata.
+handler discovery retires the facts when it adds records or decodes language
+tables (`coff_loader::exceptionHandlerState` before and after it); moving
+between functions it adds nothing for keeps them.
 Other architectures and whole-image analyses retain run-local ownership.
 Within one LowIR build, module jump-table arbitration is reused while its
 function bodies remain unchanged. Any body rebuild retires that result before
