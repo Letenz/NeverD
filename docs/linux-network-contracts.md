@@ -73,7 +73,7 @@ negative seconds retain immediate-timeout state. Fractional timeouts stop
 because kernel tick rounding is not supplied. Short getters copy only the
 requested prefix and report its length. These options do not create peer
 readiness or advance the guest clock: stream completions remain explicit inputs. Cross-page partial faults, scatter/gather sockets,
-nonblocking TCP connect completion, readiness polling, other socket options,
+nonblocking TCP connect completion, general poll/epoll, other socket options,
 shutdown and real transport are not covered by this bounded contract.
 
 ## Ordered receive completions
@@ -157,3 +157,60 @@ These ABI rules follow the pinned [AOSP netdb definitions](https://android.googl
 and [address formatter](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/upstream-openbsd/lib/libc/net/inet_ntop.c).
 
 Timeout option validation follows the [Android common kernel socket owner](https://android.googlesource.com/kernel/common/+/refs/heads/android12-5.10/net/core/sock.c).
+
+
+## Timed readiness
+
+Optional `ready_at_ns` on a data receive event declares its arrival in elapsed
+virtual nanoseconds since workload start. It also asserts no earlier read
+readiness while that event is next. Ordered timestamps must not decrease;
+untimed events retain their prior completion contract. `after_send` is still a
+separate prerequisite: unmet prerequisites do not prove a quiet socket and
+remain unsupported. Completion errors cannot carry an arrival timestamp.
+
+A TCP connection may pair `receive_eof: true` with `receive_eof_at_ns` to declare
+when EOF becomes readable after all data. Alternatively TCP or UDP may provide
+`receive_quiet_until_ns`: once all receive events are consumed, it asserts no
+read readiness through that elapsed nanosecond, inclusive. The next nanosecond
+is unknown, not an implied EOF, packet, EAGAIN completion or successful wait.
+Quiet intervals cannot coexist with EOF. End times must follow supplied event
+times. All times fit signed 64-bit nanoseconds; a quiet interval must have a
+representable first unknown nanosecond. Failed connects cannot carry schedules.
+Every timed input requires `linux_time.advance_on_idle: true`.
+
+```json
+{
+  "linux_files": {"files": []},
+  "linux_time": {"advance_on_idle": true},
+  "linux_network": {
+    "connections": [{
+      "peer_hex": "020023297f0000010000000000000000",
+      "receive_events": [{"receive_hex": "4f4b", "ready_at_ns": 7000000000}],
+      "receive_quiet_until_ns": 10000000000
+    }]
+  }
+}
+```
+
+`pselect6` can now suspend with a positive or infinite timeout when the requested
+states are known and a future event exists. Finite waits on an empty set need
+only their timeout. With cooperative Android threads, other runnable threads
+run before time advances to the earliest I/O or sleep event. Without threads,
+the same kernel owner advances the idle clock directly. The model uses exact
+virtual deadlines, without host scheduling delay or kernel timer slack.
+Readiness is rescanned on wake and wins at an exact deadline tie. Querying never
+consumes a receive event; partial TCP reads and UDP peeks retain readiness.
+A nonblocking receive before a declared arrival returns EAGAIN without consuming
+input. A direct blocking receive before arrival is still unsupported: callers
+must first wait for readiness. This does not add `poll`, `epoll`, signals or
+nonblocking connect completion.
+
+A suspended select retains its copied bitmaps and absolute deadline. Other
+threads may modify guest input memory without changing that copy; output access
+is checked at completion. Bitmap outputs precede remaining timeout output,
+including aliased pointers and ordinary copy errors. Raw traps and Bionic's
+`syscall` share the pending operation, while libc alone translates errno.
+Closing/replacing a watched FD during suspension is deliberately unsupported;
+reusing its number cannot silently attach the wait to a new description.
+These are bounded, explicit workload inputs, not measurements of a deployed
+server or promises that Android's entire networking stack is reproduced.

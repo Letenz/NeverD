@@ -41,11 +41,22 @@ struct ProcTask {
   uint32_t ID;
   char State; // R: runnable, S: cooperative wait, Z: exited group leader.
 };
+/// A suspended kernel operation retains its copied inputs in the kernel owner.
+/// The scheduler only asks when to run it and completes the original trap.
+class KernelWait {
+public:
+  virtual ~KernelWait() = default;
+  virtual bool ready() const = 0;
+  virtual std::optional<uint64_t> nextWake() const = 0;
+  virtual llvm::Expected<std::optional<uint64_t>>
+  resume(ProcessResult &Result) = 0;
+};
 struct ThreadContext {
   uint64_t ID = ThreadID;
   std::optional<uint64_t> Exit;
   /// Consumed by the scheduler before another service can run on this thread.
   std::optional<uint64_t> SleepDeadline;
+  std::unique_ptr<KernelWait> Pending;
 };
 struct ServiceABI {
   ServiceRequestKind Trap;

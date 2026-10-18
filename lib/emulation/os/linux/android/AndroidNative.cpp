@@ -577,7 +577,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
           break;
         continue;
       }
-      if (!*Value && Threads.waitSleep()) {
+      if (!*Value && Threads.waitKernel()) {
         Threads.suspend(*Request, Result.Services.size() - 1,
                         GuestThreads::WaitSource::KernelService);
         NeedSchedule = true;

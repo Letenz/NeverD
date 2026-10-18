@@ -335,6 +335,30 @@ TEST(LinuxNetworkJSON, StrictWireAndSemanticAdmission) {
       false, true);
   Event(R"("receive_hex":"","receive_events":[])", false, false);
   Event(R"("receive_events":[{"errno":4,"extra":0}])", false, false);
+
+  Event(R"("receive_events":[{"receive_hex":"01","ready_at_ns":7}])", false,
+        true);
+  Event(R"("receive_events":[{"receive_hex":"","ready_at_ns":0}])", true, true);
+  Event(R"("receive_events":[{"receive_hex":"01","ready_at_ns":-1}])", false,
+        false);
+  Event(R"("receive_events":[{"receive_hex":"01","ready_at_ns":null}])", false,
+        false);
+  Event(R"("receive_events":[{"errno":4,"ready_at_ns":7}])", false, false);
+  Event(
+      R"("receive_events":[{"receive_hex":"01","ready_at_ns":8},{"receive_hex":"02","ready_at_ns":7}])",
+      false, false);
+  Event(R"("receive_eof_at_ns":7)", false, false);
+  Event(R"("receive_eof":true,"receive_eof_at_ns":7)", false, true);
+  Event(R"("receive_eof":true,"receive_quiet_until_ns":7)", false, false);
+  Event(
+      R"("receive_events":[{"receive_hex":"01","ready_at_ns":8}],"receive_quiet_until_ns":7)",
+      false, false);
+  Event(
+      R"("receive_events":[{"receive_hex":"01","ready_at_ns":8}],"receive_quiet_until_ns":10)",
+      false, true);
+  Event(R"("receive_quiet_until_ns":9223372036854775807)", true, false);
+  Event(R"("receive_quiet_until_ns":18446744073709551615)", false, false);
+  Event(R"("connect_errno":101,"receive_quiet_until_ns":7)", true, false);
   // C++ admission shares byte and event limits with JSON callers.
   LinuxNetworkOptions N;
   LinuxDatagramConnection D;
