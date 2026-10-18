@@ -658,6 +658,83 @@ bool SymState::store(SymRef Addr, SymRef Value,
   return Absolute;
 }
 
+bool SymState::storeConditional(SymRef Addr, SymRef Value,
+                                SymConditionalStore &Control) {
+  Control.WorkUsed = 0;
+  Control.Status = SymConditionalStoreStatus::Invalid;
+  const auto ValidRef = [&](SymRef Ref) {
+    return Ref && Ref.index() < Ctx->numNodes();
+  };
+  if (!ValidRef(Addr) || Ctx->width(Addr) != 64 || !ValidRef(Value))
+    return false;
+  const Location Where = locate(Addr);
+  if (!validBankWrite(*Ctx, Where.Base, Where.Offset, Value))
+    return false;
+  const uint32_t Width = Ctx->width(Value);
+  const uint64_t Bytes = Width / kByteBits;
+  const auto Charge = [&](uint64_t Work) {
+    if (Work > Control.MaxWork - Control.WorkUsed) {
+      Control.Status = SymConditionalStoreStatus::BudgetExceeded;
+      return false;
+    }
+    Control.WorkUsed += Work;
+    return true;
+  };
+  if (!Charge(Bytes))
+    return false;
+
+  struct PlannedByte {
+    Bank *Storage;
+    SymRef Base;
+    uint64_t Offset;
+    ByteView Byte;
+  };
+  llvm::SmallVector<PlannedByte, 32> Plan;
+  const auto Inspect = [&](SymRef Base, Bank &Storage) {
+    if (!Charge(1))
+      return false;
+    if (Base == Where.Base || Storage.Bytes.empty())
+      return true;
+    if (Base && (!ValidRef(Base) || Ctx->width(Base) != 64))
+      return false;
+    for (const auto &[Offset, Byte] : Storage.Bytes) {
+      if (!Charge(Bytes + 3))
+        return false;
+      Plan.push_back({&Storage, Base, Offset, Byte});
+    }
+    return true;
+  };
+  if (!Inspect({}, AbsoluteMemory))
+    return false;
+  for (auto &[Base, Storage] : Regions)
+    if (!Inspect(SymRef(Base), Storage))
+      return false;
+
+  // Every charge and candidate validation has succeeded. Nothing below reads
+  // missing memory or reconstructs historical facts.
+  llvm::SmallVector<std::pair<SymRef, SymRef>, 8> WriteBytes;
+  for (uint64_t I = 0; I != Bytes; ++I) {
+    const auto Address = Ctx->mkAdd(Addr, Ctx->mkConst(64, I));
+    const uint32_t Low = Order == llvm::endianness::little
+                             ? uint32_t(I) * kByteBits
+                             : Width - (uint32_t(I) + 1) * kByteBits;
+    WriteBytes.emplace_back(Address, Ctx->mkExtract(Value, Low, kByteBits));
+  }
+  for (auto &Entry : Plan) {
+    const auto Offset = Ctx->mkConst(64, Entry.Offset);
+    const auto Address = Entry.Base ? Ctx->mkAdd(Entry.Base, Offset) : Offset;
+    auto Updated = Ctx->mkExtract(Entry.Byte.Value, Entry.Byte.Low, kByteBits);
+    for (const auto &[WriteAddress, Byte] : WriteBytes)
+      Updated = Ctx->mkIte(Ctx->mkEq(Address, WriteAddress), Byte, Updated);
+    Entry.Byte = {Updated};
+  }
+  const bool Absolute = store(Addr, Value);
+  for (const auto &Entry : Plan)
+    Entry.Storage->Bytes.emplace(Entry.Offset, Entry.Byte);
+  Control.Status = SymConditionalStoreStatus::Applied;
+  return Absolute;
+}
+
 //===----------------------------------------------------------------------===//
 // Whole-state operations
 //===----------------------------------------------------------------------===//

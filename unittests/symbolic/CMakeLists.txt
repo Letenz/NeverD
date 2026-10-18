@@ -13,6 +13,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymSegmentedMemoryTests.cpp
   SymRegionWrapTests.cpp
   SymStorePreservationTests.cpp
+  SymConditionalStoreTests.cpp
   SymExploreCLIContractTests.cpp
   SymExploreTests.cpp
   SymExprTests.cpp
@@ -114,5 +115,10 @@ add_neverd_unittest(NeverDSymLoadOriginBindingTests
 
 add_neverd_unittest(NeverDSymMemoryKnowledgeTests
   SymMemoryKnowledgeTests.cpp
+  LINK_COMPONENTS Symbolic Solver
+)
+
+add_neverd_unittest(NeverDSymConditionalStoreTests
+  SymConditionalStoreTests.cpp
   LINK_COMPONENTS Symbolic Solver
 )

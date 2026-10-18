@@ -2108,3 +2108,5 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 ```
 
 `SymStorePreservation.Independent*`、`RepeatedRegionsFormAUnionAndChargeEveryScan`、`EmptyIndependentRegionsKeepOriginalWorkAccounting`、`ExecutorUsesIndependentRegionsForOnlyOneStore` は、1 回の STORE による 2〜3 個の独立した現在のルートの保持、両バイト順、相対座標のゼロをまたぐ部分範囲、重複宣言、保護外の隙間、書き込み後の未知値の世代を確認します。正確な予算と 1 単位不足の予算で全作業量を確認し、存在しない領域を生成しません。無効・範囲外参照、狭い基底や定数基底、空・逆向き区間、書き込み自身の基底は状態を変更せず拒否します。空の `AdditionalRegions` では従来の単一ルートと `AdditionalRanges` の費用を保ちます。実行器では単一イベント、同一領域の隣接バイト、後続の通常書き込みによる無効化を確認します。`SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget` は比較の一致・不一致、正確・不足予算、2 つの保護ルート、旧値の出力、既存の保守的な拒否経路を確認します。
+
+`NeverDSymConditionalStoreTests` は独立したルート間の現在のバイトの条件付き効果、128 ビット書き込み、両エンディアン、部分的な重なり、シンボリック相対座標の折り返し、絶対メモリを対象とします。自身のバンクの隣接バイト、現在と過去の事実、書き込み後の未知エポック、非対応入力、必要量ちょうどと一単位不足の予算も確認します。実行器では既存のセグメント基址処理を使う STORE、厳格な CMPXCHG の成功と失敗、Old の遅延公開、拒否時の havoc、他の操作で Invalid が維持されることを確認します。通常の書き込みと保持契約の既定動作は変わりません。これらは有界メモリの意味論を検証するテストであり、アクセス権やプログラム全体の復元を認証するものではありません。
