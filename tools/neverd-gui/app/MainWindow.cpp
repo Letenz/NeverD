@@ -33,6 +33,7 @@
 #include "SymbolTablePromptDialog.h"
 #include "Theme.h"
 #include "TitleBar.h"
+#include "TypeLibrariesView.h"
 #include "TypePickerDialog.h"
 #include "WindowFrame.h"
 #include "mcp/GuiSessionBroker.h"
@@ -133,6 +134,7 @@ constexpr char PseudocodeDock[] = "pseudocode-a";
 constexpr char RepresentationDock[] = "ir-a";
 constexpr char ExtensionsDock[] = "extensions";
 constexpr char LocalTypesDock[] = "local-types";
+constexpr char TypeLibrariesDock[] = "type-libraries";
 
 QString chooserDockId(ChooserKind kind) {
   return QStringLiteral("chooser-%1").arg(int(kind));
@@ -555,6 +557,11 @@ MainWindow::Dock *MainWindow::dockNamed(const QString &name) {
     localTypes_ = new LocalTypesView(session_);
     return makeDock(name, QT_TR_NOOP("Local Types"),
                     QStringLiteral("local_types"), localTypes_);
+  }
+  if (name == QLatin1String(TypeLibrariesDock)) {
+    typeLibraries_ = new TypeLibrariesView(session_);
+    return makeDock(name, QT_TR_NOOP("Type Libraries"),
+                    QStringLiteral("type_libraries"), typeLibraries_);
   }
   for (int kind = 0; kind < int(ChooserKind::Count); ++kind)
     if (name == chooserDockId(ChooserKind(kind)))
@@ -1448,6 +1455,10 @@ void MainWindow::connectActions() {
   on(ActionId::ViewLocalTypes, [this] {
     openDock(dockNamed(QString::fromLatin1(LocalTypesDock)), true);
     localTypes_->focusFilter();
+  });
+  on(ActionId::ViewTypeLibraries, [this] {
+    openDock(dockNamed(QString::fromLatin1(TypeLibrariesDock)), true);
+    typeLibraries_->table()->setFocus();
   });
   on(ActionId::ViewUndoHistory, [this] {
     const auto &history = session_.history();

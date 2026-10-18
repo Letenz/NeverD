@@ -161,31 +161,67 @@ std::optional<HeaderImageKind> headerImageKind(const Session &S) {
     return HeaderImageKind::Kind;
 #include "neverd/types/HeaderLibraryImages.def"
   }
+  if (const std::optional<ELFSystem> System = elfSystem(S.Img)) {
+#define NEVERD_HEADER_ELF_SYSTEM(Name, Kind)                                   \
+  if (*System == ELFSystem::Name)                                              \
+    return HeaderImageKind::Kind;
+#include "neverd/types/HeaderLibraryImages.def"
+  }
   return std::nullopt;
+}
+
+/// The header libraries the session's image joins by its kind and
+/// architecture (HeaderLibraryImages.def), in the order the rows list them.
+std::vector<types::HeaderLibrary> imageLibraries(const Session &S) {
+  std::vector<types::HeaderLibrary> Libraries;
+  const std::optional<HeaderImageKind> Kind = headerImageKind(S);
+  if (!Kind)
+    return Libraries;
+#define NEVERD_HEADER_LIBRARY_IMAGE(ImageKind, Machine, Library)               \
+  if (*Kind == HeaderImageKind::ImageKind && S.Img.Arch == Arch::Machine &&    \
+      !llvm::is_contained(Libraries, types::HeaderLibrary::Library))           \
+    Libraries.push_back(types::HeaderLibrary::Library);
+#include "neverd/types/HeaderLibraryImages.def"
+  return Libraries;
+}
+
+/// Whether \p Library's records lay out as the program's: its data model,
+/// and the record ABI a program of the session's joins libraries of.
+bool compatibleLibrary(const Session &S, types::HeaderLibrary Library) {
+  return types::headerLibraryModel(Library) == S.LocalTypes->dataModel() &&
+         types::headerLibraryRecordABI(Library) ==
+             types::libraryRecordABIOf(S.LocalTypes->recordABI());
 }
 
 /// Joins the header libraries that describe the session's image
 /// (HeaderLibraryImages.def) to its types, after the program's own, in the
-/// order the rows list them.
+/// order the rows list them, but those the user left out, then those the
+/// user added (libraries.json), each where its records lay out as the
+/// program's.  One the user added that lays out otherwise, as a
+/// libraries.json edited by hand may name, joins nothing and says why.
 void joinHeaders(Session &S) {
-  const std::optional<HeaderImageKind> Kind = headerImageKind(S);
-  if (!Kind)
-    return;
-  const auto join = [&](types::HeaderLibrary Library) {
-    if (types::headerLibraryModel(Library) != S.LocalTypes->dataModel() ||
-        types::headerLibraryRecordABI(Library) !=
-            types::libraryRecordABIOf(S.LocalTypes->recordABI()))
+  const auto join = [&](types::HeaderLibrary Library, bool Added) {
+    if (llvm::any_of(S.LocalTypeHeaders,
+                     [&](const Session::JoinedHeaders &Joined) {
+                       return Joined.Library == Library;
+                     }))
       return;
     Session::JoinedHeaders Joined{Library, {}, {}};
-    if (const types::TypeLibrary *Headers =
-            types::headerLibrary(Library, &Joined.Error))
+    if (!compatibleLibrary(S, Library)) {
+      if (!Added)
+        return;
+      Joined.Error = "its records lay out otherwise than the program's";
+    } else if (const types::TypeLibrary *Headers =
+                   types::headerLibrary(Library, &Joined.Error)) {
       Joined.Merge = types::mergeHeaderTypes(*S.LocalTypes, *Headers);
+    }
     S.LocalTypeHeaders.push_back(std::move(Joined));
   };
-#define NEVERD_HEADER_LIBRARY_IMAGE(ImageKind, Machine, Library)               \
-  if (*Kind == HeaderImageKind::ImageKind && S.Img.Arch == Arch::Machine)      \
-    join(types::HeaderLibrary::Library);
-#include "neverd/types/HeaderLibraryImages.def"
+  for (types::HeaderLibrary Library : imageLibraries(S))
+    if (!llvm::is_contained(S.TypeLibraryChoice.Removed, Library))
+      join(Library, false);
+  for (types::HeaderLibrary Library : S.TypeLibraryChoice.Added)
+    join(Library, true);
   // The entry's type, where the image's subsystem says which it is and a
   // library joined to declare it.
   if (S.LocalTypeHeaders.empty())
@@ -230,6 +266,73 @@ void redeclare(Session &S) {
 
 std::filesystem::path declarationsPath(const Session &S) {
   return project_files::path(S.FilePath, project_files::File::Types);
+}
+
+std::filesystem::path librariesPath(const Session &S) {
+  return project_files::path(S.FilePath, project_files::File::TypeLibraries);
+}
+
+/// The libraries \p Value's \p Key names, or none with \p Error.
+std::optional<std::vector<types::HeaderLibrary>>
+readLibraries(const llvm::json::Object &Value, llvm::StringRef Key,
+              std::string &Error) {
+  std::vector<types::HeaderLibrary> Libraries;
+  const llvm::json::Value *Names = Value.get(Key);
+  if (!Names)
+    return Libraries;
+  const llvm::json::Array *List = Names->getAsArray();
+  if (!List) {
+    Error = ("\"" + Key + "\" must be an array of library names").str();
+    return std::nullopt;
+  }
+  for (const llvm::json::Value &Entry : *List) {
+    const std::optional<llvm::StringRef> Name = Entry.getAsString();
+    const std::optional<types::HeaderLibrary> Library =
+        Name ? types::headerLibraryNamed(*Name) : std::nullopt;
+    if (!Library) {
+      Error = Name
+                  ? "no type library is named " + jsonSafeText(*Name)
+                  : ("\"" + Key + "\" must be an array of library names").str();
+      return std::nullopt;
+    }
+    if (!llvm::is_contained(Libraries, *Library))
+      Libraries.push_back(*Library);
+  }
+  return Libraries;
+}
+
+/// The choice \p Value says, {"added":[...],"removed":[...]}, or none with
+/// \p Error.
+std::optional<Session::LibraryChoice>
+readLibraryChoice(const llvm::json::Value &Value, std::string &Error) {
+  const llvm::json::Object *Object = Value.getAsObject();
+  if (!Object) {
+    Error = "the type libraries must be an object of \"added\" and "
+            "\"removed\"";
+    return std::nullopt;
+  }
+  Session::LibraryChoice Choice;
+  std::optional<std::vector<types::HeaderLibrary>> Added =
+      readLibraries(*Object, "added", Error);
+  if (!Added)
+    return std::nullopt;
+  std::optional<std::vector<types::HeaderLibrary>> Removed =
+      readLibraries(*Object, "removed", Error);
+  if (!Removed)
+    return std::nullopt;
+  Choice.Added = std::move(*Added);
+  Choice.Removed = std::move(*Removed);
+  return Choice;
+}
+
+llvm::json::Object libraryChoiceJson(const Session::LibraryChoice &Choice) {
+  llvm::json::Array Added, Removed;
+  for (types::HeaderLibrary Library : Choice.Added)
+    Added.push_back(types::headerLibraryName(Library));
+  for (types::HeaderLibrary Library : Choice.Removed)
+    Removed.push_back(types::headerLibraryName(Library));
+  return llvm::json::Object{{"added", std::move(Added)},
+                            {"removed", std::move(Removed)}};
 }
 
 llvm::json::Array declarationRows(const Session &S) {
@@ -1100,6 +1203,176 @@ const char *neverd_type_declarations_json(neverd_session_t Sess) {
     return nullptr;
   S->clearError();
   return dupStr(jsonToString(llvm::json::Value(declarationRows(*S))));
+}
+
+const char *neverd_type_libraries_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  // Without a program, each library alone; with one, what joins it.
+  const types::TypeLibrary *Program = S->Loaded ? localTypes(*S) : nullptr;
+  if (S->Loaded && !Program)
+    return nullptr;
+  const std::vector<types::HeaderLibrary> Image =
+      Program ? imageLibraries(*S) : std::vector<types::HeaderLibrary>();
+  llvm::json::Array Libraries;
+  std::vector<types::HeaderLibrary> Listed;
+  const auto row = [&](types::HeaderLibrary Library,
+                       const Session::JoinedHeaders *Joined) {
+    llvm::json::Object Row{
+        {"name", types::headerLibraryName(Library)},
+        {"dataModel", types::dataModelName(types::headerLibraryModel(Library))},
+        {"recordABI",
+         types::recordABIName(types::headerLibraryRecordABI(Library))},
+        {"image", llvm::is_contained(Image, Library)},
+        {"joined", Joined != nullptr}};
+    if (Program)
+      Row["compatible"] = compatibleLibrary(*S, Library);
+    if (Joined && !Joined->Error.empty()) {
+      Row["error"] = jsonSafeText(Joined->Error);
+    } else if (Joined) {
+      llvm::json::Array Conflicts;
+      for (const std::string &Name : Joined->Merge.Conflicts)
+        Conflicts.push_back(jsonSafeText(Name));
+      Row["types"] = static_cast<int64_t>(Joined->Merge.Types);
+      Row["prototypes"] = static_cast<int64_t>(Joined->Merge.Prototypes);
+      Row["conflicts"] = std::move(Conflicts);
+    }
+    Libraries.push_back(std::move(Row));
+    Listed.push_back(Library);
+  };
+  // The libraries joined first, in the order they join, then the others in
+  // the table's.
+  if (Program)
+    for (const Session::JoinedHeaders &Joined : S->LocalTypeHeaders)
+      row(Joined.Library, &Joined);
+#define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, ABI, Spelling)            \
+  if (!llvm::is_contained(Listed, types::HeaderLibrary::Id))                   \
+    row(types::HeaderLibrary::Id, nullptr);
+#include "neverd/types/HeaderLibraries.def"
+  llvm::json::Object Result = libraryChoiceJson(S->TypeLibraryChoice);
+  Result["libraries"] = std::move(Libraries);
+  return dupStr(jsonToString(llvm::json::Value(std::move(Result))));
+}
+
+const char *neverd_type_libraries_set(neverd_session_t Sess, const char *Json) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return nullptr;
+  }
+  auto Parsed = llvm::json::parse(Json ? Json : "");
+  if (!Parsed) {
+    llvm::consumeError(Parsed.takeError());
+    S->setError("the type libraries are not valid JSON");
+    return nullptr;
+  }
+  std::string Error;
+  std::optional<Session::LibraryChoice> Choice =
+      readLibraryChoice(*Parsed, Error);
+  if (!Choice) {
+    S->setError(Error);
+    return nullptr;
+  }
+  if (!localTypes(*S))
+    return nullptr;
+  // An added library is none of the image's and lays out as the program's;
+  // a removed one is the image's.
+  const std::vector<types::HeaderLibrary> Image = imageLibraries(*S);
+  for (types::HeaderLibrary Library : Choice->Added) {
+    const std::string Name = types::headerLibraryName(Library).str();
+    if (llvm::is_contained(Image, Library)) {
+      S->setError(Name + " is one the program joins already");
+      return nullptr;
+    }
+    if (!compatibleLibrary(*S, Library)) {
+      S->setError(Name + " lays its records out otherwise than the program");
+      return nullptr;
+    }
+  }
+  for (types::HeaderLibrary Library : Choice->Removed)
+    if (!llvm::is_contained(Image, Library)) {
+      S->setError(types::headerLibraryName(Library).str() +
+                  " is none the program joins of its own");
+      return nullptr;
+    }
+  S->TypeLibraryChoice = std::move(*Choice);
+  // A decompilation that read the prototypes read the libraries these
+  // replace.
+  const bool ReadPrototypes = S->LocalTypesChecked;
+  S->dropLocalTypes();
+  if (ReadPrototypes)
+    S->clearPipeline();
+  return neverd_type_libraries_json(Sess);
+}
+
+int neverd_type_libraries_save(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->requireFileBacked() || !S->Loaded)
+    return -1;
+  ProjectWriteLock Lock(S->FilePath);
+  if (!Lock) {
+    S->setError("project writer unavailable: " + Lock.error());
+    return -1;
+  }
+  return saveSidecar(S, librariesPath(*S),
+                     llvm::json::Value(libraryChoiceJson(S->TypeLibraryChoice)),
+                     "type libraries")
+             ? 0
+             : -1;
+}
+
+int neverd_type_libraries_load(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->requireFileBacked() || !S->Loaded)
+    return -1;
+  const std::filesystem::path Path = librariesPath(*S);
+  std::error_code EC;
+  const bool Exists = std::filesystem::exists(Path, EC);
+  if (EC) {
+    S->setError("cannot inspect the type libraries: " + EC.message());
+    return -1;
+  }
+  Session::LibraryChoice Choice;
+  if (Exists) {
+    auto Buffer = llvm::MemoryBuffer::getFile(pathToUTF8(Path));
+    if (!Buffer) {
+      S->setError("cannot read the type libraries: " +
+                  Buffer.getError().message());
+      return -1;
+    }
+    llvm::Expected<llvm::json::Value> Parsed =
+        llvm::json::parse((*Buffer)->getBuffer());
+    if (!Parsed) {
+      llvm::consumeError(Parsed.takeError());
+      S->setError("the type libraries file is not valid JSON");
+      return -1;
+    }
+    std::string Error;
+    std::optional<Session::LibraryChoice> Read =
+        readLibraryChoice(*Parsed, Error);
+    if (!Read) {
+      S->setError("the type libraries file: " + Error);
+      return -1;
+    }
+    Choice = std::move(*Read);
+  }
+  S->TypeLibraryChoice = std::move(Choice);
+  const bool ReadPrototypes = S->LocalTypesChecked;
+  S->dropLocalTypes();
+  if (ReadPrototypes)
+    S->clearPipeline();
+  return 0;
 }
 
 int neverd_type_declarations_save(neverd_session_t Sess) {

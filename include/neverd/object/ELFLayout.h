@@ -449,6 +449,9 @@ constexpr const char *GnuOwner = "GNU";
 /// The NDK's .note.android.ident: the Android API level the image targets.
 constexpr uint32_t AndroidIdent = 1;
 constexpr const char *AndroidOwner = "Android";
+/// FreeBSD's .note.tag: the __FreeBSD_version an image was built for.
+constexpr uint32_t FreeBSDABITag = 1;
+constexpr const char *FreeBSDOwner = "FreeBSD";
 } // namespace elf_notes
 
 } // namespace neverd

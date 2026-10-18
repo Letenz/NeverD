@@ -911,6 +911,14 @@
         <source>Set t&amp;ype...</source>
         <translation>設定型別(&amp;Y)...</translation>
     </message>
+    <message>
+        <source>Type libr&amp;aries</source>
+        <translation>型別庫(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
+        <translation>顯示併入程式型別的型別庫，並新增或移除型別庫</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2435,6 +2443,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
         <translation>DWARF 檔案 (*.debug *.dSYM);;所有檔案 (*)</translation>
+    </message>
+    <message>
+        <source>Type Libraries</source>
+        <translation>型別庫</translation>
     </message>
 </context>
 <context>
@@ -4305,6 +4317,119 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>使用分析得出的型別(&amp;A)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypeLibrariesView</name>
+    <message>
+        <source>Add a type library</source>
+        <translation>新增型別庫</translation>
+    </message>
+    <message>
+        <source>Leave the selected library out</source>
+        <translation>移除所選型別庫</translation>
+    </message>
+    <message>
+        <source>Library</source>
+        <translation>庫</translation>
+    </message>
+    <message>
+        <source>Origin</source>
+        <translation>來源</translation>
+    </message>
+    <message>
+        <source>Data model</source>
+        <translation>資料模型</translation>
+    </message>
+    <message>
+        <source>Record ABI</source>
+        <translation>結構配置 ABI</translation>
+    </message>
+    <message>
+        <source>Types</source>
+        <translation>型別</translation>
+    </message>
+    <message>
+        <source>Prototypes</source>
+        <translation>原型</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>衝突</translation>
+    </message>
+    <message>
+        <source>Add a type library...</source>
+        <translation>新增型別庫...</translation>
+    </message>
+    <message>
+        <source>Leave the library out</source>
+        <translation>移除該型別庫</translation>
+    </message>
+    <message>
+        <source>Open a program to see the type libraries its types join.</source>
+        <translation>開啟一個程式以檢視併入其型別的型別庫。</translation>
+    </message>
+    <message>
+        <source>This engine joins no type libraries.</source>
+        <translation>此引擎不支援型別庫。</translation>
+    </message>
+    <message>
+        <source>The program</source>
+        <translation>程式自帶</translation>
+    </message>
+    <message>
+        <source>Added</source>
+        <translation>手動新增</translation>
+    </message>
+    <message>
+        <source>%1 joined nothing: %2</source>
+        <translation>%1 未併入任何型別：%2</translation>
+    </message>
+    <message>
+        <source>Left out, as the program sizes a type they hold otherwise: %1</source>
+        <translation>因其包含的型別在程式中大小不同而未併入：%1</translation>
+    </message>
+    <message>
+        <source>1 type library joins the program&apos;s types.</source>
+        <translation>1 個型別庫併入了程式的型別。</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n type libraries join the program&apos;s types.</source>
+        <translation>
+            <numerusform>%n 個型別庫併入了程式的型別。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No type library joins the program&apos;s types.</source>
+        <translation>沒有型別庫併入程式的型別。</translation>
+    </message>
+    <message>
+        <source>Left out: %1.</source>
+        <translation>已移除：%1。</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be listed: %1</source>
+        <translation>無法列出型別庫：%1</translation>
+    </message>
+    <message>
+        <source>Add a Type Library</source>
+        <translation>新增型別庫</translation>
+    </message>
+    <message>
+        <source>Libraries whose records lay out as the program&apos;s:</source>
+        <translation>結構配置與程式相同的型別庫：</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>新增</translation>
+    </message>
+    <message>
+        <source>Reading the program&apos;s types again...</source>
+        <translation>正在重新讀取程式的型別...</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be changed: %1</source>
+        <translation>無法變更型別庫：%1</translation>
     </message>
 </context>
 </TS>

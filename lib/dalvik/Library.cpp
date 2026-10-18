@@ -8,6 +8,8 @@
 //===----------------------------------------------------------------------===//
 #include "neverd/dalvik/Library.h"
 
+#include "AndroidFramework.h"
+
 #include <algorithm>
 #include <bit>
 namespace neverd::mobile::dalvik {
@@ -111,6 +113,28 @@ static const LibraryMethod Methods[] = {
     {"java/lang/NoClassDefFoundError", "<init>", "()V", ThrowableConstruct},
     {"java/lang/NoClassDefFoundError", "<init>", "(Ljava/lang/String;)V",
      ThrowableConstruct},
+    {"android/app/ActivityThread", "currentActivityThread",
+     "()Landroid/app/ActivityThread;", CurrentActivityThread, true},
+    {"android/app/ActivityThread", "currentApplication",
+     "()Landroid/app/Application;", CurrentApplication, true},
+    {"android/app/ActivityThread", "getApplication",
+     "()Landroid/app/Application;", ThreadApplication},
+    {"android/content/Context", "getApplicationContext",
+     "()Landroid/content/Context;", ApplicationContext},
+    {"android/content/ContextWrapper", "getBaseContext",
+     "()Landroid/content/Context;", BaseContext},
+    {"android/content/Context", "getClassLoader", "()Ljava/lang/ClassLoader;",
+     ContextClassLoader},
+    {"android/content/Context", "getPackageName", "()Ljava/lang/String;",
+     PackageName},
+    {"java/lang/Class", "getClassLoader", "()Ljava/lang/ClassLoader;",
+     ClassLoaderOf},
+    {"java/lang/ClassLoader", "getParent", "()Ljava/lang/ClassLoader;",
+     LoaderParent},
+    {"java/lang/ClassLoader", "getSystemClassLoader",
+     "()Ljava/lang/ClassLoader;", SystemClassLoader, true},
+    {"java/lang/ClassLoader", "loadClass",
+     "(Ljava/lang/String;)Ljava/lang/Class;", LoadClass},
 };
 
 struct LibraryStop {
@@ -130,7 +154,8 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
                                uint64_t receiver,
                                std::span<const uint64_t> Values,
                                const AdmitInstruction &admit, bool Nonvirtual,
-                               const Program *program) {
+                               const Program *program,
+                               AndroidFramework *framework) {
   auto value = [](uint64_t v) {
     return ExecutionResult{ExecutionStop::Returned, v, {}, {}};
   };
@@ -192,6 +217,14 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
             (!o->Initialized || !assignable(objectDescriptor(*o), Types[i])))
           return failure("Java library reference parameter type mismatch");
       }
+    if (M.Op >= CurrentActivityThread && M.Op <= LoadClass) {
+      if (!program || !framework)
+        return {ExecutionStop::Unsupported,
+                0,
+                {},
+                "Android framework state is not supplied"};
+      return framework->execute(heap, *program, M, receiver, Values, admit);
+    }
     auto Make = [&](std::span<const uint8_t> bytes, bool array = false) {
       work(bytes.size());
       auto o =

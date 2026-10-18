@@ -911,6 +911,14 @@
         <source>Set t&amp;ype...</source>
         <translation>형식 설정(&amp;Y)...</translation>
     </message>
+    <message>
+        <source>Type libr&amp;aries</source>
+        <translation>형식 라이브러리(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
+        <translation>프로그램의 형식에 결합되는 형식 라이브러리를 표시하고, 하나를 추가하거나 제외합니다</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2435,6 +2443,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
         <translation>DWARF 파일 (*.debug *.dSYM);;모든 파일 (*)</translation>
+    </message>
+    <message>
+        <source>Type Libraries</source>
+        <translation>형식 라이브러리</translation>
     </message>
 </context>
 <context>
@@ -4305,6 +4317,119 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>분석 형식 사용(&amp;A)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypeLibrariesView</name>
+    <message>
+        <source>Add a type library</source>
+        <translation>형식 라이브러리 추가</translation>
+    </message>
+    <message>
+        <source>Leave the selected library out</source>
+        <translation>선택한 라이브러리 제외</translation>
+    </message>
+    <message>
+        <source>Library</source>
+        <translation>라이브러리</translation>
+    </message>
+    <message>
+        <source>Origin</source>
+        <translation>출처</translation>
+    </message>
+    <message>
+        <source>Data model</source>
+        <translation>데이터 모델</translation>
+    </message>
+    <message>
+        <source>Record ABI</source>
+        <translation>레코드 레이아웃 ABI</translation>
+    </message>
+    <message>
+        <source>Types</source>
+        <translation>형식</translation>
+    </message>
+    <message>
+        <source>Prototypes</source>
+        <translation>프로토타입</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>충돌</translation>
+    </message>
+    <message>
+        <source>Add a type library...</source>
+        <translation>형식 라이브러리 추가...</translation>
+    </message>
+    <message>
+        <source>Leave the library out</source>
+        <translation>이 라이브러리 제외</translation>
+    </message>
+    <message>
+        <source>Open a program to see the type libraries its types join.</source>
+        <translation>프로그램을 열면 그 형식에 결합되는 형식 라이브러리가 표시됩니다.</translation>
+    </message>
+    <message>
+        <source>This engine joins no type libraries.</source>
+        <translation>이 엔진은 형식 라이브러리를 지원하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>The program</source>
+        <translation>프로그램</translation>
+    </message>
+    <message>
+        <source>Added</source>
+        <translation>추가됨</translation>
+    </message>
+    <message>
+        <source>%1 joined nothing: %2</source>
+        <translation>%1에서 결합된 것이 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>Left out, as the program sizes a type they hold otherwise: %1</source>
+        <translation>프로그램에서 크기가 다른 형식을 포함하므로 제외됨: %1</translation>
+    </message>
+    <message>
+        <source>1 type library joins the program&apos;s types.</source>
+        <translation>형식 라이브러리 1개가 프로그램의 형식에 결합되어 있습니다.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n type libraries join the program&apos;s types.</source>
+        <translation>
+            <numerusform>형식 라이브러리 %n개가 프로그램의 형식에 결합되어 있습니다.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No type library joins the program&apos;s types.</source>
+        <translation>프로그램의 형식에 결합된 형식 라이브러리가 없습니다.</translation>
+    </message>
+    <message>
+        <source>Left out: %1.</source>
+        <translation>제외됨: %1.</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be listed: %1</source>
+        <translation>형식 라이브러리를 나열하지 못했습니다: %1</translation>
+    </message>
+    <message>
+        <source>Add a Type Library</source>
+        <translation>형식 라이브러리 추가</translation>
+    </message>
+    <message>
+        <source>Libraries whose records lay out as the program&apos;s:</source>
+        <translation>레코드 배치가 프로그램과 같은 라이브러리:</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>추가</translation>
+    </message>
+    <message>
+        <source>Reading the program&apos;s types again...</source>
+        <translation>프로그램의 형식을 다시 읽는 중...</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be changed: %1</source>
+        <translation>형식 라이브러리를 변경하지 못했습니다: %1</translation>
     </message>
 </context>
 </TS>

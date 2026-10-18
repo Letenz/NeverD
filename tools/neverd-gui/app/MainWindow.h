@@ -33,6 +33,7 @@ class CodeView;
 class DisassemblyView;
 class ExtensionsView;
 class LocalTypesView;
+class TypeLibrariesView;
 class GraphOverview;
 class HexView;
 class NavigationBand;
@@ -287,6 +288,7 @@ private:
   GraphOverview *overview_ = nullptr;
   ExtensionsView *extensions_ = nullptr;
   LocalTypesView *localTypes_ = nullptr;
+  TypeLibrariesView *typeLibraries_ = nullptr;
   ChooserView *functions_ = nullptr;
   QHash<QString, Dock *> docks_;
   QHash<int, ChooserView *> choosers_;

@@ -671,6 +671,11 @@ bool Engine::declaresLocalTypes() {
          engineSymbol<SessionJsonFunction>("neverd_type_declarations_json") &&
          engineSymbol<SessionLoadFunction>("neverd_type_declarations_load");
 }
+bool Engine::choosesTypeLibraries() {
+  return engineSymbol<SessionJsonFunction>("neverd_type_libraries_json") &&
+         engineSymbol<LocalTypesFunction>("neverd_type_libraries_set") &&
+         engineSymbol<SessionLoadFunction>("neverd_type_libraries_load");
+}
 bool Engine::findsPdbFiles() {
   return engineSymbol<PdbReferenceFunction>("neverd_pdb_reference_json") &&
          engineSymbol<PdbSearchFunction>("neverd_session_set_pdb_search");
@@ -1539,6 +1544,44 @@ bool Engine::localTypesChanged() {
   return onDisk != backendJson(rows(session_));
 }
 
+fs::path Engine::typeLibrariesPath() const {
+  return project_files::path(
+      utf8Path(ownedString(neverd_session_file_path(session_))),
+      project_files::File::TypeLibraries);
+}
+
+std::optional<Json> Engine::typeLibrariesOnDisk() {
+  const fs::path path = typeLibrariesPath();
+  Json onDisk = {{"added", Json::array()}, {"removed", Json::array()}};
+  if (!fs::exists(path))
+    return onDisk;
+  if (fs::file_size(path) > MaxDeclarationBytes)
+    throw Error("resource_limit", "The type libraries file exceeds 4 MiB");
+  std::ifstream input(path, std::ios::binary);
+  if (!input)
+    throw Error("load_failed", "Cannot read the type libraries file");
+  const std::string text((std::istreambuf_iterator<char>(input)), {});
+  try {
+    const Json read = parseJson(text, MaxDeclarationBytes);
+    if (!read.is_object())
+      return std::nullopt;
+    for (const char *key : {"added", "removed"})
+      if (read.contains(key))
+        onDisk[key] = read.at(key);
+  } catch (const Error &) {
+    return std::nullopt;
+  }
+  return onDisk;
+}
+
+bool Engine::typeLibrariesChanged() {
+  if (!choosesTypeLibraries())
+    return false;
+  // A file that does not parse differs; loading it reports why.
+  const std::optional<Json> onDisk = typeLibrariesOnDisk();
+  return !onDisk || *onDisk != typeLibraryChoice_;
+}
+
 Json Engine::readCodeEdits(const std::string &binary) {
   const auto path =
       project_files::path(utf8Path(binary), project_files::File::Code);
@@ -2066,6 +2109,12 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     neverd_session_destroy(session_);
     session_ = next.release();
     codeEdits_ = std::move(nextCodeEdits);
+    // A file too large or unreadable is the next project_sync's to report.
+    try {
+      typeLibraryChoice_ = typeLibrariesOnDisk().value_or(nullptr);
+    } catch (const Error &) {
+      typeLibraryChoice_ = nullptr;
+    }
     if (!reuseLock)
       lock_ = std::move(nextLock);
     readOnly_ = readOnly;
@@ -2386,6 +2435,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     auto &store = history();
     const bool tables = !store.current();
     const bool types = localTypesChanged();
+    const bool libraries = typeLibrariesChanged();
     std::size_t kept = 0;
     if (tables) {
       std::map<std::uint64_t, std::string> committed, staged;
@@ -2434,17 +2484,26 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       if (load(session_) != 0)
         throw Error("load_failed", error(), {{"state_changed", tables}});
     }
-    if (types) {
+    // The type libraries are no history's: the engine reads them again.
+    if (libraries) {
+      static const auto load =
+          engineSymbol<SessionLoadFunction>("neverd_type_libraries_load");
+      if (load(session_) != 0)
+        throw Error("load_failed", error(), {{"state_changed", tables}});
+      typeLibraryChoice_ = typeLibrariesOnDisk().value_or(nullptr);
+    }
+    if (types || libraries) {
       analyzed_ = false;
       preparedFunction_.reset();
     }
-    if (tables || types) {
+    if (tables || types || libraries) {
       invalidate();
       ++revision_;
     }
-    return {{"changed", tables || types},
+    return {{"changed", tables || types || libraries},
             {"tables", tables},
             {"local_types", types},
+            {"type_libraries", libraries},
             {"comments_kept", kept},
             {"dirty", dirty_}};
   }
@@ -2803,6 +2862,60 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     }
     if (operand)
       result["operand"] = *operand;
+    return result;
+  }
+  if (operation == "type_libraries" || operation == "type_libraries_set") {
+    if (!choosesTypeLibraries())
+      throw Error("unsupported", "This engine chooses no type libraries");
+    const auto reply = [this](const std::string &text) {
+      if (text.empty())
+        throw Error("type_libraries_failed", error());
+      try {
+        return Json::parse(text);
+      } catch (const Json::exception &) {
+        throw Error("engine_error", "Engine returned malformed JSON");
+      }
+    };
+    if (operation == "type_libraries") {
+      static const auto list =
+          engineSymbol<SessionJsonFunction>("neverd_type_libraries_json");
+      return reply(ownedString(list(session_)));
+    }
+    requireWriter();
+    // The libraries joined beyond the image's own and those left out, by
+    // name: the engine keeps them in libraries.json, outside the history.
+    Json choice = {{"added", Json::array()}, {"removed", Json::array()}};
+    for (const char *key : {"added", "removed"})
+      if (p.contains(key)) {
+        if (!p.at(key).is_array() || p.at(key).size() > 64)
+          throw Error("invalid_request",
+                      std::string(key) + " must be an array of names");
+        for (const auto &name : p.at(key))
+          choice[key].push_back(
+              stringField(Json{{"name", name}}, "name", {}, 256));
+      }
+    static const auto set =
+        engineSymbol<LocalTypesFunction>("neverd_type_libraries_set");
+    Json result = reply(ownedString(set(session_, choice.dump().c_str())));
+    analyzed_ = false;
+    preparedFunction_.reset();
+    invalidate();
+    ++revision_;
+    // The writer lock this session holds covers the write, which the
+    // engine's own save would take again.
+    const Json kept = {{"added", result.value("added", Json::array())},
+                       {"removed", result.value("removed", Json::array())}};
+    try {
+      atomicWrite(typeLibrariesPath(), sidecarText(kept));
+    } catch (const Error &) {
+      // The engine joins again what the file still says.
+      static const auto load =
+          engineSymbol<SessionLoadFunction>("neverd_type_libraries_load");
+      (void)load(session_);
+      throw;
+    }
+    recordProject();
+    typeLibraryChoice_ = kept;
     return result;
   }
   if (operation == "local_types" || operation == "local_type" ||

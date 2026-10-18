@@ -343,6 +343,18 @@ name (`machOCommandPlatform`, `MachOPlatform.h`, which the emulator's images
 read too), and `darwinPlatform` (`DarwinOperatingSystem.h`) tells macOS
 programs from iOS ones; a program for Mac Catalyst, tvOS or watchOS, or one
 that names no platform or several, joins no library.
+`scripts/generate_freebsd_types.py` renders what FreeBSD's headers declare
+for a program into `FreeBSDX64.h`, `FreeBSDX86.h`, `FreeBSDARM64.h` and
+`FreeBSDARM.h`, from the /usr/include of FreeBSD 15.1-RELEASE's base.txz for
+amd64 and arm64: a 32-bit program reads the 64-bit base's headers, whose
+machine headers that differ take their i386 and arm forms, as FreeBSD builds
+its 32-bit libraries. The loader tells a FreeBSD program by the OS ABI byte
+FreeBSD's toolchains brand it with, or the ABI tag note naming the FreeBSD
+version it was built for (`runsUnderFreeBSD`, `ELFOperatingSystem.h`), which
+an image without the brand carries too; such a program runs under no Linux
+(`runsUnderLinux`), and joins its architecture's library
+(`NEVERD_HEADER_ELF_SYSTEM`), and the call model takes FreeBSD's C library's
+declarations (`LibCVariant::FreeBSD`).
 `scripts/generate_uefi_types.py` renders what EDK II's MdePkg declares for a
 UEFI module into `UefiX64.h`, `UefiX86.h` and `UefiARM64.h`: the UEFI and
 PI specifications, every protocol, GUID and industry standard, and the
@@ -362,8 +374,9 @@ names to an image (an x64 or x86 PE of the native subsystem joins its
 kernel's; one of the Windows GUI or console subsystem joins its user mode's,
 then, on x64 and x86, its kernel's for the few ntdll exports only the
 kernel's headers declare, such as `RtlIsNameLegalDOS8Dot3`; a Linux
-program on glibc, bionic or musl joins its architecture's, a Mach-O program
-its platform's, a UEFI module MdePkg's) after the program's debug
+program on glibc, bionic or musl joins its architecture's, a FreeBSD
+program FreeBSD's, a Mach-O program its platform's, a UEFI module
+MdePkg's) after the program's debug
 information and before the user's declarations, where the library's data
 model and record ABI are the program's:
 - a header type joins only where the program has no type of its name;
@@ -371,14 +384,26 @@ model and record ABI are the program's:
 - a header record laid out with a type the program sizes otherwise is left
   out and reported (`conflicts`).
 
+A project changes which libraries join (`neverd_type_libraries_set`, the
+workbench's Type libraries window): it adds a library whose data model and
+record ABI are the program's, or leaves out one the image joins, and the
+program's types are read again. The engine owns the choice, as it owns the
+debug files chosen: the session reads `libraries.json` from the project when
+it loads, `neverd_type_libraries_save` writes it (the worker writes it under
+the writer lock it holds, as it writes `load.json`), and undo history leaves
+it out. The image's libraries join in their rows' order but those left out,
+then those added in the order the user added them;
+`neverd_type_libraries_json` lists every library with what it joined, for a
+program or none.
+
 The call model (`lib/libc`) answers what a routine takes and returns before
 a program joins a header library, and where none joins: function discovery,
 the call analysis, MedIR's ABI pass and both C writers read it from layers
 that do not link the type libraries, as LLVM's TargetLibraryInfo stands
 beside the declarations Clang reads from headers. Its tables follow the GNU C
 Library's declarations. The C library a program links (`LibCVariant`: GNU,
-musl, bionic, Darwin's libSystem or a Windows C runtime, which
-`libcVariantOf` reads from the image) selects what `LibCVariants.def` gives
+musl, bionic, Darwin's libSystem, FreeBSD's libc or a Windows C runtime,
+which `libcVariantOf` reads from the image) selects what `LibCVariants.def` gives
 a routine another library declares otherwise: Darwin's `sendfile` takes six
 arguments, and its `shm_open` is variadic, whose mode Apple's AArch64
 convention passes on the stack. On Darwin a routine's suffixed variants
@@ -7293,8 +7318,12 @@ observations. Bionic aliases enter this owner through the service registry.
 Guest path parsing retains a trailing separator's directory requirement
 separately from the catalogue key. Open, access and status share this lookup
 constraint. Directory creation resolves the parent and final name separately,
-so an existing final name still returns `EEXIST`. Catalogue configuration
-continues to require canonical file keys.
+so an existing final name still returns `EEXIST`. The same parser folds repeated
+separators after importing the original bounded guest string, as Linux's
+[`link_path_walk`](https://kernel.googlesource.com/pub/scm/linux/kernel/git/torvalds/linux/+/v4.9/fs/namei.c)
+does. Dot components and symbolic-link traversal retain their explicit
+unsupported boundaries. Catalogue configuration continues to require canonical
+file keys; no host path or filesystem participates in resolution.
 
 `LinuxFiles` shares pathname import and catalogue classification between open
 and existence queries. The catalogue's files, ancestor directories and root
@@ -8017,6 +8046,13 @@ execution remains a separate unsupported contract.
 all JNI call forms and explicit DEX methods reuse it and Bionic's GP argument reader.
 The finite intrinsic catalogue and value semantics live in `dalvik::Library`;
 JNI retains opaque identities and argument/reference transport only.
+`dalvik::Runtime` also owns the explicit API 28 application projection in
+`AndroidFramework`: lifecycle phase, Application/Context identities and the
+separate boot/system/application loaders. JNI and DEX enter the same library
+boundary and heap; native thread detach never resets that process state. JSON
+supplies an optional snapshot, not inferred initialization or a second object
+owner. See [application snapshots](android-application-runtime.md) for the
+admitted methods, loader namespace and unsupported lifecycle transitions.
 `LinuxBinderTransactions` routes object-free messages between guest-owned opens;
 LinuxMemory owns their read-only arenas and every service body remains guest code.
 It preserves admitted libbinder request/status flags at this shared transport

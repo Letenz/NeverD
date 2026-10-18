@@ -4,6 +4,16 @@
 
 # Testing NeverD
 
+`AndroidFrameworkTest.*` checks explicit API 28 lifecycle phases, retained
+Application/Context identities, separate loader namespaces and parents,
+load-without-initialization, JNI-library/DEX sharing, type/null checks and
+terminal resource stops. `AndroidJNI.Application*` executes independent AArch64
+callers at O0/O2 across relocation packing and available CPU backends. It checks
+two native threads, global/local reference deletion and detach/reattach against
+the same process objects. `ProcessReport.AndroidApplicationSnapshot*` checks
+strict JSON input. These tests use synthetic inputs without a phone, host JVM
+or network; they do not establish arbitrary framework lifecycle equivalence.
+
 `NeverDDirectTailCallMetadataTests` builds real x86, x64 and AArch64 CFGs and
 validates direct tail-call targets at strict instruction boundaries. It covers
 fallthrough and conditional transfers into known functions, an existing direct
@@ -6926,6 +6936,15 @@ oracle. Live maps/task/status/fdinfo and opt-in timestamp/allocation maintenance
 have separate `LinuxProcTests` and `AndroidProcTests` coverage; see
 [live proc](linux-live-proc.md). These bounded contracts do not establish
 creation or complete Android filesystem equivalence.
+
+`LinuxFileNamespace.RepeatedSeparators*` and `Separator*` check repeated guest
+path separators in both LP64 ABIs: shared bytes and metadata, write visibility,
+directory and link boundaries, and the original 4096-byte import limit.
+`AndroidFiles.RepeatedSeparatorsUseTheSharedFileNamespace` runs independent raw
+syscall and Bionic callers at O0/O2 with all relocation packings; successful
+aliases preserve errno and missing/non-directory paths retain exact errors.
+Catalogue inputs still require canonical names, and dot walks remain explicit
+unsupported boundaries.
 
 Independent tokenization fixtures at O0/O2 and all three relocation packings
 check changed delimiters, interleaved contexts, unsigned bytes, final/empty

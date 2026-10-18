@@ -372,6 +372,26 @@ U64 files_access_unsupported(U64 Mode) {
   return raw(FaccessAt, (U64)-100, (U64)Name, Permission, 0);
 }
 
+U64 files_repeated_slashes(void) {
+  static const char *const Aliases[] = {"//fixture/data", "/fixture///data",
+                                        "///fixture////data"};
+  for (unsigned I = 0; I < sizeof(Aliases) / sizeof(Aliases[0]); ++I) {
+    U64 Name = (U64)Aliases[I];
+    U64 F = raw(OpenAt, (U64)-1, Name, 0, 0);
+    CHECK(F, 3);
+    CHECK(raw(Read, F, (U64)Pages, sizeof(Expected), 0), sizeof(Expected));
+    for (unsigned J = 0; J < sizeof(Expected); ++J)
+      CHECK(Pages[J], Expected[J]);
+    CHECK(raw(FaccessAt, (U64)-1, Name, 0, 0), 0);
+    CHECK(raw(Close, F, 0, 0, 0), 0);
+  }
+  CHECK(raw(OpenAt, 0, (U64) "//fixture//missing", 0, 0), (U64)-2);
+  CHECK(raw(FaccessAt, 0, (U64) "//fixture//data///", 0, 0), (U64)-20);
+  CHECK(raw(FstatAt, 0, (U64) "//fixture//data//child", 1, 0), (U64)-20);
+  CHECK(raw(MkdirAt, 0, (U64) "//fixture//data///", 0777, 0), (U64)-17);
+  return 0;
+}
+
 U64 files_directory_errors(void) {
   CHECK(raw(MkdirAt, (U64)-1, (U64)Path, (U64)-1, 99), (U64)-17);
   CHECK(raw(MkdirAt, 0, (U64) "/", 0, 0), (U64)-17);
@@ -815,6 +835,27 @@ extern I64 syscall(I64, ...);
 extern int *__errno(void);
 extern I64 readlink(const char *, void *, U64);
 extern I64 readlinkat(int, const char *, void *, U64);
+U64 files_repeated_slashes_bionic(void) {
+  *__errno() = 73;
+  int F = open("///fixture////data", 0);
+  CHECK(F, 3);
+  CHECK(*__errno(), 73);
+  CHECK(read(F, Pages, sizeof(Expected)), sizeof(Expected));
+  for (unsigned I = 0; I < sizeof(Expected); ++I)
+    CHECK(Pages[I], Expected[I]);
+  CHECK(access("//fixture//data", 0), 0);
+  CHECK(faccessat(-1, "/fixture///data", 0, 0), 0);
+  CHECK(*__errno(), 73);
+  CHECK(close(F), 0);
+  CHECK(openat(-1, "//fixture//missing", 0), -1);
+  CHECK(*__errno(), 2);
+  CHECK(access("//fixture//data///", 0), -1);
+  CHECK(*__errno(), 20);
+  CHECK(mkdir("//fixture//data///", 0777), -1);
+  CHECK(*__errno(), 17);
+  return 0;
+}
+
 U64 files_links_bionic(void) {
   for (unsigned Route = 0; Route != 3; ++Route) {
     *__errno() = 73;

@@ -270,14 +270,20 @@ struct LibCVariadicForward {
   uint8_t Count = 0;
   std::string_view Type;
   bool Environment = false;
-  /// The only object format whose C library declares the routine variadic,
-  /// or Unknown for every format's.
+  /// The only object format whose C libraries declare the routine
+  /// variadic, or Unknown for every format's: for ELF, Linux's (variadicIn).
   BinaryFormat Format = BinaryFormat::Unknown;
 };
 
 /// How a function passes its arguments on to the variadic routine C name
 /// \p Name links to, or null when C cannot.
 const LibCVariadicForward *libcVariadicForward(std::string_view Name);
+
+/// Whether a program of C library \p Variant declares \p Forward's routine
+/// variadic: every C library does where the row names no format, and where
+/// it names ELF, Linux's do (GNU, musl and bionic), as Linux's ptrace
+/// takes its address and datum variadic and FreeBSD's fixed.
+bool variadicIn(const LibCVariadicForward &Forward, LibCVariant Variant);
 
 /// ABI category of one fixed parameter in a known variadic function.  Pointer
 /// parameters must be symbolized before code generation; integer parameters

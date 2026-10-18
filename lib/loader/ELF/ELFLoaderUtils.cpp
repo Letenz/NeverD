@@ -595,6 +595,16 @@ void parseNotes(const llvm::object::ELFFile<ELFT> &ELF, const uint8_t *Data,
             uint32_t(Desc[0]) | uint32_t(Desc[1]) << 8 |
             uint32_t(Desc[2]) << 16 | uint32_t(Desc[3]) << 24;
       }
+      // FreeBSD's ABI tag names the system version the image was built for.
+      if (NoteNameRef == elf_notes::FreeBSDOwner &&
+          NH.Type == elf_notes::FreeBSDABITag && NH.DescSz >= 4 &&
+          Img.ELFMetadata) {
+        const uint8_t *Desc =
+            P + sizeof(ELFNoteHeader) + static_cast<size_t>(NameAlign);
+        Img.ELFMetadata->FreeBSDVersion =
+            uint32_t(Desc[0]) | uint32_t(Desc[1]) << 8 |
+            uint32_t(Desc[2]) << 16 | uint32_t(Desc[3]) << 24;
+      }
 
       P += static_cast<size_t>(TotalSize);
     }

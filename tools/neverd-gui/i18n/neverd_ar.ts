@@ -911,6 +911,14 @@
         <source>Set t&amp;ype...</source>
         <translation>تعيين النوع(&amp;Y)...</translation>
     </message>
+    <message>
+        <source>Type libr&amp;aries</source>
+        <translation>مكتبات الأنواع(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
+        <translation>عرض مكتبات الأنواع التي تنضم إلى أنواع البرنامج، وإضافة مكتبة أو إزالتها</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2465,6 +2473,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
         <translation>ملفات DWARF (*.debug *.dSYM);;جميع الملفات (*)</translation>
+    </message>
+    <message>
+        <source>Type Libraries</source>
+        <translation>مكتبات الأنواع</translation>
     </message>
 </context>
 <context>
@@ -4440,6 +4452,124 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>استخدام نوع التحليل(&amp;A)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypeLibrariesView</name>
+    <message>
+        <source>Add a type library</source>
+        <translation>إضافة مكتبة أنواع</translation>
+    </message>
+    <message>
+        <source>Leave the selected library out</source>
+        <translation>استبعاد المكتبة المحددة</translation>
+    </message>
+    <message>
+        <source>Library</source>
+        <translation>المكتبة</translation>
+    </message>
+    <message>
+        <source>Origin</source>
+        <translation>المصدر</translation>
+    </message>
+    <message>
+        <source>Data model</source>
+        <translation>نموذج البيانات</translation>
+    </message>
+    <message>
+        <source>Record ABI</source>
+        <translation>واجهة ABI لتخطيط السجلات</translation>
+    </message>
+    <message>
+        <source>Types</source>
+        <translation>الأنواع</translation>
+    </message>
+    <message>
+        <source>Prototypes</source>
+        <translation>النماذج الأولية</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>التعارضات</translation>
+    </message>
+    <message>
+        <source>Add a type library...</source>
+        <translation>إضافة مكتبة أنواع...</translation>
+    </message>
+    <message>
+        <source>Leave the library out</source>
+        <translation>استبعاد المكتبة</translation>
+    </message>
+    <message>
+        <source>Open a program to see the type libraries its types join.</source>
+        <translation>افتح برنامجًا لرؤية مكتبات الأنواع التي تنضم إلى أنواعه.</translation>
+    </message>
+    <message>
+        <source>This engine joins no type libraries.</source>
+        <translation>هذا المحرك لا يضم مكتبات أنواع.</translation>
+    </message>
+    <message>
+        <source>The program</source>
+        <translation>البرنامج</translation>
+    </message>
+    <message>
+        <source>Added</source>
+        <translation>مضافة</translation>
+    </message>
+    <message>
+        <source>%1 joined nothing: %2</source>
+        <translation>لم يُضَف شيء من %1: %2</translation>
+    </message>
+    <message>
+        <source>Left out, as the program sizes a type they hold otherwise: %1</source>
+        <translation>مستبعدة لأن البرنامج يعطي نوعًا تحتويه حجمًا آخر: %1</translation>
+    </message>
+    <message>
+        <source>1 type library joins the program&apos;s types.</source>
+        <translation>مكتبة أنواع واحدة منضمة إلى أنواع البرنامج.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n type libraries join the program&apos;s types.</source>
+        <translation>
+            <numerusform>%n مكتبة أنواع منضمة إلى أنواع البرنامج.</numerusform>
+            <numerusform>%n مكتبة أنواع منضمة إلى أنواع البرنامج.</numerusform>
+            <numerusform>%n مكتبتا أنواع منضمتان إلى أنواع البرنامج.</numerusform>
+            <numerusform>%n مكتبات أنواع منضمة إلى أنواع البرنامج.</numerusform>
+            <numerusform>%n مكتبة أنواع منضمة إلى أنواع البرنامج.</numerusform>
+            <numerusform>%n مكتبة أنواع منضمة إلى أنواع البرنامج.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No type library joins the program&apos;s types.</source>
+        <translation>لا توجد مكتبة أنواع منضمة إلى أنواع البرنامج.</translation>
+    </message>
+    <message>
+        <source>Left out: %1.</source>
+        <translation>المستبعدة: %1.</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be listed: %1</source>
+        <translation>تعذر سرد مكتبات الأنواع: %1</translation>
+    </message>
+    <message>
+        <source>Add a Type Library</source>
+        <translation>إضافة مكتبة أنواع</translation>
+    </message>
+    <message>
+        <source>Libraries whose records lay out as the program&apos;s:</source>
+        <translation>المكتبات التي تُرتَّب سجلاتها كسجلات البرنامج:</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>إضافة</translation>
+    </message>
+    <message>
+        <source>Reading the program&apos;s types again...</source>
+        <translation>جارٍ إعادة قراءة أنواع البرنامج...</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be changed: %1</source>
+        <translation>تعذر تغيير مكتبات الأنواع: %1</translation>
     </message>
 </context>
 </TS>

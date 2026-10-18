@@ -28,11 +28,12 @@ namespace neverd::libc {
 
 /// A C library whose declarations of a routine may differ from another's.
 enum class LibCVariant : uint8_t {
-  GNU,    ///< The GNU C Library, and any program whose library is unknown.
-  Musl,   ///< musl.
-  Bionic, ///< Android's bionic.
-  Darwin, ///< Darwin's libSystem: macOS and iOS.
-  Windows ///< A Windows C runtime.
+  GNU,     ///< The GNU C Library, and any program whose library is unknown.
+  Musl,    ///< musl.
+  Bionic,  ///< Android's bionic.
+  Darwin,  ///< Darwin's libSystem: macOS and iOS.
+  FreeBSD, ///< FreeBSD's libc.
+  Windows  ///< A Windows C runtime.
 };
 
 /// The C library a program of object format \p Format links: Darwin's for a
@@ -41,7 +42,8 @@ enum class LibCVariant : uint8_t {
 LibCVariant libcVariantOf(BinaryFormat Format);
 
 /// The C library \p Image links: as libcVariantOf(BinaryFormat) for its ABI
-/// format, an ELF program's by the C library it runs on (linuxLibC).
+/// format, an ELF program's by the system and the C library it runs on
+/// (runsUnderFreeBSD, linuxLibC).
 LibCVariant libcVariantOf(const BinaryImage &Image);
 
 /// The routine the symbol name \p Name links to in a program of C library

@@ -260,6 +260,9 @@ Json hello() {
   if (Engine::declaresLocalTypes())
     for (const char *operation : {"local_types_declare", "local_types_forget"})
       result["capabilities"].push_back(operation);
+  if (Engine::choosesTypeLibraries())
+    for (const char *operation : {"type_libraries", "type_libraries_set"})
+      result["capabilities"].push_back(operation);
   // Structure offsets are operand formats that name local types.
   if (Engine::fitsLocalTypes()) {
     result["capabilities"].push_back("local_types_fit");

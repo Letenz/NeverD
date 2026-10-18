@@ -270,9 +270,8 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
     }
   }
   auto Executed = runDex([&](const auto &Admit, uint64_t) {
-    return mobile::dalvik::executeLibrary(
-        *JNI.Heap, M, Static || New ? 0 : (*Receiver)->Identity, Values, Admit,
-        Nonvirtual, JNI.Dex.get());
+    return JNI.DexRuntime->library(M, Static || New ? 0 : (*Receiver)->Identity,
+                                   Values, Admit, Nonvirtual);
   });
   if (!Executed || !*Executed || JNI.Threads.at(threadID()).Exception)
     return Executed;

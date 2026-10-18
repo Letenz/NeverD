@@ -149,6 +149,14 @@ struct Session {
     std::string Error;
   };
   std::vector<JoinedHeaders> LocalTypeHeaders;
+  /// The user's choice of header libraries beyond the image's own
+  /// (libraries.json): those joined besides, in order, and those of the
+  /// image's left out.
+  struct LibraryChoice {
+    std::vector<types::HeaderLibrary> Added;
+    std::vector<types::HeaderLibrary> Removed;
+  };
+  LibraryChoice TypeLibraryChoice;
   /// The type the joined libraries give the image's entry point, a pointer
   /// to a function, where the image's kind says which
   /// (NEVERD_HEADER_PE_ENTRY_TYPE): empty for none.

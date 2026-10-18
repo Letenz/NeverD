@@ -2964,6 +2964,13 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None)
     return Have;
   auto Clamp = [&](size_t Limit) { return std::min(Limit, Have); };
+  // A call through a typed member that points to a function passes the
+  // parameters its type declares, a UEFI protocol's OutputString(This,
+  // String): a word the caller pushed to make room on the stack is none.
+  if (E.IsIndirectCall && E.IndirectTarget)
+    if (const TypeRef Function = typedSlotFunction(*E.IndirectTarget);
+        Function && !Function->ParamTypes.empty())
+      return Clamp(Function->ParamTypes.size());
   const std::string Name = callIdentifier(E);
   const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format);
   auto UnknownAt = [&](size_t I) {
@@ -4467,6 +4474,22 @@ TypeRef HighCWriter::typedMemberType(const HighExpr &Addr, uint16_t AccessSize,
     return nullptr;
   return Record->displayFieldTypeAt(Peeled->second, AccessSize,
                                     /*ArrayElements=*/true, Class);
+}
+
+TypeRef HighCWriter::typedSlotFunction(const HighExpr &Callee) const {
+  const unsigned PtrSize = Opts.TheArch == Arch::X86 ? 4u : 8u;
+  const HighExpr *Slot = peelIntegerViewOps(&Callee);
+  if (!Slot || Slot->Kind != ExprKind::Load || Slot->Operands.empty() ||
+      !Slot->Operands[0])
+    return nullptr;
+  const HighExpr *SlotAddr = peelIntegerViewOps(Slot->Operands[0].get());
+  if (!SlotAddr || !typedMemberAccess(*SlotAddr, PtrSize))
+    return nullptr;
+  const TypeRef Member = typedMemberType(*SlotAddr, PtrSize);
+  if (!Member || Member->Kind != NdTypeKind::Ptr || !Member->Pointee ||
+      Member->Pointee->Kind != NdTypeKind::Func)
+    return nullptr;
+  return Member->Pointee;
 }
 
 std::string HighCWriter::unknownVarUse(const HighExpr &E,

@@ -4519,6 +4519,108 @@ TEST_F(SessionCAPITest, LibSystemsTypesComeFromApplesHeaders) {
   EXPECT_EQ(Source.find("_GNU_SOURCE"), std::string::npos) << Source;
 }
 
+TEST_F(SessionCAPITest, TypeLibrariesAreChosenAndKeptWithTheProject) {
+  // A glibc program joins glibc's library; the user may leave it out and
+  // join musl's instead, which libraries.json keeps for the next session.
+  std::ifstream Input(std::filesystem::path(__FILE__).parent_path() / "types" /
+                          "fixtures" / "linux_libc_calls_x64",
+                      std::ios::binary);
+  const std::string Program =
+      write("linux_libc_calls_x64",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Program.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto libraries = [&](const char *Raw) {
+    auto Parsed = llvm::json::parse(takeString(Raw));
+    EXPECT_TRUE(static_cast<bool>(Parsed))
+        << takeString(neverd_last_error(Session));
+    std::map<std::string, llvm::json::Object> Rows;
+    if (Parsed && Parsed->getAsObject())
+      if (const llvm::json::Array *List =
+              Parsed->getAsObject()->getArray("libraries"))
+        for (const llvm::json::Value &Row : *List)
+          if (const llvm::json::Object *Object = Row.getAsObject())
+            Rows[Object->getString("name").value_or("").str()] = *Object;
+    return Rows;
+  };
+  auto Rows = libraries(neverd_type_libraries_json(Session));
+  ASSERT_TRUE(Rows.count("linux-x64"));
+  EXPECT_EQ(Rows["linux-x64"].getBoolean("image"), true);
+  EXPECT_EQ(Rows["linux-x64"].getBoolean("joined"), true);
+  EXPECT_GT(Rows["linux-x64"].getInteger("types").value_or(0), 500);
+  EXPECT_EQ(Rows["musl-x64"].getBoolean("compatible"), true);
+  EXPECT_EQ(Rows["musl-x64"].getBoolean("joined"), false);
+  EXPECT_EQ(Rows["windows-user-x64"].getBoolean("compatible"), false);
+
+  // What the program may not join, or not leave out, fails and changes
+  // nothing.
+  for (const char *Wrong :
+       {R"({"added":["windows-user-x64"]})", R"({"added":["linux-x64"]})",
+        R"({"removed":["musl-x64"]})", R"({"added":["no-such-library"]})",
+        R"({"added":"musl-x64"})"}) {
+    EXPECT_EQ(neverd_type_libraries_set(Session, Wrong), nullptr) << Wrong;
+    EXPECT_FALSE(takeString(neverd_last_error(Session)).empty()) << Wrong;
+  }
+
+  Rows = libraries(neverd_type_libraries_set(
+      Session, R"({"added":["musl-x64"],"removed":["linux-x64"]})"));
+  ASSERT_EQ(neverd_type_libraries_save(Session), 0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(Rows["linux-x64"].getBoolean("joined"), false);
+  EXPECT_EQ(Rows["musl-x64"].getBoolean("joined"), true);
+  // The header takes musl's types from musl's headers now, and none of
+  // glibc's.
+  const std::string Source = takeString(neverd_local_types_source(
+      Session, R"({"language":"c","types":["FILE"]})"));
+  EXPECT_NE(Source.find("musl's headers declare"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("defined(__GLIBC__) && !defined(__UCLIBC__)"),
+            std::string::npos)
+      << Source;
+
+  // The project keeps the choice, which the next session reads.
+  const auto Kept =
+      std::filesystem::path(Program + ".neverd") / "libraries.json";
+  ASSERT_TRUE(std::filesystem::exists(Kept));
+  neverd_session_destroy(Session);
+  Session = neverd_session_create();
+  ASSERT_EQ(neverd_session_load(Session, Program.c_str()), 1);
+  Rows = libraries(neverd_type_libraries_json(Session));
+  EXPECT_EQ(Rows["musl-x64"].getBoolean("joined"), true);
+  EXPECT_EQ(Rows["linux-x64"].getBoolean("joined"), false);
+
+  // Left with none, the header defines every type itself.
+  libraries(neverd_type_libraries_set(Session, R"({"removed":["linux-x64"]})"));
+  const std::string Alone =
+      takeString(neverd_local_types_source(Session, R"({"language":"c"})"));
+  EXPECT_EQ(Alone.find("NEVERD_LIBC_FROM_SYSTEM"), std::string::npos) << Alone;
+
+  // A libraries.json edited by hand to add a library laid out otherwise
+  // joins nothing of it and says why; the libraries joined are listed
+  // first, in the order they join.
+  {
+    std::ofstream Edited(Kept, std::ios::trunc);
+    Edited << R"({"added":["musl-x64","windows-user-x64","musl-x64"],)"
+              R"("removed":["linux-x64"]})";
+  }
+  ASSERT_EQ(neverd_type_libraries_load(Session), 0)
+      << takeString(neverd_last_error(Session));
+  auto Listed =
+      llvm::json::parse(takeString(neverd_type_libraries_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(Listed));
+  const llvm::json::Array *List = Listed->getAsObject()->getArray("libraries");
+  ASSERT_TRUE(List && List->size() > 2);
+  const llvm::json::Object &Musl = *(*List)[0].getAsObject();
+  const llvm::json::Object &Windows = *(*List)[1].getAsObject();
+  EXPECT_EQ(Musl.getString("name"), "musl-x64");
+  EXPECT_GT(Musl.getInteger("types").value_or(0), 100);
+  EXPECT_EQ(Windows.getString("name"), "windows-user-x64");
+  EXPECT_EQ(Windows.getBoolean("joined"), true);
+  EXPECT_EQ(Windows.getBoolean("compatible"), false);
+  EXPECT_NE(Windows.getString("error").value_or("").find("lay out otherwise"),
+            llvm::StringRef::npos);
+  EXPECT_EQ((*List)[2].getAsObject()->getBoolean("joined"), false);
+}
+
 TEST_F(SessionCAPITest, AppleARMProgramsKeepALongDoubleThatIsADouble) {
   // Apple's 64-bit ARM lays records out as the Itanium ABI does, with a long
   // double that is a double, which the 64-bit System V targets' is not.
@@ -5521,6 +5623,62 @@ TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
   }
 }
 
+TEST_F(SessionCAPITest, FreeBSDProgramsJoinTheirArchitecturesLibrary) {
+  // An ELF program FreeBSD's toolchain brands (its OS ABI byte, and the ABI
+  // tag note naming FreeBSD 15.1) joins the FreeBSD library of its
+  // architecture, laid out by its data model and record ABI, and no Linux
+  // one: struct stat is as large as clang makes it for each target, i386's
+  // the smaller by its 32-bit time_t.  Each was built as linux_libc_calls.c
+  // says for its Linux sibling, with clang --target=<arch>-unknown-freebsd15.1
+  // and the sysroot of FreeBSD 15.1-RELEASE's base.txz, and lib32.txz for the
+  // 32-bit ones.
+  struct Program {
+    const char *File, *Library, *Model, *ABI;
+    int64_t StatSize;
+  };
+  const Program Programs[] = {
+      {"freebsd_libc_calls_x64", "freebsd-x64", "LP64", "itanium", 224},
+      {"freebsd_libc_calls_x86", "freebsd-x86", "ILP32", "i386-sysv", 208},
+      {"freebsd_libc_calls_arm64", "freebsd-arm64", "LP64", "itanium", 224},
+      {"freebsd_libc_calls_arm", "freebsd-arm", "ILP32", "aapcs32", 224},
+  };
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  for (const Program &P : Programs) {
+    SCOPED_TRACE(P.File);
+    std::ifstream Input(Fixtures / P.File, std::ios::binary);
+    const std::string Path =
+        write(P.File, std::string(std::istreambuf_iterator<char>(Input), {}));
+    neverd_session_t FreeBSD = neverd_session_create();
+    ASSERT_NE(FreeBSD, nullptr);
+    const auto Destroy =
+        llvm::make_scope_exit([&] { neverd_session_destroy(FreeBSD); });
+    ASSERT_EQ(neverd_session_load(FreeBSD, Path.c_str()), 1)
+        << takeString(neverd_last_error(FreeBSD));
+    ASSERT_GE(neverd_session_discover_functions(FreeBSD), 0)
+        << takeString(neverd_last_error(FreeBSD));
+    auto Parsed = llvm::json::parse(
+        takeString(neverd_local_types_json(FreeBSD, nullptr)));
+    ASSERT_TRUE(static_cast<bool>(Parsed));
+    const llvm::json::Object &Types = *Parsed->getAsObject();
+    EXPECT_EQ(Types.getString("dataModel"), P.Model);
+    EXPECT_EQ(Types.getString("recordABI"), P.ABI);
+    const llvm::json::Array *Headers = Types.getArray("headers");
+    ASSERT_TRUE(Headers && Headers->size() == 1u);
+    EXPECT_EQ((*Headers)[0].getAsObject()->getString("name"), P.Library);
+    auto Stat = llvm::json::parse(
+        takeString(neverd_local_type_json(FreeBSD, "stat", nullptr)));
+    ASSERT_TRUE(static_cast<bool>(Stat));
+    EXPECT_EQ(Stat->getAsObject()->getInteger("size"), P.StatSize);
+
+    const int Index = neverd_func_find_by_name(FreeBSD, "Number");
+    ASSERT_GE(Index, 0);
+    const std::string HighC = takeString(
+        neverd_decompile(FreeBSD, neverd_func_entry(FreeBSD, Index)));
+    EXPECT_NE(HighC.find("strtol("), std::string::npos) << HighC;
+  }
+}
+
 TEST_F(SessionCAPITest, DarwinCallsPassWhatLibSystemDeclares) {
   // libSystem declares some routines otherwise than glibc does, and Apple's
   // AArch64 convention passes a variadic routine's named parameters in
@@ -5624,6 +5782,9 @@ TEST_F(SessionCAPITest, UefiApplicationsJoinTheirFirmwaresLibrary) {
         << HighC;
     EXPECT_EQ(HighC.find("*(void **)(SystemTable->"), std::string::npos)
         << HighC;
+    // A call through a member passes the parameters its type declares: on
+    // x86 the word the caller pushed to make room on the stack is none.
+    EXPECT_EQ(HighC.find("unknown register"), std::string::npos) << HighC;
   }
 }
 

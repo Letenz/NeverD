@@ -143,6 +143,30 @@ TEST(LinkedI386GOTTable, AnchorThatIsNotTheGOTOnEveryPathStaysUnresolved) {
   }
 }
 
+// Clang -O0 spills the GOT register in an aligned frame and reloads it for
+// the dispatch after a foreign store and a PLT call.  The spill's own address
+// escapes only on the default path, which ends in abort.  The reload is no
+// constant a block-local fold can see: emulated with an unknown %esp, it
+// would read the second program header at 0x54.
+TEST(LinkedI386GOTTable, SpilledGOTRegisterResolvesItsSwitch) {
+  const std::optional<BinaryImage> Img = loadLibrary();
+  if (!Img)
+    GTEST_SKIP() << "the fixture links with ld.lld";
+  const std::optional<std::vector<va_t>> Targets =
+      dispatchTargets(*Img, "spilled_got_switch");
+  ASSERT_TRUE(Targets.has_value());
+  EXPECT_EQ(*Targets, caseLabels(*Img, "spilled_got_switch", 4));
+}
+
+// A callee that receives the spill's address before the reload may replace
+// the GOT address the dispatch adds.
+TEST(LinkedI386GOTTable, EscapedSpillStaysUnresolved) {
+  const std::optional<BinaryImage> Img = loadLibrary();
+  if (!Img)
+    GTEST_SKIP() << "the fixture links with ld.lld";
+  EXPECT_FALSE(dispatchTargets(*Img, "escaped_got_switch").has_value());
+}
+
 TEST(LinkedI386GOTTable, ResolvedTableDecompilesAsASwitch) {
   const std::optional<BinaryImage> Img = loadLibrary();
   if (!Img)

@@ -8,6 +8,8 @@
 //===----------------------------------------------------------------------===//
 #include "neverd/dalvik/Runtime.h"
 
+#include "AndroidFramework.h"
+
 #include "neverd/dalvik/Library.h"
 
 #include <bit>
@@ -149,6 +151,7 @@ U binary(std::string_view op, U left, U right, const Frame &frame) {
 struct Runtime::State {
   const Program &program;
   std::shared_ptr<Heap> heap;
+  AndroidFramework framework;
   struct ClassState {
     enum Status {
       Prepared,
@@ -960,7 +963,7 @@ struct Runtime::State::Engine {
             auto args = std::span<const uint64_t>(values).subspan(!static_call);
             auto executed =
                 executeLibrary(*state.heap, *library, receiver, args, admit,
-                               super || direct, &program);
+                               super || direct, &program, &state.framework);
             if (executed.stop != ExecutionStop::Returned)
               throw Halt{std::move(executed)};
             result = executed.value;
@@ -1113,8 +1116,10 @@ Program::Program(
     if (!classes.emplace(std::move(name), std::move(item)).second)
       throw Error("duplicate supplied DEX class");
   }
-  if (android_properties)
+  if (android_properties) {
     addAndroidVersion(*android_properties);
+    addAndroidFramework();
+  }
 }
 bool Program::containsClass(std::string_view name) const {
   return findClass(name) != nullptr;
@@ -1329,9 +1334,13 @@ ExecutionResult Program::execute(const Method &method,
   Runtime runtime(*this);
   return runtime.execute(method, args, admit, stack_bytes);
 }
-Runtime::Runtime(const Program &program, std::shared_ptr<Heap> heap)
-    : state(std::make_unique<State>(program, heap ? std::move(heap)
-                                                  : std::make_shared<Heap>())) {
+Runtime::Runtime(const Program &program, std::shared_ptr<Heap> heap,
+                 std::optional<AndroidApplicationSnapshot> application)
+    : state(std::make_unique<State>(
+          program, heap ? std::move(heap) : std::make_shared<Heap>(),
+          AndroidFramework(application))) {
+  if (application && !program.containsClass("Landroid/app/ActivityThread;"))
+    throw Error("Android application snapshot requires an Android program");
 }
 Runtime::~Runtime() = default;
 ExecutionResult Runtime::allocate(std::string_view descriptor, bool initialized,
@@ -1365,6 +1374,21 @@ ExecutionResult Runtime::execute(const Method &method,
                                  uint64_t stack_bytes) {
   return state->invoke([&] {
     return State::Engine(*state, admit, stack_bytes).run(method, args, 0);
+  });
+}
+ExecutionResult Runtime::library(const LibraryMethod &method, uint64_t receiver,
+                                 std::span<const uint64_t> args,
+                                 const AdmitInstruction &admit,
+                                 bool nonvirtual) {
+  return state->invoke([&] {
+    if (!admit)
+      throw Halt{{ExecutionStop::Invalid, 0, {}, "missing Java work budget"}};
+    auto result =
+        executeLibrary(*state->heap, method, receiver, args, admit, nonvirtual,
+                       &state->program, &state->framework);
+    if (result.stop != ExecutionStop::Returned)
+      throw Halt{std::move(result)};
+    return result.value;
   });
 }
 } // namespace neverd::mobile::dalvik

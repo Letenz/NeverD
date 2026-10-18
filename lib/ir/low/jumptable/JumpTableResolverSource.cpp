@@ -284,6 +284,49 @@ static bool lastWriteMakesConstant(const std::vector<LowOp> &Ops, int Before,
          computesConstant(Ops, Def, Reg, 0);
 }
 
+// Whether the last write to register Reg before Ops[Before] reloads the whole
+// register from a frame cell (`mov 0x54(%esp),%eax`, a spill read back).
+static bool lastWriteReloadsFrameCell(const std::vector<LowOp> &Ops, int Before,
+                                      uint64_t Reg, uint16_t RegSize,
+                                      const TargetRegInfo &TRI) {
+  int Def = reachingDefIdx(Ops, Before - 1, NdVar::reg(Reg, RegSize));
+  for (int Depth = 0; Def >= 0 && Ops[Def].Opcode == NdOp::COPY &&
+                      Ops[Def].NumInputs >= 1 && Ops[Def].Inputs[0].isTemp();
+       ++Depth) {
+    if (Depth >= limits::kMaxQuasiCopyDepth)
+      return false;
+    Def = reachingDefIdx(Ops, Def - 1, Ops[Def].Inputs[0]);
+  }
+  if (Def < 0 || Ops[Def].Opcode != NdOp::LOAD || Ops[Def].NumInputs < 1 ||
+      Ops[Def].Output.Size != RegSize)
+    return false;
+  NdVar Address =
+      Ops[Def].NumInputs >= 2 ? Ops[Def].Inputs[1] : Ops[Def].Inputs[0];
+  int From = Def - 1;
+  for (int Depth = 0; Depth < limits::kMaxQuasiCopyDepth; ++Depth) {
+    if (Address.isReg())
+      return TRI.isFrameReg(Address.Offset);
+    if (!Address.isTemp())
+      return false;
+    const int AddressDef = reachingDefIdx(Ops, From, Address);
+    if (AddressDef < 0)
+      return false;
+    const LowOp &Op = Ops[AddressDef];
+    // The x86 lifter widens a 32-bit address before the access.
+    const bool Copy =
+        (Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT) &&
+        Op.NumInputs >= 1;
+    const bool Offset =
+        (Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
+        Op.NumInputs >= 2 && Op.Inputs[1].isConst();
+    if (!Copy && !Offset)
+      return false;
+    Address = Op.Inputs[0];
+    From = AddressDef - 1;
+  }
+  return false;
+}
+
 bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
                                             const InsnRecord &Rec,
                                             JumpTableInfo &Info) {
@@ -720,6 +763,14 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
                           /*RequireMappedValue=*/true,
                           /*AllowUnmappedCOFFImageBase=*/
                           Disp != 0 && Img.isCOFF());
+      // Clang -O0 spills the GOT register and reloads it for the dispatch,
+      // which no block-local fold follows.  In a linked i386 image, propose
+      // the GOT address the image records; the displaced-base role must still
+      // prove that the reload holds it on every path.
+      if (!RelBaseOpt && Disp != 0 && LoadWidth == 4 && LoadIdx > 0 &&
+          lastWriteReloadsFrameCell(BlockOps, LoadIdx, BaseReg,
+                                    Img.getPointerSize(), TRIcg))
+        RelBaseOpt = linkedI386GlobalOffsetTable(Img);
       if (!RelBaseOpt)
         return false;
       FoldedTableBase = RelBaseOpt;

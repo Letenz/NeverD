@@ -421,7 +421,112 @@ bool optionsValid() {
     WithColor::error() << "--prototypes follows --all\n";
     return false;
   }
+  if (TypesLibraries &&
+      (TypesAll || !TypeNames.empty() || TypesFit || !TypesMember.empty())) {
+    WithColor::error() << "--libraries lists the type libraries; leave out "
+                          "--type, --all, --fit and --member\n";
+    return false;
+  }
   return true;
+}
+
+/// Changes the libraries the program's types join as --remove-library and
+/// --add-library ask, as the Type libraries window's Del and Ins do: a
+/// library the user added goes, one of the program's is left out, and one
+/// left out joins again.  False with the error printed.
+bool chooseLibraries(neverd_session_t Sess) {
+  if (TypesAddLibrary.empty() && TypesRemoveLibrary.empty())
+    return true;
+  std::optional<json::Value> Listed =
+      reply(Sess, neverd_type_libraries_json(Sess), "types");
+  if (!Listed)
+    return false;
+  std::vector<std::string> Added, Removed;
+  for (const auto &[Key, Names] : {std::pair(StringRef("added"), &Added),
+                                   std::pair(StringRef("removed"), &Removed)})
+    if (const json::Array *List = Listed->getAsObject()->getArray(Key))
+      for (const json::Value &Name : *List)
+        Names->push_back(Name.getAsString().value_or("").str());
+  for (const std::string &Name : TypesRemoveLibrary)
+    if (auto Found = find(Added, Name); Found != Added.end())
+      Added.erase(Found);
+    else if (!is_contained(Removed, Name))
+      Removed.push_back(Name);
+  for (const std::string &Name : TypesAddLibrary)
+    if (auto Found = find(Removed, Name); Found != Removed.end())
+      Removed.erase(Found);
+    else if (!is_contained(Added, Name))
+      Added.push_back(Name);
+  json::Object Choice{{"added", json::Array(Added)},
+                      {"removed", json::Array(Removed)}};
+  if (!reply(Sess,
+             neverd_type_libraries_set(Sess, text(std::move(Choice)).c_str()),
+             "types"))
+    return false;
+  // The project keeps the choice, as the workbench's does.
+  if (neverd_type_libraries_save(Sess) != 0) {
+    WithColor::error() << "types: " << takeLastError(Sess) << "\n";
+    return false;
+  }
+  return true;
+}
+
+/// The type libraries, as the workbench's Type libraries window lists them:
+/// those the program's types join, in the order they join, then those left
+/// out and the others whose records lay out as the program's.
+int libraries(neverd_session_t Sess, raw_ostream &Out) {
+  std::optional<json::Value> Listed =
+      reply(Sess, neverd_type_libraries_json(Sess), "types");
+  if (!Listed)
+    return 1;
+  if (JsonOutput) {
+    Out << *Listed << "\n";
+    return 0;
+  }
+  const json::Array *Rows = Listed->getAsObject()->getArray("libraries");
+  if (!Rows)
+    return 0;
+  size_t Joined = 0;
+  for (const json::Value &Value : *Rows)
+    Joined += Value.getAsObject() &&
+              Value.getAsObject()->getBoolean("joined").value_or(false);
+  Out << "\nType libraries (" << Joined << " joined):\n"
+      << format("  %-20s %-8s %-6s %-12s %7s %10s %9s\n", "Library", "Origin",
+                "Model", "Record ABI", "Types", "Prototypes", "Conflicts");
+  const auto count = [](const json::Object &Row, StringRef Key) {
+    const std::optional<int64_t> Count = Row.getInteger(Key);
+    return Count ? std::to_string(*Count) : std::string("-");
+  };
+  for (const json::Value &Value : *Rows) {
+    const json::Object *Row = Value.getAsObject();
+    if (!Row)
+      continue;
+    const bool Image = Row->getBoolean("image").value_or(false);
+    const bool In = Row->getBoolean("joined").value_or(false);
+    if (!In && !Row->getBoolean("compatible").value_or(false))
+      continue;
+    const StringRef Name = Row->getString("name").value_or("");
+    const json::Array *Conflicts = Row->getArray("conflicts");
+    Out << format(
+        "  %-20s %-8s %-6s %-12s %7s %10s %9s\n", Name.str().c_str(),
+        In ? (Image ? "program" : "added") : (Image ? "left out" : "-"),
+        Row->getString("dataModel").value_or("").str().c_str(),
+        Row->getString("recordABI").value_or("").str().c_str(),
+        count(*Row, "types").c_str(), count(*Row, "prototypes").c_str(),
+        Conflicts ? std::to_string(Conflicts->size()).c_str() : "-");
+    if (const std::optional<StringRef> Error = Row->getString("error"))
+      WithColor::warning() << Name << " joined nothing: " << *Error << "\n";
+    if (Conflicts && !Conflicts->empty()) {
+      std::string Names;
+      for (const json::Value &Conflict : *Conflicts)
+        Names += (Names.empty() ? "" : ", ") +
+                 Conflict.getAsString().value_or("").str();
+      WithColor::note() << Name
+                        << " left out what the program sizes otherwise: "
+                        << Names << "\n";
+    }
+  }
+  return 0;
 }
 
 } // namespace
@@ -442,6 +547,12 @@ int runTypesConvert() {
   if (TypesLayout || !TypesFilter.empty() || !TypesOrigin.empty()) {
     WithColor::error()
         << "--layout, --filter and --origin read a binary's types\n";
+    return 1;
+  }
+  if (TypesLibraries || !TypesAddLibrary.empty() ||
+      !TypesRemoveLibrary.empty()) {
+    WithColor::error() << "--libraries, --add-library and --remove-library "
+                          "choose a binary's type libraries\n";
     return 1;
   }
   json::Array Declarations;
@@ -581,8 +692,13 @@ int runTypes(neverd_session_t Sess) {
     }
   }
   raw_ostream &Out = File ? *File : outs();
-  if (!declare(Sess))
+  if (!declare(Sess) || !chooseLibraries(Sess))
     return 1;
+  // A choice of libraries alone shows the libraries as they join now.
+  if (TypesLibraries ||
+      ((!TypesAddLibrary.empty() || !TypesRemoveLibrary.empty()) &&
+       TypeNames.empty() && !TypesAll && !TypesFit && TypesMember.empty()))
+    return libraries(Sess, Out);
   if (TypesFit)
     return runTypesFit(Sess, Out);
   if (!TypesMember.empty())
