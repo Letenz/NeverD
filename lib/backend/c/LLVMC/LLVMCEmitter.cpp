@@ -40,6 +40,7 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/FloatingPointContract.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/backend/c/render/SyscallHelpers.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
@@ -795,6 +796,16 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
             if ((Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
                 (Asm->getAsmString() == "ldmxcsr ($0)" ||
                  Asm->getAsmString() == "stmxcsr ($0)"))
+              HasCIntrinsics = true;
+            // An ARM assembly the writer prints as an ACLE intrinsic
+            // (`msr tpidr_el0, $0` is __arm_wsr64, `dsb sy` __dsb(0xF))
+            // needs the header that declares it.
+            if ((Opts.TheArch == Arch::ARM || Opts.TheArch == Arch::AArch64) &&
+                renderInlineAsm(Opts.TheArch, Asm->getAsmString().str(),
+                                CI->getType()->isStructTy(), "result",
+                                /*ResultLive=*/true,
+                                std::vector<std::string>(CI->arg_size(), "0"))
+                    .SetIntrinsics)
               HasCIntrinsics = true;
             continue;
           }

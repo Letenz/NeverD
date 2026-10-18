@@ -1161,7 +1161,11 @@ GCC's `#0x3e8`), `udf`, `hlt`, `hvc`, `smc` and barriers, ARM's `trap`,
 `bkpt` and barriers, and x86's sanitizer `ud1`, and checks the operand each
 intrinsic keeps and the instruction text both C routes print: beside a
 builtin, as an `asm` statement, and as the ACLE value of a barrier's own
-option.
+option. It lifts AArch64 `mrs`, `msr` (register and PSTATE), `dc`, `ic`,
+`tlbi`, `at`, `sys` and `sysl` and checks the field each keeps and that an
+MSR or SYS writes no register, prints every system register, SYS operation
+and PSTATE field encoding against capstone's listing, and checks the ACLE
+and `asm` forms both C routes print.
 
 ## LLVMC parameter names and CPU queries
 

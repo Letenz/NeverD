@@ -3717,6 +3717,20 @@ metadata (`MachineInstructionText.h`) that LLVM C prints beside it, and
 LLVM C reads a barrier's ACLE value from its option. AArch64's `udf` raises
 an undefined-instruction exception (`Udf_A64`), not a breakpoint.
 
+An AArch64 MRS, MSR or SYS keeps its op0:op1:CRn:CRm:op2 field, bits [20:5]
+of the instruction, as the first input of `Mrs`, `Msr`, `Dc`, `Ic`, `Tlbi`
+or `At`; an MSR and a SYS write no general register, and SYSL reads into
+its own. `AArch64SystemOperands.def`, which
+`scripts/generate_aarch64_system_operands.py` generates from capstone's
+tables, names each system register, DC, IC, AT and TLBI operation and
+PSTATE field as the listing does, and `aarch64SystemInstructionAsm` spells
+the instruction with `$0` for its register. HighC prints an MRS or MSR of a
+register as ACLE's `__arm_rsr64("cntvct_el0")` or `__arm_wsr64`, and any
+other as an `asm` statement that runs it with its register operand; the
+LLVM emitters run each as that inline assembly, which LLVM C reads back the
+same way. SYSP, MRRS and MSRR move a register pair no intrinsic carries,
+and fail clearly.
+
 `ir/FloatConversion.h` owns the result policy for scalar float-to-integer
 operations: saturation for the non-x86 path and x86 indefinite results for
 invalid conversions. HighC and the LLVM lowering select that same policy;

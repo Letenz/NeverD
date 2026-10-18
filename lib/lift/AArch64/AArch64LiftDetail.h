@@ -59,6 +59,18 @@ inline std::optional<uint64_t> exceptionCode(const cs_aarch64 &ARM64) {
   return std::nullopt;
 }
 
+/// The op0, op1, CRn, CRm and op2 fields of an MRS, MSR, SYS or SYSL, as
+/// bits [20:5] of the instruction hold them: `mrs x0, cntvct_el0` is 0xDF02
+/// and `dc civac, x1`, a SYS, 0x5BF1.  An MSR that writes a PSTATE field
+/// (`msr daifset, #2`) has op0 0, CRn 4 and its immediate in CRm.
+inline uint16_t systemInstructionField(const cs_insn *Insn) {
+  const uint32_t Word = static_cast<uint32_t>(Insn->bytes[0]) |
+                        static_cast<uint32_t>(Insn->bytes[1]) << 8 |
+                        static_cast<uint32_t>(Insn->bytes[2]) << 16 |
+                        static_cast<uint32_t>(Insn->bytes[3]) << 24;
+  return static_cast<uint16_t>(Word >> 5);
+}
+
 /// The option field (CRm) of a DMB, DSB or ISB: `ish` is 0xB, and an ISB
 /// written without one is SY, 0xF.  None for a form without the field, as
 /// a DSB with the nXS qualifier.

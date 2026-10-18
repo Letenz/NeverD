@@ -192,34 +192,26 @@ bool liftSysMisc(AArch64Lifter &L, AArch64Lifter::LiftState &S,
     S.emitIntrinsic(Intrinsic::A64_Wfit);
     break;
   case AARCH64_INS_SYSL: {
-    if (ARM64.op_count >= 1) {
-      NdVar Dst = L.operandWrite(ARM64.operands[0]);
-      S.emitIntrinsic(Intrinsic::Dc, Dst);
-    } else {
-      S.emitIntrinsic(Intrinsic::Dc);
-    }
+    // A SYS operation that reads a result into its register.
+    if (ARM64.op_count < 1 || ARM64.operands[0].type != AARCH64_OP_REG)
+      return false;
+    S.emitIntrinsic(Intrinsic::Dc, L.operandWrite(ARM64.operands[0]),
+                    {NdVar::cst(systemInstructionField(Insn), 2)});
     break;
   }
-  case AARCH64_INS_SYSP:
-    S.emitIntrinsic(Intrinsic::Dc);
-    break;
-  case AARCH64_INS_AT_AS1ELX:
-    S.emitIntrinsic(Intrinsic::At);
-    break;
-  case AARCH64_INS_MRRS: {
-    if (ARM64.op_count >= 2) {
-      NdVar Dst = L.operandWrite(ARM64.operands[0]);
-      S.emitIntrinsic(Intrinsic::Mrs, Dst);
-    }
+  case AARCH64_INS_AT_AS1ELX: {
+    const NdVar Field = NdVar::cst(systemInstructionField(Insn), 2);
+    if (ARM64.op_count >= 1 &&
+        ARM64.operands[ARM64.op_count - 1].type == AARCH64_OP_REG)
+      S.emitVoidIntrinsic(
+          Intrinsic::At,
+          {Field, L.operandRead(S, ARM64.operands[ARM64.op_count - 1])});
+    else
+      S.emitVoidIntrinsic(Intrinsic::At, {Field});
     break;
   }
-  case AARCH64_INS_MSRR: {
-    if (ARM64.op_count >= 1) {
-      NdVar Src = L.operandRead(S, ARM64.operands[ARM64.op_count - 1]);
-      S.emitIntrinsic(Intrinsic::Msr, NdVar::reg(a64reg::X0, 8), {Src});
-    }
-    break;
-  }
+  // SYSP, MRRS and MSRR move a register pair, which no intrinsic here
+  // carries: they fail clearly rather than run as another instruction.
 
   // TME (Transactional Memory Extension)
   case AARCH64_INS_TSTART: {

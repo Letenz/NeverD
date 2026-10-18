@@ -15,6 +15,7 @@
 #include "neverd/lift/AArch64Regs.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-aarch64-value"
+#include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
 #include "llvm/IR/Attributes.h"
@@ -43,6 +44,18 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
       return Code;
     return getVar(Op.Inputs[InputIndex], Builder);
   };
+
+  // An MRS, or a SYSL, the lift kept the field of reads its register.
+  if (Op.Output.Size == 8 && Op.NumInputs == 2 && Op.Inputs[1].isConst()) {
+    const std::string Asm = aarch64SystemInstructionAsm(
+        IC, Op.Inputs[1].ConstVal, /*HasOutput=*/true, /*HasRegister=*/false);
+    if (!Asm.empty())
+      return Builder.CreateCall(
+          llvm::InlineAsm::get(
+              llvm::FunctionType::get(Builder.getInt64Ty(), false), Asm,
+              "=r,~{memory}", /*hasSideEffects=*/true),
+          {}, "system.register");
+  }
 
   if (IC == I::A64_WspWrite && Op.Output.Size == 8 && Op.NumInputs >= 2) {
     llvm::Value *Value = getVar(Op.Inputs[1], Builder);

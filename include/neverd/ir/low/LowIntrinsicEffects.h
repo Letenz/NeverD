@@ -37,8 +37,12 @@ inline bool lowIntrinsicHasOnlyValueEffects(const LowOp &Op) {
 
 /// Whether \p Op is an intrinsic, in its lifted shape, that writes no memory
 /// and no register but its explicit output (intrinsicWritesOnlyItsOutput).
+/// It reads no value but constants, such as the register an MRS names.
 inline bool lowIntrinsicWritesOnlyItsOutput(const LowOp &Op) {
-  return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == 1 &&
+  for (unsigned I = 1; I < Op.NumInputs; ++I)
+    if (!Op.Inputs[I].isConst())
+      return false;
+  return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs >= 1 &&
          Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
          Op.Inputs[0].Offset < static_cast<uint64_t>(Intrinsic::_Count) &&
          (Op.Output.isReg() || Op.Output.isTemp()) && Op.Output.Size != 0 &&
