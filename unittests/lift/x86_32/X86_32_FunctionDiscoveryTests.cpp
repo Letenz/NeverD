@@ -258,6 +258,32 @@ TEST(X86_32_FunctionDiscovery, LoaderRegistersPackedHotpatchEntries) {
   EXPECT_EQ(Found, (std::vector<va_t>{0x401007, 0x40100C}));
 }
 
+TEST(X86_32_FunctionDiscovery, BoundaryGuessesAreThoseNothingElseConfirms) {
+  BinaryImage Img;
+  const auto Add = [&](va_t Addr, bool Guess, const char *Name = nullptr) {
+    Symbol Sym = Symbol::makeFunc(Addr, 4);
+    if (Name)
+      Sym.Name = Name;
+    Sym.IsBoundaryGuess = Guess;
+    Img.Symbols.push_back(Sym);
+  };
+  Add(0x401100, false);
+  EXPECT_TRUE(Img.boundaryGuessFunctionStarts().empty());
+  // A guess alone, one another symbol confirms, one debug information
+  // named, one a known code range starts, and one whose range continues
+  // another function's, which confirms nothing.
+  Add(0x401000, true);
+  Add(0x401010, true);
+  Add(0x401010, false);
+  Add(0x401020, true, "named_by_debug_info");
+  Add(0x401030, true);
+  Add(0x401040, true);
+  Img.KnownCodeRanges = {{0x401030, 0x401038}, {0x401040, 0x401048}};
+  Img.ContinuationCodeStarts = {0x401040};
+  EXPECT_EQ(Img.boundaryGuessFunctionStarts(),
+            (std::set<va_t>{0x401000, 0x401040}));
+}
+
 TEST(X86_32_FunctionDiscovery, HotpatchEntryAfterPaddingIsNotAGuess) {
   std::vector<uint8_t> Bytes = {0x55, 0x8B, 0xEC, 0x5D, 0xC3, 0xCC, 0xCC,
                                 0x8B, 0xFF, 0x55, 0x8B, 0xEC, 0x5D, 0xC3};

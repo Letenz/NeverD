@@ -1,0 +1,18 @@
+//===- RuntimeRoutineIntrinsics.def - Modelled runtime routines -*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// NEVERD_RUNTIME_ROUTINE_INTRINSIC(Arch, Name, Intrinsic): a compiler runtime
+// routine whose whole contract one intrinsic models, so that a call to it on
+// Arch is that intrinsic, writing the call's return register and reading
+// nothing.  The Arm run-time ABI's __aeabi_read_tp returns the thread pointer
+// in r0 and corrupts only r0, ip, lr and the flags: a caller keeps values in
+// r1-r3 across it, which an ordinary call clobbers.
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_RUNTIME_ROUTINE_INTRINSIC
+NEVERD_RUNTIME_ROUTINE_INTRINSIC(ARM, "__aeabi_read_tp", ArmThreadPointer)
+#undef NEVERD_RUNTIME_ROUTINE_INTRINSIC
+#endif

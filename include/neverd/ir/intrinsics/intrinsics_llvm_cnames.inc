@@ -1,5 +1,10 @@
 // LLVM intrinsic name → standard C name mapping.
 // Included by intrinsics.cpp.
+// The names are aligned in a column, which clang-format would undo.
+// clang-format off
+
+// The thread pointer (ARM's __aeabi_read_tp).
+{"llvm.thread.pointer.p0",         "__builtin_thread_pointer"},
 
 // x86 SSE/SSSE3
 {"llvm.x86.ssse3.pshuf.b.128",     "_mm_shuffle_epi8"},

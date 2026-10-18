@@ -18,6 +18,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/RuntimeRoutineIntrinsics.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
 #include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
@@ -54,6 +55,47 @@
 #define DEBUG_TYPE "neverd-low-to-med"
 
 namespace neverd {
+
+//===----------------------------------------------------------------------===//
+// Runtime routines one intrinsic models
+//===----------------------------------------------------------------------===//
+
+void LowToMedConverter::liftRuntimeRoutineCalls(MedFunc &Func) {
+  if (!Image)
+    return;
+  if (!RuntimeRoutineCalls) {
+    RuntimeRoutineCalls.emplace();
+    for (const auto &[Addr, Name] : Image->getImportAddressNames())
+      if (const std::optional<Intrinsic> Id =
+              runtimeRoutineIntrinsic(TargetArch, Name))
+        RuntimeRoutineCalls->emplace(Addr, *Id);
+    // A static image defines the routine itself, at any address: an object's
+    // first function starts at 0.
+    for (const Symbol &Sym : Image->Symbols)
+      if (Sym.IsFunc && !Sym.IsSection)
+        if (const std::optional<Intrinsic> Id =
+                runtimeRoutineIntrinsic(TargetArch, Sym.Name))
+          RuntimeRoutineCalls->emplace(Sym.Addr, *Id);
+  }
+  if (RuntimeRoutineCalls->empty())
+    return;
+  for (MedBlock &Block : Func.Blocks)
+    for (MedOp &Op : Block.Ops) {
+      if (Op.Opcode != NdOp::CALL || Op.NumInputs < 1 ||
+          !Op.Inputs[0].isConst() || Op.Output.Kind != MedVar::Reg)
+        continue;
+      const auto It = RuntimeRoutineCalls->find(Op.Inputs[0].ConstVal);
+      if (It == RuntimeRoutineCalls->end())
+        continue;
+      MedOp Read;
+      Read.Opcode = NdOp::INTRINSIC;
+      Read.Addr = Op.Addr;
+      Read.OriginSeq = Op.OriginSeq;
+      Read.Output = Op.Output;
+      Read.addInput(MedVar::makeConst(static_cast<uint64_t>(It->second), 2));
+      Op = std::move(Read);
+    }
+}
 
 //===----------------------------------------------------------------------===//
 // Stack-probe (chkstk) call neutralization
@@ -1080,6 +1122,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     // provided the chkstk slot set (Mach-O only).
     neutralizeStackProbeCalls(Func);
     debugVerifyMedFunc(Func, "neutralizeStackProbeCalls");
+    liftRuntimeRoutineCalls(Func);
+    debugVerifyMedFunc(Func, "liftRuntimeRoutineCalls");
 
     splitEntryLoopHeader(Func);
     debugVerifyMedFunc(Func, "splitEntryLoopHeader");

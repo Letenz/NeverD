@@ -51,6 +51,21 @@ const char *conventionSpelling(CallingConvention Convention) {
 }
 
 /// A builtin as exact-width C spells it for \p Library's program.
+/// The type a typedef of \p Name stands for, where C reserves the name for
+/// the implementation (a leading underscore and an uppercase letter or
+/// another underscore): a decompiled unit spells it in the target's exact
+/// widths rather than defining it, as <stdint.h> on Darwin defines
+/// __darwin_time_t as long, which int64_t, a long long there, is not.
+const TypeExpr *reservedTypedef(const TypeLibrary &Library,
+                                llvm::StringRef Name) {
+  if (Name.size() < 2 || Name[0] != '_' ||
+      !(Name[1] == '_' || llvm::isUpper(Name[1])))
+    return nullptr;
+  const LocalType *Local = Library.find(Name);
+  return Local && Local->Kind == TypeKind::Typedef ? Local->Target.get()
+                                                   : nullptr;
+}
+
 std::string portableBuiltin(Builtin Type, const TypeLibrary &Library) {
   const BuiltinInfo &Info = builtinInfo(Type);
   const unsigned Bytes = Library.builtinBytes(Type);
@@ -148,6 +163,11 @@ public:
   /// Whether a type rendered so far is followed by checks.
   bool asserts() const { return Asserted; }
   const NameSpelling &names() const { return Names; }
+  /// In a decompiled unit, the type a typedef of a name the implementation
+  /// reserves stands for (reservedTypedef); none elsewhere.
+  const TypeExpr *spelledThrough(llvm::StringRef Name) const {
+    return Embedded ? reservedTypedef(Library, Name) : nullptr;
+  }
 
 private:
   void record(const LocalType &Type, std::string &Out);
@@ -256,6 +276,14 @@ std::string CWriter::declare(const TypeExpr &Type,
   case TypeExprKind::Builtin:
     return spaced(Qualifiers + builtin(Type.TheBuiltin));
   case TypeExprKind::Named: {
+    if (const TypeExpr *Target = spelledThrough(Type.Name)) {
+      if (!Type.Const && !Type.Volatile)
+        return declare(*Target, std::move(Declarator));
+      TypeExpr Qualified = *Target;
+      Qualified.Const |= Type.Const;
+      Qualified.Volatile |= Type.Volatile;
+      return declare(Qualified, std::move(Declarator));
+    }
     std::string Base = Qualifiers;
     const LocalType *Shared = Cpp ? Library.find(Type.Name) : nullptr;
     if (Shared && !Embedded && Shared->Record &&
@@ -1140,6 +1168,16 @@ writeDefinitions(CWriter &Writer, const TypeLibrary &Library,
   std::function<void(const LocalType &)> Emit = [&](const LocalType &Type) {
     if (!Defined.contains(Type.Name) || !Done.insert(Type.Name).second)
       return;
+    // A typedef the unit spells through defines nothing; what it stands for
+    // is defined as anything the unit names is.
+    if (Writer.spelledThrough(Type.Name)) {
+      std::vector<std::string> Named;
+      mentionedTypes(Type, Named);
+      for (const std::string &Name : Named)
+        if (const LocalType *Found = Library.find(Name))
+          Emit(*Found);
+      return;
+    }
     // What it holds by value, and the typedefs and enumerations it names
     // anywhere: C declares neither ahead of its definition.  A typedef of
     // a record by its tag declares the record as it names it, and needs no
@@ -1212,13 +1250,18 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
   const std::vector<const LocalType *> Order =
       writeDefinitions(Writer, Library, All, Defined, /*Guarded=*/true,
                        /*Pragmas=*/false, Enums, Body);
-  // The records the definitions only point to, declared.
+  // The records the definitions only point to, declared, through the
+  // typedefs the unit spells through too.
   std::string Declarations;
   llvm::StringSet<> Declared;
   const NameSpelling &Names = Writer.names();
   for (const LocalType *Type : Order) {
     std::vector<std::string> Named;
     mentionedTypes(*Type, Named);
+    llvm::StringSet<> Through;
+    for (size_t I = 0; I < Named.size(); ++I)
+      if (Writer.spelledThrough(Named[I]) && Through.insert(Named[I]).second)
+        mentionedTypes(*Library.find(Named[I]), Named);
     for (const std::string &Name : Named)
       if (const LocalType *Found = Library.find(Name);
           Found && !Defined.contains(Name) &&
