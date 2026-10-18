@@ -7739,6 +7739,17 @@ builder recovers all three. It fails without the run bound or the label rule.
 `X86_32_FunctionDiscovery.CallbackStoredByARelocatedImmediateIsAFunction`
 stores a callback with `mov [ecx+0x10], offset cb` and recovers the callback
 as a function of its own.
+`X86_32_FunctionDiscovery.SwitchTableAmongCodeLiftsPastTheMirrorLimit` lifts
+such a switch from a `.text` larger than the LLVM emitter mirrors as one
+global; it refuses the table's address without the table-base witness or the
+elided address operations. `APointerSpilledAcrossALoopsCallsKeepsItsTable`
+walks an integer array in `.rdata` beside a code pointer with a pointer kept
+in a frame slot across a call (`add dword ptr [ebp-4], 4`), and fails as an
+ambiguous pointer table without the frame-slot recurrence.
+`I386CallContract.ABlockPhiIsNoArgumentPastAnEarlierCallInItsBlock` joins a
+callback's address and an import call's leftover in EDX, calls the import
+again in the join block, then a routine reading ECX and EDX: the argument is
+the second call's leftover, while without the rule it is the join.
 `SessionCAPITest.LLVMCReadsAPointerTableAmongCodeAsData` emits LLVM-C for the
 function that reads the table through `.data`, which was refused before.
 `NativePointerRelocationBoundary.MinGWPointerTableAmongCodeMirrorsItsFunction`

@@ -2383,7 +2383,21 @@ The LLVM backend accepts a sparse table's logical address origin separately
 from its owned runtime slots. Eliding its target load still requires the exact
 operation witness, complete mapped slot and relocation ownership, and exclusive
 consumption by the recovered branch. The unused prefix gains no suppression
-authority from sharing that origin.
+authority from sharing that origin. A table among the code is data the loader
+found there (`DataInCode`); the base decomposition refuses bytes an executable
+section owns, so the witness matches the load's address against that table's
+own base alone (`jumpTableForLoad`). Where the target load is elided, the
+operations that only form its address are too: its forwarding copies and
+extensions back to the addition of the table's base, each read by nothing
+else (`collectSuppressedTableAddressOps`). The base is then never
+materialized, so a table in a code segment too large to mirror needs no
+global; the switch dispatches on its selector.
+
+The LLVM pointer-table role proof treats a frame slot as a PHI over the
+values stored to it (`collectFrameReloadSources`). As a PHI's recurrent arm
+does, a stored value that is the slot's reload advanced by a stable offset
+(`slot = &table[0]; ...; slot = slot + 4`, a loop's pointer spilled across the
+calls in its body) carries the role of the initializers, which alone prove it.
 
 MedIR binds a switch selector to its dispatch block as well as its machine
 address. CFG products can copy one instruction into distinct SSA lifetimes;
@@ -3224,7 +3238,11 @@ It fills a slot only where the callee is known to read the register. In a slot
 it is not known to take, and for an import reached through its slot, which
 takes only proven incoming values, the arguments end there as where nothing
 was found. In the call's own block an intrinsic not proven to keep the call
-setup ends the search as well.
+setup ends the search as well. That block's entry PHI for an argument
+register holds it at the call only where nothing before the call in the block
+writes the register or is a call that may change it (`argPhiReachingCall`);
+past such a call the register holds that call's leftover, which the search
+above finds.
 
 The Itanium C++ ABI declares the routines of its runtime and of the unwinder
 it runs on (`libc::kItaniumRuntimePrototypes`). An image's own copy of one
