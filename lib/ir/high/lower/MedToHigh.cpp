@@ -376,11 +376,11 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   // The proven GOT base of an unlinked i386 object is address zero.
   if (I386GotBase.count(varKey(V)))
     return HighExpr::makeConst(0, V.Size, ConstantAddressProvenance::Scalar);
-  // A proven get-PC value is the return address its call pushed.
-  if (const auto It = I386GetPcValues.find(varKey(V));
-      It != I386GetPcValues.end() && It->second.second == V.Size)
-    return HighExpr::makeConst(It->second.first, V.Size,
-                               ConstantAddressProvenance::Scalar);
+  // A proven get-PC value is the return address its call pushed, and a
+  // PC-rooted sum the number it computes.
+  if (const auto It = I386PcRootedValues.find(varKey(V));
+      It != I386PcRootedValues.end() && It->second.second == V.Size)
+    return i386PcRootedConstant(It->second.first, V.Size);
   // The zero register reads as zero, as the index of `[x11, xzr, lsl #3]`.
   if (const auto Zero = getTargetRegInfo(TargetArch).ZeroRegister;
       Zero && V.Kind == MedVar::Reg && V.RegOff == *Zero)
@@ -897,7 +897,7 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
   DefExpr.clear();
   SourceRecordValues.clear();
   collectI386GotBase(Med);
-  collectI386GetPcValues(Med);
+  collectI386PcRootedValues(Med);
   for (const auto &Block : Med.Blocks)
     for (const auto &Op : Block.Ops)
       if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&

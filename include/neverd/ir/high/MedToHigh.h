@@ -373,16 +373,19 @@ private:
   VarKeySet I386GotBase;
   VarKeySet I386GotRooted;
   /// i386 PIC (I386PicAddresses.cpp): the values the CFG proved to be the
-  /// return address a get-PC call pushed, outside unlinked ELF objects.
-  void collectI386GetPcValues(const MedFunc &Med);
-  /// \p Op adding a scalar to, or subtracting it from, a proven get-PC
-  /// value, as the number it computes; null for any other operation.
-  ExprPtr i386GetPcSum(const MedOp &Op) const;
+  /// return address a get-PC call pushed, outside unlinked ELF objects, and
+  /// the exact sums of them and constants, such as the GOT address.
+  void collectI386PcRootedValues(const MedFunc &Med);
+  /// The PC-rooted value \p Op computes, or null.
+  ExprPtr i386PcRootedValue(const MedOp &Op) const;
+  /// \p Value, a PC-rooted value of \p Size bytes, as an expression.
+  ExprPtr i386PcRootedConstant(uint32_t Value, uint16_t Size) const;
   std::unordered_map<VarKey, std::pair<uint32_t, uint16_t>, VarKeyHash>
-      I386GetPcValues;
-  /// The call's push of each such return address, by address and origin
-  /// sequence: only its pop read the slot, which the value above replaces.
-  std::set<std::pair<va_t, int>> I386GetPcPushes;
+      I386PcRootedValues;
+  /// Stores, by address and origin sequence, that only reads of a PC-rooted
+  /// value observe, which read the value above instead: a get-PC call's push,
+  /// which only its pop reads, and a spill only reloads read.
+  std::set<std::pair<va_t, int>> I386PcRootedStores;
   /// Recover a target-width memory address from the wider LowIR VA carrier
   /// only when an explicit zero extension proves that no high bits are lost.
   ExprPtr memoryAddressExpr(const MedVar &V, bool InlineDefinition = true);

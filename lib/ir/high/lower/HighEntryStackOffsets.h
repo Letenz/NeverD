@@ -78,6 +78,22 @@ public:
     return checkedAffineOffset(From->second, To->second, /*Subtract=*/true);
   }
 
+  /// Whether \p ABytes at \p A and \p BBytes at \p B may share a byte: not
+  /// where both are offsets of one anchor and apart, or of anchors whose
+  /// possible incoming-SP offsets keep them apart.
+  bool mayOverlap(const MedVar &A, uint64_t ABytes, const MedVar &B,
+                  uint64_t BBytes) {
+    const auto From = coordinate(A), To = coordinate(B);
+    if (!From || !To)
+      return true;
+    const auto First = extent(*From, ABytes), Second = extent(*To, BBytes);
+    if (From->first == To->first && First && Second)
+      return First->first < Second->first + static_cast<int64_t>(BBytes) &&
+             Second->first < First->first + static_cast<int64_t>(ABytes);
+    return !First || !Second ||
+           (First->first < Second->second && Second->first < First->second);
+  }
+
 private:
   using Identity = std::tuple<int, int, int>;
   using View = std::tuple<int, int, int, uint16_t, uint64_t>;
@@ -92,6 +108,23 @@ private:
     std::optional<Coordinate> At;
     size_t Depth = 0;
   };
+
+  /// The incoming-SP bytes, from first to past the last, that \p Bytes at
+  /// \p At may cover.
+  std::optional<std::pair<int64_t, int64_t>> extent(Coordinate At,
+                                                    uint64_t Bytes) const {
+    const auto Bounds = Equations.anchorBounds(At.first);
+    if (!Bounds || Bytes > static_cast<uint64_t>(INT64_MAX))
+      return std::nullopt;
+    const auto Low = checkedAffineOffset(Bounds->first, At.second);
+    const auto HighStart = checkedAffineOffset(Bounds->second, At.second);
+    const auto High =
+        HighStart ? checkedAffineOffset(*HighStart, static_cast<int64_t>(Bytes))
+                  : std::nullopt;
+    if (!Low || !High)
+      return std::nullopt;
+    return std::pair(*Low, *High);
+  }
 
   std::optional<Coordinate> coordinate(const MedVar &Value) {
     if (!carrier(Value))

@@ -1550,6 +1550,13 @@ struct BinaryImage {
     return getSectionByName(section_names::elf::Rodata);
   }
 
+  /// The address of an i386 ELF PIC image's `_GLOBAL_OFFSET_TABLE_`, which a
+  /// get-PC sequence plus a GOTPC add leaves in a register.  A linked image
+  /// keeps no GOTPC relocation; this is the address its DT_PLTGOT (GNU ld and
+  /// lld: the start of .got.plt) or its `_GLOBAL_OFFSET_TABLE_` symbol
+  /// records, where both agree.  Empty for every other image.
+  std::optional<va_t> linkedI386GlobalOffsetTable() const;
+
   /// Get the GOT section (".got" / ".got.plt" / "__got").
   const Section *getGotSection() const {
     if (isMachO())

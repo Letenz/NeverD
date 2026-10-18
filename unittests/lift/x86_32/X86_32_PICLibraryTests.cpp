@@ -139,6 +139,25 @@ TEST(X86_32PICLibrary, GetPcCallPushIsNoLocal) {
   expectNoGetPcPush(*Img);
 }
 
+// `clang_reload` spills the GOT address before its PLT call and reloads it to
+// read `factor`.  Every write of the slot stores the GOT address, so the
+// reload reads it and the read names `factor`, and the spill is left out.
+// Before, the C stored the GOT address and read `*(int32_t *)(slot + N)`.
+TEST(X86_32PICLibrary, ReloadedGOTAddressNamesItsData) {
+  const std::optional<BinaryImage> Img = loadLibrary();
+  if (!Img)
+    GTEST_SKIP() << "the fixture links with ld.lld";
+  const Symbol *GOT = Img->findSymbol("_GLOBAL_OFFSET_TABLE_");
+  ASSERT_NE(GOT, nullptr);
+  const std::string Source = decompile(*Img, "clang_reload");
+  EXPECT_NE(Source.find("factor"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("tolower("), std::string::npos) << Source;
+  EXPECT_FALSE(std::regex_search(
+      Source, std::regex("\\b0x" + llvm::utohexstr(GOT->Addr) + "\\b")))
+      << Source;
+  EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+}
+
 // The object those functions are linked from gives the pop's sum the GOT
 // base, not the PC: `clang_scale`'s pop is read only by that sum, and its
 // push stayed a local (`var_m24 = 0x7E;`).

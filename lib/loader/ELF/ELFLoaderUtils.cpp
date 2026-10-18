@@ -653,3 +653,25 @@ template void parseNotes<llvm::object::ELF64LE>(
 
 } // namespace elf_loader
 } // namespace neverd
+
+namespace neverd {
+
+std::optional<va_t> BinaryImage::linkedI386GlobalOffsetTable() const {
+  if (Arch != Arch::X86 || getPointerSize() != 4 || !isELF() || IsRelocatable)
+    return std::nullopt;
+  std::optional<va_t> GOT;
+  if (DynInfo.PltGotAddr != 0)
+    GOT = DynInfo.PltGotAddr;
+  // A static or unstripped image may name the table itself.  Two records
+  // that disagree leave the GOT address unknown.
+  if (const Symbol *Sym = findSymbol("_GLOBAL_OFFSET_TABLE_")) {
+    if (GOT && *GOT != Sym->Addr)
+      return std::nullopt;
+    GOT = Sym->Addr;
+  }
+  if (!GOT || !getSegmentFor(*GOT))
+    return std::nullopt;
+  return GOT;
+}
+
+} // namespace neverd
