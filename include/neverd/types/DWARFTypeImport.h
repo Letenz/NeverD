@@ -33,6 +33,7 @@
 #include "llvm/Support/Error.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -66,6 +67,12 @@ importDWARFTypes(llvm::DWARFContext &Context, TypeLibrary &Into);
 llvm::Expected<std::unique_ptr<TypeLibrary>>
 importDWARFTypes(llvm::DWARFContext &Context, DataModel Model,
                  DWARFTypeImportStats *Stats = nullptr);
+
+/// The size of the long double \p Context's units name, as the compiler
+/// that wrote them laid it out; none where no unit names one.  Of a Windows
+/// program, it tells whose compiler built it: MinGW's keep the x87's long
+/// double on x86, Microsoft's and clang-cl's a double.
+std::optional<unsigned> dwarfLongDoubleBytes(llvm::DWARFContext &Context);
 
 } // namespace neverd::types
 

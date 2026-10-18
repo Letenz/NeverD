@@ -697,6 +697,10 @@ python3 scripts/compare_prototypes_with_ida.py --neverd build/bin/neverd \
 ```
 
 Declared types are covered at each layer:
+- `SessionCAPITest.MinGWProgramsKeepTheX87LongDouble`: the DWARF of
+  `mingw_types.{x64,x86,msvc}.exe`, built as `mingw_types.c` says, read under
+  MinGW's record ABI on x64 and x86 and under Microsoft's for clang-cl's,
+  with the Windows libraries joined;
 - `SessionCAPITest.DeclaredTypesJoinThePDBsAndStayWithTheProject`: declaring,
   replacing a PDB type in place, problems with their place, removal, and the
   declarations coming back with the next load, a PDB-less load reporting the
@@ -710,8 +714,11 @@ Rendered source must also compile with each record's size and offsets checked.
 `scripts/check_type_renders.py` runs `neverd types --all --asserts` and
 compiles the result:
 - C and C++ in all three builtin spellings with clang for the MSVC target, and
-  the portable spelling for the GNU target too; the C header, which the
-  workbench shows as C/C++, compiles as C++ as well;
+  the portable spelling for the GNU target too; the Windows spelling for both
+  Windows compilers, MSVC's and MinGW's, whose long doubles differ; the C
+  header, which the workbench shows as C/C++, compiles as C++ as well. Under
+  `--record-abi mingw-x64` or `mingw-x86` the program's compiler is MinGW's
+  and the other one MSVC's;
 - Rust with rustc in both of its spellings, exact widths and Windows' names
   as aliases, for the program's target (`--target`, `--emit=metadata`, which
   needs the target's standard library and no linker);

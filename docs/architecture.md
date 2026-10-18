@@ -254,8 +254,29 @@ architecture (`recordABIOf`), so a 32-bit Linux program's records read,
 parse and render as GCC lays them out, and an ARM one's as the AAPCS does.
 Parsing and every renderer read the library's ABI; nothing else carries one.
 MinGW's compilers lay records out as Microsoft's but keep the x87's long
-double, which the Microsoft ABI does not hold: a MinGW program's DWARF long
-double reads as its bytes.
+double: 16 bytes on x64, and on x86 12 that align to four where a double
+aligns to eight (`LongDoubleAlign`). A Windows program whose own sections
+hold DWARF, which MinGW's GCC and Clang write and Microsoft's compilers do
+not, takes MinGW's ABI unless the DWARF's `long double` is a double, as
+clang-cl's `-gdwarf` is (`dwarfLongDoubleBytes`); the session reads that
+DWARF's types where no PDB describes the program, and nothing else of it.
+A stripped MinGW program tells nothing of its compiler and stays Microsoft's.
+Go's Windows programs hold DWARF too; Go has no long double, and their types
+read as any program's. A MinGW program joins the Windows libraries, whose
+records lay out as its own do (`libraryRecordABIOf`).
+
+C has no spelling of a long double that every compiler makes the same size:
+MSVC's is a double, MinGW's and GCC's on x86 the x87's. The portable and
+Windows spellings name one a record or a typedef holds
+`neverd_long_double_<n>`, which the
+prelude declares as the compiler's long double where `__SIZEOF_LONG_DOUBLE__`
+is `<n>`, and elsewhere as that many bytes aligned as the program aligns
+them, or for eight bytes as a double, so a MinGW program's records compile to
+their layout under MSVC and an MSVC program's under MinGW. A signature keeps
+`long double`, which its target's convention passes; the keywords spelling is
+the target's own, and a type shown alone, without the prelude, keeps the
+program's name; the C parser reads the name back as the long double of that
+size and refuses it in a program whose long double is another.
 
 A source reads whole or not at all. The C API keeps the user's declarations
 in order and reads them again over the program's types whenever those are

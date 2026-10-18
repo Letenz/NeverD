@@ -52,7 +52,8 @@ RUSTUP = ("https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/"
 # The targets check_type_renders.py compiles Rust for besides the host's.
 RUST_TARGETS = ("i686-unknown-linux-gnu", "armv7-unknown-linux-gnueabihf",
                 "i686-linux-android", "i686-pc-windows-msvc",
-                "x86_64-pc-windows-msvc", "aarch64-apple-darwin")
+                "x86_64-pc-windows-msvc", "x86_64-pc-windows-gnu",
+                "i686-pc-windows-gnu", "aarch64-apple-darwin")
 
 STANDALONE = ("https://github.com/astral-sh/python-build-standalone/releases/"
               "download/20261013/")

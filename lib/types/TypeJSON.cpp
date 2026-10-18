@@ -176,7 +176,7 @@ std::optional<DataModel> dataModelNamed(llvm::StringRef Name) {
 
 std::optional<RecordABI> recordABINamed(llvm::StringRef Name) {
 #define NEVERD_RECORD_ABI(Id, Spelling, Rules, ScalarAlignLimit, WCharBytes,   \
-                          LongDoubleBytes)                                     \
+                          LongDoubleBytes, LongDoubleAlign, Library)           \
   if (Name == Spelling)                                                        \
     return RecordABI::Id;
 #include "neverd/types/RecordABIs.def"

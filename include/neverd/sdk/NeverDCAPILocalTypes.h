@@ -35,7 +35,8 @@ extern "C" {
 
 /// The program's local types in brief:
 /// {"source":"pdb"|"dwarf"|"none","dataModel":"LLP64"|"LP64"|"ILP32",
-/// "recordABI":"microsoft"|"itanium"|"apple-arm64"|"i386-sysv"|
+/// "recordABI":"microsoft"|"mingw-x64"|"mingw-x86"|"itanium"|"apple-arm64"|
+/// "i386-sysv"|
 /// "android-i386"|"aapcs32","stats":{"structs","unions","enums","declaredOnly","nestingMismatches":
 /// [name,...]},"types":[{"ordinal","name","kind","size","members",
 /// "origin"},...]}.  "recordABI" says how the program's compilers laid its
@@ -125,7 +126,8 @@ NEVERD_API const char *neverd_local_types_forget(neverd_session_t Sess,
                                                  const char *NamesJson);
 /// Converts declarations between C, C++, Rust and Go without a program.
 /// \p RequestJson is {"dataModel":"LLP64"|"LP64"|"ILP32","recordABI"?:
-/// "microsoft"|"itanium"|"apple-arm64"|"i386-sysv"|"android-i386"|"aapcs32",
+/// "microsoft"|"mingw-x64"|"mingw-x86"|"itanium"|"apple-arm64"|"i386-sysv"|
+/// "android-i386"|"aapcs32",
 /// "declarations":
 /// [{"language":"c"|"cpp"|"rust"|"go","source"},...],"keepGoing"?:bool,
 /// "render"?:{...as neverd_local_types_source's options, and
