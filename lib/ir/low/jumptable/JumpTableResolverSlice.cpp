@@ -10209,7 +10209,7 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
   // private frame spill that calls and foreign stores cannot reach.
   const bool LinkedI386GOTAnchor =
       Info.IsRelative && Info.HasTargetBase &&
-      linkedI386GlobalOffsetTable(*CurrentImg) == Info.TargetBase;
+      CurrentImg->linkedI386GlobalOffsetTable() == Info.TargetBase;
   const size_t InitialDerivedCount = Derived.size();
 
   auto alternativesFor = [&](uint8_t State)
@@ -11015,7 +11015,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
   // Like the GOT model of an object, a table read through it may reload it
   // from a private frame spill that calls and foreign stores cannot reach.
   const std::optional<va_t> LinkedI386GOT =
-      linkedI386GlobalOffsetTable(*CurrentImg);
+      CurrentImg->linkedI386GlobalOffsetTable();
   if (LinkedI386GOT && !consumeWork(Info.LoadRoles.size()))
     return false;
   const bool LinkedI386GOTBase =

@@ -16,6 +16,8 @@
 //   int clang_lower(char c) { return tolower((unsigned char)c); }
 // `clang_scale` reads `factor` through the popped address; `clang_lower`
 // keeps it in %ebx only for its PLT call.  A label marks each pop.
+//   int clang_reload(int c) { return tolower(c) + factor; }
+// spills the GOT address before its PLT call and reloads it to read `factor`.
 
 	.text
 	.p2align 4
@@ -136,6 +138,40 @@ clang_lower_pop:
 	retl
 	.cfi_endproc
 	.size	clang_lower, .-clang_lower
+
+	.p2align 4
+	.globl	clang_reload
+	.type	clang_reload, @function
+clang_reload:
+	.cfi_startproc
+	pushl	%ebp
+	.cfi_def_cfa_offset 8
+	.cfi_offset %ebp, -8
+	movl	%esp, %ebp
+	.cfi_def_cfa_register %ebp
+	pushl	%ebx
+	andl	$-16, %esp
+	subl	$16, %esp
+	.cfi_offset %ebx, -12
+	calll	clang_reload_pop
+clang_reload_pop:
+	popl	%eax
+.Lreload_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Lreload_got-clang_reload_pop), %eax
+	movl	%eax, 8(%esp)
+	movl	8(%ebp), %ecx
+	movl	%ecx, (%esp)
+	movl	%eax, %ebx
+	calll	tolower@PLT
+	movl	8(%esp), %ecx
+	addl	factor@GOTOFF(%ecx), %eax
+	leal	-4(%ebp), %esp
+	popl	%ebx
+	popl	%ebp
+	.cfi_def_cfa %esp, 4
+	retl
+	.cfi_endproc
+	.size	clang_reload, .-clang_reload
 
 	.data
 	.p2align 2
