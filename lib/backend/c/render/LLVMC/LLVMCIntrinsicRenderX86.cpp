@@ -16,6 +16,8 @@
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
 
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
@@ -23,6 +25,7 @@
 
 #include <cstring>
 #include <stdexcept>
+#include <utility>
 
 namespace neverd {
 
@@ -285,14 +288,32 @@ InlineAsmRender renderX86InlineAsm(Arch TheArch, const std::string &AsmStr,
   if (!X86C)
     X86C = lookupX86AsmToC(Mnemonic.c_str());
   if (X86C) {
+    std::vector<std::string> Operands = Args;
+    // Port I/O takes the port first in C (`__outbyte(port, data)`), where
+    // the assembly writes the data first (`outb $0, $1`).  An immediate port
+    // is the unsigned byte the instruction holds: 0x80, not -128.
+    const llvm::StringRef CName(X86C);
+    const bool PortIn =
+        CName == "__inbyte" || CName == "__inword" || CName == "__indword";
+    const bool PortOut =
+        CName == "__outbyte" || CName == "__outword" || CName == "__outdword";
+    if ((PortIn && Operands.size() == 1) || (PortOut && Operands.size() == 2)) {
+      if (PortOut)
+        std::swap(Operands[0], Operands[1]);
+      int64_t Port = 0;
+      if (!llvm::StringRef(Operands[0]).getAsInteger(10, Port) && Port < 0 &&
+          Port >= -128)
+        Operands[0] =
+            "0x" + llvm::utohexstr(static_cast<uint64_t>(Port) & 0xFF);
+    }
     std::string Result;
     if (ResultLive && !ResultName.empty())
       Result = ResultName + " = ";
     Result += std::string(X86C) + "(";
-    for (size_t I = 0; I < Args.size(); ++I) {
+    for (size_t I = 0; I < Operands.size(); ++I) {
       if (I > 0)
         Result += ", ";
-      Result += Args[I];
+      Result += Operands[I];
     }
     Result += ");\n";
     return {Result, true};

@@ -801,16 +801,28 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                 (Asm->getAsmString() == "ldmxcsr ($0)" ||
                  Asm->getAsmString() == "stmxcsr ($0)"))
               HasCIntrinsics = true;
-            // An ARM assembly the writer prints as an ACLE intrinsic
-            // (`msr tpidr_el0, $0` is __arm_wsr64, `dsb sy` __dsb(0xF))
-            // needs the header that declares it.
-            if ((Opts.TheArch == Arch::ARM || Opts.TheArch == Arch::AArch64) &&
-                renderInlineAsm(Opts.TheArch, Asm->getAsmString().str(),
-                                CI->getType()->isStructTy(), "result",
-                                /*ResultLive=*/true,
-                                std::vector<std::string>(CI->arg_size(), "0"))
-                    .SetIntrinsics)
+            // An assembly the writer prints as an intrinsic needs the header
+            // that declares it: ACLE's (`msr tpidr_el0, $0` is __arm_wsr64,
+            // `dsb sy` __dsb(0xF)), or MSVC's for a Windows image
+            // (`outb $0, $1` is __outbyte).
+            // The body refuses an assembly contract it cannot print; this
+            // only asks which header one it prints needs.
+            bool PrintsIntrinsic = false;
+            try {
+              PrintsIntrinsic =
+                  renderInlineAsm(Opts.TheArch, Asm->getAsmString().str(),
+                                  CI->getType()->isStructTy(), "result",
+                                  /*ResultLive=*/true,
+                                  std::vector<std::string>(CI->arg_size(), "0"))
+                      .SetIntrinsics;
+            } catch (const std::runtime_error &) {
+            }
+            if (PrintsIntrinsic &&
+                (Opts.TheArch == Arch::ARM || Opts.TheArch == Arch::AArch64))
               HasCIntrinsics = true;
+            if (PrintsIntrinsic && Opts.Format == BinaryFormat::COFF &&
+                (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64))
+              Headers.insert("intrin.h");
             continue;
           }
           auto *Callee = CI->getCalledFunction();
