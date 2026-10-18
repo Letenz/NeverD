@@ -2071,3 +2071,5 @@ ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on
 cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
 ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
 ```
+
+`SymStorePreservation.Independent*`、`RepeatedRegionsFormAUnionAndChargeEveryScan`、`EmptyIndependentRegionsKeepOriginalWorkAccounting` 和 `ExecutorUsesIndependentRegionsForOnlyOneStore` 覆盖一次 STORE 保留两到三个独立当前根、两种字节序、跨相对零点的部分区间、重叠声明、未保护间隙和写入后的未知值世代。精确预算及少一个单位的预算检查完整计费，缺失区域不得被物化。无效或越界引用、窄或常量基址、空或反向区间，以及实际写入自身的基址均应拒绝且不改变状态。空 `AdditionalRegions` 保持已有单根和 `AdditionalRanges` 计费。执行器检查单次事件、同区域邻接字节及后续普通写入的失效效果。`SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget` 覆盖比较匹配和不匹配、精确和不足预算、两个保留根、旧值输出及既有保守拒绝路径。

@@ -2096,3 +2096,5 @@ ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on
 cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
 ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
 ```
+
+`SymStorePreservation.Independent*`, `RepeatedRegionsFormAUnionAndChargeEveryScan`, `EmptyIndependentRegionsKeepOriginalWorkAccounting`, `ExecutorUsesIndependentRegionsForOnlyOneStore`는 한 번의 STORE로 독립적인 현재 루트 두세 개를 보존하는 동작, 두 바이트 순서, 상대 좌표 0을 지나는 부분 구간, 중첩 선언, 보호되지 않은 간격, 쓰기 이후 미지 값 세대를 검사합니다. 정확한 예산과 한 단위 부족한 예산으로 전체 비용을 확인하며, 없는 영역은 구체화하지 않아야 합니다. 잘못되거나 범위를 벗어난 참조, 좁거나 상수인 기준 주소, 빈 구간이나 역방향 구간, 실제 쓰기 자체의 기준 주소는 상태 변경 없이 거부합니다. 비어 있는 `AdditionalRegions`는 기존 단일 루트 및 `AdditionalRanges` 비용을 유지합니다. 실행기는 단일 이벤트, 같은 영역의 인접 바이트, 이후 일반 쓰기의 무효화를 검사합니다. `SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget`는 비교 일치·불일치, 정확·부족 예산, 보호 루트 두 개, 이전 값 출력, 기존의 보수적 거부 경로를 검사합니다.
