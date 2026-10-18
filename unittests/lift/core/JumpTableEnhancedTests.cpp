@@ -536,6 +536,40 @@ int spilled_got_float(int input) {
   EXPECT_TRUE(Lifted.Result.Success) << Lifted.Result.Error;
 }
 
+static neverd::LowFunc buildI386RingSpill(unsigned RingMask) {
+  auto ImageOrErr = neverd::loadBinary(
+      fs::path(TEST_OBJ_DIR) /
+      ("test_i386_ring_spill_" + std::to_string(RingMask) + ".o"));
+  if (!ImageOrErr) {
+    ADD_FAILURE() << llvm::toString(ImageOrErr.takeError());
+    return {};
+  }
+  const neverd::Symbol *Function = ImageOrErr->findSymbol("i386_ring_spill");
+  neverd::Decoder Decoder;
+  if (!Function || !Decoder.init(ImageOrErr->Arch, ImageOrErr->Mode)) {
+    ADD_FAILURE() << "i386_ring_spill cannot be decoded";
+    return {};
+  }
+  neverd::CFGBuilder Builder;
+  return Builder.build(*ImageOrErr, Decoder, Function->Addr, Function->Name);
+}
+
+TEST_F(JTE_X86_32, MaskedRingStoreLeavesTheSpilledGOTBase) {
+  // `movb %bl, 0x10(%esp,%edx,1)` with edx = x & 15 writes 0x10..0x1f; the
+  // GOT base spilled at 0x20 reaches its reload, so the table resolves.
+  const neverd::LowFunc Low = buildI386RingSpill(15);
+  ASSERT_EQ(Low.JumpTables.size(), 1u);
+  EXPECT_EQ(Low.JumpTables.front().Targets.size(), 4u);
+  EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+}
+
+TEST_F(JTE_X86_32, WiderRingStoreMayOverwriteTheSpilledGOTBase) {
+  // With edx = x & 31 the same write may cover 0x20, so the reload no longer
+  // proves the GOT base and the dispatch stays unresolved.
+  const neverd::LowFunc Low = buildI386RingSpill(31);
+  EXPECT_TRUE(Low.JumpTables.empty());
+}
+
 TEST_F(JTE_X86_32, O0ThreeSwitchLoopsReuseCanonicalFrameSpill) {
   auto ImageOrErr = neverd::loadBinary(fs::path(TEST_OBJ_DIR) /
                                        "test_i386_three_switch_loops.o");
