@@ -731,20 +731,25 @@ struct BinaryImage {
   /// other symbol names the address and no primary unwind record begins
   /// there.  See Symbol::IsBoundaryGuess.
   std::set<va_t> boundaryGuessFunctionStarts() const {
-    std::set<va_t> Guesses, Confirmed;
     // Debug info renames a guessed symbol in place; a real name confirms it.
+    const auto Guessed = [](const Symbol &Sym) {
+      return Sym.IsBoundaryGuess && isSynthesizedFuncName(Sym.Name);
+    };
+    std::set<va_t> Guesses;
     for (const auto &Sym : Symbols)
-      (Sym.IsBoundaryGuess && isSynthesizedFuncName(Sym.Name) ? Guesses
-                                                              : Confirmed)
-          .insert(Sym.Addr);
+      if (Guessed(Sym))
+        Guesses.insert(Sym.Addr);
+    // Most images have no guesses, and those that do have few: drop the
+    // confirmed ones rather than collecting every confirmed address.
+    if (Guesses.empty())
+      return Guesses;
+    for (const auto &Sym : Symbols)
+      if (!Guessed(Sym))
+        Guesses.erase(Sym.Addr);
     for (const auto &[Start, End] : KnownCodeRanges)
       if (!ContinuationCodeStarts.count(Start))
-        Confirmed.insert(Start);
-    std::set<va_t> Result;
-    for (va_t Addr : Guesses)
-      if (!Confirmed.count(Addr))
-        Result.insert(Addr);
-    return Result;
+        Guesses.erase(Start);
+    return Guesses;
   }
 
   const uint8_t *readVA(va_t Addr, size_t Len) const {
