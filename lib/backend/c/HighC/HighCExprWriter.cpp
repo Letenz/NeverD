@@ -18,6 +18,7 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/DataAccessWidths.h"
 #include "neverd/Limits.h"
+#include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X87Context.h"
@@ -2201,6 +2202,13 @@ bool HighCWriter::headerRecordOfCallee(const HighExpr &E,
 bool HighCWriter::includesHeaderOf(llvm::StringRef Name) const {
   const char *Header = libc::headerFor(Name);
   return Header && IncludedHeaders.count(Header);
+}
+
+bool HighCWriter::userDeclaresCallee(llvm::StringRef Name) const {
+  const auto It = DebugExternSigs.find(Name.str());
+  return It != DebugExternSigs.end() &&
+         It->second.PrototypeLibrary == UserPrototypeLibrary &&
+         !ConflictingDebugExternSigs.count(Name.str());
 }
 
 const libc::LibCPrototype *

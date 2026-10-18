@@ -5698,6 +5698,58 @@ TEST_F(SessionCAPITest, AProgramsOwnDeclarationOfAnImportDecides) {
   }
 }
 
+TEST_F(SessionCAPITest, AUserDeclarationOfAHeadersRoutineDeclaresItself) {
+  // The user declares read with one parameter.  A function that calls read
+  // alone declares it as the user does, without <unistd.h>, which declares
+  // the C library's read.  One that calls write too keeps the header for
+  // write, so read takes another identifier, which links by read's name.
+  // Either is C a compiler takes, in both C backends.
+  struct Case {
+    const char *Fixture;
+    const char *Function;
+    bool Header;
+  };
+  for (const Case &C : {Case{"linux_libc_calls_x64", "Read", false},
+                        Case{"user_declared_calls_x64", "Copy", true}}) {
+    SCOPED_TRACE(C.Fixture);
+    std::ifstream Input(std::filesystem::path(__FILE__).parent_path() /
+                            "types" / "fixtures" / C.Fixture,
+                        std::ios::binary);
+    const std::string Path = write(
+        C.Fixture, std::string(std::istreambuf_iterator<char>(Input), {}));
+    neverd_session_t Own = neverd_session_create();
+    ASSERT_NE(Own, nullptr);
+    auto Close = llvm::make_scope_exit([&] { neverd_session_destroy(Own); });
+    ASSERT_EQ(neverd_session_load(Own, Path.c_str()), 1)
+        << takeString(neverd_last_error(Own));
+    ASSERT_GE(neverd_session_discover_functions(Own), 0);
+    const int Index = neverd_func_find_by_name(Own, C.Function);
+    ASSERT_GE(Index, 0);
+    const neverd_va_t Entry = neverd_func_entry(Own, Index);
+    const std::string Declared = takeString(
+        neverd_local_types_declare(Own, "long read(int File);", nullptr));
+    ASSERT_NE(Declared.find("\"read\""), std::string::npos) << Declared;
+    const std::string Callee = C.Header ? "read_2" : "read";
+    for (const std::string &Text :
+         {takeString(neverd_decompile(Own, Entry)),
+          takeString(neverd_decompile_llvm(Own, Entry))}) {
+      EXPECT_EQ(Text.find("#include <unistd.h>") != std::string::npos, C.Header)
+          << Text;
+      // The routine is declared before the function that calls it.
+      const size_t Definition = Text.find(std::string(C.Function) + "(");
+      ASSERT_NE(Definition, std::string::npos) << Text;
+      const llvm::StringRef Declarations =
+          llvm::StringRef(Text).take_front(Definition);
+      EXPECT_TRUE(Declarations.contains(" " + Callee + "(")) << Text;
+      EXPECT_EQ(Declarations.contains("__asm__(\"read\")"), C.Header) << Text;
+      const std::vector<std::string> Arguments =
+          callArguments(Text, C.Function, Callee);
+      ASSERT_EQ(Arguments.size(), 1u) << Text;
+      EXPECT_NE(Arguments[0].find("arg0"), std::string::npos) << Text;
+    }
+  }
+}
+
 TEST_F(SessionCAPITest, FreeBSDProgramsJoinTheirArchitecturesLibrary) {
   // An ELF program FreeBSD's toolchain brands (its OS ABI byte, and the ABI
   // tag note naming FreeBSD 15.1) joins the FreeBSD library of its

@@ -1653,6 +1653,10 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   for (auto &Name : CallTargets) {
     if (isOwnFunctionName(Name, Funcs))
       continue;
+    // A routine the user declares is declared as the user declares it
+    // (writeForwardDecls), not by the header that declares the C library's.
+    if (userDeclaresCallee(Name))
+      continue;
     for (std::string &Header : calleeHeaders(Name))
       Headers.insert(std::move(Header));
   }
@@ -1937,7 +1941,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
          DefinedFunctionsByIdentifier.count(Name)) &&
         !SourceRuntimeLinkNames.count(Name))
       continue;
-    if (libc::isKnownFunction(Name) &&
+    // A routine the user declares is declared as the user declares it, under
+    // another identifier where a header the unit includes declares the C
+    // library's routine of the name.
+    const bool UserDeclared = userDeclaresCallee(Name);
+    if (libc::isKnownFunction(Name) && !UserDeclared &&
         (!isOwnFunctionName(Name, Funcs) || includesHeaderOf(Name)))
       continue;
     if (CIntrinsicNames.count(Name))
@@ -1950,7 +1958,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     std::string CleanName = Name;
     if (!CleanName.empty() && CleanName[0] == '_')
       CleanName = CleanName.substr(1);
-    if (libc::isKnownFunction(CleanName) &&
+    if (libc::isKnownFunction(CleanName) && !UserDeclared &&
         (!isOwnFunctionName(Name, Funcs) || includesHeaderOf(CleanName)))
       continue;
 
@@ -1986,6 +1994,17 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     // named like it, not the slot.
     const bool ImportSlot = ImportSlotIdentifiers.count(Name);
     const auto Existing = ExternalFunctionIdentifiers.find(Name);
+    // The header that declares the C library's routine of the name holds
+    // the name, where a routine the user declares takes it: the user's
+    // links by the symbol instead (LinkLabel).
+    if (Existing == ExternalFunctionIdentifiers.end() && !ImportSlot &&
+        userDeclaresCallee(Name) &&
+        (includesHeaderOf(RenderedName) ||
+         includesHeaderOf(RenderedName.ltrim('_'))))
+      if (const std::string Held =
+              canonicalizeCProjectionIdentifier(RenderedName, "nd_external");
+          !GlobalIdentifierAllocator.holds(Held))
+        GlobalIdentifierAllocator.allocateVerbatim(Held);
     std::string Identifier =
         Existing != ExternalFunctionIdentifiers.end() ? Existing->second
         : ImportSlot
