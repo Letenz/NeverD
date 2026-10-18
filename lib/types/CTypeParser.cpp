@@ -425,16 +425,41 @@ std::optional<CallingConvention> conventionWord(llvm::StringRef Word) {
 /// Words a declaration may hold that do not change its type.
 bool ignoredWord(llvm::StringRef Word) {
   return llvm::is_contained(
-      std::initializer_list<llvm::StringRef>{
-          "extern",      "static",        "inline",        "__inline",
-          "__inline__",  "__forceinline", "__extension__", "__w64",
-          "register",    "auto",          "constexpr",     "virtual",
-          "explicit",    "mutable",       "__unaligned",   "NTKERNELAPI",
-          "NTSYSAPI",    "NTSYSCALLAPI",  "NTHALAPI",      "DECLSPEC_IMPORT",
-          "FORCEINLINE", "__restrict",    "restrict",      "__restrict__",
-          "_Atomic",     "thread_local",  "__ptr32",       "__ptr64",
-          "__sptr",      "__uptr",        "_Nonnull",      "_Nullable",
-          "__based"},
+      std::initializer_list<llvm::StringRef>{"extern",
+                                             "static",
+                                             "inline",
+                                             "__inline",
+                                             "__inline__",
+                                             "__forceinline",
+                                             "__extension__",
+                                             "__w64",
+                                             "register",
+                                             "auto",
+                                             "constexpr",
+                                             "virtual",
+                                             "explicit",
+                                             "mutable",
+                                             "__unaligned",
+                                             "NTKERNELAPI",
+                                             "NTSYSAPI",
+                                             "NTSYSCALLAPI",
+                                             "NTHALAPI",
+                                             "DECLSPEC_IMPORT",
+                                             "FORCEINLINE",
+                                             "__restrict",
+                                             "restrict",
+                                             "__restrict__",
+                                             "_Atomic",
+                                             "thread_local",
+                                             "__ptr32",
+                                             "__ptr64",
+                                             "__sptr",
+                                             "__uptr",
+                                             "_Nonnull",
+                                             "_Nullable",
+                                             "_Null_unspecified",
+                                             "_Nullable_result",
+                                             "__based"},
       Word);
 }
 
@@ -560,10 +585,10 @@ private:
            Word == "intptr_t" || Word == "uintptr_t" || Word == "ssize_t" ||
            (vaListWord(Word) && !Library.find(Word));
   }
-  /// The compiler's va_list, as <stdarg.h> and glibc name it.
+  /// The compiler's va_list, as <stdarg.h>, glibc and bionic name it.
   static bool vaListWord(llvm::StringRef Word) {
     return Word == "__builtin_va_list" || Word == "va_list" ||
-           Word == "__gnuc_va_list";
+           Word == "__gnuc_va_list" || Word == "__va_list";
   }
   /// Whether the token at \p Ahead may begin a declaration's type.
   bool startsType(size_t Ahead = 0) const {
@@ -1572,11 +1597,11 @@ private:
         Suffix S;
         S.Array = true;
         // C99 lets a parameter's array qualify the pointer it adjusts to and
-        // promise its least size ([restrict], [static 4]), which change no
-        // layout local types hold.
-        while (isWord("restrict") || isWord("__restrict") ||
-               isWord("__restrict__") || isWord("const") ||
-               isWord("volatile") || isWord("static"))
+        // promise its least size ([restrict], [static 4], bionic's
+        // [_Nonnull 2]), which change no layout local types hold.
+        while (peek().Kind == TokenKind::Word &&
+               (constWord(peek().Text) || volatileWord(peek().Text) ||
+                ignoredWord(peek().Text)))
           take();
         // A parameter's array adjusts to a pointer, so its size may name
         // another parameter (C99's regexec takes `__pmatch[__nmatch]`).

@@ -474,10 +474,15 @@ declares, and checks that another function's text stays as it was.
 library joins a program's types;
 `HeaderLibrary.TheLinuxLibrariesLayRecordsOutAsGlibcDoes` checks the sizes
 and offsets clang measures for glibc's `stat`, `timespec`,
-`pthread_mutex_t`, `FILE`, `sigaction` and `dirent` on each architecture, and
-`SessionCAPITest.LinuxImportsTakeGlibcsPrototypes` decompiles
+`pthread_mutex_t`, `FILE`, `sigaction` and `dirent` on each architecture,
+`HeaderLibrary.TheAndroidLibrariesLayRecordsOutAsBionicDoes` bionic's,
+`SessionCAPITest.LinuxProgramsJoinTheirGlibcLibrary` decompiles
 `unittests/types/fixtures/linux_libc_calls_{x64,x86,arm64,arm}`, built as
-`linux_libc_calls.c` says;
+`linux_libc_calls.c` says, and
+`SessionCAPITest.AndroidProgramsJoinTheirBionicLibrary` loads
+`android_libc_calls_arm64`, a program that asks for Android's linker, and
+`android_libc_calls_arm`, a library only the NDK's note marks, built as
+`android_libc_calls.c` says;
 `HeaderLibrary.TheUserLibrariesDeclareNtdllsNativeAPI` checks phnt's
 routines and the PEB, TEB and loader records each user mode library lays
 out. The user mode libraries read a checkout of
@@ -501,8 +506,11 @@ The Linux libraries read glibc's headers as each architecture's toolchain
 installs them: the host's for x64 and x86 (libc6-dev, libc6-dev-i386),
 `/usr/aarch64-linux-gnu` for ARM64 and `/usr/arm-linux-gnueabihf` for ARM
 (libc6-dev-arm64-cross, libc6-dev-armhf-cross), or another sysroot:
-`scripts/generate_linux_types.py --sysroot linux-arm=<directory>`. Check
-the x64 and x86 ones with their record ABIs:
+`scripts/generate_linux_types.py --sysroot linux-arm=<directory>`. The
+Android libraries read a checkout of bionic
+(`--bionic <checkout>`, of https://android.googlesource.com/platform/bionic;
+its libc/include, libc/kernel and libc/NOTICE are all they need), and name
+its commit. Check the x64 and x86 Linux ones with their record ABIs:
 
 ```sh
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \

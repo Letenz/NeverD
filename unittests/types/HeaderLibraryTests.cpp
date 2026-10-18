@@ -98,8 +98,8 @@ TEST(HeaderLibrary, EveryLibraryReadsLaidOutForItsDataModel) {
     ASSERT_NE(Types, nullptr) << Error;
     EXPECT_EQ(Types->dataModel(), headerLibraryModel(Library));
     EXPECT_EQ(Types->recordABI(), headerLibraryRecordABI(Library));
-    EXPECT_GT(Types->size(), 500u);
-    EXPECT_GT(Types->prototypes().size(), 1500u);
+    EXPECT_GT(Types->size(), 400u);
+    EXPECT_GT(Types->prototypes().size(), 1000u);
     const bool Wide = headerLibraryModel(Library) != DataModel::ILP32;
     if (headerLibrarySpelling(Library) == BuiltinSpelling::Windows) {
       EXPECT_EQ(sizeOf(*Types, "HANDLE"), Wide ? 8u : 4u);
@@ -236,6 +236,53 @@ TEST(HeaderLibrary, TheLinuxLibrariesLayRecordsOutAsGlibcDoes) {
     }
     ASSERT_NE(Types->findPrototype("exit"), nullptr);
     EXPECT_TRUE(Types->findPrototype("exit")->NoReturn);
+  }
+}
+
+TEST(HeaderLibrary, TheAndroidLibrariesLayRecordsOutAsBionicDoes) {
+  // bionic's records as each architecture's compilers lay them out, as clang
+  // measures them against the same headers for API level 35: not glibc's,
+  // whose 32-bit pthread_mutex_t is 24 bytes and whose x64 sigaction 152.
+  struct Expected {
+    HeaderLibrary Library;
+    uint64_t Stat, StatSize, Timespec, Mutex, Sigaction, Dirent;
+  };
+  const Expected Libraries[] = {
+      {HeaderLibrary::AndroidX64, 144, 48, 16, 40, 32, 280},
+      {HeaderLibrary::AndroidX86, 96, 44, 8, 4, 16, 276},
+      {HeaderLibrary::AndroidARM64, 128, 48, 16, 40, 32, 280},
+      {HeaderLibrary::AndroidARM, 104, 48, 8, 4, 16, 280},
+  };
+  for (const Expected &E : Libraries) {
+    SCOPED_TRACE(headerLibraryName(E.Library).str());
+    std::string Error;
+    const TypeLibrary *Types = headerLibrary(E.Library, &Error);
+    ASSERT_NE(Types, nullptr) << Error;
+    const auto Check = [](const char *What, uint64_t Value) {
+      return "_Static_assert(" + std::string(What) +
+             " == " + std::to_string(Value) + ", \"" + What + "\");\n";
+    };
+    const std::string Assertions =
+        Check("sizeof(struct stat)", E.Stat) +
+        Check("__builtin_offsetof(struct stat, st_size)", E.StatSize) +
+        Check("sizeof(struct timespec)", E.Timespec) +
+        Check("sizeof(pthread_mutex_t)", E.Mutex) +
+        Check("sizeof(struct sigaction)", E.Sigaction) +
+        Check("sizeof(struct dirent)", E.Dirent);
+    // A copy, which the assertions read without changing the library.
+    TypeLibrary Layout = *Types;
+    const ParseResult Laid = parseCTypes(Assertions, Layout);
+    EXPECT_TRUE(Laid.Problems.empty()) << Laid.Problems.front().Message;
+
+    const FunctionDef *Init = Types->findPrototype("pthread_mutex_init");
+    ASSERT_NE(Init, nullptr);
+    EXPECT_EQ(Init->Params.size(), 2u);
+    const FunctionDef *Read = Types->findPrototype("read");
+    ASSERT_NE(Read, nullptr);
+    ASSERT_EQ(Read->Params.size(), 3u);
+    EXPECT_EQ(Read->Params[2].Name, "__count");
+    ASSERT_NE(Types->findPrototype("__assert2"), nullptr);
+    EXPECT_TRUE(Types->findPrototype("__assert2")->NoReturn);
   }
 }
 

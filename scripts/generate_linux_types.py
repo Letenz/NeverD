@@ -1,29 +1,31 @@
 #!/usr/bin/env python3
-"""Generate the Linux type libraries NeverD ships.
+"""Generate the Linux and Android type libraries NeverD ships.
 
-A Linux program's calls to the C library and the system name routines whose
+A program's calls to the C library and the system name routines whose
 parameters no debug information of its own declares.  This reads the
-headers that declare them, from the GNU C Library, as a program built for
-each architecture includes them, and renders the types and prototypes they
-declare as the C NeverD reads back:
+headers that declare them, from the GNU C Library for Linux programs and
+from bionic for Android's, as a program built for each architecture
+includes them, and renders the types and prototypes they declare as the C
+NeverD reads back:
 
 1. clang preprocesses what a program includes for the C library, POSIX and
-   the Linux interfaces glibc declares (UNIT_HEADERS), with _GNU_SOURCE as
-   most programs build, for the architecture's GNU triple against the glibc
-   headers installed for it (--sysroot).  glibc 2.38 and later give some
-   routines the name a program built so imports (`__isoc23_strtol` for
-   strtol); the reader declares each under both.
+   the Linux interfaces (UNIT_HEADERS), with _GNU_SOURCE as most programs
+   build, for the architecture's triple: against the glibc headers
+   installed for it (--sysroot), or against a checkout of bionic (--bionic)
+   for Android API level 35.  glibc 2.38 and later give some routines the
+   name a program built so imports (`__isoc23_strtol` for strtol); the
+   reader declares each under both.
 2. The lines of the compiler's own headers (<stddef.h>, <stdarg.h>) are
-   dropped.  What they declare that glibc names comes first: size_t and
-   ptrdiff_t as the target's predefined macros give them, and the 128-bit
-   integers 64-bit targets predefine.  va_list stays the compiler's, which
-   the reader takes as the address a parameter passes, and glibc's
-   `typedef __gnuc_va_list va_list;` is dropped: the C a program decompiles
-   to includes <stdarg.h> for it.  wchar_t, which local types hold as Windows' 16-bit
-   character on 32-bit targets, is written as the integer it is here
-   (__WCHAR_TYPE__: int on x86, unsigned int on ARM).  An alignment
-   attribute without its value asks the target's largest alignment, which
-   is written out (__BIGGEST_ALIGNMENT__).
+   dropped.  What they declare that the C library names comes first:
+   size_t and ptrdiff_t as the target's predefined macros give them, and
+   the 128-bit integers 64-bit targets predefine.  va_list stays the
+   compiler's, which the reader takes as the address a parameter passes,
+   and the C libraries' typedefs of it are dropped: the C a program
+   decompiles to includes <stdarg.h> for it.  wchar_t, which local
+   types hold as Windows' 16-bit character on 32-bit targets, is written as
+   the integer it is here (__WCHAR_TYPE__: int on x86, unsigned int on
+   ARM).  An alignment attribute without its value asks the target's
+   largest alignment, which is written out (__BIGGEST_ALIGNMENT__).
 3. `neverd types --data-model --record-abi --keep-going --all --prototypes`
    reads what remains and renders it, with builtins spelled as C keywords.
    Declarations the reader refuses are reported, and the script fails when
@@ -72,8 +74,14 @@ UNIT_HEADERS = (
     "malloc", "execinfo", "err", "error", "ucontext", "fts", "ftw",
     "wordexp", "shadow")
 
-# glibc's typedef of the compiler's va_list (<stdio.h>, <wchar.h>).
-VA_LIST_TYPEDEF = re.compile(r"\s*typedef\s+__gnuc_va_list\s+va_list\s*;\s*$")
+# The headers of UNIT_HEADERS bionic does not have.
+NOT_BIONIC = ("aio", "mqueue", "wordexp", "shadow")
+
+# glibc's and bionic's typedefs of the compiler's va_list (<stdio.h>,
+# <wchar.h>, <sys/cdefs.h>).
+VA_LIST_TYPEDEF = re.compile(
+    r"\s*typedef\s+(?:__gnuc_va_list\s+va_list|__builtin_va_list\s+__va_list)"
+    r"\s*;\s*$")
 
 # The 128-bit integers GCC and clang predefine for 64-bit targets.
 WIDE_INTEGERS = """typedef __int128 __int128_t;
@@ -100,6 +108,9 @@ class Target:
     sysroot: str | None
     describes: str
     output: Path
+    # Bionic's kernel headers' directory for the architecture's <asm/...>;
+    # none for glibc's.
+    bionic_asm: str | None = None
 
 
 TARGETS = {
@@ -113,6 +124,16 @@ TARGETS = {
     "linux-arm": Target("arm-linux-gnueabihf", "ILP32", "aapcs32",
                         "/usr/arm-linux-gnueabihf", "ARM (ILP32)",
                         HEADERS / "LinuxARM.h"),
+    "android-x64": Target("x86_64-linux-android35", "LP64", "itanium", None,
+                          "x64 (LP64)", HEADERS / "AndroidX64.h", "asm-x86"),
+    "android-x86": Target("i686-linux-android35", "ILP32", "i386-sysv", None,
+                          "x86 (ILP32)", HEADERS / "AndroidX86.h", "asm-x86"),
+    "android-arm64": Target("aarch64-linux-android35", "LP64", "itanium",
+                            None, "ARM64 (LP64)", HEADERS / "AndroidARM64.h",
+                            "asm-arm64"),
+    "android-arm": Target("armv7a-linux-androideabi35", "ILP32", "aapcs32",
+                          None, "ARM (ILP32)", HEADERS / "AndroidARM.h",
+                          "asm-arm"),
 }
 
 
@@ -151,19 +172,36 @@ def neverd_types(arguments, target, *options):
                 "--record-abi", target.abi, *options])
 
 
+def bionic_includes(clang, bionic, target):
+    """The include directories a program for Android builds against: the
+    compiler's own, then bionic's C library and processed kernel headers."""
+    libc = Path(bionic) / "libc"
+    resources = run([clang, "-print-resource-dir"]).strip()
+    return ["-nostdinc", "-isystem", f"{resources}/include", "-isystem",
+            str(libc / "include"), "-isystem", str(libc / "kernel" / "uapi"),
+            "-isystem", str(libc / "kernel" / "uapi" / target.bionic_asm),
+            "-isystem", str(libc / "kernel" / "android" / "uapi")]
+
+
 def generate(arguments, name, target):
-    sysroot = arguments.sysroot.get(name, target.sysroot)
-    if sysroot and not Path(sysroot, "include").is_dir():
-        sys.exit(f"{name}: no glibc headers in {sysroot}/include; give "
-                 f"--sysroot {name}=<directory>")
-    clang = [arguments.clang, f"--target={target.triple}"] + (
-        [f"--sysroot={sysroot}"] if sysroot else [])
+    if target.bionic_asm:
+        includes = bionic_includes(arguments.clang, arguments.bionic, target)
+        headers = [header for header in UNIT_HEADERS
+                   if header not in NOT_BIONIC]
+    else:
+        sysroot = arguments.sysroot.get(name, target.sysroot)
+        if sysroot and not Path(sysroot, "include").is_dir():
+            sys.exit(f"{name}: no glibc headers in {sysroot}/include; give "
+                     f"--sysroot {name}=<directory>")
+        includes = [f"--sysroot={sysroot}"] if sysroot else []
+        headers = UNIT_HEADERS
+    clang = [arguments.clang, f"--target={target.triple}", *includes]
     output = Path(arguments.output) if arguments.output else target.output
     with tempfile.TemporaryDirectory(prefix="neverd-linux-types-") as scratch:
         work = Path(scratch)
         unit = work / "system.c"
         unit.write_text("#define _GNU_SOURCE 1\n" + "".join(
-            f"#include <{header}.h>\n" for header in UNIT_HEADERS),
+            f"#include <{header}.h>\n" for header in headers),
             encoding="utf-8")
         text = run([*clang, "-E", str(unit)])
         defined = dict(re.findall(r"#define (\w+) (.+)",
@@ -188,16 +226,31 @@ def generate(arguments, name, target):
                      "keywords", "--no-offsets", "-o", str(rendered))
         body = rendered.read_text(encoding="utf-8")
 
-    version = f"{defined['__GLIBC__']}.{defined['__GLIBC_MINOR__']}"
-    text = (
-        f"The Linux types and prototypes for {target.describes}, as a "
-        "program declares them with the GNU C Library's headers and "
-        "_GNU_SOURCE.  Generated on "
-        f"{datetime.date.today().isoformat()} by "
-        f"scripts/generate_linux_types.py --target {name} from the headers "
-        f"of glibc {version}: changed from them, as NeverD reads and renders "
-        "their declarations again.  The headers' notices are in "
-        "LICENSES/glibc-headers.txt.  Do not edit; generate it again.")
+    if target.bionic_asm:
+        commit = run(["git", "-C", str(arguments.bionic), "rev-parse",
+                      "HEAD"]).strip()
+        text = (
+            f"The Android types and prototypes for {target.describes}, as a "
+            "program declares them with bionic's headers and _GNU_SOURCE, "
+            "for API level 35.  Generated on "
+            f"{datetime.date.today().isoformat()} by "
+            f"scripts/generate_linux_types.py --target {name} from the "
+            f"headers of bionic at commit {commit}: changed from them, as "
+            "NeverD reads and renders their declarations again.  The "
+            "headers' notices are in LICENSES/bionic-headers.txt.  Do not "
+            "edit; generate it again.")
+    else:
+        version = f"{defined['__GLIBC__']}.{defined['__GLIBC_MINOR__']}"
+        text = (
+            f"The Linux types and prototypes for {target.describes}, as a "
+            "program declares them with the GNU C Library's headers and "
+            "_GNU_SOURCE.  Generated on "
+            f"{datetime.date.today().isoformat()} by "
+            f"scripts/generate_linux_types.py --target {name} from the "
+            f"headers of glibc {version}: changed from them, as NeverD "
+            "reads and renders their declarations again.  The headers' "
+            "notices are in LICENSES/glibc-headers.txt.  Do not edit; "
+            "generate it again.")
     header = "".join(f"// {line}\n" for line in textwrap.wrap(
         text, 77, break_long_words=False, break_on_hyphens=False))
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -217,6 +270,10 @@ def main():
                         help="where a target's glibc headers are, as "
                              "<DIRECTORY>/include (default: the host's for "
                              "x86 and x64, /usr/<triple> for ARM)")
+    parser.add_argument("--bionic", default=None,
+                        help="a checkout of https://android.googlesource.com/"
+                             "platform/bionic, whose headers the Android "
+                             "libraries declare")
     parser.add_argument("--target", action="append", choices=sorted(TARGETS),
                         help="the library to generate; repeat for more "
                              "(default: every library)")
@@ -234,6 +291,8 @@ def main():
             parser.error(f"--sysroot takes TARGET=DIRECTORY, not {given}")
         sysroots[name] = directory
     arguments.sysroot = sysroots
+    if not arguments.bionic and any(TARGETS[name].bionic_asm for name in names):
+        parser.error("the Android libraries read bionic: give --bionic")
     for name in names:
         generate(arguments, name, TARGETS[name])
 

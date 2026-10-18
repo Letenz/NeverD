@@ -286,6 +286,28 @@ GPL. The licenses and the note are preserved in
 [LICENSES/glibc-headers.txt](LICENSES/glibc-headers.txt). Generated on
 2026-10-17.
 
+## Android type libraries
+
+`lib/types/headers/AndroidX64.h`, `AndroidX86.h`, `AndroidARM64.h` and
+`AndroidARM.h` hold the types and prototypes that the headers of bionic,
+Android's C library, declare for x64, x86, ARM64 and ARM programs of API
+level 35 built with `_GNU_SOURCE`, as `scripts/generate_linux_types.py`
+renders them from bionic's `libc/include` and its processed copies of the
+Linux kernel's user-space API headers (`libc/kernel`), at commit
+731631f300090436d7f5df80d50b6275c8c60a93 of
+https://android.googlesource.com/platform/bionic. bionic's C library
+headers are under the BSD and similar licenses its `libc/NOTICE` gathers,
+with the copyright notices of their authors (the Android Open Source
+Project, the NetBSD, OpenBSD and FreeBSD projects, the Regents of the
+University of California and others); bionic's kernel README says the
+processed kernel headers "only contain type and macro definitions", whose
+originals are under the GPL 2.0 with the Linux syscall note. The libraries
+hold only what NeverD reads from the headers and renders again: data
+structure layouts, the values of enumerations and function declarations.
+bionic's `libc/NOTICE` is preserved in
+[LICENSES/bionic-headers.txt](LICENSES/bionic-headers.txt). Generated on
+2026-10-17.
+
 ## FPREM anti-emulation regression
 
 The FPREM regression in
