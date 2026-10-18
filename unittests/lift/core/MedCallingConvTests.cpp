@@ -18,6 +18,7 @@
 #include "neverd/ir/med/MedCallingConvDetail.h"
 #include "neverd/ir/med/MedSwitchNorm.h"
 #include "neverd/ir/med/MedTypePass.h"
+#include "neverd/libc/StackProbeIndex.h"
 #include "neverd/lift/ARMRegs.h"
 #include "neverd/lift/X86Regs.h"
 
@@ -7899,6 +7900,78 @@ TEST(CallRegisterEffects, StackProbeIsNoCall) {
       for (const MedOp &Op : Block.Ops)
         Calls |= Op.Opcode == NdOp::CALL;
     EXPECT_EQ(Calls, !Elided);
+  }
+}
+
+TEST(CallRegisterEffects, StackProbeIndexAnswersAsTheLiveLookup) {
+  // The index decides once each address an export or symbol names as a
+  // helper; every other address is none.  The first export with a name, or
+  // else the first symbol (a section's own aside) when stated, is the name.
+  BinaryImage Img = win64Image();
+  const auto AddSymbol = [&](const char *Name, va_t Addr,
+                             NameOrigin Origin = NameOrigin::Stated,
+                             bool IsSection = false) {
+    Symbol Sym;
+    Sym.Name = Name;
+    Sym.Addr = Addr;
+    Sym.Origin = Origin;
+    Sym.IsSection = IsSection;
+    Img.Symbols.push_back(Sym);
+  };
+  const auto AddExport = [&](const char *Name, va_t Addr) {
+    Export Exp;
+    Exp.Name = Name;
+    Exp.Addr = Addr;
+    Img.Exports.push_back(Exp);
+  };
+  AddSymbol("__chkstk", 0x2000);
+  AddExport("", 0x2100);
+  AddSymbol("__chkstk", 0x2100);
+  AddExport("Other", 0x2200);
+  AddSymbol("__chkstk", 0x2200);
+  AddSymbol("Other", 0x2300);
+  AddSymbol("__chkstk", 0x2300);
+  AddSymbol(".text", 0x2400, NameOrigin::Stated, /*IsSection=*/true);
+  AddSymbol("__chkstk", 0x2400);
+  AddSymbol("__chkstk", 0x2500, NameOrigin::Analysis);
+  AddExport("__chkstk", 0x2600);
+  AddExport("___chkstk", 0x2700);
+  AddSymbol("__alloca_probe", 0x2800);
+  const va_t Targets[] = {0x2000, 0x2100, 0x2200, 0x2300, 0x2400,
+                          0x2500, 0x2600, 0x2700, 0x2800, 0x2900};
+  const libc::StackProbeIndex Index(Img);
+  for (va_t Target : Targets) {
+    SCOPED_TRACE(Target);
+    EXPECT_EQ(Index.effect(Img, Target), libc::stackProbeEffect(Img, Target));
+  }
+  EXPECT_EQ(Index.effect(Img, 0x2100), libc::StackProbeEffect::Probe);
+  EXPECT_EQ(Index.effect(Img, 0x2200), std::nullopt);
+  EXPECT_EQ(Index.effect(Img, 0x2300), std::nullopt);
+  EXPECT_EQ(Index.effect(Img, 0x2400), libc::StackProbeEffect::Probe);
+  EXPECT_EQ(Index.effect(Img, 0x2700), libc::StackProbeEffect::Allocate);
+  EXPECT_EQ(Index.effect(Img, 0x2800), std::nullopt);
+
+  // Another image takes the live lookup, which here finds an x86 helper.
+  BinaryImage X86 = win64Image();
+  X86.Arch = Arch::X86;
+  X86.Symbols = Img.Symbols;
+  X86.Exports = Img.Exports;
+  EXPECT_EQ(Index.effect(X86, 0x2800), libc::StackProbeEffect::Allocate);
+  EXPECT_EQ(libc::StackProbeIndex(X86).effect(X86, 0x2800),
+            libc::StackProbeEffect::Allocate);
+
+  // A summary given the index elides the probe exactly as the live lookup.
+  const NdVar Rax = NdVar::reg(x86reg::RAX, 8);
+  for (va_t Target : Targets) {
+    SCOPED_TRACE(Target);
+    LowFunc Low = makeOneBlockLow(0x1000, "large_frame", [&](auto Push) {
+      Push(NdOp::COPY, Rax, {NdVar::cst(0x2000, 8)});
+      Push(NdOp::CALL, NdVar{}, {NdVar::cst(Target, 8)});
+      Push(NdOp::INT_SUB, Rsp, {Rsp, Rax});
+    });
+    EXPECT_EQ(localRegisterEffect(Img, Low, nullptr, nullptr, nullptr, &Index)
+                  .Callees,
+              localRegisterEffect(Img, Low).Callees);
   }
 }
 

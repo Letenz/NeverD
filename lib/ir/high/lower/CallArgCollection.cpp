@@ -27,6 +27,7 @@
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/FunctionNames.h"
 #include "neverd/loader/SymbolDecoration.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -1656,26 +1657,18 @@ void MedToHighConverter::resolveCalleeNames(
 
   // BinaryImage keeps publicly editable metadata vectors, so build these
   // exact-address indexes for this immutable pipeline stage rather than
-  // caching them on the image.  They choose what calleeDisplayName does: the
-  // *first* import or export at an address, including an empty name, as
-  // findImportAt and findExportAt do, and the symbol getFunctionNameAt
-  // chooses, numbered as the function is listed.  The first symbol at a
-  // MinGW function's start is often its object's `.text` section symbol.
+  // caching them on the image, and only for the targets: an image can hold
+  // a hundred thousand symbols.  They choose what calleeDisplayName does: the
+  // *first* import at an address, including an empty name, as findImportAt
+  // does, then the name getFunctionNameAt gives the function.  The first
+  // symbol at a MinGW function's start is often its object's `.text` section
+  // symbol, which that name skips.
   std::map<va_t, const Import *> ImportsByIAT;
   for (const Import &Imp : Image->Imports)
-    ImportsByIAT.try_emplace(Imp.IATAddr, &Imp);
-  std::map<va_t, std::string> ExportsByAddr;
-  for (const Export &Exp : Image->Exports)
-    ExportsByAddr.try_emplace(Exp.Addr, Exp.Name);
-  std::map<va_t, const Symbol *> SymbolsByAddr;
-  for (const Symbol &Sym : Image->Symbols) {
-    if (Sym.Name.empty() || Sym.IsSection)
-      continue;
-    auto [It, Inserted] = SymbolsByAddr.try_emplace(Sym.Addr, &Sym);
-    if (!Inserted && BinaryImage::functionNameRank(Sym) >
-                         BinaryImage::functionNameRank(*It->second))
-      It->second = &Sym;
-  }
+    if (Targets.count(Imp.IATAddr))
+      ImportsByIAT.try_emplace(Imp.IATAddr, &Imp);
+  const std::map<va_t, std::string> ImageNames =
+      functionNamesAt(*Image, Targets);
 
   auto Usable = [](llvm::StringRef Name) {
     return !Name.empty() && !Name.starts_with(kAutoFuncPrefix);
@@ -1704,15 +1697,9 @@ void MedToHighConverter::resolveCalleeNames(
       Names[Target] = Imp->Name;
       continue;
     }
-    auto Exp = ExportsByAddr.find(Target);
-    auto Sym = SymbolsByAddr.find(Target);
-    std::string FromImage;
-    if (Exp != ExportsByAddr.end() && !Exp->second.empty())
-      FromImage = Exp->second;
-    else if (Sym != SymbolsByAddr.end())
-      FromImage = Image->functionListName(Target, Sym->second->Name);
+    const std::string &FromImage = ImageNames.at(Target);
     Names[Target] = Usable(FromImage)
-                        ? std::move(FromImage)
+                        ? FromImage
                         : (kAutoFuncPrefix + llvm::utohexstr(Target)).str();
   }
 }

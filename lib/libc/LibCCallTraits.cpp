@@ -14,6 +14,7 @@
 #include "neverd/Common.h"
 #include "neverd/libc/LibCFortify.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/StackProbeIndex.h"
 #include "neverd/libc/WindowsCRT.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -22,6 +23,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <set>
 #include <string_view>
 #include <unordered_map>
 
@@ -302,23 +304,43 @@ bool isObjectPointerParameter(std::string_view Name, unsigned Index,
   return It != Masks.end() && (It->second >> Index & 1);
 }
 
-std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
-                                                 va_t Target) {
-  struct Routine {
-    BinaryFormat Format;
-    Arch Architecture;
-    std::string_view Symbol;
-    StackProbeEffect Effect;
-  };
-  static constexpr Routine Routines[] = {
+namespace {
+struct StackProbeRoutine {
+  BinaryFormat Format;
+  Arch Architecture;
+  std::string_view Symbol;
+  StackProbeEffect Effect;
+};
+
+constexpr StackProbeRoutine StackProbeRoutines[] = {
 #define STACK_PROBE(Format, Architecture, Symbol, Effect)                      \
   {BinaryFormat::Format, Arch::Architecture, Symbol, StackProbeEffect::Effect},
 #include "neverd/libc/StackProbeRoutines.inc"
-  };
-  const auto Applies = [&](const Routine &R) {
-    return R.Format == Img.abiFormat() && R.Architecture == Img.Arch;
-  };
-  if (std::none_of(std::begin(Routines), std::end(Routines), Applies))
+};
+
+bool stackProbeApplies(const StackProbeRoutine &R, const BinaryImage &Img) {
+  return R.Format == Img.abiFormat() && R.Architecture == Img.Arch;
+}
+
+bool hasStackProbeRoutines(const BinaryImage &Img) {
+  return std::any_of(
+      std::begin(StackProbeRoutines), std::end(StackProbeRoutines),
+      [&](const StackProbeRoutine &R) { return stackProbeApplies(R, Img); });
+}
+
+/// The helper \p Name spells for \p Img's format and architecture.
+std::optional<StackProbeEffect> stackProbeNamed(const BinaryImage &Img,
+                                                std::string_view Name) {
+  for (const StackProbeRoutine &R : StackProbeRoutines)
+    if (!Name.empty() && stackProbeApplies(R, Img) && R.Symbol == Name)
+      return R.Effect;
+  return std::nullopt;
+}
+} // namespace
+
+std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
+                                                 va_t Target) {
+  if (!hasStackProbeRoutines(Img))
     return std::nullopt;
   // Only a name the binary or its debug information states proves the
   // helper; one an analysis guessed does not drop a call.
@@ -328,10 +350,38 @@ std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
   else if (const Symbol *Sym = Img.findSymbolAt(Target);
            Sym && Sym->Origin >= NameOrigin::Stated)
     Name = Sym->Name;
-  for (const Routine &R : Routines)
-    if (!Name.empty() && Applies(R) && R.Symbol == Name)
-      return R.Effect;
-  return std::nullopt;
+  return stackProbeNamed(Img, Name);
+}
+
+StackProbeIndex::StackProbeIndex(const BinaryImage &Img) : Image(&Img) {
+  if (!hasStackProbeRoutines(Img))
+    return;
+  std::set<va_t> Named;
+  for (const Export &Exp : Img.Exports)
+    if (stackProbeNamed(Img, Exp.Name))
+      Named.insert(Exp.Addr);
+  for (const Symbol &Sym : Img.Symbols)
+    if (stackProbeNamed(Img, Sym.Name))
+      Named.insert(Sym.Addr);
+  for (va_t Addr : Named)
+    if (const auto Effect = stackProbeEffect(Img, Addr))
+      Probes.emplace(Addr, *Effect);
+}
+
+std::optional<StackProbeEffect> StackProbeIndex::effect(const BinaryImage &Img,
+                                                        va_t Target) const {
+  if (Image != &Img)
+    return stackProbeEffect(Img, Target);
+  const auto It = Probes.find(Target);
+  if (It == Probes.end())
+    return std::nullopt;
+  return It->second;
+}
+
+std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
+                                                 va_t Target,
+                                                 const StackProbeIndex *Index) {
+  return Index ? Index->effect(Img, Target) : stackProbeEffect(Img, Target);
 }
 
 bool isNoReturnFunction(std::string_view Name) {

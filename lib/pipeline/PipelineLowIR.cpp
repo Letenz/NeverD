@@ -28,10 +28,12 @@
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/StackProbeIndex.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/DataSymbolBinding.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
+#include "neverd/loader/FunctionNames.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -3505,6 +3507,7 @@ ImportPrototypeArguments importPrototypeArguments(
 void computeCallRegisterEffects(
     const BinaryImage &Img, const std::set<va_t> &FuncEntries,
     const libc::NoReturnTargetIndex &NoReturnTargets,
+    const libc::StackProbeIndex &StackProbes,
     const NoReturnCalleeProver &NoReturnCallees,
     const detail::AbsoluteRelocationRootIndex &AbsoluteRelocationRoots,
     const ExecutableCodeOwnerIndex *CodeOwnerIndex,
@@ -3574,7 +3577,7 @@ void computeCallRegisterEffects(
     CollectFormattedCalls(LF.Blocks, /*Converted=*/true);
     Effects[LF.Entry] =
         localRegisterEffect(Img, LF, &NoReturnTargets, &FixedCallReads,
-                            &Result.CallArgumentSources);
+                            &Result.CallArgumentSources, &StackProbes);
     if (forwardsToGuardDispatch(Img, LF.Blocks))
       GuardForwarders.insert(LF.Entry);
     Depth[LF.Entry] = 0;
@@ -3673,7 +3676,7 @@ void computeCallRegisterEffects(
         CollectFormattedCalls(Body.Blocks, /*Converted=*/false);
         Effects[Callee] =
             localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads,
-                                &Result.CallArgumentSources);
+                                &Result.CallArgumentSources, &StackProbes);
         if (forwardsToGuardDispatch(Img, Body.Blocks))
           GuardForwarders.insert(Callee);
         Work.push_back(Callee);
@@ -3725,8 +3728,11 @@ void computeCallRegisterEffects(
         Widths[Win64Args[I] / 8] = Proto->ArgWidths[I];
       FixedEntryReads[Entry] = Widths;
     };
+    std::set<va_t> Callees;
     for (const auto &[Entry, Effect] : Effects)
-      Classify(Entry, Img.getFunctionNameAt(Entry));
+      Callees.insert(Entry);
+    for (const auto &[Entry, Name] : functionNamesAt(Img, Callees))
+      Classify(Entry, Name);
     for (const Import &Imp : Img.Imports)
       Classify(Imp.IATAddr, Imp.Name);
   }
@@ -3784,6 +3790,7 @@ struct PipelineAnalysisCache::Impl {
   const std::set<va_t> Entries;
   std::set<uint64_t> VerifiedEntries;
   libc::NoReturnTargetIndex Targets;
+  libc::StackProbeIndex StackProbes;
   detail::AbsoluteRelocationRootIndex Roots;
   ExecutableCodeOwnerIndex Owners;
   InternalNoReturnIndex Callees;
@@ -3805,7 +3812,7 @@ struct PipelineAnalysisCache::Impl {
                             return Prototype && Prototype->NoReturn;
                           })
                     : libc::NoReturnTargetIndex::DeclaredNoReturn()),
-        Roots(Img), Owners(Img),
+        StackProbes(Img), Roots(Img), Owners(Img),
         Callees(Img, &this->Entries, &Targets, &Roots, &Owners),
         Graphs(createX87CallGraphCache(&Callees, &Targets, RetainBodies,
                                        {limits::kMaxPipelineCallGraphEntries,
@@ -4418,9 +4425,9 @@ void Pipeline::buildLowIR(
     ++FuncCount;
   }
 
-  computeCallRegisterEffects(Img, FuncEntries, NoReturnTargets, NoReturnCallees,
-                             AbsoluteRelocationRoots, CodeOwnerIndex, X87Graphs,
-                             Dbg, Result);
+  computeCallRegisterEffects(
+      Img, FuncEntries, NoReturnTargets, Facts.StackProbes, NoReturnCallees,
+      AbsoluteRelocationRoots, CodeOwnerIndex, X87Graphs, Dbg, Result);
 }
 
 } // namespace neverd
