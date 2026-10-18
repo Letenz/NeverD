@@ -385,10 +385,9 @@ const char *neverd_warm_functions_json(neverd_session_t Sess,
     }
     std::optional<AnalysisCacheWarmup> Warmup;
     std::optional<va_t> Next;
-    // A PE function's preparation discovers exception handlers and drops
-    // this state (prepareFunction), so nothing kept here would survive.
-    if (S->Img.Format != BinaryFormat::COFF && S->Img.Arch == Arch::X64 &&
-        S->synchronizeFunctions()) {
+    // A PE function's preparation keeps this state unless its handler
+    // discovery adds metadata, which after a full load it does not.
+    if (S->Img.Arch == Arch::X64 && S->synchronizeFunctions()) {
       // ensurePipeline drops analysis state from before the current
       // signature feature generation.  The state built here belongs to the
       // current one, so record it as ensurePipeline would after a run.

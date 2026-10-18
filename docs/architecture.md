@@ -649,9 +649,10 @@ has its own allowances (`kMaxPipelineCallGraphEntries`,
 that cache with the entries a selected run of a symbol start uses. Warming
 never evicts: it reports the cache full instead, and it leaves a cache kept
 for other entries alone. It records the current feature generation, so the
-next selection keeps what it built. It does not help a COFF image, whose
-function preparation retires these facts, or a function that is not a symbol
-start, whose run adds its own entry and so keys another cache.
+next selection keeps what it built. A COFF image keeps it while handler
+discovery adds nothing, as after a full load, which decodes every table. It
+does not help a function that is not a symbol start, whose run adds its own
+entry and so keys another cache.
 Reload, function edits, signature matching and analysis-policy changes retire
 the cache while its image/debug owners are alive. Feature generations are
 checked even after navigation cleared the preceding pipeline result. COFF
