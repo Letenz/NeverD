@@ -662,10 +662,14 @@ compiles the result:
   the portable spelling for the GNU target too; the C header, which the
   workbench shows as C/C++, compiles as C++ as well;
 - Rust with rustc in both of its spellings, exact widths and Windows' names
-  as aliases (64-bit layouts only);
+  as aliases, for the program's target (`--target`, `--emit=metadata`, which
+  needs the target's standard library and no linker);
 - Go with `go vet` for Windows, in both spellings too;
-- Python by running the module with `python3 -I -W error`, in both spellings,
-  where ctypes checks each size and offset (64-bit layouts only);
+- Python by running the module with `-I -W error`, in both spellings, where
+  ctypes checks each size and offset, on a Python of the program's kind: the
+  host's for 64-bit layouts, i386 Linux's for i386 System V and Android's
+  i386, 32-bit ARM's under qemu for the AAPCS, 32-bit Windows' under Wine
+  for Windows x86;
 - JavaScript by running the module with `node`, in both spellings, whose
   checks read and write back every accessor within its record, and by
   `tsc --noEmit --allowJs --checkJs --strict`, which checks its JSDoc as
@@ -674,8 +678,19 @@ compiles the result:
   checks do the same (`--lua` names the interpreter, `lua5.4`, `lua5.3` or
   `lua` by default).
 
-A missing toolchain is reported and skipped. Without `--binary` it checks the
-fixture:
+A missing toolchain is reported and skipped. The 32-bit and cross ones come
+from `scripts/fetch_render_toolchains.py`, which fetches them without root into
+`~/.cache/neverd-render-toolchains` and writes `toolchains.json` there for
+the checker (`--toolchains` names another directory): rustup with the
+standard library of each cross target; Python for i386 Linux from Debian's
+i386 packages, which runs on the host's 32-bit C library; Python for 32-bit
+ARM and 32-bit Windows from python-build-standalone, run by qemu-arm against
+the armhf C library of Debian's cross packages and by Wine; and the C
+libraries' headers of armhf and arm64 Linux and of Android (bionic, at the
+commit the Android libraries name). It needs an x86-64 Debian or Ubuntu host
+with dpkg, apt-get and Wine; a part it cannot fetch is reported, and the
+checker skips what it would have checked, naming the script. Without
+`--binary` it checks the fixture:
 
 ```sh
 python3 scripts/check_type_renders.py --neverd build/bin/neverd

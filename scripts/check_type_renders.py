@@ -13,6 +13,12 @@ its DWARF; with --declare, the types C, C++, Rust or Go files declare, laid
 out for --data-model, such as a type library NeverD ships, and the
 prototypes they declare too.  A toolchain that is missing is reported and
 skipped.
+
+A program's types render for its own target, which is often not the host's:
+the toolchains scripts/fetch_render_toolchains.py fetches (--toolchains,
+default ~/.cache/neverd-render-toolchains) compile Rust for that target and
+run Python on one of its kind, i386 Linux's, 32-bit ARM's under qemu, or
+32-bit Windows' under Wine.  Without them those checks are skipped.
 """
 from __future__ import annotations
 
@@ -57,22 +63,33 @@ typedef long HRESULT;
 """
 
 # Per data model: the target every spelling of C and C++ compiles for, the
-# GNU target the portable spelling also compiles for, if another, and Go's
-# GOOS and GOARCH.  A program whose record ABI its data model does not say,
-# a 32-bit one GCC or Clang laid out, Apple's 64-bit ARM or Android's i386,
-# goes by that ABI instead, and builds for its own target alone.
+# GNU target the portable spelling also compiles for, if another, Go's GOOS
+# and GOARCH, the target Rust compiles for (the host's where none), and the
+# Python whose ctypes lay records out as the program's do: the host's, or
+# one of the toolchains (i386, armv7, win32).  A program whose record ABI
+# its data model does not say, a 32-bit one GCC or Clang laid out, Apple's
+# 64-bit ARM or Android's i386, goes by that ABI instead, and builds for its
+# own target alone.
 TARGETS = {
     "LLP64": ("x86_64-pc-windows-msvc", "x86_64-linux-gnu", "windows",
-              "amd64"),
-    "ILP32": ("i686-pc-windows-msvc", "i686-linux-gnu", "windows", "386"),
-    "LP64": ("x86_64-linux-gnu", "x86_64-linux-gnu", "windows", "amd64"),
-    "apple-arm64": ("arm64-apple-macos", None, "darwin", "arm64"),
-    "i386-sysv": ("i686-linux-gnu", None, "linux", "386"),
+              "amd64", "x86_64-pc-windows-msvc", "host"),
+    "ILP32": ("i686-pc-windows-msvc", "i686-linux-gnu", "windows", "386",
+              "i686-pc-windows-msvc", "win32"),
+    "LP64": ("x86_64-linux-gnu", "x86_64-linux-gnu", "windows", "amd64",
+             None, "host"),
+    "apple-arm64": ("arm64-apple-macos", None, "darwin", "arm64",
+                    "aarch64-apple-darwin", "host"),
+    "i386-sysv": ("i686-linux-gnu", None, "linux", "386",
+                  "i686-unknown-linux-gnu", "i386"),
     # Go builds for android/386 only through cgo; its layouts are 386's.
-    "android-i386": ("i686-linux-android", None, "linux", "386"),
-    "aapcs32": ("armv7-linux-gnueabihf", None, "linux", "arm"),
+    # Android's i386 lays records out as i386 System V does, with a long
+    # double that is a double, which ctypes then reads as c_double.
+    "android-i386": ("i686-linux-android", None, "linux", "386",
+                     "i686-linux-android", "i386"),
+    "aapcs32": ("armv7-linux-gnueabihf", None, "linux", "arm",
+                "armv7-unknown-linux-gnueabihf", "armv7"),
 }
-THIRTY_TWO_BIT = ("ILP32", "i386-sysv", "android-i386", "aapcs32")
+FETCH = "run scripts/fetch_render_toolchains.py"
 
 
 def run(command, **options):
@@ -93,6 +110,9 @@ class Checker:
         self.work = work
         self.failures = 0
         self.skipped = []
+        manifest = arguments.toolchains.expanduser() / "toolchains.json"
+        self.toolchains = json.loads(manifest.read_text(encoding="utf-8")) \
+            if manifest.exists() else {}
 
     def neverd(self, *options):
         command = [self.arguments.neverd, "types"]
@@ -137,7 +157,7 @@ class Checker:
         if not clang:
             self.skip("C and C++", f"{self.arguments.clang} not found")
             return
-        msvc, gnu, _, _ = TARGETS[model]
+        msvc, gnu = TARGETS[model][:2]
         cxx = clang + "++" if shutil.which(clang + "++") else clang
         for spelling in SPELLINGS:
             for language, suffix in (("c", ".h"), ("cpp", ".hpp")):
@@ -179,28 +199,39 @@ class Checker:
         self.report(f"c prototypes {TARGETS[model][0]}", diagnostics(result))
 
     def rust(self, model):
-        rustc = shutil.which("rustc")
-        if not rustc:
+        """rustc checks each size and offset as it compiles, for the
+        program's target: the toolchains' rustc has the standard library of
+        each, where the host's has its own alone."""
+        target = TARGETS[model][4]
+        rust = self.toolchains.get("rust", {})
+        rustc, environment = rust.get("rustc"), None
+        if rustc and Path(rustc).exists():
+            environment = dict(os.environ, **rust.get("env", {}))
+        elif target is None and shutil.which("rustc"):
+            rustc = shutil.which("rustc")
+        elif target is None:
             self.skip("Rust", "rustc not found")
             return
-        if model in THIRTY_TWO_BIT:
-            self.skip("Rust", "32-bit layouts need a 32-bit Rust target")
+        else:
+            self.skip("Rust", f"no rustc for {target}: {FETCH}")
             return
         for spelling in RUST_SPELLINGS:
             source = self.render(f"types-{spelling}.rs", "--lang", "rust",
                                  "--spelling", spelling)
             result = run([rustc, "--crate-type=lib", "--edition=2021",
                           "--emit=metadata", "-o",
-                          str(self.work / f"types-{spelling}.rmeta"),
-                          str(source)])
-            self.report(f"rust {spelling}", diagnostics(result))
+                          str(self.work / f"types-{spelling}.rmeta")] +
+                         ([f"--target={target}"] if target else []) +
+                         [str(source)], env=environment)
+            self.report(f"rust {spelling}" + (f" {target}" if target else ""),
+                        diagnostics(result))
 
     def go(self, model):
         go = shutil.which("go")
         if not go:
             self.skip("Go", "go not found")
             return
-        _, _, goos, goarch = TARGETS[model]
+        goos, goarch = TARGETS[model][2:4]
         environment = dict(os.environ, GOOS=goos, GOARCH=goarch,
                            GOFLAGS="-mod=mod")
         for spelling in GO_SPELLINGS:
@@ -215,19 +246,40 @@ class Checker:
                         diagnostics(result))
 
     def python(self, model):
-        """Python's ctypes check each size and offset as the module runs."""
-        python = shutil.which("python3")
-        if not python:
-            self.skip("Python", "python3 not found")
-            return
-        if model in THIRTY_TWO_BIT:
-            self.skip("Python", "32-bit layouts need a 32-bit Python")
-            return
+        """Python's ctypes check each size and offset as the module runs, on
+        a Python of the program's kind: the host's, or the toolchains'
+        i386 Linux one, 32-bit ARM's under qemu, 32-bit Windows' under
+        Wine."""
+        kind = TARGETS[model][5]
+        environment, windows = None, False
+        if kind == "host":
+            python = shutil.which("python3")
+            if not python:
+                self.skip("Python", "python3 not found")
+                return
+            command = [python]
+        else:
+            runner = self.toolchains.get("python", {}).get(kind)
+            if not runner or not all(Path(part).exists() for part in
+                                     runner["command"]
+                                     if part.startswith("/")):
+                self.skip("Python", f"no {kind} Python: {FETCH}")
+                return
+            command = list(runner["command"])
+            environment = {key: value for key, value in os.environ.items()
+                           if key not in runner.get("unset", [])}
+            environment.update(runner.get("env", {}))
+            windows = runner.get("windows_paths", False)
         for spelling in PYTHON_SPELLINGS:
             source = self.render(f"types-{spelling}.py", "--lang", "python",
                                  "--spelling", spelling)
-            result = run([python, "-I", "-W", "error", str(source)])
-            self.report(f"python {spelling}", diagnostics(result))
+            # Wine reaches the host's files as drive Z:.
+            path = f"Z:{source}" if windows else str(source)
+            result = run(command + ["-I", "-W", "error", path],
+                         env=environment)
+            self.report(f"python {spelling}" +
+                        ("" if kind == "host" else f" {kind}"),
+                        diagnostics(result))
 
     def javascript(self):
         """Node runs the module, whose checks read and write every accessor
@@ -297,6 +349,12 @@ def main():
                              "lua)")
     parser.add_argument("--keep", default=None,
                         help="keep the rendered sources in this directory")
+    parser.add_argument("--toolchains", type=Path,
+                        default=Path.home() / ".cache" /
+                        "neverd-render-toolchains",
+                        help="the toolchains scripts/fetch_render_toolchains.py "
+                             "fetched, which check 32-bit and cross layouts "
+                             "(default ~/.cache/neverd-render-toolchains)")
     arguments = parser.parse_args()
     if arguments.lua is None:
         arguments.lua = ["lua5.4", "lua5.3", "lua"]

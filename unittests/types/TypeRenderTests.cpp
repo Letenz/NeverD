@@ -714,6 +714,20 @@ TEST(TypeRender, CCharacterTypesLeaveCppItsKeywords) {
                         "typedef uint16_t char16_t;"));
 }
 
+TEST(TypeRender, RustImportsCoreVoidWhereItIsSpelled) {
+  // An import nothing uses warns, which a check of warnings fails on.
+  TypeLibrary Library;
+  Library.define(
+      structure("Plain", 4, {member("x", makeBuiltin(Builtin::Int), 0)}));
+  EXPECT_FALSE(contains(renderTypes(Library, {}, in(Language::Rust)),
+                        "use core::ffi::c_void;"));
+  Library.define(structure(
+      "Holder", 8,
+      {member("data", makePointer(makeBuiltin(Builtin::Void), 8), 0)}));
+  EXPECT_TRUE(contains(renderTypes(Library, {}, in(Language::Rust)),
+                       "use core::ffi::c_void;"));
+}
+
 TEST(TypeRender, NamesStepAroundKeywords) {
   TypeLibrary Library;
   Library.define(structure("_WORDS", 8,
