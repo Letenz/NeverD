@@ -1528,6 +1528,13 @@ std::optional<va_t> HighCWriter::importDataSlotRead(const HighExpr &Address,
   return Slot;
 }
 
+const std::string &HighCWriter::imageFunctionNameAt(va_t Addr) const {
+  auto [It, Inserted] = ListedFunctionNames.try_emplace(Addr);
+  if (Inserted)
+    It->second = Opts.Image->getFunctionNameAt(Addr);
+  return It->second;
+}
+
 std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
   std::string Name = E.CallTarget;
   if (Name.empty() && E.CallAddr)
@@ -1547,7 +1554,7 @@ std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
       return {};
     if (!Name.empty() && !isSynthesizedFuncName(Name))
       return {};
-    std::string FromImage = Opts.Image->getFunctionNameAt(E.CallAddr);
+    const std::string &FromImage = imageFunctionNameAt(E.CallAddr);
     if (FromImage.empty() || isSynthesizedFuncName(FromImage))
       return {};
     return FromImage;
