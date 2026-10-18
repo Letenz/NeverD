@@ -2,6 +2,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymConcreteTests.cpp
   SymDispatchTests.cpp
   SymExecTests.cpp
+  SymMemoryKnowledgeTests.cpp
   SymLoadOriginBindingTests.cpp
   SymMBARewriteCacheTests.cpp
   SymBatchSubstitutionTests.cpp
@@ -108,5 +109,10 @@ add_neverd_unittest(NeverDSymMBARewriteCacheTests
 
 add_neverd_unittest(NeverDSymLoadOriginBindingTests
   SymLoadOriginBindingTests.cpp
+  LINK_COMPONENTS Symbolic Solver
+)
+
+add_neverd_unittest(NeverDSymMemoryKnowledgeTests
+  SymMemoryKnowledgeTests.cpp
   LINK_COMPONENTS Symbolic Solver
 )
