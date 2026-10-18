@@ -8,6 +8,8 @@
 
 #include "neverd/backend/c/CSourceMap.h"
 
+#include "llvm/ADT/StringExtras.h"
+
 #include <map>
 
 using namespace neverd;
@@ -293,6 +295,58 @@ void DialectPrinter::trailingComments(const CommentList &Comments) {
   }
   Buffer += '\n';
   AtLineStart = true;
+}
+
+std::optional<std::string> DialectPrinter::stringBytes(const Expr *E) {
+  std::string Bytes;
+  const auto Append = [&](llvm::StringRef Text) {
+    if (!Text.consume_front("\"") || !Text.consume_back("\""))
+      return false;
+    for (size_t I = 0; I < Text.size(); ++I) {
+      if (Text[I] != '\\') {
+        Bytes += Text[I];
+        continue;
+      }
+      if (++I == Text.size())
+        return false;
+      unsigned Value = 0;
+      if (Text[I] >= '0' && Text[I] <= '7') {
+        Value = Text[I] - '0';
+        for (int Digits = 1; Digits < 3 && I + 1 < Text.size() &&
+                             Text[I + 1] >= '0' && Text[I + 1] <= '7';
+             ++Digits)
+          Value = Value * 8 + (Text[++I] - '0');
+      } else if (Text[I] == 'x') {
+        if (I + 1 == Text.size() || !llvm::isHexDigit(Text[I + 1]))
+          return false;
+        while (I + 1 < Text.size() && llvm::isHexDigit(Text[I + 1]))
+          if ((Value = Value * 16 + llvm::hexDigitValue(Text[++I])) > 0xFF)
+            return false;
+      } else {
+        static constexpr llvm::StringLiteral Escapes = "n\nt\tr\ra\ab\bf\fv\v"
+                                                       "\\\\\"\"''??";
+        size_t At = 0;
+        while (At < Escapes.size() && Escapes[At] != Text[I])
+          At += 2;
+        if (At == Escapes.size())
+          return false;
+        Value = static_cast<unsigned char>(Escapes[At + 1]);
+      }
+      Bytes += static_cast<char>(Value);
+    }
+    return true;
+  };
+  if (E->Ops.empty() && !Append(E->Text))
+    return std::nullopt;
+  for (const Expr *Part : E->Ops)
+    if (!Append(Part->Text))
+      return std::nullopt;
+  return Bytes;
+}
+
+bool DialectPrinter::byteArray(const CType *Ty) {
+  return Ty->isArray() && Ty->Count && Ty->Inner->isInteger() &&
+         Ty->Inner->Bits == 8 && !Ty->Inner->Signed;
 }
 
 Printed DialectPrinter::withComments(const Expr *E, Printed P) const {

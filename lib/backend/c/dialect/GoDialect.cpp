@@ -246,6 +246,10 @@ private:
   }
 
   Printed value(const Expr *E, const CType *Want) {
+    // A character a byte holds is a constant Go assigns to it.
+    if (E->Kind == ExprKind::Character && E->Text.starts_with("'") && Want &&
+        Want->isInteger() && Want->Bits == 8 && !Want->Signed)
+      return withComments(E, Printed{E->Text.str(), PrecAtom});
     if (const Expr *Narrow = narrowable(E, Want))
       return withComments(E, narrowed(Narrow, Want));
     return convert(raw(E), valueType(E), Want);
@@ -1328,8 +1332,29 @@ private:
 
   std::string initializer(const Expr *Init, const CType *Ty) {
     if (Init->Kind != ExprKind::InitList) {
-      if (Ty->isArray() && Init->Kind == ExprKind::String)
+      if (Ty->isArray() && Init->Kind == ExprKind::String) {
+        // An array of bytes takes them as its elements, which Go zero-fills
+        // past the last.
+        if (byteArray(Ty))
+          if (auto Bytes = stringBytes(Init);
+              Bytes && Bytes->size() <= *Ty->Count) {
+            while (!Bytes->empty() && !Bytes->back())
+              Bytes->pop_back();
+            std::vector<std::string> Elements;
+            for (const unsigned char Byte : *Bytes) {
+              if (!Byte)
+                Elements.push_back("0");
+              else if (Byte == '\'' || Byte == '\\')
+                Elements.push_back({'\'', '\\', static_cast<char>(Byte), '\''});
+              else if (Byte >= 32 && Byte < 127)
+                Elements.push_back({'\'', static_cast<char>(Byte), '\''});
+              else
+                Elements.push_back("0x" + llvm::utohexstr(Byte));
+            }
+            return type(Ty) + "{" + llvm::join(Elements, ", ") + "}";
+          }
         return stringLiteral(Init);
+      }
       return value(Init, Ty).Text;
     }
     std::vector<std::string> Elements;
