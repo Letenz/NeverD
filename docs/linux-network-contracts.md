@@ -201,9 +201,43 @@ virtual deadlines, without host scheduling delay or kernel timer slack.
 Readiness is rescanned on wake and wins at an exact deadline tie. Querying never
 consumes a receive event; partial TCP reads and UDP peeks retain readiness.
 A nonblocking receive before a declared arrival returns EAGAIN without consuming
-input. A direct blocking receive before arrival is still unsupported: callers
-must first wait for readiness. This does not add `poll`, `epoll`, signals or
-nonblocking connect completion.
+input. Direct blocking `read`, `recv` and `recvfrom` use the same arrival and
+idle-clock owner. A pending receive retains its open socket description,
+scalar arguments and the timeout at entry. Closing or reusing the FD from
+another thread cannot redirect that receive to another socket; aliases still
+share the original stream or packet cursor. Another consumer can take the
+available input first, in which case the pending operation waits for the next
+declared event without restarting its timeout.
+
+The supported whole-second `SO_RCVTIMEO` creates an exact virtual deadline.
+Zero means no deadline; negative seconds mean no waiting. Known absence through
+the deadline permits EAGAIN, and data or EOF at the deadline takes precedence.
+Unknown readiness and unmet send prerequisites remain unsupported even with a
+timeout or nonblocking flag. Explicit error completions keep their existing
+untimed meaning. The model does not infer kernel timer slack, packet delivery
+or missing observations from the timeout setting.
+
+Receive output memory is checked when data arrives. UDP peer length is read at
+completion, and existing payload/address/length copy order, PEEK/TRUNC, empty
+datagrams and partial-copy refusal remain in force. Zero-size `read` does not
+dequeue a datagram; zero-size UDP `recvfrom` can wait for and consume one.
+This does not add TCP WAITALL/PEEK, `poll`, `epoll`, signals or nonblocking
+connect completion.
+Buffered stdio wrappers still stop if their nested read would suspend; they
+cannot complete as a raw read without a separate buffering continuation.
+The description lifetime and timeout behavior follow
+[Linux close](https://man7.org/linux/man-pages/man2/close.2.html),
+[receive](https://man7.org/linux/man-pages/man2/recv.2.html) and
+[socket options](https://man7.org/linux/man-pages/man7/socket.7.html).
+
+The full user buffer extent is admitted before waiting, including at EOF and
+for zero-length calls. `recvfrom` checks the extent before the FD lookup; a
+descriptor `read` checks the FD first. An out-of-range extent returns EFAULT;
+page permissions remain a completion-time check. Extents above guest
+`MAX_RW_COUNT` are explicitly unsupported because read and recv import/clamp
+ordering differs. This follows the Linux 5.10
+[socket entry](https://github.com/torvalds/linux/blob/v5.10/net/socket.c) and
+[iterator import](https://github.com/torvalds/linux/blob/v5.10/lib/iov_iter.c).
 
 A suspended select retains its copied bitmaps and absolute deadline. Other
 threads may modify guest input memory without changing that copy; output access

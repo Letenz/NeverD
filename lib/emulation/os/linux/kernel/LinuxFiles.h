@@ -36,7 +36,7 @@ public:
   void setCurrentTask(uint32_t ID) { CurrentTask = ID; }
   llvm::Expected<std::optional<uint64_t>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
-         ProcessResult &Result);
+         ProcessResult &Result, ThreadContext *Thread = nullptr);
   llvm::Expected<std::optional<uint64_t>>
   extendedAttribute(ServiceKind Kind, const ProcessServiceEvent &Event,
                     const std::optional<LinuxKernelOptions> &Kernel,
@@ -58,7 +58,7 @@ public:
   llvm::Expected<std::optional<uint64_t>>
   network(ServiceKind Kind, const ProcessServiceEvent &Event,
           const std::optional<LinuxNetworkOptions> &Network,
-          ProcessResult &Result);
+          ProcessResult &Result, ThreadContext *Thread = nullptr);
   bool isRegularFile(uint32_t FD) const;
   /// Missing descriptor returns EBADF; another descriptor kind returns null.
   /// The borrowed catalogue identity outlives every mapping in this process.
@@ -139,17 +139,13 @@ private:
     const char *Unknown = nullptr;
   };
   Readiness socketReadiness(const OpenSocket &Socket, unsigned Wanted) const;
-  /// A missing value means receive may proceed; otherwise return EAGAIN or
-  /// preserve an unsupported blocking receive without consuming an event.
-  std::optional<std::optional<uint64_t>>
-  receiveBeforeReady(const OpenSocket &Socket, uint32_t Flags,
-                     ProcessResult &Result) const;
   class SelectWait;
+  class ReceiveWait;
   size_t NextConnection = 0;
   size_t NextDatagramConnection = 0;
   std::optional<uint64_t> receiveSocketError(OpenSocket &Socket,
                                              const LinuxNetworkReceive &Event,
-                                             uint32_t Flags,
+                                             bool MayReturnAgain,
                                              ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>>
   transferSocket(OpenSocket &Socket, bool Send, uint64_t Address, uint64_t Size,
@@ -162,6 +158,14 @@ private:
   using Descriptor =
       std::variant<Stream, OpenFile, ProcessDescriptor, OpenDevice,
                    OpenDirectory, OpenProcFile, OpenSocket>;
+  /// Zero admits the extent, an errno rejects it, null preserves unsupported.
+  std::optional<uint64_t> receiveBuffer(uint64_t Address, uint64_t Size,
+                                        ProcessResult &Result) const;
+  llvm::Expected<std::optional<uint64_t>>
+  receiveSocket(std::shared_ptr<Descriptor> Owner, uint64_t Address,
+                uint64_t Size, ProcessResult &Result, ThreadContext *Thread,
+                uint32_t Flags = 0, uint64_t PeerAddress = 0,
+                uint64_t PeerLength = 0);
 
   ExecutionBackend &CPU;
   const MemoryLayout &Layout;
@@ -284,10 +288,9 @@ private:
                                                       uint32_t Request,
                                                       uint64_t Argument,
                                                       ProcessResult &Result);
-  llvm::Expected<std::optional<uint64_t>> readDescriptor(uint32_t FD,
-                                                         uint64_t Address,
-                                                         uint64_t Size,
-                                                         ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>>
+  readDescriptor(uint32_t FD, uint64_t Address, uint64_t Size,
+                 ProcessResult &Result, ThreadContext *Thread);
   llvm::Expected<std::optional<uint64_t>> seekDescriptor(uint32_t FD,
                                                          uint64_t Offset,
                                                          uint32_t Whence,

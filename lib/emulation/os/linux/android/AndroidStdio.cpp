@@ -7,6 +7,7 @@
 /// Opaque FILE lifetime, buffering and positioning over the shared Linux FD
 /// owner. API 28 behavior is documented in docs/android-native-emulation.md.
 #include "AndroidInternal.h"
+#include "AndroidThreads.h"
 
 #include "neverd/emulation/CPU.h"
 
@@ -33,6 +34,14 @@ Bionic::streamService(linux_model::ServiceKind Kind, uint32_t FD, uint64_t A1,
   auto R = kernelService(Kind, Event);
   if (!R)
     return R.takeError();
+  auto *Thread = Threads ? Threads->kernel() : nullptr;
+  if (!*R && Thread && Thread->Pending) {
+    // fread/fgets need their own continuation for buffer/element accounting.
+    // A nested read result must never complete the enclosing stdio import.
+    Thread->Pending.reset();
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic = "blocking stdio receive continuation is unmodeled";
+  }
   if (*R && failed(**R))
     if (auto E = setErrno(uint64_t(0) - **R))
       return std::move(E);
