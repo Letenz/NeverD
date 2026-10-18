@@ -1,5 +1,93 @@
 # NeverD Daily Progress
 
+## Current snapshot — 2026-10-18
+
+- Source inventory pinned at **2026-10-18 00:57 UTC / 08:57 Asia/Shanghai** to dev [87d12f12](https://github.com/NeverSight/NeverD/commit/87d12f12712d4f1030b84ef9d92af0817bd68065).
+- Since the previous source pin [3264a443](https://github.com/NeverSight/NeverD/commit/3264a443fdbcae22b1641a474e6538f65d3b44ec): **241 commits / 603 changed non-directory paths**, no removed paths. Comparison commit pages: 100 + 100 + 41. Both recursive trees were complete; path inventory comes from blob/submodule identities, not the comparison endpoint's truncated file list. Inventory is not full-source review or feature acceptance. The prior PROGRESS-only commit is included in Git history but excluded from implementation progress.
+- **One statically confirmed I/O reporting defect repaired** in draft [#1282](https://github.com/NeverSight/NeverD/pull/1282): [f3dce1e3](https://github.com/NeverSight/NeverD/commit/f3dce1e32bc16367e3a785c232c2af90e1c5ca1f). Source-only regression [0faea67f](https://github.com/NeverSight/NeverD/commit/0faea67f7c9a46eb4cd7b94087c731060e173232). Remote full-file readbacks and the two-file diff matched the intended change (+31/-1). The regression is NOT executed.
+- Yesterday's [#1212](https://github.com/NeverSight/NeverD/pull/1212) and [#1214](https://github.com/NeverSight/NeverD/pull/1214) merged externally on October 17 at 04:15:34 and 04:15:45 UTC. Neither merge was performed by this review. This records incorporation, not new runtime validation.
+- Read AGENTS.md, CONTRIBUTING.md, SECURITY.md and relevant architecture/testing sections. Complete tree discovery found only root AGENTS.md. Dev reports unprotected and rulesets empty; contribution guidance still requires a topic branch and PR, followed here.
+- **Strict static-only:** no build, test, benchmark, project execution, repository script, formatter, dynamic analysis, manual CI dispatch or rerun. Repository instructions to build/test are intentionally not followed because this task permits only static inspection. No usable authorized online desktop or saved coding environment was returned; connector-only inspection and edits suffice for this bounded change, not execution verification.
+
+## Activity and review queue
+
+**Collection 00:58–01:00 UTC.** Pre-publication: **54 ordinary open issues / 4 open PRs**. Since October 17 01:07:00 UTC: **0 ordinary issue openings/closures; 68 PR openings, 66 merges, 0 closures without merge**. The exact timestamp interval includes #1214's 01:07:07 opening, already described in yesterday's publication. At 01:00 UTC the review's new draft #1282 raises open PRs to **5**; it is not additional delivered product functionality.
+
+Pagination: open issue collection 58 records then empty (54 issues plus 4 PRs); changed all-state issues 70 PR records then empty, no ordinary issue changes; all-state PR page 100 reaches older than the interval, covering all 70 changed PR records; open PR collection 4 then empty. Submitted reviews and inline comments returned empty arrays for all four pre-existing open PRs; review-thread queries also returned none, with no requested reviewers. Counts can change after collection.
+
+- #1278 timed offline readiness, head `88d74c3dfb0d8a41ca77bd0024763875ae860a65`.
+- #1244 Darwin initialization guards, sampled head `38105425ffd9c1eeb8f4e81f9f5a84444700434c`.
+- #1240 Darwin exit callbacks, sampled head `e7fd6950e43c23372384519198fa177762c47c20`.
+- #1237 native runtime/CI contracts, sampled head `00021fd0d2b81a69650d44c5a0731d420fd3c428`.
+
+At 01:00 UTC those last three heads had changed respectively to `1b72adc0899a5f104498cf05bde64635adc48570`, `f2030c67dc89c9520a667b2e7eb8b174e131e89a` and `61753092b635e980a6e365264a29a7cd8e39adf3`. Their earlier CI cannot establish the replacement heads' readiness. These branches' complete source diffs were not reviewed.
+
+Merged themes include project folders/git row merging (#1226), x87 proof/cache changes linked to #1189 (#1232, #1256), and offline Android/Linux networking (#1251, #1257, #1270). #1189 remains open with no returned comments; related merges do not prove the reporter's input is fixed. No external sample was downloaded or executed.
+
+## Bounded static review
+
+Full-file inspection: `include/neverd/support/ProjectFiles.h`, `ProjectFiles.def`, `ProjectWriteLock.h`; `tools/neverd-worker/ProjectHistory.h` and `ProjectHistory.cpp`; `tools/neverd/cmd/NeverDCmdProject.cpp`.
+
+Selected caller/configuration/regression inspection:
+- `lib/sdk/capi/NeverDCAPIPersist.cpp`: annotation/rename save paths and shared writer-lock error handling (initial approximately 450 lines).
+- `tools/neverd-gui/app/ProjectDatabase.cpp`: project migration/preparation and writeProjectFile, lines 251–310.
+- `tools/neverd-worker/CMakeLists.txt`: worker and test target wiring; `tests/git_collaboration_test.py`: first 10,000 characters of existing collaboration acceptance source.
+- `unittests/SessionCAPITests.cpp`: includes, existing SessionCAPITest fixture setup/cleanup and the appended regression.
+- Relevant workbench/shared-state architecture and testing instructions. No claim to have audited the full architecture document.
+
+### Confirmed: preparation could report success after setup I/O failure
+
+**Location:** `include/neverd/support/ProjectFiles.h::prepare`, original lines 81–90.
+
+**Trigger:** A required absent project setup file cannot be inspected or created/written/closed successfully. **Cause:** filesystem status errors were skipped; the output stream was never checked before returning success. The caller's existing error branch was therefore bypassed.
+
+**Change:** Return filesystem status errors, explicitly close the output stream and return `std::errc::io_error` on failed stream state. Existing files stay unchanged. The shared helper serves writer admission, history persistence and GUI preparation; no duplicate frontend policy or dependency was introduced.
+
+**Static evidence:** The failure return now reaches ProjectWriteLock's Error, ProjectHistory's save_failed path and ProjectDatabase's error string. The successful path still returns an empty error code. Remote source and diff inspection confirms only this common error flow changed.
+
+The added POSIX-only regression source covers a failed creation, a failed status query and a subsequent successful preparation without relying on permission bits. It reuses the existing temporary-directory fixture. It has not run, does not cover Windows-specific failure injection, and does not prove flush durability or concurrency behavior.
+
+**Further questions, not confirmed fixes:** migration currently precedes writer-lock acquisition; its cross-process interleavings need focused qualification. The CLI merge writer's late I/O handling and list-merge semantics deserve a separate bounded review. No speculative behavior change is included.
+
+**Uncovered:** the remaining changed paths, complete GUI/session concurrency, runtime network contracts, architecture semantics, full persistence code, dependency implementations and broad source-patch pipeline. Static inspection does not establish operating-system file-error behavior, binary compatibility or successful builds.
+
+## Existing and automatically triggered CI
+
+**Sample 00:58–01:00 UTC; external evidence only.** Exact dev `87d12f12712d4f1030b84ef9d92af0817bd68065` returned six workflow runs and an empty second page:
+- [CI 39084120100](https://github.com/NeverSight/NeverD/actions/runs/39084120100): queued.
+- [Mobile Decompilation 39084120094](https://github.com/NeverSight/NeverD/actions/runs/39084120094): queued.
+- [Python Plugin SDK 39084120097](https://github.com/NeverSight/NeverD/actions/runs/39084120097): queued.
+- [LLVM Style 39084120114](https://github.com/NeverSight/NeverD/actions/runs/39084120114): queued.
+- [Lift native qualification 39084120109](https://github.com/NeverSight/NeverD/actions/runs/39084120109): pending.
+- [Mobile Real Applications 39084123428](https://github.com/NeverSight/NeverD/actions/runs/39084123428): skipped.
+
+At the sampled pre-refresh PR heads: #1278 had three queued workflows; #1244 and #1240 each had successful LLVM Style, running CI and queued Python SDK/Mobile; #1237 had successful LLVM Style and queued CI/Mobile. No sampled failure does NOT mean all checks passed; three heads subsequently changed.
+
+At draft #1282 source/test head `0faea67f7c9a46eb4cd7b94087c731060e173232`, automatically created [CI](https://github.com/NeverSight/NeverD/actions/runs/39084857354), [LLVM Style](https://github.com/NeverSight/NeverD/actions/runs/39084857346) and [Mobile](https://github.com/NeverSight/NeverD/actions/runs/39084857322) were queued. GitHub reported mergeable/unstable at 01:00 UTC; this is not approval or a passing validation result. This report-only commit may have a distinct head/check lifecycle; it is not substituted for source/test evidence.
+
+## Suggested priorities (not delivery commitments)
+
+1. **Review and qualify #1282's common preparation failure contract.** Depends on maintainer review and supported-host validation. Acceptance: actual targeted regression results including successful existing-file preservation, POSIX error cases and Windows-specific failure handling; CLI and GUI receive errors consistently. This static task supplies no executed result.
+2. **Reconcile current integration and the four runtime PRs.** Depends on their final head identities and existing workflows reaching terminal states. Acceptance: exact-head results, failures/skips and requested review recorded separately; older green style checks cannot qualify newer heads. Do not dispatch or rerun CI from this review.
+3. **Qualify collaborative persistence and #1189 separately.** Dependencies: project migration/locking contracts and an authorized representative lifting fixture. Acceptance: non-destructive concurrent migration/save behavior and reporter-relevant resource results recorded by actual validation; merged planning or performance changes alone do not close either acceptance gap.
+
+## Daily log
+
+### 2026-10-18 — Shared project preparation static review
+
+- Inventoried 241 commits and 603 paths; reviewed the explicitly bounded shared persistence/CLI-GUI error-flow scope.
+- Repaired one statically confirmed error-reporting defect in draft #1282; added unexecuted regression source.
+- Reconciled yesterday's two repair merges, 54 open issues and four existing pending PRs; today's draft is tracked separately.
+- Preserved the complete previous PROGRESS contents below, including historical snapshots and manual edits.
+- No issue state/label/assignee, protection, dependency, workflow, merge or deployment changed.
+
+## Previous snapshot (preserved verbatim)
+
+<details>
+<summary>Prior PROGRESS contents through 2026-10-17</summary>
+
+# NeverD Daily Progress
+
 ## Current snapshot — 2026-10-17
 
 - Review source pinned at **01:00 UTC / 09:00 Asia/Shanghai** to dev [3264a443](https://github.com/NeverSight/NeverD/commit/3264a443fdbcae22b1641a474e6538f65d3b44ec).
@@ -2418,6 +2506,8 @@ them are author reports unless separately confirmed by linked workflow results.
 
 </details>
 
+
+</details>
 
 </details>
 

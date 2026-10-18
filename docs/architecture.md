@@ -3768,6 +3768,22 @@ LLVM emitters run each as that inline assembly, which LLVM C reads back the
 same way. SYSP, MRRS and MSRR move a register pair no intrinsic carries,
 and fail clearly.
 
+An ARM coprocessor register transfer keeps its numbers as one field of
+`ArmMrc`, `ArmMcr`, `ArmMrrc` or `ArmMcrr` (`armCoprocessorField`, one hex
+digit each for the coprocessor, opc1, CRn, CRm and opc2: TPIDRURO's
+`mrc p15, #0, r0, c13, c0, #3` is 0xF0D03). MRC writes its register, an
+MRRC's 64-bit value goes to Rt (low) and Rt2 (high), and MCR and MCRR
+write a system register from Rt, or Rt2:Rt. Both C routes call ACLE's
+`__arm_mrc(15, 0, 13, 0, 3)`, `__arm_mcr`, `__arm_mrrc` or `__arm_mcrr`
+(`ArmCoprocessorAcle.h`); the LLVM emitters run the instruction as inline
+assembly (`armCoprocessorInstructionAsm`), which LLVM C reads back to the
+same call. A read stays though its value goes unused, since reading a
+register can change state. The MRC that writes the condition flags
+(`apsr_nzcv`), a transfer of PC, an MRRC that writes one register twice,
+the unconditional MRC2 family, CDP, LDC and STC fail clearly. Capstone's
+`CS_MODE_V8` applies the Armv8.1-M rule against CP14 and CP15 only to
+M-class code (NeverSight/capstone#15), so A-profile code decodes them.
+
 An SMC or HVC #0 follows Arm's SMC Calling Convention: the lift binds its
 results in x0-x3 (r0-r3) as the outputs of a multi-output intrinsic, and
 LowToMed gives it the registers it reads, its function identifier and

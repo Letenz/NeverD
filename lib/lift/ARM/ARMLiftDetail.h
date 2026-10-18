@@ -26,6 +26,7 @@
 #ifndef NEVERD_LIFT_ARM_ARMLIFTDETAIL_H
 #define NEVERD_LIFT_ARM_ARMLIFTDETAIL_H
 
+#include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/lift/ARMLifter.h"
 
 #include <capstone/capstone.h>
@@ -55,6 +56,38 @@ inline std::optional<uint64_t> exceptionCode(const cs_insn *Insn,
     return ((Word >> 8) & 0xFFF) << 4 | (Word & 0xF);
   }
   return std::nullopt;
+}
+
+/// The armCoprocessorField of a coprocessor register transfer's operands:
+/// `mrc p15, #0, r0, c13, c0, #3`, or `mrrc p15, #1, r0, r1, c14` when
+/// \p TwoRegisters.  None for any other shape.
+inline std::optional<uint64_t> coprocessorTransferField(const cs_arm &ARM,
+                                                        bool TwoRegisters) {
+  const cs_arm_op *Op = ARM.operands;
+  auto fits = [](const cs_arm_op &Operand, arm_op_type Type, int64_t Max) {
+    return Operand.type == Type && Operand.imm >= 0 && Operand.imm <= Max;
+  };
+  if (ARM.op_count != (TwoRegisters ? 5 : 6) || !fits(Op[0], ARM_OP_PIMM, 15))
+    return std::nullopt;
+  if (TwoRegisters)
+    return fits(Op[1], ARM_OP_IMM, 15) && fits(Op[4], ARM_OP_CIMM, 15)
+               ? std::optional<uint64_t>(
+                     armCoprocessorField(Op[0].imm, Op[1].imm, 0, Op[4].imm, 0))
+               : std::nullopt;
+  return fits(Op[1], ARM_OP_IMM, 7) && fits(Op[3], ARM_OP_CIMM, 15) &&
+                 fits(Op[4], ARM_OP_CIMM, 15) && fits(Op[5], ARM_OP_IMM, 7)
+             ? std::optional<uint64_t>(armCoprocessorField(
+                   Op[0].imm, Op[1].imm, Op[3].imm, Op[4].imm, Op[5].imm))
+             : std::nullopt;
+}
+
+/// Whether \p Op is a register a coprocessor transfer moves: r0-r12, SP or
+/// LR.  An MRC to PC is the form that writes the condition flags
+/// (`mrc p14, #0, apsr_nzcv, c0, c1, #0`); elsewhere PC is UNPREDICTABLE.
+inline bool coprocessorTransferRegister(const cs_arm_op &Op) {
+  return Op.type == ARM_OP_REG &&
+         ((Op.reg >= ARM_REG_R0 && Op.reg <= ARM_REG_R12) ||
+          Op.reg == ARM_REG_SP || Op.reg == ARM_REG_LR);
 }
 
 //===----------------------------------------------------------------------===//

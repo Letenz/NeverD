@@ -60,6 +60,8 @@ constexpr bool intrinsicHasOnlyValueEffects(Intrinsic Id, uint8_t NumInputs,
 constexpr bool intrinsicWritesOnlyItsOutput(Intrinsic Id) {
   switch (Id) {
   case Intrinsic::Mrs:
+  case Intrinsic::ArmMrc:
+  case Intrinsic::ArmMrrc:
   case Intrinsic::A64_GetFPSR:
   case Intrinsic::A64_GetFPCR:
     return true;
@@ -69,12 +71,14 @@ constexpr bool intrinsicWritesOnlyItsOutput(Intrinsic Id) {
 }
 
 /// Intrinsics run for the system register they read into their destination
-/// (`mrs x0, cntvct_el0`, `mov rax, cr3`).  A function that returns that
-/// value returns a value, though the instruction has side effects or no C
-/// name of its own.
+/// (`mrs x0, cntvct_el0`, `mrc p15, #0, r0, c13, c0, #3`, `mov rax, cr3`).
+/// A function that returns that value returns a value, though the
+/// instruction has side effects or no C name of its own.
 constexpr bool intrinsicReadsSystemRegister(Intrinsic Id) {
   switch (Id) {
   case Intrinsic::Mrs:
+  case Intrinsic::ArmMrc:
+  case Intrinsic::ArmMrrc:
   case Intrinsic::ReadCr0:
   case Intrinsic::ReadCr2:
   case Intrinsic::ReadCr3:
