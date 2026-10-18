@@ -22,6 +22,11 @@ shared DAG roots, stable ordering/duplicates, borrowed operand storage,
 opaque operators and deep iterative traversal. Single-root substitution uses
 the same implementation.
 
+`NeverDSymMBARewriteCacheTests` checks context-owned exact rewrite reuse
+across calls and opaque parents, capacity/zero-work limits, unchanged variable
+identities, independent byte evaluation and reduced measured work. This cache
+is separate from per-call Solved maps and low-word projection caching.
+
 `AndroidFDSet.*` checks Bionic checked descriptor bitmaps at O0/O2 with ordinary,
 packed and RELR relocations on available CPU backends. Independent byte oracles
 cover word boundaries, untouched canaries, boolean queries, full-width extents,

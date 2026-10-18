@@ -48,6 +48,7 @@
 #include <cassert>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 namespace neverd::symbolic {
@@ -981,6 +982,14 @@ MBAResult simplifyMBA(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
 }
 
 MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
+  MBARewriteCache Disabled(Ctx, 0);
+  return simplifyMBADeep(Ctx, E, Opts, Disabled);
+}
+
+MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                          MBARewriteCache &Cache) {
+  if (Cache.Owner != &Ctx)
+    throw std::invalid_argument("MBA rewrite cache belongs to another context");
   MBAResult Result;
   Result.Expr = E;
   if (!E.isValid())
@@ -988,6 +997,20 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
   Result.SizeBefore = readingCost(Ctx, E);
   Result.SizeAfter = Result.SizeBefore;
   WorkBudget Budget(Opts.MaxWork);
+  if (auto Hit = Cache.Rewrites.find(E.index());
+      Hit != Cache.Rewrites.end() && Budget.consume()) {
+    if ((Opts.AllowGrowth || doesNotGrow(Ctx, Hit->second, E)) &&
+        agreeOnSamples(Ctx, E, Hit->second, Opts.VerifySamples)) {
+      Result.Expr = Hit->second;
+      Result.SizeAfter = readingCost(Ctx, Result.Expr);
+      Result.Changed = true;
+      Result.Outcome = MBAOutcome::Rewritten;
+      Result.Evidence = MBAEvidence::Derivation;
+      Result.Work = Budget.used();
+      ++Cache.ReusedRoots;
+      return Result;
+    }
+  }
   SolveReport FastRep;
   if (SymRef Fast = tryFastComplementarySum(Ctx, E, Opts, Budget, FastRep);
       Fast != E) {
@@ -997,6 +1020,9 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
     Result.Outcome = MBAOutcome::Rewritten;
     Result.Evidence = MBAEvidence::Derivation;
     Result.Work = Budget.used();
+    if (Cache.Rewrites.size() < Cache.Capacity &&
+        readingScore(Ctx, Fast) < readingScore(Ctx, E))
+      Cache.Rewrites.try_emplace(E.index(), Fast);
     return Result;
   }
 
@@ -1010,8 +1036,18 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
   bool Skipped = false;
   size_t RefinementStorage = Opts.MaxTableBytes;
   SymKnownBits Known(Ctx);
+  std::vector<std::pair<uint32_t, SymRef>> PendingRewrites;
+  bool Reused = false;
   auto Remember = [&](uint32_t Index, SymRef Value, bool Complete) {
     Solved[Index] = Value;
+    constexpr size_t CacheEntryBytes = 128;
+    if (Complete && Value != SymRef(Index) &&
+        PendingRewrites.size() < Cache.Capacity - Cache.Rewrites.size() &&
+        RefinementStorage >= CacheEntryBytes && Budget.consume() &&
+        readingScore(Ctx, Value) < readingScore(Ctx, SymRef(Index))) {
+      RefinementStorage -= CacheEntryBytes;
+      PendingRewrites.emplace_back(Index, Value);
+    }
     // A replacement root was also visited by this layer. Remember it under
     // its own identity so a later candidate does not measure that same root
     // again merely because it was emitted under another original node.
@@ -1028,6 +1064,12 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
 
   for (uint32_t Index : Order) {
     SymRef R(Index);
+    if (auto Hit = Cache.Rewrites.find(Index);
+        Hit != Cache.Rewrites.end() && Budget.consume()) {
+      Solved[Index] = Hit->second;
+      Reused = true;
+      continue;
+    }
     llvm::ArrayRef<SymRef> Ops = Ctx.operands(R);
 
     SymRef Rebuilt = R;
@@ -1184,6 +1226,13 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
     return Result;
   }
 
+  if (!AnySampled) {
+    for (auto [Index, Value] : PendingRewrites)
+      if (Cache.Rewrites.size() < Cache.Capacity)
+        Cache.Rewrites.try_emplace(Index, Value);
+    if (Reused)
+      ++Cache.ReusedRoots;
+  }
   Result.Expr = Out;
   Result.SizeAfter = readingCost(Ctx, Out);
   Result.Changed = true;
