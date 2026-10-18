@@ -1101,7 +1101,12 @@ of two branches keeps none (`withMergedCallSites`). A call of no single
 instruction, a jump into a scope, or a covered call in a handler's code keeps
 the pad in place. In C, every landing pad of the
 call-site table keeps its label, so a pad that only runs cleanups is not read
-as dead code after a return.
+as dead code after a return. A pad stores the exception object and selector
+the unwinder hands it: HighC prints a store of an unread call result as the
+call (`var_m30 = f()`, as x86 code spills a result right after the call), but
+never at a statement that a jump or the unwinder enters, after a call that
+never returns, or of the exception values, which no call returns
+(`collectUnusedCallStoreAlias`).
 
 DWARF subprogram extents are collected, sorted and swept once before publication
 instead of comparing every pair during ingestion. Duplicate entries, overlaps
