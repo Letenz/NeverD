@@ -267,7 +267,8 @@ def clang_options(clang, checkouts, target, root):
 def system_lines(text, target, defined):
     lines = [line for line in text.splitlines()
              if not COMPILER_TYPEDEF.match(line)]
-    kept = linux.system_lines("\n".join(lines), target, defined)
+    kept = linux.system_lines("\n".join(lines), target, defined,
+                              UNIT_HEADERS)
     # Mach-O gives every C name one underscore, which a program's import
     # names do not hold.
     return kept.replace('__asm("_" "', '__asm("')

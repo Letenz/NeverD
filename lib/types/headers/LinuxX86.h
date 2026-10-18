@@ -19,14 +19,26 @@
 #endif
 #endif
 
+#ifndef NEVERD_GNU_STRUCT
+#if defined(__MINGW32__) && (defined(__i386__) || defined(__x86_64__))
+#define NEVERD_GNU_STRUCT __attribute__((gcc_struct))
+#else
+#define NEVERD_GNU_STRUCT
+#endif
+#endif
+
 #if !defined(__cplusplus) && !defined(static_assert)
 #define static_assert _Static_assert
 #endif
 
 static_assert(sizeof(long) == 4, "these types need a 32-bit long");
 
-struct __fsid_t;
-struct __mbstate_t;
+// The member names a C library's headers may define as macros.
+#pragma push_macro("__used")
+#undef __used
+
+typedef struct __fsid_t __fsid_t;
+typedef struct __mbstate_t __mbstate_t;
 struct _G_fpos_t;
 struct _G_fpos64_t;
 struct _IO_FILE;
@@ -35,31 +47,31 @@ struct _IO_codecvt;
 struct _IO_wide_data;
 struct _IO_cookie_io_functions_t;
 struct obstack;
-struct div_t;
-struct ldiv_t;
-struct lldiv_t;
+typedef struct div_t div_t;
+typedef struct ldiv_t ldiv_t;
+typedef struct lldiv_t lldiv_t;
 struct __locale_data;
 struct __locale_struct;
-struct __sigset_t;
+typedef struct __sigset_t __sigset_t;
 struct timeval;
 struct timespec;
-struct fd_set;
-union __atomic_wide_counter;
+typedef struct fd_set fd_set;
+typedef union __atomic_wide_counter __atomic_wide_counter;
 struct __pthread_internal_list;
 struct __pthread_internal_slist;
 struct __pthread_mutex_s;
 struct __pthread_rwlock_arch_t;
 struct __pthread_cond_s;
-struct __once_flag;
-union pthread_mutexattr_t;
-union pthread_condattr_t;
-union pthread_attr_t;
-union pthread_mutex_t;
-union pthread_cond_t;
-union pthread_rwlock_t;
-union pthread_rwlockattr_t;
-union pthread_barrier_t;
-union pthread_barrierattr_t;
+typedef struct __once_flag __once_flag;
+typedef union pthread_mutexattr_t pthread_mutexattr_t;
+typedef union pthread_condattr_t pthread_condattr_t;
+typedef union pthread_attr_t pthread_attr_t;
+typedef union pthread_mutex_t pthread_mutex_t;
+typedef union pthread_cond_t pthread_cond_t;
+typedef union pthread_rwlock_t pthread_rwlock_t;
+typedef union pthread_rwlockattr_t pthread_rwlockattr_t;
+typedef union pthread_barrier_t pthread_barrier_t;
+typedef union pthread_barrierattr_t pthread_barrierattr_t;
 struct random_data;
 struct drand48_data;
 struct flock;
@@ -67,8 +79,8 @@ struct flock64;
 struct iovec;
 struct f_owner_ex;
 struct file_handle;
-struct __kernel_fd_set;
-struct __kernel_fsid_t;
+typedef struct __kernel_fd_set __kernel_fd_set;
+typedef struct __kernel_fsid_t __kernel_fsid_t;
 struct open_how;
 struct stat;
 struct stat64;
@@ -78,7 +90,7 @@ struct timex;
 struct itimerspec;
 struct sigevent;
 union sigval;
-struct siginfo_t;
+typedef struct siginfo_t siginfo_t;
 struct sigaction;
 struct _fpx_sw_bytes;
 struct _fpreg;
@@ -89,86 +101,86 @@ struct sigcontext;
 struct _xsave_hdr;
 struct _ymmh_state;
 struct _xstate;
-struct stack_t;
+typedef struct stack_t stack_t;
 struct _libc_fpreg;
 struct _libc_fpstate;
-struct mcontext_t;
-struct ucontext_t;
+typedef struct mcontext_t mcontext_t;
+typedef struct ucontext_t ucontext_t;
 struct sigstack;
 struct __jmp_buf_tag;
-struct fenv_t;
-struct femode_t;
-struct imaxdiv_t;
+typedef struct fenv_t fenv_t;
+typedef struct femode_t femode_t;
+typedef struct imaxdiv_t imaxdiv_t;
 struct dirent;
 struct dirent64;
 struct __dirstream;
-struct Dl_info;
-struct Dl_serpath;
-struct Dl_serinfo;
+typedef struct Dl_info Dl_info;
+typedef struct Dl_serpath Dl_serpath;
+typedef struct Dl_serinfo Dl_serinfo;
 struct link_map;
 struct dl_find_object;
 struct sched_attr;
 struct sched_param;
-struct cpu_set_t;
+typedef struct cpu_set_t cpu_set_t;
 struct _pthread_cleanup_buffer;
 struct __cancel_jmp_buf_tag;
 struct __pthread_cleanup_frame;
-union sem_t;
+typedef union sem_t sem_t;
 struct pollfd;
 struct termios;
 struct passwd;
 struct group;
-struct glob_t;
-struct glob64_t;
+typedef struct glob_t glob_t;
+typedef struct glob64_t glob64_t;
 struct re_dfa_t;
 struct re_pattern_buffer;
 struct re_registers;
-struct regmatch_t;
+typedef struct regmatch_t regmatch_t;
 struct option;
-struct posix_spawnattr_t;
+typedef struct posix_spawnattr_t posix_spawnattr_t;
 struct __spawn_action;
-struct posix_spawn_file_actions_t;
-struct Elf32_Ehdr;
-struct Elf64_Ehdr;
-struct Elf32_Shdr;
-struct Elf64_Shdr;
-struct Elf32_Chdr;
-struct Elf64_Chdr;
-struct Elf32_Sym;
-struct Elf64_Sym;
-struct Elf32_Syminfo;
-struct Elf64_Syminfo;
-struct Elf32_Rel;
-struct Elf64_Rel;
-struct Elf32_Rela;
-struct Elf64_Rela;
-struct Elf32_Phdr;
-struct Elf64_Phdr;
-struct Elf32_Dyn;
-struct Elf64_Dyn;
-struct Elf32_Verdef;
-struct Elf64_Verdef;
-struct Elf32_Verdaux;
-struct Elf64_Verdaux;
-struct Elf32_Verneed;
-struct Elf64_Verneed;
-struct Elf32_Vernaux;
-struct Elf64_Vernaux;
-struct Elf32_auxv_t;
-struct Elf64_auxv_t;
-struct Elf32_Nhdr;
-struct Elf64_Nhdr;
-struct Elf32_Move;
-struct Elf64_Move;
-union Elf32_gptab;
-struct Elf32_RegInfo;
-struct Elf_Options;
-struct Elf_Options_Hw;
-struct Elf32_Lib;
-struct Elf64_Lib;
-struct Elf_MIPS_ABIFlags_v0;
-struct La_i86_regs;
-struct La_i86_retval;
+typedef struct posix_spawn_file_actions_t posix_spawn_file_actions_t;
+typedef struct Elf32_Ehdr Elf32_Ehdr;
+typedef struct Elf64_Ehdr Elf64_Ehdr;
+typedef struct Elf32_Shdr Elf32_Shdr;
+typedef struct Elf64_Shdr Elf64_Shdr;
+typedef struct Elf32_Chdr Elf32_Chdr;
+typedef struct Elf64_Chdr Elf64_Chdr;
+typedef struct Elf32_Sym Elf32_Sym;
+typedef struct Elf64_Sym Elf64_Sym;
+typedef struct Elf32_Syminfo Elf32_Syminfo;
+typedef struct Elf64_Syminfo Elf64_Syminfo;
+typedef struct Elf32_Rel Elf32_Rel;
+typedef struct Elf64_Rel Elf64_Rel;
+typedef struct Elf32_Rela Elf32_Rela;
+typedef struct Elf64_Rela Elf64_Rela;
+typedef struct Elf32_Phdr Elf32_Phdr;
+typedef struct Elf64_Phdr Elf64_Phdr;
+typedef struct Elf32_Dyn Elf32_Dyn;
+typedef struct Elf64_Dyn Elf64_Dyn;
+typedef struct Elf32_Verdef Elf32_Verdef;
+typedef struct Elf64_Verdef Elf64_Verdef;
+typedef struct Elf32_Verdaux Elf32_Verdaux;
+typedef struct Elf64_Verdaux Elf64_Verdaux;
+typedef struct Elf32_Verneed Elf32_Verneed;
+typedef struct Elf64_Verneed Elf64_Verneed;
+typedef struct Elf32_Vernaux Elf32_Vernaux;
+typedef struct Elf64_Vernaux Elf64_Vernaux;
+typedef struct Elf32_auxv_t Elf32_auxv_t;
+typedef struct Elf64_auxv_t Elf64_auxv_t;
+typedef struct Elf32_Nhdr Elf32_Nhdr;
+typedef struct Elf64_Nhdr Elf64_Nhdr;
+typedef struct Elf32_Move Elf32_Move;
+typedef struct Elf64_Move Elf64_Move;
+typedef union Elf32_gptab Elf32_gptab;
+typedef struct Elf32_RegInfo Elf32_RegInfo;
+typedef struct Elf_Options Elf_Options;
+typedef struct Elf_Options_Hw Elf_Options_Hw;
+typedef struct Elf32_Lib Elf32_Lib;
+typedef struct Elf64_Lib Elf64_Lib;
+typedef struct Elf_MIPS_ABIFlags_v0 Elf_MIPS_ABIFlags_v0;
+typedef struct La_i86_regs La_i86_regs;
+typedef struct La_i86_retval La_i86_retval;
 struct r_debug;
 struct r_debug_extended;
 struct dl_phdr_info;
@@ -191,8 +203,8 @@ struct sockaddr_iso;
 struct sockaddr_ns;
 struct sockaddr_un;
 struct sockaddr_x25;
-union __SOCKADDR_ARG;
-union __CONST_SOCKADDR_ARG;
+typedef union __SOCKADDR_ARG __SOCKADDR_ARG;
+typedef union __CONST_SOCKADDR_ARG __CONST_SOCKADDR_ARG;
 struct mmsghdr;
 struct in_addr;
 struct ip_opts;
@@ -287,13 +299,14 @@ struct mq_attr;
 struct mallinfo;
 struct mallinfo2;
 struct _ftsent;
-struct FTS;
+typedef struct FTS FTS;
 struct _ftsent64;
-struct FTS64;
+typedef struct FTS64 FTS64;
 struct FTW;
-struct wordexp_t;
+typedef struct wordexp_t wordexp_t;
 struct spwd;
 
+#pragma neverd_header("fcntl.h")
 // __pid_type: 4 bytes
 enum __pid_type
 {
@@ -303,6 +316,7 @@ enum __pid_type
     F_OWNER_GID = 2,
 };
 
+#pragma neverd_header("regex.h")
 // reg_errcode_t: 4 bytes
 enum reg_errcode_t
 {
@@ -325,7 +339,9 @@ enum reg_errcode_t
     _REG_ESIZE = 15,
     _REG_ERPAREN = 16,
 };
+typedef enum reg_errcode_t reg_errcode_t;
 
+#pragma neverd_header("netdb.h")
 // __socket_type: 4 bytes
 enum __socket_type
 {
@@ -340,12 +356,14 @@ enum __socket_type
     SOCK_NONBLOCK = 0x800,
 };
 
+#pragma neverd_header("search.h")
 // ACTION: 4 bytes
 enum ACTION
 {
     FIND = 0,
     ENTER = 1,
 };
+typedef enum ACTION ACTION;
 
 // VISIT: 4 bytes
 enum VISIT
@@ -355,7 +373,9 @@ enum VISIT
     endorder = 2,
     leaf = 3,
 };
+typedef enum VISIT VISIT;
 
+#pragma neverd_header("utmp.h")
 // __itimer_which: 4 bytes
 enum __itimer_which
 {
@@ -364,6 +384,7 @@ enum __itimer_which
     ITIMER_PROF = 2,
 };
 
+#pragma neverd_header("sys/wait.h")
 // idtype_t: 4 bytes
 enum idtype_t
 {
@@ -372,7 +393,9 @@ enum idtype_t
     P_PGID = 2,
     P_PIDFD = 3,
 };
+typedef enum idtype_t idtype_t;
 
+#pragma neverd_header("sys/epoll.h")
 // EPOLL_EVENTS: 4 bytes
 enum EPOLL_EVENTS
 {
@@ -393,6 +416,7 @@ enum EPOLL_EVENTS
     EPOLLET = -2147483648,
 };
 
+#pragma neverd_header("sys/resource.h")
 // __rlimit_resource: 4 bytes
 enum __rlimit_resource
 {
@@ -433,6 +457,7 @@ enum __priority_which
     PRIO_USER = 2,
 };
 
+#pragma neverd_header("sys/ptrace.h")
 // __ptrace_request: 4 bytes
 enum __ptrace_request
 {
@@ -524,6 +549,7 @@ enum __ptrace_peeksiginfo_flags
     PTRACE_PEEKSIGINFO_SHARED = 1,
 };
 
+#pragma neverd_header("netinet/tcp.h")
 // tcp_ca_state: 4 bytes
 enum tcp_ca_state
 {
@@ -534,10 +560,13 @@ enum tcp_ca_state
     TCP_CA_Loss = 4,
 };
 
+#pragma neverd_header("glob.h")
 typedef unsigned int size_t;
 
+#pragma neverd_header()
 typedef int ptrdiff_t;
 
+#pragma neverd_header("stdio.h")
 typedef unsigned char __u_char;
 
 typedef unsigned short __u_short;
@@ -685,24 +714,27 @@ struct __mbstate_t
 struct _G_fpos_t
 {
     __off_t __pos;
-    struct __mbstate_t __state;
+    __mbstate_t __state;
 };
 
 typedef struct _G_fpos_t __fpos_t;
 
-// _G_fpos64_t: 0x10 (16) bytes
+// _G_fpos64_t: 0x10 (16) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct _G_fpos64_t
 {
     __off64_t __pos;
-    struct __mbstate_t __state;
+    __mbstate_t __state;
 };
+#pragma pack(pop)
 
 typedef struct _G_fpos64_t __fpos64_t;
 
 typedef void _IO_lock_t;
 
-// _IO_FILE: 0x94 (148) bytes
-struct _IO_FILE
+// _IO_FILE: 0x94 (148) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
+struct NEVERD_GNU_STRUCT _IO_FILE
 {
     int _flags;
     char *_IO_read_ptr;
@@ -737,11 +769,13 @@ struct _IO_FILE
     int _unused3;
     char _unused2[28];
 };
+#pragma pack(pop)
 
 typedef struct _IO_FILE __FILE;
 
 typedef struct _IO_FILE FILE;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct _IO_marker;
 
@@ -751,6 +785,7 @@ struct _IO_codecvt;
 // Declared only: its members are unknown.
 struct _IO_wide_data;
 
+#pragma neverd_header("stdio.h")
 typedef __ssize_t cookie_read_function_t(void *__cookie, char *__buf, size_t __nbytes);
 
 typedef __ssize_t cookie_write_function_t(void *__cookie, const char *__buf, size_t __nbytes);
@@ -788,9 +823,11 @@ typedef double _Float32x;
 
 typedef long double _Float64x;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct obstack;
 
+#pragma neverd_header("stdlib.h")
 // div_t: 0x8 (8) bytes
 struct div_t
 {
@@ -805,16 +842,20 @@ struct ldiv_t
     long rem;
 };
 
-// lldiv_t: 0x10 (16) bytes
+// lldiv_t: 0x10 (16) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct lldiv_t
 {
     long long quot;
     long long rem;
 };
+#pragma pack(pop)
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __locale_data;
 
+#pragma neverd_header("stdlib.h")
 // __locale_struct: 0x74 (116) bytes
 struct __locale_struct
 {
@@ -841,7 +882,7 @@ typedef __quad_t quad_t;
 
 typedef __u_quad_t u_quad_t;
 
-typedef struct __fsid_t fsid_t;
+typedef __fsid_t fsid_t;
 
 typedef __loff_t loff_t;
 
@@ -901,7 +942,7 @@ struct __sigset_t
     unsigned long __val[32];
 };
 
-typedef struct __sigset_t sigset_t;
+typedef __sigset_t sigset_t;
 
 // timeval: 0x8 (8) bytes
 struct timeval
@@ -941,7 +982,8 @@ typedef __fsblkcnt64_t fsblkcnt64_t;
 
 typedef __fsfilcnt64_t fsfilcnt64_t;
 
-// __atomic_wide_counter: 0x8 (8) bytes
+// __atomic_wide_counter: 0x8 (8) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 union __atomic_wide_counter
 {
     unsigned long long __value64;
@@ -951,6 +993,7 @@ union __atomic_wide_counter
         unsigned int __high;
     } __value32;
 };
+#pragma pack(pop)
 
 // __pthread_internal_list: 0x8 (8) bytes
 struct __pthread_internal_list
@@ -1007,8 +1050,8 @@ struct __pthread_rwlock_arch_t
 // __pthread_cond_s: 0x30 (48) bytes
 struct __pthread_cond_s
 {
-    union __atomic_wide_counter __wseq;
-    union __atomic_wide_counter __g1_start;
+    __atomic_wide_counter __wseq;
+    __atomic_wide_counter __g1_start;
     unsigned int __g_size[2];
     unsigned int __g1_orig_size;
     unsigned int __wrefs;
@@ -1062,13 +1105,15 @@ union pthread_mutex_t
     long __align;
 };
 
-// pthread_cond_t: 0x30 (48) bytes
+// pthread_cond_t: 0x30 (48) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 union pthread_cond_t
 {
     struct __pthread_cond_s __data;
     char __size[48];
     long long __align;
 };
+#pragma pack(pop)
 
 // pthread_rwlock_t: 0x20 (32) bytes
 union pthread_rwlock_t
@@ -1113,7 +1158,8 @@ struct random_data
     int *end_ptr;
 };
 
-// drand48_data: 0x18 (24) bytes
+// drand48_data: 0x18 (24) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct drand48_data
 {
     unsigned short __x[3];
@@ -1122,6 +1168,7 @@ struct drand48_data
     unsigned short __init;
     unsigned long long __a;
 };
+#pragma pack(pop)
 
 typedef int (*__compar_fn_t)(const void *, const void *);
 
@@ -1129,12 +1176,14 @@ typedef __compar_fn_t comparison_fn_t;
 
 typedef int (*__compar_d_fn_t)(const void *, const void *, void *);
 
-typedef struct __once_flag once_flag;
+typedef __once_flag once_flag;
 
+#pragma neverd_header("unistd.h")
 typedef __intptr_t intptr_t;
 
 typedef __socklen_t socklen_t;
 
+#pragma neverd_header("fcntl.h")
 // flock: 0x10 (16) bytes
 struct flock
 {
@@ -1145,7 +1194,8 @@ struct flock
     __pid_t l_pid;
 };
 
-// flock64: 0x18 (24) bytes
+// flock64: 0x18 (24) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct flock64
 {
     short l_type;
@@ -1154,6 +1204,7 @@ struct flock64
     __off64_t l_len;
     __pid_t l_pid;
 };
+#pragma pack(pop)
 
 // iovec: 0x8 (8) bytes
 struct iovec
@@ -1289,15 +1340,18 @@ typedef __u32 __wsum;
 
 typedef unsigned int __poll_t;
 
-// open_how: 0x18 (24) bytes
+// open_how: 0x18 (24) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct open_how
 {
     __u64 flags;
     __u64 mode;
     __u64 resolve;
 };
+#pragma pack(pop)
 
-// stat: 0x58 (88) bytes
+// stat: 0x58 (88) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct stat
 {
     __dev_t st_dev;
@@ -1318,8 +1372,10 @@ struct stat
     unsigned long __glibc_reserved4;
     unsigned long __glibc_reserved5;
 };
+#pragma pack(pop)
 
-// stat64: 0x60 (96) bytes
+// stat64: 0x60 (96) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct stat64
 {
     __dev_t st_dev;
@@ -1339,13 +1395,17 @@ struct stat64
     struct timespec st_ctim;
     __ino64_t st_ino;
 };
+#pragma pack(pop)
 
+#pragma neverd_header("errno.h")
 typedef int error_t;
 
+#pragma neverd_header("wchar.h")
 typedef unsigned int wint_t;
 
-typedef struct __mbstate_t mbstate_t;
+typedef __mbstate_t mbstate_t;
 
+#pragma neverd_header("time.h")
 // tm: 0x2C (44) bytes
 struct tm
 {
@@ -1362,10 +1422,12 @@ struct tm
     const char *tm_zone;
 };
 
+#pragma neverd_header("wctype.h")
 typedef unsigned long wctype_t;
 
 typedef const __int32_t *wctrans_t;
 
+#pragma neverd_header("locale.h")
 // lconv: 0x38 (56) bytes
 struct lconv
 {
@@ -1395,6 +1457,7 @@ struct lconv
     char int_n_sign_posn;
 };
 
+#pragma neverd_header("time.h")
 // timex: 0x80 (128) bytes
 struct timex
 {
@@ -1428,6 +1491,7 @@ struct itimerspec
     struct timespec it_value;
 };
 
+#pragma neverd_header("signal.h")
 typedef union sigval __sigval_t;
 
 // sigval: 0x4 (4) bytes
@@ -1450,7 +1514,7 @@ struct sigevent
         struct
         {
             void (*_function)(__sigval_t);
-            union pthread_attr_t *_attribute;
+            pthread_attr_t *_attribute;
         } _sigev_thread;
     } _sigev_un;
 };
@@ -1535,14 +1599,15 @@ struct sigaction
     union
     {
         __sighandler_t sa_handler;
-        void (*sa_sigaction)(int, struct siginfo_t *, void *);
+        void (*sa_sigaction)(int, siginfo_t *, void *);
     } __sigaction_handler;
-    struct __sigset_t sa_mask;
+    __sigset_t sa_mask;
     int sa_flags;
     void (*sa_restorer)(void);
 };
 
-// _fpx_sw_bytes: 0x30 (48) bytes
+// _fpx_sw_bytes: 0x30 (48) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct _fpx_sw_bytes
 {
     __uint32_t magic1;
@@ -1551,6 +1616,7 @@ struct _fpx_sw_bytes
     __uint32_t xstate_size;
     __uint32_t __glibc_reserved1[7];
 };
+#pragma pack(pop)
 
 // _fpreg: 0xA (10) bytes
 struct _fpreg
@@ -1627,13 +1693,15 @@ struct sigcontext
     unsigned long cr2;
 };
 
-// _xsave_hdr: 0x40 (64) bytes
+// _xsave_hdr: 0x40 (64) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct _xsave_hdr
 {
     __uint64_t xstate_bv;
     __uint64_t __glibc_reserved1[2];
     __uint64_t __glibc_reserved2[5];
 };
+#pragma pack(pop)
 
 // _ymmh_state: 0x100 (256) bytes
 struct _ymmh_state
@@ -1697,9 +1765,9 @@ struct mcontext_t
 struct ucontext_t
 {
     unsigned long uc_flags;
-    struct ucontext_t *uc_link;
-    struct stack_t uc_stack;
-    struct mcontext_t uc_mcontext;
+    ucontext_t *uc_link;
+    stack_t uc_stack;
+    mcontext_t uc_mcontext;
     sigset_t uc_sigmask;
     struct _libc_fpstate __fpregs_mem;
     unsigned long __ssp[4];
@@ -1712,6 +1780,7 @@ struct sigstack
     int ss_onstack;
 };
 
+#pragma neverd_header("setjmp.h")
 typedef int __jmp_buf[6];
 
 // __jmp_buf_tag: 0x9C (156) bytes
@@ -1719,13 +1788,14 @@ struct __jmp_buf_tag
 {
     __jmp_buf __jmpbuf;
     int __mask_was_saved;
-    struct __sigset_t __saved_mask;
+    __sigset_t __saved_mask;
 };
 
 typedef struct __jmp_buf_tag jmp_buf[1];
 
 typedef struct __jmp_buf_tag sigjmp_buf[1];
 
+#pragma neverd_header("math.h")
 typedef long double float_t;
 
 typedef long double double_t;
@@ -1736,10 +1806,11 @@ typedef long double _Float32_t;
 
 typedef long double _Float64_t;
 
+#pragma neverd_header("fenv.h")
 typedef unsigned short fexcept_t;
 
 // fenv_t: 0x1C (28) bytes
-struct fenv_t
+struct NEVERD_GNU_STRUCT fenv_t
 {
     unsigned short __control_word;
     unsigned short __glibc_reserved1;
@@ -1764,6 +1835,7 @@ struct femode_t
     unsigned int __mxcsr;
 };
 
+#pragma neverd_header("inttypes.h")
 typedef __int_least8_t int_least8_t;
 
 typedef __int_least16_t int_least16_t;
@@ -1804,13 +1876,16 @@ typedef __uintmax_t uintmax_t;
 
 typedef int __gwchar_t;
 
-// imaxdiv_t: 0x10 (16) bytes
+// imaxdiv_t: 0x10 (16) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct imaxdiv_t
 {
     long long quot;
     long long rem;
 };
+#pragma pack(pop)
 
+#pragma neverd_header("dirent.h")
 // dirent: 0x10C (268) bytes
 struct dirent
 {
@@ -1821,7 +1896,8 @@ struct dirent
     char d_name[256];
 };
 
-// dirent64: 0x114 (276) bytes
+// dirent64: 0x114 (276) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct dirent64
 {
     __ino64_t d_ino;
@@ -1830,12 +1906,16 @@ struct dirent64
     unsigned char d_type;
     char d_name[256];
 };
+#pragma pack(pop)
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __dirstream;
 
+#pragma neverd_header("dirent.h")
 typedef struct __dirstream DIR;
 
+#pragma neverd_header("dlfcn.h")
 typedef long Lmid_t;
 
 // Dl_info: 0x10 (16) bytes
@@ -1861,11 +1941,12 @@ struct Dl_serinfo
     unsigned int dls_cnt;
     union
     {
-        struct Dl_serpath dls_serpath[0];
-        struct Dl_serpath __dls_serpath_pad[1];
+        Dl_serpath dls_serpath[0];
+        Dl_serpath __dls_serpath_pad[1];
     };
 };
 
+#pragma neverd_header("link.h")
 typedef unsigned int Elf32_Addr;
 
 // link_map: 0x14 (20) bytes
@@ -1873,12 +1954,14 @@ struct link_map
 {
     Elf32_Addr l_addr;
     char *l_name;
-    struct Elf32_Dyn *l_ld;
+    Elf32_Dyn *l_ld;
     struct link_map *l_next;
     struct link_map *l_prev;
 };
 
-// dl_find_object: 0x58 (88) bytes
+#pragma neverd_header("dlfcn.h")
+// dl_find_object: 0x58 (88) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct dl_find_object
 {
     unsigned long long dlfo_flags;
@@ -1892,8 +1975,11 @@ struct dl_find_object
     unsigned int __dlfo_sframe_pad;
     unsigned long long __dlfo_reserved[6];
 };
+#pragma pack(pop)
 
-// sched_attr: 0x38 (56) bytes
+#pragma neverd_header("pthread.h")
+// sched_attr: 0x38 (56) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct sched_attr
 {
     __u32 size;
@@ -1907,6 +1993,7 @@ struct sched_attr
     __u32 sched_util_min;
     __u32 sched_util_max;
 };
+#pragma pack(pop)
 
 // sched_param: 0x4 (4) bytes
 struct sched_param
@@ -1947,6 +2034,7 @@ struct __pthread_cleanup_frame
     int __cancel_type;
 };
 
+#pragma neverd_header("semaphore.h")
 // sem_t: 0x10 (16) bytes
 union sem_t
 {
@@ -1954,6 +2042,7 @@ union sem_t
     long __align;
 };
 
+#pragma neverd_header("poll.h")
 typedef unsigned long nfds_t;
 
 // pollfd: 0x8 (8) bytes
@@ -1964,6 +2053,7 @@ struct pollfd
     short revents;
 };
 
+#pragma neverd_header("termios.h")
 typedef unsigned char cc_t;
 
 typedef unsigned int speed_t;
@@ -1993,6 +2083,7 @@ struct termios
 
 typedef speed_t baud_t;
 
+#pragma neverd_header("pwd.h")
 // passwd: 0x1C (28) bytes
 struct passwd
 {
@@ -2005,6 +2096,7 @@ struct passwd
     char *pw_shell;
 };
 
+#pragma neverd_header("grp.h")
 // group: 0x10 (16) bytes
 struct group
 {
@@ -2014,6 +2106,7 @@ struct group
     char **gr_mem;
 };
 
+#pragma neverd_header("glob.h")
 typedef unsigned int __size_t;
 
 // glob_t: 0x24 (36) bytes
@@ -2044,6 +2137,7 @@ struct glob64_t
     int (*gl_stat)(const char *, struct stat64 *);
 };
 
+#pragma neverd_header("regex.h")
 typedef unsigned int __re_size_t;
 
 typedef unsigned long __re_long_size_t;
@@ -2054,11 +2148,13 @@ typedef unsigned long active_reg_t;
 
 typedef unsigned long reg_syntax_t;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct re_dfa_t;
 
+#pragma neverd_header("regex.h")
 // re_pattern_buffer: 0x20 (32) bytes
-struct re_pattern_buffer
+struct NEVERD_GNU_STRUCT re_pattern_buffer
 {
     struct re_dfa_t *buffer;
     __re_long_size_t allocated;
@@ -2095,6 +2191,7 @@ struct regmatch_t
     regoff_t rm_eo;
 };
 
+#pragma neverd_header("getopt.h")
 // option: 0x10 (16) bytes
 struct option
 {
@@ -2104,6 +2201,7 @@ struct option
     int val;
 };
 
+#pragma neverd_header("spawn.h")
 // posix_spawnattr_t: 0x150 (336) bytes
 struct posix_spawnattr_t
 {
@@ -2117,9 +2215,11 @@ struct posix_spawnattr_t
     int __pad[15];
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __spawn_action;
 
+#pragma neverd_header("spawn.h")
 // posix_spawn_file_actions_t: 0x4C (76) bytes
 struct posix_spawn_file_actions_t
 {
@@ -2129,12 +2229,15 @@ struct posix_spawn_file_actions_t
     int __pad[16];
 };
 
+#pragma neverd_header("iconv.h")
 typedef void *iconv_t;
 
+#pragma neverd_header("langinfo.h")
 typedef void *nl_catd;
 
 typedef int nl_item;
 
+#pragma neverd_header("link.h")
 typedef unsigned short Elf32_Half;
 
 typedef unsigned short Elf64_Half;
@@ -2188,7 +2291,8 @@ struct Elf32_Ehdr
     Elf32_Half e_shstrndx;
 };
 
-// Elf64_Ehdr: 0x40 (64) bytes
+// Elf64_Ehdr: 0x40 (64) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct Elf64_Ehdr
 {
     unsigned char e_ident[16];
@@ -2206,6 +2310,7 @@ struct Elf64_Ehdr
     Elf64_Half e_shnum;
     Elf64_Half e_shstrndx;
 };
+#pragma pack(pop)
 
 // Elf32_Shdr: 0x28 (40) bytes
 struct Elf32_Shdr
@@ -2222,7 +2327,8 @@ struct Elf32_Shdr
     Elf32_Word sh_entsize;
 };
 
-// Elf64_Shdr: 0x40 (64) bytes
+// Elf64_Shdr: 0x40 (64) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct Elf64_Shdr
 {
     Elf64_Word sh_name;
@@ -2236,6 +2342,7 @@ struct Elf64_Shdr
     Elf64_Xword sh_addralign;
     Elf64_Xword sh_entsize;
 };
+#pragma pack(pop)
 
 // Elf32_Chdr: 0xC (12) bytes
 struct Elf32_Chdr
@@ -2245,7 +2352,8 @@ struct Elf32_Chdr
     Elf32_Word ch_addralign;
 };
 
-// Elf64_Chdr: 0x18 (24) bytes
+// Elf64_Chdr: 0x18 (24) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct Elf64_Chdr
 {
     Elf64_Word ch_type;
@@ -2253,6 +2361,7 @@ struct Elf64_Chdr
     Elf64_Xword ch_size;
     Elf64_Xword ch_addralign;
 };
+#pragma pack(pop)
 
 // Elf32_Sym: 0x10 (16) bytes
 struct Elf32_Sym
@@ -2265,7 +2374,8 @@ struct Elf32_Sym
     Elf32_Section st_shndx;
 };
 
-// Elf64_Sym: 0x18 (24) bytes
+// Elf64_Sym: 0x18 (24) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct Elf64_Sym
 {
     Elf64_Word st_name;
@@ -2275,6 +2385,7 @@ struct Elf64_Sym
     Elf64_Addr st_value;
     Elf64_Xword st_size;
 };
+#pragma pack(pop)
 
 // Elf32_Syminfo: 0x4 (4) bytes
 struct Elf32_Syminfo
@@ -2297,12 +2408,14 @@ struct Elf32_Rel
     Elf32_Word r_info;
 };
 
-// Elf64_Rel: 0x10 (16) bytes
+// Elf64_Rel: 0x10 (16) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct Elf64_Rel
 {
     Elf64_Addr r_offset;
     Elf64_Xword r_info;
 };
+#pragma pack(pop)
 
 // Elf32_Rela: 0xC (12) bytes
 struct Elf32_Rela
@@ -2312,13 +2425,15 @@ struct Elf32_Rela
     Elf32_Sword r_addend;
 };
 
-// Elf64_Rela: 0x18 (24) bytes
+// Elf64_Rela: 0x18 (24) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct Elf64_Rela
 {
     Elf64_Addr r_offset;
     Elf64_Xword r_info;
     Elf64_Sxword r_addend;
 };
+#pragma pack(pop)
 
 typedef Elf32_Word Elf32_Relr;
 
@@ -2337,7 +2452,8 @@ struct Elf32_Phdr
     Elf32_Word p_align;
 };
 
-// Elf64_Phdr: 0x38 (56) bytes
+// Elf64_Phdr: 0x38 (56) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct Elf64_Phdr
 {
     Elf64_Word p_type;
@@ -2349,6 +2465,7 @@ struct Elf64_Phdr
     Elf64_Xword p_memsz;
     Elf64_Xword p_align;
 };
+#pragma pack(pop)
 
 // Elf32_Dyn: 0x8 (8) bytes
 struct Elf32_Dyn
@@ -2361,7 +2478,8 @@ struct Elf32_Dyn
     } d_un;
 };
 
-// Elf64_Dyn: 0x10 (16) bytes
+// Elf64_Dyn: 0x10 (16) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct Elf64_Dyn
 {
     Elf64_Sxword d_tag;
@@ -2371,6 +2489,7 @@ struct Elf64_Dyn
         Elf64_Addr d_ptr;
     } d_un;
 };
+#pragma pack(pop)
 
 // Elf32_Verdef: 0x14 (20) bytes
 struct Elf32_Verdef
@@ -2460,7 +2579,8 @@ struct Elf32_auxv_t
     } a_un;
 };
 
-// Elf64_auxv_t: 0x10 (16) bytes
+// Elf64_auxv_t: 0x10 (16) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct Elf64_auxv_t
 {
     unsigned long long a_type;
@@ -2469,6 +2589,7 @@ struct Elf64_auxv_t
         unsigned long long a_val;
     } a_un;
 };
+#pragma pack(pop)
 
 // Elf32_Nhdr: 0xC (12) bytes
 struct Elf32_Nhdr
@@ -2486,7 +2607,8 @@ struct Elf64_Nhdr
     Elf64_Word n_type;
 };
 
-// Elf32_Move: 0x14 (20) bytes
+// Elf32_Move: 0x14 (20) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct Elf32_Move
 {
     Elf32_Xword m_value;
@@ -2495,8 +2617,10 @@ struct Elf32_Move
     Elf32_Half m_repeat;
     Elf32_Half m_stride;
 };
+#pragma pack(pop)
 
-// Elf64_Move: 0x1C (28) bytes
+// Elf64_Move: 0x1C (28) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct Elf64_Move
 {
     Elf64_Xword m_value;
@@ -2505,6 +2629,7 @@ struct Elf64_Move
     Elf64_Half m_repeat;
     Elf64_Half m_stride;
 };
+#pragma pack(pop)
 
 // Elf32_gptab: 0x8 (8) bytes
 union Elf32_gptab
@@ -2595,7 +2720,8 @@ struct La_i86_regs
     unsigned int lr_esp;
 };
 
-// La_i86_retval: 0x30 (48) bytes
+// La_i86_retval: 0x30 (48) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct La_i86_retval
 {
     unsigned int lrv_eax;
@@ -2605,6 +2731,7 @@ struct La_i86_retval
     unsigned long long __glibc_unused1;
     unsigned long long __glibc_unused2;
 };
+#pragma pack(pop)
 
 // r_debug: 0x14 (20) bytes
 struct r_debug
@@ -2628,19 +2755,22 @@ struct r_debug_extended
     struct r_debug_extended *r_next;
 };
 
-// dl_phdr_info: 0x28 (40) bytes
+// dl_phdr_info: 0x28 (40) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct dl_phdr_info
 {
     Elf32_Addr dlpi_addr;
     const char *dlpi_name;
-    const struct Elf32_Phdr *dlpi_phdr;
+    const Elf32_Phdr *dlpi_phdr;
     Elf32_Half dlpi_phnum;
     unsigned long long dlpi_adds;
     unsigned long long dlpi_subs;
     size_t dlpi_tls_modid;
     void *dlpi_tls_data;
 };
+#pragma pack(pop)
 
+#pragma neverd_header("netdb.h")
 typedef unsigned short sa_family_t;
 
 // sockaddr: 0x10 (16) bytes
@@ -2701,6 +2831,7 @@ struct osockaddr
     unsigned char sa_data[14];
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct sockaddr_at;
 
@@ -2713,6 +2844,7 @@ struct sockaddr_dl;
 // Declared only: its members are unknown.
 struct sockaddr_eon;
 
+#pragma neverd_header("netdb.h")
 typedef unsigned short in_port_t;
 
 typedef unsigned int in_addr_t;
@@ -2753,6 +2885,7 @@ struct sockaddr_in6
     unsigned int sin6_scope_id;
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct sockaddr_inarp;
 
@@ -2765,6 +2898,7 @@ struct sockaddr_iso;
 // Declared only: its members are unknown.
 struct sockaddr_ns;
 
+#pragma neverd_header("sys/un.h")
 // sockaddr_un: 0x6E (110) bytes
 struct sockaddr_un
 {
@@ -2772,9 +2906,11 @@ struct sockaddr_un
     char sun_path[108];
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct sockaddr_x25;
 
+#pragma neverd_header("netdb.h")
 // __SOCKADDR_ARG: 0x4 (4) bytes
 union __SOCKADDR_ARG
 {
@@ -2980,6 +3116,7 @@ struct gaicb
     int __glibc_reserved[5];
 };
 
+#pragma neverd_header("ifaddrs.h")
 // ifaddrs: 0x1C (28) bytes
 struct ifaddrs
 {
@@ -2996,6 +3133,7 @@ struct ifaddrs
     void *ifa_data;
 };
 
+#pragma neverd_header("search.h")
 // qelem: 0xC (12) bytes
 struct qelem
 {
@@ -3013,9 +3151,11 @@ struct entry
 
 typedef struct entry ENTRY;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct _ENTRY;
 
+#pragma neverd_header("search.h")
 // hsearch_data: 0xC (12) bytes
 struct hsearch_data
 {
@@ -3024,10 +3164,11 @@ struct hsearch_data
     unsigned int filled;
 };
 
-typedef void (*__action_fn_t)(const void *__nodep, enum VISIT __value, int __level);
+typedef void (*__action_fn_t)(const void *__nodep, VISIT __value, int __level);
 
 typedef void (*__free_fn_t)(void *__nodep);
 
+#pragma neverd_header("utime.h")
 // utimbuf: 0x8 (8) bytes
 struct utimbuf
 {
@@ -3035,6 +3176,7 @@ struct utimbuf
     __time_t modtime;
 };
 
+#pragma neverd_header("utmp.h")
 // timezone: 0x8 (8) bytes
 struct timezone
 {
@@ -3086,15 +3228,19 @@ struct utmp
     char __glibc_reserved[20];
 };
 
-// statx_timestamp: 0x10 (16) bytes
+#pragma neverd_header("sys/stat.h")
+// statx_timestamp: 0x10 (16) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct statx_timestamp
 {
     __s64 tv_sec;
     __u32 tv_nsec;
     __s32 __reserved;
 };
+#pragma pack(pop)
 
-// statx: 0x100 (256) bytes
+// statx: 0x100 (256) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct statx
 {
     __u32 stx_mask;
@@ -3129,7 +3275,9 @@ struct statx
     __u32 __spare2[1];
     __u64 __spare3[8];
 };
+#pragma pack(pop)
 
+#pragma neverd_header("sys/statvfs.h")
 // statvfs: 0x48 (72) bytes
 struct statvfs
 {
@@ -3149,7 +3297,8 @@ struct statvfs
     int __f_spare[5];
 };
 
-// statvfs64: 0x60 (96) bytes
+// statvfs64: 0x60 (96) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct statvfs64
 {
     unsigned long f_bsize;
@@ -3167,7 +3316,9 @@ struct statvfs64
     unsigned int f_type;
     int __f_spare[5];
 };
+#pragma pack(pop)
 
+#pragma neverd_header("sys/times.h")
 // tms: 0x10 (16) bytes
 struct tms
 {
@@ -3177,6 +3328,7 @@ struct tms
     clock_t tms_cstime;
 };
 
+#pragma neverd_header("sys/resource.h")
 // rusage: 0x48 (72) bytes
 struct rusage
 {
@@ -3254,6 +3406,7 @@ struct rusage
     };
 };
 
+#pragma neverd_header("sys/ioctl.h")
 // winsize: 0x8 (8) bytes
 struct winsize
 {
@@ -3263,7 +3416,9 @@ struct winsize
     unsigned short ws_ypixel;
 };
 
-// epoll_data: 0x8 (8) bytes
+#pragma neverd_header("sys/epoll.h")
+// epoll_data: 0x8 (8) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 union epoll_data
 {
     void *ptr;
@@ -3271,6 +3426,7 @@ union epoll_data
     unsigned int u32;
     unsigned long long u64;
 };
+#pragma pack(pop)
 
 typedef union epoll_data epoll_data_t;
 
@@ -3292,8 +3448,10 @@ struct epoll_params
     unsigned char __pad;
 };
 
+#pragma neverd_header("sys/eventfd.h")
 typedef unsigned long long eventfd_t;
 
+#pragma neverd_header("sys/inotify.h")
 // inotify_event: 0x10 (16) bytes
 struct inotify_event
 {
@@ -3304,6 +3462,7 @@ struct inotify_event
     char name[];
 };
 
+#pragma neverd_header("sys/resource.h")
 typedef __rlim_t rlim_t;
 
 typedef __rlim64_t rlim64_t;
@@ -3315,12 +3474,14 @@ struct rlimit
     rlim_t rlim_max;
 };
 
-// rlimit64: 0x10 (16) bytes
+// rlimit64: 0x10 (16) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct rlimit64
 {
     rlim64_t rlim_cur;
     rlim64_t rlim_max;
 };
+#pragma pack(pop)
 
 typedef enum __rlimit_resource __rlimit_resource_t;
 
@@ -3328,6 +3489,7 @@ typedef enum __rusage_who __rusage_who_t;
 
 typedef enum __priority_which __priority_which_t;
 
+#pragma neverd_header("sys/utsname.h")
 // utsname: 0x186 (390) bytes
 struct utsname
 {
@@ -3339,7 +3501,9 @@ struct utsname
     char domainname[65];
 };
 
-// prctl_mm_map: 0x64 (100) bytes
+#pragma neverd_header("sys/prctl.h")
+// prctl_mm_map: 0x64 (100) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct prctl_mm_map
 {
     __u64 start_code;
@@ -3357,23 +3521,30 @@ struct prctl_mm_map
     __u32 auxv_size;
     __u32 exe_fd;
 };
+#pragma pack(pop)
 
-// __ptrace_peeksiginfo_args: 0x10 (16) bytes
+#pragma neverd_header("sys/ptrace.h")
+// __ptrace_peeksiginfo_args: 0x10 (16) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct __ptrace_peeksiginfo_args
 {
     __uint64_t off;
     __uint32_t flags;
     __int32_t nr;
 };
+#pragma pack(pop)
 
-// __ptrace_seccomp_metadata: 0x10 (16) bytes
+// __ptrace_seccomp_metadata: 0x10 (16) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct __ptrace_seccomp_metadata
 {
     __uint64_t filter_off;
     __uint64_t flags;
 };
+#pragma pack(pop)
 
-// __ptrace_syscall_info: 0x54 (84) bytes
+// __ptrace_syscall_info: 0x54 (84) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct __ptrace_syscall_info
 {
     __uint8_t op;
@@ -3400,8 +3571,10 @@ struct __ptrace_syscall_info
         } seccomp;
     };
 };
+#pragma pack(pop)
 
-// __ptrace_rseq_configuration: 0x18 (24) bytes
+// __ptrace_rseq_configuration: 0x18 (24) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct __ptrace_rseq_configuration
 {
     __uint64_t rseq_abi_pointer;
@@ -3410,8 +3583,10 @@ struct __ptrace_rseq_configuration
     __uint32_t flags;
     __uint32_t pad;
 };
+#pragma pack(pop)
 
-// __ptrace_sud_config: 0x20 (32) bytes
+// __ptrace_sud_config: 0x20 (32) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct __ptrace_sud_config
 {
     __uint64_t mode;
@@ -3419,7 +3594,9 @@ struct __ptrace_sud_config
     __uint64_t offset;
     __uint64_t len;
 };
+#pragma pack(pop)
 
+#pragma neverd_header("sys/sysinfo.h")
 // sysinfo: 0x40 (64) bytes
 struct sysinfo
 {
@@ -3439,7 +3616,9 @@ struct sysinfo
     char _f[8];
 };
 
-// signalfd_siginfo: 0x80 (128) bytes
+#pragma neverd_header("sys/signalfd.h")
+// signalfd_siginfo: 0x80 (128) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct signalfd_siginfo
 {
     unsigned int ssi_signo;
@@ -3465,7 +3644,9 @@ struct signalfd_siginfo
     unsigned int ssi_arch;
     unsigned char __pad[28];
 };
+#pragma pack(pop)
 
+#pragma neverd_header("sys/sem.h")
 typedef unsigned short __ipc_pid_t;
 
 // ipc_perm: 0x24 (36) bytes
@@ -3496,7 +3677,8 @@ struct semid_ds
     __syscall_ulong_t __glibc_reserved4;
 };
 
-// __semid64_ds: 0x40 (64) bytes
+// __semid64_ds: 0x40 (64) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct __semid64_ds
 {
     struct ipc_perm sem_perm;
@@ -3506,6 +3688,7 @@ struct __semid64_ds
     unsigned long __glibc_reserved3;
     unsigned long __glibc_reserved4;
 };
+#pragma pack(pop)
 
 // seminfo: 0x28 (40) bytes
 struct seminfo
@@ -3530,6 +3713,7 @@ struct sembuf
     short sem_flg;
 };
 
+#pragma neverd_header("sys/shm.h")
 typedef __syscall_ulong_t shmatt_t;
 
 // shmid_ds: 0x54 (84) bytes
@@ -3550,7 +3734,8 @@ struct shmid_ds
     __syscall_ulong_t __glibc_reserved6;
 };
 
-// __shmid64_ds: 0x54 (84) bytes
+// __shmid64_ds: 0x54 (84) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct __shmid64_ds
 {
     struct ipc_perm shm_perm;
@@ -3564,6 +3749,7 @@ struct __shmid64_ds
     unsigned long __glibc_reserved5;
     unsigned long __glibc_reserved6;
 };
+#pragma pack(pop)
 
 // shminfo: 0x24 (36) bytes
 struct shminfo
@@ -3590,6 +3776,7 @@ struct shm_info
     __syscall_ulong_t swap_successes;
 };
 
+#pragma neverd_header("sys/msg.h")
 typedef __syscall_ulong_t msgqnum_t;
 
 typedef __syscall_ulong_t msglen_t;
@@ -3613,7 +3800,8 @@ struct msqid_ds
     __syscall_ulong_t __glibc_reserved5;
 };
 
-// __msqid64_ds: 0x58 (88) bytes
+// __msqid64_ds: 0x58 (88) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct __msqid64_ds
 {
     struct ipc_perm msg_perm;
@@ -3628,6 +3816,7 @@ struct __msqid64_ds
     unsigned long __glibc_reserved4;
     unsigned long __glibc_reserved5;
 };
+#pragma pack(pop)
 
 // msginfo: 0x20 (32) bytes
 struct msginfo
@@ -3649,6 +3838,7 @@ struct msgbuf
     char mtext[1];
 };
 
+#pragma neverd_header("netinet/tcp.h")
 typedef unsigned int tcp_seq;
 
 // tcphdr: 0x14 (20) bytes
@@ -3656,7 +3846,7 @@ struct tcphdr
 {
     union
     {
-        struct
+        struct NEVERD_GNU_STRUCT
         {
             unsigned short th_sport;
             unsigned short th_dport;
@@ -3669,7 +3859,7 @@ struct tcphdr
             unsigned short th_sum;
             unsigned short th_urp;
         };
-        struct
+        struct NEVERD_GNU_STRUCT
         {
             unsigned short source;
             unsigned short dest;
@@ -3691,8 +3881,9 @@ struct tcphdr
     };
 };
 
-// tcp_info: 0x118 (280) bytes
-struct tcp_info
+// tcp_info: 0x118 (280) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
+struct NEVERD_GNU_STRUCT tcp_info
 {
     unsigned char tcpi_state;
     unsigned char tcpi_ca_state;
@@ -3763,6 +3954,7 @@ struct tcp_info
     unsigned short tcpi_accecn_fail_mode;
     unsigned short tcpi_accecn_opt_seen;
 };
+#pragma pack(pop)
 
 // tcp_md5sig: 0xD8 (216) bytes
 struct tcp_md5sig
@@ -3786,7 +3978,7 @@ struct tcp_diag_md5sig
 };
 
 // tcp_ao_add: 0x120 (288) bytes
-struct DECLSPEC_ALIGN(8) tcp_ao_add
+struct DECLSPEC_ALIGN(8) NEVERD_GNU_STRUCT tcp_ao_add
 {
     struct sockaddr_storage addr;
     signed char alg_name[64];
@@ -3805,7 +3997,7 @@ struct DECLSPEC_ALIGN(8) tcp_ao_add
 };
 
 // tcp_ao_del: 0x90 (144) bytes
-struct DECLSPEC_ALIGN(8) tcp_ao_del
+struct DECLSPEC_ALIGN(8) NEVERD_GNU_STRUCT tcp_ao_del
 {
     struct sockaddr_storage addr;
     int ifindex;
@@ -3822,8 +4014,9 @@ struct DECLSPEC_ALIGN(8) tcp_ao_del
     unsigned char keyflags;
 };
 
-// tcp_ao_info_opt: 0x30 (48) bytes
-struct DECLSPEC_ALIGN(8) tcp_ao_info_opt
+// tcp_ao_info_opt: 0x30 (48) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
+struct DECLSPEC_ALIGN(8) NEVERD_GNU_STRUCT tcp_ao_info_opt
 {
     unsigned int set_current : 1;
     unsigned int set_rnext : 1;
@@ -3840,9 +4033,11 @@ struct DECLSPEC_ALIGN(8) tcp_ao_info_opt
     unsigned long long pkt_ao_required;
     unsigned long long pkt_dropped_icmp;
 };
+#pragma pack(pop)
 
-// tcp_ao_getsockopt: 0x130 (304) bytes
-struct DECLSPEC_ALIGN(8) tcp_ao_getsockopt
+// tcp_ao_getsockopt: 0x130 (304) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
+struct DECLSPEC_ALIGN(8) NEVERD_GNU_STRUCT tcp_ao_getsockopt
 {
     struct sockaddr_storage addr;
     unsigned char alg_name[64];
@@ -3862,6 +4057,7 @@ struct DECLSPEC_ALIGN(8) tcp_ao_getsockopt
     unsigned long long pkt_good;
     unsigned long long pkt_bad;
 };
+#pragma pack(pop)
 
 // tcp_ao_repair: 0x10 (16) bytes
 struct DECLSPEC_ALIGN(8) tcp_ao_repair
@@ -3900,7 +4096,8 @@ struct tcp_repair_window
     unsigned int rcv_wup;
 };
 
-// tcp_zerocopy_receive: 0x40 (64) bytes
+// tcp_zerocopy_receive: 0x40 (64) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct tcp_zerocopy_receive
 {
     unsigned long long address;
@@ -3916,7 +4113,9 @@ struct tcp_zerocopy_receive
     unsigned int msg_flags;
     unsigned int reserved;
 };
+#pragma pack(pop)
 
+#pragma neverd_header("net/if.h")
 // if_nameindex: 0x8 (8) bytes
 struct if_nameindex
 {
@@ -3924,9 +4123,11 @@ struct if_nameindex
     char *if_name;
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct iface;
 
+#pragma neverd_header("net/if.h")
 // ifaddr: 0x28 (40) bytes
 struct ifaddr
 {
@@ -3986,6 +4187,7 @@ struct ifconf
     } ifc_ifcu;
 };
 
+#pragma neverd_header("aio.h")
 // aiocb: 0x90 (144) bytes
 struct aiocb
 {
@@ -4005,7 +4207,8 @@ struct aiocb
     char __glibc_reserved[32];
 };
 
-// aiocb64: 0x90 (144) bytes
+// aiocb64: 0x90 (144) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct aiocb64
 {
     int aio_fildes;
@@ -4022,6 +4225,7 @@ struct aiocb64
     __off64_t aio_offset;
     char __glibc_reserved[32];
 };
+#pragma pack(pop)
 
 // aioinit: 0x20 (32) bytes
 struct aioinit
@@ -4036,6 +4240,7 @@ struct aioinit
     int aio_reserved;
 };
 
+#pragma neverd_header("mqueue.h")
 typedef int mqd_t;
 
 // mq_attr: 0x20 (32) bytes
@@ -4048,6 +4253,7 @@ struct mq_attr
     __syscall_slong_t __pad[4];
 };
 
+#pragma neverd_header("malloc.h")
 // mallinfo: 0x28 (40) bytes
 struct mallinfo
 {
@@ -4078,7 +4284,9 @@ struct mallinfo2
     size_t keepcost;
 };
 
-// _ftsent: 0x48 (72) bytes
+#pragma neverd_header("fts.h")
+// _ftsent: 0x48 (72) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct _ftsent
 {
     struct _ftsent *fts_cycle;
@@ -4102,8 +4310,10 @@ struct _ftsent
     struct stat *fts_statp;
     char fts_name[1];
 };
+#pragma pack(pop)
 
-// FTS: 0x2C (44) bytes
+// FTS: 0x2C (44) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct FTS
 {
     struct _ftsent *fts_cur;
@@ -4117,8 +4327,10 @@ struct FTS
     int (*fts_compar)(const void *, const void *);
     int fts_options;
 };
+#pragma pack(pop)
 
-// _ftsent64: 0x4C (76) bytes
+// _ftsent64: 0x4C (76) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct _ftsent64
 {
     struct _ftsent64 *fts_cycle;
@@ -4142,8 +4354,10 @@ struct _ftsent64
     struct stat64 *fts_statp;
     char fts_name[1];
 };
+#pragma pack(pop)
 
-// FTS64: 0x2C (44) bytes
+// FTS64: 0x2C (44) bytes, packed to 4 as the i386 System V ABI aligns its eight-byte scalars
+#pragma pack(push, 4)
 struct FTS64
 {
     struct _ftsent64 *fts_cur;
@@ -4157,11 +4371,13 @@ struct FTS64
     int (*fts_compar)(const void *, const void *);
     int fts_options;
 };
+#pragma pack(pop)
 
 typedef struct _ftsent FTSENT;
 
 typedef struct _ftsent64 FTSENT64;
 
+#pragma neverd_header("ftw.h")
 // FTW: 0x8 (8) bytes
 struct FTW
 {
@@ -4177,6 +4393,7 @@ typedef int (*__nftw_func_t)(const char *__filename, const struct stat *__status
 
 typedef int (*__nftw64_func_t)(const char *__filename, const struct stat64 *__status, int __flag, struct FTW *__info);
 
+#pragma neverd_header("wordexp.h")
 // wordexp_t: 0xC (12) bytes
 struct wordexp_t
 {
@@ -4185,6 +4402,7 @@ struct wordexp_t
     size_t we_offs;
 };
 
+#pragma neverd_header("shadow.h")
 // spwd: 0x24 (36) bytes
 struct spwd
 {
@@ -4765,9 +4983,9 @@ _Float32x __scalbnf32x(_Float32x __x, int __n);
 _Float64 __scalbnf64(_Float64 __x, int __n);
 _Float64x __scalbnf64x(_Float64x __x, int __n);
 long double __scalbnl(long double __x, int __n);
-struct cpu_set_t *__sched_cpualloc(size_t __count);
-int __sched_cpucount(size_t __setsize, const struct cpu_set_t *__setp);
-void __sched_cpufree(struct cpu_set_t *__set);
+cpu_set_t *__sched_cpualloc(size_t __count);
+int __sched_cpucount(size_t __setsize, const cpu_set_t *__setp);
+void __sched_cpufree(cpu_set_t *__set);
 int __signbit(double __value);
 int __signbitf(float __value);
 int __signbitl(long double __value);
@@ -4896,8 +5114,8 @@ int _toupper(int);
 long a64l(const char *__s);
 _Noreturn void abort(void);
 int abs(int __x);
-int accept(int __fd, union __SOCKADDR_ARG __addr, socklen_t *__addr_len);
-int accept4(int __fd, union __SOCKADDR_ARG __addr, socklen_t *__addr_len, int __flags);
+int accept(int __fd, __SOCKADDR_ARG __addr, socklen_t *__addr_len);
+int accept4(int __fd, __SOCKADDR_ARG __addr, socklen_t *__addr_len, int __flags);
 int access(const char *__name, int __type);
 int acct(const char *__name);
 double acos(double __x);
@@ -5016,7 +5234,7 @@ void backtrace_symbols_fd(void *const *__array, int __size, int __fd);
 char *basename(const char *__filename);
 int bcmp(const void *__s1, const void *__s2, size_t __n);
 void bcopy(const void *__src, void *__dest, size_t __n);
-int bind(int __fd, union __CONST_SOCKADDR_ARG __addr, socklen_t __len);
+int bind(int __fd, __CONST_SOCKADDR_ARG __addr, socklen_t __len);
 int bindresvport(int __sockfd, struct sockaddr_in *__sock_in);
 int bindresvport6(int __sockfd, struct sockaddr_in6 *__sock_in);
 int brk(void *__addr);
@@ -5089,7 +5307,7 @@ _Float64 compoundnf64(_Float64 __x, long long __y);
 _Float64x compoundnf64x(_Float64x __x, long long __y);
 long double compoundnl(long double __x, long long __y);
 size_t confstr(int __name, char *__buf, size_t __len);
-int connect(int __fd, union __CONST_SOCKADDR_ARG __addr, socklen_t __len);
+int connect(int __fd, __CONST_SOCKADDR_ARG __addr, socklen_t __len);
 ssize_t copy_file_range(int __infd, __off64_t *__pinoff, int __outfd, __off64_t *__poutoff, size_t __length, unsigned int __flags);
 double copysign(double __x, double __y);
 float copysignf(float __x, float __y);
@@ -5133,10 +5351,10 @@ double dfmal(long double __x, long double __y, long double __z);
 double difftime(time_t __time1, time_t __time0);
 int dirfd(DIR *__dirp);
 char *dirname(char *__path);
-struct div_t div(int __numer, int __denom);
+div_t div(int __numer, int __denom);
 int dl_iterate_phdr(int (*__callback)(struct dl_phdr_info *, size_t, void *), void *__data);
-int dladdr(const void *__address, struct Dl_info *__info);
-int dladdr1(const void *__address, struct Dl_info *__info, void **__extra_info, int __flags);
+int dladdr(const void *__address, Dl_info *__info);
+int dladdr1(const void *__address, Dl_info *__info, void **__extra_info, int __flags);
 int dlclose(void *__handle);
 char *dlerror(void);
 int dlinfo(void *__handle, int __request, void *__arg);
@@ -5175,8 +5393,8 @@ void endutent(void);
 int epoll_create(int __size);
 int epoll_create1(int __flags);
 int epoll_ctl(int __epfd, int __op, int __fd, struct epoll_event *__event);
-int epoll_pwait(int __epfd, struct epoll_event *__events, int __maxevents, int __timeout, const struct __sigset_t *__ss);
-int epoll_pwait2(int __epfd, struct epoll_event *__events, int __maxevents, const struct timespec *__timeout, const struct __sigset_t *__ss);
+int epoll_pwait(int __epfd, struct epoll_event *__events, int __maxevents, int __timeout, const __sigset_t *__ss);
+int epoll_pwait2(int __epfd, struct epoll_event *__events, int __maxevents, const struct timespec *__timeout, const __sigset_t *__ss);
 int epoll_wait(int __epfd, struct epoll_event *__events, int __maxevents, int __timeout);
 double erand48(unsigned short *__xsubi);
 int erand48_r(unsigned short *__xsubi, struct drand48_data *__buffer, double *__result);
@@ -5328,25 +5546,25 @@ DIR *fdopendir(int __fd);
 int feclearexcept(int __excepts);
 int fedisableexcept(int __excepts);
 int feenableexcept(int __excepts);
-int fegetenv(struct fenv_t *__envp);
+int fegetenv(fenv_t *__envp);
 int fegetexcept(void);
 int fegetexceptflag(fexcept_t *__flagp, int __excepts);
-int fegetmode(struct femode_t *__modep);
+int fegetmode(femode_t *__modep);
 int fegetround(void);
-int feholdexcept(struct fenv_t *__envp);
+int feholdexcept(fenv_t *__envp);
 int feof(FILE *__stream);
 int feof_unlocked(FILE *__stream);
 int feraiseexcept(int __excepts);
 int ferror(FILE *__stream);
 int ferror_unlocked(FILE *__stream);
-int fesetenv(const struct fenv_t *__envp);
+int fesetenv(const fenv_t *__envp);
 int fesetexcept(int __excepts);
 int fesetexceptflag(const fexcept_t *__flagp, int __excepts);
-int fesetmode(const struct femode_t *__modep);
+int fesetmode(const femode_t *__modep);
 int fesetround(int __rounding_direction);
 int fetestexcept(int __excepts);
 int fetestexceptflag(const fexcept_t *__flagp, int __excepts);
-int feupdateenv(const struct fenv_t *__envp);
+int feupdateenv(const fenv_t *__envp);
 int fexecve(int __fd, char *const *__argv, char *const *__envp);
 int fflush(FILE *__stream);
 int fflush_unlocked(FILE *__stream);
@@ -5560,16 +5778,16 @@ key_t ftok(const char *__pathname, int __proj_id);
 int ftruncate(int __fd, __off_t __length);
 int ftruncate64(int __fd, __off64_t __length);
 int ftrylockfile(FILE *__stream);
-FTSENT64 *fts64_children(struct FTS64 *, int);
-int fts64_close(struct FTS64 *);
-struct FTS64 *fts64_open(char *const *, int, int (*)(const FTSENT64 **, const FTSENT64 **));
-FTSENT64 *fts64_read(struct FTS64 *);
-int fts64_set(struct FTS64 *, FTSENT64 *, int);
-FTSENT *fts_children(struct FTS *, int);
-int fts_close(struct FTS *);
-struct FTS *fts_open(char *const *, int, int (*)(const FTSENT **, const FTSENT **));
-FTSENT *fts_read(struct FTS *);
-int fts_set(struct FTS *, FTSENT *, int);
+FTSENT64 *fts64_children(FTS64 *, int);
+int fts64_close(FTS64 *);
+FTS64 *fts64_open(char *const *, int, int (*)(const FTSENT64 **, const FTSENT64 **));
+FTSENT64 *fts64_read(FTS64 *);
+int fts64_set(FTS64 *, FTSENT64 *, int);
+FTSENT *fts_children(FTS *, int);
+int fts_close(FTS *);
+FTS *fts_open(char *const *, int, int (*)(const FTSENT **, const FTSENT **));
+FTSENT *fts_read(FTS *);
+int fts_set(FTS *, FTSENT *, int);
 int ftw(const char *__dir, __ftw_func_t __func, int __descriptors);
 int ftw64(const char *__dir, __ftw64_func_t __func, int __descriptors);
 void funlockfile(FILE *__stream);
@@ -5601,7 +5819,7 @@ int getc(FILE *__stream);
 int getc_unlocked(FILE *__stream);
 int getchar(void);
 int getchar_unlocked(void);
-int getcontext(struct ucontext_t *__ucp);
+int getcontext(ucontext_t *__ucp);
 int getcpu(unsigned int *, unsigned int *);
 char *getcwd(char *__buf, size_t __size);
 struct tm *getdate(const char *__string);
@@ -5663,7 +5881,7 @@ _Float32x getpayloadf32x(const _Float32x *__x);
 _Float64 getpayloadf64(const _Float64 *__x);
 _Float64x getpayloadf64x(const _Float64x *__x);
 long double getpayloadl(const long double *__x);
-int getpeername(int __fd, union __SOCKADDR_ARG __addr, socklen_t *__len);
+int getpeername(int __fd, __SOCKADDR_ARG __addr, socklen_t *__len);
 __pid_t getpgid(__pid_t __pid);
 __pid_t getpgrp(void);
 __pid_t getpid(void);
@@ -5702,7 +5920,7 @@ int getservbyport_r(int __port, const char *__proto, struct servent *__result_bu
 struct servent *getservent(void);
 int getservent_r(struct servent *__result_buf, char *__buf, size_t __buflen, struct servent **__result);
 __pid_t getsid(__pid_t __pid);
-int getsockname(int __fd, union __SOCKADDR_ARG __addr, socklen_t *__len);
+int getsockname(int __fd, __SOCKADDR_ARG __addr, socklen_t *__len);
 int getsockopt(int __fd, int __level, int __optname, void *__optval, socklen_t *__optlen);
 int getsourcefilter(int __s, unsigned int __interface_addr, const struct sockaddr *__group, socklen_t __grouplen, unsigned int *__fmode, unsigned int *__numsrc, struct sockaddr_storage *__slist);
 struct spwd *getspent(void);
@@ -5728,11 +5946,11 @@ wint_t getwchar(void);
 wint_t getwchar_unlocked(void);
 char *getwd(char *__buf);
 ssize_t getxattr(const char *__path, const char *__name, void *__value, size_t __size);
-int glob(const char *__pattern, int __flags, int (*__errfunc)(const char *, int), struct glob_t *__pglob);
-int glob64(const char *__pattern, int __flags, int (*__errfunc)(const char *, int), struct glob64_t *__pglob);
+int glob(const char *__pattern, int __flags, int (*__errfunc)(const char *, int), glob_t *__pglob);
+int glob64(const char *__pattern, int __flags, int (*__errfunc)(const char *, int), glob64_t *__pglob);
 int glob_pattern_p(const char *__pattern, int __quote);
-void globfree(struct glob_t *__pglob);
-void globfree64(struct glob64_t *__pglob);
+void globfree(glob_t *__pglob);
+void globfree64(glob64_t *__pglob);
 struct tm *gmtime(const time_t *__timer);
 struct tm *gmtime_r(const time_t *__timer, struct tm *__tp);
 int grantpt(int __fd);
@@ -5743,8 +5961,8 @@ int hcreate_r(size_t __nel, struct hsearch_data *__htab);
 void hdestroy(void);
 void hdestroy_r(struct hsearch_data *__htab);
 void herror(const char *__str);
-ENTRY *hsearch(ENTRY __item, enum ACTION __action);
-int hsearch_r(ENTRY __item, enum ACTION __action, ENTRY **__retval, struct hsearch_data *__htab);
+ENTRY *hsearch(ENTRY __item, ACTION __action);
+int hsearch_r(ENTRY __item, ACTION __action, ENTRY **__retval, struct hsearch_data *__htab);
 const char *hstrerror(int __err_num);
 unsigned int htonl(unsigned int __hostlong);
 unsigned short htons(unsigned short __hostshort);
@@ -5770,7 +5988,7 @@ int ilogbf64(_Float64 __x);
 int ilogbf64x(_Float64x __x);
 int ilogbl(long double __x);
 intmax_t imaxabs(intmax_t __n);
-struct imaxdiv_t imaxdiv(intmax_t __numer, intmax_t __denom);
+imaxdiv_t imaxdiv(intmax_t __numer, intmax_t __denom);
 char *index(const char *__s, int __c);
 int inet6_opt_append(void *__extbuf, socklen_t __extlen, int __offset, unsigned char __type, socklen_t __len, unsigned char __align, void **__databufp);
 int inet6_opt_find(void *__extbuf, socklen_t __extlen, int __offset, unsigned char __type, socklen_t *__lenp, void **__databufp);
@@ -5904,14 +6122,14 @@ int kill(__pid_t __pid, int __sig);
 int killpg(__pid_t __pgrp, int __sig);
 char *l64a(long __n);
 void la_activity(uintptr_t *__cookie, unsigned int __flag);
-Elf32_Addr la_i86_gnu_pltenter(struct Elf32_Sym *__sym, unsigned int __ndx, uintptr_t *__refcook, uintptr_t *__defcook, struct La_i86_regs *__regs, unsigned int *__flags, const char *__symname, long *__framesizep);
-unsigned int la_i86_gnu_pltexit(struct Elf32_Sym *__sym, unsigned int __ndx, uintptr_t *__refcook, uintptr_t *__defcook, const struct La_i86_regs *__inregs, struct La_i86_retval *__outregs, const char *symname);
+Elf32_Addr la_i86_gnu_pltenter(Elf32_Sym *__sym, unsigned int __ndx, uintptr_t *__refcook, uintptr_t *__defcook, La_i86_regs *__regs, unsigned int *__flags, const char *__symname, long *__framesizep);
+unsigned int la_i86_gnu_pltexit(Elf32_Sym *__sym, unsigned int __ndx, uintptr_t *__refcook, uintptr_t *__defcook, const La_i86_regs *__inregs, La_i86_retval *__outregs, const char *symname);
 unsigned int la_objclose(uintptr_t *__cookie);
 unsigned int la_objopen(struct link_map *__map, Lmid_t __lmid, uintptr_t *__cookie);
 char *la_objsearch(const char *__name, uintptr_t *__cookie, unsigned int __flag);
 void la_preinit(uintptr_t *__cookie);
-uintptr_t la_symbind32(struct Elf32_Sym *__sym, unsigned int __ndx, uintptr_t *__refcook, uintptr_t *__defcook, unsigned int *__flags, const char *__symname);
-uintptr_t la_symbind64(struct Elf64_Sym *__sym, unsigned int __ndx, uintptr_t *__refcook, uintptr_t *__defcook, unsigned int *__flags, const char *__symname);
+uintptr_t la_symbind32(Elf32_Sym *__sym, unsigned int __ndx, uintptr_t *__refcook, uintptr_t *__defcook, unsigned int *__flags, const char *__symname);
+uintptr_t la_symbind64(Elf64_Sym *__sym, unsigned int __ndx, uintptr_t *__refcook, uintptr_t *__defcook, unsigned int *__flags, const char *__symname);
 unsigned int la_version(unsigned int __version);
 long labs(long __x);
 int lchmod(const char *__file, __mode_t __mode);
@@ -5926,7 +6144,7 @@ _Float32x ldexpf32x(_Float32x __x, int __exponent);
 _Float64 ldexpf64(_Float64 __x, int __exponent);
 _Float64x ldexpf64x(_Float64x __x, int __exponent);
 long double ldexpl(long double __x, int __exponent);
-struct ldiv_t ldiv(long __numer, long __denom);
+ldiv_t ldiv(long __numer, long __denom);
 void *lfind(const void *__key, const void *__base, size_t *__nmemb, size_t __size, __compar_fn_t __compar);
 double lgamma(double);
 double lgamma_r(double, int *__signgamp);
@@ -5950,7 +6168,7 @@ int lio_listio64(int __mode, struct aiocb64 *const *__list, int __nent, struct s
 int listen(int __fd, int __n);
 ssize_t listxattr(const char *__path, char *__list, size_t __size);
 long long llabs(long long __x);
-struct lldiv_t lldiv(long long __numer, long long __denom);
+lldiv_t lldiv(long long __numer, long long __denom);
 ssize_t llistxattr(const char *__path, char *__list, size_t __size);
 long llogb(double __x);
 long llogbf(float __x);
@@ -6064,7 +6282,7 @@ int lstat(const char *__file, struct stat *__buf);
 int lstat64(const char *__file, struct stat64 *__buf);
 int lutimes(const char *__file, const struct timeval *__tvp);
 int madvise(void *__addr, size_t __len, int __advice);
-void makecontext(struct ucontext_t *__ucp, void (*__func)(void), int __argc, ...);
+void makecontext(ucontext_t *__ucp, void (*__func)(void), int __argc, ...);
 struct mallinfo mallinfo(void);
 struct mallinfo2 mallinfo2(void);
 void *malloc(size_t __size);
@@ -6215,8 +6433,8 @@ long pathconf(const char *__path, int __name);
 int pause(void);
 int pclose(FILE *__stream);
 void perror(const char *__s);
-int pidfd_spawn(int *__pidfd, const char *__path, const struct posix_spawn_file_actions_t *__facts, const struct posix_spawnattr_t *__attrp, char *const *__argv, char *const *__envp);
-int pidfd_spawnp(int *__pidfd, const char *__file, const struct posix_spawn_file_actions_t *__facts, const struct posix_spawnattr_t *__attrp, char *const *__argv, char *const *__envp);
+int pidfd_spawn(int *__pidfd, const char *__path, const posix_spawn_file_actions_t *__facts, const posix_spawnattr_t *__attrp, char *const *__argv, char *const *__envp);
+int pidfd_spawnp(int *__pidfd, const char *__file, const posix_spawn_file_actions_t *__facts, const posix_spawnattr_t *__attrp, char *const *__argv, char *const *__envp);
 int pipe(int *__pipedes);
 int pipe2(int *__pipedes, int __flags);
 int pkey_alloc(unsigned int __flags, unsigned int __access_restrictions);
@@ -6233,33 +6451,33 @@ int posix_fallocate64(int __fd, off64_t __offset, off64_t __len);
 int posix_madvise(void *__addr, size_t __len, int __advice);
 int posix_memalign(void **__memptr, size_t __alignment, size_t __size);
 int posix_openpt(int __oflag);
-int posix_spawn(pid_t *__pid, const char *__path, const struct posix_spawn_file_actions_t *__file_actions, const struct posix_spawnattr_t *__attrp, char *const *__argv, char *const *__envp);
-int posix_spawn_file_actions_addchdir_np(struct posix_spawn_file_actions_t *__actions, const char *__path);
-int posix_spawn_file_actions_addclose(struct posix_spawn_file_actions_t *__file_actions, int __fd);
-int posix_spawn_file_actions_addclosefrom_np(struct posix_spawn_file_actions_t *, int __from);
-int posix_spawn_file_actions_adddup2(struct posix_spawn_file_actions_t *__file_actions, int __fd, int __newfd);
-int posix_spawn_file_actions_addfchdir_np(struct posix_spawn_file_actions_t *, int __fd);
-int posix_spawn_file_actions_addopen(struct posix_spawn_file_actions_t *__file_actions, int __fd, const char *__path, int __oflag, mode_t __mode);
-int posix_spawn_file_actions_addtcsetpgrp_np(struct posix_spawn_file_actions_t *, int __tcfd);
-int posix_spawn_file_actions_destroy(struct posix_spawn_file_actions_t *__file_actions);
-int posix_spawn_file_actions_init(struct posix_spawn_file_actions_t *__file_actions);
-int posix_spawnattr_destroy(struct posix_spawnattr_t *__attr);
-int posix_spawnattr_getcgroup_np(const struct posix_spawnattr_t *__attr, int *__cgroup);
-int posix_spawnattr_getflags(const struct posix_spawnattr_t *__attr, short *__flags);
-int posix_spawnattr_getpgroup(const struct posix_spawnattr_t *__attr, pid_t *__pgroup);
-int posix_spawnattr_getschedparam(const struct posix_spawnattr_t *__attr, struct sched_param *__schedparam);
-int posix_spawnattr_getschedpolicy(const struct posix_spawnattr_t *__attr, int *__schedpolicy);
-int posix_spawnattr_getsigdefault(const struct posix_spawnattr_t *__attr, sigset_t *__sigdefault);
-int posix_spawnattr_getsigmask(const struct posix_spawnattr_t *__attr, sigset_t *__sigmask);
-int posix_spawnattr_init(struct posix_spawnattr_t *__attr);
-int posix_spawnattr_setcgroup_np(struct posix_spawnattr_t *__attr, int __cgroup);
-int posix_spawnattr_setflags(struct posix_spawnattr_t *_attr, short __flags);
-int posix_spawnattr_setpgroup(struct posix_spawnattr_t *__attr, pid_t __pgroup);
-int posix_spawnattr_setschedparam(struct posix_spawnattr_t *__attr, const struct sched_param *__schedparam);
-int posix_spawnattr_setschedpolicy(struct posix_spawnattr_t *__attr, int __schedpolicy);
-int posix_spawnattr_setsigdefault(struct posix_spawnattr_t *__attr, const sigset_t *__sigdefault);
-int posix_spawnattr_setsigmask(struct posix_spawnattr_t *__attr, const sigset_t *__sigmask);
-int posix_spawnp(pid_t *__pid, const char *__file, const struct posix_spawn_file_actions_t *__file_actions, const struct posix_spawnattr_t *__attrp, char *const *__argv, char *const *__envp);
+int posix_spawn(pid_t *__pid, const char *__path, const posix_spawn_file_actions_t *__file_actions, const posix_spawnattr_t *__attrp, char *const *__argv, char *const *__envp);
+int posix_spawn_file_actions_addchdir_np(posix_spawn_file_actions_t *__actions, const char *__path);
+int posix_spawn_file_actions_addclose(posix_spawn_file_actions_t *__file_actions, int __fd);
+int posix_spawn_file_actions_addclosefrom_np(posix_spawn_file_actions_t *, int __from);
+int posix_spawn_file_actions_adddup2(posix_spawn_file_actions_t *__file_actions, int __fd, int __newfd);
+int posix_spawn_file_actions_addfchdir_np(posix_spawn_file_actions_t *, int __fd);
+int posix_spawn_file_actions_addopen(posix_spawn_file_actions_t *__file_actions, int __fd, const char *__path, int __oflag, mode_t __mode);
+int posix_spawn_file_actions_addtcsetpgrp_np(posix_spawn_file_actions_t *, int __tcfd);
+int posix_spawn_file_actions_destroy(posix_spawn_file_actions_t *__file_actions);
+int posix_spawn_file_actions_init(posix_spawn_file_actions_t *__file_actions);
+int posix_spawnattr_destroy(posix_spawnattr_t *__attr);
+int posix_spawnattr_getcgroup_np(const posix_spawnattr_t *__attr, int *__cgroup);
+int posix_spawnattr_getflags(const posix_spawnattr_t *__attr, short *__flags);
+int posix_spawnattr_getpgroup(const posix_spawnattr_t *__attr, pid_t *__pgroup);
+int posix_spawnattr_getschedparam(const posix_spawnattr_t *__attr, struct sched_param *__schedparam);
+int posix_spawnattr_getschedpolicy(const posix_spawnattr_t *__attr, int *__schedpolicy);
+int posix_spawnattr_getsigdefault(const posix_spawnattr_t *__attr, sigset_t *__sigdefault);
+int posix_spawnattr_getsigmask(const posix_spawnattr_t *__attr, sigset_t *__sigmask);
+int posix_spawnattr_init(posix_spawnattr_t *__attr);
+int posix_spawnattr_setcgroup_np(posix_spawnattr_t *__attr, int __cgroup);
+int posix_spawnattr_setflags(posix_spawnattr_t *_attr, short __flags);
+int posix_spawnattr_setpgroup(posix_spawnattr_t *__attr, pid_t __pgroup);
+int posix_spawnattr_setschedparam(posix_spawnattr_t *__attr, const struct sched_param *__schedparam);
+int posix_spawnattr_setschedpolicy(posix_spawnattr_t *__attr, int __schedpolicy);
+int posix_spawnattr_setsigdefault(posix_spawnattr_t *__attr, const sigset_t *__sigdefault);
+int posix_spawnattr_setsigmask(posix_spawnattr_t *__attr, const sigset_t *__sigmask);
+int posix_spawnp(pid_t *__pid, const char *__file, const posix_spawn_file_actions_t *__file_actions, const posix_spawnattr_t *__attrp, char *const *__argv, char *const *__envp);
 double pow(double __x, double __y);
 float powf(float __x, float __y);
 _Float32 powf32(_Float32 __x, _Float32 __y);
@@ -6281,7 +6499,7 @@ _Float32x powrf32x(_Float32x __x, _Float32x __y);
 _Float64 powrf64(_Float64 __x, _Float64 __y);
 _Float64x powrf64x(_Float64x __x, _Float64x __y);
 long double powrl(long double __x, long double __y);
-int ppoll(struct pollfd *__fds, nfds_t __nfds, const struct timespec *__timeout, const struct __sigset_t *__ss);
+int ppoll(struct pollfd *__fds, nfds_t __nfds, const struct timespec *__timeout, const __sigset_t *__ss);
 int prctl(int __option, ...);
 ssize_t pread(int __fd, void *__buf, size_t __nbytes, __off_t __offset);
 ssize_t pread64(int __fd, void *__buf, size_t __nbytes, __off64_t __offset);
@@ -6297,63 +6515,63 @@ int process_mrelease(int pidfd, unsigned int flags);
 ssize_t process_vm_readv(pid_t __pid, const struct iovec *__lvec, unsigned long __liovcnt, const struct iovec *__rvec, unsigned long __riovcnt, unsigned long __flags);
 ssize_t process_vm_writev(pid_t __pid, const struct iovec *__lvec, unsigned long __liovcnt, const struct iovec *__rvec, unsigned long __riovcnt, unsigned long __flags);
 int profil(unsigned short *__sample_buffer, size_t __size, size_t __offset, unsigned int __scale);
-int pselect(int __nfds, struct fd_set *__readfds, struct fd_set *__writefds, struct fd_set *__exceptfds, const struct timespec *__timeout, const struct __sigset_t *__sigmask);
-void psiginfo(const struct siginfo_t *__pinfo, const char *__s);
+int pselect(int __nfds, fd_set *__readfds, fd_set *__writefds, fd_set *__exceptfds, const struct timespec *__timeout, const __sigset_t *__sigmask);
+void psiginfo(const siginfo_t *__pinfo, const char *__s);
 void psignal(int __sig, const char *__s);
 int pthread_atfork(void (*__prepare)(void), void (*__parent)(void), void (*__child)(void));
-int pthread_attr_destroy(union pthread_attr_t *__attr);
-int pthread_attr_getaffinity_np(const union pthread_attr_t *__attr, size_t __cpusetsize, struct cpu_set_t *__cpuset);
-int pthread_attr_getdetachstate(const union pthread_attr_t *__attr, int *__detachstate);
-int pthread_attr_getguardsize(const union pthread_attr_t *__attr, size_t *__guardsize);
-int pthread_attr_getinheritsched(const union pthread_attr_t *__attr, int *__inherit);
-int pthread_attr_getschedparam(const union pthread_attr_t *__attr, struct sched_param *__param);
-int pthread_attr_getschedpolicy(const union pthread_attr_t *__attr, int *__policy);
-int pthread_attr_getscope(const union pthread_attr_t *__attr, int *__scope);
-int pthread_attr_getsigmask_np(const union pthread_attr_t *__attr, struct __sigset_t *sigmask);
-int pthread_attr_getstack(const union pthread_attr_t *__attr, void **__stackaddr, size_t *__stacksize);
-int pthread_attr_getstackaddr(const union pthread_attr_t *__attr, void **__stackaddr);
-int pthread_attr_getstacksize(const union pthread_attr_t *__attr, size_t *__stacksize);
-int pthread_attr_init(union pthread_attr_t *__attr);
-int pthread_attr_setaffinity_np(union pthread_attr_t *__attr, size_t __cpusetsize, const struct cpu_set_t *__cpuset);
-int pthread_attr_setdetachstate(union pthread_attr_t *__attr, int __detachstate);
-int pthread_attr_setguardsize(union pthread_attr_t *__attr, size_t __guardsize);
-int pthread_attr_setinheritsched(union pthread_attr_t *__attr, int __inherit);
-int pthread_attr_setschedparam(union pthread_attr_t *__attr, const struct sched_param *__param);
-int pthread_attr_setschedpolicy(union pthread_attr_t *__attr, int __policy);
-int pthread_attr_setscope(union pthread_attr_t *__attr, int __scope);
-int pthread_attr_setsigmask_np(union pthread_attr_t *__attr, const struct __sigset_t *sigmask);
-int pthread_attr_setstack(union pthread_attr_t *__attr, void *__stackaddr, size_t __stacksize);
-int pthread_attr_setstackaddr(union pthread_attr_t *__attr, void *__stackaddr);
-int pthread_attr_setstacksize(union pthread_attr_t *__attr, size_t __stacksize);
-int pthread_barrier_destroy(union pthread_barrier_t *__barrier);
-int pthread_barrier_init(union pthread_barrier_t *__barrier, const union pthread_barrierattr_t *__attr, unsigned int __count);
-int pthread_barrier_wait(union pthread_barrier_t *__barrier);
-int pthread_barrierattr_destroy(union pthread_barrierattr_t *__attr);
-int pthread_barrierattr_getpshared(const union pthread_barrierattr_t *__attr, int *__pshared);
-int pthread_barrierattr_init(union pthread_barrierattr_t *__attr);
-int pthread_barrierattr_setpshared(union pthread_barrierattr_t *__attr, int __pshared);
+int pthread_attr_destroy(pthread_attr_t *__attr);
+int pthread_attr_getaffinity_np(const pthread_attr_t *__attr, size_t __cpusetsize, cpu_set_t *__cpuset);
+int pthread_attr_getdetachstate(const pthread_attr_t *__attr, int *__detachstate);
+int pthread_attr_getguardsize(const pthread_attr_t *__attr, size_t *__guardsize);
+int pthread_attr_getinheritsched(const pthread_attr_t *__attr, int *__inherit);
+int pthread_attr_getschedparam(const pthread_attr_t *__attr, struct sched_param *__param);
+int pthread_attr_getschedpolicy(const pthread_attr_t *__attr, int *__policy);
+int pthread_attr_getscope(const pthread_attr_t *__attr, int *__scope);
+int pthread_attr_getsigmask_np(const pthread_attr_t *__attr, __sigset_t *sigmask);
+int pthread_attr_getstack(const pthread_attr_t *__attr, void **__stackaddr, size_t *__stacksize);
+int pthread_attr_getstackaddr(const pthread_attr_t *__attr, void **__stackaddr);
+int pthread_attr_getstacksize(const pthread_attr_t *__attr, size_t *__stacksize);
+int pthread_attr_init(pthread_attr_t *__attr);
+int pthread_attr_setaffinity_np(pthread_attr_t *__attr, size_t __cpusetsize, const cpu_set_t *__cpuset);
+int pthread_attr_setdetachstate(pthread_attr_t *__attr, int __detachstate);
+int pthread_attr_setguardsize(pthread_attr_t *__attr, size_t __guardsize);
+int pthread_attr_setinheritsched(pthread_attr_t *__attr, int __inherit);
+int pthread_attr_setschedparam(pthread_attr_t *__attr, const struct sched_param *__param);
+int pthread_attr_setschedpolicy(pthread_attr_t *__attr, int __policy);
+int pthread_attr_setscope(pthread_attr_t *__attr, int __scope);
+int pthread_attr_setsigmask_np(pthread_attr_t *__attr, const __sigset_t *sigmask);
+int pthread_attr_setstack(pthread_attr_t *__attr, void *__stackaddr, size_t __stacksize);
+int pthread_attr_setstackaddr(pthread_attr_t *__attr, void *__stackaddr);
+int pthread_attr_setstacksize(pthread_attr_t *__attr, size_t __stacksize);
+int pthread_barrier_destroy(pthread_barrier_t *__barrier);
+int pthread_barrier_init(pthread_barrier_t *__barrier, const pthread_barrierattr_t *__attr, unsigned int __count);
+int pthread_barrier_wait(pthread_barrier_t *__barrier);
+int pthread_barrierattr_destroy(pthread_barrierattr_t *__attr);
+int pthread_barrierattr_getpshared(const pthread_barrierattr_t *__attr, int *__pshared);
+int pthread_barrierattr_init(pthread_barrierattr_t *__attr);
+int pthread_barrierattr_setpshared(pthread_barrierattr_t *__attr, int __pshared);
 int pthread_cancel(pthread_t __th);
 int pthread_clockjoin_np(pthread_t __th, void **__thread_return, clockid_t __clockid, const struct timespec *__abstime);
-int pthread_cond_broadcast(union pthread_cond_t *__cond);
-int pthread_cond_clockwait(union pthread_cond_t *__cond, union pthread_mutex_t *__mutex, __clockid_t __clock_id, const struct timespec *__abstime);
-int pthread_cond_destroy(union pthread_cond_t *__cond);
-int pthread_cond_init(union pthread_cond_t *__cond, const union pthread_condattr_t *__cond_attr);
-int pthread_cond_signal(union pthread_cond_t *__cond);
-int pthread_cond_timedwait(union pthread_cond_t *__cond, union pthread_mutex_t *__mutex, const struct timespec *__abstime);
-int pthread_cond_wait(union pthread_cond_t *__cond, union pthread_mutex_t *__mutex);
-int pthread_condattr_destroy(union pthread_condattr_t *__attr);
-int pthread_condattr_getclock(const union pthread_condattr_t *__attr, __clockid_t *__clock_id);
-int pthread_condattr_getpshared(const union pthread_condattr_t *__attr, int *__pshared);
-int pthread_condattr_init(union pthread_condattr_t *__attr);
-int pthread_condattr_setclock(union pthread_condattr_t *__attr, __clockid_t __clock_id);
-int pthread_condattr_setpshared(union pthread_condattr_t *__attr, int __pshared);
-int pthread_create(pthread_t *__newthread, const union pthread_attr_t *__attr, void *(*__start_routine)(void *), void *__arg);
+int pthread_cond_broadcast(pthread_cond_t *__cond);
+int pthread_cond_clockwait(pthread_cond_t *__cond, pthread_mutex_t *__mutex, __clockid_t __clock_id, const struct timespec *__abstime);
+int pthread_cond_destroy(pthread_cond_t *__cond);
+int pthread_cond_init(pthread_cond_t *__cond, const pthread_condattr_t *__cond_attr);
+int pthread_cond_signal(pthread_cond_t *__cond);
+int pthread_cond_timedwait(pthread_cond_t *__cond, pthread_mutex_t *__mutex, const struct timespec *__abstime);
+int pthread_cond_wait(pthread_cond_t *__cond, pthread_mutex_t *__mutex);
+int pthread_condattr_destroy(pthread_condattr_t *__attr);
+int pthread_condattr_getclock(const pthread_condattr_t *__attr, __clockid_t *__clock_id);
+int pthread_condattr_getpshared(const pthread_condattr_t *__attr, int *__pshared);
+int pthread_condattr_init(pthread_condattr_t *__attr);
+int pthread_condattr_setclock(pthread_condattr_t *__attr, __clockid_t __clock_id);
+int pthread_condattr_setpshared(pthread_condattr_t *__attr, int __pshared);
+int pthread_create(pthread_t *__newthread, const pthread_attr_t *__attr, void *(*__start_routine)(void *), void *__arg);
 int pthread_detach(pthread_t __th);
 int pthread_equal(pthread_t __thread1, pthread_t __thread2);
 _Noreturn void pthread_exit(void *__retval);
-int pthread_getaffinity_np(pthread_t __th, size_t __cpusetsize, struct cpu_set_t *__cpuset);
-int pthread_getattr_default_np(union pthread_attr_t *__attr);
-int pthread_getattr_np(pthread_t __th, union pthread_attr_t *__attr);
+int pthread_getaffinity_np(pthread_t __th, size_t __cpusetsize, cpu_set_t *__cpuset);
+int pthread_getattr_default_np(pthread_attr_t *__attr);
+int pthread_getattr_np(pthread_t __th, pthread_attr_t *__attr);
 int pthread_getconcurrency(void);
 int pthread_getcpuclockid(pthread_t __thread_id, __clockid_t *__clock_id);
 int pthread_getname_np(pthread_t __target_thread, char *__buf, size_t __buflen);
@@ -6364,52 +6582,52 @@ int pthread_join(pthread_t __th, void **__thread_return);
 int pthread_key_create(pthread_key_t *__key, void (*__destr_function)(void *));
 int pthread_key_delete(pthread_key_t __key);
 int pthread_kill(pthread_t __threadid, int __signo);
-int pthread_mutex_clocklock(union pthread_mutex_t *__mutex, clockid_t __clockid, const struct timespec *__abstime);
-int pthread_mutex_consistent(union pthread_mutex_t *__mutex);
-int pthread_mutex_consistent_np(union pthread_mutex_t *);
-int pthread_mutex_destroy(union pthread_mutex_t *__mutex);
-int pthread_mutex_getprioceiling(const union pthread_mutex_t *__mutex, int *__prioceiling);
-int pthread_mutex_init(union pthread_mutex_t *__mutex, const union pthread_mutexattr_t *__mutexattr);
-int pthread_mutex_lock(union pthread_mutex_t *__mutex);
-int pthread_mutex_setprioceiling(union pthread_mutex_t *__mutex, int __prioceiling, int *__old_ceiling);
-int pthread_mutex_timedlock(union pthread_mutex_t *__mutex, const struct timespec *__abstime);
-int pthread_mutex_trylock(union pthread_mutex_t *__mutex);
-int pthread_mutex_unlock(union pthread_mutex_t *__mutex);
-int pthread_mutexattr_destroy(union pthread_mutexattr_t *__attr);
-int pthread_mutexattr_getprioceiling(const union pthread_mutexattr_t *__attr, int *__prioceiling);
-int pthread_mutexattr_getprotocol(const union pthread_mutexattr_t *__attr, int *__protocol);
-int pthread_mutexattr_getpshared(const union pthread_mutexattr_t *__attr, int *__pshared);
-int pthread_mutexattr_getrobust(const union pthread_mutexattr_t *__attr, int *__robustness);
-int pthread_mutexattr_getrobust_np(union pthread_mutexattr_t *, int *);
-int pthread_mutexattr_gettype(const union pthread_mutexattr_t *__attr, int *__kind);
-int pthread_mutexattr_init(union pthread_mutexattr_t *__attr);
-int pthread_mutexattr_setprioceiling(union pthread_mutexattr_t *__attr, int __prioceiling);
-int pthread_mutexattr_setprotocol(union pthread_mutexattr_t *__attr, int __protocol);
-int pthread_mutexattr_setpshared(union pthread_mutexattr_t *__attr, int __pshared);
-int pthread_mutexattr_setrobust(union pthread_mutexattr_t *__attr, int __robustness);
-int pthread_mutexattr_setrobust_np(union pthread_mutexattr_t *, int);
-int pthread_mutexattr_settype(union pthread_mutexattr_t *__attr, int __kind);
+int pthread_mutex_clocklock(pthread_mutex_t *__mutex, clockid_t __clockid, const struct timespec *__abstime);
+int pthread_mutex_consistent(pthread_mutex_t *__mutex);
+int pthread_mutex_consistent_np(pthread_mutex_t *);
+int pthread_mutex_destroy(pthread_mutex_t *__mutex);
+int pthread_mutex_getprioceiling(const pthread_mutex_t *__mutex, int *__prioceiling);
+int pthread_mutex_init(pthread_mutex_t *__mutex, const pthread_mutexattr_t *__mutexattr);
+int pthread_mutex_lock(pthread_mutex_t *__mutex);
+int pthread_mutex_setprioceiling(pthread_mutex_t *__mutex, int __prioceiling, int *__old_ceiling);
+int pthread_mutex_timedlock(pthread_mutex_t *__mutex, const struct timespec *__abstime);
+int pthread_mutex_trylock(pthread_mutex_t *__mutex);
+int pthread_mutex_unlock(pthread_mutex_t *__mutex);
+int pthread_mutexattr_destroy(pthread_mutexattr_t *__attr);
+int pthread_mutexattr_getprioceiling(const pthread_mutexattr_t *__attr, int *__prioceiling);
+int pthread_mutexattr_getprotocol(const pthread_mutexattr_t *__attr, int *__protocol);
+int pthread_mutexattr_getpshared(const pthread_mutexattr_t *__attr, int *__pshared);
+int pthread_mutexattr_getrobust(const pthread_mutexattr_t *__attr, int *__robustness);
+int pthread_mutexattr_getrobust_np(pthread_mutexattr_t *, int *);
+int pthread_mutexattr_gettype(const pthread_mutexattr_t *__attr, int *__kind);
+int pthread_mutexattr_init(pthread_mutexattr_t *__attr);
+int pthread_mutexattr_setprioceiling(pthread_mutexattr_t *__attr, int __prioceiling);
+int pthread_mutexattr_setprotocol(pthread_mutexattr_t *__attr, int __protocol);
+int pthread_mutexattr_setpshared(pthread_mutexattr_t *__attr, int __pshared);
+int pthread_mutexattr_setrobust(pthread_mutexattr_t *__attr, int __robustness);
+int pthread_mutexattr_setrobust_np(pthread_mutexattr_t *, int);
+int pthread_mutexattr_settype(pthread_mutexattr_t *__attr, int __kind);
 int pthread_once(pthread_once_t *__once_control, void (*__init_routine)(void));
-int pthread_rwlock_clockrdlock(union pthread_rwlock_t *__rwlock, clockid_t __clockid, const struct timespec *__abstime);
-int pthread_rwlock_clockwrlock(union pthread_rwlock_t *__rwlock, clockid_t __clockid, const struct timespec *__abstime);
-int pthread_rwlock_destroy(union pthread_rwlock_t *__rwlock);
-int pthread_rwlock_init(union pthread_rwlock_t *__rwlock, const union pthread_rwlockattr_t *__attr);
-int pthread_rwlock_rdlock(union pthread_rwlock_t *__rwlock);
-int pthread_rwlock_timedrdlock(union pthread_rwlock_t *__rwlock, const struct timespec *__abstime);
-int pthread_rwlock_timedwrlock(union pthread_rwlock_t *__rwlock, const struct timespec *__abstime);
-int pthread_rwlock_tryrdlock(union pthread_rwlock_t *__rwlock);
-int pthread_rwlock_trywrlock(union pthread_rwlock_t *__rwlock);
-int pthread_rwlock_unlock(union pthread_rwlock_t *__rwlock);
-int pthread_rwlock_wrlock(union pthread_rwlock_t *__rwlock);
-int pthread_rwlockattr_destroy(union pthread_rwlockattr_t *__attr);
-int pthread_rwlockattr_getkind_np(const union pthread_rwlockattr_t *__attr, int *__pref);
-int pthread_rwlockattr_getpshared(const union pthread_rwlockattr_t *__attr, int *__pshared);
-int pthread_rwlockattr_init(union pthread_rwlockattr_t *__attr);
-int pthread_rwlockattr_setkind_np(union pthread_rwlockattr_t *__attr, int __pref);
-int pthread_rwlockattr_setpshared(union pthread_rwlockattr_t *__attr, int __pshared);
+int pthread_rwlock_clockrdlock(pthread_rwlock_t *__rwlock, clockid_t __clockid, const struct timespec *__abstime);
+int pthread_rwlock_clockwrlock(pthread_rwlock_t *__rwlock, clockid_t __clockid, const struct timespec *__abstime);
+int pthread_rwlock_destroy(pthread_rwlock_t *__rwlock);
+int pthread_rwlock_init(pthread_rwlock_t *__rwlock, const pthread_rwlockattr_t *__attr);
+int pthread_rwlock_rdlock(pthread_rwlock_t *__rwlock);
+int pthread_rwlock_timedrdlock(pthread_rwlock_t *__rwlock, const struct timespec *__abstime);
+int pthread_rwlock_timedwrlock(pthread_rwlock_t *__rwlock, const struct timespec *__abstime);
+int pthread_rwlock_tryrdlock(pthread_rwlock_t *__rwlock);
+int pthread_rwlock_trywrlock(pthread_rwlock_t *__rwlock);
+int pthread_rwlock_unlock(pthread_rwlock_t *__rwlock);
+int pthread_rwlock_wrlock(pthread_rwlock_t *__rwlock);
+int pthread_rwlockattr_destroy(pthread_rwlockattr_t *__attr);
+int pthread_rwlockattr_getkind_np(const pthread_rwlockattr_t *__attr, int *__pref);
+int pthread_rwlockattr_getpshared(const pthread_rwlockattr_t *__attr, int *__pshared);
+int pthread_rwlockattr_init(pthread_rwlockattr_t *__attr);
+int pthread_rwlockattr_setkind_np(pthread_rwlockattr_t *__attr, int __pref);
+int pthread_rwlockattr_setpshared(pthread_rwlockattr_t *__attr, int __pshared);
 pthread_t pthread_self(void);
-int pthread_setaffinity_np(pthread_t __th, size_t __cpusetsize, const struct cpu_set_t *__cpuset);
-int pthread_setattr_default_np(const union pthread_attr_t *__attr);
+int pthread_setaffinity_np(pthread_t __th, size_t __cpusetsize, const cpu_set_t *__cpuset);
+int pthread_setattr_default_np(const pthread_attr_t *__attr);
 int pthread_setcancelstate(int __state, int *__oldstate);
 int pthread_setcanceltype(int __type, int *__oldtype);
 int pthread_setconcurrency(int __level);
@@ -6417,7 +6635,7 @@ int pthread_setname_np(pthread_t __target_thread, const char *__name);
 int pthread_setschedparam(pthread_t __target_thread, int __policy, const struct sched_param *__param);
 int pthread_setschedprio(pthread_t __target_thread, int __prio);
 int pthread_setspecific(pthread_key_t __key, const void *__pointer);
-int pthread_sigmask(int __how, const struct __sigset_t *__newmask, struct __sigset_t *__oldmask);
+int pthread_sigmask(int __how, const __sigset_t *__newmask, __sigset_t *__oldmask);
 int pthread_sigqueue(pthread_t __threadid, int __signo, const union sigval __value);
 int pthread_spin_destroy(pthread_spinlock_t *__lock);
 int pthread_spin_init(pthread_spinlock_t *__lock, int __pshared);
@@ -6490,12 +6708,12 @@ void *realloc(void *__ptr, size_t __size);
 void *reallocarray(void *__ptr, size_t __nmemb, size_t __size);
 char *realpath(const char *__name, char *__resolved);
 ssize_t recv(int __fd, void *__buf, size_t __n, int __flags);
-ssize_t recvfrom(int __fd, void *__buf, size_t __n, int __flags, union __SOCKADDR_ARG __addr, socklen_t *__addr_len);
+ssize_t recvfrom(int __fd, void *__buf, size_t __n, int __flags, __SOCKADDR_ARG __addr, socklen_t *__addr_len);
 int recvmmsg(int __fd, struct mmsghdr *__vmessages, unsigned int __vlen, int __flags, struct timespec *__tmo);
 ssize_t recvmsg(int __fd, struct msghdr *__message, int __flags);
 int regcomp(regex_t *__preg, const char *__pattern, int __cflags);
 size_t regerror(int __errcode, const regex_t *__preg, char *__errbuf, size_t __errbuf_size);
-int regexec(const regex_t *__preg, const char *__String, size_t __nmatch, struct regmatch_t *__pmatch, int __eflags);
+int regexec(const regex_t *__preg, const char *__String, size_t __nmatch, regmatch_t *__pmatch, int __eflags);
 void regfree(regex_t *__preg);
 double remainder(double __x, double __y);
 float remainderf(float __x, float __y);
@@ -6590,13 +6808,13 @@ int scandirat64(int __dfd, const char *__dir, struct dirent64 ***__namelist, int
 int scanf(const char *__format, ...);
 int sched_get_priority_max(int __algorithm);
 int sched_get_priority_min(int __algorithm);
-int sched_getaffinity(__pid_t __pid, size_t __cpusetsize, struct cpu_set_t *__cpuset);
+int sched_getaffinity(__pid_t __pid, size_t __cpusetsize, cpu_set_t *__cpuset);
 int sched_getattr(pid_t tid, struct sched_attr *attr, unsigned int size, unsigned int flags);
 int sched_getcpu(void);
 int sched_getparam(__pid_t __pid, struct sched_param *__param);
 int sched_getscheduler(__pid_t __pid);
 int sched_rr_get_interval(__pid_t __pid, struct timespec *__t);
-int sched_setaffinity(__pid_t __pid, size_t __cpusetsize, const struct cpu_set_t *__cpuset);
+int sched_setaffinity(__pid_t __pid, size_t __cpusetsize, const cpu_set_t *__cpuset);
 int sched_setattr(pid_t tid, struct sched_attr *attr, unsigned int flags);
 int sched_setparam(__pid_t __pid, const struct sched_param *__param);
 int sched_setscheduler(__pid_t __pid, int __policy, const struct sched_param *__param);
@@ -6605,18 +6823,18 @@ char *secure_getenv(const char *__name);
 unsigned short *seed48(unsigned short *__seed16v);
 int seed48_r(unsigned short *__seed16v, struct drand48_data *__buffer);
 void seekdir(DIR *__dirp, long __pos);
-int select(int __nfds, struct fd_set *__readfds, struct fd_set *__writefds, struct fd_set *__exceptfds, struct timeval *__timeout);
-int sem_clockwait(union sem_t *__sem, clockid_t clock, const struct timespec *__abstime);
-int sem_close(union sem_t *__sem);
-int sem_destroy(union sem_t *__sem);
-int sem_getvalue(union sem_t *__sem, int *__sval);
-int sem_init(union sem_t *__sem, int __pshared, unsigned int __value);
-union sem_t *sem_open(const char *__name, int __oflag, ...);
-int sem_post(union sem_t *__sem);
-int sem_timedwait(union sem_t *__sem, const struct timespec *__abstime);
-int sem_trywait(union sem_t *__sem);
+int select(int __nfds, fd_set *__readfds, fd_set *__writefds, fd_set *__exceptfds, struct timeval *__timeout);
+int sem_clockwait(sem_t *__sem, clockid_t clock, const struct timespec *__abstime);
+int sem_close(sem_t *__sem);
+int sem_destroy(sem_t *__sem);
+int sem_getvalue(sem_t *__sem, int *__sval);
+int sem_init(sem_t *__sem, int __pshared, unsigned int __value);
+sem_t *sem_open(const char *__name, int __oflag, ...);
+int sem_post(sem_t *__sem);
+int sem_timedwait(sem_t *__sem, const struct timespec *__abstime);
+int sem_trywait(sem_t *__sem);
 int sem_unlink(const char *__name);
-int sem_wait(union sem_t *__sem);
+int sem_wait(sem_t *__sem);
 int semctl(int __semid, int __semnum, int __cmd, ...);
 int semget(key_t __key, int __nsems, int __semflg);
 int semop(int __semid, struct sembuf *__sops, size_t __nsops);
@@ -6626,10 +6844,10 @@ ssize_t sendfile(int __out_fd, int __in_fd, off_t *__offset, size_t __count);
 ssize_t sendfile64(int __out_fd, int __in_fd, __off64_t *__offset, size_t __count);
 int sendmmsg(int __fd, struct mmsghdr *__vmessages, unsigned int __vlen, int __flags);
 ssize_t sendmsg(int __fd, const struct msghdr *__message, int __flags);
-ssize_t sendto(int __fd, const void *__buf, size_t __n, int __flags, union __CONST_SOCKADDR_ARG __addr, socklen_t __addr_len);
+ssize_t sendto(int __fd, const void *__buf, size_t __n, int __flags, __CONST_SOCKADDR_ARG __addr, socklen_t __addr_len);
 void setbuf(FILE *__stream, char *__buf);
 void setbuffer(FILE *__stream, char *__buf, size_t __size);
-int setcontext(const struct ucontext_t *__ucp);
+int setcontext(const ucontext_t *__ucp);
 int setdomainname(const char *__name, size_t __len);
 int setegid(__gid_t __gid);
 int setenv(const char *__name, const char *__value, int __replace);
@@ -6701,7 +6919,7 @@ int shutdown(int __fd, int __how);
 const char *sigabbrev_np(int __sig);
 int sigaction(int __sig, const struct sigaction *__act, struct sigaction *__oact);
 int sigaddset(sigset_t *__set, int __signo);
-int sigaltstack(const struct stack_t *__ss, struct stack_t *__oss);
+int sigaltstack(const stack_t *__ss, stack_t *__oss);
 int sigandset(sigset_t *__set, const sigset_t *__left, const sigset_t *__right);
 int sigblock(int __mask);
 int sigdelset(sigset_t *__set, int __signo);
@@ -6731,9 +6949,9 @@ __sighandler_t sigset(int __sig, __sighandler_t __disp);
 int sigsetmask(int __mask);
 int sigstack(struct sigstack *__ss, struct sigstack *__oss);
 int sigsuspend(const sigset_t *__set);
-int sigtimedwait(const sigset_t *__set, struct siginfo_t *__info, const struct timespec *__timeout);
+int sigtimedwait(const sigset_t *__set, siginfo_t *__info, const struct timespec *__timeout);
 int sigwait(const sigset_t *__set, int *__sig);
-int sigwaitinfo(const sigset_t *__set, struct siginfo_t *__info);
+int sigwaitinfo(const sigset_t *__set, siginfo_t *__info);
 double sin(double __x);
 void sincos(double __x, double *__sinx, double *__cosx);
 void sincosf(float __x, float *__sinx, float *__cosx);
@@ -6867,7 +7085,7 @@ int strverscmp(const char *__s1, const char *__s2);
 size_t strxfrm(char *__dest, const char *__src, size_t __n);
 size_t strxfrm_l(char *__dest, const char *__src, size_t __n, locale_t __l);
 void swab(const void *__from, void *__to, ssize_t __n);
-int swapcontext(struct ucontext_t *__oucp, const struct ucontext_t *__ucp);
+int swapcontext(ucontext_t *__oucp, const ucontext_t *__ucp);
 int swprintf(int *__s, size_t __n, const int *__format, ...);
 int swscanf(const int *__s, const int *__format, ...);
 int symlink(const char *__from, const char *__to);
@@ -6982,7 +7200,7 @@ char *ttyname(int __fd);
 int ttyname_r(int __fd, char *__buf, size_t __buflen);
 int ttyslot(void);
 void twalk(const void *__root, __action_fn_t __action);
-void twalk_r(const void *__root, void (*)(const void *__nodep, enum VISIT __value, void *__closure), void *__closure);
+void twalk_r(const void *__root, void (*)(const void *__nodep, VISIT __value, void *__closure), void *__closure);
 void tzset(void);
 unsigned int uabs(int __x);
 __useconds_t ualarm(__useconds_t __value, __useconds_t __interval);
@@ -7049,7 +7267,7 @@ int vwscanf(const int *__format, char *__arg);
 __pid_t wait(int *__stat_loc);
 __pid_t wait3(int *__stat_loc, int __options, struct rusage *__usage);
 __pid_t wait4(__pid_t __pid, int *__stat_loc, int __options, struct rusage *__usage);
-int waitid(enum idtype_t __idtype, __id_t __id, struct siginfo_t *__infop, int __options);
+int waitid(idtype_t __idtype, __id_t __id, siginfo_t *__infop, int __options);
 __pid_t waitpid(__pid_t __pid, int *__stat_loc, int __options);
 void warn(const char *__format, ...);
 void warnx(const char *__format, ...);
@@ -7129,8 +7347,8 @@ int *wmemcpy(int *__s1, const int *__s2, size_t __n);
 int *wmemmove(int *__s1, const int *__s2, size_t __n);
 int *wmempcpy(int *__s1, const int *__s2, size_t __n);
 int *wmemset(int *__s, int __c, size_t __n);
-int wordexp(const char *__words, struct wordexp_t *__pwordexp, int __flags);
-void wordfree(struct wordexp_t *__wordexp);
+int wordexp(const char *__words, wordexp_t *__pwordexp, int __flags);
+void wordfree(wordexp_t *__wordexp);
 int wprintf(const int *__format, ...);
 ssize_t write(int __fd, const void *__buf, size_t __n);
 ssize_t writev(int __fd, const struct iovec *__iovec, int __count);
@@ -7156,3 +7374,5 @@ _Float32x ynf32x(int, _Float32x);
 _Float64 ynf64(int, _Float64);
 _Float64x ynf64x(int, _Float64x);
 long double ynl(int, long double);
+
+#pragma pop_macro("__used")

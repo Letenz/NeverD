@@ -25,6 +25,7 @@
 
 #include <functional>
 #include <set>
+#include <tuple>
 
 namespace neverd::types::render {
 namespace {
@@ -142,6 +143,8 @@ public:
   mutable std::set<Builtin> Aliased;
   /// Whether the types use long double where it is no float ctypes has.
   mutable bool LongDouble = false;
+  mutable bool Int128 = false;
+  mutable bool UInt128 = false;
   /// Whether a field holds a pointer as the host's own, which needs a
   /// Python of the program's pointer width.
   mutable bool HostPointers = false;
@@ -181,6 +184,11 @@ std::string PythonWriter::exact(Builtin Type) const {
     // ctypes.c_wchar is not on every platform.
     return Type == Builtin::Char ? "ctypes.c_char" : integer(Bytes, false);
   case BuiltinClass::Integer:
+    // ctypes has no integer of 16 bytes; C aligns its own.
+    if (Bytes == 16) {
+      (Info.Signed ? Int128 : UInt128) = true;
+      return Info.Signed ? "c_int128" : "c_uint128";
+    }
     return integer(Bytes, Info.Signed);
   }
   return "ctypes.c_uint8";
@@ -714,6 +722,17 @@ void PythonWriter::module(llvm::ArrayRef<const LocalType *> Types,
       Out +=
           std::string(builtinInfo(Type).Windows) + " = " + exact(Type) + "\n";
   }
+  // C's integers of 16 bytes, which ctypes has none of, likewise.
+  for (const auto &[Used, Name, Type] :
+       {std::tuple(Int128, "c_int128", Builtin::Int128),
+        std::tuple(UInt128, "c_uint128", Builtin::UInt128)})
+    if (Used)
+      Out += std::string("\n\nclass ") + Name +
+             "(ctypes.Structure):\n    \"\"\"C's " +
+             (Type == Builtin::Int128 ? "__int128" : "unsigned __int128") +
+             ", in 16 bytes aligned as C aligns them.\"\"\"\n    _align_ = " +
+             std::to_string(Library.alignOf(*makeBuiltin(Type))) +
+             "\n    _fields_ = [(\"bytes\", ctypes.c_uint8 * 16)]\n";
   // C's long double: bytes aligned as C aligns them, which ctypes'
   // c_longdouble is only on a host of the program's kind.
   if (LongDouble)

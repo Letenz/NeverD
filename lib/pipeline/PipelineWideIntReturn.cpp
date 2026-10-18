@@ -22,6 +22,8 @@
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 #include <algorithm>
 #include <cstring>
 #include <map>
@@ -129,6 +131,69 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
           else if (Op.Opcode == NdOp::INDIR_CALL)
             HasIndirectWideRet = true;
         }
+
+    // A caller that reads the high register after a direct call, before
+    // anything redefines it, uses the callee's high result: the register is
+    // caller-saved, so nothing else of the caller's can be there.  It need
+    // not read the low half (`(uint32_t)(f() >> 32)`, or a `mov r0, r1`
+    // that returns it), which the per-function scan requires.  Nor need the
+    // read be visible: arguments are not recovered yet, so a high result
+    // passed unchanged into the next call is a parameter that callee reads
+    // (ARM's `add64(add64(a, b), c)` keeps it in r1).  Only an in-module
+    // callee qualifies, and its body must still return the pair on every
+    // path (below): a callee that leaves the register alone, as
+    // __aeabi_read_tp leaves r1, fails that.
+    {
+      std::map<va_t, const MedFunc *> InModule;
+      for (const auto &MF : Result.MedFuncs)
+        InModule.emplace(MF.Entry, &MF);
+      auto takesHighRegister = [&](va_t Entry) {
+        const auto It = InModule.find(Entry);
+        return It != InModule.end() &&
+               llvm::any_of(It->second->Params, [&](const MedVar &Param) {
+                 return Param.Kind == MedVar::Param &&
+                        Param.RegOff == TRI.IntReturnReg2;
+               });
+      };
+      auto directTarget = [](const MedOp &Op) -> std::optional<va_t> {
+        if (Op.Opcode != NdOp::CALL || Op.NumInputs < 1 ||
+            !Op.Inputs[0].isConst())
+          return std::nullopt;
+        return Op.Inputs[0].ConstVal;
+      };
+      for (const auto &MF : Result.MedFuncs)
+        for (const auto &Blk : MF.Blocks)
+          for (size_t OI = 0; OI < Blk.Ops.size(); ++OI) {
+            const std::optional<va_t> Target = directTarget(Blk.Ops[OI]);
+            if (!Target || !InModule.count(*Target) ||
+                WideRetCallees.count(*Target))
+              continue;
+            for (size_t J = OI + 1; J < Blk.Ops.size(); ++J) {
+              const MedOp &Next = Blk.Ops[J];
+              const bool ReadsHigh = llvm::any_of(
+                  llvm::ArrayRef(Next.Inputs.data(), Next.NumInputs),
+                  [&](const MedVar &In) {
+                    return In.Kind == MedVar::Reg &&
+                           In.RegOff == TRI.IntReturnReg2;
+                  });
+              if (Next.Opcode == NdOp::CALL ||
+                  Next.Opcode == NdOp::INDIR_CALL) {
+                const std::optional<va_t> Following = directTarget(Next);
+                if (Following && takesHighRegister(*Following))
+                  WideRetCallees.insert(*Target);
+                break;
+              }
+              if (ReadsHigh) {
+                WideRetCallees.insert(*Target);
+                break;
+              }
+              if (Next.Opcode == NdOp::RETURN ||
+                  (Next.Output.Kind == MedVar::Reg &&
+                   Next.Output.RegOff == TRI.IntReturnReg2))
+                break;
+            }
+          }
+    }
 
     // When the indirect target itself folds to a known function (notably an
     // ARM32 PC-relative literal-pool pointer), the widened call site is direct

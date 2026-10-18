@@ -20,6 +20,11 @@ check_type_renders.py --toolchains reads:
 - the C library headers of armhf and arm64 Linux (Debian's cross packages)
   and of Android (bionic, at the commit the Android libraries were
   generated from);
+- the NDK's <jni.h> and <android/log.h>, and musl's sources, from which
+  scripts/generate_linux_types.py reads the Android and musl libraries
+  again;
+- zig, whose C compiler holds the C library headers of macOS and musl,
+  which a header of Linux types compiles against as another system's;
 - Lua 5.4, which the Lua renders run on, built from lua.org's sources;
 - TypeScript's compiler, which checks the JavaScript renders' JSDoc, from
   npm.
@@ -90,7 +95,23 @@ CROSS = {
 }
 
 BIONIC = "https://android.googlesource.com/platform/bionic/+archive/"
+GOOGLESOURCE = "https://android.googlesource.com/"
+# The NDK's other headers the Android libraries read: each project, the
+# name their header gives it, and the directory of it they read.
+ANDROID_TREES = {
+    "libnativehelper": ("platform/libnativehelper", "libnativehelper",
+                        "include_jni"),
+    "logging": ("platform/system/logging", "system/logging",
+                "liblog/include"),
+}
+# musl's sources, of the release the musl libraries name, with the SHA-256
+# Debian's copy of it lists.
+MUSL = ("https://musl.libc.org/releases/musl-1.2.5.tar.gz",
+        "a9a118bbe84d8764da0ea0d28b3ab3fae8477fc7e4085d90102b8596fc7c75e4")
 
+# zig, with the SHA-256 its release index lists.
+ZIG = ("https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz",
+       "1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026")
 # Lua's sources, with the SHA-256 lua.org lists.
 LUA = ("https://www.lua.org/ftp/lua-5.4.9.tar.gz",
        "2335b6c582a52654f94612bf10d2f4672805d05329aa6568b1d8cd9e5c6fb8e6")
@@ -255,20 +276,20 @@ def fetch_cross(root, force):
     return out
 
 
-def bionic_commit():
-    """The bionic commit the Android libraries were generated from, which
-    their header names."""
+def android_commit(name="bionic"):
+    """The commit of the project the Android libraries were generated from,
+    which their header names: bionic, libnativehelper or system/logging."""
     header = REPOSITORY / "lib" / "types" / "headers" / "AndroidX86.h"
-    match = re.search(r"bionic at commit\s*(?://\s*)?([0-9a-f]{40})",
-                      header.read_text(encoding="utf-8"))
+    text = re.sub(r"\s*//\s*", " ", header.read_text(encoding="utf-8"))
+    match = re.search(re.escape(name) + r" at commit ([0-9a-f]{40})", text)
     if not match:
-        raise RuntimeError(f"{header} names no bionic commit")
+        raise RuntimeError(f"{header} names no {name} commit")
     return match.group(1)
 
 
 def fetch_bionic(root, force):
     directory = root / "bionic" / "libc"
-    commit = bionic_commit()
+    commit = android_commit()
     marker = root / "bionic" / "commit"
     if force or not marker.exists() or marker.read_text().strip() != commit:
         with tempfile.TemporaryDirectory() as scratch:
@@ -280,6 +301,64 @@ def fetch_bionic(root, force):
                 tar.extractall(directory, filter="data")
         marker.write_text(commit + "\n")
     return str(directory)
+
+
+def fetch_android_tree(root, key, force):
+    """The directory of an NDK project the Android libraries read, at the
+    commit they name, as its checkout holds it."""
+    project, name, path = ANDROID_TREES[key]
+    commit = android_commit(name)
+    checkout = root / key
+    marker = checkout / "commit"
+    if force or not marker.exists() or marker.read_text().strip() != commit:
+        with tempfile.TemporaryDirectory() as scratch:
+            archive = Path(scratch) / "tree.tar.gz"
+            download(f"{GOOGLESOURCE}{project}/+archive/{commit}/{path}.tar.gz",
+                     archive)
+            shutil.rmtree(checkout, ignore_errors=True)
+            (checkout / path).mkdir(parents=True)
+            with tarfile.open(archive) as tar:
+                tar.extractall(checkout / path, filter="data")
+        marker.write_text(commit + "\n")
+    return str(checkout)
+
+
+def fetch_musl(root, force):
+    """musl's sources, which install their headers for each architecture."""
+    url, digest = MUSL
+    directory = root / "musl"
+    if force or not (directory / "VERSION").exists():
+        with tempfile.TemporaryDirectory() as scratch:
+            archive = Path(scratch) / "musl.tar.gz"
+            download(url, archive)
+            if sha256(archive) != digest:
+                raise RuntimeError(f"{url} does not match its SHA-256")
+            with tarfile.open(archive) as tar:
+                tar.extractall(scratch, filter="data")
+            shutil.rmtree(directory, ignore_errors=True)
+            shutil.move(Path(scratch) / url.rsplit("/", 1)[1].removesuffix(
+                ".tar.gz"), directory)
+    return str(directory)
+
+
+def fetch_zig(root, force):
+    """zig, whose `zig cc` compiles C for macOS and musl with the headers it
+    holds."""
+    url, digest = ZIG
+    directory = root / "zig"
+    zig = directory / "zig"
+    if force or not zig.exists():
+        with tempfile.TemporaryDirectory() as scratch:
+            archive = Path(scratch) / "zig.tar.xz"
+            download(url, archive)
+            if sha256(archive) != digest:
+                raise RuntimeError(f"{url} does not match its SHA-256")
+            with tarfile.open(archive) as tar:
+                tar.extractall(scratch, filter="data")
+            shutil.rmtree(directory, ignore_errors=True)
+            shutil.move(Path(scratch) / url.rsplit("/", 1)[1].removesuffix(
+                ".tar.xz"), directory)
+    return zig
 
 
 def fetch_lua(root, force):
@@ -394,6 +473,16 @@ def main():
     def bionic():
         manifest["sysroots"]["bionic"] = fetch_bionic(root, arguments.force)
 
+    def generator_sources():
+        manifest["sources"] = {
+            "bionic": str(root / "bionic"),
+            **{key: fetch_android_tree(root, key, arguments.force)
+               for key in ANDROID_TREES},
+            "musl": fetch_musl(root, arguments.force)}
+
+    def zig():
+        manifest["zig"] = str(fetch_zig(root, arguments.force))
+
     def lua():
         manifest["lua"] = str(fetch_lua(root, arguments.force))
 
@@ -405,6 +494,8 @@ def main():
     step("qemu, the armhf and arm64 C libraries, Python for 32-bit ARM", cross)
     step("Wine and Python for 32-bit Windows", win32)
     step("bionic's headers", bionic)
+    step("the NDK's other headers and musl's sources", generator_sources)
+    step("zig", zig)
     step("Lua", lua)
     step("TypeScript", typescript)
     (root / "toolchains.json").write_text(json.dumps(manifest, indent=2) +

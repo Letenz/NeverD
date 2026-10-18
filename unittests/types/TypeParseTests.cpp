@@ -799,6 +799,70 @@ TEST(TypeParse, ExactLongDoublesReadBackAsTheProgramsOwn) {
             "program's is of 8");
 }
 
+TEST(TypeParse, HeaderPragmasNameTheSystemHeaderOfTheTypesAfterThem) {
+  // A library of a system's headers names the header of each type, which
+  // a C header of the program's includes on that system.
+  TypeLibrary Library;
+  ASSERT_TRUE(parseCTypes("struct before { int a; };\n"
+                          "#pragma neverd_header(\"sys/stat.h\")\n"
+                          "typedef struct { int x; } anon_t;\n"
+                          "typedef struct tagged tagged;\n"
+                          "struct tagged { int y; };\n"
+                          "enum mode { MODE_A };\n"
+                          "typedef enum mode mode;\n"
+                          "#pragma neverd_header()\n"
+                          "struct after { int z; };\n",
+                          Library)
+                  .ok());
+  EXPECT_EQ(Library.find("before")->Header, "");
+  EXPECT_EQ(Library.find("anon_t")->Header, "sys/stat.h");
+  EXPECT_EQ(Library.find("tagged")->Header, "sys/stat.h");
+  EXPECT_EQ(Library.find("after")->Header, "");
+  // C names a record by its name alone where a typedef of the name lets it.
+  EXPECT_TRUE(Library.find("anon_t")->TypedefNamed);
+  EXPECT_TRUE(Library.find("tagged")->TypedefNamed);
+  EXPECT_TRUE(Library.find("mode")->TypedefNamed);
+  EXPECT_FALSE(Library.find("before")->TypedefNamed);
+  TypeLibrary Wrong;
+  const ParseResult Bad = parseCTypes(
+      "#pragma neverd_header(stdio.h)\nstruct s { int a; };\n", Wrong);
+  ASSERT_EQ(Bad.Problems.size(), 1u);
+  EXPECT_EQ(Bad.Problems[0].Message,
+            "#pragma neverd_header takes a header's name in quotes");
+}
+
+TEST(TypeParse, AHeadersOwnRenamesLeaveTheSystemsNames) {
+  // A header NeverD renders names the system's types otherwise for another
+  // system's compilers (#define X neverd_X); read back, they are the
+  // system's.
+  TypeLibrary Library(DataModel::LP64);
+  ASSERT_TRUE(parseCTypes("#define __off_t neverd___off_t\n"
+                          "typedef long __off_t;\n"
+                          "struct file { __off_t offset; };\n",
+                          Library)
+                  .ok());
+  EXPECT_NE(Library.find("__off_t"), nullptr);
+  EXPECT_EQ(Library.find("neverd___off_t"), nullptr);
+}
+
+TEST(TypeParse, APackOfTheABIsOwnLimitIsNoPacking) {
+  // The i386 System V ABI aligns long long to four, as pack(4) does; a
+  // tighter pack stays the record's.
+  TypeLibrary Library(DataModel::ILP32);
+  Library.setRecordABI(RecordABI::I386SystemV);
+  ASSERT_TRUE(parseCTypes("#pragma pack(push, 4)\n"
+                          "struct loose { char c; long long q; };\n"
+                          "#pragma pack(pop)\n"
+                          "#pragma pack(push, 2)\n"
+                          "struct tight { char c; long long q; };\n"
+                          "#pragma pack(pop)\n",
+                          Library)
+                  .ok());
+  EXPECT_EQ(recordOf(Library, "loose").Pack, 0u);
+  EXPECT_EQ(recordOf(Library, "tight").Pack, 2u);
+  EXPECT_EQ(shapeOf(recordOf(Library, "loose")), "struct{c@0 q@4}");
+}
+
 TEST(TypeParse, ARecordsTypedefRendersBeforeWhatNamesIt) {
   // EDK II's PEI notification: the record holds a function pointer whose
   // parameter is the record's typedef, which the rendering must declare

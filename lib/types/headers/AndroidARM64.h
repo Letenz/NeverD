@@ -23,27 +23,35 @@
 #endif
 #endif
 
+#ifndef NEVERD_GNU_STRUCT
+#if defined(__MINGW32__) && (defined(__i386__) || defined(__x86_64__))
+#define NEVERD_GNU_STRUCT __attribute__((gcc_struct))
+#else
+#define NEVERD_GNU_STRUCT
+#endif
+#endif
+
 #if !defined(__cplusplus) && !defined(static_assert)
 #define static_assert _Static_assert
 #endif
 
 static_assert(sizeof(long) == 8, "these types need a 64-bit long");
 
-struct __kernel_fd_set;
-struct __kernel_fsid_t;
-struct pthread_attr_t;
-struct pthread_barrier_t;
-struct pthread_cond_t;
-struct pthread_mutex_t;
-struct pthread_rwlock_t;
-struct pthread_spinlock_t;
+typedef struct __kernel_fd_set __kernel_fd_set;
+typedef struct __kernel_fsid_t __kernel_fsid_t;
+typedef struct pthread_attr_t pthread_attr_t;
+typedef struct pthread_barrier_t pthread_barrier_t;
+typedef struct pthread_cond_t pthread_cond_t;
+typedef struct pthread_mutex_t pthread_mutex_t;
+typedef struct pthread_rwlock_t pthread_rwlock_t;
+typedef struct pthread_spinlock_t pthread_spinlock_t;
 struct __sFILE;
 struct mallinfo;
 struct mallinfo2;
 struct __locale_t;
-struct div_t;
-struct ldiv_t;
-struct lldiv_t;
+typedef struct div_t div_t;
+typedef struct ldiv_t ldiv_t;
+typedef struct lldiv_t lldiv_t;
 struct timespec;
 struct __kernel_timespec;
 struct __kernel_itimerspec;
@@ -64,7 +72,7 @@ struct tpidr2_context;
 struct fpmr_context;
 struct za_context;
 struct zt_context;
-struct sigset_t;
+typedef struct sigset_t sigset_t;
 struct __kernel_sigaction;
 struct sigaltstack;
 union sigval;
@@ -76,7 +84,7 @@ struct sigaction64;
 struct user_regs_struct;
 struct user_fpsimd_struct;
 struct ucontext;
-struct fd_set;
+typedef struct fd_set fd_set;
 struct flock;
 struct flock64;
 struct f_owner_ex;
@@ -88,20 +96,20 @@ struct dmabuf_cmsg;
 struct dmabuf_token;
 struct __timezone_t;
 struct tm;
-struct mbstate_t;
+typedef struct mbstate_t mbstate_t;
 struct lconv;
-struct fenv_t;
-struct imaxdiv_t;
+typedef struct fenv_t fenv_t;
+typedef struct imaxdiv_t imaxdiv_t;
 struct dirent;
 struct dirent64;
-struct DIR;
-struct Dl_info;
+typedef struct DIR DIR;
+typedef struct Dl_info Dl_info;
 struct clone_args;
 struct sched_attr;
 struct sched_param;
-struct cpu_set_t;
-struct __pthread_cleanup_t;
-struct sem_t;
+typedef struct cpu_set_t cpu_set_t;
+typedef struct __pthread_cleanup_t __pthread_cleanup_t;
+typedef struct sem_t sem_t;
 struct pollfd;
 struct termios;
 struct termios2;
@@ -111,16 +119,16 @@ struct termio;
 struct passwd;
 struct group;
 struct stat;
-struct glob_t;
+typedef struct glob_t glob_t;
 struct re_guts;
-struct regex_t;
-struct regmatch_t;
+typedef struct regex_t regex_t;
+typedef struct regmatch_t regmatch_t;
 struct option;
 struct __posix_spawnattr;
 struct __posix_spawn_file_actions;
 struct __iconv_t;
-struct Elf32_Dyn;
-struct Elf64_Dyn;
+typedef struct Elf32_Dyn Elf32_Dyn;
+typedef struct Elf64_Dyn Elf64_Dyn;
 struct elf32_rel;
 struct elf64_rel;
 struct elf32_rela;
@@ -135,24 +143,24 @@ struct elf32_shdr;
 struct elf64_shdr;
 struct elf32_note;
 struct elf64_note;
-struct Elf32_auxv_t;
-struct Elf64_auxv_t;
-struct Elf32_Chdr;
-struct Elf64_Chdr;
-struct Elf32_Lib;
-struct Elf64_Lib;
-struct Elf32_Move;
-struct Elf64_Move;
-struct Elf32_Syminfo;
-struct Elf64_Syminfo;
-struct Elf32_Verdef;
-struct Elf32_Verdaux;
-struct Elf64_Verdef;
-struct Elf64_Verdaux;
-struct Elf32_Verneed;
-struct Elf32_Vernaux;
-struct Elf64_Verneed;
-struct Elf64_Vernaux;
+typedef struct Elf32_auxv_t Elf32_auxv_t;
+typedef struct Elf64_auxv_t Elf64_auxv_t;
+typedef struct Elf32_Chdr Elf32_Chdr;
+typedef struct Elf64_Chdr Elf64_Chdr;
+typedef struct Elf32_Lib Elf32_Lib;
+typedef struct Elf64_Lib Elf64_Lib;
+typedef struct Elf32_Move Elf32_Move;
+typedef struct Elf64_Move Elf64_Move;
+typedef struct Elf32_Syminfo Elf32_Syminfo;
+typedef struct Elf64_Syminfo Elf64_Syminfo;
+typedef struct Elf32_Verdef Elf32_Verdef;
+typedef struct Elf32_Verdaux Elf32_Verdaux;
+typedef struct Elf64_Verdef Elf64_Verdef;
+typedef struct Elf64_Verdaux Elf64_Verdaux;
+typedef struct Elf32_Verneed Elf32_Verneed;
+typedef struct Elf32_Vernaux Elf32_Vernaux;
+typedef struct Elf64_Verneed Elf64_Verneed;
+typedef struct Elf64_Vernaux Elf64_Vernaux;
 struct dl_phdr_info;
 struct link_map;
 struct r_debug;
@@ -267,35 +275,36 @@ struct tcp_ao_info_opt;
 struct tcp_ao_getsockopt;
 struct tcp_ao_repair;
 struct tcp_zerocopy_receive;
-struct sync_serial_settings;
-struct te1_settings;
-struct raw_hdlc_proto;
-struct fr_proto;
-struct fr_proto_pvc;
-struct fr_proto_pvc_info;
-struct cisco_proto;
-struct x25_hdlc_proto;
+typedef struct sync_serial_settings sync_serial_settings;
+typedef struct te1_settings te1_settings;
+typedef struct raw_hdlc_proto raw_hdlc_proto;
+typedef struct fr_proto fr_proto;
+typedef struct fr_proto_pvc fr_proto_pvc;
+typedef struct fr_proto_pvc_info fr_proto_pvc_info;
+typedef struct cisco_proto cisco_proto;
+typedef struct x25_hdlc_proto x25_hdlc_proto;
 struct ifmap;
 struct if_settings;
 struct ifreq;
 struct ifconf;
 struct if_nameindex;
 struct _ftsent;
-struct FTS;
+typedef struct FTS FTS;
 struct FTW;
 struct _jfieldID;
 struct _jmethodID;
 struct JNIInvokeInterface;
-union jvalue;
-struct JNINativeMethod;
+typedef union jvalue jvalue;
+typedef struct JNINativeMethod JNINativeMethod;
 struct _JNIEnv;
 struct _JavaVM;
 struct JNINativeInterface;
-struct JavaVMAttachArgs;
-struct JavaVMOption;
-struct JavaVMInitArgs;
+typedef struct JavaVMAttachArgs JavaVMAttachArgs;
+typedef struct JavaVMOption JavaVMOption;
+typedef struct JavaVMInitArgs JavaVMInitArgs;
 struct __android_log_message;
 
+#pragma neverd_header("stdlib.h")
 // HeapTaggingLevel: 4 bytes
 enum HeapTaggingLevel
 {
@@ -305,12 +314,14 @@ enum HeapTaggingLevel
     M_HEAP_TAGGING_LEVEL_SYNC = 3,
 };
 
+#pragma neverd_header("search.h")
 // ACTION: 4 bytes
 enum ACTION
 {
     FIND = 0,
     ENTER = 1,
 };
+typedef enum ACTION ACTION;
 
 // VISIT: 4 bytes
 enum VISIT
@@ -320,7 +331,9 @@ enum VISIT
     endorder = 2,
     leaf = 3,
 };
+typedef enum VISIT VISIT;
 
+#pragma neverd_header("netinet/tcp.h")
 // tcp_fastopen_client_fail: 4 bytes
 enum tcp_fastopen_client_fail
 {
@@ -340,6 +353,7 @@ enum tcp_ca_state
     TCP_CA_Loss = 4,
 };
 
+#pragma neverd_header("net/if.h")
 // net_device_flags: 4 bytes
 enum net_device_flags
 {
@@ -364,6 +378,7 @@ enum net_device_flags
     IFF_ECHO = 0x40000,
 };
 
+#pragma neverd_header("jni.h")
 // jobjectRefType: 4 bytes
 enum jobjectRefType
 {
@@ -372,7 +387,9 @@ enum jobjectRefType
     JNIGlobalRefType = 2,
     JNIWeakGlobalRefType = 3,
 };
+typedef enum jobjectRefType jobjectRefType;
 
+#pragma neverd_header("android/log.h")
 // android_LogPriority: 4 bytes
 enum android_LogPriority
 {
@@ -386,6 +403,7 @@ enum android_LogPriority
     ANDROID_LOG_FATAL = 7,
     ANDROID_LOG_SILENT = 8,
 };
+typedef enum android_LogPriority android_LogPriority;
 
 // log_id: 4 bytes
 enum log_id
@@ -411,6 +429,7 @@ typedef __int128 __int128_t;
 
 typedef unsigned __int128 __uint128_t;
 
+#pragma neverd_header("stdio.h")
 typedef signed char __int8_t;
 
 typedef unsigned char __uint8_t;
@@ -747,11 +766,14 @@ typedef off_t fpos_t;
 
 typedef off64_t fpos64_t;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __sFILE;
 
+#pragma neverd_header("stdio.h")
 typedef struct __sFILE FILE;
 
+#pragma neverd_header("stdlib.h")
 // mallinfo: 0x50 (80) bytes
 struct mallinfo
 {
@@ -782,9 +804,11 @@ struct mallinfo2
     size_t keepcost;
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __locale_t;
 
+#pragma neverd_header("stdlib.h")
 typedef struct __locale_t *locale_t;
 
 // div_t: 0x8 (8) bytes
@@ -808,6 +832,7 @@ struct lldiv_t
     long long rem;
 };
 
+#pragma neverd_header("unistd.h")
 // timespec: 0x10 (16) bytes
 struct timespec
 {
@@ -983,7 +1008,7 @@ struct __kernel_sigaction
     __sighandler_t sa_handler;
     unsigned long sa_flags;
     __sigrestore_t sa_restorer;
-    struct sigset_t sa_mask;
+    sigset_t sa_mask;
 };
 
 // sigaltstack: 0x18 (24) bytes
@@ -1117,7 +1142,7 @@ typedef __sighandler_t sig_t;
 
 typedef __sighandler_t sighandler_t;
 
-typedef struct sigset_t sigset64_t;
+typedef sigset_t sigset64_t;
 
 // sigaction: 0x20 (32) bytes
 struct sigaction
@@ -1128,7 +1153,7 @@ struct sigaction
         sighandler_t sa_handler;
         void (*sa_sigaction)(int, struct siginfo *, void *);
     };
-    struct sigset_t sa_mask;
+    sigset_t sa_mask;
     void (*sa_restorer)(void);
 };
 
@@ -1141,7 +1166,7 @@ struct sigaction64
         sighandler_t sa_handler;
         void (*sa_sigaction)(int, struct siginfo *, void *);
     };
-    struct sigset_t sa_mask;
+    sigset_t sa_mask;
     void (*sa_restorer)(void);
 };
 
@@ -1178,7 +1203,7 @@ struct ucontext
     stack_t uc_stack;
     union
     {
-        struct sigset_t uc_sigmask;
+        sigset_t uc_sigmask;
         sigset64_t uc_sigmask64;
     };
     char __padding[120];
@@ -1195,6 +1220,7 @@ struct fd_set
     fd_mask fds_bits[16];
 };
 
+#pragma neverd_header("fcntl.h")
 // flock: 0x20 (32) bytes
 struct flock
 {
@@ -1296,9 +1322,11 @@ struct dmabuf_token
     __u32 token_count;
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __timezone_t;
 
+#pragma neverd_header("wchar.h")
 typedef struct __timezone_t *timezone_t;
 
 // tm: 0x38 (56) bytes
@@ -1330,6 +1358,7 @@ typedef long wctype_t;
 
 typedef const void *wctrans_t;
 
+#pragma neverd_header("locale.h")
 // lconv: 0x60 (96) bytes
 struct lconv
 {
@@ -1359,10 +1388,12 @@ struct lconv
     char int_n_sign_posn;
 };
 
+#pragma neverd_header("setjmp.h")
 typedef long sigjmp_buf[33];
 
 typedef long jmp_buf[32];
 
+#pragma neverd_header("math.h")
 typedef double __double_t;
 
 typedef __double_t double_t;
@@ -1371,6 +1402,7 @@ typedef float __float_t;
 
 typedef __float_t float_t;
 
+#pragma neverd_header("fenv.h")
 // fenv_t: 0x8 (8) bytes
 struct fenv_t
 {
@@ -1380,6 +1412,7 @@ struct fenv_t
 
 typedef __uint32_t fexcept_t;
 
+#pragma neverd_header("inttypes.h")
 // imaxdiv_t: 0x10 (16) bytes
 struct imaxdiv_t
 {
@@ -1387,6 +1420,7 @@ struct imaxdiv_t
     intmax_t rem;
 };
 
+#pragma neverd_header("dirent.h")
 // dirent: 0x118 (280) bytes
 struct dirent
 {
@@ -1407,9 +1441,11 @@ struct dirent64
     char d_name[256];
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct DIR;
 
+#pragma neverd_header("dlfcn.h")
 // Dl_info: 0x20 (32) bytes
 struct Dl_info
 {
@@ -1419,6 +1455,7 @@ struct Dl_info
     void *dli_saddr;
 };
 
+#pragma neverd_header("pthread.h")
 // clone_args: 0x58 (88) bytes
 struct clone_args
 {
@@ -1467,11 +1504,12 @@ typedef void (*__pthread_cleanup_func_t)(void *);
 // __pthread_cleanup_t: 0x18 (24) bytes
 struct __pthread_cleanup_t
 {
-    struct __pthread_cleanup_t *__cleanup_prev;
+    __pthread_cleanup_t *__cleanup_prev;
     __pthread_cleanup_func_t __cleanup_routine;
     void *__cleanup_arg;
 };
 
+#pragma neverd_header("semaphore.h")
 // sem_t: 0x10 (16) bytes
 struct sem_t
 {
@@ -1479,6 +1517,7 @@ struct sem_t
     int __reserved[3];
 };
 
+#pragma neverd_header("poll.h")
 // pollfd: 0x8 (8) bytes
 struct pollfd
 {
@@ -1489,6 +1528,7 @@ struct pollfd
 
 typedef unsigned int nfds_t;
 
+#pragma neverd_header("termios.h")
 typedef unsigned char cc_t;
 
 typedef unsigned int speed_t;
@@ -1552,6 +1592,7 @@ struct termio
     unsigned char c_cc[8];
 };
 
+#pragma neverd_header("pwd.h")
 // passwd: 0x30 (48) bytes
 struct passwd
 {
@@ -1564,6 +1605,7 @@ struct passwd
     char *pw_shell;
 };
 
+#pragma neverd_header("grp.h")
 // group: 0x20 (32) bytes
 struct group
 {
@@ -1573,6 +1615,7 @@ struct group
     char **gr_mem;
 };
 
+#pragma neverd_header("sys/stat.h")
 // stat: 0x80 (128) bytes
 struct stat
 {
@@ -1595,6 +1638,7 @@ struct stat
     unsigned int __unused5;
 };
 
+#pragma neverd_header("glob.h")
 // glob_t: 0x58 (88) bytes
 struct glob_t
 {
@@ -1611,11 +1655,14 @@ struct glob_t
     int (*gl_stat)(const char *, struct stat *);
 };
 
+#pragma neverd_header("regex.h")
 typedef ssize_t regoff_t;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct re_guts;
 
+#pragma neverd_header("regex.h")
 // regex_t: 0x20 (32) bytes
 struct regex_t
 {
@@ -1632,6 +1679,7 @@ struct regmatch_t
     regoff_t rm_eo;
 };
 
+#pragma neverd_header("getopt.h")
 // option: 0x20 (32) bytes
 struct option
 {
@@ -1641,25 +1689,33 @@ struct option
     int val;
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __posix_spawnattr;
 
+#pragma neverd_header("spawn.h")
 typedef struct __posix_spawnattr *posix_spawnattr_t;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __posix_spawn_file_actions;
 
+#pragma neverd_header("spawn.h")
 typedef struct __posix_spawn_file_actions *posix_spawn_file_actions_t;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __iconv_t;
 
+#pragma neverd_header("iconv.h")
 typedef struct __iconv_t *iconv_t;
 
+#pragma neverd_header("langinfo.h")
 typedef void *nl_catd;
 
 typedef int nl_item;
 
+#pragma neverd_header("link.h")
 typedef __u32 Elf32_Addr;
 
 typedef __u16 Elf32_Half;
@@ -2101,7 +2157,7 @@ struct link_map
 {
     Elf64_Addr l_addr;
     char *l_name;
-    struct Elf64_Dyn *l_ld;
+    Elf64_Dyn *l_ld;
     struct link_map *l_next;
     struct link_map *l_prev;
 };
@@ -2121,6 +2177,7 @@ struct r_debug
     Elf64_Addr r_ldbase;
 };
 
+#pragma neverd_header("netdb.h")
 typedef unsigned short sa_family_t;
 
 // sockaddr_storage: 0x80 (128) bytes
@@ -2235,6 +2292,7 @@ struct addrinfo
     struct addrinfo *ai_next;
 };
 
+#pragma neverd_header("ifaddrs.h")
 // in6_addr: 0x10 (16) bytes
 struct in6_addr
 {
@@ -2442,7 +2500,7 @@ struct ipv6_destopt_hao
 #pragma pack(pop)
 
 // ipv6hdr: 0x28 (40) bytes
-struct ipv6hdr
+struct NEVERD_GNU_STRUCT ipv6hdr
 {
     __u8 priority : 4;
     __u8 version : 4;
@@ -2483,6 +2541,7 @@ struct ifaddrs
     void *ifa_data;
 };
 
+#pragma neverd_header("search.h")
 // entry: 0x10 (16) bytes
 struct entry
 {
@@ -2492,15 +2551,18 @@ struct entry
 
 typedef struct entry ENTRY;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __hsearch;
 
+#pragma neverd_header("search.h")
 // hsearch_data: 0x8 (8) bytes
 struct hsearch_data
 {
     struct __hsearch *__hsearch;
 };
 
+#pragma neverd_header("utime.h")
 // utimbuf: 0x10 (16) bytes
 struct utimbuf
 {
@@ -2508,6 +2570,7 @@ struct utimbuf
     __kernel_old_time_t modtime;
 };
 
+#pragma neverd_header("utmp.h")
 // lastlog: 0x128 (296) bytes
 struct lastlog
 {
@@ -2539,6 +2602,7 @@ struct utmp
     char unused[20];
 };
 
+#pragma neverd_header("sys/stat.h")
 // stat64: 0x80 (128) bytes
 struct stat64
 {
@@ -2561,6 +2625,7 @@ struct stat64
     unsigned int __unused5;
 };
 
+#pragma neverd_header("sys/statvfs.h")
 // statvfs: 0x70 (112) bytes
 struct statvfs
 {
@@ -2595,6 +2660,7 @@ struct statvfs64
     unsigned int __f_reserved[6];
 };
 
+#pragma neverd_header("sys/times.h")
 // tms: 0x20 (32) bytes
 struct tms
 {
@@ -2604,6 +2670,7 @@ struct tms
     __kernel_clock_t tms_cstime;
 };
 
+#pragma neverd_header("sys/wait.h")
 // rusage: 0x90 (144) bytes
 struct rusage
 {
@@ -2645,6 +2712,7 @@ typedef unsigned long long rlim64_t;
 
 typedef int idtype_t;
 
+#pragma neverd_header("sys/mman.h")
 // cachestat_range: 0x10 (16) bytes
 struct cachestat_range
 {
@@ -2662,6 +2730,7 @@ struct cachestat
     __u64 nr_recently_evicted;
 };
 
+#pragma neverd_header("sys/un.h")
 // sockaddr_un: 0x6E (110) bytes
 struct sockaddr_un
 {
@@ -2669,6 +2738,7 @@ struct sockaddr_un
     char sun_path[108];
 };
 
+#pragma neverd_header("sys/epoll.h")
 // epoll_data: 0x8 (8) bytes
 union epoll_data
 {
@@ -2696,8 +2766,10 @@ struct epoll_params
     __u8 __pad;
 };
 
+#pragma neverd_header("sys/eventfd.h")
 typedef unsigned long long eventfd_t;
 
+#pragma neverd_header("sys/inotify.h")
 // inotify_event: 0x10 (16) bytes
 struct inotify_event
 {
@@ -2708,6 +2780,7 @@ struct inotify_event
     char name[];
 };
 
+#pragma neverd_header("sys/utsname.h")
 // utsname: 0x186 (390) bytes
 struct utsname
 {
@@ -2719,6 +2792,7 @@ struct utsname
     char domainname[65];
 };
 
+#pragma neverd_header("sys/prctl.h")
 // prctl_mm_map: 0x68 (104) bytes
 struct prctl_mm_map
 {
@@ -2738,6 +2812,7 @@ struct prctl_mm_map
     __u32 exe_fd;
 };
 
+#pragma neverd_header("sys/ptrace.h")
 // ptrace_peeksiginfo_args: 0x10 (16) bytes
 struct ptrace_peeksiginfo_args
 {
@@ -2876,6 +2951,7 @@ struct user_za_header
     __u16 __reserved;
 };
 
+#pragma neverd_header("sys/sysinfo.h")
 // sysinfo: 0x70 (112) bytes
 struct sysinfo
 {
@@ -2895,6 +2971,7 @@ struct sysinfo
     char _f[0];
 };
 
+#pragma neverd_header("sys/signalfd.h")
 // signalfd_siginfo: 0x80 (128) bytes
 struct signalfd_siginfo
 {
@@ -2922,6 +2999,7 @@ struct signalfd_siginfo
     __u8 __pad[28];
 };
 
+#pragma neverd_header("sys/random.h")
 // rand_pool_info: 0x8 (8) bytes
 struct rand_pool_info
 {
@@ -2939,6 +3017,7 @@ struct vgetrandom_opaque_params
     __u32 reserved[13];
 };
 
+#pragma neverd_header("sys/sem.h")
 // __kernel_legacy_ipc_perm: 0x1C (28) bytes
 struct __kernel_legacy_ipc_perm
 {
@@ -2967,6 +3046,7 @@ struct ipc64_perm
     __kernel_ulong_t __unused2;
 };
 
+#pragma neverd_header("sys/msg.h")
 // msgbuf: 0x10 (16) bytes
 struct msgbuf
 {
@@ -2974,6 +3054,7 @@ struct msgbuf
     char mtext[1];
 };
 
+#pragma neverd_header("sys/sem.h")
 // ipc_kludge: 0x10 (16) bytes
 struct ipc_kludge
 {
@@ -2981,6 +3062,7 @@ struct ipc_kludge
     long msgtyp;
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct sem;
 
@@ -2990,6 +3072,7 @@ struct sem_queue;
 // Declared only: its members are unknown.
 struct sem_undo;
 
+#pragma neverd_header("sys/sem.h")
 // __kernel_legacy_semid_ds: 0x58 (88) bytes
 struct __kernel_legacy_semid_ds
 {
@@ -3057,6 +3140,7 @@ union semun
     void *__pad;
 };
 
+#pragma neverd_header("sys/shm.h")
 // __kernel_legacy_shmid_ds: 0x58 (88) bytes
 struct __kernel_legacy_shmid_ds
 {
@@ -3125,9 +3209,11 @@ struct shm_info
 
 typedef unsigned long shmatt_t;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct msg;
 
+#pragma neverd_header("sys/msg.h")
 // __kernel_legacy_msqid_ds: 0x68 (104) bytes
 struct __kernel_legacy_msqid_ds
 {
@@ -3179,12 +3265,13 @@ typedef __kernel_ulong_t msgqnum_t;
 
 typedef __kernel_ulong_t msglen_t;
 
+#pragma neverd_header("netinet/tcp.h")
 // tcphdr: 0x14 (20) bytes
 struct tcphdr
 {
     union
     {
-        struct
+        struct NEVERD_GNU_STRUCT
         {
             unsigned short th_sport;
             unsigned short th_dport;
@@ -3197,7 +3284,7 @@ struct tcphdr
             unsigned short th_sum;
             unsigned short th_urp;
         };
-        struct
+        struct NEVERD_GNU_STRUCT
         {
             unsigned short source;
             unsigned short dest;
@@ -3244,7 +3331,7 @@ struct tcp_repair_window
 };
 
 // tcp_info: 0xF8 (248) bytes
-struct tcp_info
+struct NEVERD_GNU_STRUCT tcp_info
 {
     __u8 tcpi_state;
     __u8 tcpi_ca_state;
@@ -3331,7 +3418,7 @@ struct tcp_diag_md5sig
 };
 
 // tcp_ao_add: 0x120 (288) bytes
-struct tcp_ao_add
+struct NEVERD_GNU_STRUCT tcp_ao_add
 {
     struct sockaddr_storage addr;
     char alg_name[64];
@@ -3350,7 +3437,7 @@ struct tcp_ao_add
 };
 
 // tcp_ao_del: 0x90 (144) bytes
-struct tcp_ao_del
+struct NEVERD_GNU_STRUCT tcp_ao_del
 {
     struct sockaddr_storage addr;
     __s32 ifindex;
@@ -3368,7 +3455,7 @@ struct tcp_ao_del
 };
 
 // tcp_ao_info_opt: 0x30 (48) bytes
-struct tcp_ao_info_opt
+struct NEVERD_GNU_STRUCT tcp_ao_info_opt
 {
     __u32 set_current : 1;
     __u32 set_rnext : 1;
@@ -3387,7 +3474,7 @@ struct tcp_ao_info_opt
 };
 
 // tcp_ao_getsockopt: 0x130 (304) bytes
-struct tcp_ao_getsockopt
+struct NEVERD_GNU_STRUCT tcp_ao_getsockopt
 {
     struct sockaddr_storage addr;
     char alg_name[64];
@@ -3434,6 +3521,7 @@ struct tcp_zerocopy_receive
     __u32 reserved;
 };
 
+#pragma neverd_header("net/if.h")
 // sync_serial_settings: 0xC (12) bytes
 struct sync_serial_settings
 {
@@ -3519,14 +3607,14 @@ struct if_settings
     unsigned int size;
     union
     {
-        struct raw_hdlc_proto *raw_hdlc;
-        struct cisco_proto *cisco;
-        struct fr_proto *fr;
-        struct fr_proto_pvc *fr_pvc;
-        struct fr_proto_pvc_info *fr_pvc_info;
-        struct x25_hdlc_proto *x25;
-        struct sync_serial_settings *sync;
-        struct te1_settings *te1;
+        raw_hdlc_proto *raw_hdlc;
+        cisco_proto *cisco;
+        fr_proto *fr;
+        fr_proto_pvc *fr_pvc;
+        fr_proto_pvc_info *fr_pvc_info;
+        x25_hdlc_proto *x25;
+        sync_serial_settings *sync;
+        te1_settings *te1;
     } ifs_ifsu;
 };
 
@@ -3573,6 +3661,7 @@ struct if_nameindex
     char *if_name;
 };
 
+#pragma neverd_header("fts.h")
 // _ftsent: 0x80 (128) bytes
 struct _ftsent
 {
@@ -3615,6 +3704,7 @@ struct FTS
     int fts_options;
 };
 
+#pragma neverd_header("ftw.h")
 // FTW: 0x8 (8) bytes
 struct FTW
 {
@@ -3622,6 +3712,7 @@ struct FTW
     int level;
 };
 
+#pragma neverd_header("jni.h")
 typedef unsigned char jboolean;
 
 typedef signed char jbyte;
@@ -3670,14 +3761,18 @@ typedef jobject jthrowable;
 
 typedef jobject jweak;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct _jfieldID;
 
+#pragma neverd_header("jni.h")
 typedef struct _jfieldID *jfieldID;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct _jmethodID;
 
+#pragma neverd_header("jni.h")
 typedef struct _jmethodID *jmethodID;
 
 typedef const struct JNIInvokeInterface *JavaVM;
@@ -3764,70 +3859,70 @@ struct JNINativeInterface
     jobject (*AllocObject)(JNIEnv *, jclass);
     jobject (*NewObject)(JNIEnv *, jclass, jmethodID, ...);
     jobject (*NewObjectV)(JNIEnv *, jclass, jmethodID, char *);
-    jobject (*NewObjectA)(JNIEnv *, jclass, jmethodID, const union jvalue *);
+    jobject (*NewObjectA)(JNIEnv *, jclass, jmethodID, const jvalue *);
     jclass (*GetObjectClass)(JNIEnv *, jobject);
     jboolean (*IsInstanceOf)(JNIEnv *, jobject, jclass);
     jmethodID (*GetMethodID)(JNIEnv *, jclass, const char *, const char *);
     jobject (*CallObjectMethod)(JNIEnv *, jobject, jmethodID, ...);
     jobject (*CallObjectMethodV)(JNIEnv *, jobject, jmethodID, char *);
-    jobject (*CallObjectMethodA)(JNIEnv *, jobject, jmethodID, const union jvalue *);
+    jobject (*CallObjectMethodA)(JNIEnv *, jobject, jmethodID, const jvalue *);
     jboolean (*CallBooleanMethod)(JNIEnv *, jobject, jmethodID, ...);
     jboolean (*CallBooleanMethodV)(JNIEnv *, jobject, jmethodID, char *);
-    jboolean (*CallBooleanMethodA)(JNIEnv *, jobject, jmethodID, const union jvalue *);
+    jboolean (*CallBooleanMethodA)(JNIEnv *, jobject, jmethodID, const jvalue *);
     jbyte (*CallByteMethod)(JNIEnv *, jobject, jmethodID, ...);
     jbyte (*CallByteMethodV)(JNIEnv *, jobject, jmethodID, char *);
-    jbyte (*CallByteMethodA)(JNIEnv *, jobject, jmethodID, const union jvalue *);
+    jbyte (*CallByteMethodA)(JNIEnv *, jobject, jmethodID, const jvalue *);
     jchar (*CallCharMethod)(JNIEnv *, jobject, jmethodID, ...);
     jchar (*CallCharMethodV)(JNIEnv *, jobject, jmethodID, char *);
-    jchar (*CallCharMethodA)(JNIEnv *, jobject, jmethodID, const union jvalue *);
+    jchar (*CallCharMethodA)(JNIEnv *, jobject, jmethodID, const jvalue *);
     jshort (*CallShortMethod)(JNIEnv *, jobject, jmethodID, ...);
     jshort (*CallShortMethodV)(JNIEnv *, jobject, jmethodID, char *);
-    jshort (*CallShortMethodA)(JNIEnv *, jobject, jmethodID, const union jvalue *);
+    jshort (*CallShortMethodA)(JNIEnv *, jobject, jmethodID, const jvalue *);
     jint (*CallIntMethod)(JNIEnv *, jobject, jmethodID, ...);
     jint (*CallIntMethodV)(JNIEnv *, jobject, jmethodID, char *);
-    jint (*CallIntMethodA)(JNIEnv *, jobject, jmethodID, const union jvalue *);
+    jint (*CallIntMethodA)(JNIEnv *, jobject, jmethodID, const jvalue *);
     jlong (*CallLongMethod)(JNIEnv *, jobject, jmethodID, ...);
     jlong (*CallLongMethodV)(JNIEnv *, jobject, jmethodID, char *);
-    jlong (*CallLongMethodA)(JNIEnv *, jobject, jmethodID, const union jvalue *);
+    jlong (*CallLongMethodA)(JNIEnv *, jobject, jmethodID, const jvalue *);
     jfloat (*CallFloatMethod)(JNIEnv *, jobject, jmethodID, ...);
     jfloat (*CallFloatMethodV)(JNIEnv *, jobject, jmethodID, char *);
-    jfloat (*CallFloatMethodA)(JNIEnv *, jobject, jmethodID, const union jvalue *);
+    jfloat (*CallFloatMethodA)(JNIEnv *, jobject, jmethodID, const jvalue *);
     jdouble (*CallDoubleMethod)(JNIEnv *, jobject, jmethodID, ...);
     jdouble (*CallDoubleMethodV)(JNIEnv *, jobject, jmethodID, char *);
-    jdouble (*CallDoubleMethodA)(JNIEnv *, jobject, jmethodID, const union jvalue *);
+    jdouble (*CallDoubleMethodA)(JNIEnv *, jobject, jmethodID, const jvalue *);
     void (*CallVoidMethod)(JNIEnv *, jobject, jmethodID, ...);
     void (*CallVoidMethodV)(JNIEnv *, jobject, jmethodID, char *);
-    void (*CallVoidMethodA)(JNIEnv *, jobject, jmethodID, const union jvalue *);
+    void (*CallVoidMethodA)(JNIEnv *, jobject, jmethodID, const jvalue *);
     jobject (*CallNonvirtualObjectMethod)(JNIEnv *, jobject, jclass, jmethodID, ...);
     jobject (*CallNonvirtualObjectMethodV)(JNIEnv *, jobject, jclass, jmethodID, char *);
-    jobject (*CallNonvirtualObjectMethodA)(JNIEnv *, jobject, jclass, jmethodID, const union jvalue *);
+    jobject (*CallNonvirtualObjectMethodA)(JNIEnv *, jobject, jclass, jmethodID, const jvalue *);
     jboolean (*CallNonvirtualBooleanMethod)(JNIEnv *, jobject, jclass, jmethodID, ...);
     jboolean (*CallNonvirtualBooleanMethodV)(JNIEnv *, jobject, jclass, jmethodID, char *);
-    jboolean (*CallNonvirtualBooleanMethodA)(JNIEnv *, jobject, jclass, jmethodID, const union jvalue *);
+    jboolean (*CallNonvirtualBooleanMethodA)(JNIEnv *, jobject, jclass, jmethodID, const jvalue *);
     jbyte (*CallNonvirtualByteMethod)(JNIEnv *, jobject, jclass, jmethodID, ...);
     jbyte (*CallNonvirtualByteMethodV)(JNIEnv *, jobject, jclass, jmethodID, char *);
-    jbyte (*CallNonvirtualByteMethodA)(JNIEnv *, jobject, jclass, jmethodID, const union jvalue *);
+    jbyte (*CallNonvirtualByteMethodA)(JNIEnv *, jobject, jclass, jmethodID, const jvalue *);
     jchar (*CallNonvirtualCharMethod)(JNIEnv *, jobject, jclass, jmethodID, ...);
     jchar (*CallNonvirtualCharMethodV)(JNIEnv *, jobject, jclass, jmethodID, char *);
-    jchar (*CallNonvirtualCharMethodA)(JNIEnv *, jobject, jclass, jmethodID, const union jvalue *);
+    jchar (*CallNonvirtualCharMethodA)(JNIEnv *, jobject, jclass, jmethodID, const jvalue *);
     jshort (*CallNonvirtualShortMethod)(JNIEnv *, jobject, jclass, jmethodID, ...);
     jshort (*CallNonvirtualShortMethodV)(JNIEnv *, jobject, jclass, jmethodID, char *);
-    jshort (*CallNonvirtualShortMethodA)(JNIEnv *, jobject, jclass, jmethodID, const union jvalue *);
+    jshort (*CallNonvirtualShortMethodA)(JNIEnv *, jobject, jclass, jmethodID, const jvalue *);
     jint (*CallNonvirtualIntMethod)(JNIEnv *, jobject, jclass, jmethodID, ...);
     jint (*CallNonvirtualIntMethodV)(JNIEnv *, jobject, jclass, jmethodID, char *);
-    jint (*CallNonvirtualIntMethodA)(JNIEnv *, jobject, jclass, jmethodID, const union jvalue *);
+    jint (*CallNonvirtualIntMethodA)(JNIEnv *, jobject, jclass, jmethodID, const jvalue *);
     jlong (*CallNonvirtualLongMethod)(JNIEnv *, jobject, jclass, jmethodID, ...);
     jlong (*CallNonvirtualLongMethodV)(JNIEnv *, jobject, jclass, jmethodID, char *);
-    jlong (*CallNonvirtualLongMethodA)(JNIEnv *, jobject, jclass, jmethodID, const union jvalue *);
+    jlong (*CallNonvirtualLongMethodA)(JNIEnv *, jobject, jclass, jmethodID, const jvalue *);
     jfloat (*CallNonvirtualFloatMethod)(JNIEnv *, jobject, jclass, jmethodID, ...);
     jfloat (*CallNonvirtualFloatMethodV)(JNIEnv *, jobject, jclass, jmethodID, char *);
-    jfloat (*CallNonvirtualFloatMethodA)(JNIEnv *, jobject, jclass, jmethodID, const union jvalue *);
+    jfloat (*CallNonvirtualFloatMethodA)(JNIEnv *, jobject, jclass, jmethodID, const jvalue *);
     jdouble (*CallNonvirtualDoubleMethod)(JNIEnv *, jobject, jclass, jmethodID, ...);
     jdouble (*CallNonvirtualDoubleMethodV)(JNIEnv *, jobject, jclass, jmethodID, char *);
-    jdouble (*CallNonvirtualDoubleMethodA)(JNIEnv *, jobject, jclass, jmethodID, const union jvalue *);
+    jdouble (*CallNonvirtualDoubleMethodA)(JNIEnv *, jobject, jclass, jmethodID, const jvalue *);
     void (*CallNonvirtualVoidMethod)(JNIEnv *, jobject, jclass, jmethodID, ...);
     void (*CallNonvirtualVoidMethodV)(JNIEnv *, jobject, jclass, jmethodID, char *);
-    void (*CallNonvirtualVoidMethodA)(JNIEnv *, jobject, jclass, jmethodID, const union jvalue *);
+    void (*CallNonvirtualVoidMethodA)(JNIEnv *, jobject, jclass, jmethodID, const jvalue *);
     jfieldID (*GetFieldID)(JNIEnv *, jclass, const char *, const char *);
     jobject (*GetObjectField)(JNIEnv *, jobject, jfieldID);
     jboolean (*GetBooleanField)(JNIEnv *, jobject, jfieldID);
@@ -3850,34 +3945,34 @@ struct JNINativeInterface
     jmethodID (*GetStaticMethodID)(JNIEnv *, jclass, const char *, const char *);
     jobject (*CallStaticObjectMethod)(JNIEnv *, jclass, jmethodID, ...);
     jobject (*CallStaticObjectMethodV)(JNIEnv *, jclass, jmethodID, char *);
-    jobject (*CallStaticObjectMethodA)(JNIEnv *, jclass, jmethodID, const union jvalue *);
+    jobject (*CallStaticObjectMethodA)(JNIEnv *, jclass, jmethodID, const jvalue *);
     jboolean (*CallStaticBooleanMethod)(JNIEnv *, jclass, jmethodID, ...);
     jboolean (*CallStaticBooleanMethodV)(JNIEnv *, jclass, jmethodID, char *);
-    jboolean (*CallStaticBooleanMethodA)(JNIEnv *, jclass, jmethodID, const union jvalue *);
+    jboolean (*CallStaticBooleanMethodA)(JNIEnv *, jclass, jmethodID, const jvalue *);
     jbyte (*CallStaticByteMethod)(JNIEnv *, jclass, jmethodID, ...);
     jbyte (*CallStaticByteMethodV)(JNIEnv *, jclass, jmethodID, char *);
-    jbyte (*CallStaticByteMethodA)(JNIEnv *, jclass, jmethodID, const union jvalue *);
+    jbyte (*CallStaticByteMethodA)(JNIEnv *, jclass, jmethodID, const jvalue *);
     jchar (*CallStaticCharMethod)(JNIEnv *, jclass, jmethodID, ...);
     jchar (*CallStaticCharMethodV)(JNIEnv *, jclass, jmethodID, char *);
-    jchar (*CallStaticCharMethodA)(JNIEnv *, jclass, jmethodID, const union jvalue *);
+    jchar (*CallStaticCharMethodA)(JNIEnv *, jclass, jmethodID, const jvalue *);
     jshort (*CallStaticShortMethod)(JNIEnv *, jclass, jmethodID, ...);
     jshort (*CallStaticShortMethodV)(JNIEnv *, jclass, jmethodID, char *);
-    jshort (*CallStaticShortMethodA)(JNIEnv *, jclass, jmethodID, const union jvalue *);
+    jshort (*CallStaticShortMethodA)(JNIEnv *, jclass, jmethodID, const jvalue *);
     jint (*CallStaticIntMethod)(JNIEnv *, jclass, jmethodID, ...);
     jint (*CallStaticIntMethodV)(JNIEnv *, jclass, jmethodID, char *);
-    jint (*CallStaticIntMethodA)(JNIEnv *, jclass, jmethodID, const union jvalue *);
+    jint (*CallStaticIntMethodA)(JNIEnv *, jclass, jmethodID, const jvalue *);
     jlong (*CallStaticLongMethod)(JNIEnv *, jclass, jmethodID, ...);
     jlong (*CallStaticLongMethodV)(JNIEnv *, jclass, jmethodID, char *);
-    jlong (*CallStaticLongMethodA)(JNIEnv *, jclass, jmethodID, const union jvalue *);
+    jlong (*CallStaticLongMethodA)(JNIEnv *, jclass, jmethodID, const jvalue *);
     jfloat (*CallStaticFloatMethod)(JNIEnv *, jclass, jmethodID, ...);
     jfloat (*CallStaticFloatMethodV)(JNIEnv *, jclass, jmethodID, char *);
-    jfloat (*CallStaticFloatMethodA)(JNIEnv *, jclass, jmethodID, const union jvalue *);
+    jfloat (*CallStaticFloatMethodA)(JNIEnv *, jclass, jmethodID, const jvalue *);
     jdouble (*CallStaticDoubleMethod)(JNIEnv *, jclass, jmethodID, ...);
     jdouble (*CallStaticDoubleMethodV)(JNIEnv *, jclass, jmethodID, char *);
-    jdouble (*CallStaticDoubleMethodA)(JNIEnv *, jclass, jmethodID, const union jvalue *);
+    jdouble (*CallStaticDoubleMethodA)(JNIEnv *, jclass, jmethodID, const jvalue *);
     void (*CallStaticVoidMethod)(JNIEnv *, jclass, jmethodID, ...);
     void (*CallStaticVoidMethodV)(JNIEnv *, jclass, jmethodID, char *);
-    void (*CallStaticVoidMethodA)(JNIEnv *, jclass, jmethodID, const union jvalue *);
+    void (*CallStaticVoidMethodA)(JNIEnv *, jclass, jmethodID, const jvalue *);
     jfieldID (*GetStaticFieldID)(JNIEnv *, jclass, const char *, const char *);
     jobject (*GetStaticObjectField)(JNIEnv *, jclass, jfieldID);
     jboolean (*GetStaticBooleanField)(JNIEnv *, jclass, jfieldID);
@@ -3949,7 +4044,7 @@ struct JNINativeInterface
     void (*SetLongArrayRegion)(JNIEnv *, jlongArray, jsize, jsize, const jlong *);
     void (*SetFloatArrayRegion)(JNIEnv *, jfloatArray, jsize, jsize, const jfloat *);
     void (*SetDoubleArrayRegion)(JNIEnv *, jdoubleArray, jsize, jsize, const jdouble *);
-    jint (*RegisterNatives)(JNIEnv *, jclass, const struct JNINativeMethod *, jint);
+    jint (*RegisterNatives)(JNIEnv *, jclass, const JNINativeMethod *, jint);
     jint (*UnregisterNatives)(JNIEnv *, jclass);
     jint (*MonitorEnter)(JNIEnv *, jobject);
     jint (*MonitorExit)(JNIEnv *, jobject);
@@ -3966,7 +4061,7 @@ struct JNINativeInterface
     jobject (*NewDirectByteBuffer)(JNIEnv *, void *, jlong);
     void *(*GetDirectBufferAddress)(JNIEnv *, jobject);
     jlong (*GetDirectBufferCapacity)(JNIEnv *, jobject);
-    enum jobjectRefType (*GetObjectRefType)(JNIEnv *, jobject);
+    jobjectRefType (*GetObjectRefType)(JNIEnv *, jobject);
 };
 
 typedef const struct JNINativeInterface *C_JNIEnv;
@@ -3991,10 +4086,11 @@ struct JavaVMInitArgs
 {
     jint version;
     jint nOptions;
-    struct JavaVMOption *options;
+    JavaVMOption *options;
     jboolean ignoreUnrecognized;
 };
 
+#pragma neverd_header("android/log.h")
 typedef enum log_id log_id_t;
 
 // __android_log_message: 0x30 (48) bytes
@@ -4021,9 +4117,9 @@ jint JNI_OnLoad(JavaVM *vm, void *reserved);
 void JNI_OnUnload(JavaVM *vm, void *reserved);
 _Noreturn void _Exit(int __status);
 pid_t _Fork(void);
-void __FD_CLR_chk(int, struct fd_set *, size_t);
-int __FD_ISSET_chk(int, const struct fd_set *, size_t);
-void __FD_SET_chk(int, struct fd_set *, size_t);
+void __FD_CLR_chk(int, fd_set *, size_t);
+int __FD_ISSET_chk(int, const fd_set *, size_t);
+void __FD_SET_chk(int, fd_set *, size_t);
 _Noreturn void __android_log_assert(const char *cond, const char *tag, const char *fmt, ...);
 int __android_log_buf_print(int log_id, int prio, const char *tag, const char *fmt, ...);
 int __android_log_buf_write(int log_id, int prio, const char *tag, const char *text);
@@ -4060,11 +4156,11 @@ char *__gnu_strerror_r(int __errno_value, char *__buf, size_t __n);
 int __libc_current_sigrtmax(void);
 int __libc_current_sigrtmin(void);
 char *__posix_basename(const char *__path);
-void __pthread_cleanup_pop(struct __pthread_cleanup_t *, int);
-void __pthread_cleanup_push(struct __pthread_cleanup_t *c, __pthread_cleanup_func_t, void *);
-struct cpu_set_t *__sched_cpualloc(size_t __count);
-int __sched_cpucount(size_t __set_size, const struct cpu_set_t *__set);
-void __sched_cpufree(struct cpu_set_t *__set);
+void __pthread_cleanup_pop(__pthread_cleanup_t *, int);
+void __pthread_cleanup_push(__pthread_cleanup_t *c, __pthread_cleanup_func_t, void *);
+cpu_set_t *__sched_cpualloc(size_t __count);
+int __sched_cpucount(size_t __set_size, const cpu_set_t *__set);
+void __sched_cpufree(cpu_set_t *__set);
 char *__strchr_chk(const char *__s, int __ch, size_t __n);
 size_t __strlen_chk(const char *__s, size_t __n);
 char *__strrchr_chk(const char *__s, int __ch, size_t __n);
@@ -4169,7 +4265,7 @@ int clock_settime(clockid_t __clock, const struct timespec *__ts);
 int clone(int (*__fn)(void *), void *__child_stack, int __flags, void *__arg, ...);
 int close(int __fd);
 int close_range(unsigned int __min_fd, unsigned int __max_fd, int __flags);
-int closedir(struct DIR *__dir);
+int closedir(DIR *__dir);
 void closelog(void);
 int connect(int __fd, const struct sockaddr *__addr, socklen_t __addr_length);
 ssize_t copy_file_range(int __fd_in, off64_t *__off_in, int __fd_out, off64_t *__off_out, size_t __length, unsigned int __flags);
@@ -4189,11 +4285,11 @@ char *ctime(const time_t *__t);
 char *ctime_r(const time_t *__t, char *__buf);
 int daemon(int __no_chdir, int __no_close);
 double difftime(time_t __lhs, time_t __rhs);
-int dirfd(struct DIR *__dir);
+int dirfd(DIR *__dir);
 char *dirname(const char *__path);
-struct div_t div(int __numerator, int __denominator);
+div_t div(int __numerator, int __denominator);
 int dl_iterate_phdr(int (*__callback)(struct dl_phdr_info *__info, size_t __size, void *__data), void *__data);
-int dladdr(const void *__addr, struct Dl_info *__info);
+int dladdr(const void *__addr, Dl_info *__info);
 int dlclose(void *__handle);
 char *dlerror(void);
 void *dlopen(const char *__filename, int __flag);
@@ -4217,8 +4313,8 @@ void endutent(void);
 int epoll_create(int __size);
 int epoll_create1(int __flags);
 int epoll_ctl(int __epoll_fd, int __op, int __fd, struct epoll_event *__event);
-int epoll_pwait(int __epoll_fd, struct epoll_event *__events, int __event_count, int __timeout_ms, const struct sigset_t *__mask);
-int epoll_pwait2(int __epoll_fd, struct epoll_event *__events, int __event_count, const struct timespec *__timeout, const struct sigset_t *__mask);
+int epoll_pwait(int __epoll_fd, struct epoll_event *__events, int __event_count, int __timeout_ms, const sigset_t *__mask);
+int epoll_pwait2(int __epoll_fd, struct epoll_event *__events, int __event_count, const struct timespec *__timeout, const sigset_t *__mask);
 int epoll_pwait2_64(int __epoll_fd, struct epoll_event *__events, int __event_count, const struct timespec *__timeout, const sigset64_t *__mask);
 int epoll_pwait64(int __epoll_fd, struct epoll_event *__events, int __event_count, int __timeout_ms, const sigset64_t *__mask);
 int epoll_wait(int __epoll_fd, struct epoll_event *__events, int __event_count, int __timeout_ms);
@@ -4271,25 +4367,25 @@ double fdim(double __x, double __y);
 float fdimf(float __x, float __y);
 long double fdiml(long double __x, long double __y);
 FILE *fdopen(int __fd, const char *__mode);
-struct DIR *fdopendir(int __dir_fd);
+DIR *fdopendir(int __dir_fd);
 int feclearexcept(int __exceptions);
 int fedisableexcept(int __exceptions);
 int feenableexcept(int __exceptions);
-int fegetenv(struct fenv_t *__env);
+int fegetenv(fenv_t *__env);
 int fegetexcept(void);
 int fegetexceptflag(fexcept_t *__flag_ptr, int __exceptions);
 int fegetround(void);
-int feholdexcept(struct fenv_t *__env);
+int feholdexcept(fenv_t *__env);
 int feof(FILE *__fp);
 int feof_unlocked(FILE *__fp);
 int feraiseexcept(int __exceptions);
 int ferror(FILE *__fp);
 int ferror_unlocked(FILE *__fp);
-int fesetenv(const struct fenv_t *__env);
+int fesetenv(const fenv_t *__env);
 int fesetexceptflag(const fexcept_t *__flag_ptr, int __exceptions);
 int fesetround(int __rounding_mode);
 int fetestexcept(int __exceptions);
-int feupdateenv(const struct fenv_t *__env);
+int feupdateenv(const fenv_t *__env);
 int fexecve(int __fd, char *const *__argv, char *const *__envp);
 int fflush(FILE *__fp);
 int fflush_unlocked(FILE *__fp);
@@ -4375,11 +4471,11 @@ key_t ftok(const char *__path, int __id);
 int ftruncate(int __fd, off_t __length);
 int ftruncate64(int __fd, off64_t __length);
 int ftrylockfile(FILE *__fp);
-FTSENT *fts_children(struct FTS *__fts, int __options);
-int fts_close(struct FTS *__fts);
-struct FTS *fts_open(char *const *__path, int __options, int (*__comparator)(const FTSENT **__lhs, const FTSENT **__rhs));
-FTSENT *fts_read(struct FTS *__fts);
-int fts_set(struct FTS *__fts, FTSENT *__entry, int __options);
+FTSENT *fts_children(FTS *__fts, int __options);
+int fts_close(FTS *__fts);
+FTS *fts_open(char *const *__path, int __options, int (*__comparator)(const FTSENT **__lhs, const FTSENT **__rhs));
+FTSENT *fts_read(FTS *__fts);
+int fts_set(FTS *__fts, FTSENT *__entry, int __options);
 int ftw(const char *__dir_path, int (*__callback)(const char *, const struct stat *, int), int __max_fd_count);
 int ftw64(const char *__dir_path, int (*__callback)(const char *, const struct stat64 *, int), int __max_fd_count);
 void funlockfile(FILE *__fp);
@@ -4481,8 +4577,8 @@ struct utmp *getutent(void);
 wint_t getwc(FILE *__fp);
 wint_t getwchar(void);
 ssize_t getxattr(const char *__path, const char *__name, void *__value, size_t __size);
-int glob(const char *__pattern, int __flags, int (*__error_callback)(const char *__failure_path, int __failure_errno), struct glob_t *__result_ptr);
-void globfree(struct glob_t *__result_ptr);
+int glob(const char *__pattern, int __flags, int (*__error_callback)(const char *__failure_path, int __failure_errno), glob_t *__result_ptr);
+void globfree(glob_t *__result_ptr);
 struct tm *gmtime(const time_t *__t);
 struct tm *gmtime_r(const time_t *__t, struct tm *__tm);
 int grantpt(int __fd);
@@ -4491,8 +4587,8 @@ int hcreate_r(size_t __n, struct hsearch_data *__table);
 void hdestroy(void);
 void hdestroy_r(struct hsearch_data *__table);
 void herror(const char *__s);
-ENTRY *hsearch(ENTRY __entry, enum ACTION __action);
-int hsearch_r(ENTRY __entry, enum ACTION __action, ENTRY **__result, struct hsearch_data *__table);
+ENTRY *hsearch(ENTRY __entry, ACTION __action);
+int hsearch_r(ENTRY __entry, ACTION __action, ENTRY **__result, struct hsearch_data *__table);
 const char *hstrerror(int __error);
 unsigned int htonl(unsigned int __x);
 unsigned short htons(unsigned short __x);
@@ -4510,7 +4606,7 @@ int ilogb(double __x);
 int ilogbf(float __x);
 int ilogbl(long double __x);
 intmax_t imaxabs(intmax_t __i);
-struct imaxdiv_t imaxdiv(intmax_t __numerator, intmax_t __denominator);
+imaxdiv_t imaxdiv(intmax_t __numerator, intmax_t __denominator);
 in_addr_t inet_addr(const char *__s);
 int inet_aton(const char *__s, struct in_addr *__addr);
 in_addr_t inet_lnaof(struct in_addr __addr);
@@ -4601,7 +4697,7 @@ void lcong48(unsigned short *__param);
 double ldexp(double __x, int __exponent);
 float ldexpf(float __x, int __exponent);
 long double ldexpl(long double __x, int __exponent);
-struct ldiv_t ldiv(long __numerator, long __denominator);
+ldiv_t ldiv(long __numerator, long __denominator);
 void *lfind(const void *__key, const void *__array, size_t *__count, size_t __size, int (*__comparator)(const void *, const void *));
 double lgamma(double __x);
 double lgamma_r(double __x, int *__sign);
@@ -4615,7 +4711,7 @@ int linkat(int __old_dir_fd, const char *__old_path, int __new_dir_fd, const cha
 int listen(int __fd, int __backlog);
 ssize_t listxattr(const char *__path, char *__list, size_t __size);
 long long llabs(long long __x);
-struct lldiv_t lldiv(long long __numerator, long long __denominator);
+lldiv_t lldiv(long long __numerator, long long __denominator);
 ssize_t llistxattr(const char *__path, char *__list, size_t __size);
 long long llrint(double __x);
 long long llrintf(float __x);
@@ -4669,12 +4765,12 @@ int malloc_info(int __must_be_zero, FILE *__fp);
 size_t malloc_usable_size(const void *__ptr);
 int mallopt(int __option, int __value);
 int mblen(const char *__s, size_t __n);
-size_t mbrlen(const char *__s, size_t __n, struct mbstate_t *__ps);
-size_t mbrtowc(unsigned int *__buf, const char *__s, size_t __n, struct mbstate_t *__ps);
-int mbsinit(const struct mbstate_t *__ps);
-size_t mbsnrtowcs(unsigned int *__dst, const char **__src, size_t __src_n, size_t __dst_n, struct mbstate_t *__ps);
-size_t mbsrtowcs(unsigned int *__dst, const char **__src, size_t __dst_n, struct mbstate_t *__ps);
-size_t mbsrtowcs_l(unsigned int *__dst, const char **__src, size_t __dst_n, struct mbstate_t *__ps, locale_t __l);
+size_t mbrlen(const char *__s, size_t __n, mbstate_t *__ps);
+size_t mbrtowc(unsigned int *__buf, const char *__s, size_t __n, mbstate_t *__ps);
+int mbsinit(const mbstate_t *__ps);
+size_t mbsnrtowcs(unsigned int *__dst, const char **__src, size_t __src_n, size_t __dst_n, mbstate_t *__ps);
+size_t mbsrtowcs(unsigned int *__dst, const char **__src, size_t __dst_n, mbstate_t *__ps);
+size_t mbsrtowcs_l(unsigned int *__dst, const char **__src, size_t __dst_n, mbstate_t *__ps, locale_t __l);
 size_t mbstowcs(unsigned int *__dst, const char *__src, size_t __n);
 int mbtowc(unsigned int *__wc_ptr, const char *__s, size_t __n);
 void *memalign(size_t __alignment, size_t __byte_count);
@@ -4755,7 +4851,7 @@ FILE *open_memstream(char **__ptr, size_t *__size_ptr);
 FILE *open_wmemstream(unsigned int **__ptr, size_t *__size_ptr);
 int openat(int __dir_fd, const char *__path, int __flags, ...);
 int openat64(int __dir_fd, const char *__path, int __flags, ...);
-struct DIR *opendir(const char *__path);
+DIR *opendir(const char *__path);
 void openlog(const char *__prefix, int __option, int __facility);
 long pathconf(const char *__path, int __name);
 int pause(void);
@@ -4785,24 +4881,24 @@ int posix_spawnattr_getflags(const posix_spawnattr_t *__attr, short *__flags);
 int posix_spawnattr_getpgroup(const posix_spawnattr_t *__attr, pid_t *__pgroup);
 int posix_spawnattr_getschedparam(const posix_spawnattr_t *__attr, struct sched_param *__param);
 int posix_spawnattr_getschedpolicy(const posix_spawnattr_t *__attr, int *__policy);
-int posix_spawnattr_getsigdefault(const posix_spawnattr_t *__attr, struct sigset_t *__mask);
+int posix_spawnattr_getsigdefault(const posix_spawnattr_t *__attr, sigset_t *__mask);
 int posix_spawnattr_getsigdefault64(const posix_spawnattr_t *__attr, sigset64_t *__mask);
-int posix_spawnattr_getsigmask(const posix_spawnattr_t *__attr, struct sigset_t *__mask);
+int posix_spawnattr_getsigmask(const posix_spawnattr_t *__attr, sigset_t *__mask);
 int posix_spawnattr_getsigmask64(const posix_spawnattr_t *__attr, sigset64_t *__mask);
 int posix_spawnattr_init(posix_spawnattr_t *__attr);
 int posix_spawnattr_setflags(posix_spawnattr_t *__attr, short __flags);
 int posix_spawnattr_setpgroup(posix_spawnattr_t *__attr, pid_t __pgroup);
 int posix_spawnattr_setschedparam(posix_spawnattr_t *__attr, const struct sched_param *__param);
 int posix_spawnattr_setschedpolicy(posix_spawnattr_t *__attr, int __policy);
-int posix_spawnattr_setsigdefault(posix_spawnattr_t *__attr, const struct sigset_t *__mask);
+int posix_spawnattr_setsigdefault(posix_spawnattr_t *__attr, const sigset_t *__mask);
 int posix_spawnattr_setsigdefault64(posix_spawnattr_t *__attr, const sigset64_t *__mask);
-int posix_spawnattr_setsigmask(posix_spawnattr_t *__attr, const struct sigset_t *__mask);
+int posix_spawnattr_setsigmask(posix_spawnattr_t *__attr, const sigset_t *__mask);
 int posix_spawnattr_setsigmask64(posix_spawnattr_t *__attr, const sigset64_t *__mask);
 int posix_spawnp(pid_t *__pid, const char *__file, const posix_spawn_file_actions_t *__actions, const posix_spawnattr_t *__attr, char *const *__argv, char *const *__env);
 double pow(double __x, double __y);
 float powf(float __x, float __y);
 long double powl(long double __x, long double __y);
-int ppoll(struct pollfd *__fds, nfds_t __count, const struct timespec *__timeout, const struct sigset_t *__mask);
+int ppoll(struct pollfd *__fds, nfds_t __count, const struct timespec *__timeout, const sigset_t *__mask);
 int ppoll64(struct pollfd *__fds, nfds_t __count, const struct timespec *__timeout, const sigset64_t *__mask);
 int prctl(int __op, ...);
 ssize_t pread(int __fd, void *__buf, size_t __count, off_t __offset);
@@ -4817,55 +4913,55 @@ int prlimit64(pid_t __pid, int __resource, const struct rlimit64 *__new_limit, s
 ssize_t process_madvise(int __pid_fd, const struct iovec *__iov, size_t __count, int __advice, unsigned int __flags);
 ssize_t process_vm_readv(pid_t __pid, const struct iovec *__local_iov, unsigned long __local_iov_count, const struct iovec *__remote_iov, unsigned long __remote_iov_count, unsigned long __flags);
 ssize_t process_vm_writev(pid_t __pid, const struct iovec *__local_iov, unsigned long __local_iov_count, const struct iovec *__remote_iov, unsigned long __remote_iov_count, unsigned long __flags);
-int pselect(int __max_fd_plus_one, struct fd_set *__read_fds, struct fd_set *__write_fds, struct fd_set *__exception_fds, const struct timespec *__timeout, const struct sigset_t *__mask);
-int pselect64(int __max_fd_plus_one, struct fd_set *__read_fds, struct fd_set *__write_fds, struct fd_set *__exception_fds, const struct timespec *__timeout, const sigset64_t *__mask);
+int pselect(int __max_fd_plus_one, fd_set *__read_fds, fd_set *__write_fds, fd_set *__exception_fds, const struct timespec *__timeout, const sigset_t *__mask);
+int pselect64(int __max_fd_plus_one, fd_set *__read_fds, fd_set *__write_fds, fd_set *__exception_fds, const struct timespec *__timeout, const sigset64_t *__mask);
 void psiginfo(const siginfo_t *__info, const char *__msg);
 void psignal(int __signal, const char *__msg);
 int pthread_atfork(void (*__prepare)(void), void (*__parent)(void), void (*__child)(void));
-int pthread_attr_destroy(struct pthread_attr_t *__attr);
-int pthread_attr_getdetachstate(const struct pthread_attr_t *__attr, int *__state);
-int pthread_attr_getguardsize(const struct pthread_attr_t *__attr, size_t *__size);
-int pthread_attr_getinheritsched(const struct pthread_attr_t *__attr, int *__flag);
-int pthread_attr_getschedparam(const struct pthread_attr_t *__attr, struct sched_param *__param);
-int pthread_attr_getschedpolicy(const struct pthread_attr_t *__attr, int *__policy);
-int pthread_attr_getscope(const struct pthread_attr_t *__attr, int *__scope);
-int pthread_attr_getstack(const struct pthread_attr_t *__attr, void **__addr, size_t *__size);
-int pthread_attr_getstacksize(const struct pthread_attr_t *__attr, size_t *__size);
-int pthread_attr_init(struct pthread_attr_t *__attr);
-int pthread_attr_setdetachstate(struct pthread_attr_t *__attr, int __state);
-int pthread_attr_setguardsize(struct pthread_attr_t *__attr, size_t __size);
-int pthread_attr_setinheritsched(struct pthread_attr_t *__attr, int __flag);
-int pthread_attr_setschedparam(struct pthread_attr_t *__attr, const struct sched_param *__param);
-int pthread_attr_setschedpolicy(struct pthread_attr_t *__attr, int __policy);
-int pthread_attr_setscope(struct pthread_attr_t *__attr, int __scope);
-int pthread_attr_setstack(struct pthread_attr_t *__attr, void *__addr, size_t __size);
-int pthread_attr_setstacksize(struct pthread_attr_t *__addr, size_t __size);
-int pthread_barrier_destroy(struct pthread_barrier_t *__barrier);
-int pthread_barrier_init(struct pthread_barrier_t *__barrier, const pthread_barrierattr_t *__attr, unsigned int __count);
-int pthread_barrier_wait(struct pthread_barrier_t *__barrier);
+int pthread_attr_destroy(pthread_attr_t *__attr);
+int pthread_attr_getdetachstate(const pthread_attr_t *__attr, int *__state);
+int pthread_attr_getguardsize(const pthread_attr_t *__attr, size_t *__size);
+int pthread_attr_getinheritsched(const pthread_attr_t *__attr, int *__flag);
+int pthread_attr_getschedparam(const pthread_attr_t *__attr, struct sched_param *__param);
+int pthread_attr_getschedpolicy(const pthread_attr_t *__attr, int *__policy);
+int pthread_attr_getscope(const pthread_attr_t *__attr, int *__scope);
+int pthread_attr_getstack(const pthread_attr_t *__attr, void **__addr, size_t *__size);
+int pthread_attr_getstacksize(const pthread_attr_t *__attr, size_t *__size);
+int pthread_attr_init(pthread_attr_t *__attr);
+int pthread_attr_setdetachstate(pthread_attr_t *__attr, int __state);
+int pthread_attr_setguardsize(pthread_attr_t *__attr, size_t __size);
+int pthread_attr_setinheritsched(pthread_attr_t *__attr, int __flag);
+int pthread_attr_setschedparam(pthread_attr_t *__attr, const struct sched_param *__param);
+int pthread_attr_setschedpolicy(pthread_attr_t *__attr, int __policy);
+int pthread_attr_setscope(pthread_attr_t *__attr, int __scope);
+int pthread_attr_setstack(pthread_attr_t *__attr, void *__addr, size_t __size);
+int pthread_attr_setstacksize(pthread_attr_t *__addr, size_t __size);
+int pthread_barrier_destroy(pthread_barrier_t *__barrier);
+int pthread_barrier_init(pthread_barrier_t *__barrier, const pthread_barrierattr_t *__attr, unsigned int __count);
+int pthread_barrier_wait(pthread_barrier_t *__barrier);
 int pthread_barrierattr_destroy(pthread_barrierattr_t *__attr);
 int pthread_barrierattr_getpshared(const pthread_barrierattr_t *__attr, int *__shared);
 int pthread_barrierattr_init(pthread_barrierattr_t *__attr);
 int pthread_barrierattr_setpshared(pthread_barrierattr_t *__attr, int __shared);
-int pthread_cond_broadcast(struct pthread_cond_t *__cond);
-int pthread_cond_clockwait(struct pthread_cond_t *__cond, struct pthread_mutex_t *__mutex, clockid_t __clock, const struct timespec *__timeout);
-int pthread_cond_destroy(struct pthread_cond_t *__cond);
-int pthread_cond_init(struct pthread_cond_t *__cond, const pthread_condattr_t *__attr);
-int pthread_cond_signal(struct pthread_cond_t *__cond);
-int pthread_cond_timedwait(struct pthread_cond_t *__cond, struct pthread_mutex_t *__mutex, const struct timespec *__timeout);
-int pthread_cond_timedwait_monotonic_np(struct pthread_cond_t *__cond, struct pthread_mutex_t *__mutex, const struct timespec *__timeout);
-int pthread_cond_wait(struct pthread_cond_t *__cond, struct pthread_mutex_t *__mutex);
+int pthread_cond_broadcast(pthread_cond_t *__cond);
+int pthread_cond_clockwait(pthread_cond_t *__cond, pthread_mutex_t *__mutex, clockid_t __clock, const struct timespec *__timeout);
+int pthread_cond_destroy(pthread_cond_t *__cond);
+int pthread_cond_init(pthread_cond_t *__cond, const pthread_condattr_t *__attr);
+int pthread_cond_signal(pthread_cond_t *__cond);
+int pthread_cond_timedwait(pthread_cond_t *__cond, pthread_mutex_t *__mutex, const struct timespec *__timeout);
+int pthread_cond_timedwait_monotonic_np(pthread_cond_t *__cond, pthread_mutex_t *__mutex, const struct timespec *__timeout);
+int pthread_cond_wait(pthread_cond_t *__cond, pthread_mutex_t *__mutex);
 int pthread_condattr_destroy(pthread_condattr_t *__attr);
 int pthread_condattr_getclock(const pthread_condattr_t *__attr, clockid_t *__clock);
 int pthread_condattr_getpshared(const pthread_condattr_t *__attr, int *__shared);
 int pthread_condattr_init(pthread_condattr_t *__attr);
 int pthread_condattr_setclock(pthread_condattr_t *__attr, clockid_t __clock);
 int pthread_condattr_setpshared(pthread_condattr_t *__attr, int __shared);
-int pthread_create(pthread_t *__pthread_ptr, const struct pthread_attr_t *__attr, void *(*__start_routine)(void *), void *);
+int pthread_create(pthread_t *__pthread_ptr, const pthread_attr_t *__attr, void *(*__start_routine)(void *), void *);
 int pthread_detach(pthread_t __pthread);
 int pthread_equal(pthread_t __lhs, pthread_t __rhs);
 _Noreturn void pthread_exit(void *__return_value);
-int pthread_getattr_np(pthread_t __pthread, struct pthread_attr_t *__attr);
+int pthread_getattr_np(pthread_t __pthread, pthread_attr_t *__attr);
 int pthread_getcpuclockid(pthread_t __pthread, clockid_t *__clock);
 int pthread_getname_np(pthread_t __pthread, char *__buf, size_t __n);
 int pthread_getschedparam(pthread_t __pthread, int *__policy, struct sched_param *__param);
@@ -4875,14 +4971,14 @@ int pthread_join(pthread_t __pthread, void **__return_value_ptr);
 int pthread_key_create(pthread_key_t *__key_ptr, void (*__key_destructor)(void *));
 int pthread_key_delete(pthread_key_t __key);
 int pthread_kill(pthread_t __pthread, int __signal);
-int pthread_mutex_clocklock(struct pthread_mutex_t *__mutex, clockid_t __clock, const struct timespec *__abstime);
-int pthread_mutex_destroy(struct pthread_mutex_t *__mutex);
-int pthread_mutex_init(struct pthread_mutex_t *__mutex, const pthread_mutexattr_t *__attr);
-int pthread_mutex_lock(struct pthread_mutex_t *__mutex);
-int pthread_mutex_timedlock(struct pthread_mutex_t *__mutex, const struct timespec *__timeout);
-int pthread_mutex_timedlock_monotonic_np(struct pthread_mutex_t *__mutex, const struct timespec *__timeout);
-int pthread_mutex_trylock(struct pthread_mutex_t *__mutex);
-int pthread_mutex_unlock(struct pthread_mutex_t *__mutex);
+int pthread_mutex_clocklock(pthread_mutex_t *__mutex, clockid_t __clock, const struct timespec *__abstime);
+int pthread_mutex_destroy(pthread_mutex_t *__mutex);
+int pthread_mutex_init(pthread_mutex_t *__mutex, const pthread_mutexattr_t *__attr);
+int pthread_mutex_lock(pthread_mutex_t *__mutex);
+int pthread_mutex_timedlock(pthread_mutex_t *__mutex, const struct timespec *__timeout);
+int pthread_mutex_timedlock_monotonic_np(pthread_mutex_t *__mutex, const struct timespec *__timeout);
+int pthread_mutex_trylock(pthread_mutex_t *__mutex);
+int pthread_mutex_unlock(pthread_mutex_t *__mutex);
 int pthread_mutexattr_destroy(pthread_mutexattr_t *__attr);
 int pthread_mutexattr_getprotocol(const pthread_mutexattr_t *__attr, int *__protocol);
 int pthread_mutexattr_getpshared(const pthread_mutexattr_t *__attr, int *__shared);
@@ -4892,19 +4988,19 @@ int pthread_mutexattr_setprotocol(pthread_mutexattr_t *__attr, int __protocol);
 int pthread_mutexattr_setpshared(pthread_mutexattr_t *__attr, int __shared);
 int pthread_mutexattr_settype(pthread_mutexattr_t *__attr, int __type);
 int pthread_once(pthread_once_t *__once, void (*__init_routine)(void));
-int pthread_rwlock_clockrdlock(struct pthread_rwlock_t *__rwlock, clockid_t __clock, const struct timespec *__timeout);
-int pthread_rwlock_clockwrlock(struct pthread_rwlock_t *__rwlock, clockid_t __clock, const struct timespec *__timeout);
-int pthread_rwlock_destroy(struct pthread_rwlock_t *__rwlock);
-int pthread_rwlock_init(struct pthread_rwlock_t *__rwlock, const pthread_rwlockattr_t *__attr);
-int pthread_rwlock_rdlock(struct pthread_rwlock_t *__rwlock);
-int pthread_rwlock_timedrdlock(struct pthread_rwlock_t *__rwlock, const struct timespec *__timeout);
-int pthread_rwlock_timedrdlock_monotonic_np(struct pthread_rwlock_t *__rwlock, const struct timespec *__timeout);
-int pthread_rwlock_timedwrlock(struct pthread_rwlock_t *__rwlock, const struct timespec *__timeout);
-int pthread_rwlock_timedwrlock_monotonic_np(struct pthread_rwlock_t *__rwlock, const struct timespec *__timeout);
-int pthread_rwlock_tryrdlock(struct pthread_rwlock_t *__rwlock);
-int pthread_rwlock_trywrlock(struct pthread_rwlock_t *__rwlock);
-int pthread_rwlock_unlock(struct pthread_rwlock_t *__rwlock);
-int pthread_rwlock_wrlock(struct pthread_rwlock_t *__rwlock);
+int pthread_rwlock_clockrdlock(pthread_rwlock_t *__rwlock, clockid_t __clock, const struct timespec *__timeout);
+int pthread_rwlock_clockwrlock(pthread_rwlock_t *__rwlock, clockid_t __clock, const struct timespec *__timeout);
+int pthread_rwlock_destroy(pthread_rwlock_t *__rwlock);
+int pthread_rwlock_init(pthread_rwlock_t *__rwlock, const pthread_rwlockattr_t *__attr);
+int pthread_rwlock_rdlock(pthread_rwlock_t *__rwlock);
+int pthread_rwlock_timedrdlock(pthread_rwlock_t *__rwlock, const struct timespec *__timeout);
+int pthread_rwlock_timedrdlock_monotonic_np(pthread_rwlock_t *__rwlock, const struct timespec *__timeout);
+int pthread_rwlock_timedwrlock(pthread_rwlock_t *__rwlock, const struct timespec *__timeout);
+int pthread_rwlock_timedwrlock_monotonic_np(pthread_rwlock_t *__rwlock, const struct timespec *__timeout);
+int pthread_rwlock_tryrdlock(pthread_rwlock_t *__rwlock);
+int pthread_rwlock_trywrlock(pthread_rwlock_t *__rwlock);
+int pthread_rwlock_unlock(pthread_rwlock_t *__rwlock);
+int pthread_rwlock_wrlock(pthread_rwlock_t *__rwlock);
 int pthread_rwlockattr_destroy(pthread_rwlockattr_t *__attr);
 int pthread_rwlockattr_getkind_np(const pthread_rwlockattr_t *__attr, int *__kind);
 int pthread_rwlockattr_getpshared(const pthread_rwlockattr_t *__attr, int *__shared);
@@ -4916,14 +5012,14 @@ int pthread_setname_np(pthread_t __pthread, const char *__name);
 int pthread_setschedparam(pthread_t __pthread, int __policy, const struct sched_param *__param);
 int pthread_setschedprio(pthread_t __pthread, int __priority);
 int pthread_setspecific(pthread_key_t __key, const void *__value);
-int pthread_sigmask(int __how, const struct sigset_t *__new_set, struct sigset_t *__old_set);
+int pthread_sigmask(int __how, const sigset_t *__new_set, sigset_t *__old_set);
 int pthread_sigmask64(int __how, const sigset64_t *__new_set, sigset64_t *__old_set);
 int pthread_sigqueue(pthread_t __pthread, int __signal, const union sigval __value);
-int pthread_spin_destroy(struct pthread_spinlock_t *__spinlock);
-int pthread_spin_init(struct pthread_spinlock_t *__spinlock, int __shared);
-int pthread_spin_lock(struct pthread_spinlock_t *__spinlock);
-int pthread_spin_trylock(struct pthread_spinlock_t *__spinlock);
-int pthread_spin_unlock(struct pthread_spinlock_t *__spinlock);
+int pthread_spin_destroy(pthread_spinlock_t *__spinlock);
+int pthread_spin_init(pthread_spinlock_t *__spinlock, int __shared);
+int pthread_spin_lock(pthread_spinlock_t *__spinlock);
+int pthread_spin_trylock(pthread_spinlock_t *__spinlock);
+int pthread_spin_unlock(pthread_spinlock_t *__spinlock);
 long ptrace(int __op, ...);
 char *ptsname(int __fd);
 int ptsname_r(int __fd, char *__buf, size_t __n);
@@ -4950,10 +5046,10 @@ int rand_r(unsigned int *__seed_ptr);
 long random(void);
 ssize_t read(int __fd, void *__buf, size_t __count);
 ssize_t readahead(int __fd, off64_t __offset, size_t __length);
-struct dirent *readdir(struct DIR *__dir);
-struct dirent64 *readdir64(struct DIR *__dir);
-int readdir64_r(struct DIR *__dir, struct dirent64 *__entry, struct dirent64 **__buffer);
-int readdir_r(struct DIR *__dir, struct dirent *__entry, struct dirent **__buffer);
+struct dirent *readdir(DIR *__dir);
+struct dirent64 *readdir64(DIR *__dir);
+int readdir64_r(DIR *__dir, struct dirent64 *__entry, struct dirent64 **__buffer);
+int readdir_r(DIR *__dir, struct dirent *__entry, struct dirent **__buffer);
 ssize_t readlink(const char *__path, char *__buf, size_t __buf_size);
 ssize_t readlinkat(int __dir_fd, const char *__path, char *__buf, size_t __buf_size);
 ssize_t readv(int __fd, const struct iovec *__iov, int __count);
@@ -4964,10 +5060,10 @@ ssize_t recv(int __fd, void *__buf, size_t __n, int __flags);
 ssize_t recvfrom(int __fd, void *__buf, size_t __n, int __flags, struct sockaddr *__src_addr, socklen_t *__src_addr_length);
 int recvmmsg(int __fd, struct mmsghdr *__msgs, unsigned int __msg_count, int __flags, const struct timespec *__timeout);
 ssize_t recvmsg(int __fd, struct msghdr *__msg, int __flags);
-int regcomp(struct regex_t *__re, const char *__regex, int __flags);
-size_t regerror(int __error_code, const struct regex_t *__re, char *__buf, size_t __n);
-int regexec(const struct regex_t *__re, const char *__s, size_t __match_count, struct regmatch_t *__matches, int __flags);
-void regfree(struct regex_t *__re);
+int regcomp(regex_t *__re, const char *__regex, int __flags);
+size_t regerror(int __error_code, const regex_t *__re, char *__buf, size_t __n);
+int regexec(const regex_t *__re, const char *__s, size_t __match_count, regmatch_t *__matches, int __flags);
+void regfree(regex_t *__re);
 double remainder(double __x, double __y);
 float remainderf(float __x, float __y);
 long double remainderl(long double __x, long double __y);
@@ -4981,7 +5077,7 @@ int rename(const char *__old_path, const char *__new_path);
 int renameat(int __old_dir_fd, const char *__old_path, int __new_dir_fd, const char *__new_path);
 int renameat2(int __old_dir_fd, const char *__old_path, int __new_dir_fd, const char *__new_path, unsigned int __flags);
 void rewind(FILE *__fp);
-void rewinddir(struct DIR *__dir);
+void rewinddir(DIR *__dir);
 double rint(double __x);
 float rintf(float __x);
 long double rintl(long double __x);
@@ -5005,32 +5101,32 @@ int scandirat64(int __dir_fd, const char *__path, struct dirent64 ***__name_list
 int scanf(const char *__fmt, ...);
 int sched_get_priority_max(int __policy);
 int sched_get_priority_min(int __policy);
-int sched_getaffinity(pid_t __pid, size_t __set_size, struct cpu_set_t *__set);
+int sched_getaffinity(pid_t __pid, size_t __set_size, cpu_set_t *__set);
 int sched_getattr(pid_t __pid, struct sched_attr *__attr, unsigned int __size, unsigned int __flags);
 int sched_getcpu(void);
 int sched_getparam(pid_t __pid, struct sched_param *__param);
 int sched_getscheduler(pid_t __pid);
 int sched_rr_get_interval(pid_t __pid, struct timespec *__quantum);
-int sched_setaffinity(pid_t __pid, size_t __set_size, const struct cpu_set_t *__set);
+int sched_setaffinity(pid_t __pid, size_t __set_size, const cpu_set_t *__set);
 int sched_setattr(pid_t __pid, struct sched_attr *__attr, unsigned int __flags);
 int sched_setparam(pid_t __pid, const struct sched_param *__param);
 int sched_setscheduler(pid_t __pid, int __policy, const struct sched_param *__param);
 int sched_yield(void);
 unsigned short *seed48(unsigned short *__seed16v);
-void seekdir(struct DIR *__dir, long __location);
-int select(int __max_fd_plus_one, struct fd_set *__read_fds, struct fd_set *__write_fds, struct fd_set *__exception_fds, struct timeval *__timeout);
-int sem_clockwait(struct sem_t *__sem, clockid_t __clock, const struct timespec *__ts);
-int sem_close(struct sem_t *__sem);
-int sem_destroy(struct sem_t *__sem);
-int sem_getvalue(struct sem_t *__sem, int *__value);
-int sem_init(struct sem_t *__sem, int __shared, unsigned int __value);
-struct sem_t *sem_open(const char *__name, int _flags, ...);
-int sem_post(struct sem_t *__sem);
-int sem_timedwait(struct sem_t *__sem, const struct timespec *__ts);
-int sem_timedwait_monotonic_np(struct sem_t *__sem, const struct timespec *__ts);
-int sem_trywait(struct sem_t *__sem);
+void seekdir(DIR *__dir, long __location);
+int select(int __max_fd_plus_one, fd_set *__read_fds, fd_set *__write_fds, fd_set *__exception_fds, struct timeval *__timeout);
+int sem_clockwait(sem_t *__sem, clockid_t __clock, const struct timespec *__ts);
+int sem_close(sem_t *__sem);
+int sem_destroy(sem_t *__sem);
+int sem_getvalue(sem_t *__sem, int *__value);
+int sem_init(sem_t *__sem, int __shared, unsigned int __value);
+sem_t *sem_open(const char *__name, int _flags, ...);
+int sem_post(sem_t *__sem);
+int sem_timedwait(sem_t *__sem, const struct timespec *__ts);
+int sem_timedwait_monotonic_np(sem_t *__sem, const struct timespec *__ts);
+int sem_trywait(sem_t *__sem);
 int sem_unlink(const char *__name);
-int sem_wait(struct sem_t *__sem);
+int sem_wait(sem_t *__sem);
 int semctl(int __sem_id, int __sem_num, int __op, ...);
 int semget(key_t key, int __sem_count, int __flags);
 int semop(int __sem_id, struct sembuf *__ops, size_t __op_count);
@@ -5087,43 +5183,43 @@ int shmget(key_t key, size_t __size, int __flags);
 int shutdown(int __fd, int __how);
 int sigaction(int __signal, const struct sigaction *__new_action, struct sigaction *__old_action);
 int sigaction64(int __signal, const struct sigaction64 *__new_action, struct sigaction64 *__old_action);
-int sigaddset(struct sigset_t *__set, int __signal);
+int sigaddset(sigset_t *__set, int __signal);
 int sigaddset64(sigset64_t *__set, int __signal);
 int sigaltstack(const stack_t *__new_signal_stack, stack_t *__old_signal_stack);
-int sigdelset(struct sigset_t *__set, int __signal);
+int sigdelset(sigset_t *__set, int __signal);
 int sigdelset64(sigset64_t *__set, int __signal);
-int sigemptyset(struct sigset_t *__set);
+int sigemptyset(sigset_t *__set);
 int sigemptyset64(sigset64_t *__set);
-int sigfillset(struct sigset_t *__set);
+int sigfillset(sigset_t *__set);
 int sigfillset64(sigset64_t *__set);
 int sighold(int __signal);
 int sigignore(int __signal);
 int siginterrupt(int __signal, int __flag);
-int sigismember(const struct sigset_t *__set, int __signal);
+int sigismember(const sigset_t *__set, int __signal);
 int sigismember64(const sigset64_t *__set, int __signal);
 _Noreturn void siglongjmp(sigjmp_buf __env, int __value);
 sighandler_t signal(int __signal, sighandler_t __handler);
-int signalfd(int __fd, const struct sigset_t *__mask, int __flags);
+int signalfd(int __fd, const sigset_t *__mask, int __flags);
 int signalfd64(int __fd, const sigset64_t *__mask, int __flags);
 double significand(double __x);
 float significandf(float __x);
 long double significandl(long double __x);
 int sigpause(int __signal);
-int sigpending(struct sigset_t *__set);
+int sigpending(sigset_t *__set);
 int sigpending64(sigset64_t *__set);
-int sigprocmask(int __how, const struct sigset_t *__new_set, struct sigset_t *__old_set);
+int sigprocmask(int __how, const sigset_t *__new_set, sigset_t *__old_set);
 int sigprocmask64(int __how, const sigset64_t *__new_set, sigset64_t *__old_set);
 int sigqueue(pid_t __pid, int __signal, const union sigval __value);
 int sigrelse(int __signal);
 sighandler_t sigset(int __signal, sighandler_t __handler);
 int sigsetjmp(sigjmp_buf __env, int __save_signal_mask);
-int sigsuspend(const struct sigset_t *__mask);
+int sigsuspend(const sigset_t *__mask);
 int sigsuspend64(const sigset64_t *__mask);
-int sigtimedwait(const struct sigset_t *__set, siginfo_t *__info, const struct timespec *__timeout);
+int sigtimedwait(const sigset_t *__set, siginfo_t *__info, const struct timespec *__timeout);
 int sigtimedwait64(const sigset64_t *__set, siginfo_t *__info, const struct timespec *__timeout);
-int sigwait(const struct sigset_t *__set, int *__signal);
+int sigwait(const sigset_t *__set, int *__signal);
 int sigwait64(const sigset64_t *__set, int *__signal);
-int sigwaitinfo(const struct sigset_t *__set, siginfo_t *__info);
+int sigwaitinfo(const sigset_t *__set, siginfo_t *__info);
 int sigwaitinfo64(const sigset64_t *__set, siginfo_t *__info);
 double sin(double __x);
 void sincos(double __x, double *__sin, double *__cos);
@@ -5244,7 +5340,7 @@ int tcsetwinsize(int __fd, const struct winsize *__size);
 void *tdelete(const void *__key, void **__root_ptr, int (*__comparator)(const void *, const void *));
 void tdestroy(void *__root, void (*__free_fn)(void *));
 ssize_t tee(int __in_fd, int __out_fd, size_t __length, unsigned int __flags);
-long telldir(struct DIR *__dir);
+long telldir(DIR *__dir);
 char *tempnam(const char *__dir, const char *__prefix);
 void *tfind(const void *__key, void *const *__root_ptr, int (*__comparator)(const void *, const void *));
 double tgamma(double __x);
@@ -5287,7 +5383,7 @@ long double truncl(long double __x);
 void *tsearch(const void *__key, void **__root_ptr, int (*__comparator)(const void *, const void *));
 char *ttyname(int __fd);
 int ttyname_r(int __fd, char *__buf, size_t __buf_size);
-void twalk(const void *__root, void (*__visitor)(const void *, enum VISIT, int));
+void twalk(const void *__root, void (*__visitor)(const void *, VISIT, int));
 timezone_t tzalloc(const char *__id);
 void tzfree(timezone_t __tz);
 void tzset(void);
@@ -5336,7 +5432,7 @@ void warn(const char *__fmt, ...);
 void warnx(const char *__fmt, ...);
 unsigned int *wcpcpy(unsigned int *__dst, const unsigned int *__src);
 unsigned int *wcpncpy(unsigned int *__dst, const unsigned int *__src, size_t __n);
-size_t wcrtomb(char *__buf, unsigned int __wc, struct mbstate_t *__ps);
+size_t wcrtomb(char *__buf, unsigned int __wc, mbstate_t *__ps);
 int wcscasecmp(const unsigned int *__lhs, const unsigned int *__rhs);
 int wcscasecmp_l(const unsigned int *__lhs, const unsigned int *__rhs, locale_t __l);
 unsigned int *wcscat(unsigned int *__dst, const unsigned int *__src);
@@ -5358,11 +5454,11 @@ unsigned int *wcsncat(unsigned int *__dst, const unsigned int *__src, size_t __n
 int wcsncmp(const unsigned int *__lhs, const unsigned int *__rhs, size_t __n);
 unsigned int *wcsncpy(unsigned int *__dst, const unsigned int *__src, size_t __n);
 size_t wcsnlen(const unsigned int *__s, size_t __n);
-size_t wcsnrtombs(char *__dst, const unsigned int **__src, size_t __src_n, size_t __dst_n, struct mbstate_t *__ps);
+size_t wcsnrtombs(char *__dst, const unsigned int **__src, size_t __src_n, size_t __dst_n, mbstate_t *__ps);
 unsigned int *wcspbrk(const unsigned int *__s, const unsigned int *__accept);
 unsigned int *wcsrchr(const unsigned int *__s, unsigned int __wc);
-size_t wcsrtombs(char *__dst, const unsigned int **__src, size_t __dst_n, struct mbstate_t *__ps);
-size_t wcsrtombs_l(char *__dst, const unsigned int **__src, size_t __dst_n, struct mbstate_t *__ps, locale_t __l);
+size_t wcsrtombs(char *__dst, const unsigned int **__src, size_t __dst_n, mbstate_t *__ps);
+size_t wcsrtombs_l(char *__dst, const unsigned int **__src, size_t __dst_n, mbstate_t *__ps, locale_t __l);
 size_t wcsspn(const unsigned int *__s, const unsigned int *__accept);
 unsigned int *wcsstr(const unsigned int *__haystack, const unsigned int *__needle);
 double wcstod(const unsigned int *__s, unsigned int **__end_ptr);

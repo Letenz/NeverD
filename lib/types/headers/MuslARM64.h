@@ -1,5 +1,5 @@
 // The Linux types and prototypes for ARM64 (LP64), as a program declares them
-// with musl's headers and _GNU_SOURCE.  Generated on 2026-10-17 by
+// with musl's headers and _GNU_SOURCE.  Generated on 2026-10-18 by
 // scripts/generate_linux_types.py --target musl-arm64 from the headers of musl
 // 1.2.5: changed from them, as NeverD reads and renders their declarations
 // again.  The headers' notices are in LICENSES/musl-headers.txt.  Do not edit;
@@ -11,18 +11,30 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifndef NEVERD_GNU_STRUCT
+#if defined(__MINGW32__) && (defined(__i386__) || defined(__x86_64__))
+#define NEVERD_GNU_STRUCT __attribute__((gcc_struct))
+#else
+#define NEVERD_GNU_STRUCT
+#endif
+#endif
+
 #if !defined(__cplusplus) && !defined(static_assert)
 #define static_assert _Static_assert
 #endif
 
 static_assert(sizeof(long) == 8, "these types need a 64-bit long");
 
+// The member names a C library's headers may define as macros.
+#pragma push_macro("__unused")
+#undef __unused
+
 struct _IO_FILE;
 union _G_fpos64_t;
 struct _IO_cookie_io_functions_t;
-struct div_t;
-struct ldiv_t;
-struct lldiv_t;
+typedef struct div_t div_t;
+typedef struct ldiv_t ldiv_t;
+typedef struct lldiv_t lldiv_t;
 struct __locale_struct;
 struct iovec;
 struct flock;
@@ -36,9 +48,9 @@ struct itimerspec;
 struct sigevent;
 struct __pthread;
 struct __sigset_t;
-struct pthread_attr_t;
+typedef struct pthread_attr_t pthread_attr_t;
 struct sigaltstack;
-struct fpregset_t;
+typedef struct fpregset_t fpregset_t;
 struct sigcontext;
 struct _aarch64_ctx;
 struct fpsimd_context;
@@ -47,76 +59,76 @@ struct extra_context;
 struct sve_context;
 struct ucontext;
 union sigval;
-struct siginfo_t;
+typedef struct siginfo_t siginfo_t;
 struct sigaction;
 struct __jmp_buf_tag;
-struct fenv_t;
-struct imaxdiv_t;
+typedef struct fenv_t fenv_t;
+typedef struct imaxdiv_t imaxdiv_t;
 struct dirent;
 struct __dirstream;
-struct Dl_info;
-struct pthread_mutexattr_t;
-struct pthread_condattr_t;
-struct pthread_barrierattr_t;
-struct pthread_rwlockattr_t;
-struct pthread_mutex_t;
-struct pthread_cond_t;
-struct pthread_rwlock_t;
-struct pthread_barrier_t;
+typedef struct Dl_info Dl_info;
+typedef struct pthread_mutexattr_t pthread_mutexattr_t;
+typedef struct pthread_condattr_t pthread_condattr_t;
+typedef struct pthread_barrierattr_t pthread_barrierattr_t;
+typedef struct pthread_rwlockattr_t pthread_rwlockattr_t;
+typedef struct pthread_mutex_t pthread_mutex_t;
+typedef struct pthread_cond_t pthread_cond_t;
+typedef struct pthread_rwlock_t pthread_rwlock_t;
+typedef struct pthread_barrier_t pthread_barrier_t;
 struct sched_param;
-struct cpu_set_t;
+typedef struct cpu_set_t cpu_set_t;
 struct __ptcb;
-struct sem_t;
+typedef struct sem_t sem_t;
 struct pollfd;
 struct winsize;
 struct termios;
 struct passwd;
 struct group;
-struct glob_t;
+typedef struct glob_t glob_t;
 struct re_pattern_buffer;
-struct regmatch_t;
+typedef struct regmatch_t regmatch_t;
 struct option;
-struct posix_spawnattr_t;
-struct posix_spawn_file_actions_t;
-struct Elf32_Ehdr;
-struct Elf64_Ehdr;
-struct Elf32_Shdr;
-struct Elf64_Shdr;
-struct Elf32_Chdr;
-struct Elf64_Chdr;
-struct Elf32_Sym;
-struct Elf64_Sym;
-struct Elf32_Syminfo;
-struct Elf64_Syminfo;
-struct Elf32_Rel;
-struct Elf64_Rel;
-struct Elf32_Rela;
-struct Elf64_Rela;
-struct Elf32_Phdr;
-struct Elf64_Phdr;
-struct Elf32_Dyn;
-struct Elf64_Dyn;
-struct Elf32_Verdef;
-struct Elf64_Verdef;
-struct Elf32_Verdaux;
-struct Elf64_Verdaux;
-struct Elf32_Verneed;
-struct Elf64_Verneed;
-struct Elf32_Vernaux;
-struct Elf64_Vernaux;
-struct Elf32_auxv_t;
-struct Elf64_auxv_t;
-struct Elf32_Nhdr;
-struct Elf64_Nhdr;
-struct Elf32_Move;
-struct Elf64_Move;
-union Elf32_gptab;
-struct Elf32_RegInfo;
-struct Elf_Options;
-struct Elf_Options_Hw;
-struct Elf32_Lib;
-struct Elf64_Lib;
-struct Elf_MIPS_ABIFlags_v0;
+typedef struct posix_spawnattr_t posix_spawnattr_t;
+typedef struct posix_spawn_file_actions_t posix_spawn_file_actions_t;
+typedef struct Elf32_Ehdr Elf32_Ehdr;
+typedef struct Elf64_Ehdr Elf64_Ehdr;
+typedef struct Elf32_Shdr Elf32_Shdr;
+typedef struct Elf64_Shdr Elf64_Shdr;
+typedef struct Elf32_Chdr Elf32_Chdr;
+typedef struct Elf64_Chdr Elf64_Chdr;
+typedef struct Elf32_Sym Elf32_Sym;
+typedef struct Elf64_Sym Elf64_Sym;
+typedef struct Elf32_Syminfo Elf32_Syminfo;
+typedef struct Elf64_Syminfo Elf64_Syminfo;
+typedef struct Elf32_Rel Elf32_Rel;
+typedef struct Elf64_Rel Elf64_Rel;
+typedef struct Elf32_Rela Elf32_Rela;
+typedef struct Elf64_Rela Elf64_Rela;
+typedef struct Elf32_Phdr Elf32_Phdr;
+typedef struct Elf64_Phdr Elf64_Phdr;
+typedef struct Elf32_Dyn Elf32_Dyn;
+typedef struct Elf64_Dyn Elf64_Dyn;
+typedef struct Elf32_Verdef Elf32_Verdef;
+typedef struct Elf64_Verdef Elf64_Verdef;
+typedef struct Elf32_Verdaux Elf32_Verdaux;
+typedef struct Elf64_Verdaux Elf64_Verdaux;
+typedef struct Elf32_Verneed Elf32_Verneed;
+typedef struct Elf64_Verneed Elf64_Verneed;
+typedef struct Elf32_Vernaux Elf32_Vernaux;
+typedef struct Elf64_Vernaux Elf64_Vernaux;
+typedef struct Elf32_auxv_t Elf32_auxv_t;
+typedef struct Elf64_auxv_t Elf64_auxv_t;
+typedef struct Elf32_Nhdr Elf32_Nhdr;
+typedef struct Elf64_Nhdr Elf64_Nhdr;
+typedef struct Elf32_Move Elf32_Move;
+typedef struct Elf64_Move Elf64_Move;
+typedef union Elf32_gptab Elf32_gptab;
+typedef struct Elf32_RegInfo Elf32_RegInfo;
+typedef struct Elf_Options Elf_Options;
+typedef struct Elf_Options_Hw Elf_Options_Hw;
+typedef struct Elf32_Lib Elf32_Lib;
+typedef struct Elf64_Lib Elf64_Lib;
+typedef struct Elf_MIPS_ABIFlags_v0 Elf_MIPS_ABIFlags_v0;
 struct dl_phdr_info;
 struct link_map;
 struct r_debug;
@@ -157,7 +169,7 @@ struct utimbuf;
 struct timeval;
 struct utmpx;
 struct lastlog;
-struct fd_set;
+typedef struct fd_set fd_set;
 struct stat;
 struct statx_timestamp;
 struct statx;
@@ -204,15 +216,17 @@ struct ifconf;
 struct aiocb;
 struct mq_attr;
 struct FTW;
-struct wordexp_t;
+typedef struct wordexp_t wordexp_t;
 struct spwd;
 
+#pragma neverd_header("search.h")
 // ACTION: 4 bytes
 enum ACTION
 {
     FIND = 0,
     ENTER = 1,
 };
+typedef enum ACTION ACTION;
 
 // VISIT: 4 bytes
 enum VISIT
@@ -222,7 +236,9 @@ enum VISIT
     endorder = 2,
     leaf = 3,
 };
+typedef enum VISIT VISIT;
 
+#pragma neverd_header("sys/wait.h")
 // idtype_t: 4 bytes
 enum idtype_t
 {
@@ -231,13 +247,16 @@ enum idtype_t
     P_PGID = 2,
     P_PIDFD = 3,
 };
+typedef enum idtype_t idtype_t;
 
+#pragma neverd_header("sys/epoll.h")
 // EPOLL_EVENTS: 4 bytes
 enum EPOLL_EVENTS
 {
     __EPOLL_DUMMY = 0,
 };
 
+#pragma neverd_header("netinet/tcp.h")
 // tcp_fastopen_client_fail: 4 bytes
 enum tcp_fastopen_client_fail
 {
@@ -247,21 +266,26 @@ enum tcp_fastopen_client_fail
     TFO_SYN_RETRANSMITTED = 3,
 };
 
+#pragma neverd_header("stdio.h")
 typedef unsigned long size_t;
 
+#pragma neverd_header()
 typedef long ptrdiff_t;
 
 typedef __int128 __int128_t;
 
 typedef unsigned __int128 __uint128_t;
 
+#pragma neverd_header("stdio.h")
 typedef long ssize_t;
 
 typedef long off_t;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct _IO_FILE;
 
+#pragma neverd_header("stdio.h")
 typedef struct _IO_FILE FILE;
 
 // _G_fpos64_t: 0x10 (16) bytes
@@ -293,6 +317,7 @@ struct _IO_cookie_io_functions_t
 
 typedef struct _IO_cookie_io_functions_t cookie_io_functions_t;
 
+#pragma neverd_header("stdlib.h")
 // div_t: 0x8 (8) bytes
 struct div_t
 {
@@ -314,11 +339,14 @@ struct lldiv_t
     long long rem;
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __locale_struct;
 
+#pragma neverd_header("string.h")
 typedef struct __locale_struct *locale_t;
 
+#pragma neverd_header("unistd.h")
 typedef long intptr_t;
 
 typedef int pid_t;
@@ -329,6 +357,7 @@ typedef unsigned int gid_t;
 
 typedef unsigned int useconds_t;
 
+#pragma neverd_header("fcntl.h")
 typedef unsigned int mode_t;
 
 // iovec: 0x10 (16) bytes
@@ -363,6 +392,7 @@ struct f_owner_ex
     pid_t pid;
 };
 
+#pragma neverd_header("wchar.h")
 typedef unsigned int wint_t;
 
 typedef unsigned long wctype_t;
@@ -376,6 +406,7 @@ struct __mbstate_t
 
 typedef struct __mbstate_t mbstate_t;
 
+#pragma neverd_header("time.h")
 // tm: 0x38 (56) bytes
 struct tm
 {
@@ -392,8 +423,10 @@ struct tm
     const char *tm_zone;
 };
 
+#pragma neverd_header("wctype.h")
 typedef const int *wctrans_t;
 
+#pragma neverd_header("locale.h")
 // lconv: 0x60 (96) bytes
 struct lconv
 {
@@ -423,6 +456,7 @@ struct lconv
     char int_n_sign_posn;
 };
 
+#pragma neverd_header("time.h")
 typedef long time_t;
 
 typedef void *timer_t;
@@ -445,6 +479,7 @@ struct itimerspec
     struct timespec it_value;
 };
 
+#pragma neverd_header("signal.h")
 // sigval: 0x8 (8) bytes
 union sigval
 {
@@ -465,14 +500,16 @@ struct sigevent
         struct
         {
             void (*sigev_notify_function)(union sigval);
-            struct pthread_attr_t *sigev_notify_attributes;
+            pthread_attr_t *sigev_notify_attributes;
         } __sev_thread;
     } __sev_fields;
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __pthread;
 
+#pragma neverd_header("signal.h")
 typedef struct __pthread *pthread_t;
 
 // __sigset_t: 0x80 (128) bytes
@@ -650,7 +687,7 @@ struct sigaction
     union
     {
         void (*sa_handler)(int);
-        void (*sa_sigaction)(int, struct siginfo_t *, void *);
+        void (*sa_sigaction)(int, siginfo_t *, void *);
     } __sa_handler;
     sigset_t sa_mask;
     int sa_flags;
@@ -663,6 +700,7 @@ typedef void (*sighandler_t)(int);
 
 typedef int sig_atomic_t;
 
+#pragma neverd_header("setjmp.h")
 typedef unsigned long __jmp_buf[22];
 
 // __jmp_buf_tag: 0x138 (312) bytes
@@ -677,10 +715,12 @@ typedef struct __jmp_buf_tag jmp_buf[1];
 
 typedef jmp_buf sigjmp_buf;
 
+#pragma neverd_header("math.h")
 typedef float float_t;
 
 typedef double double_t;
 
+#pragma neverd_header("fenv.h")
 typedef unsigned int fexcept_t;
 
 // fenv_t: 0x8 (8) bytes
@@ -690,6 +730,7 @@ struct fenv_t
     unsigned int __fpsr;
 };
 
+#pragma neverd_header("inttypes.h")
 typedef unsigned long uintptr_t;
 
 typedef long intmax_t;
@@ -735,6 +776,7 @@ struct imaxdiv_t
     intmax_t rem;
 };
 
+#pragma neverd_header("dirent.h")
 typedef unsigned long ino_t;
 
 // dirent: 0x118 (280) bytes
@@ -747,11 +789,14 @@ struct dirent
     char d_name[256];
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __dirstream;
 
+#pragma neverd_header("dirent.h")
 typedef struct __dirstream DIR;
 
+#pragma neverd_header("dlfcn.h")
 // Dl_info: 0x20 (32) bytes
 struct Dl_info
 {
@@ -761,6 +806,7 @@ struct Dl_info
     void *dli_saddr;
 };
 
+#pragma neverd_header("pthread.h")
 typedef int pthread_once_t;
 
 typedef unsigned int pthread_key_t;
@@ -862,12 +908,14 @@ struct __ptcb
     struct __ptcb *__next;
 };
 
+#pragma neverd_header("semaphore.h")
 // sem_t: 0x20 (32) bytes
 struct sem_t
 {
     volatile int __val[8];
 };
 
+#pragma neverd_header("poll.h")
 typedef unsigned long nfds_t;
 
 // pollfd: 0x8 (8) bytes
@@ -878,6 +926,7 @@ struct pollfd
     short revents;
 };
 
+#pragma neverd_header("termios.h")
 // winsize: 0x8 (8) bytes
 struct winsize
 {
@@ -906,6 +955,7 @@ struct termios
     speed_t __c_ospeed;
 };
 
+#pragma neverd_header("pwd.h")
 // passwd: 0x30 (48) bytes
 struct passwd
 {
@@ -918,6 +968,7 @@ struct passwd
     char *pw_shell;
 };
 
+#pragma neverd_header("grp.h")
 // group: 0x20 (32) bytes
 struct group
 {
@@ -927,6 +978,7 @@ struct group
     char **gr_mem;
 };
 
+#pragma neverd_header("glob.h")
 // glob_t: 0x48 (72) bytes
 struct glob_t
 {
@@ -937,6 +989,7 @@ struct glob_t
     void *__dummy2[5];
 };
 
+#pragma neverd_header("regex.h")
 typedef long regoff_t;
 
 // re_pattern_buffer: 0x40 (64) bytes
@@ -958,6 +1011,7 @@ struct regmatch_t
     regoff_t rm_eo;
 };
 
+#pragma neverd_header("getopt.h")
 // option: 0x20 (32) bytes
 struct option
 {
@@ -967,6 +1021,7 @@ struct option
     int val;
 };
 
+#pragma neverd_header("spawn.h")
 // posix_spawnattr_t: 0x150 (336) bytes
 struct posix_spawnattr_t
 {
@@ -988,12 +1043,15 @@ struct posix_spawn_file_actions_t
     int __pad[16];
 };
 
+#pragma neverd_header("iconv.h")
 typedef void *iconv_t;
 
+#pragma neverd_header("langinfo.h")
 typedef int nl_item;
 
 typedef void *nl_catd;
 
+#pragma neverd_header("link.h")
 typedef unsigned short Elf32_Half;
 
 typedef unsigned short Elf64_Half;
@@ -1451,7 +1509,7 @@ struct dl_phdr_info
 {
     Elf64_Addr dlpi_addr;
     const char *dlpi_name;
-    const struct Elf64_Phdr *dlpi_phdr;
+    const Elf64_Phdr *dlpi_phdr;
     Elf64_Half dlpi_phnum;
     unsigned long long dlpi_adds;
     unsigned long long dlpi_subs;
@@ -1464,7 +1522,7 @@ struct link_map
 {
     Elf64_Addr l_addr;
     char *l_name;
-    struct Elf64_Dyn *l_ld;
+    Elf64_Dyn *l_ld;
     struct link_map *l_next;
     struct link_map *l_prev;
 };
@@ -1484,6 +1542,7 @@ struct r_debug
     Elf64_Addr r_ldbase;
 };
 
+#pragma neverd_header("netdb.h")
 typedef unsigned int socklen_t;
 
 typedef unsigned short sa_family_t;
@@ -1731,6 +1790,7 @@ struct protoent
     int p_proto;
 };
 
+#pragma neverd_header("ifaddrs.h")
 // ifaddrs: 0x38 (56) bytes
 struct ifaddrs
 {
@@ -1747,6 +1807,7 @@ struct ifaddrs
     void *ifa_data;
 };
 
+#pragma neverd_header("search.h")
 // entry: 0x10 (16) bytes
 struct entry
 {
@@ -1756,9 +1817,11 @@ struct entry
 
 typedef struct entry ENTRY;
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct __tab;
 
+#pragma neverd_header("search.h")
 // hsearch_data: 0x10 (16) bytes
 struct hsearch_data
 {
@@ -1775,6 +1838,7 @@ struct qelem
     char q_data[1];
 };
 
+#pragma neverd_header("utime.h")
 // utimbuf: 0x10 (16) bytes
 struct utimbuf
 {
@@ -1782,6 +1846,7 @@ struct utimbuf
     time_t modtime;
 };
 
+#pragma neverd_header("utmp.h")
 typedef long suseconds_t;
 
 // timeval: 0x10 (16) bytes
@@ -1821,6 +1886,7 @@ struct lastlog
     char ll_host[256];
 };
 
+#pragma neverd_header("sys/types.h")
 typedef int blksize_t;
 
 typedef unsigned int nlink_t;
@@ -1875,6 +1941,7 @@ struct fd_set
     unsigned long fds_bits[16];
 };
 
+#pragma neverd_header("sys/stat.h")
 // stat: 0x80 (128) bytes
 struct stat
 {
@@ -1930,6 +1997,7 @@ struct statx
     unsigned long long __pad1[14];
 };
 
+#pragma neverd_header("sys/statvfs.h")
 // statvfs: 0x70 (112) bytes
 struct statvfs
 {
@@ -1948,6 +2016,7 @@ struct statvfs
     int __reserved[5];
 };
 
+#pragma neverd_header("sys/time.h")
 // itimerval: 0x20 (32) bytes
 struct itimerval
 {
@@ -1962,6 +2031,7 @@ struct timezone
     int tz_dsttime;
 };
 
+#pragma neverd_header("sys/times.h")
 // tms: 0x20 (32) bytes
 struct tms
 {
@@ -1971,6 +2041,7 @@ struct tms
     clock_t tms_cstime;
 };
 
+#pragma neverd_header("sys/wait.h")
 typedef unsigned long long rlim_t;
 
 // rlimit: 0x10 (16) bytes
@@ -2002,6 +2073,7 @@ struct rusage
     long __reserved[16];
 };
 
+#pragma neverd_header("sys/un.h")
 // sockaddr_un: 0x6E (110) bytes
 struct sockaddr_un
 {
@@ -2009,6 +2081,7 @@ struct sockaddr_un
     char sun_path[108];
 };
 
+#pragma neverd_header("sys/epoll.h")
 // epoll_data: 0x8 (8) bytes
 union epoll_data
 {
@@ -2027,8 +2100,10 @@ struct epoll_event
     epoll_data_t data;
 };
 
+#pragma neverd_header("sys/eventfd.h")
 typedef unsigned long long eventfd_t;
 
+#pragma neverd_header("sys/inotify.h")
 // inotify_event: 0x10 (16) bytes
 struct inotify_event
 {
@@ -2039,6 +2114,7 @@ struct inotify_event
     char name[];
 };
 
+#pragma neverd_header("sys/utsname.h")
 // utsname: 0x186 (390) bytes
 struct utsname
 {
@@ -2050,6 +2126,7 @@ struct utsname
     char domainname[65];
 };
 
+#pragma neverd_header("sys/prctl.h")
 // prctl_mm_map: 0x68 (104) bytes
 struct prctl_mm_map
 {
@@ -2069,6 +2146,7 @@ struct prctl_mm_map
     unsigned int exe_fd;
 };
 
+#pragma neverd_header("sys/ptrace.h")
 // __ptrace_peeksiginfo_args: 0x10 (16) bytes
 struct __ptrace_peeksiginfo_args
 {
@@ -2123,6 +2201,7 @@ struct __ptrace_rseq_configuration
     unsigned int pad;
 };
 
+#pragma neverd_header("sys/sysinfo.h")
 // sysinfo: 0x170 (368) bytes
 struct sysinfo
 {
@@ -2142,6 +2221,7 @@ struct sysinfo
     char __reserved[256];
 };
 
+#pragma neverd_header("sys/signalfd.h")
 // signalfd_siginfo: 0x80 (128) bytes
 struct signalfd_siginfo
 {
@@ -2169,6 +2249,7 @@ struct signalfd_siginfo
     unsigned char __pad[28];
 };
 
+#pragma neverd_header("sys/sem.h")
 // ipc_perm: 0x30 (48) bytes
 struct ipc_perm
 {
@@ -2218,6 +2299,7 @@ struct sembuf
     short sem_flg;
 };
 
+#pragma neverd_header("sys/shm.h")
 // shmid_ds: 0x70 (112) bytes
 struct shmid_ds
 {
@@ -2257,6 +2339,7 @@ struct shm_info
 
 typedef unsigned long shmatt_t;
 
+#pragma neverd_header("sys/msg.h")
 typedef unsigned long msgqnum_t;
 
 typedef unsigned long msglen_t;
@@ -2296,6 +2379,7 @@ struct msgbuf
     char mtext[1];
 };
 
+#pragma neverd_header("netinet/tcp.h")
 typedef unsigned int tcp_seq;
 
 // tcphdr: 0x14 (20) bytes
@@ -2303,7 +2387,7 @@ struct tcphdr
 {
     union
     {
-        struct
+        struct NEVERD_GNU_STRUCT
         {
             unsigned short source;
             unsigned short dest;
@@ -2322,7 +2406,7 @@ struct tcphdr
             unsigned short check;
             unsigned short urg_ptr;
         };
-        struct
+        struct NEVERD_GNU_STRUCT
         {
             unsigned short th_sport;
             unsigned short th_dport;
@@ -2339,7 +2423,7 @@ struct tcphdr
 };
 
 // tcp_info: 0xE8 (232) bytes
-struct tcp_info
+struct NEVERD_GNU_STRUCT tcp_info
 {
     unsigned char tcpi_state;
     unsigned char tcpi_ca_state;
@@ -2447,6 +2531,7 @@ struct tcp_zerocopy_receive
     unsigned int reserved;
 };
 
+#pragma neverd_header("net/if.h")
 // if_nameindex: 0x10 (16) bytes
 struct if_nameindex
 {
@@ -2454,9 +2539,11 @@ struct if_nameindex
     char *if_name;
 };
 
+#pragma neverd_header()
 // Declared only: its members are unknown.
 struct iface;
 
+#pragma neverd_header("net/if.h")
 // ifaddr: 0x30 (48) bytes
 struct ifaddr
 {
@@ -2516,6 +2603,7 @@ struct ifconf
     } ifc_ifcu;
 };
 
+#pragma neverd_header("aio.h")
 // aiocb: 0xA8 (168) bytes
 struct aiocb
 {
@@ -2535,6 +2623,7 @@ struct aiocb
     char __dummy4[16];
 };
 
+#pragma neverd_header("mqueue.h")
 typedef int mqd_t;
 
 // mq_attr: 0x40 (64) bytes
@@ -2547,6 +2636,7 @@ struct mq_attr
     long __unused[4];
 };
 
+#pragma neverd_header("ftw.h")
 // FTW: 0x8 (8) bytes
 struct FTW
 {
@@ -2554,6 +2644,7 @@ struct FTW
     int level;
 };
 
+#pragma neverd_header("wordexp.h")
 // wordexp_t: 0x18 (24) bytes
 struct wordexp_t
 {
@@ -2562,6 +2653,7 @@ struct wordexp_t
     size_t we_offs;
 };
 
+#pragma neverd_header("shadow.h")
 // spwd: 0x48 (72) bytes
 struct spwd
 {
@@ -2579,9 +2671,9 @@ struct spwd
 
 _Noreturn void _Exit(int);
 pid_t _Fork(void);
-void __CPU_AND_S(size_t __size, struct cpu_set_t *__dest, const struct cpu_set_t *__src1, const struct cpu_set_t *__src2);
-void __CPU_OR_S(size_t __size, struct cpu_set_t *__dest, const struct cpu_set_t *__src1, const struct cpu_set_t *__src2);
-void __CPU_XOR_S(size_t __size, struct cpu_set_t *__dest, const struct cpu_set_t *__src1, const struct cpu_set_t *__src2);
+void __CPU_AND_S(size_t __size, cpu_set_t *__dest, const cpu_set_t *__src1, const cpu_set_t *__src2);
+void __CPU_OR_S(size_t __size, cpu_set_t *__dest, const cpu_set_t *__src1, const cpu_set_t *__src2);
+void __CPU_XOR_S(size_t __size, cpu_set_t *__dest, const cpu_set_t *__src1, const cpu_set_t *__src2);
 unsigned long long __DOUBLE_BITS(double __f);
 unsigned int __FLOAT_BITS(float __f);
 _Noreturn void __assert_fail(const char *, const char *, int, const char *);
@@ -2612,7 +2704,7 @@ int __islessl(long double __x, long double __y);
 int __isspace(int _c);
 int __libc_current_sigrtmax(void);
 int __libc_current_sigrtmin(void);
-int __sched_cpucount(size_t, const struct cpu_set_t *);
+int __sched_cpucount(size_t, const cpu_set_t *);
 int __signbit(double);
 int __signbitf(float);
 int __signbitl(long double);
@@ -2734,9 +2826,9 @@ int daemon(int, int);
 double difftime(time_t, time_t);
 int dirfd(DIR *);
 char *dirname(char *);
-struct div_t div(int, int);
+div_t div(int, int);
 int dl_iterate_phdr(int (*)(struct dl_phdr_info *, size_t, void *), void *);
-int dladdr(const void *, struct Dl_info *);
+int dladdr(const void *, Dl_info *);
 int dlclose(void *);
 char *dlerror(void);
 int dlinfo(void *, int, void *);
@@ -2822,20 +2914,20 @@ long double fdiml(long double, long double);
 FILE *fdopen(int, const char *);
 DIR *fdopendir(int);
 int feclearexcept(int);
-int fegetenv(struct fenv_t *);
+int fegetenv(fenv_t *);
 int fegetexceptflag(fexcept_t *, int);
 int fegetround(void);
-int feholdexcept(struct fenv_t *);
+int feholdexcept(fenv_t *);
 int feof(FILE *);
 int feof_unlocked(FILE *);
 int feraiseexcept(int);
 int ferror(FILE *);
 int ferror_unlocked(FILE *);
-int fesetenv(const struct fenv_t *);
+int fesetenv(const fenv_t *);
 int fesetexceptflag(const fexcept_t *, int);
 int fesetround(int);
 int fetestexcept(int);
-int feupdateenv(const struct fenv_t *);
+int feupdateenv(const fenv_t *);
 int fexecve(int, char *const *, char *const *);
 int fflush(FILE *);
 int fflush_unlocked(FILE *);
@@ -3031,8 +3123,8 @@ wint_t getwc_unlocked(FILE *);
 wint_t getwchar(void);
 wint_t getwchar_unlocked(void);
 ssize_t getxattr(const char *, const char *, void *, size_t);
-int glob(const char *, int, int (*)(const char *, int), struct glob_t *);
-void globfree(struct glob_t *);
+int glob(const char *, int, int (*)(const char *, int), glob_t *);
+void globfree(glob_t *);
 struct tm *gmtime(const time_t *);
 struct tm *gmtime_r(const time_t *, struct tm *);
 int grantpt(int);
@@ -3041,8 +3133,8 @@ int hcreate_r(size_t, struct hsearch_data *);
 void hdestroy(void);
 void hdestroy_r(struct hsearch_data *);
 void herror(const char *);
-ENTRY *hsearch(ENTRY, enum ACTION);
-int hsearch_r(ENTRY, enum ACTION, ENTRY **, struct hsearch_data *);
+ENTRY *hsearch(ENTRY, ACTION);
+int hsearch_r(ENTRY, ACTION, ENTRY **, struct hsearch_data *);
 const char *hstrerror(int);
 unsigned int htonl(unsigned int);
 unsigned short htons(unsigned short);
@@ -3060,7 +3152,7 @@ int ilogb(double);
 int ilogbf(float);
 int ilogbl(long double);
 intmax_t imaxabs(intmax_t);
-struct imaxdiv_t imaxdiv(intmax_t, intmax_t);
+imaxdiv_t imaxdiv(intmax_t, intmax_t);
 char *index(const char *, int);
 in_addr_t inet_addr(const char *);
 int inet_aton(const char *, struct in_addr *);
@@ -3150,7 +3242,7 @@ void lcong48(unsigned short *);
 double ldexp(double, int);
 float ldexpf(float, int);
 long double ldexpl(long double, int);
-struct ldiv_t ldiv(long, long);
+ldiv_t ldiv(long, long);
 void *lfind(const void *, const void *, size_t *, size_t, int (*)(const void *, const void *));
 double lgamma(double);
 double lgamma_r(double, int *);
@@ -3165,7 +3257,7 @@ int lio_listio(int, struct aiocb *const *, int, struct sigevent *);
 int listen(int, int);
 ssize_t listxattr(const char *, char *, size_t);
 long long llabs(long long);
-struct lldiv_t lldiv(long long, long long);
+lldiv_t lldiv(long long, long long);
 ssize_t llistxattr(const char *, char *, size_t);
 long long llrint(double);
 long long llrintf(float);
@@ -3315,29 +3407,29 @@ int posix_fallocate(int, off_t, off_t);
 int posix_madvise(void *, size_t, int);
 int posix_memalign(void **, size_t, size_t);
 int posix_openpt(int);
-int posix_spawn(pid_t *, const char *, const struct posix_spawn_file_actions_t *, const struct posix_spawnattr_t *, char *const *, char *const *);
-int posix_spawn_file_actions_addchdir_np(struct posix_spawn_file_actions_t *, const char *);
-int posix_spawn_file_actions_addclose(struct posix_spawn_file_actions_t *, int);
-int posix_spawn_file_actions_adddup2(struct posix_spawn_file_actions_t *, int, int);
-int posix_spawn_file_actions_addfchdir_np(struct posix_spawn_file_actions_t *, int);
-int posix_spawn_file_actions_addopen(struct posix_spawn_file_actions_t *, int, const char *, int, mode_t);
-int posix_spawn_file_actions_destroy(struct posix_spawn_file_actions_t *);
-int posix_spawn_file_actions_init(struct posix_spawn_file_actions_t *);
-int posix_spawnattr_destroy(struct posix_spawnattr_t *);
-int posix_spawnattr_getflags(const struct posix_spawnattr_t *, short *);
-int posix_spawnattr_getpgroup(const struct posix_spawnattr_t *, pid_t *);
-int posix_spawnattr_getschedparam(const struct posix_spawnattr_t *, struct sched_param *);
-int posix_spawnattr_getschedpolicy(const struct posix_spawnattr_t *, int *);
-int posix_spawnattr_getsigdefault(const struct posix_spawnattr_t *, sigset_t *);
-int posix_spawnattr_getsigmask(const struct posix_spawnattr_t *, sigset_t *);
-int posix_spawnattr_init(struct posix_spawnattr_t *);
-int posix_spawnattr_setflags(struct posix_spawnattr_t *, short);
-int posix_spawnattr_setpgroup(struct posix_spawnattr_t *, pid_t);
-int posix_spawnattr_setschedparam(struct posix_spawnattr_t *, const struct sched_param *);
-int posix_spawnattr_setschedpolicy(struct posix_spawnattr_t *, int);
-int posix_spawnattr_setsigdefault(struct posix_spawnattr_t *, const sigset_t *);
-int posix_spawnattr_setsigmask(struct posix_spawnattr_t *, const sigset_t *);
-int posix_spawnp(pid_t *, const char *, const struct posix_spawn_file_actions_t *, const struct posix_spawnattr_t *, char *const *, char *const *);
+int posix_spawn(pid_t *, const char *, const posix_spawn_file_actions_t *, const posix_spawnattr_t *, char *const *, char *const *);
+int posix_spawn_file_actions_addchdir_np(posix_spawn_file_actions_t *, const char *);
+int posix_spawn_file_actions_addclose(posix_spawn_file_actions_t *, int);
+int posix_spawn_file_actions_adddup2(posix_spawn_file_actions_t *, int, int);
+int posix_spawn_file_actions_addfchdir_np(posix_spawn_file_actions_t *, int);
+int posix_spawn_file_actions_addopen(posix_spawn_file_actions_t *, int, const char *, int, mode_t);
+int posix_spawn_file_actions_destroy(posix_spawn_file_actions_t *);
+int posix_spawn_file_actions_init(posix_spawn_file_actions_t *);
+int posix_spawnattr_destroy(posix_spawnattr_t *);
+int posix_spawnattr_getflags(const posix_spawnattr_t *, short *);
+int posix_spawnattr_getpgroup(const posix_spawnattr_t *, pid_t *);
+int posix_spawnattr_getschedparam(const posix_spawnattr_t *, struct sched_param *);
+int posix_spawnattr_getschedpolicy(const posix_spawnattr_t *, int *);
+int posix_spawnattr_getsigdefault(const posix_spawnattr_t *, sigset_t *);
+int posix_spawnattr_getsigmask(const posix_spawnattr_t *, sigset_t *);
+int posix_spawnattr_init(posix_spawnattr_t *);
+int posix_spawnattr_setflags(posix_spawnattr_t *, short);
+int posix_spawnattr_setpgroup(posix_spawnattr_t *, pid_t);
+int posix_spawnattr_setschedparam(posix_spawnattr_t *, const struct sched_param *);
+int posix_spawnattr_setschedpolicy(posix_spawnattr_t *, int);
+int posix_spawnattr_setsigdefault(posix_spawnattr_t *, const sigset_t *);
+int posix_spawnattr_setsigmask(posix_spawnattr_t *, const sigset_t *);
+int posix_spawnp(pid_t *, const char *, const posix_spawn_file_actions_t *, const posix_spawnattr_t *, char *const *, char *const *);
 double pow(double, double);
 double pow10(double);
 float pow10f(float);
@@ -3353,55 +3445,55 @@ int printf(const char *, ...);
 int prlimit(pid_t, int, const struct rlimit *, struct rlimit *);
 ssize_t process_vm_readv(pid_t, const struct iovec *, unsigned long, const struct iovec *, unsigned long, unsigned long);
 ssize_t process_vm_writev(pid_t, const struct iovec *, unsigned long, const struct iovec *, unsigned long, unsigned long);
-int pselect(int, struct fd_set *, struct fd_set *, struct fd_set *, const struct timespec *, const sigset_t *);
-void psiginfo(const struct siginfo_t *, const char *);
+int pselect(int, fd_set *, fd_set *, fd_set *, const struct timespec *, const sigset_t *);
+void psiginfo(const siginfo_t *, const char *);
 void psignal(int, const char *);
 int pthread_atfork(void (*)(void), void (*)(void), void (*)(void));
-int pthread_attr_destroy(struct pthread_attr_t *);
-int pthread_attr_getdetachstate(const struct pthread_attr_t *, int *);
-int pthread_attr_getguardsize(const struct pthread_attr_t *, size_t *);
-int pthread_attr_getinheritsched(const struct pthread_attr_t *, int *);
-int pthread_attr_getschedparam(const struct pthread_attr_t *, struct sched_param *);
-int pthread_attr_getschedpolicy(const struct pthread_attr_t *, int *);
-int pthread_attr_getscope(const struct pthread_attr_t *, int *);
-int pthread_attr_getstack(const struct pthread_attr_t *, void **, size_t *);
-int pthread_attr_getstacksize(const struct pthread_attr_t *, size_t *);
-int pthread_attr_init(struct pthread_attr_t *);
-int pthread_attr_setdetachstate(struct pthread_attr_t *, int);
-int pthread_attr_setguardsize(struct pthread_attr_t *, size_t);
-int pthread_attr_setinheritsched(struct pthread_attr_t *, int);
-int pthread_attr_setschedparam(struct pthread_attr_t *, const struct sched_param *);
-int pthread_attr_setschedpolicy(struct pthread_attr_t *, int);
-int pthread_attr_setscope(struct pthread_attr_t *, int);
-int pthread_attr_setstack(struct pthread_attr_t *, void *, size_t);
-int pthread_attr_setstacksize(struct pthread_attr_t *, size_t);
-int pthread_barrier_destroy(struct pthread_barrier_t *);
-int pthread_barrier_init(struct pthread_barrier_t *, const struct pthread_barrierattr_t *, unsigned int);
-int pthread_barrier_wait(struct pthread_barrier_t *);
-int pthread_barrierattr_destroy(struct pthread_barrierattr_t *);
-int pthread_barrierattr_getpshared(const struct pthread_barrierattr_t *, int *);
-int pthread_barrierattr_init(struct pthread_barrierattr_t *);
-int pthread_barrierattr_setpshared(struct pthread_barrierattr_t *, int);
+int pthread_attr_destroy(pthread_attr_t *);
+int pthread_attr_getdetachstate(const pthread_attr_t *, int *);
+int pthread_attr_getguardsize(const pthread_attr_t *, size_t *);
+int pthread_attr_getinheritsched(const pthread_attr_t *, int *);
+int pthread_attr_getschedparam(const pthread_attr_t *, struct sched_param *);
+int pthread_attr_getschedpolicy(const pthread_attr_t *, int *);
+int pthread_attr_getscope(const pthread_attr_t *, int *);
+int pthread_attr_getstack(const pthread_attr_t *, void **, size_t *);
+int pthread_attr_getstacksize(const pthread_attr_t *, size_t *);
+int pthread_attr_init(pthread_attr_t *);
+int pthread_attr_setdetachstate(pthread_attr_t *, int);
+int pthread_attr_setguardsize(pthread_attr_t *, size_t);
+int pthread_attr_setinheritsched(pthread_attr_t *, int);
+int pthread_attr_setschedparam(pthread_attr_t *, const struct sched_param *);
+int pthread_attr_setschedpolicy(pthread_attr_t *, int);
+int pthread_attr_setscope(pthread_attr_t *, int);
+int pthread_attr_setstack(pthread_attr_t *, void *, size_t);
+int pthread_attr_setstacksize(pthread_attr_t *, size_t);
+int pthread_barrier_destroy(pthread_barrier_t *);
+int pthread_barrier_init(pthread_barrier_t *, const pthread_barrierattr_t *, unsigned int);
+int pthread_barrier_wait(pthread_barrier_t *);
+int pthread_barrierattr_destroy(pthread_barrierattr_t *);
+int pthread_barrierattr_getpshared(const pthread_barrierattr_t *, int *);
+int pthread_barrierattr_init(pthread_barrierattr_t *);
+int pthread_barrierattr_setpshared(pthread_barrierattr_t *, int);
 int pthread_cancel(pthread_t);
-int pthread_cond_broadcast(struct pthread_cond_t *);
-int pthread_cond_destroy(struct pthread_cond_t *);
-int pthread_cond_init(struct pthread_cond_t *, const struct pthread_condattr_t *);
-int pthread_cond_signal(struct pthread_cond_t *);
-int pthread_cond_timedwait(struct pthread_cond_t *, struct pthread_mutex_t *, const struct timespec *);
-int pthread_cond_wait(struct pthread_cond_t *, struct pthread_mutex_t *);
-int pthread_condattr_destroy(struct pthread_condattr_t *);
-int pthread_condattr_getclock(const struct pthread_condattr_t *, clockid_t *);
-int pthread_condattr_getpshared(const struct pthread_condattr_t *, int *);
-int pthread_condattr_init(struct pthread_condattr_t *);
-int pthread_condattr_setclock(struct pthread_condattr_t *, clockid_t);
-int pthread_condattr_setpshared(struct pthread_condattr_t *, int);
-int pthread_create(pthread_t *, const struct pthread_attr_t *, void *(*)(void *), void *);
+int pthread_cond_broadcast(pthread_cond_t *);
+int pthread_cond_destroy(pthread_cond_t *);
+int pthread_cond_init(pthread_cond_t *, const pthread_condattr_t *);
+int pthread_cond_signal(pthread_cond_t *);
+int pthread_cond_timedwait(pthread_cond_t *, pthread_mutex_t *, const struct timespec *);
+int pthread_cond_wait(pthread_cond_t *, pthread_mutex_t *);
+int pthread_condattr_destroy(pthread_condattr_t *);
+int pthread_condattr_getclock(const pthread_condattr_t *, clockid_t *);
+int pthread_condattr_getpshared(const pthread_condattr_t *, int *);
+int pthread_condattr_init(pthread_condattr_t *);
+int pthread_condattr_setclock(pthread_condattr_t *, clockid_t);
+int pthread_condattr_setpshared(pthread_condattr_t *, int);
+int pthread_create(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
 int pthread_detach(pthread_t);
 int pthread_equal(pthread_t, pthread_t);
 _Noreturn void pthread_exit(void *);
-int pthread_getaffinity_np(pthread_t, size_t, struct cpu_set_t *);
-int pthread_getattr_default_np(struct pthread_attr_t *);
-int pthread_getattr_np(pthread_t, struct pthread_attr_t *);
+int pthread_getaffinity_np(pthread_t, size_t, cpu_set_t *);
+int pthread_getattr_default_np(pthread_attr_t *);
+int pthread_getattr_np(pthread_t, pthread_attr_t *);
 int pthread_getconcurrency(void);
 int pthread_getcpuclockid(pthread_t, clockid_t *);
 int pthread_getname_np(pthread_t, char *, size_t);
@@ -3411,44 +3503,44 @@ int pthread_join(pthread_t, void **);
 int pthread_key_create(pthread_key_t *, void (*)(void *));
 int pthread_key_delete(pthread_key_t);
 int pthread_kill(pthread_t, int);
-int pthread_mutex_consistent(struct pthread_mutex_t *);
-int pthread_mutex_destroy(struct pthread_mutex_t *);
-int pthread_mutex_getprioceiling(const struct pthread_mutex_t *, int *);
-int pthread_mutex_init(struct pthread_mutex_t *, const struct pthread_mutexattr_t *);
-int pthread_mutex_lock(struct pthread_mutex_t *);
-int pthread_mutex_setprioceiling(struct pthread_mutex_t *, int, int *);
-int pthread_mutex_timedlock(struct pthread_mutex_t *, const struct timespec *);
-int pthread_mutex_trylock(struct pthread_mutex_t *);
-int pthread_mutex_unlock(struct pthread_mutex_t *);
-int pthread_mutexattr_destroy(struct pthread_mutexattr_t *);
-int pthread_mutexattr_getprioceiling(const struct pthread_mutexattr_t *, int *);
-int pthread_mutexattr_getprotocol(const struct pthread_mutexattr_t *, int *);
-int pthread_mutexattr_getpshared(const struct pthread_mutexattr_t *, int *);
-int pthread_mutexattr_getrobust(const struct pthread_mutexattr_t *, int *);
-int pthread_mutexattr_gettype(const struct pthread_mutexattr_t *, int *);
-int pthread_mutexattr_init(struct pthread_mutexattr_t *);
-int pthread_mutexattr_setprioceiling(struct pthread_mutexattr_t *, int);
-int pthread_mutexattr_setprotocol(struct pthread_mutexattr_t *, int);
-int pthread_mutexattr_setpshared(struct pthread_mutexattr_t *, int);
-int pthread_mutexattr_setrobust(struct pthread_mutexattr_t *, int);
-int pthread_mutexattr_settype(struct pthread_mutexattr_t *, int);
+int pthread_mutex_consistent(pthread_mutex_t *);
+int pthread_mutex_destroy(pthread_mutex_t *);
+int pthread_mutex_getprioceiling(const pthread_mutex_t *, int *);
+int pthread_mutex_init(pthread_mutex_t *, const pthread_mutexattr_t *);
+int pthread_mutex_lock(pthread_mutex_t *);
+int pthread_mutex_setprioceiling(pthread_mutex_t *, int, int *);
+int pthread_mutex_timedlock(pthread_mutex_t *, const struct timespec *);
+int pthread_mutex_trylock(pthread_mutex_t *);
+int pthread_mutex_unlock(pthread_mutex_t *);
+int pthread_mutexattr_destroy(pthread_mutexattr_t *);
+int pthread_mutexattr_getprioceiling(const pthread_mutexattr_t *, int *);
+int pthread_mutexattr_getprotocol(const pthread_mutexattr_t *, int *);
+int pthread_mutexattr_getpshared(const pthread_mutexattr_t *, int *);
+int pthread_mutexattr_getrobust(const pthread_mutexattr_t *, int *);
+int pthread_mutexattr_gettype(const pthread_mutexattr_t *, int *);
+int pthread_mutexattr_init(pthread_mutexattr_t *);
+int pthread_mutexattr_setprioceiling(pthread_mutexattr_t *, int);
+int pthread_mutexattr_setprotocol(pthread_mutexattr_t *, int);
+int pthread_mutexattr_setpshared(pthread_mutexattr_t *, int);
+int pthread_mutexattr_setrobust(pthread_mutexattr_t *, int);
+int pthread_mutexattr_settype(pthread_mutexattr_t *, int);
 int pthread_once(pthread_once_t *, void (*)(void));
-int pthread_rwlock_destroy(struct pthread_rwlock_t *);
-int pthread_rwlock_init(struct pthread_rwlock_t *, const struct pthread_rwlockattr_t *);
-int pthread_rwlock_rdlock(struct pthread_rwlock_t *);
-int pthread_rwlock_timedrdlock(struct pthread_rwlock_t *, const struct timespec *);
-int pthread_rwlock_timedwrlock(struct pthread_rwlock_t *, const struct timespec *);
-int pthread_rwlock_tryrdlock(struct pthread_rwlock_t *);
-int pthread_rwlock_trywrlock(struct pthread_rwlock_t *);
-int pthread_rwlock_unlock(struct pthread_rwlock_t *);
-int pthread_rwlock_wrlock(struct pthread_rwlock_t *);
-int pthread_rwlockattr_destroy(struct pthread_rwlockattr_t *);
-int pthread_rwlockattr_getpshared(const struct pthread_rwlockattr_t *, int *);
-int pthread_rwlockattr_init(struct pthread_rwlockattr_t *);
-int pthread_rwlockattr_setpshared(struct pthread_rwlockattr_t *, int);
+int pthread_rwlock_destroy(pthread_rwlock_t *);
+int pthread_rwlock_init(pthread_rwlock_t *, const pthread_rwlockattr_t *);
+int pthread_rwlock_rdlock(pthread_rwlock_t *);
+int pthread_rwlock_timedrdlock(pthread_rwlock_t *, const struct timespec *);
+int pthread_rwlock_timedwrlock(pthread_rwlock_t *, const struct timespec *);
+int pthread_rwlock_tryrdlock(pthread_rwlock_t *);
+int pthread_rwlock_trywrlock(pthread_rwlock_t *);
+int pthread_rwlock_unlock(pthread_rwlock_t *);
+int pthread_rwlock_wrlock(pthread_rwlock_t *);
+int pthread_rwlockattr_destroy(pthread_rwlockattr_t *);
+int pthread_rwlockattr_getpshared(const pthread_rwlockattr_t *, int *);
+int pthread_rwlockattr_init(pthread_rwlockattr_t *);
+int pthread_rwlockattr_setpshared(pthread_rwlockattr_t *, int);
 pthread_t pthread_self(void);
-int pthread_setaffinity_np(pthread_t, size_t, const struct cpu_set_t *);
-int pthread_setattr_default_np(const struct pthread_attr_t *);
+int pthread_setaffinity_np(pthread_t, size_t, const cpu_set_t *);
+int pthread_setattr_default_np(const pthread_attr_t *);
 int pthread_setcancelstate(int, int *);
 int pthread_setcanceltype(int, int *);
 int pthread_setconcurrency(int);
@@ -3510,7 +3602,7 @@ int recvmmsg(int, struct mmsghdr *, unsigned int, unsigned int, struct timespec 
 ssize_t recvmsg(int, struct msghdr *, int);
 int regcomp(regex_t *, const char *, int);
 size_t regerror(int, const regex_t *, char *, size_t);
-int regexec(const regex_t *, const char *, size_t, struct regmatch_t *, int);
+int regexec(const regex_t *, const char *, size_t, regmatch_t *, int);
 void regfree(regex_t *);
 double remainder(double, double);
 float remainderf(float, float);
@@ -3547,29 +3639,29 @@ int scandir(const char *, struct dirent ***, int (*)(const struct dirent *), int
 int scanf(const char *, ...);
 int sched_get_priority_max(int);
 int sched_get_priority_min(int);
-int sched_getaffinity(pid_t, size_t, struct cpu_set_t *);
+int sched_getaffinity(pid_t, size_t, cpu_set_t *);
 int sched_getcpu(void);
 int sched_getparam(pid_t, struct sched_param *);
 int sched_getscheduler(pid_t);
 int sched_rr_get_interval(pid_t, struct timespec *);
-int sched_setaffinity(pid_t, size_t, const struct cpu_set_t *);
+int sched_setaffinity(pid_t, size_t, const cpu_set_t *);
 int sched_setparam(pid_t, const struct sched_param *);
 int sched_setscheduler(pid_t, int, const struct sched_param *);
 int sched_yield(void);
 char *secure_getenv(const char *);
 unsigned short *seed48(unsigned short *);
 void seekdir(DIR *, long);
-int select(int, struct fd_set *, struct fd_set *, struct fd_set *, struct timeval *);
-int sem_close(struct sem_t *);
-int sem_destroy(struct sem_t *);
-int sem_getvalue(struct sem_t *, int *);
-int sem_init(struct sem_t *, int, unsigned int);
-struct sem_t *sem_open(const char *, int, ...);
-int sem_post(struct sem_t *);
-int sem_timedwait(struct sem_t *, const struct timespec *);
-int sem_trywait(struct sem_t *);
+int select(int, fd_set *, fd_set *, fd_set *, struct timeval *);
+int sem_close(sem_t *);
+int sem_destroy(sem_t *);
+int sem_getvalue(sem_t *, int *);
+int sem_init(sem_t *, int, unsigned int);
+sem_t *sem_open(const char *, int, ...);
+int sem_post(sem_t *);
+int sem_timedwait(sem_t *, const struct timespec *);
+int sem_trywait(sem_t *);
 int sem_unlink(const char *);
-int sem_wait(struct sem_t *);
+int sem_wait(sem_t *);
 int semctl(int, int, int, ...);
 int semget(key_t, int, int);
 int semop(int, struct sembuf *, size_t);
@@ -3655,9 +3747,9 @@ int sigrelse(int);
 void (*sigset(int, void (*)(int)))(int);
 int sigsetjmp(sigjmp_buf, int);
 int sigsuspend(const sigset_t *);
-int sigtimedwait(const sigset_t *, struct siginfo_t *, const struct timespec *);
+int sigtimedwait(const sigset_t *, siginfo_t *, const struct timespec *);
 int sigwait(const sigset_t *, int *);
-int sigwaitinfo(const sigset_t *, struct siginfo_t *);
+int sigwaitinfo(const sigset_t *, siginfo_t *);
 double sin(double);
 void sincos(double, double *, double *);
 void sincosf(float, float *, float *);
@@ -3810,7 +3902,7 @@ long double truncl(long double);
 void *tsearch(const void *, void **, int (*)(const void *, const void *));
 char *ttyname(int);
 int ttyname_r(int, char *, size_t);
-void twalk(const void *, void (*)(const void *, enum VISIT, int));
+void twalk(const void *, void (*)(const void *, VISIT, int));
 void tzset(void);
 unsigned int ualarm(unsigned int, unsigned int);
 int ulckpwdf(void);
@@ -3860,7 +3952,7 @@ int vwscanf(const unsigned int *, char *);
 pid_t wait(int *);
 pid_t wait3(int *, int, struct rusage *);
 pid_t wait4(pid_t, int *, int, struct rusage *);
-int waitid(enum idtype_t, id_t, struct siginfo_t *, int);
+int waitid(idtype_t, id_t, siginfo_t *, int);
 pid_t waitpid(pid_t, int *, int);
 void warn(const char *, ...);
 void warnx(const char *, ...);
@@ -3919,8 +4011,8 @@ int wmemcmp(const unsigned int *, const unsigned int *, size_t);
 unsigned int *wmemcpy(unsigned int *, const unsigned int *, size_t);
 unsigned int *wmemmove(unsigned int *, const unsigned int *, size_t);
 unsigned int *wmemset(unsigned int *, unsigned int, size_t);
-int wordexp(const char *, struct wordexp_t *, int);
-void wordfree(struct wordexp_t *);
+int wordexp(const char *, wordexp_t *, int);
+void wordfree(wordexp_t *);
 int wprintf(const unsigned int *, ...);
 ssize_t write(int, const void *, size_t);
 ssize_t writev(int, const struct iovec *, int);
@@ -3931,3 +4023,5 @@ double y1(double);
 float y1f(float);
 double yn(int, double);
 float ynf(int, float);
+
+#pragma pop_macro("__unused")

@@ -368,6 +368,50 @@ model and record ABI are the program's:
 - a header record laid out with a type the program sizes otherwise is left
   out and reported (`conflicts`).
 
+A C or C++ header rendered for a program joined to a library of a system's
+headers (`HeaderLibrarySystems.def`: glibc's, bionic's and musl's) takes
+that C library's types from the system's own headers where the compiler that
+reads it has them, rather than defining them again, and defines them itself
+everywhere else, Windows and macOS among them (`RenderOptions::SystemLibrary`,
+`renderCHeader`). A C library type is one whose name the library has: the
+program's own DWARF definition of `struct stat` is one too.
+- A probe ahead of every include defines `_GNU_SOURCE`, with which the
+  libraries were read, and `NEVERD_LIBC_FROM_SYSTEM` where the compiler
+  targets the library's platform and architecture and its C library is the
+  library's (`__GLIBC__`, `__BIONIC__`, or neither for musl). It fails
+  clearly where glibc's or bionic's headers came first without
+  `_GNU_SOURCE`; `NEVERD_OWN_LIBC_TYPES` asks for the definitions instead.
+- There, the header includes the headers its C library types come from:
+  each type of a library follows `#pragma neverd_header("stdio.h")`, the
+  header of the unit `generate_linux_types.py` reads (`UNIT_HEADERS`) that
+  brought it in, which the C parser keeps on the type (`LocalType::Header`).
+  The library's prototypes are declared only where its headers do not.
+- Elsewhere the definitions stand. The compiler's own headers may declare
+  some of their names otherwise (`PreludeNames.def`): reserved names, C's
+  `<stddef.h>` and `<stdint.h>` names, and those the Windows C runtimes'
+  `<corecrt.h>` declares take other names for the header's definitions
+  (`#define X neverd_X`, kept with `push_macro`), so that the program's
+  layouts hold and the names stay the compiler's after them; member names a
+  C library's `<sys/cdefs.h>` defines as macros (`__unused`) are undefined
+  meanwhile. The C parser reads such a rename as the system's own name.
+- Their size and offset checks stand after both, in C where the system
+  declares them, as glibc's C++ declares some otherwise.
+- A record C names only through a typedef (`typedef struct { ... } X`, or
+  `typedef struct X X`; `LocalType::TypedefNamed`, which the C parser and
+  the DWARF import keep) is declared `typedef struct X X;` and named `X`,
+  as the system's headers name it.
+- The i386 System V ABI aligns long long and double to four in a record:
+  such a record of i386's takes `#pragma pack(push, 4)`, which changes
+  nothing there and keeps the layout on compilers that align them to eight;
+  the parser reads that pack back as none. A record of GNU's bit-fields
+  takes `NEVERD_GNU_STRUCT`, MinGW's `gcc_struct`. Microsoft's compilers
+  lay bit-fields out no other way, so a few records glibc and musl declare
+  with them, `_IO_FILE` and `fenv_t`, take another layout there, which the
+  checks report.
+- A typedef of an array of a record whose members are unknown, as ARM's
+  glibc gives `jmp_buf` where local types do not hold its `__jmp_buf`, is
+  said in a comment, as are the prototypes that take it.
+
 `TypeFit.h` judges which records a pointer points at by what the code
 does through it, as an analyst checks a guess against the code.
 `memberAt` lands an access of some bytes at an offset on the member that
@@ -498,7 +542,14 @@ the code (`recordRelocatedPointerRunsInCode`): its slots become pointer slots
 of data, the operands naming it name data, and its start joins `DataInCode`.
 Function detection keeps a target such a table names inside the function it
 follows as that function's label, which the jump-table resolver reads; a
-target outside it is an entry. Such a table roots no function's code
+target outside it is an entry. A function it takes the address of with a
+relocated immediate (`mov [obj+off], offset cb`, a callback stored into an
+object; `push offset filter`, a handler) is likewise a function
+(`scanCodeAddressImmediatesX86`): the base relocation makes the immediate an
+instruction operand, so the target is no call site and often has no prologue,
+yet it is still an entry the bounded decoder verifies, and symbolizing it
+corrects a function whose real entry carries a `/GS` or `/RTC` check the
+stored address skipped. Such a table roots no function's code
 (`exploreAddressTakenRoots`): the range of a function before the dispatcher
 reaches the dispatcher's cases when the dispatcher's entry is only a guess.
 A relocation run ends at the next table anchor among its own slots; an anchor
@@ -2589,6 +2640,16 @@ encoding, with bounded NOP padding. Its own HighC, LLVM and LLVM C bodies retain
 that instruction sequence in a naked helper, preserving the selected register,
 stack and flags. Caller rewriting continues to require CFG-authenticated
 occurrences; helper names alone prove nothing.
+An i386 ELF PIC switch reads a table of `case@GOTOFF` words through the
+register a get-PC sequence and an `add $_GLOBAL_OFFSET_TABLE_` filled, then adds
+the entry back to that register. A linked image keeps no relocation for either,
+so the relative-table recognizer takes the GOT address the loader recorded
+(`linkedI386GlobalOffsetTable`: DT_PLTGOT, or the `_GLOBAL_OFFSET_TABLE_`
+symbol, which must agree) as the table's separate target anchor. The get-PC
+value and the immediate are scalars, so the target-role and displaced-base
+proofs accept the scalar GOT address besides an address constant, and still
+prove that the register holds it on every path. An object file keeps its
+relocation-authenticated GOT-base model instead.
 
 For 32-bit ARM Mach-O, the loader seeds exact Thumb entries from executable
 `N_ARM_THUMB_DEF` symbols, including object address zero, then follows direct
@@ -3116,6 +3177,20 @@ propagation starts from established results rather than mutually justifying
 forwarders. `MedSSA` publishes an explicit unspecified PHI input when a
 predecessor has no reaching definition, preventing constant propagation from
 borrowing a sibling's first version-zero write.
+
+A caller proposes a pair in three ways:
+- it reads both halves after the call (`modelCallWideIntReturn`);
+- it reads the high register after a direct call to an in-module function
+  before anything redefines it (`(uint32_t)(f() >> 32)`);
+- it passes the high register unchanged to the next call, whose callee takes
+  it as a parameter (ARM's `add64(add64(a, b), c)`).
+
+The high register is caller-saved, so nothing else of the caller's can be
+there, and the callee's body must still confirm the pair: a callee that
+leaves r1 alone, as `__aeabi_read_tp` does, fails. A function that returns
+whatever a pair returner left (`return add64(...)`) is no pair returner
+without such a caller: `return (int)(long long)x;` leaves
+`__aeabi_f2lz`'s high half in r1 the same way.
 
 `TargetRegInfo::floatingParamRegs(format)` owns the default ABI's floating
 argument bank. Entry recovery, outgoing call recovery, module propagation and

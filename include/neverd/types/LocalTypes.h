@@ -269,6 +269,13 @@ struct LocalType {
   /// Function.
   std::shared_ptr<const FunctionDef> Function;
   std::string Comment;
+  /// The system header that declares it, where a library NeverD ships read
+  /// it from a system's headers: "stdio.h" for <stdio.h>.  Empty otherwise.
+  std::string Header;
+  /// Whether C names it by its name alone, as a typedef of the name lets
+  /// it: `typedef struct X X`, or `typedef struct { ... } X`, which names
+  /// the record by nothing else.
+  bool TypedefNamed = false;
 };
 
 /// The named types of a program.
