@@ -508,6 +508,9 @@ TEST(LowIntrinsicEffects, OutputOnlyReadsAndTraps) {
   const NdVar Register = NdVar::reg(TRI.IntParamRegs[1], 8);
   EXPECT_TRUE(
       lowIntrinsicWritesOnlyItsOutput(make(Intrinsic::Mrs, Register, {})));
+  // The register an MRS names, `cntvct_el0`.
+  EXPECT_TRUE(lowIntrinsicWritesOnlyItsOutput(
+      make(Intrinsic::Mrs, Register, {NdVar::cst(0xDF02, 2)})));
   EXPECT_FALSE(lowIntrinsicWritesOnlyItsOutput(
       make(Intrinsic::Mrs, Register, {Register})));
   EXPECT_FALSE(lowIntrinsicWritesOnlyItsOutput(make(Intrinsic::Mrs, {}, {})));

@@ -15,6 +15,7 @@
 
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/MedLLVMInstructionText.h"
+#include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-aarch64-sideeffect"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -148,6 +149,31 @@ bool MedLLVMEmitter::emitAArch64Exception(const MedOp &Op, Intrinsic IC,
 
 bool MedLLVMEmitter::emitAArch64Sideeffect(const MedOp &Op, Intrinsic IC,
                                            llvm::IRBuilder<> &Builder) {
+  // An MSR, or a SYS operation (DC, IC, AT, TLBI), the lift kept the field
+  // of runs as itself, with its register operand; it writes no register.
+  if (Op.Output.Size == 0 && (Op.NumInputs == 2 || Op.NumInputs == 3) &&
+      Op.Inputs[1].isConst()) {
+    const bool HasRegister = Op.NumInputs == 3;
+    const std::string Asm = aarch64SystemInstructionAsm(
+        IC, Op.Inputs[1].ConstVal, /*HasOutput=*/false, HasRegister);
+    if (!Asm.empty()) {
+      llvm::SmallVector<llvm::Value *, 1> Arguments;
+      if (HasRegister)
+        Arguments.push_back(Builder.CreateZExtOrTrunc(
+            getVar(Op.Inputs[2], Builder), Builder.getInt64Ty()));
+      auto *Type = llvm::FunctionType::get(
+          Builder.getVoidTy(),
+          HasRegister ? llvm::ArrayRef<llvm::Type *>(Builder.getInt64Ty())
+                      : llvm::ArrayRef<llvm::Type *>(),
+          false);
+      Builder.CreateCall(
+          llvm::InlineAsm::get(Type, Asm,
+                               HasRegister ? "r,~{memory}" : "~{memory}",
+                               /*hasSideEffects=*/true),
+          Arguments);
+      return true;
+    }
+  }
   if (IC == Intrinsic::A64_SveSt1 || IC == Intrinsic::A64_SveStnt1) {
     if (Op.NumInputs < 6 || !Op.Inputs[4].isConst() || !Op.Inputs[5].isConst())
       return true;

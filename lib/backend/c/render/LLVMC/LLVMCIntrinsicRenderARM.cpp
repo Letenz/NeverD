@@ -13,9 +13,12 @@
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/AtomicOrdering.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace neverd {
@@ -63,6 +66,26 @@ InlineAsmRender renderARMInlineAsm(const std::string &AsmStr,
                   (Option.empty() ? "" : " /* " + AsmStr + " */") + "\n",
               true};
   }
+  // A system register as ACLE names it: `mrs $0, tpidr_el0` reads
+  // __arm_rsr64("tpidr_el0"), and `msr tpidr_el0, $0` writes __arm_wsr64.
+  const auto isRegisterName = [](llvm::StringRef Name) {
+    return !Name.empty() && llvm::all_of(Name, [](char C) {
+      return llvm::isAlnum(C) || C == '_';
+    });
+  };
+  if (llvm::StringRef Register = AsmStr; Register.consume_front("mrs $0, ") &&
+                                         Args.empty() &&
+                                         isRegisterName(Register))
+    return {(ResultLive && !ResultName.empty() ? ResultName + " = "
+                                               : std::string()) +
+                "__arm_rsr64(\"" + Register.str() + "\");\n",
+            true};
+  if (llvm::StringRef Register = AsmStr;
+      Register.consume_front("msr ") && Register.consume_back(", $0") &&
+      Args.size() == 1 && isRegisterName(Register))
+    return {"__arm_wsr64(\"" + Register.str() + "\", " + Args[0] + ");\n",
+            true};
+
   const char *ArmC = lookupArmAsmToC(AsmStr.c_str());
   // A trap or a breakpoint builtin takes no code: the instruction it was
   // lifted from goes beside it (`__builtin_trap(); /* udf #0xFE */`).
@@ -75,19 +98,38 @@ InlineAsmRender renderARMInlineAsm(const std::string &AsmStr,
   if (ArmC)
     return {std::string(ArmC) + ";" + Comment + "\n", true};
 
-  std::string Result = "__asm__ volatile(\"" + AsmStr + "\"";
-  if (!Args.empty()) {
-    Result += " : : ";
-    for (size_t I = 0; I < Args.size(); ++I) {
-      if (I > 0)
-        Result += ", ";
-      Result += "\"r\"(" + Args[I] + ")";
+  // LLVM's `$N` is GNU C's `%N`, and an operand the arguments do not fill is
+  // the output, which comes first (`sysl $0, #3, c15, c0, #1`).
+  std::string Template;
+  size_t Operands = 0;
+  for (size_t I = 0; I < AsmStr.size(); ++I) {
+    if (AsmStr[I] == '$' && I + 1 < AsmStr.size() &&
+        llvm::isDigit(AsmStr[I + 1])) {
+      Operands = std::max<size_t>(Operands, AsmStr[I + 1] - '0' + 1);
+      Template += '%';
+      continue;
     }
+    Template += AsmStr[I];
+  }
+  const bool HasOutput = Operands > Args.size();
+  // An output nothing reads still needs a place to go.
+  const bool ScratchOutput = HasOutput && (!ResultLive || ResultName.empty());
+  std::string Result = ScratchOutput ? "{ uint64_t result; " : "";
+  Result += "__asm__ volatile(\"" + Template + "\"";
+  if (HasOutput || !Args.empty()) {
+    Result += " : ";
+    if (HasOutput)
+      Result += "\"=r\"(" +
+                (ScratchOutput ? std::string("result") : ResultName) + ") ";
+    Result += ":";
+    for (size_t I = 0; I < Args.size(); ++I)
+      Result += (I > 0 ? ", " : " ") + ("\"r\"(" + Args[I] + ")");
     Result += " :";
   } else {
     Result += " :::";
   }
-  Result += " \"memory\");\n";
+  Result += " \"memory\");";
+  Result += ScratchOutput ? " }\n" : "\n";
   return {Result, false};
 }
 
