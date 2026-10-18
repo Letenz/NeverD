@@ -81,6 +81,8 @@ struct FuncInfo {
   /// Original identity is never overwritten by a display annotation or rename.
   std::string LinkageName;
   NameOrigin LinkageOrigin = NameOrigin::Stated;
+
+  bool operator==(const FuncInfo &) const = default;
 };
 
 struct Session {
@@ -319,6 +321,20 @@ struct Session {
   Decoder Dec;
 
   std::vector<FuncInfo> Functions;
+  /// What resetFunctionsFromImage last built Functions from, while nothing
+  /// but a name refresh has changed the list since (functionListCurrent).
+  /// The image's own tables change only on loads, which build the list
+  /// again, or after clearPipeline(), which drops this.
+  struct FunctionListInputs {
+    const Symbol *Symbols;
+    size_t SymbolCount;
+    const Export *Exports;
+    size_t ExportCount;
+    bool Discovered;
+    std::map<va_t, std::string> Renames;
+    std::map<va_t, bool> FunctionEdits;
+  };
+  std::optional<FunctionListInputs> ListInputs;
 
   PatchResult LastPatch;
   std::string LastSourcePatchReport;
@@ -593,6 +609,7 @@ struct Session {
   }
 
   void resetFunctionsFromImage() {
+    ListInputs.reset();
     Functions.clear();
     OriginalNames.clear();
     AccessWidths.reset();
@@ -635,6 +652,26 @@ struct Session {
     appendDiscoveredFunctions();
     appendCreatedFunctions();
     refreshFunctionNames();
+    ListInputs = FunctionListInputs{Img.Symbols.data(),
+                                    Img.Symbols.size(),
+                                    Img.Exports.data(),
+                                    Img.Exports.size(),
+                                    DiscoveredFunctions.has_value(),
+                                    Renames,
+                                    FunctionEdits};
+  }
+
+  /// Whether resetFunctionsFromImage would build the function list as it
+  /// is: only name refreshes have changed it since that built it, and the
+  /// inputs it read are the ones it read then.
+  bool functionListCurrent() const {
+    return Loaded && ListInputs && ListInputs->Symbols == Img.Symbols.data() &&
+           ListInputs->SymbolCount == Img.Symbols.size() &&
+           ListInputs->Exports == Img.Exports.data() &&
+           ListInputs->ExportCount == Img.Exports.size() &&
+           ListInputs->Discovered == DiscoveredFunctions.has_value() &&
+           ListInputs->Renames == Renames &&
+           ListInputs->FunctionEdits == FunctionEdits;
   }
 
   /// Add the functions the user made that the list does not hold yet.
@@ -770,6 +807,7 @@ struct Session {
     AnalysisCache.reset();
     AccessWidths.reset();
     AccessWidthsFunctions.clear();
+    ListInputs.reset();
   }
 
   /// Only navigation may keep immutable image facts. Edits, reloads and
@@ -782,7 +820,13 @@ struct Session {
     auto KeptWidths = std::move(AccessWidths);
     auto KeptExtents = std::move(AccessWidthsFunctions);
     clearPipelineResult();
-    resetFunctionsFromImage();
+    // A list built from inputs that have not changed since is the list a
+    // rebuild makes, and its names are derived again as a rebuild derives
+    // them.  An image lists tens of thousands of functions.
+    if (functionListCurrent())
+      refreshFunctionNames();
+    else
+      resetFunctionsFromImage();
     AccessWidths = std::move(KeptWidths);
     AccessWidthsFunctions = std::move(KeptExtents);
     OnlyFunctionEntries = {Entry};

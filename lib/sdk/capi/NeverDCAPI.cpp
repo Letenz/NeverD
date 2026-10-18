@@ -94,6 +94,8 @@ bool Session::synchronizeFunctions() {
       refreshFunctionNames();
       return true;
     }
+    // The list then holds what the image's own tables do not.
+    ListInputs.reset();
     llvm::DenseMap<va_t, size_t> FunctionIndices;
     FunctionIndices.reserve(Functions.size() + PipeResult.LowFuncs.size());
     for (size_t Index = 0; Index < Functions.size(); ++Index)
@@ -129,6 +131,8 @@ bool Session::synchronizeFunctions() {
     return false;
 
   resetFunctionsFromImage();
+  // The program's functions and sizes replace what the image's tables state.
+  ListInputs.reset();
 
   const sbf::SBFProgram &Program = *PipeResult.SBF;
   const sbf::FunctionBodyIndex FunctionBodies(Program);
