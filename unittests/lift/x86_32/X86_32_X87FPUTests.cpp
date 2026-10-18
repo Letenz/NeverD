@@ -1548,8 +1548,9 @@ TEST(CallRegisterBodyCache, ExceptionEdgesRemainAvailableToSummaryReaders) {
   expectSameRegisterBody(Seed.build(Image, Dec, Image.Entry), *Body);
 }
 
-TEST(CallRegisterBodyCache, IncompleteBodiesAreNotRetained) {
+TEST(CallRegisterBodyCache, IncompleteBodiesServeOnlyCallEffects) {
   using Access = detail::X87CallGraphCacheTestAccess;
+  // A truncated instruction, and a jump out of the image.
   for (const std::vector<uint8_t> Bytes :
        {std::vector<uint8_t>{0x0f},
         std::vector<uint8_t>{0xe9, 0xfb, 0x7f, 0, 0}}) {
@@ -1558,9 +1559,26 @@ TEST(CallRegisterBodyCache, IncompleteBodiesAreNotRetained) {
     CFGBuilder Seed;
     Seed.setX87CallGraphCache(Cache);
     Access::query(Seed, Image, Image.Entry);
-    EXPECT_FALSE(cachedRegisterBody(Cache, Image));
+    EXPECT_EQ(Access::summaryStats(Seed)[0], 1u);
+    // A caller's call effects read the retained body as they read a fresh
+    // build: incomplete, with the same effect.
+    const auto Body = cachedRegisterBody(Cache, Image);
+    ASSERT_TRUE(Body);
+    EXPECT_FALSE(Body->Complete);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Image));
+    CFGBuilder Fresh;
+    const LowFunc Built = Fresh.build(Image, Dec, Image.Entry);
+    ASSERT_FALSE(Built.hasCompleteLiftCoverage());
+    const auto Kept = localRegisterEffect(Image, CallRegisterBodyView(*Body));
+    const auto Cold = localRegisterEffect(Image, CallRegisterBodyView(Built));
+    EXPECT_EQ(Kept.Incomplete, Cold.Incomplete);
+    EXPECT_EQ(Kept.Unknown, Cold.Unknown);
+    EXPECT_EQ(Kept.Writes, Cold.Writes);
+    EXPECT_EQ(Kept.Callees, Cold.Callees);
+    EXPECT_EQ(Kept.Blocks.size(), Cold.Blocks.size());
+    // A selected function's own build is never one of them.
     EXPECT_FALSE(cachedFunction(Cache, Image));
-    EXPECT_EQ(Access::summaryStats(Seed)[0], 0u);
   }
 }
 
