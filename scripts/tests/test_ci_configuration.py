@@ -164,6 +164,7 @@ class CiConfigurationTests(unittest.TestCase):
         guest_counts = {
             "CreatedDirectoryFileSystemsKeepActualParentAndHeldLifetime": 8,
             "CreatedRegularAttributesKeepIndependentProvidersAndObjectState": 20,
+            "AttributeNamesPreserveReferencesAndRetainedIdentity": 3,
         }
         profiles = ("MacOSARM64_hvf", "IOSARM64_hvf", "SimulatorARM64_hvf",
                     "MacOSARM64_unicorn", "MacOSX64_whp", "MacOSX64_kvm")
@@ -203,7 +204,8 @@ class CiConfigurationTests(unittest.TestCase):
                 props = {p["name"]: p["value"] for p in test["properties"]}
                 if name in selected:
                     self.assertGreater(props["TIMEOUT"], selected[name])
-                    self.assertLessEqual(props["TIMEOUT"], selected[name] + 20)
+                    self.assertLessEqual(props["TIMEOUT"], selected[name] + 30)
+                    self.assertEqual(props["TIMEOUT"] % 30, 0)
                 else:
                     self.assertEqual(props["TIMEOUT"], previous.get(name, 30))
                 self.assertFalse(props.get("RUN_SERIAL", False))

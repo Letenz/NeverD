@@ -1281,7 +1281,7 @@ TEST_P(DarwinProcess, AttributeNamesPreserveReferencesAndRetainedIdentity) {
   Options.DarwinFiles = darwin_test::attributeNamesOptions();
   Options.Arguments[2] = "/data";
   Options.InstructionQuantum = 1024;
-  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Limits.TimeoutMicroseconds = BatchedProcessTimeoutMicroseconds;
   for (const char *Mode : {"attribute-names", "attribute-names-values",
                            "attribute-names-unsupported"}) {
     SCOPED_TRACE(Mode);

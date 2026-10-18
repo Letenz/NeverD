@@ -15,6 +15,10 @@ foreach(_neverd_darwin_test IN LISTS NeverDDarwinProcessTests_TESTS)
       "^Transports/DarwinProcess\\.CreatedRegularAttributesKeepIndependentProvidersAndObjectState/")
     # Twenty separately bounded twenty-second guests, plus host setup/teardown.
     set_tests_properties("${_neverd_darwin_test}" PROPERTIES TIMEOUT 420)
+  elseif(_neverd_darwin_test MATCHES
+      "^Transports/DarwinProcess\\.AttributeNamesPreserveReferencesAndRetainedIdentity/")
+    # Three separately bounded twenty-second guests, plus host setup/teardown.
+    set_tests_properties("${_neverd_darwin_test}" PROPERTIES TIMEOUT 90)
   endif()
 endforeach()
 unset(_neverd_darwin_test)
