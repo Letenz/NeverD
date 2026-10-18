@@ -1,5 +1,7 @@
 **Lingue**: [English](../process-emulation.md) | [简体中文](../zh-CN/process-emulation.md) | [繁體中文](../zh-TW/process-emulation.md) | [日本語](../ja/process-emulation.md) | [한국어](../ko/process-emulation.md) | [Français](../fr/process-emulation.md) | [Deutsch](../de/process-emulation.md) | [Español](../es/process-emulation.md) | [Italiano](process-emulation.md) | [Русский](../ru/process-emulation.md) | [العربية](../ar/process-emulation.md)
 
+> Aggiornamento: per poll/epoll e stdio con buffer, vedere il [contratto attuale](../linux-network-contracts.md#poll-and-epoll-waits). Le note di questa pagina che limitano poll a timeout zero e GKI descrivono il sottoinsieme precedente.
+
 [← Indice della documentazione](README.md)
 
 # Emulazione dei processi guest

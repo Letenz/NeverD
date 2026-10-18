@@ -35,6 +35,7 @@ add_neverd_component_library(NeverDEmulationLinuxKernel
   LinuxFileWrite.cpp
   LinuxPIDFD.cpp
   LinuxPoll.cpp
+  LinuxEpoll.cpp
   LinuxSelect.cpp
   LinuxSocketReadiness.cpp
   LinuxSocketReceive.cpp

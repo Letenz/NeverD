@@ -304,24 +304,30 @@ TEST_P(LinuxPIDFDProcess, ZeroTimeoutPollRetainsReadinessAndOrderedCopies) {
     }
   }
 }
-TEST_P(LinuxPIDFDProcess, ZeroTimeoutPollKeepsUnobservedBoundaries) {
+TEST_P(LinuxPIDFDProcess, PollUsesGenericFilesButRetainsUnknownBoundaries) {
   auto R = run('h', "O2");
-  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
-  EXPECT_EQ(R.Diagnostic, PollKernelMissing);
+  EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+  EXPECT_EQ(R.ExitStatus, 0u);
   Options.LinuxKernel.emplace().GKI = AndroidGKIKernel::Android17_6_18;
-  for (auto [Mode, Reason] : {std::pair{'j', PollSignalMaskUnsupported},
-                              std::pair{'k', PollWaitUnsupported},
-                              std::pair{'r', PollDescriptorUnsupported}}) {
+  R = run('j', "O2");
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(R.Diagnostic, PollSignalMaskUnsupported);
+  EXPECT_FALSE(R.Services.back().Result);
+  R = run('k', "O2");
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(R.Diagnostic, "positive poll timeout requires virtual idle time");
+  Options.LinuxTime.emplace().AdvanceOnIdle = true;
+  for (char Mode : {'k', 'r'}) {
     R = run(Mode, "O2");
-    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
-    EXPECT_EQ(R.Diagnostic, Reason);
-    EXPECT_FALSE(R.Services.back().Result);
+    EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 0u);
   }
   Options.LinuxFiles.reset();
   R = run('h', "O2");
   EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
   EXPECT_EQ(R.Diagnostic, PollLimitMissing);
 }
+
 TEST_P(LinuxPIDFDProcess, ProcessCPUClocksKeepMissingObservationBoundaries) {
   auto &Kernel = Options.LinuxKernel.emplace();
   Kernel.GKI = AndroidGKIKernel::Android17_6_18;

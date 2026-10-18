@@ -8482,3 +8482,17 @@ and preserves unknown operands across call/exception boundaries without
 inventing forwarded entry parameters. `NeverDLLVMImportVeneerBoundaryTests`
 checks exact unwind-owned code pointers on ELF/COFF/Mach-O for x64/AArch64,
 adjacent symbol ends, and rejection of unproved/continuation/data addresses.
+
+
+### Buffered streams and poll/epoll
+
+Build `NeverDLinuxProcessTests` and `NeverDAndroidNativeTests` with CPU emulation
+and semantic fixtures enabled. Run `*LinuxPoll*`, `*LinuxPIDFDProcess*`,
+`*AndroidStreamWait*`, `*AndroidPoll*` and `*AndroidReceive*` first. The new tests
+cover x64/AArch64 kernel ABIs, retained inputs and output faults, alias lifetime,
+ONESHOT rearming, timeout copyback, and original libc callers over all six
+O0/O2 ordinary/APS2/RELR fixtures and available checked ARM64 backends. Buffered
+cases assert partial objects, newline/read-ahead, multiple suspensions, EOF,
+per-read timeout, thread-local errno and incomplete imports at unknown input.
+Run affected Linux and Android owner suites before review; unavailable backend
+skips do not count as executed coverage. All fixtures use explicit offline data.

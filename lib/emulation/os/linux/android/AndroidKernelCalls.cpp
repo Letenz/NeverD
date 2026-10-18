@@ -75,4 +75,24 @@ BionicResult Bionic::syscall(const NativeCallEvent &Call) {
   return kernelCall(std::nullopt, Call);
 }
 
+BionicResult Bionic::pollCall(const NativeCallEvent &Call) {
+  using linux_model::ServiceKind;
+  auto Adapted = Call;
+  if (Call.Name == symbol::EpollPwait || Call.Name == symbol::EpollPwait64) {
+    Adapted.Arguments[5] = linux_model::SignalMaskSize;
+    return kernelCall(ServiceKind::EpollPwait, Adapted);
+  }
+  ProcessServiceEvent Event{Call.PC, 0, {}, std::nullopt};
+  std::copy_n(Call.Arguments.begin(), Event.Arguments.size(),
+              Event.Arguments.begin());
+  Event.ReturnAddress = Call.ReturnAddress;
+  Event.Arguments[4] = linux_model::SignalMaskSize;
+  auto R = Kernel.poll(Call.Name == symbol::Poll ? ServiceKind::Poll
+                                                 : ServiceKind::PPoll,
+                       Event, Threads ? Threads->kernel() : nullptr, true);
+  if (!R)
+    return R.takeError();
+  return kernelResult(*R);
+}
+
 } // namespace neverd::emulation::android_model

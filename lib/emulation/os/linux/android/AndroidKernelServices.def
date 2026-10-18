@@ -58,4 +58,8 @@ NEVERD_ANDROID_KERNEL_SERVICE("socket", Socket)
 NEVERD_ANDROID_KERNEL_SERVICE("connect", Connect)
 NEVERD_ANDROID_KERNEL_SERVICE("sendto", SendTo)
 NEVERD_ANDROID_KERNEL_SERVICE("recvfrom", ReceiveFrom)
+NEVERD_ANDROID_KERNEL_SERVICE("epoll_create", EpollCreate)
+NEVERD_ANDROID_KERNEL_SERVICE("epoll_create1", EpollCreate1)
+NEVERD_ANDROID_KERNEL_SERVICE("epoll_ctl", EpollCtl)
+NEVERD_ANDROID_KERNEL_SERVICE("epoll_wait", EpollWait)
 #endif

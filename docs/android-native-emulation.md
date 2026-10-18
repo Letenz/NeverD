@@ -470,7 +470,10 @@ API 28's 1024-byte BUFSIZ. Missing metadata remains unknown, not a fabricated
 failed fstat or default block size. `setvbuf(..., _IONBF, ...)` needs no metadata
 and uses a one-byte buffer. Model-owned allocations count against the guest
 memory limit; buffer allocation failure falls back to one-byte reads and
-retains ENOMEM. Caller-supplied buffers are actual guest memory. Rebuffering
+retains ENOMEM. A non-null caller buffer with a nonzero size also avoids a
+default-size dependency, while known descriptor errors still set errno. Its
+bytes are actual guest memory; filesystem-size seek optimizations are not
+performed by this model. Rebuffering
 discards unread bytes at the underlying FD position without rewinding it.
 
 Refills advance the kernel's shared open-description cursor; `ftell` subtracts
@@ -486,9 +489,23 @@ and retains a failure while continuing with the remaining streams.
 `fdopen` adopts the existing FD without duplicating or resetting it. `dup`
 aliases and raw syscalls see the same kernel cursor. Closing the FD does not
 erase already buffered bytes; a later refill reports EBADF. `fclose` retires the
-stream even when closing its FD fails. Thread calls share FILE state, complete
-as indivisible model events, and retain separate TLS errno. Explicit
-`flockfile` locking and concurrent unlocked operations are not modeled.
+stream even when closing its FD fails. Buffered and direct `fread`, `fgets`,
+`fgetc`/`getc` and unlocked aliases can suspend on a scheduled kernel read.
+The libc continuation retains the original arguments, partial element/line
+progress and refill phase, and completes the original import exactly once.
+`__fread_chk` and `__fgets_chk` apply their compiler-supplied bounds before
+entering the same continuation. Violations stop explicitly without simulating
+the libc abort sequence; fread multiplication overflow keeps its normal error
+path, following [Bionic fortify](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/fortify.cpp).
+Every nested read keeps its own entry-time socket timeout; errno is set in the
+resumed thread. Other guest threads run before idle time advances. A missing
+input leaves the original import incomplete, including any bytes already copied.
+
+An active read reserves that FILE until completion. Concurrent access by another
+thread stops explicitly; FILE lock contention, explicit `flockfile` and racing
+unlocked access are not modeled. Other FILE objects remain usable. Buffered
+writes/flushes retain their existing immediate-transfer contract; this does not
+add blocking output or sockets' missing default fstat metadata.
 
 Transfers above the API 28 callback's signed-int extent, fdopen's close-on-exec
 or append-flag mutation, `ungetc`, wide streams, `freopen`, custom callbacks

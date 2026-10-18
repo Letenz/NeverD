@@ -1,5 +1,7 @@
 **Языки**: [English](../process-emulation.md) | [简体中文](../zh-CN/process-emulation.md) | [繁體中文](../zh-TW/process-emulation.md) | [日本語](../ja/process-emulation.md) | [한국어](../ko/process-emulation.md) | [Français](../fr/process-emulation.md) | [Deutsch](../de/process-emulation.md) | [Español](../es/process-emulation.md) | [Italiano](../it/process-emulation.md) | [Русский](process-emulation.md) | [العربية](../ar/process-emulation.md)
 
+> Обновление: актуальные правила poll/epoll и буферизованного stdio приведены в [общем контракте](../linux-network-contracts.md#poll-and-epoll-waits). Указанные на этой странице ограничения poll нулевым тайм-аутом и GKI относятся к прежнему подмножеству.
+
 [← К оглавлению документации](README.md)
 
 # Эмуляция гостевых процессов

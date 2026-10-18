@@ -9,9 +9,9 @@ Linux kernel variants. Select a branch explicitly in a process request:
 
 The Android native profile's API 28 contract describes Bionic imports and does
 not select a Linux kernel version. GKI selection currently controls only the
-implemented `pidfd_open`, vectored-output, encoded process CPU clock,
-zero-timeout process-descriptor `ppoll` and extended-attribute query error
-contracts.
+implemented `pidfd_open`, vectored-output, encoded process CPU clock and
+extended-attribute query error contracts. Descriptor polling uses the shared
+Linux owner independently of GKI selection.
 It does not certify an
 entire kernel, load a kernel image, or infer device, namespace, credentials or
 process inventory.
@@ -106,20 +106,24 @@ single-buffer policy; it does not infer a kernel release.
 
 Bionic translates raw negative errors to `-1` and thread-local `errno`; a
 successful call preserves `errno`. `fstat` needs file metadata not supplied by
-this subset. Blocking polling, exit notifications, signal delivery through pidfds,
+this subset. Exit notifications, signal delivery through pidfds,
 `pidfd_getfd`, `fcntl`, pidfs ioctls and unobserved task lookup remain unsupported.
 Scheduling and process lifetime are not inferred from a pidfd.
 
-## Implemented zero-timeout poll subset
+## Process-descriptor polling
 
-Selected GKI branches admit raw x64/AArch64 `ppoll` and Bionic's variadic
-`syscall` for an explicit zero timespec and a null temporary signal mask.
-`linux_files.descriptor_limit` supplies the guest RLIMIT_NOFILE bound for this
-subset. The low unsigned 32-bit `nfds` count may not exceed that limit. The
-shared descriptor owner reports no readiness for observed live pidfds, ignores
-negative descriptors and reports `POLLNVAL` (`0x20`) for closed descriptors,
-counting every nonzero entry separately. Readiness of other descriptor types
-remains unobserved and stops explicitly.
+Raw x64/AArch64 `ppoll`, x64 `poll` and Bionic named/variadic wrappers use
+one descriptor owner. Polling does not require GKI selection; creating pidfds
+still follows the selected kernel's contract. `linux_files.descriptor_limit`
+supplies the guest RLIMIT_NOFILE bound. The low unsigned 32-bit `nfds` count
+may not exceed it. Observed live pidfds have no readiness, negative descriptors
+are ignored, and closed descriptors report `POLLNVAL` (`0x20`). Every nonzero
+entry is counted separately, including repeated descriptors.
+
+Regular-file readiness, scheduled TCP/UDP input, finite waits, raw ppoll timeout
+copyback and Bionic timeout preservation are documented with the
+[shared poll/epoll contract](linux-network-contracts.md#poll-and-epoll-waits).
+Missing observations and unsupported descriptor kinds remain explicit stops.
 
 The timeout is copied and validated before the mask and descriptor arguments.
 A nonnull mask has its full-width size and readable extent checked before the
@@ -142,8 +146,9 @@ and the last two releases' pidfs implementation:
 [6.12](https://android.googlesource.com/kernel/common/+/894a317b5382555614ef2be7a79cca79083c6cf2/fs/pidfs.c),
 [6.18](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/fs/pidfs.c).
 Exit and reaping notifications differ across those versions and are outside
-the fixed-live-task subset. Blocking waits, temporary masks, signal delivery
-and named Bionic `ppoll` wrappers require further contracts.
+the fixed-live-task subset. Temporary masks and signal delivery still require
+further contracts. Finite waits can expire using the shared virtual clock;
+this does not invent task exit or reaping events.
 
 ## Architecture-specific open flags and known path errors
 

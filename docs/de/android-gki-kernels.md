@@ -1,5 +1,7 @@
 # Verträge veröffentlichter Android-GKI-Kernel
 
+> Aktualisierung: Für poll/epoll und gepuffertes stdio gilt der [gemeinsame Vertrag](../linux-network-contracts.md#poll-and-epoll-waits). Die Einschränkungen dieser Seite auf Zeitlimit null und GKI beschreiben die frühere poll-Teilmenge.
+
 NeverD priorisiert veröffentlichte Android-GKI-Zweige von 5.10 bis 6.18 vor weiteren Linux-Varianten. Der Prozessauftrag wählt den Zweig ausdrücklich:
 
 ```json

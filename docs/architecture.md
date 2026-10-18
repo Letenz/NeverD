@@ -8018,3 +8018,16 @@ but cannot reset a suspended deadline. Guest memory access is revalidated at
 completion. Raw read/recvfrom and Bionic read/recv/recvfrom all enter this owner
 and finish their original scheduler event once; no import adapter waits or
 advances a separate clock.
+
+
+### Buffered libc and descriptor waits
+
+`LinuxFiles` owns poll/epoll admission, interest sets and non-consuming
+readiness. `LinuxSocketReadiness` is shared with select and receive; every wait
+uses the same `LinuxClock` and scheduler. Epoll registrations borrow description
+identity weakly while a pending epoll operation owns its set. No backend owns
+these semantics. `AndroidKernelCalls` adapts libc timeout-copy and errno rules.
+`NativeWait` gives `GuestThreads` only readiness, deadline and resume operations;
+`Bionic::StreamReadWait` owns FILE progress across nested reads. Kernel byte
+counts never directly complete an enclosing fread/fgets import. The FILE
+reservation explicitly excludes unsupported concurrent operations.

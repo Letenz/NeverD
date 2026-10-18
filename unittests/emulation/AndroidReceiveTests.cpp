@@ -204,23 +204,17 @@ TEST_P(AndroidReceive, BufferedImportsNeverResumeAsTheirNestedRead) {
     Options.Android->Arguments = {Buffer};
     auto R = llvm::cantFail(
         emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options));
-    if (!Arrival) {
-      EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
-      EXPECT_EQ(R.ReturnValue, 1u);
-      EXPECT_EQ(word(R, 0), 1u);
-      EXPECT_EQ(word(R, 1), 0x5au);
-    } else {
-      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
-      EXPECT_EQ(R.Diagnostic,
-                "blocking stdio receive continuation is unmodeled");
-      EXPECT_EQ(word(R, 0), 0u);
-      EXPECT_EQ(word(R, 1), 0u);
-      ASSERT_FALSE(R.NativeCalls.empty());
-      EXPECT_EQ(R.NativeCalls.back().Name, "fread");
-      EXPECT_FALSE(R.NativeCalls.back().Result);
-      for (const auto &T : R.NativeThreads)
-        EXPECT_FALSE(T.Waiting);
-    }
+    EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+    EXPECT_EQ(R.ReturnValue, 1u);
+    EXPECT_EQ(word(R, 0), 1u);
+    EXPECT_EQ(word(R, 1), 0x5au);
+    unsigned Completed = 0;
+    for (const auto &C : R.NativeCalls)
+      if (C.Name == "fread") {
+        ++Completed;
+        EXPECT_EQ(C.Result, 1u);
+      }
+    EXPECT_EQ(Completed, 1u);
   }
 }
 INSTANTIATE_TEST_SUITE_P(
