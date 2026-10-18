@@ -114,6 +114,7 @@ def run(worker, cli=None):
             git(alice, "pull", "-q", "--no-rebase", "origin", "main")
             synced = client.call("project_sync", {})
             assert synced["payload"] == {"changed": True, "tables": True, "local_types": False,
+                                         "type_libraries": False,
                                          "comments_kept": 1, "dirty": True}, synced
             assert client.call("save", {})["status"] == "ok"
         finally:
@@ -138,6 +139,7 @@ def run(worker, cli=None):
             git(alice, "pull", "-q", "origin", "main")
             synced = client.call("project_sync", {})
             assert synced["payload"] == {"changed": True, "tables": True, "local_types": False,
+                                         "type_libraries": False,
                                          "comments_kept": 0, "dirty": False}, synced
         finally:
             client.close()
