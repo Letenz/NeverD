@@ -1158,6 +1158,7 @@ void MainWindow::connectActions() {
   on(ActionId::FileLoadPdb, [this] { loadPdb(); });
   on(ActionId::FileLoadDwarf, [this] { loadDwarf(); });
   on(ActionId::FileLoadMap, [this] { loadMap(); });
+  on(ActionId::FileLoadHeader, [this] { loadHeader(); });
   on(ActionId::FileLoadSignatures, [this] {
     const auto path = QFileDialog::getOpenFileName(
         this, tr("Load signature pack"), {},
@@ -1550,6 +1551,9 @@ void MainWindow::updateActions() {
   actions_.action(ActionId::FileLoadMap)
       ->setEnabled(loadsDebugFile && !selfDescribed &&
                    session_.loadsMapFiles());
+  actions_.action(ActionId::FileLoadHeader)
+      ->setEnabled(loaded && !session_.readOnly() &&
+                   session_.declaresLocalTypes());
   actions_.action(ActionId::EditRename)
       ->setEnabled(location && !session_.readOnly());
   // A function starts where none starts yet; the one the cursor is in can
@@ -2022,6 +2026,38 @@ void MainWindow::loadMap() {
                     confirmMap(facts, epoch);
                   });
                 });
+}
+
+void MainWindow::loadHeader() {
+  if (!session_.loaded() || session_.readOnly() ||
+      !session_.declaresLocalTypes())
+    return;
+  const auto path = QFileDialog::getOpenFileName(
+      this, tr("Parse C header file"),
+      QFileInfo(session_.projectPath()).absolutePath(),
+      tr("C and C++ headers (*.h *.hh *.hpp *.hxx);;All files (*)"));
+  if (path.isEmpty() || !session_.loaded())
+    return;
+  // As much as one declaration of the editor takes.
+  constexpr qint64 MaxHeaderBytes = 4 << 20;
+  QFile file(path);
+  if (file.size() > MaxHeaderBytes) {
+    QMessageBox::warning(
+        this, tr("Parse C header file"),
+        tr("%1 is larger than 4 MiB.").arg(QDir::toNativeSeparators(path)));
+    return;
+  }
+  if (!file.open(QIODevice::ReadOnly)) {
+    QMessageBox::warning(
+        this, tr("Parse C header file"),
+        tr("Cannot read %1: %2")
+            .arg(QDir::toNativeSeparators(path), file.errorString()));
+    return;
+  }
+  const QString source = QString::fromUtf8(file.readAll());
+  openDock(dockNamed(QString::fromLatin1(LocalTypesDock)), true);
+  localTypes_->declareSource(QStringLiteral("c"), source,
+                             tr("Parse %1").arg(QFileInfo(path).fileName()));
 }
 
 void MainWindow::confirmMap(const QJsonObject &facts, quint64 epoch) {

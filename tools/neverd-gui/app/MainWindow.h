@@ -237,6 +237,9 @@ private:
   /// File, Load file, MAP file: names from a linker MAP the user picks,
   /// confirmed first when it describes another build.
   void loadMap();
+  /// Opens the Local Types editor with a header file the user picks, as
+  /// IDA parses a C header into its local types (Ctrl+F9).
+  void loadHeader();
   /// Load the MAP \p facts describe, as map_inspect read it, once the user
   /// confirmed a MAP of another build; nothing when the session changed.
   void confirmMap(const QJsonObject &facts, quint64 epoch);

@@ -880,6 +880,14 @@
         <translation>Charger les noms depuis un fichier MAP de l&apos;éditeur de liens</translation>
     </message>
     <message>
+        <source>C &amp;header file...</source>
+        <translation>Fichier d&apos;&amp;en-tête C...</translation>
+    </message>
+    <message>
+        <source>Declare the types a C or C++ header declares, in the Local Types editor</source>
+        <translation>Déclarer les types qu&apos;un en-tête C ou C++ déclare, dans l&apos;éditeur des types locaux</translation>
+    </message>
+    <message>
         <source>S&amp;tructure offset...</source>
         <translation>Offset de s&amp;tructure...</translation>
     </message>
@@ -2397,6 +2405,26 @@ Utiliser ce PDB pour l&apos;analyse ? Ses symboles, types, signatures de fonctio
     <message>
         <source>MAP files (*.map);;All files (*)</source>
         <translation>Fichiers MAP (*.map);;Tous les fichiers (*)</translation>
+    </message>
+    <message>
+        <source>Parse C header file</source>
+        <translation>Analyser un fichier d&apos;en-tête C</translation>
+    </message>
+    <message>
+        <source>C and C++ headers (*.h *.hh *.hpp *.hxx);;All files (*)</source>
+        <translation>En-têtes C et C++ (*.h *.hh *.hpp *.hxx);;Tous les fichiers (*)</translation>
+    </message>
+    <message>
+        <source>%1 is larger than 4 MiB.</source>
+        <translation>%1 dépasse 4 Mio.</translation>
+    </message>
+    <message>
+        <source>Cannot read %1: %2</source>
+        <translation>Impossible de lire %1 : %2</translation>
+    </message>
+    <message>
+        <source>Parse %1</source>
+        <translation>Analyser %1</translation>
     </message>
     <message>
         <source>Load a MAP file of another build</source>
