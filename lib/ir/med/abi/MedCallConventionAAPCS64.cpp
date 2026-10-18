@@ -21,6 +21,7 @@ namespace neverd {
 extern const CallArgumentConvention AAPCS64CallArguments;
 const CallArgumentConvention AAPCS64CallArguments = {
     .TheArch = Arch::AArch64,
+    .ImportArgumentsFromPrototype = true,
     .PrototypeArgCount = itaniumRuntimeArgCount,
     .ArgumentsFromCallSetup = true,
 };
