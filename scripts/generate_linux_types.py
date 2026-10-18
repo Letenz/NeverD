@@ -21,11 +21,11 @@ NeverD reads back:
    the 128-bit integers 64-bit targets predefine.  va_list stays the
    compiler's, which the reader takes as the address a parameter passes,
    and the C libraries' typedefs of it are dropped: the C a program
-   decompiles to includes <stdarg.h> for it.  wchar_t, which local
-   types hold as Windows' 16-bit character on 32-bit targets, is written as
-   the integer it is here (__WCHAR_TYPE__: int on x86, unsigned int on
-   ARM).  An alignment attribute without its value asks the target's
-   largest alignment, which is written out (__BIGGEST_ALIGNMENT__).
+   decompiles to includes <stdarg.h> for it.  wchar_t, which C++ alone
+   builds in, is written as the integer the target makes it
+   (__WCHAR_TYPE__: int on x86, unsigned int on ARM).  An alignment
+   attribute without its value asks the target's largest alignment, which
+   is written out (__BIGGEST_ALIGNMENT__).
 3. `neverd types --data-model --record-abi --keep-going --all --prototypes`
    reads what remains and renders it, with builtins spelled as C keywords.
    Declarations the reader refuses are reported, and the script fails when
@@ -126,8 +126,9 @@ TARGETS = {
                         HEADERS / "LinuxARM.h"),
     "android-x64": Target("x86_64-linux-android35", "LP64", "itanium", None,
                           "x64 (LP64)", HEADERS / "AndroidX64.h", "asm-x86"),
-    "android-x86": Target("i686-linux-android35", "ILP32", "i386-sysv", None,
-                          "x86 (ILP32)", HEADERS / "AndroidX86.h", "asm-x86"),
+    "android-x86": Target("i686-linux-android35", "ILP32", "android-i386",
+                          None, "x86 (ILP32)", HEADERS / "AndroidX86.h",
+                          "asm-x86"),
     "android-arm64": Target("aarch64-linux-android35", "LP64", "itanium",
                             None, "ARM64 (LP64)", HEADERS / "AndroidARM64.h",
                             "asm-arm64"),

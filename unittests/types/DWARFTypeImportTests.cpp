@@ -135,7 +135,9 @@ TEST_P(DWARFTypeImport, ReadsEnumerations) {
   EXPECT_EQ(Color->Enum->Values[1].Value, 5u);
   EXPECT_EQ(static_cast<int64_t>(Color->Enum->Values[2].Value), -1);
   EXPECT_TRUE(builtinInfo(Color->Enum->Underlying).Signed);
-  EXPECT_EQ(builtinBytes(Color->Enum->Underlying, DataModel::LP64), 4u);
+  EXPECT_EQ(builtinBytes(Color->Enum->Underlying, DataModel::LP64,
+                         RecordABI::Itanium),
+            4u);
 }
 
 TEST_P(DWARFTypeImport, InfersPackingAlignmentAndFlexibleArrays) {

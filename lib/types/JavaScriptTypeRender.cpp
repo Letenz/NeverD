@@ -168,7 +168,7 @@ std::string ScriptWriter::write(const ViewValue &Value, const std::string &At,
 
 void ScriptWriter::enumeration(const ViewEnum &Enum, std::string &Out) const {
   const EnumDef &Def = *Enum.Enum;
-  const unsigned Bytes = builtinBytes(Def.Underlying, Library.dataModel());
+  const unsigned Bytes = Library.builtinBytes(Def.Underlying);
   const bool Signed = builtinInfo(Def.Underlying).Signed;
   const bool Big = Bytes > 4;
   Out += "/** " + commented(Enum.Doc) + ": an enumeration of " +

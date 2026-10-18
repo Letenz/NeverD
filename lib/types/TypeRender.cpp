@@ -535,7 +535,7 @@ BitStorage bitStorage(const TypeLibrary &Library, const TypeExpr &Type) {
   switch (Type.Kind) {
   case TypeExprKind::Builtin: {
     const BuiltinInfo &Info = builtinInfo(Type.TheBuiltin);
-    return {builtinBytes(Type.TheBuiltin, Library.dataModel()),
+    return {Library.builtinBytes(Type.TheBuiltin),
             Info.Signed && Info.Class != BuiltinClass::Bool};
   }
   case TypeExprKind::Enum:
@@ -704,7 +704,7 @@ RecordPlan planRecord(const TypeLibrary &Library, const RecordDef &Record,
           Run.StorageBytes = 0;
           for (const Builtin Unsigned : {Builtin::UChar, Builtin::UShort,
                                          Builtin::UInt, Builtin::ULongLong}) {
-            const uint64_t Bytes = builtinBytes(Unsigned, Library.dataModel());
+            const uint64_t Bytes = Library.builtinBytes(Unsigned);
             if (holds(First / Bytes * Bytes, Bytes)) {
               Run.Storage = makeBuiltin(Unsigned);
               Run.Byte = First / Bytes * Bytes;

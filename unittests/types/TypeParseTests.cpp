@@ -168,6 +168,34 @@ TEST(TypeParse, ThirtyTwoBitRecordsLayOutAsTheirABISays) {
   EXPECT_EQ(ARMWide.Size, 16u);
 }
 
+TEST(TypeParse, WideCharactersAndLongDoublesAreAsLargeAsTheTargetMakesThem) {
+  // A data model says neither: wchar_t is Windows' 16-bit character and four
+  // bytes elsewhere, and long double is a double to Microsoft's compilers,
+  // ARM's, Apple's 64-bit ARM and Android's i386, the x87's 12 bytes on
+  // i386 System V and 16 on the 64-bit System V targets.  Clang lays each
+  // out so for its target.
+  const char *Source =
+      "struct L { char c; long double d; wchar_t w; char e; };";
+  const auto layout = [&](DataModel Model, RecordABI ABI) {
+    const RecordDef Record = recordOf(parsed(Source, {}, Model, ABI), "L");
+    return shapeOf(Record) + " " + std::to_string(Record.Size);
+  };
+  EXPECT_EQ(layout(DataModel::ILP32, RecordABI::Microsoft),
+            "struct{c@0 d@8 w@16 e@18} 24");
+  EXPECT_EQ(layout(DataModel::LLP64, RecordABI::Microsoft),
+            "struct{c@0 d@8 w@16 e@18} 24");
+  EXPECT_EQ(layout(DataModel::ILP32, RecordABI::I386SystemV),
+            "struct{c@0 d@4 w@16 e@20} 24");
+  EXPECT_EQ(layout(DataModel::ILP32, RecordABI::AndroidI386),
+            "struct{c@0 d@4 w@12 e@16} 20");
+  EXPECT_EQ(layout(DataModel::ILP32, RecordABI::AAPCS32),
+            "struct{c@0 d@8 w@16 e@20} 24");
+  EXPECT_EQ(layout(DataModel::LP64, RecordABI::Itanium),
+            "struct{c@0 d@16 w@32 e@36} 48");
+  EXPECT_EQ(layout(DataModel::LP64, RecordABI::AppleARM64),
+            "struct{c@0 d@8 w@16 e@20} 24");
+}
+
 TEST(TypeParse, ReadsAnonymousRecordsAndWindowsNames) {
   const TypeLibrary Library = parsed(R"(
     struct _THREAD_LIKE

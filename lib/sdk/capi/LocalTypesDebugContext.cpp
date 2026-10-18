@@ -92,8 +92,7 @@ public:
 private:
   TypeRef builtin(types::Builtin Builtin) {
     const types::BuiltinInfo &Info = types::builtinInfo(Builtin);
-    const uint16_t Bytes =
-        uint16_t(types::builtinBytes(Builtin, Library.dataModel()));
+    const uint16_t Bytes = uint16_t(Library.builtinBytes(Builtin));
     switch (Builtin) {
     case types::Builtin::Void:
       return NdType::makeVoid();
@@ -164,8 +163,8 @@ private:
     TypeRef Named = NdType::makeNamedRecord(Name.str(), Integer->Size,
                                             /*Enum=*/true);
     Named->IsSigned = Integer->IsSigned;
-    for (const auto &[Value, Enumerator] : displayedEnumerators(
-             Enum, types::builtinBytes(Enum.Underlying, Library.dataModel()))) {
+    for (const auto &[Value, Enumerator] :
+         displayedEnumerators(Enum, Library.builtinBytes(Enum.Underlying))) {
       Named->FieldDisplayNames.push_back(Enumerator);
       Named->FieldDisplayOffsets.push_back(Value);
     }
@@ -407,8 +406,7 @@ bool LocalTypesDebugContext::takeLibraryNames(const TypeRef &Type) const {
     if (!Local || Local->Kind != types::TypeKind::Enum || !Local->Enum)
       return false;
     for (const auto &[Value, Enumerator] : displayedEnumerators(
-             *Local->Enum, types::builtinBytes(Local->Enum->Underlying,
-                                               Types->dataModel()))) {
+             *Local->Enum, Types->builtinBytes(Local->Enum->Underlying))) {
       Names.push_back(Enumerator);
       Offsets.push_back(Value);
     }
