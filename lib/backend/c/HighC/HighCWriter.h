@@ -142,6 +142,13 @@ public:
   /// The records the unit declares a typedef of their own name for, which
   /// it can spell by that name alone.
   std::set<std::string> RecordTypedefs;
+  /// The records it declares none for because a function or an object of
+  /// the unit has the name, which it spells by their tags (`struct stat`):
+  /// whether each is a union.
+  std::map<std::string, bool> TagRecords;
+  /// The keyword the unit spells record \p Name's tag with, where it spells
+  /// the record by its tag (TagRecords); none otherwise.
+  const char *recordTagKeyword(llvm::StringRef Name) const;
   /// Whether the unit can spell \p Type, a pointer to a named record, by
   /// the record's name alone.
   bool spellsRecordPointer(const TypeRef &Type) const;
@@ -603,6 +610,15 @@ public:
   /// record's pointer member, or an object of the image declared as a
   /// pointer.  An integer it is stored to takes it as the address it is.
   TypeRef printedPointerType(const HighExpr &Value) const;
+  /// Whether \p Text, as \p Value printed, is a pointer in C: a local the
+  /// text declares one, a typed record's pointer member or a pointer object,
+  /// as the value or as the definition it is forwarded from.  An integer it
+  /// is stored or assigned to takes it as the address it is.
+  bool printsPointer(const HighExpr &Value, llvm::StringRef Text) const;
+  /// What \p Value prints as where that is a pointer printedPointerType
+  /// knows: the value, the definition it is forwarded from, or the member
+  /// load a temporary carries; null otherwise.
+  const HighExpr *printedPointerSource(const HighExpr &Value) const;
   /// Whether the debug information declares \p E's callee: it types its
   /// return or parameters, or names it where the unit includes no header
   /// that declares it.  A public symbol's name alone yields to the header's
@@ -789,6 +805,10 @@ public:
   /// Parameter display names (`item`, injected `result`) cannot also name a
   /// frame home. The incoming C parameter already owns that identifier.
   bool isReservedParamDisplayName(llvm::StringRef Name) const;
+  /// Whether the unit gives \p Name at file scope to a function or an object
+  /// it declares or calls, or to a type it declares a typedef of: a local of
+  /// the name would hide it from the function's code.
+  bool namesFileScope(llvm::StringRef Name) const;
   bool isAddressTakenSlot(llvm::StringRef Name) const;
   bool hidesAddressTakenParamHome(llvm::StringRef Slot,
                                   const HighExpr &Val) const;
@@ -904,6 +924,8 @@ public:
 
   std::set<std::string> ExternFuncs;
   std::map<std::string, const HighFunc *> DefinedFuncs;
+  /// The identifiers the unit's code calls or takes the address of.
+  std::set<std::string> UnitCallTargets;
   /// True when \p Name is a function this file or the image defines, not a
   /// libc routine of the same name (ntoskrnl implements its own `setjmp`).
   /// A call to the function being written when it is printed as void: its
