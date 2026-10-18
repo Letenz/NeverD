@@ -795,3 +795,91 @@ TEST(I386CallContract, AWindowsImportMayTakeECXAndEDX) {
   EXPECT_EQ(Arguments[0], temporary32(1));
   EXPECT_EQ(Arguments[1], temporary32(2));
 }
+
+// A register argument a block's entry PHI holds reaches a call only where no
+// earlier call in the block changes the register.  Here EDX joins a stored
+// callback's address with what an import call left, the join block calls the
+// import again, and then a routine reading ECX and EDX: EDX holds that call's
+// leftover there, not the join, whose code-address arm the LLVM emitter could
+// not give one identity.
+TEST(I386CallContract, ABlockPhiIsNoArgumentPastAnEarlierCallInItsBlock) {
+  std::vector<uint8_t> Code = {
+      0x55,                         // push ebp
+      0x8B, 0xEC,                   // mov ebp, esp
+      0x53,                         // push ebx
+      0x8B, 0x5D, 0x08,             // mov ebx, [ebp+8]
+      0x85, 0xDB,                   // test ebx, ebx
+      0x74, 0x07,                   // je 0x401012
+      0xBA, 0x60, 0x10, 0x40, 0x00, // mov edx, offset callback
+      0xEB, 0x0B,                   // jmp 0x40101D
+      0xBA, 0x07, 0x00, 0x00, 0x00, // 0x401012: mov edx, 7
+  };
+  for (uint8_t Byte : callThroughSlot(slot(0))) // call dword ptr [rand]
+    Code.push_back(Byte);
+  for (uint8_t Byte : callThroughSlot(slot(0))) // 0x40101D: the join
+    Code.push_back(Byte);
+  for (uint8_t Byte : {0x8B, 0xCB,                   // mov ecx, ebx
+                       0xE8, 0x26, 0x00, 0x00, 0x00, // call reads_two
+                       0x5B, 0x5D, 0xC3})            // pop; pop; ret
+    Code.push_back(Byte);
+  Code.resize(0x50, 0xCC);
+  for (uint8_t Byte : {0x8D, 0x04, 0x11, 0xC3}) // 0x401050: reads_two
+    Code.push_back(Byte);                       // lea eax, [ecx+edx]; ret
+  Code.resize(0x60, 0xCC);
+  for (uint8_t Byte : {0x33, 0xC0, 0xC3}) // 0x401060: callback
+    Code.push_back(Byte);                 // xor eax, eax; ret
+  BinaryImage Img = makeImage(Code, {"rand"});
+  const std::pair<va_t, const char *> Routines[] = {{Text + 0x50, "_reads_two"},
+                                                    {Text + 0x60, "_callback"}};
+  for (const auto &[Address, Name] : Routines) {
+    Symbol Routine = Symbol::makeFunc(Address);
+    Routine.Name = Name;
+    Img.Symbols.push_back(std::move(Routine));
+  }
+  // The base relocation of the mov's imm32 at 0x40100C.
+  Img.CodeAddressRelocOperands.emplace(
+      Text + 0x0C, RelocatedAddressField{.EncodedValue = Text + 0x60,
+                                         .TargetVA = Text + 0x60,
+                                         .Width = 4,
+                                         .TargetOwnerVA = Text + 0x60});
+  const std::set<va_t> Entries = {Text, Text + 0x50, Text + 0x60};
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = Entries;
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  const auto Wrap =
+      std::find_if(Result.MedFuncs.begin(), Result.MedFuncs.end(),
+                   [](const MedFunc &F) { return F.Entry == Text; });
+  ASSERT_NE(Wrap, Result.MedFuncs.end());
+  const MedCallInfo *Call = nullptr;
+  const MedBlock *CallBlock = nullptr;
+  for (const MedBlock &Block : Wrap->Blocks)
+    for (size_t I = 0; I < Block.Ops.size(); ++I) {
+      const MedOp &Op = Block.Ops[I];
+      if (Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
+          Op.Inputs[0].isConst() && Op.Inputs[0].ConstVal == Text + 0x50) {
+        Call = Wrap->findCall(Block.Id, static_cast<int>(I));
+        CallBlock = &Block;
+      }
+    }
+  ASSERT_NE(Call, nullptr);
+  ASSERT_GE(Call->Args.size(), 2u);
+  for (const PhiNode &Phi : CallBlock->Phis)
+    EXPECT_FALSE(Call->Args[1].Kind == Phi.Output.Kind &&
+                 Call->Args[1].Id == Phi.Output.Id &&
+                 Call->Args[1].SSAVer == Phi.Output.SSAVer)
+        << "EDX holds what the call before it left, not the block's join";
+
+  llvm::LLVMContext LiftCtx;
+  PipelineOptions Lift;
+  Lift.EmitDumpOutput = false;
+  Lift.LiftMode = true;
+  Lift.OnlyFunctionEntries = Entries;
+  const PipelineResult Lifted = Pipeline().run(Img, LiftCtx, Lift);
+  ASSERT_TRUE(Lifted.Success) << Lifted.Error;
+  ASSERT_NE(Lifted.LlvmModule, nullptr);
+  EXPECT_FALSE(llvm::verifyModule(*Lifted.LlvmModule, &llvm::errs()));
+}

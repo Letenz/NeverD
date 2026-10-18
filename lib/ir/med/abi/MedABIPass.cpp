@@ -1212,7 +1212,10 @@ void recoverCallAbi(
       // value never re-moved before the call, e.g. `for(...) acc = f(acc, i)`
       // keeps `acc` in arg0 across iterations — leaves no in-block write for
       // the backward scan above to see.  Recover it from the block's PHI for
-      // that argument register (its reaching value at the call point).
+      // that argument register, where the PHI still holds the register at the
+      // call: the backward scan stops at the nearest earlier call, which
+      // changes a caller-saved argument register, and then the register holds
+      // that call's leftover, which the cross-block search below finds.
       //
       // Indirect call: the arity is unknown, so fill consecutive slots from
       // arg0 until a slot has no reaching PHI.  Direct call: arguments are
@@ -1233,8 +1236,8 @@ void recoverCallAbi(
       // argument.  Do not treat that like unused function-entry r9.
       if (!CI.IsIndirect && MaxRegArg >= 0 && !HasStackArg) {
         while (RegPhiLimit + 1 < NumIntParamRegs && RegPhiLimit + 1 < MaxArgs &&
-               selectAuthoritativeArgPhi(Func, Blk, TRI, RegPhiLimit + 1,
-                                         IntegerLayout))
+               argPhiReachingCall(Func, Blk, static_cast<int>(OI), TRI,
+                                  RegPhiLimit + 1, IntegerLayout, Fmt))
           ++RegPhiLimit;
       }
       for (int K = 0; IntRegArgsApply && K < MaxArgs; ++K) {
@@ -1242,8 +1245,8 @@ void recoverCallAbi(
           continue;
         if (!CI.IsIndirect && K > RegPhiLimit)
           break; // direct call: never invent a trailing argument
-        const PhiNode *Best =
-            selectAuthoritativeArgPhi(Func, Blk, TRI, K, IntegerLayout);
+        const PhiNode *Best = argPhiReachingCall(
+            Func, Blk, static_cast<int>(OI), TRI, K, IntegerLayout, Fmt);
         if (!Best) {
           if (CI.IsIndirect)
             break;  // indirect arguments are consecutive from arg0
