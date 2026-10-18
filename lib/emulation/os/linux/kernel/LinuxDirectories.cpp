@@ -49,15 +49,21 @@ std::optional<std::string> LinuxFiles::descriptorPath(uint32_t FD) const {
 }
 
 llvm::Expected<uint64_t> LinuxFiles::inode(const std::string &Path) {
+  if (auto *M = directoryMetadata(Path))
+    return M->Inode;
   if (auto M = Options->Metadata.find(Path); M != Options->Metadata.end())
     return M->second.Inode;
   if (auto I = Inodes.find(Path); I != Inodes.end())
     return I->second;
   if (Inodes.size() >= FileDescriptorLimit * 2 + FileCountLimit)
     return failure("directory inode identity budget exhausted");
-  if (UsedInodes.empty())
+  if (UsedInodes.empty()) {
     for (const auto &[P, M] : Options->Metadata)
       UsedInodes.insert(M.Inode);
+    if (Options->DirectoryCreation)
+      for (const auto &[P, M] : Options->DirectoryCreation->Parents)
+        UsedInodes.insert(M.Inode);
+  }
   while (UsedInodes.contains(NextInode))
     ++NextInode;
   const auto Number = NextInode++;
@@ -125,8 +131,16 @@ LinuxFiles::directoryEntries(uint32_t FD, uint64_t Address, uint32_t Size,
       Add(procProcessPath());
     else if (Options->DynamicProcFDs)
       Add("/proc/self/fd");
+    std::vector<std::string> Ordered(Names.begin(), Names.end());
+    // Append new children without renumbering cookies already returned by an
+    // open description. dup shares that cursor; rewind sees the same inodes.
+    for (const auto &Created : CreatedDirectories) {
+      llvm::StringRef Child(Created);
+      if (Child.consume_front(Prefix) && !Child.empty() && !Child.contains('/'))
+        Ordered.push_back(Child.str());
+    }
     uint64_t Cookie = 2;
-    for (const auto &Name : Names) {
+    for (const auto &Name : Ordered) {
       auto Path = Prefix + Name;
       const auto Kind = lookupPath(Path);
       uint8_t Type = Kind == PathKind::Directory ? 4

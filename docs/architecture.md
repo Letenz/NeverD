@@ -4986,6 +4986,12 @@ time solely from LinuxClock. Directory and stdio buffers belong to Bionic,
 which delegates refill, write, seek and close to this same kernel owner. Neither
 the JSON adapter nor a private workload supplies a second descriptor table.
 
+`LinuxFiles` also owns the opt-in directory creation provider, mutable directory
+metadata and append-stable directory cookies. LinuxClock supplies timestamps;
+JSON carries only initial snapshots, umask and bounds. Bionic `strstr` stays in
+the common string owner with bounded linear search and provider lifetime checks.
+See [directory creation contracts](android-directory-creation.md).
+
 `LinuxFiles` also owns explicit device open descriptions in the file/link
 namespace. `LinuxDeviceFiles` validates and applies per-open ioctl transactions:
 all guest pointer resolution and byte expectations precede output writes and

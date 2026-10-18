@@ -158,6 +158,53 @@ llvm::Error validateFileOptions(const LinuxFileOptions &Options) {
         !isNormalizedTimespec(Metadata.ChangeTime))
       return failure(FileMetadataOption);
   }
+  if (Options.DirectoryCreation) {
+    const auto &C = *Options.DirectoryCreation;
+    if (C.Parents.empty() || C.Parents.size() > FileCountLimit || !C.Limit ||
+        C.Limit > FileCountLimit || (C.Umask & ~0777u) ||
+        C.Limit + Paths.size() > FileCountLimit ||
+        uint64_t(C.Limit) * FilePathLimit > FileByteLimit - Total)
+      return failure("invalid directory creation bounds or umask");
+    std::set<uint64_t> Inodes;
+    for (const auto &[Path, M] : Options.Metadata)
+      Inodes.insert(M.Inode);
+    for (const auto &[Path, M] : C.Parents) {
+      if (!isDeclaredDirectory(Options, Path) ||
+          ((Path == "/proc" || llvm::StringRef(Path).starts_with("/proc/")) &&
+           (Options.DynamicProc || Options.DynamicProcFDs)))
+        return failure("directory creation requires declared non-proc parents");
+      if ((M.Mode & ~07777u) != 0040000 || (M.Mode & 04000) || !M.Inode ||
+          !Inodes.insert(M.Inode).second || M.BlockSize != 4096 || M.Blocks ||
+          !isNormalizedTimespec(M.AccessTime) ||
+          !isNormalizedTimespec(M.ModificationTime) ||
+          !isNormalizedTimespec(M.ChangeTime))
+        return failure("invalid tmpfs directory metadata");
+      const std::string Prefix = Path == "/" ? "/" : Path + '/';
+      std::set<std::string> Entries, Directories;
+      auto Add = [&](llvm::StringRef P, bool Directory) {
+        if (!P.consume_front(Prefix) || P.empty())
+          return;
+        auto [Name, Tail] = P.split('/');
+        Entries.insert(Name.str());
+        if (Directory || !Tail.empty())
+          Directories.insert(Name.str());
+      };
+      for (const auto &[P, B] : Options.Files)
+        Add(P, false);
+      for (const auto &[P, B] : Options.SymbolicLinks)
+        Add(P, false);
+      for (const auto &[P, D] : Options.Devices)
+        Add(P, false);
+      for (const auto &P : Options.Directories)
+        Add(P, true);
+      if (Options.DynamicProc || Options.DynamicProcFDs)
+        Add("/proc", true);
+      if (M.Size != (Entries.size() + 2) * 20 ||
+          M.LinkCount != Directories.size() + 2)
+        return failure(
+            "directory metadata disagrees with the closed namespace");
+    }
+  }
   for (const auto &Path : Options.TrackWriteMetadata) {
     auto I = Options.Metadata.find(Path);
     if (!Options.WriteLimits.contains(Path) || I == Options.Metadata.end())

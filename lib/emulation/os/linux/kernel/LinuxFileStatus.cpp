@@ -16,6 +16,12 @@ LinuxFiles::statusDescriptor(uint32_t FD, uint64_t Address,
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
+  if (const auto *D = std::get_if<OpenDirectory>(I->second.get())) {
+    const auto *M = directoryMetadata(D->Path);
+    return M ? status(*M, Address, Result)
+             : llvm::Expected<std::optional<uint64_t>>(
+                   unsupported(Result, FileStatusDirectory));
+  }
   const auto *File = std::get_if<OpenFile>(I->second.get());
   if (!File || !File->Metadata)
     return unsupported(Result, FileStatusMissing);
@@ -67,6 +73,8 @@ LinuxFiles::statusAt(uint32_t Directory, uint64_t PathAddress, uint64_t Address,
   case PathKind::NotDirectory:
     return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
   case PathKind::Directory:
+    if (auto *M = directoryMetadata(Path->Name))
+      return status(*M, Address, Result);
     return unsupported(Result, FileStatusDirectory);
   case PathKind::Device:
     return unsupported(Result, FileStatusMissing);

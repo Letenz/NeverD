@@ -96,3 +96,22 @@ u64 decimal_dynamic(const char *input, u64 closed) {
     return 95;
   return (u64)(long)convert(input);
 }
+
+extern char *strstr(const char *, const char *);
+u64 substring_supplied(const char *text, const char *needle, unsigned *error) {
+  *__errno() = 733;
+  char *result = strstr(text, needle);
+  *error = *__errno();
+  return (u64)result;
+}
+u64 substring_dynamic(const char *text, const char *needle, u64 closed) {
+  void *library = dlopen("libsearch.so", 2);
+  if (!library)
+    return 97;
+  char *(*find)(const char *, const char *) = dlsym(library, "strstr");
+  if (!find)
+    return 96;
+  if (closed && dlclose(library))
+    return 95;
+  return (u64)find(text, needle);
+}
