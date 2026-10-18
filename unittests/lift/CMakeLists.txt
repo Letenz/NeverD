@@ -2580,6 +2580,8 @@ set(X86_32_TEST_SOURCES
   x86_32/test_jumptable_foreign_store_i386.c
   x86_32/test_jumptable_dynamic_stack_i386.s
   x86_32/test_register_pair_returns_i386.s
+  x86_32/test_jumptable_realigned_frame_i386.c
+  x86_32/test_jumptable_realigned_alias_i386.s
   x86_32/test_arith32.c
   x86_32/test_control32.c
   x86_32/test_bitops32.c
@@ -2946,6 +2948,9 @@ foreach(src ${X86_32_TEST_SOURCES})
   elseif(src MATCHES "test_jumptable_foreign_store")
     # -O0 PIC: the GOT base is spilled once and reloaded in the loop.
     set(x86_32_extra_flags -fPIC)
+  elseif(src MATCHES "test_jumptable_realigned_frame")
+    # Every prologue aligns ESP, and locals are addressed from the result.
+    set(x86_32_extra_flags -fPIC -mstackrealign)
   endif()
   add_custom_command(
     OUTPUT ${obj}

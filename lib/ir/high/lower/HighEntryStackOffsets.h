@@ -210,8 +210,9 @@ private:
       for (size_t Input : Nodes[I].Inputs)
         Nodes[Input].Users.push_back(I);
     for (Node &N : Nodes) {
+      // Only an offset from the incoming stack pointer is an entry offset.
       const auto Value = Equations.value(N.Equation);
-      if (Value.K == Frame::Kind::Value)
+      if (Value.K == Frame::Kind::Value && Value.Anchor == 0)
         N.Offset = Value.Offset;
     }
     depths();
