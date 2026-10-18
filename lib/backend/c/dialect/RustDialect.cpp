@@ -1371,6 +1371,18 @@ private:
       return value(Init, Ty).Text;
     }
     if (Ty->isArray()) {
+      // Bytes that are mostly text read as Rust's byte string of them.
+      if (byteArray(Ty))
+        if (const auto Bytes = listBytes(Init, *Ty->Count)) {
+          size_t Text = 0, Set = 0;
+          for (const unsigned char Byte : *Bytes) {
+            Set += Byte != 0;
+            Text += (Byte >= 32 && Byte < 127) || Byte == '\n' ||
+                    Byte == '\t' || Byte == '\r';
+          }
+          if (Set && Text * 4 >= Set * 3)
+            return byteString(*Bytes, *Ty->Count);
+        }
       // Each element in its place, designated or next; C zeroes the rest.
       std::vector<std::string> Elements;
       size_t Next = 0;

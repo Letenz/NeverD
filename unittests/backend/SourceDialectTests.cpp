@@ -406,17 +406,21 @@ TEST(SourceDialect, SpellsSparseArraysAndOneDeclarationPerObject) {
 TEST(SourceDialect, SpellsImageBytesFromStringsAndCharacters) {
   // The emitter spells an image's bytes as a string, or as a list with text
   // as characters.  Each dialect spells the same bytes, which C zero-fills
-  // past the initializer.
+  // past the initializer.  Rust reads a list that is mostly text as its byte
+  // string too; other bytes stay a list.
   const char *C =
       "unsigned char text[8] = \"a\\\"\\\\\\000\\n\\377\";\n"
-      "unsigned char list[6] = { '@', '\\'', 0x88, [5] = '\\\\', };\n";
+      "unsigned char list[6] = { '@', '\\'', 0x88, [5] = '\\\\', };\n"
+      "unsigned char table[5] = { 0x40, 0x88, 0x99, [4] = 0x1, };\n";
   const std::string Rust = spell(C, SourceDialect::Rust).Text;
   EXPECT_NE(Rust.find(R"(static mut text: [u8; 8] = *b"a\"\\\0\n\xFF\0\0";)"),
             std::string::npos)
       << Rust;
+  EXPECT_NE(Rust.find(R"(static mut list: [u8; 6] = *b"@'\x88\0\0\\";)"),
+            std::string::npos)
+      << Rust;
   EXPECT_NE(
-      Rust.find(
-          R"(static mut list: [u8; 6] = [b'@', b'\'', 0x88, 0, 0, b'\\'];)"),
+      Rust.find("static mut table: [u8; 5] = [0x40, 0x88, 0x99, 0, 0x1];"),
       std::string::npos)
       << Rust;
   const std::string Go = spell(C, SourceDialect::Go).Text;

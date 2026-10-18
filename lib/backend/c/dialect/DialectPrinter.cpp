@@ -297,50 +297,89 @@ void DialectPrinter::trailingComments(const CommentList &Comments) {
   AtLineStart = true;
 }
 
+namespace {
+/// Appends the bytes \p Text spells inside a narrow C string or character
+/// literal to \p Bytes; false for an escape that spells no single byte.
+bool appendLiteralBytes(llvm::StringRef Text, std::string &Bytes) {
+  for (size_t I = 0; I < Text.size(); ++I) {
+    if (Text[I] != '\\') {
+      Bytes += Text[I];
+      continue;
+    }
+    if (++I == Text.size())
+      return false;
+    unsigned Value = 0;
+    if (Text[I] >= '0' && Text[I] <= '7') {
+      Value = Text[I] - '0';
+      for (int Digits = 1; Digits < 3 && I + 1 < Text.size() &&
+                           Text[I + 1] >= '0' && Text[I + 1] <= '7';
+           ++Digits)
+        Value = Value * 8 + (Text[++I] - '0');
+    } else if (Text[I] == 'x') {
+      if (I + 1 == Text.size() || !llvm::isHexDigit(Text[I + 1]))
+        return false;
+      while (I + 1 < Text.size() && llvm::isHexDigit(Text[I + 1]))
+        if ((Value = Value * 16 + llvm::hexDigitValue(Text[++I])) > 0xFF)
+          return false;
+    } else {
+      static constexpr llvm::StringLiteral Escapes = "n\nt\tr\ra\ab\bf\fv\v"
+                                                     "\\\\\"\"''??";
+      size_t At = 0;
+      while (At < Escapes.size() && Escapes[At] != Text[I])
+        At += 2;
+      if (At == Escapes.size())
+        return false;
+      Value = static_cast<unsigned char>(Escapes[At + 1]);
+    }
+    Bytes += static_cast<char>(Value);
+  }
+  return true;
+}
+} // namespace
+
 std::optional<std::string> DialectPrinter::stringBytes(const Expr *E) {
   std::string Bytes;
   const auto Append = [&](llvm::StringRef Text) {
-    if (!Text.consume_front("\"") || !Text.consume_back("\""))
-      return false;
-    for (size_t I = 0; I < Text.size(); ++I) {
-      if (Text[I] != '\\') {
-        Bytes += Text[I];
-        continue;
-      }
-      if (++I == Text.size())
-        return false;
-      unsigned Value = 0;
-      if (Text[I] >= '0' && Text[I] <= '7') {
-        Value = Text[I] - '0';
-        for (int Digits = 1; Digits < 3 && I + 1 < Text.size() &&
-                             Text[I + 1] >= '0' && Text[I + 1] <= '7';
-             ++Digits)
-          Value = Value * 8 + (Text[++I] - '0');
-      } else if (Text[I] == 'x') {
-        if (I + 1 == Text.size() || !llvm::isHexDigit(Text[I + 1]))
-          return false;
-        while (I + 1 < Text.size() && llvm::isHexDigit(Text[I + 1]))
-          if ((Value = Value * 16 + llvm::hexDigitValue(Text[++I])) > 0xFF)
-            return false;
-      } else {
-        static constexpr llvm::StringLiteral Escapes = "n\nt\tr\ra\ab\bf\fv\v"
-                                                       "\\\\\"\"''??";
-        size_t At = 0;
-        while (At < Escapes.size() && Escapes[At] != Text[I])
-          At += 2;
-        if (At == Escapes.size())
-          return false;
-        Value = static_cast<unsigned char>(Escapes[At + 1]);
-      }
-      Bytes += static_cast<char>(Value);
-    }
-    return true;
+    return Text.consume_front("\"") && Text.consume_back("\"") &&
+           appendLiteralBytes(Text, Bytes);
   };
   if (E->Ops.empty() && !Append(E->Text))
     return std::nullopt;
   for (const Expr *Part : E->Ops)
     if (!Append(Part->Text))
       return std::nullopt;
+  return Bytes;
+}
+
+std::optional<std::string> DialectPrinter::listBytes(const Expr *Init,
+                                                     uint64_t Count) {
+  std::string Bytes;
+  uint64_t Next = 0;
+  for (const Expr *Item : Init->Ops) {
+    if (Item->Kind == ExprKind::Designated) {
+      if (Item->Ops.size() != 2 || !Item->Ops[0]->Value ||
+          *Item->Ops[0]->Value < 0)
+        return std::nullopt;
+      Next = static_cast<uint64_t>(*Item->Ops[0]->Value);
+      Item = Item->Ops[1];
+    }
+    std::string Byte;
+    llvm::StringRef Text = Item->Text;
+    if (Item->Kind == ExprKind::Character) {
+      if (!Text.consume_front("'") || !Text.consume_back("'") ||
+          !appendLiteralBytes(Text, Byte) || Byte.size() != 1)
+        return std::nullopt;
+    } else if (Item->Value && *Item->Value >= 0 && *Item->Value <= 0xFF) {
+      Byte = static_cast<char>(*Item->Value);
+    } else {
+      return std::nullopt;
+    }
+    if (Next >= Count)
+      return std::nullopt;
+    if (Bytes.size() <= Next)
+      Bytes.resize(Next + 1);
+    Bytes[Next++] = Byte.front();
+  }
   return Bytes;
 }
 
