@@ -16,10 +16,18 @@ pub struct Plain {
     pub c: u16,
 }
 
-/// Variants, which local types do not hold.
+/// Variants, which local types hold as the enumeration's bytes.
 pub enum Shape {
     Circle(f64),
     Square { side: u32 },
+}
+
+/// An enumeration with data held by value, and members of no bytes.
+pub struct Holder {
+    pub tag: u16,
+    pub shape: Shape,
+    pub unit: (),
+    pub marker: core::marker::PhantomData<u64>,
 }
 
 #[repr(u8)]
@@ -29,10 +37,10 @@ pub enum Kind {
 }
 
 #[no_mangle]
-pub extern "C" fn use_types(p: &Point, q: &Plain, s: &Shape, k: Kind) -> i64 {
+pub extern "C" fn use_types(p: &Point, q: &Plain, s: &Shape, k: Kind, h: &Holder) -> i64 {
     let shape = match s {
         Shape::Circle(r) => *r as i64,
         Shape::Square { side } => *side as i64,
     };
-    p.y + q.b as i64 + q.a as i64 + q.c as i64 + shape + k as i64
+    p.y + q.b as i64 + q.a as i64 + q.c as i64 + shape + k as i64 + h.tag as i64
 }

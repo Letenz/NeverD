@@ -215,7 +215,7 @@ std::string escapedName(Language Lang, llvm::StringRef Name) {
   // A raw identifier keeps a Rust name as it was, except for the few that
   // cannot be raw.
   if (Lang == Language::Rust && Name != "self" && Name != "Self" &&
-      Name != "crate" && Name != "super")
+      Name != "crate" && Name != "super" && Name != "_")
     return "r#" + Name.str();
   return Name.str() + "_";
 }
@@ -422,10 +422,35 @@ void functionMentions(const FunctionDef &Function,
 
 } // namespace
 
+std::string stringLiteralBody(llvm::StringRef Text) {
+  std::string Body;
+  for (char C : Text) {
+    if (C == '"' || C == '\\') {
+      Body += '\\';
+      Body += C;
+    } else if (static_cast<unsigned char>(C) < 0x20 || C == 0x7f) {
+      // Three octal digits end the escape, where hexadecimal ones would run
+      // on into a following digit.
+      const unsigned char Byte = static_cast<unsigned char>(C);
+      Body += '\\';
+      Body += char('0' + (Byte >> 6));
+      Body += char('0' + ((Byte >> 3) & 7));
+      Body += char('0' + (Byte & 7));
+    } else {
+      Body += C;
+    }
+  }
+  return Body;
+}
+
 void valueDependencies(const TypeExpr &Type, std::vector<std::string> &Names) {
   switch (Type.Kind) {
   case TypeExprKind::Named:
     Names.push_back(Type.Name);
+    return;
+  case TypeExprKind::Pointer:
+    if (Type.Element && Type.Element->Kind == TypeExprKind::Array)
+      valueDependencies(*Type.Element, Names);
     return;
   case TypeExprKind::Array:
     if (Type.Element)

@@ -861,3 +861,37 @@ TEST(TypeRender, GnuBitFieldsThatShareBytesTakeStorageOfTheirOwn) {
                                "\"little\")"))
       << Python;
 }
+
+TEST(TypeRender, RustAndGoProgramsTypesCompileAsC) {
+  // A Rust type's name can hold `extern "C"`, which a check's message
+  // quotes; a unit structure has no bytes, which C defines no record of;
+  // a pointer to an array of records needs the record complete first.
+  TypeLibrary Library(DataModel::LP64);
+  const std::string Quoted = "Holder<unsafe extern \"C\" fn(*mut u8)>";
+  Library.define(structure(
+      "Cell", 8,
+      {member("rows",
+              makePointer(makeArray(makeNamed("Row", TypeKind::Struct), 4), 8),
+              0)}));
+  Library.define(
+      structure("Row", 4, {member("x", makeBuiltin(Builtin::Int), 0)}));
+  Library.define(structure(
+      Quoted, 8, {member("cell", makeNamed("Cell", TypeKind::Struct), 0)}));
+  Library.define(structure("core::marker::PhantomData<u8>", 0, {}));
+  RenderOptions Options = in(Language::C);
+  Options.Asserts = true;
+  const std::string C = renderTypes(Library, {}, Options);
+  EXPECT_TRUE(contains(C, "\"Holder<unsafe extern \\\"C\\\" fn(*mut u8)>\""))
+      << C;
+  EXPECT_TRUE(contains(C, "// core::marker::PhantomData<u8>: 0 bytes, which C "
+                          "defines no record of\nstruct "
+                          "core__marker__PhantomData_u8_;\n"))
+      << C;
+  EXPECT_FALSE(contains(C, "sizeof(struct core__marker__PhantomData_u8_)"))
+      << C;
+  const size_t Row = C.find("struct Row\n{");
+  const size_t Cell = C.find("struct Cell\n{");
+  ASSERT_NE(Row, std::string::npos) << C;
+  ASSERT_NE(Cell, std::string::npos) << C;
+  EXPECT_LT(Row, Cell) << C;
+}

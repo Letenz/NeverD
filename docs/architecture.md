@@ -159,11 +159,20 @@ A typedef of an anonymous record names it, as C's declarations read; a
 typedef of a record of its own name is that record. The same name in many
 units, as a header's types are, is one type, the first definition, which a
 declaration elsewhere names; another unit's definition of another size is
-reported as a conflict. A record DWARF describes in a way local types do not
-hold, such as a Rust enumeration's variants or a virtual base, is left out
-with the reason (`DWARFTypeImportStats::Skipped`), as is one whose members
-cannot sit where they say. A base type local types do not spell, such as a
-complex number, holds its bytes.
+reported as a conflict. A Rust enumeration with data, whose variants local
+types do not spell, holds its bytes, as large and as aligned as DWARF says,
+so that what holds it lays out as the compiler laid it out. A member that
+holds no bytes, such as Rust's `()` or `PhantomData`, lies nowhere and is
+left out, and C defines no record of none: it declares one. A Go func value,
+a subroutine type of a pointer's size, is the address of its closure: a
+pointer to its function, whose one result Go lists as a parameter marked
+`DW_AT_variable_parameter`, or an untyped address for several results. A
+name members share, as Go's blank fields `_` do, is numbered past the first
+(`_1`), and the member's comment keeps it. A record DWARF describes in a way
+local types do not hold, such as a virtual base, is left out with the reason
+(`DWARFTypeImportStats::Skipped`), as is one whose members cannot sit where
+they say. A base type local types do not spell, such as a complex number,
+holds its bytes.
 
 `renderType` and `renderTypes` spell types as C, C++, Rust, Go, Python,
 JavaScript or Lua (`TypeLanguages.def`), each member marked with its

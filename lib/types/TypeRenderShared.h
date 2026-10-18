@@ -220,7 +220,14 @@ std::vector<const LocalType *>
 neededTypes(const TypeLibrary &Library, llvm::ArrayRef<const LocalType *> Roots,
             bool ThroughPointers);
 
-/// The named types \p Type holds by value, which C needs complete first.
+/// \p Text as the body of a C or C++ string literal: a quote, a backslash
+/// and a control character escaped, as a Rust type's name can hold
+/// `extern "C"`.
+std::string stringLiteralBody(llvm::StringRef Text);
+
+/// The named types \p Type holds by value, which C needs complete first:
+/// those of its members, and the elements of an array a pointer points to,
+/// which C spells only of complete elements.
 void valueDependencies(const TypeExpr &Type, std::vector<std::string> &Names);
 void valueDependencies(const LocalType &Type, std::vector<std::string> &Names);
 
