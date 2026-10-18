@@ -747,7 +747,7 @@ struct BinaryImage {
       if (!Guessed(Sym))
         Guesses.erase(Sym.Addr);
     for (const auto &[Start, End] : KnownCodeRanges)
-      if (!ContinuationCodeStarts.count(Start))
+      if (Guesses.count(Start) && !ContinuationCodeStarts.count(Start))
         Guesses.erase(Start);
     return Guesses;
   }

@@ -22,6 +22,7 @@
 #include "neverd/DataAccessWidths.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/CSourceMap.h"
+#include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/dialect/SourceDialect.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/codegen/CodeGen.h"
@@ -335,6 +336,12 @@ struct Session {
     std::map<va_t, bool> FunctionEdits;
   };
   std::optional<FunctionListInputs> ListInputs;
+  /// Emits the session's C (cEmitter()), keeping the image's function names
+  /// from one emission to the next.  Those name the symbol table Symbols
+  /// held when it read them; clearPipeline() drops them.
+  HighCEmitter CEmitter;
+  const Symbol *CEmitterSymbols = nullptr;
+  size_t CEmitterSymbolCount = 0;
 
   PatchResult LastPatch;
   std::string LastSourcePatchReport;
@@ -808,6 +815,21 @@ struct Session {
     AccessWidths.reset();
     AccessWidthsFunctions.clear();
     ListInputs.reset();
+    CEmitterSymbols = nullptr;
+    CEmitterSymbolCount = 0;
+  }
+
+  /// The emitter of this session's C.  It reads the image's function names
+  /// again when the symbol table has moved or grown since it read them, or
+  /// after clearPipeline(); an image holds tens of thousands.
+  HighCEmitter &cEmitter() {
+    if (CEmitterSymbols != Img.Symbols.data() ||
+        CEmitterSymbolCount != Img.Symbols.size() || !CEmitterSymbols) {
+      CEmitter.prepareImageFunctionNames(Img);
+      CEmitterSymbols = Img.Symbols.data();
+      CEmitterSymbolCount = Img.Symbols.size();
+    }
+    return CEmitter;
   }
 
   /// Only navigation may keep immutable image facts. Edits, reloads and

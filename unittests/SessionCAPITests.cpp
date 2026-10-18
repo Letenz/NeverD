@@ -7386,6 +7386,53 @@ TEST_F(SessionCAPITest, SelectionsKeepTheFunctionListARebuildWouldMake) {
   EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
 }
 
+TEST_F(SessionCAPITest, SessionCReadsTheImageFunctionNamesItsSymbolsHold) {
+  using neverd::sdk::SessionTestAccess;
+  const auto Path = write("own-names.elf", makeAnalysisCacheELF(false));
+  // A function of the image named like a C library routine is the image's
+  // own: its caller's C declares it rather than including its header.
+  const auto NameCallee = [](neverd_session_t Target, llvm::StringRef Name) {
+    auto &State = *neverd::sdk::toSession(Target);
+    auto Named =
+        neverd::Symbol::makeFunc(neverd_session_entry_addr(Target) + 0x40, 6);
+    Named.Name = Name.str();
+    Named.Origin = neverd::NameOrigin::Stated;
+    State.Img.Symbols.push_back(std::move(Named));
+  };
+  const auto Fresh = [&](llvm::ArrayRef<llvm::StringRef> Names) {
+    neverd_session_t Other = neverd_session_create();
+    EXPECT_EQ(neverd_session_load(Other, Path.c_str()), 1);
+    const auto Entry = seedAnalysisCacheSymbols(Other);
+    for (llvm::StringRef Name : Names)
+      NameCallee(Other, Name);
+    SessionTestAccess::resetFunctions(*neverd::sdk::toSession(Other));
+    auto Text = takeString(neverd_decompile(Other, Entry));
+    neverd_session_destroy(Other);
+    return Text;
+  };
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Entry = seedAnalysisCacheSymbols(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  const auto Unnamed = takeString(neverd_decompile(Session, Entry));
+  ASSERT_FALSE(Unnamed.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_EQ(Unnamed, Fresh({}));
+  // A symbol the image gains is read again at the next emission: the
+  // callee it names is the image's own, which no header declares.
+  NameCallee(Session, "strlen");
+  SessionTestAccess::resetFunctions(State);
+  SessionTestAccess::selectFunction(State, Entry);
+  const auto Own = takeString(neverd_decompile(Session, Entry));
+  EXPECT_NE(Own.find("strlen("), std::string::npos) << Own;
+  EXPECT_EQ(Own.find("#include <string.h>"), std::string::npos) << Own;
+  // Any other change to the symbols goes with retiring the pipeline, which
+  // drops the names read before, even when the table keeps its size.
+  for (auto &Sym : State.Img.Symbols)
+    if (Sym.Name == "strlen")
+      Sym.Name = "strcpy";
+  SessionTestAccess::clearPipeline(State);
+  EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Fresh({"strcpy"}));
+}
+
 TEST_F(SessionCAPITest, AnalysisCacheSurvivesOnlyFunctionNavigation) {
   const auto Path = write("cache.elf", makeAnalysisCacheELF(false));
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
