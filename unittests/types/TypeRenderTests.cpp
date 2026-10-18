@@ -941,6 +941,40 @@ TEST(TypeRender, NamesStepAroundKeywords) {
       contains(renderType(Library, Words, in(Language::Go)), "\ttype_ uint32"));
 }
 
+TEST(TypeRender, UnitsSpellReservedTypedefsInExactWidths) {
+  // Darwin's headers define __darwin_size_t as unsigned long, which
+  // uint64_t, an unsigned long long there, is not: a decompiled unit that
+  // defined it would not compile beside them, and spells what it stands
+  // for instead, as wide whatever system reads it.
+  TypeLibrary Library(DataModel::LP64);
+  ASSERT_TRUE(parseCTypes("typedef unsigned long __darwin_size_t;\n"
+                          "typedef struct _opaque *__darwin_handle_t;\n"
+                          "typedef __darwin_size_t length_t;\n"
+                          "struct buffer { __darwin_size_t size;\n"
+                          "  __darwin_handle_t owner; length_t used; };\n",
+                          Library)
+                  .ok());
+  const LocalType *Root = Library.find("buffer");
+  const EmbeddedC Embedded = renderEmbeddedC(Library, {Root}, in(Language::C));
+  EXPECT_FALSE(contains(Embedded.Text, "__darwin")) << Embedded.Text;
+  EXPECT_TRUE(contains(Embedded.Text, "uint64_t size;")) << Embedded.Text;
+  EXPECT_TRUE(contains(Embedded.Text, "typedef uint64_t length_t;"))
+      << Embedded.Text;
+  // The record the reserved typedef points to is declared, as one a
+  // definition points to is.
+  EXPECT_TRUE(contains(Embedded.Text, "struct _opaque;")) << Embedded.Text;
+  EXPECT_TRUE(llvm::is_contained(Embedded.DeclaredTypes, "_opaque"));
+  EXPECT_FALSE(llvm::is_contained(Embedded.Types, "__darwin_size_t"));
+  // The code beside the definitions spells it so too.
+  EXPECT_EQ(spellType(Library, *makeNamed("__darwin_size_t", TypeKind::Typedef),
+                      "n", in(Language::C)),
+            "uint64_t n");
+  // A view of the library shows the typedef as the library has it.
+  EXPECT_TRUE(contains(
+      renderType(Library, *Library.find("__darwin_size_t"), in(Language::C)),
+      "typedef uint64_t __darwin_size_t;"));
+}
+
 TEST(TypeRender, NamesThatAreNoIdentifiersCompile) {
   TypeLibrary Library;
   Library.define(structure("Outer::Inner<int>", 4,
