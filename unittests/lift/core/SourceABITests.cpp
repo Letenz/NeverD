@@ -184,6 +184,53 @@ TEST(SourceABI, UnboundSourceCallsRetainGenericArguments) {
   }
 }
 
+TEST(SourceABI, PrototypeArgumentCountsDoNotReplaceExplicitOperands) {
+  SourceFunctionTypeHint Hint;
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Hint.ReturnType = NdType::makeInt(8);
+  Hint.Parameters = {{"first", NdType::makeInt(4)},
+                     {"second", NdType::makeInt(8)}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Arch::AArch64, Error)) << Error;
+  LowFunc Low;
+  Low.Entry = 0x1000;
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Low.Entry;
+  Block.EndAddr = Low.Entry + 8;
+  LowOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Addr = Low.Entry;
+  Call.Output = NdVar::reg(a64reg::X0, 8);
+  Call.addInput(NdVar::cst(0x2000, 8));
+  Call.addInput(NdVar::cst(11, 4));
+  Call.addInput(NdVar::cst(22, 8));
+  LowOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = Low.Entry + 4;
+  Return.addInput(Call.Output);
+  Block.Ops = {Call, Return};
+  Low.Blocks = {Block};
+  const std::map<va_t, int> Counts{{0x2000, 2}};
+  const std::map<va_t, SourceFunctionTypeHint> Hints{{0x2000, Hint}};
+  LowToMedConverter Converter;
+  Converter.setSourceCallHintsEnabled(true);
+  Converter.setSourceCalleeTypeHints(&Hints);
+  Converter.setCallEntryArgumentCounts(&Counts);
+  auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::COFF);
+  const auto &Ops = Med.Blocks.front().Ops;
+  const auto It = std::find_if(Ops.begin(), Ops.end(), [](const MedOp &Op) {
+    return Op.Opcode == NdOp::CALL;
+  });
+  ASSERT_NE(It, Ops.end());
+  EXPECT_FALSE(It->SourceCallHint);
+  ASSERT_EQ(It->NumInputs, 3U);
+  ASSERT_TRUE(It->Inputs[1].isConst());
+  EXPECT_EQ(It->Inputs[1].ConstVal, 11U);
+  ASSERT_TRUE(It->Inputs[2].isConst());
+  EXPECT_EQ(It->Inputs[2].ConstVal, 22U);
+}
+
 TEST(SourceABI, NativeAArch64FullQRegisterRequiresVectorCarrier) {
   SourceFunctionTypeHint Hint;
   Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
