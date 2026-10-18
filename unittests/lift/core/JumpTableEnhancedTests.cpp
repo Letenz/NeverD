@@ -452,18 +452,11 @@ int selected_function_table(int input) {
       << "a data-pointer slot cannot supply an indirect-call target";
 }
 
-TEST_F(JTE_X86_32, SelectArmBiasedBeforeItsTableKeepsTheAnchoredOwner) {
-  // `t[(j + 5) % 13]` becomes a select between two GOTOFF addresses: t + 0x14
-  // when j < 8 and t - 0x20 otherwise.  The second lies before .rodata; the
-  // loader anchors that exact folded field to the table's segment, so the
-  // select arm is rebuilt from its owner instead of being refused.
-  if (!hasCrossTargetClang())
-    GTEST_SKIP() << "cross-target Clang unavailable";
-  const fs::path Source = tmpFile("biased_select_arm.c");
-  const fs::path Object = tmpFile("biased_select_arm.o");
-  {
-    std::ofstream File(Source);
-    File << R"(
+// `t[(j + 5) % 13]` becomes a select between two addresses: t + 0x14 when
+// j < 8 and t - 0x20 otherwise.  The second lies before .rodata; the loader
+// anchors that exact operand, GOTOFF or absolute, to the table's segment, so
+// the select arm is rebuilt from its owner.
+static const char *const BiasedSelectArmSource = R"(
 static const unsigned t[13] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41};
 int biased_select_arm(int input) {
   unsigned s = (unsigned)input, h = 0;
@@ -476,10 +469,50 @@ int biased_select_arm(int input) {
   return (int)h;
 }
 )";
+
+TEST_F(JTE_X86_32, SelectArmBiasedBeforeItsTableKeepsTheAnchoredOwner) {
+  // PIC: both arms are GOTOFF fields; without the anchor this arm is refused.
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target Clang unavailable";
+  const fs::path Source = tmpFile("biased_select_arm.c");
+  const fs::path Object = tmpFile("biased_select_arm.o");
+  {
+    std::ofstream File(Source);
+    File << BiasedSelectArmSource;
   }
   auto Compiled = exec(NEVERD_TEST_CLANG,
                        {"-target", "i386-linux-gnu", "-march=pentium4", "-O2",
                         "-fPIC", "-c", Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+  auto ImageOrErr = neverd::loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  auto &Image = *ImageOrErr;
+  ASSERT_EQ(Image.RodataAnchorSeg.size(), 1u)
+      << "expected exactly one select arm biased before the table";
+  auto Anchored = runPipelineWithEvidenceBudget(Image, 256);
+  ASSERT_TRUE(Anchored.Result.Success) << Anchored.Result.Error;
+  EXPECT_NE(Anchored.LLVMIR.find(".rodata, i64 -32)"), std::string::npos)
+      << "the biased arm must be rebuilt from its owner\n"
+      << Anchored.LLVMIR;
+}
+
+TEST_F(JTE_X86_32, AbsoluteSelectArmBiasedBeforeItsTableKeepsTheOwner) {
+  // Non-PIC: the arms are R_386_32 operands.  Without the anchor the biased
+  // arm was emitted as its raw original address, which the recompiled code
+  // dereferenced.
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target Clang unavailable";
+  const fs::path Source = tmpFile("absolute_biased_select_arm.c");
+  const fs::path Object = tmpFile("absolute_biased_select_arm.o");
+  {
+    std::ofstream File(Source);
+    File << BiasedSelectArmSource;
+  }
+  auto Compiled =
+      exec(NEVERD_TEST_CLANG,
+           {"-target", "i386-linux-gnu", "-march=pentium4", "-O2", "-fno-pic",
+            "-c", Source.string(), "-o", Object.string()});
   ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
   auto ImageOrErr = neverd::loadBinary(Object);
   ASSERT_TRUE(static_cast<bool>(ImageOrErr))
