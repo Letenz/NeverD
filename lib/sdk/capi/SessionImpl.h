@@ -63,6 +63,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -592,6 +593,12 @@ struct Session {
       return;
     const auto Symbols = Img.getFunctionSymbols();
     Functions.reserve(Symbols.size());
+    // The export each address names first, as findExportAt finds it, for
+    // every symbol at once: an image can hold thousands of both.
+    std::unordered_map<va_t, const Export *> ExportAt;
+    ExportAt.reserve(Img.Exports.size());
+    for (const Export &Exp : Img.Exports)
+      ExportAt.try_emplace(Exp.Addr, &Exp);
     for (const Symbol *Symbol : Symbols) {
       // A name that states nothing gives way to the export there, as the
       // analysis names the function (getFunctionNameAt): a PE names its
@@ -602,9 +609,9 @@ struct Session {
       std::string Linkage = Img.functionListName(Symbol->Addr, Symbol->Name);
       NameOrigin LinkageOrigin = Symbol->Origin;
       if (LinkageOrigin < NameOrigin::Stated)
-        if (const Export *Exp = Img.findExportAt(Symbol->Addr);
-            Exp && !Exp->Name.empty()) {
-          Linkage = Exp->Name;
+        if (const auto Found = ExportAt.find(Symbol->Addr);
+            Found != ExportAt.end() && !Found->second->Name.empty()) {
+          Linkage = Found->second->Name;
           LinkageOrigin = NameOrigin::Stated;
         }
       std::string Name = Linkage;
