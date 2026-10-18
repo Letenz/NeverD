@@ -395,6 +395,11 @@ const char *neverd_warm_functions_json(neverd_session_t Sess,
         S->clearPipeline();
         S->PipelineFeatureGeneration = S->SigDB.featureGeneration();
       }
+      // The C view of the first function opened reads the widths of the
+      // image's data accesses, which scanning every function finds.  Scan
+      // them here, where nothing waits, as that view would; the session
+      // keeps them while the functions' extents stay.
+      S->dataAccessWidths();
       const FunctionPage Page = functionPage(*S, FirstEntry, MaxFunctions);
       std::vector<va_t> Entries;
       Entries.reserve(Page.Functions.size());
