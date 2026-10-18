@@ -25,9 +25,10 @@
 /// `sp - 16` share a base and differ by eight, so a write to one is known not
 /// to be a write to the other, and a frame survives its own spills.  Two
 /// different bases may be the same pointer and nothing here can say they are
-/// not, so a write through one still forgets the others.  The model is exact
-/// where separation is provable and blunt where it is not, which is the only
-/// arrangement that is both useful and never wrong.
+/// not, so the default store forgets the others. A per-write separation
+/// contract can preserve declared current bytes. Optional conditional tracking
+/// instead updates materialized bytes with exact alias predicates, while
+/// unmaterialized memory retains the ordinary conservative unknown epochs.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -119,6 +120,26 @@ struct SymStorePreservation {
   llvm::ArrayRef<SymStorePreservationRegion> AdditionalRegions;
 };
 
+/// Bounded conditional semantics for one STORE or atomic write phase. This
+/// policy is independent of SymStorePreservation: it assumes no separation.
+/// Current bytes in absolute memory and other 64-bit symbolic regions receive
+/// their conditional write effects. Missing bytes retain new unknown epochs.
+/// References must belong to the state's context; indices do not authenticate
+/// cross-context ownership. No accessibility or initial alias consistency is
+/// established by this policy. Work counts a write-byte plan entry, each bank
+/// inspected, and WriteBytes+3 units per current cross-region byte. All work
+/// and validation precede expression construction and the actual store.
+enum class SymConditionalStoreStatus : uint8_t {
+  Invalid,
+  Applied,
+  BudgetExceeded,
+};
+struct SymConditionalStore {
+  uint64_t MaxWork = 0;
+  uint64_t WorkUsed = 0;
+  SymConditionalStoreStatus Status = SymConditionalStoreStatus::Invalid;
+};
+
 /// The state is a regular value: copying one is what forking a path is, so it
 /// has to sit in a container and be assigned like anything else.  A copy is a
 /// handful of maps of small integers, which is cheap enough that nothing more
@@ -185,6 +206,15 @@ public:
   /// are rejected; they must use normal byte-overlap semantics instead.
   bool store(SymRef Addr, SymRef Value, SymStorePreservation &Preservation);
 
+  /// Apply one 64-bit-address store, retaining conditional effects for already
+  /// materialized bytes in other absolute or 64-bit symbolic banks. The actual
+  /// bank uses ordinary byte-overlap semantics. Invalid input, unsupported
+  /// materialized banks and budget refusal leave state unchanged; inspect
+  /// Control.Status because false can also denote a successful symbolic store.
+  /// Symbolic offsets wrap modulo 2^64; absolute writes must not overflow.
+  bool storeConditional(SymRef Addr, SymRef Value,
+                        SymConditionalStore &Control);
+
   /// What a load that could not be resolved was reading.
   struct LoadOrigin {
     SymRef Address;
@@ -240,10 +270,9 @@ public:
   llvm::ArrayRef<MemoryInputOrigin> memoryInputOrigins(SymRef Value) const;
 
   /// True once a store the engine could not resolve to a numeric address has
-  /// happened.  Such a store keeps its own region exactly and forgets every
-  /// other one, so this does not say that nothing is known any more; it says
-  /// that something was conservatively given up and a result reached through
-  /// memory is an approximation.
+  /// happened. The target region remains exact; optional write policies may
+  /// also retain current bytes elsewhere. Missing memory is still conservative,
+  /// so this records lost precision rather than claiming nothing is known.
   bool memoryIsUnknown() const { return MemoryClobbered; }
 
   /// Forget memory outright, every region of it.  What a callee with no
@@ -298,7 +327,7 @@ public:
   llvm::SmallVector<SymConstantByte, 32> constantScalarBytes() const;
 
   /// Constant bytes currently retained for this exact symbolic region base.
-  /// All guest writes have already applied store()'s alias invalidation. This
+  /// All guest writes have already applied overlap and alias effects. This
   /// read-only projection does not claim that the region is private or create
   /// missing bytes, and returns nothing for an absent/invalid base.
   llvm::SmallVector<SymConstantRegionByte, 32>

@@ -2054,3 +2054,5 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 ```
 
 `SymStorePreservation.Independent*`、`RepeatedRegionsFormAUnionAndChargeEveryScan`、`EmptyIndependentRegionsKeepOriginalWorkAccounting` 與 `ExecutorUsesIndependentRegionsForOnlyOneStore` 涵蓋一次 STORE 保留兩至三個獨立目前根、兩種位元組序、跨相對零點的部分區間、重疊宣告、未保護間隙及寫入後未知值的世代。精確預算及少一單位的預算檢查完整計費，缺少的區域不得具現化。無效或越界參照、窄或常數基底、空或反向區間，以及實際寫入本身的基底均應拒絕且不改變狀態。空 `AdditionalRegions` 維持既有單根及 `AdditionalRanges` 計費。執行器檢查單次事件、同區域相鄰位元組及後續一般寫入的失效效果。`SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget` 涵蓋比較符合及不符合、精確及不足預算、兩個保留根、舊值輸出及既有保守拒絕路徑。
+
+`NeverDSymConditionalStoreTests` 涵蓋獨立根的目前位元組條件效果、128 位元寫入、兩種位元組順序、部分重疊、符號相對座標環繞及絕對記憶體，並檢查自身區域相鄰位元組、目前與歷史事實、寫入後未知時期、不支援的輸入，以及精確與少一單位預算。執行器案例涵蓋沿用既有區段基址處理的 STORE、嚴格 CMPXCHG 的成功與失敗、Old 延後發布、拒絕時 havoc，以及其他操作保持 Invalid。一般寫入與保留契約的預設行為不變。這些測試驗證有界記憶體語義，不認證存取權限或完整程式還原。

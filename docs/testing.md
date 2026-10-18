@@ -8789,3 +8789,5 @@ ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on
 cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
 ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
 ```
+
+`NeverDSymConditionalStoreTests` covers conditional effects on current bytes across independent roots, 128-bit writes, both byte orders, partial overlaps, symbolic relative wrapping and absolute memory. It checks own-bank neighbors, current versus historical facts, post-write unknown epochs, unsupported inputs, and exact versus one-short budgets. Executor cases cover STORE with existing segment-base handling, strict CMPXCHG success/failure and delayed Old publication, refusal havoc, and other operations leaving the policy Invalid. Ordinary store and preservation defaults retain their existing behavior. These tests validate bounded memory semantics; they do not certify access permissions or complete program recovery.

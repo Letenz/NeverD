@@ -661,7 +661,8 @@ StepResult SymExec::stepBits(const LowOp &Op) {
 }
 
 StepResult SymExec::stepMemory(const LowOp &Op,
-                               SymStorePreservation *Preservation) {
+                               SymStorePreservation *Preservation,
+                               SymConditionalStore *Conditional) {
   const auto Refuse = [&]() {
     if (Op.Opcode == NdOp::STORE || Op.Opcode == NdOp::ATOMIC_XCHG ||
         Op.Opcode == NdOp::ATOMIC_ADD || Op.Opcode == NdOp::ATOMIC_CMPXCHG) {
@@ -670,7 +671,7 @@ StepResult SymExec::stepMemory(const LowOp &Op,
     }
     return unmodelled(Op);
   };
-  if (Preservation && Op.Opcode == NdOp::ATOMIC_CMPXCHG &&
+  if ((Preservation || Conditional) && Op.Opcode == NdOp::ATOMIC_CMPXCHG &&
       !supportsCmpxchgPreservation(Op))
     return Refuse();
   const LowMemoryOperandView Memory = lowMemoryOperands(Op);
@@ -682,11 +683,18 @@ StepResult SymExec::stepMemory(const LowOp &Op,
       Absolute->getZExtValue() > UINT64_MAX - (Memory.AccessSize - 1))
     return Refuse();
   const auto Commit = [&](SymRef Value) {
-    const bool Absolute = Preservation ? State.store(Addr, Value, *Preservation)
-                                       : State.store(Addr, Value);
-    if (Preservation &&
-        Preservation->Status != SymStorePreservationStatus::Applied)
-      return Refuse();
+    bool Absolute;
+    if (Conditional) {
+      Absolute = State.storeConditional(Addr, Value, *Conditional);
+      if (Conditional->Status != SymConditionalStoreStatus::Applied)
+        return Refuse();
+    } else {
+      Absolute = Preservation ? State.store(Addr, Value, *Preservation)
+                              : State.store(Addr, Value);
+      if (Preservation &&
+          Preservation->Status != SymStorePreservationStatus::Applied)
+        return Refuse();
+    }
     if (!Absolute) {
       ++Unmodelled;
       ++MemoryHavocs;
@@ -723,15 +731,15 @@ StepResult SymExec::stepMemory(const LowOp &Op,
     SymRef Expected = fit(read(*Memory.ExpectedValue), widthOf(Op.Output));
     SymRef Desired = fit(read(*Memory.StoredValue), widthOf(Op.Output));
     // Preserve the legacy no-descriptor ordering, including RAM outputs.
-    // The strict preservation shape has only scalar outputs and publishes Old
-    // after its write contract has actually succeeded.
-    if (!Preservation)
+    // Explicit write policies accept only scalar outputs and publish Old
+    // after the write phase has actually succeeded.
+    if (!Preservation && !Conditional)
       writeResult(Op.Output, Old);
     const auto Committed =
         Commit(Ctx.mkIte(Ctx.mkEq(Old, Expected), Desired, Old));
     if (Committed != StepResult::Continue)
       return Committed;
-    if (Preservation)
+    if (Preservation || Conditional)
       writeResult(Op.Output, Old);
     return StepResult::Continue;
   }
@@ -835,6 +843,20 @@ StepResult SymExec::step(const LowOp &Op, const SymCallEffect *CallEffect) {
 
 StepResult SymExec::step(const LowOp &Op, const SymCallEffect *CallEffect,
                          SymStorePreservation *Preservation) {
+  return stepImpl(Op, CallEffect, Preservation, nullptr);
+}
+
+StepResult SymExec::stepWithConditionalStore(const LowOp &Op,
+                                             SymConditionalStore &Control,
+                                             const SymCallEffect *CallEffect) {
+  Control.Status = SymConditionalStoreStatus::Invalid;
+  Control.WorkUsed = 0;
+  return stepImpl(Op, CallEffect, nullptr, &Control);
+}
+
+StepResult SymExec::stepImpl(const LowOp &Op, const SymCallEffect *CallEffect,
+                             SymStorePreservation *Preservation,
+                             SymConditionalStore *Conditional) {
   // Unmodelled is a continuing value abstraction. A required environment
   // cannot be replaced by an unknown result, especially without an output.
   if (isLowRawEnvironmentRequirement(Op))
@@ -846,6 +868,9 @@ StepResult SymExec::step(const LowOp &Op, const SymCallEffect *CallEffect,
     if (Op.Opcode != NdOp::STORE && Op.Opcode != NdOp::ATOMIC_CMPXCHG)
       return step(Op, CallEffect);
   }
+  if (Conditional && Op.Opcode != NdOp::STORE &&
+      Op.Opcode != NdOp::ATOMIC_CMPXCHG)
+    return step(Op, CallEffect);
   switch (Op.Opcode) {
   case NdOp::INT_ADD:
   case NdOp::INT_SUB:
@@ -913,7 +938,7 @@ StepResult SymExec::step(const LowOp &Op, const SymCallEffect *CallEffect,
   case NdOp::ATOMIC_XCHG:
   case NdOp::ATOMIC_ADD:
   case NdOp::ATOMIC_CMPXCHG:
-    return stepMemory(Op, Preservation);
+    return stepMemory(Op, Preservation, Conditional);
 
   case NdOp::BRANCH:
   case NdOp::COND_BR:
