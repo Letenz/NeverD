@@ -140,6 +140,32 @@ int lowbyte(int a) {
                             {0, 0x41, 0x7F, 0x80, 0xC1, -1, 0x1FF});
 }
 
+// Clang -O0 with -mstackrealign, as the Android NDK builds i386 code,
+// realigns every frame (`and esp, -16`) and stores each stack argument with
+// `mov [esp+N]`.  No entry offset reaches below the alignment, so the stores
+// of a call through a pointer were taken for pushes, the last one first:
+// `pick(d, x * 3, x + 1, x, ...)`.
+TEST_F(X86_32_CallAbi, ARealignedFramesStackArgumentsKeepTheirSlots) {
+  HostFlags = {"-m32"};
+  KernelOptimization = "-O0";
+  expectHighCRunsLikeSource(
+      {"-target", "i386-linux-gnu", "-march=pentium4", "-mstackrealign"},
+      R"C(
+typedef int (*fn4)(int, int, int, int);
+static int mix(int a, int b, int c, int d) {
+  return (int)((((unsigned)a * 31u + (unsigned)b) * 31u + (unsigned)c) * 31u +
+               (unsigned)d);
+}
+static fn4 volatile pick = mix;
+int realigned_call(int x) {
+  char d = (char)x;
+  return pick(x, x + 1, x * 3, (unsigned char)d);
+}
+)C",
+      "realigned_call", {"realigned_call", "mix", "pick"},
+      {0, 1, -3, 77, 0x80, 0x1C1});
+}
+
 // A call through a function pointer takes its arguments on the stack, as
 // many as its caller pushes, whatever ECX and EDX hold at the call: here a
 // quotient in EDX and the first argument in ECX, as Clang leaves them in a
