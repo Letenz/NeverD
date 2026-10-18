@@ -1249,8 +1249,18 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
         }
         return std::nullopt;
       };
+      const std::optional<va_t> I386GOT = linkedI386GlobalOffsetTable(Img);
       for (int W = 0; W < 2; ++W) {
-        auto Anchor = traceConstAnchor(BlockOps[AddD].Inputs[W], AddD - 1);
+        const NdVar &Input = BlockOps[AddD].Inputs[W];
+        auto Anchor = traceConstAnchor(Input, AddD - 1);
+        // Linked i386 PIC code adds each entry to the GOT register it read
+        // the table through.  Clang computes that register from the return
+        // address its call/pop pushed, which the load-free walk rejects but
+        // the base fold above emulated.  branchTargetDependsOnTableLoad
+        // proves that the register holds the GOT address on every path.
+        if (!Anchor && I386GOT && FoldedTableBase == *I386GOT &&
+            Input.isReg() && Input.Offset == BaseReg)
+          Anchor = *I386GOT;
         if (!Anchor || *Anchor == TableAddr)
           continue;
         const bool IsCOFFImageBaseRVA =
@@ -1258,7 +1268,11 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
             Img.getPointerSize() == 8 && Info.EntrySize == sizeof(uint32_t) &&
             SawZext && !SawSext && !Info.IsSigned && *Anchor == Img.Base &&
             Info.EntryScale == 1;
-        if (Img.hasExecutableCodeOwnerAt(*Anchor) || IsCOFFImageBaseRVA) {
+        const bool IsI386GOTRelative = I386GOT && *Anchor == *I386GOT &&
+                                       Info.EntrySize == sizeof(uint32_t) &&
+                                       Info.EntryScale == 1;
+        if (Img.hasExecutableCodeOwnerAt(*Anchor) || IsCOFFImageBaseRVA ||
+            IsI386GOTRelative) {
           Info.setTargetBase(*Anchor);
           Info.EntryScale = 1;
           Info.IsPEImageRelativeRVA = IsCOFFImageBaseRVA;

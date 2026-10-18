@@ -2575,6 +2575,16 @@ encoding, with bounded NOP padding. Its own HighC, LLVM and LLVM C bodies retain
 that instruction sequence in a naked helper, preserving the selected register,
 stack and flags. Caller rewriting continues to require CFG-authenticated
 occurrences; helper names alone prove nothing.
+An i386 ELF PIC switch reads a table of `case@GOTOFF` words through the
+register a get-PC sequence and an `add $_GLOBAL_OFFSET_TABLE_` filled, then adds
+the entry back to that register. A linked image keeps no relocation for either,
+so the relative-table recognizer takes the GOT address the loader recorded
+(`linkedI386GlobalOffsetTable`: DT_PLTGOT, or the `_GLOBAL_OFFSET_TABLE_`
+symbol, which must agree) as the table's separate target anchor. The get-PC
+value and the immediate are scalars, so the target-role and displaced-base
+proofs accept the scalar GOT address besides an address constant, and still
+prove that the register holds it on every path. An object file keeps its
+relocation-authenticated GOT-base model instead.
 
 For 32-bit ARM Mach-O, the loader seeds exact Thumb entries from executable
 `N_ARM_THUMB_DEF` symbols, including object address zero, then follows direct

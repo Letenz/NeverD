@@ -2503,6 +2503,13 @@ agree. Borrowed RBP fields, negative displacements and both signed and unsigned
 index extensions are covered; changed bases/offsets, partial reloads, stores,
 calls and memory barriers must not recover a table from the earlier guard.
 
+`LinkedI386GOTTable.*` in `NeverDJumpTableTests` links an i386 shared library
+with ld.lld (`test_pic_switch_i386.s`) and requires the exact cases of GCC's
+thunk with a separate or fused add, clang's call/pop, and a GOT register kept
+in `%ebx` across a call on one path; `gcc_fused_switch` must decompile as a
+`switch`. A GOT+4 anchor and a register replaced on one path must publish no
+table. The tests skip without ld.lld.
+
 `JTE_AArch64.GCCCompactSignedEntriesMayPrecedeTheAnchor` assembles GCC's
 compact switch (`test_jumptable_gcc_compact_a64.s`): the entry loaded back into
 the index register, the table base register reused for the anchor, and signed
