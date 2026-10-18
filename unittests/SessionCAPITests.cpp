@@ -3350,6 +3350,47 @@ TEST_F(SessionCAPITest, InputSha256IsTheHashOfTheLoadedFile) {
             Expected(Contract));
 }
 
+TEST_F(SessionCAPITest, SidecarWritesRecordInputAndKeepAMatchingManifest) {
+  const std::string Path = write("recorded.evm", "6001600055");
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  neverd_annotation_set(Session, 0, "persisted note");
+  ASSERT_EQ(neverd_annotations_save(Session), 0);
+  const auto ManifestPath = Path + ".neverd/project.json";
+  const auto ReadManifest = [&] {
+    std::ifstream Input(ManifestPath, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(Input),
+                       std::istreambuf_iterator<char>());
+  };
+  auto Manifest = llvm::json::parse(ReadManifest());
+  ASSERT_TRUE(bool(Manifest));
+  auto *Root = Manifest->getAsObject();
+  ASSERT_NE(Root, nullptr);
+  const auto *Input = Root->getObject("input");
+  ASSERT_NE(Input, nullptr);
+  const auto Digest = takeString(neverd_session_input_sha256(Session));
+  ASSERT_FALSE(Digest.empty());
+  EXPECT_EQ(Input->getString("sha256"), Digest);
+  EXPECT_EQ(Input->getString("name"), "recorded.evm");
+  EXPECT_EQ(Input->getInteger("size"), 10);
+  auto View = llvm::json::parse(takeString(neverd_project_json(Session)));
+  ASSERT_TRUE(bool(View));
+  ASSERT_NE(View->getAsObject(), nullptr);
+  EXPECT_EQ(View->getAsObject()->getBoolean("matches"), true);
+  ASSERT_NE(View->getAsObject()->getObject("recorded"), nullptr);
+  EXPECT_EQ(View->getAsObject()->getObject("recorded")->getString("sha256"),
+            Digest);
+  // Recording the same input preserves other project metadata byte for byte.
+  (*Root)["extension"] = "retained";
+  {
+    std::ofstream Output(ManifestPath, std::ios::binary);
+    Output << llvm::formatv("{0:2}", *Manifest).str() << '\n';
+    ASSERT_TRUE(Output.good());
+  }
+  const auto Before = ReadManifest();
+  ASSERT_EQ(neverd_project_record(Session), 0);
+  EXPECT_EQ(ReadManifest(), Before);
+}
+
 TEST_F(SessionCAPITest, ReloadingRenamesRestoresNamesRemovedFromTheSidecar) {
   const std::string Original = write("original.evm", "6001600055");
   ASSERT_EQ(neverd_session_load(Session, Original.c_str()), 1);
@@ -6806,6 +6847,54 @@ TEST_F(SessionCAPITest, PEAnalysisCacheRetiresOnlyWhenHandlersGrowMetadata) {
   EXPECT_EQ(takeString(neverd_decompile(Session, Entries[0])), Source);
 }
 
+TEST_F(SessionCAPITest, PEWarmingSurvivesFunctionsThatInstallHandlers) {
+  // A full PE load decodes every handler's language tables, so preparing a
+  // function that installs one adds no metadata and keeps the analysis that
+  // warming built.  Its source reads the same as without warming.
+  const auto Fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "Inputs" / "source-patch" / "native-processes" /
+                       "x64-original.exe";
+  const auto Handled = [](neverd_session_t Owner) {
+    std::vector<neverd::va_t> Entries;
+    for (const auto &F :
+         neverd::sdk::toSession(Owner)->Img.ExceptionMetadata.Functions)
+      if (F.PersonalityVA && F.Kind == neverd::RuntimeFunctionKind::Primary &&
+          F.CodeRange.isValid())
+        Entries.push_back(F.CodeRange.Begin);
+    return Entries;
+  };
+  std::vector<std::string> Cold;
+  {
+    neverd_session_t Plain = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Plain, Fixture.string().c_str()), 1);
+    for (neverd::va_t Entry : Handled(Plain))
+      Cold.push_back(takeString(neverd_decompile(Plain, Entry)));
+    neverd_session_destroy(Plain);
+  }
+  ASSERT_GE(Cold.size(), 2u);
+
+  ASSERT_EQ(neverd_session_load(Session, Fixture.string().c_str()), 1);
+  auto &State = *neverd::sdk::toSession(Session);
+  auto Page = llvm::json::parse(
+      takeString(neverd_warm_functions_json(Session, 0, 4096)));
+  ASSERT_TRUE(bool(Page)) << llvm::toString(Page.takeError());
+  const auto *Result = Page->getAsObject();
+  ASSERT_NE(Result, nullptr);
+  EXPECT_EQ(Result->getBoolean("available"), true);
+  EXPECT_GT(Result->getInteger("prepared").value_or(0), 0);
+  const auto Facts =
+      neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache);
+  ASSERT_NE(Facts, nullptr);
+  const auto Entries = Handled(Session);
+  ASSERT_EQ(Entries.size(), Cold.size());
+  for (size_t I = 0; I < Entries.size(); ++I) {
+    ASSERT_EQ(neverd_prepare_function(Session, Entries[I]), 1);
+    EXPECT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
+              Facts);
+    EXPECT_EQ(takeString(neverd_decompile(Session, Entries[I])), Cold[I]);
+  }
+}
+
 TEST_F(SessionCAPITest, AnalysisCacheChecksFeaturesAfterSelectionClearsResult) {
   const auto Path = write("cache.elf", makeAnalysisCacheELF(false));
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
@@ -8912,5 +9001,29 @@ TEST_F(SessionCAPITest, PersistedAddressEncodingsKeepCanonicalSaveRoundTrips) {
                         Renames);
   }
 }
+
+
+#ifndef _WIN32
+TEST_F(SessionCAPITest, ProjectPreparationReportsSetupFailures) {
+  const auto Input = write("project-input.bin", "input");
+  const auto Folder = neverd::project_files::folder(Input);
+  std::filesystem::create_directories(Folder / "local");
+  const auto Setup = Folder / ".gitignore";
+  // A missing target parent makes file creation fail without relying on
+  // permission bits (which privileged test processes can bypass).
+  std::filesystem::create_symlink(Folder / "missing" / "ignore", Setup);
+  EXPECT_EQ(neverd::project_files::prepare(Input),
+            std::make_error_code(std::errc::io_error));
+  EXPECT_FALSE(std::filesystem::exists(Folder / ".gitattributes"));
+  std::filesystem::remove(Setup);
+  // A self-referential link makes the existence query itself fail.
+  std::filesystem::create_symlink(Setup.filename(), Setup);
+  EXPECT_TRUE(neverd::project_files::prepare(Input));
+  std::filesystem::remove(Setup);
+  EXPECT_FALSE(neverd::project_files::prepare(Input));
+  EXPECT_TRUE(std::filesystem::is_regular_file(Setup));
+  EXPECT_TRUE(std::filesystem::is_regular_file(Folder / ".gitattributes"));
+}
+#endif
 
 } // namespace

@@ -4,6 +4,11 @@
 
 # Testing NeverD
 
+`NeverDDirectTailCallMetadataTests` builds real x86, x64 and AArch64 CFGs and
+validates direct tail-call targets at strict instruction boundaries. It covers
+fallthrough and conditional transfers into known functions, an existing direct
+jump, ordinary calls and indirect tail calls.
+
 `AndroidFDSet.*` checks Bionic checked descriptor bitmaps at O0/O2 with ordinary,
 packed and RELR relocations on available CPU backends. Independent byte oracles
 cover word boundaries, untouched canaries, boolean queries, full-width extents,
@@ -66,6 +71,19 @@ state generators retain an explicit unsupported test.
 
 `InterpreterSpecialization.SegmentedWrite*` checks independent byte-memory results, all scalar widths, base-addition wraparound, frame aliases, overwritten pointer origins, cross-node invalidation and exact/short budgets. `SegmentedWritesAndReadsShareLinearMemory` covers equal and distinct segment bases. `PEFixedImageTest.RawSegmented*` checks native bytes, live return-cell alias refusal and changed capability receipts. The existing receipt compatibility cases retain their values. Build the specialization, PE fixed-image, machine-state and native/LLVM refinement test owners; source and proof refusal checks include an unused write capability.
 
+## Symbolic SHUFPS semantics
+
+`SymIntegerIntrinsics.*` checks all 256 shuffle controls at 128, 256 and 512
+bits, bit-pattern preservation, source/destination aliases and temporary
+outputs. It also checks malformed shapes, unavailable values and unsupported
+intrinsics. `NeverDSymbolicIntegerIntrinsicTests` runs these checks together
+with the existing execution, store-preservation and x87 regressions:
+
+```sh
+cmake --build build-release --target NeverDSymbolicIntegerIntrinsicTests --parallel 4
+ctest --test-dir build-release -L '^NeverDSymbolicIntegerIntrinsicTests$' --output-on-failure
+```
+
 ## Concrete entry-memory concolic replay
 
 Build `NeverDSymbolicTests`, `NeverDConcolicTests` and
@@ -114,7 +132,9 @@ generated C and generated Rust. Treat a missing compiler skip as missing
 backend evidence, not as semantic success.
 
 The native source dialect suite also uses `rustc` and `go` from `PATH`, or
-`NEVERD_TEST_RUSTC` and `NEVERD_TEST_GO`. It executes 32 Rust/C observations and
+`NEVERD_TEST_RUSTC` and `NEVERD_TEST_GO`. On Windows, its Rust executable
+fixtures select `lld-link` explicitly so Git Bash's POSIX `link.exe` cannot
+replace the COFF linker. It executes 32 Rust/C observations and
 12 Go/C observations covering integer promotion, narrowing, signed/unsigned
 comparison, arithmetic shifts and loops. The Go check compiles its generated
 scalar functions unchanged; it does not establish that every Go pseudocode
@@ -633,6 +653,13 @@ has the same early return beside a virtual tail call.
 Build and run `NeverDSessionLLVMTests` as well: its private Session queries
 link the actual local-type/debug implementations and shared atomic sidecar
 helper into the test executable. It must not acquire a libneverd dependency.
+This standalone link includes the real project-input recorder through the
+sidecar owner; information panels must not be required to resolve it. Run
+`SessionCAPITest.InputSha256IsTheHashOfTheLoadedFile` and the existing sidecar
+persistence/failure tests against the shared SDK when changing these owners.
+`SidecarWritesRecordInputAndKeepAMatchingManifest` checks that saving a sidecar
+records the real input, public queries agree, and recording the same input
+preserves other manifest fields and bytes.
 `scripts/compare_prototypes_with_ida.py` compares the signatures NeverD
 decompiles with the prototypes an IDA dump shows; it decompiles each
 function by address and resolves IDA's typedefs through the shipped headers:
@@ -944,6 +971,25 @@ They cover intermediate D0 transport, D16-D31 scratch registers and both arms
 of an FP return join. `NeverDARM32ObjectImmediateTests` runs the five ARM32 host C
 differentials separately; the Windows EH CI lane runs these cases with its
 Clang 18 toolchain, including NEON zip/mask shapes different from Clang 23.
+The shared HighC host fixture reports native `-m32` execution unavailable on
+macOS, where a 64-bit build would truncate the kernels' addresses. Linux and
+Windows retain the actual 32-bit differential. Native x87 IR inputs use
+`LLVMHostFixture.h` at both host compiler boundaries; the original verified
+module and semantic proofs remain unchanged. The compiler copy lowers
+whole-object lifetime markers to the older `(i64 size, ptr)` signature, using
+the actual static allocation size or `-1` for a variable-sized allocation.
+The Clang 18 O2 execution remains required; it must not consume the newer
+one-argument intrinsic with verification disabled. The same copy spells
+binary80 hexadecimal literals with the older `0xK` prefix while retaining all
+80 bits. LLVM tokenization keeps identical-looking
+names, labels, inline assembly and metadata strings unchanged.
+The source dialect bit-field differential uses its native C oracle's record
+ABI: Microsoft on Windows and Itanium on the 64-bit System V and Apple hosts,
+with independent layout
+assertions before the Rust/Go byte comparisons. Both record ABIs' actual
+generated Rust/Go views are also read on every host. The C syntax reader
+recognizes only the emitted `NEVERD_MS_STRUCT` prefix, including after
+`DECLSPEC_ALIGN(N)`; unknown layout macros still fail visibly.
 The call controls retain explicitly prepared floating registers for both direct
 and indirect calls whose ABI operands have not yet been recovered.
 
@@ -3200,7 +3246,14 @@ address-size truncation before adding FS. Only TPIDR_EL0 and FPCR/FPSR system-re
 `ExecutionExitTests.cpp` exercises real x64/ARM64 software and checked runs:
 pre-effect stops, deadlines followed by clean resumption, faults overriding stop
 requests, retained recoverable faults, guest traps versus unsupported operations,
-observer failures and software HLT without a workload-completion claim.
+observer failures and software HLT without a workload-completion claim. The
+software deadline regression spends the budget inside an instruction observer
+and verifies that the following unmapped load never executes and a fresh run
+can stop normally. Keep native Windows repetition for the short-slice timer
+regression; a pass on another host does not qualify its timing behavior.
+The driver context fixture checks all 1296 guarded bytes at each of twelve
+captures. Constant-width copies and unrolled fixed loops reduce checked native
+instruction overhead while retaining every comparison and the existing budget.
 `AArch64ProjectionTests.cpp` executes through the ARM MMU using the actual
 native page-table projection, checking translations, remapping and write
 protection. These tests deliberately use Unicorn's architectural CPU TLB, not
@@ -5989,6 +6042,36 @@ sufficient either. The audit runs even after CTest fails and preserves that
 failure. Each matrix leg uploads its inventory, JUnit, exit status, outcome
 JSON, and log as `ctest-evidence-<profile>`.
 
+The same job first executes its focused emulation and mobile contracts. The
+`reuse` command retains only their passed results with matching inventory
+identities, so the main profile does not run those cases twice. Failed, skipped
+and incomplete cases remain in the main execution. A name registered by several
+owners moves only when every selected owner has passed. The final audit combines
+the retained JUnit cases with fresh results against the unchanged complete
+profile, rejects overlaps and missing identities, and keeps the original exit
+status. Reuse names, JUnit and input hashes accompany the outcome artifact.
+This avoids repeated native work within the hosted job's time limit without
+reducing its required coverage.
+
+The original WHP file-transfer matrix contains eighteen separately bounded
+five-second guests, so its complete CTest method has a 120-second allowance.
+The original integer-formatting matrix contains four thirty-second guests and
+has a 150-second CTest allowance. The policy matches only those two methods and
+their four WHP contract/base variants; other driver methods retain their
+existing limits. The created-regular-attributes, created-directory-filesystem
+and attribute-name Darwin differentials use the same twenty-second guest
+allowance as the other semantic batches, including complete filesystem record
+copies. Their whole-method CTest allowances include host setup and teardown:
+180 seconds for eight directory guests, 420 seconds for twenty attribute guests,
+and 90 seconds for three attribute-name guests. The policy applies to these
+three methods across their transports.
+Instruction bounds, public defaults and all result assertions remain unchanged.
+
+The four `SessionCAPIKernelInputs` checks require developer-supplied kernel/PDB
+files. Their exact missing-input reasons are recorded as external-input skips;
+they do not count as passed. Once their required environment variables are
+configured, a skip fails the audit. Other Session checks remain mandatory.
+
 The required execution policy follows existing CI ownership:
 
 - Linux must execute all selected `NeverDSemanticTests` cases; macOS must
@@ -7843,6 +7926,8 @@ DarwinFileSystemOptions and DarwinFileSystemTest cover exact wide/signed fields,
 
 `DarwinCreatedAttributesPublic.PreserveProvidersAcrossCAndCLI` registers five platform cases separately, preserving all 180 C API/CLI executions under the original 30-second case limit. `DarwinCreatedRegularAttributesRejectMalformedProvidersBeforeLoading` retains the ten invalid inputs. Mobile policy regressions check unchanged text and reject altered directives; scalar, calls/Blocks and Swift recovery must rebuild and execute all twelve variants, followed by `test_mobile_ios_single_session.py`.
 
+`SourceABI.SourceCallsReplaceGenericRegisterArgumentSummaries` in `NeverDObjCSourceCallTests` checks source argument order, narrow lanes and Swift context carriers on x86-64 and ARM64 after generic call summaries are available. `SourceABI.UnboundSourceCallsRetainGenericArguments` checks disabled, missing and invalid bindings plus explicit LowIR and formatted-call operands. `SourceABI.PrototypeArgumentCountsDoNotReplaceExplicitOperands` retains explicit COFF ARM64 arguments even when import prototype counts match the source declaration. The mobile matrix must still recover, compile and independently execute every original/rebuilt variant; complete method counts alone do not establish matching behavior.
+
 ## Declared mount enumeration
 
 Declared mount enumeration now provides ordered cached observations and explicitly supplied successful refreshes. Each process keeps its own cache. Duplicate records remain separate, and an empty table is distinct from an unknown table. This supports another common filesystem query used by Apple applications; dyld, Mach IPC and the full Objective-C/Swift and Foundation/UIKit environment remain incomplete.
@@ -8158,7 +8243,7 @@ target bounds. `DarwinLibSystemTest.Callback*`, `NormalExit*` and
 capacity/nulls, current-stack preservation, live permissions and pending tables.
 `DarwinProcess.DylibConstructorsAndTLSCallbacksKeepStartupAndExitOrder` repeats
 all exit paths, fresh processes and shared instruction/event limits. It adds
-one mandatory method: 102 per profile and 306 matching ARM64 identities.
+the constructor/TLS method in the mandatory native inventory.
 `DarwinNative.ConstructorsAndTLSCallbacksMatchOriginalNativeImages` compares
 both system-linked formats with actual macOS execution; independent original
 O0/O1/O2 controls disable stack protection, whose guard imports remain outside
@@ -8166,6 +8251,29 @@ this provider. `DarwinLibSystemPublic.ConstructorsAndTLSCallbacksKeepLifetimeAcr
 and genuine Python `test_darwin_constructors_and_tls_callbacks_keep_process_lifetime`
 check all five profiles, void JSON results and repeated session isolation.
 Native Intel and physical iOS remain unqualified. No guest budget is increased.
+
+### Darwin C/C++ global exit callbacks
+
+`DarwinExitFixtures.cmake` builds a real two-dylib C++ graph with compiler-emitted
+`__cxa_atexit` and local-static initialization using `-fno-threadsafe-statics`.
+`DarwinLibSystemTest.Global*` checks exact arity/int results, errno, mixed LIFO,
+quota retirement, full-width objects, original targets and active-frame permissions.
+`DarwinLinking.CallbackStorage*` and `RegistrationOnly*` protect the old base/TLS
+footprint and conditional global metadata charge; raw and constructor-only
+minimum-budget cases remain separate. Guard imports from libSystem and selective-finalization imports
+remain refused.
+
+`DarwinProcess.DylibGlobalsAndLocalStaticsFinalizeAfterTLS` covers eight native
+outcomes, global raw exit, explicit reentrant-exit refusal, fresh processes and
+shared terminal event/instruction limits. It raises the mandatory inventory to
+103 methods per profile and 309 matching ARM64 HVF identities.
+`DarwinNative.GlobalAndStaticDestructorsMatchOriginalNativeImages` compares both
+system-linked formats with original macOS execution. Independent O0/O1/O2
+controls cover all eight outcomes. C/CLI
+`GlobalAndStaticDestructorsKeepLifetimeAcrossCAndCLI` and genuine Python
+`test_darwin_global_and_static_destructors_keep_process_lifetime` check all five
+profiles and existing JSON call records. Native Intel and physical iOS remain
+unqualified; all guest budgets remain unchanged.
 
 ### Imported Darwin data and TLS pointer offsets
 
@@ -8244,6 +8352,31 @@ side-effecting statement without acquiring a Linux syscall contract.
 `KernelMDLChain.CreateMdl*` and `KernelMDLUserMapping.CreateMdl*` cover full-width guards, untouched bytes, zero/wrapping metadata, pool and stack lifetime, locks, aliases, failed release, partial reuse, IRP refusal and IRQL. The genuine WDK user-mapping fixture exercises static/dynamic creation, owned pool, interior caller pool and caller stack records, physical identity and complete unload. Original probes distinguish wrapper writes, pool flag translation and injected allocator/free boundaries.
 
 `KernelMDLChain.AdvanceMdl*` and `KernelMDLUserMapping.AdvanceMdl*` check repeated page crossings, PFN tails, exact-end refusal, narrow arguments, stable mapping extents, failed teardown, permissions, storage ownership, process context and unsupported dependencies. The genuine WDK user-mapping fixture uses static/dynamic advance, explicit unmap and automatic unlock. Original-code probes separately cover the entire advance routine, restoration helper and unmap wrapper with explicit mapping-kind/PTE-release injection; they do not execute the operating system page database.
+
+### Darwin default C++ static guards
+
+`DarwinGuardFixtures.cmake` preserves default thread-safe static code generation
+in two dylibs and main. A separate exact libc++ tbd exports only the three guard
+operations; native controls link real libc++. `DarwinLibSystemBindings.Guard*`
+and the four guard methods in `DarwinLibSystemTest` cover complete state words,
+independent high/low port values, errno, void returns, first-byte-only readonly
+acquire and failure ordering. `DarwinLinking.Guard*` independently writes both
+fixup forms and checks provider closure, compatibility, shared pages, individual
+fixup/gate charges, exact minimum admission and one byte below it.
+
+`DarwinProcess.DefaultStaticGuardsKeepDylibTLSAndExitLifetime` covers constructor,
+TLS and global callbacks, repeated static mutation, abort/retry, fresh state,
+recursive/foreign/absent-port failures and shared event/instruction cuts. It
+raises the required native inventory to 104 methods/profile, 312 matching ARM64
+HVF identities. `DarwinNative.DefaultStaticGuardsMatchOriginalNativeImages`,
+C/CLI `DefaultStaticGuardsKeepLifetimeAcrossCAndCLI` and genuine Python
+`test_darwin_default_static_guards_keep_process_lifetime` check the same original
+programs. O0/O1/O2 classic/chained native controls include x64 through Rosetta.
+ARM64 compilation specifies both `-march=armv8-a -mcpu=generic`; inspect every
+final image for LDARB, absence of LDAPR and real guard imports. Preserve failed
+modern-host and march-only LDAPRB controls. Their refusal happened before the
+first guard call with no output; it does not prove unchanged memory. Native
+Intel, physical iOS, RCpc and concurrent initialization remain separate coverage.
 
 ## Offline Android resolver and Linux stream contracts
 

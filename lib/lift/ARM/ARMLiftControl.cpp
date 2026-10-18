@@ -211,14 +211,58 @@ bool ARMLifter::liftControl(LiftState &S, const cs_insn *Insn,
     // typed state-transition contract.
     return false;
 
-  // Coprocessor (traditional CP14/CP15 access — system side effects)
-  case ARM_INS_MCR:
-  case ARM_INS_MCR2:
-  case ARM_INS_MCRR:
-  case ARM_INS_MCRR2:
+  // A coprocessor register transfer keeps its coprocessor, opc1, CRn, CRm
+  // and opc2 as its field (armCoprocessorField): `mrc p15, #0, r0, c13, c0,
+  // #3` reads TPIDRURO into r0, and `mcr p15, #0, r1, c7, c10, #5` runs the
+  // CP15 barrier with r1.
   case ARM_INS_MRC:
-  case ARM_INS_MRC2:
+  case ARM_INS_MCR: {
+    const std::optional<uint64_t> Field =
+        coprocessorTransferField(ARM, /*TwoRegisters=*/false);
+    if (!Field || !coprocessorTransferRegister(ARM.operands[2]))
+      return false;
+    if (Insn->id == ARM_INS_MRC)
+      S.emitIntrinsic(Intrinsic::ArmMrc, operandWrite(ARM.operands[2]),
+                      {NdVar::cst(*Field, 4)});
+    else
+      S.emitVoidIntrinsic(Intrinsic::ArmMcr, {NdVar::cst(*Field, 4),
+                                              operandRead(S, ARM.operands[2])});
+    break;
+  }
+  // An MRRC or MCRR moves a 64-bit value, Rt its low half and Rt2 its high
+  // (`mrrc p15, #1, r0, r1, c14` reads CNTVCT).
   case ARM_INS_MRRC:
+  case ARM_INS_MCRR: {
+    const std::optional<uint64_t> Field =
+        coprocessorTransferField(ARM, /*TwoRegisters=*/true);
+    if (!Field || !coprocessorTransferRegister(ARM.operands[2]) ||
+        !coprocessorTransferRegister(ARM.operands[3]))
+      return false;
+    NdVar Value = S.makeTemp(8);
+    if (Insn->id == ARM_INS_MCRR) {
+      S.emit(
+          NdOp::CONCAT, Value,
+          {operandRead(S, ARM.operands[3]), operandRead(S, ARM.operands[2])});
+      S.emitVoidIntrinsic(Intrinsic::ArmMcrr, {NdVar::cst(*Field, 4), Value});
+      break;
+    }
+    // An MRRC that writes one register twice is UNPREDICTABLE.
+    if (ARM.operands[2].reg == ARM.operands[3].reg)
+      return false;
+    S.emitIntrinsic(Intrinsic::ArmMrrc, Value, {NdVar::cst(*Field, 4)});
+    S.emit(NdOp::SUBBYTES, operandWrite(ARM.operands[2]),
+           {Value, NdVar::cst(0, 4)});
+    S.emit(NdOp::SUBBYTES, operandWrite(ARM.operands[3]),
+           {Value, NdVar::cst(4, 4)});
+    break;
+  }
+  // The unconditional transfers (MRC2 and its kin), which Armv8 removed and
+  // ACLE only spells before it, CDP and the coprocessor loads and stores
+  // have no typed contract; a placeholder would lose their data flow and
+  // the state they change.
+  case ARM_INS_MCR2:
+  case ARM_INS_MCRR2:
+  case ARM_INS_MRC2:
   case ARM_INS_MRRC2:
   case ARM_INS_CDP:
   case ARM_INS_CDP2:
@@ -230,9 +274,6 @@ bool ARMLifter::liftControl(LiftState &S, const cs_insn *Insn,
   case ARM_INS_STC2:
   case ARM_INS_STC2L:
   case ARM_INS_STCL:
-    // Coprocessor forms differ in register direction, width, addressing, and
-    // device side effects.  Treating all of them as MSR loses both data flow
-    // and architectural state.
     return false;
   // CDE (Custom Datapath Extension).  These encodings carry
   // implementation-defined coprocessor operands.  Operand-free placeholders

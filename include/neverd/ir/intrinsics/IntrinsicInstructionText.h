@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace neverd {
 
@@ -62,6 +63,44 @@ std::string aarch64SystemRegisterName(uint64_t Encoding, bool Write);
 /// form of \p Id.
 std::string aarch64SystemInstructionAsm(Intrinsic Id, uint64_t Field,
                                         bool HasOutput, bool HasRegister);
+
+/// The field an ARM coprocessor register transfer (MRC, MCR, MRRC or MCRR)
+/// keeps of its operands, one hex digit each: coprocessor, opc1, CRn, CRm and
+/// opc2, so `mrc p15, #0, r0, c13, c0, #3` is 0xF0D03.  MRRC and MCRR have no
+/// CRn or opc2, which stay 0: `mrrc p15, #1, r0, r1, c14` is 0xF10E0.
+constexpr uint64_t armCoprocessorField(unsigned Coprocessor, unsigned Opc1,
+                                       unsigned CRn, unsigned CRm,
+                                       unsigned Opc2) {
+  return uint64_t(Coprocessor) << 16 | uint64_t(Opc1) << 12 |
+         uint64_t(CRn) << 8 | uint64_t(CRm) << 4 | Opc2;
+}
+
+/// The operands an armCoprocessorField holds.
+struct ArmCoprocessorOperands {
+  unsigned Coprocessor;
+  unsigned Opc1;
+  unsigned CRn;
+  unsigned CRm;
+  unsigned Opc2;
+};
+
+/// The operands of coprocessor transfer \p Id (ArmMrc, ArmMcr, ArmMrrc or
+/// ArmMcrr) in \p Field; none for another intrinsic, or a field no such
+/// instruction has: an MRC's or MCR's opc1 over 7, or an MRRC's CRn.
+std::optional<ArmCoprocessorOperands> armCoprocessorOperands(Intrinsic Id,
+                                                             uint64_t Field);
+
+/// The assembly of coprocessor transfer \p Id with \p Field, with `$0` for
+/// its register, or `${0:Q}, ${0:R}` for the low and high halves of the
+/// 64-bit value an MRRC or MCRR moves: `mrc p15, #0, $0, c13, c0, #3`,
+/// `mcrr p15, #1, ${0:Q}, ${0:R}, c14`.  Empty where armCoprocessorOperands
+/// has none.
+std::string armCoprocessorInstructionAsm(Intrinsic Id, uint64_t Field);
+
+/// The intrinsic and field of coprocessor transfer assembly \p Text as
+/// armCoprocessorInstructionAsm writes it; none for any other text.
+std::optional<std::pair<Intrinsic, uint64_t>>
+armCoprocessorAsmField(llvm::StringRef Text);
 
 } // namespace neverd
 

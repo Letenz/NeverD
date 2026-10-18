@@ -232,6 +232,7 @@ jobs:
             scripts.tests.test_ci_configuration \
             scripts.tests.test_audit_ci_test_inventory \
             scripts.tests.test_audit_ci_test_results \
+            scripts.tests.test_ci_test_reuse \
             scripts.tests.test_run_lift_qualification \
             scripts.tests.test_prepare_source_dialect_corpus \
             scripts.tests.test_run_native_cpu_ci \
@@ -1791,9 +1792,28 @@ jobs:
           PYTHON: ${{ matrix.python }}
           TEST_PROFILE: ${{ matrix.test_profile }}
 
+      - name: Preserve completed focused test passes
+        id: reused_tests
+        if: ${{ !cancelled() && steps.inventory.outcome == 'success' }}
+        shell: bash
+        run: |
+          "$PYTHON" scripts/audit_ci_test_results.py reuse \
+            --inventory build-ci/ctest-inventory.json \
+            --profile "$TEST_PROFILE" \
+            --exclude-label-regex "$EXCLUDE_LABELS" \
+            --completed-junit build-ci/emulation-focused/results.xml \
+            --completed-junit build-ci/mobile-native-focused/results.xml \
+            --exclude-tests build-ci/ctest-reused-names.txt \
+            --prior-passes build-ci/ctest-prior-passes.xml \
+            --output build-ci/ctest-reuse.json
+        env:
+          EXCLUDE_LABELS: ${{ steps.inventory.outputs.label_exclude }}
+          TEST_PROFILE: ${{ matrix.test_profile }}
+          PYTHON: ${{ matrix.python }}
+
       - name: Run selected test profile
         id: ctest
-        if: ${{ !cancelled() && steps.default_build.outcome == 'success' && steps.inventory.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.default_build.outcome == 'success' && steps.inventory.outcome == 'success' && steps.reused_tests.outcome == 'success' }}
         shell: bash
         run: |
           set -o pipefail
@@ -1803,6 +1823,7 @@ jobs:
           ctest --test-dir build-ci \
             --build-config Release \
             --label-exclude "$EXCLUDE_LABELS" \
+            --exclude-from-file "$PWD/build-ci/ctest-reused-names.txt" \
             --output-junit "$PWD/build-ci/ctest-results.xml" \
             --output-log "$PWD/ctest.log" \
             --no-tests=error \
@@ -1825,6 +1846,7 @@ jobs:
           "$PYTHON" scripts/audit_ci_test_results.py audit \
             --inventory build-ci/ctest-inventory.json \
             --junit build-ci/ctest-results.xml \
+            --prior-passes build-ci/ctest-prior-passes.xml \
             --ctest-status build-ci/ctest-exit-status.txt \
             --profile "$TEST_PROFILE" \
             --exclude-label-regex "$EXCLUDE_LABELS" \
@@ -1846,6 +1868,9 @@ jobs:
             build-ci/ctest-results.xml
             build-ci/ctest-exit-status.txt
             build-ci/ctest-outcomes.json
+            build-ci/ctest-reuse.json
+            build-ci/ctest-reused-names.txt
+            build-ci/ctest-prior-passes.xml
             build-ci/source-dialects/
             ctest.log
           if-no-files-found: error

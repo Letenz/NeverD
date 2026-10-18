@@ -494,6 +494,8 @@ void CFGBuilder::rewriteAsTailCall(InsnRecord &Rec) {
   Rec.IsIndirect = false;
   Rec.IsCall = true;
   Rec.IsRet = true;
+  // Synthetic fallthrough stubs have no decoded immediate to preserve.
+  Rec.Immediate = Target;
   Rec.BranchTarget = InvalidVA;
   CallTargets.insert(Target);
 }
