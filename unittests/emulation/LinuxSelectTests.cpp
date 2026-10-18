@@ -237,10 +237,9 @@ TEST_P(LinuxSelect, BlockingWaitsNeverBecomeUnobservedTimeoutSuccess) {
   EXPECT_EQ(select(0, 0), 0u);
   EXPECT_FALSE(select(0, 0, 0, 0, 0));
   word(Base + 96, 5);
-  EXPECT_FALSE(select(0, 0));
-  EXPECT_NE(Report.Diagnostic.find("readiness schedule"), std::string::npos);
-  EXPECT_EQ(word(Base + 96), 5u);
-  EXPECT_EQ(Kernel->clock().elapsed(), 0u);
+  EXPECT_EQ(select(0, 0), 0u); // No descriptors: the timeout is sufficient.
+  EXPECT_EQ(word(Base + 96), 0u);
+  EXPECT_EQ(Kernel->clock().elapsed(), 5000000000u);
 }
 
 TEST_P(LinuxSelect, LiveProcessDescriptorsRetainTheirOwnedReadiness) {
@@ -255,6 +254,219 @@ TEST_P(LinuxSelect, LiveProcessDescriptorsRetainTheirOwnedReadiness) {
   ASSERT_EQ(call(ServiceKind::Socket, 2, 1, 6), 3u);
   EXPECT_FALSE(select(4, Base + 64)); // Not connected, not implicitly ready.
   EXPECT_EQ(word(Base + 64), 8u);
+}
+
+TEST_P(LinuxSelect, TimedArrivalTimeoutEOFAndQuietIntervalsShareOneClock) {
+  auto &C = Options.LinuxNetwork->Connections[0];
+  C.Receive.clear();
+  C.ReceiveEvents = {{{7, 8}, 0, 0, 7}};
+  C.ReceiveEOFAtNS = 13;
+  ASSERT_EQ(socket(), 3u);
+  word(Base + 64, 8);
+  EXPECT_EQ(select(4, Base + 64), 0u);
+  EXPECT_EQ(Kernel->clock().elapsed(), 0u);
+  word(Base + 64, 8);
+  word(Base + 104, 5);
+  EXPECT_EQ(select(4, Base + 64), 0u);
+  EXPECT_EQ(Kernel->clock().elapsed(), 5u);
+  EXPECT_EQ(word(Base + 104), 0u);
+  word(Base + 64, 8);
+  word(Base + 104, 5);
+  EXPECT_EQ(select(4, Base + 64), 1u);
+  EXPECT_EQ(Kernel->clock().elapsed(), 7u);
+  EXPECT_EQ(word(Base + 104), 3u);
+  EXPECT_EQ(call(ServiceKind::Read, 3, Base + 128, 1), 1u);
+  EXPECT_EQ(word(Base + 128), 7u);
+  EXPECT_EQ(select(4, Base + 64), 1u); // Remaining byte stays ready.
+  EXPECT_EQ(Kernel->clock().elapsed(), 7u);
+  EXPECT_EQ(call(ServiceKind::Read, 3, Base + 128, 1), 1u);
+  word(Base + 104, 6);
+  EXPECT_EQ(select(4, Base + 64), 1u); // Arrival wins at the exact deadline.
+  EXPECT_EQ(Kernel->clock().elapsed(), 13u);
+  EXPECT_EQ(word(Base + 104), 0u);
+  EXPECT_EQ(call(ServiceKind::Read, 3, Base + 128, 1), 0u);
+}
+
+TEST_P(LinuxSelect, TimedInputCannotBeReadEarlyOrConsumedByQueries) {
+  auto &C = Options.LinuxNetwork->Connections[0];
+  C.Receive.clear();
+  C.ReceiveEOF = false;
+  C.ReceiveEvents = {{{9}, 0, 0, 7}};
+  C.ReceiveQuietUntilNS = 12;
+  ASSERT_EQ(socket(), 3u);
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, 3, Base + 128, 1, 0x40),
+            uint64_t(-11));
+  EXPECT_FALSE(call(ServiceKind::Read, 3, Base + 128, 1));
+  EXPECT_EQ(Kernel->clock().elapsed(), 0u);
+  EXPECT_EQ(word(Base + 128), 0u);
+  word(Base + 64, 8);
+  EXPECT_EQ(select(4, Base + 64, 0, 0, 0), 1u); // Infinite wait has an event.
+  EXPECT_EQ(Kernel->clock().elapsed(), 7u);
+  EXPECT_EQ(call(ServiceKind::Read, 3, Base + 128, 1), 1u);
+  EXPECT_EQ(word(Base + 128), 9u);
+  word(Base + 104, 5);
+  EXPECT_EQ(select(4, Base + 64), 0u);
+  EXPECT_EQ(Kernel->clock().elapsed(), 12u);
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, 3, Base + 128, 1, 0x40),
+            uint64_t(-11));
+  word(Base + 64, 8);
+  word(Base + 104, 2);
+  EXPECT_FALSE(select(4, Base + 64)); // Silence ends before the timeout.
+  EXPECT_EQ(Kernel->clock().elapsed(), 13u);
+  EXPECT_EQ(word(Base + 64), 8u);
+  EXPECT_EQ(word(Base + 104), 2u); // Unsupported is not a completed call.
+}
+
+TEST_P(LinuxSelect, PendingWaitOwnsCopiedInputsAndRechecksOutputAccess) {
+  auto &C = Options.LinuxNetwork->Connections[0];
+  C.Receive.clear();
+  C.ReceiveEvents = {{{7}, 0, 0, 7}};
+  ASSERT_EQ(socket(), 3u);
+  word(Base + 64, 8);
+  word(Base + 104, 10);
+  linux_model::ThreadContext Thread;
+  EXPECT_FALSE(require(
+      Kernel->handle(ServiceKind::PSelect,
+                     {0, 0, {4, Base + 64, 0, 0, Base + 96, 0}, {}}, &Thread)));
+  ASSERT_TRUE(Thread.Pending);
+  EXPECT_FALSE(Thread.Pending->ready());
+  EXPECT_EQ(Thread.Pending->nextWake(), 7u);
+  word(Base + 64, 0); // A concurrent writer does not change copied fd_set.
+  word(Base + 104, 1);
+  ASSERT_TRUE(Kernel->clock().advanceTo(7, Report));
+  EXPECT_TRUE(Thread.Pending->ready());
+  EXPECT_EQ(require(Thread.Pending->resume(Report)), 1u);
+  EXPECT_EQ(word(Base + 64), 8u);
+  EXPECT_EQ(word(Base + 104), 3u);
+}
+
+TEST_P(LinuxSelect, PendingOutputFaultKeepsOtherCopiesAndRemainingTime) {
+  auto &C = Options.LinuxNetwork->Connections[0];
+  C.Receive.clear();
+  C.ReceiveEvents = {{{7}, 0, 0, 7}};
+  ASSERT_EQ(socket(), 3u);
+  word(Base + 4096, 8);
+  word(Base + 104, 10);
+  linux_model::ThreadContext Thread;
+  EXPECT_FALSE(require(Kernel->handle(
+      ServiceKind::PSelect, {0, 0, {4, Base + 4096, 0, 0, Base + 96, 0}, {}},
+      &Thread)));
+  ASSERT_TRUE(Thread.Pending);
+  require(
+      cpu().addressSpace()->protect(Base + 4096, 4096, Read | UserAccessible));
+  ASSERT_TRUE(Kernel->clock().advanceTo(7, Report));
+  EXPECT_EQ(require(Thread.Pending->resume(Report)), uint64_t(-14));
+  EXPECT_EQ(word(Base + 4096), 8u);
+  EXPECT_EQ(word(Base + 104), 3u);
+}
+
+TEST_P(LinuxSelect, PendingFDReplacementIsNotAnotherConnectionsReadiness) {
+  auto &C = Options.LinuxNetwork->Connections[0];
+  C.Receive.clear();
+  C.ReceiveEvents = {{{7}, 0, 0, 7}};
+  ASSERT_EQ(socket(), 3u);
+  ASSERT_EQ(call(ServiceKind::Dup, 3), 4u);
+  word(Base + 64, 8);
+  word(Base + 104, 10);
+  linux_model::ThreadContext Thread;
+  EXPECT_FALSE(require(
+      Kernel->handle(ServiceKind::PSelect,
+                     {0, 0, {4, Base + 64, 0, 0, Base + 96, 0}, {}}, &Thread)));
+  ASSERT_TRUE(Thread.Pending);
+  EXPECT_EQ(call(ServiceKind::Close, 3), 0u);
+  ASSERT_EQ(file(), 3u);
+  EXPECT_TRUE(Thread.Pending->ready());
+  EXPECT_FALSE(require(Thread.Pending->resume(Report)));
+  EXPECT_NE(Report.Diagnostic.find("descriptor changed"), std::string::npos);
+  EXPECT_EQ(word(Base + 64), 8u);
+  EXPECT_EQ(word(Base + 104), 10u);
+  EXPECT_EQ(Kernel->clock().elapsed(), 0u);
+  word(Base + 64, 16);
+  EXPECT_EQ(select(5, Base + 64, 0, 0, 0), 1u); // Original dup still owns data.
+  EXPECT_EQ(call(ServiceKind::Read, 4, Base + 128, 1), 1u);
+}
+
+TEST_P(LinuxSelect, EmptyDatagramArrivalAndPeekKeepOneTimedOwner) {
+  LinuxDatagramConnection C;
+  C.Peer = Options.LinuxNetwork->Connections[0].Peer;
+  C.ReceiveEvents = {{{}, 0, 0, 7}, {{9}, 0, 0, 11}};
+  Options.LinuxNetwork->DatagramConnections = {C};
+  ASSERT_EQ(call(ServiceKind::Socket, 2, 2, 17), 3u);
+  ASSERT_EQ(call(ServiceKind::Connect, 3, Base, 16), 0u);
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, 3, Base + 128, 0, 0x40),
+            uint64_t(-11));
+  word(Base + 64, 8);
+  EXPECT_EQ(select(4, Base + 64, 0, 0, 0), 1u);
+  EXPECT_EQ(Kernel->clock().elapsed(), 7u);
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, 3, Base + 128, 0, 2), 0u);
+  EXPECT_EQ(select(4, Base + 64), 1u);
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, 3, Base + 128, 0), 0u);
+  EXPECT_EQ(select(4, Base + 64, 0, 0, 0), 1u);
+  EXPECT_EQ(Kernel->clock().elapsed(), 11u);
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, 3, Base + 128, 1), 1u);
+  EXPECT_EQ(word(Base + 128), 9u);
+}
+
+TEST_P(LinuxSelect, FailedClockAdvanceDoesNotPublishAReadyDescriptor) {
+  auto &C = Options.LinuxNetwork->Connections[0];
+  C.Receive.clear();
+  C.ReceiveEvents = {{{7}, 0, 0, 7}};
+  Options.LinuxTime->Clocks[1] = {INT64_MAX, 999999999};
+  ASSERT_EQ(socket(), 3u);
+  word(Base + 64, 8);
+  word(Base + 104, 10);
+  EXPECT_FALSE(select(4, Base + 64));
+  EXPECT_EQ(Kernel->clock().elapsed(), 0u);
+  EXPECT_EQ(word(Base + 104), 10u);
+  EXPECT_EQ(word(Base + 64), 8u);
+}
+
+TEST_P(LinuxSelect, MultipleDescriptionsWakeAtEarliestArrivalWithoutConsuming) {
+  auto C = Options.LinuxNetwork->Connections[0];
+  C.Receive.clear();
+  C.ReceiveEvents = {{{1}, 0, 0, 8}};
+  Options.LinuxNetwork->Connections = {C, C};
+  Options.LinuxNetwork->Connections[1].ReceiveEvents[0].ReadyAtNS = 4;
+  ASSERT_EQ(socket(), 3u);
+  ASSERT_EQ(socket(), 4u);
+  word(Base + 64, 24);
+  word(Base + 104, 10);
+  EXPECT_EQ(select(5, Base + 64), 1u);
+  EXPECT_EQ(Kernel->clock().elapsed(), 4u);
+  EXPECT_EQ(word(Base + 64), 16u);
+  EXPECT_EQ(word(Base + 104), 6u);
+  word(Base + 64, 8);
+  EXPECT_EQ(select(5, Base + 64), 1u);
+  EXPECT_EQ(Kernel->clock().elapsed(), 8u);
+  word(Base + 64, 24);
+  EXPECT_EQ(select(5, Base + 64), 2u);
+  EXPECT_EQ(word(Base + 64), 24u);
+  EXPECT_EQ(word(Base + 104), 2u);
+}
+
+TEST_P(LinuxSelect, AliasConsumptionRearmsPendingWaitOnTheNextEvent) {
+  auto &C = Options.LinuxNetwork->Connections[0];
+  C.Receive.clear();
+  C.ReceiveEvents = {{{1}, 0, 0, 5}, {{2}, 0, 0, 9}};
+  ASSERT_EQ(socket(), 3u);
+  ASSERT_EQ(call(ServiceKind::Dup, 3), 4u);
+  word(Base + 64, 8);
+  word(Base + 104, 10);
+  linux_model::ThreadContext Thread;
+  EXPECT_FALSE(require(
+      Kernel->handle(ServiceKind::PSelect,
+                     {0, 0, {4, Base + 64, 0, 0, Base + 96, 0}, {}}, &Thread)));
+  ASSERT_TRUE(Thread.Pending);
+  ASSERT_TRUE(Kernel->clock().advanceTo(5, Report));
+  EXPECT_TRUE(Thread.Pending->ready());
+  EXPECT_EQ(call(ServiceKind::Read, 4, Base + 128, 1), 1u);
+  EXPECT_FALSE(Thread.Pending->ready());
+  EXPECT_EQ(Thread.Pending->nextWake(), 9u);
+  ASSERT_TRUE(Kernel->clock().advanceTo(9, Report));
+  EXPECT_EQ(require(Thread.Pending->resume(Report)), 1u);
+  EXPECT_EQ(word(Base + 104), 1u);
+  EXPECT_EQ(call(ServiceKind::Read, 3, Base + 128, 1), 1u);
+  EXPECT_EQ(word(Base + 128), 2u);
 }
 
 INSTANTIATE_TEST_SUITE_P(Architectures, LinuxSelect,

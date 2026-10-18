@@ -54,6 +54,14 @@ llvm::Error text(const llvm::json::Value &V, llvm::StringRef Name,
   Out = S->str();
   return llvm::Error::success();
 }
+llvm::Error timestamp(const llvm::json::Value &V, llvm::StringRef Name,
+                      std::optional<uint64_t> &Out) {
+  auto N = process_json::integer<uint64_t>(V);
+  if (!N || *N > uint64_t(INT64_MAX))
+    return invalid(Name);
+  Out = *N;
+  return llvm::Error::success();
+}
 llvm::Error receiveEvents(const llvm::json::Value &Value,
                           std::vector<LinuxNetworkReceive> &Out,
                           uint64_t &Remaining) {
@@ -76,6 +84,9 @@ llvm::Error receiveEvents(const llvm::json::Value &Value,
           return Error;
         if (!E.Error)
           return invalid(Name);
+      } else if (Name == field::ReadyAtNS) {
+        if (auto Error = timestamp(V, Name, E.ReadyAtNS))
+          return Error;
       } else if (Name == field::AfterSend) {
         auto N = process_json::integer<uint64_t>(V);
         if (!N)
@@ -130,6 +141,13 @@ linuxNetworkOptionsFromJSON(const llvm::json::Value &Value) {
       } else if (Name == field::ReceiveEvents) {
         if (auto E = receiveEvents(V, Connection.ReceiveEvents, Remaining))
           return std::move(E);
+      } else if (Name == field::ReceiveEOFAtNS ||
+                 Name == field::ReceiveQuietUntilNS) {
+        if (auto E = timestamp(V, Name,
+                               Name == field::ReceiveEOFAtNS
+                                   ? Connection.ReceiveEOFAtNS
+                                   : Connection.ReceiveQuietUntilNS))
+          return std::move(E);
       } else if (Name == field::ReceiveEOF) {
         auto B = V.getAsBoolean();
         if (!B)
@@ -152,6 +170,9 @@ linuxNetworkOptionsFromJSON(const llvm::json::Value &Value) {
           return std::move(E);
       } else if (Name == field::ConnectErrno) {
         if (auto E = number(V, Name, Connection.ConnectErrno))
+          return std::move(E);
+      } else if (Name == field::ReceiveQuietUntilNS) {
+        if (auto E = timestamp(V, Name, Connection.ReceiveQuietUntilNS))
           return std::move(E);
       } else if (Name == field::ExpectedDatagrams) {
         const auto *Packets = V.getAsArray();

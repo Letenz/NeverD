@@ -159,7 +159,7 @@ The supported Bionic subset is:
   and [bitmap ABI](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/include/sys/select.h).
   Raw `pselect6` and its variadic `syscall` route use the shared Linux readiness
   subset below; Bionic `select`/`pselect` wrappers are not yet modeled.
-- LP64 raw `pselect6`, for immediate completion within the initial 64-descriptor
+- LP64 raw `pselect6`, within the initial 64-descriptor
   word. It captures all input sets before ordered output, counts ready bits
   across sets, checks unopened descriptors, and preserves the raw errno/libc
   errno boundary. Regular files and declared live pidfds share the existing
@@ -169,12 +169,16 @@ The supported Bionic subset is:
   completion error or stream byte. Missing input, gated input, exceptional data
   and exhausted send contracts retain an unsupported observation boundary.
   Zero timeouts do not change time. A nonzero timeout requires the explicit
-  virtual idle-time policy and can complete only when immediately ready; its
-  remaining-time copy follows bitmap output, including aliases and ordinary
-  errors. Entirely read-only timeout output is ignored as in Linux. Partial
-  output faults, larger descriptor-table history, temporary signal masks and
-  actual blocking waits remain explicit unsupported cases. No host polling is
-  used. Admission and copy ordering follow [Linux v4.14](https://github.com/torvalds/linux/blob/v4.14/fs/select.c).
+  virtual idle-time policy. Explicit [arrival and quiet intervals](linux-network-contracts.md#timed-readiness)
+  allow blocking waits without host polling. The scheduler runs other runnable
+  threads first and advances idle time only to the earliest wait event. Inputs
+  are retained across suspension, output access is checked on wake, and the
+  original raw or libc event is completed once. Readiness wins over a timeout
+  at the same instant. The remaining-time copy follows bitmap output, including
+  aliases and ordinary errors; wholly read-only timeout output is ignored.
+  Closing or replacing a watched description during a wait stops explicitly.
+  Partial output faults, larger descriptor-table history and temporary signal
+  masks remain unsupported. Admission and copy ordering follow [Linux v4.14](https://github.com/torvalds/linux/blob/v4.14/fs/select.c).
 - `strchr`, `strrchr`, `__strchr_chk`, `__strrchr_chk`, with byte-width character
   conversion, NUL matches, full-width object extents and unchanged errno. The
   first search can return before reaching a terminator; reverse search must

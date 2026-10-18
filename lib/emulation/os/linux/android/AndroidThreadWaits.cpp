@@ -68,8 +68,13 @@ void GuestThreads::wakeMutex(uint64_t Address) {
   }
 }
 
-bool GuestThreads::waitSleep() {
+bool GuestThreads::waitKernel() {
   auto &T = current();
+  if (T.Kernel.Pending) {
+    assert(!T.Waiting && !T.Kernel.SleepDeadline);
+    T.Waiting = Wait{std::move(T.Kernel.Pending), std::nullopt};
+    return true;
+  }
   if (!T.Kernel.SleepDeadline)
     return false;
   assert(!T.Waiting && "running thread already has a pending wait");
@@ -106,7 +111,10 @@ bool GuestThreads::ready(const Wait &Pending) const {
           [](const Once &O) { return O.Ready; },
           [](const Mutex &M) { return M.Ready; },
           [](const Semaphore &S) { return S.Ready; },
-          [&](const Sleep &S) { return S.Deadline <= Clock.elapsed(); }),
+          [&](const Sleep &S) { return S.Deadline <= Clock.elapsed(); },
+          [](const std::unique_ptr<linux_model::KernelWait> &K) {
+            return K->ready();
+          }),
       Pending.Operation);
 }
 
@@ -115,9 +123,15 @@ std::optional<uint64_t> GuestThreads::nextWake() const {
   for (const auto &T : Threads) {
     if (!T.Waiting || T.Report.Finished)
       continue;
-    const auto *S = std::get_if<Sleep>(&T.Waiting->Operation);
-    if (S && (!Deadline || S->Deadline < *Deadline))
-      Deadline = S->Deadline;
+    std::optional<uint64_t> Wake;
+    if (const auto *S = std::get_if<Sleep>(&T.Waiting->Operation))
+      Wake = S->Deadline;
+    else if (const auto *K =
+                 std::get_if<std::unique_ptr<linux_model::KernelWait>>(
+                     &T.Waiting->Operation))
+      Wake = (*K)->nextWake();
+    if (Wake && (!Deadline || *Wake < *Deadline))
+      Deadline = Wake;
   }
   return Deadline;
 }
@@ -136,22 +150,32 @@ BionicResult GuestThreads::resumeWait(Bionic &LibC) {
   // Resumption can fail before another guest instruction executes. Attribute
   // that stop to this service, not the previous thread's last instruction.
   Result.PC = Pending.Request->PC;
-  return std::visit(
-      llvm::makeVisitor(
-          [&](const Join &J) -> BionicResult {
-            if (auto E = prepareJoin(J))
-              return std::move(E);
-            return value(0);
-          },
-          [&](const Once &O) { return resumeOnce(O); },
-          [&](const Mutex &M) {
-            return LibC.resumeMutex(M.Address, M.Attributes);
-          },
-          [&](const Semaphore &S) {
-            return LibC.resumeSemaphore(S.Address, S.Shared);
-          },
-          [&](const Sleep &) -> BionicResult { return value(0); }),
-      Pending.Operation);
+  return std::visit(llvm::makeVisitor(
+                        [&](const Join &J) -> BionicResult {
+                          if (auto E = prepareJoin(J))
+                            return std::move(E);
+                          return value(0);
+                        },
+                        [&](const Once &O) { return resumeOnce(O); },
+                        [&](const Mutex &M) {
+                          return LibC.resumeMutex(M.Address, M.Attributes);
+                        },
+                        [&](const Semaphore &S) {
+                          return LibC.resumeSemaphore(S.Address, S.Shared);
+                        },
+                        [&](const Sleep &) -> BionicResult { return value(0); },
+                        [&](const std::unique_ptr<linux_model::KernelWait> &K)
+                            -> BionicResult {
+                          auto R = K->resume(Result);
+                          if (!R)
+                            return R.takeError();
+                          if (Pending.Source == WaitSource::NativeCall)
+                            return LibC.kernelResult(*R);
+                          if (!*R)
+                            return std::optional<BionicValue>();
+                          return value(**R);
+                        }),
+                    Pending.Operation);
 }
 
 BionicResult GuestThreads::resumeOnce(const Once &Once) {

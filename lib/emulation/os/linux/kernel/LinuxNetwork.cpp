@@ -24,7 +24,7 @@ llvm::Error receiveEvents(llvm::ArrayRef<LinuxNetworkReceive> Events,
                           uint64_t SentLimit, bool Datagram, uint64_t &Bytes) {
   if (Events.size() > 4096)
     return failure("offline network has too many receive events");
-  uint64_t Previous = 0;
+  uint64_t Previous = 0, PreviousTime = 0;
   for (const auto &E : Events) {
     if (E.AfterSend < Previous || E.AfterSend > SentLimit ||
         (E.Error && E.Error != 4 && E.Error != 11) ||
@@ -32,12 +32,44 @@ llvm::Error receiveEvents(llvm::ArrayRef<LinuxNetworkReceive> Events,
         (!Datagram && !E.Error && E.Bytes.empty()) ||
         (Datagram && E.Bytes.size() > 65507))
       return failure("invalid offline receive event");
+    if (E.ReadyAtNS) {
+      if (E.Error || *E.ReadyAtNS > uint64_t(INT64_MAX) ||
+          *E.ReadyAtNS < PreviousTime)
+        return failure("invalid offline receive event time");
+      PreviousTime = *E.ReadyAtNS;
+    }
     Previous = E.AfterSend;
     Bytes += E.Bytes.size();
   }
   return llvm::Error::success();
 }
+llvm::Error receiveEnd(llvm::ArrayRef<LinuxNetworkReceive> Events,
+                       std::optional<uint64_t> EOFTime,
+                       std::optional<uint64_t> QuietTime) {
+  uint64_t Last = 0;
+  for (const auto &E : Events)
+    if (E.ReadyAtNS)
+      Last = *E.ReadyAtNS;
+  for (auto T : {EOFTime, QuietTime})
+    if (T && (*T < Last || *T > uint64_t(INT64_MAX)))
+      return failure("invalid offline receive end time");
+  // The quiet interval is inclusive; its first unknown nanosecond must fit.
+  if (QuietTime && *QuietTime == uint64_t(INT64_MAX))
+    return failure("offline receive quiet interval has no finite end");
+  return llvm::Error::success();
+}
 } // namespace
+bool hasTimedReceives(const LinuxNetworkOptions &Options) {
+  auto Timed = [](const auto &C) {
+    return C.ReceiveQuietUntilNS ||
+           llvm::any_of(C.ReceiveEvents,
+                        [](const auto &E) { return E.ReadyAtNS.has_value(); });
+  };
+  return llvm::any_of(
+             Options.Connections,
+             [&](const auto &C) { return C.ReceiveEOFAtNS || Timed(C); }) ||
+         llvm::any_of(Options.DatagramConnections, Timed);
+}
 uint16_t networkAddressFamily(llvm::ArrayRef<uint8_t> Address) {
   if (Address.size() < 2)
     return 0;
@@ -61,6 +93,13 @@ llvm::Error validateNetworkOptions(const LinuxNetworkOptions &Options) {
                             C.ReceiveEOF || !C.ReceiveEvents.empty())) ||
         (!C.Receive.empty() && !C.ReceiveEvents.empty()))
       return failure("invalid offline TCP connection contract");
+    if ((C.ReceiveEOFAtNS && !C.ReceiveEOF) ||
+        (C.ReceiveQuietUntilNS && C.ReceiveEOF) ||
+        (C.ConnectErrno && (C.ReceiveEOFAtNS || C.ReceiveQuietUntilNS)))
+      return failure("invalid offline TCP receive schedule");
+    if (auto E = receiveEnd(C.ReceiveEvents, C.ReceiveEOFAtNS,
+                            C.ReceiveQuietUntilNS))
+      return E;
     Bytes += C.ExpectedSend.size() + C.Receive.size();
     if (auto E =
             receiveEvents(C.ReceiveEvents, C.ExpectedSend.size(), false, Bytes))
@@ -78,6 +117,10 @@ llvm::Error validateNetworkOptions(const LinuxNetworkOptions &Options) {
         !llvm::all_of(llvm::ArrayRef(C.Peer).slice(4, 4),
                       [](uint8_t V) { return V == 0; }))
       return failure("offline UDP requires zero IPv6 flow information");
+    if (C.ConnectErrno && C.ReceiveQuietUntilNS)
+      return failure("invalid offline UDP receive schedule");
+    if (auto E = receiveEnd(C.ReceiveEvents, {}, C.ReceiveQuietUntilNS))
+      return E;
     for (const auto &Packet : C.ExpectedSend) {
       if (Packet.size() > 65507)
         return failure("offline UDP datagram exceeds the supported size");
@@ -290,6 +333,9 @@ LinuxFiles::transferSocket(OpenSocket &Socket, bool Send, uint64_t Address,
     return Reply(uint64_t(0) - InvalidArgument);
   if (!Size)
     return Reply(0);
+  if (!Send)
+    if (auto Early = receiveBeforeReady(Socket, Flags, Result))
+      return *Early;
   const auto &C = *Socket.Connection;
   const LinuxNetworkReceive *Event = nullptr;
   if (!Send && !C.ReceiveEvents.empty() &&

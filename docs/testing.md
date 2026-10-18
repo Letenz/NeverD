@@ -17,7 +17,15 @@ readiness, EOF and empty datagrams, gated/absent inputs, wrapper/timeout/mask
 error order, closed descriptors, ordered and partial output faults, aliased
 timeout output and explicit unsupported waits. `AndroidFDSet.RawAndBionicPselect*`
 executes actual AArch64 SVC and Bionic `syscall` callers, checking errno separation
-against the same regular-file description.
+against the same regular-file description. Timed Linux cases check arrival,
+EOF, empty datagrams, independent timeout arithmetic, finite quiet intervals,
+non-consuming queries, early nonblocking receives, suspended input copies,
+output faults, FD replacement and atomic clock-overflow refusal.
+`AndroidReadiness.*` runs two original guest threads at O0/O2 across relocation
+formats and available CPU backends. It checks sleep/I/O deadline ordering,
+exact timeout ties, shared-memory mutation during waits, output permissions
+changed by another thread, raw versus libc errno, and exactly one completion
+of the original call. No case opens a host socket.
 
 `AArch64SIMD.RegisterShifts*` checks baseline USHL/SSHL scalar D and fixed
 vectors against independent bit selection, including signed low-byte amounts,

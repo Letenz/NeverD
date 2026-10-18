@@ -7812,6 +7812,14 @@ See [offline network contracts](linux-network-contracts.md).
 `LinuxSelect` owns LP64 `pselect6` admission and ordered user copies. Its socket
 readiness query borrows the same `LinuxFiles` descriptions and receive/send
 cursors as transfers; it does not consume input or create a parallel socket
-registry. Unsupported blocking waits do not advance the shared virtual clock.
+registry. `LinuxSocketReadiness` projects declared arrivals and quiet intervals
+onto those same cursors. `SelectWait` retains copied arguments and description
+identities, rechecks live readiness and output access, and computes remaining
+time from `LinuxClock`. `KernelWait` exposes only readiness, the next wake and
+completion to `GuestThreads`; it introduces no second scheduler or socket
+registry. Runnable threads precede idle advancement; sleep and I/O deadlines
+compete in one ordering. Resume completes the original service event, and Bionic
+alone converts errors using the resumed thread's errno. Unknown observations
+and changed descriptor owners remain explicit stops.
 Android's raw and variadic syscall routes reuse this kernel owner; checked
 Bionic bitmap helpers own only guest memory operations and FORTIFY checks.
