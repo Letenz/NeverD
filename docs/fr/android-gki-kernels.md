@@ -1,5 +1,7 @@
 # Contrats des noyaux Android GKI publiés
 
+> Mise à jour : consultez le [contrat actuel](../linux-network-contracts.md#poll-and-epoll-waits) pour poll/epoll et stdio avec tampon. Les restrictions de cette page à un délai nul et à GKI décrivent le sous-ensemble précédent de poll.
+
 NeverD privilégie les branches Android GKI publiées de 5.10 à 6.18 avant les autres variantes Linux. La requête sélectionne explicitement une branche :
 
 ```json
