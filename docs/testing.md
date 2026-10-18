@@ -5963,6 +5963,9 @@ their four WHP contract/base variants; other driver methods retain their
 existing limits. The created-regular-attributes and created-directory-filesystem
 Darwin differentials use the same twenty-second guest allowance as the other
 semantic batches, including repeated complete filesystem record copies.
+Their whole-method CTest allowances cover all eight directory guests (180
+seconds) and twenty attribute guests (420 seconds), including host setup and
+teardown. The policy applies to those two methods across their transports.
 Instruction bounds, public defaults and all result assertions remain unchanged.
 
 The four `SessionCAPIKernelInputs` checks require developer-supplied kernel/PDB
