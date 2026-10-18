@@ -4550,6 +4550,17 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
   // load of it does.
   if (Depth == 1 && Base && (namedFrameSlot(*Base) || frameDisplacement(*Base)))
     return UntypedCallee("(uintptr_t)(" + exprStr(E) + ")");
+  // A slot a typed record names prints as its member, which the call reads:
+  // a UEFI protocol's function pointer, SystemTable->ConOut->OutputString,
+  // or one at the start of what a member points to, t->boot->reset.
+  if (Depth >= 1) {
+    const HighExpr *Slot = peelIntegerViewOps(&E);
+    if (Slot && !Slot->Operands.empty() && Slot->Operands[0])
+      if (const HighExpr *SlotAddr =
+              peelIntegerViewOps(Slot->Operands[0].get()))
+        if (auto Member = typedMemberAccess(*SlotAddr, PtrSize))
+          return UntypedCallee("(" + *Member + ")");
+  }
   // Slot load of `*(vtbl + imm)` where `vtbl` is `*obj` (MSVC vfptr at 0).
   // Keep the inner vfptr load; `obj + imm` would name a field, not a method.
   // Only one load reads the slot: under a second (`**(p + imm)`, a call
