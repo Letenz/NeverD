@@ -7,7 +7,8 @@
 ///
 /// \file
 /// ARM (32-bit) side-effect intrinsic emission: barriers (DMB/DSB/ISB),
-/// supervisor calls, breakpoints, and exclusive monitors.
+/// supervisor calls, breakpoints, exclusive monitors, and coprocessor
+/// register writes.
 ///
 /// Value-producing intrinsics (RBIT) live in MedLLVMARMValueEmitter.cpp.
 ///
@@ -110,6 +111,24 @@ bool MedLLVMEmitter::emitARMException(const MedOp &Op, Intrinsic IC,
 
 bool MedLLVMEmitter::emitARMSideeffect(const MedOp &Op, Intrinsic IC,
                                        llvm::IRBuilder<> &Builder) {
+  // A coprocessor register write runs as itself with its value (`mcr p15,
+  // #0, $0, c7, c10, #5`), which is 64-bit for an MCRR.
+  if (IC == Intrinsic::ArmMcr || IC == Intrinsic::ArmMcrr) {
+    const std::string Asm =
+        Op.NumInputs == 3 && Op.Inputs[1].isConst()
+            ? armCoprocessorInstructionAsm(IC, Op.Inputs[1].ConstVal)
+            : std::string();
+    if (Asm.empty())
+      llvm::report_fatal_error(
+          "ARM coprocessor write without its coprocessor field");
+    auto *ValueTy = sizeToType(IC == Intrinsic::ArmMcr ? 4 : 8);
+    Builder.CreateCall(
+        llvm::InlineAsm::get(llvm::FunctionType::get(
+                                 llvm::Type::getVoidTy(*Ctx), {ValueTy}, false),
+                             Asm, "r,~{memory}", /*hasSideEffects=*/true),
+        {Builder.CreateZExtOrTrunc(getVar(Op.Inputs[2], Builder), ValueTy)});
+    return true;
+  }
   if (emitARMBarrier(Op, IC, Builder))
     return true;
   if (emitARMException(Op, IC, Builder))

@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/c/render/ArmCoprocessorAcle.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 
@@ -85,6 +86,20 @@ InlineAsmRender renderARMInlineAsm(const std::string &AsmStr,
       Args.size() == 1 && isRegisterName(Register))
     return {"__arm_wsr64(\"" + Register.str() + "\", " + Args[0] + ");\n",
             true};
+
+  // A coprocessor transfer is ACLE's __arm_mrc or kin, with the numbers its
+  // assembly carries.
+  if (const auto Transfer = armCoprocessorAsmField(AsmStr)) {
+    const auto [Id, Field] = *Transfer;
+    const bool Writes = Id == Intrinsic::ArmMcr || Id == Intrinsic::ArmMcrr;
+    if (Args.size() == (Writes ? 1u : 0u))
+      return {(!Writes && ResultLive && !ResultName.empty() ? ResultName + " = "
+                                                            : std::string()) +
+                  armCoprocessorAcleCall(Id, Field,
+                                         Writes ? Args[0] : std::string()) +
+                  ";\n",
+              true};
+  }
 
   const char *ArmC = lookupArmAsmToC(AsmStr.c_str());
   // A trap or a breakpoint builtin takes no code: the instruction it was

@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/c/render/ArmCoprocessorAcle.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
@@ -25,6 +26,7 @@
 #include <limits>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <string>
 
 namespace neverd {
@@ -620,9 +622,14 @@ bool armIntrinsicUsesCHeader(Intrinsic Id) {
 #define NEVERD_NEON_DOUBLING_MULTIPLY(ID, Base, Widening) case I::ID:
 #include "neverd/backend/c/render/HighC/NeonIntrinsicSpellings.def"
   case I::A64_Fcvtxn:
-  // An MRS or MSR of a register is ACLE's __arm_rsr64 or __arm_wsr64.
+  // An MRS or MSR of a register is ACLE's __arm_rsr64 or __arm_wsr64, and
+  // a coprocessor transfer its __arm_mrc and kin.
   case I::Mrs:
   case I::Msr:
+  case I::ArmMrc:
+  case I::ArmMcr:
+  case I::ArmMrrc:
+  case I::ArmMcrr:
     return true;
   default:
     return false;
@@ -1069,6 +1076,25 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
   case I::Tlbi:
   case I::At:
     return renderA64SystemInstruction(Id, Ops, ResultBytes, HasCIntrinsics);
+  case I::ArmMrc:
+  case I::ArmMcr:
+  case I::ArmMrrc:
+  case I::ArmMcrr: {
+    // The lift keeps the instruction's numbers as the field, then an MCR's
+    // or MCRR's value.
+    const bool Writes = Id == I::ArmMcr || Id == I::ArmMcrr;
+    const std::optional<uint64_t> Field = Ops.size() == (Writes ? 2u : 1u)
+                                              ? constantOperand(Ops[0])
+                                              : std::nullopt;
+    std::string Call = Field ? armCoprocessorAcleCall(
+                                   Id, *Field, Writes ? Ops[1] : std::string())
+                             : std::string();
+    if (Call.empty())
+      throw std::invalid_argument(
+          "ARM coprocessor transfer without its coprocessor field");
+    HasCIntrinsics = true;
+    return Call;
+  }
   case I::Dmb:
   case I::ArmDmb:
   case I::Dsb:

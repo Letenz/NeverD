@@ -6,7 +6,9 @@
 
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringSwitch.h"
 
 namespace neverd {
 
@@ -202,6 +204,88 @@ std::string aarch64SystemInstructionAsm(Intrinsic Id, uint64_t Field,
   default:
     return {};
   }
+}
+
+std::optional<ArmCoprocessorOperands> armCoprocessorOperands(Intrinsic Id,
+                                                             uint64_t Field) {
+  const ArmCoprocessorOperands Operands{static_cast<unsigned>(Field >> 16),
+                                        static_cast<unsigned>(Field >> 12) &
+                                            0xF,
+                                        static_cast<unsigned>(Field >> 8) & 0xF,
+                                        static_cast<unsigned>(Field >> 4) & 0xF,
+                                        static_cast<unsigned>(Field) & 0xF};
+  if (Operands.Coprocessor > 15)
+    return std::nullopt;
+  switch (Id) {
+  case Intrinsic::ArmMrc:
+  case Intrinsic::ArmMcr:
+    if (Operands.Opc1 > 7 || Operands.Opc2 > 7)
+      return std::nullopt;
+    return Operands;
+  case Intrinsic::ArmMrrc:
+  case Intrinsic::ArmMcrr:
+    if (Operands.CRn != 0 || Operands.Opc2 != 0)
+      return std::nullopt;
+    return Operands;
+  default:
+    return std::nullopt;
+  }
+}
+
+std::string armCoprocessorInstructionAsm(Intrinsic Id, uint64_t Field) {
+  const std::optional<ArmCoprocessorOperands> O =
+      armCoprocessorOperands(Id, Field);
+  if (!O)
+    return {};
+  const std::string Head = std::string(intrinsicAsmMnemonic(Id)) + " p" +
+                           std::to_string(O->Coprocessor) + ", #" +
+                           std::to_string(O->Opc1) + ", ";
+  if (Id == Intrinsic::ArmMrrc || Id == Intrinsic::ArmMcrr)
+    return Head + "${0:Q}, ${0:R}, c" + std::to_string(O->CRm);
+  return Head + "$0, c" + std::to_string(O->CRn) + ", c" +
+         std::to_string(O->CRm) + ", #" + std::to_string(O->Opc2);
+}
+
+std::optional<std::pair<Intrinsic, uint64_t>>
+armCoprocessorAsmField(llvm::StringRef Text) {
+  const auto [Mnemonic, Rest] = Text.split(' ');
+  const std::optional<Intrinsic> Id =
+      llvm::StringSwitch<std::optional<Intrinsic>>(Mnemonic)
+          .Case("mrc", Intrinsic::ArmMrc)
+          .Case("mcr", Intrinsic::ArmMcr)
+          .Case("mrrc", Intrinsic::ArmMrrc)
+          .Case("mcrr", Intrinsic::ArmMcrr)
+          .Default(std::nullopt);
+  if (!Id)
+    return std::nullopt;
+  // Each number follows its prefix (`p15`, `#0`, `c13`); the text is the
+  // one armCoprocessorInstructionAsm writes for the field they make.
+  llvm::SmallVector<llvm::StringRef, 6> Operands;
+  Rest.split(Operands, ", ");
+  auto number = [](llvm::StringRef Operand, llvm::StringRef Prefix) {
+    unsigned Value = 0;
+    return Operand.consume_front(Prefix) && !Operand.getAsInteger(10, Value)
+               ? std::optional<unsigned>(Value)
+               : std::nullopt;
+  };
+  const bool Pair = *Id == Intrinsic::ArmMrrc || *Id == Intrinsic::ArmMcrr;
+  if (Operands.size() != (Pair ? 5u : 6u))
+    return std::nullopt;
+  const std::optional<unsigned> Coprocessor = number(Operands[0], "p");
+  const std::optional<unsigned> Opc1 = number(Operands[1], "#");
+  const std::optional<unsigned> CRn =
+      Pair ? std::optional<unsigned>(0) : number(Operands[3], "c");
+  const std::optional<unsigned> CRm = number(Operands[4], "c");
+  const std::optional<unsigned> Opc2 =
+      Pair ? std::optional<unsigned>(0) : number(Operands[5], "#");
+  if (!Coprocessor || !Opc1 || !CRn || !CRm || !Opc2 || *Coprocessor > 15 ||
+      *Opc1 > 15 || *CRn > 15 || *CRm > 15 || *Opc2 > 15)
+    return std::nullopt;
+  const uint64_t Field =
+      armCoprocessorField(*Coprocessor, *Opc1, *CRn, *CRm, *Opc2);
+  if (armCoprocessorInstructionAsm(*Id, Field) != Text)
+    return std::nullopt;
+  return std::pair(*Id, Field);
 }
 
 std::string intrinsicInstructionText(Intrinsic Id,
