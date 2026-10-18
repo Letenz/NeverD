@@ -1013,8 +1013,21 @@ runtime reads as C++ whatever its name. The C++ printer uses the shared symbol
 spelling rules for namespaces, STL aliases and qualified ATL types; non-default
 template arguments and explicit ABI arguments remain visible. DWARF record
 identities supply type spellings, not guessed layouts or implicit member-call
-conventions. The GUI offers a separate C choice for non-C images and omits it
-when only C is offered.
+conventions. Overloads that C numbers apart (`f` and `f_2`) read by their one
+C++ name, each linking its own symbol; two functions of one symbol, or a
+function and an object of one name, keep their C identifiers. C declares a
+record by the last component of its C++ name (`std::__ndk1::__sp_mut` is
+`__sp_mut`), which the C++ view names back, and spells one whose name a
+function of the unit or of the C library has by its tag (`struct stat`,
+`struct stat64`): no typedef can declare the name beside the function. The C
+the views read is C a compiler accepts. A local takes no name the unit gives
+a function, an object or a typedef at file scope (`td_ta_event_getmsg`'s
+result is no `msg` where the code calls `msg()`), and a bitwise, shift or
+multiplicative operator, an integer local and integer memory take a pointer as
+its address, an integer (`(uintptr_t)p & ~0xFF`): a local the text declares a
+pointer, a typed record's pointer member, a pointer object, or a value
+forwarded from one. The GUI offers a separate C choice for non-C images and
+omits it when only C is offered.
 
 The reader reads the definitions a unit holds of the program's local types:
 unions, anonymous structures and unions, bit-fields, enumerations,
@@ -4985,6 +4998,12 @@ metadata and sparse allocated-page state in the same mutable object, borrowing
 time solely from LinuxClock. Directory and stdio buffers belong to Bionic,
 which delegates refill, write, seek and close to this same kernel owner. Neither
 the JSON adapter nor a private workload supplies a second descriptor table.
+
+`LinuxFiles` also owns the opt-in directory creation provider, mutable directory
+metadata and append-stable directory cookies. LinuxClock supplies timestamps;
+JSON carries only initial snapshots, umask and bounds. Bionic `strstr` stays in
+the common string owner with bounded linear search and provider lifetime checks.
+See [directory creation contracts](android-directory-creation.md).
 
 `LinuxFiles` also owns explicit device open descriptions in the file/link
 namespace. `LinuxDeviceFiles` validates and applies per-open ioctl transactions:

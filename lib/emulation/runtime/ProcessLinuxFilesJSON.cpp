@@ -201,6 +201,37 @@ linuxFileOptionsFromJSON(const llvm::json::Value &Value) {
       Out.WorkingDirectory = Path->str();
       continue;
     }
+    if (Name == field::DirectoryCreation) {
+      const auto *C = V.getAsObject();
+      const auto *Parents =
+          C ? C->getArray(field::DirectoryCreationParents) : nullptr;
+      auto Number = [&](llvm::StringRef Key) {
+        const auto *N = C ? C->get(Key) : nullptr;
+        return N ? process_json::integer<uint32_t>(*N) : std::nullopt;
+      };
+      auto Mask = Number(field::DirectoryCreationUmask);
+      auto Limit = Number(field::DirectoryCreationLimit);
+      if (!C || C->size() != 3 || !Parents || !Mask || !Limit ||
+          Parents->size() > linux_model::FileCountLimit)
+        return invalid(Name);
+      auto &D = Out.DirectoryCreation.emplace();
+      D.Umask = *Mask;
+      D.Limit = *Limit;
+      for (const auto &Row : *Parents) {
+        const auto *P = Row.getAsObject();
+        auto Path = P ? P->getString(field::Path) : std::nullopt;
+        const auto *M = P ? P->get(field::FileMetadata) : nullptr;
+        if (!P || P->size() != 2 || !Path || !M ||
+            Path->size() >= linux_model::FilePathLimit ||
+            D.Parents.contains(Path->str()))
+          return invalid(Name);
+        auto Parsed = metadata(*M);
+        if (!Parsed)
+          return Parsed.takeError();
+        D.Parents.emplace(Path->str(), *Parsed);
+      }
+      continue;
+    }
     if (Name == field::FileDirectories) {
       const auto *Dirs = V.getAsArray();
       if (!Dirs || Dirs->size() > linux_model::FileCountLimit)

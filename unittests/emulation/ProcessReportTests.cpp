@@ -1498,6 +1498,79 @@ TEST(ProcessReport, JNIClassLoaderDeclarationsAndRetainedNativeBindings) {
   EXPECT_EQ(B->getString("address"), "ffffffffffffffff");
 }
 
+TEST(ProcessReport, DirectoryCreationRequiresCompleteBoundedMetadata) {
+  auto M = llvm::cantFail(llvm::json::parse(FileTestMetadataJSON));
+  auto &O = *M.getAsObject();
+  O["mode"] = 0042775;
+  O["inode"] = 91;
+  O["uid"] = 1000;
+  O["gid"] = 1234;
+  O["size"] = 40;
+  O["blocks"] = 0;
+  O["block_size"] = 4096;
+  O["link_count"] = 2;
+  auto Parse = [&](const llvm::json::Value &V) {
+    return processOptionsFromJSON(
+        R"({"linux_files":{"files":[],"directories":["/work"],"directory_creation":)" +
+        llvm::formatv("{0}", V).str() + "}}");
+  };
+  llvm::json::Value Good =
+      llvm::json::Object{{"umask", 18},
+                         {"limit", 2},
+                         {"parents", llvm::json::Array{llvm::json::Object{
+                                         {"path", "/work"}, {"metadata", M}}}}};
+  auto P = Parse(Good);
+  ASSERT_TRUE(bool(P)) << llvm::toString(P.takeError());
+  EXPECT_EQ(P->LinuxFiles->DirectoryCreation->Umask, 0022u);
+  EXPECT_EQ(P->LinuxFiles->DirectoryCreation->Parents.at("/work").Inode, 91u);
+  auto Refused = [&](llvm::json::Value V) {
+    auto R = Parse(V);
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  };
+  for (const char *Key : {"umask", "limit", "parents"}) {
+    auto V = Good;
+    V.getAsObject()->erase(Key);
+    Refused(V);
+    V = Good;
+    (*V.getAsObject())[Key] = nullptr;
+    Refused(V);
+  }
+  for (auto [Key, Value] : {std::pair{"umask", -1},
+                            {"umask", 512},
+                            {"limit", 0},
+                            {"limit", 256},
+                            {"limit", -1}}) {
+    auto V = Good;
+    (*V.getAsObject())[Key] = Value;
+    Refused(V);
+  }
+  for (const char *Path : {"/missing", "/work/", "relative", "/proc"}) {
+    auto V = Good;
+    (*(*V.getAsObject()->getArray("parents"))[0].getAsObject())["path"] = Path;
+    Refused(V);
+  }
+  for (auto [Key, Value] : {std::pair{"mode", 0100755},
+                            {"mode", 0044755},
+                            {"inode", 0},
+                            {"blocks", 1},
+                            {"block_size", 512},
+                            {"size", 60},
+                            {"link_count", 3}}) {
+    auto V = Good;
+    (*(*V.getAsObject()->getArray("parents"))[0].getAsObject()->getObject(
+        "metadata"))[Key] = Value;
+    Refused(V);
+  }
+  auto V = Good;
+  auto &Rows = *V.getAsObject()->getArray("parents");
+  Rows.push_back(Rows.front());
+  Refused(V);
+  V = Good;
+  (*V.getAsObject())["extra"] = 0;
+  Refused(V);
+}
+
 TEST(ProcessReport, GuestDirectoriesAreExplicitAndTyped) {
   auto Parsed = processOptionsFromJSON(R"({"linux_files":{"files":[],
     "directories":["/work","/app/files"],"working_directory":"/work"},
