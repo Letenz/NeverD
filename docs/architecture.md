@@ -8,6 +8,10 @@ This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
 
+## Checked alignment recovery
+
+`arch/x86_64` owns checked `RequireAligned` transitions for 64-bit addresses in the default address space. The common recovery engine charges the scalar proof operations and proves the rejection predicate is zero before retaining the original guard. Explicit nonfaulting execution does not supply that proof. Alignment does not require MXCSR state; segmented addresses and optional guards remain unsupported by this recovery adapter.
+
 ## Checked MXCSR recovery
 
 `X64MXCSRMask` enables raw MXCSR loads and scalar state reads/writes with an explicit effective mask (`0xffbf` or `0xffff`). The x64 adapter owns the legal initial-state domain and transitions. Core charges work and requires a proof that reserved bits are clear; the nonfaulting flag alone supplies no such proof. Original intrinsics remain observable. MXCSR memory stores, source wrapping and native/LLVM certificates still require their own contracts.

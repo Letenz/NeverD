@@ -331,6 +331,18 @@ execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
             return std::nullopt;
           TaskPriority = Value;
         } else if (Op.Inputs[0].Offset ==
+                   static_cast<uint64_t>(Intrinsic::RequireAligned)) {
+          if (Op.NumInputs != 3 || Op.Output.Size || Op.Inputs[0].Size != 2 ||
+              Op.MemoryOrdering != NdMemoryOrdering::None ||
+              Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+              Op.Inputs[1].Size != 8 || !Op.Inputs[2].isConst() ||
+              Op.Inputs[2].Size != 8)
+            return std::nullopt;
+          const uint64_t Alignment = Op.Inputs[2].Offset;
+          if (!Alignment || (Alignment & (Alignment - 1)) ||
+              read(Op.Inputs[1]) % Alignment != 0)
+            return std::nullopt;
+        } else if (Op.Inputs[0].Offset ==
                    static_cast<uint64_t>(Intrinsic::Ldmxcsr)) {
           const auto Address = read(Op.Inputs[1]);
           if (!MXCSR || Address > UINT64_MAX - 3)
@@ -4722,6 +4734,7 @@ TEST(InterpreterSpecialization, TimestampTransitionMatchesCompleteStateOracle) {
     EXPECT_FALSE(x64::lowerRuntimeTimestampRead(I, Invalid));
 }
 
+#include "AlignmentRecoveryTests.inc"
 #include "MXCSRRecoveryTests.inc"
 #include "SegmentedStoreTests.inc"
 

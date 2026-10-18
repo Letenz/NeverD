@@ -2172,3 +2172,19 @@ I controlli MDL precedenti coprono chiamate WDK reali statiche e dinamiche, work
 `KernelMDLChain.CreateMdl*` e `KernelMDLUserMapping.CreateMdl*` verificano larghezza, byte conservati, metadati vuoti/in overflow, durata di pool/stack, blocchi, alias, rilascio fallito, riuso parziale, rifiuto IRP e IRQL. Il driver WDK reale esegue creazione statica/dinamica, pool proprio, interno e stack del chiamante, identità fisica e scaricamento completo. Le sonde originali distinguono scritture, traduzione dei flag e confini iniettati di allocazione/rilascio.
 
 `KernelMDLChain.AdvanceMdl*` e `KernelMDLUserMapping.AdvanceMdl*` verificano attraversamenti ripetuti, coda PFN, rifiuto alla fine, larghezza degli argomenti, mappature complete, pulizia fallita, permessi e durata. Il vero WDK esegue chiamate statiche/dinamiche ed entrambe le pulizie. Le sonde distinguono routine completa, ausiliario di ripristino e wrapper di rimozione con confini di tipo mappatura/rilascio PTE iniettati; non eseguono il database delle pagine del sistema.
+
+## Trasferimenti vettoriali allineati classici
+
+`NeverDX86LegacyAlignedMoveTests` verifica la conservazione dei registri di MOVDQA, MOVAPS e MOVAPD e l’allineamento a 16 byte prima dell’accesso alla memoria, compresi il riavvolgimento dovuto alla larghezza dell’indirizzo e le basi FS/GS esplicite. Gli accessi non allineati devono preservare registri di destinazione e memoria. Le basi di segmento mancanti restano rifiutate. Questi test coprono lifting ed emulatore; il recupero simbolico esatto deve dimostrare separatamente la condizione di allineamento conservata.
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*` e `PEFixedImageTest.RawAlign*` verificano prove indipendenti tramite resto, input non validi, budget esatti, controlli nativi conservati e ricevute alterate. Gli audit dei movimenti classici vincolano tutte le operazioni, incluso il controllo di allineamento, senza certificare la conservazione dei banchi opachi di stato.
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```

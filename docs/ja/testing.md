@@ -2076,3 +2076,19 @@ CRT 回帰は全バイト／UTF-16 単位、引数幅、変更不要な読み取
 `KernelMDLChain.CreateMdl*` と `KernelMDLUserMapping.CreateMdl*` は全幅検査、保持バイト、空・折返し値、プール／スタック寿命、ロック、別名、解放失敗、部分再利用、IRP 拒否、IRQL を検証します。実際の WDK フィクスチャは静的・動的生成、所有プール、呼出側プール内部とスタック、物理同一性、アンロードを実行します。原コードの観測はフィールド書込、プールフラグ変換、注入した確保／解放境界を区別します。
 
 `KernelMDLChain.AdvanceMdl*` と `KernelMDLUserMapping.AdvanceMdl*` は反復ページ境界、末尾、終端拒否、引数幅、全マッピング、解放失敗、権限、格納域とプロセス寿命を検証します。実 WDK は静的／動的呼出と明示解除・自動アンロックを実行します。原コード観測は完全な進行、復元ヘルパー、マッピング種類／PTE 解放を注入した解除ラッパーを区別し、OS ページデータベースの実行を主張しません。
+
+## 従来形式のアラインされたベクトル転送
+
+`NeverDX86LegacyAlignedMoveTests` は MOVDQA、MOVAPS、MOVAPD のレジスタ保存と、メモリアクセス前の16バイト境界チェックを検証します。アドレス幅による折り返しと明示的な FS/GS ベースも対象です。非整列アクセスは宛先レジスタとメモリを変更せず、セグメントベースが不明なら拒否します。これはリフトとエミュレータの検証です。厳密なシンボリック復元では、保持された整列条件を別途証明する必要があります。
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*` と `PEFixedImageTest.RawAlign*` は独立した剰余証明、不正入力、厳密な予算、元の検査の保持、証明記録の改ざんを検査します。従来の移動命令の監査はアラインメント検査を含む全操作を結び付けますが、不透明な機械状態の保持は証明しません。
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```

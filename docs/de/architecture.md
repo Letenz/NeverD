@@ -9,6 +9,10 @@ müssen, um NeverD sicher zu ändern. Er behandelt bewusst nur NeverD-eigenen
 Code; die LLVM-, Capstone- und Unicorn-Submodule behalten ihre interne
 Architektur.
 
+## Wiederherstellung mit Ausrichtungsnachweis
+
+`arch/x86_64` besitzt die geprüften `RequireAligned`-Übergänge für 64-Bit-Adressen im Standardadressraum. Die gemeinsame Wiederherstellung zählt die skalaren Beweisoperationen und beweist vor dem Erhalt der ursprünglichen Prüfung, dass das Ablehnungsprädikat null ist. Explizit fehlerfreie Ausführung ersetzt diesen Beweis nicht. MXCSR-Zustand ist nicht erforderlich; segmentierte Adressen und optionale Bedingungen bleiben in diesem Adapter ununterstützt.
+
 ## Geprüfte MXCSR-Wiederherstellung
 
 `X64MXCSRMask` aktiviert rohe MXCSR-Ladevorgänge und skalare Zustandszugriffe mit expliziter effektiver Maske (`0xffbf` oder `0xffff`). Der x64-Adapter besitzt den gültigen Anfangszustandsraum und die Übergänge. Der Kern zählt den Aufwand und verlangt den Beweis, dass reservierte Bits null sind; die Fehlerfreiheitsoption genügt nicht. Ursprüngliche Intrinsics bleiben beobachtbar. MXCSR-Speicherzugriffe zum Schreiben, Quellschnittstellen und native/LLVM-Zertifikate benötigen eigene Verträge.

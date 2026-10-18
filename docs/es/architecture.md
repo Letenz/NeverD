@@ -9,6 +9,10 @@ para modificar NeverD con seguridad. Cubre deliberadamente solo el código
 propio de NeverD; los submódulos LLVM, Capstone y Unicorn mantienen su propia
 arquitectura interna.
 
+## Recuperación con prueba de alineación
+
+`arch/x86_64` define las transiciones verificadas de `RequireAligned` para direcciones de 64 bits en el espacio predeterminado. El motor común contabiliza las operaciones escalares y demuestra que el predicado de rechazo es cero antes de conservar la comprobación original. Declarar una ejecución sin fallos no aporta esa prueba. No se requiere estado MXCSR; este adaptador sigue rechazando direcciones segmentadas y condiciones opcionales.
+
 ## Recuperación de MXCSR con comprobación
 
 `X64MXCSRMask` habilita cargas MXCSR y lecturas/escrituras escalares con una máscara efectiva explícita (`0xffbf` o `0xffff`). El adaptador x64 define los estados iniciales válidos y sus transiciones. El núcleo contabiliza el trabajo y exige demostrar que los bits reservados son cero; la opción sin fallos no basta. Las operaciones intrínsecas originales siguen siendo observables. Las escrituras MXCSR en memoria, la interfaz de código fuente y los certificados nativos/LLVM necesitan contratos propios.
