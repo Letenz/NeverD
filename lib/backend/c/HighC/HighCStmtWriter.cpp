@@ -1589,8 +1589,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
             It != DefinedFunctionsByAddress.end() && It->second)
           FilterName = functionIdentifier(*It->second);
         if (FilterName.empty() && Opts.Image) {
-          const std::string Listed =
-              Opts.Image->getFunctionNameAt(Clause.FilterOrActionVA);
+          const std::string &Listed =
+              imageFunctionNameAt(Clause.FilterOrActionVA);
           if (!llvm::StringRef(Listed).starts_with(kAutoFuncPrefix))
             FilterName = functionIdentifier(Listed);
         }

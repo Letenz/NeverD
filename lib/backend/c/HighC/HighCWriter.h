@@ -395,6 +395,11 @@ public:
                       bool ProjectImageBacking = true);
   std::string renderUnaryOp(const HighExpr &E, int ParentPrec);
   std::string resolvedCallTarget(const HighExpr &E) const;
+  /// The name the image lists the function at \p Addr under
+  /// (BinaryImage::getFunctionNameAt), looked up once per address: the image
+  /// does not change while a unit is written, and each lookup scans every
+  /// export and symbol it holds.
+  const std::string &imageFunctionNameAt(va_t Addr) const;
   /// The C identifier a direct call names; see HighCExprWriter.cpp.
   std::string callIdentifier(const HighExpr &E) const;
   /// The C name of the import slot call \p E goes through, itself or by the
@@ -1228,6 +1233,8 @@ public:
   mutable std::unordered_map<std::string, std::vector<const HighExpr *>>
       AssignedValuesByName;
   mutable bool AssignedValuesIndexed = false;
+  /// imageFunctionNameAt's answers.
+  mutable std::unordered_map<va_t, std::string> ListedFunctionNames;
   /// Multi-use MSVC ctor dests print as the this operand (`&var`), not `v21`.
   std::map<std::string, const HighExpr *> CtorThisForward;
   /// Assigned call results that stay as temps take a Get* stem (`FontColor`).

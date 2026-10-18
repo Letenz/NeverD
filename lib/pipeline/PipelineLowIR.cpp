@@ -3554,7 +3554,7 @@ void computeCallRegisterEffects(
   // remain deterministic; only independent CFG builds run concurrently.
   for (size_t Next = 0; Next < Work.size();) {
     const size_t FrontierEnd = Work.size();
-    std::vector<std::pair<va_t, std::string>> Pending;
+    std::vector<va_t> Pending;
     for (; Next < FrontierEnd; ++Next) {
       const va_t Caller = Work[Next];
       const int CalleeDepth = Depth[Caller] + 1;
@@ -3575,7 +3575,7 @@ void computeCallRegisterEffects(
           continue;
         ++ExtraLifts;
         Depth[Callee] = CalleeDepth;
-        Pending.emplace_back(Callee, Img.getFunctionNameAt(Callee));
+        Pending.push_back(Callee);
       }
     }
     // Give parallel workers enough admitted bodies to overlap costly callees
@@ -3595,7 +3595,7 @@ void computeCallRegisterEffects(
       std::atomic<bool> Initialized{true};
       uint64_t Bytes = 0;
       for (size_t I = 0; I < Count; ++I) {
-        const va_t Entry = Pending[Begin + I].first;
+        const va_t Entry = Pending[Begin + I];
         const va_t End = Img.getFunctionMetadataEnd(Entry, CodeOwnerIndex);
         if (End != InvalidVA && End > Entry)
           Weights[I] = std::min<uint64_t>(End - Entry, 1u << 20);
@@ -3617,13 +3617,16 @@ void computeCallRegisterEffects(
             ExtraCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
             ExtraCFG.setX87CallGraphCache(X87Graphs);
             for (size_t I; (I = Claim()) < N;) {
-              const auto &[Entry, Name] = Pending[Begin + I];
+              const va_t Entry = Pending[Begin + I];
               CachedBodies[I] = CFGBuilder::cachedCallRegisterBody(
                   X87Graphs, Img, Entry, &FuncEntries, &NoReturnTargets,
                   &NoReturnCallees, &AbsoluteRelocationRoots, CodeOwnerIndex);
               if (CachedBodies[I])
                 continue;
-              Bodies[I] = ExtraCFG.build(Img, ExtraDec, Entry, Name);
+              // Named only when built: the lookup scans every export and
+              // symbol, and most callees come from the cache.
+              Bodies[I] = ExtraCFG.build(Img, ExtraDec, Entry,
+                                         Img.getFunctionNameAt(Entry));
             }
           },
           Bytes >= MinParallelBytes ? 2 : limits::kMinParallelIRWorkItems,
@@ -3631,7 +3634,7 @@ void computeCallRegisterEffects(
       if (!Initialized.load(std::memory_order_relaxed))
         return;
       for (size_t I = 0; I < Count; ++I) {
-        const va_t Callee = Pending[Begin + I].first;
+        const va_t Callee = Pending[Begin + I];
         const CallRegisterBodyView Body =
             CachedBodies[I] ? CallRegisterBodyView(*CachedBodies[I])
                             : CallRegisterBodyView(Bodies[I]);
