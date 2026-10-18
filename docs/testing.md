@@ -4,6 +4,16 @@
 
 # Testing NeverD
 
+`AndroidFrameworkTest.*` checks explicit API 28 lifecycle phases, retained
+Application/Context identities, separate loader namespaces and parents,
+load-without-initialization, JNI-library/DEX sharing, type/null checks and
+terminal resource stops. `AndroidJNI.Application*` executes independent AArch64
+callers at O0/O2 across relocation packing and available CPU backends. It checks
+two native threads, global/local reference deletion and detach/reattach against
+the same process objects. `ProcessReport.AndroidApplicationSnapshot*` checks
+strict JSON input. These tests use synthetic inputs without a phone, host JVM
+or network; they do not establish arbitrary framework lifecycle equivalence.
+
 `NeverDDirectTailCallMetadataTests` builds real x86, x64 and AArch64 CFGs and
 validates direct tail-call targets at strict instruction boundaries. It covers
 fallthrough and conditional transfers into known functions, an existing direct

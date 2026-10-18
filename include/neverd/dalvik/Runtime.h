@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 #pragma once
 
+#include "neverd/dalvik/AndroidApplication.h"
 #include "neverd/dalvik/Heap.h"
 
 #include <functional>
@@ -15,6 +16,7 @@
 #include <span>
 
 namespace neverd::mobile::dalvik {
+struct LibraryMethod;
 enum class ExecutionStop {
   Returned,
   Thrown,
@@ -39,9 +41,10 @@ using AdmitInstruction = std::function<ExecutionStop()>;
 class Program {
 public:
   // Input declarations must come from the shared validated DEX reader.
-  // Android opts into the API 28 read-only scalar Build.VERSION projection
-  // using its explicit property snapshot. This is not framework <clinit>
-  // execution or permission to replace platform declarations with DEX.
+  // Android opts into API 28 Build.VERSION fields and the finite framework
+  // hierarchy. Runtime supplies the separate optional application snapshot.
+  // This is not framework <clinit> execution or permission to replace platform
+  // declarations with DEX.
   explicit Program(std::vector<Class> declarations,
                    std::optional<std::map<std::string, std::string>>
                        android_properties = std::nullopt);
@@ -80,6 +83,7 @@ public:
 
 private:
   void addAndroidVersion(const std::map<std::string, std::string> &properties);
+  void addAndroidFramework();
   ClassMap classes;
   std::map<FieldRef, PlatformValue> platform_values;
 };
@@ -91,7 +95,8 @@ private:
 // invocation.
 class Runtime {
 public:
-  explicit Runtime(const Program &program, std::shared_ptr<Heap> heap = {});
+  explicit Runtime(const Program &program, std::shared_ptr<Heap> heap = {},
+                   std::optional<AndroidApplicationSnapshot> application = {});
   ~Runtime();
   Runtime(const Runtime &) = delete;
   Runtime &operator=(const Runtime &) = delete;
@@ -105,6 +110,11 @@ public:
                              uint64_t stack_bytes);
   ExecutionResult execute(const Method &method, std::span<const uint64_t> args,
                           const AdmitInstruction &admit, uint64_t stack_bytes);
+  // JNI and DEX share library semantics and workload-owned framework objects.
+  ExecutionResult library(const LibraryMethod &method, uint64_t receiver,
+                          std::span<const uint64_t> args,
+                          const AdmitInstruction &admit,
+                          bool nonvirtual = false);
 
 private:
   struct State;

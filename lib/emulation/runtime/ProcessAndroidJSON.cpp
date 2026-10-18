@@ -197,6 +197,40 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         Remaining -= Size;
         Out.LogRecords->push_back(std::move(R));
       }
+    } else if (Name == field::ApplicationSnapshot) {
+      const auto *Input = V.getAsObject();
+      if (!Input || Input->empty())
+        return invalid(Name);
+      mobile::dalvik::AndroidApplicationSnapshot Snapshot;
+      bool HasPhase = false;
+      for (const auto &[Key, Value] : *Input) {
+        auto Text = Value.getAsString();
+        if (!Text)
+          return invalid(Key);
+        if (Key == field::ApplicationPhase) {
+          using Phase = mobile::dalvik::AndroidApplicationSnapshot::Phase;
+          if (*Text == "unattached")
+            Snapshot.phase = Phase::Unattached;
+          else if (*Text == "attached")
+            Snapshot.phase = Phase::Attached;
+          else if (*Text == "application")
+            Snapshot.phase = Phase::Application;
+          else
+            return invalid(Key);
+          HasPhase = true;
+        } else if (Key == field::ApplicationPackage) {
+          if (Text->empty() || Text->size() > 1024 || Text->contains('\0'))
+            return invalid(Key);
+          Snapshot.package_name = Text->str();
+        } else
+          return invalid(Key);
+      }
+      if (!HasPhase ||
+          (Snapshot.package_name &&
+           Snapshot.phase !=
+               mobile::dalvik::AndroidApplicationSnapshot::Phase::Application))
+        return invalid(Name);
+      Out.Application = std::move(Snapshot);
     } else if (Name == field::JNIClassLookupFailures) {
       const auto *Failures = V.getAsObject();
       if (!Failures || Failures->size() > 4096)

@@ -24,6 +24,132 @@ static Handle attach(void) {
     return 0;
   return env;
 }
+static Ref application_global, application_loader_global;
+static void *application_child(void *unused) {
+  (void)unused;
+  Handle e = attach();
+  if (!e)
+    return (void *)1;
+  Ref type = C(e, Ref, 6, "android/app/ActivityThread");
+  Ref id =
+      C(e, Ref, 113, type, "currentApplication", "()Landroid/app/Application;");
+  Ref app = C(e, Ref, 114, type, id);
+  if (!C(e, int, 24, app, application_global))
+    return (void *)2;
+  Ref context = C(e, Ref, 6, "android/content/Context");
+  Ref loader_id =
+      C(e, Ref, 33, context, "getClassLoader", "()Ljava/lang/ClassLoader;");
+  Ref loader = C(e, Ref, 34, app, loader_id);
+  if (!C(e, int, 24, loader, application_loader_global))
+    return (void *)3;
+  return (void *)(U64)C(vm, int, 5);
+}
+int jni_application_snapshot(int phase) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/app/ActivityThread");
+  Ref thread_id = C(e, Ref, 113, type, "currentActivityThread",
+                    "()Landroid/app/ActivityThread;");
+  Ref thread = C(e, Ref, 114, type, thread_id);
+  CHECK(!!thread == (phase != 0));
+  Ref current_id =
+      C(e, Ref, 113, type, "currentApplication", "()Landroid/app/Application;");
+  Ref app = C(e, Ref, 114, type, current_id);
+  CHECK(!!app == (phase == 2));
+  if (thread) {
+    Ref get_id =
+        C(e, Ref, 33, type, "getApplication", "()Landroid/app/Application;");
+    Ref again = C(e, Ref, 34, thread, get_id);
+    CHECK(C(e, int, 24, app, again));
+  }
+  if (phase != 2) {
+    CHECK(!C(vm, int, 5));
+    return 0;
+  }
+  Ref app_type = C(e, Ref, 6, "android/app/Application");
+  Ref actual_class = C(e, Ref, 31, app);
+  CHECK(C(e, int, 24, app_type, actual_class));
+  Ref base_id =
+      C(e, Ref, 33, app_type, "getBaseContext", "()Landroid/content/Context;");
+  Ref base = C(e, Ref, 34, app, base_id);
+  CHECK(base && !C(e, int, 24, app, base));
+  Ref context = C(e, Ref, 6, "android/content/Context");
+  Ref app_id = C(e, Ref, 33, context, "getApplicationContext",
+                 "()Landroid/content/Context;");
+  Ref again = C(e, Ref, 34, app, app_id);
+  CHECK(C(e, int, 24, again, app));
+  again = C(e, Ref, 34, base, app_id);
+  CHECK(C(e, int, 24, again, app));
+  Ref loader_id =
+      C(e, Ref, 33, context, "getClassLoader", "()Ljava/lang/ClassLoader;");
+  Ref loader = C(e, Ref, 34, app, loader_id);
+  again = C(e, Ref, 34, base, loader_id);
+  CHECK(loader && C(e, int, 24, loader, again));
+  Ref class_type = C(e, Ref, 6, "java/lang/Class");
+  Ref class_loader_id =
+      C(e, Ref, 33, class_type, "getClassLoader", "()Ljava/lang/ClassLoader;");
+  Ref boot = C(e, Ref, 34, app_type, class_loader_id);
+  Ref loader_type = C(e, Ref, 6, "java/lang/ClassLoader");
+  Ref parent_id =
+      C(e, Ref, 33, loader_type, "getParent", "()Ljava/lang/ClassLoader;");
+  Ref system_id = C(e, Ref, 113, loader_type, "getSystemClassLoader",
+                    "()Ljava/lang/ClassLoader;");
+  Ref system = C(e, Ref, 114, loader_type, system_id);
+  CHECK(boot && system && !C(e, int, 24, loader, system));
+  CHECK(!C(e, int, 24, boot, loader) && !C(e, int, 24, boot, system));
+  again = C(e, Ref, 34, loader, parent_id);
+  CHECK(C(e, int, 24, boot, again));
+  again = C(e, Ref, 34, system, parent_id);
+  CHECK(C(e, int, 24, boot, again));
+  CHECK(!C(e, Ref, 34, boot, parent_id));
+  Ref load_id = C(e, Ref, 33, loader_type, "loadClass",
+                  "(Ljava/lang/String;)Ljava/lang/Class;");
+  Ref name = C(e, Ref, 167, "android.app.Application");
+  again = C(e, Ref, 34, loader, load_id, name);
+  CHECK(C(e, int, 24, app_type, again));
+  CHECK(!C(e, Ref, 34, loader, load_id, (Ref)0) && C(e, int, 228));
+  C(e, void, 17);
+  application_global = C(e, Ref, 21, app);
+  application_loader_global = C(e, Ref, 21, loader);
+  C(e, void, 23, app);
+  C(e, void, 23, loader);
+  U64 child = 0;
+  void *status = (void *)99;
+  CHECK(!pthread_create(&child, (void *)0, application_child, (void *)0));
+  CHECK(!pthread_join(child, &status) && !status);
+  CHECK(!C(vm, int, 5));
+  e = attach();
+  CHECK(e);
+  type = C(e, Ref, 6, "android/app/ActivityThread");
+  CHECK(C(e, Ref, 113, type, "currentApplication",
+          "()Landroid/app/Application;") == current_id);
+  again = C(e, Ref, 114, type, current_id);
+  CHECK(C(e, int, 24, again, application_global));
+  again = C(e, Ref, 34, application_global, loader_id);
+  CHECK(C(e, int, 24, again, application_loader_global));
+  C(e, void, 22, application_global);
+  C(e, void, 22, application_loader_global);
+  CHECK(!C(vm, int, 5));
+  return 0;
+}
+int jni_application_package(void) {
+  Handle e = attach();
+  Ref type = C(e, Ref, 6, "android/app/ActivityThread");
+  Ref current =
+      C(e, Ref, 113, type, "currentApplication", "()Landroid/app/Application;");
+  Ref app = C(e, Ref, 114, type, current);
+  Ref context = C(e, Ref, 6, "android/content/Context");
+  Ref id = C(e, Ref, 33, context, "getPackageName", "()Ljava/lang/String;");
+  Ref name = C(e, Ref, 34, app, id);
+  const char *text = C(e, const char *, 169, name, (void *)0);
+  const char expected[] = "test.app";
+  for (unsigned i = 0; i < sizeof(expected); ++i)
+    CHECK(text[i] == expected[i]);
+  CHECK(C(e, int, 164, name) == 8);
+  C(e, void, 170, name, text);
+  CHECK(!C(vm, int, 5));
+  return 0;
+}
 int jni_build_version(int expected_sdk, int distinct) {
   Handle e = attach();
   CHECK(e);

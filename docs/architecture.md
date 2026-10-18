@@ -8029,6 +8029,13 @@ execution remains a separate unsupported contract.
 all JNI call forms and explicit DEX methods reuse it and Bionic's GP argument reader.
 The finite intrinsic catalogue and value semantics live in `dalvik::Library`;
 JNI retains opaque identities and argument/reference transport only.
+`dalvik::Runtime` also owns the explicit API 28 application projection in
+`AndroidFramework`: lifecycle phase, Application/Context identities and the
+separate boot/system/application loaders. JNI and DEX enter the same library
+boundary and heap; native thread detach never resets that process state. JSON
+supplies an optional snapshot, not inferred initialization or a second object
+owner. See [application snapshots](android-application-runtime.md) for the
+admitted methods, loader namespace and unsupported lifecycle transitions.
 `LinuxBinderTransactions` routes object-free messages between guest-owned opens;
 LinuxMemory owns their read-only arenas and every service body remains guest code.
 It preserves admitted libbinder request/status flags at this shared transport
