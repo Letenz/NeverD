@@ -128,6 +128,38 @@ std::string takeString(const char *Value) {
   return Text;
 }
 
+/// The arguments the first call to \p Callee after \p Caller's name in the
+/// C \p Text passes, by their text.
+std::vector<std::string> callArguments(llvm::StringRef Text,
+                                       llvm::StringRef Caller,
+                                       llvm::StringRef Callee) {
+  std::vector<std::string> Arguments;
+  const std::string Call = (Callee + "(").str();
+  size_t At = Text.find((Caller + "(").str());
+  while (At != llvm::StringRef::npos) {
+    At = Text.find(Call, At + 1);
+    if (At == llvm::StringRef::npos ||
+        (!llvm::isAlnum(Text[At - 1]) && Text[At - 1] != '_'))
+      break;
+  }
+  if (At == llvm::StringRef::npos)
+    return Arguments;
+  std::string Argument;
+  int Depth = 0;
+  for (const char C : Text.drop_front(At + Call.size())) {
+    if (Depth == 0 && (C == ',' || C == ')')) {
+      Arguments.push_back(llvm::StringRef(Argument).trim().str());
+      Argument.clear();
+      if (C == ')')
+        break;
+      continue;
+    }
+    Depth += C == '(' ? 1 : C == ')' ? -1 : 0;
+    Argument += C;
+  }
+  return Arguments;
+}
+
 TEST(SessionARMFunctionMode, RejectsInvalidModeAndAcceptsObjectAddressZero) {
   EXPECT_EQ(neverd_session_set_arm_function_mode(
                 nullptr, 0, NEVERD_ARM_FUNCTION_MODE_THUMB),
@@ -5625,61 +5657,45 @@ TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
 }
 
 TEST_F(SessionCAPITest, AProgramsOwnDeclarationOfAnImportDecides) {
-  // The user declares the routine a program imports as read with one
-  // parameter, as a library of its own may export it: every call passes
-  // that one, in both C backends, whatever the C library's read takes.
-  // The arguments the call to read in Read's body passes, by their text.
-  auto ReadArguments = [](llvm::StringRef Text) {
-    std::vector<std::string> Arguments;
-    size_t At = Text.find("Read(");
-    while (At != llvm::StringRef::npos) {
-      At = Text.find("read(", At + 1);
-      if (At == llvm::StringRef::npos ||
-          (!llvm::isAlnum(Text[At - 1]) && Text[At - 1] != '_'))
-        break;
-    }
-    if (At == llvm::StringRef::npos)
-      return Arguments;
-    std::string Argument;
-    int Depth = 0;
-    for (const char C : Text.drop_front(At + 5)) {
-      if (Depth == 0 && (C == ',' || C == ')')) {
-        Arguments.push_back(llvm::StringRef(Argument).trim().str());
-        Argument.clear();
-        if (C == ')')
-          break;
-        continue;
-      }
-      Depth += C == '(' ? 1 : C == ')' ? -1 : 0;
-      Argument += C;
-    }
-    return Arguments;
-  };
+  // The user declares the routine a program imports as read, as a library of
+  // its own may export it: every call passes the parameters it declares, in
+  // both C backends, whatever the C library's read takes.  With one, the
+  // call passes that one; with four, the fourth too, from the register the
+  // convention gives it.
   std::ifstream Input(std::filesystem::path(__FILE__).parent_path() / "types" /
                           "fixtures" / "linux_libc_calls_x64",
                       std::ios::binary);
   const std::string Path =
       write("linux_libc_calls_x64",
             std::string(std::istreambuf_iterator<char>(Input), {}));
-  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
-      << takeString(neverd_last_error(Session));
-  ASSERT_GE(neverd_session_discover_functions(Session), 0);
-  const int Index = neverd_func_find_by_name(Session, "Read");
-  ASSERT_GE(Index, 0);
-  const neverd_va_t Entry = neverd_func_entry(Session, Index);
-  const std::string Before = takeString(neverd_decompile(Session, Entry));
-  EXPECT_EQ(ReadArguments(Before).size(), 3u) << Before;
-  const std::string Declared = takeString(
-      neverd_local_types_declare(Session, "long read(int File);", nullptr));
-  ASSERT_NE(Declared.find("\"read\""), std::string::npos) << Declared;
-  const std::string HighC = takeString(neverd_decompile(Session, Entry));
-  const std::vector<std::string> HighCArguments = ReadArguments(HighC);
-  ASSERT_EQ(HighCArguments.size(), 1u) << HighC;
-  EXPECT_NE(HighCArguments[0].find("arg0"), std::string::npos) << HighC;
-  const std::string LLVMC = takeString(neverd_decompile_llvm(Session, Entry));
-  const std::vector<std::string> LLVMCArguments = ReadArguments(LLVMC);
-  ASSERT_EQ(LLVMCArguments.size(), 1u) << LLVMC;
-  EXPECT_NE(LLVMCArguments[0].find("arg0"), std::string::npos) << LLVMC;
+  for (const auto &[Declaration, Count] :
+       {std::pair<const char *, size_t>{"long read(int File);", 1},
+        {"long read(int File, void *Buffer, unsigned long Count, int Extra);",
+         4}}) {
+    SCOPED_TRACE(Declaration);
+    neverd_session_t Own = neverd_session_create();
+    ASSERT_NE(Own, nullptr);
+    auto Close = llvm::make_scope_exit([&] { neverd_session_destroy(Own); });
+    ASSERT_EQ(neverd_session_load(Own, Path.c_str()), 1)
+        << takeString(neverd_last_error(Own));
+    ASSERT_GE(neverd_session_discover_functions(Own), 0);
+    const int Index = neverd_func_find_by_name(Own, "Read");
+    ASSERT_GE(Index, 0);
+    const neverd_va_t Entry = neverd_func_entry(Own, Index);
+    const std::string Before = takeString(neverd_decompile(Own, Entry));
+    EXPECT_EQ(callArguments(Before, "Read", "read").size(), 3u) << Before;
+    const std::string Declared =
+        takeString(neverd_local_types_declare(Own, Declaration, nullptr));
+    ASSERT_NE(Declared.find("\"read\""), std::string::npos) << Declared;
+    for (const std::string &Text :
+         {takeString(neverd_decompile(Own, Entry)),
+          takeString(neverd_decompile_llvm(Own, Entry))}) {
+      const std::vector<std::string> Arguments =
+          callArguments(Text, "Read", "read");
+      ASSERT_EQ(Arguments.size(), Count) << Text;
+      EXPECT_NE(Arguments[0].find("arg0"), std::string::npos) << Text;
+    }
+  }
 }
 
 TEST_F(SessionCAPITest, FreeBSDProgramsJoinTheirArchitecturesLibrary) {

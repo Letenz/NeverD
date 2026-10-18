@@ -365,6 +365,9 @@ unsigned MedToHighConverter::importFixedArgCount(size_t CallIdx,
     return 0;
   const va_t Key =
       Call.Inputs[0].isConst() ? Call.Inputs[0].ConstVal : ResolvedSlot;
+  // One whose prototype the user declares reads what its summary counts.
+  if (Key && UserPrototypeCallees && UserPrototypeCallees->count(Key))
+    return static_cast<unsigned>(std::max<int>(0, Call.CalleeRegisterArgs));
   const std::string Import = Key ? importCalleeName(*Image, Key) : "";
   if (Import.empty())
     return 0;
@@ -1279,6 +1282,18 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     if (PassesOwnSignature)
       return MatchOwnSignature(std::move(Collected));
     const MedOp &Call = Ops[CallIdx];
+    // A call to an import whose prototype the user declares, through its
+    // stub or its slot, passes what call-ABI recovery gave it.
+    if (UserPrototypeCallees) {
+      if (Call.NumInputs >= 1 && Call.Inputs[0].isConst() &&
+          UserPrototypeCallees->count(Call.Inputs[0].ConstVal))
+        return Collected;
+      if (CurMed)
+        if (const MedCallInfo *Info =
+                CurMed->findCall(CurBlock.Id, static_cast<int>(CallIdx));
+            Info && UserPrototypeCallees->count(Info->TargetAddr))
+          return Collected;
+    }
     std::string Name;
     if (Call.SourceCallHint && !Call.SourceCallHint->TargetName.empty())
       Name = Call.SourceCallHint->TargetName;

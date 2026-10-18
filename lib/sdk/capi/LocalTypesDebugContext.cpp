@@ -7,6 +7,7 @@
 #include "LocalTypesDebugContext.h"
 
 #include "neverd/Limits.h"
+#include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/types/TypeParse.h"
@@ -652,8 +653,8 @@ LocalTypesDebugContext::resolvePrototype(llvm::StringRef Name) const {
     return Signature;
   const std::optional<types::HeaderLibrary> Header =
       prototypeHeader(Name, Function->second.get());
-  Signature->PrototypeLibrary =
-      Header ? types::headerLibraryName(*Header).str() : "local-types";
+  Signature->PrototypeLibrary = Header ? types::headerLibraryName(*Header).str()
+                                       : UserPrototypeLibrary.str();
   types::RenderOptions Options;
   Options.Lang = types::Language::C;
   if (Header)

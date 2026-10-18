@@ -218,7 +218,8 @@ void propagateForwardedCallArities(
     const std::map<va_t, bool> &CalleeConsumesVaList,
     std::map<va_t, std::vector<uint64_t>> &CalleeIntRegs,
     const std::set<va_t> &VectorArgumentCallees,
-    const std::map<va_t, PointerVariableCallee> &PointerCallees) {
+    const std::map<va_t, PointerVariableCallee> &PointerCallees,
+    const std::set<va_t> &UserPrototypeCallees) {
   if (Funcs.empty())
     return;
 
@@ -254,7 +255,8 @@ void propagateForwardedCallArities(
                    &CalleeTotalArity, &CalleeFPArity, &CalleeFPReturnSize,
                    &CalleeFPRegs, &CalleeHasSret, &CalleeIsVariadic,
                    &CalleeConsumesVaList, /*FrameLocalLeafCallees=*/nullptr,
-                   &CalleeIntRegs, &VectorArgumentCallees, &PointerCallees);
+                   &CalleeIntRegs, &VectorArgumentCallees, &PointerCallees,
+                   &UserPrototypeCallees);
     int MaxRegIdx = -1;
     int MaxIdx = -1;
     std::vector<uint64_t> FPRegs;
@@ -619,7 +621,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
       SignatureBodies, Img.Arch, AllFuncNames, Img, CalleeRegArity,
       CalleeTotalArity, CalleeFPArity, CalleeFPReturnSize, CalleeFPRegs,
       CalleeHasSret, CalleeIsVariadic, CalleeConsumesVaList, CalleeIntRegs,
-      VectorArgumentCallees, PointerCallees);
+      VectorArgumentCallees, PointerCallees, Result.CallUserPrototypes);
 
   const auto FrameLocalLeafCallees =
       Convention && Convention->TargetSpillsSurviveLeafCalls
@@ -631,7 +633,8 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                    &CalleeTotalArity, &CalleeFPArity, &CalleeFPReturnSize,
                    &CalleeFPRegs, &CalleeHasSret, &CalleeIsVariadic,
                    &CalleeConsumesVaList, &FrameLocalLeafCallees,
-                   &CalleeIntRegs, &VectorArgumentCallees, &PointerCallees);
+                   &CalleeIntRegs, &VectorArgumentCallees, &PointerCallees,
+                   &Result.CallUserPrototypes);
   }
 
   // Regparm two-pass call recovery (i386): the first pass promotes forwarder
@@ -669,7 +672,8 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                      &CalleeFPArity, &CalleeFPReturnSize, &CalleeFPRegs,
                      &CalleeHasSret, &CalleeIsVariadic, &CalleeConsumesVaList,
                      /*FrameLocalLeafCallees=*/nullptr, &CalleeIntRegs2,
-                     &VectorArgumentCallees, &PointerCallees);
+                     &VectorArgumentCallees, &PointerCallees,
+                     &Result.CallUserPrototypes);
     }
   }
   // An omitted definition cannot give the emitter its parameter count.

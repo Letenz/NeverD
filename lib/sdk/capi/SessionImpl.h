@@ -978,6 +978,7 @@ struct Session {
       Recovery.CallEntryStackArgs = PipeResult.CallEntryStackArgs;
       Recovery.CallEntryStackSlots = PipeResult.CallEntryStackSlots;
       Recovery.CallEntryArgumentCounts = PipeResult.CallEntryArgumentCounts;
+      Recovery.CallUserPrototypes = PipeResult.CallUserPrototypes;
       Recovery.CallArgumentSources = PipeResult.CallArgumentSources;
       Recovery.OmittedCallees = PipeResult.OmittedCallees;
       recoverModuleCallAbi(Img, Recovery, FuncNames);
@@ -988,6 +989,7 @@ struct Session {
       ImportMap.emplace_back(Addr, Name);
     MedLLVMEmitter Emitter;
     Emitter.setDebugContext(decompileDebug());
+    Emitter.setUserPrototypeCallees(&PipeResult.CallUserPrototypes);
     // Native source views need surviving instruction observations even when
     // this function contains no recognized library operation.
     Sources = std::make_shared<LLVMSourceMap>();
