@@ -1023,7 +1023,9 @@ function and an object of one name, keep their C identifiers. C declares a
 record by the last component of its C++ name (`std::__ndk1::__sp_mut` is
 `__sp_mut`), which the C++ view names back, and spells one whose name a
 function of the unit or of the C library has by its tag (`struct stat`,
-`struct stat64`): no typedef can declare the name beside the function. The C
+`struct stat64`), or an object a C library header declares (`struct
+timezone` beside <time.h>'s `timezone`, `LibCDataObjects.def`): no typedef
+can declare the name beside the function or the object. The C
 the views read is C a compiler accepts. A local takes no name the unit gives
 a function, an object or a typedef at file scope (`td_ta_event_getmsg`'s
 result is no `msg` where the code calls `msg()`), and a bitwise, shift or
@@ -1041,8 +1043,8 @@ the routine's header declares, and the stub otherwise. Both C routes spell
 x86's `ud2` `__builtin_trap()` and its `int3` `__builtin_debugtrap()` where no
 Windows header declares `__debugbreak`, and a variadic import's stub declares
 its fixed parameters as the program's C library does
-(`NEVERD_LIBC_VARIANT_FORWARD_FIXED`: bionic's and musl's ptrace request is an
-int, glibc's an enumeration). The GUI offers a separate C choice for non-C
+(`NEVERD_LIBC_VARIANT_FORWARD_FIXED`: bionic's and musl's ptrace and ioctl
+requests are ints, glibc's an enumeration and an unsigned long). The GUI offers a separate C choice for non-C
 images and omits it when only C is offered.
 
 The reader reads the definitions a unit holds of the program's local types:

@@ -601,6 +601,13 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
     // with; the checks make a layout no compiler agrees with an error.
     Options.Spelling = types::BuiltinSpelling::Portable;
     Options.Asserts = true;
+    // The system's own types come from its headers, which the unit includes:
+    // the first library of a system's headers the program joins.
+    for (const types::HeaderLibrary Library : Headers)
+      if (types::headerLibrarySystem(Library)) {
+        Options.SystemLibrary = Library;
+        break;
+      }
     CRenderer = std::make_unique<types::EmbeddedCRenderer>(*Types, Options);
   }
   const types::EmbeddedC Embedded = CRenderer->render(Roots);

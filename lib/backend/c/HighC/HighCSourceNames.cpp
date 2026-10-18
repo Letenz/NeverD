@@ -155,7 +155,8 @@ void HighCWriter::writeSourceRecordDeclarations(
                                   : "struct";
         const bool Ordinary =
             CallTargets.count(Name) || AddressTakenFunctions.count(Name) ||
-            Defined.count(Name) || GlobalIdentifierAllocator.holds(Name);
+            Defined.count(Name) || GlobalIdentifierAllocator.holds(Name) ||
+            libc::headerOfDataObject(Name);
         if (Ordinary)
           TagRecords.emplace(Name, Keyword == llvm::StringRef("union"));
         else if (Declared.insert(Name).second) {

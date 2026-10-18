@@ -46502,6 +46502,26 @@ TEST(HighCPointerAddresses, RecordsNamedLikeFunctionsAreSpelledByTheirTags) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses, RecordsNamedLikeLibraryObjectsAreSpelledByTags) {
+  // gettimeofday() fills a struct timezone, whose name <time.h> gives the
+  // object `long timezone`: no typedef can declare it beside the object.
+  HighFunc Func;
+  Func.Name = "probe_zone";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(4);
+  auto Record = std::make_shared<NdType>();
+  Record->Kind = NdTypeKind::Struct;
+  Record->SourceName = "timezone";
+  Func.Params = {{"zone", NdType::makePtr(Record)}};
+  returnValue(Func, HighExpr::makeConst(0, 4));
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("probe_zone(struct timezone* zone)"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("typedef struct timezone timezone;"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, IntegersTakeForwardedPointerMembersAsIntegers) {
   // zlib's zlib_filefunc64_def holds `voidpf opaque`, which the machine
   // copies through integer registers: the integer memory and the integer
