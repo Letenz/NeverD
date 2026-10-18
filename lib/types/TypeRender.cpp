@@ -852,6 +852,21 @@ std::string TypeSpeller::spell(const TypeExpr &Type,
   return Speller->declare(Type, Declarator);
 }
 
+EmbeddedCRenderer::EmbeddedCRenderer(const TypeLibrary &Library,
+                                     const RenderOptions &Options)
+    : Library(Library), Options(Options) {
+  this->Options.Lang = Language::C;
+  Names = std::make_unique<render::NameSpelling>(Library, Language::C,
+                                                 /*CppToo=*/false);
+}
+
+EmbeddedCRenderer::~EmbeddedCRenderer() = default;
+
+EmbeddedC
+EmbeddedCRenderer::render(llvm::ArrayRef<const LocalType *> Roots) const {
+  return render::renderEmbeddedC(Library, Roots, Options, Names.get());
+}
+
 std::string renderTypes(const TypeLibrary &Library,
                         llvm::ArrayRef<const LocalType *> Types,
                         const RenderOptions &Options) {

@@ -593,14 +593,16 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
   }
   if (Roots.empty())
     return Result;
-  types::RenderOptions Options;
-  Options.Lang = types::Language::C;
-  // Exact widths, which mean the same on every compiler the unit builds
-  // with; the checks make a layout no compiler agrees with an error.
-  Options.Spelling = types::BuiltinSpelling::Portable;
-  Options.Asserts = true;
-  const types::EmbeddedC Embedded =
-      types::renderEmbeddedC(*Types, Roots, Options);
+  if (!CRenderer) {
+    types::RenderOptions Options;
+    Options.Lang = types::Language::C;
+    // Exact widths, which mean the same on every compiler the unit builds
+    // with; the checks make a layout no compiler agrees with an error.
+    Options.Spelling = types::BuiltinSpelling::Portable;
+    Options.Asserts = true;
+    CRenderer = std::make_unique<types::EmbeddedCRenderer>(*Types, Options);
+  }
+  const types::EmbeddedC Embedded = CRenderer->render(Roots);
   Result.Text = Embedded.Text;
   for (const auto &[Name, Union] : Embedded.Records)
     Result.Records[Name] = Result.Tags[Name] = Union;

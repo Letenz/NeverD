@@ -83,11 +83,21 @@ public:
   /// members as C allows; any other C names what C++ reads too.
   /// \p Prelude: the C a header holds, whose prelude declares what the
   /// writer names, such as a long double exactly as large.
+  /// \p Shared: the spelling of the names of \p Library that this writer
+  /// would make itself, made once for many writers.
   CWriter(const TypeLibrary &Library, const RenderOptions &Options,
-          bool Embedded = false, bool Prelude = false)
+          bool Embedded = false, bool Prelude = false,
+          const NameSpelling *Shared = nullptr)
       : Library(Library), Options(Options), Cpp(Options.Lang == Language::Cpp),
         Prelude(Prelude && !Embedded),
-        Names(Library, Options.Lang, /*CppToo=*/!Embedded) {}
+        Own(Shared ? std::nullopt
+                   : std::optional<NameSpelling>(std::in_place, Library,
+                                                 Options.Lang,
+                                                 /*CppToo=*/!Embedded)),
+        Names(Shared ? *Shared : *Own) {}
+  // Names may refer to Own.
+  CWriter(const CWriter &) = delete;
+  CWriter &operator=(const CWriter &) = delete;
 
   std::string builtin(Builtin Type) const;
   std::string declare(const TypeExpr &Type, std::string Declarator) const;
@@ -141,7 +151,8 @@ private:
   const RenderOptions &Options;
   const bool Cpp;
   const bool Prelude;
-  const NameSpelling Names;
+  const std::optional<NameSpelling> Own;
+  const NameSpelling &Names;
   unsigned Digits = 1;
   unsigned Fillers = 0;
   /// How many signatures the writer is in.
@@ -986,7 +997,8 @@ writeDefinitions(CWriter &Writer, const TypeLibrary &Library,
 
 EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
                           llvm::ArrayRef<const LocalType *> Roots,
-                          const RenderOptions &Options) {
+                          const RenderOptions &Options,
+                          const NameSpelling *Spelled) {
   EmbeddedC Result;
   if (Roots.empty())
     return Result;
@@ -999,7 +1011,8 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
   for (const LocalType *Type : Library.types())
     if (Defined.contains(Type->Name) && !llvm::is_contained(All, Type))
       All.push_back(Type);
-  CWriter Writer(Library, Options, /*Embedded=*/true);
+  CWriter Writer(Library, Options, /*Embedded=*/true, /*Prelude=*/false,
+                 Spelled);
   std::string Enums, Body;
   const std::vector<const LocalType *> Order = writeDefinitions(
       Writer, Library, All, Defined, /*Guarded=*/true, Enums, Body);

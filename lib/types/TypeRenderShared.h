@@ -262,9 +262,12 @@ std::string renderC(const TypeLibrary &Library, const LocalType &Type,
 std::string renderCHeader(const TypeLibrary &Library,
                           llvm::ArrayRef<const LocalType *> Types,
                           const RenderOptions &Options);
+/// \p Spelled, when given, is the library's C spelling (CppToo false), which
+/// the call then reads instead of spelling every name again.
 EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
                           llvm::ArrayRef<const LocalType *> Roots,
-                          const RenderOptions &Options);
+                          const RenderOptions &Options,
+                          const NameSpelling *Spelled = nullptr);
 std::string renderRust(const TypeLibrary &Library, const LocalType &Type,
                        const RenderOptions &Options);
 std::string renderRustModule(const TypeLibrary &Library,

@@ -514,6 +514,33 @@ TEST(TypeRender, LuaExtendsSignsAndNamesWhatItDeclares) {
                              "16) end\n"));
 }
 
+TEST_F(TypeRenderFixture, AnEmbeddedCRendererRendersAsEachCallDoes) {
+  // One renderer spells the library's names once for every unit; each unit
+  // reads as a call of its own makes it, whatever it rendered before.
+  RenderOptions Options = in(Language::C);
+  Options.Spelling = BuiltinSpelling::Portable;
+  Options.Asserts = true;
+  const EmbeddedCRenderer Renderer(*Library, Options);
+  std::vector<std::vector<const LocalType *>> Units;
+  for (const char *Name :
+       {"_DEVICE", "_USES_FORWARD", "_POOL_KIND", "_LARGE_INTEGER"})
+    if (const LocalType *Type = Library->find(Name))
+      Units.push_back({Type});
+  ASSERT_EQ(Units.size(), 4u);
+  Units.push_back({Units[0][0], Units[1][0]});
+  for (int Pass = 0; Pass < 2; ++Pass)
+    for (const auto &Roots : Units) {
+      const EmbeddedC Shared = Renderer.render(Roots);
+      const EmbeddedC Own = renderEmbeddedC(*Library, Roots, Options);
+      EXPECT_EQ(Shared.Text, Own.Text);
+      EXPECT_EQ(Shared.Records, Own.Records);
+      EXPECT_EQ(Shared.Declared, Own.Declared);
+      EXPECT_EQ(Shared.Identifiers, Own.Identifiers);
+      EXPECT_EQ(Shared.Types, Own.Types);
+      EXPECT_EQ(Shared.DeclaredTypes, Own.DeclaredTypes);
+    }
+}
+
 TEST_F(TypeRenderFixture, EmbeddedCDefinesWhatAUnitNames) {
   // A decompiled unit holds the records it names, what they hold by value,
   // and declarations of what they only point to, each under a guard.
