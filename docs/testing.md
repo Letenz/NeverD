@@ -4,6 +4,11 @@
 
 # Testing NeverD
 
+`NeverDLLVMCInlineAsmHeaderTests` checks isolated x86/x64 system-assembly
+intrinsic declarations before use, explicit include suppression and retained
+ARM/AArch64 barrier declarations. A mixed
+instruction fixture can hide missing headers by requesting them elsewhere.
+
 `AndroidFDSet.*` checks Bionic checked descriptor bitmaps at O0/O2 with ordinary,
 packed and RELR relocations on available CPU backends. Independent byte oracles
 cover word boundaries, untouched canaries, boolean queries, full-width extents,

@@ -1,3 +1,7 @@
+add_neverd_unittest(NeverDLLVMCInlineAsmHeaderTests
+  core/LLVMCInlineAsmHeaderTests.cpp
+  LINK_COMPONENTS BackendC)
+
 add_neverd_unittest(NeverDSEHRuntimeMemoryTests
   core/LowScalarConstantTests.cpp
   eh/SEHRuntimeMemoryTests.cpp

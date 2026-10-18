@@ -801,16 +801,19 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                 (Asm->getAsmString() == "ldmxcsr ($0)" ||
                  Asm->getAsmString() == "stmxcsr ($0)"))
               HasCIntrinsics = true;
-            // An ARM assembly the writer prints as an ACLE intrinsic
-            // (`msr tpidr_el0, $0` is __arm_wsr64, `dsb sy` __dsb(0xF))
-            // needs the header that declares it.
-            if ((Opts.TheArch == Arch::ARM || Opts.TheArch == Arch::AArch64) &&
-                renderInlineAsm(Opts.TheArch, Asm->getAsmString().str(),
+            // Use the writer's semantic classification for every architecture:
+            // an isolated x86 RDMSR needs declarations just as an ARM ACLE
+            // intrinsic does. Headers must be known before bodies are emitted.
+            if (renderInlineAsm(Opts.TheArch, Asm->getAsmString().str(),
                                 CI->getType()->isStructTy(), "result",
                                 /*ResultLive=*/true,
                                 std::vector<std::string>(CI->arg_size(), "0"))
-                    .SetIntrinsics)
+                    .SetIntrinsics) {
               HasCIntrinsics = true;
+              if (Opts.Format == BinaryFormat::COFF &&
+                  (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64))
+                Headers.insert("intrin.h");
+            }
             continue;
           }
           auto *Callee = CI->getCalledFunction();
