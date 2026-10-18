@@ -6695,6 +6695,44 @@ TEST_F(SessionCAPITest, AnalysisCacheRetiresOnEditsPolicyAndSignatureMatching) {
   Rebuild();
 }
 
+TEST_F(SessionCAPITest, PEAnalysisCacheRetiresOnlyWhenHandlersGrowMetadata) {
+  // A PE function's preparation decodes its exception handlers, which can
+  // add metadata the analysis facts read.  Moving between functions whose
+  // handlers add nothing keeps the facts.  A function whose handler still
+  // has undecoded language tables, as a focused load leaves it, retires them
+  // when its preparation decodes them.
+  const auto Fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "safety" / "fixtures" / "binaries" /
+                       "safety_cases_pe_x64.exe";
+  ASSERT_EQ(neverd_session_load(Session, Fixture.string().c_str()), 1);
+  auto &State = *neverd::sdk::toSession(Session);
+  std::vector<neverd::va_t> Entries;
+  for (const auto &F : State.Img.ExceptionMetadata.Functions)
+    if (F.Kind == neverd::RuntimeFunctionKind::Primary &&
+        F.CodeRange.isValid() && !F.PersonalityVA && Entries.size() < 3)
+      Entries.push_back(F.CodeRange.Begin);
+  ASSERT_EQ(Entries.size(), 3u);
+  ASSERT_EQ(neverd_prepare_function(Session, Entries[0]), 1);
+  const auto Facts =
+      neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache);
+  ASSERT_NE(Facts, nullptr);
+  const auto Source = takeString(neverd_decompile(Session, Entries[0]));
+  ASSERT_FALSE(Source.empty()) << takeString(neverd_last_error(Session));
+  ASSERT_EQ(neverd_prepare_function(Session, Entries[1]), 1);
+  EXPECT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
+            Facts);
+  auto *Handled = State.Img.ExceptionMetadata.findFunction(Entries[2]);
+  ASSERT_NE(Handled, nullptr);
+  Handled->PersonalityVA = Entries[0];
+  Handled->LanguageTablesResolved = false;
+  ASSERT_EQ(neverd_prepare_function(Session, Entries[2]), 1);
+  EXPECT_TRUE(State.Img.ExceptionMetadata.findFunction(Entries[2])
+                  ->LanguageTablesResolved);
+  EXPECT_NE(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
+            Facts);
+  EXPECT_EQ(takeString(neverd_decompile(Session, Entries[0])), Source);
+}
+
 TEST_F(SessionCAPITest, AnalysisCacheChecksFeaturesAfterSelectionClearsResult) {
   const auto Path = write("cache.elf", makeAnalysisCacheELF(false));
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);

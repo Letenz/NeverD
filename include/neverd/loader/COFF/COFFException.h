@@ -43,6 +43,21 @@ void resolveExceptionHandlers(BinaryImage &Img);
 /// function.
 void ensureExceptionHandlers(BinaryImage &Img, const std::set<va_t> &Entries);
 
+/// What ensureExceptionHandlers can add to an image: runtime-function
+/// records (with the code ranges and symbols they bring) and decoded language
+/// tables, which a record with a personality gets once.  Equal states before
+/// and after a call mean the call added nothing analysis reads; it can only
+/// have marked records without a personality as resolved.
+struct ExceptionHandlerState {
+  size_t Functions = 0;
+  size_t ResolvedPersonalities = 0;
+  size_t KnownCodeRanges = 0;
+  size_t Symbols = 0;
+  ExceptionParseStatus ParseStatus = ExceptionParseStatus::Complete;
+  bool operator==(const ExceptionHandlerState &) const = default;
+};
+ExceptionHandlerState exceptionHandlerState(const BinaryImage &Img);
+
 /// Materialize the x64 RUNTIME_FUNCTION covering \p Address from
 /// BinaryImage::COFFPDataRecords when `--func` skipped it at load.
 bool ensureX64RuntimeFunction(BinaryImage &Img, va_t Address);
