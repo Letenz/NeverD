@@ -23,6 +23,10 @@ namespace instruction_relocations_detail {
 void addX86Fields(const BinaryImage &Img, const DecodedInsn &DI,
                   InstructionRelocations &Result);
 
+/// maxAdjacentRelocatedFields for i386 and x86-64
+/// (InstructionRelocationsX86.cpp).
+std::optional<unsigned> maxAdjacentX86RelocatedFields(Arch A, unsigned Width);
+
 /// AArch64 fields of \p DI (InstructionRelocationsAArch64.cpp).
 void addAArch64Fields(const BinaryImage &Img, const DecodedInsn &DI,
                       InstructionRelocations &Result);

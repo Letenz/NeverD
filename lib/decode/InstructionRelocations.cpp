@@ -78,4 +78,15 @@ InstructionRelocations instructionRelocations(const BinaryImage &Img,
   return Result;
 }
 
+std::optional<unsigned> maxAdjacentRelocatedFields(Arch A, unsigned Width) {
+  switch (A) {
+  case Arch::X86:
+  case Arch::X64:
+    return instruction_relocations_detail::maxAdjacentX86RelocatedFields(A,
+                                                                         Width);
+  default:
+    return std::nullopt;
+  }
+}
+
 } // namespace neverd

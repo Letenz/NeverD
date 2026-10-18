@@ -7,6 +7,7 @@
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
 
 #include "neverd/decode/Decoder.h"
+#include "neverd/decode/InstructionRelocations.h"
 #include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -716,6 +717,88 @@ void recordConstantCodeSlots(BinaryImage &Img) {
   for (const auto &[Slot, Target] : Candidates)
     if (!Escaped.count(Slot))
       Img.ConstantCodeSlots.emplace(Slot, Target);
+}
+
+void recordRelocatedPointerRunsInCode(BinaryImage &Img) {
+  if (Img.IsRelocatable)
+    return;
+  const uint32_t Width = Img.getPointerSize();
+  const std::optional<unsigned> PerInstruction =
+      maxAdjacentRelocatedFields(Img.Arch, Width);
+  if (!PerInstruction)
+    return;
+  // The absolute pointer-wide fields among the code, whatever they name.
+  std::vector<std::pair<va_t, RelocatedAddressField>> Fields;
+  auto Collect = [&](const std::map<va_t, RelocatedAddressField> &Operands) {
+    for (const auto &[SlotVA, Field] : Operands)
+      if (Field.Width == Width && !Field.PCRelativeFromInstructionEnd &&
+          Field.Kind == RelocatedAddressFieldKind::Generic)
+        Fields.emplace_back(SlotVA, Field);
+  };
+  Collect(Img.CodeAddressRelocOperands);
+  Collect(Img.DataAddressRelocOperands);
+  llvm::sort(Fields, llvm::less_first());
+  std::vector<AbsolutePointerRelocationEffect> Slots;
+  std::vector<std::pair<va_t, va_t>> Runs;
+  for (size_t Begin = 0; Begin < Fields.size();) {
+    size_t End = Begin + 1;
+    while (End < Fields.size() &&
+           Fields[End].first - Fields[End - 1].first == Width)
+      ++End;
+    if (End - Begin > *PerInstruction) {
+      Runs.emplace_back(Fields[Begin].first, Fields[End - 1].first + Width);
+      for (size_t I = Begin; I < End; ++I) {
+        const auto &[SlotVA, Field] = Fields[I];
+        // The relocation as it would have been recorded had the slot's
+        // section kept data only.
+        Slots.push_back(decideAbsolutePointerRelocation(
+            Img, SlotVA, Field.TargetVA, Field.TargetOwnerVA, [&](va_t Addr) {
+              PointerRelocationAddressClass Class =
+                  classifyPointerRelocationAddress(Img, Addr);
+              if (Addr == SlotVA)
+                Class.Executable = false;
+              return Class;
+            }));
+      }
+    }
+    Begin = End;
+  }
+  if (Runs.empty())
+    return;
+  auto InRun = [&](va_t Addr) {
+    const auto Run = std::upper_bound(
+        Runs.begin(), Runs.end(), Addr,
+        [](va_t A, const std::pair<va_t, va_t> &R) { return A < R.first; });
+    return Run != Runs.begin() && Addr < std::prev(Run)->second;
+  };
+  // An operand naming such a run names data, as one naming a table in .rdata
+  // does.
+  for (const auto &[SlotVA, Field] : Img.CodeAddressRelocOperands)
+    if (!InRun(SlotVA) && InRun(Field.TargetVA) &&
+        !Field.PCRelativeFromInstructionEnd &&
+        Field.Kind == RelocatedAddressFieldKind::Generic) {
+      // Decided as it would have been had the run's section kept data only;
+      // the target owns itself, as recordDataPointerTargets has it.
+      const va_t Target = Field.TargetVA;
+      Slots.push_back(decideAbsolutePointerRelocation(
+          Img, SlotVA, Target, InvalidVA, [&](va_t Addr) {
+            PointerRelocationAddressClass Class =
+                classifyPointerRelocationAddress(Img, Addr);
+            if (Addr == Target)
+              Class.Executable = false;
+            return Class;
+          }));
+    }
+  for (const AbsolutePointerRelocationEffect &Slot : Slots)
+    if (Slot.What != AbsolutePointerRelocationEffect::Kind::None) {
+      Img.CodeAddressRelocOperands.erase(Slot.SlotVA);
+      Img.DataAddressRelocOperands.erase(Slot.SlotVA);
+      applyAbsolutePointerRelocation(Img, Slot);
+    }
+  std::vector<va_t> Starts;
+  for (const auto &[Begin, End] : Runs)
+    Starts.push_back(Begin);
+  recordDataInCode(Img, Starts);
 }
 
 void parseTLSDirectory(const COFFObjectFile &Obj, BinaryImage &Img,

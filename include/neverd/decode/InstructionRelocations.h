@@ -19,6 +19,7 @@
 
 #include "neverd/decode/Decoder.h"
 
+#include <optional>
 #include <vector>
 
 namespace neverd {
@@ -33,6 +34,12 @@ struct InstructionRelocations {
 /// The relocation fields inside \p DI, an instruction of \p Img.
 InstructionRelocations instructionRelocations(const BinaryImage &Img,
                                               const DecodedInsn &DI);
+
+/// How many relocated fields of \p Width bytes one instruction of \p A can
+/// hold back to back, or std::nullopt when \p A has no such bound.  A longer
+/// run of adjacent relocated fields lies in no instruction: it is data among
+/// the code, such as the jump table MSVC places after an i386 function.
+std::optional<unsigned> maxAdjacentRelocatedFields(Arch A, unsigned Width);
 
 } // namespace neverd
 
