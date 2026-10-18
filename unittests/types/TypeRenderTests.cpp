@@ -708,11 +708,17 @@ TEST(TypeRender, NamesStepAroundKeywords) {
                            {member("type", makeBuiltin(Builtin::ULong), 0),
                             member("class", makeBuiltin(Builtin::ULong), 4)}));
   const LocalType &Words = *Library.find("_WORDS");
+  // The C a C/C++ view shows reads as C++ too, and steps around C++'s
+  // keywords; the C a decompiled unit embeds keeps C's names, as its code
+  // spells them.
   const std::string C = renderType(Library, Words, in(Language::C));
   EXPECT_TRUE(contains(C, "uint32_t type;"));
-  EXPECT_TRUE(contains(C, "uint32_t class;"));
+  EXPECT_TRUE(contains(C, "uint32_t class_;")) << C;
   EXPECT_TRUE(contains(renderType(Library, Words, in(Language::Cpp)),
                        "uint32_t class_;"));
+  const LocalType *Root = &Words;
+  const EmbeddedC Embedded = renderEmbeddedC(Library, {Root}, in(Language::C));
+  EXPECT_TRUE(contains(Embedded.Text, "uint32_t class;")) << Embedded.Text;
   EXPECT_TRUE(contains(renderType(Library, Words, in(Language::Rust)),
                        "pub r#type: u32,"));
   EXPECT_TRUE(

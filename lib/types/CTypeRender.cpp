@@ -77,9 +77,12 @@ std::string portableBuiltin(Builtin Type, const TypeLibrary &Library) {
 
 class CWriter {
 public:
-  CWriter(const TypeLibrary &Library, const RenderOptions &Options)
+  /// \p Embedded: the C a decompiled unit holds, whose code spells the
+  /// members as C allows; any other C names what C++ reads too.
+  CWriter(const TypeLibrary &Library, const RenderOptions &Options,
+          bool Embedded = false)
       : Library(Library), Options(Options), Cpp(Options.Lang == Language::Cpp),
-        Names(Library, Options.Lang) {}
+        Names(Library, Options.Lang, /*CppToo=*/!Embedded) {}
 
   std::string builtin(Builtin Type) const;
   std::string declare(const TypeExpr &Type, std::string Declarator) const;
@@ -789,8 +792,10 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
 } // namespace
 
 struct CSpeller::Impl {
+  // Types spelled as decompiled code spells them, beside the definitions
+  // its unit embeds.
   Impl(const TypeLibrary &Library, const RenderOptions &Options)
-      : Options(Options), Writer(Library, this->Options) {}
+      : Options(Options), Writer(Library, this->Options, /*Embedded=*/true) {}
   RenderOptions Options;
   CWriter Writer;
 };
@@ -913,7 +918,7 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
   for (const LocalType *Type : Library.types())
     if (Defined.contains(Type->Name) && !llvm::is_contained(All, Type))
       All.push_back(Type);
-  CWriter Writer(Library, Options);
+  CWriter Writer(Library, Options, /*Embedded=*/true);
   std::string Enums, Body;
   const std::vector<const LocalType *> Order = writeDefinitions(
       Writer, Library, All, Defined, /*Guarded=*/true, Enums, Body);
