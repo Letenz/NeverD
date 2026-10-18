@@ -203,6 +203,56 @@ TEST(ReturnContracts, ACallerThatReadsTheResultKeepsAValue) {
             (std::vector<bool>{false, false}));
 }
 
+/// RAX written by intrinsic \p Id with \p Inputs after it.
+MedOp intrinsic(Intrinsic Id, std::vector<MedVar> Inputs = {}) {
+  Inputs.insert(Inputs.begin(),
+                MedVar::makeConst(static_cast<uint64_t>(Id), 2));
+  return operation(NdOp::INTRINSIC, rax(1), std::move(Inputs));
+}
+
+TEST(ReturnContracts, ASystemRegisterReadIsAValue) {
+  // `mov rax, cr3; ret` hands back the register it reads, though reading it
+  // has side effects.
+  EXPECT_EQ(settle({function(CalleeEntry, {block({intrinsic(Intrinsic::ReadCr3),
+                                                  returning(rax(1))})})}),
+            std::vector<bool>{false});
+}
+
+TEST(ReturnContracts, ASystemCallResultACallerReadsIsAValue) {
+  // An ntdll stub returns its system call's NTSTATUS, which its caller
+  // tests.
+  MedFunc Stub =
+      function(CalleeEntry, {block({intrinsic(Intrinsic::X64WindowsSyscall,
+                                              {MedVar::makeConst(0x55, 8)}),
+                                    returning(rax(1))})});
+  MedFunc Caller = function(
+      CallerEntry, {block({callTo(CalleeEntry, 1),
+                           operation(NdOp::INT_ADD, rax(2),
+                                     {rax(1), MedVar::makeConst(1, 8)}),
+                           returning(rax(2))})});
+  EXPECT_EQ(settle({std::move(Stub), std::move(Caller)}, BinaryFormat::COFF),
+            (std::vector<bool>{false, false}));
+}
+
+TEST(ReturnContracts, ASystemCallResultNoCallerReadsIsNoValue) {
+  // A system call writes its result whatever the function means: a wrapper
+  // nothing reads the result of, as `void f(void) { exit_group(5); }`,
+  // returns none.
+  EXPECT_EQ(settle({function(CalleeEntry,
+                             {block({intrinsic(Intrinsic::X64WindowsSyscall,
+                                               {MedVar::makeConst(0x55, 8)}),
+                                     returning(rax(1))})})},
+                   BinaryFormat::COFF),
+            std::vector<bool>{true});
+}
+
+TEST(ReturnContracts, AnInstructionRunForItsEffectIsNoValue) {
+  // What the lift writes for a breakpoint is no result.
+  EXPECT_EQ(settle({function(CalleeEntry, {block({intrinsic(Intrinsic::Int3),
+                                                  returning(rax(1))})})}),
+            std::vector<bool>{true});
+}
+
 TEST(ReturnContracts, AConstantIsADeliberateValue) {
   // register_tm_clones' `return 0` beside the bare path: a value.
   EXPECT_EQ(
