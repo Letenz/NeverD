@@ -17,6 +17,8 @@ llvm::Error Bionic::initializeDex() {
                                                     jni_abi::ObjectLimit);
   if (!Native.JNI && !Native.JNIClassLookupFailures.empty())
     return failure("JNI class lookup failures require JNI");
+  if (!Native.JNI && Native.Application)
+    return failure("Android application snapshot requires JNI");
   if (Native.DexImages.empty() && !Native.JNI)
     return llvm::Error::success();
   if (!Native.JNI || Native.DexImages.size() > 16)
@@ -76,8 +78,8 @@ llvm::Error Bionic::initializeDex() {
       if (mobile::dalvik::platformClass(Name) || JNI.Dex->containsClass(Type))
         return failure("JNI class lookup failure shadows a known class");
     }
-    JNI.DexRuntime =
-        std::make_shared<mobile::dalvik::Runtime>(*JNI.Dex, JNI.Heap);
+    JNI.DexRuntime = std::make_shared<mobile::dalvik::Runtime>(
+        *JNI.Dex, JNI.Heap, Native.Application);
   } catch (const mobile::Error &E) {
     return failure(llvm::Twine("invalid supplied DEX: ") + E.what());
   }

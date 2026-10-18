@@ -9,6 +9,7 @@
 #pragma once
 #include "neverd/dalvik/Runtime.h"
 namespace neverd::mobile::dalvik {
+class AndroidFramework;
 enum LibraryOperation {
   GetClass,
   IdentityEquals,
@@ -33,7 +34,18 @@ enum LibraryOperation {
   Intern,
   ThrowableMessage,
   ThrowableConstruct,
-  ObjectConstruct
+  ObjectConstruct,
+  CurrentActivityThread,
+  CurrentApplication,
+  ThreadApplication,
+  ApplicationContext,
+  BaseContext,
+  ContextClassLoader,
+  PackageName,
+  ClassLoaderOf,
+  LoaderParent,
+  SystemClassLoader,
+  LoadClass
 };
 struct LibraryMethod {
   const char *Class, *Name, *Signature;
@@ -46,5 +58,6 @@ const LibraryMethod *libraryMethod(const MethodRef &reference, bool is_static);
 ExecutionResult
 executeLibrary(Heap &heap, const LibraryMethod &method, uint64_t receiver,
                std::span<const uint64_t> args, const AdmitInstruction &admit,
-               bool nonvirtual = false, const Program *program = nullptr);
+               bool nonvirtual = false, const Program *program = nullptr,
+               AndroidFramework *framework = nullptr);
 } // namespace neverd::mobile::dalvik

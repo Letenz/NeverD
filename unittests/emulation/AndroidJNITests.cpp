@@ -58,6 +58,48 @@ TEST_P(AndroidJNI, VMThreadAttachmentAndVersions) {
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
   EXPECT_EQ(R.ReturnValue, 0u);
 }
+TEST_P(AndroidJNI, ApplicationSnapshotHasThreeDistinctLifecyclePhases) {
+  using Phase = mobile::dalvik::AndroidApplicationSnapshot::Phase;
+  for (auto P : {Phase::Unattached, Phase::Attached, Phase::Application}) {
+    Options.Android->Application =
+        mobile::dalvik::AndroidApplicationSnapshot{P, {}};
+    Options.Android->Arguments = {uint64_t(P)};
+    auto R = run("jni_application_snapshot");
+    EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+    EXPECT_EQ(R.ReturnValue, 0u);
+  }
+}
+TEST_P(AndroidJNI, ApplicationUnknownStateAndPackageDoNotBecomeNullOrDefaults) {
+  auto Unknown = run("jni_application_snapshot");
+  EXPECT_EQ(Unknown.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(Unknown.Diagnostic.find("lifecycle snapshot"), std::string::npos);
+  Options.Android->Application = mobile::dalvik::AndroidApplicationSnapshot{
+      mobile::dalvik::AndroidApplicationSnapshot::Phase::Application, {}};
+  auto Package = run("jni_application_package");
+  EXPECT_EQ(Package.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(Package.Diagnostic.find("package name"), std::string::npos);
+  Options.Android->Application->package_name = "test.app";
+  auto Known = run("jni_application_package");
+  EXPECT_EQ(Known.Stop, ProcessStopReason::Returned) << Known.Diagnostic;
+  EXPECT_EQ(Known.ReturnValue, 0u);
+}
+TEST_P(AndroidJNI, ApplicationInputRequiresJNIAndValidPhaseMetadata) {
+  Options.Android->EntrySymbol = "jni_application_snapshot";
+  Options.Android->Application.emplace();
+  Options.Android->JNI = false;
+  auto Rejected =
+      emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+  EXPECT_FALSE(bool(Rejected));
+  EXPECT_NE(llvm::toString(Rejected.takeError()).find("requires JNI"),
+            std::string::npos);
+  Options.Android->JNI = true;
+  Options.Android->Application->package_name = "test.app";
+  auto Invalid =
+      emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+  EXPECT_FALSE(bool(Invalid));
+  EXPECT_NE(llvm::toString(Invalid.takeError()).find("package snapshot"),
+            std::string::npos);
+}
 TEST_P(AndroidJNI, BuildVersionFieldsUseTheNativePropertySnapshot) {
   Options.Android->Properties = {{"ro.build.version.release", "9.2"},
                                  {"ro.build.version.incremental", "9.2"},

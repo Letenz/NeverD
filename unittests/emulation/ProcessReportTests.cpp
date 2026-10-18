@@ -1498,6 +1498,36 @@ TEST(ProcessReport, JNIClassLoaderDeclarationsAndRetainedNativeBindings) {
   EXPECT_EQ(B->getString("address"), "ffffffffffffffff");
 }
 
+TEST(ProcessReport, AndroidApplicationSnapshotIsExplicitAndStrict) {
+  auto Parsed = processOptionsFromJSON(R"({"android":{"jni":true,
+    "application_snapshot":{"phase":"application","package_name":"test.app"}}})");
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  ASSERT_TRUE(Parsed->Android->Application);
+  EXPECT_EQ(Parsed->Android->Application->phase,
+            mobile::dalvik::AndroidApplicationSnapshot::Phase::Application);
+  EXPECT_EQ(Parsed->Android->Application->package_name, "test.app");
+  for (const char *Invalid :
+       {"null", "[]", "true", "{}", R"({"phase":1})", R"({"phase":"ready"})",
+        R"({"package_name":"test.app"})",
+        R"({"phase":"attached","package_name":"test.app"})",
+        R"({"phase":"application","package_name":""})",
+        R"({"phase":"application","package_name":"a\u0000b"})",
+        R"({"phase":"unattached","invent":true})"}) {
+    auto Bad = processOptionsFromJSON(
+        std::string("{\"android\":{\"application_snapshot\":") + Invalid +
+        "}}");
+    ASSERT_FALSE(bool(Bad)) << Invalid;
+    llvm::consumeError(Bad.takeError());
+  }
+  for (const char *Phase : {"unattached", "attached", "application"}) {
+    auto Input = processOptionsFromJSON(
+        std::string("{\"android\":{\"application_snapshot\":{\"phase\":\"") +
+        Phase + "\"}}}");
+    ASSERT_TRUE(bool(Input)) << llvm::toString(Input.takeError());
+    EXPECT_FALSE(Input->Android->Application->package_name.has_value());
+  }
+}
+
 TEST(ProcessReport, RejectsMalformedRequestsBeforeWorkloadConstruction) {
 #define NEVERD_PROCESS_INVALID_JSON(Name, Text)                                \
   {                                                                            \

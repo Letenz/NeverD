@@ -1,5 +1,6 @@
 include(${CMAKE_SOURCE_DIR}/cmake/NeverDZlib.cmake)
 add_neverd_component_library(NeverDDalvik
+  AndroidFramework.cpp
   AndroidVersion.cpp
   Budget.cpp
   Dex.cpp
