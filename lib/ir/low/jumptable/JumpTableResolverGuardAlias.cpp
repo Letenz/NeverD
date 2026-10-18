@@ -957,9 +957,25 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
     size_t Index;
   };
   std::vector<SelectSite> SelectSites;
-  bool HasGuardCondition = false;
+  size_t ControllingGuards = 0;
   for (const std::optional<bool> &Condition : TableConditions)
-    HasGuardCondition |= Condition.has_value();
+    ControllingGuards += Condition.has_value();
+  const bool HasGuardCondition = ControllingGuards != 0;
+  // The controlling guards are candidate-wide inventory too, which
+  // tableLoadConditionValues has already paid for.  More of them than the
+  // ordinary allowance holds, as in a compare chain before a dense table, give
+  // this batch the dedicated allowance.  Their value queries then walk back
+  // across the chain's blocks, so they use the large-expression role depth.
+  const bool LongGuardChain =
+      ControllingGuards > limits::kMaxJumpTableOrdinaryControllingGuards;
+  const uint32_t GuardValueDepth =
+      LongGuardChain ? limits::kMaxJumpTableLargeExpressionRoleResolverDepth
+                     : limits::kMaxJumpTableExpandedResolverDepth;
+  if (LongGuardChain) {
+    GuardBuildWork += limits::kMaxJumpTableGuardExpressionEvidenceWork -
+                      limits::kMaxJumpTableEvidenceWork;
+    GuardExpressionAllowanceExtended = true;
+  }
   if (HasGuardCondition)
     for (const auto &[Addr, Insn] : Insns) {
       if (!consumeAliasSyntaxWork())
@@ -1090,16 +1106,17 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
     }
   }
   // Value reconstruction crosses CFG predecessors as well as expression
-  // definitions. Use the expanded graph-walk limit; local guard syntax keeps
-  // its separate depth bound and every query retains the shared work budget.
+  // definitions. Use the guard batch's graph-walk limit; local guard syntax
+  // keeps its separate depth bound and every query retains the shared work
+  // budget.
   if (!AliasQueries.empty()) {
     bool AliasProofComplete = false;
     const std::vector<bool> AliasResults = tableValuesMatchAtUses(
         AliasQueries, &AliasProofComplete, nullptr, InvalidVA, nullptr,
         CandidateEvidenceBudget, /*LocalMatchEvidenceLimit=*/0,
         /*CandidateBranchesSharingTargets=*/nullptr,
-        /*QueryUnsignedFeasibleMasks=*/nullptr,
-        limits::kMaxJumpTableExpandedResolverDepth, CertifiedEdgeOverrides);
+        /*QueryUnsignedFeasibleMasks=*/nullptr, GuardValueDepth,
+        CertifiedEdgeOverrides);
     if (!AliasProofComplete || AliasResults.size() != AliasQueries.size()) {
       Info.IncompleteGuardDomain = true;
       return false;
@@ -1427,8 +1444,8 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
             Queries, &Complete, &QueryComplete, InvalidVA, nullptr,
             CandidateEvidenceBudget, /*LocalMatchEvidenceLimit=*/0,
             /*CandidateBranchesSharingTargets=*/nullptr,
-            /*QueryUnsignedFeasibleMasks=*/nullptr,
-            limits::kMaxJumpTableExpandedResolverDepth, CertifiedEdgeOverrides);
+            /*QueryUnsignedFeasibleMasks=*/nullptr, GuardValueDepth,
+            CertifiedEdgeOverrides);
       };
   bool ProofComplete = false;
   std::vector<bool> ProofQueryComplete;
@@ -1684,8 +1701,8 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
       std::vector<uint64_t> Masks;
       const auto Results = tableValuesMatchAtUses(
           {Joined}, nullptr, &Complete, InvalidVA, nullptr,
-          CandidateEvidenceBudget, 0, nullptr, &Masks,
-          limits::kMaxJumpTableExpandedResolverDepth, CertifiedEdgeOverrides);
+          CandidateEvidenceBudget, 0, nullptr, &Masks, GuardValueDepth,
+          CertifiedEdgeOverrides);
       // The ordinary table representation requires a dense zero-based
       // prefix. Sparse domains keep their existing specialized owner.
       if (Results.size() == 1 && Complete.size() == 1 && Complete[0] &&

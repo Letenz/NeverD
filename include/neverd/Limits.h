@@ -83,6 +83,18 @@ constexpr uint32_t kMaxJumpTableGuardAliasEvidenceWork = 16384;
 /// candidate-wide aggregate account.
 constexpr uint32_t kMaxJumpTableGuardExpressionEvidenceWork = 16384;
 
+/// Controlling guards that one precise guard batch handles under the ordinary
+/// allowance.  clang -O0 lowers a sparse switch to one compare per case, and a
+/// dense switch after it gets a table that every one of those compares
+/// controls.  Each costs about 120 units of exact syntax, query, and replay
+/// accounting, so more than 4096 / 128 of them can fill the ordinary
+/// allowance.  A batch with more uses the guard-expression allowance above,
+/// and its value queries cross the compare blocks at the large-expression role
+/// depth.  The 70 compares before a table in android_x64_server's
+/// `dynamic_info_t::d_tag_str` use about 8.5 KiB and reach depth 144.
+constexpr uint32_t kMaxJumpTableOrdinaryControllingGuards =
+    kMaxJumpTableEvidenceWork / 128;
+
 /// Local symbolization allowance for an ordinary unsigned-bound query.  The
 /// largest supported later O0 state-machine dispatch exceeds the generic
 /// occurrence allowance while remaining well below one complete value-match
