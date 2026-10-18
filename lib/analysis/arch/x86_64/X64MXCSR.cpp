@@ -7,12 +7,12 @@
 /// Architecture-owned MXCSR domains and checked scalar state transitions.
 //===----------------------------------------------------------------------===//
 
-#include "X64Recovery.h"
+#include "X64ControlTransitions.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/symbolic/SymState.h"
 
-namespace neverd::analysis::x64 {
+namespace neverd::analysis::x64::mxcsr {
 namespace {
 enum class Operation { Load, Read, Write };
 
@@ -47,8 +47,7 @@ std::optional<Operation> operation(const LowOp &Op) {
 }
 } // namespace
 
-llvm::Error
-validateRuntimeControlOptions(const SpecializationOptions &Options) {
+llvm::Error validateOptions(const SpecializationOptions &Options) {
   if (!Options.X64MXCSRMask)
     return llvm::Error::success();
   if (!Options.ExplicitMachineState || !Options.NormalNonfaultingExecution)
@@ -64,14 +63,12 @@ validateRuntimeControlOptions(const SpecializationOptions &Options) {
   return llvm::Error::success();
 }
 
-bool supportsRuntimeControlOperation(const LowOp &Op,
-                                     const SpecializationOptions &Options) {
+bool supportsOperation(const LowOp &Op, const SpecializationOptions &Options) {
   return Options.X64MXCSRMask.has_value() && operation(Op).has_value();
 }
 
-RuntimeControlState
-seedRuntimeControlState(symbolic::SymContext &Ctx,
-                        const SpecializationOptions &Options) {
+RuntimeControlState seedState(symbolic::SymContext &Ctx,
+                              const SpecializationOptions &Options) {
   if (!Options.X64MXCSRMask)
     return {};
   // Intel SDM vol.1 11.6.6: MXCSR_MASK describes writable bits; a zero FXSAVE
@@ -82,10 +79,10 @@ seedRuntimeControlState(symbolic::SymContext &Ctx,
 }
 
 std::optional<RuntimeControlTransition>
-lowerRuntimeControlOperation(const LowOp &Op, symbolic::SymState &State,
-                             const RuntimeControlState &Controls,
-                             const SpecializationOptions &Options,
-                             llvm::function_ref<NdVar(uint16_t)> Temporary) {
+lowerOperation(const LowOp &Op, symbolic::SymState &State,
+               const RuntimeControlState &Controls,
+               const SpecializationOptions &Options,
+               llvm::function_ref<NdVar(uint16_t)> Temporary) {
   const auto Kind = operation(Op);
   if (!Kind || !Options.X64MXCSRMask || Controls.Values.size() != 1 ||
       !Controls.Values[0] || State.context().width(Controls.Values[0]) != 32)
@@ -126,4 +123,4 @@ lowerRuntimeControlOperation(const LowOp &Op, symbolic::SymState &State,
   Result.OutputState = std::pair<size_t, NdVar>{0, Slot};
   return Result;
 }
-} // namespace neverd::analysis::x64
+} // namespace neverd::analysis::x64::mxcsr

@@ -2191,3 +2191,19 @@ Les contrôles MDL historiques couvrent les appels WDK réels statiques et dynam
 `KernelMDLChain.CreateMdl*` et `KernelMDLUserMapping.CreateMdl*` vérifient largeurs, octets conservés, métadonnées vides ou débordantes, durées de vie, verrous, alias, échecs de libération, réemploi partiel, refus IRP et IRQL. Le pilote WDK réel couvre appels statiques/dynamiques, pool propre, stockage intérieur et pile, identité physique et déchargement complet. Les sondes originales distinguent écritures, traduction des drapeaux et frontières d’allocation/libération injectées.
 
 `KernelMDLChain.AdvanceMdl*` et `KernelMDLUserMapping.AdvanceMdl*` vérifient les franchissements répétés, la marque PFN, les refus en fin, la largeur des arguments, le mapping complet, les échecs de nettoyage, les droits et les durées de vie. Le vrai WDK exécute les appels statiques/dynamiques et les deux nettoyages. Les sondes distinguent la routine complète, la restauration et le wrapper de démontage avec frontières type de mapping/libération PTE injectées, sans exécuter la base de pages du système.
+
+## Transferts vectoriels alignés classiques
+
+`NeverDX86LegacyAlignedMoveTests` vérifie la préservation des registres de MOVDQA, MOVAPS et MOVAPD et leur alignement de 16 octets avant tout accès mémoire, y compris le débordement de largeur d’adresse et les bases FS/GS explicites. Un accès non aligné doit préserver les registres de destination et la mémoire. Une base de segment absente reste refusée. Ces tests couvrent le lifting et l’émulateur ; la récupération symbolique exacte doit prouver séparément la garde d’alignement conservée.
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*` et `PEFixedImageTest.RawAlign*` vérifient une preuve indépendante par reste, les entrées invalides, les budgets exacts, la conservation des gardes natives et la falsification des reçus. Les audits des déplacements classiques lient toutes les opérations, garde d’alignement comprise, sans certifier la conservation des banques d’état opaques.
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```

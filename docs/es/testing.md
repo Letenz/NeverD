@@ -2177,3 +2177,19 @@ Las comprobaciones MDL antiguas cubren llamadas WDK reales estáticas y dinámic
 `KernelMDLChain.CreateMdl*` y `KernelMDLUserMapping.CreateMdl*` cubren anchuras, bytes conservados, metadatos vacíos/desbordados, vida de pool/pila, bloqueos, alias, liberación fallida, reutilización parcial, rechazo IRP e IRQL. El controlador WDK real ejecuta creación estática/dinámica, pool propio, interior del pool y pila del llamador, identidad física y descarga completa. Las sondas originales distinguen escrituras, traducción de banderas y límites inyectados de asignación/liberación.
 
 `KernelMDLChain.AdvanceMdl*` y `KernelMDLUserMapping.AdvanceMdl*` comprueban cruces repetidos, cola PFN, rechazo al final, ancho de argumentos, mapeos completos, fallos de limpieza, permisos y duración. El WDK real ejecuta llamadas estáticas/dinámicas y ambas limpiezas. Las sondas distinguen la rutina completa, el ayudante de restauración y el wrapper de desmapeo con límites de tipo de mapeo/liberación PTE inyectados; no ejecutan la base de páginas del sistema.
+
+## Transferencias vectoriales alineadas clásicas
+
+`NeverDX86LegacyAlignedMoveTests` comprueba la conservación de registros de MOVDQA, MOVAPS y MOVAPD y la alineación de 16 bytes antes del acceso a memoria, incluido el desbordamiento por ancho de dirección y las bases FS/GS explícitas. Los accesos no alineados deben conservar los registros de destino y la memoria. Las bases de segmento ausentes siguen rechazándose. Estas pruebas cubren el lifting y el emulador; la recuperación simbólica exacta debe demostrar por separado la condición de alineación conservada.
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*` y `PEFixedImageTest.RawAlign*` comprueban pruebas independientes mediante resto, entradas inválidas, presupuestos exactos, comprobaciones nativas conservadas y recibos manipulados. Las auditorías de movimientos clásicos vinculan todas las operaciones, incluida la comprobación de alineación, sin certificar la conservación de bancos opacos de estado.
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```

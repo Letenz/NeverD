@@ -2192,3 +2192,19 @@ Die alten MDL-Aufrufe werden mit echten statischen und dynamischen WDK-Aufrufen,
 `KernelMDLChain.CreateMdl*` und `KernelMDLUserMapping.CreateMdl*` prüfen Breiten, erhaltene Bytes, leere/überlaufende Metadaten, Pool-/Stacklebensdauer, Sperren, Aliase, fehlgeschlagene Freigaben, partielle Wiederverwendung, IRP-Ablehnung und IRQL. Der echte WDK-Treiber prüft statische/dynamische Erstellung, eigenen Pool, inneren Pool und Stackspeicher, physische Identität und vollständiges Entladen. Originalproben trennen Feldschreibzugriffe, Flagübersetzung und injizierte Allokations-/Freigabegrenzen.
 
 `KernelMDLChain.AdvanceMdl*` und `KernelMDLUserMapping.AdvanceMdl*` prüfen wiederholte Seitengrenzen, PFN-Endmarkierung, Endablehnung, Argumentbreite, vollständige Abbildungen, fehlgeschlagenen Abbau, Rechte und Lebensdauer. Echtes WDK führt statische/dynamische Aufrufe und beide Abbauwege aus. Originalproben trennen vollständige Routine, Wiederherstellungshelfer und Unmap-Wrapper mit injizierten Abbildungstyp-/PTE-Freigabegrenzen; die OS-Seitendatenbank wird nicht ausgeführt.
+
+## Klassische ausgerichtete Vektortransfers
+
+`NeverDX86LegacyAlignedMoveTests` prüft die Registererhaltung von MOVDQA, MOVAPS und MOVAPD sowie die 16-Byte-Ausrichtung vor Speicherzugriffen, einschließlich Überlauf bei begrenzter Adressbreite und expliziter FS/GS-Basen. Nicht ausgerichtete Zugriffe müssen Zielregister und Speicher unverändert lassen. Fehlende Segmentbasen werden weiterhin abgelehnt. Dies prüft Lifting und Emulator; die exakte symbolische Wiederherstellung muss die erhaltene Ausrichtungsbedingung gesondert beweisen.
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*` und `PEFixedImageTest.RawAlign*` prüfen unabhängige Restwertbeweise, ungültige Eingaben, genaue Budgets, erhaltene native Prüfungen und manipulierte Nachweise. Audits klassischer Verschiebeoperationen binden den gesamten Operationsbereich einschließlich Ausrichtungsprüfung, bescheinigen aber nicht den Erhalt opaker Zustandsbanken.
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```

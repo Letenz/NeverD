@@ -2102,3 +2102,19 @@ Complete Darwin composite: 3624 registered, 2508 passed, 1116 hardware-unavailab
 تغطي `KernelMDLChain.CreateMdl*` و`KernelMDLUserMapping.CreateMdl*` العرض والبايتات المحفوظة والبيانات الفارغة أو الملتفة وعمر التجمع والمكدس والأقفال والأسماء البديلة وفشل التحرير وإعادة الاستخدام الجزئي ورفض IRP وIRQL. ينفذ برنامج WDK الحقيقي الإنشاء الثابت والديناميكي والتجمع المملوك وذاكرة المتصل الداخلية ومكدسه والهوية الفيزيائية والإلغاء الكامل. تميز المجسات الأصلية كتابة الحقول وترجمة الأعلام وحدود التخصيص والتحرير المحقونة.
 
 تختبر `KernelMDLChain.AdvanceMdl*` و`KernelMDLUserMapping.AdvanceMdl*` عبور الصفحات المتكرر والذيل ورفض النهاية وعرض المعاملات والتعيين الكامل وفشل التنظيف والصلاحيات والأعمار. ينفذ WDK الحقيقي استدعاءات ثابتة وديناميكية ومساري التنظيف. تفصل المجسات الروتين الكامل ومساعد الاستعادة وغلاف الإزالة مع حقن حدود نوع التعيين وتحرير PTE؛ ولا تنفذ قاعدة صفحات النظام.
+
+## نقل المتجهات التقليدي مع المحاذاة
+
+يتحقق `NeverDX86LegacyAlignedMoveTests` من حفظ سجلات MOVDQA وMOVAPS وMOVAPD ومن محاذاة 16 بايت قبل الوصول إلى الذاكرة، بما يشمل التفاف عرض العنوان وقواعد FS/GS الصريحة. يجب أن يحافظ الوصول غير المحاذى على سجلات الوجهة والذاكرة. يظل غياب قاعدة المقطع سببًا للرفض. تغطي هذه الاختبارات التحويل والمحاكي؛ ويتطلب الاسترجاع الرمزي الدقيق إثبات شرط المحاذاة المحفوظ بشكل مستقل.
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+تتحقق `InterpreterSpecialization.Alignment*` و `PEFixedImageTest.RawAlign*` من إثبات مستقل باستخدام باقي القسمة، والمدخلات غير الصالحة، والميزانيات الدقيقة، والاحتفاظ بالفحوص الأصلية والتلاعب بالإيصالات. يربط تدقيق تعليمات النقل التقليدية نطاق العمليات الكامل بما فيه فحص المحاذاة، ولا يثبت الحفاظ على مجموعات حالة الآلة المعتمة.
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```

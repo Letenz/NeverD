@@ -2066,3 +2066,19 @@ CRT 회귀는 모든 바이트/UTF-16 단위, 인수 폭, 변경이 없는 읽�
 `KernelMDLChain.CreateMdl*` 및 `KernelMDLUserMapping.CreateMdl*`는 인수 폭, 보존 바이트, 빈 범위와 순환, 풀 및 스택 수명, 잠금, 별칭, 해제 실패, 부분 재사용, IRP 거부와 IRQL을 검사합니다. 실제 WDK 픽스처는 정적·동적 생성, 소유 풀, 호출자 풀 내부 및 스택 기술자, 물리 동일성과 완전한 언로드를 실행합니다. 원본 탐침은 필드 쓰기, 풀 플래그 변환과 주입된 할당／해제 경계를 구분합니다.
 
 `KernelMDLChain.AdvanceMdl*`과 `KernelMDLUserMapping.AdvanceMdl*`은 반복 페이지 이동, 꼬리, 끝 거절, 인수 폭, 전체 매핑, 정리 실패, 권한과 저장소/프로세스 수명을 검사합니다. 실제 WDK는 정적/동적 호출과 명시적 매핑 해제 및 자동 잠금 해제를 실행합니다. 원본 검사는 전체 진행, 복원 도우미, 매핑 종류/PTE 해제 경계를 주입한 래퍼를 구분하며 OS 페이지 데이터베이스 실행을 주장하지 않습니다.
+
+## 기존 정렬 벡터 이동
+
+`NeverDX86LegacyAlignedMoveTests`는 MOVDQA, MOVAPS, MOVAPD의 레지스터 보존과 메모리 접근 전 16바이트 정렬 검사를 확인합니다. 주소 폭에 따른 순환과 명시적 FS/GS 기준 주소도 포함합니다. 정렬되지 않은 접근은 대상 레지스터와 메모리를 보존해야 하며, 세그먼트 기준 주소가 없으면 거부합니다. 이 검증은 리프팅과 에뮬레이터에 해당합니다. 정확한 기호 복원은 유지된 정렬 조건을 별도로 증명해야 합니다.
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*`와 `PEFixedImageTest.RawAlign*`는 독립적인 나머지 증명, 잘못된 입력, 정확한 예산, 원래 검사 보존 및 증명 기록 변조를 검사합니다. 레거시 이동 명령 감사는 정렬 검사를 포함한 전체 연산 범위를 연결하며 불투명한 기계 상태의 보존을 증명하지 않습니다.
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```

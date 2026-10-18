@@ -27,6 +27,36 @@ constexpr std::array<unsigned, 7> Flags = {x86reg::CF, x86reg::PF, x86reg::AF,
                                            x86reg::ZF, x86reg::SF, x86reg::DF,
                                            x86reg::OF};
 
+struct MoveEncoding {
+  unsigned Id;
+  uint8_t Prefix;
+  uint8_t LoadOpcode;
+  uint8_t StoreOpcode;
+  bool Aligned;
+};
+
+constexpr MoveEncoding Moves[] = {{X86_INS_MOVDQU, 0xf3, 0x6f, 0x7f, false},
+                                  {X86_INS_MOVDQA, 0x66, 0x6f, 0x7f, true},
+                                  {X86_INS_MOVUPS, 0, 0x10, 0x11, false},
+                                  {X86_INS_MOVUPD, 0x66, 0x10, 0x11, false},
+                                  {X86_INS_MOVAPS, 0, 0x28, 0x29, true},
+                                  {X86_INS_MOVAPD, 0x66, 0x28, 0x29, true}};
+
+std::vector<uint8_t> encoding(const MoveEncoding &Move, bool Store,
+                              llvm::ArrayRef<uint8_t> Tail,
+                              bool AddressPrefix = false, uint8_t Rex = 0) {
+  std::vector<uint8_t> Bytes;
+  if (Move.Prefix)
+    Bytes.push_back(Move.Prefix);
+  if (AddressPrefix)
+    Bytes.push_back(0x67);
+  if (Rex)
+    Bytes.push_back(0x40 | Rex);
+  Bytes.insert(Bytes.end(), {0x0f, Store ? Move.StoreOpcode : Move.LoadOpcode});
+  Bytes.insert(Bytes.end(), Tail.begin(), Tail.end());
+  return Bytes;
+}
+
 struct MemoryCase {
   Arch Target;
   std::vector<uint8_t> ModRM;
@@ -155,21 +185,18 @@ void checkMove(Arch Target, const std::vector<uint8_t> &Bytes,
 
 TEST(X86LegacyVectorMoveAudit, FullValuesAliasesFlagsAndHighVectorBits) {
   for (Arch Target : {Arch::X86, Arch::X64})
-    for (uint8_t Prefix : {uint8_t(0x66), uint8_t(0xf3)})
-      for (uint8_t Opcode : {uint8_t(0x6f), uint8_t(0x7f)})
+    for (const auto &Move : Moves)
+      for (bool Store : {false, true})
         for (unsigned Destination : {0u, 7u, 8u, 15u})
           for (unsigned Source : {0u, 7u, 8u, 15u}) {
             if (Target == Arch::X86 && (Destination >= 8 || Source >= 8))
               continue;
-            const unsigned Reg = Opcode == 0x6f ? Destination : Source;
-            const unsigned RM = Opcode == 0x6f ? Source : Destination;
-            std::vector<uint8_t> Bytes{Prefix};
+            const unsigned Reg = Store ? Source : Destination;
+            const unsigned RM = Store ? Destination : Source;
             const uint8_t Rex = (Reg >= 8 ? 4 : 0) | (RM >= 8 ? 1 : 0);
-            if (Rex)
-              Bytes.push_back(0x40 | Rex);
-            Bytes.insert(
-                Bytes.end(),
-                {0x0f, Opcode, uint8_t(0xc0 | ((Reg & 7) << 3) | (RM & 7))});
+            const auto Bytes = encoding(
+                Move, Store, {uint8_t(0xc0 | ((Reg & 7) << 3) | (RM & 7))},
+                false, Rex);
             checkMove(Target, Bytes, Destination, Source, nullptr, false);
             if (testing::Test::HasFatalFailure())
               return;
@@ -194,25 +221,23 @@ TEST(X86LegacyVectorMoveAudit,
       {Arch::X86, {0x47, 0xfd}, 3, -1, 1, -3, true},
       {Arch::X86, {0x06, 0x01, 0x90}, -1, -1, 1, int16_t(0x9001), true},
   };
-  for (const auto &C : Cases)
-    for (bool Store : {false, true})
-      for (unsigned Vector : {0u, 7u, 8u, 15u}) {
-        if (C.Target == Arch::X86 && Vector >= 8)
-          continue;
-        std::vector<uint8_t> Bytes{0xf3};
-        if (C.AddressPrefix)
-          Bytes.push_back(0x67);
-        uint8_t Rex = C.Rex | (Vector >= 8 ? 4 : 0);
-        if (Rex)
-          Bytes.push_back(0x40 | Rex);
-        Bytes.insert(Bytes.end(), {0x0f, uint8_t(Store ? 0x7f : 0x6f)});
-        auto ModRM = C.ModRM;
-        ModRM[0] |= (Vector & 7) << 3;
-        Bytes.insert(Bytes.end(), ModRM.begin(), ModRM.end());
-        checkMove(C.Target, Bytes, Vector, Vector, &C, Store);
-        if (testing::Test::HasFatalFailure())
-          return;
-      }
+  for (const auto &Move : Moves) {
+    if (Move.Aligned)
+      continue; // Aligned memory uses the strict emulator fault oracle.
+    for (const auto &C : Cases)
+      for (bool Store : {false, true})
+        for (unsigned Vector : {0u, 7u, 8u, 15u}) {
+          if (C.Target == Arch::X86 && Vector >= 8)
+            continue;
+          const uint8_t Rex = C.Rex | (Vector >= 8 ? 4 : 0);
+          auto ModRM = C.ModRM;
+          ModRM[0] |= (Vector & 7) << 3;
+          const auto Bytes = encoding(Move, Store, ModRM, C.AddressPrefix, Rex);
+          checkMove(C.Target, Bytes, Vector, Vector, &C, Store);
+          if (testing::Test::HasFatalFailure())
+            return;
+        }
+  }
 }
 
 void expectUnaudited(Decoder &Dec, DecodedInsn &Insn) {
@@ -234,11 +259,12 @@ void expectUnaudited(Decoder &Dec, DecodedInsn &Insn) {
   EXPECT_EQ(Preserved, LowInstructionPreservedState{});
 }
 
-TEST(X86LegacyVectorMoveAudit, OtherEncodingsAndAlignedMemoryRemainUnaudited) {
+TEST(X86LegacyVectorMoveAudit,
+     OtherEncodingsAndSegmentedMemoryRemainUnaudited) {
   const std::vector<std::vector<uint8_t>> Cases = {
-      {0x66, 0x0f, 0x6f,
-       0x00}, // aligned load needs a separate alignment contract
-      {0x66, 0x0f, 0x7f, 0x00},
+      {0x66, 0x64, 0x0f, 0x6f, 0x00},       // segmented aligned load
+      {0x66, 0x65, 0x0f, 0x7f, 0x00},       // segmented aligned store
+      {0xc5, 0xf9, 0x6f, 0x00},             // VEX aligned load
       {0xc5, 0xfa, 0x6f, 0xc1},             // VEX.128
       {0xc5, 0xfe, 0x6f, 0xc1},             // VEX.256
       {0x62, 0xf1, 0x7e, 0x48, 0x6f, 0xc1}, // EVEX.512
@@ -248,8 +274,16 @@ TEST(X86LegacyVectorMoveAudit, OtherEncodingsAndAlignedMemoryRemainUnaudited) {
       {0xf3, 0x40, 0x40, 0x0f, 0x6f, 0xc1},
       {0xf3, 0x67, 0x67, 0x0f, 0x6f, 0x00},
       {0xf3, 0x64, 0x0f, 0x6f, 0x00},
-      {0x0f, 0x6f, 0xc1},       // MMX
-      {0xf3, 0x0f, 0x10, 0xc1}, // scalar merge, not a full move
+      {0x0f, 0x6f, 0xc1},                   // MMX
+      {0xf3, 0x0f, 0x10, 0xc1},             // scalar merge, not a full move
+      {0xf2, 0x0f, 0x10, 0xc1},             // scalar double move
+      {0xc5, 0xf8, 0x10, 0xc1},             // VEX floating register move
+      {0xc5, 0xf9, 0x11, 0x00},             // VEX floating memory store
+      {0xc5, 0xf8, 0x28, 0x00},             // VEX floating aligned load
+      {0x62, 0xf1, 0x7c, 0x48, 0x10, 0xc1}, // EVEX floating move
+      {0x66, 0x66, 0x0f, 0x28, 0xc1},
+      {0x67, 0x67, 0x0f, 0x11, 0x00},
+      {0x40, 0x40, 0x0f, 0x29, 0xc1},
   };
   Decoder Dec;
   ASSERT_TRUE(Dec.init(Arch::X64));
@@ -266,50 +300,136 @@ TEST(X86LegacyVectorMoveAudit, OtherEncodingsAndAlignedMemoryRemainUnaudited) {
   }
 }
 
+cs_x86_op &memoryOperand(cs_insn &Insn) {
+  auto &X = Insn.detail->x86;
+  return X.operands[X.operands[0].type == X86_OP_MEM ? 0 : 1];
+}
+
 TEST(X86LegacyVectorMoveAudit, MalformedRawAndDetailCannotAuthorizeCoverage) {
   using Mutation = void (*)(cs_insn &);
   const Mutation RegisterMutations[] = {
-      [](cs_insn &I) { I.bytes[3] ^= 8; },
-      [](cs_insn &I) { I.bytes[2] = 0x7f; },
+      [](cs_insn &I) { I.bytes[I.detail->x86.encoding.modrm_offset] ^= 8; },
+      [](cs_insn &I) { I.bytes[I.detail->x86.encoding.modrm_offset - 1] ^= 1; },
       [](cs_insn &I) { I.bytes[I.size++] = 0x90; },
       [](cs_insn &I) { I.detail->x86.op_count = 1; },
       [](cs_insn &I) { I.detail->x86.operands[0].size = 8; },
       [](cs_insn &I) { I.detail->x86.operands[1].reg = X86_REG_XMM2; },
       [](cs_insn &I) { I.detail->x86.rex = 0x44; },
       [](cs_insn &I) { I.detail->x86.prefix[0] = 0xf3; },
-      [](cs_insn &I) { I.detail->x86.prefix[2] = 0x66; },
+      [](cs_insn &I) {
+        I.detail->x86.prefix[2] = I.detail->x86.prefix[2] ? 0 : 0x66;
+      },
       [](cs_insn &I) { I.detail->x86.addr_size = 4; },
-      [](cs_insn &I) { I.detail->x86.encoding.modrm_offset = 2; },
+      [](cs_insn &I) { I.detail->x86.encoding.modrm_offset += 1; },
       [](cs_insn &I) { I.detail->x86.operands[0].avx_zero_opmask = true; },
       [](cs_insn &I) { I.detail->x86.operands[1].avx_bcast = X86_AVX_BCAST_4; },
   };
   const Mutation MemoryMutations[] = {
-      [](cs_insn &I) { I.detail->x86.operands[1].mem.base = X86_REG_RDX; },
-      [](cs_insn &I) { I.detail->x86.operands[1].mem.index = X86_REG_RSI; },
-      [](cs_insn &I) { I.detail->x86.operands[1].mem.scale = 3; },
-      [](cs_insn &I) { I.detail->x86.operands[1].mem.segment = X86_REG_FS; },
-      [](cs_insn &I) { I.detail->x86.operands[1].mem.disp += 1; },
+      [](cs_insn &I) { memoryOperand(I).mem.base = X86_REG_RDX; },
+      [](cs_insn &I) { memoryOperand(I).mem.index = X86_REG_RSI; },
+      [](cs_insn &I) { memoryOperand(I).mem.scale = 3; },
+      [](cs_insn &I) { memoryOperand(I).mem.segment = X86_REG_FS; },
+      [](cs_insn &I) { memoryOperand(I).mem.disp += 1; },
       [](cs_insn &I) { I.detail->x86.encoding.disp_offset -= 1; },
       [](cs_insn &I) { I.detail->x86.encoding.disp_size = 4; },
-      [](cs_insn &I) { I.detail->x86.operands[1].size = 8; },
-      [](cs_insn &I) { I.bytes[4] ^= 8; },
+      [](cs_insn &I) { memoryOperand(I).size = 8; },
+      [](cs_insn &I) { I.bytes[I.detail->x86.encoding.modrm_offset + 1] ^= 8; },
   };
   Decoder Dec;
   ASSERT_TRUE(Dec.init(Arch::X64));
-  for (bool Memory : {false, true}) {
-    const std::vector<uint8_t> Bytes =
-        Memory ? std::vector<uint8_t>{0xf3, 0x0f, 0x6f, 0x44, 0x4b, 0xfd}
-               : std::vector<uint8_t>{0xf3, 0x0f, 0x6f, 0xc1};
-    const auto Mutations = Memory ? llvm::ArrayRef<Mutation>(MemoryMutations)
-                                  : llvm::ArrayRef<Mutation>(RegisterMutations);
-    for (unsigned Index = 0; Index != Mutations.size(); ++Index) {
-      SCOPED_TRACE(::testing::Message() << Memory << '/' << Index);
-      DecodedInsn Insn{};
-      ASSERT_EQ(Dec.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, Insn),
-                int(Bytes.size()));
-      Mutations[Index](*Insn.Raw);
-      expectUnaudited(Dec, Insn);
-    }
+  for (const auto &Move : Moves)
+    for (bool Store : {false, true})
+      for (bool Memory : {false, true}) {
+        const auto Bytes =
+            encoding(Move, Store,
+                     Memory ? llvm::ArrayRef<uint8_t>({0x44, 0x4b, 0xfd})
+                            : llvm::ArrayRef<uint8_t>({0xc1}));
+        const auto Mutations =
+            Memory ? llvm::ArrayRef<Mutation>(MemoryMutations)
+                   : llvm::ArrayRef<Mutation>(RegisterMutations);
+        for (unsigned Index = 0; Index != Mutations.size(); ++Index) {
+          SCOPED_TRACE(::testing::Message() << Move.Id << '/' << Store << '/'
+                                            << Memory << '/' << Index);
+          DecodedInsn Insn{};
+          ASSERT_EQ(
+              Dec.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, Insn),
+              int(Bytes.size()));
+          Mutations[Index](*Insn.Raw);
+          expectUnaudited(Dec, Insn);
+        }
+      }
+}
+
+TEST(X86LegacyVectorMoveAudit, InstructionIdentityBindsPrefixAndOpcode) {
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X64));
+  for (const auto &Move : Moves)
+    for (bool Store : {false, true})
+      for (bool Memory : {false, true}) {
+        const auto Bytes =
+            encoding(Move, Store, {uint8_t(Memory ? 0x08 : 0xc1)});
+        for (const auto &Other : Moves) {
+          if (Move.Id == Other.Id)
+            continue;
+          SCOPED_TRACE(::testing::Message() << Move.Id << '/' << Other.Id << '/'
+                                            << Store << '/' << Memory);
+          DecodedInsn Insn{};
+          ASSERT_EQ(
+              Dec.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, Insn),
+              int(Bytes.size()));
+          Insn.Raw->id = Other.Id;
+          expectUnaudited(Dec, Insn);
+        }
+      }
+}
+
+TEST(X86LegacyVectorMoveAudit, ZeroByteCannotMasqueradeAsAnAbsentPrefix) {
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X64));
+  for (const auto &Move : Moves) {
+    if (Move.Prefix)
+      continue;
+    for (bool Store : {false, true})
+      for (bool Memory : {false, true}) {
+        const auto Bytes =
+            encoding(Move, Store, {uint8_t(Memory ? 0x08 : 0xc1)});
+        DecodedInsn Insn{};
+        ASSERT_EQ(
+            Dec.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, Insn),
+            int(Bytes.size()));
+        // Keep the opcode and detail offsets consistent after prepending 00.
+        // A zero mandatory-prefix sentinel must never consume a raw byte.
+        for (unsigned I = Insn.Raw->size; I != 0; --I)
+          Insn.Raw->bytes[I] = Insn.Raw->bytes[I - 1];
+        Insn.Raw->bytes[0] = 0;
+        ++Insn.Raw->size;
+        ++Insn.Raw->detail->x86.encoding.modrm_offset;
+        expectUnaudited(Dec, Insn);
+      }
+  }
+}
+
+TEST(X86LegacyVectorMoveAudit, SegmentAndPrefixBoundariesRemainUnaudited) {
+  for (Arch Target : {Arch::X86, Arch::X64}) {
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Target));
+    for (const auto &Move : Moves)
+      for (bool Store : {false, true})
+        for (uint8_t Prefix : {uint8_t(0x64), uint8_t(0x65), uint8_t(0x67)}) {
+          // FS/GS require a separate admission contract. Repeated 67 is
+          // noncanonical even when the decoder normalizes it to one prefix.
+          auto Bytes = encoding(Move, Store, {0x08}, Prefix == 0x67);
+          Bytes.insert(Bytes.begin(), Prefix);
+          DecodedInsn Insn{};
+          const int Size =
+              Dec.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, Insn);
+          if (Size <= 0)
+            continue;
+          ASSERT_EQ(Size, int(Bytes.size()));
+          SCOPED_TRACE(::testing::Message()
+                       << Move.Id << '/' << Store << '/' << unsigned(Prefix));
+          expectUnaudited(Dec, Insn);
+        }
   }
 }
 
