@@ -33,17 +33,22 @@ using namespace neverd;
 
 namespace {
 
-std::optional<BinaryImage> loadLibrary() {
-  const std::filesystem::path Library =
-      std::filesystem::path(TEST_OBJ_DIR) / "test_pic_library_i386.so";
-  if (!std::filesystem::exists(Library))
+/// The fixture \p File, the assembled object or the library linked from it.
+std::optional<BinaryImage> loadFixture(llvm::StringRef File) {
+  const std::filesystem::path Path =
+      std::filesystem::path(TEST_OBJ_DIR) / File.str();
+  if (!std::filesystem::exists(Path))
     return std::nullopt;
-  auto ImageOrErr = loadBinary(Library);
+  auto ImageOrErr = loadBinary(Path);
   if (!ImageOrErr) {
     ADD_FAILURE() << llvm::toString(ImageOrErr.takeError());
     return std::nullopt;
   }
   return std::move(*ImageOrErr);
+}
+
+std::optional<BinaryImage> loadLibrary() {
+  return loadFixture("test_pic_library_i386.so");
 }
 
 /// The HighC source of the library's function \p Name.
@@ -101,6 +106,27 @@ TEST(X86_32PICLibrary, GetPcThunkCallLoadsOnlyItsRegister) {
   }
 }
 
+/// Expect neither of \p Img's call/pop functions to print the return address
+/// its call pushed, and each to keep what it computes.
+void expectNoGetPcPush(const BinaryImage &Img) {
+  for (const char *Name : {"clang_scale", "clang_lower"}) {
+    SCOPED_TRACE(Name);
+    const Symbol *Pop = Img.findSymbol(std::string(Name) + "_pop");
+    ASSERT_NE(Pop, nullptr);
+    const std::string Source = decompile(Img, Name);
+    // The writer spells the return address in uppercase hexadecimal.
+    EXPECT_FALSE(std::regex_search(
+        Source, std::regex("\\b0x" + llvm::utohexstr(Pop->Addr) + "\\b")))
+        << Source;
+    EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+  }
+  const std::string Scale = decompile(Img, "clang_scale");
+  EXPECT_NE(Scale.find("factor"), std::string::npos) << Scale;
+  // The byte the call passes keeps its zero extension.
+  const std::string Lower = decompile(Img, "clang_lower");
+  EXPECT_NE(Lower.find("(uint8_t)arg0"), std::string::npos) << Lower;
+}
+
 // Clang's call to the next instruction pushes the return address for the pop
 // alone, which reads it as the PC.  A frame realigned to 16 bytes kept that
 // push as a local of the C (`var_m24 = 0x146E;`), whether the pop's value
@@ -110,22 +136,17 @@ TEST(X86_32PICLibrary, GetPcCallPushIsNoLocal) {
   const std::optional<BinaryImage> Img = loadLibrary();
   if (!Img)
     GTEST_SKIP() << "the fixture links with ld.lld";
-  for (const char *Name : {"clang_scale", "clang_lower"}) {
-    SCOPED_TRACE(Name);
-    const Symbol *Pop = Img->findSymbol(std::string(Name) + "_pop");
-    ASSERT_NE(Pop, nullptr);
-    const std::string Source = decompile(*Img, Name);
-    // The writer spells the return address in uppercase hexadecimal.
-    EXPECT_FALSE(std::regex_search(
-        Source, std::regex("\\b0x" + llvm::utohexstr(Pop->Addr) + "\\b")))
-        << Source;
-    EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
-  }
-  const std::string Scale = decompile(*Img, "clang_scale");
-  EXPECT_NE(Scale.find("factor"), std::string::npos) << Scale;
-  // The byte the call passes keeps its zero extension.
-  const std::string Lower = decompile(*Img, "clang_lower");
-  EXPECT_NE(Lower.find("(uint8_t)arg0"), std::string::npos) << Lower;
+  expectNoGetPcPush(*Img);
+}
+
+// The object those functions are linked from gives the pop's sum the GOT
+// base, not the PC: `clang_scale`'s pop is read only by that sum, and its
+// push stayed a local (`var_m24 = 0x7E;`).
+TEST(X86_32PICLibrary, ObjectGetPcCallPushIsNoLocal) {
+  const std::optional<BinaryImage> Img = loadFixture("test_pic_library_i386.o");
+  if (!Img)
+    GTEST_SKIP() << "the fixture assembles with clang";
+  expectNoGetPcPush(*Img);
 }
 
 } // namespace
