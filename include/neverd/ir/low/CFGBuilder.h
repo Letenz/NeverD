@@ -688,11 +688,15 @@ struct X87CallGraphCacheLimits {
   size_t GraphBytes = 8 * 1024 * 1024;
   size_t BodyBytes = 32 * 1024 * 1024;
 };
+/// ImmutableEntries names an entry inventory whose owner never changes it
+/// while the cache lives.  A request that borrows that inventory matches a
+/// context frozen from it by identity, without comparing every entry.
 std::shared_ptr<X87CallGraphCache>
 createX87CallGraphCache(const NoReturnCalleeProver *NonReentrantProver,
                         const libc::NoReturnTargetIndex *NonReentrantTargets,
                         bool RetainCallRegisterBodies,
-                        const X87CallGraphCacheLimits &Limits);
+                        const X87CallGraphCacheLimits &Limits,
+                        const std::set<va_t> *ImmutableEntries = nullptr);
 
 class CFGBuilder {
   friend class X87CallEffectIndex;

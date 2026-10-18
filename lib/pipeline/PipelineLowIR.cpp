@@ -3742,7 +3742,8 @@ void computeCallRegisterEffects(
 struct PipelineAnalysisCache::Impl {
   const BinaryImage *Image;
   DebugContext *Debug;
-  std::set<va_t> Entries;
+  // Never changes, so the graph cache matches it by identity.
+  const std::set<va_t> Entries;
   std::set<uint64_t> VerifiedEntries;
   libc::NoReturnTargetIndex Targets;
   detail::AbsoluteRelocationRootIndex Roots;
@@ -3770,7 +3771,8 @@ struct PipelineAnalysisCache::Impl {
         Graphs(createX87CallGraphCache(&Callees, &Targets, RetainBodies,
                                        {limits::kMaxPipelineCallGraphEntries,
                                         limits::kMaxPipelineCallGraphBytes,
-                                        limits::kMaxPipelineCallBodyBytes})) {}
+                                        limits::kMaxPipelineCallBodyBytes},
+                                       &this->Entries)) {}
 
   bool matches(const BinaryImage &Img, DebugContext *Dbg,
                const std::set<va_t> &CandidateEntries) const {
