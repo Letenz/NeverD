@@ -3803,7 +3803,8 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
     // would discard what they built.
     return std::nullopt;
   } else {
-    Cache.Facts->Callees.clearMemoizedProofs();
+    Cache.Facts->Callees.trimMemoizedProofs(
+        limits::kMaxRetainedNoReturnAnswers);
     Cache.Facts->Targets.clearMemoizedNames();
   }
   const auto &Facts = *Cache.Facts;
@@ -3858,9 +3859,11 @@ void Pipeline::buildLowIR(
     Cache.Facts = std::make_shared<PipelineAnalysisCache::Impl>(
         Img, Dbg, std::move(CandidateEntries), Restricted);
   else {
-    // Keep no-return memo storage local to each run, as before. Its stable
-    // owning index still binds the bounded raw graph/body cache contexts.
-    Cache.Facts->Callees.clearMemoizedProofs();
+    // Earlier runs' no-return answers hold for the same facts, and replaying
+    // a retained body asks them again; the screening data behind them does
+    // not accumulate.  Lazy names are resolved again each run.
+    Cache.Facts->Callees.trimMemoizedProofs(
+        limits::kMaxRetainedNoReturnAnswers);
     Cache.Facts->Targets.clearMemoizedNames();
   }
   const auto &Facts = *Cache.Facts;

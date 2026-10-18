@@ -423,6 +423,10 @@ constexpr size_t kMaxCallSetupStackProofWork = 4096;
 /// A no-return proof for an internal callee lifts it, and its own proofs
 /// lift their callees in turn; one this many proofs deep counts as returning.
 constexpr unsigned kMaxNoReturnProofDepth = 4;
+/// No-return answers (proofs, screens and stated calls) a session keeps for
+/// later selections that share its analysis facts; past this many it starts
+/// over.
+constexpr size_t kMaxRetainedNoReturnAnswers = 1 << 18;
 /// One x87 call-effect proof must close every returning path and callee under
 /// these independent limits. Incomplete proofs grant no stack or return fact.
 constexpr unsigned kMaxX87CallProofDepth = 16;

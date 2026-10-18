@@ -46,6 +46,14 @@ inline std::string variadicImportOfStub(const BinaryImage &Image, va_t Entry) {
   if (const libc::LibCPrototype *Prototype =
           libc::libcPrototype(Name, Image.Format))
     return Prototype->Variadic ? Name : std::string();
+  // A routine one format's C library alone declares variadic, as Linux's
+  // ptrace, is variadic in that format's images only.
+  if (const libc::LibCVariadicForward *Forward =
+          libc::libcVariadicForward(Name);
+      Forward && Forward->Format != BinaryFormat::Unknown)
+    return Forward->Format == Image.Format && libc::isKnownFunction(Name)
+               ? Name
+               : std::string();
   return libc::isKnownFunction(Name) && libc::varArgFixedCount(Name) > 0
              ? Name
              : std::string();

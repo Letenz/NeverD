@@ -227,6 +227,7 @@ add_neverd_unittest(NeverDLiftTests
   core/LowInstructionBoundaryTests.cpp
   core/LiftCommonTests.cpp
   core/LinuxSyscallTests.cpp
+  core/SmcccCallTests.cpp
   core/TargetRegInfoSubRegTests.cpp
   core/MedSSAMultiRootTests.cpp
   core/ObjCSourceTypeHintTests.cpp
@@ -2523,6 +2524,8 @@ set(X86_64_TEST_SOURCES
   x86_64/test_jumptable_rbp_base.s
   x86_64/test_jumptable_tail_stub.s
   x86_64/test_jumptable_guard_chain.c
+  x86_64/test_jumptable_masked_byte.s
+  x86_64/test_jumptable_byte_switch.s
   x86_64/test_jumptable_inclusive_postload_clobber.s
   x86_64/test_jumptable_inclusive_postload_unrelated.s
   x86_64/test_jumptable_inclusive_preload_alias.s
@@ -2592,9 +2595,12 @@ set(AARCH64_TEST_SOURCES
   aarch64/test_return_join_a64.c
   aarch64/test_param_phi_a64.s
   aarch64/test_linux_svc_a64.s
+  aarch64/test_smccc_a64.s
   aarch64/test_jumptable_index_identity_a64.s
   aarch64/test_jumptable_gcc_compact_a64.s
   aarch64/test_jumptable_inflate_gcc_a64.s
+  aarch64/test_jumptable_byte_loop_a64.s
+  aarch64/test_jumptable_masked_lane_a64.s
   aarch64/test_pageoff_wrong_base_a64.s
   aarch64/test_pageoff_reaching_a64.s
   aarch64/test_pageoff_alternatives_a64.s
@@ -2636,10 +2642,12 @@ set(ARM32_TEST_SOURCES
   arm32/test_predicated_pop_arm.s
   arm32/test_inline_state_domain_arm.s
   arm32/test_frame_pointer_void_arm.s
+  arm32/test_refused_functions_arm.s
   arm32/test_arm_rel32_reaching.s
   arm32/test_arm_rel32_multiple_sources.s
   arm32/test_arm_relocation_free_literal.s
   arm32/test_linux_svc_arm.s
+  arm32/test_smccc_arm.s
   arm32/test_thumb_pc_reads.s
   arm32/test_module_predicated_escape_arm.s
   format/test_elf_pointer_reloc_arm32.s

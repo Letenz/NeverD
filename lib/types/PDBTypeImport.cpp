@@ -265,7 +265,7 @@ uint64_t Importer::sizeOf(cv::TypeIndex Index) {
     if (unsigned Bytes = simplePointerBytes(Index.getSimpleMode()))
       return Bytes;
     auto Kind = builtinOf(Index.getSimpleKind());
-    return Kind ? builtinBytes(*Kind, Library.dataModel()) : 0;
+    return Kind ? Library.builtinBytes(*Kind) : 0;
   }
   if (auto Found = Sizes.find(Index.getIndex()); Found != Sizes.end())
     return Found->second;
@@ -618,8 +618,7 @@ std::shared_ptr<const EnumDef> Importer::enumeration(cv::TypeIndex Definition) {
   Result->Values = fields(Record->getFieldList()).Enumerators;
   // CodeView may spell -1 as 0xFFFFFFFF; a value takes the underlying
   // type's width and, when that type is signed, its sign.
-  const unsigned Bits =
-      builtinBytes(Result->Underlying, Library.dataModel()) * 8;
+  const unsigned Bits = Library.builtinBytes(Result->Underlying) * 8;
   if (Bits && Bits < 64)
     for (Enumerator &Value : Result->Values) {
       const uint64_t Mask = (uint64_t(1) << Bits) - 1;

@@ -1189,23 +1189,25 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     const auto KnownNumber = controlConstantMayRelocate(Op.Inputs[1])
                                  ? std::nullopt
                                  : traceControlConst(Op.Inputs[1]);
-    const bool OnlyFirstArgument =
-        KnownNumber && linuxX64SyscallArgumentCount(*KnownNumber) == 1;
-    // Linux exit/exit_group consume only RDI. Do not invent dependencies on
-    // undefined entry registers for operands outside that syscall's ABI.
-    llvm::Value *DxSi = OnlyFirstArgument ? llvm::ConstantInt::get(I128Ty, 0)
-                                          : getVar(Op.Inputs[3], Builder);
-    llvm::Value *R8R10 = OnlyFirstArgument ? llvm::ConstantInt::get(I128Ty, 0)
-                                           : getVar(Op.Inputs[4], Builder);
+    const std::optional<unsigned> Count =
+        KnownNumber ? linuxX64SyscallArgumentCount(*KnownNumber) : std::nullopt;
+    // A syscall whose arity is known reads only its own arguments. Do not
+    // invent dependencies on undefined entry registers outside its ABI.
+    const auto Operand = [&](size_t Index, llvm::Type *Type) -> llvm::Value * {
+      return !Count || x64SyscallOperandRead(Index, *Count)
+                 ? getVar(Op.Inputs[1 + Index], Builder)
+                 : llvm::ConstantInt::get(Type, 0);
+    };
+    llvm::Value *DxSi = Operand(2, I128Ty);
+    llvm::Value *R8R10 = Operand(3, I128Ty);
     llvm::Value *Arguments[] = {
         Number,
-        getVar(Op.Inputs[2], Builder),
+        Operand(1, I64Ty),
         Builder.CreateTrunc(DxSi, I64Ty),
         Builder.CreateTrunc(Builder.CreateLShr(DxSi, 64), I64Ty),
         Builder.CreateTrunc(R8R10, I64Ty),
         Builder.CreateTrunc(Builder.CreateLShr(R8R10, 64), I64Ty),
-        OnlyFirstArgument ? llvm::ConstantInt::get(I64Ty, 0)
-                          : getVar(Op.Inputs[5], Builder)};
+        Operand(4, I64Ty)};
     auto *FnTy = llvm::FunctionType::get(
         PairTy, {I64Ty, I64Ty, I64Ty, I64Ty, I64Ty, I64Ty, I64Ty}, false);
     auto *Asm = llvm::InlineAsm::get(

@@ -15,6 +15,7 @@
 #include "neverd/libc/WindowsCRT.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringSwitch.h"
 
 #include <algorithm>
@@ -41,12 +42,19 @@ unsigned fortifiedChkFixedCount(std::string_view Core) {
       .Default(0);
 }
 
-unsigned irregularVarArgFixedCount(std::string_view Name) {
-  return llvm::StringSwitch<unsigned>(Name)
-#define LIBC_IRREGULAR_VARARG(Name, Count) .Case(Name, Count)
+/// The category of each fixed parameter of the irregular variadic routine
+/// \p Name, or none for any other routine.
+llvm::ArrayRef<VarArgFixedParamKind>
+irregularVarArgFixedKinds(std::string_view Name) {
+  using enum VarArgFixedParamKind;
+#define LIBC_IRREGULAR_VARARG(Routine, ...)                                    \
+  if (Name == Routine) {                                                       \
+    static constexpr VarArgFixedParamKind Kinds[] = {__VA_ARGS__};             \
+    return Kinds;                                                              \
+  }
 #include "neverd/libc/LibCIrregularVarArg.inc"
 #undef LIBC_IRREGULAR_VARARG
-      .Default(0);
+  return {};
 }
 
 /// The standard routine whose arguments a C library's variant \p Name takes
@@ -128,7 +136,7 @@ unsigned varArgFixedCount(std::string_view Name) {
   }
 
   // Irregular variadic functions with no printf/scanf suffix.
-  return irregularVarArgFixedCount(Name);
+  return irregularVarArgFixedKinds(Name).size();
 }
 
 VarArgFixedParamKind varArgFixedParamKind(std::string_view Name,
@@ -188,18 +196,10 @@ VarArgFixedParamKind varArgFixedParamKind(std::string_view Name,
   // The irregular registry intentionally carries only the fixed prefix the
   // recovery pass can prove.  Classify that prefix without guessing the types
   // of any optional tail arguments.
-  if (Name == "open")
-    return Index == 0 ? VarArgFixedParamKind::Pointer
-                      : VarArgFixedParamKind::Integer;
-  if (Name == "syslog" || Name == "err" || Name == "errx" || Name == "openat" ||
-      Name == "fcntl" || Name == "ioctl")
-    return VarArgFixedParamKind::Integer;
-  if (Name == "warn" || Name == "warnx" || Name == "execl" ||
-      Name == "execlp" || Name == "execle" || Name == "mq_open" ||
-      Name == "sem_open")
-    return VarArgFixedParamKind::Pointer;
-
-  return VarArgFixedParamKind::Unknown;
+  const llvm::ArrayRef<VarArgFixedParamKind> Irregular =
+      irregularVarArgFixedKinds(Name);
+  return Index < Irregular.size() ? Irregular[Index]
+                                  : VarArgFixedParamKind::Unknown;
 }
 
 bool isVaListConsumer(std::string_view Name) {
@@ -534,6 +534,13 @@ const LibCVariadicForward *libcVariadicForward(std::string_view Name) {
   {Kind::Bounded, Routine,  ReturnType,                                        \
    TypeHeader,    Routine,  NEVERD_FIXED_PARAMETERS(__VA_ARGS__),              \
    Read,          ReadType, false},
+#define LIBC_ELF_BOUNDED_VARARGS(Routine, ReturnType, TypeHeader, Read,        \
+                                 ReadType, ...)                                \
+  {Kind::Bounded, Routine,                                                     \
+   ReturnType,    TypeHeader,                                                  \
+   Routine,       NEVERD_FIXED_PARAMETERS(__VA_ARGS__),                        \
+   Read,          ReadType,                                                    \
+   false,         BinaryFormat::ELF},
 #define LIBC_SENTINEL_VARARGS(Routine, ReturnType, TypeHeader, Vector,         \
                               WithEnvironment, ...)                            \
   {Kind::Sentinel,                                                             \

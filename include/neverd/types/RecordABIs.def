@@ -6,29 +6,45 @@
 ///
 /// \file
 /// How a target's compilers lay records out, beyond what its data model
-/// says: where its bit-fields go and how far its scalars align.
+/// says: where its bit-fields go, how far its scalars align, and how large
+/// its wchar_t and long double are.
 ///
-/// NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit)
+/// NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes,
+///                   LongDoubleBytes)
 ///   Spelling          Its name in the C API.
 ///   Rules             Where its bit-fields go: MSVC or Itanium.
 ///   ScalarAlignLimit  The largest alignment a builtin scalar takes in a
 ///                     record, which otherwise aligns to its size.
+///   WCharBytes        The size of its wchar_t,
+///   LongDoubleBytes   and of its long double, as Clang's
+///                     __SIZEOF_WCHAR_T__ and __SIZEOF_LONG_DOUBLE__ give
+///                     them for its target.
 ///
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_RECORD_ABI
-#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit)
+#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes, \
+                          LongDoubleBytes)
 #endif
 
-/// Microsoft's compilers, and MinGW's, which lay records out as they do.
-NEVERD_RECORD_ABI(Microsoft, "microsoft", MSVC, 16)
-/// GCC and Clang on the 64-bit System V and Apple targets.
-NEVERD_RECORD_ABI(Itanium, "itanium", Itanium, 16)
+/// Microsoft's compilers, and MinGW's, which lay records out as they do but
+/// keep the x87's long double, 16 bytes on x64 and 12 on x86, which this
+/// does not hold.
+NEVERD_RECORD_ABI(Microsoft, "microsoft", MSVC, 16, 2, 8)
+/// GCC and Clang on the 64-bit System V targets, Android's among them, and
+/// on Apple's x86-64.
+NEVERD_RECORD_ABI(Itanium, "itanium", Itanium, 16, 4, 16)
+/// Apple's 64-bit ARM: the Itanium ABI's records, and a long double that is
+/// a double.
+NEVERD_RECORD_ABI(AppleARM64, "apple-arm64", Itanium, 16, 4, 8)
 /// The i386 System V ABI: long long, double and long double align to four
-/// in a record.
-NEVERD_RECORD_ABI(I386SystemV, "i386-sysv", Itanium, 4)
+/// in a record, and long double is the x87's, in 12 bytes.
+NEVERD_RECORD_ABI(I386SystemV, "i386-sysv", Itanium, 4, 4, 12)
+/// Android's i386: the i386 System V ABI's records, and a long double that
+/// is a double.
+NEVERD_RECORD_ABI(AndroidI386, "android-i386", Itanium, 4, 4, 8)
 /// The 32-bit ARM procedure call standard: eight-byte scalars align to
-/// eight.
-NEVERD_RECORD_ABI(AAPCS32, "aapcs32", Itanium, 8)
+/// eight, and long double is a double.
+NEVERD_RECORD_ABI(AAPCS32, "aapcs32", Itanium, 8, 4, 8)
 
 #undef NEVERD_RECORD_ABI

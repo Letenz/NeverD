@@ -706,7 +706,8 @@ bool Engine::reloadUserState() {
   const bool functions = reloadFunctionEdits();
   const bool items = reloadDataItems();
   const bool operands = reloadOperandFormats();
-  return annotations && renames && functions && items && operands;
+  const bool types = reloadTypeDeclarations();
+  return annotations && renames && functions && items && operands && types;
 }
 bool Engine::reloadOperandFormats() {
   const auto &formats = operandFormats();
@@ -775,6 +776,31 @@ bool Engine::reloadFunctionEdits() {
     return false;
   if (functionEditRows() != before)
     functionsChanged();
+  return true;
+}
+Json Engine::typeDeclarationRows() const {
+  if (!declaresLocalTypes())
+    return Json::array();
+  static const auto rows =
+      engineSymbol<SessionJsonFunction>("neverd_type_declarations_json");
+  Json declared = backendJson(rows(session_));
+  if (!declared.is_array())
+    throw Error("engine_error", "Engine returned malformed type declarations");
+  for (std::size_t i = 0; i < declared.size(); ++i)
+    declared[i]["addr"] = hexAddress(i);
+  return declared;
+}
+bool Engine::reloadTypeDeclarations() {
+  if (!declaresLocalTypes() || !history_ ||
+      typeDeclarationRows() == history_->committedState().at("types"))
+    return true;
+  static const auto load =
+      engineSymbol<SessionLoadFunction>("neverd_type_declarations_load");
+  if (load(session_) != 0)
+    return false;
+  analyzed_ = false;
+  preparedFunction_.reset();
+  operandFormatsChanged();
   return true;
 }
 Json Engine::functionEditRows() const {
@@ -1364,7 +1390,10 @@ ProjectHistory &Engine::history() {
          {"functions", functionEditRows()},
          {"items", dataItemRows()},
          {"operands", operandFormatRows()},
-         {"code_edits", codeEdits_}});
+         {"code_edits", codeEdits_},
+         {"types", declaresLocalTypes()
+                       ? typeDeclarationRows()
+                       : history_->committedState().at("types")}});
   }
   return *history_;
 }
@@ -2372,11 +2401,15 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       }
       dirty_ = kept != 0;
     }
-    if (types) {
+    // The history holds the declarations too: a change of them is a change
+    // of its tables, which reloadUserState read.
+    if (types && !tables) {
       static const auto load =
           engineSymbol<SessionLoadFunction>("neverd_type_declarations_load");
       if (load(session_) != 0)
         throw Error("load_failed", error(), {{"state_changed", tables}});
+    }
+    if (types) {
       analyzed_ = false;
       preparedFunction_.reset();
     }
@@ -2611,12 +2644,16 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     requireWriter();
     if (!declaresLocalTypes())
       throw Error("unsupported", "This engine cannot declare local types");
+    // A declaration commits at once, as a rename does, over saved comments,
+    // into a history that holds the declarations as they stand before it.
+    if (dirty_)
+      throw Error("unsaved_changes",
+                  "Save or reload staged annotations before declaring types");
+    history().requireUsable();
     static const auto declare =
         engineSymbol<LocalTypeFunction>("neverd_local_types_declare");
     static const auto forget =
         engineSymbol<LocalTypeNamesFunction>("neverd_local_types_forget");
-    static const auto rows =
-        engineSymbol<SessionJsonFunction>("neverd_type_declarations_json");
     static const auto load =
         engineSymbol<SessionLoadFunction>("neverd_type_declarations_load");
     std::string reply;
@@ -2639,18 +2676,25 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     } catch (const Json::exception &) {
       throw Error("engine_error", "Engine returned malformed JSON");
     }
-    // The project keeps what the user declared at once, as a rename, under
-    // the writer lock this session holds; the sidecar unchanged, so are the
-    // types.
+    // The project keeps what the user declared at once, as a rename, and
+    // undo takes it away again: the declaration after the last.  The
+    // sidecar unchanged, so are the types.
     if (result.value("problems", Json::array()).empty()) {
+      auto &store = *history_;
+      const auto checkpoint = store;
       try {
-        atomicWrite(
-            project_files::path(
-                utf8Path(ownedString(neverd_session_file_path(session_))),
-                project_files::File::Types),
-            sidecarText(backendJson(rows(session_))));
-        recordProject();
+        auto state = store.committedState();
+        Json declared = typeDeclarationRows();
+        if (declared.empty())
+          throw Error("engine_error", "Engine kept no declaration");
+        store.stage({{"kind", "types"},
+                     {"address", hexAddress(declared.size() - 1)},
+                     {"before", nullptr},
+                     {"after", declared.back()}});
+        state["types"] = std::move(declared);
+        store.persist(state);
       } catch (...) {
+        store = checkpoint;
         (void)load(session_);
         throw;
       }

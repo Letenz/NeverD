@@ -1017,6 +1017,41 @@ TEST(SysVCallContract, ACallThroughALoaderBoundSlotPassesThePrototype) {
   EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
 }
 
+TEST(SysVCallContract, APLTEntryOfItsOwnRoutinePassesTheRoutinesArguments) {
+  // A shared object defines g(x) { return 2 * x + 1; } and reaches it through
+  // its PLT entry, `f: jmp g@plt`, as it does a preemptible g.  The loader
+  // relocates g's slot to g itself, so f and the entry pass x on, to g.
+  constexpr va_t G = Text, F = Text + 0x10, Stub = Text + 0x20;
+  std::vector<uint8_t> Code(0x30, 0xCC);
+  put(Code, G, {0x8D, 0x44, 0x3F, 0x01, 0xC3}); // lea eax, [rdi+rdi+1]; ret
+  std::vector<uint8_t> Jump = {0xE9};           // jmp stub
+  for (uint8_t B : rel32(F + 5, Stub))
+    Jump.push_back(B);
+  put(Code, F, Jump);
+  BinaryImage Img = makeImportImage(Code, {{G, "g"}, {F, "f"}}, {{Stub, "g"}});
+  constexpr va_t Slot = 0x403000;
+  for (unsigned B = 0; B < 8; ++B)
+    Img.Segments.back().Data[B] = static_cast<uint8_t>(G >> (8 * B));
+  Img.CodePtrRelocSlots.insert(Slot);
+  for (const std::set<va_t> &Entries :
+       {std::set<va_t>{G, F, Stub}, std::set<va_t>{F}}) {
+    SCOPED_TRACE(Entries.size());
+    const std::string Source = liftEntries(Img, Entries);
+    const std::string Caller = body(Source, "f");
+    ASSERT_FALSE(Caller.empty()) << Source;
+    EXPECT_NE(Caller.find("f(int64_t arg0)"), std::string::npos) << Caller;
+    EXPECT_TRUE(llvm::Regex("[^[:alnum:]_]g\\(arg0\\)").match(Caller))
+        << Caller;
+    EXPECT_FALSE(llvm::Regex("[^[:alnum:]_]g_[[:xdigit:]]+\\(").match(Source))
+        << Source;
+  }
+  const std::string Source = liftEntries(Img, {G, Stub});
+  const std::string Entry = body(Source, "sub_401020");
+  ASSERT_FALSE(Entry.empty()) << Source;
+  EXPECT_NE(Entry.find("sub_401020(int64_t arg0)"), std::string::npos) << Entry;
+  EXPECT_TRUE(llvm::Regex("[^[:alnum:]_]g\\(arg0\\)").match(Entry)) << Entry;
+}
+
 TEST(SysVCallContract, AnArgumentOnlyTheCallSiteScanReadsKeepsItsValue) {
   // parse(o): s = o->text + 1 in RDI, tested by a load through it; the call
   // to an import with no prototype in the next block passes it on.  Only

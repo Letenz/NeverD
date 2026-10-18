@@ -650,6 +650,27 @@ TEST(InternalNoReturn, ProofsStopAtTheDepthLimit) {
   }
 }
 
+TEST(InternalNoReturn, TrimmingKeepsAnswersUntilThereAreTooMany) {
+  // A later run keeps the answers earlier runs found, which depend only on
+  // the index's inputs.  Changing the callee after its proof, which no
+  // session does, shows which answer a run reads.
+  auto Image =
+      imageWith(callerThen({0xcd, 0x29}), {{Base, "caller"}, {0x1010, "b"}});
+  const std::set<va_t> Entries{Base, 0x1010};
+  const libc::NoReturnTargetIndex Names(Image);
+  InternalNoReturnIndex Callees(Image, &Entries, &Names, nullptr, nullptr);
+  ASSERT_TRUE(Callees.neverReturns(0x1010, 0));
+  Image.Segments.front().Data[0x10] = 0xc3;
+  Callees.trimMemoizedProofs(limits::kMaxRetainedNoReturnAnswers);
+  EXPECT_TRUE(Callees.neverReturns(0x1010, 0));
+  // Past the bound the answers start over, as a cleared index does.
+  Callees.trimMemoizedProofs(0);
+  EXPECT_FALSE(Callees.neverReturns(0x1010, 0));
+  Image.Segments.front().Data[0x10] = 0xcd;
+  Callees.clearMemoizedProofs();
+  EXPECT_TRUE(Callees.neverReturns(0x1010, 0));
+}
+
 TEST(InternalNoReturn, CallFollowedByCodeIsNotProved) {
   // caller: call callee; ret -- no padding follows and no metadata gives the
   // callee a code range to check, so the callee that never returns is not

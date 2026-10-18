@@ -880,6 +880,14 @@
         <translation>リンカーの MAP ファイルから名前を読み込みます</translation>
     </message>
     <message>
+        <source>C &amp;header file...</source>
+        <translation>C ヘッダー ファイル(&amp;H)...</translation>
+    </message>
+    <message>
+        <source>Declare the types a C or C++ header declares, in the Local Types editor</source>
+        <translation>C または C++ のヘッダーが宣言する型を、ローカル型のエディターで宣言します</translation>
+    </message>
+    <message>
         <source>S&amp;tructure offset...</source>
         <translation>構造体オフセット(&amp;T)...</translation>
     </message>
@@ -2391,6 +2399,26 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>MAP files (*.map);;All files (*)</source>
         <translation>MAP ファイル (*.map);;すべてのファイル (*)</translation>
+    </message>
+    <message>
+        <source>Parse C header file</source>
+        <translation>C ヘッダー ファイルの解析</translation>
+    </message>
+    <message>
+        <source>C and C++ headers (*.h *.hh *.hpp *.hxx);;All files (*)</source>
+        <translation>C/C++ ヘッダー (*.h *.hh *.hpp *.hxx);;すべてのファイル (*)</translation>
+    </message>
+    <message>
+        <source>%1 is larger than 4 MiB.</source>
+        <translation>%1 が 4 MiB を超えています。</translation>
+    </message>
+    <message>
+        <source>Cannot read %1: %2</source>
+        <translation>%1 を読み込めません：%2</translation>
+    </message>
+    <message>
+        <source>Parse %1</source>
+        <translation>%1 の解析</translation>
     </message>
     <message>
         <source>Load a MAP file of another build</source>

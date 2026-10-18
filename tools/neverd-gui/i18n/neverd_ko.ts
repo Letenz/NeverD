@@ -880,6 +880,14 @@
         <translation>링커 MAP 파일에서 이름을 불러옵니다</translation>
     </message>
     <message>
+        <source>C &amp;header file...</source>
+        <translation>C 헤더 파일(&amp;H)...</translation>
+    </message>
+    <message>
+        <source>Declare the types a C or C++ header declares, in the Local Types editor</source>
+        <translation>C 또는 C++ 헤더가 선언하는 형식을 로컬 형식 편집기에서 선언합니다</translation>
+    </message>
+    <message>
         <source>S&amp;tructure offset...</source>
         <translation>구조체 오프셋(&amp;T)...</translation>
     </message>
@@ -2391,6 +2399,26 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>MAP files (*.map);;All files (*)</source>
         <translation>MAP 파일 (*.map);;모든 파일 (*)</translation>
+    </message>
+    <message>
+        <source>Parse C header file</source>
+        <translation>C 헤더 파일 구문 분석</translation>
+    </message>
+    <message>
+        <source>C and C++ headers (*.h *.hh *.hpp *.hxx);;All files (*)</source>
+        <translation>C/C++ 헤더 (*.h *.hh *.hpp *.hxx);;모든 파일 (*)</translation>
+    </message>
+    <message>
+        <source>%1 is larger than 4 MiB.</source>
+        <translation>%1이(가) 4 MiB를 초과합니다.</translation>
+    </message>
+    <message>
+        <source>Cannot read %1: %2</source>
+        <translation>%1을(를) 읽을 수 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>Parse %1</source>
+        <translation>%1 구문 분석</translation>
     </message>
     <message>
         <source>Load a MAP file of another build</source>

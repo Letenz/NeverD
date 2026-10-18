@@ -3,6 +3,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymDispatchTests.cpp
   SymExecTests.cpp
   SymMBAObservedWindowTests.cpp
+  SymIntegerIntrinsicTests.cpp
   SymSegmentedMemoryTests.cpp
   SymRegionWrapTests.cpp
   SymStorePreservationTests.cpp
@@ -57,6 +58,14 @@ target_compile_definitions(NeverDSymbolicTests PRIVATE
   SYMBOLIC_FIXTURE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
 )
 add_dependencies(NeverDSymbolicTests neverd)
+
+add_neverd_unittest(NeverDSymbolicIntegerIntrinsicTests
+  SymIntegerIntrinsicTests.cpp
+  SymExecTests.cpp
+  SymStorePreservationTests.cpp
+  SymX87Tests.cpp
+  LINK_COMPONENTS Symbolic Solver
+)
 
 add_neverd_unittest(NeverDSymbolicSparseContextTests
   SymMBASparseContextTests.cpp

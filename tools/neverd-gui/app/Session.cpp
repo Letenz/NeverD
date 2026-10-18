@@ -1388,16 +1388,34 @@ void Session::reportPdb(const QJsonObject &result) {
 
 void Session::declareTypes(const QString &language, const QString &source,
                            Reply done, Failure failed) {
-  command(QStringLiteral("local_types_declare"),
-          {{"language", language}, {"source", source}}, std::move(done),
-          std::move(failed));
+  // Like a rename, a declaration commits at once over saved comments, and
+  // undo takes it away again.
+  if (dirty_)
+    save();
+  command(
+      QStringLiteral("local_types_declare"),
+      {{"language", language}, {"source", source}},
+      [this, done = std::move(done)](const QJsonObject &payload) {
+        refreshHistory();
+        if (done)
+          done(payload);
+      },
+      std::move(failed));
 }
 
 void Session::forgetTypes(const QStringList &names, Reply done,
                           Failure failed) {
-  command(QStringLiteral("local_types_forget"),
-          {{"names", QJsonArray::fromStringList(names)}}, std::move(done),
-          std::move(failed));
+  if (dirty_)
+    save();
+  command(
+      QStringLiteral("local_types_forget"),
+      {{"names", QJsonArray::fromStringList(names)}},
+      [this, done = std::move(done)](const QJsonObject &payload) {
+        refreshHistory();
+        if (done)
+          done(payload);
+      },
+      std::move(failed));
 }
 
 void Session::setStringOptions(const QStringList &encodings,

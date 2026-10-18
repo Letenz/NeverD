@@ -375,8 +375,11 @@ unreadSyscallArguments(const BinaryImage &Img, const LowBlock &Block) {
         Number ? linuxX64SyscallArgumentCount(*Number) : std::nullopt;
     if (!Count || *Count >= std::size(kLinuxX64SyscallArgumentRegisters))
       continue;
+    // The lift passes RDX:RSI and R8:R10 as one operand each, which the call
+    // reads whole once it reads either half.
     const llvm::ArrayRef<uint64_t> Rest =
-        llvm::ArrayRef(kLinuxX64SyscallArgumentRegisters).drop_front(*Count);
+        llvm::ArrayRef(kLinuxX64SyscallArgumentRegisters)
+            .drop_front(x64SyscallRegistersRead(*Count));
     for (size_t I = First; I < End; ++I)
       Unread[I] = Rest;
   }
@@ -736,7 +739,8 @@ void summarizeIncomingStackReads(const BinaryImage &Img, CallRegisterBodyView F,
           DirectTarget && Op.Opcode != NdOp::INDIR_BR &&
           (Op.Opcode == NdOp::INDIR_CALL
                ? !importCalleeName(Img, Op.Inputs[0].Offset).empty()
-               : Img.findImportAt(Op.Inputs[0].Offset) != nullptr);
+               : Img.findImportAt(Op.Inputs[0].Offset) != nullptr) &&
+          !importOwnRoutine(Img, ArgumentSources, Op.Inputs[0].Offset);
       const std::optional<va_t> ArgumentsFrom =
           ImportTarget ? std::nullopt
                        : pointerVariableArgumentsFrom(ArgumentSources, F.Blocks,
@@ -1054,7 +1058,9 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
         // the slot is an import's and its prototype says what that reads.
         Effect.Unknown = true;
         (TailCall ? Step.UnknownTailCall : Step.UnknownCall) = true;
-        if (DirectTarget && !importCalleeName(Img, Op.Inputs[0].Offset).empty())
+        if (DirectTarget &&
+            !importCalleeName(Img, Op.Inputs[0].Offset).empty() &&
+            !importOwnRoutine(Img, ArgumentSources, Op.Inputs[0].Offset))
           Step.ImportCallee = Op.Inputs[0].Offset;
         else if (const std::optional<va_t> Source =
                      pointerVariableArgumentsFrom(ArgumentSources, F.Blocks,
@@ -1087,22 +1093,29 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
         break;
       case NdOp::CALL: {
         // A call that never returns cannot change a register its caller
-        // reads, but it still receives this function's registers.
+        // reads, but it still receives this function's registers.  A stub
+        // of an import the loader starts at this image's own routine calls
+        // that routine.
         Step.Exits = NoReturnCall;
-        if (!DirectTarget || Img.findImportAt(Op.Inputs[0].Offset)) {
+        const std::optional<va_t> OwnRoutine =
+            DirectTarget
+                ? importOwnRoutine(Img, ArgumentSources, Op.Inputs[0].Offset)
+                : std::nullopt;
+        if (!DirectTarget ||
+            (!OwnRoutine && Img.findImportAt(Op.Inputs[0].Offset))) {
           if (!NoReturnCall)
             Effect.Unknown = true;
           (TailCall ? Step.UnknownTailCall : Step.UnknownCall) = true;
           if (DirectTarget)
             Step.ImportCallee = Op.Inputs[0].Offset;
         } else {
-          Step.Callee = Op.Inputs[0].Offset;
+          const va_t Callee = OwnRoutine ? *OwnRoutine : Op.Inputs[0].Offset;
+          Step.Callee = Callee;
           Step.TailCallee = TailCall;
           if (!NoReturnCall)
-            Effect.Callees.insert(Op.Inputs[0].Offset);
-          else if (!EntersNoReturnFunction ||
-                   Img.userNoReturnAt(Op.Inputs[0].Offset))
-            Effect.NoReturnCallees.insert(Op.Inputs[0].Offset);
+            Effect.Callees.insert(Callee);
+          else if (!EntersNoReturnFunction || Img.userNoReturnAt(Callee))
+            Effect.NoReturnCallees.insert(Callee);
         }
         break;
       }

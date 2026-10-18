@@ -63,6 +63,10 @@ public:
   /// the selected types.
   void run(TypesCommand command);
   static QKeySequence commandKey(TypesCommand command);
+  /// Opens the editor with \p source, declarations in \p language, under
+  /// \p title: a header file's, as IDA parses one into its local types.
+  void declareSource(const QString &language, const QString &source,
+                     const QString &title);
 
 protected:
   bool eventFilter(QObject *object, QEvent *event) override;

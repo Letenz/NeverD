@@ -764,6 +764,112 @@ TEST(X87CallGraphCache, AnIncompleteProofDoesNotPoisonAnotherDepth) {
             Incomplete);
 }
 
+/// A function that calls 0x1100 and then holds bytes that are no
+/// instruction: its lift is complete only when the callee is proved never to
+/// return.
+BinaryImage callThenNoInstructionImage() {
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::ELF;
+  Image.Entry = 0x1000;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = Image.Entry;
+  Text.Size = 0x200;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xcc);
+  auto Publish = [&](va_t Address, const char *Name,
+                     const std::vector<uint8_t> &Bytes) {
+    std::copy(Bytes.begin(), Bytes.end(),
+              Text.Data.begin() + Address - Text.VA);
+    Symbol Sym = Symbol::makeFunc(Address, Bytes.size());
+    Sym.Name = Name;
+    Image.Symbols.push_back(Sym);
+    Image.KnownCodeRanges.emplace_back(Address, Address + Bytes.size());
+  };
+  // call 0x1100; ff ff (no instruction); ret
+  Publish(0x1000, "caller", {0xe8, 0xfb, 0, 0, 0, 0xff, 0xff, 0xc3});
+  Publish(0x1100, "callee", {0xeb, 0xfe}); // jmp $
+  Image.Segments.push_back(std::move(Text));
+  return Image;
+}
+
+/// Answers whether a callee never returns as the test sets it.
+struct SwitchedNoReturnProver final : NoReturnCalleeProver {
+  bool NeverReturns = false;
+  mutable size_t Questions = 0;
+  bool neverReturns(va_t, unsigned) const override {
+    ++Questions;
+    return NeverReturns;
+  }
+  bool mayNeverReturn(va_t) const override { return true; }
+};
+
+TEST(X87CallGraphCache, AnIncompleteLiftIsBuiltOnceWhileItsAnswersHold) {
+  // The caller's lift reaches the bytes after the call, which decode as no
+  // instruction.  The refusal is kept with the answer that led there, so
+  // another index answers from it instead of lifting the caller again.
+  using Access = detail::X87CallGraphCacheTestAccess;
+  const BinaryImage Image = callThenNoInstructionImage();
+  const std::set<va_t> Entries{0x1000, 0x1100};
+  SwitchedNoReturnProver Prover;
+  auto Cache = createX87CallGraphCache();
+  const auto Configure = [&](CFGBuilder &Builder, bool Shared) {
+    Builder.setKnownFuncEntries(&Entries);
+    Builder.setNoReturnCalleeProver(&Prover);
+    if (Shared)
+      Builder.setX87CallGraphCache(Cache);
+  };
+  CFGBuilder First, Second, Cold;
+  Configure(First, true);
+  Configure(Second, true);
+  Configure(Cold, false);
+  const auto Incomplete = Access::query(First, Image, 0x1000);
+  EXPECT_EQ(Incomplete.first, std::nullopt);
+  ASSERT_EQ(Access::stats(First)[1], 1u);
+  const size_t Hits = Access::stats(First)[0];
+  EXPECT_EQ(Access::query(Second, Image, 0x1000), Incomplete);
+  EXPECT_EQ(Access::stats(Second)[0], Hits + 1);
+  EXPECT_EQ(Access::stats(Second)[1], 1u);
+  EXPECT_EQ(Access::query(Cold, Image, 0x1000), Incomplete);
+}
+
+TEST(X87CallGraphCache, AnIncompleteLiftIsBuiltAgainWhenAnAnswerChanges) {
+  // Once the callee is proved never to return, the caller's lift stops at
+  // the call.  The refusal no longer holds: the request lifts the caller
+  // again, and its complete graph replaces the refusal.
+  using Access = detail::X87CallGraphCacheTestAccess;
+  const BinaryImage Image = callThenNoInstructionImage();
+  const std::set<va_t> Entries{0x1000, 0x1100};
+  SwitchedNoReturnProver Prover;
+  auto Cache = createX87CallGraphCache();
+  const auto Configure = [&](CFGBuilder &Builder, bool Shared) {
+    Builder.setKnownFuncEntries(&Entries);
+    Builder.setNoReturnCalleeProver(&Prover);
+    if (Shared)
+      Builder.setX87CallGraphCache(Cache);
+  };
+  CFGBuilder Seed;
+  Configure(Seed, true);
+  const auto Incomplete = Access::query(Seed, Image, 0x1000);
+  ASSERT_EQ(Incomplete.first, std::nullopt);
+  Prover.NeverReturns = true;
+  CFGBuilder Warm, Cold, Again;
+  Configure(Warm, true);
+  Configure(Cold, false);
+  Configure(Again, true);
+  const auto Complete = Access::query(Warm, Image, 0x1000);
+  EXPECT_NE(Complete, Incomplete);
+  EXPECT_EQ(Complete, Access::query(Cold, Image, 0x1000));
+  // The complete graph answers without another proof or lift.
+  const size_t Hits = Access::stats(Warm)[0];
+  const size_t Questions = Prover.Questions;
+  EXPECT_EQ(Access::query(Again, Image, 0x1000), Complete);
+  EXPECT_EQ(Prover.Questions, Questions);
+  EXPECT_GT(Access::stats(Again)[0], Hits);
+}
+
 TEST(X87CallGraphCache, ChangedBuildContextsCannotHitThePreviousGraph) {
   using Access = detail::X87CallGraphCacheTestAccess;
   struct ReturningProver final : NoReturnCalleeProver {
@@ -1686,11 +1792,12 @@ TEST(X87CallGraphCache, RejectionMarkersCannotSurviveChangedBuildContexts) {
     }
 }
 
-TEST(X87CallGraphCache, IncompleteInstructionGraphsAreNeverRetained) {
+TEST(X87CallGraphCache, IncompleteInstructionGraphsAreRetainedOnlyAsRefusals) {
   using Access = detail::X87CallGraphCacheTestAccess;
   BinaryImage Image = x87CallLoopImage(Arch::X86, BinaryFormat::ELF);
   // The executable section ends halfway through FLD1. Ownership of the entry
-  // does not turn a truncated instruction stream into a complete local graph.
+  // does not turn a truncated instruction stream into a complete local graph:
+  // the cache keeps only the refusal, which the next request answers from.
   Image.Segments[0].Size = 0x201;
   Image.Segments[0].Data.resize(0x201);
   auto Cache = createX87CallGraphCache();
@@ -1698,8 +1805,8 @@ TEST(X87CallGraphCache, IncompleteInstructionGraphsAreNeverRetained) {
     CFGBuilder Builder;
     Builder.setX87CallGraphCache(Cache);
     EXPECT_FALSE(Access::query(Builder, Image, 0x1200).first);
-    EXPECT_EQ(Access::stats(Builder)[0], 0u);
-    EXPECT_EQ(Access::stats(Builder)[1], 0u);
+    EXPECT_EQ(Access::stats(Builder)[0], I);
+    EXPECT_EQ(Access::stats(Builder)[1], 1u);
   }
 }
 
@@ -2004,7 +2111,7 @@ TEST(X87CallGraphCache, FailedLeaderWakesFollowersForIndependentRetry) {
   EXPECT_EQ(Access::flightStats(Observer)[4], 0u);
 }
 
-TEST(X87CallGraphCache, IncompleteLeaderIsNotSharedWithWaitingProofs) {
+TEST(X87CallGraphCache, IncompleteLeaderReachesWaitersThroughTheirOwnProofs) {
   using Access = detail::X87CallGraphCacheTestAccess;
   BinaryImage Image = x87CallLoopImage(Arch::X86, BinaryFormat::ELF);
   Segment Leaf;
@@ -2035,9 +2142,11 @@ TEST(X87CallGraphCache, IncompleteLeaderIsNotSharedWithWaitingProofs) {
   const auto First = Leader.get();
   EXPECT_FALSE(First.first);
   EXPECT_EQ(First.second, limits::kMaxX87CallProofWork - 1);
+  // The waiter takes the leader's refusal only after asking the prover the
+  // leader's question itself, as every later request does.
   EXPECT_EQ(Follower.get(), First);
   EXPECT_EQ(Prover.calls(), 2u);
-  EXPECT_EQ(Access::stats(Observer)[1], 0u);
+  EXPECT_EQ(Access::stats(Observer)[1], 1u);
   EXPECT_EQ(Run(), First);
   EXPECT_EQ(Prover.calls(), 3u);
   EXPECT_EQ(Access::flightStats(Observer)[3], 0u);

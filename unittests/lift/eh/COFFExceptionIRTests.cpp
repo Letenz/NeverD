@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "CSourceText.h"
 #include "gtest/gtest.h"
 
 #include "neverd/Limits.h"
@@ -1933,7 +1934,7 @@ TEST(COFFExceptionIR, LLVMCProjectsInvokeNormalEdgesWithHandlerPhiCopy) {
   EXPECT_FALSE(llvm::verifyFunction(*Function, &llvm::errs()));
 
   const std::string Source = emitLLVMC(Module);
-  const auto BodyAt = Source.find("seh_phi_exit_order(");
+  const auto BodyAt = test::cDefinitionAt(Source, "seh_phi_exit_order");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   const auto ExitAt = Source.find("exit_step()", BodyAt);
   const auto InsideAt = Source.find("inside_step();", BodyAt);
@@ -2033,7 +2034,7 @@ TEST(COFFExceptionIR, LLVMCProjectsBothConstantPhiCopiesAfterExcept) {
   EXPECT_FALSE(llvm::verifyFunction(*Function, &llvm::errs()));
 
   const std::string Source = emitLLVMC(Module);
-  const auto BodyAt = Source.find("seh_phi_constant_edges(");
+  const auto BodyAt = test::cDefinitionAt(Source, "seh_phi_constant_edges");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   const auto ExitAt = Source.find("exit_step();", BodyAt);
   const auto ExceptAt = Source.find("} __except (", BodyAt);
@@ -2059,10 +2060,9 @@ TEST(COFFExceptionIR, LLVMCProjectsBothConstantPhiCopiesAfterExcept) {
       << Source;
   EXPECT_NE(Source.find("goto L_join;", ExitAt), std::string::npos) << Source;
   if (hasHostFixtureCompiler()) {
+    // The unit declares its callees itself.
     const std::string Prelude =
-        "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
-        "void exit_step(void);\nvoid inside_step(void);\n"
-        "void after_step(uint32_t);\n";
+        "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n";
     CompilerResult Syntax = runCCompiler(
         Prelude + Source, {"--target=x86_64-pc-windows-msvc", "-fms-extensions",
                            "-std=c11", "-fsyntax-only"});
@@ -2136,7 +2136,7 @@ TEST(COFFExceptionIR, LLVMCFallbackProjectsInvokeNormalEdgesInsideTry) {
   EXPECT_FALSE(llvm::verifyFunction(*Function, &llvm::errs()));
 
   const std::string Source = emitLLVMC(Module);
-  const auto BodyAt = Source.find("seh_fallback_exit(");
+  const auto BodyAt = test::cDefinitionAt(Source, "seh_fallback_exit");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   const auto ExitAt = Source.find("exit_step();", BodyAt);
   const auto InsideAt = Source.find("inside_step();", BodyAt);
@@ -2160,10 +2160,9 @@ TEST(COFFExceptionIR, LLVMCFallbackProjectsInvokeNormalEdgesInsideTry) {
   EXPECT_NE(HandlerDtorAt, std::string::npos) << Source;
   EXPECT_EQ(Source.find("goto L_done;", ExceptAt), std::string::npos) << Source;
   if (hasHostFixtureCompiler()) {
+    // The unit declares its callees itself.
     const std::string Prelude =
-        "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
-        "void exit_step(void);\nvoid inside_step(void);\n"
-        "void after_step(void);\nvoid object_dtor(void *);\n";
+        "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n";
     CompilerResult Syntax = runCCompiler(
         Prelude + Source, {"--target=x86_64-pc-windows-msvc", "-fms-extensions",
                            "-std=c11", "-fsyntax-only"});
@@ -2233,7 +2232,7 @@ TEST(COFFExceptionIR, LLVMCFallbackKeepsInvokeTargetReturnLabel) {
   EXPECT_FALSE(llvm::verifyFunction(*Function, &llvm::errs()));
 
   const std::string Source = emitLLVMC(Module);
-  const auto BodyAt = Source.find("seh_ret_label(");
+  const auto BodyAt = test::cDefinitionAt(Source, "seh_ret_label");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   const auto ExitAt = Source.find("exit_step();", BodyAt);
   const auto ExceptAt = Source.find("} __except (", BodyAt);
@@ -2251,10 +2250,9 @@ TEST(COFFExceptionIR, LLVMCFallbackKeepsInvokeTargetReturnLabel) {
   EXPECT_NE(Source.find("object_dtor(", ExceptAt), std::string::npos) << Source;
   EXPECT_EQ(Source.find("goto L_done;", ExceptAt), std::string::npos) << Source;
   if (hasHostFixtureCompiler()) {
+    // The unit declares its callees itself.
     const std::string Prelude =
-        "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
-        "void exit_step(void);\nvoid inside_step(void);\n"
-        "void object_dtor(void *);\n";
+        "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n";
     CompilerResult Syntax = runCCompiler(
         Prelude + Source, {"--target=x86_64-pc-windows-msvc", "-fms-extensions",
                            "-std=c11", "-fsyntax-only"});

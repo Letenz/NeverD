@@ -46,15 +46,19 @@ types::DataModel dataModelOf(const BinaryImage &Img) {
 
 /// How \p Img's compilers laid its records out: as Microsoft's for a
 /// Windows program, and for any other as its architecture's System V ABI
-/// says, which for a 32-bit one its data model does not.
+/// says, which for a 32-bit one its data model does not; Apple's 64-bit ARM
+/// and Android's i386 keep a long double that is a double.
 types::RecordABI recordABIOf(const BinaryImage &Img) {
   if (Img.abiFormat() == BinaryFormat::COFF)
     return types::RecordABI::Microsoft;
   if (Img.Bits != Bitness::Bits32)
-    return types::RecordABI::Itanium;
+    return Img.abiFormat() == BinaryFormat::MachO && Img.Arch == Arch::AArch64
+               ? types::RecordABI::AppleARM64
+               : types::RecordABI::Itanium;
   switch (Img.Arch) {
   case Arch::X86:
-    return types::RecordABI::I386SystemV;
+    return linuxLibC(Img) == LinuxLibC::Bionic ? types::RecordABI::AndroidI386
+                                               : types::RecordABI::I386SystemV;
   case Arch::ARM:
     return types::RecordABI::AAPCS32;
   default:
@@ -929,8 +933,8 @@ const char *neverd_types_convert(const char *RequestJson) {
     std::optional<llvm::StringRef> Name = Named->getAsString();
     ABI = Name ? types::recordABINamed(*Name) : std::nullopt;
     if (!ABI)
-      return refuse("\"recordABI\" must be microsoft, itanium, i386-sysv or "
-                    "aapcs32");
+      return refuse("\"recordABI\" must be microsoft, itanium, apple-arm64, "
+                    "i386-sysv, android-i386 or aapcs32");
   }
   bool KeepGoing = false;
   std::string Error;

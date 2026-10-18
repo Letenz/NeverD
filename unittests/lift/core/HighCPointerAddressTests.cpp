@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "CSourceText.h"
 #include "gtest/gtest.h"
 
 #include "neverd/Common.h"
@@ -316,19 +317,14 @@ lastCallArguments(std::string_view Source, std::string_view Callee) {
 // calls in that definition, never in its prerequisite prototypes.
 std::string sourceFunctionDefinition(const std::string &Source,
                                      std::string_view Name) {
-  const std::string Needle = std::string(Name) + "(";
-  size_t From = 0;
-  while ((From = Source.find(Needle, From)) != std::string::npos) {
-    const size_t End = Source.find('\n', From);
-    if (Source.find('{', From) < End) {
-      const size_t Begin = Source.rfind('\n', From);
-      const size_t Close = Source.find("\n}", End);
-      if (Close != std::string::npos)
-        return Source.substr(Begin == std::string::npos ? 0 : Begin + 1,
-                             Close + 2 -
-                                 (Begin == std::string::npos ? 0 : Begin + 1));
-    }
-    From += Needle.size();
+  if (const size_t From = test::cDefinitionAt(Source, Name);
+      From != std::string::npos) {
+    const size_t Begin = Source.rfind('\n', From);
+    const size_t Close = Source.find("\n}", Source.find('\n', From));
+    if (Close != std::string::npos)
+      return Source.substr(Begin == std::string::npos ? 0 : Begin + 1,
+                           Close + 2 -
+                               (Begin == std::string::npos ? 0 : Begin + 1));
   }
   ADD_FAILURE() << "missing source definition for " << Name << "\n" << Source;
   return {};
@@ -13047,8 +13043,8 @@ TEST(LLVMCPointerAddresses, ZeroPastEightByteCallArgumentIsOmitted) {
   Options.EmitIncludes = false;
   ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, nullptr));
   OS.flush();
-  const auto BodyAt = Source.find("spill_past_string(");
-  const auto KeptAt = Source.find("keep_past_string(");
+  const auto BodyAt = test::cDefinitionAt(Source, "spill_past_string");
+  const auto KeptAt = test::cDefinitionAt(Source, "keep_past_string");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   ASSERT_NE(KeptAt, std::string::npos) << Source;
   const std::string ZeroFn = Source.substr(BodyAt, KeptAt - BodyAt);
@@ -14114,8 +14110,8 @@ TEST(LLVMCPointerAddresses, RecordVisibleRegisterSpillOfZeroIsKept) {
   Options.EmitIncludes = false;
   ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
   OS.flush();
-  const auto BodyAt = Source.find("spill_frame_zero(");
-  const auto KeptAt = Source.find("spill_frame_kept(");
+  const auto BodyAt = test::cDefinitionAt(Source, "spill_frame_zero");
+  const auto KeptAt = test::cDefinitionAt(Source, "spill_frame_kept");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   ASSERT_NE(KeptAt, std::string::npos) << Source;
   const std::string ZeroFn = Source.substr(BodyAt, KeptAt - BodyAt);
@@ -14191,9 +14187,10 @@ TEST(LLVMCPointerAddresses, UnreadZeroSpillPastCallRecordIsOmitted) {
   Options.EmitIncludes = false;
   ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
   OS.flush();
-  const auto BodyAt = Source.find("spill_zero(");
+  const auto BodyAt = test::cDefinitionAt(Source, "spill_zero");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
-  const auto KeepAt = Source.find("keep_spill_for_later_record(", BodyAt);
+  const auto KeepAt =
+      test::cDefinitionAt(Source, "keep_spill_for_later_record", BodyAt);
   ASSERT_NE(KeepAt, std::string::npos) << Source;
   const std::string BeforeCall = Source.substr(BodyAt, KeepAt - BodyAt);
   const std::string AfterStore = Source.substr(KeepAt);
@@ -41028,7 +41025,8 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmcExceptContainsHandler) {
   ASSERT_NE(SkipEnd, std::string::npos) << Source;
   const std::string SkipLabel = Source.substr(SkipAt + 5, SkipEnd - SkipAt - 5);
   const auto SkipTargetAt = Source.find("\n" + SkipLabel + ":\n");
-  const auto RaiseAt = Source.find("RaiseException(");
+  // The call, not the prototype the unit declares before the bodies.
+  const auto RaiseAt = Source.find("    RaiseException(");
   ASSERT_NE(SkipTargetAt, std::string::npos) << Source;
   EXPECT_LT(SkipAt, RaiseAt) << Source;
   EXPECT_LT(RaiseAt, SkipTargetAt) << Source;
@@ -41238,7 +41236,8 @@ TEST(LLVMCPointerAddresses, CorpusSehProbeCliLlvmcKeepsProtectedEffects) {
   const size_t TryAt = Source.find("__try {");
   const size_t ExceptAt = Source.find("} __except");
   expectCapturedSehExceptionCode(Source);
-  const size_t RaiseAt = Source.find("RaiseException(");
+  // The call, not the prototype the unit declares before the bodies.
+  const size_t RaiseAt = Source.find("    RaiseException(");
   // The exact four-byte local is shared by both arms and the continuation.
   const std::string Slot = assignedNameBefore(Source, "= -100;");
   ASSERT_FALSE(Slot.empty()) << Source;

@@ -101,6 +101,28 @@ def run(executable):
         assert rows[1] == {"forget": ["_PACKED"]}
         bad = owner.call("local_types_forget", {"names": "_PACKED"})
         assert bad["status"] == "error" and bad["error"]["code"] == "invalid_request", bad
+        # Each declaration and removal is a step of undo history, which takes
+        # the project's file and the types back with it.
+        history = ok(owner, "history")
+        assert [item["kind"] for item in history["items"]][-2:] == ["types", "types"], history
+        assert history["can_undo"], history
+        ok(owner, "undo")
+        assert [row.get("language") for row in json.loads(sidecar.read_text())] == ["rust"]
+        assert [row["name"] for row in
+                ok(owner, "local_types", {"filter": "packed", "origin": "pdb"})["types"]] == ["_PACKED"]
+        ok(owner, "undo")
+        assert json.loads(sidecar.read_text()) == []
+        assert owner.call("local_type", {"name": "OWNER"})["status"] == "error"
+        ok(owner, "redo")
+        assert ok(owner, "local_type", {"name": "OWNER"})["size"] == 16
+        ok(owner, "redo")
+        assert json.loads(sidecar.read_text())[1] == {"forget": ["_PACKED"]}
+        assert ok(owner, "local_types", {"filter": "packed", "origin": "pdb"})["types"] == []
+        # A comment staged and unsaved keeps a declaration from committing.
+        ok(owner, "annotation_set", {"address": hex(0x140001000), "text": "staged"})
+        refused = owner.call("local_types_declare", {"source": "struct C { int c; };"})
+        assert refused["error"]["code"] == "unsaved_changes", refused
+        ok(owner, "save")
         # A prototype takes the decompilation, and every view reads anew.
         prototype = owner.call("local_types_declare", {
             "language": "c", "source": "long Probe(struct _DEVICE *Device);"})

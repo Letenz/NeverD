@@ -432,6 +432,18 @@ TEST(TypeRender, JavaScriptExtendsSignsAndNamesWhatItDeclares) {
   // Sixteen bytes read as one bigint from two halves.
   EXPECT_TRUE(contains(Text, "  get Wide() { return this.#wide("));
   EXPECT_TRUE(contains(Text, "  #wide(at, signed) {"));
+
+  // A type TypeScript names itself, as the Windows headers' `boolean`, an
+  // unsigned char, takes a name of its own in JSDoc.
+  TypeLibrary Windows;
+  ASSERT_TRUE(parseCTypes("typedef unsigned char boolean;\n"
+                          "typedef boolean BOOLEAN;\n"
+                          "struct FLAGS { BOOLEAN On; };\n",
+                          Windows)
+                  .ok());
+  const std::string Flags = renderTypes(Windows, {}, in(Language::JavaScript));
+  EXPECT_TRUE(contains(Flags, "/** @typedef {number} boolean_ */\n")) << Flags;
+  EXPECT_TRUE(contains(Flags, "/** @typedef {boolean_} BOOLEAN */\n")) << Flags;
 }
 
 TEST_F(TypeRenderFixture, LuaReadsRecordsThroughStringUnpack) {
@@ -708,11 +720,17 @@ TEST(TypeRender, NamesStepAroundKeywords) {
                            {member("type", makeBuiltin(Builtin::ULong), 0),
                             member("class", makeBuiltin(Builtin::ULong), 4)}));
   const LocalType &Words = *Library.find("_WORDS");
+  // The C a C/C++ view shows reads as C++ too, and steps around C++'s
+  // keywords; the C a decompiled unit embeds keeps C's names, as its code
+  // spells them.
   const std::string C = renderType(Library, Words, in(Language::C));
   EXPECT_TRUE(contains(C, "uint32_t type;"));
-  EXPECT_TRUE(contains(C, "uint32_t class;"));
+  EXPECT_TRUE(contains(C, "uint32_t class_;")) << C;
   EXPECT_TRUE(contains(renderType(Library, Words, in(Language::Cpp)),
                        "uint32_t class_;"));
+  const LocalType *Root = &Words;
+  const EmbeddedC Embedded = renderEmbeddedC(Library, {Root}, in(Language::C));
+  EXPECT_TRUE(contains(Embedded.Text, "uint32_t class;")) << Embedded.Text;
   EXPECT_TRUE(contains(renderType(Library, Words, in(Language::Rust)),
                        "pub r#type: u32,"));
   EXPECT_TRUE(
@@ -894,4 +912,16 @@ TEST(TypeRender, RustAndGoProgramsTypesCompileAsC) {
   ASSERT_NE(Row, std::string::npos) << C;
   ASSERT_NE(Cell, std::string::npos) << C;
   EXPECT_LT(Row, Cell) << C;
+
+  // A blank field, as Go's own types hold, is no field Go's checks reach.
+  TypeLibrary Go(DataModel::LP64);
+  Go.define(structure("Padded", 8,
+                      {member("_", makeBuiltin(Builtin::UInt), 0),
+                       member("x", makeBuiltin(Builtin::UInt), 4)}));
+  RenderOptions GoOptions = in(Language::Go);
+  GoOptions.Asserts = true;
+  const std::string Padded = renderTypes(Go, {}, GoOptions);
+  EXPECT_TRUE(contains(Padded, "\t_ uint32")) << Padded;
+  EXPECT_TRUE(contains(Padded, "unsafe.Offsetof(Padded{}.x)")) << Padded;
+  EXPECT_FALSE(contains(Padded, "unsafe.Offsetof(Padded{}._)")) << Padded;
 }

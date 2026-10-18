@@ -45,9 +45,13 @@ M("int3", "__debugbreak")
 M("ud2", "__ud2")
 M("hlt", "__halt")
 
-// I/O port
+// I/O port; renderX86InlineAsm puts the port first.
 M("inb", "__inbyte")
+M("inw", "__inword")
+M("inl", "__indword")
 M("outb", "__outbyte")
+M("outw", "__outword")
+M("outl", "__outdword")
 M("insb", "__inbytestring")
 M("outsb", "__outbytestring")
 M("insw", "__inwordstring")

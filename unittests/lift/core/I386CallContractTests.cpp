@@ -20,6 +20,7 @@
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/IR/Instructions.h"
@@ -697,6 +698,77 @@ std::pair<std::vector<MedVar>, bool> importCallArguments(BinaryFormat Format,
   return {Func.CallInfos.empty() ? std::vector<MedVar>{}
                                  : Func.CallInfos[0].Args,
           !Func.Params.empty()};
+}
+
+TEST(I386CallContract, APICPLTEntryJumpsByTheGOTItsCallerHolds) {
+  // A shared object's PLT entries, `jmp *name@GOT(%ebx)`, jump by the GOT
+  // address the psABI has their caller hold in EBX, which the dynamic section
+  // names (DT_PLTGOT).  Each passes its caller's argument on: islower's to
+  // islower, and g's to the g the object defines, where the loader starts
+  // g's slot.
+  constexpr va_t G = 0x320, Plt = 0x3C0, GotPlt = 0x2000;
+  constexpr va_t GSlot = GotPlt + 0xC, LowerSlot = GotPlt + 0x10;
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::ELF;
+  Img.DynInfo.PltGotAddr = GotPlt;
+  const auto AddCode = [&](const char *Name, va_t VA,
+                           std::vector<uint8_t> Bytes) {
+    Segment Code;
+    Code.Name = Name;
+    Code.VA = VA;
+    Code.Data = std::move(Bytes);
+    Code.Size = Code.FileSz = Code.Data.size();
+    Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Img.Segments.push_back(std::move(Code));
+  };
+  AddCode(".text", G, {0x8B, 0x44, 0x24, 0x04, 0xC3}); // mov eax, [esp+4]; ret
+  std::vector<uint8_t> Entries = {0xFF, 0xA3, 0x0C, 0x00, 0x00, 0x00};
+  Entries.resize(0x10, 0xCC);                            // jmp *0xc(%ebx)
+  for (uint8_t B : {0xFF, 0xA3, 0x10, 0x00, 0x00, 0x00}) // jmp *0x10(%ebx)
+    Entries.push_back(B);
+  Entries.resize(0x20, 0xCC);
+  AddCode(".plt", Plt, std::move(Entries));
+  Segment Got;
+  Got.Name = ".got.plt";
+  Got.VA = GotPlt;
+  Got.Size = Got.FileSz = 0x18;
+  Got.Data.assign(Got.Size, 0);
+  Got.Data[GSlot - GotPlt] = static_cast<uint8_t>(G);
+  Got.Data[GSlot - GotPlt + 1] = static_cast<uint8_t>(G >> 8);
+  Got.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Img.Segments.push_back(std::move(Got));
+  Img.Imports.push_back({"libc.so.6", "g", 0, GSlot});
+  Img.Imports.push_back({"libc.so.6", "islower", 0, LowerSlot});
+  Img.CodePtrRelocSlots.insert(GSlot);
+  ASSERT_TRUE(Img.recordImportStorageSlot(LowerSlot, "islower", 0,
+                                          ImportStorageEvidence::LoaderBind));
+  Symbol Function = Symbol::makeFunc(G);
+  Function.Name = "g";
+  Img.Symbols.push_back(std::move(Function));
+  scanImportThunks(Img);
+  ASSERT_NE(Img.findImportStubAt(Plt), nullptr);
+  ASSERT_NE(Img.findImportStubAt(Plt + 0x10), nullptr);
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {G, Plt, Plt + 0x10};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Img.Arch;
+  Options.Format = Img.Format;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, Options));
+  for (const char *Call : {"sub_3C0(int32_t arg0) {\n    return g(arg0);",
+                           "sub_3D0(int32_t arg0) {\n    return "
+                           "(int32_t)islower(arg0);"})
+    EXPECT_NE(Source.find(Call), std::string::npos) << Call << "\n" << Source;
+  EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
 }
 
 } // namespace

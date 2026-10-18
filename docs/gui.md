@@ -530,6 +530,7 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Ctrl+F | Quick filter in a list; find text in a disassembly, pseudocode or IR window |
 | Ctrl+Shift+[ / Ctrl+Shift+] | Collapse / expand the current pseudocode brace block |
 | Ctrl+F5 | Write the function's pseudocode to a C file |
+| Ctrl+F9 | Declare the types of a C header file, in the Local Types editor |
 | Alt+A | String literal options |
 | Ctrl+W | Save the project |
 | Ctrl+Shift+P | Command palette |
@@ -824,6 +825,12 @@ DWARF loaded after a MAP replaces the MAP's names, and a MAP loaded after them
 fills only what they leave unnamed. The project keeps the files chosen, and
 reopening it loads them again; one that no longer loads leaves the project open
 without it, with a warning. The command line names a DWARF file with `--dwarf`.
+
+**File → Load file → C header file...** (Ctrl+F9), as IDA parses a C header
+into its local types, opens the Local Types editor with a header file's text.
+The editor reads its declarations as it reads any, with object-like `#define`s
+and `#pragma pack`, shows a problem at its place, and declares the types when
+asked; undo takes them away again.
 
 **File → Load file → PDB file...** selects a PDB anywhere on disk for the
 currently loaded PE. A matching CodeView identity applies its debug symbols and

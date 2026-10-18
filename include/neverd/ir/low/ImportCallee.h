@@ -15,7 +15,9 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/SymbolDecoration.h"
 
 #include "llvm/ADT/ArrayRef.h"
 
@@ -162,6 +164,44 @@ pointerVariableArgumentsFrom(const std::map<va_t, va_t> *ArgumentSources,
     return std::nullopt;
   const auto It = ArgumentSources->find(*Slot);
   if (It == ArgumentSources->end())
+    return std::nullopt;
+  return It->second;
+}
+
+/// The routine of this image a call to an import's stub or through its slot,
+/// \p Target, reaches: the loader starts the slot of a symbol the image
+/// defines itself at that routine (ownRoutineOfImport), which
+/// \p ArgumentSources keys the slot to.  The call passes that routine's
+/// arguments, not those of another module's routine its import would name,
+/// unless the C library tables declare the import's own: an image's copy of
+/// the unwinder's _Unwind_RaiseException takes what its declaration says,
+/// which a summary of the copy's body only approximates.
+inline std::optional<va_t>
+importOwnRoutine(const BinaryImage &Img,
+                 const std::map<va_t, va_t> *ArgumentSources, va_t Target) {
+  if (!ArgumentSources || ArgumentSources->empty())
+    return std::nullopt;
+  // A slot is one a function-pointer variable's source names; any other
+  // target, the stub its registration names.  Few calls reach either, so
+  // neither lookup scans the import table for most.
+  const Import *Imp = nullptr;
+  if (ArgumentSources->count(Target)) {
+    Imp = Img.findImportAt(Target);
+    if (Imp && Imp->IATAddr != Target)
+      Imp = nullptr;
+  } else {
+    Imp = Img.findImportStubAt(Target);
+  }
+  if (!Imp || !Imp->IATAddr)
+    return std::nullopt;
+  if (libc::libcArityForSymbol(Imp->Name) ||
+      libc::libcPrototype(importNamesAreCNames(Img.Format)
+                              ? llvm::StringRef(Imp->Name)
+                              : cNameOfSymbol(Imp->Name, Img.Format, Img.Arch),
+                          Img.abiFormat()))
+    return std::nullopt;
+  const auto It = ArgumentSources->find(Imp->IATAddr);
+  if (It == ArgumentSources->end() || It->second == Imp->IATAddr)
     return std::nullopt;
   return It->second;
 }

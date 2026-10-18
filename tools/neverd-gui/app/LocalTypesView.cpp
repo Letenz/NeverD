@@ -1442,6 +1442,12 @@ void LocalTypesView::run(TypesCommand command) {
   }
 }
 
+void LocalTypesView::declareSource(const QString &language,
+                                   const QString &source,
+                                   const QString &title) {
+  openEditor(language, source, title);
+}
+
 void LocalTypesView::openEditor(const QString &language, const QString &source,
                                 const QString &title) {
   QPointer<LocalTypesView> view(this);

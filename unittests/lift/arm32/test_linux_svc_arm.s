@@ -13,8 +13,8 @@ arm_linux_exit:
   bx lr
 .size arm_linux_exit, .-arm_linux_exit
 
-// A syscall whose arity the table does not verify passes every argument
-// register; here each one is set.
+// A syscall whose arity the table does not list, a number no kernel
+// assigns, passes every argument register; here each one is set.
 .globl arm_linux_seven
 .type arm_linux_seven, %function
 arm_linux_seven:
@@ -26,7 +26,7 @@ arm_linux_seven:
   mov r4, #14
   mov r5, #15
   mov r6, #16
-  mov r7, #4
+  movw r7, #0x5ab
   svc #0
   pop {r4, r5, r6, r7, pc}
 .size arm_linux_seven, .-arm_linux_seven

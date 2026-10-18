@@ -38,7 +38,8 @@ uint32_t scalarAlignment(uint64_t Bytes, RecordABI ABI) {
 
 LayoutRules layoutRulesOf(RecordABI ABI) {
   switch (ABI) {
-#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit)             \
+#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes, \
+                          LongDoubleBytes)                                     \
   case RecordABI::Name:                                                        \
     return LayoutRules::Rules;
 #include "neverd/types/RecordABIs.def"
@@ -48,7 +49,8 @@ LayoutRules layoutRulesOf(RecordABI ABI) {
 
 uint32_t scalarAlignLimitOf(RecordABI ABI) {
   switch (ABI) {
-#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit)             \
+#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes, \
+                          LongDoubleBytes)                                     \
   case RecordABI::Name:                                                        \
     return ScalarAlignLimit;
 #include "neverd/types/RecordABIs.def"
@@ -58,7 +60,8 @@ uint32_t scalarAlignLimitOf(RecordABI ABI) {
 
 llvm::StringRef recordABIName(RecordABI ABI) {
   switch (ABI) {
-#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit)             \
+#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes, \
+                          LongDoubleBytes)                                     \
   case RecordABI::Name:                                                        \
     return Spelling;
 #include "neverd/types/RecordABIs.def"
@@ -74,7 +77,18 @@ const BuiltinInfo &builtinInfo(Builtin Type) {
   return Builtins[static_cast<size_t>(Type)];
 }
 
-unsigned builtinBytes(Builtin Type, DataModel Model) {
+unsigned builtinBytes(Builtin Type, DataModel Model, RecordABI ABI) {
+  switch (ABI) {
+#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes, \
+                          LongDoubleBytes)                                     \
+  case RecordABI::Name:                                                        \
+    if (Type == Builtin::WChar)                                                \
+      return WCharBytes;                                                       \
+    if (Type == Builtin::LongDouble)                                           \
+      return LongDoubleBytes;                                                  \
+    break;
+#include "neverd/types/RecordABIs.def"
+  }
   return builtinInfo(Type).Bytes[static_cast<size_t>(Model)];
 }
 
@@ -250,7 +264,7 @@ std::optional<uint64_t> TypeLibrary::sizeOf(const TypeExpr &Type) const {
   case TypeExprKind::Builtin:
     if (Type.TheBuiltin == Builtin::Void)
       return std::nullopt;
-    return builtinBytes(Type.TheBuiltin, Model);
+    return builtinBytes(Type.TheBuiltin);
   case TypeExprKind::Pointer:
     return Type.PointerBytes;
   case TypeExprKind::Array: {
@@ -267,9 +281,9 @@ std::optional<uint64_t> TypeLibrary::sizeOf(const TypeExpr &Type) const {
     return Type.Record ? std::optional<uint64_t>(Type.Record->Size)
                        : std::nullopt;
   case TypeExprKind::Enum:
-    return Type.Enum ? std::optional<uint64_t>(
-                           builtinBytes(Type.Enum->Underlying, Model))
-                     : std::nullopt;
+    return Type.Enum
+               ? std::optional<uint64_t>(builtinBytes(Type.Enum->Underlying))
+               : std::nullopt;
   case TypeExprKind::Named: {
     const LocalType *Named = resolve(Type.Name);
     if (!Named)
@@ -282,7 +296,7 @@ std::optional<uint64_t> TypeLibrary::sizeOf(const TypeExpr &Type) const {
       return Named->Record->Size;
     case TypeKind::Enum:
       return Named->Enum ? std::optional<uint64_t>(
-                               builtinBytes(Named->Enum->Underlying, Model))
+                               builtinBytes(Named->Enum->Underlying))
                          : std::nullopt;
     case TypeKind::Typedef:
       return Named->Target ? sizeOf(*Named->Target) : std::nullopt;
@@ -331,7 +345,7 @@ uint32_t TypeLibrary::requiredAlignOf(const TypeExpr &Type) const {
 uint32_t TypeLibrary::alignOf(const TypeExpr &Type) const {
   switch (Type.Kind) {
   case TypeExprKind::Builtin:
-    return scalarAlignment(builtinBytes(Type.TheBuiltin, Model), ABI);
+    return scalarAlignment(builtinBytes(Type.TheBuiltin), ABI);
   case TypeExprKind::Pointer:
     return Type.PointerBytes;
   case TypeExprKind::Array:
@@ -341,8 +355,7 @@ uint32_t TypeLibrary::alignOf(const TypeExpr &Type) const {
   case TypeExprKind::Record:
     return Type.Record ? alignOf(*Type.Record) : 1;
   case TypeExprKind::Enum:
-    return Type.Enum ? scalarAlignment(
-                           builtinBytes(Type.Enum->Underlying, Model), ABI)
+    return Type.Enum ? scalarAlignment(builtinBytes(Type.Enum->Underlying), ABI)
                      : 4;
   case TypeExprKind::Named: {
     const LocalType *Named = resolve(Type.Name);
@@ -354,8 +367,7 @@ uint32_t TypeLibrary::alignOf(const TypeExpr &Type) const {
       return Named->Record ? alignOf(*Named->Record) : 1;
     case TypeKind::Enum:
       return Named->Enum
-                 ? scalarAlignment(builtinBytes(Named->Enum->Underlying, Model),
-                                   ABI)
+                 ? scalarAlignment(builtinBytes(Named->Enum->Underlying), ABI)
                  : 4;
     case TypeKind::Typedef:
       return Named->Target ? alignOf(*Named->Target) : 1;
