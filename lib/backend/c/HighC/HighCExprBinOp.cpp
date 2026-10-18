@@ -465,7 +465,8 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
       return {};
     if (E.MemoryAddressSpace == NdMemoryAddressSpace::Default)
       if (auto Member =
-              typedMemberAccess(*E.Operands[0], E.Type ? E.Type->Size : 0))
+              typedMemberAccess(*E.Operands[0], E.Type ? E.Type->Size : 0,
+                                /*EnterNestedAtZero=*/true, accessClassOf(&E)))
         return "&" + *Member;
     return addrStr(*E.Operands[0], 0,
                    E.MemoryAddressSpace == NdMemoryAddressSpace::Default);

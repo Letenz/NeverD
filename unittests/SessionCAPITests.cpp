@@ -4290,6 +4290,45 @@ TEST_F(SessionCAPITest, ThirtyTwoBitLinuxObjectsLayRecordsOutAsGCCDoes) {
             20);
 }
 
+TEST_F(SessionCAPITest, CodeReadsTheUnionAlternativeOfItsAccess) {
+  // A union's alternatives are as wide as one another; the code reads and
+  // writes the one its access's class names, as the source does.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "dwarf_unions.gcc.o", std::ios::binary);
+  const std::string Object =
+      write("dwarf_unions.gcc.o",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Object.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const auto entry = [&](const char *Name) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    return Index < 0 ? uint64_t(0) : neverd_func_entry(Session, Index);
+  };
+  for (const auto &[Name, Expected] :
+       std::vector<std::pair<const char *, const char *>>{
+           {"get_i", "return v->i;"},
+           {"get_d", "return v->d;"},
+           {"set_i", "v->i = x;"},
+           {"set_d", "v->d = x;"},
+           {"held_i", "return h->v.i;"}}) {
+    const std::string Code = takeString(neverd_decompile(Session, entry(Name)));
+    EXPECT_NE(Code.find(Expected), std::string::npos) << Name << "\n" << Code;
+  }
+  // LLVM-C, which holds a double in a vector register, reads and writes the
+  // integer alternative its loads and stores hold.
+  EXPECT_NE(takeString(neverd_decompile_llvm(Session, entry("get_i")))
+                .find("return v->i;"),
+            std::string::npos);
+  EXPECT_NE(takeString(neverd_decompile_llvm(Session, entry("held_i")))
+                .find("return h->v.i;"),
+            std::string::npos);
+  EXPECT_NE(takeString(neverd_decompile_llvm(Session, entry("set_i")))
+                .find("v->i = x;"),
+            std::string::npos);
+}
+
 TEST_F(SessionCAPITest, CodeReadsTheRecordsItsMembersReach) {
   // first_child reads l->head->child, a node no type of its own names, and
   // sum_list walks nodes from l->head: HighC asks the local types for the

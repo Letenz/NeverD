@@ -2287,10 +2287,11 @@ TypeRef HighCWriter::typedPointerMemberLoad(const HighExpr &Value) const {
       !Value.Operands[0])
     return nullptr;
   const uint16_t Size = Value.Type ? Value.Type->Size : 0;
-  if (!typedMemberAccess(*Value.Operands[0], Size))
+  if (!typedMemberAccess(*Value.Operands[0], Size, /*EnterNestedAtZero=*/true,
+                         accessClassOf(&Value)))
     return nullptr;
-  const TypeRef Member =
-      cDisplayType(typedMemberType(*Value.Operands[0], Size));
+  const TypeRef Member = cDisplayType(
+      typedMemberType(*Value.Operands[0], Size, accessClassOf(&Value)));
   return Member && Member->Kind == NdTypeKind::Ptr ? Member : nullptr;
 }
 
@@ -3382,8 +3383,8 @@ bool HighCWriter::printsAsInteger(const HighExpr &E,
     return Integer(Declared);
   if (E.Kind == ExprKind::Load && !E.Operands.empty() && E.Operands[0] &&
       !Text.starts_with("*"))
-    if (const TypeRef Member =
-            typedMemberType(*E.Operands[0], E.Type ? E.Type->Size : 0))
+    if (const TypeRef Member = typedMemberType(
+            *E.Operands[0], E.Type ? E.Type->Size : 0, accessClassOf(&E)))
       return Integer(Member);
   return Integer(E.Type);
 }
@@ -3625,12 +3626,15 @@ void completeDisplayRecord(DebugContext *Dbg, const TypeRef &Ty) {
 /// alternatives are all that wide is: no scalar is a record, though the
 /// address of one is.
 bool readsWholeRecord(const NdType &Record, uint64_t Offset,
-                      uint16_t AccessSize, bool EnterNestedAtZero) {
+                      uint16_t AccessSize, bool EnterNestedAtZero,
+                      NdAccessClass Class = NdAccessClass::Unknown) {
   if (!EnterNestedAtZero || !AccessSize)
     return false;
-  const TypeRef Type = Record.displayFieldTypeAt(Offset, AccessSize);
+  const TypeRef Type = Record.displayFieldTypeAt(Offset, AccessSize,
+                                                 /*ArrayElements=*/true, Class);
   return Type && Type->Kind == NdTypeKind::Struct && !Type->IsEnum &&
-         !Type->displayFieldPathAt(0, AccessSize);
+         !Type->displayFieldPathAt(0, AccessSize, /*EnterNestedAtZero=*/true,
+                                   /*ArrayElements=*/true, Class);
 }
 } // namespace
 
@@ -4277,7 +4281,8 @@ TypeRef HighCWriter::frameTypedMemberType(int64_t Disp,
 
 std::optional<std::string>
 HighCWriter::typedMemberAccess(const HighExpr &Addr, uint16_t AccessSize,
-                               bool EnterNestedAtZero) const {
+                               bool EnterNestedAtZero,
+                               NdAccessClass Class) const {
   if (const auto Disp = frameDisplacement(Addr))
     if (auto FrameMember = frameTypedMemberAccess(*Disp, AccessSize))
       return FrameMember;
@@ -4297,9 +4302,10 @@ HighCWriter::typedMemberAccess(const HighExpr &Addr, uint16_t AccessSize,
   }
   completeDisplayRecord(Dbg, Record);
   const auto Field =
-      Record->displayFieldPathAt(Peeled->second, AccessSize, EnterNestedAtZero);
-  if (!Field ||
-      readsWholeRecord(*Record, Peeled->second, AccessSize, EnterNestedAtZero))
+      Record->displayFieldPathAt(Peeled->second, AccessSize, EnterNestedAtZero,
+                                 /*ArrayElements=*/true, Class);
+  if (!Field || readsWholeRecord(*Record, Peeled->second, AccessSize,
+                                 EnterNestedAtZero, Class))
     return std::nullopt;
   auto Path = canonicalizeDisplayPath(*Field);
   if (!Path)
@@ -4353,7 +4359,9 @@ HighCWriter::loadedMemberAccess(const HighExpr &Load) const {
   if (Load.Operands.empty() || !Load.Operands[0])
     return std::nullopt;
   const HighExpr &Addr = *Load.Operands[0];
-  if (auto Member = typedMemberAccess(Addr, Load.Type ? Load.Type->Size : 0))
+  if (auto Member =
+          typedMemberAccess(Addr, Load.Type ? Load.Type->Size : 0,
+                            /*EnterNestedAtZero=*/true, accessClassOf(&Load)))
     return Member;
   if (const TypeRef Type = typedMemberType(Addr);
       Type && Type->Kind == NdTypeKind::Struct && !Type->IsEnum)
@@ -4361,8 +4369,34 @@ HighCWriter::loadedMemberAccess(const HighExpr &Load) const {
   return typedMemberAccess(Addr);
 }
 
-TypeRef HighCWriter::typedMemberType(const HighExpr &Addr,
-                                     uint16_t AccessSize) const {
+std::optional<std::string>
+HighCWriter::floatAlternative(const HighExpr &Addr, const NdType &Float) const {
+  if (Float.Kind != NdTypeKind::Float || !Float.Size)
+    return std::nullopt;
+  const auto Member =
+      typedMemberAccess(Addr, Float.Size,
+                        /*EnterNestedAtZero=*/true, NdAccessClass::Floating);
+  const TypeRef Type =
+      Member ? typedMemberType(Addr, Float.Size, NdAccessClass::Floating)
+             : nullptr;
+  if (!Type || Type->Kind != NdTypeKind::Float || Type->Size != Float.Size)
+    return std::nullopt;
+  return Member;
+}
+
+TypeRef HighCWriter::loadedMemberType(const HighExpr &Load) const {
+  if (Load.Operands.empty() || !Load.Operands[0])
+    return nullptr;
+  const HighExpr &Addr = *Load.Operands[0];
+  const uint16_t Size = Load.Type ? Load.Type->Size : 0;
+  if (typedMemberAccess(Addr, Size, /*EnterNestedAtZero=*/true,
+                        accessClassOf(&Load)))
+    return typedMemberType(Addr, Size, accessClassOf(&Load));
+  return typedMemberType(Addr);
+}
+
+TypeRef HighCWriter::typedMemberType(const HighExpr &Addr, uint16_t AccessSize,
+                                     NdAccessClass Class) const {
   if (const auto Disp = frameDisplacement(Addr))
     if (TypeRef FrameTy = frameTypedMemberType(*Disp, AccessSize))
       return FrameTy;
@@ -4381,9 +4415,10 @@ TypeRef HighCWriter::typedMemberType(const HighExpr &Addr,
     return nullptr;
   }
   completeDisplayRecord(Dbg, Record);
-  if (readsWholeRecord(*Record, Peeled->second, AccessSize, true))
+  if (readsWholeRecord(*Record, Peeled->second, AccessSize, true, Class))
     return nullptr;
-  return Record->displayFieldTypeAt(Peeled->second, AccessSize);
+  return Record->displayFieldTypeAt(Peeled->second, AccessSize,
+                                    /*ArrayElements=*/true, Class);
 }
 
 std::string HighCWriter::unknownVarUse(const HighExpr &E,
@@ -4562,7 +4597,7 @@ bool HighCWriter::isSameWidthUnsigned(const HighExpr &E, uint16_t Width) const {
            Ty->Size == Width;
   };
   if (P->Kind == ExprKind::Load && !P->Operands.empty() && P->Operands[0])
-    return Matches(typedMemberType(*P->Operands[0], Width));
+    return Matches(typedMemberType(*P->Operands[0], Width, accessClassOf(P)));
   if (P->Kind == ExprKind::Var || P->Kind == ExprKind::Phi) {
     if (TypeRef Decl = declaredParamType(P->Var))
       return Matches(Decl);
@@ -5324,7 +5359,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     if (E.MemoryOrdering == NdMemoryOrdering::None &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
       if (auto Member =
-              typedMemberAccess(*E.Operands[0], E.Type ? E.Type->Size : 0))
+              typedMemberAccess(*E.Operands[0], E.Type ? E.Type->Size : 0,
+                                /*EnterNestedAtZero=*/true, accessClassOf(&E)))
         return *Member;
       if (auto Index = typedIndexAccess(*E.Operands[0]))
         return Index->Base + "[" + Index->Index + "]";
@@ -5400,10 +5436,11 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     }
     if (E.MemoryOrdering == NdMemoryOrdering::None &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
-      if (auto Member = typedMemberAccess(*E.Operands[0],
-                                          E.Operands[1] && E.Operands[1]->Type
-                                              ? E.Operands[1]->Type->Size
-                                              : 0))
+      if (auto Member = typedMemberAccess(
+              *E.Operands[0],
+              E.Operands[1] && E.Operands[1]->Type ? E.Operands[1]->Type->Size
+                                                   : 0,
+              /*EnterNestedAtZero=*/true, accessClassOf(E.Operands[1].get())))
         return *Member + " = " + Val;
       if (auto Slot = namedFrameSlot(*E.Operands[0]))
         return *Slot + " = " + Val;
@@ -5545,6 +5582,13 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     // constant.
     if (const auto Literal = floatConstantBitsText(Src, E.Type))
       return *Literal;
+    // A float read as the bits of a union member is the union's floating
+    // alternative of its width: `v->d`, not the bits of `v->i`.
+    if (Src.Kind == ExprKind::Load && Src.Operands.size() == 1 &&
+        Src.Operands[0] && Src.MemoryOrdering == NdMemoryOrdering::None &&
+        Src.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+      if (const auto Member = floatAlternative(*Src.Operands[0], *E.Type))
+        return *Member;
     // An x87 value's 80 bits are the low ten bytes of a `long double`, whose
     // size the unit asserts is that of the `unsigned _BitInt(80)` carrying
     // them; the bytes past them are padding to both.

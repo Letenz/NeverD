@@ -85,6 +85,11 @@ inline constexpr llvm::StringLiteral kFrameStorageName = "stack_storage";
 
 /// The bytes of a pointer, and of an integer argument register, on \p A.
 uint16_t pointerBytes(Arch A);
+/// The class of the access that reads or writes \p Value, by its type.
+inline NdAccessClass accessClassOf(const HighExpr *Value) {
+  return Value && Value->Type ? Value->Type->accessClass()
+                              : NdAccessClass::Unknown;
+}
 
 /// The bytes of the integer \p Operand a bit count counts, or 0.
 uint16_t countedBytes(const HighExpr &Operand);
@@ -457,11 +462,24 @@ public:
   /// The member \p Load reads: one of its width, else one of another width
   /// it reads as it is, but never a whole record, whose bytes no scalar is.
   std::optional<std::string> loadedMemberAccess(const HighExpr &Load) const;
+  /// The type of the member loadedMemberAccess names.
+  TypeRef loadedMemberType(const HighExpr &Load) const;
+  /// The union alternative of floating type \p Float that holds the bits
+  /// the code reads by \p Bits, an ordinary load, or writes to \p Addr, as
+  /// `v->d` holds those of `v->i`; none where no such alternative of that
+  /// width is there.
+  std::optional<std::string> floatAlternative(const HighExpr &Addr,
+                                              const NdType &Float) const;
+  /// The member at \p Addr an access of \p AccessSize bytes reads or
+  /// writes; of a union's alternatives of that width, the one its \p Class
+  /// holds (NdType::scalarOfClassAt).
   std::optional<std::string>
   typedMemberAccess(const HighExpr &Addr, uint16_t AccessSize = 0,
-                    bool EnterNestedAtZero = true) const;
+                    bool EnterNestedAtZero = true,
+                    NdAccessClass Class = NdAccessClass::Unknown) const;
   std::optional<std::string> typedMemberAddress(const HighExpr &Addr) const;
-  TypeRef typedMemberType(const HighExpr &Addr, uint16_t AccessSize = 0) const;
+  TypeRef typedMemberType(const HighExpr &Addr, uint16_t AccessSize = 0,
+                          NdAccessClass Class = NdAccessClass::Unknown) const;
   /// Whether \p Addr is a member of a record the unit defines from the
   /// program's local types (RecordDefinitions).
   bool memberOfDefinedRecord(const HighExpr &Addr) const;
