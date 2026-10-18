@@ -1,5 +1,5 @@
 // The Linux types and prototypes for ARM (ILP32), as a program declares them
-// with the GNU C Library's headers and _GNU_SOURCE.  Generated on 2026-10-17 by
+// with the GNU C Library's headers and _GNU_SOURCE.  Generated on 2026-10-18 by
 // scripts/generate_linux_types.py --target linux-arm from the headers of glibc
 // 2.43: changed from them, as NeverD reads and renders their declarations
 // again.  The headers' notices are in LICENSES/glibc-headers.txt.  Do not edit;
@@ -1424,14 +1424,14 @@ struct itimerspec
     struct timespec it_value;
 };
 
+typedef union sigval __sigval_t;
+
 // sigval: 0x4 (4) bytes
 union sigval
 {
     int sival_int;
     void *sival_ptr;
 };
-
-typedef union sigval __sigval_t;
 
 // sigevent: 0x40 (64) bytes
 struct sigevent
@@ -6079,7 +6079,7 @@ int pthread_key_create(pthread_key_t *__key, void (*__destr_function)(void *));
 int pthread_key_delete(pthread_key_t __key);
 int pthread_kill(pthread_t __threadid, int __signo);
 int pthread_mutex_clocklock(union pthread_mutex_t *__mutex, clockid_t __clockid, const struct timespec *__abstime);
-int pthread_mutex_consistent(union pthread_mutex_t *);
+int pthread_mutex_consistent(union pthread_mutex_t *__mutex);
 int pthread_mutex_consistent_np(union pthread_mutex_t *);
 int pthread_mutex_destroy(union pthread_mutex_t *__mutex);
 int pthread_mutex_getprioceiling(const union pthread_mutex_t *__mutex, int *__prioceiling);
@@ -6093,14 +6093,14 @@ int pthread_mutexattr_destroy(union pthread_mutexattr_t *__attr);
 int pthread_mutexattr_getprioceiling(const union pthread_mutexattr_t *__attr, int *__prioceiling);
 int pthread_mutexattr_getprotocol(const union pthread_mutexattr_t *__attr, int *__protocol);
 int pthread_mutexattr_getpshared(const union pthread_mutexattr_t *__attr, int *__pshared);
-int pthread_mutexattr_getrobust(union pthread_mutexattr_t *, int *);
+int pthread_mutexattr_getrobust(const union pthread_mutexattr_t *__attr, int *__robustness);
 int pthread_mutexattr_getrobust_np(union pthread_mutexattr_t *, int *);
 int pthread_mutexattr_gettype(const union pthread_mutexattr_t *__attr, int *__kind);
 int pthread_mutexattr_init(union pthread_mutexattr_t *__attr);
 int pthread_mutexattr_setprioceiling(union pthread_mutexattr_t *__attr, int __prioceiling);
 int pthread_mutexattr_setprotocol(union pthread_mutexattr_t *__attr, int __protocol);
 int pthread_mutexattr_setpshared(union pthread_mutexattr_t *__attr, int __pshared);
-int pthread_mutexattr_setrobust(union pthread_mutexattr_t *, int);
+int pthread_mutexattr_setrobust(union pthread_mutexattr_t *__attr, int __robustness);
 int pthread_mutexattr_setrobust_np(union pthread_mutexattr_t *, int);
 int pthread_mutexattr_settype(union pthread_mutexattr_t *__attr, int __kind);
 int pthread_once(pthread_once_t *__once_control, void (*__init_routine)(void));

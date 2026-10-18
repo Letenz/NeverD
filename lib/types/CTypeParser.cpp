@@ -28,10 +28,18 @@ namespace {
 
 enum class TokenKind : uint8_t { End, Word, Number, String, Punct, Pragma };
 
+/// The prefix a quoted literal takes: none, L, u, U or u8, which say how
+/// wide its units are and, for a character, its type.
+enum class Encoding : uint8_t { Plain, Wide, UTF16, UTF32, UTF8 };
+
 struct Token {
   TokenKind Kind = TokenKind::End;
   std::string Text;
   uint64_t Value = 0;
+  /// A quoted literal's prefix; a character constant's type follows it.
+  Encoding Quoted = Encoding::Plain;
+  /// Whether a number is a character constant ('A', L'A').
+  bool Character = false;
   /// A number with a point or an exponent, which no constant expression
   /// this reads takes.
   bool Floating = false;
@@ -133,8 +141,24 @@ private:
       while (At < Source.size() && (llvm::isAlnum(Source[At]) ||
                                     Source[At] == '_' || Source[At] == '$'))
         advance();
+      const llvm::StringRef Word = Source.slice(Start, At);
+      // An encoding prefix directly before a quote: L"A", u'A', u8"A".
+      if (At < Source.size() && (Source[At] == '"' || Source[At] == '\'')) {
+        const std::optional<Encoding> Prefix =
+            llvm::StringSwitch<std::optional<Encoding>>(Word)
+                .Case("L", Encoding::Wide)
+                .Case("u", Encoding::UTF16)
+                .Case("U", Encoding::UTF32)
+                .Case("u8", Encoding::UTF8)
+                .Default(std::nullopt);
+        if (Prefix) {
+          quoted(Result);
+          Result.Quoted = *Prefix;
+          return Result;
+        }
+      }
       Result.Kind = TokenKind::Word;
-      Result.Text = Source.slice(Start, At).str();
+      Result.Text = Word.str();
       return Result;
     }
     if (llvm::isDigit(C) ||
@@ -193,30 +217,7 @@ private:
       return Result;
     }
     if (C == '"' || C == '\'') {
-      const char Quote = C;
-      advance();
-      std::string Text;
-      while (At < Source.size() && Source[At] != Quote && Source[At] != '\n') {
-        if (Source[At] == '\\' && At + 1 < Source.size()) {
-          advance();
-          const char Escaped = Source[At];
-          Text += Escaped == 'n' ? '\n' : Escaped == 't' ? '\t' : Escaped;
-          advance();
-          continue;
-        }
-        Text += Source[At];
-        advance();
-      }
-      if (At >= Source.size() || Source[At] != Quote)
-        problem(Result.Line, Result.Column, "a quoted text does not end");
-      advance();
-      if (Quote == '\'') {
-        Result.Kind = TokenKind::Number;
-        Result.Value = Text.empty() ? 0 : uint8_t(Text.front());
-      } else {
-        Result.Kind = TokenKind::String;
-      }
-      Result.Text = std::move(Text);
+      quoted(Result);
       return Result;
     }
     for (const char *Punct : Punctuators)
@@ -230,6 +231,36 @@ private:
             std::string("'") + C + "' cannot begin a declaration's word");
     advance();
     return Token();
+  }
+
+  /// Reads the quoted literal at the current place into \p Result: a string,
+  /// or a character constant, which is a number.
+  void quoted(Token &Result) {
+    const char Quote = Source[At];
+    advance();
+    std::string Text;
+    while (At < Source.size() && Source[At] != Quote && Source[At] != '\n') {
+      if (Source[At] == '\\' && At + 1 < Source.size()) {
+        advance();
+        const char Escaped = Source[At];
+        Text += Escaped == 'n' ? '\n' : Escaped == 't' ? '\t' : Escaped;
+        advance();
+        continue;
+      }
+      Text += Source[At];
+      advance();
+    }
+    if (At >= Source.size() || Source[At] != Quote)
+      problem(Result.Line, Result.Column, "a quoted text does not end");
+    advance();
+    if (Quote == '\'') {
+      Result.Kind = TokenKind::Number;
+      Result.Value = Text.empty() ? 0 : uint8_t(Text.front());
+      Result.Character = true;
+    } else {
+      Result.Kind = TokenKind::String;
+    }
+    Result.Text = std::move(Text);
   }
 
   /// A word, or the tokens of the macro it names.
@@ -587,11 +618,49 @@ private:
            (vaListWord(Word) && !Library.find(Word));
   }
   /// The compiler's va_list, as <stdarg.h>, glibc, bionic, musl and Darwin
-  /// name it.
+  /// name it, and the Microsoft ABI's, which EDK II's x64 VA_LIST is on GCC
+  /// and Clang.
   static bool vaListWord(llvm::StringRef Word) {
     return Word == "__builtin_va_list" || Word == "va_list" ||
            Word == "__gnuc_va_list" || Word == "__va_list" ||
-           Word == "__isoc_va_list" || Word == "__darwin_va_list";
+           Word == "__isoc_va_list" || Word == "__darwin_va_list" ||
+           Word == "__builtin_ms_va_list";
+  }
+
+  /// The bytes of each unit of a literal of the encoding \p Quoted:
+  /// wchar_t's for L, as the target's ABI sizes it.
+  uint64_t unitBytes(Encoding Quoted) const {
+    switch (Quoted) {
+    case Encoding::Wide:
+      return Library.builtinBytes(Builtin::WChar);
+    case Encoding::UTF16:
+      return 2;
+    case Encoding::UTF32:
+      return 4;
+    case Encoding::Plain:
+    case Encoding::UTF8:
+      break;
+    }
+    return 1;
+  }
+
+  /// The units the UTF-8 text \p Text of a literal of the encoding
+  /// \p Quoted takes: its bytes, else a unit for each character, and for
+  /// UTF-16, as a two-byte wchar_t holds it, two past the basic plane.
+  uint64_t unitsOf(llvm::StringRef Text, Encoding Quoted) const {
+    if (unitBytes(Quoted) == 1)
+      return Text.size();
+    uint64_t Units = 0;
+    for (size_t I = 0; I < Text.size();) {
+      const unsigned char Lead = Text[I];
+      const size_t Length = Lead < 0x80   ? 1
+                            : Lead < 0xE0 ? 2
+                            : Lead < 0xF0 ? 3
+                                          : 4;
+      Units += Length == 4 && unitBytes(Quoted) == 2 ? 2 : 1;
+      I += Length;
+    }
+    return Units;
   }
   /// Whether the token at \p Ahead may begin a declaration's type.
   bool startsType(size_t Ahead = 0) const {
@@ -696,6 +765,76 @@ private:
       Names.push_back(Name);
   }
 
+  /// Gives \p Name the prototype \p Function, as the text declares the
+  /// routine of that name, or as another routine's assembler name
+  /// (\p Alias) names it.  A routine's own declaration describes its name
+  /// whether or not an assembler name gives the name another prototype:
+  /// bionic's strtol_l, which takes a locale, is strtol's symbol.  A routine
+  /// the text declares again, or two that one assembler name alone names,
+  /// must pass and return alike, as EDK II's module kinds do not each
+  /// declaring _ModuleEntryPoint; the later of two that do describes it.
+  bool declareRoutine(const std::string &Name,
+                      std::shared_ptr<const FunctionDef> Function, bool Alias,
+                      const Token &At) {
+    const bool Own = OwnNames.count(Name);
+    if (Alias && Own)
+      return true;
+    // An earlier declaration of the same standing: the routine's own, or
+    // another assembler name's where no own one is.
+    if (NotedPrototypes.count(Name) && (Alias || Own))
+      if (const FunctionDef *Earlier = Library.findPrototype(Name);
+          Earlier && !passesAlike(*Earlier, *Function)) {
+        fail(At, "'" + Name + "' is declared again with another type");
+        return false;
+      }
+    if (!Alias)
+      OwnNames.insert(Name);
+    Library.definePrototype(Name, std::move(Function));
+    note(Result.Prototypes, NotedPrototypes, Name);
+    return true;
+  }
+
+  /// How a call passes or returns a value of \p Type: its class and size,
+  /// typedefs seen through, an array or a function as an address.
+  std::pair<BuiltinClass, uint64_t> passing(const TypeExprRef &Type) const {
+    if (!Type)
+      return {BuiltinClass::Void, 0};
+    const TypeExpr *At = Type.get();
+    for (unsigned Depth = 0; Depth < 16 && At->Kind == TypeExprKind::Named;
+         ++Depth) {
+      const LocalType *Local = Library.find(At->Name);
+      if (!Local || Local->Kind != TypeKind::Typedef || !Local->Target)
+        break;
+      At = Local->Target.get();
+    }
+    switch (At->Kind) {
+    case TypeExprKind::Builtin:
+      return {builtinInfo(At->TheBuiltin).Class,
+              Library.builtinBytes(At->TheBuiltin)};
+    case TypeExprKind::Pointer:
+    case TypeExprKind::Array:
+    case TypeExprKind::Function:
+      // An address, which no builtin class names: Character only tells it
+      // from an integer of its size.
+      return {BuiltinClass::Character, pointerSize()};
+    default:
+      // A record or an enumeration, by its size.
+      return {BuiltinClass::Void, Library.sizeOf(*At).value_or(0)};
+    }
+  }
+
+  /// Whether calls that \p A and \p B describe pass and return alike: as
+  /// many parameters, each of the same class and size, and returns alike.
+  bool passesAlike(const FunctionDef &A, const FunctionDef &B) const {
+    if (A.Params.size() != B.Params.size() || A.Variadic != B.Variadic ||
+        passing(A.Return) != passing(B.Return))
+      return false;
+    for (size_t I = 0; I < A.Params.size(); ++I)
+      if (passing(A.Params[I].Type) != passing(B.Params[I].Type))
+        return false;
+    return true;
+  }
+
   void topLevel() {
     const Token &First = peek();
     if (First.Kind == TokenKind::Pragma) {
@@ -775,13 +914,13 @@ private:
           Function->NoReturn = true;
           Type = makeFunction(std::move(Function));
         }
-        Library.definePrototype(Name, Type->Function);
-        note(Result.Prototypes, NotedPrototypes, Name);
+        if (!declareRoutine(Name, Type->Function, /*Alias=*/false, NameToken))
+          return;
         // A program that calls the routine imports its assembler name.
-        if (!Declared.AsmName.empty() && Declared.AsmName != Name) {
-          Library.definePrototype(Declared.AsmName, Type->Function);
-          note(Result.Prototypes, NotedPrototypes, Declared.AsmName);
-        }
+        if (!Declared.AsmName.empty() && Declared.AsmName != Name &&
+            !declareRoutine(Declared.AsmName, Type->Function, /*Alias=*/true,
+                            NameToken))
+          return;
         // A definition's body holds no declarations this reads.
         if (isPunct("{")) {
           skipBody();
@@ -1917,18 +2056,44 @@ private:
         if (At.Text == "sizeof" && isPunct("(") && isPunct("(", 1) &&
             isPunct("(", 2) && startsType(3))
           return memberSize(At);
-        // The size of a string literal is its bytes and the terminator's,
-        // as INTERNET_MAX_URL_LENGTH counts sizeof("://").
+        // The size of a string literal is its units and the terminator's,
+        // as INTERNET_MAX_URL_LENGTH counts sizeof("://") and EDK II's Base.h
+        // sizeof(L"A").
         if (At.Text == "sizeof" &&
             (peek().Kind == TokenKind::String ||
              (isPunct("(", 0) && peek(1).Kind == TokenKind::String))) {
           const bool Parenthesized = accept("(");
-          uint64_t Size = 1;
-          while (peek().Kind == TokenKind::String)
-            Size += take().Text.size();
+          // Adjacent literals are one, of the prefix one of them has.
+          std::string Text;
+          Encoding Quoted = Encoding::Plain;
+          while (peek().Kind == TokenKind::String) {
+            const Token Part = take();
+            if (Part.Quoted != Encoding::Plain) {
+              if (Quoted != Encoding::Plain && Quoted != Part.Quoted) {
+                fail(Part, "adjacent string literals of two encodings");
+                return std::nullopt;
+              }
+              Quoted = Part.Quoted;
+            }
+            Text += Part.Text;
+          }
           if (Parenthesized && !expect(")", "after a string"))
             return std::nullopt;
-          return int64_t(Size);
+          return int64_t((unitsOf(Text, Quoted) + 1) * unitBytes(Quoted));
+        }
+        // A character constant is an int in C; a prefixed one is of its
+        // encoding's character type, as EDK II's sizeof(L'A').
+        if (At.Text == "sizeof" &&
+            ((peek().Kind == TokenKind::Number && peek().Character) ||
+             (isPunct("(", 0) && peek(1).Kind == TokenKind::Number &&
+              peek(1).Character && isPunct(")", 2)))) {
+          const bool Parenthesized = accept("(");
+          const Token Character = take();
+          if (Parenthesized && !expect(")", "after a character"))
+            return std::nullopt;
+          return int64_t(Character.Quoted == Encoding::Plain
+                             ? Library.builtinBytes(Builtin::Int)
+                             : unitBytes(Character.Quoted));
         }
         TypeExprRef Type = typeInParentheses();
         if (!Type)
@@ -2112,6 +2277,9 @@ private:
   ParseResult &Result;
   /// The names Result lists.
   llvm::StringSet<> NotedTypes, NotedPrototypes;
+  /// The routines the text declares by their own names, which another's
+  /// assembler name does not describe.
+  llvm::StringSet<> OwnNames;
   const bool Cpp;
   bool Failed = false;
   /// Open extern "C" and namespace blocks.

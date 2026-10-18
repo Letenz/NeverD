@@ -68,4 +68,9 @@ NEVERD_HEADER_LIBRARY(MacOSARM64, "macos-arm64", MacOSARM64, LP64, AppleARM64,
 NEVERD_HEADER_LIBRARY(IOSARM64, "ios-arm64", IOSARM64, LP64, AppleARM64,
                       Keywords)
 
+NEVERD_HEADER_LIBRARY(UefiX64, "uefi-x64", UefiX64, LLP64, Microsoft, Keywords)
+NEVERD_HEADER_LIBRARY(UefiX86, "uefi-x86", UefiX86, ILP32, Microsoft, Keywords)
+NEVERD_HEADER_LIBRARY(UefiARM64, "uefi-arm64", UefiARM64, LLP64, Microsoft,
+                      Keywords)
+
 #undef NEVERD_HEADER_LIBRARY

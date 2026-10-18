@@ -5417,6 +5417,96 @@ TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
   }
 }
 
+TEST_F(SessionCAPITest, UefiApplicationsJoinTheirFirmwaresLibrary) {
+  // A UEFI application joins its architecture's MdePkg library, and its
+  // entry takes the specification's EFI_IMAGE_ENTRY_POINT: the system
+  // table it reaches the console and the boot services through is typed,
+  // and each call reads its protocol's pointer once, then the slot.
+  struct Program {
+    const char *File, *Library, *Model;
+    int64_t SystemTable;
+    const char *OutputString, *HandleProtocol;
+  };
+  const Program Programs[] = {
+      {"uefi_calls_x64.efi", "uefi-x64", "LLP64", 120,
+       "*(void **)((uintptr_t)((SystemTable->ConOut)) + 8)",
+       "*(void **)((uintptr_t)((SystemTable->BootServices)) + 0x98)"},
+      {"uefi_calls_x86.efi", "uefi-x86", "ILP32", 72,
+       "*(void **)((uintptr_t)((SystemTable->ConOut)) + 4)",
+       "*(void **)((uintptr_t)((SystemTable->BootServices)) + 0x58)"},
+      {"uefi_calls_arm64.efi", "uefi-arm64", "LLP64", 120,
+       "*(void **)((uintptr_t)((SystemTable->ConOut)) + 8)",
+       "*(void **)((uintptr_t)((SystemTable->BootServices)) + 0x98)"},
+  };
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  for (const Program &P : Programs) {
+    SCOPED_TRACE(P.File);
+    std::ifstream Input(Fixtures / P.File, std::ios::binary);
+    const std::string Path =
+        write(P.File, std::string(std::istreambuf_iterator<char>(Input), {}));
+    neverd_session_t Uefi = neverd_session_create();
+    ASSERT_NE(Uefi, nullptr);
+    const auto Destroy =
+        llvm::make_scope_exit([&] { neverd_session_destroy(Uefi); });
+    ASSERT_EQ(neverd_session_load(Uefi, Path.c_str()), 1)
+        << takeString(neverd_last_error(Uefi));
+    ASSERT_GE(neverd_session_discover_functions(Uefi), 0)
+        << takeString(neverd_last_error(Uefi));
+    auto Parsed =
+        llvm::json::parse(takeString(neverd_local_types_json(Uefi, nullptr)));
+    ASSERT_TRUE(static_cast<bool>(Parsed));
+    const llvm::json::Object &Types = *Parsed->getAsObject();
+    EXPECT_EQ(Types.getString("dataModel"), P.Model);
+    EXPECT_EQ(Types.getString("recordABI"), "microsoft");
+    const llvm::json::Array *Headers = Types.getArray("headers");
+    ASSERT_TRUE(Headers && Headers->size() == 1u);
+    EXPECT_EQ((*Headers)[0].getAsObject()->getString("name"), P.Library);
+    auto Table = llvm::json::parse(
+        takeString(neverd_local_type_json(Uefi, "EFI_SYSTEM_TABLE", nullptr)));
+    ASSERT_TRUE(static_cast<bool>(Table));
+    EXPECT_EQ(Table->getAsObject()->getInteger("size"), P.SystemTable);
+
+    const std::string HighC =
+        takeString(neverd_decompile(Uefi, neverd_session_entry_addr(Uefi)));
+    EXPECT_NE(HighC.find("EFI_STATUS sub_"), std::string::npos) << HighC;
+    EXPECT_NE(
+        HighC.find("(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)"),
+        std::string::npos)
+        << HighC;
+    EXPECT_NE(HighC.find(P.OutputString), std::string::npos) << HighC;
+    EXPECT_NE(HighC.find(P.HandleProtocol), std::string::npos) << HighC;
+    EXPECT_EQ(HighC.find("*(void **)(SystemTable->"), std::string::npos)
+        << HighC;
+  }
+}
+
+TEST_F(SessionCAPITest, CallsThroughTypedMembersReadEachPointerOnce) {
+  // t->out->write reads t->out, then the slot 8 bytes into what it points
+  // to; t->boot->reset the slot t->boot points to.  The member at an
+  // address is what the address holds, one load more than the address:
+  // printing it where the call reads the address read through the wrong
+  // pointer.
+  std::ifstream Input(std::filesystem::path(__FILE__).parent_path() / "types" /
+                          "fixtures" / "member_calls_x64",
+                      std::ios::binary);
+  const std::string Path =
+      write("member_calls_x64",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  ASSERT_GE(neverd_session_discover_functions(Session), 0);
+  const int Index = neverd_func_find_by_name(Session, "entry");
+  ASSERT_GE(Index, 0);
+  const std::string HighC =
+      takeString(neverd_decompile(Session, neverd_func_entry(Session, Index)));
+  EXPECT_NE(HighC.find("*(void **)((uintptr_t)((t->out)) + 8)"),
+            std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find("**(void ***)(&t->boot)"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("*(void **)(t->out)"), std::string::npos) << HighC;
+}
+
 TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
   const char *Kernel = std::getenv("NEVERD_TYPES_NTOSKRNL");
   const char *PDB = std::getenv("NEVERD_TYPES_NTKRNLMP");

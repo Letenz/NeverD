@@ -1,6 +1,6 @@
 // The Android types and prototypes for x64 (LP64), as a program declares them
 // with bionic's headers, <jni.h> and <android/log.h> and _GNU_SOURCE, for API
-// level 35.  Generated on 2026-10-17 by scripts/generate_linux_types.py
+// level 35.  Generated on 2026-10-18 by scripts/generate_linux_types.py
 // --target android-x64 from the headers of bionic at commit
 // 731631f300090436d7f5df80d50b6275c8c60a93, libnativehelper at commit
 // aef2939781fc0b57b4477df7160935cdf5697919 and system/logging at commit
@@ -1076,14 +1076,14 @@ struct sigcontext
     __u64 reserved1[8];
 };
 
+typedef union sigval sigval_t;
+
 // sigval: 0x8 (8) bytes
 union sigval
 {
     int sival_int;
     void *sival_ptr;
 };
-
-typedef union sigval sigval_t;
 
 // __sifields: 0x20 (32) bytes
 union __sifields
@@ -4819,7 +4819,7 @@ int lstat(const char *__path, struct stat *__buf);
 int lstat64(const char *__path, struct stat64 *__buf);
 int lutimes(const char *__path, const struct timeval *__times);
 int madvise(void *__addr, size_t __size, int __advice);
-struct mallinfo2 mallinfo(void);
+struct mallinfo mallinfo(void);
 struct mallinfo2 mallinfo2(void);
 void *malloc(size_t __byte_count);
 int malloc_info(int __must_be_zero, FILE *__fp);
@@ -4830,7 +4830,7 @@ size_t mbrlen(const char *__s, size_t __n, struct mbstate_t *__ps);
 size_t mbrtowc(int *__buf, const char *__s, size_t __n, struct mbstate_t *__ps);
 int mbsinit(const struct mbstate_t *__ps);
 size_t mbsnrtowcs(int *__dst, const char **__src, size_t __src_n, size_t __dst_n, struct mbstate_t *__ps);
-size_t mbsrtowcs(int *__dst, const char **__src, size_t __dst_n, struct mbstate_t *__ps, locale_t __l);
+size_t mbsrtowcs(int *__dst, const char **__src, size_t __dst_n, struct mbstate_t *__ps);
 size_t mbsrtowcs_l(int *__dst, const char **__src, size_t __dst_n, struct mbstate_t *__ps, locale_t __l);
 size_t mbstowcs(int *__dst, const char *__src, size_t __n);
 int mbtowc(int *__wc_ptr, const char *__s, size_t __n);
@@ -5323,7 +5323,7 @@ int strcoll_l(const char *__lhs, const char *__rhs, locale_t __l);
 char *strcpy(char *__dst, const char *__src);
 size_t strcspn(const char *__s, const char *__reject);
 char *strdup(const char *__s);
-const char *strerror(int __errno_value);
+char *strerror(int __errno_value);
 char *strerror_l(int __errno_value, locale_t __l);
 char *strerror_r(int __errno_value, char *__buf, size_t __n);
 const char *strerrordesc_np(int __errno_value);
@@ -5341,7 +5341,7 @@ char *strncpy(char *__dst, const char *__src, size_t __n);
 char *strndup(const char *__s, size_t __n);
 size_t strnlen(const char *__s, size_t __n);
 char *strpbrk(const char *__s, const char *__accept);
-char *strptime(const char *__s, const char *__fmt, struct tm *__tm, locale_t __l);
+char *strptime(const char *__s, const char *__fmt, struct tm *__tm);
 char *strptime_l(const char *__s, const char *__fmt, struct tm *__tm, locale_t __l);
 char *strrchr(const char *__s, int __ch);
 char *strsep(char **__s_ptr, const char *__delimiter);
@@ -5355,13 +5355,13 @@ float strtof_l(const char *__s, char **__end_ptr, locale_t __l);
 intmax_t strtoimax(const char *__s, char **__end_ptr, int __base);
 char *strtok(char *__s, const char *__delimiter);
 char *strtok_r(char *__s, const char *__delimiter, char **__pos_ptr);
-long strtol(const char *__s, char **__end_ptr, int, locale_t __l);
+long strtol(const char *__s, char **__end_ptr, int __base);
 long strtol_l(const char *__s, char **__end_ptr, int, locale_t __l);
 long double strtold(const char *__s, char **__end_ptr);
 long double strtold_l(const char *__s, char **__end_ptr, locale_t __l);
 long long strtoll(const char *__s, char **__end_ptr, int __base);
 long long strtoll_l(const char *__s, char **__end_ptr, int __base, locale_t __l);
-unsigned long strtoul(const char *__s, char **__end_ptr, int __base, locale_t __l);
+unsigned long strtoul(const char *__s, char **__end_ptr, int __base);
 unsigned long strtoul_l(const char *__s, char **__end_ptr, int __base, locale_t __l);
 unsigned long long strtoull(const char *__s, char **__end_ptr, int __base);
 unsigned long long strtoull_l(const char *__s, char **__end_ptr, int __base, locale_t __l);
@@ -5518,24 +5518,24 @@ size_t wcsnlen(const int *__s, size_t __n);
 size_t wcsnrtombs(char *__dst, const int **__src, size_t __src_n, size_t __dst_n, struct mbstate_t *__ps);
 int *wcspbrk(const int *__s, const int *__accept);
 int *wcsrchr(const int *__s, int __wc);
-size_t wcsrtombs(char *__dst, const int **__src, size_t __dst_n, struct mbstate_t *__ps, locale_t __l);
+size_t wcsrtombs(char *__dst, const int **__src, size_t __dst_n, struct mbstate_t *__ps);
 size_t wcsrtombs_l(char *__dst, const int **__src, size_t __dst_n, struct mbstate_t *__ps, locale_t __l);
 size_t wcsspn(const int *__s, const int *__accept);
 int *wcsstr(const int *__haystack, const int *__needle);
-double wcstod(const int *__s, int **__end_ptr, locale_t __l);
+double wcstod(const int *__s, int **__end_ptr);
 double wcstod_l(const int *__s, int **__end_ptr, locale_t __l);
-float wcstof(const int *__s, int **__end_ptr, locale_t __l);
+float wcstof(const int *__s, int **__end_ptr);
 float wcstof_l(const int *__s, int **__end_ptr, locale_t __l);
 intmax_t wcstoimax(const int *__s, int **__end_ptr, int __base);
 int *wcstok(int *__s, const int *__delimiter, int **__ptr);
-long wcstol(const int *__s, int **__end_ptr, int __base, locale_t __l);
+long wcstol(const int *__s, int **__end_ptr, int __base);
 long wcstol_l(const int *__s, int **__end_ptr, int __base, locale_t __l);
 long double wcstold(const int *__s, int **__end_ptr);
 long double wcstold_l(const int *__s, int **__end_ptr, locale_t __l);
 long long wcstoll(const int *__s, int **__end_ptr, int __base);
 long long wcstoll_l(const int *__s, int **__end_ptr, int __base, locale_t __l);
 size_t wcstombs(char *__dst, const int *__src, size_t __n);
-unsigned long wcstoul(const int *__s, int **__end_ptr, int __base, locale_t __l);
+unsigned long wcstoul(const int *__s, int **__end_ptr, int __base);
 unsigned long wcstoul_l(const int *__s, int **__end_ptr, int __base, locale_t __l);
 unsigned long long wcstoull(const int *__s, int **__end_ptr, int __base);
 unsigned long long wcstoull_l(const int *__s, int **__end_ptr, int __base, locale_t __l);

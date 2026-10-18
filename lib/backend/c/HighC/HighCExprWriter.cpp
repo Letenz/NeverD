@@ -997,8 +997,17 @@ std::string HighCWriter::storedValueText(const HighExpr &Value,
   // A plain store converts the value to the memory's type like an
   // assignment does: an integer slot takes a pointer as the address it is.
   if (Ordering == NdMemoryOrdering::None && To && To->Kind == NdTypeKind::Int &&
-      !To->IsEnum && printedPointerType(Value))
-    return "(" + typeToC(To) + ")(uintptr_t)(" + exprStr(Value) + ")";
+      !To->IsEnum) {
+    if (printedPointerType(Value))
+      return "(" + typeToC(To) + ")(uintptr_t)(" + exprStr(Value) + ")";
+    // A local the output declares a pointer, printed by its name, as one a
+    // typed member's load assigns: i386's outgoing argument slots hold it.
+    if (const HighExpr *Inner = peelIntegerViewOps(&Value);
+        Inner && (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi))
+      if (const std::string Text = exprStr(Value);
+          isBarePointerName(*Inner, Text))
+        return "(" + typeToC(To) + ")(uintptr_t)(" + Text + ")";
+  }
   if (Ordering == NdMemoryOrdering::None && Value.Type &&
       Value.Type->Kind == NdTypeKind::Int)
     if (auto Converted = implicitIntegerConversion(Value, To))
@@ -4477,14 +4486,20 @@ std::string HighCWriter::pointerObjectStr(const HighExpr &E) {
   const HighExpr *Inner = peelIntegerViewOps(&E);
   if (!Inner)
     Inner = &E;
-  if (auto Member = typedMemberAccess(*Inner))
-    return *Member;
-  if (Inner->Kind == ExprKind::Load && !Inner->Operands.empty() &&
+  // The pointer E's value is: a load of a member prints as the member, and
+  // the address of one as its address.  The member at E itself would be
+  // what E points to, a load more: `t->boot` for the address `t + 0x48`
+  // whose load the call reads.
+  const bool Loaded =
+      Inner->Kind == ExprKind::Load && !Inner->Operands.empty() &&
       Inner->Operands[0] && Inner->MemoryOrdering == NdMemoryOrdering::None &&
-      Inner->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+      Inner->MemoryAddressSpace == NdMemoryAddressSpace::Default;
+  if (Loaded)
     if (auto Member = loadedMemberAccess(*Inner))
       return *Member;
-  }
+  if (!Loaded && Inner->Kind != ExprKind::Var && Inner->Kind != ExprKind::Phi)
+    if (auto Member = typedMemberAccess(*Inner))
+      return "&" + *Member;
   if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) {
     const std::string Name = copyForwardName(varName(Inner->Var));
     if (auto It = FieldForward.find(Name); It != FieldForward.end())
@@ -4572,19 +4587,23 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
             const HighExpr *FieldAddr =
                 peelIntegerViewOps(Obj->Operands[0].get());
             if (FieldAddr)
-              if (auto Member = typedMemberAccess(*FieldAddr))
+              if (auto Member = typedMemberAccess(*FieldAddr, PtrSize))
                 ObjStr = *Member;
             if (ObjStr.empty())
               ObjStr = pointerObjectStr(*Obj);
+            SlotBase = "*(void **)(" + ObjStr + ")";
           } else if (Obj) {
-            if (auto Member = typedMemberAccess(*Obj))
-              ObjStr = *Member;
-            if (ObjStr.empty())
-              ObjStr = pointerObjectStr(*Obj);
+            // The pointer-wide member at the object's address is the table
+            // pointer the slot load reads: a UEFI protocol's
+            // `SystemTable->ConOut`, or a vfptr.
+            if (auto Member = typedMemberAccess(*Obj, PtrSize))
+              SlotBase = "(" + *Member + ")";
+            else
+              SlotBase = "*(void **)(" + pointerObjectStr(*Obj) + ")";
           } else {
-            ObjStr = pointerObjectStr(*Vptr->Operands[0]);
+            SlotBase =
+                "*(void **)(" + pointerObjectStr(*Vptr->Operands[0]) + ")";
           }
-          SlotBase = "*(void **)(" + ObjStr + ")";
         } else {
           SlotBase = pointerObjectStr(*Ptr);
         }

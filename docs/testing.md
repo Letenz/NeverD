@@ -534,7 +534,14 @@ declares, and checks that another function's text stays as it was.
 `__REDIRECT` (`__isoc23_strtol`), musl's `__REDIR` (`__typeof__(stat)`) and
 C99's qualified parameter arrays, and
 `TypeParse.AnLP64ParameterPassesItsVaListByAddress` each C library's name
-for the compiler's `va_list`.
+for the compiler's `va_list`;
+`TypeParse.SizesWideAndUnicodeLiterals` sizes EDK II's `sizeof(L'A')` and
+`sizeof(L"A")`,
+`TypeParse.ARoutineDeclaredAgainWithAnotherTypeIsRefused` refuses a second
+`_ModuleEntryPoint` of another type, and
+`TypeParse.ARecordsTypedefRendersBeforeWhatNamesIt` renders EDK II's
+`EFI_PEI_NOTIFY_DESCRIPTOR`, whose record holds a function pointer that
+names the record's typedef.
 `HeaderLibrary.*` reads the embedded libraries and checks how a header
 library joins a program's types;
 `HeaderLibrary.TheLinuxLibrariesLayRecordsOutAsGlibcDoes` checks the sizes
@@ -545,6 +552,8 @@ the NDK's JNI records,
 `HeaderLibrary.TheMuslLibrariesLayRecordsOutAsMuslDoes` musl's,
 `HeaderLibrary.TheDarwinLibrariesLayRecordsOutAsLibSystemDoes` libSystem's
 and the routines it names by assembler names (`stat$INODE64`),
+`HeaderLibrary.TheUefiLibrariesLayOutTheFirmwaresTables` the system table,
+the boot and runtime services and protocols MdePkg lays out,
 `SessionCAPITest.LinuxProgramsJoinTheirGlibcLibrary` decompiles
 `unittests/types/fixtures/linux_libc_calls_{x64,x86,arm64,arm}`, built as
 `linux_libc_calls.c` says, and
@@ -558,6 +567,12 @@ headers as `musl_libc_stub.c` says;
 `SessionCAPITest.DarwinProgramsJoinTheirPlatformsLibrary` loads
 `darwin_libc_calls_{x64,arm64,ios_arm64}`, built against the headers the
 Darwin libraries read as `darwin_libc_stub.c` says;
+`SessionCAPITest.UefiApplicationsJoinTheirFirmwaresLibrary` loads
+`uefi_calls_{x64,x86,arm64}.efi`, built as `uefi_calls.c` says, whose entry
+takes `EFI_IMAGE_ENTRY_POINT`;
+`SessionCAPITest.CallsThroughTypedMembersReadEachPointerOnce` decompiles
+`member_calls_x64` and checks that a call through a typed member's pointer
+reads each pointer once;
 `HeaderLibrary.TheUserLibrariesDeclareNtdllsNativeAPI` checks phnt's
 routines and the PEB, TEB and loader records each user mode library lays
 out. The user mode libraries read a checkout of
@@ -602,7 +617,10 @@ need Perl for Libc's feature script, and write
 `LICENSES/darwin-headers.txt` again.
 `--install-headers <directory>` installs the headers alone and prints what
 clang takes to read them for each target, as the Darwin fixtures were
-built. Check the x64 and x86 Linux ones with their record ABIs:
+built. The UEFI libraries read a checkout of EDK II
+(`scripts/generate_uefi_types.py --edk2 <checkout>`, of
+https://github.com/tianocore/edk2; MdePkg/Include and License.txt are all
+they need) and name its commit. Check the x64 and x86 Linux ones with their record ABIs:
 
 ```sh
 python3 scripts/check_type_renders.py --neverd build/bin/neverd \

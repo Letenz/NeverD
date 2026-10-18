@@ -105,6 +105,11 @@ TEST(HeaderLibrary, EveryLibraryReadsLaidOutForItsDataModel) {
       EXPECT_EQ(sizeOf(*Types, "HANDLE"), Wide ? 8u : 4u);
       EXPECT_EQ(sizeOf(*Types, "SIZE_T"), Wide ? 8u : 4u);
       EXPECT_EQ(sizeOf(*Types, "_UNICODE_STRING"), Wide ? 16u : 8u);
+    } else if (Types->find("EFI_GUID")) {
+      // UEFI's own names, which hold no socket.
+      EXPECT_EQ(sizeOf(*Types, "UINTN"), Wide ? 8u : 4u);
+      EXPECT_EQ(sizeOf(*Types, "EFI_HANDLE"), Wide ? 8u : 4u);
+      EXPECT_EQ(sizeOf(*Types, "EFI_GUID"), 16u);
     } else {
       EXPECT_EQ(sizeOf(*Types, "size_t"), Wide ? 8u : 4u);
       EXPECT_EQ(sizeOf(*Types, "sockaddr_in"), 16u);
@@ -284,6 +289,13 @@ TEST(HeaderLibrary, TheAndroidLibrariesLayRecordsOutAsBionicDoes) {
     EXPECT_EQ(Read->Params[2].Name, "__count");
     ASSERT_NE(Types->findPrototype("__assert2"), nullptr);
     EXPECT_TRUE(Types->findPrototype("__assert2")->NoReturn);
+    // bionic's strtol_l, which takes a locale, is strtol's symbol: strtol's
+    // own declaration describes strtol.
+    for (const char *Name : {"strtol", "strtoul", "wcstol"}) {
+      const FunctionDef *Number = Types->findPrototype(Name);
+      ASSERT_NE(Number, nullptr) << Name;
+      EXPECT_EQ(Number->Params.size(), 3u) << Name;
+    }
 
     // The NDK's <jni.h> and <android/log.h>: JNIEnv's function table, a
     // pointer for each of its 233 entries, and the log.
@@ -413,6 +425,67 @@ TEST(HeaderLibrary, TheDarwinLibrariesLayRecordsOutAsLibSystemDoes) {
     ASSERT_NE(Types->findPrototype("os_unfair_lock_lock"), nullptr);
     ASSERT_NE(Types->findPrototype("exit"), nullptr);
     EXPECT_TRUE(Types->findPrototype("exit")->NoReturn);
+  }
+}
+
+TEST(HeaderLibrary, TheUefiLibrariesLayOutTheFirmwaresTables) {
+  // The tables a UEFI module is given and the protocols it locates, as clang
+  // lays them out against MdePkg for each architecture.  The library classes
+  // of one kind of module are left out: each declares _ModuleEntryPoint its
+  // way, and the specification's EFI_IMAGE_ENTRY_POINT types an
+  // application's entry instead.
+  struct Expected {
+    HeaderLibrary Library;
+    uint64_t SystemTable, BootServicesAt, BootServices, LocateProtocolAt,
+        RuntimeServices, LoadedImage, ImageSizeAt, FileProtocol, OutputStringAt;
+  };
+  const Expected Libraries[] = {
+      {HeaderLibrary::UefiX64, 120, 96, 376, 320, 136, 96, 72, 120, 8},
+      {HeaderLibrary::UefiX86, 72, 60, 200, 172, 80, 64, 40, 64, 4},
+      {HeaderLibrary::UefiARM64, 120, 96, 376, 320, 136, 96, 72, 120, 8},
+  };
+  for (const Expected &E : Libraries) {
+    SCOPED_TRACE(headerLibraryName(E.Library).str());
+    std::string Error;
+    const TypeLibrary *Types = headerLibrary(E.Library, &Error);
+    ASSERT_NE(Types, nullptr) << Error;
+    const auto Check = [](const char *What, uint64_t Value) {
+      return "_Static_assert(" + std::string(What) +
+             " == " + std::to_string(Value) + ", \"" + What + "\");\n";
+    };
+    const std::string Assertions =
+        Check("sizeof(EFI_SYSTEM_TABLE)", E.SystemTable) +
+        Check("__builtin_offsetof(EFI_SYSTEM_TABLE, BootServices)",
+              E.BootServicesAt) +
+        Check("sizeof(EFI_BOOT_SERVICES)", E.BootServices) +
+        Check("__builtin_offsetof(EFI_BOOT_SERVICES, LocateProtocol)",
+              E.LocateProtocolAt) +
+        Check("sizeof(EFI_RUNTIME_SERVICES)", E.RuntimeServices) +
+        Check("sizeof(EFI_LOADED_IMAGE_PROTOCOL)", E.LoadedImage) +
+        Check("__builtin_offsetof(EFI_LOADED_IMAGE_PROTOCOL, ImageSize)",
+              E.ImageSizeAt) +
+        Check("sizeof(EFI_FILE_PROTOCOL)", E.FileProtocol) +
+        Check("__builtin_offsetof(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL, "
+              "OutputString)",
+              E.OutputStringAt) +
+        Check("sizeof(EFI_GUID)", 16) +
+        Check("sizeof(EFI_GRAPHICS_OUTPUT_MODE_INFORMATION)", 36) +
+        Check("sizeof(SMBIOS_TABLE_ENTRY_POINT)", 31);
+    // A copy, which the assertions read without changing the library.
+    TypeLibrary Layout = *Types;
+    const ParseResult Laid = parseCTypes(Assertions, Layout);
+    EXPECT_TRUE(Laid.Problems.empty()) << Laid.Problems.front().Message;
+
+    const LocalType *Entry = Types->find("EFI_IMAGE_ENTRY_POINT");
+    ASSERT_NE(Entry, nullptr);
+    EXPECT_EQ(Entry->Kind, TypeKind::Typedef);
+    EXPECT_EQ(Types->findPrototype("_ModuleEntryPoint"), nullptr);
+    const FunctionDef *Copy = Types->findPrototype("CopyMem");
+    ASSERT_NE(Copy, nullptr);
+    EXPECT_EQ(Copy->Params.size(), 3u);
+    const FunctionDef *Print = Types->findPrototype("AsciiPrint");
+    ASSERT_NE(Print, nullptr);
+    EXPECT_TRUE(Print->Variadic);
   }
 }
 

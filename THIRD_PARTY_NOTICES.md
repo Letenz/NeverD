@@ -284,7 +284,22 @@ layouts and accessors, and small macros and small inline functions"); the
 syscall note puts programs that use the kernel's interfaces outside the
 GPL. The licenses and the note are preserved in
 [LICENSES/glibc-headers.txt](LICENSES/glibc-headers.txt). Generated on
-2026-10-17.
+2026-10-18.
+
+## UEFI type libraries
+
+`lib/types/headers/UefiX64.h`, `UefiX86.h` and `UefiARM64.h` hold the types
+and prototypes that EDK II's MdePkg headers declare for UEFI modules on x64,
+x86 and ARM64: the UEFI and Platform Initialization specifications, their
+protocols and GUIDs, the industry standards and the library classes, as
+`scripts/generate_uefi_types.py` renders them from `MdePkg/Include` of
+https://github.com/tianocore/edk2 at edk2-stable202608 (commit
+2970e5699ba6267f3384ffab20f96647578aebc8). The headers are Copyright (c)
+TianoCore and contributors, under the BSD-2-Clause-Patent license, which is
+preserved in [LICENSES/edk2-headers.txt](LICENSES/edk2-headers.txt). The
+libraries hold only what NeverD reads from the headers and renders again:
+data structure layouts, the values of enumerations and function
+declarations. Generated on 2026-10-18.
 
 ## Darwin type libraries
 
@@ -339,7 +354,7 @@ hold only what NeverD reads from the headers and renders again: data
 structure layouts, the values of enumerations and function declarations.
 bionic's `libc/NOTICE` is preserved in
 [LICENSES/bionic-headers.txt](LICENSES/bionic-headers.txt). Generated on
-2026-10-17.
+2026-10-18.
 
 The same libraries hold what two headers the NDK ships declare: `<jni.h>`,
 from `include_jni` of

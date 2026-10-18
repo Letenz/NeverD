@@ -82,13 +82,16 @@ public:
   /// \p Headers are the header libraries joined to \p Types, which a
   /// prototype names as its source.  \p Recognized names the functions
   /// signatures recognized by their bytes, which nothing else names.
+  /// \p EntryType names the type of \p Image's entry point, a pointer to a
+  /// function, where its kind's specification gives it one.
   LocalTypesDebugContext(
       const DebugContext &Inner,
       std::shared_ptr<const types::TypeLibrary> Types,
       std::map<va_t, std::string> Declarations = {},
       const BinaryImage *Image = nullptr,
       std::vector<types::HeaderLibrary> Headers = {},
-      std::unordered_map<uint64_t, std::string> Recognized = {});
+      std::unordered_map<uint64_t, std::string> Recognized = {},
+      std::string EntryType = {});
   /// Takes back the members and enumerators it gave the debug information's
   /// types, and gives back those they held, so that the context made after
   /// a change to the library gives them anew.
@@ -101,7 +104,8 @@ public:
   /// neither, the library's prototype of the name the function at the entry
   /// is displayed under: the one the image states, else the inner one, else
   /// the one signatures recognized it by.  At an import's slot or stub, the
-  /// prototype of the routine imported, under its name.
+  /// prototype of the routine imported, under its name; at the image's
+  /// entry point, the type its kind's specification gives it.
   std::optional<FunctionSym> resolveFunction(va_t Addr) const override;
 
   std::optional<std::string> functionName(va_t Addr) const override {
@@ -238,6 +242,10 @@ private:
   const BinaryImage *Image;
   std::vector<types::HeaderLibrary> Headers;
   std::unordered_map<uint64_t, std::string> Recognized;
+  /// The type of the image's entry point, a pointer to a function.
+  std::string EntryType;
+  /// The function type EntryType points to, as a signature.
+  std::optional<FunctionSym> entrySignature() const;
   mutable std::mutex Mutex;
   mutable llvm::StringMap<std::optional<FunctionSym>> Signatures;
   /// What spells the prototypes' declarations, by the spelling of builtins
