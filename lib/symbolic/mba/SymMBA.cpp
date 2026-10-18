@@ -247,6 +247,53 @@ SymRef foldKnownBits(SymContext &Ctx, SymRef Root, SymKnownBits &Known,
              : Root;
 }
 
+SymRef foldConditionalControls(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                               size_t &Storage) {
+  auto Op = Ctx.op(Root);
+  if (Op == SymOp::Eq) {
+    for (unsigned I = 0; I < 2; ++I) {
+      auto Value = Ctx.operand(Root, I), Literal = Ctx.operand(Root, 1 - I);
+      if (Ctx.op(Value) != SymOp::Ite || !Ctx.isConst(Literal))
+        continue;
+      auto T = Ctx.operand(Value, 1), E = Ctx.operand(Value, 2);
+      if (Ctx.isConst(T) && Ctx.isConst(E) && Budget.consume(3))
+        return Ctx.mkIte(Ctx.operand(Value, 0), Ctx.mkEq(T, Literal),
+                         Ctx.mkEq(E, Literal));
+    }
+  }
+  if (Op != SymOp::Ite || Budget.exhausted() || Storage < 128)
+    return Root;
+  auto Condition = Ctx.operand(Root, 0);
+  std::vector<SymRef> Work{Ctx.operand(Root, 1), Ctx.operand(Root, 2)};
+  llvm::DenseSet<uint32_t> Seen;
+  bool Dependent = false;
+  unsigned Edges = 0;
+  while (!Work.empty()) {
+    auto Value = Work.back();
+    Work.pop_back();
+    if (!Seen.insert(Value.index()).second)
+      continue;
+    if (!Budget.consume() || Seen.size() > 64)
+      return Root;
+    Dependent |= Value == Condition;
+    auto Children = Ctx.operands(Value);
+    if (Children.size() > 128 - Edges)
+      return Root;
+    Edges += Children.size();
+    Work.insert(Work.end(), Children.begin(), Children.end());
+  }
+  const size_t Bytes = Seen.size() * 128;
+  if (!Dependent || Storage < Bytes || !Budget.consume(2 * Seen.size()))
+    return Root;
+  Storage -= Bytes;
+  auto T =
+      Ctx.substitute(Ctx.operand(Root, 1), {{Condition.index(), Ctx.mkOne(1)}});
+  auto E = Ctx.substitute(Ctx.operand(Root, 2),
+                          {{Condition.index(), Ctx.mkZero(1)}});
+  auto Result = Ctx.mkIte(Condition, T, E);
+  return doesNotGrow(Ctx, Result, Root) ? Result : Root;
+}
+
 //===----------------------------------------------------------------------===//
 // Regions guarded by constant masks
 //===----------------------------------------------------------------------===//
@@ -999,6 +1046,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
 
     Rebuilt = foldObservedWindow(Ctx, Rebuilt, Budget, RefinementStorage);
     Rebuilt = foldKnownBits(Ctx, Rebuilt, Known, Budget, RefinementStorage);
+    Rebuilt = foldConditionalControls(Ctx, Rebuilt, Budget, RefinementStorage);
     if (!canMeasureAtRoot(Ctx, Rebuilt)) {
       Solved[Index] = Rebuilt;
       continue;

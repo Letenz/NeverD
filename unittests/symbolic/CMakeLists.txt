@@ -2,6 +2,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymConcreteTests.cpp
   SymDispatchTests.cpp
   SymExecTests.cpp
+  SymConditionalControlTests.cpp
   SymMBAKnownFactTests.cpp
   SymMBAObservedWindowTests.cpp
   SymIntegerIntrinsicTests.cpp
@@ -84,5 +85,10 @@ add_neverd_unittest(NeverDSymMBAObservedWindowTests
 
 add_neverd_unittest(NeverDSymMBAKnownFactTests
   SymMBAKnownFactTests.cpp
+  LINK_COMPONENTS Symbolic Solver
+)
+
+add_neverd_unittest(NeverDSymConditionalControlTests
+  SymConditionalControlTests.cpp
   LINK_COMPONENTS Symbolic Solver
 )

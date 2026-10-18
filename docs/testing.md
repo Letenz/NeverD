@@ -13,6 +13,10 @@ jump, ordinary calls and indirect tail calls.
 mask and predicate consumers, including independent sign-extension and
 unbounded-value counterexamples. The shared deep-work budget remains in force.
 
+`NeverDSymConditionalControlTests` checks branch-scoped conditional
+specialization and constant-tag recovery, with unrelated predicates,
+zero/partial budgets and independent exhaustive small-word evaluation.
+
 `AndroidFDSet.*` checks Bionic checked descriptor bitmaps at O0/O2 with ordinary,
 packed and RELR relocations on available CPU backends. Independent byte oracles
 cover word boundaries, untouched canaries, boolean queries, full-width extents,
