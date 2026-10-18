@@ -135,7 +135,9 @@ TEST_P(DWARFTypeImport, ReadsEnumerations) {
   EXPECT_EQ(Color->Enum->Values[1].Value, 5u);
   EXPECT_EQ(static_cast<int64_t>(Color->Enum->Values[2].Value), -1);
   EXPECT_TRUE(builtinInfo(Color->Enum->Underlying).Signed);
-  EXPECT_EQ(builtinBytes(Color->Enum->Underlying, DataModel::LP64), 4u);
+  EXPECT_EQ(builtinBytes(Color->Enum->Underlying, DataModel::LP64,
+                         RecordABI::Itanium),
+            4u);
 }
 
 TEST_P(DWARFTypeImport, InfersPackingAlignmentAndFlexibleArrays) {
@@ -207,6 +209,22 @@ TEST(DWARFTypeImportRust, ReadsRustsLayoutsAndHoldsVariantsAsBytes) {
   ASSERT_NE(Holder, nullptr);
   EXPECT_EQ(shapeOf(*Holder->Record), "struct{shape@0 tag@16}");
   EXPECT_EQ(Holder->Record->Size, 24u);
+  // A function item holds no bytes, though DWARF gives it as a pointer to
+  // its function, past the record's end.
+  const LocalType *Mapper = Library.find("rust_dwarf::Mapper<fn(u32) -> u32>");
+  ASSERT_NE(Mapper, nullptr);
+  EXPECT_EQ(shapeOf(*Mapper->Record), "struct{base@0}");
+  EXPECT_EQ(Mapper->Record->Size, 4u);
+  // An unsized tail, which DWARF gives as its element, is C's flexible
+  // array.
+  const LocalType *Tail = Library.find("rust_dwarf::Tail");
+  ASSERT_NE(Tail, nullptr);
+  EXPECT_EQ(shapeOf(*Tail->Record), "struct{len@0 data@4}");
+  EXPECT_EQ(Tail->Record->Size, 4u);
+  ASSERT_EQ(Tail->Record->Members.size(), 2u);
+  const TypeExpr &Data = *Tail->Record->Members[1].Type;
+  EXPECT_EQ(Data.Kind, TypeExprKind::Array);
+  EXPECT_FALSE(Data.Count.has_value());
 }
 
 TEST(DWARFTypeImportGo, ReadsGosStructuresAndFuncValues) {
@@ -230,6 +248,11 @@ TEST(DWARFTypeImportGo, ReadsGosStructuresAndFuncValues) {
     ASSERT_FALSE(Error);
     Source << "package main\n"
               "type Point struct {\n\tX int32\n\tY int64\n\tName string\n}\n"
+              "type Guarded struct {\n\tlock noCopy\n\tV int32\n}\n"
+              "type noCopy struct{}\n"
+              "type Off struct {\n\ta uintptr\n}\n"
+              "type Span struct {\n\tbase, limit Off\n}\n"
+              "type Spans struct {\n\tx uint64\n\ts Span\n}\n"
               "type Calls struct {\n\t_ [2]byte\n"
               "\tEqual func(a, b uintptr) bool\n\t_ [6]byte\n"
               "\tPair func() (int, bool)\n\tCount int32\n}\n"
@@ -237,8 +260,14 @@ TEST(DWARFTypeImportGo, ReadsGosStructuresAndFuncValues) {
               "func area(p *Point) int64 { return int64(p.X) * p.Y }\n"
               "//go:noinline\n"
               "func calls(c *Calls) int32 { return c.Count }\n"
+              "//go:noinline\n"
+              "func guarded(g *Guarded) int32 { return g.V }\n"
+              "//go:noinline\n"
+              "func spans(s *Spans) uint64 { return s.x }\n"
               "func main() {\n\tprintln(area(&Point{X: 2, Y: 3}))\n"
-              "\tprintln(calls(&Calls{Count: 4}))\n}\n";
+              "\tprintln(calls(&Calls{Count: 4}))\n"
+              "\tprintln(guarded(&Guarded{V: 5}))\n"
+              "\tprintln(spans(&Spans{x: 6}))\n}\n";
   }
   const std::string Program = path("program");
   const std::string Output = path("go.txt");
@@ -273,6 +302,21 @@ TEST(DWARFTypeImportGo, ReadsGosStructuresAndFuncValues) {
   // Blank fields take numbers past their first; a func value is the
   // address of its closure, a pointer to its function, whose one result
   // Go lists as a parameter, and one of several results an address alone.
+  // A member of no bytes lies nowhere, whichever type DWARF gives first.
+  const LocalType *Guarded = Library.find("main.Guarded");
+  ASSERT_NE(Guarded, nullptr);
+  EXPECT_EQ(shapeOf(*Guarded->Record), "struct{V@0}");
+  EXPECT_EQ(Guarded->Record->Size, 4u);
+  // A record held by value through the typedef of its own name, as Go
+  // names each type, lays out before what holds it: no alignment is
+  // guessed of members not read yet.
+  const LocalType *Span = Library.find("main.Span");
+  ASSERT_NE(Span, nullptr);
+  EXPECT_EQ(Span->Record->Alignment, 0u);
+  EXPECT_EQ(Library.alignOf(*makeNamed("main.Span", TypeKind::Struct)), 8u);
+  const LocalType *Spans = Library.find("main.Spans");
+  ASSERT_NE(Spans, nullptr);
+  EXPECT_EQ(shapeOf(*Spans->Record), "struct{x@0 s@8}");
   const LocalType *Calls = Library.find("main.Calls");
   ASSERT_NE(Calls, nullptr);
   EXPECT_EQ(shapeOf(*Calls->Record), "struct{_@0 Equal@8 _1@16 Pair@24 "

@@ -68,6 +68,55 @@ constexpr bool intrinsicWritesOnlyItsOutput(Intrinsic Id) {
   }
 }
 
+/// Intrinsics run for the system register they read into their destination
+/// (`mrs x0, cntvct_el0`, `mov rax, cr3`).  A function that returns that
+/// value returns a value, though the instruction has side effects or no C
+/// name of its own.
+constexpr bool intrinsicReadsSystemRegister(Intrinsic Id) {
+  switch (Id) {
+  case Intrinsic::Mrs:
+  case Intrinsic::ReadCr0:
+  case Intrinsic::ReadCr2:
+  case Intrinsic::ReadCr3:
+  case Intrinsic::ReadCr4:
+  case Intrinsic::ReadCr8:
+  case Intrinsic::ReadDr:
+    return true;
+  default:
+    return false;
+  }
+}
+
+/// Intrinsics that run a system call with its register contract and write
+/// its result: what a function that returns it returns, an ntdll stub's
+/// NTSTATUS among them.
+constexpr bool intrinsicReturnsSystemCallResult(Intrinsic Id) {
+  switch (Id) {
+  case Intrinsic::A64LinuxSyscall:
+  case Intrinsic::ArmLinuxSyscall:
+  case Intrinsic::X64Syscall:
+  case Intrinsic::X64WindowsSyscall:
+    return true;
+  default:
+    return false;
+  }
+}
+
+/// SMC and HVC, whose outputs the lift binds under the SMC Calling
+/// Convention (SMC or HVC #0) are the call's results: like a system call's,
+/// a value where a caller reads it.
+constexpr bool intrinsicReturnsSmcccResults(Intrinsic Id) {
+  switch (Id) {
+  case Intrinsic::Smc:
+  case Intrinsic::Hvc:
+  case Intrinsic::ArmSmc:
+  case Intrinsic::ArmHvc:
+    return true;
+  default:
+    return false;
+  }
+}
+
 /// Operand roles of an intrinsic whose complete effects are its explicit
 /// output and one access to the memory at an explicit address operand.  Input
 /// indices count the constant intrinsic ID as input 0; AccessSize names the

@@ -58,17 +58,21 @@ typedef long HRESULT;
 
 # Per data model: the target every spelling of C and C++ compiles for, the
 # GNU target the portable spelling also compiles for, if another, and Go's
-# GOOS and GOARCH.  A 32-bit program GCC or Clang laid out goes by its record
-# ABI instead, and builds for its own target alone.
+# GOOS and GOARCH.  A program whose record ABI its data model does not say,
+# a 32-bit one GCC or Clang laid out, Apple's 64-bit ARM or Android's i386,
+# goes by that ABI instead, and builds for its own target alone.
 TARGETS = {
     "LLP64": ("x86_64-pc-windows-msvc", "x86_64-linux-gnu", "windows",
               "amd64"),
     "ILP32": ("i686-pc-windows-msvc", "i686-linux-gnu", "windows", "386"),
     "LP64": ("x86_64-linux-gnu", "x86_64-linux-gnu", "windows", "amd64"),
+    "apple-arm64": ("arm64-apple-macos", None, "darwin", "arm64"),
     "i386-sysv": ("i686-linux-gnu", None, "linux", "386"),
+    # Go builds for android/386 only through cgo; its layouts are 386's.
+    "android-i386": ("i686-linux-android", None, "linux", "386"),
     "aapcs32": ("armv7-linux-gnueabihf", None, "linux", "arm"),
 }
-THIRTY_TWO_BIT = ("ILP32", "i386-sysv", "aapcs32")
+THIRTY_TWO_BIT = ("ILP32", "i386-sysv", "android-i386", "aapcs32")
 
 
 def run(command, **options):
@@ -277,8 +281,8 @@ def main():
                         choices=sorted(TARGETS),
                         help="the data model --declare files lay out for")
     parser.add_argument("--record-abi", default=None,
-                        choices=("microsoft", "itanium", "i386-sysv",
-                                 "aapcs32"),
+                        choices=("microsoft", "itanium", "apple-arm64",
+                                 "i386-sysv", "android-i386", "aapcs32"),
                         help="the record ABI --declare files lay out by "
                              "(default: the data model's), as a 32-bit Linux "
                              "library's i386-sysv")

@@ -1476,18 +1476,23 @@ TEST(HighCIntegerWidths, LinuxX64ExitOmitsUnusedUnknownRegisterInputs) {
     return Func;
   };
 
-  const std::string Source = emitFunctions({MakeCall(60, "call_exit"),
-                                            MakeCall(231, "call_exit_group"),
-                                            MakeCall(39, "call_getpid")});
+  // 0x5AB is a number no kernel assigns, whose arity the table does not
+  // list: its call keeps every register input.
+  const std::string Source = emitFunctions(
+      {MakeCall(60, "call_exit"), MakeCall(231, "call_exit_group"),
+       MakeCall(39, "call_getpid"), MakeCall(0x5AB, "call_unlisted")});
   EXPECT_NE(Source.find("neverd_x64_syscall(0x3C, 0, 0, 0, 0)"),
             std::string::npos)
       << Source;
   EXPECT_NE(Source.find("neverd_x64_syscall(0xE7, 0, 0, 0, 0)"),
             std::string::npos)
       << Source;
-  const size_t Getpid = Source.find("call_getpid(");
-  ASSERT_NE(Getpid, std::string::npos) << Source;
-  EXPECT_NE(Source.find("__builtin_trap()", Getpid), std::string::npos)
+  EXPECT_NE(Source.find("neverd_x64_syscall(0x27, 0, 0, 0, 0)"),
+            std::string::npos)
+      << Source;
+  const size_t Unlisted = Source.find("call_unlisted(");
+  ASSERT_NE(Unlisted, std::string::npos) << Source;
+  EXPECT_NE(Source.find("__builtin_trap()", Unlisted), std::string::npos)
       << Source;
 #if defined(__x86_64__) && defined(__linux__)
   compileAndExecute(Source + "int main(void) { call_exit(); return 99; }\n",

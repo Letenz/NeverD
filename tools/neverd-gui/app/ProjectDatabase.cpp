@@ -196,16 +196,22 @@ std::optional<std::vector<Chunk>> compressInput(const QString &path,
 } // namespace
 
 namespace {
-/// What a database saved before it recorded its packed files packed: every
-/// table the worker's edit history keeps, its history, and how a binary file
-/// is read.
+/// What a database saved before it recorded its packed files packed: the
+/// tables the worker's edit history kept then, its history, and how a binary
+/// file is read.  Fixed: a table added since, as the type declarations, is
+/// one such a database never packed, which unpacking it leaves alone.
 const QStringList &legacySidecarSuffixes() {
-  static const QStringList suffixes = {
-#define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
-  QLatin1String(project_files::describe(project_files::File::Id).Legacy),
-#include "UserStateTables.def"
-      QStringLiteral(".neverd-history.json"),
-      QStringLiteral(".neverd-load.json")};
+  static const QStringList suffixes = [] {
+    QStringList keys;
+    for (const project_files::File Id :
+         {project_files::File::Annotations, project_files::File::Renames,
+          project_files::File::Functions, project_files::File::Items,
+          project_files::File::Operands, project_files::File::Code})
+      keys.append(QLatin1String(project_files::describe(Id).Legacy));
+    keys.append(QStringLiteral(".neverd-history.json"));
+    keys.append(QStringLiteral(".neverd-load.json"));
+    return keys;
+  }();
   return suffixes;
 }
 

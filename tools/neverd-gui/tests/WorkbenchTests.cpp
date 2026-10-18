@@ -5506,6 +5506,89 @@ private slots:
         types->findChild<QLabel *>(QStringLiteral("localTypesSummary"));
     QVERIFY(summary);
     QTRY_VERIFY(summary->text().contains(QStringLiteral("Deleted OWNER")));
+
+    // Undo takes the deletion back, and redo makes it again.
+    QTRY_VERIFY(bench.action(ActionId::EditUndo)->isEnabled());
+    bench.action(ActionId::EditUndo)->trigger();
+    QTRY_COMPARE(list->model()->rowCount(), 4);
+    QTRY_VERIFY(bench.action(ActionId::EditRedo)->isEnabled());
+    bench.action(ActionId::EditRedo)->trigger();
+    QTRY_COMPARE(list->model()->rowCount(), 3);
+  }
+
+  void headerFilesDeclareTheirTypesByCtrlF9() {
+    // Ctrl+F9, as IDA parses a C header, opens the editor with a header
+    // file's declarations, which declare its types; undo takes them away.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("local-types.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.action(ActionId::ViewLocalTypes)->trigger();
+    auto *types = bench.window->findChild<LocalTypesView *>();
+    QVERIFY(types);
+    auto *list =
+        types->findChild<QTreeView *>(QStringLiteral("localTypesList"));
+    QVERIFY(list);
+    QTRY_COMPARE_WITH_TIMEOUT(list->model()->rowCount(), 3, OpenTimeoutMs);
+    const QString header = directory.filePath(QStringLiteral("owner.h"));
+    {
+      QFile file(header);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("#pragma once\nstruct FROM_HEADER { int x; };\n");
+    }
+    QCOMPARE(bench.action(ActionId::FileLoadHeader)->shortcut(),
+             QKeySequence(QStringLiteral("Ctrl+F9")));
+    QString parsed;
+    QStringList messages;
+    QTimer files;
+    connect(&files, &QTimer::timeout, this, [&] {
+      QWidget *modal = QApplication::activeModalWidget();
+      if (!modal || !modal->isVisible())
+        return;
+      // A message, as the file dialog's when it finds no such file, is
+      // reported rather than waited on.
+      if (auto *box = qobject_cast<QMessageBox *>(modal)) {
+        messages.append(box->text());
+        box->reject();
+        return;
+      }
+      if (auto *dialog = qobject_cast<QFileDialog *>(modal)) {
+        // The name typed, as a user types it: selectFile leaves the name
+        // alone while its edit has the focus.
+        if (auto *name =
+                dialog->findChild<QLineEdit *>(QStringLiteral("fileNameEdit")))
+          name->setText(header);
+        else
+          dialog->selectFile(header);
+        static_cast<QDialog *>(dialog)->accept();
+        return;
+      }
+      auto *dialog = qobject_cast<QDialog *>(modal);
+      auto *text = dialog ? dialog->findChild<QPlainTextEdit *>(
+                                QStringLiteral("declareEditor"))
+                          : nullptr;
+      auto *declare =
+          dialog ? dialog->findChild<QPushButton *>(QStringLiteral("declare"))
+                 : nullptr;
+      if (!text || !declare || !declare->isEnabled() || !parsed.isEmpty())
+        return;
+      parsed = text->toPlainText();
+      // As pressing Declare does, whether or not the window is shown yet.
+      declare->click();
+    });
+    files.start(10);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bench.action(ActionId::FileLoadHeader)->isEnabled(), OpenTimeoutMs);
+    bench.action(ActionId::FileLoadHeader)->trigger();
+    files.stop();
+    QVERIFY2(parsed.contains(QStringLiteral("struct FROM_HEADER")),
+             qPrintable(parsed + messages.join(QLatin1Char('\n'))));
+    QTRY_COMPARE_WITH_TIMEOUT(list->model()->rowCount(), 4, OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.action(ActionId::EditUndo)->isEnabled(),
+                             OpenTimeoutMs);
+    bench.action(ActionId::EditUndo)->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(list->model()->rowCount(), 3, OpenTimeoutMs);
   }
 
   void viewsNarrowPastTheirRows() {

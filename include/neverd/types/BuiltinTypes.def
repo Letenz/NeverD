@@ -14,7 +14,8 @@
 ///   Signed    Whether an integer or character type is signed.
 ///   LLP64     Its size in bytes on 64-bit Windows,
 ///   LP64      on 64-bit Unix,
-///   ILP32     and on 32-bit targets.
+///   ILP32     and on 32-bit targets; 0 for wchar_t and long double, whose
+///             sizes the target's record ABI says (RecordABIs.def).
 ///   Keywords  Its C spelling in keywords, as DWARF and MSVC record it.
 ///   Windows   Its spelling in the Windows headers.
 ///
@@ -33,7 +34,7 @@ NEVERD_BUILTIN_TYPE(Bool, Bool, false, 1, 1, 1, "bool", "bool")
 NEVERD_BUILTIN_TYPE(Char, Character, true, 1, 1, 1, "char", "CHAR")
 NEVERD_BUILTIN_TYPE(SChar, Integer, true, 1, 1, 1, "signed char", "SCHAR")
 NEVERD_BUILTIN_TYPE(UChar, Integer, false, 1, 1, 1, "unsigned char", "UCHAR")
-NEVERD_BUILTIN_TYPE(WChar, Character, false, 2, 4, 2, "wchar_t", "WCHAR")
+NEVERD_BUILTIN_TYPE(WChar, Character, false, 0, 0, 0, "wchar_t", "WCHAR")
 NEVERD_BUILTIN_TYPE(Char8, Character, false, 1, 1, 1, "char8_t", "char8_t")
 NEVERD_BUILTIN_TYPE(Char16, Character, false, 2, 2, 2, "char16_t", "char16_t")
 NEVERD_BUILTIN_TYPE(Char32, Character, false, 4, 4, 4, "char32_t", "char32_t")
@@ -52,7 +53,7 @@ NEVERD_BUILTIN_TYPE(UInt128, Integer, false, 16, 16, 16, "unsigned __int128",
 NEVERD_BUILTIN_TYPE(Half, Float, true, 2, 2, 2, "_Float16", "_Float16")
 NEVERD_BUILTIN_TYPE(Float, Float, true, 4, 4, 4, "float", "FLOAT")
 NEVERD_BUILTIN_TYPE(Double, Float, true, 8, 8, 8, "double", "DOUBLE")
-NEVERD_BUILTIN_TYPE(LongDouble, Float, true, 8, 16, 12, "long double",
+NEVERD_BUILTIN_TYPE(LongDouble, Float, true, 0, 0, 0, "long double",
                     "long double")
 NEVERD_BUILTIN_TYPE(HResult, Integer, true, 4, 4, 4, "HRESULT", "HRESULT")
 

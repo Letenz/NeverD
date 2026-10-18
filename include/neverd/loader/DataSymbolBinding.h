@@ -14,6 +14,7 @@
 
 namespace neverd {
 struct BinaryImage;
+struct Import;
 
 /// A dynamic relocation binds this pointer slot to a symbol's address.
 /// Unknown (STT_NOTYPE) symbols remain untyped; TLS and callable resolvers
@@ -57,5 +58,15 @@ struct PointerVariableCallee {
 /// a routine, by the word's address.
 std::map<va_t, PointerVariableCallee>
 collectPointerVariableCallees(const BinaryImage &Image);
+
+/// The routine of this image the import \p Imp reaches: the loader starts
+/// the slot of a symbol the image defines itself, as the ELF PLT or GOT slot
+/// of a preemptible function, at that routine instead of binding it to
+/// another module's (collectPointerVariableCallees keys the slot to it).
+/// Only the loader writes such a slot, so a call through it, or through the
+/// stub that jumps through it, is a call to that routine under the name the
+/// slot is bound by.
+std::optional<va_t> ownRoutineOfImport(const BinaryImage &Image,
+                                       const Import &Imp);
 } // namespace neverd
 #endif

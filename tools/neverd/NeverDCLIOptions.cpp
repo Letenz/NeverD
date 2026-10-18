@@ -975,8 +975,9 @@ cl::opt<std::string> TypesDataModel(
 cl::opt<std::string> TypesRecordABI(
     "record-abi",
     cl::desc("With --data-model, lay records out as microsoft, itanium, "
-             "i386-sysv or aapcs32 compilers do (default: the data model's: "
-             "Itanium's for LP64, Microsoft's otherwise)"),
+             "apple-arm64, i386-sysv, android-i386 or aapcs32 compilers do "
+             "(default: the data model's: Itanium's for LP64, Microsoft's "
+             "otherwise)"),
     cl::init(""), cl::value_desc("abi"), cl::sub(TypesCmd));
 cl::opt<bool> TypesKeepGoing(
     "keep-going",

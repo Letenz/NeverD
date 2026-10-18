@@ -50,6 +50,17 @@ void InternalNoReturnIndex::clearMemoizedProofs() {
   StatedCalls.clear();
 }
 
+void InternalNoReturnIndex::trimMemoizedProofs(size_t MaxAnswers) {
+  std::lock_guard<std::mutex> Lock(Mutex);
+  Instructions.clear();
+  Transfers.clear();
+  if (Proofs.size() + Screens.size() + StatedCalls.size() > MaxAnswers) {
+    Proofs.clear();
+    Screens.clear();
+    StatedCalls.clear();
+  }
+}
+
 bool InternalNoReturnIndex::neverReturns(va_t Target, unsigned Depth) const {
   if (const auto Stated = Img.userNoReturnAt(Target))
     return *Stated;

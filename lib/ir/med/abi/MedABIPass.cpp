@@ -774,6 +774,15 @@ void recoverCallAbi(
             Callee != PointerCallees->end() &&
             (!IsIndirectImport || Callee->second.LocalEntry != InvalidVA))
           VariableCallee = &Callee->second;
+      // So does a call to the stub that jumps through such a slot, as a
+      // shared object's `b g@plt` reaches the g it defines.
+      if (IsDirectImport && PointerCallees)
+        if (const Import *Imp = Img->findImportAt(CI.TargetAddr);
+            Imp && Imp->IATAddr)
+          if (const auto Callee = PointerCallees->find(Imp->IATAddr);
+              Callee != PointerCallees->end() &&
+              Callee->second.LocalEntry != InvalidVA)
+            VariableCallee = &Callee->second;
 
       // An external placeholder collision, indirect call or import keeps its
       // existing output here (promoteFloatCallResult).

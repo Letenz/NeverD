@@ -24,8 +24,8 @@ FlatMember flat(std::string Name, Builtin Type, uint64_t Byte,
   Member.Type = makeBuiltin(Type);
   Member.BitOffset = Byte * 8;
   Member.StorageBitOffset = Byte * 8;
-  Member.StorageBits = builtinBytes(Type, Model) * 8;
-  Member.Alignment = builtinBytes(Type, Model);
+  Member.StorageBits = builtinBytes(Type, Model, defaultRecordABI(Model)) * 8;
+  Member.Alignment = builtinBytes(Type, Model, defaultRecordABI(Model));
   return Member;
 }
 
@@ -68,12 +68,29 @@ void expectRoundTrip(const RecordDef &Record,
 
 } // namespace
 
-TEST(LocalTypes, BuiltinSizesFollowTheDataModel) {
-  EXPECT_EQ(builtinBytes(Builtin::ULong, DataModel::LLP64), 4u);
-  EXPECT_EQ(builtinBytes(Builtin::ULong, DataModel::LP64), 8u);
-  EXPECT_EQ(builtinBytes(Builtin::WChar, DataModel::LP64), 4u);
-  EXPECT_EQ(builtinBytes(Builtin::WChar, DataModel::LLP64), 2u);
+TEST(LocalTypes, BuiltinSizesFollowTheDataModelAndTheRecordABI) {
+  EXPECT_EQ(
+      builtinBytes(Builtin::ULong, DataModel::LLP64, RecordABI::Microsoft), 4u);
+  EXPECT_EQ(builtinBytes(Builtin::ULong, DataModel::LP64, RecordABI::Itanium),
+            8u);
   EXPECT_EQ(pointerBytes(DataModel::ILP32), 4u);
+  // wchar_t and long double are as large as the target's compilers make
+  // them, which its data model does not say.
+  const auto sizes = [](DataModel Model, RecordABI ABI) {
+    return std::to_string(builtinBytes(Builtin::WChar, Model, ABI)) + " " +
+           std::to_string(builtinBytes(Builtin::LongDouble, Model, ABI));
+  };
+  EXPECT_EQ(sizes(DataModel::LLP64, RecordABI::Microsoft), "2 8");
+  EXPECT_EQ(sizes(DataModel::ILP32, RecordABI::Microsoft), "2 8");
+  EXPECT_EQ(sizes(DataModel::LP64, RecordABI::Itanium), "4 16");
+  EXPECT_EQ(sizes(DataModel::LP64, RecordABI::AppleARM64), "4 8");
+  EXPECT_EQ(sizes(DataModel::ILP32, RecordABI::I386SystemV), "4 12");
+  EXPECT_EQ(sizes(DataModel::ILP32, RecordABI::AndroidI386), "4 8");
+  EXPECT_EQ(sizes(DataModel::ILP32, RecordABI::AAPCS32), "4 8");
+  TypeLibrary ARM(DataModel::ILP32);
+  ARM.setRecordABI(RecordABI::AAPCS32);
+  EXPECT_EQ(ARM.builtinBytes(Builtin::LongDouble), 8u);
+  EXPECT_EQ(ARM.sizeOf(*makeBuiltin(Builtin::WChar)), 4u);
   EXPECT_STREQ(builtinInfo(Builtin::ULong).Windows, "ULONG");
   EXPECT_STREQ(builtinInfo(Builtin::ULongLong).Keywords, "unsigned long long");
 }
@@ -106,7 +123,8 @@ TEST(LocalTypes, ScalarsAlignAsTheirRecordABISays) {
             8u);
   EXPECT_EQ(alignment(DataModel::ILP32, RecordABI::I386SystemV, Builtin::Int),
             4u);
-  // An alignment is a power of two, a twelve-byte scalar's too.
+  // Microsoft's long double is a double, and the 64-bit System V targets'
+  // the x87's in sixteen bytes, aligned as large.
   EXPECT_EQ(alignment(DataModel::ILP32, std::nullopt, Builtin::LongDouble), 8u);
   EXPECT_EQ(alignment(DataModel::LP64, std::nullopt, Builtin::LongDouble), 16u);
   EXPECT_EQ(layoutRulesOf(RecordABI::I386SystemV), LayoutRules::Itanium);

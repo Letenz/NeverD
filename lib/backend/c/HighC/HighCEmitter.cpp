@@ -1965,11 +1965,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     const MsvcCallee *Msvc = msvcCallee(Identifier, Opts.Format);
     if (!Msvc)
       return;
-    const TypeRef This = msvcSyntheticThis(Identifier, *Msvc);
-    if (!This || This->Kind != NdTypeKind::Ptr || !This->Pointee ||
-        This->Pointee->Kind != NdTypeKind::Struct || This->Pointee->IsEnum)
-      return;
-    const std::string Record = cNamedTypeSpelling(This->Pointee->SourceName);
+    const std::string Record =
+        cNamedTypeSpelling(msvcSyntheticRecord(Identifier, *Msvc));
     if (Record.empty() || ExternFuncs.count(Record) ||
         isOwnFunctionName(Record, Funcs) ||
         !DeclaredSyntheticRecords.insert(Record).second)

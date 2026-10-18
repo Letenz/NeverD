@@ -51,6 +51,7 @@
 #include "neverd/backend/llvm/PEImportShadow.h"
 #include "neverd/libc/LibCResult.h"
 #include "neverd/libc/MinGWHeaderFunctions.h"
+#include "neverd/loader/DataSymbolBinding.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -327,6 +328,16 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
               DebugName =
                   symbolOfImportName(Imp->Name, Opts.Format, Opts.TheArch);
         }
+        // A call to a stub reaches its import, by whose name it calls; the
+        // stub's own body is not the import, and calls it by that name.
+        if (!Fn.isDeclaration() && !DebugName.empty() && Img)
+          if (const Import *Imp = Img->findImportStubAt(Addr);
+              Imp && !Imp->Name.empty() &&
+              cNameOfSymbol(DebugName, Opts.Format, Opts.TheArch) ==
+                  cNameOfSymbol(
+                      symbolOfImportName(Imp->Name, Opts.Format, Opts.TheArch),
+                      Opts.Format, Opts.TheArch))
+            DebugName.clear();
       }
     }
     // An image symbol carries the format's decoration; an LLVM name may have
@@ -340,14 +351,18 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
     if (!Fn.isDeclaration()) {
       CName = cDefinitionName(CName, Opts.Format);
       // The image's own copy of a C library routine, as a statically linked
-      // `atexit`, is not the routine a header or the runtime's tables
-      // declare the name for, and takes its address as a body lifted under
-      // an import's name does (`fprintf_1400014B0`), one of mingw-w64's
-      // own routines a Windows program links too (`__mingw_printf`).  So
-      // does a whole module's `main`, which C holds to the parameters and
-      // result it gives main, not those the code has.
+      // `atexit`, is not the routine a header declares the name for, and
+      // takes its address as a body lifted under an import's name does
+      // (`fprintf_1400014B0`), one of mingw-w64's own routines a Windows
+      // program links too (`__mingw_printf`).  So does the copy of a routine
+      // the runtime's tables type where the image imports the routine too,
+      // whose declaration takes the name; a copy alone keeps it, as the
+      // listing does (`_Unwind_Resume`).  So does a whole module's `main`,
+      // which C holds to the parameters and result it gives main, not those
+      // the code has.
       if (libc::isKnownFunction(CName) ||
-          libc::libcPrototype(CName, Opts.Format) ||
+          (libc::libcPrototype(CName, Opts.Format) &&
+           ImportCNames.count(CName.str())) ||
           (Opts.Format == BinaryFormat::COFF &&
            libc::mingwHeadersDeclare(CName)) ||
           (!OnlyFunction && CName == "main")) {
@@ -797,16 +812,28 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                 (Asm->getAsmString() == "ldmxcsr ($0)" ||
                  Asm->getAsmString() == "stmxcsr ($0)"))
               HasCIntrinsics = true;
-            // An ARM assembly the writer prints as an ACLE intrinsic
-            // (`msr tpidr_el0, $0` is __arm_wsr64, `dsb sy` __dsb(0xF))
-            // needs the header that declares it.
-            if ((Opts.TheArch == Arch::ARM || Opts.TheArch == Arch::AArch64) &&
-                renderInlineAsm(Opts.TheArch, Asm->getAsmString().str(),
-                                CI->getType()->isStructTy(), "result",
-                                /*ResultLive=*/true,
-                                std::vector<std::string>(CI->arg_size(), "0"))
-                    .SetIntrinsics)
+            // An assembly the writer prints as an intrinsic needs the header
+            // that declares it: ACLE's (`msr tpidr_el0, $0` is __arm_wsr64,
+            // `dsb sy` __dsb(0xF)), or MSVC's for a Windows image
+            // (`outb $0, $1` is __outbyte).
+            // The body refuses an assembly contract it cannot print; this
+            // only asks which header one it prints needs.
+            bool PrintsIntrinsic = false;
+            try {
+              PrintsIntrinsic =
+                  renderInlineAsm(Opts.TheArch, Asm->getAsmString().str(),
+                                  CI->getType()->isStructTy(), "result",
+                                  /*ResultLive=*/true,
+                                  std::vector<std::string>(CI->arg_size(), "0"))
+                      .SetIntrinsics;
+            } catch (const std::runtime_error &) {
+            }
+            if (PrintsIntrinsic &&
+                (Opts.TheArch == Arch::ARM || Opts.TheArch == Arch::AArch64))
               HasCIntrinsics = true;
+            if (PrintsIntrinsic && Opts.Format == BinaryFormat::COFF &&
+                (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64))
+              Headers.insert("intrin.h");
             continue;
           }
           auto *Callee = CI->getCalledFunction();
@@ -1490,8 +1517,16 @@ std::string LLVMCWriter::boundImportCallee(const llvm::CallBase &Call) const {
   const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Slot);
   const auto SlotVA =
       Load ? imageDataVA(Load->getPointerOperand()) : std::nullopt;
+  // So does the slot of a symbol the image defines itself, which the loader
+  // starts at that routine (ownRoutineOfImport).
+  const auto OwnRoutineSlot = [&] {
+    const Import *Imp = Img->findImportAt(*SlotVA);
+    return Imp && Imp->IATAddr == *SlotVA &&
+           ownRoutineOfImport(*Img, *Imp).has_value();
+  };
   if (!CalledSymbol &&
-      (!Img || !SlotVA || !Img->ImportStorageSlots.count(*SlotVA)))
+      (!Img || !SlotVA ||
+       (!Img->ImportStorageSlots.count(*SlotVA) && !OwnRoutineSlot())))
     return {};
   return resolveImportCalleeName(Call.getCalledOperand());
 }
@@ -1754,6 +1789,7 @@ static uint64_t argumentSlotBytes(const llvm::Function &Fn,
 void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
   const c_library::ImportPops StdcallPops =
       Img ? c_library::stdcallImportPops(*Img) : c_library::ImportPops();
+  std::set<std::string> SyntheticRecords;
   for (auto &Fn : Mod) {
     if (OnlyFunction) {
       // Selected fragments need declarations for their referenced providers,
@@ -1807,6 +1843,15 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
         continue;
       }
     if (const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format)) {
+      // Its `this` names its class record, which the unit declares
+      // incomplete first, as HighC does.  A name the unit gives a function
+      // or an object of its own is that, not a type.
+      if (const std::string Record =
+              cNamedTypeSpelling(msvcSyntheticRecord(Name, *Msvc));
+          !Record.empty() && !GlobalIdentifierAllocator.holds(Record) &&
+          !EmittedGlobalNames.count(Record) &&
+          SyntheticRecords.insert(Record).second)
+        OS << "typedef struct " << Record << " " << Record << ";\n";
       OS << msvcSyntheticPrototype(Name, *Msvc,
                                    Opts.TheArch == Arch::X64 && Msvc->FastCall)
          << ";\n";

@@ -880,7 +880,7 @@ private:
             Field.Type->K == GType::Name && primitive(Field.Type->Text)) {
           if (auto Bits = bitList(Field.Comment)) {
             const Builtin Storage = *primitive(Field.Type->Text);
-            const unsigned Size = builtinBytes(Storage, Library.dataModel());
+            const unsigned Size = Library.builtinBytes(Storage);
             if (LastBitfields)
               Draft.Members.push_back({"", makeBuiltin(Storage), true, 0, ""});
             uint32_t Used = 0;
@@ -896,7 +896,7 @@ private:
                   Getter && Getter->Return && Getter->Return->K == GType::Name)
                 if (std::optional<Builtin> Read =
                         primitive(Getter->Return->Text);
-                    Read && builtinBytes(*Read, Library.dataModel()) == Size)
+                    Read && Library.builtinBytes(*Read) == Size)
                   Type = *Read;
               Draft.Members.push_back(
                   {unescaped(Name), makeBuiltin(Type), true, Width, ""});
@@ -972,7 +972,7 @@ private:
     for (const GField &Field : Struct.Fields)
       if (Field.Type->K == GType::Array && Field.Type->Inner->K == GType::Name)
         if (std::optional<Builtin> Unit = primitive(Field.Type->Inner->Text))
-          Bytes += Field.Type->Count * builtinBytes(*Unit, Library.dataModel());
+          Bytes += Field.Type->Count * Library.builtinBytes(*Unit);
     return Bytes;
   }
 
@@ -1020,8 +1020,7 @@ private:
   /// whether they are floating.
   bool sameValues(Builtin A, Builtin B) const {
     const BuiltinInfo &First = builtinInfo(A), &Second = builtinInfo(B);
-    return builtinBytes(A, Library.dataModel()) ==
-               builtinBytes(B, Library.dataModel()) &&
+    return Library.builtinBytes(A) == Library.builtinBytes(B) &&
            First.Signed == Second.Signed &&
            (First.Class == BuiltinClass::Float) ==
                (Second.Class == BuiltinClass::Float);
@@ -1043,7 +1042,7 @@ private:
       if (!Named || !sameValues(*Named, *Windows))
         fail(Line, Column,
              "'" + Name + "' is the builtin of " +
-                 std::to_string(builtinBytes(*Windows, Library.dataModel())) +
+                 std::to_string(Library.builtinBytes(*Windows)) +
                  " bytes that Windows names so; a type cannot make it "
                  "another");
       return true;
@@ -1073,8 +1072,7 @@ private:
         continue;
       auto Enum = std::make_shared<EnumDef>();
       Enum->Underlying = *primitive(Type->Text);
-      const unsigned Bits =
-          builtinBytes(Enum->Underlying, Library.dataModel()) * 8;
+      const unsigned Bits = Library.builtinBytes(Enum->Underlying) * 8;
       for (const auto &[Value, Number] : Found->second) {
         uint64_t Raw = uint64_t(Number);
         if (Bits < 64) {

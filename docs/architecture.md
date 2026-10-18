@@ -243,18 +243,29 @@ record ABI does (`TypeLayout.h`):
 
 A library's record ABI (`RecordABIs.def`) says what its data model does not:
 whether bit-fields go as Microsoft's compilers or the Itanium ABI place them,
-and how far a scalar aligns in a record, four for long long and double under
-the i386 System V ABI. The C API takes a program's from its platform and
+how far a scalar aligns in a record, four for long long and double under
+the i386 System V ABI, and how large wchar_t and long double are
+(`builtinBytes`). wchar_t is Windows' 16-bit character and four bytes
+elsewhere; long double is a double to Microsoft's compilers, 32-bit ARM's,
+Apple's 64-bit ARM and Android's i386, and the x87's 12 bytes on i386 System
+V and 16 on the 64-bit System V targets, as Clang's `__SIZEOF_LONG_DOUBLE__`
+says for each. The C API takes a program's from its platform and
 architecture (`recordABIOf`), so a 32-bit Linux program's records read,
 parse and render as GCC lays them out, and an ARM one's as the AAPCS does.
 Parsing and every renderer read the library's ABI; nothing else carries one.
+MinGW's compilers lay records out as Microsoft's but keep the x87's long
+double, which the Microsoft ABI does not hold: a MinGW program's DWARF long
+double reads as its bytes.
 
 A source reads whole or not at all. The C API keeps the user's declarations
 in order and reads them again over the program's types whenever those are
 read anew, as after loading another PDB. A declaration that no longer reads
 is left out and reported (`declarationProblems`), never silently dropped.
-The worker writes the declarations to the project folder's `types.json` at once;
-they do not join undo history.
+The worker writes the declarations to the project folder's `types.json` at once,
+each a step of undo history: the history holds the file as a table whose rows
+lie at their places in the order made (`NEVERD_USER_STATE_ORDERED` in the
+worker's `UserStateTables.def`), and undo takes the last back off the file and
+the program's types.
 
 Header libraries (`HeaderLibraries.def`, `HeaderLibrary.h`) give a program
 the system's types and prototypes that its debug information lacks: the
@@ -624,8 +635,11 @@ graph and machine-body caches. Each selection owns independent output IR,
 replays the ordinary proof obligations and recomputes caller-dependent
 register/argument summaries. Exact candidate and verified-entry inventories
 bind reuse; selection cannot silently change a cached function's boundaries.
-No-return proof and lazy-name memo entries are cleared between runs, so they
-do not accumulate across navigation. Image indexes scale with the loaded
+No-return answers (proofs, screens and stated calls) depend only on the image
+and those facts, so later selections keep them, up to
+`kMaxRetainedNoReturnAnswers`; the screened instructions behind them and the
+lazy-name memo are cleared between runs and do not accumulate across
+navigation. Image indexes scale with the loaded
 metadata. The session cache finds graphs and bodies through a hash index and
 has its own allowances (`kMaxPipelineCallGraphEntries`,
 `kMaxPipelineCallGraphBytes` and `kMaxPipelineCallBodyBytes` in
@@ -641,7 +655,9 @@ start, whose run adds its own entry and so keys another cache.
 Reload, function edits, signature matching and analysis-policy changes retire
 the cache while its image/debug owners are alive. Feature generations are
 checked even after navigation cleared the preceding pipeline result. COFF
-handler discovery conservatively retires facts before expanding metadata.
+handler discovery retires the facts when it adds records or decodes language
+tables (`coff_loader::exceptionHandlerState` before and after it); moving
+between functions it adds nothing for keeps them.
 Other architectures and whole-image analyses retain run-local ownership.
 Within one LowIR build, module jump-table arbitration is reused while its
 function bodies remain unchanged. Any body rebuild retires that result before
@@ -3076,6 +3092,14 @@ either stays inside the jumping function. A guessed entry that another function
 absorbed this way is audited as `AbsorbedFunctionChunk` rather than decompiled
 twice.
 
+A whole unit (`neverd_decompile_all`, in every language) begins with a
+`/* neverd.not-decompiled: NAME at 0xENTRY: REASON */` line for each function
+the pipeline refused (`RejectedLowIR`, `RejectedIncomplete`,
+`RejectedUnwindlessNonLeaf`, `MedIRFailed`), where it would otherwise be
+missing with no word. The reason is the audit's disposition and its evidence,
+as `--func` reports it for that function (`rejected-incomplete; decode failure
+at 0xC`).
+
 An x86 function whose whole body is one direct unconditional jump, after an
 optional `endbr` marker, passes its caller's return address, stack and
 arguments on untouched, so function detection makes the jump target an entry
@@ -3740,6 +3764,25 @@ LLVM emitters run each as that inline assembly, which LLVM C reads back the
 same way. SYSP, MRRS and MSRR move a register pair no intrinsic carries,
 and fail clearly.
 
+An SMC or HVC #0 follows Arm's SMC Calling Convention: the lift binds its
+results in x0-x3 (r0-r3) as the outputs of a multi-output intrinsic, and
+LowToMed gives it the registers it reads, its function identifier and
+arguments in x0-x7, or r0-r3 on ARM, whose procedure call standard preserves
+r4-r7 (`smcccArgumentRegisters`, `MedSmcccConvention.cpp`). Both C routes pin
+each value to its register for the instruction; a function returns a result
+its caller reads, as with a system call. An SMC or HVC of another immediate
+keeps no register contract.
+
+A Linux system call whose number its block sets reads only the argument
+registers of the kernel's handler (`LinuxSyscallArguments.def`, which
+`scripts/generate_linux_syscall_arguments.py` generates from a kernel tree's
+system call tables and handler prototypes, for x86-64, AArch64 and ARM EABI,
+where a 64-bit argument takes an even-aligned register pair); the rest are
+no parameters of a wrapper, and the C writers pass them as 0. x86-64 passes
+RDX:RSI and R8:R10 as one operand each, read whole once either half is
+(`x64SyscallOperandRead`). A number the table does not list keeps every
+argument register.
+
 `ir/FloatConversion.h` owns the result policy for scalar float-to-integer
 operations: saturation for the non-x86 path and x86 indefinite results for
 invalid conversions. HighC and the LLVM lowering select that same policy;
@@ -3995,6 +4038,12 @@ specializes strictly lifted LowIR before the common MedIR boundary. Its
 provider owns immutable image evidence, `SymExec` owns instruction semantics,
 and the residual CFG reuses the ordinary SSA and source backends. Recovery
 evidence remains separate from native occurrence and binary patch certificates.
+
+`SymIntegerIntrinsics` owns exact bit-vector evaluation of LowIR SHUFPS.
+It selects 32-bit words within each 128-bit lane and captures both original
+inputs before publishing a possibly aliased output. The lifter continues to
+own memory-source loads and encoding-specific upper-register effects.
+Unsupported IDs and malformed shapes retain the unmodelled execution path.
 
 `InterpreterSpecialization` owns bounded backward propagation of pending bit
 demands after a failed attempt. It reuses the scalar evaluator without changing

@@ -140,7 +140,7 @@ std::string LuaWriter::write(const ViewValue &Value, const std::string &At,
 
 void LuaWriter::enumeration(const ViewEnum &Enum, std::string &Out) const {
   const EnumDef &Def = *Enum.Enum;
-  const unsigned Bytes = builtinBytes(Def.Underlying, Library.dataModel());
+  const unsigned Bytes = Library.builtinBytes(Def.Underlying);
   const bool Signed = builtinInfo(Def.Underlying).Signed;
   Out += "-- " + Enum.Doc + ": an enumeration of " + std::to_string(Bytes) +
          " bytes, which fields hold as integers.\n";

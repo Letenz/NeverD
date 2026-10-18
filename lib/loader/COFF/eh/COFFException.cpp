@@ -405,6 +405,17 @@ void ensureExceptionHandlers(BinaryImage &Img, const std::set<va_t> &Entries) {
   Img.ExceptionMetadata.rebuildIndex();
 }
 
+ExceptionHandlerState exceptionHandlerState(const BinaryImage &Img) {
+  ExceptionHandlerState State;
+  State.Functions = Img.ExceptionMetadata.Functions.size();
+  for (const ExceptionFunction &F : Img.ExceptionMetadata.Functions)
+    State.ResolvedPersonalities += F.PersonalityVA && F.LanguageTablesResolved;
+  State.KnownCodeRanges = Img.KnownCodeRanges.size();
+  State.Symbols = Img.Symbols.size();
+  State.ParseStatus = Img.ExceptionMetadata.ParseStatus;
+  return State;
+}
+
 void resolveExceptionHandlers(BinaryImage &Img) {
   ensureExceptionHandlers(Img, Img.LoadOnlyFunctionEntries);
 }

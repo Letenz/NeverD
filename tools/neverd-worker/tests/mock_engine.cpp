@@ -106,6 +106,9 @@ struct MockSession {
   /// The local types the user declared, and the fixture's they removed.
   std::vector<std::string> declaredTypes;
   std::set<std::string> forgottenTypes;
+  /// The declarations in the order made, as the engine keeps them:
+  /// {"language","source"} or {"forget":[name,...]}.
+  Json declarations = Json::array();
   std::vector<std::uint64_t> functions = listedFunctions({});
   neverd_load_progress_fn progress = nullptr;
   void *progressUser = nullptr;
@@ -1312,8 +1315,41 @@ const char *neverd_local_type_json(neverd_session_t s, const char *name,
   return copy(type.dump());
 }
 
+/// The structure \p text names after `struct `, declared; none when it
+/// names none.
+std::string declareStructure(MockSession &state, const std::string &text) {
+  const auto at = text.find("struct ");
+  if (at == std::string::npos)
+    return {};
+  std::string name;
+  for (auto i = at + 7;
+       i < text.size() &&
+       (std::isalnum(static_cast<unsigned char>(text[i])) || text[i] == '_');
+       ++i)
+    name += text[i];
+  if (std::find(state.declaredTypes.begin(), state.declaredTypes.end(), name) ==
+      state.declaredTypes.end())
+    state.declaredTypes.push_back(name);
+  state.forgottenTypes.erase(name);
+  return name;
+}
+
+/// Removes the types \p names lists: those declared, or the fixture's.
+void forgetTypes(MockSession &state, const Json &names) {
+  for (const auto &name : names) {
+    auto &declared = state.declaredTypes;
+    const auto found =
+        std::find(declared.begin(), declared.end(), name.get<std::string>());
+    if (found != declared.end())
+      declared.erase(found);
+    else
+      state.forgottenTypes.insert(name.get<std::string>());
+  }
+}
+
 /// Declares the structure the source names after `struct `; a source that
-/// says NOPE has a problem at its place instead.
+/// says NOPE has a problem at its place instead.  A declaration without
+/// problems goes after the others, as the engine keeps them.
 const char *neverd_local_types_declare(neverd_session_t s, const char *source,
                                        const char *options) {
   session(s)->error.clear();
@@ -1328,21 +1364,15 @@ const char *neverd_local_types_declare(neverd_session_t s, const char *source,
     problems.push_back({{"line", line},
                         {"column", column},
                         {"message", "'NOPE' names no type"}});
-  } else if (const auto at = text.find("struct "); at != std::string::npos) {
-    std::string name;
-    for (auto i = at + 7;
-         i < text.size() &&
-         (std::isalnum(static_cast<unsigned char>(text[i])) || text[i] == '_');
-         ++i)
-      name += text[i];
-    if (std::find(session(s)->declaredTypes.begin(),
-                  session(s)->declaredTypes.end(),
-                  name) == session(s)->declaredTypes.end())
-      session(s)->declaredTypes.push_back(name);
-    session(s)->forgottenTypes.erase(name);
-    types.push_back(name);
+  } else {
+    if (const std::string name = declareStructure(*session(s), text);
+        !name.empty())
+      types.push_back(name);
+    session(s)->declarations.push_back(
+        {{"language", parsed.is_object() ? parsed.value("language", "c")
+                                         : std::string("c")},
+         {"source", text}});
   }
-  (void)parsed;
   return copy(Json{
       {"types", types}, {"prototypes", Json::array()}, {"problems", problems}}
                   .dump());
@@ -1355,28 +1385,40 @@ const char *neverd_local_types_forget(neverd_session_t s, const char *names) {
     session(s)->error = "name the types to remove in a list";
     return nullptr;
   }
-  for (const auto &name : parsed) {
-    auto &declared = session(s)->declaredTypes;
-    const auto found =
-        std::find(declared.begin(), declared.end(), name.get<std::string>());
-    if (found != declared.end())
-      declared.erase(found);
-    else
-      session(s)->forgottenTypes.insert(name.get<std::string>());
-  }
+  forgetTypes(*session(s), parsed);
+  session(s)->declarations.push_back({{"forget", parsed}});
   return copy(Json{{"removed", parsed}, {"usedBy", Json::array()}}.dump());
 }
 
 const char *neverd_type_declarations_json(neverd_session_t s) {
   session(s)->error.clear();
-  Json rows = Json::array();
-  for (const auto &name : session(s)->declaredTypes)
-    rows.push_back({{"language", "c"}, {"source", "struct " + name + " {};"}});
-  return copy(rows.dump());
+  return copy(session(s)->declarations.dump());
 }
 
+/// Reads the project's types.json and makes its declarations again, in
+/// order, over the fixture's types.
 int neverd_type_declarations_load(neverd_session_t s) {
-  session(s)->error.clear();
+  auto &state = *session(s);
+  state.error.clear();
+  Json declarations = Json::array();
+  const auto file = neverd::project_files::path(
+      std::filesystem::path(state.path), neverd::project_files::File::Types);
+  if (std::filesystem::exists(file)) {
+    std::ifstream input(file, std::ios::binary);
+    declarations = Json::parse(input, nullptr, false);
+    if (!declarations.is_array()) {
+      state.error = "type declarations sidecar is not valid JSON";
+      return -1;
+    }
+  }
+  state.declaredTypes.clear();
+  state.forgottenTypes.clear();
+  for (const auto &row : declarations)
+    if (row.contains("forget"))
+      forgetTypes(state, row.at("forget"));
+    else
+      declareStructure(state, row.value("source", std::string()));
+  state.declarations = std::move(declarations);
   return 0;
 }
 

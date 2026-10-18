@@ -1,3 +1,4 @@
+#include "CSourceText.h"
 #include "HighCHostExecution.h"
 #include "NeverDLiftFixture.h"
 
@@ -343,7 +344,7 @@ TEST_F(X86_64_Intrinsics, LlvmC_StoreForwarding_NoFrameInClflush) {
   auto r = decompileToC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled.c");
-  auto pos = content.find("test_clflush");
+  auto pos = neverd::test::cDefinitionAt(content, "test_clflush_intrinsic");
   ASSERT_NE(pos, std::string::npos);
   auto fn_body = content.substr(pos, content.find("\n}\n", pos) - pos + 3);
   EXPECT_TRUE(fn_body.find("frame") == std::string::npos)
@@ -561,7 +562,7 @@ TEST_F(X86_64_Intrinsics, LlvmC_CpuidReturnMatchesSignature) {
   auto r = decompileToC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled.c");
-  auto pos = content.find("test_cpuid_return_eax");
+  auto pos = neverd::test::cDefinitionAt(content, "test_cpuid_return_eax");
   ASSERT_NE(pos, std::string::npos) << "test_cpuid_return_eax not found";
   auto fn_body = content.substr(pos, content.find("\n}\n", pos) - pos + 3);
   EXPECT_TRUE(fn_body.find("__cpuid") != std::string::npos ||
@@ -670,7 +671,7 @@ TEST_F(X86_64_Intrinsics, LlvmC_RdtscReturnCollapsed) {
   auto r = decompileToC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled.c");
-  auto pos = content.find("test_rdtsc_return");
+  auto pos = neverd::test::cDefinitionAt(content, "test_rdtsc_return");
   ASSERT_NE(pos, std::string::npos);
   auto fn_body = content.substr(pos, content.find("\n}\n", pos) - pos + 3);
   EXPECT_TRUE(fn_body.find("<< 0x20") == std::string::npos)
@@ -682,7 +683,7 @@ TEST_F(X86_64_Intrinsics, LlvmC_CpuidNoIntermediateVar) {
   auto r = decompileToC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled.c");
-  auto pos = content.find("test_cpuid_return_eax");
+  auto pos = neverd::test::cDefinitionAt(content, "test_cpuid_return_eax");
   ASSERT_NE(pos, std::string::npos);
   auto fn_body = content.substr(pos, content.find("\n}\n", pos) - pos + 3);
   EXPECT_TRUE(fn_body.find("cpuInfo[0]") != std::string::npos)

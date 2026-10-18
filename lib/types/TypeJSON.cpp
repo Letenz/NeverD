@@ -175,7 +175,8 @@ std::optional<DataModel> dataModelNamed(llvm::StringRef Name) {
 }
 
 std::optional<RecordABI> recordABINamed(llvm::StringRef Name) {
-#define NEVERD_RECORD_ABI(Id, Spelling, Rules, ScalarAlignLimit)               \
+#define NEVERD_RECORD_ABI(Id, Spelling, Rules, ScalarAlignLimit, WCharBytes,   \
+                          LongDoubleBytes)                                     \
   if (Name == Spelling)                                                        \
     return RecordABI::Id;
 #include "neverd/types/RecordABIs.def"
@@ -225,7 +226,7 @@ llvm::json::Object typeJSON(const TypeLibrary &Library, const LocalType &Type,
   } else if (Type.Enum) {
     const EnumDef &Enum = *Type.Enum;
     const bool Signed = builtinInfo(Enum.Underlying).Signed;
-    Out["size"] = builtinBytes(Enum.Underlying, Library.dataModel());
+    Out["size"] = Library.builtinBytes(Enum.Underlying);
     Out["underlying"] = Build.spell(*makeBuiltin(Enum.Underlying));
     Out["flags"] = Enum.Flags;
     llvm::json::Array Values;

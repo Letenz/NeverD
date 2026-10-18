@@ -204,6 +204,49 @@ TEST(MachineInstructionText, AArch64KeepsSystemRegistersAndOperations) {
   }
 }
 
+/// The operations the instruction \p Bytes lifts to.
+std::vector<LowOp> liftOps(Arch TheArch, InstructionMode Mode,
+                           std::vector<uint8_t> Bytes) {
+  Decoder Decode;
+  EXPECT_TRUE(Decode.init(TheArch, Mode));
+  DecodedInsn Instruction;
+  EXPECT_EQ(
+      Decode.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, Instruction),
+      static_cast<int>(Bytes.size()));
+  std::vector<LowOp> Ops;
+  Decode.liftToLow(Instruction, Ops);
+  return Ops;
+}
+
+/// The registers \p Ops copies a temporary into after their intrinsic: the
+/// results bound to it.
+std::vector<uint64_t> boundResults(const std::vector<LowOp> &Ops) {
+  std::vector<uint64_t> Registers;
+  for (const LowOp &Op : Ops)
+    if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 && Op.Inputs[0].isTemp() &&
+        Op.Output.isReg())
+      Registers.push_back(Op.Output.Offset);
+  return Registers;
+}
+
+TEST(MachineInstructionText, SmcccCallsBindTheirResults) {
+  // SMC and HVC #0 return x0-x3 (r0-r3); another immediate is no call of
+  // the convention.
+  const std::vector<uint64_t> X0X3 = {0, 8, 16, 24};
+  EXPECT_EQ(boundResults(liftOps(Arch::AArch64, InstructionMode::Default,
+                                 {0x03, 0x00, 0x00, 0xd4})),
+            X0X3); // smc #0
+  EXPECT_EQ(boundResults(liftOps(Arch::AArch64, InstructionMode::Default,
+                                 {0x02, 0x00, 0x00, 0xd4})),
+            X0X3); // hvc #0
+  EXPECT_TRUE(boundResults(liftOps(Arch::AArch64, InstructionMode::Default,
+                                   {0x23, 0x00, 0x00, 0xd4}))
+                  .empty()); // smc #1
+  EXPECT_EQ(boundResults(liftOps(Arch::ARM, InstructionMode::ARM,
+                                 {0x70, 0x00, 0x60, 0xe1})),
+            (std::vector<uint64_t>{0, 4, 8, 12})); // smc #0
+}
+
 /// The listing's text of the AArch64 instruction \p Word in lowercase, with
 /// capstone's `c0xf` spelled `c15`; empty where it does not decode.
 std::string listingText(csh Handle, uint32_t Word) {
@@ -485,6 +528,27 @@ entry:
             std::string::npos)
       << C;
   EXPECT_EQ(C.find("$0"), std::string::npos) << C;
+}
+
+TEST(MachineInstructionText, LLVMCPortIoTakesThePortFirst) {
+  // AT&T assembly writes OUT's data first; MSVC's intrinsics take the port
+  // first, an immediate one as the byte the instruction holds.
+  const std::string C = llvmC(R"(
+define i8 @port_io(i16 %port, i32 %value) {
+entry:
+  %byte = call i8 asm sideeffect "inb $1, $0", "={ax},N,~{memory}"(i8 96)
+  call void asm sideeffect "outb $0, $1", "{ax},N,~{memory}"(i8 %byte, i8 -128)
+  call void asm sideeffect "outl $0, $1", "{ax},{dx},~{memory}"(i32 %value, i16 %port)
+  %word = call i16 asm sideeffect "inw $1, $0", "={ax},{dx},~{memory}"(i16 %port)
+  ret i8 %byte
+}
+)",
+                              Arch::X64);
+  EXPECT_NE(C.find("__inbyte(0x60)"), std::string::npos) << C;
+  EXPECT_NE(C.find("__outbyte(0x80, "), std::string::npos) << C;
+  EXPECT_NE(C.find("__outdword(port, value)"), std::string::npos) << C;
+  EXPECT_NE(C.find("__inword(port)"), std::string::npos) << C;
+  EXPECT_EQ(C.find("-128"), std::string::npos) << C;
 }
 
 } // namespace

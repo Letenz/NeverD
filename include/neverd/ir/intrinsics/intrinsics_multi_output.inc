@@ -4,6 +4,8 @@
 // output_count = number of register-level outputs beyond the primary return.
 // Used by cf_structurer to recognize the INTRINSIC + COPY-clobber pattern
 // and by emitters to render proper multi-output C code.
+// The counts are aligned in a column, which clang-format would undo.
+// clang-format off
 
 // x86/x64
 MULTI_OUT(Intrinsic::Cpuid,   4);  // eax, ebx, ecx, edx
@@ -24,6 +26,13 @@ MULTI_OUT(Intrinsic::Scasd, 1);
 MULTI_OUT(Intrinsic::Scasq, 1);
 
 // AArch64 FEAT_MOPS set prologue: destination, remaining count, NZCV.
+// SMC and HVC #0 under the SMC Calling Convention: x0-x3 (r0-r3), which
+// the lift binds only for that immediate (smcccArgumentRegisters).
+MULTI_OUT(Intrinsic::Smc,    4);
+MULTI_OUT(Intrinsic::Hvc,    4);
+MULTI_OUT(Intrinsic::ArmSmc, 4);
+MULTI_OUT(Intrinsic::ArmHvc, 4);
+
 MULTI_OUT(Intrinsic::A64_MopsSetP,   3);
 MULTI_OUT(Intrinsic::A64_MopsSetPN,  3);
 MULTI_OUT(Intrinsic::A64_MopsSetPT,  3);

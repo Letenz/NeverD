@@ -31,6 +31,7 @@
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/ir/low/X87PartialRemainder.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/symbolic/SymIntegerIntrinsics.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/SmallVector.h"
@@ -926,6 +927,11 @@ StepResult SymExec::step(const LowOp &Op, const SymCallEffect *CallEffect,
     return StepResult::Continue;
 
   case NdOp::INTRINSIC:
+    if (auto Value = evaluateIntegerIntrinsic(
+            Ctx, Op, [&](const NdVar &Input) { return read(Input); })) {
+      writeResult(Op.Output, *Value);
+      return StepResult::Continue;
+    }
     return stepX87Intrinsic(Op);
 
   default:

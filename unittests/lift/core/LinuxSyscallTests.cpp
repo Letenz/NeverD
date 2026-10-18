@@ -12,6 +12,8 @@
 
 #include "NeverDLiftFixture.h"
 
+#include "neverd/ir/intrinsics/X64Syscall.h"
+
 #include <fstream>
 #include <sstream>
 
@@ -40,6 +42,25 @@ std::string cFunction(const std::string &C, const std::string &Name) {
 
 } // namespace
 
+// The arities the kernel's handlers take: one register per argument, and on
+// ARM an even-aligned pair per 64-bit one.
+TEST(LinuxSyscallArguments, CountTheKernelHandlersRegisters) {
+  using neverd::Arch;
+  using neverd::linuxSyscallArgumentCount;
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::X64, 0), 3u);       // read
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::X64, 39), 0u);      // getpid
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::X64, 9), 6u);       // mmap
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::AArch64, 56), 4u);  // openat
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::AArch64, 172), 0u); // getpid
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 180), 6u);     // pread64
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 194), 4u);     // ftruncate64
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 192), 6u);     // mmap2
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::X64, 100000), std::nullopt);
+  // RDX:RSI and R8:R10 are read whole once either half is.
+  EXPECT_EQ(neverd::x64SyscallRegistersRead(2), 3u);
+  EXPECT_EQ(neverd::x64SyscallRegistersRead(4), 5u);
+}
+
 class LinuxSyscall : public NeverDLiftTest {
 protected:
   std::string highC(const fs::path &Object) {
@@ -56,7 +77,7 @@ TEST_F(LinuxSyscall, AArch64CallsPassTheirRegisters) {
             std::string::npos)
       << C;
   EXPECT_NE(cFunction(C, "a64_linux_six")
-                .find("neverd_a64_linux_syscall(0x3F, 0x14, 0x15, 0x16, 0x17, "
+                .find("neverd_a64_linux_syscall(0x5AB, 0x14, 0x15, 0x16, 0x17, "
                       "0x18, 0x19)"),
             std::string::npos)
       << C;
@@ -77,8 +98,8 @@ TEST_F(LinuxSyscall, ARMCallsPassTheirRegisters) {
       << C;
   EXPECT_NE(
       cFunction(C, "arm_linux_seven")
-          .find(
-              "neverd_arm_linux_syscall(4, 10, 0xB, 0xC, 0xD, 0xE, 0xF, 0x10)"),
+          .find("neverd_arm_linux_syscall(0x5AB, 10, 0xB, 0xC, 0xD, 0xE, 0xF, "
+                "0x10)"),
       std::string::npos)
       << C;
   EXPECT_EQ(cFunction(C, "arm_oabi_call").find("linux_syscall"),
@@ -125,7 +146,7 @@ TEST_F(LinuxSyscall, LLVMCCallsTheHelper) {
   EXPECT_NE(C.find("static inline uint64_t neverd_a64_linux_syscall("),
             std::string::npos)
       << C;
-  EXPECT_NE(C.find("neverd_a64_linux_syscall(0x3F, "), std::string::npos) << C;
+  EXPECT_NE(C.find("neverd_a64_linux_syscall(0x5AB, "), std::string::npos) << C;
 }
 
 // The helpers build for the system the code was lifted from.

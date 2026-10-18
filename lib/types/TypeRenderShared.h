@@ -53,7 +53,10 @@ std::string escapedName(Language Lang, llvm::StringRef Name);
 /// another type took gets a number.
 class NameSpelling {
 public:
-  NameSpelling(const TypeLibrary &Library, Language Lang);
+  /// \p CppToo, for C: names C++ reads too, which step around C++'s
+  /// keywords as well, as the C a C/C++ view shows must; the C a decompiled
+  /// unit embeds keeps the names C allows, as its code spells them.
+  NameSpelling(const TypeLibrary &Library, Language Lang, bool CppToo = false);
 
   Language language() const { return Lang; }
   /// The spelling of the type named \p Name.
@@ -76,6 +79,9 @@ private:
                    llvm::StringSet<> &Taken);
 
   Language Lang;
+  /// The language whose keywords the names step around: C++'s for C that
+  /// C++ reads too.
+  Language Reserved;
   llvm::StringMap<std::string> Types;
   std::map<const EnumDef *, std::vector<std::string>> Enumerators;
   std::vector<std::pair<std::string, std::string>> Renamed;

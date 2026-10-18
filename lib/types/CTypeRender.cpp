@@ -47,10 +47,10 @@ const char *conventionSpelling(CallingConvention Convention) {
   return "";
 }
 
-/// A builtin as exact-width C spells it.
-std::string portableBuiltin(Builtin Type, DataModel Model) {
+/// A builtin as exact-width C spells it for \p Library's program.
+std::string portableBuiltin(Builtin Type, const TypeLibrary &Library) {
   const BuiltinInfo &Info = builtinInfo(Type);
-  const unsigned Bytes = builtinBytes(Type, Model);
+  const unsigned Bytes = Library.builtinBytes(Type);
   switch (Info.Class) {
   case BuiltinClass::Void:
     return "void";
@@ -77,9 +77,12 @@ std::string portableBuiltin(Builtin Type, DataModel Model) {
 
 class CWriter {
 public:
-  CWriter(const TypeLibrary &Library, const RenderOptions &Options)
+  /// \p Embedded: the C a decompiled unit holds, whose code spells the
+  /// members as C allows; any other C names what C++ reads too.
+  CWriter(const TypeLibrary &Library, const RenderOptions &Options,
+          bool Embedded = false)
       : Library(Library), Options(Options), Cpp(Options.Lang == Language::Cpp),
-        Names(Library, Options.Lang) {}
+        Names(Library, Options.Lang, /*CppToo=*/!Embedded) {}
 
   std::string builtin(Builtin Type) const;
   std::string declare(const TypeExpr &Type, std::string Declarator) const;
@@ -149,7 +152,7 @@ std::string CWriter::builtin(Builtin Type) const {
   case BuiltinSpelling::Keywords:
     return Info.Keywords;
   case BuiltinSpelling::Portable:
-    return portableBuiltin(Type, Library.dataModel());
+    return portableBuiltin(Type, Library);
   }
   return Info.Keywords;
 }
@@ -305,7 +308,7 @@ std::string CWriter::memberAlignment(const TypeExpr &Type) {
   if (!Held || Held->Kind != TypeExprKind::Builtin)
     return {};
   const BuiltinInfo &Info = builtinInfo(Held->TheBuiltin);
-  const unsigned Bytes = builtinBytes(Held->TheBuiltin, Library.dataModel());
+  const unsigned Bytes = Library.builtinBytes(Held->TheBuiltin);
   if (Bytes != 8 || Library.alignOf(*Held) != 8 ||
       (Info.Class != BuiltinClass::Integer &&
        Info.Class != BuiltinClass::Float))
@@ -369,7 +372,7 @@ std::string CWriter::enumHead(const EnumDef &Enum) {
 
 void CWriter::enumerators(const EnumDef &Enum, unsigned Indent,
                           std::string &Out) {
-  const unsigned Bytes = builtinBytes(Enum.Underlying, Library.dataModel());
+  const unsigned Bytes = Library.builtinBytes(Enum.Underlying);
   const bool Signed = builtinInfo(Enum.Underlying).Signed;
   bool Hex = Enum.Flags;
   for (const Enumerator &Value : Enum.Values)
@@ -590,8 +593,7 @@ void CWriter::record(const LocalType &Type, std::string &Out) {
 void CWriter::enumeration(const LocalType &Type, std::string &Out) {
   const EnumDef &Enum = *Type.Enum;
   Out += "// " + Type.Name + ": " +
-         std::to_string(builtinBytes(Enum.Underlying, Library.dataModel())) +
-         " bytes\n";
+         std::to_string(Library.builtinBytes(Enum.Underlying)) + " bytes\n";
   // An enumeration no declaration lists the values of, as Microsoft's
   // compilers take `typedef enum _X X;` alone, has its underlying type
   // stated: C has no enumeration without enumerators, and C23 and C++ take
@@ -632,8 +634,7 @@ void CWriter::asserts(const LocalType &Type, std::string &Out) {
   const std::string Quoted = stringLiteralBody(Type.Name);
   if (Type.Kind == TypeKind::Enum) {
     Out += std::string(Assert) + "(sizeof(" + Name + ") == " +
-           std::to_string(
-               builtinBytes(Type.Enum->Underlying, Library.dataModel())) +
+           std::to_string(Library.builtinBytes(Type.Enum->Underlying)) +
            ", \"" + Quoted + "\");\n";
     return;
   }
@@ -705,7 +706,7 @@ std::string namedBuiltins(const CWriter &Writer, const TypeLibrary &Library,
                           bool Cpp) {
   std::string Out;
   for (Builtin Type : Writer.builtins()) {
-    const std::string Portable = portableBuiltin(Type, Library.dataModel());
+    const std::string Portable = portableBuiltin(Type, Library);
     if (Type == Builtin::HResult)
       Out += "\n#ifndef _HRESULT_DEFINED\n#define _HRESULT_DEFINED\ntypedef " +
              Portable + " HRESULT;\n#endif\n";
@@ -756,7 +757,7 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
     Out += "\n#if !defined(_WINDEF_) && !defined(_NTDEF_)\n";
     for (Builtin Type : Writer.builtins()) {
       const BuiltinInfo &Info = builtinInfo(Type);
-      const std::string Portable = portableBuiltin(Type, Library.dataModel());
+      const std::string Portable = portableBuiltin(Type, Library);
       // A keyword, such as char16_t in C++ or long double, needs no
       // declaring.
       if (Portable == Info.Windows ||
@@ -775,12 +776,11 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
   }
   case BuiltinSpelling::Keywords:
     if (LongChecked)
-      Out +=
-          "\nstatic_assert(sizeof(long) == " +
-          std::to_string(builtinBytes(Builtin::Long, Library.dataModel())) +
-          ", \"these types need a " +
-          std::to_string(builtinBytes(Builtin::Long, Library.dataModel()) * 8) +
-          "-bit long\");\n";
+      Out += "\nstatic_assert(sizeof(long) == " +
+             std::to_string(Library.builtinBytes(Builtin::Long)) +
+             ", \"these types need a " +
+             std::to_string(Library.builtinBytes(Builtin::Long) * 8) +
+             "-bit long\");\n";
     Out += namedBuiltins(Writer, Library, Cpp);
     break;
   case BuiltinSpelling::Portable:
@@ -792,8 +792,10 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
 } // namespace
 
 struct CSpeller::Impl {
+  // Types spelled as decompiled code spells them, beside the definitions
+  // its unit embeds.
   Impl(const TypeLibrary &Library, const RenderOptions &Options)
-      : Options(Options), Writer(Library, this->Options) {}
+      : Options(Options), Writer(Library, this->Options, /*Embedded=*/true) {}
   RenderOptions Options;
   CWriter Writer;
 };
@@ -916,7 +918,7 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
   for (const LocalType *Type : Library.types())
     if (Defined.contains(Type->Name) && !llvm::is_contained(All, Type))
       All.push_back(Type);
-  CWriter Writer(Library, Options);
+  CWriter Writer(Library, Options, /*Embedded=*/true);
   std::string Enums, Body;
   const std::vector<const LocalType *> Order = writeDefinitions(
       Writer, Library, All, Defined, /*Guarded=*/true, Enums, Body);

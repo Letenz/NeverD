@@ -1033,7 +1033,7 @@ private:
           primitive(Element.Name)) {
         if (auto Bits = bitfieldDoc(Field.Doc)) {
           const Builtin Storage = *primitive(Element.Name);
-          const unsigned Size = builtinBytes(Storage, Library.dataModel());
+          const unsigned Size = Library.builtinBytes(Storage);
           // A run after a run begins a unit of its own.
           if (LastBitfields)
             Draft.Members.push_back(
@@ -1051,7 +1051,7 @@ private:
             if (auto Found = Accessors.find(Record.Name + "::" + Name);
                 Found != Accessors.end() && Found->second->K == RType::Path)
               if (std::optional<Builtin> Read = primitive(Found->second->Name);
-                  Read && builtinBytes(*Read, Library.dataModel()) == Size)
+                  Read && Library.builtinBytes(*Read) == Size)
                 Type = *Read;
             Draft.Members.push_back(
                 {Name, makeBuiltin(Type), true, Width, std::string()});
@@ -1131,8 +1131,7 @@ private:
   /// whether they are floating.
   bool sameValues(Builtin A, Builtin B) const {
     const BuiltinInfo &First = builtinInfo(A), &Second = builtinInfo(B);
-    return builtinBytes(A, Library.dataModel()) ==
-               builtinBytes(B, Library.dataModel()) &&
+    return Library.builtinBytes(A) == Library.builtinBytes(B) &&
            First.Signed == Second.Signed &&
            (First.Class == BuiltinClass::Float) ==
                (Second.Class == BuiltinClass::Float);
@@ -1155,7 +1154,7 @@ private:
         const auto [Line, Column] = AliasPlaces.lookup(Alias.first);
         fail(Line, Column,
              "'" + Alias.first + "' is the builtin of " +
-                 std::to_string(builtinBytes(*Windows, Library.dataModel())) +
+                 std::to_string(Library.builtinBytes(*Windows)) +
                  " bytes that Windows names so; an alias cannot make it "
                  "another");
       }
@@ -1179,8 +1178,7 @@ private:
         continue;
       auto Enum = std::make_shared<EnumDef>();
       Enum->Underlying = *primitive(Type->Name);
-      const unsigned Bits =
-          builtinBytes(Enum->Underlying, Library.dataModel()) * 8;
+      const unsigned Bits = Library.builtinBytes(Enum->Underlying) * 8;
       for (const auto &[Value, Number] : Found->second) {
         uint64_t Raw = uint64_t(Number);
         if (Bits < 64) {

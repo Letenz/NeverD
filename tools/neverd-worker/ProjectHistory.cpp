@@ -23,6 +23,34 @@ std::string compactText(const Json &value) {
 fs::path sidecar(const fs::path &binary, project_files::File file) {
   return project_files::path(binary, file);
 }
+/// Whether \p table's file holds its rows in order, without addresses
+/// (UserStateTables.def).
+bool ordered(std::string_view table) {
+#define NEVERD_USER_STATE_ORDERED(Table)                                       \
+  if (table == Table)                                                          \
+    return true;
+#include "UserStateTables.def"
+  return false;
+}
+/// \p rows, \p table's file, as the history holds them: an ordered table's
+/// rows take their place as their address.
+Json rowsFromFile(std::string_view table, Json rows) {
+  if (!ordered(table) || !rows.is_array())
+    return rows;
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    if (!rows[i].is_object() || rows[i].contains("addr"))
+      throw Error("history_invalid", "User state item must be an object");
+    rows[i]["addr"] = hexAddress(i);
+  }
+  return rows;
+}
+/// \p rows as \p table's file holds them.
+Json rowsToFile(std::string_view table, Json rows) {
+  if (ordered(table))
+    for (auto &row : rows)
+      row.erase("addr");
+  return rows;
+}
 Json read(const fs::path &path, std::size_t limit = MaxHistoryBytes) {
   std::error_code ec;
   if (!fs::exists(path, ec))
@@ -102,6 +130,23 @@ void validateRow(std::string_view table, const Json &row) {
 #include "neverd/sdk/FunctionAttributes.def"
     if (!edits)
       throw Error("history_invalid", "Function edit is empty");
+  } else if (table == "types") {
+    // A declaration, or the names of the types a removal takes away; the
+    // engine reads each again as it loads the types.
+    if (row.contains("forget")) {
+      const auto &names = row.at("forget");
+      if (!names.is_array() || names.empty() || names.size() > 4096)
+        throw Error("history_invalid", "Type removal is invalid");
+      for (const auto &name : names)
+        if (!name.is_string() || name.get_ref<const std::string &>().empty() ||
+            name.get_ref<const std::string &>().size() > 4096)
+          throw Error("history_invalid", "Type removal is invalid");
+    } else {
+      if (!row.contains("language") || !row.contains("source"))
+        throw Error("history_invalid", "Type declaration is incomplete");
+      (void)stringField(row, "language", {}, 16);
+      (void)stringField(row, "source", {}, 4u << 20);
+    }
   } else if (table == "items") {
     // The engine checks a data item against the image when it loads one.
     (void)stringField(row, "kind", {}, 32);
@@ -216,6 +261,12 @@ Json ProjectHistory::normalizedState(Json state) {
       if (items[i - 1].at("addr") == items[i].at("addr"))
         throw Error("history_invalid",
                     "User state contains duplicate addresses");
+    // An ordered table's rows lie at their places in the list, every one.
+    if (ordered(name))
+      for (std::size_t i = 0; i < items.size(); ++i)
+        if (parseAddress(items[i].at("addr").get<std::string>()) != i)
+          throw Error("history_invalid",
+                      "User state rows in order leave a gap");
   }
   return state;
 }
@@ -251,7 +302,14 @@ ProjectHistory::ProjectHistory(fs::path binary, std::string sourceHash,
       blocked_ = "input_changed";
       return;
     }
-    if (normalizedState(previousDocument_.at("state")) != committedState_) {
+    // A table the history predates took no edit it recorded: it holds
+    // what the file holds.
+    Json previous = previousDocument_.at("state");
+#define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
+  if (Optional && previous.is_object() && !previous.contains(Table))           \
+    previous[Table] = committedState_.at(Table);
+#include "UserStateTables.def"
+    if (normalizedState(std::move(previous)) != committedState_) {
       blocked_ = "foreign_edits";
       return;
     }
@@ -274,7 +332,7 @@ Json ProjectHistory::diskState() const {
       rows.is_null())                                                          \
     state[Table] = Json::array();                                              \
   else                                                                         \
-    state[Table] = std::move(rows);
+    state[Table] = rowsFromFile(Table, std::move(rows));
 #include "UserStateTables.def"
   return normalizedState(std::move(state));
 }
@@ -282,13 +340,14 @@ Json ProjectHistory::diskState() const {
 void ProjectHistory::writeSidecars(const Json &state) const {
 #define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
   writer_(sidecar(binary_, project_files::File::Id),                           \
-          sidecarText(state.at(Table)));
+          sidecarText(rowsToFile(Table, state.at(Table))));
 #include "UserStateTables.def"
 }
 
 void ProjectHistory::checkSidecarBudgets(const Json &state) {
 #define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
-  if (sidecarText(state.at(Table)).size() > MaxStateFileBytes)                 \
+  if (sidecarText(rowsToFile(Table, state.at(Table))).size() >                 \
+      MaxStateFileBytes)                                                       \
     throw Error("history_budget_exceeded", "A user state file exceeds 16 "     \
                                            "MiB");
 #include "UserStateTables.def"

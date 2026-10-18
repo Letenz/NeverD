@@ -240,8 +240,30 @@ constexpr const char *PythonPredeclared[] = {"ctypes", "enum", "property"};
 /// What a JavaScript module of local types reads from the global scope and
 /// declares itself, which a type of the same name would hide.
 constexpr const char *JavaScriptPredeclared[] = {
-    "ArrayBuffer", "BigInt", "DataView",   "Infinity",   "NaN",   "Number",
-    "Object",      "check",  "RangeError", "Uint8Array", "index", "undefined",
+    "ArrayBuffer",
+    "BigInt",
+    "DataView",
+    "Infinity",
+    "NaN",
+    "Number",
+    "Object",
+    "check",
+    "RangeError",
+    "Uint8Array",
+    "index",
+    "undefined",
+    // The types TypeScript names itself, which the module's JSDoc spells: a
+    // program's own `boolean`, as the Windows headers declare, would read
+    // as TypeScript's.
+    "any",
+    "bigint",
+    "boolean",
+    "never",
+    "number",
+    "object",
+    "string",
+    "symbol",
+    "unknown",
 };
 
 /// Rust's primitive types, which a type of the same name would hide.
@@ -250,8 +272,10 @@ constexpr const char *RustPrimitives[] = {
     "isize", "str",  "u8",  "u16", "u32", "u64", "u128", "usize",
 };
 
-NameSpelling::NameSpelling(const TypeLibrary &Library, Language Lang)
-    : Lang(Lang) {
+NameSpelling::NameSpelling(const TypeLibrary &Library, Language Lang,
+                           bool CppToo)
+    : Lang(Lang),
+      Reserved(CppToo && Lang == Language::C ? Language::Cpp : Lang) {
   const std::vector<const LocalType *> All = Library.types();
   llvm::StringSet<> Taken;
   for (const LocalType *Type : All) {
@@ -297,7 +321,7 @@ std::string NameSpelling::identifier(llvm::StringRef Name,
     for (const char *Word : JavaScriptPredeclared)
       if (Text == Word)
         return Text + "_";
-  return escapedName(Lang, Text);
+  return escapedName(Reserved, Text);
 }
 
 void NameSpelling::enumeration(const EnumDef &Enum, llvm::StringRef Owner,
@@ -535,7 +559,7 @@ BitStorage bitStorage(const TypeLibrary &Library, const TypeExpr &Type) {
   switch (Type.Kind) {
   case TypeExprKind::Builtin: {
     const BuiltinInfo &Info = builtinInfo(Type.TheBuiltin);
-    return {builtinBytes(Type.TheBuiltin, Library.dataModel()),
+    return {Library.builtinBytes(Type.TheBuiltin),
             Info.Signed && Info.Class != BuiltinClass::Bool};
   }
   case TypeExprKind::Enum:
@@ -704,7 +728,7 @@ RecordPlan planRecord(const TypeLibrary &Library, const RecordDef &Record,
           Run.StorageBytes = 0;
           for (const Builtin Unsigned : {Builtin::UChar, Builtin::UShort,
                                          Builtin::UInt, Builtin::ULongLong}) {
-            const uint64_t Bytes = builtinBytes(Unsigned, Library.dataModel());
+            const uint64_t Bytes = Library.builtinBytes(Unsigned);
             if (holds(First / Bytes * Bytes, Bytes)) {
               Run.Storage = makeBuiltin(Unsigned);
               Run.Byte = First / Bytes * Bytes;
@@ -804,7 +828,7 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
 
 std::vector<std::pair<std::string, std::string>>
 renamedNames(const TypeLibrary &Library, Language Lang) {
-  return render::NameSpelling(Library, Lang).renamed();
+  return render::NameSpelling(Library, Lang, /*CppToo=*/true).renamed();
 }
 
 std::string spellType(const TypeLibrary &Library, const TypeExpr &Type,

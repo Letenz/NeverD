@@ -869,6 +869,15 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
                                    Syscall->ArgumentRegisters[I], Size)));
           MOp.Output = ndVarToMedVar(NdVar::reg(Syscall->ResultRegister, Size));
         }
+      // An SMC or HVC #0 reads the registers of the SMC Calling Convention;
+      // the lift binds its results.
+      if (LOp.Opcode == NdOp::INTRINSIC && LOp.NumInputs == 2 &&
+          LOp.Inputs[0].isConst() && LOp.Inputs[1].isConst())
+        for (uint64_t Register : smcccArgumentRegisters(
+                 TheArch, static_cast<Intrinsic>(LOp.Inputs[0].Offset),
+                 LOp.Inputs[1].Offset))
+          MOp.addInput(ndVarToMedVar(
+              NdVar::reg(Register, TheArch == Arch::AArch64 ? 8 : 4)));
       DispatchCallDefinedArgs = DispatchDefined;
       // A register an indirect call goes through, loaded from an import's
       // slot, names that import as the slot would (`mov rax, [rip+slot];
@@ -878,19 +887,29 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
           LOp.Inputs[0].isReg() && Image)
         if (const std::optional<va_t> Slot =
                 loadedCallSlot(Low, LB, LowOpIndex, LOp.Inputs[0]);
-            Slot && !importCalleeName(*Image, *Slot).empty())
+            Slot && !importCalleeName(*Image, *Slot).empty() &&
+            !importOwnRoutine(*Image, CallArgumentSources, *Slot))
           RegisterCallSlot = *Slot;
       // An import's slot names the import; any other function-pointer
-      // variable gives the call only the arguments of what it starts at.
+      // variable gives the call only the arguments of what it starts at, as
+      // the slot of an import the loader starts at this image's own routine
+      // does, and the stub that jumps through it.
       CallArgumentsFrom = 0;
       if (LOp.Opcode == NdOp::INDIR_CALL && LOp.NumInputs >= 1 &&
           !RegisterCallSlot && Image && CallArgumentSources &&
           !CallArgumentSources->empty() &&
           !(LOp.Inputs[0].isConst() &&
-            !importCalleeName(*Image, LOp.Inputs[0].Offset).empty()))
+            !importCalleeName(*Image, LOp.Inputs[0].Offset).empty() &&
+            !importOwnRoutine(*Image, CallArgumentSources,
+                              LOp.Inputs[0].Offset)))
         if (const std::optional<va_t> Source = pointerVariableArgumentsFrom(
                 CallArgumentSources, Low.Blocks, LB, LowOpIndex, LOp))
           CallArgumentsFrom = *Source;
+      if (LOp.Opcode == NdOp::CALL && LOp.NumInputs >= 1 &&
+          LOp.Inputs[0].isConst() && Image)
+        if (const std::optional<va_t> Own = importOwnRoutine(
+                *Image, CallArgumentSources, LOp.Inputs[0].Offset))
+          CallArgumentsFrom = *Own;
       if (!bindFormattedCall(MB, MOp, LOp))
         applyCallRegisterEffect(MOp, LOp);
       if (TheArch == Arch::X86 && Low.RegistrationStates &&
