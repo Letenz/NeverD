@@ -99,10 +99,24 @@ llvm::Expected<uint64_t> Bionic::jniReference(std::shared_ptr<JNIObject> Object,
   return Reference;
 }
 
-llvm::Error Bionic::jniException(llvm::StringRef Class) {
+llvm::Error Bionic::jniException(llvm::StringRef Class,
+                                 std::optional<llvm::StringRef> Message) {
   auto Object = jniNewObject(JNIObject::Throwable, Class, 0);
   if (!Object)
     return Object.takeError();
+  if (Message) {
+    try {
+      auto Bytes = mobile::dalvik::javaStringBytes(Message->str());
+      auto Text =
+          jniNewObject(JNIObject::String, "java/lang/String", Bytes.size());
+      if (!Text)
+        return Text.takeError();
+      (*Text)->Bytes = std::move(Bytes);
+      (*Object)->Message = (*Text)->Identity;
+    } catch (const mobile::Error &E) {
+      return failure(E.what());
+    }
+  }
   JNI.Threads.at(threadID()).Exception = std::move(*Object);
   return llvm::Error::success();
 }
@@ -134,15 +148,17 @@ BionicResult Bionic::jniObjects(unsigned Slot, const NativeCallEvent &Call) {
     auto Name = string(A[1]);
     if (!Name)
       return Name.takeError();
+    const auto &Failures = Options.Android->JNIClassLookupFailures;
+    if (auto I = Failures.find(*Name); I != Failures.end()) {
+      if (auto E = jniException(I->second))
+        return std::move(E);
+      return value(0);
+    }
     auto Class = jniClass(*Name);
     if (!Class)
       return Class.takeError();
-    const auto Descriptor = "L" + *Name + ";";
-    if (JNI.Dex && JNI.Dex->containsClass(Descriptor)) {
-      auto Initialized = executeDex(nullptr, {}, Descriptor);
-      if (!Initialized || !*Initialized || Thread.Exception)
-        return Initialized;
-    }
+    // API 28 ART resolves FindClass without initializing it. GetMethodID,
+    // field lookup, allocation and invocation retain their own active uses.
     return Ref(*Class);
   }
   if (Slot == 15)

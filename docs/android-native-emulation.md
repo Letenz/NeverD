@@ -995,6 +995,44 @@ API 28 execution profile. Supplied DEX still cannot replace platform classes.
 No application context, registration, service reply or SDK-private cache is
 created by this projection.
 
+### Class lookup and native registration
+
+API 28 `FindClass` resolves a class without executing `<clinit>`. Native
+registration also does not initialize it. These boundaries follow
+[ART JNI](https://android.googlesource.com/platform/art/+/android-9.0.0_r1/runtime/jni_internal.cc)
+and [ClassLinker](https://android.googlesource.com/platform/art/+/android-9.0.0_r1/runtime/class_linker.cc).
+
+Unknown classes remain explicit stops. A workload may supply
+`android.jni_class_lookup_failures`, mapping exact slash-separated, non-array
+class names to `java/lang/ClassNotFoundException` or
+`java/lang/NoClassDefFoundError`. Each matched lookup returns null and leaves
+that fresh pending exception, with no message/cause payload. This is an explicit
+negative result supplied by the external loader contract; missing DEX alone
+never declares absence. At most 4096 entries with names of at most 1024 bytes
+are admitted. Known intrinsic or supplied DEX classes cannot be shadowed, and
+JNI must be enabled. Unlisted names, arbitrary loader objects, custom delegation,
+multiple defining loaders and dynamic classpath mutation remain unmodeled.
+
+`RegisterNatives` binds names and full signatures to native declarations in the
+supplied class/superclass chain. It retains the original declaring owner,
+replaces previous bindings, and preserves earlier entries if a later missing or
+non-native method raises `NoSuchMethodError` with its API 28 detail message.
+API 28's deprecated `!` signature
+prefix is accepted. Zero-count registration is a no-op; null members, malformed
+tables, negative counts and exhausted bounds fail explicitly. Each table and
+retained inventory is limited to 4096 bindings. `UnregisterNatives` removes only
+the specified class's declarations. Local-reference deletion and detach do not
+retire bindings.
+
+The process report's optional `android.jni_registrations` lists retained
+`class`, `name`, `signature` and `address`, sorted by method identity, including
+partial state at terminal failures. These are registered targets, not evidence
+of method execution or of a deployed application's identity. This increment
+admits registration only: native Java method invocation, special native ABIs,
+implicit symbol lookup and registration against unmodeled platform declarations
+remain explicit unsupported boundaries. Neither registration nor reporting
+executes or rewrites the target.
+
 ## Explicit DEX methods and object state
 
 With JNI enabled, `android.dex_images` accepts an array of complete hex-encoded
@@ -1026,8 +1064,9 @@ ArithmeticException for JNI to observe and clear.
 Each workload retains its own class state across JNI calls, local-reference
 deletion, detach/reattach and sequential calls from different guest threads.
 DEX encoded field values (or zero defaults) are installed before `<clinit>`.
-FindClass, static method lookup, static invocation and static field instructions
-initialize the declaring class once. Recursive initialization on the executing
+Method/field lookup, allocation, static invocation and static field instructions
+initialize the declaring class once. `FindClass` only resolves the class, including
+a previously resolved class whose initializer failed. Recursive initialization on the executing
 thread can observe prepared or partially written values; it does not rerun the
 initializer. `sget`/`sput` integral variants check the declared field width;
 stores narrow byte/char/short values, and final stores are restricted to the

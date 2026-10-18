@@ -8592,3 +8592,19 @@ cases assert partial objects, newline/read-ahead, multiple suspensions, EOF,
 per-read timeout, thread-local errno and incomplete imports at unknown input.
 Run affected Linux and Android owner suites before review; unavailable backend
 skips do not count as executed coverage. All fixtures use explicit offline data.
+
+
+### JNI lookup and native registration boundaries
+
+`AndroidJNI.NativeRegistrationsRetainPartialRebindingsAndDeclaringOwners` runs
+original O0/O2 native callers under every relocation packing and available CPU
+transport. An authored DEX declares inherited native methods and a class whose
+initializer throws. Tests compare complete retained registration inventories
+through replacements, partial failure, class-local unregistration and detach;
+lookup/registration must not initialize, while method lookup must initialize.
+Malformed inputs preserve the already published prefix. Explicit loader-failure
+cases verify exception identities, clear/retry and rejection of declarations
+that shadow known classes. ProcessReport tests cover the JSON request and full
+64-bit targets. Run the JNI, Dalvik and process-public suites; runtime tests for
+existing DEX state/language workloads protect initialization order. These tests
+do not claim native Java method execution or custom loader support.

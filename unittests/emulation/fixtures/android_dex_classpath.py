@@ -5,8 +5,11 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'scripts'))
 from benchmark_mobile_inventory import make_dex
+from android_jni_registration_dex import registration_dex
 
 output = Path(sys.argv[1])
 output.mkdir(parents=True, exist_ok=True)
 for count, index in [(17, 0), (2048, 0), (2048, 1), (2049, 1), (4096, 0), (4097, 0)]:
     (output / f'classes-{count}-{index}.dex').write_bytes(make_dex(count, dex_index=index))
+
+(output / 'registration.dex').write_bytes(registration_dex())

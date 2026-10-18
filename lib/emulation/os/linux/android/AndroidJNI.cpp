@@ -183,6 +183,8 @@ BionicResult Bionic::jniCall(const NativeCallEvent &Call) {
       Slot != 22 && Slot != 23 && Slot != 19 && Slot != 20 && Slot != 166 &&
       Slot != 170 && !(Slot >= 191 && Slot <= 198))
     return failure("JNI operation is not admitted with a pending exception");
+  if (Slot == 215 || Slot == 216)
+    return jniRegistration(Slot, Call);
   if (Slot == 4)
     return value(jni_abi::Version);
   if (Slot == 219) {

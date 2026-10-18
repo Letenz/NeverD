@@ -55,7 +55,10 @@ public:
   const Method *virtualMethod(const MethodRef &reference,
                               std::string_view receiver) const;
   const Field *findField(const FieldRef &reference, bool is_static) const;
-  const Method *findMethod(const MethodRef &reference, bool is_static) const;
+  /// With no staticness, search only the class/superclass chain. This is used
+  /// by native registration, whose declarations may be static or virtual.
+  const Method *findMethod(const MethodRef &reference,
+                           std::optional<bool> is_static) const;
   const Field *findStaticField(const FieldRef &reference) const;
   std::optional<std::string>
   unsupportedClass(std::string_view descriptor) const;

@@ -137,7 +137,11 @@ bool platformClass(std::string_view name) {
       "java/lang/OutOfMemoryError",
       "java/lang/LinkageError",
       "java/lang/ExceptionInInitializerError",
-      "java/lang/NoClassDefFoundError"};
+      "java/lang/NoClassDefFoundError",
+      "java/lang/NoSuchMethodError",
+      "java/lang/IncompatibleClassChangeError",
+      "java/lang/ClassNotFoundException",
+      "java/lang/ReflectiveOperationException"};
   for (auto n : names)
     if (name == n)
       return true;
@@ -155,14 +159,20 @@ std::string objectDescriptor(const Object &object) {
 std::string_view javaParent(std::string_view name) {
   if (name == "java/lang/Object")
     return {};
-  if (name == "java/lang/RuntimeException")
+  if (name == "java/lang/ClassNotFoundException")
+    return "java/lang/ReflectiveOperationException";
+  if (name == "java/lang/RuntimeException" ||
+      name == "java/lang/ReflectiveOperationException")
     return "java/lang/Exception";
   if (name == "java/lang/Exception" || name == "java/lang/Error")
     return "java/lang/Throwable";
   if (name == "java/lang/OutOfMemoryError" || name == "java/lang/LinkageError")
     return "java/lang/Error";
+  if (name == "java/lang/NoSuchMethodError")
+    return "java/lang/IncompatibleClassChangeError";
   if (name == "java/lang/ExceptionInInitializerError" ||
-      name == "java/lang/NoClassDefFoundError")
+      name == "java/lang/NoClassDefFoundError" ||
+      name == "java/lang/IncompatibleClassChangeError")
     return "java/lang/LinkageError";
   if (name == "java/lang/ArrayIndexOutOfBoundsException" ||
       name == "java/lang/StringIndexOutOfBoundsException")

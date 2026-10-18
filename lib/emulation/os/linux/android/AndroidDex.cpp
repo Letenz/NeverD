@@ -15,6 +15,8 @@ llvm::Error Bionic::initializeDex() {
   const auto &Native = *Options.Android;
   JNI.Heap = std::make_shared<mobile::dalvik::Heap>(Options.MemoryLimit / 2,
                                                     jni_abi::ObjectLimit);
+  if (!Native.JNI && !Native.JNIClassLookupFailures.empty())
+    return failure("JNI class lookup failures require JNI");
   if (Native.DexImages.empty() && !Native.JNI)
     return llvm::Error::success();
   if (!Native.JNI || Native.DexImages.size() > 16)
@@ -60,6 +62,20 @@ llvm::Error Bionic::initializeDex() {
     }
     JNI.Dex = std::make_shared<mobile::dalvik::Program>(std::move(Classes),
                                                         Native.Properties);
+    if (Native.JNIClassLookupFailures.size() > jni_abi::ReferenceLimit)
+      return failure("JNI class lookup failure inventory exceeds its budget");
+    for (const auto &[Name, Exception] : Native.JNIClassLookupFailures) {
+      if (Name.empty() || Name.size() > 1024 || Name.front() == '/' ||
+          Name.back() == '/' || Name.find("//") != std::string::npos ||
+          Name.find_first_of(".;[\0", 0, 4) != std::string::npos ||
+          (Exception != "java/lang/ClassNotFoundException" &&
+           Exception != "java/lang/NoClassDefFoundError"))
+        return failure("invalid JNI class lookup failure declaration");
+      const auto Type = "L" + Name + ";";
+      mobile::dalvik::descriptor(Type);
+      if (mobile::dalvik::platformClass(Name) || JNI.Dex->containsClass(Type))
+        return failure("JNI class lookup failure shadows a known class");
+    }
     JNI.DexRuntime =
         std::make_shared<mobile::dalvik::Runtime>(*JNI.Dex, JNI.Heap);
   } catch (const mobile::Error &E) {

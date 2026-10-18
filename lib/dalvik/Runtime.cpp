@@ -1199,7 +1199,7 @@ const Field *Program::findStaticField(const FieldRef &reference) const {
   return findField(reference, true);
 }
 const Method *Program::findMethod(const MethodRef &reference,
-                                  bool is_static) const {
+                                  std::optional<bool> is_static) const {
   std::set<std::string> seen;
   std::function<const Method *(std::string_view, unsigned)> find =
       [&](std::string_view name, unsigned depth) -> const Method * {
@@ -1210,13 +1210,15 @@ const Method *Program::findMethod(const MethodRef &reference,
       if (method.reference.name == reference.name &&
           method.reference.parameters == reference.parameters &&
           method.reference.returns == reference.returns)
-        return has(method.access, "static") == is_static ? &method : nullptr;
+        return !is_static || has(method.access, "static") == *is_static
+                   ? &method
+                   : nullptr;
     if (reference.name.starts_with('<'))
       return nullptr;
     if (auto base = find(parent(name), depth + 1))
       return base;
     // The admitted interfaces contain public abstract declarations only.
-    if (!is_static)
+    if (is_static && !*is_static)
       for (const auto &interface : klass->interfaces)
         if (auto method = find(interface, depth + 1))
           return method;
