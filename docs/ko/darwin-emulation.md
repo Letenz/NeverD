@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 9fc13e22f8389ee3a151e7b2f022bbf58f728e5597159984b0585f1b88cbb48e -->
+<!-- i18n-source: 26e0c6dba6d3b863bb8dc0c4690bbc6ea61bbe5dd2accd19643847c8968fc13e -->
 
 [← 문서 목록](README.md)
 
@@ -33,7 +33,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 `LC_UNIXTHREAD`는 PC만 설정된 완전한 네이티브 64비트 일반 레지스터 레코드 하나를 요구합니다. 초기 스택에는 argc, 종료된 argv/envp, `executable_path=<input filename>`을 포함하는 종료된 apple 벡터가 있습니다. 사용자 SP/플래그, 다른 레지스터, 추가 flavor, 충돌하는 진입점은 거부합니다. 호스트 환경이나 Linux 보조 벡터를 상속하지 않습니다. [dyld 구조](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md)를 참고하세요.
 
-아래의 유한 libSystem, 명시적 시작 dylib, 시작 생성자, 주 스레드 C/C++ TLS 및 프로세스 종료 시 C/C++ 소멸자를 지원합니다. 선택적 DSO 종료, guard를 사용하는 지역 정적 초기화, 구형 TLS 초기화 섹션, arm64e/PAC, 미지원 CPU 하위 유형, 암호화와 미모델링 명령은 실행 전에 실패합니다. 주 실행 파일은 선호 주소를, dylib는 결정적 독립 주소를 사용합니다. 서명 메타데이터는 AMFI나 entitlement를 구현하지 않습니다.
+아래의 유한 libSystem, 명시적 시작 dylib, 시작 생성자, 주 스레드 C/C++ TLS 및 프로세스 종료 시 C/C++ 소멸자를 지원합니다. 선택적 DSO 종료, 구형 TLS 초기화 섹션, arm64e/PAC, 미지원 CPU 하위 유형, 암호화와 미모델링 명령은 실행 전에 실패합니다. 주 실행 파일은 선호 주소를, dylib는 결정적 독립 주소를 사용합니다. 서명 메타데이터는 AMFI나 entitlement를 구현하지 않습니다.
 
 ## Darwin 서비스
 
@@ -1835,7 +1835,7 @@ classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/ev
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
 memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
-native common catalogue: 82; required methods/platform: 103; matching ARM64 identities: 309
+native common catalogue: 82; required methods/platform: 104; matching ARM64 identities: 312
 ```
 
 ```json
@@ -1863,7 +1863,7 @@ lifetime: one main-thread block/image/process; stable addresses; fresh subsequen
 addends: checked signed ordinary provider offsets; data/TLS initializers; original provider spans only
 unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; selective DSO finalization/legacy TLS init; dlopen/dlsym; threads
 workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
-native common catalogue: 82; required methods/platform: 103; matching ARM64 identities: 309
+native common catalogue: 82; required methods/platform: 104; matching ARM64 identities: 312
 ```
 
 ## Darwin dylib 가져오기 오프셋
@@ -1882,4 +1882,12 @@ native common catalogue: 82; required methods/platform: 103; matching ARM64 iden
 
 C `atexit`와 C++ `__cxa_atexit`는 정수 0을 반환하고 errno를 보존합니다. C 콜백은 인수가 없고 C++ 콜백은 원래 객체 값을 받으며 DSO는 불투명한 이벤트 값입니다. 정상 종료는 주 스레드 TLS를 한 번 처리한 뒤 C/C++ 공통 등록 순서의 역순으로 전역 콜백을 실행합니다. 새 전역 등록이 이전 항목보다 먼저 실행되고 TLS 단계는 다시 시작하지 않습니다. 강한 등록 가져오기만 별도의 1024개 저장소를 예약하며 기존 raw, 생성자 및 TLS 예산을 유지합니다.
 
-원본 두 dylib는 컴파일러 생성 소멸자, 지역 static 반복 접근, 중첩 등록, 깊은 스택 객체와 소멸자 내부 `_exit`를 확인합니다. 지역 static은 `-fno-threadsafe-statics`를 사용합니다. `__cxa_guard_*`, `__cxa_finalize`, dlopen/dlclose, 스레드와 전체 프레임워크는 계속 거부합니다. 소프트웨어 5개 및 ARM64 HVF 3개 구성과 C/CLI/Python은 기존 형식과 예산을 공유합니다. Intel 네이티브 및 실제 iOS는 미검증입니다.
+원본 두 dylib는 컴파일러 생성 소멸자, 지역 static 반복 접근, 중첩 등록, 깊은 스택 객체와 소멸자 내부 `_exit`를 확인합니다. 지역 static은 `-fno-threadsafe-statics`를 사용합니다. `__cxa_finalize`, dlopen/dlclose, 스레드와 전체 프레임워크는 계속 거부합니다. 소프트웨어 5개 및 ARM64 HVF 3개 구성과 C/CLI/Python은 기존 형식과 예산을 공유합니다. Intel 네이티브 및 실제 iOS는 미검증입니다.
+
+## 주 스레드 C++ static guard
+
+`/usr/lib/libc++.1.dylib`(호환 버전 최대 1.0.0)의 강한 zero-addend import `___cxa_guard_acquire`, `___cxa_guard_release`, `___cxa_guard_abort`만 허용합니다. 다른 C++ 심볼, libc++abi, 별칭, weak/reexport와 내장 덮어쓰기는 거부합니다. libSystem과 두 페이지를 공유하며 guard만으로 콜백 큐를 예약하지 않습니다.
+
+guard는 null이 아니고 자연 정렬된 8바이트입니다. 초기화 바이트가 0이 아니면 acquire는 그 한 바이트만 읽어 int 0을 반환하며 쓰기 권한이나 포트가 필요 없습니다. 0 상태에는 명시적 비영 `darwin_system.thread_self_port`(`DarwinSystemOptions::ThreadSelfPort`)가 필요합니다. P의 pending은 `(uint64_t(P)<<32)|0x200`, acquire는 1, abort는 0 복원, release는 `(uint64_t(P)<<32)|0x101`입니다. void 호출은 errno/결과 레지스터를 보존하며 보고 결과는 null입니다. 재귀, 외부 소유자, 대기/미지 상태, 잘못된 메모리는 변경 전에 거부하고 호스트 ID를 추정하지 않습니다.
+
+기본 static 두 dylib는 시작 및 TLS/전역 종료 중 생성, 반복 접근, 전체 guard/센티널, abort/retry와 normal/raw 종료를 검증하며 기존 LIFO, 예산, 새 프로세스 격리를 유지합니다. 소프트웨어 5개, ARM64 HVF 3개, C/CLI/Python과 O0/O1/O2 classic/chained 원본을 검사합니다. ARM64는 `-march=armv8-a -mcpu=generic`과 최종 LDARB/LDAPR 부재 확인이 필요합니다. march만 지정하면 LDAPRB가 남을 수 있습니다. RCpc, 동시 초기화, 예외와 선택적 DSO 종료는 미지원입니다. x64는 Rosetta이며 실제 Intel/iOS는 미검증입니다.

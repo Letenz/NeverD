@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 9fc13e22f8389ee3a151e7b2f022bbf58f728e5597159984b0585f1b88cbb48e -->
+<!-- i18n-source: 26e0c6dba6d3b863bb8dc0c4690bbc6ea61bbe5dd2accd19643847c8968fc13e -->
 
 [← فهرس الوثائق](README.md)
 
@@ -33,7 +33,7 @@ neverd emulate guest.macho --profile=ios-macho64-v1 \
 
 يتطلب `LC_UNIXTHREAD` سجلاً واحداً كاملاً للسجلات العامة الأصلية ذات 64 بت، مع تعيين PC فقط. يحتوي المكدس الأولي argc وargv/envp المنتهيين ومتجه apple منتهياً يتضمن `executable_path=<input filename>`. تُرفض قيم SP والأعلام المخصصة والسجلات الأخرى وflavors الإضافية ونقاط الدخول المتعارضة. لا تُورث بيئة المضيف أو متجه Linux المساعد. المرجع: [معمارية dyld](https://github.com/apple-oss-distributions/dyld/blob/main/doc/dyld4.md).
 
-يدعم العقد المحدود أدناه libSystem ومكتبات dylib الصريحة عند البدء ومنشئات البدء وTLS بلغة C/C++ للخيط الرئيسي ودوال هدم C/C++ عند انتهاء العملية. يبقى الإنهاء الانتقائي لـDSO والتهيئة المحلية الثابتة باستخدام guard ومهيئات TLS القديمة وarm64e/PAC وأنواع CPU غير المدعومة والتشفير والأوامر غير المنمذجة مرفوضة قبل التنفيذ. يحتفظ البرنامج الرئيسي بعنوانه المفضل وتُعطى dylib عناوين منفصلة حتمية. لا تنفذ بيانات التوقيع AMFI أو entitlements.
+يدعم العقد المحدود أدناه libSystem ومكتبات dylib الصريحة عند البدء ومنشئات البدء وTLS بلغة C/C++ للخيط الرئيسي ودوال هدم C/C++ عند انتهاء العملية. يبقى الإنهاء الانتقائي لـDSO ومهيئات TLS القديمة وarm64e/PAC وأنواع CPU غير المدعومة والتشفير والأوامر غير المنمذجة مرفوضة قبل التنفيذ. يحتفظ البرنامج الرئيسي بعنوانه المفضل وتُعطى dylib عناوين منفصلة حتمية. لا تنفذ بيانات التوقيع AMFI أو entitlements.
 
 ## خدمات Darwin
 
@@ -1833,7 +1833,7 @@ classic lazy: eager stable slots; status 83; stdout_hex 41005a53; named calls/ev
 _exit: status 35; stdout_hex 58; named calls 2; events 2
 file calls: main status 73; stdout_hex 460044; named calls 40; events 41
 memory calls: main status 79; stdout_hex 4d0050; named calls 18; events 19
-native common catalogue: 82; required methods/platform: 103; matching ARM64 identities: 309
+native common catalogue: 82; required methods/platform: 104; matching ARM64 identities: 312
 ```
 
 ```json
@@ -1861,7 +1861,7 @@ lifetime: one main-thread block/image/process; stable addresses; fresh subsequen
 addends: checked signed ordinary provider offsets; data/TLS initializers; original provider spans only
 unsupported: cycles; weak/reexports/resolvers; gate/TLV/lazy addends; selective DSO finalization/legacy TLS init; dlopen/dlsym; threads
 workload: shared dependency; duplicate export spelling; TLS aliasing; template mutation; main 83; stdout 440054
-native common catalogue: 82; required methods/platform: 103; matching ARM64 identities: 309
+native common catalogue: 82; required methods/platform: 104; matching ARM64 identities: 312
 ```
 
 ## إزاحات استيراد Darwin dylib
@@ -1880,4 +1880,12 @@ native common catalogue: 82; required methods/platform: 103; matching ARM64 iden
 
 تعيد C `atexit` وC++ `__cxa_atexit` صفراً صحيحاً وتحفظان errno. لا يستقبل استدعاء C وسائط؛ يستقبل C++ قيمة الكائن الأصلية، وتبقى DSO قيمة حدث مبهمة. ينهي الخروج العادي TLS للخيط الرئيسي مرة واحدة ثم يعالج قائمة C/C++ المشتركة بترتيب عكسي. تسبق التسجيلات العامة الجديدة القديمة ولا تعاد مرحلة TLS. تحجز الواردات القوية وحدها قائمة عامة مستقلة من1024 عنصراً مع حفظ ميزانيات raw والمُنشئات وTLS السابقة.
 
-يفحص البرنامج الأصلي ذو مكتبتَي dylib الهادمات التي يولدها المترجم وتكرار الوصول إلى static محلي والتسجيل المتداخل وكائنات المكدس و`_exit` من هادم. يستخدم static المحلي `-fno-threadsafe-statics`. تبقى `__cxa_guard_*` و`__cxa_finalize` وdlopen/dlclose والخيوط والأطر الكاملة مرفوضة. تتشارك خمسة ملفات برمجية وثلاثة ARM64 HVF وC/CLI/Python التنسيقات والميزانيات القائمة؛ Intel الأصلي وiOS الفعلي غير متحققين.
+يفحص البرنامج الأصلي ذو مكتبتَي dylib الهادمات التي يولدها المترجم وتكرار الوصول إلى static محلي والتسجيل المتداخل وكائنات المكدس و`_exit` من هادم. يستخدم static المحلي `-fno-threadsafe-statics`. تبقى `__cxa_finalize` وdlopen/dlclose والخيوط والأطر الكاملة مرفوضة. تتشارك خمسة ملفات برمجية وثلاثة ARM64 HVF وC/CLI/Python التنسيقات والميزانيات القائمة؛ Intel الأصلي وiOS الفعلي غير متحققين.
+
+## حراس static في خيط C++ الرئيسي
+
+تُقبل فقط الاستيرادات القوية ذات addend صفري `___cxa_guard_acquire` و`___cxa_guard_release` و`___cxa_guard_abort` من `/usr/lib/libc++.1.dylib` بتوافق لا يتجاوز 1.0.0. تبقى الرموز الأخرى وlibc++abi والأسماء البديلة وweak/reexport والاستبدال مرفوضة. تشترك مع libSystem في صفحتين؛ لا يحجز guard وحده طابور callbacks.
+
+guard ثمانية بايتات بمؤشر غير صفري ومحاذاة طبيعية. إذا كان بايت التهيئة غير صفري تقرأ acquire ذلك البايت فقط وتعيد int 0 دون كتابة أو منفذ. خلاف ذلك يلزم P الصريح غير الصفري `darwin_system.thread_self_port` (`DarwinSystemOptions::ThreadSelfPort`): pending هو `(uint64_t(P)<<32)|0x200`، acquire تعيد 1، abort يعيد الصفر وrelease يكتب `(uint64_t(P)<<32)|0x101`. تحافظ void على errno وسجلات النتيجة وتبلغ null. تفشل العودية والمالك الآخر والانتظار والحالات المجهولة والذاكرة غير الصالحة قبل التعديل؛ لا تُستنتج هوية المضيف.
+
+تختبر مكتبتا dylib أصليتان static الافتراضي عند البدء وأثناء هدم TLS/العناصر العامة، والوصول المتكرر وكل البايتات والحراس وabort/retry وخروج normal/raw، مع LIFO وميزانيات مشتركة وعمليات جديدة. تشمل خمسة ملفات software وثلاثة ARM64 HVF وC/CLI/Python وO0/O1/O2 classic/chained. يتطلب ARM64 الخيارين `-march=armv8-a -mcpu=generic` وفحص LDARB وعدم LDAPR في الناتج؛ march وحده قد يولد LDAPRB. تبقى RCpc والتزامن والاستثناءات والإنهاء الانتقائي لـDSO غير مدعومة. يستخدم x64 Rosetta؛ Intel/iOS الفعليان غير مؤهلين.

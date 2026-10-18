@@ -7718,8 +7718,19 @@ entry before invoking original code. The DSO carrier is event data only.
 An externally discriminated private union preserves the old callback base and
 TLS record stride: strong global imports select precharged combined storage
 with a separate 1,024-entry quota. Raw and constructor/TLS-only images retain
-their previous admission budgets. Selective finalization and guard-based local
-static initialization remain explicit unsupported imports.
+their previous admission budgets. Selective finalization remains an explicit unsupported import.
+
+`DarwinLibSystemCalls.def` also owns each exact provider identity. The three
+static-guard operations belong only to libc++. `DarwinImage` admits that finite
+builtin alongside libSystem and reserves one shared pair of runtime pages,
+charging every fixup and unique gate without inventing callback storage for
+guard-only imports. `DarwinLibSystem` alone owns the single-main-thread guard
+state transitions in guest memory and consumes the explicit ThreadSelfPort;
+completed acquire reads only its initialized byte. The common IntegerABI return
+publisher preserves void results and emits the binding table's provider. No
+loader, emitter, thread scheduler or host-library lookup duplicates this rule.
+Baseline ARM64 fixtures use verified generic armv8-a output; RCpc remains outside
+the checked execution contract.
 
 
 ### Sequential raw compare-and-exchange

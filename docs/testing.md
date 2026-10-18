@@ -8245,7 +8245,7 @@ Native Intel and physical iOS remain unqualified. No guest budget is increased.
 quota retirement, full-width objects, original targets and active-frame permissions.
 `DarwinLinking.CallbackStorage*` and `RegistrationOnly*` protect the old base/TLS
 footprint and conditional global metadata charge; raw and constructor-only
-minimum-budget cases remain separate. Guard and selective-finalization imports
+minimum-budget cases remain separate. Guard imports from libSystem and selective-finalization imports
 remain refused.
 
 `DarwinProcess.DylibGlobalsAndLocalStaticsFinalizeAfterTLS` covers eight native
@@ -8337,6 +8337,31 @@ side-effecting statement without acquiring a Linux syscall contract.
 `KernelMDLChain.CreateMdl*` and `KernelMDLUserMapping.CreateMdl*` cover full-width guards, untouched bytes, zero/wrapping metadata, pool and stack lifetime, locks, aliases, failed release, partial reuse, IRP refusal and IRQL. The genuine WDK user-mapping fixture exercises static/dynamic creation, owned pool, interior caller pool and caller stack records, physical identity and complete unload. Original probes distinguish wrapper writes, pool flag translation and injected allocator/free boundaries.
 
 `KernelMDLChain.AdvanceMdl*` and `KernelMDLUserMapping.AdvanceMdl*` check repeated page crossings, PFN tails, exact-end refusal, narrow arguments, stable mapping extents, failed teardown, permissions, storage ownership, process context and unsupported dependencies. The genuine WDK user-mapping fixture uses static/dynamic advance, explicit unmap and automatic unlock. Original-code probes separately cover the entire advance routine, restoration helper and unmap wrapper with explicit mapping-kind/PTE-release injection; they do not execute the operating system page database.
+
+### Darwin default C++ static guards
+
+`DarwinGuardFixtures.cmake` preserves default thread-safe static code generation
+in two dylibs and main. A separate exact libc++ tbd exports only the three guard
+operations; native controls link real libc++. `DarwinLibSystemBindings.Guard*`
+and the four guard methods in `DarwinLibSystemTest` cover complete state words,
+independent high/low port values, errno, void returns, first-byte-only readonly
+acquire and failure ordering. `DarwinLinking.Guard*` independently writes both
+fixup forms and checks provider closure, compatibility, shared pages, individual
+fixup/gate charges, exact minimum admission and one byte below it.
+
+`DarwinProcess.DefaultStaticGuardsKeepDylibTLSAndExitLifetime` covers constructor,
+TLS and global callbacks, repeated static mutation, abort/retry, fresh state,
+recursive/foreign/absent-port failures and shared event/instruction cuts. It
+raises the required native inventory to 104 methods/profile, 312 matching ARM64
+HVF identities. `DarwinNative.DefaultStaticGuardsMatchOriginalNativeImages`,
+C/CLI `DefaultStaticGuardsKeepLifetimeAcrossCAndCLI` and genuine Python
+`test_darwin_default_static_guards_keep_process_lifetime` check the same original
+programs. O0/O1/O2 classic/chained native controls include x64 through Rosetta.
+ARM64 compilation specifies both `-march=armv8-a -mcpu=generic`; inspect every
+final image for LDARB, absence of LDAPR and real guard imports. Preserve failed
+modern-host and march-only LDAPRB controls. Their refusal happened before the
+first guard call with no output; it does not prove unchanged memory. Native
+Intel, physical iOS, RCpc and concurrent initialization remain separate coverage.
 
 ## Offline Android resolver and Linux stream contracts
 
