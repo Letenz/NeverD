@@ -3795,13 +3795,10 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
     if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr))
       CandidateEntries.insert(Sym.Addr);
   PipelineAnalysisCache &Cache = *Opts.AnalysisCache;
-  if (!Cache.Facts) {
+  // Facts for another symbol inventory serve no later run.
+  if (!Cache.Facts || !Cache.Facts->matches(Img, Dbg, CandidateEntries)) {
     Cache.Facts = std::make_shared<PipelineAnalysisCache::Impl>(
         Img, Dbg, std::move(CandidateEntries), /*RetainBodies=*/true);
-  } else if (!Cache.Facts->matches(Img, Dbg, CandidateEntries)) {
-    // The session's own runs keep this state for other entries; replacing it
-    // would discard what they built.
-    return std::nullopt;
   } else {
     Cache.Facts->Callees.trimMemoizedProofs(
         limits::kMaxRetainedNoReturnAnswers);
@@ -3830,22 +3827,23 @@ void Pipeline::buildLowIR(
   // hot/cold chunks of one function with the same int3 padding, and a jump
   // into such a chunk must keep its code in the jumping function.
   const std::set<va_t> BoundaryGuesses = Img.boundaryGuessFunctionStarts();
-  std::set<va_t> CandidateEntries;
-  for (const auto &C : Candidates)
-    if (!BoundaryGuesses.count(C.first))
-      CandidateEntries.insert(C.first);
   // The same symbol inventory owns both full-image and selected-function CFGs;
   // unselected bodies need not be lifted to preserve their entry boundaries.
+  std::set<va_t> CandidateEntries;
   for (const auto &Sym : Img.Symbols)
     if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr))
       CandidateEntries.insert(Sym.Addr);
+  bool AddsEntries = false;
+  for (const auto &C : Candidates)
+    if (!BoundaryGuesses.count(C.first))
+      AddsEntries |= CandidateEntries.insert(C.first).second;
   if (Opts.OnlyFunctionEntries.empty()) {
     // A chained-unwind continuation is part of its parent function: a jump
     // to it must be followed, not modeled as a tail call to a missing one.
     for (const auto &[Start, End] : Img.KnownCodeRanges) {
       (void)End;
       if (Start != 0 && !Img.ContinuationCodeStarts.count(Start))
-        CandidateEntries.insert(Start);
+        AddsEntries |= CandidateEntries.insert(Start).second;
     }
   }
   const bool Restricted =
@@ -3855,18 +3853,21 @@ void Pipeline::buildLowIR(
       Opts.AnalysisCache && Restricted && Img.Arch == Arch::X64
           ? *Opts.AnalysisCache
           : LocalCache;
-  if (!Cache.Facts || !Cache.Facts->matches(Img, Dbg, CandidateEntries))
-    Cache.Facts = std::make_shared<PipelineAnalysisCache::Impl>(
+  // A selection that is not a symbol start adds its own entry and keys other
+  // facts, kept beside the symbol inventory's rather than in their place.
+  std::shared_ptr<PipelineAnalysisCache::Impl> &Kept =
+      AddsEntries ? Cache.SelectionFacts : Cache.Facts;
+  if (!Kept || !Kept->matches(Img, Dbg, CandidateEntries))
+    Kept = std::make_shared<PipelineAnalysisCache::Impl>(
         Img, Dbg, std::move(CandidateEntries), Restricted);
   else {
     // Earlier runs' no-return answers hold for the same facts, and replaying
     // a retained body asks them again; the screening data behind them does
     // not accumulate.  Lazy names are resolved again each run.
-    Cache.Facts->Callees.trimMemoizedProofs(
-        limits::kMaxRetainedNoReturnAnswers);
-    Cache.Facts->Targets.clearMemoizedNames();
+    Kept->Callees.trimMemoizedProofs(limits::kMaxRetainedNoReturnAnswers);
+    Kept->Targets.clearMemoizedNames();
   }
-  const auto &Facts = *Cache.Facts;
+  const auto &Facts = *Kept;
   const auto &FuncEntries = Facts.Entries;
   const auto &NoReturnTargets = Facts.Targets;
   const auto &AbsoluteRelocationRoots = Facts.Roots;

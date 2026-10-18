@@ -186,10 +186,11 @@ NEVERD_API int neverd_prepare_function_view(neverd_session_t Sess,
 /// {"available":bool,"prepared":int,"full":bool,"next_entry":"0x..."|null}:
 /// "prepared" counts the functions the session now holds prepared, "full"
 /// says it refused one for lack of room, so further calls prepare nothing
-/// new.  "available" is false where calls keep no such state: images other
-/// than x86-64 and sessions whose analysis already covers other entries.  A
-/// PE function's preparation keeps it unless discovering the function's
-/// exception handlers adds metadata, which after a full load it does not.  NULL
+/// new.  "available" is false where calls keep no such state, images other
+/// than x86-64.  A function that is not a symbol start keeps its own state
+/// beside it.  A PE function's preparation keeps it unless discovering the
+/// function's exception handlers adds metadata, which after a full load it
+/// does not.  NULL
 /// with an error when no binary is loaded or a build fails.  Like every
 /// session call, this must not run concurrently with another call on the
 /// session.

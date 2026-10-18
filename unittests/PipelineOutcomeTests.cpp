@@ -89,6 +89,11 @@ public:
     return Cache.Facts;
   }
 
+  static std::shared_ptr<const void>
+  selectionFacts(const PipelineAnalysisCache &Cache) {
+    return Cache.SelectionFacts;
+  }
+
   static void buildLowIR(const BinaryImage &Image, PipelineResult &Result) {
     buildLowIR(Image, Result, {Image.Entry});
   }
@@ -258,24 +263,34 @@ TEST(PipelineOutcome, AnalysisCachePreservesFloatingAndIntegerCallChains) {
 TEST(PipelineOutcome, AnalysisCacheBindsExactEntryInventories) {
   BinaryImage Image = selectionCacheImage(true);
   PipelineAnalysisCache Cache;
-  auto Check = [&](va_t Entry) {
-    const auto Before = PipelineTestPeer::analysisFacts(Cache);
+  // A run whose exact inventory its kind of facts was not built for builds
+  // new ones, the other kind stays, and either way it equals a cold run.
+  auto Check = [&](va_t Entry, bool AddsEntry, bool Fresh) {
+    const auto Facts = PipelineTestPeer::analysisFacts(Cache);
+    const auto Selection = PipelineTestPeer::selectionFacts(Cache);
     PipelineResult Kept, Cold;
     PipelineTestPeer::buildLowIR(Image, Kept, {Entry}, &Cache);
     PipelineTestPeer::buildLowIR(Image, Cold, {Entry});
-    EXPECT_NE(PipelineTestPeer::analysisFacts(Cache), Before);
+    const auto NowFacts = PipelineTestPeer::analysisFacts(Cache);
+    const auto NowSelection = PipelineTestPeer::selectionFacts(Cache);
+    EXPECT_EQ(AddsEntry ? NowSelection != Selection : NowFacts != Facts, Fresh);
+    EXPECT_EQ(AddsEntry ? NowFacts : NowSelection,
+              AddsEntry ? Facts : Selection);
     expectSameSelection(Kept, Cold);
   };
-  Check(0x1000);
-  Check(0x1200); // A new selected entry changes the known boundary inventory.
-  Check(0x1000);
+  Check(0x1000, false, true);
+  // A selected entry that starts no symbol adds to the known boundaries.
+  Check(0x1200, true, true);
+  Check(0x1000, false, false);
+  Check(0x1200, true, false);
   Image.VerifiedFunctionEntries.insert(0x1200);
-  Check(0x1000);
+  Check(0x1000, false, true);
+  Check(0x1200, true, true);
   // Equal cardinality is insufficient, and removing an entry matters too.
   Image.VerifiedFunctionEntries = {0x1300};
-  Check(0x1000);
+  Check(0x1000, false, true);
   Image.VerifiedFunctionEntries.clear();
-  Check(0x1000);
+  Check(0x1000, false, true);
 }
 
 TEST(PipelineOutcome, AnalysisCacheResetObservesChangedCalleeBytes) {
@@ -357,18 +372,43 @@ TEST(PipelineOutcome, WarmedAnalysisCacheLeavesSelectedRunsUnchanged) {
   }
 }
 
-TEST(PipelineOutcome, WarmingKeepsAnalysisKeptForOtherEntries) {
+TEST(PipelineOutcome, SelectionsOutsideTheSymbolInventoryKeepTheirOwnFacts) {
   const BinaryImage Image = selectionCacheImage(false);
   PipelineAnalysisCache Cache;
-  PipelineResult Selected;
-  // 0x1200 starts no symbol, so its run knows one more entry.
-  PipelineTestPeer::buildLowIR(Image, Selected, {0x1200}, &Cache);
+  PipelineResult Symbol, Selected, Again, ColdSymbol, ColdSelected;
+  PipelineTestPeer::buildLowIR(Image, Symbol, {0x1000}, &Cache);
   const auto Facts = PipelineTestPeer::analysisFacts(Cache);
   ASSERT_NE(Facts, nullptr);
+  EXPECT_EQ(PipelineTestPeer::selectionFacts(Cache), nullptr);
+  // 0x1200 starts no symbol, so its run knows one more entry and keys facts
+  // of its own, beside the symbol inventory's.
+  PipelineTestPeer::buildLowIR(Image, Selected, {0x1200}, &Cache);
+  const auto Selection = PipelineTestPeer::selectionFacts(Cache);
+  ASSERT_NE(Selection, nullptr);
+  EXPECT_NE(Selection, Facts);
+  EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), Facts);
+  PipelineTestPeer::buildLowIR(Image, ColdSelected, {0x1200});
+  expectSameSelection(Selected, ColdSelected);
+  // The next symbol start finds the symbol inventory's facts in place.
+  PipelineTestPeer::buildLowIR(Image, Again, {0x1000}, &Cache);
+  EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), Facts);
+  EXPECT_EQ(PipelineTestPeer::selectionFacts(Cache), Selection);
+  PipelineTestPeer::buildLowIR(Image, ColdSymbol, {0x1000});
+  expectSameSelection(Again, ColdSymbol);
+  // Warming adds to them and leaves the selection's.
   PipelineOptions Options;
   Options.AnalysisCache = &Cache;
-  EXPECT_FALSE(Pipeline().warmAnalysisCache(Image, Options, nullptr, {0x1000}));
+  EXPECT_TRUE(Pipeline().warmAnalysisCache(Image, Options, nullptr, {0x1000}));
   EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), Facts);
+  EXPECT_EQ(PipelineTestPeer::selectionFacts(Cache), Selection);
+  // Facts for another image serve no run of this one, so warming replaces
+  // them; a reset retires both kinds.
+  const BinaryImage Other = selectionCacheImage(false);
+  EXPECT_TRUE(Pipeline().warmAnalysisCache(Other, Options, nullptr, {0x1000}));
+  EXPECT_NE(PipelineTestPeer::analysisFacts(Cache), Facts);
+  Cache.reset();
+  EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), nullptr);
+  EXPECT_EQ(PipelineTestPeer::selectionFacts(Cache), nullptr);
   // Without a cache, or on another architecture, nothing is kept to warm.
   EXPECT_FALSE(Pipeline().warmAnalysisCache(Image, PipelineOptions(), nullptr,
                                             {0x1000}));
