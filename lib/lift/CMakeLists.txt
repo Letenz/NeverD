@@ -137,5 +137,6 @@ add_neverd_component_library(NeverDLift
   X86/X86Regs.cpp
 
   LINK_COMPONENTS
+  IRIntrinsics
   IRLowValidation
 )
