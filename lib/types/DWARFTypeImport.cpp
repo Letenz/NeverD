@@ -136,6 +136,16 @@ public:
   }
 
   void finish() {
+    // A record or enumeration a typedef of its name names, which C may then
+    // name by that alone.
+    for (const auto &Entry : NamedByTypedef)
+      if (const LocalType *Named = Library.find(Entry.getKey());
+          Named && Named->Origin == TypeOrigin::DWARF && !Named->TypedefNamed &&
+          (Named->Record || Named->Enum)) {
+        LocalType Marked = *Named;
+        Marked.TypedefNamed = true;
+        Library.define(std::move(Marked));
+      }
     for (const auto &Entry : Declared)
       if (!Library.find(Entry.getKey())) {
         LocalType Local;
@@ -297,11 +307,13 @@ private:
             AnonymousNames.try_emplace(Target.getDebugInfoEntry(), Name);
         if (First) {
           define(Name, kindOf(Target.getTag()), Target);
+          NamedByTypedef.insert(Name);
           return;
         }
         if (Naming->second == Name)
           return;
       } else if (TargetName == Name) {
+        NamedByTypedef.insert(Name);
         return;
       }
     }
@@ -1078,6 +1090,8 @@ private:
   std::deque<llvm::DWARFDie> Pending;
   llvm::DenseSet<const llvm::DWARFDebugInfoEntry *> Visited;
   llvm::StringSet<> Defined, Refused, Conflicting;
+  /// The records and enumerations a typedef of their name names.
+  llvm::StringSet<> NamedByTypedef;
   llvm::StringMap<TypeKind> Declared;
   /// The typedef that names each anonymous record, by its entry.
   llvm::DenseMap<const llvm::DWARFDebugInfoEntry *, std::string> AnonymousNames;

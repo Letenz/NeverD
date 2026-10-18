@@ -22,6 +22,7 @@
 
 #include "llvm/ADT/StringRef.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,24 @@ enum class HeaderLibrary : uint8_t {
 
 /// The library's name, as JSON gives it: windows-kernel-x64.
 llvm::StringRef headerLibraryName(HeaderLibrary Library);
+/// The library of the name headerLibraryName gives, if one has it.
+std::optional<HeaderLibrary> headerLibraryNamed(llvm::StringRef Name);
+
+/// How C's preprocessor tells that a compiler's headers are those of the
+/// system a library was read from (HeaderLibrarySystems.def): each a
+/// condition, Probe a header, Feature a macro.
+struct HeaderSystem {
+  llvm::StringRef Name;
+  llvm::StringRef Platform;
+  llvm::StringRef Arch;
+  llvm::StringRef Test;
+  llvm::StringRef Probe;
+  llvm::StringRef Feature;
+  llvm::StringRef Configured;
+};
+/// The system whose own headers declare \p Library's types; none for a
+/// library no system's headers give.
+std::optional<HeaderSystem> headerLibrarySystem(HeaderLibrary Library);
 
 /// The data model the library is laid out for.
 DataModel headerLibraryModel(HeaderLibrary Library);

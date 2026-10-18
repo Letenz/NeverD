@@ -4301,17 +4301,19 @@ TEST_F(SessionCAPITest, ThirtyTwoBitLinuxObjectsLayRecordsOutAsGCCDoes) {
 
   // The records render as GCC laid them out, with nothing to make GNU's
   // compilers lay them out as Microsoft's: flags' bit-fields share kind's
-  // unit, and device's eight-byte union aligns to four.
+  // unit, and device's eight-byte union aligns to four, which a pack of four
+  // keeps where other compilers align it to eight.
   const std::string Source = takeString(neverd_local_types_source(
       Session,
       R"({"language":"c","types":["flags","device"],"asserts":true})"));
   for (const char *Expected :
        {"sizeof(struct flags) == 0xC", "offsetof(struct flags, tail) == 0x8",
         "offsetof(struct device, time) == 0x1C",
+        "packed to 4 as the i386 System V ABI aligns its eight-byte scalars",
         "sizeof(struct device) == 0x54"})
     EXPECT_NE(Source.find(Expected), std::string::npos) << Expected << Source;
   for (const char *Unexpected :
-       {"NEVERD_MS_STRUCT", "NEVERD_ALIGN8 ", "#pragma pack"})
+       {"NEVERD_MS_STRUCT", "NEVERD_ALIGN8 ", "#pragma pack(push, 1)"})
     EXPECT_EQ(Source.find(Unexpected), std::string::npos)
         << Unexpected << Source;
 
@@ -4412,6 +4414,53 @@ TEST_F(SessionCAPITest, MinGWProgramsKeepTheX87LongDouble) {
     // The member is the long double, not its bytes.
     EXPECT_EQ(LongDoubleType, "long double");
     EXPECT_EQ(Sizes["ld"], Program.LongDoubleBytes);
+  }
+}
+
+TEST_F(SessionCAPITest, TheCLibrarysTypesComeFromTheSystemsHeaders) {
+  // dwarf_libc's record holds glibc's FILE, struct stat and sigset_t,
+  // which its DWARF describes beside its own limits_t: its C header takes
+  // glibc's from glibc's headers where the compiler has them, and defines
+  // them only elsewhere.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  for (const char *File : {"dwarf_libc.x64.o", "dwarf_libc.x86.o"}) {
+    SCOPED_TRACE(File);
+    neverd_session_destroy(Session);
+    Session = neverd_session_create();
+    std::ifstream Input(Fixtures / File, std::ios::binary);
+    const std::string Object =
+        write(File, std::string(std::istreambuf_iterator<char>(Input), {}));
+    ASSERT_EQ(neverd_session_load(Session, Object.c_str()), 1)
+        << takeString(neverd_last_error(Session));
+    const std::string Source = takeString(neverd_local_types_source(
+        Session, R"({"language":"c","types":["record"],"asserts":true})"));
+    for (const char *Expected :
+         {"#define NEVERD_LIBC_FROM_SYSTEM 1\n", "#include <stdio.h>\n",
+          "typedef struct limits_t limits_t;\n", "    limits_t limits;",
+          "    FILE *log;"})
+      EXPECT_NE(Source.find(Expected), std::string::npos) << Expected << "\n"
+                                                          << Source;
+    const size_t Branch = Source.find("#if defined(NEVERD_LIBC_FROM_SYSTEM)\n");
+    const size_t Fallback = Source.find("#else\n", Branch);
+    const size_t End = Source.find("#endif\n", Fallback);
+    ASSERT_NE(End, std::string::npos) << Source;
+    const size_t Stat = Source.find("\nstruct stat\n");
+    EXPECT_GT(Stat, Fallback);
+    EXPECT_LT(Stat, End);
+    EXPECT_GT(Source.find("\nstruct limits_t\n"), End);
+    EXPECT_GT(Source.find("\nstruct record\n"), End);
+    // i386's records keep its alignment of eight-byte scalars elsewhere.
+    if (llvm::StringRef(File).contains("x86"))
+      EXPECT_NE(Source.find("#pragma pack(push, 4)\nstruct stat\n"),
+                std::string::npos)
+          << Source;
+    // Asked for none, the header defines every type itself.
+    const std::string Own = takeString(neverd_local_types_source(
+        Session,
+        R"({"language":"c","types":["record"],"systemLibrary":false})"));
+    EXPECT_EQ(Own.find("NEVERD_LIBC_FROM_SYSTEM"), std::string::npos) << Own;
+    EXPECT_NE(Own.find("\nstruct stat\n"), std::string::npos) << Own;
   }
 }
 

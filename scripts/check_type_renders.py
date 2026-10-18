@@ -106,6 +106,41 @@ OTHER_WINDOWS_COMPILER = {
 }
 FETCH = "run scripts/fetch_render_toolchains.py"
 
+# Each library of a system's headers (--system-library), by the compiler
+# and target its own system's headers are read with: clang, against the
+# toolchains' sysroot or bionic where the host has none, or zig, whose
+# headers are musl's.  Its C library's types come from them there.
+SYSTEMS = {
+    "linux-x64": ("clang", "x86_64-linux-gnu", None),
+    "linux-x86": ("clang", "i686-linux-gnu", None),
+    "linux-arm64": ("clang", "aarch64-linux-gnu", "arm64"),
+    "linux-arm": ("clang", "armv7-linux-gnueabihf", "armhf"),
+    "android-x64": ("clang", "x86_64-linux-android", "asm-x86"),
+    "android-x86": ("clang", "i686-linux-android", "asm-x86"),
+    "android-arm64": ("clang", "aarch64-linux-android", "asm-arm64"),
+    "android-arm": ("clang", "armv7a-linux-androideabi", "asm-arm"),
+    "musl-x64": ("zig", "x86_64-linux-musl", None),
+    "musl-x86": ("zig", "x86-linux-musl", None),
+    "musl-arm64": ("zig", "aarch64-linux-musl", None),
+    "musl-arm": ("zig", "arm-linux-musleabihf", None),
+}
+# The other systems of each pointer width a library's portable C compiles
+# for, defining its C library's types itself: Windows' two compilers,
+# macOS's, and Linux's on the other C libraries.
+OTHER_SYSTEMS = {
+    8: (("clang", "x86_64-w64-mingw32", None),
+        ("clang", "x86_64-pc-windows-msvc", None),
+        ("zig", "aarch64-macos", None), ("zig", "x86_64-macos", None),
+        ("clang", "x86_64-linux-gnu", None),
+        ("zig", "x86_64-linux-musl", None),
+        ("clang", "x86_64-linux-android", "asm-x86")),
+    4: (("clang", "i686-w64-mingw32", None),
+        ("clang", "i686-pc-windows-msvc", None),
+        ("clang", "i686-linux-gnu", None),
+        ("zig", "x86-linux-musl", None),
+        ("clang", "i686-linux-android", "asm-x86")),
+}
+
 
 def run(command, **options):
     return subprocess.run(command, capture_output=True, text=True, **options)
@@ -131,6 +166,8 @@ class Checker:
 
     def neverd(self, *options):
         command = [self.arguments.neverd, "types"]
+        if self.arguments.system_library:
+            command += ["--system-library", self.arguments.system_library]
         if self.arguments.declare:
             command += ["--data-model", self.arguments.data_model]
             if self.arguments.record_abi:
@@ -174,6 +211,7 @@ class Checker:
             return
         msvc, gnu = TARGETS[model][:2]
         cxx = clang + "++" if shutil.which(clang + "++") else clang
+        own = SYSTEMS.get(self.arguments.system_library)
         for spelling in SPELLINGS:
             for language, suffix in (("c", ".h"), ("cpp", ".hpp")):
                 header = self.render(f"types-{spelling}{suffix}", "--lang",
@@ -185,26 +223,89 @@ class Checker:
                 # Portable C is every compiler's; Windows' names are both
                 # Windows compilers', MSVC's and MinGW's, whose long doubles
                 # differ.
-                targets = [msvc] + ([gnu] if gnu and spelling == "portable"
-                                    else [])
+                targets = [("clang", msvc, None)] + (
+                    [("clang", gnu, None)] if gnu and spelling == "portable"
+                    else [])
                 if spelling == "windows" and msvc in OTHER_WINDOWS_COMPILER:
-                    targets.append(OTHER_WINDOWS_COMPILER[msvc])
+                    targets.append(("clang", OTHER_WINDOWS_COMPILER[msvc],
+                                    None))
+                # A library of a system's headers takes its C library's
+                # types from them on that system, and defines them itself
+                # on every other, in its portable C.
+                if own:
+                    targets = [own] + ([other for other in OTHER_SYSTEMS[
+                        8 if TARGETS[model][0].startswith(("x86_64",
+                                                           "aarch64",
+                                                           "arm64"))
+                        else 4] if other[1] != own[1]]
+                        if spelling == "portable" else [])
                 for unit_language, standard, name in units:
                     unit = self.work / name
                     unit.write_text(f'#include "{header.name}"\n',
                                     encoding="utf-8")
-                    driver = clang if unit_language == "c" else cxx
-                    for target in targets:
-                        result = run([driver, f"--target={target}",
-                                      "-fsyntax-only", standard, "-x",
+                    for tool, target, extra in targets:
+                        command = self.compiler(tool, unit_language, target,
+                                                extra, clang, cxx)
+                        if command is None:
+                            continue
+                        result = run([*command, standard, "-x",
                                       unit_language, str(unit)], cwd=self.work)
                         what = language if unit_language == "c" or \
                             language == "cpp" else "c as c++"
                         self.report(f"{what} {spelling} {target}",
                                     diagnostics(result))
 
+    def compiler(self, tool, language, target, extra, clang, cxx):
+        """The command that compiles a unit of language for target alone:
+        clang, with the toolchains' sysroot or bionic's headers extra names,
+        or zig, whose own headers are musl's and macOS's; none, after
+        reporting it skipped, where the toolchains lack it."""
+        if tool == "zig":
+            zig = self.toolchains.get("zig")
+            if not zig or not Path(zig).exists():
+                self.skip(f"C for {target}", FETCH)
+                return None
+            # zig cc compiles to an object: its -fsyntax-only does not run.
+            cache = str(self.work / "zig-cache")
+            return ["env", f"ZIG_GLOBAL_CACHE_DIR={cache}",
+                    f"ZIG_LOCAL_CACHE_DIR={cache}", zig,
+                    "cc" if language == "c" else "c++", f"--target={target}",
+                    "-c", "-o", str(self.work / "zig.o")]
+        command = [clang if language == "c" else cxx, f"--target={target}",
+                   "-fsyntax-only"]
+        # No C++ library's headers: the units include C's alone, which a
+        # host without a 32-bit C++ library still has.
+        if language != "c":
+            command.append("-nostdinc++")
+        if extra in ("arm64", "armhf"):
+            sysroot = self.toolchains.get("sysroots", {}).get(extra)
+            if not sysroot:
+                self.skip(f"C for {target}", FETCH)
+                return None
+            command.append(f"--sysroot={sysroot}")
+        elif extra:
+            bionic = self.toolchains.get("sysroots", {}).get("bionic")
+            if not bionic:
+                self.skip(f"C for {target}", FETCH)
+                return None
+            resources = run([clang, "-print-resource-dir"]).stdout.strip()
+            command += ["-nostdinc", "-isystem", f"{resources}/include"]
+            for directory in ("include", "kernel/uapi", f"kernel/uapi/{extra}",
+                              "kernel/android/uapi"):
+                command += ["-isystem", str(Path(bionic) / directory)]
+            # The NDK's <jni.h> and <android/log.h>, which the Android
+            # libraries declare too.
+            sources = self.toolchains.get("sources", {})
+            for key, directory in (("libnativehelper", "include_jni"),
+                                   ("logging", "liblog/include")):
+                if key in sources:
+                    command += ["-isystem", str(Path(sources[key]) / directory)]
+        return command
+
     def prototypes(self, model):
-        """The prototypes, with Windows' typedefs, for the MSVC target."""
+        """The prototypes, with Windows' typedefs, for the MSVC target, or
+        for the system of --system-library, whose headers declare its
+        routines in place of them."""
         clang = shutil.which(self.arguments.clang)
         if not clang:
             self.skip("prototypes", f"{self.arguments.clang} not found")
@@ -214,9 +315,14 @@ class Checker:
         unit = self.work / "prototypes.c"
         unit.write_text(WINDOWS_TYPEDEFS + f'#include "{header.name}"\n',
                         encoding="utf-8")
-        result = run([clang, f"--target={TARGETS[model][0]}", "-fsyntax-only",
-                      "-std=c11", "-x", "c", str(unit)], cwd=self.work)
-        self.report(f"c prototypes {TARGETS[model][0]}", diagnostics(result))
+        tool, target, extra = SYSTEMS.get(self.arguments.system_library,
+                                          ("clang", TARGETS[model][0], None))
+        command = self.compiler(tool, "c", target, extra, clang, clang)
+        if command is None:
+            return
+        result = run([*command, "-std=c11", "-x", "c", str(unit)],
+                     cwd=self.work)
+        self.report(f"c prototypes {target}", diagnostics(result))
 
     def rust(self, model):
         """rustc checks each size and offset as it compiles, for the
@@ -362,6 +468,13 @@ def main():
                         help="the record ABI --declare files lay out by "
                              "(default: the data model's), as a 32-bit Linux "
                              "library's i386-sysv")
+    parser.add_argument("--system-library", default=None,
+                        choices=sorted(SYSTEMS),
+                        help="the library of a system's headers whose types "
+                             "the C and C++ take from that system's headers "
+                             "on it (neverd types --system-library), checked "
+                             "there and, in the portable C that defines "
+                             "them, on every other system")
     parser.add_argument("--clang", default="clang",
                         help="the clang driver C and C++ compile with")
     parser.add_argument("--tsc", default="tsc",

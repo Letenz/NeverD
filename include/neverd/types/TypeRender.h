@@ -21,6 +21,7 @@
 #ifndef NEVERD_TYPES_TYPERENDER_H
 #define NEVERD_TYPES_TYPERENDER_H
 
+#include "neverd/types/HeaderLibrary.h"
 #include "neverd/types/LocalTypes.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -86,6 +87,14 @@ struct RenderOptions {
   /// When every type renders, the library's function prototypes after them,
   /// in the languages rendersPrototypes says.
   bool Prototypes = false;
+  /// C and C++ headers: the library of a system's headers
+  /// (HeaderLibrarySystems.def) whose types, and the prototypes it gives,
+  /// come from those headers where the compiler has them, and are defined
+  /// only where it does not.
+  std::optional<HeaderLibrary> SystemLibrary;
+  /// C and C++ headers: each type after the system header that declares it
+  /// (#pragma neverd_header), as the libraries NeverD ships keep it.
+  bool HeaderPragmas = false;
 };
 
 /// C that another unit holds, as a decompiled function's does: the

@@ -98,7 +98,14 @@ NEVERD_API const char *neverd_local_type_json(neverd_session_t Sess,
 /// portable, exact widths (uint32_t, u32, uint32, ctypes.c_uint32, number),
 /// unless asked, and windows, which Rust, Go, Python, JavaScript and Lua
 /// declare as aliases of exact widths as wdk-sys does (pub type ULONG =
-/// u32); C and C++ take keywords (unsigned long) too.  NULL
+/// u32); C and C++ take keywords (unsigned long) too.  In C and C++,
+/// "systemLibrary" names a library of a system's headers (linux-x64,
+/// android-arm, musl-x86, ...; HeaderLibrarySystems.def), by default the one
+/// the program joins: the types and prototypes it gives come from that
+/// system's headers where the compiler that reads the source has them, and
+/// are defined only where it does not; false defines every type.
+/// "headerPragmas" puts each type after the system header that declares it
+/// (#pragma neverd_header), as the libraries NeverD ships keep it.  NULL
 /// with neverd_last_error() for an unknown type, a spelling the language
 /// does not take or other malformed options.
 NEVERD_API const char *neverd_local_types_source(neverd_session_t Sess,

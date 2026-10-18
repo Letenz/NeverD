@@ -798,6 +798,112 @@ TEST(TypeRender, RecordLongDoublesAreAsLargeOnEveryCompiler) {
   EXPECT_TRUE(contains(renderTypes(Windows, {}, Options), "double d;"));
 }
 
+TEST(TypeRender, RecordsATypedefNamesGoByThatName) {
+  // `typedef struct { ... } X` names the record by X alone, as a system's
+  // headers declare it: C names it so, ahead and after.
+  TypeLibrary Library(DataModel::LP64);
+  ASSERT_TRUE(parseCTypes("typedef struct { int v[2]; } fsid_like;\n"
+                          "struct holder { fsid_like id; fsid_like *next; };\n",
+                          Library)
+                  .ok());
+  const std::string C = renderTypes(Library, {}, in(Language::C));
+  EXPECT_TRUE(contains(C, "typedef struct fsid_like fsid_like;\n")) << C;
+  EXPECT_TRUE(contains(C, "    fsid_like id;")) << C;
+  EXPECT_TRUE(contains(C, "    fsid_like *next;")) << C;
+  EXPECT_FALSE(contains(C, "struct fsid_like id")) << C;
+  const std::string Alone =
+      renderType(Library, *Library.find("fsid_like"), in(Language::C));
+  EXPECT_TRUE(contains(Alone, "};\ntypedef struct fsid_like fsid_like;\n"))
+      << Alone;
+  TypeLibrary Back(DataModel::LP64);
+  ASSERT_TRUE(parseCTypes(C, Back).ok());
+  EXPECT_TRUE(Back.find("fsid_like")->TypedefNamed);
+}
+
+TEST(TypeRender, TheCLibrarysTypesComeFromItsHeadersOnItsSystem) {
+  // A program's record holding glibc's: on x64 glibc they come from its
+  // headers, and elsewhere from definitions whose names the compiler's own
+  // headers keep.
+  TypeLibrary Library(DataModel::LP64);
+  const TypeLibrary *Glibc = headerLibrary(HeaderLibrary::LinuxX64);
+  ASSERT_NE(Glibc, nullptr);
+  mergeHeaderTypes(Library, *Glibc);
+  ASSERT_TRUE(parseCTypes("struct record { FILE *log; struct stat info; "
+                          "sigset_t mask; long count; };\n",
+                          Library)
+                  .ok());
+  RenderOptions Options = in(Language::C);
+  Options.SystemLibrary = HeaderLibrary::LinuxX64;
+  Options.Asserts = true;
+  const std::string Text =
+      renderTypes(Library, {Library.find("record")}, Options);
+  for (const char *Expected :
+       {"#if !defined(NEVERD_OWN_LIBC_TYPES) && defined(__linux__) && \\\n"
+        "    defined(__x86_64__) && !defined(__ILP32__)\n#ifndef _GNU_SOURCE\n"
+        "#define _GNU_SOURCE 1\n#endif\n",
+        "#if defined(__GLIBC__) && !defined(__UCLIBC__)\n#if "
+        "!(defined(__USE_GNU))\n",
+        "#define NEVERD_LIBC_FROM_SYSTEM 1\n", "#include <stdio.h>\n",
+        "#define _IO_FILE neverd__IO_FILE\n",
+        "#if !defined(NEVERD_LIBC_FROM_SYSTEM) || !defined(__cplusplus)\n"
+        "static_assert(",
+        "static_assert(sizeof(struct stat) == 0x90",
+        "#pragma pop_macro(\"_IO_FILE\")\n"})
+    EXPECT_TRUE(contains(Text, Expected)) << Expected << "\n" << Text;
+  // The program's record stands after the branches, on every system.
+  const size_t Branch = Text.find("#if defined(NEVERD_LIBC_FROM_SYSTEM)\n");
+  const size_t Fallback = Text.find("#else\n", Branch);
+  const size_t End = Text.find("#endif\n", Fallback);
+  ASSERT_NE(End, std::string::npos) << Text;
+  EXPECT_LT(Fallback, Text.find("\nstruct stat\n"));
+  EXPECT_GT(End, Text.find("\nstruct stat\n"));
+  EXPECT_GT(Text.find("\nstruct record\n"), End);
+  // The prelude's standard names stay the compiler's.
+  EXPECT_FALSE(contains(Text, "typedef uint64_t size_t;")) << Text;
+  Options.SystemLibrary.reset();
+  EXPECT_FALSE(contains(renderTypes(Library, {Library.find("record")}, Options),
+                        "NEVERD_LIBC_FROM_SYSTEM"));
+}
+
+TEST(TypeRender, I386RecordsLayOutAsI386OnEveryCompiler) {
+  // The i386 System V ABI aligns long long to four, which pack(4) keeps on
+  // compilers that align it to eight; GNU's bit-fields ask MinGW's
+  // compilers for GNU's layout.
+  TypeLibrary Library(DataModel::ILP32);
+  Library.setRecordABI(RecordABI::I386SystemV);
+  ASSERT_TRUE(parseCTypes("struct loose { char c; long long q; };\n"
+                          "struct ints { char c; int i; };\n"
+                          "struct bits { char c : 3; int i : 5; };\n",
+                          Library)
+                  .ok());
+  const std::string Text = renderTypes(Library, {}, in(Language::C));
+  EXPECT_TRUE(contains(Text, "packed to 4 as the i386 System V ABI aligns its "
+                             "eight-byte scalars\n#pragma pack(push, "
+                             "4)\nstruct loose\n"))
+      << Text;
+  EXPECT_FALSE(contains(Text, "#pragma pack(push, 4)\nstruct ints\n"));
+  EXPECT_TRUE(contains(Text, "struct NEVERD_GNU_STRUCT bits\n")) << Text;
+  EXPECT_TRUE(contains(Text, "#define NEVERD_GNU_STRUCT "
+                             "__attribute__((gcc_struct))\n"))
+      << Text;
+}
+
+TEST(TypeRender, ChecksLeaveTheFillersOut) {
+  // A filler of the bytes after the last member is no member a system's own
+  // declaration has, read back or not.
+  TypeLibrary Library(DataModel::LP64);
+  Library.define(
+      structure("Tail", 12, {member("x", makeBuiltin(Builtin::Int), 0)}));
+  RenderOptions Options = in(Language::C);
+  Options.Asserts = true;
+  const std::string Text = renderTypes(Library, {}, Options);
+  EXPECT_TRUE(contains(Text, "__filler0[8];")) << Text;
+  EXPECT_FALSE(contains(Text, "__filler0) ==")) << Text;
+  TypeLibrary Back(DataModel::LP64);
+  ASSERT_TRUE(parseCTypes(Text, Back).ok());
+  EXPECT_FALSE(contains(renderTypes(Back, {}, Options), "__filler0) =="));
+}
+
 TEST(TypeRender, RustImportsCoreVoidWhereItIsSpelled) {
   // An import nothing uses warns, which a check of warnings fails on.
   TypeLibrary Library;

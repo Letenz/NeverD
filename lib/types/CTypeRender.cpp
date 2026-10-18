@@ -15,6 +15,7 @@
 
 #include "TypeRenderShared.h"
 
+#include "neverd/types/HeaderLibrary.h"
 #include "neverd/types/TypeLayout.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -77,6 +78,15 @@ std::string portableBuiltin(Builtin Type, const TypeLibrary &Library) {
   return "void";
 }
 
+/// The names of the members C fills the bytes between members with.
+constexpr llvm::StringLiteral FillerPrefix = "__filler";
+
+/// Whether \p Name is a filler's: __filler0.
+bool isFillerName(llvm::StringRef Name) {
+  return Name.consume_front(FillerPrefix) && !Name.empty() &&
+         llvm::all_of(Name, llvm::isDigit);
+}
+
 class CWriter {
 public:
   /// \p Embedded: the C a decompiled unit holds, whose code spells the
@@ -89,7 +99,10 @@ public:
           bool Embedded = false, bool Prelude = false,
           const NameSpelling *Shared = nullptr)
       : Library(Library), Options(Options), Cpp(Options.Lang == Language::Cpp),
-        Prelude(Prelude && !Embedded),
+        Embedded(Embedded), Prelude(Prelude && !Embedded),
+        System(!Embedded && Options.SystemLibrary
+                   ? headerLibrary(*Options.SystemLibrary)
+                   : nullptr),
         Own(Shared ? std::nullopt
                    : std::optional<NameSpelling>(std::in_place, Library,
                                                  Options.Lang,
@@ -104,6 +117,20 @@ public:
 
   void definition(const LocalType &Type, std::string &Out);
   void forwardDeclaration(const LocalType &Type, std::string &Out) const;
+  /// The checks of \p Type's size and offsets, which a definition is
+  /// followed by unless they are written apart (separateAsserts).
+  void checks(const LocalType &Type, std::string &Out);
+  /// Every record has been declared ahead of the definitions, with the
+  /// typedef of its name that C names it by alone.
+  void declaredAhead() { DeclaredAhead = true; }
+  /// The definitions written next leave their checks to checks().
+  void separateAsserts(bool Separate) { SeparateAsserts = Separate; }
+  /// The library of the system's headers the types may come from.
+  const TypeLibrary *system() const { return System; }
+  /// The record whose members are unknown that the typedef \p Type is an
+  /// array of, as ARM's glibc gives jmp_buf where local types do not hold
+  /// its __jmp_buf: C declares no such array.  Null for any other type.
+  const LocalType *unknownElement(const LocalType &Type) const;
   /// The builtins rendered so far.
   const std::set<Builtin> &builtins() const { return UsedBuiltins; }
   /// Whether a record rendered so far declares its alignment.
@@ -115,6 +142,9 @@ public:
   /// that Microsoft's give it.
   bool alignsEightByteMembers() const { return EightByteMembers; }
   bool microsoftBitfields() const { return MicrosoftBitfields; }
+  /// Whether a record rendered so far asks MinGW's compilers for GNU's
+  /// bit-fields.
+  bool gnuBitfields() const { return GnuBitfields; }
   /// Whether a type rendered so far is followed by checks.
   bool asserts() const { return Asserted; }
   const NameSpelling &names() const { return Names; }
@@ -133,6 +163,12 @@ private:
   void line(unsigned Indent, llvm::StringRef Code, llvm::StringRef Comment,
             std::string &Out) const;
   std::string tagged(const LocalType &Type) const;
+  /// Whether C names \p Type by its name alone, as a typedef of the name,
+  /// its own or the system's, lets it: `typedef struct { ... } X` leaves
+  /// the record no tag of its own.  Decompiled code keeps the tags.
+  bool bare(const LocalType &Type) const;
+  /// The typedef that names \p Type by its name alone, where C does so.
+  std::string bareTypedef(const LocalType &Type) const;
   /// "struct" or "union", with the alignment \p Record declares.
   std::string keyword(const RecordDef &Record);
   /// The alignment a member of \p Type declares where the 32-bit data
@@ -143,6 +179,9 @@ private:
   std::string offset(uint64_t Byte) const {
     return offsetText(Byte, Options, Digits);
   }
+  /// Whether \p Record holds in place, not through a record of a name of
+  /// its own, a scalar of eight bytes its ABI aligns to less.
+  bool holdsLooseScalars(const RecordDef &Record) const;
   /// Every named member reachable as Type.Name, with its byte offset.
   void hoisted(const RecordDef &Record, uint64_t Base,
                std::vector<std::pair<std::string, uint64_t>> &Out) const;
@@ -150,9 +189,13 @@ private:
   const TypeLibrary &Library;
   const RenderOptions &Options;
   const bool Cpp;
+  const bool Embedded;
   const bool Prelude;
+  const TypeLibrary *const System;
   const std::optional<NameSpelling> Own;
   const NameSpelling &Names;
+  bool DeclaredAhead = false;
+  bool SeparateAsserts = false;
   unsigned Digits = 1;
   unsigned Fillers = 0;
   /// How many signatures the writer is in.
@@ -163,6 +206,7 @@ private:
   bool EightByteMembers = false;
   /// Whether a record asks GNU compilers for Microsoft's bit-field layout.
   bool MicrosoftBitfields = false;
+  bool GnuBitfields = false;
   bool Asserted = false;
 };
 
@@ -217,7 +261,9 @@ std::string CWriter::declare(const TypeExpr &Type,
       // own union does a header's structure of the name.
       const LocalType *Named = Library.find(Type.Name);
       const TypeKind Kind = Named ? Named->Kind : Type.NamedKind;
-      if (Kind == TypeKind::Struct)
+      if (Named && bare(*Named))
+        ;
+      else if (Kind == TypeKind::Struct)
         Base += "struct ";
       else if (Kind == TypeKind::Union)
         Base += "union ";
@@ -322,11 +368,17 @@ std::string CWriter::keyword(const RecordDef &Record) {
   // Microsoft's compilers fill a bit-field's storage unit apart from the
   // members around it, where GNU's pack bits into whatever has room; GNU
   // lays such a record out as Microsoft's do only when asked.
-  if (Library.layoutRules() == LayoutRules::MSVC &&
-      llvm::any_of(Record.Members,
-                   [](const Member &Field) { return Field.isBitfield(); })) {
+  const bool Bitfields = llvm::any_of(
+      Record.Members, [](const Member &Field) { return Field.isBitfield(); });
+  if (Library.layoutRules() == LayoutRules::MSVC && Bitfields) {
     MicrosoftBitfields = true;
     Text += " NEVERD_MS_STRUCT";
+  }
+  // And GNU's for Windows, MinGW's, lay them out as Microsoft's do unless
+  // asked otherwise; Microsoft's lay them out no other way.
+  if (Library.layoutRules() == LayoutRules::Itanium && Bitfields && !Embedded) {
+    GnuBitfields = true;
+    Text += " NEVERD_GNU_STRUCT";
   }
   return Text;
 }
@@ -363,9 +415,85 @@ std::string CWriter::memberAlignment(const TypeExpr &Type) {
   return "NEVERD_ALIGN8 ";
 }
 
+const LocalType *CWriter::unknownElement(const LocalType &Type) const {
+  if (Type.Kind != TypeKind::Typedef || !Type.Target)
+    return nullptr;
+  const TypeExpr *Held = Type.Target.get();
+  bool Array = false;
+  for (unsigned Hop = 0; Held && Hop < 64; ++Hop) {
+    if (Held->Kind == TypeExprKind::Array) {
+      Array = true;
+      Held = Held->Element.get();
+      continue;
+    }
+    const LocalType *Named =
+        Held->Kind == TypeExprKind::Named ? Library.find(Held->Name) : nullptr;
+    if (Named && Named->Kind == TypeKind::Typedef && Named->Target) {
+      Held = Named->Target.get();
+      continue;
+    }
+    return Array && Named && Named->Record && !Named->Record->Defined ? Named
+                                                                      : nullptr;
+  }
+  return nullptr;
+}
+
+bool CWriter::holdsLooseScalars(const RecordDef &Record) const {
+  for (const Member &Field : Record.Members) {
+    // What the member holds: through arrays and typedefs, and the records
+    // in place it holds.
+    const TypeExpr *Held = Field.Type.get();
+    for (unsigned Hop = 0; Held && Hop < 64; ++Hop) {
+      if (Held->Kind == TypeExprKind::Array) {
+        Held = Held->Element.get();
+        continue;
+      }
+      const LocalType *Named = Held->Kind == TypeExprKind::Named
+                                   ? Library.find(Held->Name)
+                                   : nullptr;
+      if (Named && Named->Kind == TypeKind::Typedef && Named->Target) {
+        Held = Named->Target.get();
+        continue;
+      }
+      break;
+    }
+    if (!Held)
+      continue;
+    if (Held->Kind == TypeExprKind::Record && Held->Record &&
+        holdsLooseScalars(*Held->Record))
+      return true;
+    if (Held->Kind == TypeExprKind::Builtin &&
+        Library.builtinBytes(Held->TheBuiltin) == 8 &&
+        Library.alignOf(*Held) < 8)
+      return true;
+  }
+  return false;
+}
+
+bool CWriter::bare(const LocalType &Type) const {
+  if (Embedded || Cpp ||
+      (Type.Kind != TypeKind::Struct && Type.Kind != TypeKind::Union &&
+       Type.Kind != TypeKind::Enum))
+    return false;
+  if (Type.TypedefNamed)
+    return true;
+  const LocalType *Own = System ? System->find(Type.Name) : nullptr;
+  return Own && Own->TypedefNamed;
+}
+
+std::string CWriter::bareTypedef(const LocalType &Type) const {
+  if (!bare(Type))
+    return {};
+  const char *Keyword = Type.Kind == TypeKind::Enum    ? "enum"
+                        : Type.Kind == TypeKind::Union ? "union"
+                                                       : "struct";
+  const std::string Name = Names.type(Type.Name);
+  return "typedef " + std::string(Keyword) + " " + Name + " " + Name + ";\n";
+}
+
 std::string CWriter::tagged(const LocalType &Type) const {
   const std::string Name = Names.type(Type.Name);
-  if (Cpp)
+  if (Cpp || bare(Type))
     return Name;
   switch (Type.Kind) {
   case TypeKind::Struct:
@@ -382,7 +510,7 @@ std::string CWriter::tagged(const LocalType &Type) const {
 void CWriter::step(const SequentialLayout::Step &Step, uint64_t At,
                    unsigned Indent, std::string &Out) {
   if (Step.Filler) {
-    const std::string Name = "__filler" + std::to_string(Fillers++);
+    const std::string Name = FillerPrefix.str() + std::to_string(Fillers++);
     line(Indent,
          builtin(Builtin::UChar) + " " + Name + "[" +
              std::to_string(Step.Filler) + "];",
@@ -605,6 +733,8 @@ void CWriter::record(const LocalType &Type, std::string &Out) {
   if (!Record.Defined) {
     Out += "// Declared only: its members are unknown.\n";
     Out += std::string(Keyword) + " " + Names.type(Type.Name) + ";\n";
+    if (!DeclaredAhead)
+      Out += bareTypedef(Type);
     return;
   }
   // A record of no bytes, as Rust's unit structures are, has no C
@@ -613,6 +743,8 @@ void CWriter::record(const LocalType &Type, std::string &Out) {
   if (!Record.Size) {
     Out += "// " + Type.Name + ": 0 bytes, which C defines no record of\n";
     Out += std::string(Keyword) + " " + Names.type(Type.Name) + ";\n";
+    if (!DeclaredAhead)
+      Out += bareTypedef(Type);
     return;
   }
   Digits = offsetDigits(Record.Size);
@@ -621,15 +753,27 @@ void CWriter::record(const LocalType &Type, std::string &Out) {
                        std::to_string(Record.Size) + ") bytes";
   if (Record.Pack)
     Header += ", packed to " + std::to_string(Record.Pack);
+  // The i386 System V ABI aligns long long and double to four in a record,
+  // where every other compiler aligns them to eight: the pack that lays
+  // such a record out so everywhere, which changes nothing on i386.
+  const uint32_t Limit = scalarAlignLimitOf(Library.recordABI());
+  uint32_t Pack = Record.Pack;
+  if (!Embedded && Limit < 8 && holdsLooseScalars(Record))
+    Pack = Pack ? std::min(Pack, Limit) : Limit;
+  if (Pack != Record.Pack)
+    Header += ", packed to " + std::to_string(Pack) +
+              " as the i386 System V ABI aligns its eight-byte scalars";
   Out += Header + "\n";
-  if (Record.Pack)
-    Out += "#pragma pack(push, " + std::to_string(Record.Pack) + ")\n";
+  if (Pack)
+    Out += "#pragma pack(push, " + std::to_string(Pack) + ")\n";
   Out += keyword(Record) + " " + Names.type(Type.Name) + "\n{\n";
-  body(Record, Record.Pack, 4, 0, /*Outer=*/true, Out);
+  body(Record, Pack, 4, 0, /*Outer=*/true, Out);
   Out += "};\n";
-  if (Record.Pack)
+  if (Pack)
     Out += "#pragma pack(pop)\n";
-  if (Options.Asserts)
+  if (!DeclaredAhead)
+    Out += bareTypedef(Type);
+  if (Options.Asserts && !SeparateAsserts)
     asserts(Type, Out);
 }
 
@@ -651,7 +795,9 @@ void CWriter::enumeration(const LocalType &Type, std::string &Out) {
     enumerators(Enum, 4, Out);
     Out += "};\n";
   }
-  if (Options.Asserts)
+  // C declares no enumeration ahead.
+  Out += bareTypedef(Type);
+  if (Options.Asserts && !SeparateAsserts)
     asserts(Type, Out);
 }
 
@@ -663,7 +809,9 @@ void CWriter::hoisted(
       hoisted(*Field.Type->Record, Base + Field.BitOffset, Out);
       continue;
     }
-    if (Field.isBitfield() || Field.Name.empty())
+    // Nor a filler of the bytes between, which C reads back as a member a
+    // system's own declaration does not have.
+    if (Field.isBitfield() || Field.Name.empty() || isFillerName(Field.Name))
       continue;
     Out.push_back({Names.member(Field.Name), (Base + Field.BitOffset) / 8});
   }
@@ -705,8 +853,14 @@ void CWriter::definition(const LocalType &Type, std::string &Out) {
       enumeration(Type, Out);
     return;
   case TypeKind::Typedef:
-    if (Type.Target)
-      Out += "typedef " + declare(*Type.Target, Names.type(Type.Name)) + ";\n";
+    if (!Type.Target)
+      return;
+    if (const LocalType *Unknown = unknownElement(Type)) {
+      Out += "// " + Type.Name + ": an array of " + Unknown->Name +
+             ", whose members are unknown: C declares no array of it.\n";
+      return;
+    }
+    Out += "typedef " + declare(*Type.Target, Names.type(Type.Name)) + ";\n";
     return;
   case TypeKind::Function:
     if (Type.Function)
@@ -719,10 +873,23 @@ void CWriter::definition(const LocalType &Type, std::string &Out) {
 
 void CWriter::forwardDeclaration(const LocalType &Type,
                                  std::string &Out) const {
-  if (Type.Kind == TypeKind::Struct)
-    Out += "struct " + Names.type(Type.Name) + ";\n";
-  else if (Type.Kind == TypeKind::Union)
-    Out += "union " + Names.type(Type.Name) + ";\n";
+  if (Type.Kind != TypeKind::Struct && Type.Kind != TypeKind::Union)
+    return;
+  if (const std::string Typedef = bareTypedef(Type); !Typedef.empty())
+    Out += Typedef;
+  else
+    Out += (Type.Kind == TypeKind::Struct ? "struct " : "union ") +
+           Names.type(Type.Name) + ";\n";
+}
+
+void CWriter::checks(const LocalType &Type, std::string &Out) {
+  const bool LaidOut =
+      Type.Kind == TypeKind::Enum
+          ? Type.Enum != nullptr
+          : (Type.Kind == TypeKind::Struct || Type.Kind == TypeKind::Union) &&
+                Type.Record && Type.Record->Defined && Type.Record->Size;
+  if (Options.Asserts && LaidOut)
+    asserts(Type, Out);
 }
 
 /// Whether \p Type is a character type C++ has a keyword for, which C's
@@ -807,6 +974,13 @@ std::string prelude(const CWriter &Writer, const TypeLibrary &Library,
            "(defined(__i386__) || defined(__x86_64__))\n#define "
            "NEVERD_MS_STRUCT __attribute__((ms_struct))\n#else\n#define "
            "NEVERD_MS_STRUCT\n#endif\n#endif\n";
+  // MinGW's lay them out as GNU's do elsewhere when asked; Microsoft's own
+  // compilers cannot, which the checks after such a record then report.
+  if (Writer.gnuBitfields())
+    Out += "\n#ifndef NEVERD_GNU_STRUCT\n#if defined(__MINGW32__) && "
+           "(defined(__i386__) || defined(__x86_64__))\n#define "
+           "NEVERD_GNU_STRUCT __attribute__((gcc_struct))\n#else\n#define "
+           "NEVERD_GNU_STRUCT\n#endif\n#endif\n";
   // C++'s static_assert, which C11 spells _Static_assert: <assert.h> would
   // name it, but freestanding C, as a driver's, need not have the header.
   const bool LongChecked = spellingOf(Options) == BuiltinSpelling::Keywords &&
@@ -941,14 +1115,16 @@ const LocalType *typedefRecord(const TypeLibrary &Library,
 /// The definitions of \p All that \p Defined holds, enumerations into
 /// \p Enums and the rest into \p Body, each after what it holds by value
 /// and the typedefs and enumerations it names; \p Guarded wraps each in a
-/// guard of its own.  The types defined, in order.
+/// guard of its own, and \p Pragmas puts it after the system header that
+/// declares it.  The types defined, in order.
 std::vector<const LocalType *>
 writeDefinitions(CWriter &Writer, const TypeLibrary &Library,
                  llvm::ArrayRef<const LocalType *> All,
-                 const llvm::StringSet<> &Defined, bool Guarded,
+                 const llvm::StringSet<> &Defined, bool Guarded, bool Pragmas,
                  std::string &Enums, std::string &Body) {
   llvm::StringSet<> Done;
   std::vector<const LocalType *> Order;
+  std::string EnumHeader, BodyHeader;
   std::function<void(const LocalType &)> Emit = [&](const LocalType &Type) {
     if (!Defined.contains(Type.Name) || !Done.insert(Type.Name).second)
       return;
@@ -976,6 +1152,13 @@ writeDefinitions(CWriter &Writer, const TypeLibrary &Library,
       if (const LocalType *Found = Library.find(Name))
         Emit(*Found);
     std::string &Into = Type.Kind == TypeKind::Enum ? Enums : Body;
+    if (std::string &Header =
+            Type.Kind == TypeKind::Enum ? EnumHeader : BodyHeader;
+        Pragmas && Type.Header != Header) {
+      Header = Type.Header;
+      Into += "#pragma neverd_header(" +
+              (Header.empty() ? std::string() : "\"" + Header + "\"") + ")\n";
+    }
     const std::string Guard = "NEVERD_TYPE_" + Writer.names().type(Type.Name);
     if (Guarded)
       Into += "#ifndef " + Guard + "\n#define " + Guard + "\n";
@@ -1014,8 +1197,9 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
   CWriter Writer(Library, Options, /*Embedded=*/true, /*Prelude=*/false,
                  Spelled);
   std::string Enums, Body;
-  const std::vector<const LocalType *> Order = writeDefinitions(
-      Writer, Library, All, Defined, /*Guarded=*/true, Enums, Body);
+  const std::vector<const LocalType *> Order =
+      writeDefinitions(Writer, Library, All, Defined, /*Guarded=*/true,
+                       /*Pragmas=*/false, Enums, Body);
   // The records the definitions only point to, declared.
   std::string Declarations;
   llvm::StringSet<> Declared;
@@ -1062,6 +1246,82 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
   return Result;
 }
 
+/// The condition under which the compiler's own headers declare the type
+/// \p Name (PreludeNames.def), "1" where they all do; none where none does.
+std::optional<llvm::StringRef> preludeType(llvm::StringRef Name) {
+#define NEVERD_PRELUDE_TYPE(Type, Declared)                                    \
+  if (Name == #Type)                                                           \
+    return llvm::StringRef(Declared);
+#include "neverd/types/PreludeNames.def"
+  return std::nullopt;
+}
+
+/// Whether a C library's own headers may define \p Name as a macro
+/// (PreludeNames.def).
+bool preludeMacro(llvm::StringRef Name) {
+#define NEVERD_PRELUDE_MACRO(Macro)                                            \
+  if (Name == #Macro)                                                          \
+    return true;
+#include "neverd/types/PreludeNames.def"
+  return false;
+}
+
+/// Whether C reserves \p Name to its implementations: __x and _X.
+bool reservedName(llvm::StringRef Name) {
+  return Name.size() > 1 && Name[0] == '_' &&
+         (Name[1] == '_' || llvm::isUpper(Name[1]));
+}
+
+/// The names \p Record's members take, in records in place too.
+void memberNames(const RecordDef &Record, std::set<std::string> &Names) {
+  for (const Member &Field : Record.Members) {
+    if (!Field.Name.empty())
+      Names.insert(Field.Name);
+    if (Field.Type && Field.Type->Kind == TypeExprKind::Record &&
+        Field.Type->Record)
+      memberNames(*Field.Type->Record, Names);
+  }
+}
+
+/// \p Lines under the preprocessor condition \p Condition, where it is not
+/// "1".
+std::string under(llvm::StringRef Condition, const std::string &Lines) {
+  if (Lines.empty())
+    return {};
+  return Condition == "1"
+             ? Lines
+             : "#if " + Condition.str() + "\n" + Lines + "#endif\n";
+}
+
+/// What tells C's preprocessor that a compiler's headers are \p System's,
+/// which defines NEVERD_LIBC_FROM_SYSTEM where they are.
+std::string systemProbe(const HeaderSystem &System) {
+  const std::string Name = System.Name.str(), Feature = System.Feature.str();
+  std::string Out =
+      "// The types " + Name +
+      "'s headers declare come from them where the "
+      "compiler has\n// " +
+      Name +
+      " for the program's architecture, which "
+      "these definitions are\n// otherwise: define NEVERD_OWN_LIBC_TYPES for "
+      "these definitions alone.\n#if !defined(NEVERD_OWN_LIBC_TYPES) && " +
+      System.Platform.str() + " && \\\n    " + System.Arch.str() + "\n";
+  if (!Feature.empty())
+    Out += "#ifndef " + Feature + "\n#define " + Feature + " 1\n#endif\n";
+  if (!System.Probe.empty())
+    Out += "#if defined(__has_include)\n#if __has_include(<" +
+           System.Probe.str() + ">)\n#include <" + System.Probe.str() +
+           ">\n#endif\n#endif\n";
+  Out += "#if " + System.Test.str() + "\n";
+  if (!System.Configured.empty())
+    Out += "#if !(" + System.Configured.str() + ")\n#error \"" + Name +
+           "'s headers came before these types without " + Feature +
+           ", which these types need: include them first, or define " +
+           Feature + " first\"\n#endif\n";
+  Out += "#define NEVERD_LIBC_FROM_SYSTEM 1\n#endif\n#endif\n";
+  return Out;
+}
+
 std::string renderCHeader(const TypeLibrary &Library,
                           llvm::ArrayRef<const LocalType *> Roots,
                           const RenderOptions &Options) {
@@ -1078,15 +1338,54 @@ std::string renderCHeader(const TypeLibrary &Library,
   }
 
   CWriter Writer(Library, Options, /*Embedded=*/false, /*Prelude=*/true);
-  std::string Declarations, Enums, Body;
+  Writer.declaredAhead();
+  // The system's own types, which its headers declare: those of a name its
+  // library has, the program's own definitions of them too, come from its
+  // headers where the compiler has them, and are defined only where it does
+  // not.
+  const std::optional<HeaderSystem> System =
+      Options.SystemLibrary ? headerLibrarySystem(*Options.SystemLibrary)
+                            : std::nullopt;
+  const TypeLibrary *SystemTypes = System ? Writer.system() : nullptr;
+  const auto theirs = [&](llvm::StringRef Name) {
+    return SystemTypes && SystemTypes->find(Name);
+  };
+  std::vector<const LocalType *> Theirs, Own;
   for (const LocalType *Type : All)
+    (theirs(Type->Name) ? Theirs : Own).push_back(Type);
+  llvm::StringSet<> TheirDefined, OwnDefined;
+  for (const auto &Entry : Defined)
+    (theirs(Entry.getKey()) ? TheirDefined : OwnDefined).insert(Entry.getKey());
+
+  // Their definitions stand where the system's headers do not; their checks
+  // hold either way.
+  std::string TheirDeclarations, TheirEnums, TheirBody, TheirChecks;
+  for (const LocalType *Type : Theirs)
+    Writer.forwardDeclaration(*Type, TheirDeclarations);
+  Writer.separateAsserts(true);
+  const std::vector<const LocalType *> TheirDone = writeDefinitions(
+      Writer, Library, Theirs, TheirDefined,
+      /*Guarded=*/false, Options.HeaderPragmas, TheirEnums, TheirBody);
+  Writer.separateAsserts(false);
+  std::set<std::string> Includes;
+  for (const LocalType *Type : TheirDone) {
+    Writer.checks(*Type, TheirChecks);
+    if (const LocalType *Declared = SystemTypes->find(Type->Name);
+        !Declared->Header.empty())
+      Includes.insert(Declared->Header);
+  }
+
+  std::string Declarations, Enums, Body;
+  for (const LocalType *Type : Own)
     Writer.forwardDeclaration(*Type, Declarations);
   // Enumerations first, then each type after what it holds by value.
-  const std::vector<const LocalType *> Done = writeDefinitions(
-      Writer, Library, All, Defined, /*Guarded=*/false, Enums, Body);
+  const std::vector<const LocalType *> Done =
+      writeDefinitions(Writer, Library, Own, OwnDefined, /*Guarded=*/false,
+                       Options.HeaderPragmas, Enums, Body);
 
-  // The functions the library knows the prototypes of, by name.
-  std::string Prototypes;
+  // The functions the library knows the prototypes of, by name: the
+  // system's where its headers do not declare them.
+  std::string Prototypes, TheirPrototypes;
   size_t PrototypeCount = 0;
   if (Options.Prototypes && Roots.empty()) {
     std::vector<std::pair<llvm::StringRef, const FunctionDef *>> Sorted;
@@ -1109,34 +1408,134 @@ std::string renderCHeader(const TypeLibrary &Library,
       llvm::sort(Names);
     const bool Cpp = Options.Lang == Language::Cpp;
     for (const auto &[Name, Function] : Sorted) {
+      std::string &Into = SystemTypes && SystemTypes->findPrototype(Name)
+                              ? TheirPrototypes
+                              : Prototypes;
+      // A routine that takes or returns a type C declares no definition of.
+      LocalType Signature;
+      Signature.Kind = TypeKind::Function;
+      Signature.Function = std::make_shared<FunctionDef>(*Function);
+      std::vector<std::string> Mentioned;
+      mentionedTypes(Signature, Mentioned);
+      if (const auto Missing =
+              llvm::find_if(Mentioned,
+                            [&](const std::string &Type) {
+                              const LocalType *Found = Library.find(Type);
+                              return Found && Writer.unknownElement(*Found);
+                            });
+          Missing != Mentioned.end()) {
+        Into += "// " + Name.str() + ": takes " + *Missing +
+                ", which C declares no definition of here.\n";
+        continue;
+      }
       if (Function->NoReturn)
-        Prototypes += Cpp ? "[[noreturn]] " : "_Noreturn ";
-      Prototypes += Writer.declare(
+        Into += Cpp ? "[[noreturn]] " : "_Noreturn ";
+      Into += Writer.declare(
           *makeFunction(std::make_shared<FunctionDef>(*Function)), Name.str());
       // The first C name of the prototype takes its first such name; C gives
       // a routine one assembler name.
       if (auto Labels = Symbols.find(Function);
           Labels != Symbols.end() && !Labels->second.empty()) {
-        Prototypes += " __asm__(\"" + Labels->second.front().str() + "\")";
+        Into += " __asm__(\"" + Labels->second.front().str() + "\")";
         Labels->second.erase(Labels->second.begin());
         ++PrototypeCount;
       }
-      Prototypes += ";\n";
+      Into += ";\n";
     }
     PrototypeCount += Sorted.size();
   }
 
+  const bool FromSystem =
+      System && (!TheirDone.empty() || !TheirPrototypes.empty());
+  // Where the compiler is not the system, its own headers may declare the
+  // system's names otherwise: the system's types defined here take other
+  // names for these definitions, which leave the names the compiler's.
+  std::map<std::string, std::string> Renames, Restores;
+  if (FromSystem)
+    for (const LocalType *Type : Theirs) {
+      const std::string Name = Writer.names().type(Type->Name);
+      const std::optional<llvm::StringRef> Declared = preludeType(Name);
+      if (!Declared && !reservedName(Name))
+        continue;
+      const std::string Condition = Declared ? Declared->str() : "1";
+      Renames[Condition] += "#pragma push_macro(\"" + Name + "\")\n#define " +
+                            Name + " neverd_" + Name + "\n";
+      Restores[Condition] += "#pragma pop_macro(\"" + Name + "\")\n";
+    }
+  // And may define the name of a member as a macro.
+  std::set<std::string> Members;
+  for (const auto *Order : {&TheirDone, &Done})
+    for (const LocalType *Type : *Order)
+      if (Type->Record)
+        memberNames(*Type->Record, Members);
+  // after the system's headers have read them, and before the definitions.
+  std::string Undefines, Redefines;
+  for (const std::string &Member : Members)
+    if (preludeMacro(Member)) {
+      Undefines +=
+          "#pragma push_macro(\"" + Member + "\")\n#undef " + Member + "\n";
+      Redefines += "#pragma pop_macro(\"" + Member + "\")\n";
+    }
+  if (!Undefines.empty())
+    Undefines = "// The member names a C library's headers may define as "
+                "macros.\n" +
+                Undefines;
+  std::string Hide, Show;
+  if (!Renames.empty()) {
+    Hide += "\n// The names the system's types defined here take where the "
+            "compiler's own\n// headers may declare them otherwise.\n#if "
+            "!defined(NEVERD_LIBC_FROM_SYSTEM)\n";
+    for (const auto &[Condition, Lines] : Renames)
+      Hide += under(Condition, Lines);
+    Hide += "#endif\n";
+    Show += "\n#if !defined(NEVERD_LIBC_FROM_SYSTEM)\n";
+    for (const auto &[Condition, Lines] : Restores)
+      Show += under(Condition, Lines);
+    Show += "#endif\n";
+  }
+  if (!Redefines.empty())
+    Show += "\n" + Redefines;
   std::string Out =
-      "// " + std::to_string(Done.size()) + " types" +
+      "// " + std::to_string(Done.size() + TheirDone.size()) + " types" +
       (PrototypeCount ? ", " + std::to_string(PrototypeCount) + " prototypes"
                       : std::string()) +
       ", rendered by NeverD.\n#pragma once\n\n";
+  // The system's feature macro comes before any header that reads it.
+  if (FromSystem)
+    Out += systemProbe(*System) + "\n";
   Out += prelude(Writer, Library, Options);
+  Out += Hide;
+  if (FromSystem && !TheirDone.empty()) {
+    Out += "\n#if defined(NEVERD_LIBC_FROM_SYSTEM)\n";
+    for (const std::string &Header : Includes)
+      Out += "#include <" + Header + ">\n";
+    Out += Undefines + "#else\n" + Undefines;
+    if (!TheirDeclarations.empty())
+      Out += TheirDeclarations + "\n";
+    Out += TheirEnums + TheirBody + "#endif\n";
+    // The system's own declarations are checked as C, which some C
+    // libraries declare otherwise for C++, as glibc's __SOCKADDR_ARG is.
+    if (!TheirChecks.empty())
+      Out += "\n#if !defined(NEVERD_LIBC_FROM_SYSTEM) || "
+             "!defined(__cplusplus)\n" +
+             TheirChecks + "#endif\n";
+  } else {
+    if (!Undefines.empty())
+      Out += "\n" + Undefines;
+    if (!TheirDone.empty())
+      Out += "\n" + TheirDeclarations + "\n" + TheirEnums + TheirBody +
+             TheirChecks;
+  }
   if (!Declarations.empty())
     Out += "\n" + Declarations;
   Out += "\n" + Enums + Body;
+  if (!TheirPrototypes.empty())
+    Out += FromSystem ? "\n#if !defined(NEVERD_LIBC_FROM_SYSTEM)\n" +
+                            TheirPrototypes + "#endif\n"
+                      : "\n" + TheirPrototypes;
   if (!Prototypes.empty())
     Out += "\n" + Prototypes;
+  Out += Show;
   return Out;
 }
 

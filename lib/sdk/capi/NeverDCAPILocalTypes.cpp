@@ -472,8 +472,25 @@ bool readRender(const llvm::json::Object &Options, types::RenderOptions &Render,
       !readFlag(Options, "hexOffsets", Render.HexOffsets, Error) ||
       !readFlag(Options, "asserts", Render.Asserts, Error) ||
       !readFlag(Options, "prototypes", Render.Prototypes, Error) ||
+      !readFlag(Options, "headerPragmas", Render.HeaderPragmas, Error) ||
       !readFlag(Options, "dependencies", Dependencies, Error))
     return false;
+  // The library of a system's headers whose types its headers give, or
+  // false for none.
+  if (const llvm::json::Value *Value = Options.get("systemLibrary")) {
+    const std::optional<llvm::StringRef> Name = Value->getAsString();
+    const std::optional<types::HeaderLibrary> Library =
+        Name ? types::headerLibraryNamed(*Name) : std::nullopt;
+    if (Value->getAsBoolean() == false) {
+      Render.SystemLibrary.reset();
+    } else if (!Library || !types::headerLibrarySystem(*Library)) {
+      Error = "\"systemLibrary\" must be false or name a library of a "
+              "system's headers";
+      return false;
+    } else {
+      Render.SystemLibrary = *Library;
+    }
+  }
   // Prototypes asked of a language that renders none fail, not vanish.
   if (Render.Prototypes && !types::rendersPrototypes(Render.Lang)) {
     Error = ("\"prototypes\" render in c and cpp, not " +
@@ -834,13 +851,20 @@ const char *neverd_local_types_source(neverd_session_t Sess,
   types::RenderOptions Render;
   bool Dependencies = true;
   std::string Error;
+  const types::TypeLibrary *Library = localTypes(*S);
+  if (!Library)
+    return nullptr;
+  // The system's types come from its headers, unless asked otherwise: the
+  // first library of a system's headers the program joins.
+  for (const Session::JoinedHeaders &Joined : S->LocalTypeHeaders)
+    if (Joined.Error.empty() && types::headerLibrarySystem(Joined.Library)) {
+      Render.SystemLibrary = Joined.Library;
+      break;
+    }
   if (!readRender(*Options, Render, Dependencies, Error)) {
     S->setError(Error);
     return nullptr;
   }
-  const types::TypeLibrary *Library = localTypes(*S);
-  if (!Library)
-    return nullptr;
   std::vector<const types::LocalType *> Roots;
   if (!readRoots(*Options, *Library, Roots, Error)) {
     S->setError(Error);

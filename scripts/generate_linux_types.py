@@ -19,7 +19,10 @@ declare as the C NeverD reads back:
    name a program built so imports (`__isoc23_strtol` for strtol); the
    reader declares each under both.
 2. The lines of the compiler's own headers (<stddef.h>, <stdarg.h>) are
-   dropped.  What they declare that the C library names comes first:
+   dropped, and each declaration follows a `#pragma neverd_header` naming
+   the header the unit included it through, which a header NeverD renders
+   for a program includes in place of defining the C library's types where
+   the compiler has the C library.  What they declare that the C library names comes first:
    size_t and ptrdiff_t as the target's predefined macros give them, and
    the 128-bit integers 64-bit targets predefine.  va_list stays the
    compiler's, which the reader takes as the address a parameter passes,
@@ -172,21 +175,45 @@ def run(command, **options):
     return result.stdout
 
 
-def system_lines(text, target, defined):
+def unit_header(path, headers):
+    """The header of the unit's headers (UNIT_HEADERS: "sys/stat") that
+    the file at path is, with its .h: the longest that names it, as
+    sys/time.h is time.h too."""
+    named = [header for header in headers
+             if path.endswith("/" + header + ".h")]
+    return max(named, key=len) + ".h" if named else ""
+
+
+def system_lines(text, target, defined, headers=()):
     """The preprocessed lines of glibc's headers, without line markers, after
     what the compiler's headers would declare, wchar_t written as its
-    integer and alignments without their value written out."""
+    integer and alignments without their value written out; each after the
+    #pragma neverd_header of the header of the unit's headers it came
+    through."""
     kept = [f"typedef {defined['__SIZE_TYPE__']} size_t;\n"
             f"typedef {defined['__PTRDIFF_TYPE__']} ptrdiff_t;\n"]
     if target.model == "LP64":
         kept.append(WIDE_INTEGERS)
     largest = defined.get("__BIGGEST_ALIGNMENT__", "16")
     keep = True
+    # The files being read, the unit's first, as the line markers' flags
+    # enter (1) and leave (2) them, and the header the kept lines are of.
+    reading, attributed = [], ""
     for line in text.splitlines():
-        marker = re.match(r'# \d+ "([^"]+)"', line)
+        marker = re.match(r'# \d+ "([^"]+)"((?: \d)*)', line)
         if marker:
-            path = marker.group(1)
+            path, flags = marker.group(1), marker.group(2).split()
+            if "1" in flags or not reading:
+                reading.append(path)
+            elif "2" in flags:
+                while len(reading) > 1 and reading[-1] != path:
+                    reading.pop()
             keep = not ("/lib/clang/" in path or path.startswith("<"))
+            header = (unit_header(reading[1], headers) if len(reading) > 1
+                      else attributed)
+            if header != attributed:
+                kept.append(f'#pragma neverd_header("{header}")')
+                attributed = header
             continue
         if keep and not VA_LIST_TYPEDEF.match(line):
             line = re.sub(r"\bwchar_t\b", defined["__WCHAR_TYPE__"], line)
@@ -260,7 +287,7 @@ def generate(arguments, name, target):
         defined = dict(re.findall(r"#define (\w+) (.+)",
                                   run([*clang, "-E", "-dM", str(unit)])))
         source = work / "system.h"
-        source.write_text(system_lines(text, target, defined),
+        source.write_text(system_lines(text, target, defined, headers),
                           encoding="utf-8")
         listed = json.loads(neverd_types(arguments, target, "--declare",
                                          str(source), "--keep-going",
@@ -276,7 +303,8 @@ def generate(arguments, name, target):
         rendered = work / "rendered.h"
         neverd_types(arguments, target, "--declare", str(source),
                      "--keep-going", "--all", "--prototypes", "--spelling",
-                     "keywords", "--no-offsets", "-o", str(rendered))
+                     "keywords", "--no-offsets", "--header-pragmas", "-o",
+                     str(rendered))
         body = rendered.read_text(encoding="utf-8")
 
     if target.libc == "musl":
@@ -292,6 +320,10 @@ def generate(arguments, name, target):
             "again.")
     elif target.bionic_asm:
         def commit(checkout):
+            # A tree fetched at a commit names it beside itself, as
+            # scripts/fetch_render_toolchains.py fetches them.
+            if (Path(checkout) / "commit").is_file():
+                return (Path(checkout) / "commit").read_text().strip()
             return run(["git", "-C", str(checkout), "rev-parse",
                         "HEAD"]).strip()
         text = (

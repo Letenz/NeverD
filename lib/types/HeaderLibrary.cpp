@@ -86,6 +86,41 @@ llvm::StringRef headerLibraryName(HeaderLibrary Library) {
   return "";
 }
 
+std::optional<HeaderLibrary> headerLibraryNamed(llvm::StringRef Name) {
+#define NEVERD_HEADER_LIBRARY(Id, Spelled, File, Model, ABI, Spelling)         \
+  if (Name == Spelled)                                                         \
+    return HeaderLibrary::Id;
+#include "neverd/types/HeaderLibraries.def"
+  return std::nullopt;
+}
+
+std::optional<HeaderSystem> headerLibrarySystem(HeaderLibrary Library) {
+  const auto system = [](llvm::StringRef Kind) -> std::optional<HeaderSystem> {
+#define NEVERD_HEADER_SYSTEM(Id, Name, Platform, Test, Probe, Feature,         \
+                             Configured)                                       \
+  if (Kind == #Id)                                                             \
+    return HeaderSystem{Name, Platform, {}, Test, Probe, Feature, Configured};
+#include "neverd/types/HeaderLibrarySystems.def"
+    return std::nullopt;
+  };
+  const auto arch = [](llvm::StringRef Arch) -> llvm::StringRef {
+#define NEVERD_HEADER_SYSTEM_ARCH(Id, Test)                                    \
+  if (Arch == #Id)                                                             \
+    return Test;
+#include "neverd/types/HeaderLibrarySystems.def"
+    return {};
+  };
+#define NEVERD_HEADER_LIBRARY_IMAGE(Kind, Target, Image)                       \
+  if (Library == HeaderLibrary::Image)                                         \
+    if (std::optional<HeaderSystem> Found = system(#Kind)) {                   \
+      Found->Arch = arch(#Target);                                             \
+      if (!Found->Arch.empty())                                                \
+        return Found;                                                          \
+    }
+#include "neverd/types/HeaderLibraryImages.def"
+  return std::nullopt;
+}
+
 llvm::StringRef headerLibrarySource(HeaderLibrary Library) {
   switch (Library) {
 #define NEVERD_HEADER_LIBRARY(Id, Name, File, Model, ABI, Spelling)            \

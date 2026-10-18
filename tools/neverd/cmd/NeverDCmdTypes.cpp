@@ -96,6 +96,15 @@ json::Object withSpelling(json::Object Options) {
   return Options;
 }
 
+/// \p Options with the --system-library asked, none for "none".
+json::Object withSystem(json::Object Options) {
+  if (TypesSystemLibrary == "none")
+    Options["systemLibrary"] = false;
+  else if (!TypesSystemLibrary.empty())
+    Options["systemLibrary"] = TypesSystemLibrary.getValue();
+  return Options;
+}
+
 /// The spelling the source --lang renders takes: the one asked, or the
 /// language's own, as the engine says it.
 std::string spellingTaken() {
@@ -299,12 +308,13 @@ int layout(neverd_session_t Sess, raw_ostream &Out) {
 }
 
 int render(neverd_session_t Sess, raw_ostream &Out) {
-  json::Object Options = withSpelling(
+  json::Object Options = withSystem(withSpelling(
       json::Object{{"language", TypesLanguage},
                    {"offsets", !TypesNoOffsets},
                    {"hexOffsets", !TypesDecimalOffsets},
                    {"asserts", static_cast<bool>(TypesAsserts)},
-                   {"prototypes", static_cast<bool>(TypesPrototypes)}});
+                   {"prototypes", static_cast<bool>(TypesPrototypes)},
+                   {"headerPragmas", static_cast<bool>(TypesHeaderPragmas)}}));
   if (!TypesAll) {
     json::Array Names;
     for (const std::string &Name : TypeNames)
@@ -464,13 +474,14 @@ int runTypesConvert() {
     json::Array Names;
     for (const std::string &Name : TypeNames)
       Names.push_back(Name);
-    json::Object Render =
-        withSpelling(json::Object{{"language", TypesLanguage.getValue()},
-                                  {"offsets", !TypesNoOffsets},
-                                  {"hexOffsets", !TypesDecimalOffsets},
-                                  {"asserts", TypesAsserts.getValue()},
-                                  {"prototypes", TypesPrototypes.getValue()},
-                                  {"dependencies", !TypesAlone}});
+    json::Object Render = withSystem(withSpelling(
+        json::Object{{"language", TypesLanguage.getValue()},
+                     {"offsets", !TypesNoOffsets},
+                     {"hexOffsets", !TypesDecimalOffsets},
+                     {"asserts", TypesAsserts.getValue()},
+                     {"prototypes", TypesPrototypes.getValue()},
+                     {"headerPragmas", TypesHeaderPragmas.getValue()},
+                     {"dependencies", !TypesAlone}}));
     if (!Names.empty())
       Render["types"] = std::move(Names);
     Request["render"] = std::move(Render);
