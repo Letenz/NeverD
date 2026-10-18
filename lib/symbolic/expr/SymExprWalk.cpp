@@ -121,15 +121,25 @@ void SymContext::collectVars(SymRef R,
 
 SymRef SymContext::substitute(SymRef R,
                               const std::unordered_map<uint32_t, SymRef> &Map) {
+  return substituteAll({R}, Map).front();
+}
+
+std::vector<SymRef>
+SymContext::substituteAll(llvm::ArrayRef<SymRef> Roots,
+                          const std::unordered_map<uint32_t, SymRef> &Map) {
+  // Builders can grow operand storage while any root is rebuilt.
+  const std::vector<SymRef> OwnedRoots(Roots.begin(), Roots.end());
   if (Map.empty())
-    return R;
+    return OwnedRoots;
 
   // Rebuild bottom-up over a topological order.  Going through the builders
   // means the result is canonical, so a substitution that makes two subterms
   // equal has that equality recognised immediately.
   std::unordered_map<uint32_t, SymRef> Done;
 
-  llvm::SmallVector<std::pair<SymRef, bool>, 32> Work{{R, false}};
+  llvm::SmallVector<std::pair<SymRef, bool>, 32> Work;
+  for (SymRef R : OwnedRoots)
+    Work.emplace_back(R, false);
   while (!Work.empty()) {
     auto [Cur, Expanded] = Work.pop_back_val();
     if (Done.count(Cur.index()))
@@ -163,7 +173,11 @@ SymRef SymContext::substitute(SymRef R,
     Done.emplace(Cur.index(), rebuild(Cur, NewOps));
   }
 
-  return Done.at(R.index());
+  std::vector<SymRef> Results;
+  Results.reserve(OwnedRoots.size());
+  for (SymRef R : OwnedRoots)
+    Results.push_back(Done.at(R.index()));
+  return Results;
 }
 
 SymRef SymContext::substituteVar(SymRef R, uint32_t VarIdx, SymRef Val) {
