@@ -2574,6 +2574,8 @@ set(X86_32_TEST_SOURCES
   x86_32/test_i386_gotoff_stack_group.s
   x86_32/test_i386_relocation_writer_footprint.s
   x86_32/test_jumptable_frame_lane32.s
+  x86_32/test_jumptable_foreign_store_i386.c
+  x86_32/test_jumptable_dynamic_stack_i386.s
   x86_32/test_arith32.c
   x86_32/test_control32.c
   x86_32/test_bitops32.c
@@ -2936,6 +2938,9 @@ foreach(src ${X86_32_TEST_SOURCES})
     set(x86_32_extra_flags -O2 -fno-pic -fcommon)
   elseif(src MATCHES "test_extern_calls")
     set(x86_32_extra_flags -O2 -fPIC -fcommon)
+  elseif(src MATCHES "test_jumptable_foreign_store")
+    # -O0 PIC: the GOT base is spilled once and reloaded in the loop.
+    set(x86_32_extra_flags -fPIC)
   endif()
   add_custom_command(
     OUTPUT ${obj}
