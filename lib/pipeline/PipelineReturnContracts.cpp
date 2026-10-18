@@ -40,6 +40,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/X87Context.h"
+#include "neverd/ir/intrinsics/IntrinsicValueEffects.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/libc/LibCNames.h"
@@ -69,6 +70,9 @@ enum class ReturnedValue : uint8_t {
   Undefined,
   /// The parameter in a return register the function never writes.
   Incoming,
+  /// A system call's result, which the call writes to the return register
+  /// whatever the function means: a value where a caller reads it.
+  SystemCallResult,
   /// A constant or a comparison: a value the function means.
   Deliberate,
   /// Any other value.
@@ -462,18 +466,25 @@ private:
                                                 : ReturnedValue::Other);
       return;
     case NdOp::INTRINSIC: {
-      // An instruction run for its effect (a fence, a breakpoint, a system
-      // call) or one C has no name for leaves no value the function means;
-      // the x64 debug service returns its status, an x87 state read (fnstsw,
-      // fnstcw) the state, and `str`, `sldt` or `smsw` the register it reads.
+      // An instruction run for its effect (a fence, a breakpoint) or one C
+      // has no name for leaves no value the function means; the x64 debug
+      // service returns its status, an x87 state read (fnstsw, fnstcw) the
+      // state, and `str`, `sldt` or `smsw` and a system register's read the
+      // register it reads.  A system call writes its result whatever the
+      // function means.
       const Intrinsic Id = Op.NumInputs >= 1 && Op.Inputs[0].isConst()
                                ? static_cast<Intrinsic>(Op.Inputs[0].ConstVal)
                                : Intrinsic::None;
+      if (intrinsicReturnsSystemCallResult(Id)) {
+        Paths.push_back(ReturnedValue::SystemCallResult);
+        return;
+      }
       Paths.push_back(Id != Intrinsic::None && Id != Intrinsic::DebugService &&
                               Id != Intrinsic::CetRdSsp &&
                               !x86FPStateReturnsValue(Id) &&
                               !x87ContextReturnsValue(Id) &&
                               !isX86SystemRegisterStore(Id) &&
+                              !intrinsicReadsSystemRegister(Id) &&
                               (isSideeffectIntrinsic(Id) || !intrinsicCName(Id))
                           ? ReturnedValue::Undefined
                           : ReturnedValue::Other);
@@ -529,7 +540,8 @@ private:
       return true;
     const bool Read = callerReadsResult(Func);
     for (ReturnedValue &Path : Paths)
-      if (Path == ReturnedValue::Incoming)
+      if (Path == ReturnedValue::Incoming ||
+          Path == ReturnedValue::SystemCallResult)
         Path = Read ? ReturnedValue::Other : ReturnedValue::Undefined;
     const auto Count = [&](ReturnedValue Kind) {
       return llvm::count(Paths, Kind);
