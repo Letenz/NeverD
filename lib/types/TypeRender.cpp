@@ -591,8 +591,8 @@ RecordPlan planRecord(const TypeLibrary &Library, const RecordDef &Record,
   // storage unit after one another, and under GNU's rules those that share
   // a byte too, as GNU's compilers pack a field at the bit after the one
   // before it.
-  const bool Gnu = !Record.Union &&
-                   defaultRules(Library.dataModel()) == LayoutRules::Itanium;
+  const bool Gnu =
+      !Record.Union && Library.layoutRules() == LayoutRules::Itanium;
   const auto firstByte = [](const Member &Bit) { return Bit.BitOffset / 8; };
   const auto endByte = [](const Member &Bit) {
     return (Bit.BitOffset + Bit.BitWidth + 7) / 8;

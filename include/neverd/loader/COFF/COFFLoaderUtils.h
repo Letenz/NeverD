@@ -155,6 +155,16 @@ void parseSymbolTable(const llvm::object::COFFObjectFile &Obj, BinaryImage &Img,
 /// code, become pointers to data (recordDataPointerTargets).
 void recordSymbolTableDataInCode(BinaryImage &Img);
 
+/// Records in Img.ConstantCodeSlots each `__imp_X` variable of an x86 or x64
+/// image's symbol table, MinGW's for a function its runtime supplies in place
+/// of an import (__MINGW_IMP_SYMBOL), that holds one of the image's function
+/// entries under a relocation and that no instruction changes or lets escape:
+/// every instruction that names it reads it, and no pointer in data or export
+/// names it.  A linear sweep of each executable section, resynchronized at
+/// the entries the image's metadata gives, finds those instructions.  A lazy
+/// binding that the function it starts at rewrites stays a variable.
+void recordConstantCodeSlots(BinaryImage &Img);
+
 /// Parse one delay-import descriptor from the already mapped image.  Supports
 /// current RVA descriptors and legacy VA descriptors, returning the number of
 /// imports appended.  Exposed separately for bounded synthetic-image tests.

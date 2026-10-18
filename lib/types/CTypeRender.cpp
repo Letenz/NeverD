@@ -39,7 +39,7 @@ std::string hex(uint64_t Value) {
 
 const char *conventionSpelling(CallingConvention Convention) {
   switch (Convention) {
-#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA, Wide)                    \
+#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA, Wide, Pops)              \
   case CallingConvention::Name:                                                \
     return C;
 #include "neverd/types/CallingConventions.def"
@@ -276,7 +276,7 @@ std::string CWriter::keyword(const RecordDef &Record) {
   // Microsoft's compilers fill a bit-field's storage unit apart from the
   // members around it, where GNU's pack bits into whatever has room; GNU
   // lays such a record out as Microsoft's do only when asked.
-  if (defaultRules(Library.dataModel()) == LayoutRules::MSVC &&
+  if (Library.layoutRules() == LayoutRules::MSVC &&
       llvm::any_of(Record.Members,
                    [](const Member &Field) { return Field.isBitfield(); })) {
     MicrosoftBitfields = true;
@@ -408,7 +408,7 @@ void CWriter::body(const RecordDef &Record, uint32_t Pack, unsigned Indent,
   // into the unit of its type that holds it, sharing bytes with members
   // before it: the source gives the bits between, rather than storage
   // units.  The bit after the last member, from the record.
-  const bool Gnu = defaultRules(Library.dataModel()) == LayoutRules::Itanium;
+  const bool Gnu = Library.layoutRules() == LayoutRules::Itanium;
   uint64_t EndBit = 0;
   uint64_t UnionSize = 0;
   uint32_t UnionAlign = 1;
@@ -584,11 +584,20 @@ void CWriter::enumeration(const LocalType &Type, std::string &Out) {
   Out += "// " + Type.Name + ": " +
          std::to_string(builtinBytes(Enum.Underlying, Library.dataModel())) +
          " bytes\n";
-  std::string Head = enumHead(Enum);
-  Head.insert(4, " " + Names.type(Type.Name));
-  Out += Head + "\n{\n";
-  enumerators(Enum, 4, Out);
-  Out += "};\n";
+  // An enumeration no declaration lists the values of, as Microsoft's
+  // compilers take `typedef enum _X X;` alone, has its underlying type
+  // stated: C has no enumeration without enumerators, and C23 and C++ take
+  // the type as complete.
+  if (Enum.Values.empty()) {
+    Out += "enum " + Names.type(Type.Name) + " : " + builtin(Enum.Underlying) +
+           ";\n";
+  } else {
+    std::string Head = enumHead(Enum);
+    Head.insert(4, " " + Names.type(Type.Name));
+    Out += Head + "\n{\n";
+    enumerators(Enum, 4, Out);
+    Out += "};\n";
+  }
   if (Options.Asserts)
     asserts(Type, Out);
 }

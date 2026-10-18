@@ -7,7 +7,9 @@
 #include "neverd/libc/LibCExceptionRuntime.h"
 #include "neverd/libc/LibCFortify.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/LibCResult.h"
 #include "neverd/libc/LibCStartup.h"
+#include "neverd/libc/MinGWHeaderFunctions.h"
 #include "neverd/libc/WindowsCRT.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -518,10 +520,42 @@ TEST(LibCReturnsValue, ReadsTheDeclaredResult) {
                    .has_value());
 }
 
+TEST(LibCResult, ReadsWhetherTheDeclaredResultIsAPointer) {
+  // A header's declaration, a typedef's pointer too.
+  EXPECT_EQ(libcResult("getenv", BinaryFormat::ELF), LibCResult::Pointer);
+  EXPECT_EQ(libcResult("malloc", BinaryFormat::COFF), LibCResult::Pointer);
+  EXPECT_EQ(libcResult("signal", BinaryFormat::ELF), LibCResult::Pointer);
+  EXPECT_EQ(libcResult("newlocale", BinaryFormat::ELF), LibCResult::Pointer);
+  EXPECT_EQ(libcResult("strlen", BinaryFormat::ELF), LibCResult::Value);
+  EXPECT_EQ(libcResult("pthread_self", BinaryFormat::ELF), LibCResult::Value);
+  EXPECT_EQ(libcResult("free", BinaryFormat::MachO), LibCResult::Void);
+  // A prototype's result, in the image format it applies to.
+  EXPECT_EQ(libcResult("__acrt_iob_func", BinaryFormat::COFF),
+            LibCResult::Pointer);
+  EXPECT_EQ(libcResult("__getmainargs", BinaryFormat::COFF), LibCResult::Value);
+  EXPECT_EQ(libcResult("_initterm", BinaryFormat::COFF), LibCResult::Void);
+  EXPECT_EQ(libcResult("_onexit", BinaryFormat::COFF), LibCResult::Pointer);
+  EXPECT_FALSE(libcResult("__acrt_iob_func", BinaryFormat::ELF).has_value());
+  EXPECT_FALSE(
+      libcResult("neverd_unknown_routine", BinaryFormat::ELF).has_value());
+}
+
 TEST(LibCReturnsValue, TheGeneratedTableNamesOnlyKnownRoutines) {
 #define NEVERD_LIBC_RETURN_KIND(NAME, KIND) EXPECT_TRUE(isKnownFunction(NAME));
 #include "neverd/libc/LibCReturnKinds.inc"
 #undef NEVERD_LIBC_RETURN_KIND
+}
+
+TEST(MinGWHeaderFunctions, NamesWhatTheHeadersDeclare) {
+  // mingw-w64's own routines, the runtime's and the C library's.
+  EXPECT_TRUE(mingwHeadersDeclare("__mingw_printf"));
+  EXPECT_TRUE(mingwHeadersDeclare("_lock_file"));
+  EXPECT_TRUE(mingwHeadersDeclare("_onexit"));
+  EXPECT_TRUE(mingwHeadersDeclare("printf"));
+  // The start-up code's internals and a program's own names are not.
+  EXPECT_FALSE(mingwHeadersDeclare("_pei386_runtime_relocator"));
+  EXPECT_FALSE(mingwHeadersDeclare("main"));
+  EXPECT_FALSE(mingwHeadersDeclare("sub_140001000"));
 }
 
 TEST(VarArgFixedCount, IsoAliasesTakeTheStandardRoutinesArguments) {

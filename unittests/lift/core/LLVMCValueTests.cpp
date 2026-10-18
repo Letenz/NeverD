@@ -2166,6 +2166,420 @@ int main(void) { return first_constructor() == 42 ? 0 : 1; }
     compileAndRun(Source, Optimization);
 }
 
+TEST(LLVMCValues, ACallerWithUnwindInformationSeesItsCalleeDeclared) {
+  // Every function an image describes for unwinding, as an ELF FDE or an x64
+  // .pdata entry, carries its exception record, which marks it for
+  // exception analysis.  Its body still prints as code that calls on.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+define i64 @caller(i64 %value) !neverd.windows.eh !1 {
+entry:
+  %result = call i64 @callee(i64 %value)
+  ret i64 %result
+}
+define i64 @callee(i64 %value) !neverd.windows.eh !1 {
+entry:
+  %result = add i64 %value, 1
+  ret i64 %result
+}
+!0 = !{}
+!1 = !{i32 11, !"complete", !"dwarf-fde", i8 0, i64 4096, i64 4100, i32 0, i32 0, i64 8192, i8 0, i8 0, i32 0, i16 0, i32 0, i32 0, !"none", !"", i64 0, i64 0, !"", !0, !0, !0, !0, !0, !0, !0, !0, !0, !0, i32 0, !0, i1 false, !0, !0}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  for (bool Preserve : {false, true}) {
+    SCOPED_TRACE(Preserve);
+    neverd::CEmitterOptions Options;
+    Options.PreserveLLVMFunctionTypes = Preserve;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+    const size_t Declaration = Source.find(" callee(uint64_t value);");
+    ASSERT_NE(Declaration, std::string::npos) << Source;
+    EXPECT_LT(Declaration, Source.find(" caller(uint64_t value) {")) << Source;
+    Source += R"(
+int main(void) { return caller(41) == 42 ? 0 : 1; }
+)";
+    compileAndRun(Source, "-O0");
+  }
+}
+
+TEST(LLVMCValues, ALibraryRoutineCalledThroughItsImportTakesItsDeclaration) {
+  // A whole module calls routines through their import table, whose mirror
+  // folds each slot's load to the import's symbol.  A routine a header
+  // declares takes its arguments and returns its result as that declaration
+  // types them, as a direct call to it does; one only the Windows runtime's
+  // tables type is declared from them.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+@fputc = external global i8, !neverd.data-symbol !0
+@getenv = external global i8, !neverd.data-symbol !0
+@free = external global i8, !neverd.data-symbol !0
+@EnterCriticalSection = external global i8, !neverd.data-symbol !0
+define i64 @use(i64 %stream, i64 %lock, i64 %name) {
+entry:
+  %put = call i64 @fputc(i64 120, i64 %stream)
+  %entered = call i64 @EnterCriticalSection(i64 %lock)
+  %value = call i64 @getenv(i64 %name)
+  %freed = call i64 @free(i64 %value)
+  %sum = add i64 %put, %value
+  ret i64 %sum
+}
+!0 = !{}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  neverd::CEmitterOptions Options;
+  Options.Format = neverd::BinaryFormat::COFF;
+  Options.TheArch = neverd::Arch::X64;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(Source.find("#include <stdio.h>"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("#include <stdlib.h>"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("extern void EnterCriticalSection(void *);"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("fputc("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("    EnterCriticalSection((void *)(uintptr_t)("),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("((uint64_t)(uintptr_t)getenv("), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("    free((void *)(uintptr_t)("), std::string::npos)
+      << Source;
+  Source += R"c(
+static int entered;
+void EnterCriticalSection(void *lock) { entered = lock != 0; }
+int main(void) {
+  int lock = 0;
+  if (use((uint64_t)(uintptr_t)stderr, (uint64_t)(uintptr_t)&lock,
+          (uint64_t)(uintptr_t)"NEVERD_UNSET_VARIABLE") != 'x')
+    return 1;
+  return entered ? 0 : 2;
+}
+)c";
+  compileAndRun(Source, "-O0");
+}
+
+TEST(LLVMCValues, ARuntimeRoutineReturningAFunctionPointerIsDeclared) {
+  // msvcrt's _onexit takes and returns an _onexit_t, a function pointer,
+  // which its declaration spells inside the function's declarator.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+@_onexit = external global i8, !neverd.data-symbol !0
+define i64 @register_handler(i64 %function) {
+entry:
+  %registered = call i64 @_onexit(i64 %function)
+  ret i64 %registered
+}
+!0 = !{}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  neverd::CEmitterOptions Options;
+  Options.Format = neverd::BinaryFormat::COFF;
+  Options.TheArch = neverd::Arch::X64;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(Source.find("extern int (*_onexit(int (*)(void)))(void);"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(
+      Source.find("((uint64_t)(uintptr_t)_onexit((int (*)(void))(uintptr_t)("),
+      std::string::npos)
+      << Source;
+  Source += R"c(
+int (*_onexit(int (*function)(void)))(void) { return function; }
+static int seven(void) { return 7; }
+int main(void) {
+  return register_handler((uint64_t)(uintptr_t)seven) ==
+                 (uint64_t)(uintptr_t)seven
+             ? 0
+             : 1;
+}
+)c";
+  compileAndRun(Source, "-O0");
+}
+
+TEST(LLVMCValues, ARuntimeRoutineCalledDirectlyTakesItsPrototype) {
+  // A routine the module declares and calls directly takes the runtime
+  // tables' prototype, as one called through its import does, and the
+  // arguments it declares: a register the code set for nothing is not one.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+declare i64 @_onexit(i64, i64)
+define i64 @register_handler(i64 %function) {
+entry:
+  %registered = call i64 @_onexit(i64 %function, i64 7)
+  ret i64 %registered
+}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  neverd::CEmitterOptions Options;
+  Options.Format = neverd::BinaryFormat::COFF;
+  Options.TheArch = neverd::Arch::X64;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(Source.find("extern int (*_onexit(int (*)(void)))(void);"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("_onexit((int (*)(void))(uintptr_t)(function)))"),
+            std::string::npos)
+      << Source;
+  Source += R"c(
+int (*_onexit(int (*function)(void)))(void) { return function; }
+static int seven(void) { return 7; }
+int main(void) {
+  return register_handler((uint64_t)(uintptr_t)seven) ==
+                 (uint64_t)(uintptr_t)seven
+             ? 0
+             : 1;
+}
+)c";
+  compileAndRun(Source, "-O0");
+}
+
+TEST(LLVMCValues, AWeakImportIsDeclaredWeak) {
+  // An ELF _init calls __gmon_start__ only where profiling linked it: the
+  // weak reference's address is null otherwise, and the program links.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+@__gmon_start__ = extern_weak global [0 x i8], !neverd.data-symbol !0
+define i64 @init_profiling() {
+entry:
+  %absent = icmp eq i64 ptrtoint (ptr @__gmon_start__ to i64), 0
+  br i1 %absent, label %done, label %start
+start:
+  %started = call i64 @__gmon_start__()
+  br label %done
+done:
+  %result = phi i64 [ 0, %entry ], [ 1, %start ]
+  ret i64 %result
+}
+!0 = !{}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  neverd::CEmitterOptions Options;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(Source.find("extern __attribute__((weak)) void "
+                        "__gmon_start__(void);"),
+            std::string::npos)
+      << Source;
+  Source += R"c(
+int main(void) {
+  init_profiling();
+  return 0;
+}
+)c";
+  compileAndRun(Source, "-O0");
+}
+
+TEST(LLVMCValues, ADefinitionOfALibraryRoutinesNameTakesItsAddress) {
+  // The image's own copy of a C library routine, as MinGW's atexit, is not
+  // the routine its header declares.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+define i32 @atexit(i64 %function) !neverd.rewrite.source-identity !0 {
+entry:
+  %low = trunc i64 %function to i32
+  ret i32 %low
+}
+define i32 @register_exit(i64 %function) {
+entry:
+  %result = call i32 @atexit(i64 %function)
+  ret i32 %result
+}
+!0 = !{i32 1, i64 4198400}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  neverd::CEmitterOptions Options;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(Source.find("/* atexit */\n"), std::string::npos) << Source;
+  EXPECT_NE(Source.find(" atexit_401000(uint64_t function) {"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("atexit_401000(function)"), std::string::npos)
+      << Source;
+  Source += R"(
+#include <stdlib.h>
+int main(void) { return register_exit(7) == 7 ? 0 : 1; }
+)";
+  compileAndRun(Source, "-O0");
+}
+
+TEST(LLVMCValues, ACastBetweenAnIntegerAndAPointerConverts) {
+  // A volatile read keeps its own name, which a cast of the value reads
+  // through; a cast between an integer and a pointer still converts it.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+define i64 @first_byte(ptr %bytes) {
+entry:
+  %byte = load i8, ptr %bytes
+  %wide = zext i8 %byte to i64
+  ret i64 %wide
+}
+define i64 @read_through(ptr %slot) {
+entry:
+  %address = load volatile i64, ptr %slot
+  %bytes = inttoptr i64 %address to ptr
+  %value = call i64 @first_byte(ptr %bytes)
+  ret i64 %value
+}
+define i64 @eight_past(ptr %slot) {
+entry:
+  %loaded = load volatile ptr, ptr %slot
+  %integer = ptrtoint ptr %loaded to i64
+  %sum = add i64 %integer, 8
+  ret i64 %sum
+}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  neverd::CEmitterOptions Options;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(Source.find("first_byte((void*)("), std::string::npos) << Source;
+  Source += R"(
+int main(void) {
+  static unsigned char bytes[16] = {42};
+  uint64_t word = (uint64_t)(uintptr_t)bytes;
+  void *pointer = bytes;
+  return read_through(&word) == 42 &&
+                 eight_past(&pointer) == (uint64_t)(uintptr_t)bytes + 8
+             ? 0
+             : 1;
+}
+)";
+  compileAndRun(Source, "-O0");
+}
+
+TEST(LLVMCValues, AMinGWRoutineTheProgramLinksTakesItsAddress) {
+  // A Windows program links its own copies of mingw-w64 routines its
+  // headers declare, as __mingw_printf; another format's headers do not.
+  const char *IR = R"(
+define i32 @__mingw_printf(i64 %format) !neverd.rewrite.source-identity !0 {
+entry:
+  %low = trunc i64 %format to i32
+  ret i32 %low
+}
+define i32 @say(i64 %text) {
+entry:
+  %count = call i32 @__mingw_printf(i64 %text)
+  ret i32 %count
+}
+!0 = !{i32 1, i64 5368713216}
+)";
+  for (const neverd::BinaryFormat Format :
+       {neverd::BinaryFormat::COFF, neverd::BinaryFormat::ELF}) {
+    llvm::LLVMContext Context;
+    llvm::SMDiagnostic Diagnostic;
+    auto Module = llvm::parseAssemblyString(IR, Diagnostic, Context);
+    ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+    neverd::CEmitterOptions Options;
+    Options.Format = Format;
+    Options.TheArch = neverd::Arch::X64;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+    const bool Windows = Format == neverd::BinaryFormat::COFF;
+    EXPECT_EQ(Source.find("__mingw_printf_140001000(") != std::string::npos,
+              Windows)
+        << Source;
+    EXPECT_EQ(Source.find(" __mingw_printf(") != std::string::npos, !Windows)
+        << Source;
+  }
+}
+
+TEST(LLVMCValues, AWholeModulesMainTakesItsAddress) {
+  // C holds a function named main to the parameters and result it gives
+  // main, where a program's main has those its code has.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+define i64 @main(i32 %count, ptr %vector) !neverd.rewrite.source-identity !0 {
+entry:
+  %wide = zext i32 %count to i64
+  ret i64 %wide
+}
+define i64 @start_program() {
+entry:
+  %status = call i64 @main(i32 7, ptr null)
+  ret i64 %status
+}
+!0 = !{i32 1, i64 4198400}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  neverd::CEmitterOptions Options;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(Source.find(" main_401000(uint32_t count, "), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find(" main("), std::string::npos) << Source;
+  Source += R"(
+int main(void) { return start_program() == 7 ? 0 : 1; }
+)";
+  compileAndRun(Source, "-O0");
+}
+
+TEST(LLVMCValues, ACalleeThatReturnsNothingLeavesItsResultUndefined) {
+  // A definition whose result is settled as none prints as returning void:
+  // a call nothing reads is a statement, and a read of what it left is
+  // zero, as an undefined value's is.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+@total = global i64 0
+define i64 @add_to_total(i64 %amount) !neverd.function.returns-no-value !0 {
+entry:
+  %old = load i64, ptr @total
+  %new = add i64 %old, %amount
+  store i64 %new, ptr @total
+  ret i64 %new
+}
+define i64 @add_twice() {
+entry:
+  %unread = call i64 @add_to_total(i64 2)
+  %read = call i64 @add_to_total(i64 3)
+  %plus = add i64 %read, 1
+  ret i64 %plus
+}
+!0 = !{}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  neverd::CEmitterOptions Options;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_NE(Source.find("void add_to_total("), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("= add_to_total("), std::string::npos) << Source;
+  EXPECT_NE(Source.find(", (uint64_t)0)"), std::string::npos) << Source;
+  Source += R"(
+int main(void) { return add_twice() == 1 ? 0 : 1; }
+)";
+  compileAndRun(Source, "-O0");
+}
+
 TEST(LLVMCValues, ReloadedFieldGuardSurvivesAnInterveningCall) {
   llvm::LLVMContext Context;
   llvm::SMDiagnostic Diagnostic;

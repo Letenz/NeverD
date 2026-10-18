@@ -175,6 +175,87 @@ TEST_P(AArch64SIMD, IntegerDuplicationFillsBothLanes) {
   ASSERT_NO_FATAL_FAILURE(expectSuccess(run(DuplicateInteger)));
   EXPECT_EQ(vector(LastVector), (RegisterValue{InitialScalar, InitialScalar}));
 }
+TEST_P(AArch64SIMD, RegisterShiftsUseSignedLowByteAndPreserveFullState) {
+  struct ShiftCase {
+    uint32_t Word;
+    unsigned Bits, Elements;
+  };
+  // Independently assembled USHL forms; clearing U selects SSHL. The last
+  // encoding is scalar D, whose upper 64 bits are also cleared.
+  constexpr ShiftCase Cases[] = {{0x2e22443f, 8, 8},  {0x6e22443f, 8, 16},
+                                 {0x2e62443f, 16, 4}, {0x6e62443f, 16, 8},
+                                 {0x2ea2443f, 32, 2}, {0x6ea2443f, 32, 4},
+                                 {0x6ee2443f, 64, 2}, {0x7ee2443f, 64, 1}};
+  llvm::cantFail(CPU->setReg(AArch64Register::FPCR,
+                             DefaultNaN | FlushToZero | (1u << RoundingShift)));
+  llvm::cantFail(CPU->setReg(AArch64Register::FPSR, InitialFPSR));
+  std::array<uint8_t, 64> Guard;
+  Guard.fill(0xa5);
+  llvm::cantFail(CPU->write(Stack, Guard));
+  for (const auto &C : Cases)
+    for (bool Signed : {false, true})
+      for (unsigned Destination : {31u, 1u, 2u})
+        for (unsigned Amount :
+             {0u, 1u, C.Bits - 1, C.Bits, C.Bits + 1, 127u, 128u, 255u}) {
+          SCOPED_TRACE(C.Word);
+          SCOPED_TRACE(Signed);
+          SCOPED_TRACE(Destination);
+          SCOPED_TRACE(Amount);
+          vector(31, {InitialVectorLow, InitialVectorHigh});
+          vector(1, {0x80ff7f000102ff80ULL, 0xffffffff00000001ULL});
+          RegisterValue Amounts{};
+          const uint64_t Mask =
+              C.Bits == 64 ? UINT64_MAX : (uint64_t(1) << C.Bits) - 1;
+          for (unsigned E = 0; E < C.Elements; ++E) {
+            // Nonzero upper bytes must not affect the shift amount.
+            const uint64_t Lane =
+                (0xa59701bcfa987600ULL | ((Amount + E) & 255)) & Mask;
+            Amounts[E * C.Bits / 64] |= Lane << (E * C.Bits % 64);
+          }
+          vector(2, Amounts);
+          auto ExpectedVectors = vectors();
+          auto ExpectedScalars = scalars();
+          ExpectedScalars[unsigned(AArch64Register::PC)] = Code + 4;
+          RegisterValue Expected{};
+          for (unsigned E = 0; E < C.Elements; ++E) {
+            const unsigned W = E * C.Bits / 64, Offset = E * C.Bits % 64;
+            const uint64_t Value = (ExpectedVectors[1][W] >> Offset) & Mask;
+            const unsigned LowByte = (ExpectedVectors[2][W] >> Offset) & 255;
+            const int Shift = LowByte < 128 ? int(LowByte) : int(LowByte) - 256;
+            // Independent bit selection avoids host signed shifts and all
+            // oversized-shift undefined behavior, including -128 and +127.
+            for (unsigned B = 0; B < C.Bits; ++B) {
+              const int Source = int(B) - Shift;
+              const bool Bit = Source < 0 ? false
+                               : Source >= int(C.Bits)
+                                   ? Signed && ((Value >> (C.Bits - 1)) & 1)
+                                   : (Value >> Source) & 1;
+              Expected[W] |= uint64_t(Bit) << (Offset + B);
+            }
+          }
+          ExpectedVectors[Destination] = Expected;
+          const uint32_t Word = ((C.Word & ~31u) | Destination) &
+                                (Signed ? ~(1u << 29) : UINT32_MAX);
+          ASSERT_NO_FATAL_FAILURE(expectSuccess(run(Word)));
+          EXPECT_EQ(vectors(), ExpectedVectors);
+          EXPECT_EQ(scalars(), ExpectedScalars);
+          std::array<uint8_t, 64> After;
+          llvm::cantFail(CPU->snapshotBacking(Stack, After));
+          EXPECT_EQ(After, Guard);
+        }
+}
+// A failed checked run is terminal; each rejection needs a fresh backend.
+#define SHIFT_REJECTION(Name, Word)                                            \
+  TEST_P(AArch64SIMD, RegisterShiftsReject##Name) { expectRejected(Word); }
+SHIFT_REJECTION(UnsignedSingleLaneVector, 0x2ee2443f)
+SHIFT_REJECTION(SignedSingleLaneVector, 0x0ee2443f)
+SHIFT_REJECTION(UnsignedScalarByte, 0x7e22443f)
+SHIFT_REJECTION(SignedScalarByte, 0x5e22443f)
+SHIFT_REJECTION(UnsignedScalarHalf, 0x7e62443f)
+SHIFT_REJECTION(SignedScalarHalf, 0x5e62443f)
+SHIFT_REJECTION(UnsignedScalarWord, 0x7ea2443f)
+SHIFT_REJECTION(SignedScalarWord, 0x5ea2443f)
+#undef SHIFT_REJECTION
 TEST_P(AArch64SIMD, WideningShiftsPreserveFullStateAndReadBeforeWriting) {
   struct WidenCase {
     uint32_t Word;

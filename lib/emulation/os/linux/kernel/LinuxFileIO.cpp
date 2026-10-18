@@ -61,8 +61,13 @@ LinuxFiles::readDescriptor(uint32_t FD, uint64_t Address, uint64_t Size,
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
     return std::optional<uint64_t>(uint64_t(0) - BadDescriptor);
-  if (auto *Socket = std::get_if<OpenSocket>(I->second.get()))
+  if (auto *Socket = std::get_if<OpenSocket>(I->second.get())) {
+    // Linux sock_read_iter returns before dequeuing for a zero-size read.
+    // recvfrom with a zero-size buffer still consumes a UDP datagram.
+    if (!Size)
+      return std::optional<uint64_t>(0);
     return transferSocket(*Socket, false, Address, Size, Result);
+  }
   if (std::holds_alternative<ProcessDescriptor>(*I->second))
     return std::optional<uint64_t>(uint64_t(0) - InvalidArgument);
   if (std::holds_alternative<OpenDevice>(*I->second))

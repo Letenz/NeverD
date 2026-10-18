@@ -498,6 +498,7 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
         Reconv.setCallArgumentSources(&Result.CallArgumentSources);
         Reconv.setCallEntryStackArgs(&Result.CallEntryStackArgs);
         Reconv.setCallEntryStackSlots(&Result.CallEntryStackSlots);
+        Reconv.setCallEntryArgumentCounts(&Result.CallEntryArgumentCounts);
         Reconv.setCallDispatchThunks(&Result.CallDispatchThunks);
         Reconv.setCallVariadicFrom(&Result.CallVariadicFrom);
         Reconv.setFormattedCalls(&Result.FormattedCalls);
@@ -505,6 +506,11 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
         Reconv.setI64Callees(&I64RetCallees);
         if (HasIndI64)
           Reconv.setI64IndirectSites(&IndIt->second);
+        // MedFuncs[I] is the first conversion of the same LowFunc.
+        Reconv.setRegistrationFrameFacts(
+            {Result.MedFuncs[I].Entry,
+             Result.MedFuncs[I].RegistrationCallerCleanupABIComplete,
+             Result.MedFuncs[I].RegistrationCxxEntryPopBytes});
         MedFunc NewMF =
             Reconv.convert(Result.LowFuncs[I], Img.Arch, Img.abiFormat());
         NewMF.OriginalSize = Result.LowFuncs[I].OriginalSize;

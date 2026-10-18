@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <gtest/gtest.h>
 #include <map>
+#include <optional>
 
 using namespace neverd::types;
 using neverd::types::test::shapeOf;
@@ -22,8 +23,12 @@ using neverd::types::test::shapeOf;
 namespace {
 
 /// \p Source read into a new library, every problem a failure.
-TypeLibrary parsed(llvm::StringRef Source, ParseOptions Options = {}) {
-  TypeLibrary Library;
+TypeLibrary parsed(llvm::StringRef Source, ParseOptions Options = {},
+                   DataModel Model = DataModel::LLP64,
+                   std::optional<RecordABI> ABI = std::nullopt) {
+  TypeLibrary Library(Model);
+  if (ABI)
+    Library.setRecordABI(*ABI);
   const ParseResult Result = parseTypes(Source, Library, Options);
   for (const SourceProblem &Problem : Result.Problems)
     ADD_FAILURE() << Problem.Line << ":" << Problem.Column << ": "
@@ -119,15 +124,48 @@ TEST(TypeParse, ReadsOneFunctionsDeclarationAgainstTheLibrary) {
 }
 
 TEST(TypeParse, BitfieldsShareUnitsUnderItanium) {
-  ParseOptions Options;
-  Options.Rules = LayoutRules::Itanium;
   const TypeLibrary Library = parsed(
       "struct B { unsigned a : 4; unsigned short c : 3; unsigned d : 30; };",
-      Options);
+      {}, DataModel::LP64);
   const RecordDef &B = recordOf(Library, "B");
   // c fits after a; d would cross a 32-bit unit and takes the next.
   EXPECT_EQ(shapeOf(B), "struct{a@0b:4 c@4b:3 d@32b:30}");
   EXPECT_EQ(B.Size, 8u);
+}
+
+TEST(TypeParse, ThirtyTwoBitRecordsLayOutAsTheirABISays) {
+  // One declaration, three 32-bit ABIs: the i386 System V ABI packs the
+  // bit-field into the byte after c and aligns long long and double to
+  // four, Microsoft's compilers give the bit-field a unit of its own and
+  // align them to eight, as ARM's do after packing the bit-field.
+  const char *Source = "struct S { char c; unsigned int b : 4; long long q; "
+                       "double d; short t; };";
+  const RecordDef I386 = recordOf(
+      parsed(Source, {}, DataModel::ILP32, RecordABI::I386SystemV), "S");
+  EXPECT_EQ(shapeOf(I386), "struct{c@0 b@8b:4 q@4 d@12 t@20}");
+  EXPECT_EQ(I386.Size, 24u);
+  const RecordDef Microsoft =
+      recordOf(parsed(Source, {}, DataModel::ILP32), "S");
+  EXPECT_EQ(shapeOf(Microsoft), "struct{c@0 b@32b:4 q@8 d@16 t@24}");
+  EXPECT_EQ(Microsoft.Size, 32u);
+  const RecordDef ARM =
+      recordOf(parsed(Source, {}, DataModel::ILP32, RecordABI::AAPCS32), "S");
+  EXPECT_EQ(shapeOf(ARM), "struct{c@0 b@8b:4 q@8 d@16 t@24}");
+  EXPECT_EQ(ARM.Size, 32u);
+
+  // A long long bit-field spans two units of four bytes on i386, where
+  // ARM's may not cross one of eight.
+  const char *Wide =
+      "struct W { char c[5]; unsigned long long x : 40; char after; };";
+  const RecordDef I386Wide =
+      recordOf(parsed(Wide, {}, DataModel::ILP32, RecordABI::I386SystemV), "W");
+  EXPECT_EQ(shapeOf(I386Wide), "struct{c@0 x@40b:40 after@10}");
+  EXPECT_EQ(I386Wide.Members[1].StorageBitOffset, 32u);
+  EXPECT_EQ(I386Wide.Size, 12u);
+  const RecordDef ARMWide =
+      recordOf(parsed(Wide, {}, DataModel::ILP32, RecordABI::AAPCS32), "W");
+  EXPECT_EQ(shapeOf(ARMWide), "struct{c@0 x@64b:40 after@13}");
+  EXPECT_EQ(ARMWide.Size, 16u);
 }
 
 TEST(TypeParse, ReadsAnonymousRecordsAndWindowsNames) {
@@ -369,6 +407,53 @@ TEST(TypeParse, RefusesWhatItCannotLayOutAndKeepsGoingWhenAsked) {
   EXPECT_NE(Library.find("C"), nullptr);
 }
 
+TEST(TypeParse, AVariadicRoutineIsCdeclWhateverItsConvention) {
+  // phnt declares RtlInitializeSidEx NTAPI: only its caller knows what a
+  // call pushes, so compilers take a convention whose callee pops as cdecl.
+  TypeLibrary Library(DataModel::ILP32);
+  ASSERT_TRUE(
+      parseCTypes("long __stdcall RtlInitializeSidEx(void *Sid, void *Auth, "
+                  "unsigned char Count, ...);\n"
+                  "long __stdcall RtlInitializeSid(void *Sid, void *Auth, "
+                  "unsigned char Count);",
+                  Library)
+          .ok());
+  const FunctionDef *Variadic = Library.findPrototype("RtlInitializeSidEx");
+  ASSERT_NE(Variadic, nullptr);
+  EXPECT_TRUE(Variadic->Variadic);
+  EXPECT_EQ(Variadic->Convention, CallingConvention::Cdecl);
+  const FunctionDef *Fixed = Library.findPrototype("RtlInitializeSid");
+  ASSERT_NE(Fixed, nullptr);
+  EXPECT_EQ(Fixed->Convention, CallingConvention::Stdcall);
+}
+
+TEST(TypeParse, AnEnumerationOfNoValuesReadsBackWithItsType) {
+  // `typedef enum _CLASS CLASS;` alone, as Microsoft's compilers take it and
+  // phnt declares USERTHREADINFOCLASS.  C has no enumeration without
+  // enumerators: it renders with its underlying type, which completes it.
+  TypeLibrary Library;
+  ASSERT_TRUE(parseCTypes("typedef enum _CLASS CLASS;\n"
+                          "typedef struct _QUERY { CLASS Class; } QUERY;",
+                          Library)
+                  .ok());
+  for (Language Lang : {Language::C, Language::Cpp}) {
+    RenderOptions Render;
+    Render.Lang = Lang;
+    Render.Asserts = true;
+    const std::string Text = renderTypes(Library, {}, Render);
+    EXPECT_NE(Text.find("enum _CLASS : int32_t;"), std::string::npos) << Text;
+    TypeLibrary Back;
+    ParseOptions Read;
+    Read.Lang = Lang;
+    ASSERT_TRUE(parseTypes(Text, Back, Read).ok()) << Text;
+    const LocalType *Class = Back.find("_CLASS");
+    ASSERT_NE(Class, nullptr);
+    ASSERT_TRUE(Class->Enum);
+    EXPECT_TRUE(Class->Enum->Values.empty());
+    EXPECT_EQ(Back.sizeOf(*makeNamed("QUERY", TypeKind::Typedef)), 4u);
+  }
+}
+
 TEST(TypeParse, ConvertsWithoutAProgram) {
   // A C header read and rendered as Rust and Go, and back.
   TypeLibrary Library;
@@ -417,6 +502,28 @@ TEST(TypeParse, ChecksStaticAssertions) {
   ASSERT_EQ(Wrong.Problems.size(), 1u);
   EXPECT_EQ(Wrong.Problems[0].Line, 2u);
   EXPECT_EQ(Wrong.Problems[0].Message, "a static assertion fails: B");
+}
+
+TEST(TypeParse, SizesAMemberReachedThroughANullPointer) {
+  // As RTL_FIELD_SIZE and RTL_SIZEOF_THROUGH_FIELD spell it.
+  TypeLibrary Library;
+  EXPECT_TRUE(parseCTypes(R"(
+    typedef struct _A {
+      char c;
+      struct { short s; long long q; };
+      struct { int i; char b[3]; } n;
+    } A;
+    _Static_assert(sizeof(((A *)0)->q) == 8, "A.q");
+    _Static_assert(sizeof(((A *)0)->n.b) == 3, "A.n.b");
+    _Static_assert(__builtin_offsetof(A, q) + sizeof(((A *)0)->q) == 24,
+                   "A through q");
+  )",
+                          Library)
+                  .ok());
+  const ParseResult Missing = parseCTypes(
+      "_Static_assert(sizeof(((A *)0)->z) == 1, \"A.z\");", Library);
+  ASSERT_EQ(Missing.Problems.size(), 1u);
+  EXPECT_EQ(Missing.Problems[0].Message, "no member 'z' to take the size of");
 }
 
 TEST(TypeParse, ReportsWhereAndChangesNothingOnAProblem) {

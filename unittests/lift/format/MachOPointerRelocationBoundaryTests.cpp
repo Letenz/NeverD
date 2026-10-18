@@ -23380,6 +23380,51 @@ TEST(LLVMFrameSlotProof, SharedRecurrenceRequiresEveryArmAndAnExactRoot) {
   }
 }
 
+// i386 keeps the guest ESP and its host RSP container as parallel PHIs. A
+// back edge that returns ESP through the RSP PHI of the same header is an
+// exact recurrence; an RSP PHI of another block is not the same anchor.
+TEST(LLVMFrameSlotProof, ParallelStackPointerPhisAnchorOnlyInOneBlock) {
+  for (const bool SameBlock : {true, false}) {
+    SCOPED_TRACE(SameBlock);
+    FrameSlotProofFixture Fixture(Arch::X86);
+    const uint64_t SPOffset = getTargetRegInfo(Arch::X86).StackPointer;
+    auto stackPointer = [&](uint16_t Size) {
+      MedVar V = Fixture.temp();
+      V.Kind = MedVar::Reg;
+      V.RegOff = SPOffset;
+      V.Size = Size;
+      return V;
+    };
+    const int Entry = SameBlock ? 0 : Fixture.addBlock();
+    if (!SameBlock)
+      Fixture.edge(0, Entry);
+    const int Header = Fixture.addBlock();
+    Fixture.edge(Entry, Header);
+    Fixture.edge(Header, Header);
+    const MedVar Guest = stackPointer(4), Host = stackPointer(8);
+    const MedVar HostEntry = stackPointer(8), Back = stackPointer(4);
+    Fixture.op(Header, NdOp::SUBBYTES, Back, {Host, MedVar::makeConst(0, 1)});
+    PhiNode GuestPhi;
+    GuestPhi.Output = Guest;
+    GuestPhi.Args = {{Entry, Fixture.SP}, {Header, Back}};
+    Fixture.Func.Blocks[Header].Phis.push_back(GuestPhi);
+    PhiNode HostPhi;
+    HostPhi.Output = Host;
+    HostPhi.Args = {{SameBlock ? Entry : 0, HostEntry}};
+    if (SameBlock)
+      HostPhi.Args.push_back({Header, Host});
+    Fixture.Func.Blocks[SameBlock ? Header : Entry].Phis.push_back(HostPhi);
+    MedLLVMEmitter Emitter;
+    const auto Slot = MedLLVMProvenanceTestPeer::canonicalFrameSlot(
+        Emitter, Fixture.Func, Arch::X86, Guest);
+    EXPECT_EQ(Slot.has_value(), SameBlock);
+    if (Slot) {
+      EXPECT_EQ(Slot->first, std::make_pair(Fixture.SP.Id, Fixture.SP.SSAVer));
+      EXPECT_EQ(Slot->second, 0);
+    }
+  }
+}
+
 TEST(LLVMFrameSlotProof, ExhaustionIsSharedSaturatingAndQueryLocal) {
   for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
     SCOPED_TRACE(static_cast<int>(TargetArch));

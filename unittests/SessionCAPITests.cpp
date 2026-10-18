@@ -3464,6 +3464,31 @@ TEST_F(SessionCAPITest,
 }
 #endif
 
+TEST_F(SessionCAPITest, MinGWImportVariableCallsReachTheirFunction) {
+  // A call through MinGW's `__imp_add_one`, which no code changes, calls
+  // add_one; one through `__imp_twice`, which its lazy binding rewrites, goes
+  // through the variable.  Both routes agree.
+  const auto Fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "loader" / "fixtures" / "mingw_imp_slots.exe";
+  std::ifstream Input(Fixture, std::ios::binary);
+  const std::string Exe =
+      write("mingw_imp_slots.exe",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Exe.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Index = neverd_func_find_by_name(Session, "entry");
+  ASSERT_GE(Index, 0);
+  const neverd_va_t Entry = neverd_func_entry(Session, Index);
+  const std::string Source = takeString(neverd_decompile(Session, Entry));
+  EXPECT_NE(Source.find("add_one(1)"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("imp_add_one"), std::string::npos) << Source;
+  // Neither `twice(2)` nor `bind_twice(2)`: the variable it calls through.
+  EXPECT_EQ(Source.find("twice(2)"), std::string::npos) << Source;
+  const std::string Llvm = takeString(neverd_decompile_llvm(Session, Entry));
+  EXPECT_NE(Llvm.find("add_one("), std::string::npos) << Llvm;
+  EXPECT_EQ(Llvm.find("twice(2)"), std::string::npos) << Llvm;
+}
+
 TEST_F(SessionCAPITest, LLVMCReadsAPointerTableAmongCodeAsData) {
   // The fixture keeps a pointer table among its code, as GNU ld keeps
   // __CTOR_LIST__ in .text, and reads it through a pointer in .data.  Taken
@@ -3608,8 +3633,9 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
             "_THREAD_LIKE");
   EXPECT_EQ(List.getObject("stats")->getArray("nestingMismatches")->size(), 0u);
   // A console program joins the user mode headers after its PDB, then the
-  // kernel's for the native API: the kernel's KUSER_SHARED_DATA holds a
-  // record user mode lays out otherwise, and is left out.
+  // kernel's for the few native routines only it declares.  phnt's native
+  // API declares KUSER_SHARED_DATA in user mode, so the kernel's, laid out
+  // with records user mode lays out otherwise, does not join.
   const llvm::json::Array *Headers = List.getArray("headers");
   ASSERT_TRUE(Headers && Headers->size() == 2u);
   const llvm::json::Object &User = *(*Headers)[0].getAsObject();
@@ -3617,7 +3643,7 @@ TEST_F(SessionCAPITest, LocalTypesComeFromThePDB) {
   EXPECT_EQ(User.getArray("conflicts")->size(), 0u);
   const llvm::json::Object &Native = *(*Headers)[1].getAsObject();
   EXPECT_EQ(Native.getString("name"), "windows-kernel-x64");
-  EXPECT_EQ(Native.getArray("conflicts")->size(), 2u);
+  EXPECT_EQ(Native.getArray("conflicts")->size(), 0u);
 
   llvm::json::Object Thread =
       parse(neverd_local_type_json(Session, "_THREAD_LIKE", nullptr));
@@ -4080,6 +4106,11 @@ TEST_F(SessionCAPITest, FunctionsHoldTheRecordsTheirPDBTypes) {
   // The library's members name the four bytes of a flag union in place,
   // which the PDB's leave unnamed.
   EXPECT_NE(Use.find("Thread->MiscFlags"), std::string::npos);
+  // The enumeration Microsoft x64 passes fifth, on the stack, as wide as its
+  // underlying int.
+  EXPECT_NE(Use.find("_USES_FORWARD* Forward, _SIGNED_KIND Kind) {"),
+            std::string::npos)
+      << Use;
   // LLVM-C defines them too, and declares the typedefs its signature
   // spells, the enumeration's after its definition.
   const auto llvm = [&] {
@@ -4219,17 +4250,80 @@ TEST_F(SessionCAPITest, ObjectsTakeTheirLocalTypesFromTheirDWARF) {
       << Source;
 
   // HighC reads the members by name and defines the records it reads them
-  // of; LLVM-C binds no debug parameters in a relocatable object.
+  // of.
   const int Index = neverd_func_find_by_name(Session, "use");
   ASSERT_GE(Index, 0);
-  const std::string Use =
-      takeString(neverd_decompile(Session, neverd_func_entry(Session, Index)));
+  const uint64_t UseEntry = neverd_func_entry(Session, Index);
+  const std::string Use = takeString(neverd_decompile(Session, UseEntry));
   EXPECT_NE(Use.find("int32_t use(device* d, packed* p,"), std::string::npos)
       << Use;
   EXPECT_NE(Use.find("d->size"), std::string::npos) << Use;
   EXPECT_NE(Use.find("p->count"), std::string::npos) << Use;
   EXPECT_NE(Use.find("struct device\n{"), std::string::npos) << Use;
   EXPECT_NE(Use.find("struct packed\n{"), std::string::npos) << Use;
+  // So does LLVM-C, though use sits at address zero, as an object's first
+  // function does.
+  EXPECT_EQ(UseEntry, 0u);
+  const std::string LLVMC =
+      takeString(neverd_decompile_llvm(Session, UseEntry));
+  EXPECT_NE(LLVMC.find("use(device* d, packed* p, aligned* a, tail* t, "
+                       "uses_forward* f)"),
+            std::string::npos)
+      << LLVMC;
+}
+
+TEST_F(SessionCAPITest, ThirtyTwoBitLinuxObjectsLayRecordsOutAsGCCDoes) {
+  // GCC's i386 code packs bit-fields as on any System V target and aligns
+  // long long and double to four, which a 32-bit data model alone, read as
+  // Microsoft's, does not say: the session takes the record ABI from the
+  // object's platform and architecture.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "dwarf_types.gcc32.o", std::ios::binary);
+  const std::string Object =
+      write("dwarf_types.gcc32.o",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Object.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_local_types_json(Session, nullptr)));
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  const llvm::json::Object *Root = Parsed->getAsObject();
+  ASSERT_TRUE(Root);
+  EXPECT_EQ(Root->getString("source"), "dwarf");
+  EXPECT_EQ(Root->getString("dataModel"), "ILP32");
+  EXPECT_EQ(Root->getString("recordABI"), "i386-sysv");
+
+  // The records render as GCC laid them out, with nothing to make GNU's
+  // compilers lay them out as Microsoft's: flags' bit-fields share kind's
+  // unit, and device's eight-byte union aligns to four.
+  const std::string Source = takeString(neverd_local_types_source(
+      Session,
+      R"({"language":"c","types":["flags","device"],"asserts":true})"));
+  for (const char *Expected :
+       {"sizeof(struct flags) == 0xC", "offsetof(struct flags, tail) == 0x8",
+        "offsetof(struct device, time) == 0x1C",
+        "sizeof(struct device) == 0x54"})
+    EXPECT_NE(Source.find(Expected), std::string::npos) << Expected << Source;
+  for (const char *Unexpected :
+       {"NEVERD_MS_STRUCT", "NEVERD_ALIGN8 ", "#pragma pack"})
+    EXPECT_EQ(Source.find(Unexpected), std::string::npos)
+        << Unexpected << Source;
+
+  // A declaration lays out as the program's records do.
+  const auto parse = [&](const char *Raw) {
+    auto Parsed = llvm::json::parse(takeString(Raw));
+    EXPECT_TRUE(static_cast<bool>(Parsed))
+        << takeString(neverd_last_error(Session));
+    return Parsed && Parsed->getAsObject() ? *Parsed->getAsObject()
+                                           : llvm::json::Object();
+  };
+  const llvm::json::Object Declared = parse(neverd_local_types_declare(
+      Session, "struct sample { char c; long long q; double d; };", nullptr));
+  EXPECT_EQ(Declared.getArray("problems")->size(), 0u);
+  EXPECT_EQ(parse(neverd_local_type_json(Session, "sample", nullptr))
+                .getInteger("size"),
+            20);
 }
 
 TEST_F(SessionCAPITest, CodeReadsTheRecordsItsMembersReach) {
@@ -4696,8 +4790,8 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
                       "1, 0, 3, 0, 0)"),
             std::string::npos)
       << Open;
-  // GetLastError takes nothing; CloseHandle and ZwClose, which only the
-  // kernel's headers declare, take the handle.
+  // GetLastError takes nothing; CloseHandle and ZwClose, which phnt's
+  // native API declares, take the handle.
   const std::string Probe = decompile("Probe");
   EXPECT_NE(Probe.find(" = GetLastError();"), std::string::npos) << Probe;
   EXPECT_NE(Probe.find("extern int32_t ZwClose(void* Handle);"),
@@ -4793,6 +4887,68 @@ TEST_F(SessionCAPITest, X86ImportsTakeTheirStdcallPrototypes) {
       << Seek;
   EXPECT_NE(Seek.find(", 0);"), std::string::npos) << Seek;
   EXPECT_EQ(Seek.find(", 0, 0"), std::string::npos) << Seek;
+}
+
+TEST_F(SessionCAPITest, ARM64ImportsPassWhatTheirPrototypesCount) {
+  // An ARM64 program calling routines kernel32, user32 and ntdll export.  The
+  // setup of each call gives it its arguments, and an import's prototype
+  // counts them.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "user_imports_arm64.exe", std::ios::binary);
+  const std::string Program =
+      write("user_imports_arm64.exe",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Program.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  ASSERT_GE(neverd_session_discover_functions(Session), 0)
+      << takeString(neverd_last_error(Session));
+  // It joins the ARM64 user mode headers alone: no kernel library describes
+  // ARM64.
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_local_types_json(Session, nullptr)));
+  ASSERT_TRUE(static_cast<bool>(Parsed));
+  const llvm::json::Array *Headers = Parsed->getAsObject()->getArray("headers");
+  ASSERT_TRUE(Headers && Headers->size() == 1u);
+  EXPECT_EQ((*Headers)[0].getAsObject()->getString("name"),
+            "windows-user-arm64");
+  EXPECT_EQ(Parsed->getAsObject()->getString("dataModel"), "LLP64");
+  const auto decompile = [&](const char *Name) {
+    const int Index = neverd_func_find_by_name(Session, Name);
+    EXPECT_GE(Index, 0) << Name;
+    return Index < 0 ? std::string()
+                     : takeString(neverd_decompile(
+                           Session, neverd_func_entry(Session, Index)));
+  };
+  // Open jumps to CreateFileW through its slot and passes its own argument
+  // on in x0, which it never writes.
+  const std::string Open = decompile("Open");
+  EXPECT_NE(Open.find("Open(int64_t arg0)"), std::string::npos) << Open;
+  EXPECT_NE(Open.find("CreateFileW((uint16_t*)(uintptr_t)arg0, 0x80000000, "
+                      "1, 0, 3, 0, 0)"),
+            std::string::npos)
+      << Open;
+  // GetLastError takes nothing: the x0 Probe was called with is none.
+  // ZwClose takes the handle, as phnt's native API declares it.
+  const std::string Probe = decompile("Probe");
+  EXPECT_NE(Probe.find("GetLastError()"), std::string::npos) << Probe;
+  EXPECT_EQ(Probe.find("GetLastError(arg0"), std::string::npos) << Probe;
+  EXPECT_NE(Probe.find("extern int32_t ZwClose(void* Handle);"),
+            std::string::npos)
+      << Probe;
+  // ExitProcess takes the code and returns to no caller.
+  const std::string Finish = decompile("Finish");
+  EXPECT_NE(Finish.find("ExitProcess(uint32_t uExitCode) "
+                        "__attribute__((noreturn));"),
+            std::string::npos)
+      << Finish;
+  EXPECT_NE(Finish.find("ExitProcess(arg0);"), std::string::npos) << Finish;
+  // CreateWindowExW takes twelve: the last four are on the stack.
+  const std::string Window = decompile("Window");
+  EXPECT_NE(Window.find("0x10000000, 1, 2, 3, 4, (HWND__*)(uintptr_t)arg0, 0, "
+                        "(HINSTANCE__*)(uintptr_t)arg1, 0);"),
+            std::string::npos)
+      << Window;
 }
 
 TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {

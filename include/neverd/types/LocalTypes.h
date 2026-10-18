@@ -43,6 +43,33 @@ enum class DataModel : uint8_t {
   ILP32, ///< 32-bit targets: 32-bit int, long and pointers.
 };
 
+/// How a compiler lays a record out.
+enum class LayoutRules : uint8_t {
+  /// Microsoft's: a bitfield shares a storage unit only with the bitfields
+  /// of its type's size before it.
+  MSVC,
+  /// The Itanium ABI's, as GCC and Clang outside Windows: a bitfield goes
+  /// wherever it fits without crossing a unit of its type.
+  Itanium,
+};
+
+/// How a target's compilers lay records out, beyond what its data model
+/// says (RecordABIs.def).
+enum class RecordABI : uint8_t {
+#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit) Name,
+#include "neverd/types/RecordABIs.def"
+};
+
+/// Where \p ABI's bit-fields go.
+LayoutRules layoutRulesOf(RecordABI ABI);
+/// The largest alignment a builtin scalar takes in a record of \p ABI.
+uint32_t scalarAlignLimitOf(RecordABI ABI);
+/// \p ABI's name in the C API.
+llvm::StringRef recordABIName(RecordABI ABI);
+/// The ABI a data model's compilers follow when nothing else says:
+/// Microsoft's for LLP64 and ILP32, the Itanium ABI's for LP64.
+RecordABI defaultRecordABI(DataModel Model);
+
 /// What a builtin type is.
 enum class BuiltinClass : uint8_t { Void, Bool, Character, Integer, Float };
 
@@ -88,7 +115,7 @@ enum class TypeOrigin : uint8_t {
 
 /// How a function takes its arguments (CallingConventions.def).
 enum class CallingConvention : uint8_t {
-#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA, Wide) Name,
+#define NEVERD_CALLING_CONVENTION(Name, C, Rust, IDA, Wide, Pops) Name,
 #include "neverd/types/CallingConventions.def"
 };
 
@@ -233,7 +260,8 @@ struct LocalType {
 /// The named types of a program.
 class TypeLibrary {
 public:
-  explicit TypeLibrary(DataModel Model = DataModel::LLP64) : Model(Model) {}
+  explicit TypeLibrary(DataModel Model = DataModel::LLP64)
+      : Model(Model), ABI(defaultRecordABI(Model)) {}
   /// Copies are whole libraries of their own, which share the definitions,
   /// so that a change can be tried on one and kept or dropped.
   TypeLibrary(const TypeLibrary &Other);
@@ -242,6 +270,13 @@ public:
   TypeLibrary &operator=(TypeLibrary &&) = default;
 
   DataModel dataModel() const { return Model; }
+  /// How the program's compilers laid its records out, which parsing lays
+  /// declarations out by and every rendering follows: a 32-bit Linux
+  /// program's i386 System V ABI, which its data model alone does not say.
+  /// Its data model's unless set.
+  RecordABI recordABI() const { return ABI; }
+  void setRecordABI(RecordABI Laid) { ABI = Laid; }
+  LayoutRules layoutRules() const { return layoutRulesOf(ABI); }
 
   /// Defines \p Type, which replaces the type of its name and keeps that
   /// type's ordinal.  Returns the ordinal.
@@ -282,6 +317,7 @@ public:
 
 private:
   DataModel Model;
+  RecordABI ABI;
   llvm::StringMap<std::shared_ptr<const FunctionDef>> Prototypes;
   /// By ordinal - 1; null where a type was removed.
   std::vector<std::unique_ptr<LocalType>> ByOrdinal;

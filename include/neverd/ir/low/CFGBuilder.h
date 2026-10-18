@@ -680,6 +680,19 @@ std::shared_ptr<X87CallGraphCache>
 createX87CallGraphCache(const NoReturnCalleeProver *NonReentrantProver,
                         const libc::NoReturnTargetIndex *NonReentrantTargets,
                         bool RetainCallRegisterBodies);
+/// The least recently used graphs and bodies leave the cache beyond these
+/// bounds; the defaults are the bounds of the caches above.
+struct X87CallGraphCacheLimits {
+  /// Graphs, and separately bodies, retained.
+  size_t Entries = 128;
+  size_t GraphBytes = 8 * 1024 * 1024;
+  size_t BodyBytes = 32 * 1024 * 1024;
+};
+std::shared_ptr<X87CallGraphCache>
+createX87CallGraphCache(const NoReturnCalleeProver *NonReentrantProver,
+                        const libc::NoReturnTargetIndex *NonReentrantTargets,
+                        bool RetainCallRegisterBodies,
+                        const X87CallGraphCacheLimits &Limits);
 
 class CFGBuilder {
   friend class X87CallEffectIndex;
@@ -1148,6 +1161,8 @@ private:
     int FpuTopIn = 0;
     int FpuTopOut = 0;
     bool FpuReset = false;
+
+    bool operator==(const InsnRecord &Other) const = default;
   };
 
   void explore(const BinaryImage &Img, Decoder &Dec, va_t Addr);
@@ -1917,6 +1932,9 @@ private:
     const std::map<va_t, JumpTableInfo> *ConsumerRoleInfos = nullptr;
     /// Borrowed from the enclosing round; never retained by a proposal.
     FiniteJumpTableRoundCertificate *FiniteRoundCertificate = nullptr;
+
+    bool
+    operator==(const GuardedJumpTableGroupProofContext &Other) const = default;
   };
   enum class GuardedJumpTableGroupKind : uint8_t {
     DenseGuard,
@@ -1936,6 +1954,8 @@ private:
     std::map<va_t, JumpTableInfo> Infos;
     std::map<va_t, std::vector<va_t>> Targets;
     bool Published = false;
+
+    bool operator==(const GuardedJumpTableGroupState &Other) const = default;
   };
   std::optional<GuardedJumpTableGroupProofContext> GuardedGroupProofContext;
   std::optional<GuardedJumpTableGroupKey> GuardedGroupIdentity;

@@ -287,6 +287,8 @@ add_neverd_unittest(NeverDAndroidNativeTests
   AndroidSemaphoreTests.cpp
   AndroidRandomTests.cpp
   AndroidNetworkTests.cpp
+  AndroidAuxvTests.cpp
+  AndroidCalendarTests.cpp
   AndroidThreadAttributeTests.cpp
   AndroidThreadTests.cpp
   AndroidTimeTests.cpp
@@ -1540,6 +1542,8 @@ target_include_directories(NeverDNativeDriverTests PRIVATE
 target_compile_definitions(NeverDNativeDriverTests PRIVATE
   ${_driver_execution_fixture_definitions})
 add_dependencies(NeverDNativeDriverTests NeverDDriverFixtures)
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/DriverBatchTestExecution.cmake")
 
 add_neverd_unittest(NeverDKernelSnapshotTests
   NO_PRETTY_VALUES

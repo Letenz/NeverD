@@ -4,9 +4,11 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// System V x86-64: RDI, RSI, RDX, RCX, R8 and R9.  A variadic callee tests
-// AL (the vector registers its caller used) and spills every argument
-// register to its register save area, so its summary lists no parameters.
+// System V x86-64, the convention of ELF and Mach-O images alike (Apple's
+// x86-64 convention is the System V one): RDI, RSI, RDX, RCX, R8 and R9.  A
+// variadic callee tests AL (the vector registers its caller used) and spills
+// every argument register to its register save area, so its summary lists no
+// parameters.
 // Its stack arguments start at the return address with no home area, which
 // the stack-argument summary does not count.  RAX, R10 and R11 hold nothing
 // at entry, so a function that only aligns the stack for a call with a push
@@ -39,7 +41,7 @@ bool readsVectorCount(const GPRReadWidths &Reads) {
 extern const CallArgumentConvention SysVX64CallArguments;
 const CallArgumentConvention SysVX64CallArguments = {
     .TheArch = Arch::X64,
-    .Format = BinaryFormat::ELF,
+    .Format = BinaryFormat::Unknown,
     .RegisterArgumentsFromCalleeSummary = true,
     .VectorArgumentsFromCalleeSummary = true,
     .ImportArgumentsFromPrototype = true,

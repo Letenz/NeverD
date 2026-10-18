@@ -891,6 +891,7 @@ struct Session {
       Recovery.CallEntryReadGPRs = PipeResult.CallEntryReadGPRs;
       Recovery.CallEntryStackArgs = PipeResult.CallEntryStackArgs;
       Recovery.CallEntryStackSlots = PipeResult.CallEntryStackSlots;
+      Recovery.CallEntryArgumentCounts = PipeResult.CallEntryArgumentCounts;
       Recovery.CallArgumentSources = PipeResult.CallArgumentSources;
       Recovery.OmittedCallees = PipeResult.OmittedCallees;
       recoverModuleCallAbi(Img, Recovery, FuncNames);
@@ -1067,6 +1068,17 @@ struct PipelineRunner {
 /// naming \p Kind.
 bool saveSidecar(Session *S, const std::filesystem::path &Path,
                  llvm::json::Value Values, llvm::StringRef Kind);
+
+/// The SHA-256 of the input as loaded, in lowercase hexadecimal: the one the
+/// loader took while it read the input, else one hash of the file, kept.
+/// Empty when the file cannot be read.
+std::string inputSha256(Session &S);
+
+/// The loaded input as a project's project.json names it.
+llvm::json::Object projectInput(Session &S);
+
+/// The input the project's project.json names, if it names one.
+std::optional<llvm::json::Object> recordedInput(const Session &S);
 
 /// Records in the project folder's project.json which build of the input the
 /// project's files describe, when it names none or another; false with the

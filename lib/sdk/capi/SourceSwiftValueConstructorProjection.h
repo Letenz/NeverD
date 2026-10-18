@@ -354,7 +354,6 @@ public:
     for (const auto &F : Result.MedFuncs)
       Names.emplace(F.Entry, F.Name);
     Converter.setFuncNames(&Names);
-    Converter.setJumpTables(Current->Low->JumpTables);
     const auto MedReplay = Converter.convert(*Current->Med, Image.Arch);
     if (!sameBody(*Rebuilt->High, *Current->High, Image, *Rebuilt->Low,
                   *Rebuilt->Med, *Current->Low, *Current->Med) ||

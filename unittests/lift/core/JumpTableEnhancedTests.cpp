@@ -266,7 +266,7 @@ TEST(JumpTableHighSelector, MissingExactSelectorRemainsAnUnresolvedGoto) {
   JT.InsnAddr = 0x100;
   JT.Targets = {0x200, 0x300};
   neverd::MedToHighConverter Converter;
-  Converter.setJumpTables({JT});
+  Med.JumpTables = {JT};
   const neverd::HighFunc High = Converter.convert(Med, neverd::Arch::X64);
 
   EXPECT_TRUE(std::none_of(High.Body.begin(), High.Body.end(),
@@ -9262,6 +9262,10 @@ static fs::path gccCompactA64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_jumptable_gcc_compact_a64.o";
 }
 
+static fs::path gccInflateA64Obj() {
+  return fs::path(TEST_OBJ_DIR) / "test_jumptable_inflate_gcc_a64.o";
+}
+
 static fs::path pageoffWrongBaseA64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_pageoff_wrong_base_a64.o";
 }
@@ -9798,6 +9802,44 @@ TEST_F(JTE_AArch64, GCCCompactGuardBoundsTheStorageItReads) {
   const neverd::va_t Eight = Function->Addr + 0x40;
   EXPECT_EQ(Low.JumpTables.front().Targets,
             (std::vector<neverd::va_t>{Eight, Abort, Anchor, Four, Eight}));
+  EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+}
+
+// zlib's inflate as GCC compiles it: a 31-mode state loop that dispatches
+// through `ldrh w0, [x0, w1, uxtw #1]`, while its cases keep updating the
+// 64-bit bit buffer. The table is the first object in .rodata; each halfword
+// is the case's distance in instructions from the anchor after `br`.
+TEST_F(JTE_AArch64, ZlibInflateDispatchReachesEveryMode) {
+  auto ImageOrErr = neverd::loadBinary(gccInflateA64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  const neverd::Symbol *Function = Image.findSymbol("inflate");
+  ASSERT_NE(Function, nullptr);
+  const neverd::Section *Rodata = nullptr;
+  for (const neverd::Section &Section : Image.Sections)
+    if (Section.Name == ".rodata")
+      Rodata = &Section;
+  constexpr size_t Modes = 31;
+  ASSERT_NE(Rodata, nullptr);
+  ASSERT_GE(Rodata->Data.size(), Modes * 2);
+
+  neverd::CFGBuilder Builder;
+  const neverd::LowFunc Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  ASSERT_EQ(Low.JumpTables.size(), 1u);
+  const neverd::JumpTable &Table = Low.JumpTables.front();
+  EXPECT_EQ(Table.BaseAddr, Rodata->VA);
+  std::vector<neverd::va_t> Expected;
+  const neverd::va_t Anchor = Table.InsnAddr + 4;
+  for (size_t Mode = 0; Mode < Modes; ++Mode) {
+    const auto Entry = static_cast<int16_t>(Rodata->Data[2 * Mode] |
+                                            (Rodata->Data[2 * Mode + 1] << 8));
+    Expected.push_back(Anchor + static_cast<int64_t>(Entry) * 4);
+  }
+  EXPECT_EQ(Table.Targets, Expected);
   EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
 }
 

@@ -153,7 +153,6 @@ inline bool objCSwiftBooleanSourceCallBound(const HighExpr &Expression,
   for (const auto &F : Result.HighFuncs)
     Functions.emplace(F.Entry, &F);
   Converter.setFuncNames(&Names);
-  Converter.setJumpTables(Low->JumpTables);
   const auto Replay = Converter.convert(*Med, Image.Arch);
   const auto BoundReplay =
       bindObjCSourceReferences(Replay, Image, nullptr, &Functions);
