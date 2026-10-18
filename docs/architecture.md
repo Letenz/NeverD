@@ -8300,3 +8300,5 @@ these semantics. `AndroidKernelCalls` adapts libc timeout-copy and errno rules.
 `Bionic::StreamReadWait` owns FILE progress across nested reads. Kernel byte
 counts never directly complete an enclosing fread/fgets import. The FILE
 reservation explicitly excludes unsupported concurrent operations.
+
+`X86LegacyVectorMoveAudit` admits legacy MOVSS/MOVSD register and unsegmented memory forms through the same raw-prefix, opcode, ModRM/SIB and decoder-detail checks as packed moves. XMM operands remain 16 bytes while memory operands are exactly 4 or 8 bytes. The existing scalar move owners merge register sources and zero the remaining low-128-bit destination bytes on memory loads, preserving higher vector bits. Complete emitted spans bind the undefined-output receipt. This does not admit string MOVSD, VEX/EVEX forms, segmented memory or an opaque-state preservation contract.

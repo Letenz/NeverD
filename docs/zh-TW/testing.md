@@ -2045,3 +2045,10 @@ ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverD
 cmake --build build-release --target NeverDX86NativeStateAuditTests
 ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
 ```
+
+`NeverDX86ScalarMoveAuditTests` 對照原始位元組及完整解碼詳情檢查傳統 MOVSS/MOVSD 的嚴格准入。獨立位元組預期涵蓋暫存器合併、記憶體載入零擴展、純量儲存、所有對齊餘數、16/32/64 位元定址，以及完整暫存器、旗標與 MXCSR 保留。記憶體位元組缺失或寫入唯讀記憶體不得提交架構輸出。負例維持字串、VEX/EVEX、分段及格式錯誤形式的拒絕；憑據綁定完整操作範圍，不授予不透明狀態保留能力。
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```

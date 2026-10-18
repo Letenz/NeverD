@@ -2089,3 +2089,10 @@ ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverD
 cmake --build build-release --target NeverDX86NativeStateAuditTests
 ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
 ```
+
+`NeverDX86ScalarMoveAuditTests`는 원본 바이트와 완전한 디코더 세부 정보를 기준으로 레거시 MOVSS/MOVSD의 엄격한 허용 여부를 검사합니다. 독립적인 바이트 오라클은 레지스터 병합, 메모리 로드의 0 확장, 스칼라 저장, 모든 정렬 나머지, 16/32/64비트 주소 지정과 전체 레지스터·플래그·MXCSR 보존을 검증합니다. 메모리 바이트 누락이나 읽기 전용 메모리 저장은 아키텍처 출력을 확정해서는 안 됩니다. 문자열, VEX/EVEX, 세그먼트 및 잘못된 형식은 계속 거부하며 기록은 전체 연산 범위를 결속하지만 불투명 상태 보존 권한을 부여하지 않습니다.
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
