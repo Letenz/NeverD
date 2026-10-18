@@ -7624,6 +7624,9 @@ linked i386 image whose table follows its function two bytes past a four-byte
 boundary, with an aligned relocated `.rdata` pointer an instruction names past
 it: the cases stay the switch's labels rather than entries, and the CFG
 builder recovers all three. It fails without the run bound or the label rule.
+`X86_32_FunctionDiscovery.CallbackStoredByARelocatedImmediateIsAFunction`
+stores a callback with `mov [ecx+0x10], offset cb` and recovers the callback
+as a function of its own.
 `SessionCAPITest.LLVMCReadsAPointerTableAmongCodeAsData` emits LLVM-C for the
 function that reads the table through `.data`, which was refused before.
 `NativePointerRelocationBoundary.MinGWPointerTableAmongCodeMirrorsItsFunction`

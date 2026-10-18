@@ -542,7 +542,14 @@ the code (`recordRelocatedPointerRunsInCode`): its slots become pointer slots
 of data, the operands naming it name data, and its start joins `DataInCode`.
 Function detection keeps a target such a table names inside the function it
 follows as that function's label, which the jump-table resolver reads; a
-target outside it is an entry. Such a table roots no function's code
+target outside it is an entry. A function it takes the address of with a
+relocated immediate (`mov [obj+off], offset cb`, a callback stored into an
+object; `push offset filter`, a handler) is likewise a function
+(`scanCodeAddressImmediatesX86`): the base relocation makes the immediate an
+instruction operand, so the target is no call site and often has no prologue,
+yet it is still an entry the bounded decoder verifies, and symbolizing it
+corrects a function whose real entry carries a `/GS` or `/RTC` check the
+stored address skipped. Such a table roots no function's code
 (`exploreAddressTakenRoots`): the range of a function before the dispatcher
 reaches the dispatcher's cases when the dispatcher's entry is only a guess.
 A relocation run ends at the next table anchor among its own slots; an anchor

@@ -364,13 +364,16 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   for (va_t Thunk : ExceptionThunks)
     Entries.erase(Thunk);
 
-  // Code a pointer table among the code names is a function of its own,
-  // except inside the function the table follows: there it is that
-  // function's label, such as a case of the switch whose table MSVC places
-  // after the function's code, which the jump-table resolver reads.  The
-  // bounded decoder below still decides whether a target is an entry.
+  // Code that other code names is a function of its own, except inside the
+  // function naming it, where it is that function's label: a pointer table
+  // among the code names its dispatcher's cases, which the jump-table
+  // resolver reads, and a relocated immediate (`mov [obj+off], offset cb`, a
+  // callback stored into an object; `push offset filter`, a handler) names a
+  // function the code only takes the address of.  The bounded decoder below
+  // still decides whether a target is an entry.
   std::set<va_t> CodeNamedTargets;
   if (IsX86LinkedCOFF && Img.Entry != 0) {
+    func_detect_detail::scanCodeAddressImmediatesX86(Img, Dec, CodeNamedByCode);
     const std::vector<va_t> Starts(Entries.begin(), Entries.end());
     auto NamesOwnLabel = [&](va_t Namer, va_t Target) {
       const auto Next = std::upper_bound(Starts.begin(), Starts.end(), Namer);
