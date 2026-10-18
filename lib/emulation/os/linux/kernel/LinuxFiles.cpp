@@ -71,9 +71,9 @@ LinuxFiles::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Getcwd:
     return getWorkingDirectory(A0, A1, Result);
   case ServiceKind::Mkdir:
-    return makeDirectory(A0, Result);
+    return makeDirectory(A0, A1, Result);
   case ServiceKind::MkdirAt:
-    return makeDirectory(A1, Result);
+    return makeDirectory(A1, A2, Result);
   case ServiceKind::Access:
     return access(A0, A1, Result);
   case ServiceKind::FaccessAt:

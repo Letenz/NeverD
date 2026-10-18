@@ -336,6 +336,7 @@ private:
   BionicResult registerExit(const NativeCallEvent &Call);
   BionicResult finalize(uint64_t DSO);
   BionicResult tokenize(const NativeCallEvent &Call);
+  BionicResult findSubstring(const NativeCallEvent &Call);
   BionicResult findCharacter(const NativeCallEvent &Call);
   class ArgumentReader;
   class StringFormatter;

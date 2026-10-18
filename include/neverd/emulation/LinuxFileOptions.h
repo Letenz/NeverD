@@ -34,6 +34,16 @@ struct LinuxFileMetadata {
   LinuxTimespec ChangeTime;
 };
 
+/// Opt-in noatime tmpfs directory provider. Parents are existing directory
+/// snapshots with authorized ancestor traversal, no ACLs or security hooks.
+/// New children inherit this provider. Credentials are the Linux workload's
+/// fixed UID/GID; neither permissions nor timestamps come from the host.
+struct LinuxDirectoryCreationOptions {
+  std::map<std::string, LinuxFileMetadata> Parents;
+  uint32_t Umask = 0022;
+  uint32_t Limit = 64;
+};
+
 /// Explicit identity for the bounded live proc view. Unknown status fields
 /// are omitted, rather than inferred from the host or an Android version.
 struct LinuxProcMapping {
@@ -75,6 +85,7 @@ struct LinuxFileOptions {
   /// Linked, reachable guest cwd, explicitly present in Directories (or root).
   /// Absent means unknown. This does not enable chdir or relative path walks.
   std::optional<std::string> WorkingDirectory;
+  std::optional<LinuxDirectoryCreationOptions> DirectoryCreation;
   /// Opt-in live /proc/self/fd links and enumeration, owned by the FD table.
   /// Other proc entries remain explicit inputs, not inferred kernel state.
   bool DynamicProcFDs = false;

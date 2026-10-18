@@ -34,14 +34,11 @@ struct SymExecConcreteShadow::Impl {
     Started = false;
   }
 
-  std::optional<uint64_t> concreteValue(const NdVar &V) {
+  std::optional<llvm::APInt> concreteValue(const NdVar &V) {
     SymRef Expression = Executor->operandValue(V);
-    if (!Expression.isValid() || Context->width(Expression) > 64)
+    if (!Expression.isValid())
       return std::nullopt;
-    std::optional<llvm::APInt> Constant = Context->asConst(Expression);
-    if (!Constant || Constant->getActiveBits() > 64)
-      return std::nullopt;
-    return Constant->getZExtValue();
+    return Context->asConst(Expression);
   }
 
   bool fail() {
@@ -101,6 +98,11 @@ bool SymExecConcreteShadow::step(const LowOp &Op) {
     return false;
   P->Started = true;
 
+  // Widening data does not widen the linear-address interface.
+  if (const auto Memory = lowMemoryOperands(Op);
+      Memory.Address && Memory.Address->Size > sizeof(uint64_t))
+    return P->fail();
+
   // A concrete run must know every value the operation consumes, even when
   // symbolic simplification could prove that one of them does not affect the
   // output.  This is what keeps a missing seed from becoming an implicit zero.
@@ -124,10 +126,14 @@ std::optional<uint64_t> SymExecConcreteShadow::value(const NdVar &V) {
   if (!P->Trusted)
     return std::nullopt;
   P->Started = true;
-  std::optional<uint64_t> Result = P->concreteValue(V);
-  if (!Result)
-    P->Trusted = false;
-  return Result;
+  const std::optional<llvm::APInt> Result = P->concreteValue(V);
+  // Operation data can be wider than the scalar control-decision interface.
+  // Even a wide value with zero high bits does not fit that interface's width.
+  if (!Result || Result->getBitWidth() > 64) {
+    P->fail();
+    return std::nullopt;
+  }
+  return Result->getZExtValue();
 }
 
 } // namespace neverd::symbolic

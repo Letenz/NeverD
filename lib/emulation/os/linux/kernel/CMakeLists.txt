@@ -28,6 +28,7 @@ add_neverd_component_library(NeverDEmulationLinuxKernel
   LinuxFilePaths.cpp
   LinuxFileLinks.cpp
   LinuxFileIO.cpp
+  LinuxDirectoryCreation.cpp
   LinuxDirectories.cpp
   LinuxProc.cpp
   LinuxProcRead.cpp
