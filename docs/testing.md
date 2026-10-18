@@ -8281,6 +8281,13 @@ TF_STATUS_CODE replies, including exact guards and buffer release. The LP64
 `LinuxBinder` test checks rejected flags/status sizes/objects, unchanged arenas
 and consumed counts, and a successful retry of the same pending call. These
 checks validate message transport, not any Android service's response policy.
+`LinuxBinder` also checks page-rounded arenas through 4 MiB, both ends' read-only
+permissions, failed protection upgrades, dup/close/unmap lifetimes, oversized
+refusal without allocation and retry after memory-budget exhaustion.
+`AndroidBinder.LargeArenasRetainMultipleCopiedRequestsAndReplies` keeps two
+64 KiB requests live in one larger arena, verifies the second buffer beyond
+64 KiB, and executes guest-produced replies and buffer release at O0/O2 across
+all Android relocation forms and available CPU backends.
 Run `ctest -R 'Binder|GPUCommands|RejectedIndirectGPU|RejectedGPU|StatefulDescriptorsPages'`,
 then the five OS/memory/session owner labels described above.
 
