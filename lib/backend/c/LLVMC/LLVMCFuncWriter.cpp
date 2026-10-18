@@ -3020,6 +3020,11 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
       }
     }
   }
+  // A call through a typed member that points to a function passes the
+  // parameters its type declares: on x86 a word the caller pushed to make
+  // room on the stack is none.
+  if (const std::optional<unsigned> Params = typedSlotParamCount(Call))
+    return Clamp(*Params);
   auto UnknownAt = [&](size_t I) {
     llvm::Value *Arg = Call.getArgOperand(static_cast<unsigned>(I));
     return isUnknownPlaceholder(Arg) || OmittedUnknowns.count(Arg);

@@ -2290,7 +2290,8 @@ entry:
             std::string::npos)
       << Source;
   EXPECT_NE(
-      Source.find("((uint64_t)(uintptr_t)_onexit((int (*)(void))(uintptr_t)("),
+      Source.find(
+          "((uint64_t)(uintptr_t)_onexit((int32_t (*)(void))(uintptr_t)("),
       std::string::npos)
       << Source;
   Source += R"c(
@@ -2331,7 +2332,7 @@ entry:
   EXPECT_NE(Source.find("extern int32_t (*_onexit(int32_t (*)(void)))(void);"),
             std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("_onexit((int (*)(void))(uintptr_t)(function)))"),
+  EXPECT_NE(Source.find("_onexit((int32_t (*)(void))(uintptr_t)(function)))"),
             std::string::npos)
       << Source;
   Source += R"c(

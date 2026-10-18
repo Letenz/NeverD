@@ -62,6 +62,57 @@ BionicResult Bionic::usleep(const NativeCallEvent &Call) {
       Duration, Kernel.clock(), Threads ? Threads->kernel() : nullptr, Result));
 }
 
+BionicResult Bionic::getcwd(const NativeCallEvent &Call) {
+  const uint64_t Original = Call.Arguments[0], Requested = Call.Arguments[1];
+  if (Original && !Requested) {
+    if (auto E = setErrno(linux_model::InvalidArgument))
+      return std::move(E);
+    return value(0);
+  }
+  uint64_t Buffer = Original;
+  const uint64_t Size = !Original && !Requested ? PageSize : Requested;
+  if (!Buffer) {
+    auto Allocated = allocate(Size, Options.Android->MallocFillByte);
+    if (!Allocated)
+      return Allocated.takeError();
+    Buffer = *Allocated;
+    if (!Buffer)
+      return value(0);
+  }
+  ProcessServiceEvent Event{Call.PC, 0, {Buffer, Size, 0, 0, 0, 0}, {}};
+  Event.ReturnAddress = Call.ReturnAddress;
+  auto Returned = kernelService(linux_model::ServiceKind::Getcwd, Event);
+  if (!Returned)
+    return Returned.takeError();
+  if (!*Returned)
+    return std::optional<BionicValue>();
+  if (**Returned >= uint64_t(0) - 4095) {
+    if (!Original)
+      if (auto E = release(Buffer))
+        return std::move(E);
+    if (auto E = setErrno(uint64_t(0) - **Returned))
+      return std::move(E);
+    return value(0);
+  }
+  if (!Original && !Requested) {
+    // API 28 allocates a page for the kernel, then duplicates the exact string
+    // before releasing it. Keep both allocation lifetimes and failure paths.
+    std::vector<uint8_t> Bytes(**Returned);
+    if (auto E = CPU.read(Buffer, Bytes))
+      return std::move(E);
+    auto Exact = allocate(Bytes.size(), Options.Android->MallocFillByte);
+    if (!Exact)
+      return Exact.takeError();
+    if (*Exact)
+      if (auto E = CPU.write(*Exact, Bytes))
+        return std::move(E);
+    if (auto E = release(Buffer))
+      return std::move(E);
+    Buffer = *Exact;
+  }
+  return value(Buffer);
+}
+
 BionicResult Bionic::socketTransfer(const NativeCallEvent &Call) {
   auto Adapted = Call;
   Adapted.Arguments[4] = Adapted.Arguments[5] = 0;

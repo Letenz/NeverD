@@ -9,6 +9,13 @@
 // they were, so `scale` and `twice` keep a value in %ecx across the call.
 // `twice` calls a thunk padded as GCC pads one for in-order Atom
 // (-mtune=bonnell).  Each function has the unwind record GCC gives it.
+// Clang finds the GOT by calling the next instruction and popping the return
+// address, here in -O0 frames realigned to 16 bytes (clang -m32 -O0 -fPIC
+// -mstackrealign):
+//   int clang_scale(int a) { return a * factor; }
+//   int clang_lower(char c) { return tolower((unsigned char)c); }
+// `clang_scale` reads `factor` through the popped address; `clang_lower`
+// keeps it in %ebx only for its PLT call.  A label marks each pop.
 
 	.text
 	.p2align 4
@@ -67,6 +74,68 @@ twice:
 	ret
 	.cfi_endproc
 	.size	twice, .-twice
+
+	.p2align 4
+	.globl	clang_scale
+	.type	clang_scale, @function
+clang_scale:
+	.cfi_startproc
+	pushl	%ebp
+	.cfi_def_cfa_offset 8
+	.cfi_offset %ebp, -8
+	movl	%esp, %ebp
+	.cfi_def_cfa_register %ebp
+	andl	$-16, %esp
+	subl	$16, %esp
+	calll	clang_scale_pop
+clang_scale_pop:
+	popl	%eax
+.Lscale_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Lscale_got-clang_scale_pop), %eax
+	movl	8(%ebp), %ecx
+	movl	%ecx, 12(%esp)
+	movl	12(%esp), %ecx
+	imull	factor@GOTOFF(%eax), %ecx
+	movl	%ecx, %eax
+	movl	%ebp, %esp
+	popl	%ebp
+	.cfi_def_cfa %esp, 4
+	retl
+	.cfi_endproc
+	.size	clang_scale, .-clang_scale
+
+	.p2align 4
+	.globl	clang_lower
+	.type	clang_lower, @function
+clang_lower:
+	.cfi_startproc
+	pushl	%ebp
+	.cfi_def_cfa_offset 8
+	.cfi_offset %ebp, -8
+	movl	%esp, %ebp
+	.cfi_def_cfa_register %ebp
+	pushl	%ebx
+	andl	$-16, %esp
+	subl	$32, %esp
+	.cfi_offset %ebx, -12
+	calll	clang_lower_pop
+clang_lower_pop:
+	popl	%eax
+.Llower_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Llower_got-clang_lower_pop), %eax
+	movb	8(%ebp), %cl
+	movzbl	8(%ebp), %edx
+	movl	%edx, (%esp)
+	movl	%eax, %ebx
+	movb	%cl, 19(%esp)
+	calll	tolower@PLT
+	leal	-4(%ebp), %esp
+	popl	%ebx
+	popl	%ebp
+	.cfi_def_cfa %esp, 4
+	retl
+	.cfi_endproc
+	.size	clang_lower, .-clang_lower
 
 	.data
 	.p2align 2

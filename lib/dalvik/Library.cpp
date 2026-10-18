@@ -135,6 +135,14 @@ static const LibraryMethod Methods[] = {
      "()Ljava/lang/ClassLoader;", SystemClassLoader, true},
     {"java/lang/ClassLoader", "loadClass",
      "(Ljava/lang/String;)Ljava/lang/Class;", LoadClass},
+    {"android/content/Context", "getFilesDir", "()Ljava/io/File;",
+     FilesDirectory},
+    {"java/io/File", "getPath", "()Ljava/lang/String;", FilePath},
+    {"java/io/File", "getAbsolutePath", "()Ljava/lang/String;", FilePath},
+    {"java/io/File", "toString", "()Ljava/lang/String;", FilePath},
+    {"java/io/File", "getName", "()Ljava/lang/String;", FileName},
+    {"java/io/File", "getParent", "()Ljava/lang/String;", FileParent},
+    {"java/io/File", "isAbsolute", "()Z", FileIsAbsolute},
 };
 
 struct LibraryStop {
@@ -217,7 +225,7 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
             (!o->Initialized || !assignable(objectDescriptor(*o), Types[i])))
           return failure("Java library reference parameter type mismatch");
       }
-    if (M.Op >= CurrentActivityThread && M.Op <= LoadClass) {
+    if (M.Op >= CurrentActivityThread && M.Op <= FileIsAbsolute) {
       if (!program || !framework)
         return {ExecutionStop::Unsupported,
                 0,

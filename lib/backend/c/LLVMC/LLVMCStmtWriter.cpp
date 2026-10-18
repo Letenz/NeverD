@@ -4928,8 +4928,13 @@ std::string LLVMCWriter::indirectCalleeType(const llvm::CallBase &Call,
           "unsupported preserved indirect-call convention");
     break;
   }
+  // A typed member's callee takes its type's parameters, which its calls
+  // pass (printedCallArgLimit).
+  unsigned Params = Type->getNumParams();
+  if (const std::optional<unsigned> Typed = typedSlotParamCount(Call))
+    Params = std::min(Params, *Typed);
   std::string Parameters;
-  for (unsigned I = 0; I < Type->getNumParams(); ++I) {
+  for (unsigned I = 0; I < Params; ++I) {
     if (!Parameters.empty())
       Parameters += ", ";
     Parameters += sourceScalarType(

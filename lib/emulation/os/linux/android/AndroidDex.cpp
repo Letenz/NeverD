@@ -19,6 +19,12 @@ llvm::Error Bionic::initializeDex() {
     return failure("JNI class lookup failures require JNI");
   if (!Native.JNI && Native.Application)
     return failure("Android application snapshot requires JNI");
+  if (Native.Application && Native.Application->files_directory &&
+      (!Options.LinuxFiles ||
+       !linux_model::isDeclaredDirectory(*Options.LinuxFiles,
+                                         *Native.Application->files_directory)))
+    return failure(
+        "Android files directory requires a declared Linux directory");
   if (Native.DexImages.empty() && !Native.JNI)
     return llvm::Error::success();
   if (!Native.JNI || Native.DexImages.size() > 16)

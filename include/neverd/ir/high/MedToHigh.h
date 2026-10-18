@@ -359,6 +359,17 @@ private:
   ExprPtr i386GotRelativeAddress(const MedOp &Op, unsigned Displacement);
   VarKeySet I386GotBase;
   VarKeySet I386GotRooted;
+  /// i386 PIC (I386PicAddresses.cpp): the values the CFG proved to be the
+  /// return address a get-PC call pushed, outside unlinked ELF objects.
+  void collectI386GetPcValues(const MedFunc &Med);
+  /// \p Op adding a scalar to, or subtracting it from, a proven get-PC
+  /// value, as the number it computes; null for any other operation.
+  ExprPtr i386GetPcSum(const MedOp &Op) const;
+  std::unordered_map<VarKey, std::pair<uint32_t, uint16_t>, VarKeyHash>
+      I386GetPcValues;
+  /// The call's push of each such return address, by address and origin
+  /// sequence: only its pop read the slot, which the value above replaces.
+  std::set<std::pair<va_t, int>> I386GetPcPushes;
   /// Recover a target-width memory address from the wider LowIR VA carrier
   /// only when an explicit zero extension proves that no high bits are lost.
   ExprPtr memoryAddressExpr(const MedVar &V, bool InlineDefinition = true);

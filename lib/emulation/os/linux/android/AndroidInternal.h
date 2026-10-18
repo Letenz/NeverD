@@ -232,6 +232,7 @@ private:
   BionicResult kernelCall(std::optional<linux_model::ServiceKind> Kind,
                           const NativeCallEvent &Call);
   BionicResult usleep(const NativeCallEvent &Call);
+  BionicResult getcwd(const NativeCallEvent &Call);
   BionicResult pollCall(const NativeCallEvent &Call);
   BionicResult openLibrary(NativeCallEvent &Call);
   BionicResult lookupSymbol(NativeCallEvent &Call);

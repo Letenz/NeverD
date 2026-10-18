@@ -72,6 +72,9 @@ struct LinuxFileOptions {
   /// Directory enumeration assigns workload-local inode identities when no
   /// explicit regular-file inode is supplied; these are not host observations.
   std::vector<std::string> Directories;
+  /// Linked, reachable guest cwd, explicitly present in Directories (or root).
+  /// Absent means unknown. This does not enable chdir or relative path walks.
+  std::optional<std::string> WorkingDirectory;
   /// Opt-in live /proc/self/fd links and enumeration, owned by the FD table.
   /// Other proc entries remain explicit inputs, not inferred kernel state.
   bool DynamicProcFDs = false;

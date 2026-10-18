@@ -194,6 +194,13 @@ linuxFileOptionsFromJSON(const llvm::json::Value &Value) {
       Out.DynamicProcFDs = *B;
       continue;
     }
+    if (Name == field::LinuxWorkingDirectory) {
+      auto Path = V.getAsString();
+      if (!Path || Path->size() >= linux_model::FilePathLimit)
+        return invalid(Name);
+      Out.WorkingDirectory = Path->str();
+      continue;
+    }
     if (Name == field::FileDirectories) {
       const auto *Dirs = V.getAsArray();
       if (!Dirs || Dirs->size() > linux_model::FileCountLimit)

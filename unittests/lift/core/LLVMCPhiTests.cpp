@@ -940,6 +940,20 @@ TEST(LLVMCValues, LoopPhasesPreserveConstrainedCallsAndExceptionFunctions) {
   ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
 }
 
+/// Where \p Source defines the function whose header starts with \p Header:
+/// the header's line that opens its body.  A whole module declares each
+/// definition before the bodies (DefinitionDeclarations), which a unit of
+/// one function leaves out.
+size_t definitionAt(llvm::StringRef Source, llvm::StringRef Header) {
+  for (size_t At = Source.find(Header); At != llvm::StringRef::npos;
+       At = Source.find(Header, At + 1)) {
+    const size_t End = Source.find('\n', At);
+    if (Source.slice(At, End).rtrim().ends_with("{"))
+      return At;
+  }
+  return llvm::StringRef::npos;
+}
+
 std::string emitScalarRegions(llvm::StringRef IR) {
   llvm::LLVMContext Context;
   llvm::SMDiagnostic Error;
@@ -966,8 +980,8 @@ std::string emitScalarRegions(llvm::StringRef IR) {
     // Selected-function emission deliberately omits unrelated prototypes and
     // module spacing. Its actual function projection must be identical.
     const std::string Definition = " " + Function.getName().str() + "(";
-    const auto WholeAt = Source.find(Definition);
-    const auto SelectedAt = Selected.find(Definition);
+    const auto WholeAt = definitionAt(Source, Definition);
+    const auto SelectedAt = definitionAt(Selected, Definition);
     EXPECT_NE(WholeAt, std::string::npos);
     EXPECT_NE(SelectedAt, std::string::npos);
     if (WholeAt != std::string::npos && SelectedAt != std::string::npos)

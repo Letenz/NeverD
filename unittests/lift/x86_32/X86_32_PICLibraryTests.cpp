@@ -19,12 +19,14 @@
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <filesystem>
 #include <optional>
+#include <regex>
 #include <string>
 
 using namespace neverd;
@@ -97,6 +99,33 @@ TEST(X86_32PICLibrary, GetPcThunkCallLoadsOnlyItsRegister) {
     if (llvm::StringRef(Name) != "put")
       EXPECT_NE(Source.find("factor"), std::string::npos) << Source;
   }
+}
+
+// Clang's call to the next instruction pushes the return address for the pop
+// alone, which reads it as the PC.  A frame realigned to 16 bytes kept that
+// push as a local of the C (`var_m24 = 0x146E;`), whether the pop's value
+// was read, as `clang_scale` reads `factor` through it, or not: `clang_lower`
+// keeps it in %ebx only for its PLT call.
+TEST(X86_32PICLibrary, GetPcCallPushIsNoLocal) {
+  const std::optional<BinaryImage> Img = loadLibrary();
+  if (!Img)
+    GTEST_SKIP() << "the fixture links with ld.lld";
+  for (const char *Name : {"clang_scale", "clang_lower"}) {
+    SCOPED_TRACE(Name);
+    const Symbol *Pop = Img->findSymbol(std::string(Name) + "_pop");
+    ASSERT_NE(Pop, nullptr);
+    const std::string Source = decompile(*Img, Name);
+    // The writer spells the return address in uppercase hexadecimal.
+    EXPECT_FALSE(std::regex_search(
+        Source, std::regex("\\b0x" + llvm::utohexstr(Pop->Addr) + "\\b")))
+        << Source;
+    EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+  }
+  const std::string Scale = decompile(*Img, "clang_scale");
+  EXPECT_NE(Scale.find("factor"), std::string::npos) << Scale;
+  // The byte the call passes keeps its zero extension.
+  const std::string Lower = decompile(*Img, "clang_lower");
+  EXPECT_NE(Lower.find("(uint8_t)arg0"), std::string::npos) << Lower;
 }
 
 } // namespace

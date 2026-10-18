@@ -122,6 +122,24 @@ int use2(int a) {
                           "use2", {"use2", "k2", "h4"});
 }
 
+// GCC -O0 reloads a char from its frame slot with `movzbl` and pushes it for
+// a prototyped import.  The C prints the pushed value in the call, and it
+// must keep the zero extension: the int8_t slot converts by its sign, which
+// passed 0xFFFFFF80 for 0x80.
+TEST_F(X86_32_CallAbi, AForwardedZeroExtensionReachesAnImportsArgument) {
+  HostFlags = {"-m32"};
+  KernelOptimization = "-O0";
+  expectHighCRunsLikeSource("gcc", {"-m32"}, R"C(
+unsigned int htonl(unsigned int);
+int lowbyte(int a) {
+  char c = (char)a;
+  return (int)htonl((unsigned char)c);
+}
+)C",
+                            "lowbyte", {"lowbyte"},
+                            {0, 0x41, 0x7F, 0x80, 0xC1, -1, 0x1FF});
+}
+
 // A call through a function pointer takes its arguments on the stack, as
 // many as its caller pushes, whatever ECX and EDX hold at the call: here a
 // quotient in EDX and the first argument in ECX, as Clang leaves them in a

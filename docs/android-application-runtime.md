@@ -76,3 +76,46 @@ Behavior references are Android's
 and [ClassLoader](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/ClassLoader.java)
 at `android-9.0.0_r1`. The implementation and synthetic tests are independently
 written; reference framework bodies are not embedded in NeverD.
+
+## Existing application files directory
+
+`application_snapshot.files_directory` is optional in the `application` phase.
+It names an already initialized, existing private files directory; it does not
+infer a package, create a directory, change permissions or run ContextImpl's
+initialization code. The native profile requires `linux_files` and an exact
+entry in `linux_files.directories` (root is intrinsic). Missing or conflicting
+namespace inputs fail before execution. Standalone Dalvik validates an absolute,
+NUL-free UTF-8 path of at most 4095 bytes and applies File's Unix lexical slash
+normalization; it does not resolve dot components or consult the host.
+
+`Context.getFilesDir()` on the retained application or base context returns the
+same workload-owned `java.io.File`. Its `getPath`, `getAbsolutePath` and `toString`
+return the retained path string; `getName`, `getParent` and `isAbsolute` provide
+lexical queries over that absolute path. Root has an empty name and null parent.
+Unknown paths and foreign File objects stop explicitly. Arbitrary File
+constructors, relative Java paths, canonicalization, filesystem queries and
+mutations are outside this existing-directory projection. Directory availability
+is not evidence of the actual installed application.
+
+## Guest working directory
+
+`linux_files.working_directory` optionally supplies a linked, reachable guest
+cwd, independently of the application's files directory. It must be `/` or a
+canonical absolute entry in `linux_files.directories`. An implicit catalogue
+parent alone is insufficient for this explicit input. No host cwd is inherited.
+
+Raw x64/AArch64 `getcwd` returns the bytes copied including NUL. A short buffer
+returns `ERANGE` before output access, wholly inaccessible output returns
+`EFAULT`, and mixed writable/unwritable output stops without inventing an
+architecture-specific partial copy. Android Bionic `getcwd` returns the original
+buffer on success and null with thread-local errno on failure. A non-null buffer
+with size zero returns `EINVAL`; a null buffer allocates guest memory, and size
+zero follows API 28's page allocation, exact string duplication and temporary
+release. Guest `free` owns returned allocations. Successful calls preserve errno.
+An absent cwd remains unknown. These inputs do not implement `chdir`, deleted
+or unreachable cwd, relative pathname traversal, mounts or filesystem mutation.
+
+Behavior references are API 28 [File](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/io/File.java),
+[UnixFileSystem](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/io/UnixFileSystem.java)
+and [Bionic getcwd](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/bionic/getcwd.cpp).
+Implementations and synthetic callers are independently written.
