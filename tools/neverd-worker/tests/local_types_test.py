@@ -289,6 +289,48 @@ def run(executable):
         malformed = owner.call("local_types_source", {"asserts": "yes"})
         assert malformed["status"] == "error" and malformed["error"]["code"] == "invalid_request", malformed
 
+        # Shift+F11: the libraries a console program's types join.  The
+        # kernel's left out and UEFI's added read the types again, and the
+        # project keeps the choice outside the history.
+        for operation in ("type_libraries", "type_libraries_set"):
+            assert operation in owner.hello["capabilities"]
+
+        def joined(listing):
+            return [row["name"] for row in listing["libraries"] if row["joined"]]
+
+        listing = owner.call("type_libraries", {})
+        assert listing["status"] == "ok", listing
+        assert joined(listing["payload"]) == ["windows-user-x64", "windows-kernel-x64"], listing
+        kernel = next(row for row in listing["payload"]["libraries"]
+                      if row["name"] == "windows-kernel-x64")
+        assert kernel["image"] and kernel["types"] > 0 and kernel["compatible"], kernel
+        assert ok(owner, "local_type", {"name": "_DRIVER_OBJECT"})["origin"] == "header"
+        assert owner.call("local_type", {"name": "EFI_SYSTEM_TABLE"})["status"] == "error"
+        steps = len(ok(owner, "history", {"offset": 0, "limit": 64})["items"])
+        chosen = owner.call("type_libraries_set", {"added": ["uefi-x64"],
+                                                   "removed": ["windows-kernel-x64"]})
+        assert chosen["status"] == "ok" and chosen["revision"] != listing["revision"], chosen
+        assert joined(chosen["payload"]) == ["windows-user-x64", "uefi-x64"], chosen
+        assert owner.call("local_type", {"name": "_DRIVER_OBJECT"})["status"] == "error"
+        assert ok(owner, "local_type", {"name": "EFI_SYSTEM_TABLE"})["origin"] == "header"
+        kept = Path(str(binary) + ".neverd/libraries.json")
+        assert json.loads(kept.read_text()) == {"added": ["uefi-x64"],
+                                                "removed": ["windows-kernel-x64"]}
+        assert len(ok(owner, "history", {"offset": 0, "limit": 64})["items"]) == steps
+        # A library laid out otherwise, or one the program joins already, is
+        # refused, and the choice stays.
+        for added in ("linux-x64", "windows-user-x64"):
+            refused = owner.call("type_libraries_set", {"added": [added]})
+            assert refused["error"]["code"] == "type_libraries_failed", refused
+        refused = owner.call("type_libraries_set", {"added": "uefi-x64"})
+        assert refused["error"]["code"] == "invalid_request", refused
+        assert json.loads(kept.read_text())["added"] == ["uefi-x64"]
+        refused = replica.call("type_libraries_set", {})
+        assert refused["error"]["code"] == "read_only", refused
+        assert joined(ok(owner, "type_libraries_set", {})) == ["windows-user-x64",
+                                                             "windows-kernel-x64"]
+        assert json.loads(kept.read_text()) == {"added": [], "removed": []}
+
 
 if __name__ == "__main__":
     run(sys.argv[1])

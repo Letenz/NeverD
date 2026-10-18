@@ -132,6 +132,7 @@ bool isEdit(const QString &operation) {
                                    QStringLiteral("operand_format"),
                                    QStringLiteral("local_types_declare"),
                                    QStringLiteral("local_types_forget"),
+                                   QStringLiteral("type_libraries_set"),
                                    QStringLiteral("undo"),
                                    QStringLiteral("redo"),
                                    QStringLiteral("save")};
@@ -1416,6 +1417,15 @@ void Session::forgetTypes(const QStringList &names, Reply done,
           done(payload);
       },
       std::move(failed));
+}
+
+void Session::setTypeLibraries(const QStringList &added,
+                               const QStringList &removed, Reply done,
+                               Failure failed) {
+  command(QStringLiteral("type_libraries_set"),
+          {{"added", QJsonArray::fromStringList(added)},
+           {"removed", QJsonArray::fromStringList(removed)}},
+          std::move(done), std::move(failed));
 }
 
 void Session::setStringOptions(const QStringList &encodings,

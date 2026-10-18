@@ -109,6 +109,8 @@ struct MockSession {
   /// The declarations in the order made, as the engine keeps them:
   /// {"language","source"} or {"forget":[name,...]}.
   Json declarations = Json::array();
+  /// The type libraries joined beyond the image's own and those left out.
+  Json libraryChoice = {{"added", Json::array()}, {"removed", Json::array()}};
   std::vector<std::uint64_t> functions = listedFunctions({});
   neverd_load_progress_fn progress = nullptr;
   void *progressUser = nullptr;
@@ -423,6 +425,8 @@ int neverd_session_load(neverd_session_t s, const char *path) {
       session(s)->debugInfo && session(s)->pdbSearch &&
       (input.filename() == "symbols-local.bin" ||
        (symbolsFixture(input) && matchingFixturePdb(fixtureStorePdb(input))));
+  // The engine reads the project's choice of type libraries as it loads.
+  neverd_type_libraries_load(s);
   notify("ready", 1);
   return 1;
 }
@@ -1419,6 +1423,122 @@ int neverd_type_declarations_load(neverd_session_t s) {
     else
       declareStructure(state, row.value("source", std::string()));
   state.declarations = std::move(declarations);
+  return 0;
+}
+
+/// The fixture's type libraries: the two the image joins, one more it may,
+/// and one whose records lay out otherwise.
+struct MockLibrary {
+  const char *name;
+  bool image, compatible;
+  int types, prototypes;
+};
+constexpr MockLibrary MockLibraries[] = {
+    {"windows-user-x64", true, true, 2, 3},
+    {"windows-kernel-x64", true, true, 1, 1},
+    {"uefi-x64", false, true, 4, 0},
+    {"linux-x64", false, false, 0, 0},
+};
+
+const MockLibrary *mockLibrary(const std::string &name) {
+  for (const MockLibrary &library : MockLibraries)
+    if (name == library.name)
+      return &library;
+  return nullptr;
+}
+
+const char *neverd_type_libraries_json(neverd_session_t s) {
+  auto &state = *session(s);
+  state.error.clear();
+  Json libraries = Json::array();
+  const auto &choice = state.libraryChoice;
+  const auto chose = [&](const char *key, const char *name) {
+    for (const auto &entry : choice.at(key))
+      if (entry == name)
+        return true;
+    return false;
+  };
+  for (const MockLibrary &library : MockLibraries) {
+    Json row = {{"name", library.name},
+                {"dataModel", library.compatible ? "LLP64" : "LP64"},
+                {"recordABI", library.compatible ? "microsoft" : "itanium"},
+                {"compatible", library.compatible},
+                {"image", library.image}};
+    const bool joined = (library.image && !chose("removed", library.name)) ||
+                        chose("added", library.name);
+    row["joined"] = joined;
+    if (joined) {
+      row["types"] = library.types;
+      row["prototypes"] = library.prototypes;
+      row["conflicts"] = Json::array();
+    }
+    libraries.push_back(std::move(row));
+  }
+  Json result = choice;
+  result["libraries"] = std::move(libraries);
+  return copy(result.dump());
+}
+
+const char *neverd_type_libraries_set(neverd_session_t s, const char *json) {
+  auto &state = *session(s);
+  state.error.clear();
+  const Json parsed = json ? Json::parse(json, nullptr, false) : Json();
+  if (!parsed.is_object()) {
+    state.error = "the type libraries are not valid JSON";
+    return nullptr;
+  }
+  Json choice = {{"added", Json::array()}, {"removed", Json::array()}};
+  for (const char *key : {"added", "removed"})
+    for (const auto &name : parsed.value(key, Json::array())) {
+      const MockLibrary *library =
+          name.is_string() ? mockLibrary(name.get<std::string>()) : nullptr;
+      if (!library) {
+        state.error = "no type library is named " + name.dump();
+        return nullptr;
+      }
+      if (std::string(key) == "added" &&
+          (library->image || !library->compatible)) {
+        state.error = std::string(library->name) +
+                      (library->image ? " is one the program joins already"
+                                      : " lays its records out otherwise "
+                                        "than the program");
+        return nullptr;
+      }
+      if (std::string(key) == "removed" && !library->image) {
+        state.error = std::string(library->name) +
+                      " is none the program joins of its own";
+        return nullptr;
+      }
+      choice[key].push_back(name);
+    }
+  const auto file =
+      neverd::project_files::path(std::filesystem::path(state.path),
+                                  neverd::project_files::File::TypeLibraries);
+  std::filesystem::create_directories(file.parent_path());
+  std::ofstream(file, std::ios::binary) << choice.dump();
+  state.libraryChoice = std::move(choice);
+  return neverd_type_libraries_json(s);
+}
+
+int neverd_type_libraries_load(neverd_session_t s) {
+  auto &state = *session(s);
+  state.error.clear();
+  Json choice = {{"added", Json::array()}, {"removed", Json::array()}};
+  const auto file =
+      neverd::project_files::path(std::filesystem::path(state.path),
+                                  neverd::project_files::File::TypeLibraries);
+  if (std::filesystem::exists(file)) {
+    std::ifstream input(file, std::ios::binary);
+    const Json read = Json::parse(input, nullptr, false);
+    if (!read.is_object()) {
+      state.error = "the type libraries file is not valid JSON";
+      return -1;
+    }
+    for (const char *key : {"added", "removed"})
+      if (read.contains(key))
+        choice[key] = read.at(key);
+  }
+  state.libraryChoice = std::move(choice);
   return 0;
 }
 

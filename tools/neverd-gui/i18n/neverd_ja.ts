@@ -911,6 +911,14 @@
         <source>Set t&amp;ype...</source>
         <translation>型を設定(&amp;Y)...</translation>
     </message>
+    <message>
+        <source>Type libr&amp;aries</source>
+        <translation>型ライブラリ(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
+        <translation>プログラムの型に結合される型ライブラリを表示し、追加または除外します</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2435,6 +2443,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
         <translation>DWARF ファイル (*.debug *.dSYM);;すべてのファイル (*)</translation>
+    </message>
+    <message>
+        <source>Type Libraries</source>
+        <translation>型ライブラリ</translation>
     </message>
 </context>
 <context>
@@ -4305,6 +4317,119 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>解析の型を使用(&amp;A)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypeLibrariesView</name>
+    <message>
+        <source>Add a type library</source>
+        <translation>型ライブラリを追加</translation>
+    </message>
+    <message>
+        <source>Leave the selected library out</source>
+        <translation>選択したライブラリを除外</translation>
+    </message>
+    <message>
+        <source>Library</source>
+        <translation>ライブラリ</translation>
+    </message>
+    <message>
+        <source>Origin</source>
+        <translation>由来</translation>
+    </message>
+    <message>
+        <source>Data model</source>
+        <translation>データモデル</translation>
+    </message>
+    <message>
+        <source>Record ABI</source>
+        <translation>レコードレイアウト ABI</translation>
+    </message>
+    <message>
+        <source>Types</source>
+        <translation>型</translation>
+    </message>
+    <message>
+        <source>Prototypes</source>
+        <translation>プロトタイプ</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>競合</translation>
+    </message>
+    <message>
+        <source>Add a type library...</source>
+        <translation>型ライブラリを追加...</translation>
+    </message>
+    <message>
+        <source>Leave the library out</source>
+        <translation>このライブラリを除外</translation>
+    </message>
+    <message>
+        <source>Open a program to see the type libraries its types join.</source>
+        <translation>プログラムを開くと、その型に結合される型ライブラリが表示されます。</translation>
+    </message>
+    <message>
+        <source>This engine joins no type libraries.</source>
+        <translation>このエンジンは型ライブラリに対応していません。</translation>
+    </message>
+    <message>
+        <source>The program</source>
+        <translation>プログラム</translation>
+    </message>
+    <message>
+        <source>Added</source>
+        <translation>追加</translation>
+    </message>
+    <message>
+        <source>%1 joined nothing: %2</source>
+        <translation>%1 は何も結合されませんでした: %2</translation>
+    </message>
+    <message>
+        <source>Left out, as the program sizes a type they hold otherwise: %1</source>
+        <translation>プログラムでのサイズが異なる型を含むため除外: %1</translation>
+    </message>
+    <message>
+        <source>1 type library joins the program&apos;s types.</source>
+        <translation>1 個の型ライブラリがプログラムの型に結合されています。</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n type libraries join the program&apos;s types.</source>
+        <translation>
+            <numerusform>%n 個の型ライブラリがプログラムの型に結合されています。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No type library joins the program&apos;s types.</source>
+        <translation>プログラムの型に結合されている型ライブラリはありません。</translation>
+    </message>
+    <message>
+        <source>Left out: %1.</source>
+        <translation>除外: %1。</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be listed: %1</source>
+        <translation>型ライブラリを一覧表示できませんでした: %1</translation>
+    </message>
+    <message>
+        <source>Add a Type Library</source>
+        <translation>型ライブラリの追加</translation>
+    </message>
+    <message>
+        <source>Libraries whose records lay out as the program&apos;s:</source>
+        <translation>レコードのレイアウトがプログラムと同じライブラリ:</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>追加</translation>
+    </message>
+    <message>
+        <source>Reading the program&apos;s types again...</source>
+        <translation>プログラムの型を再読み込みしています...</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be changed: %1</source>
+        <translation>型ライブラリを変更できませんでした: %1</translation>
     </message>
 </context>
 </TS>

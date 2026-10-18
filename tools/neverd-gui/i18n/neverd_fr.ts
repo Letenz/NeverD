@@ -911,6 +911,14 @@
         <source>Set t&amp;ype...</source>
         <translation>Définir le t&amp;ype...</translation>
     </message>
+    <message>
+        <source>Type libr&amp;aries</source>
+        <translation>&amp;Bibliothèques de types</translation>
+    </message>
+    <message>
+        <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
+        <translation>Afficher les bibliothèques de types jointes aux types du programme, et en ajouter ou en écarter une</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2441,6 +2449,10 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
     <message>
         <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
         <translation>Fichiers DWARF (*.debug *.dSYM);;Tous les fichiers (*)</translation>
+    </message>
+    <message>
+        <source>Type Libraries</source>
+        <translation>Bibliothèques de types</translation>
     </message>
 </context>
 <context>
@@ -4332,6 +4344,120 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>Utiliser le type de l&apos;&amp;analyse</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypeLibrariesView</name>
+    <message>
+        <source>Add a type library</source>
+        <translation>Ajouter une bibliothèque de types</translation>
+    </message>
+    <message>
+        <source>Leave the selected library out</source>
+        <translation>Écarter la bibliothèque sélectionnée</translation>
+    </message>
+    <message>
+        <source>Library</source>
+        <translation>Bibliothèque</translation>
+    </message>
+    <message>
+        <source>Origin</source>
+        <translation>Origine</translation>
+    </message>
+    <message>
+        <source>Data model</source>
+        <translation>Modèle de données</translation>
+    </message>
+    <message>
+        <source>Record ABI</source>
+        <translation>ABI de disposition</translation>
+    </message>
+    <message>
+        <source>Types</source>
+        <translation>Types</translation>
+    </message>
+    <message>
+        <source>Prototypes</source>
+        <translation>Prototypes</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>Conflits</translation>
+    </message>
+    <message>
+        <source>Add a type library...</source>
+        <translation>Ajouter une bibliothèque de types...</translation>
+    </message>
+    <message>
+        <source>Leave the library out</source>
+        <translation>Écarter la bibliothèque</translation>
+    </message>
+    <message>
+        <source>Open a program to see the type libraries its types join.</source>
+        <translation>Ouvrez un programme pour voir les bibliothèques de types jointes à ses types.</translation>
+    </message>
+    <message>
+        <source>This engine joins no type libraries.</source>
+        <translation>Ce moteur ne joint aucune bibliothèque de types.</translation>
+    </message>
+    <message>
+        <source>The program</source>
+        <translation>Le programme</translation>
+    </message>
+    <message>
+        <source>Added</source>
+        <translation>Ajoutée</translation>
+    </message>
+    <message>
+        <source>%1 joined nothing: %2</source>
+        <translation>%1 n&apos;a rien apporté : %2</translation>
+    </message>
+    <message>
+        <source>Left out, as the program sizes a type they hold otherwise: %1</source>
+        <translation>Écartés, car le programme donne une autre taille à un type qu&apos;ils contiennent : %1</translation>
+    </message>
+    <message>
+        <source>1 type library joins the program&apos;s types.</source>
+        <translation>1 bibliothèque de types est jointe aux types du programme.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n type libraries join the program&apos;s types.</source>
+        <translation>
+            <numerusform>%n bibliothèque de types est jointe aux types du programme.</numerusform>
+            <numerusform>%n bibliothèques de types sont jointes aux types du programme.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No type library joins the program&apos;s types.</source>
+        <translation>Aucune bibliothèque de types n&apos;est jointe aux types du programme.</translation>
+    </message>
+    <message>
+        <source>Left out: %1.</source>
+        <translation>Écartées : %1.</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be listed: %1</source>
+        <translation>Impossible de lister les bibliothèques de types : %1</translation>
+    </message>
+    <message>
+        <source>Add a Type Library</source>
+        <translation>Ajouter une bibliothèque de types</translation>
+    </message>
+    <message>
+        <source>Libraries whose records lay out as the program&apos;s:</source>
+        <translation>Bibliothèques dont les enregistrements sont disposés comme ceux du programme :</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Ajouter</translation>
+    </message>
+    <message>
+        <source>Reading the program&apos;s types again...</source>
+        <translation>Relecture des types du programme...</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be changed: %1</source>
+        <translation>Impossible de modifier les bibliothèques de types : %1</translation>
     </message>
 </context>
 </TS>

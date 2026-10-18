@@ -23,6 +23,7 @@
 #include "SettingsKeys.h"
 #include "SymbolTablePromptDialog.h"
 #include "Theme.h"
+#include "TypeLibrariesView.h"
 #include "TypePickerDialog.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
@@ -5589,6 +5590,96 @@ private slots:
                              OpenTimeoutMs);
     bench.action(ActionId::EditUndo)->trigger();
     QTRY_COMPARE_WITH_TIMEOUT(list->model()->rowCount(), 3, OpenTimeoutMs);
+  }
+
+  void typeLibrariesAreAddedAndLeftOutByShiftF11() {
+    // Shift+F11, as IDA lists its type libraries: the program's two join
+    // its types; Del leaves the kernel's out, Ins adds UEFI's, and the
+    // project keeps the choice.
+    QTemporaryDir directory;
+    Workbench bench;
+    const QString input =
+        writeFixture(directory, QStringLiteral("local-types.bin"));
+    bench.window->openFile(input);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QCOMPARE(bench.action(ActionId::ViewTypeLibraries)->shortcut(),
+             QKeySequence(QStringLiteral("Shift+F11")));
+    bench.action(ActionId::ViewTypeLibraries)->trigger();
+    auto *view = bench.window->findChild<TypeLibrariesView *>();
+    QVERIFY(view);
+    auto *table = view->table();
+    const auto names = [table] {
+      QStringList listed;
+      for (int row = 0; row < table->topLevelItemCount(); ++row)
+        listed << table->topLevelItem(row)->text(0);
+      return listed;
+    };
+    QTRY_COMPARE_WITH_TIMEOUT(
+        names(),
+        (QStringList{QStringLiteral("windows-user-x64"),
+                     QStringLiteral("windows-kernel-x64")}),
+        OpenTimeoutMs);
+    QCOMPARE(table->topLevelItem(0)->text(1), QStringLiteral("The program"));
+    QCOMPARE(table->topLevelItem(0)->text(4), QStringLiteral("2"));
+    auto *status =
+        view->findChild<QLabel *>(QStringLiteral("typeLibrariesStatus"));
+    QVERIFY(status);
+    QCOMPARE(status->text(),
+             QStringLiteral("2 type libraries join the program's types."));
+
+    // Del leaves the selected library out.
+    table->setCurrentItem(table->topLevelItem(1));
+    view->removeLibrary();
+    QTRY_COMPARE_WITH_TIMEOUT(names(),
+                              QStringList{QStringLiteral("windows-user-x64")},
+                              OpenTimeoutMs);
+    QCOMPARE(status->text(),
+             QStringLiteral("1 type library joins the program's types. Left "
+                            "out: windows-kernel-x64."));
+
+    // Ins offers the libraries that lay out as the program's and join none
+    // of its types now, the kernel's left out among them.
+    QStringList offered;
+    QTimer chooser;
+    connect(&chooser, &QTimer::timeout, this, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (!dialog || !dialog->isVisible() || !offered.isEmpty() ||
+          dialog->objectName() != QLatin1String("addTypeLibraryDialog"))
+        return;
+      auto *choices = dialog->findChild<QTreeWidget *>(
+          QStringLiteral("typeLibraryChoices"));
+      if (!choices)
+        return;
+      for (int row = 0; row < choices->topLevelItemCount(); ++row) {
+        offered << choices->topLevelItem(row)->text(0);
+        if (offered.back() == QLatin1String("uefi-x64"))
+          choices->setCurrentItem(choices->topLevelItem(row));
+      }
+      dialog->accept();
+    });
+    chooser.start(10);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view->findChild<QToolButton *>(QStringLiteral("typeLibrariesAdd"))
+            ->isEnabled(),
+        OpenTimeoutMs);
+    view->addLibrary();
+    chooser.stop();
+    QCOMPARE(offered, (QStringList{QStringLiteral("windows-kernel-x64"),
+                                   QStringLiteral("uefi-x64")}));
+    QTRY_COMPARE_WITH_TIMEOUT(names(),
+                              (QStringList{QStringLiteral("windows-user-x64"),
+                                           QStringLiteral("uefi-x64")}),
+                              OpenTimeoutMs);
+    QCOMPARE(table->topLevelItem(1)->text(1), QStringLiteral("Added"));
+
+    // The project keeps the choice, which the next session joins.
+    QFile kept(input + QStringLiteral(".neverd/libraries.json"));
+    QVERIFY(kept.open(QIODevice::ReadOnly));
+    const QJsonObject choice = QJsonDocument::fromJson(kept.readAll()).object();
+    QCOMPARE(choice.value(QStringLiteral("added")).toArray(),
+             QJsonArray{QStringLiteral("uefi-x64")});
+    QCOMPARE(choice.value(QStringLiteral("removed")).toArray(),
+             QJsonArray{QStringLiteral("windows-kernel-x64")});
   }
 
   void viewsNarrowPastTheirRows() {

@@ -911,6 +911,14 @@
         <source>Set t&amp;ype...</source>
         <translation>T&amp;yp festlegen...</translation>
     </message>
+    <message>
+        <source>Type libr&amp;aries</source>
+        <translation>Typ&amp;bibliotheken</translation>
+    </message>
+    <message>
+        <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
+        <translation>Die Typbibliotheken anzeigen, die zu den Typen des Programms gehören, und eine hinzufügen oder weglassen</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2441,6 +2449,10 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
     <message>
         <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
         <translation>DWARF-Dateien (*.debug *.dSYM);;Alle Dateien (*)</translation>
+    </message>
+    <message>
+        <source>Type Libraries</source>
+        <translation>Typbibliotheken</translation>
     </message>
 </context>
 <context>
@@ -4332,6 +4344,120 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>Typ der &amp;Analyse verwenden</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypeLibrariesView</name>
+    <message>
+        <source>Add a type library</source>
+        <translation>Eine Typbibliothek hinzufügen</translation>
+    </message>
+    <message>
+        <source>Leave the selected library out</source>
+        <translation>Die ausgewählte Bibliothek weglassen</translation>
+    </message>
+    <message>
+        <source>Library</source>
+        <translation>Bibliothek</translation>
+    </message>
+    <message>
+        <source>Origin</source>
+        <translation>Herkunft</translation>
+    </message>
+    <message>
+        <source>Data model</source>
+        <translation>Datenmodell</translation>
+    </message>
+    <message>
+        <source>Record ABI</source>
+        <translation>Record-Layout-ABI</translation>
+    </message>
+    <message>
+        <source>Types</source>
+        <translation>Typen</translation>
+    </message>
+    <message>
+        <source>Prototypes</source>
+        <translation>Prototypen</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>Konflikte</translation>
+    </message>
+    <message>
+        <source>Add a type library...</source>
+        <translation>Eine Typbibliothek hinzufügen...</translation>
+    </message>
+    <message>
+        <source>Leave the library out</source>
+        <translation>Die Bibliothek weglassen</translation>
+    </message>
+    <message>
+        <source>Open a program to see the type libraries its types join.</source>
+        <translation>Öffnen Sie ein Programm, um die Typbibliotheken zu sehen, die zu seinen Typen gehören.</translation>
+    </message>
+    <message>
+        <source>This engine joins no type libraries.</source>
+        <translation>Diese Engine bindet keine Typbibliotheken ein.</translation>
+    </message>
+    <message>
+        <source>The program</source>
+        <translation>Das Programm</translation>
+    </message>
+    <message>
+        <source>Added</source>
+        <translation>Hinzugefügt</translation>
+    </message>
+    <message>
+        <source>%1 joined nothing: %2</source>
+        <translation>%1 hat nichts beigetragen: %2</translation>
+    </message>
+    <message>
+        <source>Left out, as the program sizes a type they hold otherwise: %1</source>
+        <translation>Weggelassen, da das Programm einen enthaltenen Typ anders bemisst: %1</translation>
+    </message>
+    <message>
+        <source>1 type library joins the program&apos;s types.</source>
+        <translation>1 Typbibliothek gehört zu den Typen des Programms.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n type libraries join the program&apos;s types.</source>
+        <translation>
+            <numerusform>%n Typbibliothek gehört zu den Typen des Programms.</numerusform>
+            <numerusform>%n Typbibliotheken gehören zu den Typen des Programms.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No type library joins the program&apos;s types.</source>
+        <translation>Keine Typbibliothek gehört zu den Typen des Programms.</translation>
+    </message>
+    <message>
+        <source>Left out: %1.</source>
+        <translation>Weggelassen: %1.</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be listed: %1</source>
+        <translation>Die Typbibliotheken konnten nicht aufgelistet werden: %1</translation>
+    </message>
+    <message>
+        <source>Add a Type Library</source>
+        <translation>Typbibliothek hinzufügen</translation>
+    </message>
+    <message>
+        <source>Libraries whose records lay out as the program&apos;s:</source>
+        <translation>Bibliotheken, deren Records wie die des Programms angeordnet sind:</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Hinzufügen</translation>
+    </message>
+    <message>
+        <source>Reading the program&apos;s types again...</source>
+        <translation>Die Typen des Programms werden neu gelesen...</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be changed: %1</source>
+        <translation>Die Typbibliotheken konnten nicht geändert werden: %1</translation>
     </message>
 </context>
 </TS>

@@ -911,6 +911,14 @@
         <source>Set t&amp;ype...</source>
         <translation>Set t&amp;ype...</translation>
     </message>
+    <message>
+        <source>Type libr&amp;aries</source>
+        <translation>Type libr&amp;aries</translation>
+    </message>
+    <message>
+        <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
+        <translation>Show the type libraries the program&apos;s types join, and add or remove one</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2441,6 +2449,10 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
     <message>
         <source>DWARF files (*.debug *.dSYM);;All files (*)</source>
         <translation>DWARF files (*.debug *.dSYM);;All files (*)</translation>
+    </message>
+    <message>
+        <source>Type Libraries</source>
+        <translation>Type Libraries</translation>
     </message>
 </context>
 <context>
@@ -4332,6 +4344,120 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>Use the &amp;analysis&apos; type</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TypeLibrariesView</name>
+    <message>
+        <source>Add a type library</source>
+        <translation>Add a type library</translation>
+    </message>
+    <message>
+        <source>Leave the selected library out</source>
+        <translation>Leave the selected library out</translation>
+    </message>
+    <message>
+        <source>Library</source>
+        <translation>Library</translation>
+    </message>
+    <message>
+        <source>Origin</source>
+        <translation>Origin</translation>
+    </message>
+    <message>
+        <source>Data model</source>
+        <translation>Data model</translation>
+    </message>
+    <message>
+        <source>Record ABI</source>
+        <translation>Record ABI</translation>
+    </message>
+    <message>
+        <source>Types</source>
+        <translation>Types</translation>
+    </message>
+    <message>
+        <source>Prototypes</source>
+        <translation>Prototypes</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>Conflicts</translation>
+    </message>
+    <message>
+        <source>Add a type library...</source>
+        <translation>Add a type library...</translation>
+    </message>
+    <message>
+        <source>Leave the library out</source>
+        <translation>Leave the library out</translation>
+    </message>
+    <message>
+        <source>Open a program to see the type libraries its types join.</source>
+        <translation>Open a program to see the type libraries its types join.</translation>
+    </message>
+    <message>
+        <source>This engine joins no type libraries.</source>
+        <translation>This engine joins no type libraries.</translation>
+    </message>
+    <message>
+        <source>The program</source>
+        <translation>The program</translation>
+    </message>
+    <message>
+        <source>Added</source>
+        <translation>Added</translation>
+    </message>
+    <message>
+        <source>%1 joined nothing: %2</source>
+        <translation>%1 joined nothing: %2</translation>
+    </message>
+    <message>
+        <source>Left out, as the program sizes a type they hold otherwise: %1</source>
+        <translation>Left out, as the program sizes a type they hold otherwise: %1</translation>
+    </message>
+    <message>
+        <source>1 type library joins the program&apos;s types.</source>
+        <translation>1 type library joins the program&apos;s types.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n type libraries join the program&apos;s types.</source>
+        <translation>
+            <numerusform>%n type libraries join the program&apos;s types.</numerusform>
+            <numerusform>%n type libraries join the program&apos;s types.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No type library joins the program&apos;s types.</source>
+        <translation>No type library joins the program&apos;s types.</translation>
+    </message>
+    <message>
+        <source>Left out: %1.</source>
+        <translation>Left out: %1.</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be listed: %1</source>
+        <translation>The type libraries could not be listed: %1</translation>
+    </message>
+    <message>
+        <source>Add a Type Library</source>
+        <translation>Add a Type Library</translation>
+    </message>
+    <message>
+        <source>Libraries whose records lay out as the program&apos;s:</source>
+        <translation>Libraries whose records lay out as the program&apos;s:</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Add</translation>
+    </message>
+    <message>
+        <source>Reading the program&apos;s types again...</source>
+        <translation>Reading the program&apos;s types again...</translation>
+    </message>
+    <message>
+        <source>The type libraries could not be changed: %1</source>
+        <translation>The type libraries could not be changed: %1</translation>
     </message>
 </context>
 </TS>

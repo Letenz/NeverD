@@ -65,6 +65,9 @@ public:
   static bool listsLocalTypes();
   /// Whether the engine adds declared types (local_types_declare).
   static bool declaresLocalTypes();
+  /// Whether the engine lists the type libraries and takes the user's
+  /// choice of them (type_libraries, type_libraries_set).
+  static bool choosesTypeLibraries();
   /// Whether the engine ranks local types by the code's accesses through a
   /// pointer (local_types_fit) and names structure offsets by them.
   static bool fitsLocalTypes();
@@ -207,6 +210,9 @@ private:
   /// Whether the local types file holds other declarations than the
   /// Session's: git, another tool or a person changed it.
   bool localTypesChanged();
+  /// Whether libraries.json says another choice of type libraries than the
+  /// engine holds.
+  bool typeLibrariesChanged();
   /// The Session's type declarations as the history's rows, each at its
   /// place in the order made; none from an engine that keeps none.
   Json typeDeclarationRows() const;

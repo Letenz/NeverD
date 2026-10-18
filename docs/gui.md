@@ -489,6 +489,19 @@ and suggests names as you type. Cross references (X, Ctrl+X, Ctrl+J) list call
 (`p`), jump (`j`), read (`r`), write (`w`) and offset (`o`) references from the
 worker's reference index.
 
+**View → Open subviews → Type libraries** (Shift+F11, as IDA's) lists the
+libraries of a system's headers whose types and prototypes join the
+program's: the image's own first, in the order they join, then those the
+user added, each with its data model, the record ABI its records are laid
+out by, the types and prototypes it joined, and the records it left out
+because the program sizes a type they hold otherwise (their names in the
+tooltip). Ins offers the libraries whose records lay out as the program's
+and adds the one chosen; Del leaves the selected library out, or takes back
+one the user added. The program's types are read again, and the project
+keeps the choice in `libraries.json`, outside undo history. `neverd types
+<input> --libraries` lists the same, and `--add-library` and
+`--remove-library` change the choice as Ins and Del do.
+
 In a pseudocode, C or LLVM C window, X on a declared local variable or parameter
 lists its occurrences in the current function, with source line, column and
 code. The list uses the variable's identity from the complete loaded document,
@@ -525,6 +538,7 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Alt+Up / Alt+Down | Previous / next occurrence of the highlighted identifier |
 | Ctrl+Shift+Up / Ctrl+Shift+Down | Previous / next function |
 | Shift+F3, Shift+F4, Shift+F7, Shift+F12 | Functions, Names, Segments, Strings |
+| Shift+F11 | Type libraries |
 | Ctrl+Shift+F12 | String references |
 | F6 / Shift+F6 | Next / previous window |
 | Ctrl+F | Quick filter in a list; find text in a disassembly, pseudocode or IR window |
@@ -859,8 +873,8 @@ command line, `--pdb <file> --pdb-unverified` makes the same choice for one run.
 
 A binary's project is one folder beside it, named after it: `ls` keeps its
 project in `ls.neverd/`. Renames, function edits, data items, operand
-formats, code edits, local types, bookmarks and the debug files chosen are
-written as they are made; comments are staged until **File → Save** (Ctrl+W)
+formats, code edits, local types, bookmarks, the debug files and the type
+libraries chosen are written as they are made; comments are staged until **File → Save** (Ctrl+W)
 writes them. Saving and quitting write no database.
 
 ```text
@@ -877,6 +891,7 @@ ls.neverd/              its project: commit the folder
   load.json             how a binary file is read
   bookmarks.json        bookmarks, as neverd bookmarks keeps them too
   debug.json            the PDB, DWARF, MAP and symbol table choices
+  libraries.json        the type libraries added and left out
   .gitattributes        *.json merge=neverd text eol=lf
   .gitignore            /local/
   local/                each user's own, outside version control
