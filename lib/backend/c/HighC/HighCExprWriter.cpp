@@ -25,11 +25,13 @@
 #include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/X86ShadowStackShape.h"
 #include "neverd/ir/high/X87ConstantShape.h"
+#include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
 #include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/StringLiteralSymbols.h"
+#include "neverd/loader/SymbolDecoration.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/IntegerLiterals.h"
 
@@ -1656,6 +1658,21 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     if (!Typed.empty())
       return Typed;
 
+    // A trap or a breakpoint whose code the intrinsic keeps spells as its
+    // builtin, which takes no code: the statement prints the instruction
+    // beside it.  One with no C name runs as the instruction itself.
+    if (const std::string Instruction = intrinsicInstruction(E);
+        !Instruction.empty()) {
+      const char *CName = intrinsicCName(E.IntrinsicId);
+      if (CName && (isUnconditionalTrapIntrinsic(E.IntrinsicId) ||
+                    llvm::StringRef(CName) == "__builtin_debugtrap"))
+        return std::string(CName) + "()";
+      if (!CName)
+        return Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64
+                   ? "__asm { " + Instruction + " }"
+                   : "__asm__ volatile(\"" + Instruction + "\" ::: \"memory\")";
+    }
+
     std::optional<unsigned> LinuxSyscallArgs;
     if (E.IntrinsicId == Intrinsic::X64Syscall && E.Operands.size() == 5 &&
         E.Operands[0]) {
@@ -1838,12 +1855,18 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       }
     }
     if (Callee) {
-      // A callee this file defines takes what its prototype declares.
-      if (const TypeRef Expected = Defined
-                                       ? emittedParamTypeAt(*Defined, I)
-                                       : expectedDebugCallArgType(*Callee, I)) {
-        S += exprStrAsTypedArg(*Op, Expected);
-        continue;
+      // A callee this file defines takes what its prototype declares.  A
+      // record the header declaring the callee defines, which the unit does
+      // not name, is reached through void *, which converts to it.
+      if (TypeRef Expected = Defined ? emittedParamTypeAt(*Defined, I)
+                                     : expectedDebugCallArgType(*Callee, I)) {
+        if (!Defined && headerRecordOfCallee(E, Expected))
+          Expected =
+              Expected->Kind == NdTypeKind::Ptr ? NdType::makePtr() : nullptr;
+        if (Expected) {
+          S += exprStrAsTypedArg(*Op, Expected);
+          continue;
+        }
       }
     }
     if (Msvc) {
@@ -2086,6 +2109,21 @@ bool HighCWriter::debugDeclaresCallee(const HighExpr &E) const {
   if (!libc::isKnownFunction(Symbol.str()) && Symbol.starts_with("_"))
     Symbol = Symbol.drop_front();
   return !libc::isKnownFunction(Symbol.str()) || !includesHeaderOf(Symbol);
+}
+
+bool HighCWriter::headerRecordOfCallee(const HighExpr &E,
+                                       const TypeRef &Type) const {
+  TypeRef Pointee = Type;
+  while (Pointee && Pointee->Kind == NdTypeKind::Ptr)
+    Pointee = Pointee->Pointee;
+  if (!Pointee || Pointee->Kind != NdTypeKind::Struct || Pointee->IsEnum ||
+      Pointee->SourceName.empty() || E.Kind != ExprKind::Call ||
+      E.IsIndirectCall || E.CallTarget.empty() || calledDefinition(E))
+    return false;
+  llvm::StringRef Symbol = E.CallTarget;
+  if (!libc::isKnownFunction(Symbol.str()) && Symbol.starts_with("_"))
+    Symbol = Symbol.drop_front();
+  return libc::isKnownFunction(Symbol.str()) && includesHeaderOf(Symbol);
 }
 
 bool HighCWriter::includesHeaderOf(llvm::StringRef Name) const {
@@ -2934,10 +2972,30 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
 }
 
 std::optional<libc::LibCArity>
-HighCWriter::knownArity(llvm::StringRef Symbol, llvm::StringRef Identifier) {
+HighCWriter::knownArity(llvm::StringRef Symbol,
+                        llvm::StringRef Identifier) const {
   if (auto Arity = libc::libcArityForSymbol(Symbol))
     return Arity;
-  return libc::libcArity(Identifier);
+  if (auto Arity = libc::libcArity(Identifier))
+    return Arity;
+  // Where the tables know none, as the call analysis takes it: the slots
+  // the call pushes, a 64-bit argument's two included.
+  if (const std::optional<unsigned> Bytes = stdcallPops(Symbol, Identifier);
+      Bytes && *Bytes % 4 == 0)
+    return libc::LibCArity{static_cast<int>(*Bytes / 4)};
+  return std::nullopt;
+}
+
+std::optional<unsigned>
+HighCWriter::stdcallPops(llvm::StringRef Symbol,
+                         llvm::StringRef Identifier) const {
+  if (const std::optional<unsigned> Bytes =
+          stdcallArgumentBytes(Symbol, Opts.Format, Opts.TheArch))
+    return Bytes;
+  if (const auto Imported = StdcallImportPops.find(Identifier);
+      Imported != StdcallImportPops.end())
+    return Imported->second;
+  return std::nullopt;
 }
 
 std::optional<size_t>
@@ -2973,7 +3031,9 @@ TypeRef HighCWriter::displayCallArgType(const HighExpr &Call,
                                         size_t Index) const {
   auto FromFS = [&](const FunctionSym &FS) -> TypeRef {
     TypeRef Ty = cDisplayType(expectedDebugCallArgType(FS, Index));
-    return isNamedPointerDisplay(Ty) ? Ty : TypeRef{};
+    return isNamedPointerDisplay(Ty) && !headerRecordOfCallee(Call, Ty)
+               ? Ty
+               : TypeRef{};
   };
   if (Dbg && Call.CallAddr)
     if (auto FS = Dbg->resolveFunction(Call.CallAddr))
@@ -4569,6 +4629,31 @@ const HighExpr *HighCWriter::sameWidthVariable(const HighExpr &E) const {
     Cur = Cur->Operands[0].get();
   }
   return nullptr;
+}
+
+std::string HighCWriter::intrinsicInstruction(const HighExpr &E) const {
+  if (E.Kind != ExprKind::Call ||
+      !intrinsicCarriesInstructionOperand(E.IntrinsicId) ||
+      E.Operands.empty() || !E.Operands[0])
+    return {};
+  const HighExpr *Operand = unwrapIntegerView(E.Operands[0].get());
+  if (!Operand || Operand->Kind != ExprKind::Const)
+    return {};
+  return intrinsicInstructionText(E.IntrinsicId, Operand->ConstVal);
+}
+
+std::string HighCWriter::intrinsicInstructionComment(const HighExpr &E) const {
+  if (!intrinsicCName(E.IntrinsicId))
+    return {};
+  // An instruction without an operand (`isb`) says no more than its C.
+  const std::string Instruction = intrinsicInstruction(E);
+  if (Instruction.find(' ') == std::string::npos)
+    return {};
+  return " /* " + Instruction + " */";
+}
+
+std::string HighCWriter::callStatementText(const HighExpr &Call) {
+  return statementCallText(Call) + ";" + intrinsicInstructionComment(Call);
 }
 
 const HighExpr *HighCWriter::unwrapIntegerView(const HighExpr *E) const {

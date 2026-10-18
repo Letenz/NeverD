@@ -18,6 +18,7 @@
 #include "../CSourceRecorder.h"
 #include "../DebugParamBinding.h"
 #include "../FloatConversion.h"
+#include "../StdcallImportPops.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/pass/HighC/HighCPasses.h"
@@ -512,6 +513,16 @@ public:
   std::string indirectCalleeStr(const HighExpr &E,
                                 const TypeRef &ReturnType = nullptr);
   const HighExpr *unwrapIntegerView(const HighExpr *E) const;
+  /// The instruction a call \p E of an intrinsic that keeps its operand was
+  /// lifted from (`brk #0x3E8`, intrinsicInstructionText); empty for any
+  /// other call.
+  std::string intrinsicInstruction(const HighExpr &E) const;
+  /// ` /* brk #0x3E8 */` beside a statement calling \p E, whose builtin
+  /// leaves out the operand of the instruction it stands for; empty when its
+  /// C spells the instruction itself.
+  std::string intrinsicInstructionComment(const HighExpr &E) const;
+  /// \p Call as a statement, with the instruction it stands for beside it.
+  std::string callStatementText(const HighExpr &Call);
   /// Whether every byte of \p E from \p Bytes up is zero, as far as its
   /// form and forwarded values show: a comparison, a constant, a zero
   /// extension or a mask that fits.
@@ -559,6 +570,11 @@ public:
   /// that declares it.  A public symbol's name alone yields to the header's
   /// prototype of a C library routine the unit includes.
   bool debugDeclaresCallee(const HighExpr &E) const;
+  /// Whether \p Type names a record a C library header the unit includes
+  /// for \p E's callee declares: the header's `struct stat`, which the unit
+  /// neither defines nor names by a typedef, and which a function of the
+  /// same name would hide.
+  bool headerRecordOfCallee(const HighExpr &E, const TypeRef &Type) const;
   /// Whether the unit includes the standard header that declares the C
   /// library routine \p Name (libc::headerFor).
   bool includesHeaderOf(llvm::StringRef Name) const;
@@ -569,9 +585,16 @@ public:
   /// pointer/string/fill source and drops leftover register clobbers.
   size_t debugCallArgLimit(const HighExpr &E) const;
   /// The fixed arity of the known function \p Symbol, which the C name
-  /// \p Identifier reads; a C++ stem is no name the tables know.
-  static std::optional<libc::LibCArity> knownArity(llvm::StringRef Symbol,
-                                                   llvm::StringRef Identifier);
+  /// \p Identifier reads; a C++ stem is no name the tables know.  An i386
+  /// stdcall routine's names spell it (stdcallPops): a 32-bit argument for
+  /// each four bytes the routine pops.
+  std::optional<libc::LibCArity> knownArity(llvm::StringRef Symbol,
+                                            llvm::StringRef Identifier) const;
+  /// The bytes the i386 stdcall routine \p Symbol, which the C name
+  /// \p Identifier reads, pops: as its own name spells them (`_Validate@8`)
+  /// or the names the image imports it by (StdcallImportPops).
+  std::optional<unsigned> stdcallPops(llvm::StringRef Symbol,
+                                      llvm::StringRef Identifier) const;
   /// How many arguments the plain declaration of the external function \p E
   /// calls gives it (writeForwardDecls), when its arity is known.
   std::optional<size_t> plainDeclarationArity(const HighExpr &E) const;
@@ -875,6 +898,9 @@ public:
   // carry source names. Keep their mapping separate when both _foo and __foo
   // occur in one function.
   std::map<std::string, std::set<std::string>> ExternalCallSources;
+  /// What each i386 stdcall routine the image imports pops, by its import
+  /// name (c_library::stdcallImportPops).
+  c_library::ImportPops StdcallImportPops;
   /// Callees with a call that never returns (HighExpr::DoesNotReturn); their
   /// declarations say so, as for a routine the name list knows.
   std::set<std::string> NoReturnCallTargets;
