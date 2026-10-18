@@ -36,6 +36,8 @@
 
 #include "SymMBADetail.h"
 
+#include "neverd/symbolic/SymKnownBits.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -193,6 +195,56 @@ SymRef foldObservedWindow(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
   auto Part =
       projectBitWindow(Ctx, Source, 0, Mask.popcount(), Budget, Storage);
   return Ctx.mkZExt(Part, Ctx.width(Root));
+}
+
+SymRef foldKnownBits(SymContext &Ctx, SymRef Root, SymKnownBits &Known,
+                     WorkBudget &Budget, size_t &Storage) {
+  const auto Op = Ctx.op(Root);
+  if (Ctx.isConst(Root) || Ctx.isVar(Root) ||
+      Ctx.width(Root) > SymKnownBits::MaxWidth)
+    return Root;
+  const bool HasMask = (Op == SymOp::And || Op == SymOp::Or) &&
+                       Ctx.numOperands(Root) == 2 &&
+                       Ctx.isConst(Ctx.operand(Root, 0));
+  // Only ask for facts at the consumers that use them. Opaque boundaries keep
+  // the existing deep walk's guarantee of spending no region work there.
+  if (!HasMask && !isPredicate(Op))
+    return Root;
+  constexpr size_t FactBytes = 128;
+  unsigned Available = unsigned(
+      std::min<size_t>(SymKnownBits::MaxQueryWork, Storage / FactBytes));
+  while (Available && !Budget.canConsume(Available))
+    Available /= 2;
+  if (!Available)
+    return Root;
+  const auto Source = HasMask ? Ctx.operand(Root, 1) : Root;
+  if (HasMask && Ctx.numOperands(Source) == 0)
+    return Root;
+  unsigned Remaining = Available;
+  auto Bits = Known.query(Source, Remaining);
+  Budget.consume(Available - Remaining);
+  Storage -= (Available - Remaining) * FactBytes;
+  if (!HasMask)
+    return Bits && Bits->isConstant() ? Ctx.mkConst(Bits->One) : Root;
+  const unsigned Words = (Ctx.width(Root) - 1) / 64 + 1;
+  if (!Bits || Storage < Words * sizeof(uint64_t) || !Budget.consume(Words))
+    return Root;
+  Storage -= Words * sizeof(uint64_t);
+  const auto Mask = Ctx.constValue(Ctx.operand(Root, 0));
+  const auto Unknown = ~(Bits->Zero | Bits->One);
+  if (Op == SymOp::And) {
+    if ((Unknown & Mask).isZero())
+      return Ctx.mkConst(Bits->One & Mask);
+    return (Mask | Bits->Zero).isAllOnes() ? Source : Root;
+  }
+  if ((Unknown & ~Mask).isZero())
+    return Ctx.mkConst(Bits->One | Mask);
+  const auto Missing = Mask & ~Bits->One;
+  if (Missing.isZero())
+    return Source;
+  return (Missing & ~Bits->Zero).isZero()
+             ? Ctx.mkAdd(Source, Ctx.mkConst(Missing))
+             : Root;
 }
 
 //===----------------------------------------------------------------------===//
@@ -910,6 +962,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
   llvm::DenseMap<uint32_t, SymRef> Solved;
   bool Skipped = false;
   size_t RefinementStorage = Opts.MaxTableBytes;
+  SymKnownBits Known(Ctx);
   auto Remember = [&](uint32_t Index, SymRef Value, bool Complete) {
     Solved[Index] = Value;
     // A replacement root was also visited by this layer. Remember it under
@@ -945,6 +998,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
     }
 
     Rebuilt = foldObservedWindow(Ctx, Rebuilt, Budget, RefinementStorage);
+    Rebuilt = foldKnownBits(Ctx, Rebuilt, Known, Budget, RefinementStorage);
     if (!canMeasureAtRoot(Ctx, Rebuilt)) {
       Solved[Index] = Rebuilt;
       continue;

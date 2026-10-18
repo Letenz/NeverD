@@ -9,6 +9,10 @@ validates direct tail-call targets at strict instruction boundaries. It covers
 fallthrough and conditional transfers into known functions, an existing direct
 jump, ordinary calls and indirect tail calls.
 
+`NeverDSymMBAKnownFactTests` checks reuse of existing known-bit facts at
+mask and predicate consumers, including independent sign-extension and
+unbounded-value counterexamples. The shared deep-work budget remains in force.
+
 `AndroidFDSet.*` checks Bionic checked descriptor bitmaps at O0/O2 with ordinary,
 packed and RELR relocations on available CPU backends. Independent byte oracles
 cover word boundaries, untouched canaries, boolean queries, full-width extents,

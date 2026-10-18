@@ -2,6 +2,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymConcreteTests.cpp
   SymDispatchTests.cpp
   SymExecTests.cpp
+  SymMBAKnownFactTests.cpp
   SymMBAObservedWindowTests.cpp
   SymIntegerIntrinsicTests.cpp
   SymSegmentedMemoryTests.cpp
@@ -78,5 +79,10 @@ target_include_directories(NeverDSymbolicSparseContextTests PRIVATE
 
 add_neverd_unittest(NeverDSymMBAObservedWindowTests
   SymMBAObservedWindowTests.cpp
+  LINK_COMPONENTS Symbolic Solver
+)
+
+add_neverd_unittest(NeverDSymMBAKnownFactTests
+  SymMBAKnownFactTests.cpp
   LINK_COMPONENTS Symbolic Solver
 )
