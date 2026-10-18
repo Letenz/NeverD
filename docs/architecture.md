@@ -667,12 +667,13 @@ has its own allowances (`kMaxPipelineCallGraphEntries`,
 `neverd_warm_functions_json`, which the worker calls in idle steps when
 `open` asks for `warm`, builds a page of functions' graphs and bodies into
 that cache with the entries a selected run of a symbol start uses. Warming
-never evicts: it reports the cache full instead, and it leaves a cache kept
-for other entries alone. It records the current feature generation, so the
-next selection keeps what it built. A COFF image keeps it while handler
-discovery adds nothing, as after a full load, which decodes every table. It
-does not help a function that is not a symbol start, whose run adds its own
-entry and so keys another cache.
+never evicts: it reports the cache full instead. It records the current
+feature generation, so the next selection keeps what it built. A COFF image
+keeps it while handler discovery adds nothing, as after a full load, which
+decodes every table. A function that is not a symbol start adds its own entry
+to its run, which keys other facts. The cache keeps the latest such
+selection's facts beside the symbol inventory's, so passing through one
+leaves what the symbol starts share in place.
 Reload, function edits, signature matching and analysis-policy changes retire
 the cache while its image/debug owners are alive. Feature generations are
 checked even after navigation cleared the preceding pipeline result. COFF
@@ -7986,3 +7987,13 @@ alone converts errors using the resumed thread's errno. Unknown observations
 and changed descriptor owners remain explicit stops.
 Android's raw and variadic syscall routes reuse this kernel owner; checked
 Bionic bitmap helpers own only guest memory operations and FORTIFY checks.
+
+`LinuxSocketReceive::ReceiveWait` retains the original socket description,
+scalar receive arguments and timeout independently of descriptor-number reuse.
+It projects the same arrival cursors as select, admits explicit receive errors
+without turning them into poll observations, and delegates completed copies to
+the existing TCP/UDP transfer owners. Competing reads can change the next wake
+but cannot reset a suspended deadline. Guest memory access is revalidated at
+completion. Raw read/recvfrom and Bionic read/recv/recvfrom all enter this owner
+and finish their original scheduler event once; no import adapter waits or
+advances a separate clock.

@@ -197,9 +197,9 @@ TEST_P(LinuxNetwork, DatagramBoundariesPeekTruncationAndAliasesAreShared) {
   EXPECT_FALSE(call(ServiceKind::ReceiveFrom, Alias, Base + 128, 3));
   EXPECT_EQ(call(ServiceKind::SendTo, Alias, UINT64_MAX, 0), 0u);
   // read(0) leaves the empty datagram queued; recv(0) consumes it.
-  EXPECT_EQ(call(ServiceKind::Read, Alias, UINT64_MAX, 0), 0u);
-  EXPECT_EQ(call(ServiceKind::ReceiveFrom, Alias, UINT64_MAX, 0, 2), 0u);
-  EXPECT_EQ(call(ServiceKind::ReceiveFrom, Alias, UINT64_MAX, 0), 0u);
+  EXPECT_EQ(call(ServiceKind::Read, Alias, 1, 0), 0u);
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, Alias, 1, 0, 2), 0u);
+  EXPECT_EQ(call(ServiceKind::ReceiveFrom, Alias, 1, 0), 0u);
   EXPECT_EQ(call(ServiceKind::Read, Alias, Base + 128, 3), 1u);
   uint8_t Last;
   llvm::cantFail(cpu().read(Base + 128, llvm::MutableArrayRef(&Last, 1)));

@@ -6815,6 +6815,31 @@ TEST_F(SessionCAPITest, AnalysisCacheSurvivesOnlyFunctionNavigation) {
   EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
 }
 
+TEST_F(SessionCAPITest, AnalysisCacheSurvivesSelectingAnEntryNoSymbolStarts) {
+  const auto Path = write("cache.elf", makeAnalysisCacheELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Entry = seedAnalysisCacheSymbols(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  // The padding at Entry + 0x20 starts no symbol.
+  for (const auto &Sym : State.Img.Symbols)
+    ASSERT_FALSE(Sym.IsFunc && Sym.Addr == Entry + 0x20);
+  ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
+  const auto Facts =
+      neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache);
+  ASSERT_NE(Facts, nullptr);
+  const auto Source = takeString(neverd_decompile(Session, Entry));
+  ASSERT_FALSE(Source.empty()) << takeString(neverd_last_error(Session));
+  // Its run knows one more entry and keys facts of its own beside these.
+  ASSERT_EQ(neverd_prepare_function(Session, Entry + 0x20), 1)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
+            Facts);
+  EXPECT_FALSE(takeString(neverd_decompile(Session, Entry + 0x10)).empty());
+  EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
+  EXPECT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
+            Facts);
+}
+
 TEST_F(SessionCAPITest, AnalysisCacheRetiresOnSameAddressImageReload) {
   const auto First = write("floating.elf", makeAnalysisCacheELF(true));
   const auto Second = write("integer.elf", makeAnalysisCacheELF(false));
