@@ -617,7 +617,18 @@ register/argument summaries. Exact candidate and verified-entry inventories
 bind reuse; selection cannot silently change a cached function's boundaries.
 No-return proof and lazy-name memo entries are cleared between runs, so they
 do not accumulate across navigation. Image indexes scale with the loaded
-metadata; the existing graph/body payload allowances remain unchanged.
+metadata. The session cache finds graphs and bodies through a hash index and
+has its own allowances (`kMaxPipelineCallGraphEntries`,
+`kMaxPipelineCallGraphBytes` and `kMaxPipelineCallBodyBytes` in
+`Limits.h`); other x87 graph caches keep the smaller defaults.
+`neverd_warm_functions_json`, which the worker calls in idle steps when
+`open` asks for `warm`, builds a page of functions' graphs and bodies into
+that cache with the entries a selected run of a symbol start uses. Warming
+never evicts: it reports the cache full instead, and it leaves a cache kept
+for other entries alone. It records the current feature generation, so the
+next selection keeps what it built. It does not help a COFF image, whose
+function preparation retires these facts, or a function that is not a symbol
+start, whose run adds its own entry and so keys another cache.
 Reload, function edits, signature matching and analysis-policy changes retire
 the cache while its image/debug owners are alive. Feature generations are
 checked even after navigation cleared the preceding pipeline result. COFF

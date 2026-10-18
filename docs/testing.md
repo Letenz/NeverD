@@ -216,6 +216,11 @@ IR, same-address image replacement, failed reload, function edits, target
 policy, signature matching and feature changes between selections. Run these
 with `NeverDPipelineOutcomeTests` and `NeverDSessionCAPITests`; the no-return,
 x87 and jump-table suites cover their shared proof consumers.
+`PipelineOutcome.Warm*` checks that idle preparation leaves selected runs
+unchanged, keeps a cache built for other entries, and stops at the cache bound
+without evicting. `NeverDWorkerWarmFunctions` checks the worker's `warm` open
+option against the mock engine: off by default, a running pass, a restart
+after an edit, a full cache and an engine without preparation.
 
 `MedDCE.KeepsLivePhiCyclesAndDropsDeadCyclesInEitherBlockOrder` checks register
 DCE liveness through cyclic PHIs, dead-cycle removal and sparse identifiers on
