@@ -151,6 +151,8 @@ there. `.github/workflows/allocator.yml` covers MSVC x64/ARM64 and clang-cl x64,
 Release/Debug and the compile-time opt-out. The full Windows CI profile also
 runs the allocator test against the actual SDK. The same focused workflow
 checks Linux and macOS with mimalloc enabled, disabled and under ASan/UBSan.
+The normal jobs leave `NEVERD_ENABLE_MIMALLOC` unset and require mimalloc to be
+active, so a regression in the default cannot pass by testing the system heap.
 Use native ARM64 binaries on
 Windows ARM64; x64 emulation needs a separately built ARM64EC allocator and is
 not covered by this integration.

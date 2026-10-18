@@ -44,14 +44,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for allocator in ON OFF; do
+          for allocator in default OFF; do
+            if [ "$allocator" = default ]; then
+              allocator_flags=(-DNEVERD_TEST_EXPECT_MIMALLOC=ON)
+            else
+              allocator_flags=(-DNEVERD_ENABLE_MIMALLOC=OFF -DNEVERD_TEST_EXPECT_MIMALLOC=OFF)
+            fi
             cmake -S unittests/allocator -B "build-allocator-$allocator" -G Ninja \
-              -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_MIMALLOC="$allocator"
+              -DCMAKE_BUILD_TYPE=Release "${allocator_flags[@]}"
             cmake --build "build-allocator-$allocator" --parallel 2
             ctest --test-dir "build-allocator-$allocator" --output-on-failure --no-tests=error
           done
           cmake -S unittests/allocator -B build-allocator-asan -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_MIMALLOC=ON \
+            -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_MIMALLOC=ON -DNEVERD_TEST_EXPECT_MIMALLOC=OFF \
             -DCMAKE_C_FLAGS=-fsanitize=address,undefined \
             -DCMAKE_CXX_FLAGS=-fsanitize=address,undefined
           cmake --build build-allocator-asan --parallel 2
@@ -84,7 +89,7 @@ jobs:
       - name: Configure dynamic CRT allocator tests
         run: >-
           cmake -S unittests/allocator -B build-allocator -G "Ninja Multi-Config"
-          -DNEVERD_ENABLE_MIMALLOC=ON
+          -DNEVERD_TEST_EXPECT_MIMALLOC=ON
           -DCMAKE_C_COMPILER=${{ matrix.compiler }}
           -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
       - name: Test Release and Debug, including installed DLLs
@@ -99,7 +104,7 @@ jobs:
       - name: Test the system allocator build
         shell: pwsh
         run: |
-          cmake -S unittests/allocator -B build-allocator-off -G Ninja -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_MIMALLOC=OFF -DCMAKE_C_COMPILER=${{ matrix.compiler }} -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+          cmake -S unittests/allocator -B build-allocator-off -G Ninja -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_MIMALLOC=OFF -DNEVERD_TEST_EXPECT_MIMALLOC=OFF -DCMAKE_C_COMPILER=${{ matrix.compiler }} -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cmake --build build-allocator-off
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

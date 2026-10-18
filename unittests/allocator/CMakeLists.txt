@@ -7,6 +7,17 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/NeverDMimalloc.cmake")
 endif()
 
+# CI supplies an expectation, leaving the production option at its default.
+# A disabled allocator must not silently turn the default-on job into a test
+# of the system allocator instead.
+if(DEFINED NEVERD_TEST_EXPECT_MIMALLOC)
+  if((NEVERD_TEST_EXPECT_MIMALLOC AND NOT NEVERD_MIMALLOC_ENABLED) OR
+     (NOT NEVERD_TEST_EXPECT_MIMALLOC AND NEVERD_MIMALLOC_ENABLED))
+    message(FATAL_ERROR
+      "Expected mimalloc=${NEVERD_TEST_EXPECT_MIMALLOC}, got ${NEVERD_MIMALLOC_ENABLED}")
+  endif()
+endif()
+
 # Deliberately has no dependency on mimalloc. Verify allocations in a shared
 # library use the executable's allocator, including initialization before main.
 add_library(neverd-allocator-probe SHARED AllocatorProbe.cpp)

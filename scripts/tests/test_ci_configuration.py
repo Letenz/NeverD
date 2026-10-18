@@ -53,6 +53,10 @@ class CiConfigurationTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 commands = json.loads((build / "compile_commands.json").read_text())
+                # The real helper also adds the process allocator's sources.
+                # Inspect this test target, independent of its dependencies.
+                commands = [entry for entry in commands
+                            if Path(entry["file"]).name == "probe.cpp"]
                 self.assertEqual(len(commands), 1)
                 command = commands[0]
                 tokens = command.get("arguments") or re.findall(
