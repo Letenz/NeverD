@@ -56,7 +56,9 @@ enum class LayoutRules : uint8_t {
 /// How a target's compilers lay records out, beyond what its data model
 /// says (RecordABIs.def).
 enum class RecordABI : uint8_t {
-#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit) Name,
+#define NEVERD_RECORD_ABI(Name, Spelling, Rules, ScalarAlignLimit, WCharBytes, \
+                          LongDoubleBytes)                                     \
+  Name,
 #include "neverd/types/RecordABIs.def"
 };
 
@@ -85,13 +87,15 @@ enum class Builtin : uint8_t {
 struct BuiltinInfo {
   BuiltinClass Class;
   bool Signed;
-  uint8_t Bytes[3]; ///< By DataModel.
+  uint8_t Bytes[3]; ///< By DataModel; 0 where the record ABI says it.
   const char *Keywords;
   const char *Windows;
 };
 
 const BuiltinInfo &builtinInfo(Builtin Type);
-unsigned builtinBytes(Builtin Type, DataModel Model);
+/// The size of \p Type on a target of \p Model whose compilers follow
+/// \p ABI, which says how large wchar_t and long double are.
+unsigned builtinBytes(Builtin Type, DataModel Model, RecordABI ABI);
 unsigned pointerBytes(DataModel Model);
 
 /// Whether the Windows headers name \p Type by a typedef of their own, as
@@ -277,6 +281,11 @@ public:
   RecordABI recordABI() const { return ABI; }
   void setRecordABI(RecordABI Laid) { ABI = Laid; }
   LayoutRules layoutRules() const { return layoutRulesOf(ABI); }
+  /// The size of \p Type for the program: its data model's, or its record
+  /// ABI's for wchar_t and long double.
+  unsigned builtinBytes(Builtin Type) const {
+    return types::builtinBytes(Type, Model, ABI);
+  }
 
   /// Defines \p Type, which replaces the type of its name and keeps that
   /// type's ordinal.  Returns the ordinal.

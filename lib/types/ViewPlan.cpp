@@ -76,7 +76,7 @@ std::optional<ViewValue> ViewPlanner::builtin(Builtin Type,
                                               bool Spelled) const {
   const BuiltinInfo &Info = builtinInfo(Type);
   ViewValue Value;
-  Value.Bytes = builtinBytes(Type, Library.dataModel());
+  Value.Bytes = Library.builtinBytes(Type);
   Value.Signed = Info.Signed && Info.Class != BuiltinClass::Bool;
   const auto integer = [&] {
     const unsigned Bytes = Value.Bytes;

@@ -166,7 +166,7 @@ std::string GoWriter::builtin(Builtin Type) const {
 
 std::string GoWriter::exact(Builtin Type) const {
   const BuiltinInfo &Info = builtinInfo(Type);
-  const unsigned Bytes = builtinBytes(Type, Library.dataModel());
+  const unsigned Bytes = Library.builtinBytes(Type);
   switch (Info.Class) {
   case BuiltinClass::Void:
     return "struct{}";
@@ -228,7 +228,7 @@ uint32_t GoWriter::goAlign(const TypeExpr &Type, uint32_t Pack) const {
   case TypeExprKind::Builtin:
     if (exact(Type.TheBuiltin).front() == '[')
       return 1;
-    return scalarAlign(builtinBytes(Type.TheBuiltin, Library.dataModel()));
+    return scalarAlign(Library.builtinBytes(Type.TheBuiltin));
   case TypeExprKind::Pointer:
     return scalarAlign(Type.PointerBytes);
   case TypeExprKind::Array:
@@ -241,8 +241,7 @@ uint32_t GoWriter::goAlign(const TypeExpr &Type, uint32_t Pack) const {
     return recordAlign(*Type.Record,
                        Type.Record->Pack ? Type.Record->Pack : Pack);
   case TypeExprKind::Enum:
-    return Type.Enum ? scalarAlign(builtinBytes(Type.Enum->Underlying,
-                                                Library.dataModel()))
+    return Type.Enum ? scalarAlign(Library.builtinBytes(Type.Enum->Underlying))
                      : 4;
   case TypeExprKind::Named: {
     const LocalType *Named = Library.resolve(Type.Name);
@@ -253,8 +252,7 @@ uint32_t GoWriter::goAlign(const TypeExpr &Type, uint32_t Pack) const {
                  ? recordAlign(*Named->Record, Named->Record->Pack)
                  : 1;
     if (Named->Enum)
-      return scalarAlign(
-          builtinBytes(Named->Enum->Underlying, Library.dataModel()));
+      return scalarAlign(Library.builtinBytes(Named->Enum->Underlying));
     if (Named->Target)
       return goAlign(*Named->Target, 0);
     return 1;
@@ -367,8 +365,7 @@ void GoWriter::bitAccessors(const std::string &Type, const Slot &Place,
         (Access.Signed ? "int" : "uint") + std::to_string(Access.ValueBits);
     // A builtin of the unit's size keeps its own name: ULONG, not UINT.
     if (Bit->Type && Bit->Type->Kind == TypeExprKind::Builtin &&
-        builtinBytes(Bit->Type->TheBuiltin, Library.dataModel()) * 8 ==
-            Access.ValueBits &&
+        Library.builtinBytes(Bit->Type->TheBuiltin) * 8 == Access.ValueBits &&
         builtinInfo(Bit->Type->TheBuiltin).Signed == Access.Signed &&
         builtinInfo(Bit->Type->TheBuiltin).Class != BuiltinClass::Float &&
         builtinInfo(Bit->Type->TheBuiltin).Class != BuiltinClass::Bool)
@@ -677,7 +674,7 @@ void GoWriter::enumeration(const std::string &Name, const EnumDef &Enum,
   if (Enum.Values.empty())
     return;
   const bool Signed = builtinInfo(Enum.Underlying).Signed;
-  const unsigned Bytes = builtinBytes(Enum.Underlying, Library.dataModel());
+  const unsigned Bytes = Library.builtinBytes(Enum.Underlying);
   Out += "\nconst (\n";
   for (size_t I = 0; I < Enum.Values.size(); ++I) {
     const Enumerator &Value = Enum.Values[I];

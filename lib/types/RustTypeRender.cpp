@@ -129,9 +129,10 @@ std::string RustWriter::longDouble() const {
   if (!LongDouble)
     return {};
   const std::string Bytes =
-      std::to_string(builtinBytes(Builtin::LongDouble, Library.dataModel()));
-  return "\n/// C's long double: the x87's extended precision in " + Bytes +
-         " bytes, aligned as C aligns it.\n#[repr(C, align(" +
+      std::to_string(Library.builtinBytes(Builtin::LongDouble));
+  return "\n/// C's long double, in " + Bytes +
+         " bytes aligned as C aligns them: no float of Rust's holds it.\n"
+         "#[repr(C, align(" +
          std::to_string(Library.alignOf(*makeBuiltin(Builtin::LongDouble))) +
          "))]\n#[derive(Clone, Copy)]\npub struct c_longdouble(pub [u8; " +
          Bytes + "]);\n";
@@ -139,7 +140,7 @@ std::string RustWriter::longDouble() const {
 
 std::string RustWriter::exact(Builtin Type, bool Pointee) const {
   const BuiltinInfo &Info = builtinInfo(Type);
-  const unsigned Bytes = builtinBytes(Type, Library.dataModel());
+  const unsigned Bytes = Library.builtinBytes(Type);
   switch (Info.Class) {
   case BuiltinClass::Void:
     return Pointee ? "c_void" : "()";
@@ -411,8 +412,7 @@ void RustWriter::accessors(const RecordPlan &Plan, std::string &Out) const {
       std::string Value = (Access.Signed ? "i" : "u") + Bits;
       // A builtin of the unit's size keeps its own name: ULONG, not UINT.
       if (Bit->Type->Kind == TypeExprKind::Builtin &&
-          builtinBytes(Bit->Type->TheBuiltin, Library.dataModel()) * 8 ==
-              Access.ValueBits &&
+          Library.builtinBytes(Bit->Type->TheBuiltin) * 8 == Access.ValueBits &&
           builtinInfo(Bit->Type->TheBuiltin).Signed == Access.Signed &&
           builtinInfo(Bit->Type->TheBuiltin).Class != BuiltinClass::Float &&
           builtinInfo(Bit->Type->TheBuiltin).Class != BuiltinClass::Bool)
@@ -502,7 +502,7 @@ void RustWriter::enumeration(const std::string &Name, const EnumDef &Enum,
   Out += "/// " + Name + ": an enumeration of " + Underlying + ".\n";
   Out += "pub type " + Name + " = " + Underlying + ";\n";
   const bool Signed = builtinInfo(Enum.Underlying).Signed;
-  const unsigned Bytes = builtinBytes(Enum.Underlying, Library.dataModel());
+  const unsigned Bytes = Library.builtinBytes(Enum.Underlying);
   for (size_t I = 0; I < Enum.Values.size(); ++I) {
     const Enumerator &Value = Enum.Values[I];
     std::string Number;

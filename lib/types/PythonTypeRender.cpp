@@ -158,7 +158,7 @@ std::string PythonWriter::builtin(Builtin Type) const {
 
 std::string PythonWriter::exact(Builtin Type) const {
   const BuiltinInfo &Info = builtinInfo(Type);
-  const unsigned Bytes = builtinBytes(Type, Library.dataModel());
+  const unsigned Bytes = Library.builtinBytes(Type);
   switch (Info.Class) {
   case BuiltinClass::Void:
     return "None";
@@ -275,7 +275,7 @@ std::string PythonWriter::slotType(const Slot &Place) const {
 
 void PythonWriter::enumeration(const std::string &Name, const EnumDef &Enum,
                                const std::string &Doc, std::string &Out) const {
-  const unsigned Bytes = builtinBytes(Enum.Underlying, Library.dataModel());
+  const unsigned Bytes = Library.builtinBytes(Enum.Underlying);
   const bool Signed = builtinInfo(Enum.Underlying).Signed;
   Out += "class " + Name + "(enum.IntEnum):\n";
   Out += "    \"\"\"" + Doc + ": an enumeration of " + std::to_string(Bytes) +
@@ -717,15 +717,13 @@ void PythonWriter::module(llvm::ArrayRef<const LocalType *> Types,
   // C's long double: bytes aligned as C aligns them, which ctypes'
   // c_longdouble is only on a host of the program's kind.
   if (LongDouble)
-    Out +=
-        "\n\nclass c_longdouble(ctypes.Structure):\n    \"\"\"C's long "
-        "double: the x87's extended precision in " +
-        std::to_string(builtinBytes(Builtin::LongDouble, Library.dataModel())) +
-        " bytes, aligned as C aligns it.\"\"\"\n    _align_ = " +
-        std::to_string(Library.alignOf(*makeBuiltin(Builtin::LongDouble))) +
-        "\n    _fields_ = [(\"bytes\", ctypes.c_uint8 * " +
-        std::to_string(builtinBytes(Builtin::LongDouble, Library.dataModel())) +
-        ")]\n";
+    Out += "\n\nclass c_longdouble(ctypes.Structure):\n    \"\"\"C's long "
+           "double, in " +
+           std::to_string(Library.builtinBytes(Builtin::LongDouble)) +
+           " bytes aligned as C aligns them.\"\"\"\n    _align_ = " +
+           std::to_string(Library.alignOf(*makeBuiltin(Builtin::LongDouble))) +
+           "\n    _fields_ = [(\"bytes\", ctypes.c_uint8 * " +
+           std::to_string(Library.builtinBytes(Builtin::LongDouble)) + ")]\n";
   if (HostPointers)
     Out += "\n# The program's pointers are 64-bit, as the host's must be.\n"
            "assert ctypes.sizeof(ctypes.c_void_p) == 8, \"these types need a "

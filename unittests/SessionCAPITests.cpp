@@ -4288,6 +4288,92 @@ TEST_F(SessionCAPITest, ThirtyTwoBitLinuxObjectsLayRecordsOutAsGCCDoes) {
   EXPECT_EQ(parse(neverd_local_type_json(Session, "sample", nullptr))
                 .getInteger("size"),
             20);
+  // Its wchar_t is four bytes and its long double the x87's twelve, which
+  // align to four.
+  const llvm::json::Object Wide = parse(neverd_local_types_declare(
+      Session, "struct wide { wchar_t w; char c; long double ld; char e; };",
+      nullptr));
+  EXPECT_EQ(Wide.getArray("problems")->size(), 0u);
+  EXPECT_EQ(parse(neverd_local_type_json(Session, "wide", nullptr))
+                .getInteger("size"),
+            24);
+}
+
+TEST_F(SessionCAPITest, AppleARMProgramsKeepALongDoubleThatIsADouble) {
+  // Apple's 64-bit ARM lays records out as the Itanium ABI does, with a long
+  // double that is a double, which the 64-bit System V targets' is not.
+  std::ifstream Input(std::filesystem::path(__FILE__).parent_path() / "safety" /
+                          "fixtures" / "binaries" / "safety_cases_macho_arm64",
+                      std::ios::binary);
+  const std::string Program =
+      write("safety_cases_macho_arm64",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Program.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_local_types_json(Session, nullptr)));
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  EXPECT_EQ(Parsed->getAsObject()->getString("recordABI"), "apple-arm64");
+  auto Declared = llvm::json::parse(takeString(neverd_local_types_declare(
+      Session, "struct apple { char c; long double d; };", nullptr)));
+  ASSERT_TRUE(bool(Declared)) << takeString(neverd_last_error(Session));
+  EXPECT_EQ(Declared->getAsObject()->getArray("problems")->size(), 0u);
+  auto Apple = llvm::json::parse(
+      takeString(neverd_local_type_json(Session, "apple", nullptr)));
+  ASSERT_TRUE(bool(Apple));
+  EXPECT_EQ(Apple->getAsObject()->getInteger("size"), 16);
+}
+
+TEST_F(SessionCAPITest, ARMObjectsTakeTheLongDoubleAndWideCharOfTheirABI) {
+  // 32-bit ARM's long double is a double and its wchar_t four bytes, which
+  // its data model does not say: the session takes them from the object's
+  // record ABI, the AAPCS.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  std::ifstream Input(Fixtures / "dwarf_types.arm32.o", std::ios::binary);
+  const std::string Object =
+      write("dwarf_types.arm32.o",
+            std::string(std::istreambuf_iterator<char>(Input), {}));
+  ASSERT_EQ(neverd_session_load(Session, Object.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_local_types_json(Session, nullptr)));
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  const llvm::json::Object *Root = Parsed->getAsObject();
+  ASSERT_TRUE(Root);
+  EXPECT_EQ(Root->getString("source"), "dwarf");
+  EXPECT_EQ(Root->getString("dataModel"), "ILP32");
+  EXPECT_EQ(Root->getString("recordABI"), "aapcs32");
+
+  // device's long double keeps the name DWARF gives it, as wide as a double,
+  // where Clang laid it.
+  const std::string Source = takeString(neverd_local_types_source(
+      Session, R"({"language":"c","types":["device"],"asserts":true,)"
+               R"("spelling":"keywords"})"));
+  for (const char *Expected :
+       {"long double precise;", "offsetof(struct device, time) == 0x20",
+        "offsetof(struct device, precise) == 0x50",
+        "sizeof(struct device) == 0x60"})
+    EXPECT_NE(Source.find(Expected), std::string::npos) << Expected << Source;
+
+  // A declaration lays out as the program's records do.
+  const auto parse = [&](const char *Raw) {
+    auto Parsed = llvm::json::parse(takeString(Raw));
+    EXPECT_TRUE(static_cast<bool>(Parsed))
+        << takeString(neverd_last_error(Session));
+    return Parsed && Parsed->getAsObject() ? *Parsed->getAsObject()
+                                           : llvm::json::Object();
+  };
+  const llvm::json::Object Declared = parse(neverd_local_types_declare(
+      Session, "struct wide { wchar_t w; char c; long double ld; char e; };",
+      nullptr));
+  EXPECT_EQ(Declared.getArray("problems")->size(), 0u);
+  const std::string Wide = takeString(neverd_local_types_source(
+      Session, R"({"language":"c","types":["wide"],"asserts":true})"));
+  for (const char *Expected :
+       {"offsetof(struct wide, c) == 0x4", "offsetof(struct wide, ld) == 0x8",
+        "offsetof(struct wide, e) == 0x10", "sizeof(struct wide) == 0x18"})
+    EXPECT_NE(Wide.find(Expected), std::string::npos) << Expected << Wide;
 }
 
 TEST_F(SessionCAPITest, CodeReadsTheUnionAlternativeOfItsAccess) {
@@ -4965,12 +5051,17 @@ TEST_F(SessionCAPITest, LinuxProgramsJoinTheirGlibcLibrary) {
     // Whether LLVM-C declares the frame slot stat fills as the record (an
     // i386 call's stack slots stay bytes).
     bool StatLocal;
+    // The size of its long double, which glibc's long_double_t names: the
+    // x87's, a quad, or on 32-bit ARM a double.
+    int64_t LongDouble;
   };
   const Program Programs[] = {
-      {"linux_libc_calls_x64", "linux-x64", "LP64", "itanium", 144, true},
-      {"linux_libc_calls_x86", "linux-x86", "ILP32", "i386-sysv", 88, false},
-      {"linux_libc_calls_arm64", "linux-arm64", "LP64", "itanium", 128, true},
-      {"linux_libc_calls_arm", "linux-arm", "ILP32", "aapcs32", 88, true},
+      {"linux_libc_calls_x64", "linux-x64", "LP64", "itanium", 144, true, 16},
+      {"linux_libc_calls_x86", "linux-x86", "ILP32", "i386-sysv", 88, false,
+       12},
+      {"linux_libc_calls_arm64", "linux-arm64", "LP64", "itanium", 128, true,
+       16},
+      {"linux_libc_calls_arm", "linux-arm", "ILP32", "aapcs32", 88, true, 8},
   };
   const auto Fixtures =
       std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
@@ -5000,6 +5091,10 @@ TEST_F(SessionCAPITest, LinuxProgramsJoinTheirGlibcLibrary) {
         takeString(neverd_local_type_json(Linux, "stat", nullptr)));
     ASSERT_TRUE(static_cast<bool>(Stat));
     EXPECT_EQ(Stat->getAsObject()->getInteger("size"), P.Stat);
+    auto LongDouble = llvm::json::parse(
+        takeString(neverd_local_type_json(Linux, "long_double_t", nullptr)));
+    ASSERT_TRUE(static_cast<bool>(LongDouble));
+    EXPECT_EQ(LongDouble->getAsObject()->getInteger("size"), P.LongDouble);
 
     const int Index = neverd_func_find_by_name(Linux, "Size");
     ASSERT_GE(Index, 0);

@@ -243,11 +243,19 @@ record ABI does (`TypeLayout.h`):
 
 A library's record ABI (`RecordABIs.def`) says what its data model does not:
 whether bit-fields go as Microsoft's compilers or the Itanium ABI place them,
-and how far a scalar aligns in a record, four for long long and double under
-the i386 System V ABI. The C API takes a program's from its platform and
+how far a scalar aligns in a record, four for long long and double under
+the i386 System V ABI, and how large wchar_t and long double are
+(`builtinBytes`). wchar_t is Windows' 16-bit character and four bytes
+elsewhere; long double is a double to Microsoft's compilers, 32-bit ARM's,
+Apple's 64-bit ARM and Android's i386, and the x87's 12 bytes on i386 System
+V and 16 on the 64-bit System V targets, as Clang's `__SIZEOF_LONG_DOUBLE__`
+says for each. The C API takes a program's from its platform and
 architecture (`recordABIOf`), so a 32-bit Linux program's records read,
 parse and render as GCC lays them out, and an ARM one's as the AAPCS does.
 Parsing and every renderer read the library's ABI; nothing else carries one.
+MinGW's compilers lay records out as Microsoft's but keep the x87's long
+double, which the Microsoft ABI does not hold: a MinGW program's DWARF long
+double reads as its bytes.
 
 A source reads whole or not at all. The C API keeps the user's declarations
 in order and reads them again over the program's types whenever those are

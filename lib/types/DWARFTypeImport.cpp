@@ -437,9 +437,8 @@ private:
     const uint64_t Bytes = unsignedOf(Die, dw::DW_AT_byte_size).value_or(0);
     const uint64_t Encoding = unsignedOf(Die, dw::DW_AT_encoding).value_or(0);
     const llvm::StringRef Name(Die.getShortName() ? Die.getShortName() : "");
-    const DataModel Model = Library.dataModel();
     const auto fits = [&](Builtin Type) {
-      return builtinBytes(Type, Model) == Bytes;
+      return Library.builtinBytes(Type) == Bytes;
     };
     std::optional<Builtin> Found;
     switch (Encoding) {
@@ -494,6 +493,12 @@ private:
       break;
     }
     case dw::DW_ATE_float:
+      // long double by its name too where it is as wide as a double, as
+      // 32-bit ARM's and Microsoft's are.
+      if (Name == "long double" && fits(Builtin::LongDouble)) {
+        Found = Builtin::LongDouble;
+        break;
+      }
       for (Builtin Type : {Builtin::Half, Builtin::Float, Builtin::Double,
                            Builtin::LongDouble})
         if (fits(Type) && (Type != Builtin::LongDouble || Bytes > 8)) {
@@ -658,7 +663,7 @@ private:
       static constexpr Builtin UnsignedOrder[] = {
           Builtin::UChar, Builtin::UShort, Builtin::UInt, Builtin::ULongLong};
       for (Builtin Type : Signed ? SignedOrder : UnsignedOrder)
-        if (builtinBytes(Type, Library.dataModel()) == Bytes)
+        if (Library.builtinBytes(Type) == Bytes)
           Base = Type;
     }
     if (!Base) {
@@ -667,7 +672,7 @@ private:
     }
     Enum->Underlying = *Base;
     // A signed enumeration's values extend their sign from its width.
-    const unsigned Bits = builtinBytes(*Base, Library.dataModel()) * 8;
+    const unsigned Bits = Library.builtinBytes(*Base) * 8;
     if (builtinInfo(*Base).Signed && Bits && Bits < 64)
       for (Enumerator &Entry : Enum->Values)
         if (Entry.Value >> (Bits - 1) & 1)
@@ -887,7 +892,7 @@ private:
     const std::optional<Builtin> Own = integerOf(*Field.Type);
     if (!Own)
       return false;
-    const uint64_t Bits = builtinBytes(*Own, Library.dataModel()) * 8;
+    const uint64_t Bits = Library.builtinBytes(*Own) * 8;
     if (!Bits || Field.BitWidth > Bits)
       return false;
     const uint64_t Span = uint64_t(Library.alignOf(*makeBuiltin(*Own))) * 8;

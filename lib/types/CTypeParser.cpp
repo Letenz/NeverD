@@ -1440,7 +1440,7 @@ private:
     Defines = true;
     auto Def = std::make_shared<EnumDef>();
     Def->Underlying = Underlying;
-    const unsigned Bits = builtinBytes(Underlying, Library.dataModel()) * 8;
+    const unsigned Bits = Library.builtinBytes(Underlying) * 8;
     const bool Signed = builtinInfo(Underlying).Signed;
     int64_t Next = 0;
     while (!Failed && !accept("}")) {
@@ -1840,8 +1840,7 @@ private:
         if (!V)
           return V;
         if (Type && Type->Kind == TypeExprKind::Builtin) {
-          const unsigned Bits =
-              builtinBytes(Type->TheBuiltin, Library.dataModel()) * 8;
+          const unsigned Bits = Library.builtinBytes(Type->TheBuiltin) * 8;
           if (Bits && Bits < 64) {
             uint64_t Raw = uint64_t(*V) & ((uint64_t(1) << Bits) - 1);
             if (builtinInfo(Type->TheBuiltin).Signed && (Raw >> (Bits - 1)) & 1)
