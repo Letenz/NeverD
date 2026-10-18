@@ -47,6 +47,21 @@ llvm::Value *MedLLVMEmitter::emitARMIntrinsicValue(const MedOp &Op,
             "=r,~{memory}", /*hasSideEffects=*/true),
         {}, "coprocessor.register");
   }
+  // An MRS runs as itself (`mrs $0, apsr`); the lift merges the flags it
+  // keeps into the word.
+  if (IC == I::ArmMrs) {
+    const std::string Asm =
+        Op.NumInputs == 2 && Op.Inputs[1].isConst() && Op.Output.Size == 4
+            ? armStatusInstructionAsm(IC, Op.Inputs[1].ConstVal)
+            : std::string();
+    if (Asm.empty())
+      llvm::report_fatal_error("ARM MRS without its status register field");
+    return Builder.CreateCall(
+        llvm::InlineAsm::get(
+            llvm::FunctionType::get(Builder.getInt32Ty(), false), Asm,
+            "=r,~{memory}", /*hasSideEffects=*/true),
+        {}, "status.register");
+  }
   if (IC == I::ArmRbit && Op.Output.Size > 0) {
     auto *OutTy = sizeToType(Op.Output.Size);
     if (Op.NumInputs >= 2) {

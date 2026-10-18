@@ -1086,9 +1086,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     buildSsa(Func, Low);
     debugVerifyMedFunc(Func, "buildSsa");
 
-    // Only the x86 lifter emits PUSHF, so this finds nothing elsewhere.
-    foldMachineFlagsIntoPushfImages(Func);
-    debugVerifyMedFunc(Func, "foldMachineFlagsIntoPushfImages");
+    // The x86 lifter's PUSHF and the ARM lifter's MRS of APSR.
+    foldMachineFlagsIntoStatusImages(Func);
+    debugVerifyMedFunc(Func, "foldMachineFlagsIntoStatusImages");
 
     // Model a call's floating-point/vector return (x86-64 returns it in XMM0, a
     // caller-saved vector register the lifter did not model the call as

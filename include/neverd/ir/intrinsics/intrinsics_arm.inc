@@ -85,3 +85,6 @@ ArmUrecpe, ArmUrsqrte,
 // A Linux EABI supervisor call: the number in r7, the arguments in r0-r6 and
 // the result in r0 (MedSyscallConvention.h).
 ArmLinuxSyscall,
+
+// A CPS, with its armCpsField (IntrinsicInstructionText.h).
+ArmCps,
