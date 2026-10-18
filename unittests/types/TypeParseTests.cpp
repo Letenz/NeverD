@@ -194,6 +194,12 @@ TEST(TypeParse, WideCharactersAndLongDoublesAreAsLargeAsTheTargetMakesThem) {
             "struct{c@0 d@16 w@32 e@36} 48");
   EXPECT_EQ(layout(DataModel::LP64, RecordABI::AppleARM64),
             "struct{c@0 d@8 w@16 e@20} 24");
+  // MinGW's compilers lay Microsoft's records out with the x87's long
+  // double, which on x86 aligns to four where a double aligns to eight.
+  EXPECT_EQ(layout(DataModel::LLP64, RecordABI::MinGW64),
+            "struct{c@0 d@16 w@32 e@34} 48");
+  EXPECT_EQ(layout(DataModel::ILP32, RecordABI::MinGW32),
+            "struct{c@0 d@4 w@16 e@18} 20");
 }
 
 TEST(TypeParse, ReadsAnonymousRecordsAndWindowsNames) {
@@ -607,6 +613,54 @@ TEST(TypeParse, ConvertsWithoutAProgram) {
   ASSERT_TRUE(parseCTypes(Header, Back).ok());
   ASSERT_NE(Back.findPrototype("Pair"), nullptr);
   EXPECT_EQ(Back.findPrototype("Pair")->Params[1].Name, "Flags");
+}
+
+TEST(TypeParse, ExactLongDoublesReadBackAsTheProgramsOwn) {
+  // The prelude declares the name twice, once for compilers whose long
+  // double is as large; both read as the long double, which only the
+  // program's of that size is.
+  for (const auto &[Model, ABI] :
+       {std::pair(DataModel::LP64, RecordABI::Itanium),
+        std::pair(DataModel::ILP32, RecordABI::MinGW32),
+        std::pair(DataModel::LLP64, RecordABI::Microsoft)}) {
+    TypeLibrary Library(Model);
+    Library.setRecordABI(ABI);
+    ASSERT_TRUE(parseCTypes("typedef long double real;\n"
+                            "struct L { char c; long double d; double e; "
+                            "real r; };",
+                            Library)
+                    .ok());
+    for (const BuiltinSpelling Spelling :
+         {BuiltinSpelling::Portable, BuiltinSpelling::Windows}) {
+      RenderOptions Render;
+      Render.Spelling = Spelling;
+      Render.Asserts = true;
+      const std::string Header = renderTypes(Library, {}, Render);
+      TypeLibrary Back(Model);
+      Back.setRecordABI(ABI);
+      const ParseResult Result = parseCTypes(Header, Back);
+      ASSERT_TRUE(Result.ok()) << Header;
+      const RecordDef &L = recordOf(Back, "L");
+      ASSERT_EQ(L.Members.size(), 4u);
+      ASSERT_TRUE(L.Members[1].Type);
+      EXPECT_EQ(L.Members[1].Type->Kind, TypeExprKind::Builtin) << Header;
+      // The portable spelling of a long double of eight bytes is a double.
+      EXPECT_EQ(L.Members[1].Type->TheBuiltin,
+                Spelling == BuiltinSpelling::Portable &&
+                        Library.builtinBytes(Builtin::LongDouble) == 8
+                    ? Builtin::Double
+                    : Builtin::LongDouble);
+      EXPECT_EQ(shapeOf(L), shapeOf(recordOf(Library, "L")));
+      EXPECT_EQ(Back.types().size(), Library.types().size()) << Header;
+    }
+  }
+  TypeLibrary Narrow(DataModel::LLP64);
+  const ParseResult Wrong =
+      parseCTypes("struct W { neverd_long_double_16 d; };", Narrow);
+  ASSERT_EQ(Wrong.Problems.size(), 1u);
+  EXPECT_EQ(Wrong.Problems[0].Message,
+            "'neverd_long_double_16' is a long double of 16 bytes, where the "
+            "program's is of 8");
 }
 
 TEST(TypeParse, ChecksStaticAssertions) {

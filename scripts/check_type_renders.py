@@ -73,6 +73,13 @@ typedef long HRESULT;
 TARGETS = {
     "LLP64": ("x86_64-pc-windows-msvc", "x86_64-linux-gnu", "windows",
               "amd64", "x86_64-pc-windows-msvc", "host"),
+    # MinGW's records, Microsoft's with the x87's long double, which MSVC's
+    # compiler, whose long double is a double, then checks the portable
+    # spelling of too.
+    "mingw-x64": ("x86_64-w64-mingw32", "x86_64-pc-windows-msvc", "windows",
+                  "amd64", "x86_64-pc-windows-gnu", "host"),
+    "mingw-x86": ("i686-w64-mingw32", "i686-pc-windows-msvc", "windows",
+                  "386", "i686-pc-windows-gnu", "win32"),
     "ILP32": ("i686-pc-windows-msvc", "i686-linux-gnu", "windows", "386",
               "i686-pc-windows-msvc", "win32"),
     "LP64": ("x86_64-linux-gnu", "x86_64-linux-gnu", "windows", "amd64",
@@ -88,6 +95,14 @@ TARGETS = {
                      "i686-linux-android", "i386"),
     "aapcs32": ("armv7-linux-gnueabihf", None, "linux", "arm",
                 "armv7-unknown-linux-gnueabihf", "armv7"),
+}
+# The other compiler of each Windows target, which reads the same Windows
+# headers with a long double of its own.
+OTHER_WINDOWS_COMPILER = {
+    "x86_64-pc-windows-msvc": "x86_64-w64-mingw32",
+    "i686-pc-windows-msvc": "i686-w64-mingw32",
+    "x86_64-w64-mingw32": "x86_64-pc-windows-msvc",
+    "i686-w64-mingw32": "i686-pc-windows-msvc",
 }
 FETCH = "run scripts/fetch_render_toolchains.py"
 
@@ -167,8 +182,13 @@ class Checker:
                 units = [("c++", "-std=c++20", header.stem + "-cpp.cpp")]
                 if language == "c":
                     units.insert(0, ("c", "-std=c11", header.stem + ".c"))
+                # Portable C is every compiler's; Windows' names are both
+                # Windows compilers', MSVC's and MinGW's, whose long doubles
+                # differ.
                 targets = [msvc] + ([gnu] if gnu and spelling == "portable"
                                     else [])
+                if spelling == "windows" and msvc in OTHER_WINDOWS_COMPILER:
+                    targets.append(OTHER_WINDOWS_COMPILER[msvc])
                 for unit_language, standard, name in units:
                     unit = self.work / name
                     unit.write_text(f'#include "{header.name}"\n',
@@ -333,8 +353,9 @@ def main():
                         choices=sorted(TARGETS),
                         help="the data model --declare files lay out for")
     parser.add_argument("--record-abi", default=None,
-                        choices=("microsoft", "itanium", "apple-arm64",
-                                 "i386-sysv", "android-i386", "aapcs32"),
+                        choices=("microsoft", "mingw-x64", "mingw-x86",
+                                 "itanium", "apple-arm64", "i386-sysv",
+                                 "android-i386", "aapcs32"),
                         help="the record ABI --declare files lay out by "
                              "(default: the data model's), as a 32-bit Linux "
                              "library's i386-sysv")

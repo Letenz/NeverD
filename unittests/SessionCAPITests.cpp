@@ -4340,6 +4340,81 @@ TEST_F(SessionCAPITest, ThirtyTwoBitLinuxObjectsLayRecordsOutAsGCCDoes) {
             24);
 }
 
+TEST_F(SessionCAPITest, MinGWProgramsKeepTheX87LongDouble) {
+  // A Windows program's own DWARF is MinGW's, whose compilers lay
+  // Microsoft's records out with the x87's long double: sixteen bytes on
+  // x64, and on x86 twelve that align to four where a double aligns to
+  // eight.  clang-cl's DWARF names a long double that is a double, which
+  // keeps Microsoft's ABI.  Each joins the Windows libraries.
+  const auto Fixtures =
+      std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
+  struct Case {
+    const char *File;
+    const char *ABI;
+    const char *DataModel;
+    int64_t Size;
+    int64_t LongDouble;
+    int64_t LongDoubleBytes;
+    int64_t Double;
+    const char *Library;
+  };
+  for (const Case &Program : {Case{"mingw_types.x64.exe", "mingw-x64", "LLP64",
+                                   64, 16, 16, 32, "windows-user-x64"},
+                              Case{"mingw_types.x86.exe", "mingw-x86", "ILP32",
+                                   40, 4, 12, 16, "windows-user-x86"},
+                              Case{"mingw_types.msvc.exe", "microsoft", "LLP64",
+                                   40, 8, 8, 16, "windows-user-x64"}}) {
+    SCOPED_TRACE(Program.File);
+    neverd_session_destroy(Session);
+    Session = neverd_session_create();
+    std::ifstream Input(Fixtures / Program.File, std::ios::binary);
+    const std::string Image = write(
+        Program.File, std::string(std::istreambuf_iterator<char>(Input), {}));
+    ASSERT_EQ(neverd_session_load(Session, Image.c_str()), 1)
+        << takeString(neverd_last_error(Session));
+    auto Parsed = llvm::json::parse(
+        takeString(neverd_local_types_json(Session, nullptr)));
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    const llvm::json::Object *Root = Parsed->getAsObject();
+    ASSERT_TRUE(Root);
+    EXPECT_EQ(Root->getString("source"), "dwarf");
+    EXPECT_EQ(Root->getString("dataModel"), Program.DataModel);
+    EXPECT_EQ(Root->getString("recordABI"), Program.ABI);
+    bool Joined = false;
+    if (const llvm::json::Array *Headers = Root->getArray("headers"))
+      for (const llvm::json::Value &Header : *Headers)
+        if (const llvm::json::Object *Entry = Header.getAsObject())
+          Joined |= Entry->getString("name") == Program.Library &&
+                    !Entry->get("error");
+    EXPECT_TRUE(Joined) << llvm::formatv("{0:2}", *Parsed).str();
+
+    // In the program's own keywords: the portable spelling of a long double
+    // of eight bytes is a double.
+    auto Sample = llvm::json::parse(takeString(neverd_local_type_json(
+        Session, "sample", R"({"spelling":"keywords"})")));
+    ASSERT_TRUE(bool(Sample)) << takeString(neverd_last_error(Session));
+    const llvm::json::Object *Record = Sample->getAsObject();
+    ASSERT_TRUE(Record);
+    EXPECT_EQ(Record->getInteger("size"), Program.Size);
+    std::map<std::string, int64_t> Offsets, Sizes;
+    std::string LongDoubleType;
+    if (const llvm::json::Array *Members = Record->getArray("members"))
+      for (const llvm::json::Value &Member : *Members)
+        if (const llvm::json::Object *Field = Member.getAsObject()) {
+          const std::string Name = Field->getString("name").value_or("").str();
+          Offsets[Name] = Field->getInteger("offset").value_or(-1);
+          Sizes[Name] = Field->getInteger("size").value_or(-1);
+          if (Name == "ld")
+            LongDoubleType = Field->getString("type").value_or("").str();
+        }
+    EXPECT_EQ(Offsets["ld"], Program.LongDouble);
+    EXPECT_EQ(Offsets["d"], Program.Double);
+    // The member is the long double, not its bytes.
+    EXPECT_EQ(LongDoubleType, "long double");
+    EXPECT_EQ(Sizes["ld"], Program.LongDoubleBytes);
+  }
+}
+
 TEST_F(SessionCAPITest, AppleARMProgramsKeepALongDoubleThatIsADouble) {
   // Apple's 64-bit ARM lays records out as the Itanium ABI does, with a long
   // double that is a double, which the 64-bit System V targets' is not.
@@ -9026,7 +9101,6 @@ TEST_F(SessionCAPITest, PersistedAddressEncodingsKeepCanonicalSaveRoundTrips) {
                         Renames);
   }
 }
-
 
 #ifndef _WIN32
 TEST_F(SessionCAPITest, ProjectPreparationReportsSetupFailures) {

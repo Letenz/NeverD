@@ -714,6 +714,63 @@ TEST(TypeRender, CCharacterTypesLeaveCppItsKeywords) {
                         "typedef uint16_t char16_t;"));
 }
 
+TEST(TypeRender, RecordLongDoublesAreAsLargeOnEveryCompiler) {
+  // A record's long double of 16 bytes is the compiler's own where it is as
+  // large, and its bytes elsewhere, as MSVC's long double is a double; a
+  // signature passes the program's long double, and the keywords spelling
+  // keeps it.
+  TypeLibrary Library(DataModel::LP64);
+  ASSERT_TRUE(parseCTypes("typedef long double real;\n"
+                          "struct Wide { char c; long double d;\n"
+                          "  long double (*scale)(long double); real r; };\n"
+                          "long double half(long double x);\n",
+                          Library)
+                  .ok());
+  RenderOptions Options = in(Language::C);
+  Options.Prototypes = true;
+  const std::string Portable = renderTypes(Library, {}, Options);
+  EXPECT_TRUE(contains(Portable, "neverd_long_double_16 d;")) << Portable;
+  // A typedef the record holds is as large.
+  EXPECT_TRUE(contains(Portable, "typedef neverd_long_double_16 real;"))
+      << Portable;
+  EXPECT_TRUE(contains(Portable, "#if (defined(__SIZEOF_LONG_DOUBLE__) && "
+                                 "__SIZEOF_LONG_DOUBLE__ == 16)\ntypedef long "
+                                 "double neverd_long_double_16;\n#else\n"
+                                 "typedef struct DECLSPEC_ALIGN(16)\n{\n    "
+                                 "uint8_t bytes[16];\n} "
+                                 "neverd_long_double_16;\n#endif\n"))
+      << Portable;
+  EXPECT_TRUE(contains(Portable, "long double (*scale)(long double);"))
+      << Portable;
+  EXPECT_TRUE(contains(Portable, "long double half(long double x);"))
+      << Portable;
+  // A type shown alone, without the prelude, keeps the program's name.
+  const std::string Alone = renderType(Library, *Library.find("Wide"), Options);
+  EXPECT_TRUE(contains(Alone, "long double d;")) << Alone;
+  EXPECT_FALSE(contains(Alone, "neverd_long_double")) << Alone;
+  Options.Spelling = BuiltinSpelling::Keywords;
+  const std::string Keywords = renderTypes(Library, {}, Options);
+  EXPECT_TRUE(contains(Keywords, "long double d;")) << Keywords;
+  EXPECT_FALSE(contains(Keywords, "neverd_long_double")) << Keywords;
+
+  // Windows' spelling of MSVC's long double, which MinGW's compilers make
+  // sixteen bytes: a double for them.
+  TypeLibrary Windows(DataModel::LLP64);
+  ASSERT_TRUE(
+      parseCTypes("struct Narrow { char c; long double d; };\n", Windows).ok());
+  Options.Spelling = BuiltinSpelling::Windows;
+  const std::string Named = renderTypes(Windows, {}, Options);
+  EXPECT_TRUE(contains(Named, "neverd_long_double_8 d;")) << Named;
+  EXPECT_TRUE(contains(Named, "#if defined(_MSC_VER) || "
+                              "(defined(__SIZEOF_LONG_DOUBLE__) && "
+                              "__SIZEOF_LONG_DOUBLE__ == 8)\ntypedef long "
+                              "double neverd_long_double_8;\n#else\ntypedef "
+                              "double neverd_long_double_8;\n#endif\n"))
+      << Named;
+  Options.Spelling = BuiltinSpelling::Portable;
+  EXPECT_TRUE(contains(renderTypes(Windows, {}, Options), "double d;"));
+}
+
 TEST(TypeRender, RustImportsCoreVoidWhereItIsSpelled) {
   // An import nothing uses warns, which a check of warnings fails on.
   TypeLibrary Library;
