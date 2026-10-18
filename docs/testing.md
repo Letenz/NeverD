@@ -4,6 +4,11 @@
 
 # Testing NeverD
 
+`NeverDSymMemoryKnowledgeTests` checks caller-proved memory-fact import,
+byte order, canonical aliases, transactional conflicts, modular relative
+coordinates, absolute overflow, memory epochs and later store invalidation.
+Snapshots contain materialized facts only; history never seeds their bytes.
+
 `AndroidFDSet.*` checks Bionic checked descriptor bitmaps at O0/O2 with ordinary,
 packed and RELR relocations on available CPU backends. Independent byte oracles
 cover word boundaries, untouched canaries, boolean queries, full-width extents,

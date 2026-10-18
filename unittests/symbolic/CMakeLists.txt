@@ -2,6 +2,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymConcreteTests.cpp
   SymDispatchTests.cpp
   SymExecTests.cpp
+  SymMemoryKnowledgeTests.cpp
   SymSegmentedMemoryTests.cpp
   SymRegionWrapTests.cpp
   SymStorePreservationTests.cpp
@@ -64,4 +65,9 @@ add_neverd_unittest(NeverDSymbolicSparseContextTests
 
 target_include_directories(NeverDSymbolicSparseContextTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
+)
+
+add_neverd_unittest(NeverDSymMemoryKnowledgeTests
+  SymMemoryKnowledgeTests.cpp
+  LINK_COMPONENTS Symbolic Solver
 )
