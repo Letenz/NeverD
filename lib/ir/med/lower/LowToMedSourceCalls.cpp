@@ -267,8 +267,16 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
                                                Error->Location.ValueBytes)));
           Op.HasSourceErrorResult = true;
         }
+      // Generic callee summaries can already have published integer/vector
+      // register uses (notably SysV x64). A validated source ABI owns their
+      // order and lanes. Only replace that complete summary shape; explicit
+      // LowIR arguments and exact formatted calls retain their own contract.
+      const bool SummaryArguments =
+          !Op.ExactArguments && Op.CalleeRegisterArgs >= 0 &&
+          Op.NumInputs == 1u + Op.CalleeRegisterArgs +
+                              std::max<int>(0, Op.CalleeVectorArgs);
       if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
-          Op.NumInputs != 1) {
+          (Op.NumInputs != 1 && !SummaryArguments)) {
         Ops.push_back(std::move(Op));
         continue;
       }
@@ -359,6 +367,14 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
         Ops.push_back(std::move(Op));
         continue;
       }
+      // Do this only after every binding check succeeds, so an unavailable
+      // or invalid source declaration leaves the generic arguments intact.
+      Op.NumInputs = 1;
+      Op.CalleeRegisterArgs = -1;
+      Op.CalleeVectorArgs = -1;
+      Op.CalleeVectorSlots = 0;
+      Op.CalleeVectorArgWidths = 0;
+      Op.CalleeStackArgs = -1;
       for (size_t I = 0; I < Parameters.size(); ++I) {
         const auto &Location = Parameters[I].Location;
         MedVar Argument;

@@ -7869,6 +7869,8 @@ DarwinFileSystemOptions and DarwinFileSystemTest cover exact wide/signed fields,
 
 `DarwinCreatedAttributesPublic.PreserveProvidersAcrossCAndCLI` registers five platform cases separately, preserving all 180 C API/CLI executions under the original 30-second case limit. `DarwinCreatedRegularAttributesRejectMalformedProvidersBeforeLoading` retains the ten invalid inputs. Mobile policy regressions check unchanged text and reject altered directives; scalar, calls/Blocks and Swift recovery must rebuild and execute all twelve variants, followed by `test_mobile_ios_single_session.py`.
 
+`SourceABI.SourceCallsReplaceGenericRegisterArgumentSummaries` in `NeverDObjCSourceCallTests` checks source argument order, narrow lanes and Swift context carriers on x86-64 and ARM64 after generic call summaries are available. `SourceABI.UnboundSourceCallsRetainGenericArguments` checks disabled, missing and invalid bindings plus explicit LowIR and formatted-call operands. The mobile matrix must still recover, compile and independently execute every original/rebuilt variant; complete method counts alone do not establish matching behavior.
+
 ## Declared mount enumeration
 
 Declared mount enumeration now provides ordered cached observations and explicitly supplied successful refreshes. Each process keeps its own cache. Duplicate records remain separate, and an empty table is distinct from an unknown table. This supports another common filesystem query used by Apple applications; dyld, Mach IPC and the full Objective-C/Swift and Foundation/UIKit environment remain incomplete.
