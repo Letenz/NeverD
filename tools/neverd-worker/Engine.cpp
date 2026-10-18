@@ -1564,6 +1564,7 @@ Json Engine::analysisSnapshot() {
   }
   options["path"] = ownedString(neverd_session_file_path(session_));
   options["analysis"] = false;
+  options["warm"] = false;
   options["read_only"] = true;
   return {{"schema", 1},
           {"open", options},
@@ -1847,7 +1848,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     const auto path = fs::canonical(utf8Path(pathText), ec);
     if (ec || !fs::is_regular_file(path, ec))
       throw Error("load_failed", "Input is not an accessible regular file");
-    for (const char *flag : {"read_only", "debug_info", "analysis"})
+    for (const char *flag : {"read_only", "debug_info", "analysis", "warm"})
       if (p.contains(flag) && !p[flag].is_boolean())
         throw Error("invalid_request", std::string(flag) + " must be boolean");
     if (p.contains("pdb") && !p.at("pdb").is_object())
@@ -2024,7 +2025,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     symbolsInput_ = symbolsDeclined ? Json{{"mode", "none"}} : Json(nullptr);
     pdbDisplayNames_ = Json::array();
     backgroundAnalysis_ = p.value("analysis", true);
-    warmFunctions_ = p.value("warm", false);
+    // Preparing functions is the last step of idle-time analysis.
+    warmFunctions_ = backgroundAnalysis_ && p.value("warm", false);
     restartWarming();
     dirty_ = false;
     analyzed_ = false;

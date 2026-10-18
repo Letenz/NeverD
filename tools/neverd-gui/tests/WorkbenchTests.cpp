@@ -2140,6 +2140,31 @@ private slots:
     QVERIFY(!firstFinished);
   }
 
+  void idleAnalysisPreparesFunctionsUnlessTurnedOff() {
+    // The load dialog's Analysis option also has the worker prepare each
+    // function for its first decompile in idle time; turned off, it
+    // prepares none.
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    const auto preparation = [&] {
+      return session.background()
+          .value("warm")
+          .toObject()
+          .value("state")
+          .toString();
+    };
+    session.open(writeFixture(directory, QStringLiteral("prepared.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(preparation(), QStringLiteral("complete"),
+                              OpenTimeoutMs);
+    LoadOptions options;
+    options.analysis = false;
+    session.open(writeFixture(directory, QStringLiteral("unprepared.bin")),
+                 options);
+    QTRY_COMPARE_WITH_TIMEOUT(preparation(), QStringLiteral("off"),
+                              OpenTimeoutMs);
+  }
+
   void analysisPagesKeepTheirReplicaWhenAnotherFunctionQueues() {
     QTemporaryDir directory;
     Session session(QString::fromLocal8Bit(TEST_WORKER));

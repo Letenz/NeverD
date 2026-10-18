@@ -585,7 +585,8 @@ void Session::sendOpen(const QString &requested, const QString &path,
             .object();
   QJsonObject payload{{"path", path},
                       {"debug_info", options.debugInfo},
-                      {"analysis", options.analysis}};
+                      {"analysis", options.analysis},
+                      {"warm", options.analysis}};
   if (!options.pdb.isEmpty())
     payload.insert(QStringLiteral("pdb"), options.pdb);
   if (!options.dwarf.isEmpty())

@@ -58,7 +58,17 @@ def run(executable):
         ok(client, "open", {"path": str(root / "warm-unavailable.bin"), "warm": True})
         unavailable = warm_state(client, lambda w: w["state"] not in ("pending", "running"))
         assert unavailable["state"] == "unavailable", unavailable
-        print("warm functions: off by default, running and complete, restart on change, full, unavailable")
+        bad = client.call("open", {"path": str(root / "plain.bin"), "warm": "yes"})
+        assert bad["status"] == "error" and bad["error"]["code"] == "invalid_request", bad
+        # Preparing functions is part of idle-time analysis.
+        ok(client, "open", {"path": str(root / "plain.bin"), "analysis": False, "warm": True})
+        assert warm_state(client, lambda w: w["state"] == "off")["prepared"] == 0
+        # A read-only replica of the session prepares nothing either.
+        ok(client, "open", {"path": str(root / "warm-slow.bin"), "warm": True})
+        snapshot = ok(client, "analysis_snapshot")
+        assert snapshot["open"]["warm"] is False and snapshot["open"]["analysis"] is False, snapshot
+        print("warm functions: off by default, running and complete, restart on change, full, unavailable,"
+              " boolean, needs analysis, not in replicas")
 
 
 if __name__ == "__main__":
