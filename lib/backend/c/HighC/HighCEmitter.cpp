@@ -1720,6 +1720,10 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     const std::string Name = cNamedTypeSpelling(Tag);
     if (Name.empty() || RecordTypedefs.count(Name))
       continue;
+    if (llvm::is_contained(RecordDefinitions.HeaderTypedefs, Name)) {
+      RecordTypedefs.insert(Name);
+      continue;
+    }
     if (GlobalIdentifierAllocator.holds(Name) || CallTargets.count(Name) ||
         libc::headerOfDataObject(Name)) {
       TagRecords.emplace(Name, Union);

@@ -23,6 +23,7 @@
 #include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/LibCResult.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -4555,8 +4556,19 @@ TypeRef HighCWriter::callResultType(const HighExpr &Call) const {
       }
     }
   } else if (const MsvcCallee *Msvc =
-                 msvcCallee(callIdentifier(Call), Opts.Format))
+                 msvcCallee(callIdentifier(Call), Opts.Format)) {
     ReturnType = msvcSyntheticReturn(Msvc->ReturnKind);
+  } else if (const llvm::StringRef Symbol = headerDeclaredCallee(Call);
+             !Symbol.empty() && callIdentifier(Call) == Symbol &&
+             libc::libcResult(Symbol, Opts.libcVariant()) ==
+                 libc::LibCResult::Pointer) {
+    // A routine a C library header declares returns the pointer its
+    // declaration says, which no prototype here gives where the header
+    // declares the routine variadic: sem_open's sem_t *.  A call through
+    // an import's slot returns what the slot's declaration says.
+    ReturnType = NdType::makePtr();
+    ReturnType->Size = pointerBytes(Opts.TheArch);
+  }
   // A result whose type C cannot spell keeps the destination's type.
   if (ReturnType && !hasCValueLayout(ReturnType))
     ReturnType = nullptr;

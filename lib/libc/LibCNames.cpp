@@ -38,6 +38,7 @@
 #include "neverd/libc/LibCResult.h"
 #include "neverd/libc/LibCSched.h"
 #include "neverd/libc/LibCSearch.h"
+#include "neverd/libc/LibCSemaphore.h"
 #include "neverd/libc/LibCSetjmp.h"
 #include "neverd/libc/LibCSignal.h"
 #include "neverd/libc/LibCSpawn.h"
@@ -142,6 +143,7 @@ struct Registry {
     registerFunctions(All, ToHeader, kRegexFunctions, kRegexHeader);
     registerFunctions(All, ToHeader, kSchedFunctions, kSchedHeader);
     registerFunctions(All, ToHeader, kSearchFunctions, kSearchHeader);
+    registerFunctions(All, ToHeader, kSemaphoreFunctions, kSemaphoreHeader);
     registerFunctions(All, ToHeader, kSpawnFunctions, kSpawnHeader);
     registerFunctions(All, ToHeader, kStringsFunctions, kStringsHeader);
     registerFunctions(All, ToHeader, kTermiosFunctions, kTermiosHeader);
@@ -234,6 +236,7 @@ struct ArityRegistry {
     registerArity(Map, kRegexArity);
     registerArity(Map, kSchedArity);
     registerArity(Map, kSearchArity);
+    registerArity(Map, kSemaphoreArity);
     registerArity(Map, kSignalArity);
     registerArity(Map, kSpawnArity);
     registerArity(Map, kTermiosArity);

@@ -573,10 +573,16 @@ void LLVMCWriter::writeRecordDefinitions(std::string &Text) {
       DeclareIncomplete({});
       return;
     }
-  DeclareIncomplete(std::set<std::string>(Spelled.begin(), Spelled.end()));
+  // A header the unit includes names some records by a typedef alone, which
+  // the unit spells them by.
+  std::set<std::string> Typedefs(Spelled.begin(), Spelled.end());
+  Typedefs.insert(Definitions.HeaderTypedefs.begin(),
+                  Definitions.HeaderTypedefs.end());
+  DeclareIncomplete(Typedefs);
   for (const std::string &Name : Spelled)
-    OS << "typedef " << (Definitions.Tags[Name] ? "union " : "struct ") << Name
-       << " " << Name << ";\n";
+    if (!llvm::is_contained(Definitions.HeaderTypedefs, Name))
+      OS << "typedef " << (Definitions.Tags[Name] ? "union " : "struct ")
+         << Name << " " << Name << ";\n";
   if (!Definitions.Text.empty())
     OS << "\n" << Definitions.Text << "\n";
   // An enumeration's type is complete only where it is defined.

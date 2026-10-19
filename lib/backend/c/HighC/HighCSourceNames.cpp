@@ -160,7 +160,10 @@ void HighCWriter::writeSourceRecordDeclarations(
         if (Ordinary)
           TagRecords.emplace(Name, Keyword == llvm::StringRef("union"));
         else if (Declared.insert(Name).second) {
-          OS << "typedef " << Keyword << " " << Name << " " << Name << ";\n";
+          // A header the unit includes names some records by a typedef
+          // alone, which the unit spells them by.
+          if (!llvm::is_contained(RecordDefinitions.HeaderTypedefs, Name))
+            OS << "typedef " << Keyword << " " << Name << " " << Name << ";\n";
           RecordTypedefs.insert(Name);
         }
       }

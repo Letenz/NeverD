@@ -1214,6 +1214,38 @@ TEST(TypeRender, RustAndGoProgramsTypesCompileAsC) {
   EXPECT_FALSE(contains(Padded, "unsafe.Offsetof(Padded{}._)")) << Padded;
 }
 
+TEST(TypeRender, UnitsSpellHeaderTypedefRecordsByTheirNames) {
+  // glibc names fd_set by a typedef alone (`typedef struct {...} fd_set;`),
+  // which leaves it no tag: a unit that takes it from its header spells it
+  // by that name, in its checks and in the records that hold it, and lists
+  // it, so that the unit declares no typedef of its own, which would
+  // contradict the header's.
+  TypeLibrary Library(DataModel::LP64);
+  const TypeLibrary *Glibc = headerLibrary(HeaderLibrary::LinuxX64);
+  ASSERT_NE(Glibc, nullptr);
+  const LocalType *Theirs = Glibc->find("fd_set");
+  ASSERT_NE(Theirs, nullptr);
+  ASSERT_TRUE(Theirs->TypedefNamed);
+  ASSERT_FALSE(Theirs->Header.empty());
+  mergeHeaderTypes(Library, *Glibc);
+  ASSERT_TRUE(parseCTypes("struct waiter { fd_set readable; fd_set *more; "
+                          "int count; };\n",
+                          Library)
+                  .ok());
+  RenderOptions Options = in(Language::C);
+  Options.SystemLibrary = HeaderLibrary::LinuxX64;
+  Options.Asserts = true;
+  const EmbeddedC Embedded =
+      renderEmbeddedC(Library, {Library.find("waiter")}, Options);
+  EXPECT_TRUE(contains(Embedded.Text, "#include <" + Theirs->Header + ">\n"))
+      << Embedded.Text;
+  EXPECT_TRUE(contains(Embedded.Text, "static_assert(sizeof(fd_set) == "))
+      << Embedded.Text;
+  EXPECT_TRUE(contains(Embedded.Text, "fd_set readable;")) << Embedded.Text;
+  EXPECT_FALSE(contains(Embedded.Text, "struct fd_set")) << Embedded.Text;
+  EXPECT_TRUE(llvm::is_contained(Embedded.HeaderTypedefs, "fd_set"));
+}
+
 TEST(TypeRender, UnitsTakeTheSystemsOwnTypesFromItsHeaders) {
   // A decompiled unit includes the C library's headers, which define what a
   // program's record holds, struct stat: defined again, it would not
