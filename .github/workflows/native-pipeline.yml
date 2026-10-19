@@ -166,6 +166,13 @@ jobs:
           assert all(case.get('status') == 'run' and not any(child.tag in {'failure', 'error', 'skipped'} for child in case) for case in cases)
           (build / 'source.txt').write_text(subprocess.check_output(['git', '-C', 'third_party/capstone', 'rev-parse', 'HEAD'], text=True))
           print(f'Capstone: {len(cases)} passed, zero failed, zero skipped')
+          subprocess.run(['ctest', '--test-dir', str(build), '-R', '^integration_py_cstest$',
+                          '--no-tests=error', '--output-on-failure',
+                          '--output-junit', 'cstest-integration.xml'], check=True)
+          traversal = list(ET.parse(build / 'cstest-integration.xml').getroot().iter('testcase'))
+          assert len(traversal) == 1 and traversal[0].get('name') == 'integration_py_cstest'
+          assert traversal[0].get('status') == 'run' and not any(
+              child.tag in {'failure', 'error', 'skipped'} for child in traversal[0])
           decoder = build / 'suite/cstest' / ('cstest.exe' if os.name == 'nt' else 'cstest')
           details = subprocess.run([str(decoder), 'third_party/capstone/tests/details/arm.yaml',
                                     'third_party/capstone/tests/details/aarch64.yaml'],
@@ -339,6 +346,7 @@ jobs:
             build-capstone-core/CMakeCache.txt
             build-capstone-core/source.txt
             build-capstone-core/results.xml
+            build-capstone-core/cstest-integration.xml
             build-capstone-core/arm-details.log
             build-capstone-core/arm-details.json
             build-capstone-core/Testing/Temporary/LastTest.log
