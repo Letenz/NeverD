@@ -114,7 +114,8 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
   auto considerStore = [&](const std::vector<MedOp> &Ops, int J) {
     const MedOp &Prev = Ops[static_cast<size_t>(J)];
     if (Prev.Opcode != NdOp::STORE || Prev.NumInputs < 2 ||
-        Prev.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+        Prev.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        (Scan.IsPcRootedStore && Scan.IsPcRootedStore(Prev)))
       return;
     MedVar Stored = Prev.Inputs[1];
     // Incoming callee-save spills (SSA 0) are prologue saves. A computed
@@ -1181,6 +1182,10 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     return false;
   };
   Scan.IsNoArgumentStore = IsNoArgumentStore;
+  auto IsPcRootedStore = [&](const MedOp &Store) {
+    return I386PcRootedStores.count({Store.Addr, Store.OriginSeq}) != 0;
+  };
+  Scan.IsPcRootedStore = IsPcRootedStore;
   Scan.FrameSize = CurMed ? CurMed->FrameSize : 0;
   if (CurMed && LoadedEntrySlotsFor != CurMed) {
     LoadedEntrySlots.clear();

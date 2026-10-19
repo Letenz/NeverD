@@ -35,6 +35,9 @@
 // `clang_pass_result`, from -O0 code, stores the result of a call through
 // a table at 4(%esp) and calls the next entry, leaving 0(%esp) unwritten,
 // as android_x86_server's `openssl_api_10_t::library_init` does.
+//   int clang_call_keep_got(void (*f)(void)) { f(); return factor; }
+// built at -O0 spills the GOT address to 4(%esp) before calling `f` and
+// reloads it to read `factor`.
 
 	.text
 	.p2align 4
@@ -334,6 +337,38 @@ clang_pass_result:
 	retl
 	.cfi_endproc
 	.size	clang_pass_result, .-clang_pass_result
+
+	.p2align 4
+	.globl	clang_call_keep_got
+	.type	clang_call_keep_got, @function
+clang_call_keep_got:
+	.cfi_startproc
+	pushl	%ebp
+	.cfi_def_cfa_offset 8
+	.cfi_offset %ebp, -8
+	movl	%esp, %ebp
+	.cfi_def_cfa_register %ebp
+	pushl	%esi
+	.cfi_offset %esi, -12
+	andl	$-16, %esp
+	subl	$16, %esp
+	calll	.Lkeep_got_pc
+.Lkeep_got_pc:
+	popl	%eax
+.Lkeep_got_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Lkeep_got_got-.Lkeep_got_pc), %eax
+	movl	%eax, 4(%esp)
+	movl	8(%ebp), %eax
+	calll	*%eax
+	movl	4(%esp), %ecx
+	movl	factor@GOTOFF(%ecx), %eax
+	leal	-4(%ebp), %esp
+	popl	%esi
+	popl	%ebp
+	.cfi_def_cfa %esp, 4
+	retl
+	.cfi_endproc
+	.size	clang_call_keep_got, .-clang_call_keep_got
 
 	.section	.rodata
 	.p2align 2
