@@ -272,6 +272,7 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
           if (!Established)
             return invalid(Key);
           Snapshot.application_loader_established = *Established;
+          continue;
         } else if (Key == field::ApplicationClassLookupFailures) {
           const auto *Failures = Value.getAsArray();
           if (!Failures || Failures->size() > 256)

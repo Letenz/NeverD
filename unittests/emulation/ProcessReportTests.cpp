@@ -1759,6 +1759,17 @@ TEST(ProcessReport, AndroidLoaderMayBeEstablishedBeforeApplication) {
     "class_lookup_failures":[{"loader":"application","binary_name":"test.Absent","message":null}]}}})");
   ASSERT_TRUE(bool(Input)) << llvm::toString(Input.takeError());
   EXPECT_EQ(Input->Android->Application->application_loader_established, true);
+  for (auto Phase : {"unattached", "attached", "application"}) {
+    bool Established = llvm::StringRef(Phase) == "application";
+    auto Valid = processOptionsFromJSON(
+        std::string(
+            R"({"android":{"jni":true,"application_snapshot":{"phase":")") +
+        Phase + R"(","application_loader_established":)" +
+        (Established ? "true" : "false") + "}}}");
+    ASSERT_TRUE(bool(Valid)) << llvm::toString(Valid.takeError());
+    EXPECT_EQ(Valid->Android->Application->application_loader_established,
+              Established);
+  }
   for (auto Invalid :
        {R"({"phase":"attached","application_loader_established":null})",
         R"({"phase":"attached","application_loader_established":1})",
