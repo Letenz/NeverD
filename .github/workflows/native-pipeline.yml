@@ -17,6 +17,7 @@ on:
       - 'cmake/NeverDForks*'
       - '.gitmodules'
       - 'third_party/forks.json'
+      - 'third_party/capstone'
       - 'third_party/highway'
       - 'third_party/simdutf'
       - 'third_party/simdjson'
@@ -46,6 +47,7 @@ on:
       - 'cmake/NeverDForks*'
       - '.gitmodules'
       - 'third_party/forks.json'
+      - 'third_party/capstone'
       - 'third_party/highway'
       - 'third_party/simdutf'
       - 'third_party/simdjson'
@@ -140,6 +142,8 @@ jobs:
           python scripts/build.py build-abi --parallel 4 --target \
             neverd neverd-worker NeverDAllocatorTests \
             NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests \
+            NeverDX86NativeStateAuditTests NeverDX86LegacyAlignedMoveTests \
+            NeverDX86UndefinedEffectsTests \
             NeverDHighControlFlowTests NeverDAccelerationTests \
             NeverDStringScanTests NeverDTextEncodingTests \
             NeverDPythonRuntimeTests NeverDPythonPluginTests
@@ -159,6 +163,9 @@ jobs:
           pipeline_minimum = 40 + (os.name != 'nt') + (sys.platform == 'linux')
           for owner, minimum in (('NeverDFPParameterMaskTests', 180),
                                   ('NeverDPipelineOutcomeTests', pipeline_minimum),
+                                  ('NeverDX86NativeStateAuditTests', 8),
+                                  ('NeverDX86LegacyAlignedMoveTests', 7),
+                                  ('NeverDX86UndefinedEffectsTests', 52),
                                   ('NeverDSupportThreadTests', 12),
                                   ('NeverDHighControlFlowTests', 420),
                                   ('NeverDAccelerationTests', 14),
@@ -237,6 +244,8 @@ jobs:
           python scripts/build.py build-abi --parallel 4 --target \
             neverd neverd-worker NeverDAllocatorTests \
             NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests \
+            NeverDX86NativeStateAuditTests NeverDX86LegacyAlignedMoveTests \
+            NeverDX86UndefinedEffectsTests \
             NeverDHighControlFlowTests NeverDAccelerationTests \
             NeverDStringScanTests NeverDTextEncodingTests \
             NeverDPythonRuntimeTests NeverDPythonPluginTests

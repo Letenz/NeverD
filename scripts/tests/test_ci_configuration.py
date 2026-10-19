@@ -26,6 +26,25 @@ STYLE_EXPECTATIONS = ROOT / "scripts" / "tests" / "CIStyleExpectations.def"
 
 
 class CiConfigurationTests(unittest.TestCase):
+    def test_capstone_updates_run_native_and_product_contracts(self):
+        native = WORKFLOW.with_name("native-pipeline.yml").read_text()
+        product = WORKFLOW.with_name("web-windows-qualification.yml").read_text()
+        for source in (native, product):
+            push, pull_request = source.split("  pull_request:\n", 1)
+            self.assertIn("- 'third_party/capstone'", push.split("  push:\n", 1)[1])
+            self.assertIn("- 'third_party/capstone'", pull_request.split("\npermissions:", 1)[0])
+
+        owners = {"NeverDX86NativeStateAuditTests", "NeverDX86LegacyAlignedMoveTests",
+                  "NeverDX86UndefinedEffectsTests"}
+        for name in ("Build production and complete focused test owners",
+                     "Repeat native contracts with the optional task scheduler"):
+            step = self.workflow_step_containing(native, name)
+            command = step.split("--target", 1)[1].split("\n          python", 1)[0]
+            self.assertTrue(owners <= set(re.findall(r"\bNeverD\w+Tests\b", command)))
+        audit = self.workflow_step_containing(native, "Require every focused C++ case")
+        for owner in owners:
+            self.assertIn("('" + owner + "',", audit)
+
     def test_msvc_test_targets_select_extended_coff_objects(self):
         for msvc_style in (False, True):
             with self.subTest(msvc_style=msvc_style), tempfile.TemporaryDirectory(
