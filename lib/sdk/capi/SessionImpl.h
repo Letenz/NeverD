@@ -340,6 +340,40 @@ struct Session {
     std::map<va_t, bool> FunctionEdits;
   };
   std::optional<FunctionListInputs> ListInputs;
+  /// Advances with every change to Functions or to their names, so that what
+  /// was read from the list knows whether the list is still the one it read.
+  /// Code that changes the list calls functionListChanged().
+  uint64_t FunctionListRevision = 0;
+  void functionListChanged() { ++FunctionListRevision; }
+  /// What refreshFunctionNames last derived the names from.  From the same
+  /// inputs it derives the names the list holds, so it keeps them: an image
+  /// lists tens of thousands of functions.
+  struct FunctionNameInputs {
+    uint64_t Revision;
+    const FuncInfo *List;
+    size_t Count;
+    std::map<va_t, std::string> Renames;
+    std::unordered_map<uint64_t, std::string> Signatures;
+  };
+  std::optional<FunctionNameInputs> NamesDerivedFrom;
+  /// Where functionIndexNamed() finds a name, read from the list as it was
+  /// at Revision.
+  struct FunctionNameIndex {
+    uint64_t Revision;
+    const FuncInfo *List;
+    size_t Count;
+    /// The first function listed under each name.
+    std::unordered_map<std::string, size_t> FirstNamed;
+    /// The first function listed at each entry.
+    std::unordered_map<va_t, size_t> FirstAt;
+    /// The addresses the image exports under each name, in export order.
+    std::unordered_map<std::string, std::vector<va_t>> Exported;
+  };
+  std::optional<FunctionNameIndex> NameIndex;
+  /// The first function listed under \p Name, else the first listed at an
+  /// address the image exports under it, taking the exports in order: a
+  /// linker that folds identical functions exports several names for one.
+  std::optional<size_t> functionIndexNamed(llvm::StringRef Name);
   /// Emits the session's C (cEmitter()), keeping the image's function names
   /// from one emission to the next.  Those name the symbol table Symbols
   /// held when it read them; clearPipeline() drops them.
@@ -620,6 +654,7 @@ struct Session {
   }
 
   void resetFunctionsFromImage() {
+    functionListChanged();
     ListInputs.reset();
     Functions.clear();
     OriginalNames.clear();
@@ -704,11 +739,13 @@ struct Session {
                            Name, NameOrigin::Analysis});
       Added = true;
     }
-    if (Added)
+    if (Added) {
+      functionListChanged();
       std::stable_sort(Functions.begin(), Functions.end(),
                        [](const FuncInfo &Left, const FuncInfo &Right) {
                          return Left.Entry < Right.Entry;
                        });
+    }
   }
 
   /// Add the detector's entries the list does not hold yet, keeping it in
@@ -732,11 +769,13 @@ struct Session {
                            Name, NameOrigin::Analysis});
       Added = true;
     }
-    if (Added)
+    if (Added) {
+      functionListChanged();
       std::stable_sort(Functions.begin(), Functions.end(),
                        [](const FuncInfo &Left, const FuncInfo &Right) {
                          return Left.Entry < Right.Entry;
                        });
+    }
     return Added;
   }
 

@@ -27,7 +27,15 @@ using namespace neverd;
 using namespace neverd::sdk;
 
 void Session::refreshFunctionNames() {
-  const auto Names = SigDB.buildNameMap();
+  auto Names = SigDB.buildNameMap();
+  // Deriving the names again from what they were derived from gives the
+  // names the list holds.
+  if (NamesDerivedFrom && NamesDerivedFrom->Revision == FunctionListRevision &&
+      NamesDerivedFrom->List == Functions.data() &&
+      NamesDerivedFrom->Count == Functions.size() &&
+      NamesDerivedFrom->Renames == Renames &&
+      NamesDerivedFrom->Signatures == Names)
+    return;
   // The list is in address order, as the map is, so each name lands at or
   // just before where the last one did instead of being searched for.
   auto Next = OriginalNames.begin();
@@ -51,6 +59,10 @@ void Session::refreshFunctionNames() {
       F.Origin = NameOrigin::User;
     }
   }
+  functionListChanged();
+  NamesDerivedFrom =
+      FunctionNameInputs{FunctionListRevision, Functions.data(),
+                         Functions.size(), Renames, std::move(Names)};
 }
 
 /// The addresses signatures are tried at: every function the session lists,

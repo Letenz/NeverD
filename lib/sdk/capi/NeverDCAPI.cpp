@@ -66,6 +66,36 @@ using namespace neverd::sdk;
 
 namespace neverd::sdk {
 
+std::optional<size_t> Session::functionIndexNamed(llvm::StringRef Name) {
+  // The list an image's functions make is read once for every name looked up
+  // in it, rather than once for each.
+  if (!NameIndex || NameIndex->Revision != FunctionListRevision ||
+      NameIndex->List != Functions.data() ||
+      NameIndex->Count != Functions.size()) {
+    FunctionNameIndex Index{
+        FunctionListRevision, Functions.data(), Functions.size(), {}, {}, {}};
+    Index.FirstNamed.reserve(Functions.size());
+    Index.FirstAt.reserve(Functions.size());
+    for (size_t I = 0; I < Functions.size(); ++I) {
+      Index.FirstNamed.try_emplace(Functions[I].Name, I);
+      Index.FirstAt.try_emplace(Functions[I].Entry, I);
+    }
+    for (const Export &Exp : Img.Exports)
+      Index.Exported[Exp.Name].push_back(Exp.Addr);
+    NameIndex = std::move(Index);
+  }
+  if (const auto Named = NameIndex->FirstNamed.find(Name.str());
+      Named != NameIndex->FirstNamed.end())
+    return Named->second;
+  if (const auto Exported = NameIndex->Exported.find(Name.str());
+      Exported != NameIndex->Exported.end())
+    for (const va_t Addr : Exported->second)
+      if (const auto At = NameIndex->FirstAt.find(Addr);
+          At != NameIndex->FirstAt.end())
+        return At->second;
+  return std::nullopt;
+}
+
 bool Session::synchronizeFunctions() {
   if (Img.Arch != Arch::SBF) {
     // Native function discovery lives in the pipeline, not in the loader.
@@ -121,6 +151,7 @@ bool Session::synchronizeFunctions() {
                      [](const FuncInfo &Left, const FuncInfo &Right) {
                        return Left.Entry < Right.Entry;
                      });
+    functionListChanged();
     NativeFunctionsSynchronized = true;
     refreshFunctionNames();
     return true;
@@ -172,6 +203,7 @@ bool Session::synchronizeFunctions() {
             [](const FuncInfo &Left, const FuncInfo &Right) {
               return Left.Entry < Right.Entry;
             });
+  functionListChanged();
   SBFFunctionsSynchronized = true;
   return true;
 }
@@ -993,17 +1025,8 @@ int neverd_func_find_by_name(neverd_session_t Sess, const char *Name) {
   auto *S = toSession(Sess);
   if (!S || !S->Loaded || !Name || !S->synchronizeFunctions())
     return -1;
-  for (size_t I = 0; I < S->Functions.size(); ++I)
-    if (S->Functions[I].Name == Name)
-      return static_cast<int>(I);
-  // Every name the image exports a function under finds it: a linker that
-  // folds identical functions exports several names for one entry.
-  for (const Export &Exp : S->Img.Exports)
-    if (Exp.Name == Name)
-      for (size_t I = 0; I < S->Functions.size(); ++I)
-        if (S->Functions[I].Entry == Exp.Addr)
-          return static_cast<int>(I);
-  return -1;
+  const std::optional<size_t> Index = S->functionIndexNamed(Name);
+  return Index ? static_cast<int>(*Index) : -1;
 }
 
 int neverd_func_find_by_addr(neverd_session_t Sess, neverd_va_t Addr) {
