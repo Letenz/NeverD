@@ -8,7 +8,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from unittest.mock import patch
 
 
@@ -26,6 +26,24 @@ STYLE_EXPECTATIONS = ROOT / "scripts" / "tests" / "CIStyleExpectations.def"
 
 
 class CiConfigurationTests(unittest.TestCase):
+    def test_native_scheduler_selects_test_audits_on_windows_and_unix(self):
+        native = WORKFLOW.with_name("native-pipeline.yml").read_text()
+        step = self.workflow_step_containing(
+            native, "Repeat native contracts with the optional task scheduler")
+        selection = re.search(
+            r"Path\('build-abi/evidence'\)\.glob\('([^']+)'\)", step)
+        self.assertIsNotNone(selection)
+        audits = {"NeverDAccelerationTests.json", "NeverDX86NativeStateAuditTests.json"}
+        receipts = {"neverd-build-receipt.json", "neverd-dependency-inputs.json",
+                    "neverd-fork-snapshot.json"}
+        # Windows Path.glob is case-insensitive: dependency receipts also match
+        # the old NeverD*.json pattern, but do not contain test inventories.
+        for path_type in (PurePosixPath, PureWindowsPath):
+            with self.subTest(path_type=path_type):
+                selected = {name for name in audits | receipts
+                            if path_type(name).match(selection.group(1))}
+                self.assertEqual(selected, audits)
+
     def test_capstone_updates_run_native_and_product_contracts(self):
         native = WORKFLOW.with_name("native-pipeline.yml").read_text()
         product = WORKFLOW.with_name("web-windows-qualification.yml").read_text()

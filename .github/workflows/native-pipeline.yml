@@ -253,7 +253,7 @@ jobs:
           import json, os, subprocess
           from pathlib import Path
           suffix = '.exe' if os.name == 'nt' else ''
-          for previous in sorted(Path('build-abi/evidence').glob('NeverD*.json')):
+          for previous in sorted(Path('build-abi/evidence').glob('NeverD*Tests.json')):
               expected = json.loads(previous.read_text())['tests']
               output = Path('build-abi/evidence-tbb') / previous.stem
               minimum = len(expected) + (2 if previous.stem == 'NeverDAccelerationTests' else 0)
