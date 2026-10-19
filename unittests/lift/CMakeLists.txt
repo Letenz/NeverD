@@ -2637,6 +2637,7 @@ set(AARCH64_TEST_SOURCES
   aarch64/test_param_phi_a64.s
   aarch64/test_linux_svc_a64.s
   aarch64/test_smccc_a64.s
+  aarch64/test_trap_ends_flow_a64.s
   aarch64/test_jumptable_index_identity_a64.s
   aarch64/test_jumptable_gcc_compact_a64.s
   aarch64/test_jumptable_inflate_gcc_a64.s
