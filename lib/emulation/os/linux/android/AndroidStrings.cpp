@@ -143,9 +143,10 @@ BionicResult Bionic::findSubstring(const NativeCallEvent &Call) {
   return failure(diagnostic::StringScanLimit);
 }
 
-BionicResult Bionic::spanAcceptedString(const NativeCallEvent &Call) {
+BionicResult Bionic::spanString(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
-  std::array<bool, 256> Accepted{};
+  const bool RejectMembers = Call.Name == symbol::Strcspn;
+  std::array<bool, 256> Members{};
   bool Terminated = false;
   // Build a fixed-size byte set without copying guest strings to host libc.
   // Both scans use the same access/deadline checks as other string models.
@@ -159,7 +160,7 @@ BionicResult Bionic::spanAcceptedString(const NativeCallEvent &Call) {
       Terminated = true;
       break;
     }
-    Accepted[*C] = true;
+    Members[*C] = true;
   }
   if (!Terminated)
     return failure(diagnostic::StringScanLimit);
@@ -169,8 +170,9 @@ BionicResult Bionic::spanAcceptedString(const NativeCallEvent &Call) {
     auto C = byte(A[0] + I);
     if (!C)
       return C.takeError();
-    // NUL is never a member. No later source byte is needed after a rejection.
-    if (!Accepted[*C])
+    // Both spans stop at NUL, including strcspn with an empty reject set.
+    // No later source byte is needed once membership ends the span.
+    if (!*C || Members[*C] == RejectMembers)
       return value(I);
   }
   return failure(diagnostic::StringScanLimit);

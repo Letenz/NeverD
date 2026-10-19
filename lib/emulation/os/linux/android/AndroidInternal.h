@@ -337,7 +337,7 @@ private:
   BionicResult finalize(uint64_t DSO);
   BionicResult tokenize(const NativeCallEvent &Call);
   BionicResult findSubstring(const NativeCallEvent &Call);
-  BionicResult spanAcceptedString(const NativeCallEvent &Call);
+  BionicResult spanString(const NativeCallEvent &Call);
   BionicResult copyBoundedString(const NativeCallEvent &Call);
   BionicResult findCharacter(const NativeCallEvent &Call);
   class ArgumentReader;

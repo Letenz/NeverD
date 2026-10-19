@@ -209,6 +209,13 @@ The supported Bionic subset is:
   of returning a guessed count. No guest bytes or errno are changed. This
   independently implemented model follows the byte-set contract of the pinned
   [API 28 Bionic source](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/upstream-openbsd/lib/libc/string/strspn.c).
+- `strcspn`, sharing that bounded byte-set owner and returning the prefix length
+  before the first member of a NUL-terminated reject set. A source NUL always
+  stops the scan, including when the reject set is empty. The model reads the
+  full reject set and only the required source prefix, supports read-only and
+  overlapping strings, preserves errno and keeps the same explicit pointer,
+  scan-limit and deadline failures. Its independent implementation follows the
+  pinned [API 28 byte contract](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/upstream-openbsd/lib/libc/string/strcspn.c).
 - `strtok_r`, scanning guest byte strings and updating the caller's eight-byte,
   aligned save pointer. Delimiters may change between calls; separate contexts
   remain independent. API 28 clears the saved pointer at the final token or an
