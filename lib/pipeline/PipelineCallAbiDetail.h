@@ -14,14 +14,64 @@
 #define NEVERD_LIB_PIPELINE_PIPELINECALLABIDETAIL_H
 
 #include "neverd/Common.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/med/MedIR.h"
 
 #include <map>
+#include <memory>
+#include <optional>
+#include <set>
 #include <string>
+#include <vector>
 
 namespace neverd {
 
 struct BinaryImage;
 struct PipelineResult;
+struct Symbol;
+
+/// What reading the signature bodies of omitted callees read of each callee
+/// (recoverModuleCallAbi): how its lift's blocks count against the bound on
+/// the operations read, and the typed body its conversion gives.  Both follow
+/// from the image and the call summaries a conversion reads, so restricted
+/// runs whose summaries are the same take them as read.
+struct OmittedCalleeMemo {
+  struct Callee {
+    /// Whether the callee was lifted: BlockOps is then known.
+    bool Lifted = false;
+    /// The operations of each block of the lift, when the lift is complete
+    /// and has no unsafe indirect branch; none otherwise.
+    std::optional<std::vector<size_t>> BlockOps;
+    /// Whether the lift was converted: Body is then known.
+    bool Converted = false;
+    /// The typed body, or null where the conversion fails or the body is too
+    /// large to be a signature.
+    std::shared_ptr<const MedFunc> Body;
+  };
+  /// Read under \p Result's call summaries of \p Img; starts again when this
+  /// was read under others.
+  void adopt(const BinaryImage &Img, const PipelineResult &Result);
+  /// The callees read, unless the memo is full: the callee is then read for
+  /// the run alone.
+  Callee *find(va_t Entry);
+  /// Counts \p Body against the memo's bound.
+  void remember(const MedFunc &Body);
+
+  std::map<va_t, Callee> Callees;
+
+private:
+  const BinaryImage *Image = nullptr;
+  const Symbol *SymbolData = nullptr;
+  size_t SymbolCount = 0;
+  std::map<va_t, uint32_t> CallMayWriteGPRs;
+  std::map<va_t, GPRReadWidths> CallEntryReadGPRs;
+  std::map<va_t, va_t> CallArgumentSources;
+  std::map<va_t, int> CallEntryStackArgs;
+  std::set<va_t> CallEntryStackSlots;
+  std::map<va_t, int> CallEntryArgumentCounts;
+  size_t Bytes = 0;
+  bool Full = false;
+};
 
 /// Recover every call's arguments in \p Result, and the parameters each
 /// forwarder passes straight through, from the setup its caller writes

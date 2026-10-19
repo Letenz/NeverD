@@ -72,6 +72,10 @@ public:
   analysisFacts(const PipelineAnalysisCache &Cache) {
     return Cache.Facts;
   }
+  static const OmittedCalleeMemo *
+  calleeSignatures(const PipelineAnalysisCache &Cache) {
+    return Cache.CalleeSignatures.get();
+  }
 };
 } // namespace neverd
 
@@ -5782,6 +5786,49 @@ TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
         takeString(neverd_decompile(Darwin, neverd_func_entry(Darwin, Index)));
     EXPECT_NE(HighC.find(P.Call), std::string::npos) << HighC;
     EXPECT_NE(HighC.find(P.Declaration), std::string::npos) << HighC;
+  }
+}
+
+TEST_F(SessionCAPITest, CalleeSignaturesReadOnceServeLaterSelections) {
+  // Where a call takes its arguments from its caller's setup, a selection
+  // reads its callees' bodies for their signatures.  Later selections of the
+  // image take the callees they share as read, and every function decompiles
+  // as in a session that reads them afresh.
+  for (const char *Fixture : {"linux_libc_calls_arm64", "linux_libc_calls_arm",
+                              "linux_libc_calls_x86"}) {
+    SCOPED_TRACE(Fixture);
+    std::ifstream Input(std::filesystem::path(__FILE__).parent_path() /
+                            "types" / "fixtures" / Fixture,
+                        std::ios::binary);
+    const std::string Path =
+        write(Fixture, std::string(std::istreambuf_iterator<char>(Input), {}));
+    neverd_session_t Kept = neverd_session_create();
+    ASSERT_NE(Kept, nullptr);
+    auto CloseKept =
+        llvm::make_scope_exit([&] { neverd_session_destroy(Kept); });
+    ASSERT_EQ(neverd_session_load(Kept, Path.c_str()), 1)
+        << takeString(neverd_last_error(Kept));
+    ASSERT_GE(neverd_session_discover_functions(Kept), 0);
+    std::vector<neverd_va_t> Entries;
+    for (int I = 0; I < neverd_func_count(Kept); ++I)
+      Entries.push_back(neverd_func_entry(Kept, I));
+    ASSERT_FALSE(Entries.empty());
+    for (const neverd_va_t Entry : Entries) {
+      SCOPED_TRACE(Entry);
+      const std::string Source = takeString(neverd_decompile(Kept, Entry));
+      neverd_session_t Fresh = neverd_session_create();
+      ASSERT_NE(Fresh, nullptr);
+      auto CloseFresh =
+          llvm::make_scope_exit([&] { neverd_session_destroy(Fresh); });
+      ASSERT_EQ(neverd_session_load(Fresh, Path.c_str()), 1);
+      ASSERT_GE(neverd_session_discover_functions(Fresh), 0);
+      EXPECT_EQ(takeString(neverd_decompile(Fresh, Entry)), Source);
+    }
+    const neverd::OmittedCalleeMemo *Memo =
+        neverd::PipelineTestPeer::calleeSignatures(
+            neverd::sdk::toSession(Kept)->AnalysisCache);
+    ASSERT_NE(Memo, nullptr);
+    EXPECT_FALSE(Memo->Callees.empty());
   }
 }
 
