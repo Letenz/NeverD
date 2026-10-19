@@ -94,6 +94,27 @@ jobs:
               fi
             done
           done
+      - name: Verify the fork's dynamic loader regression
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          set -euo pipefail
+          cmake -S build-accel-ON-Release/_deps/neverd_tbb-src -B build-tbb-loader -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DTBB_TEST=ON -DTBB_STRICT=OFF \
+            -DTBBMALLOC_BUILD=OFF -DTBBMALLOC_PROXY_BUILD=OFF \
+            -DTBB_ENABLE_IPO=OFF -DTBB_DISABLE_HWLOC_AUTOMATIC_SEARCH=ON
+          cmake --build build-tbb-loader --target test_dynamic_link --parallel 3
+          cd build-tbb-loader
+          ctest -R '^test_dynamic_link$' \
+            --no-tests=error --output-on-failure --output-junit loader.xml
+          python - <<'PYTHON'
+          import xml.etree.ElementTree as ET
+          cases = list(ET.parse('loader.xml').getroot().iter('testcase'))
+          assert len(cases) == 1 and cases[0].get('name') == 'test_dynamic_link'
+          assert cases[0].get('status') == 'run'
+          assert not any(child.tag in {'failure', 'error', 'skipped'} for child in cases[0])
+          PYTHON
       - name: Test system allocator and sanitizer coexistence
         env:
           CC: ${{ matrix.cc }}
@@ -125,4 +146,7 @@ jobs:
             build-accel-*/evidence
             build-accel-*/installed-evidence
             build-accel-*/CMakeCache.txt
+            build-tbb-loader/loader.xml
+            build-tbb-loader/CMakeCache.txt
+            build-tbb-loader/Testing/Temporary/LastTest.log
           if-no-files-found: error

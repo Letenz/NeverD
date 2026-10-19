@@ -124,6 +124,10 @@ UTF-8 validation and simdjson 5.0.5 transport admission. They retain the process
 allocator. JSON still uses the existing nlohmann DOM and serialization; the
 original admission path handles inputs outside simdjson's numeric domain.
 Invalid external text retains its byte-preserving escapes.
+All four libraries are downloaded from the NeverSight forks, pinned to full
+commit IDs and archive SHA-256 hashes in `cmake/NeverDPerformance.cmake`.
+Keep compatibility fixes in those forks; update the pin, source notices and
+qualification evidence together when adopting a fork change.
 
 `NEVERD_ENABLE_HIGHWAY`, `NEVERD_ENABLE_SIMDUTF` and `NEVERD_ENABLE_SIMDJSON`
 can be set to `OFF` for comparisons. `NEVERD_ENABLE_TBB=ON` selects the optional

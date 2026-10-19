@@ -24,8 +24,8 @@ function(neverd_add_task_scheduler)
     return()
   endif()
   FetchContent_Declare(neverd_tbb
-    URL https://codeload.github.com/uxlfoundation/oneTBB/tar.gz/refs/tags/v2023.1.0
-    URL_HASH SHA256=191288b52e1e6b17198000b64d77d194bb65e791be46ebc606e9b091781e2070
+    URL https://codeload.github.com/NeverSight/oneTBB/tar.gz/80dfa673b2d9df4edaa0d7ad2b6d28cc6ecae2e5
+    URL_HASH SHA256=a0454a01f6516a094edaf0d3d264a2ba9e52492ce5912dae5d0264c2fb95f771
     SOURCE_SUBDIR neverd-no-automatic-subdirectory TIMEOUT 120)
   FetchContent_MakeAvailable(neverd_tbb)
   set(TBB_TEST OFF)
@@ -80,8 +80,8 @@ function(neverd_add_text_acceleration)
     POSITION_INDEPENDENT_CODE ON)
   if(NEVERD_ENABLE_HIGHWAY)
     FetchContent_Declare(neverd_highway
-      URL https://codeload.github.com/google/highway/tar.gz/refs/tags/1.4.0
-      URL_HASH SHA256=e72241ac9524bb653ae52ced768b508045d4438726a303f10181a38f764a453c
+      URL https://codeload.github.com/NeverSight/highway/tar.gz/2607d3b5b0113992fe84d3848859eae13b3b52c1
+      URL_HASH SHA256=741d705781e0b3e406beda8f1f994fbae01321237ce8023a1ad90fbaf7940c25
       SOURCE_SUBDIR neverd-no-automatic-subdirectory TIMEOUT 120)
     FetchContent_MakeAvailable(neverd_highway)
     # Highway declares these with set(CACHE), rather than option(). Its older
@@ -101,8 +101,8 @@ function(neverd_add_text_acceleration)
   endif()
   if(NEVERD_ENABLE_SIMDUTF)
     FetchContent_Declare(neverd_simdutf
-      URL https://codeload.github.com/simdutf/simdutf/tar.gz/refs/tags/v9.3.2
-      URL_HASH SHA256=d92a0a4ce216dcebf18af20fed7ea7279fa535683f790fdaeed39827a234f567
+      URL https://codeload.github.com/NeverSight/simdutf/tar.gz/8d82299606e675b50de8dc16fd118aae4b65bfde
+      URL_HASH SHA256=1570c58a689e5fd6a71a8fb661dbc33fdc6844a0a476a048a9e0dfde9ccc1ab8
       SOURCE_SUBDIR neverd-no-automatic-subdirectory TIMEOUT 120)
     FetchContent_MakeAvailable(neverd_simdutf)
     set(SIMDUTF_TESTS OFF)
@@ -123,8 +123,8 @@ function(neverd_add_simdjson)
     return()
   endif()
   FetchContent_Declare(neverd_simdjson
-    URL https://codeload.github.com/simdjson/simdjson/tar.gz/refs/tags/v5.0.5
-    URL_HASH SHA256=50bb17769e1054ff1bfcd5dbbfcf33544c77f6ebdb31a318436ea0e47f78f571
+    URL https://codeload.github.com/NeverSight/simdjson/tar.gz/9c003534b1be3bc4f1322bfa7a770a7ffbf247d9
+    URL_HASH SHA256=3d753ab15ce01a094066fff4c80719d1f03090c7ef140bec758dc3c0282c2a9f
     SOURCE_SUBDIR neverd-no-automatic-subdirectory TIMEOUT 120)
   FetchContent_MakeAvailable(neverd_simdjson)
   set(SIMDJSON_DEVELOPER_MODE OFF)

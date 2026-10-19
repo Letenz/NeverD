@@ -21,6 +21,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   endif()
   if(MSVC)
     add_compile_options(/utf-8 /bigobj)
+    # Match the production LLVM build: dependencies must tolerate Unicode APIs.
+    add_compile_definitions(UNICODE _UNICODE)
   endif()
 endif()
 

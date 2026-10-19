@@ -546,8 +546,10 @@ NeverD uses Highway 1.4.0 (Apache-2.0 OR BSD-3-Clause), simdutf 9.3.2
 (Apache-2.0 OR MIT) and simdjson 5.0.5 (Apache-2.0 OR MIT) for bounded byte
 scans, valid UTF-8 fast paths and transport admission. The optional oneTBB
 2023.1.0 scheduler is Apache-2.0 licensed. No allocator proxy is built.
-The downloaded upstream source is unmodified; archive hashes are pinned in
-`cmake/NeverDPerformance.cmake`. Original licenses and source references are
+All four sources come from NeverSight forks based on these upstream releases.
+The oneTBB fork adds a Windows Unicode build fix and loader regression coverage.
+Fork commit IDs and archive hashes are pinned in `cmake/NeverDPerformance.cmake`.
+Original copyrights, licenses and source references are
 retained under [Highway](LICENSES/highway/SOURCE.md),
 [simdutf](LICENSES/simdutf/SOURCE.md), [simdjson](LICENSES/simdjson/SOURCE.md)
 and [oneTBB](LICENSES/oneTBB/SOURCE.md). Enabled dependencies' notices are
