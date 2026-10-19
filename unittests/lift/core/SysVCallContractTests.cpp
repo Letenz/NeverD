@@ -910,6 +910,61 @@ int main(void) {
 )");
 }
 
+TEST(SysVCallContract, ASharedCallTakesTheFormatAnotherBodyGivesIt) {
+  // b(x) = printf("%d", x) loads the format and calls; a jumps straight to
+  // that call with its own registers, a(f, x) = printf(f, x).  A run that
+  // lifts b before a makes the call they share a formatted one, which reads
+  // the value after the format, for a too.  a's facts, kept from a run that
+  // reached a alone, read an ordinary call and must not stand in for it.
+  constexpr va_t B = Text, Call = B + 7, A = Text + 0x10, Q = Text + 0x20,
+                 R = Text + 0x30, Stub = Text + 0x40, Format = 0x402000;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> BCode = {0x48, 0x8D, 0x3D}; // lea rdi, [fmt]
+  for (uint8_t Byte : rel32(Call, Format))
+    BCode.push_back(Byte);
+  BCode.push_back(0xE8); // call printf
+  for (uint8_t Byte : rel32(Call + 5, Stub))
+    BCode.push_back(Byte);
+  BCode.push_back(0xC3); // ret
+  put(Code, B, BCode);
+  std::vector<uint8_t> ACode = {0xE9}; // jmp to b's call
+  for (uint8_t Byte : rel32(A + 5, Call))
+    ACode.push_back(Byte);
+  put(Code, A, ACode);
+  std::vector<uint8_t> QCode = {0xE8}; // call b
+  for (uint8_t Byte : rel32(Q + 5, B))
+    QCode.push_back(Byte);
+  QCode.push_back(0xE8); // call a
+  for (uint8_t Byte : rel32(Q + 10, A))
+    QCode.push_back(Byte);
+  QCode.push_back(0xC3); // ret
+  put(Code, Q, QCode);
+  std::vector<uint8_t> RCode = {0xE8}; // call a
+  for (uint8_t Byte : rel32(R + 5, A))
+    RCode.push_back(Byte);
+  RCode.push_back(0xC3); // ret
+  put(Code, R, RCode);
+  BinaryImage Img = makeImportImage(
+      Code, {{B, "b"}, {A, "a"}, {Q, "q"}, {R, "r"}}, {{Stub, "printf"}});
+  addReadOnlyData(Img, Format, "%d");
+  const auto Run = [&](va_t Entry, PipelineAnalysisCache *Cache) {
+    llvm::LLVMContext Ctx;
+    PipelineOptions Opts;
+    Opts.EmitDumpOutput = false;
+    Opts.OnlyFunctionEntries = {Entry};
+    Opts.AnalysisCache = Cache;
+    return Pipeline().run(Img, Ctx, Opts);
+  };
+  PipelineAnalysisCache Cache;
+  for (va_t Root : {R, Q}) {
+    SCOPED_TRACE(Root);
+    const PipelineResult Kept = Run(Root, &Cache), Cold = Run(Root, nullptr);
+    EXPECT_EQ(Kept.CallEntryReadGPRs, Cold.CallEntryReadGPRs);
+    EXPECT_EQ(Kept.CallMayWriteGPRs, Cold.CallMayWriteGPRs);
+    EXPECT_EQ(Kept.CallEntryStackArgs, Cold.CallEntryStackArgs);
+  }
+}
+
 TEST(SysVCallContract, AVariadicImportsFixedArgumentsReachItFromAJoin) {
   // wrap(flag) picks the format in either arm of an `if` and calls
   // __fprintf_chk(0, 2, fmt) after the join: the format reaches the call as

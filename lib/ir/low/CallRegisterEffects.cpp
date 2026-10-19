@@ -915,7 +915,9 @@ void joinPlainSteps(LocalRegisterEffect &Effect) {
         Steps[Kept] = std::move(Steps[I]);
       ++Kept;
     }
+    // A summary is kept across runs: release the steps it no longer has.
     Steps.resize(Kept);
+    Steps.shrink_to_fit();
   }
 }
 

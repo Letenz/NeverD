@@ -49,13 +49,17 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <iterator>
+#include <list>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -3090,6 +3094,147 @@ WindowsEHContinuationRootTestResult collectWindowsEHContinuationRootsForTesting(
 // buildLowIR — Phase 1
 //===----------------------------------------------------------------------===//
 
+namespace pipeline_detail {
+/// What computeCallRegisterEffects reads of a callee's body: its register
+/// effect, the fixed arguments of the formatted calls it makes, and whether
+/// it forwards to the guard dispatcher.  The effect read every call's fixed
+/// arguments as the run had collected them by then (Consulted, absent ones
+/// too); it stands for another run only where that run gives each of those
+/// calls the same.
+struct CalleeFacts {
+  LocalRegisterEffect Effect;
+  std::vector<std::pair<va_t, GPRReadWidths>> FormattedReads;
+  std::vector<std::pair<va_t, std::optional<GPRReadWidths>>> Consulted;
+  bool ForwardsToGuardDispatch = false;
+};
+
+/// CalleeFacts by callee entry, for one analysis cache's facts.  A body is
+/// lifted, and its effect computed, once rather than in every run whose
+/// callees reach it.
+class CalleeFactsCache {
+public:
+  std::shared_ptr<const CalleeFacts> find(va_t Entry) {
+    std::lock_guard<std::mutex> Lock(Mutex);
+    const auto Found = Index.find(Entry);
+    if (Found == Index.end())
+      return nullptr;
+    Items.splice(Items.begin(), Items, Found->second);
+    return Items.front().Facts;
+  }
+  /// Keep \p Facts for \p Entry.  Without \p Evict, a cache with no room
+  /// keeps what it holds (warming fills it in entry order).
+  void insert(va_t Entry, std::shared_ptr<const CalleeFacts> Facts,
+              bool Evict) {
+    const size_t Size = bytes(*Facts);
+    std::lock_guard<std::mutex> Lock(Mutex);
+    if (Size > MaxBytes)
+      return;
+    if (const auto Found = Index.find(Entry); Found != Index.end()) {
+      Bytes -= Found->second->Bytes;
+      Items.erase(Found->second);
+      Index.erase(Found);
+    }
+    if (!Evict && Size > MaxBytes - Bytes)
+      return;
+    while (!Items.empty() && Size > MaxBytes - Bytes) {
+      Bytes -= Items.back().Bytes;
+      Index.erase(Items.back().Entry);
+      Items.pop_back();
+    }
+    Items.push_front({Entry, std::move(Facts), Size});
+    Index[Entry] = Items.begin();
+    Bytes += Size;
+  }
+
+private:
+  // Joined effects take a few kilobytes a function: room for a kernel's.
+  static constexpr size_t MaxBytes = size_t(256) << 20;
+  struct Item {
+    va_t Entry;
+    std::shared_ptr<const CalleeFacts> Facts;
+    size_t Bytes;
+  };
+  static size_t bytes(const CalleeFacts &Facts) {
+    constexpr size_t Node = 6 * sizeof(void *);
+    const LocalRegisterEffect &Effect = Facts.Effect;
+    size_t Bytes =
+        sizeof(Item) + sizeof(CalleeFacts) + 2 * Node +
+        Effect.Blocks.capacity() * sizeof(RegisterBlock) +
+        (Effect.Callees.size() + Effect.NoReturnCallees.size() +
+         Effect.StackTailCallees.size()) *
+            (Node + sizeof(va_t)) +
+        Facts.FormattedReads.capacity() * sizeof(Facts.FormattedReads.front()) +
+        Facts.Consulted.capacity() * sizeof(Facts.Consulted.front());
+    for (const RegisterBlock &Block : Effect.Blocks)
+      Bytes += Block.Steps.capacity() * sizeof(RegisterStep) +
+               Block.Succs.capacity() * sizeof(size_t);
+    return Bytes;
+  }
+  std::mutex Mutex;
+  std::list<Item> Items;
+  std::unordered_map<va_t, std::list<Item>::iterator> Index;
+  size_t Bytes = 0;
+};
+
+/// The fixed arguments of the formatted calls in \p Blocks, as
+/// computeCallRegisterEffects merges them into a run's FixedCallReads; with
+/// \p Converted, the calls themselves too.
+std::vector<std::pair<va_t, GPRReadWidths>>
+formattedCallReads(const BinaryImage &Img, llvm::ArrayRef<LowBlock> Blocks,
+                   std::map<va_t, FormattedCall> *Converted) {
+  std::map<va_t, FormattedCall> Calls;
+  pipeline_detail::collectFormattedCalls(Img, Blocks, Calls);
+  std::vector<std::pair<va_t, GPRReadWidths>> Reads;
+  Reads.reserve(Calls.size());
+  for (auto &[Address, Call] : Calls) {
+    GPRReadWidths Widths{};
+    for (const FormattedCallArgument &Argument : Call.Arguments)
+      if (const auto Family = registerFamilyOf(Img.Arch, Argument.Register))
+        Widths[Family->first] = std::max<uint8_t>(
+            Widths[Family->first],
+            static_cast<uint8_t>(Family->second + Argument.Bytes));
+    Reads.emplace_back(Address, Widths);
+    if (Converted)
+      Converted->emplace(Address, std::move(Call));
+  }
+  return Reads;
+}
+
+void mergeFixedCallReads(std::map<va_t, GPRReadWidths> &Into,
+                         llvm::ArrayRef<std::pair<va_t, GPRReadWidths>> Reads) {
+  for (const auto &[Address, Widths] : Reads) {
+    GPRReadWidths &Merged = Into[Address];
+    for (size_t I = 0; I < Merged.size(); ++I)
+      Merged[I] = std::max(Merged[I], Widths[I]);
+  }
+}
+
+/// What localRegisterEffect reads of \p Reads for the calls in \p Blocks.
+std::vector<std::pair<va_t, std::optional<GPRReadWidths>>>
+consultedCallReads(llvm::ArrayRef<LowBlock> Blocks,
+                   const std::map<va_t, GPRReadWidths> &Reads) {
+  std::vector<std::pair<va_t, std::optional<GPRReadWidths>>> Consulted;
+  for (const LowBlock &Block : Blocks)
+    for (const LowOp &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+        const auto Found = Reads.find(Op.Addr);
+        Consulted.emplace_back(Op.Addr, Found == Reads.end()
+                                            ? std::nullopt
+                                            : std::optional(Found->second));
+      }
+  return Consulted;
+}
+
+bool consultedReadsHold(const CalleeFacts &Facts,
+                        const std::map<va_t, GPRReadWidths> &Reads) {
+  return llvm::all_of(Facts.Consulted, [&](const auto &Call) {
+    const auto Found = Reads.find(Call.first);
+    return Found == Reads.end() ? !Call.second
+                                : Call.second && *Call.second == Found->second;
+  });
+}
+} // namespace pipeline_detail
+
 namespace {
 /// True when \p F only jumps through the load configuration's Control Flow
 /// Guard dispatch pointer, as ntoskrnl's KeGuardDispatchICall does with
@@ -3512,12 +3657,13 @@ void computeCallRegisterEffects(
     const detail::AbsoluteRelocationRootIndex &AbsoluteRelocationRoots,
     const ExecutableCodeOwnerIndex *CodeOwnerIndex,
     const std::shared_ptr<X87CallGraphCache> &X87Graphs,
-    const DebugContext *Dbg, PipelineResult &Result) {
+    const std::map<va_t, PointerVariableCallee> &PointerCallees,
+    pipeline_detail::CalleeFactsCache &KnownCallees, const DebugContext *Dbg,
+    PipelineResult &Result) {
   // A call through a function-pointer variable passes the arguments of the
-  // routine the variable starts at: another module's, whose prototype is kept
-  // under the variable's address, or this image's, by its entry.
-  const std::map<va_t, PointerVariableCallee> PointerCallees =
-      collectPointerVariableCallees(Img);
+  // routine the variable starts at (PointerCallees): another module's, whose
+  // prototype is kept under the variable's address, or this image's, by its
+  // entry.
   Result.CallArgumentSources.clear();
   Result.CallUserPrototypes.clear();
   for (const auto &[Slot, Callee] : PointerCallees)
@@ -3560,18 +3706,24 @@ void computeCallRegisterEffects(
   std::map<va_t, GPRReadWidths> FixedCallReads;
   auto CollectFormattedCalls = [&](llvm::ArrayRef<LowBlock> Blocks,
                                    bool Converted) {
-    std::map<va_t, FormattedCall> Calls;
-    pipeline_detail::collectFormattedCalls(Img, Blocks, Calls);
-    for (auto &[Address, Call] : Calls) {
-      GPRReadWidths &Reads = FixedCallReads[Address];
-      for (const FormattedCallArgument &Argument : Call.Arguments)
-        if (const auto Family = registerFamilyOf(Img.Arch, Argument.Register))
-          Reads[Family->first] = std::max<uint8_t>(
-              Reads[Family->first],
-              static_cast<uint8_t>(Family->second + Argument.Bytes));
-      if (Converted)
-        Result.FormattedCalls.emplace(Address, std::move(Call));
-    }
+    auto Reads = pipeline_detail::formattedCallReads(
+        Img, Blocks, Converted ? &Result.FormattedCalls : nullptr);
+    pipeline_detail::mergeFixedCallReads(FixedCallReads, Reads);
+    return Reads;
+  };
+  // A callee's body as a run takes it: retained and validated, or lifted
+  // with the run's settings.
+  auto BuildCallee = [&](Decoder &Dec, va_t Entry) {
+    CFGBuilder ExtraCFG;
+    ExtraCFG.setKnownFuncEntries(&FuncEntries);
+    ExtraCFG.setNoReturnTargetIndex(&NoReturnTargets);
+    ExtraCFG.setNoReturnCalleeProver(&NoReturnCallees);
+    ExtraCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
+    ExtraCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
+    ExtraCFG.setX87CallGraphCache(X87Graphs);
+    // Named only when built: the lookup scans every export and symbol, and
+    // most callees come from the cache.
+    return ExtraCFG.build(Img, Dec, Entry, Img.getFunctionNameAt(Entry));
   };
   for (const LowFunc &LF : Result.LowFuncs) {
     CollectFormattedCalls(LF.Blocks, /*Converted=*/true);
@@ -3626,11 +3778,16 @@ void computeCallRegisterEffects(
       const size_t Count = std::min(BatchSize, Pending.size() - Begin);
       std::vector<LowFunc> Bodies(Count);
       std::vector<std::shared_ptr<const CallRegisterBody>> CachedBodies(Count);
+      std::vector<std::shared_ptr<const pipeline_detail::CalleeFacts>> Known(
+          Count);
       std::vector<uint64_t> Weights(Count, 0);
       std::atomic<bool> Initialized{true};
       uint64_t Bytes = 0;
       for (size_t I = 0; I < Count; ++I) {
         const va_t Entry = Pending[Begin + I];
+        Known[I] = KnownCallees.find(Entry);
+        if (Known[I])
+          continue;
         const va_t End = Img.getFunctionMetadataEnd(Entry, CodeOwnerIndex);
         if (End != InvalidVA && End > Entry)
           Weights[I] = std::min<uint64_t>(End - Entry, 1u << 20);
@@ -3644,24 +3801,15 @@ void computeCallRegisterEffects(
               Initialized.store(false, std::memory_order_relaxed);
               return;
             }
-            CFGBuilder ExtraCFG;
-            ExtraCFG.setKnownFuncEntries(&FuncEntries);
-            ExtraCFG.setNoReturnTargetIndex(&NoReturnTargets);
-            ExtraCFG.setNoReturnCalleeProver(&NoReturnCallees);
-            ExtraCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
-            ExtraCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
-            ExtraCFG.setX87CallGraphCache(X87Graphs);
             for (size_t I; (I = Claim()) < N;) {
+              if (Known[I])
+                continue;
               const va_t Entry = Pending[Begin + I];
               CachedBodies[I] = CFGBuilder::cachedCallRegisterBody(
                   X87Graphs, Img, Entry, &FuncEntries, &NoReturnTargets,
                   &NoReturnCallees, &AbsoluteRelocationRoots, CodeOwnerIndex);
-              if (CachedBodies[I])
-                continue;
-              // Named only when built: the lookup scans every export and
-              // symbol, and most callees come from the cache.
-              Bodies[I] = ExtraCFG.build(Img, ExtraDec, Entry,
-                                         Img.getFunctionNameAt(Entry));
+              if (!CachedBodies[I])
+                Bodies[I] = BuildCallee(ExtraDec, Entry);
             }
           },
           Bytes >= MinParallelBytes ? 2 : limits::kMinParallelIRWorkItems,
@@ -3670,15 +3818,45 @@ void computeCallRegisterEffects(
         return;
       for (size_t I = 0; I < Count; ++I) {
         const va_t Callee = Pending[Begin + I];
+        if (const auto &Facts = Known[I]) {
+          // What an earlier run or warming read of the body stands while
+          // this run gives its calls the same fixed arguments.
+          pipeline_detail::mergeFixedCallReads(FixedCallReads,
+                                               Facts->FormattedReads);
+          if (pipeline_detail::consultedReadsHold(*Facts, FixedCallReads)) {
+            Effects[Callee] = Facts->Effect;
+            if (Facts->ForwardsToGuardDispatch)
+              GuardForwarders.insert(Callee);
+            Work.push_back(Callee);
+            continue;
+          }
+          CachedBodies[I] = CFGBuilder::cachedCallRegisterBody(
+              X87Graphs, Img, Callee, &FuncEntries, &NoReturnTargets,
+              &NoReturnCallees, &AbsoluteRelocationRoots, CodeOwnerIndex);
+          if (!CachedBodies[I]) {
+            Decoder Dec;
+            if (!Dec.init(Img))
+              return;
+            Bodies[I] = BuildCallee(Dec, Callee);
+          }
+        }
         const CallRegisterBodyView Body =
             CachedBodies[I] ? CallRegisterBodyView(*CachedBodies[I])
                             : CallRegisterBodyView(Bodies[I]);
-        CollectFormattedCalls(Body.Blocks, /*Converted=*/false);
+        auto Reads = CollectFormattedCalls(Body.Blocks, /*Converted=*/false);
         Effects[Callee] =
             localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads,
                                 &Result.CallArgumentSources, &StackProbes);
-        if (forwardsToGuardDispatch(Img, Body.Blocks))
+        const bool Forwards = forwardsToGuardDispatch(Img, Body.Blocks);
+        if (Forwards)
           GuardForwarders.insert(Callee);
+        auto Facts = std::make_shared<pipeline_detail::CalleeFacts>();
+        Facts->Effect = Effects[Callee];
+        Facts->FormattedReads = std::move(Reads);
+        Facts->Consulted =
+            pipeline_detail::consultedCallReads(Body.Blocks, FixedCallReads);
+        Facts->ForwardsToGuardDispatch = Forwards;
+        KnownCallees.insert(Callee, std::move(Facts), /*Evict=*/true);
         Work.push_back(Callee);
       }
     }
@@ -3791,6 +3969,12 @@ struct PipelineAnalysisCache::Impl {
   std::set<uint64_t> VerifiedEntries;
   libc::NoReturnTargetIndex Targets;
   libc::StackProbeIndex StackProbes;
+  // Every run's call effects read them; they follow from the image alone.
+  const std::map<va_t, PointerVariableCallee> PointerCallees;
+  mutable pipeline_detail::CalleeFactsCache CalleeFacts;
+  /// Whether warming found no room for another body.  Later pages lift each
+  /// function once, for its callee facts.
+  bool BodiesFull = false;
   detail::AbsoluteRelocationRootIndex Roots;
   ExecutableCodeOwnerIndex Owners;
   InternalNoReturnIndex Callees;
@@ -3812,7 +3996,8 @@ struct PipelineAnalysisCache::Impl {
                             return Prototype && Prototype->NoReturn;
                           })
                     : libc::NoReturnTargetIndex::DeclaredNoReturn()),
-        StackProbes(Img), Roots(Img), Owners(Img),
+        StackProbes(Img), PointerCallees(collectPointerVariableCallees(Img)),
+        Roots(Img), Owners(Img),
         Callees(Img, &this->Entries, &Targets, &Roots, &Owners),
         Graphs(createX87CallGraphCache(&Callees, &Targets, RetainBodies,
                                        {limits::kMaxPipelineCallGraphEntries,
@@ -3851,6 +4036,94 @@ std::vector<va_t> symbolFunctionStarts(const BinaryImage &Img,
 }
 } // namespace
 
+namespace {
+/// Keep what a run reads of each of \p Functions as a callee
+/// (computeCallRegisterEffects), with only the function's own formatted
+/// calls giving fixed arguments; a run whose other bodies give one of its
+/// calls more takes the body again.  The cache keeps what it has room for.
+void warmCalleeFacts(
+    const BinaryImage &Img, llvm::ArrayRef<va_t> Functions,
+    const std::shared_ptr<X87CallGraphCache> &Graphs,
+    const std::set<va_t> &Entries, const libc::NoReturnTargetIndex &Targets,
+    const NoReturnCalleeProver &Callees,
+    const detail::AbsoluteRelocationRootIndex &Roots,
+    const ExecutableCodeOwnerIndex &Owners,
+    const libc::StackProbeIndex &StackProbes,
+    const std::map<va_t, PointerVariableCallee> &PointerCallees,
+    pipeline_detail::CalleeFactsCache &Known) {
+  std::vector<va_t> Missing;
+  for (va_t Entry : Functions)
+    if (Img.hasExecutableCodeOwnerAt(Entry) && !Known.find(Entry))
+      Missing.push_back(Entry);
+  if (Missing.empty())
+    return;
+  std::vector<std::shared_ptr<const CallRegisterBody>> Cached(Missing.size());
+  std::vector<LowFunc> Built(Missing.size());
+  std::vector<char> Taken(Missing.size(), 0);
+  std::vector<uint64_t> Weights(Missing.size(), 0);
+  for (size_t I = 0; I < Missing.size(); ++I) {
+    const va_t End = Img.getFunctionMetadataEnd(Missing[I], &Owners);
+    if (End != InvalidVA && End > Missing[I])
+      Weights[I] = std::min<uint64_t>(End - Missing[I], 1u << 20);
+  }
+  std::vector<std::exception_ptr> Failures(Missing.size());
+  parallelForEachWeighted(
+      Weights,
+      [&](auto Claim, size_t N) {
+        Decoder Dec;
+        if (!Dec.init(Img))
+          return;
+        CFGBuilder Builder;
+        Builder.setKnownFuncEntries(&Entries);
+        Builder.setNoReturnTargetIndex(&Targets);
+        Builder.setNoReturnCalleeProver(&Callees);
+        Builder.setAbsoluteRelocationRootIndex(&Roots);
+        Builder.setExecutableCodeOwnerIndex(&Owners);
+        Builder.setX87CallGraphCache(Graphs);
+        for (size_t I; (I = Claim()) < N;)
+          try {
+            Cached[I] = CFGBuilder::cachedCallRegisterBody(
+                Graphs, Img, Missing[I], &Entries, &Targets, &Callees, &Roots,
+                &Owners);
+            if (!Cached[I])
+              Built[I] = Builder.build(Img, Dec, Missing[I],
+                                       Img.getFunctionNameAt(Missing[I]));
+            Taken[I] = 1;
+          } catch (...) {
+            Failures[I] = std::current_exception();
+          }
+      },
+      1, std::min(workerThreadCount(), 4u));
+  for (const std::exception_ptr &Failure : Failures)
+    if (Failure)
+      std::rethrow_exception(Failure);
+  // computeCallRegisterEffects reads calls through pointer variables so.
+  std::map<va_t, va_t> ArgumentSources;
+  for (const auto &[Slot, Callee] : PointerCallees)
+    ArgumentSources.emplace(Slot, Callee.ImportName.empty() ? Callee.LocalEntry
+                                                            : Slot);
+  for (size_t I = 0; I < Missing.size(); ++I) {
+    if (!Taken[I])
+      continue;
+    const CallRegisterBodyView Body = Cached[I]
+                                          ? CallRegisterBodyView(*Cached[I])
+                                          : CallRegisterBodyView(Built[I]);
+    auto Callee = std::make_shared<pipeline_detail::CalleeFacts>();
+    Callee->FormattedReads =
+        pipeline_detail::formattedCallReads(Img, Body.Blocks, nullptr);
+    std::map<va_t, GPRReadWidths> FixedCallReads;
+    pipeline_detail::mergeFixedCallReads(FixedCallReads,
+                                         Callee->FormattedReads);
+    Callee->Effect = localRegisterEffect(Img, Body, &Targets, &FixedCallReads,
+                                         &ArgumentSources, &StackProbes);
+    Callee->Consulted =
+        pipeline_detail::consultedCallReads(Body.Blocks, FixedCallReads);
+    Callee->ForwardsToGuardDispatch = forwardsToGuardDispatch(Img, Body.Blocks);
+    Known.insert(Missing[I], std::move(Callee), /*Evict=*/false);
+  }
+}
+} // namespace
+
 std::optional<AnalysisCacheWarmup>
 Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
                             DebugContext *Dbg, llvm::ArrayRef<va_t> Functions) {
@@ -3872,11 +4145,21 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
         limits::kMaxRetainedNoReturnAnswers);
     Cache.Facts->Targets.clearMemoizedNames();
   }
-  const auto &Facts = *Cache.Facts;
-  const auto Warmup = CFGBuilder::warmCallGraphs(
-      Facts.Graphs, Img, Functions, &Facts.Entries, &Facts.Targets,
-      &Facts.Callees, &Facts.Roots, &Facts.Owners, workerThreadCount());
-  return AnalysisCacheWarmup{Warmup.Retained, Warmup.Full};
+  auto &Facts = *Cache.Facts;
+  // Bodies and graphs serve the call proofs of the functions runs lift
+  // themselves; a callee is read from its facts.  Once no body fits, a page
+  // only lifts each function for its callee facts, once.
+  CFGBuilder::CallGraphWarmup Warmup;
+  if (!Facts.BodiesFull) {
+    Warmup = CFGBuilder::warmCallGraphs(
+        Facts.Graphs, Img, Functions, &Facts.Entries, &Facts.Targets,
+        &Facts.Callees, &Facts.Roots, &Facts.Owners, workerThreadCount());
+    Facts.BodiesFull = Warmup.Full;
+  }
+  warmCalleeFacts(Img, Functions, Facts.Graphs, Facts.Entries, Facts.Targets,
+                  Facts.Callees, Facts.Roots, Facts.Owners, Facts.StackProbes,
+                  Facts.PointerCallees, Facts.CalleeFacts);
+  return AnalysisCacheWarmup{Warmup.Retained, Facts.BodiesFull};
 }
 
 void Pipeline::buildLowIR(
@@ -4427,7 +4710,8 @@ void Pipeline::buildLowIR(
 
   computeCallRegisterEffects(
       Img, FuncEntries, NoReturnTargets, Facts.StackProbes, NoReturnCallees,
-      AbsoluteRelocationRoots, CodeOwnerIndex, X87Graphs, Dbg, Result);
+      AbsoluteRelocationRoots, CodeOwnerIndex, X87Graphs, Facts.PointerCallees,
+      Facts.CalleeFacts, Dbg, Result);
 }
 
 } // namespace neverd
