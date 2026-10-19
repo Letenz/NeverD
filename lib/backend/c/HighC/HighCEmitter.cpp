@@ -2823,8 +2823,18 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         noteImageObject(*VA, Expected, false);
     }
   };
-  for (const HighFunc &Func : Funcs)
+  for (const HighFunc &Func : Funcs) {
+    // A function that returns no value prints its returns bare (a returned
+    // call as its statement): what the return register holds there names
+    // nothing in C, such as the GOT address a get-PC sequence left in it.
+    const TypeRef DeclaredReturn = declaredFunctionReturnType(Func);
+    const bool BareReturns = DeclaredReturn
+                                 ? DeclaredReturn->Kind == NdTypeKind::Void
+                                 : analyzeVoidReturn(Func);
     walkStmts(Func.Body, [&](const HighStmt &S) {
+      if (BareReturns && S.Kind == StmtKind::Return && S.RetVal &&
+          !highCExpressionHasEffect(*S.RetVal))
+        return;
       if (S.Kind == StmtKind::Store &&
           S.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
           S.StoreAddr) {
@@ -2844,6 +2854,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           Visit(*E);
       });
     });
+  }
   for (const auto &[VA, Bytes] : GuardedAlignments)
     if (auto It = ImageObjects.find(VA); It != ImageObjects.end())
       It->second.AlignedBytes = std::max(It->second.AlignedBytes, Bytes);

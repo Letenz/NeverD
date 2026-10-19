@@ -28,6 +28,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <random>
 #include <tuple>
 
 namespace neverd {
@@ -7995,6 +7996,71 @@ TEST(CallRegisterEffects, APreservedFamilyKeepsTheBytesItTracks) {
                                           x86reg::VectorBase, 16));
   EXPECT_FALSE(callPreservesRegisterBytes(Arch::X64, 0, XMM1, 16));
   EXPECT_FALSE(callPreservesRegisterBytes(Arch::AArch64, ~uint32_t(0), 0, 8));
+}
+
+TEST(CallRegisterEffects, JoinedPlainStepsSolveAsTheirSteps) {
+  // Runs of steps that read, kill and partly write register families,
+  // between calls that keep or change some of them, before a block whose
+  // reads make bytes live after the runs: joined or not, a solve gives the
+  // same reads and writes.
+  std::mt19937 Random(20261019);
+  const auto Pick = [&](std::initializer_list<uint8_t> Values) {
+    return *(Values.begin() + Random() % Values.size());
+  };
+  const auto PlainStep = [&] {
+    RegisterStep Step;
+    for (size_t Family = 0; Family < Step.Reads.size(); ++Family) {
+      if (Random() % 3 == 0)
+        Step.Reads[Family] = Pick({1, 2, 4, 8, 16});
+      if (Random() % 4 == 0)
+        Step.LowWrites[Family] = Pick({1, 2, 4});
+      if (Random() % 6 == 0)
+        Step.Kills |= GPRFamilyMask(1) << Family;
+    }
+    return Step;
+  };
+  LocalRegisterEffect Callee;
+  Callee.Writes = (GPRFamilyMask(1) << 1) | (GPRFamilyMask(1) << 18);
+  Callee.Blocks.resize(1);
+  Callee.Blocks[0].Steps.push_back(PlainStep());
+  for (int Trial = 0; Trial < 500; ++Trial) {
+    SCOPED_TRACE(Trial);
+    LocalRegisterEffect Caller;
+    Caller.Blocks.resize(3);
+    Caller.Blocks[0].Succs = {1, 2};
+    Caller.Blocks[1].Succs = {2};
+    for (RegisterBlock &Block : Caller.Blocks) {
+      const int Count = static_cast<int>(Random() % 12);
+      for (int I = 0; I < Count; ++I) {
+        if (Random() % 5 == 0) {
+          RegisterStep Call = PlainStep();
+          Call.Callee = 0x2000;
+          Caller.Callees.insert(0x2000);
+          Block.Steps.push_back(Call);
+        } else {
+          Block.Steps.push_back(PlainStep());
+        }
+      }
+    }
+    LocalRegisterEffect Joined = Caller;
+    joinPlainSteps(Joined);
+    size_t Steps = 0, JoinedSteps = 0;
+    for (size_t B = 0; B < Caller.Blocks.size(); ++B) {
+      Steps += Caller.Blocks[B].Steps.size();
+      JoinedSteps += Joined.Blocks[B].Steps.size();
+    }
+    EXPECT_LE(JoinedSteps, Steps);
+    const auto Solve = [&](const LocalRegisterEffect &Effect) {
+      return solveCallRegisterEffects({{0x1000, Effect}, {0x2000, Callee}},
+                                      /*VolatileFamilies=*/0x00FF0F07,
+                                      /*ArgumentFamilies=*/0x00FF0306);
+    };
+    const CallRegisterSummaries Original = Solve(Caller);
+    const CallRegisterSummaries Result = Solve(Joined);
+    EXPECT_EQ(Result.EntryReads, Original.EntryReads);
+    EXPECT_EQ(Result.MayWrite, Original.MayWrite);
+    EXPECT_EQ(Result.EntryStackArgs, Original.EntryStackArgs);
+  }
 }
 
 TEST(CallRegisterEffects, MaskedByteMergeIsALowWrite) {
