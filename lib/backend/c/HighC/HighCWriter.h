@@ -786,6 +786,10 @@ public:
   std::optional<int64_t> frameDisplacement(const HighExpr &E) const;
   std::optional<int64_t>
   certifiedFrameStorageDisplacement(const HighExpr &E) const;
+  /// Whether the alignment precondition \p Call always holds in C: its
+  /// address is a slot of the frame storage, whose layout gives the slot the
+  /// alignment the entry stack pointer's residue gives it in the machine.
+  bool frameStorageAlignmentHolds(const HighExpr &Call);
   /// Whether \p E combines a certified frame address with a run-time value,
   /// so it reaches whichever frame bytes that value selects.
   bool reachesFrameThroughIndex(const HighExpr &E) const;

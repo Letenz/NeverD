@@ -1288,6 +1288,11 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         break;
       }
     }
+    // An aligned access to a frame slot faults on nothing C can run: the
+    // storage gives the slot the machine's alignment, so its check always
+    // passes, as a compiler folds it.
+    if (frameStorageAlignmentHolds(*Stmt.CallExpr))
+      break;
     {
       auto Rendered = renderX86SegmentedIntrinsicStatement(
           Opts.TheArch, *Stmt.CallExpr, nullptr,
