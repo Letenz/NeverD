@@ -3005,6 +3005,75 @@ TEST_F(SessionCAPITest, DataAccessWidthsCheckEveryExtentAndDiscardOldSource) {
   Check(0u);
 }
 
+TEST_F(SessionCAPITest, DataAccessWidthsReadOnlyTheExtentsThatChange) {
+  // Reading the widths again decodes only the functions whose extent
+  // changed, and gives what a fresh read of every function gives, whatever
+  // the list became: sizes cleared, shortened or restored, functions
+  // dropped, added inside others, or listed twice with another size.
+  const auto Fixture = std::filesystem::path(__FILE__).parent_path() /
+                       "Inputs" / "source-patch" / "native-processes" /
+                       "x64-original.exe";
+  ASSERT_EQ(neverd_session_load(Session, Fixture.string().c_str()), 1);
+  auto &State = *neverd::sdk::toSession(Session);
+  ASSERT_GE(State.Functions.size(), 4u);
+  const auto Original = State.Functions;
+  auto Agree = [&] {
+    const auto *Widths =
+        neverd::sdk::SessionTestAccess::dataAccessWidths(State);
+    ASSERT_NE(Widths, nullptr);
+    const auto Fresh =
+        neverd::sdk::SessionTestAccess::collectDataAccessWidths(State);
+    ASSERT_TRUE(Fresh);
+    EXPECT_TRUE(std::equal(Widths->begin(), Widths->end(), Fresh->begin(),
+                           Fresh->end()));
+  };
+  Agree();
+  ASSERT_FALSE(State.AccessWidths->empty());
+  uint64_t Seed = 0x9e3779b97f4a7c15u;
+  auto Next = [&] {
+    Seed ^= Seed << 13;
+    Seed ^= Seed >> 7;
+    Seed ^= Seed << 17;
+    return Seed;
+  };
+  for (int Step = 0; Step < 200; ++Step) {
+    SCOPED_TRACE(Step);
+    auto &List = State.Functions;
+    const size_t I = Next() % List.size();
+    switch (Next() % 6) {
+    case 0:
+      List[I].Size = 0;
+      break;
+    case 1:
+      List[I].Size = Original[Next() % Original.size()].Size;
+      break;
+    case 2:
+      List[I].Size /= 2;
+      break;
+    case 3:
+      if (List.size() > 2)
+        List.erase(List.begin() + static_cast<std::ptrdiff_t>(I));
+      break;
+    case 4: {
+      neverd::sdk::FuncInfo Inside = List[I];
+      Inside.Entry += 1 + Next() % 8;
+      Inside.Size = Next() % 2 ? 0 : 16;
+      List.push_back(Inside);
+      break;
+    }
+    default: {
+      neverd::sdk::FuncInfo Twice = List[I];
+      Twice.Size += 1 + Next() % 32;
+      List.push_back(Twice);
+      break;
+    }
+    }
+    Agree();
+  }
+  State.Functions = Original;
+  Agree();
+}
+
 TEST_F(SessionCAPITest, DataAccessWidthsRetireOnEditsPolicyAndSignatures) {
   const auto Input = write("widths.elf", accessWidthCacheELF());
   ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);

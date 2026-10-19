@@ -25,6 +25,7 @@ bool SessionTestAccess::functionListIsRebuilt(Session &State) {
   auto Inputs = State.ListInputs;
   auto Widths = std::move(State.AccessWidths);
   auto Extents = std::move(State.AccessWidthsFunctions);
+  auto Scan = std::move(State.AccessScan);
   State.resetFunctionsFromImage();
   const bool Rebuilt =
       State.Functions == Functions && State.OriginalNames == OriginalNames;
@@ -34,6 +35,7 @@ bool SessionTestAccess::functionListIsRebuilt(Session &State) {
   State.ListInputs = std::move(Inputs);
   State.AccessWidths = std::move(Widths);
   State.AccessWidthsFunctions = std::move(Extents);
+  State.AccessScan = std::move(Scan);
   return Rebuilt;
 }
 void SessionTestAccess::clearPipeline(Session &State) { State.clearPipeline(); }
