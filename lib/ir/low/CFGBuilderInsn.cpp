@@ -668,6 +668,13 @@ void CFGBuilder::rewriteAsIndirectTailCall(InsnRecord &Rec) {
   Rec.IsCall = true;
   Rec.IsRet = true;
   Rec.BranchTarget = InvalidVA;
+  // A jump through the slot of an import that never returns, as a PLT entry
+  // of exit, never returns either, as a call through that slot does not.
+  // Only the import the loader binds to the slot proves it: a jump that
+  // ends its function's code range is an ordinary tail call.
+  Rec.IsNoReturnCall =
+      Target.isConst() &&
+      libc::isNoReturnTarget(*CurrentImg, Target.Offset, NoReturnTargets);
 }
 
 } // namespace neverd
