@@ -365,7 +365,8 @@ std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
 /// must stop exploring rather than fall through and swallow them (a leaf `bl
 /// _longjmp` would otherwise absorb the whole function laid out after it).
 /// Leading platform underscores (the Mach-O `_` prefix) are stripped
-/// internally.
+/// internally.  Rust standard library routines declared to return `!` (a
+/// panic, abort or exit) are known by their demangled path.
 bool isNoReturnFunction(std::string_view Name);
 
 /// True if \p Target resolves through \p Img to a known no-return import

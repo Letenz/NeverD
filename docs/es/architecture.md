@@ -994,8 +994,9 @@ entrada `CallArgumentConvention` en su propio
 `lib/ir/med/abi/MedCallConvention<Name>.cpp`, registrada en
 `MedCallConvention.cpp`. Las funciones que nunca retornan se enumeran por
 runtime en `include/neverd/libc` (`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`,
-`WindowsNoReturn.inc`). Así, admitir otro objetivo añade un archivo o una
-entrada de tabla en lugar de una rama en el pase compartido.
+`WindowsNoReturn.inc`, `RustRuntimeNoReturn.inc`). Así, admitir otro objetivo
+añade un archivo o una entrada de tabla en lugar de una rama en el pase
+compartido.
 
 Los símbolos no definidos de un objeto reubicable se resuelven en una capa
 compartida, `include/neverd/loader/ObjectExterns.h`. El cargador de cada formato

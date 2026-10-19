@@ -776,6 +776,38 @@ TEST(IsNoReturnFunction, ItaniumCxxTerminators) {
   EXPECT_TRUE(isNoReturnFunction("__clang_call_terminate"));
 }
 
+TEST(IsNoReturnFunction, RustRoutinesDeclaredToReturnNever) {
+  // v0 names in ELF and Mach-O spelling, a legacy name, a generic instance,
+  // the panic_const family, and the panic handler std exports under its own
+  // name or as a member of the synthetic `__rustc` crate.
+  for (const char *Name :
+       {"_RNvNtCsbAqs9W1eE8G_4core6option13unwrap_failed",
+        "__RNvNtCsbAqs9W1eE8G_4core6option13unwrap_failed",
+        "_ZN4core9panicking5panic17h0123456789abcdefE",
+        "__RINvNtCsbAqs9W1eE8G_4core9panicking13assert_failedyyEB4_",
+        "__RNvNtNtCsbAqs9W1eE8G_4core9panicking11panic_const"
+        "24panic_const_add_overflow",
+        "__RNvNtNtCsbAqs9W1eE8G_4core5slice5index16slice_index_fail",
+        "__RNvNtCsl2jJwwz0T1e_5alloc7raw_vec12handle_error",
+        "__RNvCs9wFQrvczXsK_7___rustc17rust_begin_unwind",
+        "_rust_begin_unwind"}) {
+    SCOPED_TRACE(Name);
+    EXPECT_TRUE(isNoReturnFunction(Name));
+  }
+  // std::thread::panicking, std::panicking::panic_count::increase and
+  // std::process::id return; __rust_start_panic returns when no unwinder
+  // takes the panic; a crate's own `panicking::panic` is not core's.
+  for (const char *Name :
+       {"_RNvNtCsgejaSCmAoRz_3std6thread9panicking",
+        "__RNvNtNtCsgejaSCmAoRz_3std9panicking11panic_count8increase",
+        "_RNvNtCsgejaSCmAoRz_3std7process2id",
+        "__RNvCs9wFQrvczXsK_7___rustc18___rust_start_panic",
+        "_RNvNtCs1a2b3c4d5e6_7mycrate9panicking5panic"}) {
+    SCOPED_TRACE(Name);
+    EXPECT_FALSE(isNoReturnFunction(Name));
+  }
+}
+
 TEST(IsNoReturnFunction, MsvcGsHelpers) {
   EXPECT_TRUE(isNoReturnFunction("report_gsfailure"));
   EXPECT_TRUE(isNoReturnFunction("_report_gsfailure"));
