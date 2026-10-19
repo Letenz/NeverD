@@ -42,6 +42,8 @@
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
@@ -52,6 +54,7 @@
 #include <cstdlib>
 #include <exception>
 #include <iterator>
+#include <limits>
 #include <list>
 #include <map>
 #include <memory>
@@ -479,6 +482,16 @@ struct ModuleAddressFacts {
 };
 using ModuleAddressState = std::map<LowValueKey, ModuleAddressFacts>;
 
+/// The facts of \p State under keys in \p Space.  The map orders its keys by
+/// space first, so they are one run of it: a scan of the registers need not
+/// visit every frame cell and temporary, nor a scan of the frame the rest.
+template <typename StateT> auto entriesIn(StateT &State, VnodeSpace Space) {
+  return llvm::make_range(
+      State.lower_bound(LowValueKey{Space, 0, 0}),
+      State.upper_bound(LowValueKey{Space, std::numeric_limits<uint64_t>::max(),
+                                    std::numeric_limits<uint16_t>::max()}));
+}
+
 struct ReturnedCodeEvidence {
   std::vector<std::set<va_t>> TargetsByFunction;
   std::vector<bool> CompleteByFunction;
@@ -597,6 +610,16 @@ bool collectLowAddressUses(
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const std::vector<TargetRegisterRange> PreservedRanges =
       TRI.callPreservedRanges(Img.abiFormat());
+  // The register containing a register, which every read and write asks of
+  // each register entry it scans; it depends on the target alone.
+  llvm::DenseMap<std::pair<uint64_t, uint16_t>, std::pair<uint64_t, uint16_t>>
+      WideRegisters;
+  auto wideRegister = [&](uint64_t Offset, uint16_t Size) {
+    auto [It, Inserted] = WideRegisters.try_emplace({Offset, Size});
+    if (Inserted)
+      It->second = TRI.findWideReg(Offset, Size);
+    return It->second;
+  };
   const auto SEHRuntimeMemory = collectLowSEHRuntimeMemory(Img, Funcs);
   std::map<va_t, const LowFunc *> SEHCallees;
   if (LocalUnwind)
@@ -997,7 +1020,7 @@ bool collectLowAddressUses(
           return std::nullopt;
         if (TRI.isFlag(Offset, Size))
           return RegisterLane{Offset, Size, 0, Size};
-        const auto [WideOffset, WideSize] = TRI.findWideReg(Offset, Size);
+        const auto [WideOffset, WideSize] = wideRegister(Offset, Size);
         int ByteOffset = 0;
         if (WideOffset != Offset || WideSize != Size) {
           ByteOffset = TRI.subRegByteOffset(Offset, Size, WideOffset, WideSize);
@@ -1032,10 +1055,10 @@ bool collectLowAddressUses(
               Facts = It->second;
               Projected = true;
             }
-            for (const auto &[Key, ExistingFacts] : State) {
+            for (const auto &[Key, ExistingFacts] :
+                 entriesIn(State, VnodeSpace::REG)) {
               const auto &[Space, Offset, Size] = Key;
-              if (Space != VnodeSpace::REG)
-                continue;
+              (void)Space;
               if (Key == lowValueKey(Value))
                 continue;
               const std::optional<RegisterLane> Existing =
@@ -1209,9 +1232,8 @@ bool collectLowAddressUses(
         if (Address.Imprecise || Address.MayBeNonFrame ||
             Address.FrameOffsets.size() != 1) {
           State[allFrameMemoryEscapedKey()].FrameCellEscaped = true;
-          for (auto &[Key, Stored] : State)
-            if (std::get<0>(Key) == VnodeSpace::STACK)
-              Stored.FrameCellEscaped = true;
+          for (auto &[Key, Stored] : entriesIn(State, VnodeSpace::STACK))
+            Stored.FrameCellEscaped = true;
           return true;
         }
         for (int64_t EscapedOffset : Address.FrameOffsets) {
@@ -1234,9 +1256,11 @@ bool collectLowAddressUses(
             Address.MayBeNonFrame || Address.Imprecise)
           return true;
         for (int64_t Offset : Address.FrameOffsets)
-          for (const auto &[Key, Stored] : State) {
+          for (const auto &[Key, Stored] :
+               entriesIn(State, VnodeSpace::STACK)) {
             const auto &[Space, RawOffset, StoredSize] = Key;
-            if (Space == VnodeSpace::STACK && Stored.FrameCellEscaped &&
+            (void)Space;
+            if (Stored.FrameCellEscaped &&
                 frameIntervalsOverlap(Offset, AccessSize,
                                       static_cast<int64_t>(RawOffset),
                                       StoredSize))
@@ -1257,10 +1281,11 @@ bool collectLowAddressUses(
         bool MissingAlternative = false;
         for (int64_t LoadOffset : Address.FrameOffsets) {
           bool Found = false;
-          for (const auto &[Key, Stored] : State) {
+          for (const auto &[Key, Stored] :
+               entriesIn(State, VnodeSpace::STACK)) {
             const auto &[Space, RawOffset, StoredSize] = Key;
-            if (Space != VnodeSpace::STACK ||
-                !frameIntervalsOverlap(LoadOffset, AccessSize,
+            (void)Space;
+            if (!frameIntervalsOverlap(LoadOffset, AccessSize,
                                        static_cast<int64_t>(RawOffset),
                                        StoredSize))
               continue;
@@ -1490,11 +1515,11 @@ bool collectLowAddressUses(
               // return as live: without a signature that made i386 EDX and
               // AArch64 X1 false pointer escapes whenever they merely held a
               // stale unrelated value at an ordinary scalar return.
-              for (const auto &[Key, Facts] : State) {
+              for (const auto &[Key, Facts] :
+                   entriesIn(State, VnodeSpace::REG)) {
                 const auto &[Space, Offset, Size] = Key;
+                (void)Space;
                 (void)Size;
-                if (Space != VnodeSpace::REG)
-                  continue;
                 const bool IsPrimaryIntegerReturn = Offset == TRI.IntReturnReg;
                 const bool IsPrimaryFPReturn =
                     TRI.FPReturnReg != 0 && Offset == TRI.FPReturnReg;
@@ -1641,9 +1666,8 @@ bool collectLowAddressUses(
               for (uint8_t I = 1; I < Op.NumInputs; ++I)
                 if (!mergeCallArgument(factsFor(Op.Inputs[I])))
                   return false;
-            for (const auto &[Key, Facts] : State) {
-              if (std::get<0>(Key) != VnodeSpace::REG ||
-                  TRI.regToArgIdx(std::get<1>(Key),
+            for (const auto &[Key, Facts] : entriesIn(State, VnodeSpace::REG)) {
+              if (TRI.regToArgIdx(std::get<1>(Key),
                                   Img.abiFormat() == BinaryFormat::COFF) < 0)
                 continue;
               if (!mergeCallArgument(Facts))
@@ -1671,10 +1695,11 @@ bool collectLowAddressUses(
                    ++CellIndex) {
                 const ModuleAddressFacts *Cell = nullptr;
                 uint16_t CellSize = 0;
-                for (const auto &[Key, Facts] : State) {
+                for (const auto &[Key, Facts] :
+                     entriesIn(State, VnodeSpace::STACK)) {
                   const auto &[Space, RawOffset, StoredSize] = Key;
-                  if (Space != VnodeSpace::STACK || StoredSize == 0 ||
-                      !Facts.FrameCellPresent ||
+                  (void)Space;
+                  if (StoredSize == 0 || !Facts.FrameCellPresent ||
                       static_cast<int64_t>(RawOffset) != Cursor)
                     continue;
                   if (Cell != nullptr)
@@ -1713,9 +1738,9 @@ bool collectLowAddressUses(
               // window.  Preserve soundness locally by treating every
               // address-bearing frame cell as a possible stack argument;
               // this does not poison unrelated functions or tables.
-              for (const auto &[Key, Facts] : State)
-                if (std::get<0>(Key) == VnodeSpace::STACK &&
-                    std::get<2>(Key) != 0 && Facts.FrameCellPresent &&
+              for (const auto &[Key, Facts] :
+                   entriesIn(State, VnodeSpace::STACK))
+                if (std::get<2>(Key) != 0 && Facts.FrameCellPresent &&
                     !mergeCallArgument(Facts))
                   return false;
             }
@@ -1993,10 +2018,10 @@ bool collectLowAddressUses(
                 // dropping those roots would let `movb %dil,%dil` or an AH
                 // write erase a live table pointer before an opaque call.
                 ModuleAddressFacts Combined;
-                for (const auto &[Key, ExistingFacts] : State) {
+                for (const auto &[Key, ExistingFacts] :
+                     entriesIn(State, VnodeSpace::REG)) {
                   const auto &[Space, Offset, Size] = Key;
-                  if (Space != VnodeSpace::REG)
-                    continue;
+                  (void)Space;
                   const std::optional<RegisterLane> Existing =
                       registerLane(Offset, Size);
                   if (!Existing ||
@@ -2150,7 +2175,8 @@ bool collectLowAddressUses(
       if (!Reached[I])
         continue;
       ModuleAddressState Ignored;
-      if (!transfer(Func.Blocks[I], InStates[I], &Uses, Ignored))
+      // The recording pass reads each input state for the last time.
+      if (!transfer(Func.Blocks[I], std::move(InStates[I]), &Uses, Ignored))
         return failCollect("transfer-record", FuncIndex,
                            Func.Blocks[I].StartAddr);
     }
