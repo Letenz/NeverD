@@ -59,11 +59,14 @@ bool reachingRegisterAtBlockEntry(const MedFunc &Func, const MedBlock &Block,
 /// a write does, and so does an exception handler's entry, where the
 /// unwinder leaves caller-saved registers unspecified.  Where every path
 /// that finds nothing else ends so, none reaching the function's entry, the
-/// value is what the calls left there (valueLeftByCall).
+/// value is what the calls left there (valueLeftByCall).  With
+/// \p ParameterAtEntry, a register the function takes as a parameter and its
+/// entry holds no copy of (the body only passes it on) enters as that
+/// parameter.
 bool reachingRegisterAtCall(const MedFunc &Func, const MedBlock &Block,
                             size_t CallIdx, uint64_t RegOff,
                             const TargetRegInfo &TRI, BinaryFormat Format,
-                            MedVar &Out);
+                            MedVar &Out, bool ParameterAtEntry = false);
 
 /// The values the call at \p CallIdx in \p Block stores to the pointer-wide
 /// slots from the stack pointer it is made with up, in slot order as far as
