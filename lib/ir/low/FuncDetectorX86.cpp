@@ -263,6 +263,14 @@ bool isX86StrongFramePrologue(llvm::ArrayRef<uint8_t> Bytes) {
   return false;
 }
 
+/// `push ebp; mov ebp, esp` (55 8B EC or 55 89 E5): the frame setup itself,
+/// not just a push of EBP followed by some move.
+bool isX86EbpFrameSetup(llvm::ArrayRef<uint8_t> Bytes) {
+  return Bytes.size() >= 3 && Bytes[0] == 0x55 &&
+         ((Bytes[1] == 0x8B && Bytes[2] == 0xEC) ||
+          (Bytes[1] == 0x89 && Bytes[2] == 0xE5));
+}
+
 bool isX86StackAdjustPrologue(llvm::ArrayRef<uint8_t> Bytes) {
   return Bytes.size() >= 2 && Bytes[1] == 0xEC &&
          (Bytes[0] == 0x81 || Bytes[0] == 0x83);
@@ -420,7 +428,7 @@ void FuncDetector::scanX86UnsymbolizedEntries(const BinaryImage &Img,
       Cur = static_cast<const uint8_t *>(Hit) + 1;
       if ((Addr & 15u) == 0)
         continue;
-      if (!isX86StrongFramePrologue(At(Addr)))
+      if (!isX86EbpFrameSetup(At(Addr)))
         continue;
       considerX86Prologue(Img, Dec, *Seg, Addr, Occupied, Out,
                           UnsymbolizedX86Entries);

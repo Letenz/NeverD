@@ -199,6 +199,29 @@ TEST(X86_32_FunctionDiscovery, RecoversUnalignedFramePrologue) {
       << "expected unaligned push-ebp frame prologue";
 }
 
+TEST(X86_32_FunctionDiscovery,
+     APushOfEbpWithoutTheFrameMoveIsNoUnalignedEntry) {
+  // `push 55h; mov eax, esi` holds the bytes 55 8B C6 one byte into its
+  // first instruction.  A push of EBP followed by just any move is no frame
+  // setup, so the unaligned scan takes it for none.
+  std::vector<uint8_t> Bytes(0x20, 0xCC);
+  const uint8_t Entry[] = {0x55, 0x8B, 0xEC, // 401000 push ebp; mov ebp, esp
+                           0x6A, 0x55,       // 401003 push 55h
+                           0x8B, 0xC6,       // 401005 mov eax, esi
+                           0x83, 0xC4, 0x04, // 401007 add esp, 4
+                           0x5D, 0xC3};      // 40100A pop ebp; ret
+  std::copy(std::begin(Entry), std::end(Entry), Bytes.begin());
+
+  BinaryImage Img = makePeText(std::move(Bytes));
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  const auto Functions = Detector.detect(Img, Dec);
+  EXPECT_TRUE(hasEntry(Functions, 0x401000));
+  EXPECT_FALSE(hasEntry(Functions, 0x401004))
+      << "55 8B C6 inside an instruction is no frame prologue";
+}
+
 TEST(X86_32_FunctionDiscovery, RecoversAlignedPushRegAndSehPrologues) {
   std::vector<uint8_t> Bytes(0x50, 0xCC);
   const uint8_t Entry[] = {0x55, 0x8B, 0xEC, 0x5D, 0xC3};
