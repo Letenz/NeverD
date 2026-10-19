@@ -288,10 +288,12 @@ int neverd_rename_func(neverd_session_t Sess, const char *OldName,
       S->forgetEmittedSources();
       F.Name = NewName;
       F.Origin = NameOrigin::User;
+      S->functionListChanged();
       if (neverd_renames_save(Sess) != 0) {
         S->Renames = PreviousRenames;
         F.Name = PreviousName;
         F.Origin = PreviousOrigin;
+        S->functionListChanged();
         return -1;
       }
       return 0;
@@ -401,6 +403,7 @@ int neverd_renames_load(neverd_session_t Sess) {
           Original != S->OriginalNames.end())
         F.Name = Original->second;
     }
+    S->functionListChanged();
     S->Renames.clear();
     S->forgetEmittedSources();
     S->refreshFunctionNames();
@@ -452,6 +455,7 @@ int neverd_renames_load(neverd_session_t Sess) {
       }
     }
   }
+  S->functionListChanged();
   return 0;
 }
 
