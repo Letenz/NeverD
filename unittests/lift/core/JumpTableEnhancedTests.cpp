@@ -3957,6 +3957,45 @@ TEST_F(JTE_X86_64, JumpsAfterReleasingTheFrameKeepTheRelativeTable) {
   EXPECT_TRUE(Framed.JumpTables.empty());
 }
 
+static fs::path slotReloadGuardX64Obj() {
+  return fs::path(TEST_OBJ_DIR) / "test_jumptable_slot_reload_guard.o";
+}
+
+// A switch byte kept in a frame slot after a call: the guard compares the
+// slot and the dispatch reloads it.  Two loads of the slot with no store and
+// no call between them read one value, so the guard bounds the table; a call
+// between them leaves the reload unbounded.
+TEST_F(JTE_X86_64, AReloadOfTheComparedSlotIsTheGuardedIndex) {
+  auto ImageOrErr = neverd::loadBinary(slotReloadGuardX64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  const auto Build = [&](const char *Name) {
+    const neverd::Symbol *Function = Image.findSymbol(Name);
+    EXPECT_NE(Function, nullptr);
+    neverd::Decoder Decoder;
+    EXPECT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+    neverd::CFGBuilder Builder;
+    return Builder.build(Image, Decoder, Function ? Function->Addr : 0, Name);
+  };
+
+  const neverd::LowFunc Reload = Build("slot_dispatch");
+  ASSERT_EQ(Reload.JumpTables.size(), 1u);
+  const neverd::va_t Base = Reload.JumpTables.front().BaseAddr;
+  std::vector<neverd::va_t> Expected;
+  for (size_t Case = 0; Case < 4; ++Case) {
+    const uint8_t *Bytes = Image.readVA(Base + Case * 4, 4);
+    ASSERT_NE(Bytes, nullptr);
+    int32_t Entry = 0;
+    std::memcpy(&Entry, Bytes, sizeof(Entry));
+    Expected.push_back(Base + static_cast<int64_t>(Entry));
+  }
+  EXPECT_EQ(Reload.JumpTables.front().Targets, Expected);
+
+  const neverd::LowFunc AfterCall = Build("slot_dispatch_after_call");
+  EXPECT_TRUE(AfterCall.JumpTables.empty());
+}
+
 static fs::path tailStubX64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_jumptable_tail_stub.o";
 }

@@ -12,8 +12,10 @@
 #include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/ISAEncoding.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
 #include <array>
@@ -393,6 +395,72 @@ TEST(FunctionDiscoveryAlignment, PreservesAlignedEntriesAfterPadding) {
     ASSERT_EQ(Img.Symbols.size(), 1u);
     EXPECT_EQ(Img.Symbols.front().Addr, 0x1000 + C.Offset);
   }
+}
+
+// MSVC keeps string literals in the executable sections of drivers and the
+// kernel, padded with int3 like the functions between them.  Their first
+// bytes read as prologues -- `W` is `push rdi`, `H` a REX prefix -- but text
+// holds no return, call or unconditional jump: execution entered there can
+// only trap on the padding, so no function begins there.
+TEST(FunctionDiscoveryAlignment, StringLiteralsInCodeBeginNoFunctions) {
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  std::vector<uint8_t> Bytes(0x60, x86::kInt3);
+  // The scanner deliberately skips a segment's initial padding run.
+  Bytes[0] = 0x12;
+  const auto Put = [&](size_t Offset, std::initializer_list<uint8_t> Code) {
+    std::copy(Code.begin(), Code.end(), Bytes.begin() + Offset);
+  };
+  // push rbp; mov rbp, rsp; pop rbp; ret
+  Put(0x10, {0x55, 0x48, 0x89, 0xe5, 0x5d, 0xc3});
+  // L"WIN"
+  Put(0x20, {'W', 0, 'I', 0, 'N', 0, 0, 0});
+  // "HYPERVISOR=": pop rcx, push rax, push r10, ... in code.
+  Put(0x30, {'H', 'Y', 'P', 'E', 'R', 'V', 'I', 'S', 'O', 'R', '=', 0});
+  // Text and a zero byte that are code: `imul rax, [rax], -0x34; nop; ret`,
+  // whose immediate is the int3 after them.
+  Put(0x40, {'H', 'k', 0, x86::kInt3, 0x90, 0xc3});
+  // `jz` out of the text: execution leaves the literals.
+  Put(0x50, {'H', 't', 0x7e, 0});
+  Img.Segments.push_back(executableSegment(0x1000, Bytes));
+
+  scanPaddingBoundaries(Img);
+
+  std::vector<va_t> Guessed;
+  for (const Symbol &Sym : Img.Symbols) {
+    EXPECT_TRUE(Sym.IsBoundaryGuess);
+    Guessed.push_back(Sym.Addr);
+  }
+  llvm::sort(Guessed);
+  EXPECT_EQ(Guessed, (std::vector<va_t>{0x1010, 0x1040, 0x1050}));
+}
+
+// A table of pointers to such literals points at data.
+TEST(FunctionDiscoveryAlignment, PointersToStringLiteralsInCodeAreNoFunctions) {
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  std::vector<uint8_t> Code(0x20, x86::kInt3);
+  // L"WIN", then `push rbp; mov rbp, rsp; pop rbp; ret`.
+  const std::array<uint8_t, 8> Literal = {'W', 0, 'I', 0, 'N', 0, 0, 0};
+  const std::array<uint8_t, 6> Function = {0x55, 0x48, 0x89, 0xe5, 0x5d, 0xc3};
+  std::copy(Literal.begin(), Literal.end(), Code.begin());
+  std::copy(Function.begin(), Function.end(), Code.begin() + 0x10);
+  Img.Segments.push_back(executableSegment(0x1000, Code));
+  Segment Data;
+  Data.VA = 0x2000;
+  Data.Size = 16;
+  Data.Flags = SegmentFlags::Readable;
+  Data.Data.resize(16);
+  writeLE<uint64_t>(Data.Data.data(), 0x1000);
+  writeLE<uint64_t>(Data.Data.data() + 8, 0x1010);
+  Img.Segments.push_back(std::move(Data));
+
+  scanDataFuncPointers(Img);
+
+  ASSERT_EQ(Img.Symbols.size(), 1u);
+  EXPECT_EQ(Img.Symbols.front().Addr, 0x1010u);
 }
 
 TEST(FunctionDiscoveryAlignment, DataPointersRejectMisalignedAArch64Entries) {

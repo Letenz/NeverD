@@ -10,6 +10,10 @@ NeverD 的测试回答三个不同问题：表示形状是否符合预期、完�
 
 `PipelineOutcome.ResolvedCalls*` 检查寄存器分组、call／invoke 身份、栈字节打包与拆分、窄值留在各自的栈槽，以及缺失字节的拒绝。`MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` 检查记录的偏移。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` 覆盖 x64、ARM32、AArch64 的 ELF、PE、Mach-O。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` 覆盖三种格式，拒绝长度被改写、可写或越界范围、同名本地函数、错误源寄存器、替代入口和可重定位镜像。主机 C 差分测试将原始 C 独立按 O0 编译，生成的 C 仍按 O2 编译，避免主机优化器把循环递推算错后污染对照。AArch64 FMA 检查仅在 x86 主机上请求 `-mfma`。
 
+## 传统 GS 恢复检查
+
+`NeverDX86LegacyGSRecoveryTests` 检查通用交换／两次交换后置条件、完整宽度的段内存地址、别名、FS／内存／标志保持、与 MXCSR 共存、非法状态和临时槽、原子拒绝、效果保留及预算边界。`PEFixedImageTest.RawLegacyGS*` 检查原生编码准入和凭据绑定。机器状态及原生／LLVM 细化测试拒绝不支持的源码契约，包括未使用的声明。`LegacyGSExecutionPolicy.RemainsUnmodeled` 保持具体执行拒绝。这些是符号与策略测试，不是原生特权指令执行。
+
 ## MXCSR 还原检查
 
 `InterpreterSpecialization.MXCSR*` 覆盖任意入口状态、精确内存值、保留位、DAZ、别名、非法形式、节点投影及精确/不足预算。`PEFixedImageTest.RawMXCSR*` 检查传统/VEX 原生字节和绑定掩码的凭据。机器状态及原生/LLVM 细化测试确保未使用的能力也不能扩大接口。

@@ -12,6 +12,22 @@
 
 #include "../../core/RecoveryArchitecture.h"
 
+namespace neverd::analysis::x64::control {
+size_t stateSize(const SpecializationOptions &Options);
+bool validState(symbolic::SymState &State, const RuntimeControlState &Controls,
+                const SpecializationOptions &Options);
+} // namespace neverd::analysis::x64::control
+
+namespace neverd::analysis::x64::legacygs {
+llvm::Error validateOptions(const SpecializationOptions &Options);
+bool supportsOperation(const LowOp &Op, const SpecializationOptions &Options);
+std::optional<RuntimeControlTransition>
+lowerOperation(const LowOp &Op, symbolic::SymState &State,
+               const RuntimeControlState &Controls,
+               const SpecializationOptions &Options,
+               llvm::function_ref<NdVar(uint16_t)> Temporary);
+} // namespace neverd::analysis::x64::legacygs
+
 namespace neverd::analysis::x64::mxcsr {
 llvm::Error validateOptions(const SpecializationOptions &Options);
 bool supportsOperation(const LowOp &Op, const SpecializationOptions &Options);

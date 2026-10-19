@@ -13,6 +13,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/intrinsics/IntrinsicTermination.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86Interrupts.h"
 
@@ -21,6 +22,7 @@
 
 #include <functional>
 #include <map>
+#include <optional>
 #include <set>
 
 namespace neverd {
@@ -242,15 +244,26 @@ static bool isX86NoReturnInterruptCall(const HighExpr &Expression) {
 bool isTerminatingHighCall(const ExprPtr &Expression) {
   if (isNonReturningSourceCall(Expression))
     return true;
-  if (Expression && Expression->Kind == ExprKind::Call &&
-      !Expression->IsIndirectCall && !Expression->SourceCallHint &&
-      isX86NoReturnInterruptCall(*Expression))
+  if (!Expression || Expression->Kind != ExprKind::Call ||
+      Expression->IsIndirectCall || Expression->SourceCallHint)
+    return false;
+  if (isX86NoReturnInterruptCall(*Expression))
     return true;
-  return Expression && Expression->Kind == ExprKind::Call &&
-         !Expression->IsIndirectCall && !Expression->SourceCallHint &&
-         Expression->Operands.empty() && Expression->IntrinsicOutputs.empty() &&
-         Expression->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-         isUnconditionalTrapIntrinsic(Expression->IntrinsicId);
+  if (!Expression->IntrinsicOutputs.empty() ||
+      Expression->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const Intrinsic Id = Expression->IntrinsicId;
+  if (Expression->Operands.empty())
+    return isUnconditionalTrapIntrinsic(Id) ||
+           intrinsicNeverReturns(Id, std::nullopt);
+  // An exception-generating instruction keeps the code it carries as its one
+  // operand (`brk #1`, `udf #0`).  The table LowIR and MedIR end the flow
+  // with decides whether it returns (IntrinsicTermination.h).
+  const ExprPtr &Code = Expression->Operands.front();
+  if (Expression->Operands.size() != 1 || !Code ||
+      Code->Kind != ExprKind::Const)
+    return false;
+  return intrinsicNeverReturns(Id, Code->ConstVal);
 }
 
 ExprPtr withMergedCallSites(const ExprPtr &Kept, const ExprPtr &Dropped) {

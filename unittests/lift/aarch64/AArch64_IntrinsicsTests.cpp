@@ -203,6 +203,23 @@ TEST_F(AArch64_Intrinsics, OnlyBrkIsUnreachable) {
       << otherFunctions.substr(0, 3000);
 }
 
+// A trap ends its block in C as in the binary: no return of the other
+// path's value follows `brk #1`.
+TEST_F(AArch64_Intrinsics, TrapEndsItsBlock) {
+  auto r = decompileToHighC(obj("test_trap_ends_flow_a64.o"));
+  ASSERT_EQ(r.exitCode, 0) << "Decompile failed: " << r.err;
+  const std::string Content = readDecompiledFile("decompiled_high.c");
+  const size_t Start = Content.find(" trap_or_five(");
+  ASSERT_NE(Start, std::string::npos) << Content;
+  const std::string Body =
+      Content.substr(Start, Content.find("\n}", Start) - Start);
+  // Only the end of its block or of the function follows the trap.
+  const size_t Trap = Body.find("__builtin_trap();");
+  ASSERT_NE(Trap, std::string::npos) << Body;
+  const size_t Next = Body.find_first_not_of(" \n", Body.find('\n', Trap));
+  EXPECT_TRUE(Next == std::string::npos || Body[Next] == '}') << Body;
+}
+
 TEST_F(AArch64_Intrinsics, LLVM_NoNdStubs) {
   auto r = liftToLLVMIR(obj("test_intrinsics_a64.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM IR lift failed: " << r.err;

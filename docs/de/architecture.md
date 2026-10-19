@@ -13,6 +13,10 @@ Architektur.
 
 `arch/x86_64` besitzt die geprüften `RequireAligned`-Übergänge für 64-Bit-Adressen im Standardadressraum. Die gemeinsame Wiederherstellung zählt die skalaren Beweisoperationen und beweist vor dem Erhalt der ursprünglichen Prüfung, dass das Ablehnungsprädikat null ist. Explizit fehlerfreie Ausführung ersetzt diesen Beweis nicht. MXCSR-Zustand ist nicht erforderlich; segmentierte Adressen und optionale Bedingungen bleiben in diesem Adapter ununterstützt.
 
+## Wiederherstellung des klassischen GS-Zustands
+
+`X64LegacyGSState` deklariert 64-Bit-CPL0-Ausführung mit deaktiviertem CR4.FRED unter `KernelX64NoFaultV1` und explizit fehlerfreiem Maschinenzustand. `arch/x86_64` verwaltet SWAPGS, beliebige aktive/inaktive 64-Bit-Basen und die gemeinsame Aktualisierung der GS-Adressinterpretation. Beide Basen dürfen beliebigen Speicher aliasieren; FS bleibt fest. Segmentierte Zugriffe benötigen weiterhin eigene Optionen. Projektion vergisst Korrelationen, behält aber das ursprüngliche Intrinsic und den vollständigen Eingabebereich. Die Deklaration wird an Raw-Belege gebunden. Quellcode-/Native-/LLVM-Schnittstellen ohne authentifizierte GS/MSR-Eingaben lehnen sie ab; konkrete Unicorn/KVM/WHP/HVF-Ausführung bleibt unverändert. Nur exakt `0F 01 F8` erhält Belege für undefinierte Ausgaben und separat für opake Registerbänke; keiner beweist die Ausführungsvoraussetzungen.
+
 ## Geprüfte MXCSR-Wiederherstellung
 
 `X64MXCSRMask` aktiviert rohe MXCSR-Ladevorgänge und skalare Zustandszugriffe mit expliziter effektiver Maske (`0xffbf` oder `0xffff`). Der x64-Adapter besitzt den gültigen Anfangszustandsraum und die Übergänge. Der Kern zählt den Aufwand und verlangt den Beweis, dass reservierte Bits null sind; die Fehlerfreiheitsoption genügt nicht. Ursprüngliche Intrinsics bleiben beobachtbar. MXCSR-Speicherzugriffe zum Schreiben, Quellschnittstellen und native/LLVM-Zertifikate benötigen eigene Verträge.

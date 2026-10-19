@@ -12,6 +12,10 @@ Capstone, and Unicorn submodules keep their own internal architecture.
 
 `arch/x86_64` owns checked `RequireAligned` transitions for 64-bit addresses in the default address space. The common recovery engine charges the scalar proof operations and proves the rejection predicate is zero before retaining the original guard. Explicit nonfaulting execution does not supply that proof. Alignment does not require MXCSR state; segmented addresses and optional guards remain unsupported by this recovery adapter.
 
+## Legacy GS recovery
+
+`X64LegacyGSState` declares 64-bit CPL0 execution with CR4.FRED disabled under `KernelX64NoFaultV1` and explicit nonfaulting machine state. `arch/x86_64` owns SWAPGS, its arbitrary 64-bit active/inactive bases and the atomic update of GS address interpretation. Both bases may alias any memory; FS stays fixed. Segmented reads/writes still need their separate options. Projection forgets correlations while retaining the original intrinsic and the full input domain. The declaration is bound into raw receipts. Source/native/LLVM interfaces without authenticated GS/MSR inputs refuse it; concrete Unicorn/KVM/WHP/HVF execution gains no capability. Only exact `0F 01 F8` receives native undefined-output and separate opaque-bank receipts; neither receipt proves the execution preconditions.
+
 ## Checked MXCSR recovery
 
 `X64MXCSRMask` enables raw MXCSR loads and scalar state reads/writes with an explicit effective mask (`0xffbf` or `0xffff`). The x64 adapter owns the legal initial-state domain and transitions. Core charges work and requires a proof that reserved bits are clear; the nonfaulting flag alone supplies no such proof. Original intrinsics remain observable. MXCSR memory stores, source wrapping and native/LLVM certificates still require their own contracts.
