@@ -19,6 +19,16 @@
 
 class X86_64_CallAbi : public HighCHostExecutionTest {
 protected:
+  /// Whether "gcc" is GCC building x86-64 Linux code, as the kernels that
+  /// test GCC's own layout and scheduling need: elsewhere it may be another
+  /// compiler or target another machine.
+  bool gccBuildsX86_64Linux() {
+    const RunResult Machine = exec("gcc", {"-dumpmachine"});
+    return Machine.ok() && Machine.out.rfind("x86_64", 0) == 0 &&
+           Machine.out.find("linux") != std::string::npos &&
+           !exec("gcc", {"--version"}).contains("clang");
+  }
+
   void SetUp() override {
     HighCHostExecutionTest::SetUp();
 #if defined(__APPLE__) && defined(__aarch64__)
@@ -589,4 +599,98 @@ TEST_F(X86_64_CallAbi, AVariadicForwarderPassesItsVaListOn) {
   EXPECT_EQ(Caller.find("0.0"), std::string::npos) << C;
   EXPECT_EQ(Caller.find(", 0, 0)"), std::string::npos) << C;
   EXPECT_NE(Caller.find(", 4, 0)"), std::string::npos) << C;
+  // Clang keeps x across the first dsum call in [rsp], below the stack
+  // arguments: no integer argument.
+  EXPECT_NE(Caller.find("dsum(2, 1.5, "), std::string::npos) << C;
+}
+
+// GCC sets a call's integer arguments before it converts its floating ones
+// (`mov edi, 2; cvtsi2sd xmm1, ebp; call dsum`), whose MXCSR state ends no
+// argument setup, emits the static functions first, the first of them at
+// address 0, and sets R9 for `sum(7, ...)` before the call to `sum` ahead
+// of it, which leaves R9 alone (-fipa-ra).
+static const char *const GccVariadicForwarders = R"C(
+#include <stdarg.h>
+static int sum(int n, ...) __attribute__((noinline));
+static double dsum(int n, ...) __attribute__((noinline));
+static int vsum(int n, va_list ap) __attribute__((noinline));
+static double vdsum(int n, va_list ap) __attribute__((noinline));
+int forward(int x) {
+  return sum(0) + sum(2, x, 3) + sum(7, x, 1, 2, 3, 4, 5, x * 2) +
+         sum(6, x, 1, 2, 3, 4, 0) + (int)dsum(2, 1.5, (double)x) +
+         (int)dsum(1, (double)x * 3.0);
+}
+static int sum(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  int r = vsum(n, ap);
+  va_end(ap);
+  return r;
+}
+static double dsum(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  double r = vdsum(n, ap);
+  va_end(ap);
+  return r;
+}
+static int vsum(int n, va_list ap) {
+  int s = 0;
+  for (int i = 0; i < n; i++)
+    s += va_arg(ap, int) * (i + 1);
+  return s;
+}
+static double vdsum(int n, va_list ap) {
+  double s = 0;
+  for (int i = 0; i < n; i++)
+    s += va_arg(ap, double) * (i + 1);
+  return s;
+}
+)C";
+
+TEST_F(X86_64_CallAbi, ArgumentSetupCrossesFloatingConversions) {
+  if (!gccBuildsX86_64Linux())
+    GTEST_SKIP() << "needs GCC building x86-64 Linux code";
+  expectHighCRunsLikeSource("gcc", {}, GccVariadicForwarders, "forward",
+                            {"forward", "sum", "vsum", "dsum", "vdsum"},
+                            {0, 1, -1, 7, 1000});
+  if (HasFatalFailure() || IsSkipped())
+    return;
+  std::ifstream Input(tmpFile("decompiled_high.c"));
+  const std::string C((std::istreambuf_iterator<char>(Input)),
+                      std::istreambuf_iterator<char>());
+  const std::string Caller = C.substr(C.find(" forward(int32_t arg0) {"));
+  EXPECT_NE(Caller.find("dsum(2, "), std::string::npos) << C;
+  // The arguments of the call opening at \p Open, as top-level commas count.
+  const auto Arguments = [&](size_t Open) {
+    size_t Count = 1;
+    int Depth = 0;
+    for (size_t I = Open; I < Caller.size(); ++I) {
+      if (Caller[I] == '(')
+        ++Depth;
+      else if (Caller[I] == ')' && --Depth == 0)
+        return Count;
+      else if (Caller[I] == ',' && Depth == 1)
+        ++Count;
+    }
+    return size_t(0);
+  };
+  // AL says one vector register: XMM1, still holding x * 3.0, passes none.
+  const size_t One = Caller.find("dsum(1, ");
+  ASSERT_NE(One, std::string::npos) << C;
+  EXPECT_EQ(Arguments(One + 4), 2u) << C;
+}
+
+// A relocatable object's first function sits at address 0, which a call
+// still names: GCC emits a static function first, and a call to it reads
+// the callee's summary as any other does.
+TEST_F(X86_64_CallAbi, ACallToTheFunctionAtAddressZeroPassesItsArguments) {
+  if (!gccBuildsX86_64Linux())
+    GTEST_SKIP() << "needs GCC building x86-64 Linux code";
+  expectHighCRunsLikeSource("gcc", {}, R"C(
+static int twice(int x, int y) __attribute__((noinline));
+static int twice(int x, int y) { return x * 2 + y; }
+int entry(int x) { return twice(x, 1) + twice(x + 3, x); }
+)C",
+                            "entry", {"entry", "twice"}, {0, 1, -1, 7, 1000});
 }

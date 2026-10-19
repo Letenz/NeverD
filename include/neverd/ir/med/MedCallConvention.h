@@ -56,6 +56,10 @@ struct CallArgumentConvention {
   /// passes no summarized arguments (a System V variadic prologue spills
   /// every argument register to its save area).  Null when every summary is.
   bool (*SummaryListsNoParameters)(const GPRReadWidths &Reads) = nullptr;
+  /// The register whose low byte a call to a variadic function loads with
+  /// the number of vector registers it passes, at most (System V x86-64's
+  /// AL).  Unset where the convention passes no such count.
+  std::optional<uint64_t> VariadicVectorCountRegister;
   /// A call to an indirect-call dispatcher (Control Flow Guard) calls the
   /// function in this register with the argument registers set on every path
   /// to the call.  Empty when the convention has no such dispatcher.

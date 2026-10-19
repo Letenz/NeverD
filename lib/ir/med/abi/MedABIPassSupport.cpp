@@ -38,21 +38,7 @@
 
 namespace neverd {
 
-bool isAbiRecoveryBarrier(const MedOp &Op) {
-  if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
-    return true;
-  if (Op.Opcode != NdOp::INTRINSIC)
-    return false;
-  if (Op.NumInputs == 0 || Op.NumInputs > Op.Inputs.size() ||
-      !Op.Inputs[0].isConst())
-    return true;
-  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
-  if (static_cast<uint64_t>(Id) != Op.Inputs[0].ConstVal)
-    return true;
-  if (preservesCallSetup(Id))
-    return false;
-  return !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op));
-}
+bool isAbiRecoveryBarrier(const MedOp &Op) { return endsCallArgumentSetup(Op); }
 
 bool incomingArgumentReachesCall(const AbiCallContext &C, int ArgIndex) {
   if (C.Func.Blocks.empty() || C.CallIdx < 0)

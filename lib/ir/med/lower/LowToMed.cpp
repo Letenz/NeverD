@@ -279,6 +279,37 @@ void splitEntryLoopHeader(MedFunc &Func) {
   }
 }
 
+/// The constant the low byte of \p Register holds where the call at
+/// \p CallIndex of \p Ops reads it: the last write of that byte before the
+/// call, through extensions of the register itself (`xor eax, eax` writes
+/// EAX and zero-extends it into RAX).  Nullopt where another kind of write,
+/// an earlier call or the block's start comes first.
+std::optional<uint8_t> lowByteConstantAtCall(llvm::ArrayRef<LowOp> Ops,
+                                             size_t CallIndex,
+                                             uint64_t Register) {
+  for (size_t I = std::min(CallIndex, Ops.size()); I-- > 0;) {
+    const LowOp &Op = Ops[I];
+    if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+      return std::nullopt;
+    const NdVar &Out = Op.Output;
+    // A write that leaves the byte alone, such as one to AH.
+    if (!Out.isReg() || Out.Size == 0 || Out.Offset > Register ||
+        Out.Offset + Out.Size <= Register)
+      continue;
+    if (Out.Offset != Register)
+      return std::nullopt;
+    if (Op.Opcode == NdOp::COPY && Op.NumInputs >= 1 && Op.Inputs[0].isConst())
+      return static_cast<uint8_t>(Op.Inputs[0].Offset & 0xFF);
+    if ((Op.Opcode == NdOp::INT_ZEXT || Op.Opcode == NdOp::INT_SEXT ||
+         Op.Opcode == NdOp::COPY) &&
+        Op.NumInputs >= 1 && Op.Inputs[0].isReg() &&
+        Op.Inputs[0].Offset == Register)
+      continue;
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
 } // namespace
 
 bool LowToMedConverter::bindFormattedCall(MedBlock &MB, MedOp &MOp,
@@ -345,10 +376,13 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
   // through was loaded from (RegisterCallSlot).  A call through a
   // function-pointer variable reads the arguments of the routine the
   // variable starts at (CallArgumentsFrom); nothing else follows from it.
-  const va_t Key =
-      LOp.Inputs[0].isConst() ? LOp.Inputs[0].Offset : RegisterCallSlot;
+  // A constant target is the callee even at address 0, where a relocatable
+  // object's first section, and so its first function, starts.
+  const bool ConstantTarget = LOp.Inputs[0].isConst();
+  const va_t Key = ConstantTarget ? LOp.Inputs[0].Offset : RegisterCallSlot;
+  const bool Keyed = ConstantTarget || RegisterCallSlot;
   const va_t ArgumentsKey = CallArgumentsFrom ? CallArgumentsFrom : Key;
-  if (!ArgumentsKey)
+  if (!CallArgumentsFrom && !Keyed)
     return;
   // Publish the register arguments the callee reads as uses, so SSA sees a
   // pass-through argument and the call site knows its arity.  The calling
@@ -518,7 +552,7 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
           MOp.CalleeStackArgs = static_cast<int8_t>(std::min(
               S->second, static_cast<int>(std::numeric_limits<int8_t>::max())));
     }
-  if (!CallMayWriteGPRs || !Key)
+  if (!CallMayWriteGPRs || !Keyed)
     return;
   auto It = CallMayWriteGPRs->find(Key);
   if (It == CallMayWriteGPRs->end())
@@ -986,6 +1020,14 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
         if (const std::optional<va_t> Own = importOwnRoutine(
                 *Image, CallArgumentSources, LOp.Inputs[0].Offset))
           CallArgumentsFrom = *Own;
+      // How many vector registers the call tells a variadic callee it
+      // passes, at most (System V AL).
+      if (Convention && Convention->VariadicVectorCountRegister &&
+          (LOp.Opcode == NdOp::CALL || LOp.Opcode == NdOp::INDIR_CALL))
+        if (const std::optional<uint8_t> Count = lowByteConstantAtCall(
+                LB.Ops, LowOpIndex, *Convention->VariadicVectorCountRegister);
+            Count && *Count <= ConventionRegs.floatingParamRegs(Fmt).size())
+          MOp.VariadicVectorCount = static_cast<int8_t>(*Count);
       if (!bindFormattedCall(MB, MOp, LOp))
         applyCallRegisterEffect(MOp, LOp);
       if (TheArch == Arch::X86 && Low.RegistrationStates &&
