@@ -63,7 +63,7 @@ Use Release unless the task specifically needs Debug behavior:
 cmake -S . -B build-release -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=ON
-cmake --build build-release --parallel
+python scripts/build.py build-release --parallel
 ```
 
 By default, the build compiles `third_party/llvm-project` as an integrated
@@ -79,7 +79,7 @@ the Release tree:
 cmake -S . -B build-debug -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
   -DBUILD_TESTING=ON
-cmake --build build-debug --parallel
+python scripts/build.py build-debug --parallel
 ```
 
 Never report decode or lift throughput from a Debug build. Use Release for
@@ -90,7 +90,7 @@ benchmarks, or RelWithDebInfo when profiling needs symbols.
 Linux, macOS and Windows MSVC/clang-cl builds enable `NEVERD_ENABLE_MIMALLOC`
 by default. NeverD tools,
 the analysis worker and tests created through the common CMake helper use the
-hash-pinned mimalloc 3.3.2 allocator with a backported macOS fork fix, following
+NeverSight mimalloc fork from its default branch, following
 NeverC's host allocator approach.
 On Unix the allocator is embedded once in each executable. Windows uses one
 mimalloc DLL and the matching architecture's `mimalloc-redirect*.dll` to redirect
@@ -100,7 +100,7 @@ Windows requires `/MD` or `/MDd`; static CRT builds must disable mimalloc.
 The SDK library itself does not impose an allocator on embedding applications.
 Use a native ARM64 build on Windows ARM64: an x64 allocator DLL cannot redirect
 the ARM64EC CRT used for x64 emulation. MinGW builds retain the system allocator.
-See the [upstream Windows requirements](https://github.com/microsoft/mimalloc/blob/v3.3.2/bin/readme.md).
+See the [upstream Windows requirements](https://github.com/NeverSight/mimalloc/blob/main3/bin/readme.md).
 
 Use `-DNEVERD_ENABLE_MIMALLOC=OFF` for a system-allocator baseline or when using
 an external allocator. The legacy `NEVERD_WORKER_MIMALLOC=OFF` option still
@@ -110,28 +110,49 @@ and configuration-specific compiler/linker flags. UBSan alone remains compatible
 Sanitizers added only through target-specific flags must also set the option OFF.
 On Windows, `MIMALLOC_DISABLE_REDIRECT=1` also allows a runtime system-allocator
 comparison without rebuilding; `MIMALLOC_VERBOSE=1` reports activation.
-Offline builds may supply the matching source with
-`-DFETCHCONTENT_SOURCE_DIR_NEVERD_MIMALLOC=/path/to/mimalloc-3.3.2`. On macOS,
-apply the callback fix to a disposable source copy first:
-`cmake -DNEVERD_MIMALLOC_SOURCE_DIR=/path/to/copy -P cmake/PatchMimalloc.cmake`.
+The supported build entry point, `python scripts/build.py BUILD_DIR`, refreshes
+all five NeverSight forks from their remote default branches before every build.
+They are Git submodules in `third_party`, like Capstone and Unicorn. The script
+resolves the actual branch names, updates these five submodules, then exports
+their committed sources to `BUILD_DIR/third_party/<library>/<commit>/src`.
+Uncommitted or divergent local submodule work stops the build without being
+overwritten. Network failures stop the build. The build directory is locked
+across refresh, reconfiguration and compilation; sources stay at that snapshot
+until the next invocation. Incremental builds therefore adopt new commits too.
+
+`neverd-dependency-inputs.json` records configuration inputs, including commit and
+export SHA-256, and travels with installed products. It does not certify a binary.
+`neverd-build-receipt.json` records success or failure for the requested targets
+and configuration only. CI retains both. Installation rejects failed builds,
+changed inputs and unbuilt configurations; product CI builds every installed
+target before testing the installation. Mainline can change between runs;
+compare these commits before treating separate platform runs as one qualification.
+Plain `cmake --build` checks freshness and refuses stale snapshots; use the Python
+entry point to refresh them. Auto-regeneration during that entry point keeps the
+same snapshot. Explicit `FETCHCONTENT_SOURCE_DIR_NEVERD_*` overrides are available
+for isolated local fixtures, but are rejected by the mainline build entry point.
+Multi-config generators require an explicit `--config`. Build compilation targets
+with the entry point, then run tests and `cmake --install` separately; passing
+the `install` target directly is rejected before compilation.
+
 See [allocator validation](docs/testing.md#allocator-validation) for smoke tests
 and performance comparison guidance.
 
 ### Performance libraries
 
-Normal builds enable hash-pinned Highway 1.4.0 byte scanning, simdutf 9.3.2
-UTF-8 validation and simdjson 5.0.5 transport admission. They retain the process
+Normal builds enable Highway byte scanning, simdutf UTF-8 validation and
+simdjson transport admission. They retain the process
 allocator. JSON still uses the existing nlohmann DOM and serialization; the
 original admission path handles inputs outside simdjson's numeric domain.
 Invalid external text retains its byte-preserving escapes.
-All four libraries are downloaded from the NeverSight forks, pinned to full
-commit IDs and archive SHA-256 hashes in `cmake/NeverDPerformance.cmake`.
-Keep compatibility fixes in those forks; update the pin, source notices and
-qualification evidence together when adopting a fork change.
+These libraries and mimalloc come from the NeverSight forks listed in
+`third_party/forks.json`. Compatibility fixes live on each fork's default branch.
+The build copies the current source's licenses and records its exact commit;
+NeverD does not pin these five dependencies to an earlier release.
 
 `NEVERD_ENABLE_HIGHWAY`, `NEVERD_ENABLE_SIMDUTF` and `NEVERD_ENABLE_SIMDJSON`
 can be set to `OFF` for comparisons. `NEVERD_ENABLE_TBB=ON` selects the optional
-oneTBB 2023.1.0 scheduler; its default is `OFF`. It retains workers between
+oneTBB scheduler; its default is `OFF`. It retains workers between
 batches, checks their 8 MiB stacks, and never builds or loads an allocator proxy.
 This experimental scheduler is for processes that neither fork after first
 use nor dynamically unload the SDK. It does not finalize a host's shared TBB
@@ -149,7 +170,7 @@ cmake -S . -B build-release -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=ON \
   -DNEVERD_LLVM_PREBUILT=ON
-cmake --build build-release --parallel
+python scripts/build.py build-release --parallel
 ```
 
 CMake downloads the repository's configured release package, verifies its
@@ -209,6 +230,7 @@ tools and regression tests, not local benchmark reports or copied result tables.
 Run all registered tests through the aggregate target:
 
 ```bash
+python scripts/build.py build-release --parallel
 cmake --build build-release --target check-neverd
 ```
 
@@ -219,7 +241,7 @@ During development, use the smallest relevant target or CTest label:
 cmake --build build-release --target check-neverd-semantic
 
 # Lifter/loader/format binary only
-cmake --build build-release --target NeverDLiftTests --parallel 4
+python scripts/build.py build-release --target NeverDLiftTests --parallel 4
 ctest --test-dir build-release --build-config Release \
   -L '^NeverDLiftTests$' --output-on-failure --parallel 4
 ```
@@ -238,7 +260,7 @@ PYTHONPATH=pluginsdk/python python3 -m unittest discover \
 python3 -m mypy --config-file pluginsdk/python/pyproject.toml \
   pluginsdk/python/neverd_plugin
 PYTHONPATH=pluginsdk/python python3 scripts/check_python_plugin_sdk.py
-cmake --build build-release --target \
+python scripts/build.py build-release --target \
   NeverDPluginRuntimeTests NeverDPythonRuntimeTests NeverDPythonPluginTests
 ctest --test-dir build-release -R 'NeverD(Python|Plugin)' --output-on-failure
 ```

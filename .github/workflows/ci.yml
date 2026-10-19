@@ -352,7 +352,7 @@ jobs:
         id: default_build
         shell: bash
         run: |
-          cmake --build build-ci --config Release --parallel "$BUILD_PARALLEL"
+          python scripts/build.py build-ci --config Release --parallel "$BUILD_PARALLEL"
           cmake -E touch build-ci/.neverd-capability-build-complete
         env:
           BUILD_PARALLEL: ${{ matrix.parallel }}
@@ -1875,6 +1875,14 @@ jobs:
             ctest.log
           if-no-files-found: error
 
+      - name: Retain fork configuration and build receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fork-build-${{ matrix.test_profile }}
+          path: build-ci/neverd-*.json
+          if-no-files-found: ignore
+
       - name: Capture the existing first-fatal semantic failures
         id: first_fatal_snapshot
         # Two bounded discovery/execution pairs need up to 60 minutes, with
@@ -2108,7 +2116,7 @@ jobs:
             -DNEVERD_EMULATION_BACKEND_KVM=${{ matrix.backend == 'kvm' && 'ON' || 'OFF' }} \
             -DNEVERD_EMULATION_BACKEND_WHP=${{ matrix.backend == 'whp' && 'ON' || 'OFF' }} \
             -DNEVERD_LLVM_PREBUILT=OFF
-          cmake --build build-ci-arm64 --target NeverDEmulationNative --parallel 4
+          python scripts/build.py build-ci-arm64 --target NeverDEmulationNative --parallel 4
           python scripts/audit_native_backend_build.py \
             --backend ${{ matrix.backend }} --build build-ci-arm64 \
             --output build-ci-arm64/evidence/build.json
@@ -2374,7 +2382,7 @@ jobs:
             "${compiler_args[@]}"
       - name: Build x86 and ARM32 exception owners
         run: |
-          cmake --build build-windows-eh --parallel 4 --target \
+          python scripts/build.py build-windows-eh --parallel 4 --target \
             NeverDRegistrationStateTests NeverDRegistrationEHTests NeverDLiftTests \
             NeverDMedStackAlignmentTests NeverDMedLLVMDeadSlotsTests NeverDNoReturnTests \
             NeverDRegistrationCallResultTests \

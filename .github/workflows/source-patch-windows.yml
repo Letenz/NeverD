@@ -153,7 +153,7 @@ jobs:
             -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF `
             "-DNEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE=$env:NEVERD_SOURCE_CLANG"
           if ($LASTEXITCODE -ne 0) { throw 'Configure failed' }
-          cmake --build build-source-windows --target NeverDSourcePatchTests NeverDSourcePatchMatrixTests NeverDSourcePatchDynCodeTests NeverDNativeExceptionRewriteContractTests --parallel 4
+          python scripts/build.py build-source-windows --target NeverDSourcePatchTests NeverDSourcePatchMatrixTests NeverDSourcePatchDynCodeTests NeverDNativeExceptionRewriteContractTests --parallel 4
           if ($LASTEXITCODE -ne 0) { throw 'Focused build failed' }
 
       - name: Execute PE under Windows and the four-architecture matrix

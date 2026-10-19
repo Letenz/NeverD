@@ -1,9 +1,12 @@
 # simdjson
 
-Source: [NeverSight/simdjson at 9c003534b1be3bc4f1322bfa7a770a7ffbf247d9](https://github.com/NeverSight/simdjson/tree/9c003534b1be3bc4f1322bfa7a770a7ffbf247d9).
-This fork commit matches upstream [simdjson/simdjson v5.0.5](https://github.com/simdjson/simdjson/tree/v5.0.5).
+Source: [NeverSight/simdjson](https://github.com/NeverSight/simdjson).
+Every mainline build resolves the remote default branch (currently `master`),
+then uses that exact commit throughout compilation. The generated
+`neverd-dependency-inputs.json` records the configure input commit and export SHA-256.
+It is an input list; build/test receipts establish product qualification.
 
-License: Apache-2.0 OR MIT. The original copyright notices and license texts
-are retained here and in the downloaded source. The pinned fork source has no
-changes from this upstream release. NeverD applies no local source patches.
-`cmake/NeverDPerformance.cmake` pins both the fork commit and archive SHA-256.
+License: Apache-2.0 OR MIT. Original license and copyright notices remain in the fork.
+The build copies the license files from the actual source snapshot, together
+with a generated immutable source link, into the delivered notices.
+NeverD applies no local source patches.

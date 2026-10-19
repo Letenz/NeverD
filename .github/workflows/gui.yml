@@ -65,7 +65,7 @@ jobs:
             -DNEVERD_ENGINE_IMPLIB="$GITHUB_WORKSPACE/build-fixture/bin/neverd_fixture.lib" \
             -DNEVERD_GUI_CI_DIAGNOSTICS=${{ runner.os == 'Windows' && 'ON' || 'OFF' }} \
             -DNEVERD_WORKER_REAL_ENGINE_TESTS=OFF
-          cmake --build build-gui --parallel 3
+          python scripts/build.py build-gui --parallel 3
           cp "build-fixture/bin/${{ matrix.library }}" build-gui/bin/
       - name: Verify GUI, IPC, MCP and translation contracts
         shell: bash

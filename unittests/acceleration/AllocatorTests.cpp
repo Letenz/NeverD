@@ -31,7 +31,7 @@ TEST(AccelerationAllocator, RetainsConfiguredProcessAllocator) {
   auto *Memory = std::malloc(193);
   ASSERT_NE(Memory, nullptr);
 #if NEVERD_TEST_MIMALLOC
-  EXPECT_EQ(mi_version(), 30302);
+  EXPECT_EQ(mi_version(), MI_MALLOC_VERSION);
   EXPECT_TRUE(mi_is_in_heap_region(Memory));
 #endif
   std::free(Memory);

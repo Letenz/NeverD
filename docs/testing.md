@@ -135,12 +135,18 @@ state generators retain an explicit unsupported test.
 
 ## Allocator validation
 
+Use `python scripts/build.py BUILD_DIR` after CMake configuration to refresh
+NeverSight default branches on each invocation. Keep `neverd-dependency-inputs.json`
+and `neverd-build-receipt.json` with test evidence; compare commits across hosts.
+A failed refresh is not a test pass. Fixture-only source overrides remain
+available through raw CMake, but are not mainline qualification.
+
 The allocator regression can run independently of LLVM:
 
 ```bash
 cmake -S unittests/allocator -B build-allocator -G Ninja \
   -DCMAKE_BUILD_TYPE=Release
-cmake --build build-allocator
+python scripts/build.py build-allocator
 ctest --test-dir build-allocator --output-on-failure
 ```
 
@@ -153,7 +159,7 @@ of the macOS malloc zone, and must survive through shutdown. In a full NeverD
 build the test also checks sessions and strings allocated by the actual SDK:
 
 ```bash
-cmake --build build-release --target NeverDAllocatorTests
+python scripts/build.py build-release --target NeverDAllocatorTests
 ctest --test-dir build-release/unittests/allocator --output-on-failure
 ```
 
@@ -168,9 +174,9 @@ On Windows use an MSVC or clang-cl developer shell with the dynamic CRT:
 
 ```powershell
 cmake -S unittests/allocator -B build-allocator -G "Ninja Multi-Config"
-cmake --build build-allocator --config Release
+python scripts/build.py build-allocator --config Release
 ctest --test-dir build-allocator -C Release --output-on-failure
-cmake --build build-allocator --config Debug
+python scripts/build.py build-allocator --config Debug
 ctest --test-dir build-allocator -C Debug --output-on-failure
 ```
 
@@ -219,7 +225,7 @@ intrinsics. `NeverDSymbolicIntegerIntrinsicTests` runs these checks together
 with the existing execution, store-preservation and x87 regressions:
 
 ```sh
-cmake --build build-release --target NeverDSymbolicIntegerIntrinsicTests --parallel 4
+python scripts/build.py build-release --target NeverDSymbolicIntegerIntrinsicTests --parallel 4
 ctest --test-dir build-release -L '^NeverDSymbolicIntegerIntrinsicTests$' --output-on-failure
 ```
 
@@ -255,7 +261,7 @@ LLVM. This includes the opt-in oneTBB scheduler and the default mimalloc:
 ```bash
 cmake -S unittests/acceleration -B build-acceleration -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_TBB=ON
-cmake --build build-acceleration --parallel 4
+python scripts/build.py build-acceleration --parallel 4
 ctest --test-dir build-acceleration --output-on-failure --no-tests=error
 ```
 

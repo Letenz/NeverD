@@ -636,7 +636,7 @@ class CiConfigurationTests(unittest.TestCase):
     def test_workflow_still_builds_the_unfiltered_default_target(self):
         source = WORKFLOW.read_text(encoding="utf-8")
         step_marker = "      - name: Build default targets\n"
-        command = 'cmake --build build-ci --config Release --parallel "$BUILD_PARALLEL"'
+        command = 'python scripts/build.py build-ci --config Release --parallel "$BUILD_PARALLEL"'
         self.assertEqual(source.count(step_marker), 1)
         self.assertEqual(source.count(command), 1)
         build_section = source.split(step_marker, 1)[1].split("\n      - name:", 1)[0]

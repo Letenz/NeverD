@@ -7,6 +7,18 @@ on:
     paths:
       - '.github/workflows/performance-libraries.yml'
       - 'cmake/NeverDPerformance.cmake'
+      - 'cmake/NeverDForks*'
+      - '.gitmodules'
+      - 'third_party/forks.json'
+      - 'third_party/highway'
+      - 'third_party/simdutf'
+      - 'third_party/simdjson'
+      - 'third_party/oneTBB'
+      - 'third_party/mimalloc'
+      - 'cmake/NeverDMimalloc.cmake'
+      - 'scripts/build.py'
+      - 'scripts/fork_dependencies.py'
+      - 'scripts/tests/test_fork_dependencies.py'
       - 'include/neverd/support/ByteScan.h'
       - 'include/neverd/support/Parallel.h'
       - 'lib/support/ByteScan.cpp'
@@ -18,6 +30,18 @@ on:
     paths:
       - '.github/workflows/performance-libraries.yml'
       - 'cmake/NeverDPerformance.cmake'
+      - 'cmake/NeverDForks*'
+      - '.gitmodules'
+      - 'third_party/forks.json'
+      - 'third_party/highway'
+      - 'third_party/simdutf'
+      - 'third_party/simdjson'
+      - 'third_party/oneTBB'
+      - 'third_party/mimalloc'
+      - 'cmake/NeverDMimalloc.cmake'
+      - 'scripts/build.py'
+      - 'scripts/fork_dependencies.py'
+      - 'scripts/tests/test_fork_dependencies.py'
       - 'include/neverd/support/ByteScan.h'
       - 'include/neverd/support/Parallel.h'
       - 'lib/support/ByteScan.cpp'
@@ -69,6 +93,8 @@ jobs:
         if: runner.os == 'Windows'
         with:
           arch: ${{ matrix.arch }}
+      - name: Verify fork refresh and build receipts
+        run: python -m unittest scripts.tests.test_fork_dependencies -v
       - name: Test enabled and disabled libraries, including installed binaries
         env:
           CC: ${{ matrix.cc }}
@@ -84,7 +110,7 @@ jobs:
                 -DCMAKE_BUILD_TYPE="$profile" -DNEVERD_TEST_EXPECT_MIMALLOC=ON \
                 -DNEVERD_ENABLE_TBB="$mode" -DNEVERD_ENABLE_HIGHWAY="$mode" \
                 -DNEVERD_ENABLE_SIMDUTF="$mode" -DNEVERD_ENABLE_SIMDJSON="$mode"
-              cmake --build "$build" --parallel 3
+              python scripts/build.py "$build" --parallel 3
               python unittests/acceleration/verify.py "$build/bin/NeverDAccelerationTests$suffix" "$build/evidence"
               cmake --install "$build" --prefix "$build/installed"
               python unittests/acceleration/verify.py "$build/installed/bin/NeverDAccelerationTests$suffix" "$build/installed-evidence"
@@ -100,8 +126,9 @@ jobs:
           CXX: ${{ matrix.cxx }}
         run: |
           set -euo pipefail
-          cmake -S build-accel-ON-Release/_deps/neverd_tbb-src -B build-tbb-loader -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release -DTBB_TEST=ON -DTBB_STRICT=OFF \
+          tbb_source=$(python -c 'import json; from pathlib import Path; s=json.load(open("build-accel-ON-Release/.neverd-deps/snapshot.json"))["sources"]["neverd_tbb"]; print(Path(s["archive"]).parent / "src")')
+          cmake -S "$tbb_source" -B build-tbb-loader -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DTBB_TEST=ON -DTBB_STRICT=OFF -DTCM_BUILD=OFF -DTCM_TEST=OFF \
             -DTBBMALLOC_BUILD=OFF -DTBBMALLOC_PROXY_BUILD=OFF \
             -DTBB_ENABLE_IPO=OFF -DTBB_DISABLE_HWLOC_AUTOMATIC_SEARCH=ON
           cmake --build build-tbb-loader --target test_dynamic_link --parallel 3
@@ -126,7 +153,7 @@ jobs:
           cmake -S unittests/acceleration -B build-accel-system -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_TBB=ON \
             -DNEVERD_ENABLE_MIMALLOC=OFF -DNEVERD_TEST_EXPECT_MIMALLOC=OFF
-          cmake --build build-accel-system --parallel 3
+          python scripts/build.py build-accel-system --parallel 3
           python unittests/acceleration/verify.py "build-accel-system/bin/NeverDAccelerationTests$suffix" build-accel-system/evidence
           if [ "$RUNNER_OS" != Windows ]; then
             cmake -S unittests/acceleration -B build-accel-asan -G Ninja \
@@ -134,9 +161,22 @@ jobs:
               -DNEVERD_TEST_EXPECT_MIMALLOC=OFF \
               -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
               -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
-            cmake --build build-accel-asan --parallel 3
+            python scripts/build.py build-accel-asan --parallel 3
             python unittests/acceleration/verify.py build-accel-asan/bin/NeverDAccelerationTests build-accel-asan/evidence
           fi
+      - name: Verify macOS allocator minimum size and libffi compatibility
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          allocator_source=$(python -c 'import json; from pathlib import Path; s=json.load(open("build-accel-ON-Release/.neverd-deps/snapshot.json"))["sources"]["neverd_mimalloc"]; print(Path(s["archive"]).parent / "src")')
+          for config in Release Debug; do
+            cmake -S "$allocator_source" -B "build-mimalloc-fork-$config" -G Ninja \
+              -DCMAKE_BUILD_TYPE="$config" -DMI_BUILD_TESTS=ON -DMI_BUILD_SHARED=OFF \
+              -DMI_BUILD_STATIC=ON -DMI_BUILD_OBJECT=ON -DMI_NO_OPT_ARCH=ON
+            cmake --build "build-mimalloc-fork-$config" --target mimalloc-test-api mimalloc-test-osx-override --parallel 3
+            ctest --test-dir "build-mimalloc-fork-$config" -R '^(test-api|test-osx-override)$' \
+              --output-on-failure --no-tests=error --output-junit allocator.xml
+          done
       - name: Retain complete native evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -146,6 +186,8 @@ jobs:
             build-accel-*/evidence
             build-accel-*/installed-evidence
             build-accel-*/CMakeCache.txt
+            build-accel-*/neverd-*.json
+            build-mimalloc-fork-*/allocator.xml
             build-tbb-loader/loader.xml
             build-tbb-loader/CMakeCache.txt
             build-tbb-loader/Testing/Temporary/LastTest.log

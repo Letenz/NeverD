@@ -72,7 +72,7 @@ jobs:
             -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF -DNEVERD_ENABLE_CPU_EMULATION=ON \
             -DNEVERD_ENABLE_DRIVER_EMULATION=ON -DNEVERD_EMULATION_BACKEND_UNICORN=OFF \
             -DNEVERD_LLVM_PREBUILT=ON
-          cmake --build build-alignment-probe --target NeverDWindowsProcessTests --parallel 4 --verbose > build-alignment-probe/build.txt 2>&1
+          python scripts/build.py build-alignment-probe --target NeverDWindowsProcessTests --parallel 4 --verbose > build-alignment-probe/build.txt 2>&1
       - name: Observe identical PE through native launch boundaries
         shell: python
         run: |

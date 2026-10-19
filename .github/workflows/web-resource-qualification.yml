@@ -67,7 +67,7 @@ jobs:
             -DNEVERD_ENABLE_WEB_JAVASCRIPT=ON \
             -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF \
             -DICU_ROOT="$(brew --prefix icu4c@77)"
-          cmake --build build-web-qualification \
+          python scripts/build.py build-web-qualification \
             --target NeverDWebArtifactTests NeverDWebSDKTests \
             NeverDWebGzipWithoutDecoderTests --parallel 3
       - name: Qualify the real distribution with no optional CEF omission

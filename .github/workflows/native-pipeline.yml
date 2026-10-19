@@ -14,6 +14,18 @@ on:
       - 'unittests/lift/core/FPParameterMaskTests.cpp'
       - 'unittests/PipelineOutcomeTests.cpp'
       - 'cmake/NeverDPerformance.cmake'
+      - 'cmake/NeverDForks*'
+      - '.gitmodules'
+      - 'third_party/forks.json'
+      - 'third_party/highway'
+      - 'third_party/simdutf'
+      - 'third_party/simdjson'
+      - 'third_party/oneTBB'
+      - 'third_party/mimalloc'
+      - 'cmake/NeverDMimalloc.cmake'
+      - 'scripts/build.py'
+      - 'scripts/fork_dependencies.py'
+      - 'scripts/tests/test_fork_dependencies.py'
       - 'include/neverd/support/ByteScan.h'
       - 'include/neverd/support/Parallel.h'
       - 'lib/support/**'
@@ -31,6 +43,18 @@ on:
       - 'unittests/lift/core/FPParameterMaskTests.cpp'
       - 'unittests/PipelineOutcomeTests.cpp'
       - 'cmake/NeverDPerformance.cmake'
+      - 'cmake/NeverDForks*'
+      - '.gitmodules'
+      - 'third_party/forks.json'
+      - 'third_party/highway'
+      - 'third_party/simdutf'
+      - 'third_party/simdjson'
+      - 'third_party/oneTBB'
+      - 'third_party/mimalloc'
+      - 'cmake/NeverDMimalloc.cmake'
+      - 'scripts/build.py'
+      - 'scripts/fork_dependencies.py'
+      - 'scripts/tests/test_fork_dependencies.py'
       - 'include/neverd/support/ByteScan.h'
       - 'include/neverd/support/Parallel.h'
       - 'lib/support/**'
@@ -81,7 +105,7 @@ jobs:
         run: git submodule update --init --depth 1 third_party/capstone
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.16.0
         with:
           version: v0.16.0
@@ -113,7 +137,7 @@ jobs:
             -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF
       - name: Build production and complete focused test owners
         run: |
-          cmake --build build-abi --parallel 4 --target \
+          python scripts/build.py build-abi --parallel 4 --target \
             neverd neverd-worker NeverDAllocatorTests \
             NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests \
             NeverDHighControlFlowTests NeverDAccelerationTests \
@@ -205,10 +229,12 @@ jobs:
           PY
           python build-abi/verify-sdk-worker.py
           cp build-abi/CMakeCache.txt build-abi/evidence/CMakeCache.txt
+      - name: Retain default dependency snapshot
+        run: cp build-abi/neverd-*.json build-abi/evidence/
       - name: Repeat native contracts with the optional task scheduler
         run: |
           cmake -S . -B build-abi -DNEVERD_ENABLE_TBB=ON
-          cmake --build build-abi --parallel 4 --target \
+          python scripts/build.py build-abi --parallel 4 --target \
             neverd neverd-worker NeverDAllocatorTests \
             NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests \
             NeverDHighControlFlowTests NeverDAccelerationTests \
@@ -230,6 +256,7 @@ jobs:
           PY
           NEVERD_NATIVE_EVIDENCE=evidence-tbb python build-abi/verify-sdk-worker.py
           cp build-abi/CMakeCache.txt build-abi/evidence-tbb/CMakeCache.txt
+          cp build-abi/neverd-*.json build-abi/evidence-tbb/
       - name: Retain native results and configuration
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -239,4 +266,5 @@ jobs:
             build-abi/evidence
             build-abi/evidence-tbb
             build-abi/CMakeCache.txt
+            build-abi/neverd-*.json
           if-no-files-found: warn

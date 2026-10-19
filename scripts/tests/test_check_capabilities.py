@@ -3551,11 +3551,11 @@ class RepositoryCapabilityTests(unittest.TestCase):
         self.assertIn(completion_stamp, workflow)
         self.assertIn(inventory_capture, workflow)
         main_build = next(
-            line for line in workflow.splitlines() if "cmake --build build-ci" in line
+            line for line in workflow.splitlines() if "python scripts/build.py build-ci" in line
         )
         self.assertNotIn("--target", main_build)
         self.assertGreater(
-            workflow.index(completion_stamp), workflow.index("cmake --build build-ci")
+            workflow.index(completion_stamp), workflow.index("python scripts/build.py build-ci")
         )
         self.assertIn(configured_check, workflow)
         self.assertIn(configured_inventory, workflow)

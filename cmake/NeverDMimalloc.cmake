@@ -6,6 +6,7 @@
 # See THIRD_PARTY_NOTICES.md for the integration changes and license notices.
 # Uses upstream's object override on Unix and CRT DLL redirection on Windows.
 include_guard(GLOBAL)
+include("${CMAKE_CURRENT_LIST_DIR}/NeverDForks.cmake")
 
 function(neverd_check_mimalloc_crt runtime)
   if(NOT "${runtime}" STREQUAL "" AND NOT "${runtime}" MATCHES "DLL$")
@@ -14,20 +15,6 @@ function(neverd_check_mimalloc_crt runtime)
       "MSVC_RUNTIME_LIBRARY is '${runtime}'. Use a DLL runtime or "
       "-DNEVERD_ENABLE_MIMALLOC=OFF.")
   endif()
-endfunction()
-
-# The worker's earlier mimalloc 3.5 kept its settings as cache strings that
-# default to "DEFAULT". The 3.3.2 options read such a leftover as ON, which put
-# assertions, statistics and guard pages into the allocator of build trees
-# configured before this module. Drop the leftovers so the options take their
-# own defaults; values a user set stay.
-function(neverd_drop_stale_mimalloc_settings)
-  get_cmake_property(_variables CACHE_VARIABLES)
-  foreach(_variable IN LISTS _variables)
-    if(_variable MATCHES "^MI_" AND "$CACHE{${_variable}}" STREQUAL "DEFAULT")
-      unset(${_variable} CACHE)
-    endif()
-  endforeach()
 endfunction()
 
 function(neverd_link_mimalloc target)
@@ -75,12 +62,13 @@ function(neverd_link_mimalloc target)
     # the executable only calls into libneverd. An archive can be discarded.
     target_link_libraries(${target} PRIVATE mimalloc-obj)
   endif()
+  get_property(_notices GLOBAL PROPERTY NEVERD_FORK_NOTICES_neverd_mimalloc)
   add_custom_command(TARGET ${target} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:${target}>/licenses/mimalloc"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../LICENSES/mimalloc/LICENSE"
-      "$<TARGET_FILE_DIR:${target}>/licenses/mimalloc/LICENSE"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+      "${_notices}"
+      "$<TARGET_FILE_DIR:${target}>/licenses/mimalloc"
     VERBATIM)
 endfunction()
 
@@ -145,30 +133,18 @@ function(neverd_fetch_mimalloc)
   if(POLICY CMP0135)
     cmake_policy(SET CMP0135 NEW)
   endif()
-  # Keep NeverC's tested pin. Backport the later macOS fork callback instead
-  # of adopting 3.5.x, which fails our embedded-Python allocation tests.
-  FetchContent_Declare(neverd_mimalloc
-    URL https://github.com/microsoft/mimalloc/archive/refs/tags/v3.3.2.tar.gz
-    URL_HASH SHA256=ca02384e007f46950598500dfaebde5ff9948c1d231f5a81b058799afa64bbbb
-    PATCH_COMMAND ${CMAKE_COMMAND}
-      "-DNEVERD_MIMALLOC_SOURCE_DIR=<SOURCE_DIR>"
-      -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/PatchMimalloc.cmake"
-    SOURCE_SUBDIR neverd-no-automatic-subdirectory
-    TIMEOUT 180)
-  FetchContent_MakeAvailable(neverd_mimalloc)
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/NeverDForks.cmake")
+  neverd_populate_fork(neverd_mimalloc)
   if(APPLE)
-    # FetchContent source overrides bypass PATCH_COMMAND. Never modify such a
-    # caller-owned tree silently or accept an allocator that crashes in fork.
+    # Caller-owned fixtures must retain the mainline macOS fork callbacks.
     file(READ "${neverd_mimalloc_SOURCE_DIR}/src/prim/osx/alloc-override-zone.c"
       _zone_source)
     if(NOT _zone_source MATCHES "\\.reinit_lock = &intro_reinit_lock")
       message(FATAL_ERROR
-        "The supplied mimalloc source needs the macOS fork fix. Apply "
-        "cmake/PatchMimalloc.cmake to a disposable copy, or unset "
-        "FETCHCONTENT_SOURCE_DIR_NEVERD_MIMALLOC to use the patched download.")
+        "The supplied mimalloc source needs the macOS fork callbacks. Unset "
+        "FETCHCONTENT_SOURCE_DIR_NEVERD_MIMALLOC to use the NeverSight fork.")
     endif()
   endif()
-  neverd_drop_stale_mimalloc_settings()
   set(MI_BUILD_STATIC OFF)
   if(WIN32)
     set(MI_BUILD_SHARED ON)
@@ -213,6 +189,7 @@ endfunction()
 
 neverd_fetch_mimalloc()
 set(NEVERD_MIMALLOC_ENABLED ON)
-message(STATUS "NeverD allocator: mimalloc 3.3.2 (executables only)")
-install(FILES "${CMAKE_CURRENT_LIST_DIR}/../LICENSES/mimalloc/LICENSE"
+message(STATUS "NeverD allocator: mimalloc from NeverSight default branch (executables only)")
+get_property(_neverd_mimalloc_notices GLOBAL PROPERTY NEVERD_FORK_NOTICES_neverd_mimalloc)
+install(DIRECTORY "${_neverd_mimalloc_notices}/"
   DESTINATION share/neverd/licenses/mimalloc)

@@ -19,23 +19,20 @@ No external JSON executable or language runtime is invoked.
 
 ## mimalloc
 
-Linux and macOS executables optionally embed the mimalloc 3.3.2
-single-object allocator from Microsoft Research and Daan Leijen, under the MIT
-license. Windows MSVC ABI builds instead ship its shared allocator and the
-architecture-matched redirection DLL from the same release archive.
-The [upstream release](https://github.com/microsoft/mimalloc/tree/v3.3.2)
-archive is pinned by SHA-256
-`ca02384e007f46950598500dfaebde5ff9948c1d231f5a81b058799afa64bbbb`.
-The original notice is preserved in [LICENSES/mimalloc/LICENSE](LICENSES/mimalloc/LICENSE),
-staged beside enabled executables and installed under `share/neverd/licenses/mimalloc`.
+Linux and macOS executables embed the NeverSight mimalloc fork's single-object
+allocator by default. Windows MSVC ABI builds ship its shared allocator and the
+architecture-matched redirection DLL from the same source snapshot. Original
+Microsoft Research and Daan Leijen copyrights and the MIT license remain intact.
+See [the fork source](https://github.com/NeverSight/mimalloc) and
+[the source notice](LICENSES/mimalloc/SOURCE.md).
 
-`cmake/PatchMimalloc.cmake` backports only the macOS malloc-zone `reinit_lock`
-callback from upstream's
-[`v3.5.3/src/prim/osx/alloc-override-zone.c`](https://github.com/microsoft/mimalloc/blob/v3.5.3/src/prim/osx/alloc-override-zone.c).
-This fixes a null callback during `fork()`. The downloaded source retains its
-MIT notice and receives a dated NeverD modification comment. The integration
-keeps 3.3.2 because embedded Python regressions pass with this narrow backport,
-while unmodified 3.5.3 and 3.5.4 fail those tests on the macOS development host.
+Each build resolves the fork's default branch, currently `main3`, and records
+its exact commit and archive SHA-256 in `neverd-dependency-inputs.json`. The build
+stages and installs the license from that source. NeverSight's 2026-10-19 change
+normalizes tiny allocations in the macOS allocator override before size-class
+selection and debug padding, preserving the platform minimum required by
+libffi during embedded CPython ctypes initialization. The fork retains the
+upstream macOS fork callbacks. No local backport or old release is selected.
 
 The executable-level integration follows NeverC's host allocator design in
 `neverc/cmake/modules/AddMimalloc.cmake` at revision
@@ -542,13 +539,14 @@ QEMU or Wine was copied into this implementation.
 
 ## Performance libraries
 
-NeverD uses Highway 1.4.0 (Apache-2.0 OR BSD-3-Clause), simdutf 9.3.2
-(Apache-2.0 OR MIT) and simdjson 5.0.5 (Apache-2.0 OR MIT) for bounded byte
+NeverD uses Highway (Apache-2.0 OR BSD-3-Clause), simdutf
+(Apache-2.0 OR MIT) and simdjson (Apache-2.0 OR MIT) for bounded byte
 scans, valid UTF-8 fast paths and transport admission. The optional oneTBB
-2023.1.0 scheduler is Apache-2.0 licensed. No allocator proxy is built.
-All four sources come from NeverSight forks based on these upstream releases.
+scheduler is Apache-2.0 licensed. No allocator proxy is built.
+All four sources follow the default branches of the NeverSight forks.
 The oneTBB fork adds a Windows Unicode build fix and loader regression coverage.
-Fork commit IDs and archive hashes are pinned in `cmake/NeverDPerformance.cmake`.
+Each build records actual fork commit IDs and archive hashes in
+`neverd-dependency-inputs.json`; `cmake/NeverDForks.cmake` owns their acquisition.
 Original copyrights, licenses and source references are
 retained under [Highway](LICENSES/highway/SOURCE.md),
 [simdutf](LICENSES/simdutf/SOURCE.md), [simdjson](LICENSES/simdjson/SOURCE.md)

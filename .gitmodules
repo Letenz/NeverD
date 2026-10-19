@@ -18,3 +18,23 @@
 	path = unittests/corpus
 	url = https://github.com/NeverSight/testbins.git
 	branch = main
+[submodule "third_party/highway"]
+	path = third_party/highway
+	url = https://github.com/NeverSight/highway.git
+	branch = master
+[submodule "third_party/simdutf"]
+	path = third_party/simdutf
+	url = https://github.com/NeverSight/simdutf.git
+	branch = master
+[submodule "third_party/simdjson"]
+	path = third_party/simdjson
+	url = https://github.com/NeverSight/simdjson.git
+	branch = master
+[submodule "third_party/mimalloc"]
+	path = third_party/mimalloc
+	url = https://github.com/NeverSight/mimalloc.git
+	branch = main3
+[submodule "third_party/oneTBB"]
+	path = third_party/oneTBB
+	url = https://github.com/NeverSight/oneTBB.git
+	branch = master

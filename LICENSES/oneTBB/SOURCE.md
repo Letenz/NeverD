@@ -1,13 +1,16 @@
 # oneTBB
 
-Source: [NeverSight/oneTBB at 80dfa673b2d9df4edaa0d7ad2b6d28cc6ecae2e5](https://github.com/NeverSight/oneTBB/tree/80dfa673b2d9df4edaa0d7ad2b6d28cc6ecae2e5).
-Based on upstream [uxlfoundation/oneTBB v2023.1.0](https://github.com/uxlfoundation/oneTBB/tree/v2023.1.0).
+Source: [NeverSight/oneTBB](https://github.com/NeverSight/oneTBB).
+Every mainline build resolves the remote default branch (currently `master`),
+then uses that exact commit throughout compilation. The generated
+`neverd-dependency-inputs.json` records the configure input commit and export SHA-256.
+It is an input list; build/test receipts establish product qualification.
 
-License: Apache-2.0. The original copyright notices and license texts are
-retained here and in the downloaded source.
+License: Apache-2.0. Original license and copyright notices remain in the fork.
+The build copies the license files from the actual source snapshot, together
+with a generated immutable source link, into the delivered notices.
+NeverD applies no local source patches.
 
-Fork changes (NeverSight, 2026-10-19): select explicit narrow Windows dynamic
-loader APIs so that Unicode-enabled embedding builds compile; enable Unicode
-macros for the dynamic loader regression and keep its helper's narrow API.
-NeverD applies no additional local source patches.
-`cmake/NeverDPerformance.cmake` pins both the fork commit and archive SHA-256.
+NeverSight modification (2026-10-19): explicit narrow Windows loader APIs and
+Unicode regression coverage, merged into the default branch at
+[00c4549a](https://github.com/NeverSight/oneTBB/commit/00c4549a8e549a60102e49954a7dea0aa3933cc0).

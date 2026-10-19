@@ -821,7 +821,10 @@ initializers can allocate before the executable registers its malloc zone;
 those existing system allocations must remain valid through process shutdown.
 Allocator selection does not alter lifted-program semantics or generated code.
 
-`cmake/NeverDPerformance.cmake` owns the pinned acceleration providers.
+`cmake/NeverDPerformance.cmake` owns the acceleration providers. The shared
+`cmake/NeverDForks.cmake` boundary resolves NeverSight default branches through
+`scripts/build.py` before each build, freezes one source snapshot throughout
+compilation and records the actual commits for qualification and installation.
 The private text helper uses Highway only after an inline short-run scan and
 simdutf only to prove that an entire UTF-8 span needs no repair. Existing string
 metadata and byte-preserving repair remain authoritative. Transport admission
