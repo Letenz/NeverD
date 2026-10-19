@@ -1768,7 +1768,9 @@ TEST(ProcessReport, AndroidLoaderMayBeEstablishedBeforeApplication) {
         std::string(R"({"android":{"jni":true,"application_snapshot":)") +
         Invalid + "}}");
     ASSERT_FALSE(bool(Bad)) << Invalid;
-    llvm::consumeError(Bad.takeError());
+    EXPECT_NE(
+        llvm::toString(Bad.takeError()).find("application_loader_established"),
+        std::string::npos);
   }
 }
 

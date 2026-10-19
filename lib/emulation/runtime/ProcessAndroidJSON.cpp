@@ -348,6 +348,11 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
                mobile::dalvik::AndroidApplicationSnapshot::Phase::Application))
         return invalid(Name);
       try {
+        (void)mobile::dalvik::androidApplicationLoaderState(Snapshot);
+      } catch (const mobile::Error &) {
+        return invalid(field::ApplicationLoaderEstablished);
+      }
+      try {
         mobile::dalvik::validateAndroidClassLookupFailures(Snapshot);
       } catch (const mobile::Error &) {
         return invalid(field::ApplicationClassLookupFailures);
