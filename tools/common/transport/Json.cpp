@@ -68,7 +68,9 @@ Json copySIMDValue(simdjson::dom::element Value, bool &NeedsNumberParser) {
   switch (Value.type()) {
   case Type::OBJECT: {
     Json::object_t Result;
-    for (const auto Field : Value.get_object().value_unsafe()) {
+    // value_unsafe() refers into a temporary result; retain the view by value.
+    const auto Object = Value.get_object().value_unsafe();
+    for (const auto Field : Object) {
       auto [It, Inserted] = Result.emplace(std::string(Field.key), nullptr);
       if (!Inserted)
         throw Error("invalid_json", "Duplicate object key in JSON frame");

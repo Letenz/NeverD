@@ -152,6 +152,8 @@ jobs:
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
+          ASAN_OPTIONS: detect_stack_use_after_return=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
           set -euo pipefail
           suffix=""
