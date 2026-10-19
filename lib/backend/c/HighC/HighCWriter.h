@@ -985,6 +985,9 @@ public:
   /// The local types' definitions of the records the unit names.
   CRecordDefinitions RecordDefinitions;
   std::map<const HighFunc *, std::string> FunctionIdentifiers;
+  /// The definitions whose own names are a C library routine's, which they
+  /// step aside from (copiesHeaderRoutine, libraryDeclaresDefinition).
+  std::set<const HighFunc *> HeaderRoutineCopies;
   /// The C name each defined function's symbol spells, for its comment.
   std::map<const HighFunc *, std::string> FunctionSymbolNames;
   std::map<std::string, std::string> FunctionIdentifiersBySourceName;

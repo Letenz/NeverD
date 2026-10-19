@@ -399,8 +399,10 @@ void HighCWriter::prepareFunctionIdentifiers(
     std::string Stem =
         canonicalizeCProjectionIdentifier(RenderedName, "nd_function");
     if (Func.Entry && (copiesHeaderRoutine(Stem, Opts.Format) ||
-                       libraryDeclaresDefinition(Func)))
+                       libraryDeclaresDefinition(Func))) {
       Stem += "_" + llvm::utohexstr(Func.Entry);
+      HeaderRoutineCopies.insert(&Func);
+    }
     std::string Identifier = GlobalIdentifierAllocator.allocateVerbatim(Stem);
     FunctionIdentifiers.emplace(&Func, Identifier);
     DefinedFunctionsByIdentifier.emplace(Identifier, &Func);
