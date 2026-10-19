@@ -1292,6 +1292,7 @@ void Engine::restartWarming() {
   warmState_ = warmFunctions_ ? WarmState::Pending : WarmState::Off;
   warmCursor_ = 0;
   warmPrepared_ = 0;
+  warmFull_ = false;
   warmError_.clear();
 }
 void Engine::warmStep() {
@@ -1318,13 +1319,12 @@ void Engine::warmStep() {
     return;
   }
   warmPrepared_ += page.value("prepared", std::size_t{0});
+  warmFull_ = warmFull_ || page.value("full", false);
   const auto next = page.value("next_entry", Json());
-  if (page.value("full", false))
-    warmState_ = WarmState::Full;
-  else if (next.is_string())
+  if (next.is_string())
     warmCursor_ = parseAddress(next.get<std::string>());
   else
-    warmState_ = WarmState::Complete;
+    warmState_ = warmFull_ ? WarmState::Full : WarmState::Complete;
 }
 Json Engine::warmJson() const {
   static constexpr const char *Names[] = {"off",      "pending", "running",
