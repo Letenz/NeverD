@@ -5288,6 +5288,12 @@ ownership and immutable zone names. Backend selection and thread scheduling
 do not change that identity. Its explicit fixed zone is independent of the
 kernel's legacy `gettimeofday` timezone pair; neither inherits host tzdata.
 Calendar conversion reads caller timestamps and does not advance guest clocks.
+The same owner admits `mktime`, normalizes signed civil inputs and encodes the
+result through the forward conversion's field writer. It checks intermediate
+integer arithmetic and the complete output extent before publishing normalized
+fields; API 28's `-1`/errno and fixed-zone DST failure effects are explicit.
+Caller `tm_wday`, `tm_yday`, `tm_gmtoff` and `tm_zone` are not environmental
+inputs. The inverse never allocates a second zone or a separate static result.
 
 Bionic also owns the API 28 `pthread_once` control state. It requests guest
 initialization through an internal callback result; the native runner suspends

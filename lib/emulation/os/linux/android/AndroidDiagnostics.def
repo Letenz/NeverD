@@ -238,6 +238,10 @@ NEVERD_ANDROID_DIAGNOSTIC(AuxiliaryVectorUnspecified,
 NEVERD_ANDROID_DIAGNOSTIC(CalendarZoneInput, "invalid fixed calendar time zone")
 NEVERD_ANDROID_DIAGNOSTIC(CalendarZoneUnspecified,
                           "localtime requires an explicit fixed time zone")
+NEVERD_ANDROID_DIAGNOSTIC(MKTimeZoneUnspecified,
+                          "mktime requires an explicit fixed time zone")
+NEVERD_ANDROID_DIAGNOSTIC(CalendarNormalization,
+                          "mktime extreme-field normalization is unmodeled")
 NEVERD_ANDROID_DIAGNOSTIC(CalendarRange,
                           "calendar conversion supports years 1 through 9999")
 NEVERD_ANDROID_DIAGNOSTIC(CalendarZoneChanged,
