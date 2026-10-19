@@ -139,3 +139,28 @@ u64 span_dynamic(const char *text, const char *accept, u64 closed) {
     return 95;
   return span(text, accept);
 }
+
+extern u64 strcspn(const char *, const char *);
+u64 reject_span_supplied(const char *text, const char *reject,
+                         unsigned *error) {
+  *__errno() = 733;
+  u64 result = strcspn(text, reject);
+  *error = *__errno();
+  return result;
+}
+u64 reject_span_readonly(void *page, const char *text, const char *reject) {
+  if (mprotect(page, 4096, 1))
+    return 98;
+  return strcspn(text, reject);
+}
+u64 reject_span_dynamic(const char *text, const char *reject, u64 closed) {
+  void *library = dlopen("libsearch.so", 2);
+  if (!library)
+    return 97;
+  u64 (*span)(const char *, const char *) = dlsym(library, "strcspn");
+  if (!span)
+    return 96;
+  if (closed && dlclose(library))
+    return 95;
+  return span(text, reject);
+}

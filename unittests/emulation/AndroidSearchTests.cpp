@@ -365,24 +365,26 @@ TEST_P(AndroidSearch, SubstringDynamicProviderRetainsLifetime) {
   EXPECT_FALSE(Closed.NativeCalls.back().Result);
 }
 
-TEST_P(AndroidSearch, SpanCountsAcceptedPrefixAndPreservesErrnoAndInputs) {
+TEST_P(AndroidSearch, SpanCountsBytePrefixesAndPreservesErrnoAndInputs) {
   struct Case {
     const char *Text, *Accept;
-    uint64_t Count;
+    uint64_t Count, Complement;
   };
-  const Case Cases[] = {{"", "", 0},
-                        {"abc", "", 0},
-                        {"", "abc", 0},
-                        {"cabba!abc", "abc", 5},
-                        {"abca", "aaabbb", 2},
-                        {"abc", "cba", 3},
-                        {"zabc", "abc", 0},
-                        {"abc", "abcdef", 3},
-                        {" \t\r\nx", "\n\r\t ", 4},
-                        {"\xff\x80\x7f!", "\x7f\xff\x80", 3},
-                        {"\xff\x80", "\xff", 1},
-                        {"ab\0c", "abc", 2},
-                        {"abc", "ab\0c", 2}};
+  const Case Cases[] = {{"", "", 0, 0},
+                        {"abc", "", 0, 3},
+                        {"", "abc", 0, 0},
+                        {"cabba!abc", "abc", 5, 0},
+                        {"abca", "aaabbb", 2, 0},
+                        {"abc", "cba", 3, 0},
+                        {"zabc", "abc", 0, 1},
+                        {"abc", "abcdef", 3, 0},
+                        {" \t\r\nx", "\n\r\t ", 4, 0},
+                        {"\xff\x80\x7f!", "\x7f\xff\x80", 3, 0},
+                        {"\xff\x80", "\xff", 1, 0},
+                        {"ab\0c", "abc", 2, 0},
+                        {"abc", "ab\0c", 2, 0},
+                        {"aaaab", "bb", 0, 4},
+                        {"\xff\xff\x80", "\x80", 0, 2}};
   for (const auto &C : Cases) {
     SCOPED_TRACE(C.Text);
     auto &Bytes = Options.Android->Memory[0].Bytes;
@@ -395,17 +397,21 @@ TEST_P(AndroidSearch, SpanCountsAcceptedPrefixAndPreservesErrnoAndInputs) {
     Put(0, C.Text);
     Put(64, C.Accept);
     const auto Before = Bytes;
-    auto R = run("span_supplied", {Buffer, Buffer + 64, Buffer + 124});
-    returned(R, C.Count);
-    ASSERT_EQ(R.MemorySnapshots.size(), 2u);
-    EXPECT_EQ(llvm::support::endian::read32le(
-                  R.MemorySnapshots[0].Bytes.data() + 124),
-              733u);
-    EXPECT_TRUE(std::equal(Before.begin(), Before.begin() + 124,
-                           R.MemorySnapshots[0].Bytes.begin()));
-    EXPECT_EQ(R.MemorySnapshots[1].Bytes,
-              std::vector<uint8_t>(Before.end() - 16, Before.end()));
-    EXPECT_TRUE(R.Services.empty());
+    for (bool Complement : {false, true}) {
+      SCOPED_TRACE(Complement);
+      auto R = run(Complement ? "reject_span_supplied" : "span_supplied",
+                   {Buffer, Buffer + 64, Buffer + 124});
+      returned(R, Complement ? C.Complement : C.Count);
+      ASSERT_EQ(R.MemorySnapshots.size(), 2u);
+      EXPECT_EQ(llvm::support::endian::read32le(
+                    R.MemorySnapshots[0].Bytes.data() + 124),
+                733u);
+      EXPECT_TRUE(std::equal(Before.begin(), Before.begin() + 124,
+                             R.MemorySnapshots[0].Bytes.begin()));
+      EXPECT_EQ(R.MemorySnapshots[1].Bytes,
+                std::vector<uint8_t>(Before.end() - 16, Before.end()));
+      EXPECT_TRUE(R.Services.empty());
+    }
   }
 }
 
@@ -420,15 +426,26 @@ TEST_P(AndroidSearch, SpanUsesAllUnsignedBytesAndReadOnlyAliasedStrings) {
   Bytes[255] = Bytes[767] = 0;
   Options.Android->ReadMemory = {{Buffer, 4096}};
   for (uint64_t Accept : {Buffer, Buffer + 512}) {
-    auto R = run("span_readonly", {Buffer, Buffer, Accept});
-    returned(R, 255);
-    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
-    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Bytes);
+    for (bool Complement : {false, true}) {
+      auto R = run(Complement ? "reject_span_readonly" : "span_readonly",
+                   {Buffer, Buffer, Accept});
+      returned(R, Complement ? 0 : 255);
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      EXPECT_EQ(R.MemorySnapshots[0].Bytes, Bytes);
+    }
   }
+  auto Empty = run("reject_span_readonly", {Buffer, Buffer, Buffer + 255});
+  returned(Empty, 255);
+  ASSERT_EQ(Empty.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(Empty.MemorySnapshots[0].Bytes, Bytes);
   const char Text[] = "abcabc";
   std::copy(std::begin(Text), std::end(Text), Bytes.begin());
   auto R = run("span_readonly", {Buffer, Buffer, Buffer + 3});
   returned(R, 6);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Bytes);
+  R = run("reject_span_readonly", {Buffer, Buffer, Buffer + 3});
+  returned(R, 0);
   ASSERT_EQ(R.MemorySnapshots.size(), 1u);
   EXPECT_EQ(R.MemorySnapshots[0].Bytes, Bytes);
 }
@@ -460,29 +477,68 @@ TEST_P(AndroidSearch, SpanStopsAtRejectOrNulAndRequiresReadableBoundedInputs) {
            "invalid guest pointer");
 }
 
+TEST_P(AndroidSearch, ComplementSpanStopsAtMemberOrNulAndChecksBothInputs) {
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  Bytes.assign(4096, 0xa5);
+  Bytes[0] = 'b';
+  Bytes[1] = 0;
+  Bytes[4093] = Bytes[4094] = 'a';
+  for (uint8_t Last : {uint8_t('b'), uint8_t(0)}) {
+    Bytes[4095] = Last;
+    returned(run("reject_span_readonly", {Buffer, PageEnd - 3, Buffer}), 2);
+  }
+  // An empty set spans the entire terminated source, not a zero-length prefix.
+  returned(run("reject_span_readonly", {Buffer, PageEnd - 3, Buffer + 1}), 2);
+  // Reject-set termination at the page tail and partial input overlap.
+  returned(run("reject_span_readonly", {Buffer, Buffer, PageEnd - 2}), 1);
+  Bytes[4095] = 'a';
+  rejected(run("reject_span_supplied", {PageEnd - 3, Buffer, Buffer + 124}),
+           "strcspn", "invalid guest pointer");
+  rejected(run("reject_span_supplied", {Buffer, PageEnd - 1, Buffer + 124}),
+           "strcspn", "invalid guest pointer");
+  for (uint64_t Invalid : {uint64_t(0), PageEnd, UINT64_MAX}) {
+    rejected(run("reject_span_supplied", {Invalid, Buffer + 1, Buffer + 124}),
+             "strcspn", "invalid guest pointer");
+    rejected(run("reject_span_supplied", {Buffer, Invalid, Buffer + 124}),
+             "strcspn", "invalid guest pointer");
+  }
+  const char Text[] = "xxabc";
+  std::copy(std::begin(Text), std::end(Text), Bytes.begin());
+  Options.Android->ReadMemory = {{Buffer, 4096}};
+  auto R = run("reject_span_readonly", {Buffer, Buffer, Buffer + 2});
+  returned(R, 2);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Bytes);
+}
+
 TEST_P(AndroidSearch, SpanDynamicProviderRetainsLifetime) {
   Options.Android->Memory[0].Bytes = {'b', 'a', '!', 0, 'a', 'b', 0};
-  Options.Android->Libraries["libsearch.so"] = {"strspn"};
-  auto R = run("span_dynamic", {Buffer, Buffer + 4, 0});
-  returned(R, 2);
-  uint64_t Target = 0;
-  for (const auto &Call : R.NativeCalls)
-    if (Call.Name == "dlsym") {
-      EXPECT_EQ(Call.Library, "libsearch.so");
-      EXPECT_EQ(Call.Symbol, "strspn");
-      ASSERT_TRUE(Call.Result);
-      Target = *Call.Result;
-    }
-  ASSERT_NE(Target, 0u);
-  ASSERT_FALSE(R.NativeCalls.empty());
-  EXPECT_EQ(R.NativeCalls.back().Name, "strspn");
-  EXPECT_EQ(R.NativeCalls.back().PC, Target);
-  EXPECT_EQ(R.NativeCalls.back().Library, "libsearch.so");
-  auto Closed = run("span_dynamic", {Buffer, Buffer + 4, 1});
-  EXPECT_EQ(Closed.Stop, ProcessStopReason::UnsupportedService);
-  EXPECT_NE(Closed.Diagnostic.find("inactive dynamic library"),
-            std::string::npos);
-  EXPECT_FALSE(Closed.NativeCalls.back().Result);
+  for (bool Complement : {false, true}) {
+    SCOPED_TRACE(Complement);
+    const char *Name = Complement ? "strcspn" : "strspn";
+    const char *Entry = Complement ? "reject_span_dynamic" : "span_dynamic";
+    Options.Android->Libraries["libsearch.so"] = {Name};
+    auto R = run(Entry, {Buffer, Buffer + 4, 0});
+    returned(R, Complement ? 0 : 2);
+    uint64_t Target = 0;
+    for (const auto &Call : R.NativeCalls)
+      if (Call.Name == "dlsym") {
+        EXPECT_EQ(Call.Library, "libsearch.so");
+        EXPECT_EQ(Call.Symbol, Name);
+        ASSERT_TRUE(Call.Result);
+        Target = *Call.Result;
+      }
+    ASSERT_NE(Target, 0u);
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_EQ(R.NativeCalls.back().Name, Name);
+    EXPECT_EQ(R.NativeCalls.back().PC, Target);
+    EXPECT_EQ(R.NativeCalls.back().Library, "libsearch.so");
+    auto Closed = run(Entry, {Buffer, Buffer + 4, 1});
+    EXPECT_EQ(Closed.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(Closed.Diagnostic.find("inactive dynamic library"),
+              std::string::npos);
+    EXPECT_FALSE(Closed.NativeCalls.back().Result);
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -636,16 +692,25 @@ TEST(AndroidSearchMemory, SpanScanLimitsAndTimeoutDoNotPublishAResultOrWrites) {
     bool Expired;
     const char *Error;
     uint64_t Expected;
+    bool Complement = false;
   };
   for (const auto C : {Case{8, Buffer, Buffer, false, "scan exceeds", 0},
                        {8, Buffer, Buffer + 7, false, "scan exceeds", 0},
                        {9, Buffer, Buffer + 7, false, nullptr, 8},
                        {1, Buffer + 8, Buffer + 8, false, nullptr, 0},
                        {0, Buffer, Buffer, false, "scan exceeds", 0},
-                       {9, Buffer, Buffer + 7, true, "timed out", 0}}) {
+                       {9, Buffer, Buffer + 7, true, "timed out", 0},
+                       {8, Buffer, Buffer, false, "scan exceeds", 0, true},
+                       {8, Buffer, Buffer + 8, false, "scan exceeds", 0, true},
+                       {9, Buffer, Buffer + 8, false, nullptr, 8, true},
+                       {2, Buffer, Buffer + 7, false, nullptr, 0, true},
+                       {1, Buffer + 8, Buffer + 8, false, nullptr, 0, true},
+                       {0, Buffer, Buffer, false, "scan exceeds", 0, true},
+                       {9, Buffer, Buffer + 8, true, "timed out", 0, true}}) {
     SCOPED_TRACE(C.Limit);
     SCOPED_TRACE(C.Accept);
     SCOPED_TRACE(C.Expired);
+    SCOPED_TRACE(C.Complement);
     Options.MemoryLimit = C.Limit;
     auto Budget = llvm::cantFail(ExecutionBudget::create(
         Options.Limits, C.Expired ? ExecutionBudget::Clock::time_point::min()
@@ -653,7 +718,7 @@ TEST(AndroidSearchMemory, SpanScanLimitsAndTimeoutDoNotPublishAResultOrWrites) {
     android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
                                 Linked);
     NativeCallEvent Call{};
-    Call.Name = "strspn";
+    Call.Name = C.Complement ? "strcspn" : "strspn";
     Call.Arguments = {C.Text, C.Accept};
     auto Value = Model.invoke(Call);
     if (C.Error) {
