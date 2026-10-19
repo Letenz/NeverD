@@ -2358,32 +2358,12 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         ImageLoadVars[varKey(S.Dst->Var)] = *VA;
     });
   // Symbols size the objects; the largest one at an address is the object.
-  SizedObjects.clear();
-  SizedObjectReach.clear();
-  for (const Symbol &Sym : Opts.Image->Symbols)
-    if (!Sym.IsFunc && Sym.Size && isImageDataAddress(Sym.Addr) &&
-        Sym.Size <= std::numeric_limits<va_t>::max() - Sym.Addr)
-      SizedObjects.emplace_back(Sym.Addr, Sym.Size);
-  llvm::sort(SizedObjects, [](const auto &A, const auto &B) {
-    return A.first != B.first ? A.first < B.first : A.second > B.second;
-  });
-  SizedObjects.erase(std::unique(SizedObjects.begin(), SizedObjects.end(),
-                                 [](const auto &A, const auto &B) {
-                                   return A.first == B.first;
-                                 }),
-                     SizedObjects.end());
-  for (const auto &[Addr, Size] : SizedObjects)
-    SizedObjectReach.push_back(
-        std::max(SizedObjectReach.empty() ? va_t{0} : SizedObjectReach.back(),
-                 Addr + Size));
-  DataSymbolStarts.clear();
-  for (const Symbol &Sym : Opts.Image->Symbols)
-    if (!Sym.IsFunc && isImageDataAddress(Sym.Addr))
-      DataSymbolStarts.push_back(Sym.Addr);
-  llvm::sort(DataSymbolStarts);
-  DataSymbolStarts.erase(
-      std::unique(DataSymbolStarts.begin(), DataSymbolStarts.end()),
-      DataSymbolStarts.end());
+  if (SharedDataObjects) {
+    DataObjects = SharedDataObjects;
+  } else {
+    OwnDataObjects = collectImageDataObjects(*Opts.Image);
+    DataObjects = &OwnDataObjects;
+  }
   // The code reaches all of an object through an address that varies or
   // points into it: the object is declared whole, as bytes.
   auto NoteWhole = [&](va_t Addr, const TypeRef &Access, bool Written) {
@@ -2618,7 +2598,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     // address itself is no object the code uses.
     if (E.Kind == ExprKind::Const)
       if (const auto Owner = anchoredOwner(E)) {
-        if (!stringLiteralAt(Opts.Image, Dbg, *Owner))
+        if (!stringLiteral(*Owner))
           NoteWhole(*Owner, nullptr, false);
         return;
       }
@@ -2631,7 +2611,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           Object && Object->first != E.ConstVal)
         NoteWhole(E.ConstVal, nullptr, false);
     if (E.Kind == ExprKind::Const && isImageDataAddress(E.ConstVal) &&
-        !stringLiteralAt(Opts.Image, Dbg, E.ConstVal)) {
+        !stringLiteral(E.ConstVal)) {
       bool Named = Opts.UserNames && Opts.UserNames->count(E.ConstVal);
       if (!Named && Dbg) {
         if (auto Data = Dbg->resolveDataObject(E.ConstVal);
@@ -2962,7 +2942,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                 ? FunctionAddressNames.count(Target) ||
                       FunctionAddressNames.count(Target & ~va_t{1})
                 : sizedObjectAt(Target) || ImageObjects.count(Target) ||
-                      stringLiteralAt(Opts.Image, Dbg, Target).has_value();
+                      stringLiteral(Target).has_value();
       }
     }
   }
@@ -3406,6 +3386,13 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
   }
 }
 
+std::optional<std::string> HighCWriter::stringLiteral(va_t Addr) const {
+  auto [Known, Added] = StringLiterals.try_emplace(Addr);
+  if (Added)
+    Known->second = stringLiteralAt(Opts.Image, Dbg, Addr);
+  return Known->second;
+}
+
 std::optional<std::string> HighCWriter::dataSymbolAddress(va_t Slot) const {
   const auto It = DataSymbolBindings.find(Slot);
   if (It == DataSymbolBindings.end())
@@ -3459,7 +3446,7 @@ std::optional<std::string> HighCWriter::relocatedSlotTarget(va_t Slot) const {
     const bool Array = Obj != ImageObjects.end() && Obj->second.String;
     return "(uintptr_t)" + std::string(Array ? "" : "&") + *Name;
   }
-  if (auto Literal = stringLiteralAt(Opts.Image, Dbg, Target))
+  if (auto Literal = stringLiteral(Target))
     return "(uintptr_t)" + *Literal;
   return std::nullopt;
 }
@@ -3767,9 +3754,41 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
 // Public API
 //===----------------------------------------------------------------------===//
 
+HighCImageDataObjects collectImageDataObjects(const BinaryImage &Image) {
+  HighCImageDataObjects Objects;
+  auto &SizedObjects = Objects.SizedObjects;
+  for (const Symbol &Sym : Image.Symbols)
+    if (!Sym.IsFunc && Sym.Size && isImageDataAt(Image, Sym.Addr) &&
+        Sym.Size <= std::numeric_limits<va_t>::max() - Sym.Addr)
+      SizedObjects.emplace_back(Sym.Addr, Sym.Size);
+  llvm::sort(SizedObjects, [](const auto &A, const auto &B) {
+    return A.first != B.first ? A.first < B.first : A.second > B.second;
+  });
+  SizedObjects.erase(std::unique(SizedObjects.begin(), SizedObjects.end(),
+                                 [](const auto &A, const auto &B) {
+                                   return A.first == B.first;
+                                 }),
+                     SizedObjects.end());
+  auto &SizedObjectReach = Objects.SizedObjectReach;
+  for (const auto &[Addr, Size] : SizedObjects)
+    SizedObjectReach.push_back(
+        std::max(SizedObjectReach.empty() ? va_t{0} : SizedObjectReach.back(),
+                 Addr + Size));
+  auto &DataSymbolStarts = Objects.DataSymbolStarts;
+  for (const Symbol &Sym : Image.Symbols)
+    if (!Sym.IsFunc && isImageDataAt(Image, Sym.Addr))
+      DataSymbolStarts.push_back(Sym.Addr);
+  llvm::sort(DataSymbolStarts);
+  DataSymbolStarts.erase(
+      std::unique(DataSymbolStarts.begin(), DataSymbolStarts.end()),
+      DataSymbolStarts.end());
+  return Objects;
+}
+
 void HighCEmitter::prepareImageFunctionNames(const BinaryImage &Image) {
   PreparedImage = nullptr;
   PreparedImageFunctionNames = collectImageFunctionNameViews(Image);
+  PreparedDataObjects = collectImageDataObjects(Image);
   PreparedImage = &Image;
 }
 
@@ -3816,11 +3835,10 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
         attachItaniumHandlerBodies(Func);
       }
     }
+    const bool Prepared = Opts.Image && Opts.Image == PreparedImage;
     HighCWriter W(OS, Opts, Dbg, true,
-                  Opts.Image && Opts.Image == PreparedImage
-                      ? &PreparedImageFunctionNames
-                      : nullptr,
-                  Recorder);
+                  Prepared ? &PreparedImageFunctionNames : nullptr, Recorder,
+                  Prepared ? &PreparedDataObjects : nullptr);
     W.ExtraRecords = Extra;
     W.WantedRecords = Wanted;
     W.prepareFunctionReturns(Working);

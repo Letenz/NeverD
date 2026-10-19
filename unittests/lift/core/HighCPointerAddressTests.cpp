@@ -1695,6 +1695,71 @@ int main(void) {
 )c");
 }
 
+TEST(HighCPointerAddresses, PreparedImageDataObjectsPreserveEmission) {
+  // An emitter prepared for an image reads its data objects once for every
+  // emission over it; each reads the objects a fresh emitter reads.  The
+  // tables the code indexes: one a symbol sizes, one an unsized public
+  // bounds, and one that runs to its section's end.
+  BinaryImage Img = makeImageObjectFixture(
+      0x140003700,
+      {1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+       17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      false);
+  Section Sec;
+  Sec.Name = ".rdata";
+  Sec.VA = 0x140003700;
+  Sec.Size = 32;
+  Sec.Flags = SegmentFlags::Readable;
+  Img.Sections.push_back(Sec);
+  Img.Symbols.push_back({"sized", 0x140003700, 4, false});
+  Img.Symbols.push_back({"unsized", 0x140003708, 0, false});
+  Img.Symbols.push_back({"after", 0x140003710, 0, false});
+
+  const auto Word = NdType::makeInt(8, false);
+  const auto Reader = [&](llvm::StringRef Name, va_t Table) {
+    HighFunc Func;
+    Func.Name = Name.str();
+    Func.ReturnType = NdType::makeInt(4, false);
+    Func.Params = {{"arg0", Word}};
+    auto Index = HighExpr::makeBinop(NdOp::INT_AND, parameter(0, Word),
+                                     HighExpr::makeConst(3, 8));
+    auto Element = HighExpr::makeLoad(
+        HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeConst(Table, 8),
+                            std::move(Index)),
+        NdType::makeInt(1, false));
+    auto Value = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Element));
+    Value->Type = Func.ReturnType;
+    returnValue(Func, std::move(Value));
+    return Func;
+  };
+  const std::vector<HighFunc> Funcs = {Reader("read_sized", 0x140003700),
+                                       Reader("read_unsized", 0x140003708),
+                                       Reader("read_rest", 0x140003718)};
+  const auto Emit = [&](HighCEmitter &Emitter, const BinaryImage &Current) {
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    Options.Image = &Current;
+    EXPECT_TRUE(Emitter.emit(Funcs, OS, Options));
+    OS.flush();
+    return Source;
+  };
+  HighCEmitter Prepared;
+  Prepared.prepareImageFunctionNames(Img);
+  HighCEmitter Plain;
+  const std::string Source = Emit(Prepared, Img);
+  EXPECT_EQ(Source, Emit(Plain, Img));
+  EXPECT_NE(Source.find("sized"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("unsized"), std::string::npos) << Source;
+  // Another image is read for itself, not as the prepared one.
+  BinaryImage Other =
+      makeImageObjectFixture(0x140003700, std::vector<uint8_t>(32, 9), false);
+  Other.Sections.push_back(Sec);
+  EXPECT_EQ(Emit(Prepared, Other), Emit(Plain, Other));
+}
+
 // A read-only section of these bytes and read_byte(i), which reads the byte
 // at a variable index into it, so the table runs to the section's end.
 std::string emitIndexedByteTable(const std::vector<uint8_t> &Bytes) {

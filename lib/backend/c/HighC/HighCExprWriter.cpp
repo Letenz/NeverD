@@ -2434,7 +2434,7 @@ std::string HighCWriter::stringArgumentNote(const HighExpr &Arg) {
     // A number is no address, and a literal shows its text itself.
     if (Inner->ConstProvenance == ConstantAddressProvenance::Scalar ||
         Inner->ConstProvenance == ConstantAddressProvenance::AddressFragment ||
-        stringLiteralAt(Opts.Image, Dbg, Inner->ConstVal))
+        stringLiteral(Inner->ConstVal))
       return {};
     Target = Inner->ConstVal;
   } else if (Inner->Kind == ExprKind::Load && Inner->Operands.size() == 1 &&
@@ -5614,7 +5614,7 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return "(" + typeToC(E.Type) + ")" + *Anchored;
       return PointerInteger(*Anchored);
     }
-    if (auto Lit = stringLiteralAt(Opts.Image, Dbg, E.ConstVal);
+    if (auto Lit = stringLiteral(E.ConstVal);
         Lit && !objectOutgrowsLiteral(E.ConstVal, *Lit))
       return LiteralAddressOperands.count(&E)
                  ? PointerInteger("(uintptr_t)" + *Lit)
@@ -6367,20 +6367,24 @@ std::optional<va_t> HighCWriter::constAddress(const HighExpr &E) const {
   return std::nullopt;
 }
 
-bool HighCWriter::isImageDataAddress(va_t Addr) const {
-  if (!Opts.Image || Addr == 0 || Addr == InvalidVA)
+bool isImageDataAt(const BinaryImage &Img, va_t Addr) {
+  if (Addr == 0 || Addr == InvalidVA)
     return false;
-  if (Opts.Image->findImportAt(Addr))
+  if (Img.findImportAt(Addr))
     return false;
-  const Segment *Seg = Opts.Image->getSegmentFor(Addr);
+  const Segment *Seg = Img.getSegmentFor(Addr);
   if (!Seg || !Seg->isReadable())
     return false;
   // Instruction bytes are not data objects.  Read-only constants live in
   // .rdata / .rodata (readable, not writable, not executable), and where
   // the debug information places data among the code.
   if (Seg->isExecutable() && !Seg->isWritable())
-    return isCodeSectionData(Opts.Image, Addr);
+    return isCodeSectionData(&Img, Addr);
   return true;
+}
+
+bool HighCWriter::isImageDataAddress(va_t Addr) const {
+  return Opts.Image && isImageDataAt(*Opts.Image, Addr);
 }
 
 std::optional<uint64_t> HighCWriter::foldReadonlyScalar(va_t Addr,
@@ -6473,6 +6477,8 @@ const HighExpr *HighCWriter::indexedImageBase(const HighExpr &Address) const {
 
 std::optional<std::pair<va_t, uint64_t>>
 HighCWriter::sizedObjectAt(va_t Addr) const {
+  const auto &SizedObjects = DataObjects->SizedObjects;
+  const auto &SizedObjectReach = DataObjects->SizedObjectReach;
   const auto After = llvm::upper_bound(
       SizedObjects, Addr,
       [](va_t A, const std::pair<va_t, uint64_t> &O) { return A < O.first; });
@@ -6496,6 +6502,9 @@ HighCWriter::indexedObjectAt(va_t Addr) const {
     return std::nullopt;
   va_t Begin = Sec->VA;
   va_t End = Sec->VA + Sec->Size;
+  const auto &SizedObjects = DataObjects->SizedObjects;
+  const auto &SizedObjectReach = DataObjects->SizedObjectReach;
+  const auto &DataSymbolStarts = DataObjects->DataSymbolStarts;
   const auto After = llvm::upper_bound(
       SizedObjects, Addr,
       [](va_t A, const std::pair<va_t, uint64_t> &O) { return A < O.first; });
@@ -6609,7 +6618,7 @@ HighCWriter::anchoredOwnerAddress(const HighExpr &Const) const {
   const std::optional<va_t> Owner = anchoredOwner(Const);
   if (!Owner)
     return std::nullopt;
-  std::optional<std::string> Object = stringLiteralAt(Opts.Image, Dbg, *Owner);
+  std::optional<std::string> Object = stringLiteral(*Owner);
   if (!Object)
     Object = imageBackingAddress(*Owner);
   if (!Object)

@@ -3685,7 +3685,7 @@ void computeCallRegisterEffects(
     const std::shared_ptr<X87CallGraphCache> &X87Graphs,
     const std::map<va_t, PointerVariableCallee> &PointerCallees,
     pipeline_detail::CalleeFactsCache &KnownCallees, const DebugContext *Dbg,
-    PipelineResult &Result) {
+    const std::map<va_t, std::string> *FunctionNames, PipelineResult &Result) {
   // A call through a function-pointer variable passes the arguments of the
   // routine the variable starts at (PointerCallees): another module's, whose
   // prototype is kept under the variable's address, or this image's, by its
@@ -3822,11 +3822,9 @@ void computeCallRegisterEffects(
       parallelForEachWeighted(
           Weights,
           [&](auto Claim, size_t N) {
-            Decoder ExtraDec;
-            if (!ExtraDec.init(Img)) {
-              Initialized.store(false, std::memory_order_relaxed);
-              return;
-            }
+            // A worker opens a decoder only for a body it builds: a warmed
+            // run knows most callees from their facts or kept bodies.
+            std::optional<Decoder> ExtraDec;
             for (size_t I; (I = Claim()) < N;) {
               if (Known[I])
                 continue;
@@ -3834,8 +3832,13 @@ void computeCallRegisterEffects(
               CachedBodies[I] = CFGBuilder::cachedCallRegisterBody(
                   X87Graphs, Img, Entry, &FuncEntries, &NoReturnTargets,
                   &NoReturnCallees, &AbsoluteRelocationRoots, CodeOwnerIndex);
-              if (!CachedBodies[I])
-                Bodies[I] = BuildCallee(ExtraDec, Entry);
+              if (CachedBodies[I])
+                continue;
+              if (!ExtraDec && !ExtraDec.emplace().init(Img)) {
+                Initialized.store(false, std::memory_order_relaxed);
+                return;
+              }
+              Bodies[I] = BuildCallee(*ExtraDec, Entry);
             }
           },
           Bytes >= MinParallelBytes ? 2 : limits::kMinParallelIRWorkItems,
@@ -3935,8 +3938,19 @@ void computeCallRegisterEffects(
     std::set<va_t> Callees;
     for (const auto &[Entry, Effect] : Effects)
       Callees.insert(Entry);
-    for (const auto &[Entry, Name] : functionNamesAt(Img, Callees))
-      Classify(Entry, Name);
+    if (FunctionNames) {
+      // What functionNamesAt gives these: the analysis cache read every
+      // named address of the image once.
+      for (const va_t Entry : Callees)
+        if (const auto Named = FunctionNames->find(Entry);
+            Named != FunctionNames->end())
+          Classify(Entry, Named->second);
+        else
+          Classify(Entry, (kAutoFuncPrefix + llvm::utohexstr(Entry)).str());
+    } else {
+      for (const auto &[Entry, Name] : functionNamesAt(Img, Callees))
+        Classify(Entry, Name);
+    }
     for (const Import &Imp : Img.Imports)
       Classify(Imp.IATAddr, Imp.Name);
   }
@@ -4076,6 +4090,7 @@ PipelineAnalysisCache::SymbolInventory::SymbolInventory(const BinaryImage &Img)
     : BoundaryGuesses(Img.boundaryGuessFunctionStarts()),
       Starts(symbolFunctionStarts(Img, BoundaryGuesses)), Image(&Img),
       SymbolData(Img.Symbols.data()), SymbolCount(Img.Symbols.size()),
+      ExportData(Img.Exports.data()), ExportCount(Img.Exports.size()),
       RangeData(Img.KnownCodeRanges.data()),
       RangeCount(Img.KnownCodeRanges.size()),
       ContinuationCount(Img.ContinuationCodeStarts.size()) {}
@@ -4084,9 +4099,25 @@ bool PipelineAnalysisCache::SymbolInventory::readFrom(
     const BinaryImage &Img) const {
   return Image == &Img && SymbolData == Img.Symbols.data() &&
          SymbolCount == Img.Symbols.size() &&
+         ExportData == Img.Exports.data() &&
+         ExportCount == Img.Exports.size() &&
          RangeData == Img.KnownCodeRanges.data() &&
          RangeCount == Img.KnownCodeRanges.size() &&
          ContinuationCount == Img.ContinuationCodeStarts.size();
+}
+
+const std::map<va_t, std::string> &
+PipelineAnalysisCache::SymbolInventory::functionNames(
+    const BinaryImage &Img) const {
+  if (!FunctionNames) {
+    std::set<va_t> Named;
+    for (const Export &Exp : Img.Exports)
+      Named.insert(Exp.Addr);
+    for (const Symbol &Sym : Img.Symbols)
+      Named.insert(Sym.Addr);
+    FunctionNames = functionNamesAt(Img, Named);
+  }
+  return *FunctionNames;
 }
 
 std::shared_ptr<const PipelineAnalysisCache::SymbolInventory>
@@ -4773,7 +4804,8 @@ void Pipeline::buildLowIR(
   computeCallRegisterEffects(
       Img, FuncEntries, NoReturnTargets, Facts.StackProbes, NoReturnCallees,
       AbsoluteRelocationRoots, CodeOwnerIndex, X87Graphs, Facts.PointerCallees,
-      Facts.CalleeFacts, Dbg, Result);
+      Facts.CalleeFacts, Dbg, Shared ? &Inventory->functionNames(Img) : nullptr,
+      Result);
 }
 
 } // namespace neverd

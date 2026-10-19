@@ -17,20 +17,37 @@
 
 #include "llvm/Support/raw_ostream.h"
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace neverd {
 
+/// What an emission reads of an image's data symbols to bound the objects
+/// the code reaches: each object a symbol sizes (the largest at an address),
+/// the furthest any object at or before each one reaches, and where each data
+/// symbol starts.  It depends on the image alone.
+struct HighCImageDataObjects {
+  std::vector<std::pair<va_t, uint64_t>> SizedObjects;
+  std::vector<va_t> SizedObjectReach;
+  std::vector<va_t> DataSymbolStarts;
+};
+
+/// \p Image's data objects, as every emission over it reads them.
+HighCImageDataObjects collectImageDataObjects(const BinaryImage &Image);
+
 class HighCEmitter {
   const BinaryImage *PreparedImage = nullptr;
   std::unordered_set<std::string_view> PreparedImageFunctionNames;
+  HighCImageDataObjects PreparedDataObjects;
 
 public:
-  /// Reuse the image's defined-function index across a batch of emissions.
-  /// The image and its symbol names must remain unchanged until the batch ends.
+  /// Reuse the image's defined-function index and data objects across a
+  /// batch of emissions: an image holds tens of thousands of symbols.  The
+  /// image and its symbols must remain unchanged until the batch ends.
   void prepareImageFunctionNames(const BinaryImage &Image);
 
   bool emit(const std::vector<HighFunc> &Funcs, llvm::raw_ostream &OS,

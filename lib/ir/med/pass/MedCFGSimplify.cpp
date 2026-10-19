@@ -16,24 +16,39 @@
 
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <set>
 
 namespace neverd {
 
 void LowToMedConverter::simplifyCfg(MedFunc &Func) {
-  std::set<va_t> AddressTakenTargets;
-  if (Image) {
-    for (va_t Target : Image->CodeRefTargets)
-      AddressTakenTargets.insert(
-          normalizeCodeAddress(Target, Image->Arch, Image->Mode));
-    const unsigned PointerSize = Image->getPointerSize();
-    if (PointerSize != 0)
-      for (va_t Slot : Image->CodePtrRelocSlots)
-        if (const uint8_t *Bytes = Image->readVA(Slot, PointerSize))
-          AddressTakenTargets.insert(normalizeCodeAddress(
-              static_cast<va_t>(readPtr(Bytes, Image->is64Bit())), Image->Arch,
-              Image->Mode));
-  }
+  // Whether code the image takes the address of starts at \p Address: a
+  // published code reference, or the value of a relocated code pointer.  An
+  // image holds tens of thousands of each, and most functions have no
+  // jump-only block to ask about, so each is read only once one asks.
+  std::optional<std::set<va_t>> PointerTargets;
+  auto AddressTaken = [&](va_t Address) {
+    if (!Image)
+      return false;
+    // normalizeCodeAddress clears at most the Thumb bit, so only these two
+    // references can normalize to Address.
+    for (auto Target = Image->CodeRefTargets.lower_bound(Address);
+         Target != Image->CodeRefTargets.end() && *Target - Address <= 1;
+         ++Target)
+      if (normalizeCodeAddress(*Target, Image->Arch, Image->Mode) == Address)
+        return true;
+    if (!PointerTargets) {
+      PointerTargets.emplace();
+      const unsigned PointerSize = Image->getPointerSize();
+      if (PointerSize != 0)
+        for (va_t Slot : Image->CodePtrRelocSlots)
+          if (const uint8_t *Bytes = Image->readVA(Slot, PointerSize))
+            PointerTargets->insert(normalizeCodeAddress(
+                static_cast<va_t>(readPtr(Bytes, Image->is64Bit())),
+                Image->Arch, Image->Mode));
+    }
+    return PointerTargets->count(Address) != 0;
+  };
 
   // Native registration reconstruction replays exact source intervals and
   // their ordinary edges. Retain every reached interval until that replay;
@@ -89,9 +104,9 @@ void LowToMedConverter::simplifyCfg(MedFunc &Func) {
       const va_t BlockAddress = Blk.StartAddr != 0 || Blk.Ops.empty()
                                     ? Blk.StartAddr
                                     : Blk.Ops.front().Addr;
-      if (AddressTakenTargets.count(normalizeCodeAddress(
-              BlockAddress, TargetArch,
-              Image ? Image->Mode : InstructionMode::Default)) != 0)
+      if (AddressTaken(normalizeCodeAddress(BlockAddress, TargetArch,
+                                            Image ? Image->Mode
+                                                  : InstructionMode::Default)))
         continue;
 
       int Target = Blk.Succs[0];
