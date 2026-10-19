@@ -3533,8 +3533,25 @@ ImportPrototypeArguments importPrototypeArguments(
         importNamesAreCNames(Img.Format)
             ? libc::libcArity(Name, libc::libcVariantOf(Img))
             : libc::libcArityForSymbol(Name, libc::libcVariantOf(Img));
-    if (!Arity || Arity->IntArgs < 0)
-      return DeclaredArguments(Name);
+    if (!Arity || Arity->IntArgs < 0) {
+      if (std::optional<Arguments> Declared = DeclaredArguments(Name))
+        return Declared;
+      // A variadic routine reads its fixed parameters, integers all, where
+      // its variadic arguments follow them in the argument registers
+      // (`open(path, flags, ...)`): a caller passing one on untouched passes
+      // it as its own parameter.
+      if (!Convention || !Convention->VariadicImportArgumentsInRegisters ||
+          !libc::isKnownFunction(Name))
+        return std::nullopt;
+      const unsigned Fixed =
+          libc::varArgFixedCount(Name, libc::libcVariantOf(Img));
+      if (!Fixed)
+        return std::nullopt;
+      Arguments Result;
+      Result.Integers = static_cast<int>(Fixed);
+      Result.Order.assign(Fixed, 0);
+      return Result;
+    }
     Arguments Result;
     Result.Integers = Arity->IntArgs;
     Result.Floats.assign(Arity->FpArgs,

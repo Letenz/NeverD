@@ -1038,6 +1038,54 @@ TEST(SysVCallContract, AVariadicImportTakesTheParameterPassedThroughToIt) {
   EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
 }
 
+TEST(SysVCallContract, AVariadicImportReadsTheParametersPassedOnToIt) {
+  // grep opens a file `xor ecx, ecx; xor eax, eax; call openat`, passing
+  // its dirfd, path and flags on untouched and reading none of them, and
+  // logs `mov esi, 7; xor eax, eax; call printf` with its format.  A
+  // variadic import reads its fixed parameters, which are then the
+  // functions' own, and the arguments a call sets after them follow them:
+  // its unit called openat() in a function of no parameter.
+  constexpr va_t Opener = Text, Logger = Text + 0x20, OpenAt = Text + 0x40,
+                 Printf = Text + 0x50;
+  std::vector<uint8_t> Code(0x60, 0xCC);
+  auto Define = [&](va_t At, std::vector<uint8_t> Setup, va_t Callee) {
+    std::vector<uint8_t> Bytes = {0x48, 0x83, 0xEC, 0x08}; // sub rsp, 8
+    Bytes.insert(Bytes.end(), Setup.begin(), Setup.end());
+    Bytes.push_back(0xE8); // call
+    for (uint8_t B : rel32(At + Bytes.size() + 4, Callee))
+      Bytes.push_back(B);
+    for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                      0xC3})                  // ret
+      Bytes.push_back(B);
+    put(Code, At, Bytes);
+  };
+  Define(Opener,
+         {0x31, 0xC9,  // xor ecx, ecx
+          0x31, 0xC0}, // xor eax, eax
+         OpenAt);
+  Define(Logger,
+         {0xBE, 0x07, 0x00, 0x00, 0x00, // mov esi, 7
+          0x31, 0xC0},                  // xor eax, eax
+         Printf);
+  const BinaryImage Img =
+      makeImportImage(Code, {{Opener, "opener"}, {Logger, "logger"}},
+                      {{OpenAt, "openat"}, {Printf, "printf"}});
+  const std::string Source = liftEntries(Img, {Opener, Logger});
+  const std::string Open = body(Source, "opener");
+  const std::string Log = body(Source, "logger");
+  ASSERT_FALSE(Open.empty()) << Source;
+  ASSERT_FALSE(Log.empty()) << Source;
+  EXPECT_TRUE(
+      llvm::Regex("opener\\([^)]*arg0, [^)]*arg1, [^)]*arg2\\)").match(Open))
+      << Open;
+  EXPECT_TRUE(llvm::Regex("openat\\([^,]*arg0[^,]*, [^,]*arg1[^,]*, "
+                          "[^,]*arg2[^,]*, 0\\)")
+                  .match(Open))
+      << Open;
+  EXPECT_TRUE(llvm::Regex("printf\\([^,]*arg0[^,]*, 7\\)").match(Log)) << Log;
+  EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+}
+
 TEST(SysVCallContract, AJumpThroughALoadedSlotPassesTheArgumentsSetBefore) {
   // GCC's register_tm_clones: RDI and RSI are set and tested, RAX is
   // loaded from the GOT slot of _ITM_registerTMCloneTable and tested, and

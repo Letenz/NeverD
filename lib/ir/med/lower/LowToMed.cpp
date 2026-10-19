@@ -33,10 +33,12 @@
 #include "neverd/ir/med/X86RegistrationEntry.h"
 #include "neverd/ir/med/X86RegistrationSEHRegisters.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/LibCVariant.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/SourceRegisterCopy.h"
 #include "neverd/loader/ObjC/ObjCClassGetterCalls.h"
+#include "neverd/loader/SymbolDecoration.h"
 
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -320,6 +322,21 @@ bool LowToMedConverter::bindFormattedCall(MedBlock &MB, MedOp &MOp,
   return true;
 }
 
+unsigned LowToMedConverter::variadicImportFixedCount(va_t Key) const {
+  if (!Image || !Key)
+    return 0;
+  const std::string Import = importCalleeName(*Image, Key);
+  if (Import.empty())
+    return 0;
+  // A Mach-O bind names the symbol; a PE import entry is the C name.
+  const std::string Name =
+      cNameOfStatedName(Import, Image->Format, Image->Arch).str();
+  if (libc::libcPrototype(Name, Image->abiFormat()) ||
+      !libc::isKnownFunction(Name))
+    return 0;
+  return libc::varArgFixedCount(Name, libc::libcVariantOf(*Image));
+}
+
 void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
   if ((LOp.Opcode != NdOp::CALL && LOp.Opcode != NdOp::INDIR_CALL) ||
       LOp.NumInputs == 0)
@@ -456,19 +473,27 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
       // A variadic callee also reads the variadic arguments the caller
       // passes: the argument registers set on every path to the call.  An
       // unread fixed slot below them carries zero as above.
+      std::optional<int> VariadicFrom;
       if (CallVariadicFrom && Convention->VariadicFromSummary)
         if (auto V = CallVariadicFrom->find(ArgumentsKey);
-            V != CallVariadicFrom->end()) {
-          int8_t Passed = Count;
-          for (int8_t I = static_cast<int8_t>(V->second); I < Slots; ++I)
-            if ((DispatchCallDefinedArgs >> I) & 1)
-              Passed = I + 1;
-          for (int8_t I = Count; I < Passed; ++I)
-            MOp.addInput(I < V->second ? MedVar::makeConst(0, TRI.PointerSize)
-                                       : ndVarToMedVar(NdVar::reg(
-                                             ArgRegs[I], TRI.PointerSize)));
-          Count = Passed;
-        }
+            V != CallVariadicFrom->end())
+          VariadicFrom = V->second;
+      // So does a variadic C library import, after the fixed parameters its
+      // summary reads, where they follow them in the argument registers.
+      if (!VariadicFrom && Convention->VariadicImportArgumentsInRegisters)
+        if (const unsigned Fixed = variadicImportFixedCount(ArgumentsKey))
+          VariadicFrom = static_cast<int>(Fixed);
+      if (VariadicFrom) {
+        int8_t Passed = Count;
+        for (int8_t I = static_cast<int8_t>(*VariadicFrom); I < Slots; ++I)
+          if ((DispatchCallDefinedArgs >> I) & 1)
+            Passed = I + 1;
+        for (int8_t I = Count; I < Passed; ++I)
+          MOp.addInput(I < *VariadicFrom ? MedVar::makeConst(0, TRI.PointerSize)
+                                         : ndVarToMedVar(NdVar::reg(
+                                               ArgRegs[I], TRI.PointerSize)));
+        Count = Passed;
+      }
       MOp.CalleeRegisterArgs = Count;
       // The floating arguments follow, each in the next vector register the
       // callee reads: the whole register, whose value every write reaches,
@@ -700,7 +725,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
       Convention && ((Convention->DispatcherTargetRegister &&
                       CallDispatchThunks && !CallDispatchThunks->empty()) ||
                      (Convention->VariadicFromSummary && CallVariadicFrom &&
-                      !CallVariadicFrom->empty()));
+                      !CallVariadicFrom->empty()) ||
+                     (Convention->VariadicImportArgumentsInRegisters && Image));
   auto ArgBit = [&](const NdVar &V) -> uint8_t {
     if (!V.isReg())
       return 0;
