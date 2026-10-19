@@ -42,6 +42,7 @@
 #include "neverd/ir/X87Context.h"
 #include "neverd/ir/intrinsics/IntrinsicValueEffects.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/med/I386PicAddress.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/SymbolDecoration.h"
@@ -371,6 +372,23 @@ private:
     return false;
   }
 
+  /// Whether \p Value is the linked GOT's address that an authenticated i386
+  /// get-PC sequence computes (`call 1f; 1: pop %eax; add $GOT-1b, %eax`):
+  /// the base the function addresses its data from, not a value it means.
+  bool isI386GOTAddress(const FunctionFacts &F, const MedVar &Value) const {
+    if (Img.Arch != Arch::X86 || !F.Func || F.Func->I386GetPcModels.empty())
+      return false;
+    const std::optional<va_t> GOT = Img.linkedI386GlobalOffsetTable();
+    if (!GOT)
+      return false;
+    const std::optional<uint64_t> Folded = foldI386PicAddress(
+        *F.Func, Value, [&](const MedVar &Each) -> const MedOp * {
+          const auto Def = F.Defs.find(keyOf(Each));
+          return Def == F.Defs.end() ? nullptr : Def->second;
+        });
+    return Folded && uint32_t(*Folded) == uint32_t(*GOT);
+  }
+
   /// What \p Value hands back, each path a PHI joins counted on its own.
   void classify(const FunctionFacts &F, const MedVar &Value,
                 std::vector<ReturnedValue> &Paths, std::set<ValueKey> &Seen,
@@ -380,7 +398,7 @@ private:
       Paths.push_back(ReturnedValue::Deliberate);
       return;
     }
-    if (Value.Kind == MedVar::Unspecified) {
+    if (Value.Kind == MedVar::Unspecified || isI386GOTAddress(F, Value)) {
       Paths.push_back(ReturnedValue::Undefined);
       return;
     }

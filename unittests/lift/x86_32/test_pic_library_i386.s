@@ -23,6 +23,8 @@
 // `gcc_lookup` adds the index to the GOT register its thunk loads,
 // `clang_lookup` to the address its call/pop leaves, before the GOTOFF
 // displacement of `table`.
+//   void clang_set_factor(int v) { factor = v; }
+// returns with the GOT address its call/pop left in %eax.
 
 	.text
 	.p2align 4
@@ -210,6 +212,24 @@ clang_lookup:
 	retl
 	.cfi_endproc
 	.size	clang_lookup, .-clang_lookup
+
+	.p2align 4
+	.globl	clang_set_factor
+	.type	clang_set_factor, @function
+clang_set_factor:
+	.cfi_startproc
+	calll	.Lset_factor_pc
+	.cfi_adjust_cfa_offset 4
+.Lset_factor_pc:
+	popl	%eax
+	.cfi_adjust_cfa_offset -4
+.Lset_factor_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Lset_factor_got-.Lset_factor_pc), %eax
+	movl	4(%esp), %ecx
+	movl	%ecx, factor@GOTOFF(%eax)
+	retl
+	.cfi_endproc
+	.size	clang_set_factor, .-clang_set_factor
 
 	.section	.rodata
 	.p2align 2
