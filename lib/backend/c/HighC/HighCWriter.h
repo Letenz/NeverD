@@ -790,6 +790,38 @@ public:
   /// address is a slot of the frame storage, whose layout gives the slot the
   /// alignment the entry stack pointer's residue gives it in the machine.
   bool frameStorageAlignmentHolds(const HighExpr &Call);
+  /// The va_start forwarder \p Func is, as C prints it (`T f(named, ...)`):
+  /// none where a source or debug signature declares its parameters.
+  const HighFunc::VaStartForwarder *
+  vaStartForwarder(const HighFunc &Func) const;
+  /// Whether a call of \p Func, a va_start forwarder, passes an operand
+  /// that holds one of va_start's areas (HighFunc::VaStartForwarder::Junk).
+  bool vaStartJunkPassed(const HighFunc &Func) const;
+  mutable std::map<const HighFunc *, bool> VaStartJunkPassedCache;
+  /// CurrentFunc's, where it is one.
+  const HighFunc::VaStartForwarder *currentVaStart() const {
+    return CurrentFunc ? vaStartForwarder(*CurrentFunc) : nullptr;
+  }
+  /// Whether \p Stmt is a store of CurrentFunc's va_start, which C's
+  /// va_start does: a va_list field, a saved argument register, or an
+  /// overflow parameter's home.
+  bool vaStartStatement(const HighStmt &Stmt) const;
+  /// The parameter `va_start` names: CurrentFunc's last named one, as its
+  /// header spells it.
+  std::string VaStartLastNamed;
+  /// The operands a call \p E of the va_start forwarder \p Callee passes:
+  /// its named parameters, then the integer, vector and stack arguments.
+  /// \p Printed, for the call CurrentFunc prints, takes each kind up to the
+  /// last the call sets, and no stack argument call recovery only padded the
+  /// call with; otherwise every operand that may be passed.
+  std::vector<size_t> vaStartCallOperands(const HighExpr &E,
+                                          const HighFunc &Callee,
+                                          const HighFunc::VaStartForwarder &Va,
+                                          bool Printed) const;
+  /// Whether \p Op, an argument of a va_start forwarder, is a register the
+  /// call never set, seen through the conversions that carry it in its
+  /// register (a vector register's double as its bits).
+  bool vaStartUnknownOperand(const HighExpr *Op) const;
   /// Whether \p E combines a certified frame address with a run-time value,
   /// so it reaches whichever frame bytes that value selects.
   bool reachesFrameThroughIndex(const HighExpr &E) const;

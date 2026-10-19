@@ -1676,6 +1676,10 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
           !Import.empty())
         if (const auto *Forward = libc::libcVariadicForward(Import))
           c_stub::addVariadicStubHeaders(Headers, *Forward);
+  // So does a function that builds its va_list only to pass it on.
+  for (const auto &F : Funcs)
+    if (vaStartForwarder(F))
+      Headers.insert("stdarg.h");
 
   for (auto &Name : CallTargets) {
     if (isOwnFunctionName(Name, Funcs))
@@ -1904,6 +1908,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
               ? sourceParameterType(Function.SourceTypeHint->Parameters[I])
               : declaredAs(emittedParamTypeAt(Function, I), "");
     }
+    if (vaStartForwarder(Function) && ParamCount)
+      Declarator += ", ...";
     if (ParamCount == 0)
       Declarator += "void";
     OS << declaredAs(ReturnType, Declarator + ")") << ";\n";
@@ -1928,6 +1934,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
               ? sourceParameterType(Function->SourceTypeHint->Parameters[I])
               : declaredAs(emittedParamTypeAt(*Function, I), "");
     }
+    if (vaStartForwarder(*Function) && ParamCount)
+      Declarator += ", ...";
     if (ParamCount == 0)
       Declarator += "void";
     if (Function->SourceTypeHint)
@@ -1966,6 +1974,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
               ? sourceParameterType(Function->SourceTypeHint->Parameters[I])
               : declaredAs(emittedParamTypeAt(*Function, I), "");
     }
+    if (vaStartForwarder(*Function) && ParamCount)
+      Declarator += ", ...";
     if (ParamCount == 0)
       Declarator += "void";
     OS << declaredAs(ReturnType, Declarator + ")") << ";\n";

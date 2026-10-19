@@ -18,6 +18,8 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <map>
+#include <optional>
+#include <set>
 
 namespace neverd {
 namespace med_variadic_detail {
@@ -61,6 +63,74 @@ bool hasX64VariadicPrologue(VariadicScan &S, uint64_t &VaStartWord) {
     }
   Marked = HasVaWord && countParamRegSpills(Func, TRI.IntParamRegs) >= 1;
   return Marked;
+}
+
+std::optional<X64VaStartGeometry> x64VaStartGeometry(VariadicScan &S,
+                                                     uint64_t VaStartWord,
+                                                     int64_t OverflowBase) {
+  const VariadicValueIndex &Values = S.values();
+  // The constant a store writes, directly or through the register a COPY
+  // loaded it into (`movabs $0x3000000008, %rax; mov %rax, (%rsp)`).
+  auto Constant = [&](const MedVar &Value) -> std::optional<uint64_t> {
+    if (Value.isConst())
+      return Value.ConstVal;
+    const auto Key = VariadicValueIndex::keyOf(Value);
+    const auto It = Values.Definitions.find(Key);
+    if (It == Values.Definitions.end() ||
+        Values.AmbiguousDefinitions.count(Key) ||
+        It->second->Opcode != NdOp::COPY || It->second->NumInputs < 1 ||
+        !It->second->Inputs[0].isConst())
+      return std::nullopt;
+    return It->second->Inputs[0].ConstVal;
+  };
+  const uint64_t GpOffset = VaStartWord & 0xFFFFFFFFu;
+  const uint64_t FpOffset = VaStartWord >> 32;
+  std::set<int64_t> Words, GpFields, FpFields;
+  // The entry-SP address each pointer-wide store writes at each place; a
+  // place written two different ones has none.
+  std::map<int64_t, std::optional<int64_t>> Pointers;
+  for (const MedBlock &Block : S.Func.Blocks)
+    for (const MedOp &Op : Block.Ops) {
+      if (Op.Opcode != NdOp::STORE || Op.NumInputs < 2 ||
+          Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+        continue;
+      const auto At = entrySpDelta(Values, S.SpOff, Op.Inputs[0], 0);
+      if (!At)
+        continue;
+      const MedVar &Value = Op.Inputs[1];
+      if (const auto Word = Constant(Value)) {
+        if (Value.Size == sizeof(uint64_t) && *Word == VaStartWord)
+          Words.insert(*At);
+        else if (Value.Size == sizeof(uint32_t) && *Word == GpOffset)
+          GpFields.insert(*At);
+        else if (Value.Size == sizeof(uint32_t) && *Word == FpOffset)
+          FpFields.insert(*At);
+        continue;
+      }
+      if (Value.Size != S.TRI.PointerSize)
+        continue;
+      const auto Address = entrySpDelta(Values, S.SpOff, Value, 0);
+      auto [It, Inserted] = Pointers.emplace(*At, Address);
+      if (!Inserted && It->second != Address)
+        It->second.reset();
+    }
+  std::set<int64_t> Candidates = Words;
+  for (int64_t At : GpFields)
+    if (FpFields.count(At + static_cast<int64_t>(sizeof(uint32_t))))
+      Candidates.insert(At);
+  std::optional<X64VaStartGeometry> Found;
+  for (int64_t VaList : Candidates) {
+    const auto Overflow = Pointers.find(VaList + 8);
+    const auto SaveArea = Pointers.find(VaList + 16);
+    if (Overflow == Pointers.end() || !Overflow->second ||
+        *Overflow->second != OverflowBase || SaveArea == Pointers.end() ||
+        !SaveArea->second)
+      continue;
+    if (Found)
+      return std::nullopt;
+    Found = X64VaStartGeometry{VaList, *SaveArea->second};
+  }
+  return Found;
 }
 
 /// The i386 stack va_list, homed and then reloaded or walked.

@@ -219,6 +219,10 @@ void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
   bool Marked = false;
   std::optional<int> FirstVariadicRegister;
   std::optional<int> FirstVariadicVectorRegister;
+  std::optional<uint64_t> X64VaStartWord;
+  Func.VaListDisplacement.reset();
+  Func.VaRegisterSaveArea.reset();
+  Func.VaNamedIntegerRegisters = -1;
   switch (TargetArch) {
   case Arch::X64: {
     uint64_t VaStartWord = 0;
@@ -226,10 +230,12 @@ void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
     // fp_offset, past the integer save slots, steps over each named vector
     // register's.  The integer registers stay parameters: every call passes
     // them all.
-    if (Marked)
+    if (Marked) {
       FirstVariadicVectorRegister =
           static_cast<int>(((VaStartWord >> 32) - limits::kX64VaFpOffsetMin) /
                            limits::kX64VaFpOffsetStep);
+      X64VaStartWord = VaStartWord;
+    }
     break;
   }
   case Arch::X86:
@@ -275,6 +281,19 @@ void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
       Base.value_or(TRI.CallPushesReturnAddress ? TRI.PointerSize : 0);
   Func.VariadicFirstRegister = FirstVariadicRegister.value_or(-1);
   Func.VariadicFirstVectorRegister = FirstVariadicVectorRegister.value_or(-1);
+  // Where the prologue initializes one va_list, gp_offset counts the named
+  // integer parameters ahead of the saved registers.  A named vector
+  // parameter's place among the integer ones is unknown, so only a function
+  // that takes none (fp_offset past the integer save slots alone) has a C
+  // signature to give.
+  if (X64VaStartWord && (*X64VaStartWord >> 32) == limits::kX64VaFpOffsetMin)
+    if (const auto Geometry =
+            x64VaStartGeometry(S, *X64VaStartWord, Func.VariadicOverflowBase)) {
+      Func.VaListDisplacement = Geometry->VaList;
+      Func.VaRegisterSaveArea = Geometry->SaveArea;
+      Func.VaNamedIntegerRegisters = static_cast<int>(
+          (*X64VaStartWord & 0xFFFFFFFFu) / limits::kX64VaGpOffsetStep);
+    }
 }
 
 } // namespace neverd

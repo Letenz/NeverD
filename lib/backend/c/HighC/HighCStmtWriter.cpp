@@ -1330,6 +1330,41 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     break;
 
   case StmtKind::Return:
+    // A va_start forwarder ends its va_list before it returns, after the
+    // returned value, which may read the list, is taken.
+    if (currentVaStart()) {
+      const bool Unknown =
+          !Stmt.RetVal || Stmt.RetVal->Kind == ExprKind::Undef ||
+          (Stmt.RetVal->Kind == ExprKind::Var &&
+           !Analysis.AssignedVars.count(varName(Stmt.RetVal->Var)) &&
+           (Stmt.RetVal->Var.Kind != MedVar::Param || InEHClauseBody));
+      if (IndirectReturnName.empty() && !InferredVoid && !Unknown) {
+        const std::string Value = formatReturnExpr(*Stmt.RetVal);
+        if (Value.find("arguments") != std::string::npos) {
+          emitIndent(Indent);
+          OS << "{\n";
+          emitIndent(Indent + 1);
+          OS << declaredAs(FuncReturnType, "va_result") << " = " << Value
+             << ";\n";
+          emitIndent(Indent + 1);
+          OS << "va_end(arguments);\n";
+          emitIndent(Indent + 1);
+          OS << "return va_result;\n";
+          emitIndent(Indent);
+          OS << "}\n";
+        } else {
+          emitIndent(Indent);
+          OS << "va_end(arguments);\n";
+          emitIndent(Indent);
+          OS << "return " << Value << ";\n";
+        }
+        break;
+      }
+      if (!InferredVoid || !Stmt.RetVal || !returnedCall(*Stmt.RetVal)) {
+        emitIndent(Indent);
+        OS << "va_end(arguments);\n";
+      }
+    }
     emitIndent(Indent);
     if (!IndirectReturnName.empty() &&
         (InferredVoid || !Stmt.RetVal || Stmt.RetVal->Kind == ExprKind::Undef ||
@@ -1345,6 +1380,10 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
               Stmt.RetVal ? returnedCall(*Stmt.RetVal) : nullptr) {
         OS << callStatementText(*Call) << "\n";
         emitIndent(Indent);
+        if (currentVaStart()) {
+          OS << "va_end(arguments);\n";
+          emitIndent(Indent);
+        }
       }
       OS << "return;\n";
     } else if (!Stmt.RetVal || Stmt.RetVal->Kind == ExprKind::Undef ||
