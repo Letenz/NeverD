@@ -2609,6 +2609,7 @@ set(X86_32_TEST_SOURCES
   x86_32/test_misc32.c
   x86_32/test_fp32.c
   x86_32/test_debug_params32.c
+  x86_32/test_debug_regparm32.c
   x86_32/test_cmov32.c
   x86_32/test_rotate32.c
   x86_32/test_carry32.c
@@ -2962,6 +2963,9 @@ foreach(src ${X86_32_TEST_SOURCES})
   elseif(src MATCHES "test_debug_params32")
     # The signatures under test come from the DWARF description.
     set(x86_32_extra_flags -g)
+  elseif(src MATCHES "test_debug_regparm32")
+    # Optimized, the description locates each parameter where it enters.
+    set(x86_32_extra_flags -g -O2)
   elseif(src MATCHES "test_return_join")
     set(x86_32_extra_flags -O2)
   elseif(src MATCHES "test_extern_calls_nopic")

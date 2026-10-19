@@ -62,6 +62,18 @@ std::optional<SourceParameterPlacement>
 placeSourceParameters(Arch A, BinaryFormat F, const TypeRef &ReturnType,
                       llvm::ArrayRef<TypeRef> ParamTypes);
 
+/// The placement of the parameters \p ParamTypes of an i386 function whose
+/// debug information says where they enter it, \p Entries
+/// (FunctionSym::ParamEntryLocations): one in a register in it, and those in
+/// the caller's slots in the slots that follow, in order, while every
+/// parameter before has a known place.  A parameter of no certain place has
+/// no pieces.  None where the result's hidden pointer takes a place the
+/// information does not say.
+std::optional<SourceParameterPlacement>
+placeEnteredParameters(Arch A, BinaryFormat F, const TypeRef &ReturnType,
+                       llvm::ArrayRef<TypeRef> ParamTypes,
+                       llvm::ArrayRef<SourceABIValueLocation> Entries);
+
 } // namespace neverd
 
 #endif // NEVERD_IR_SOURCEPARAMETERPLACEMENT_H

@@ -2432,11 +2432,12 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
       // recovered anyway, such as an ECX a call passes on, comes before the
       // stack arguments and moves every name after it.  Where more arguments
       // were recovered than declared, none is named.
-      DebugPositional = Opts.TheArch != Arch::X86 ||
-                        (DebugFn->CallConv != DebugCallConv::Cdecl &&
-                         DebugFn->CallConv != DebugCallConv::Stdcall &&
-                         DebugFn->CallConv != DebugCallConv::Unknown) ||
-                        Fn.arg_size() <= DebugFn->Params.size();
+      DebugPositional = DebugFn->ParamEntryLocations.empty() &&
+                        (Opts.TheArch != Arch::X86 ||
+                         (DebugFn->CallConv != DebugCallConv::Cdecl &&
+                          DebugFn->CallConv != DebugCallConv::Stdcall &&
+                          DebugFn->CallConv != DebugCallConv::Unknown) ||
+                         Fn.arg_size() <= DebugFn->Params.size());
       bindDebugArguments(Fn);
       // The record the first parameter points to is reached through the
       // argument that holds that pointer, where the convention put it.  A

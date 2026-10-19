@@ -15,6 +15,7 @@
 #define NEVERD_DEBUG_DEBUGCONTEXT_H
 
 #include "neverd/Common.h"
+#include "neverd/ir/SourceTypeHint.h"
 #include "neverd/ir/high/HighIR.h"
 
 #include <cstdint>
@@ -70,6 +71,14 @@ struct FunctionSym {
   /// of its own, such as Go's register ABI, or one the debug information
   /// does not name: no C placement rules locate its parameters.
   bool PlatformConvention = true;
+  /// Where each parameter enters the function, for one the debug information
+  /// places in a register at the entry where the platform's convention would
+  /// not: an i386 function GCC passes EAX, EDX and ECX (regparm), or clang
+  /// ECX and EDX (fastcc).  Parallel to Params: an IntegerRegister location
+  /// names its register, a Stack one says only that the value is in the
+  /// caller's slots, and None that the information does not say.  Empty for
+  /// every other function.
+  std::vector<SourceABIValueLocation> ParamEntryLocations;
   /// Where a known routine's return and parameters come from when neither
   /// the debug information nor the user gives them: the type library whose
   /// prototype of the function's name gives them (windows-kernel-x64), and
