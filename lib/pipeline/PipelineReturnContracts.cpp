@@ -95,9 +95,11 @@ struct FunctionFacts {
   /// The intrinsic each bound output of a multi-output intrinsic comes from.
   std::map<ValueKey, const MedOp *> IntrinsicOutputDefs;
   std::map<ValueKey, const PhiNode *> Phis;
-  /// Values an operation other than a return reads.
+  /// Values an operation other than a return reads, directly or through the
+  /// PHIs that merge them.
   std::set<ValueKey> Read;
-  /// Values a return hands back.
+  /// Values a return hands back, directly or through the PHIs that merge
+  /// them.
   std::set<ValueKey> Returned;
   /// The results of the calls to each function of this image: a direct
   /// call's target, or the routine an import's stub or slot reaches
@@ -201,6 +203,8 @@ FunctionFacts collectFacts(const MedFunc &Func, const TargetRegInfo &TRI,
   FunctionFacts Facts;
   Facts.Func = &Func;
   std::vector<const MedOp *> Calls;
+  // Each PHI's arguments, by its output: they are read where it is.
+  std::map<ValueKey, std::vector<ValueKey>> PhiArgs;
   for (const MedBlock &Block : Func.Blocks) {
     for (const PhiNode &Phi : Block.Phis) {
       Facts.WritesReturnRegister |= Phi.Output.Kind == MedVar::Reg &&
@@ -209,7 +213,7 @@ FunctionFacts collectFacts(const MedFunc &Func, const TargetRegInfo &TRI,
       for (const auto &[Predecessor, Value] : Phi.Args) {
         (void)Predecessor;
         if (!Value.isConst())
-          Facts.Read.insert(keyOf(Value));
+          PhiArgs[keyOf(Phi.Output)].push_back(keyOf(Value));
       }
     }
     for (const MedOp &Op : Block.Ops) {
@@ -244,6 +248,21 @@ FunctionFacts collectFacts(const MedFunc &Func, const TargetRegInfo &TRI,
         Calls.push_back(&Op);
     }
   }
+  // A merge nothing reads, such as the return register's after a call made
+  // on one path only, reads none of its arguments.
+  const auto ThroughPhis = [&](std::set<ValueKey> &Values) {
+    std::vector<ValueKey> Pending(Values.begin(), Values.end());
+    while (!Pending.empty()) {
+      const ValueKey Merged = Pending.back();
+      Pending.pop_back();
+      if (const auto Args = PhiArgs.find(Merged); Args != PhiArgs.end())
+        for (const ValueKey &Arg : Args->second)
+          if (Values.insert(Arg).second)
+            Pending.push_back(Arg);
+    }
+  };
+  ThroughPhis(Facts.Read);
+  ThroughPhis(Facts.Returned);
   // A call's callee is known once every definition is: an indirect call may
   // load its slot in a later block.
   for (const MedOp *Call : Calls) {
