@@ -809,9 +809,13 @@ const Session::FunctionSource &dialectSource(neverd_session_t Sess, va_t Entry,
   return Kept;
 }
 
-llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
-                              llvm::StringRef Stage, size_t Offset,
-                              size_t Limit) {
+/// Writes the page of \p Entry's view \p Stage, from line \p Offset and of at
+/// most \p Limit lines, to \p OS: the JSON object llvm::json prints for it,
+/// keys in its order, written once the page is known rather than built as a
+/// value first.  A large function's page holds a row for each of its
+/// thousands of lines.
+void writeSourcePage(llvm::raw_ostream &OS, neverd_session_t Sess, va_t Entry,
+                     llvm::StringRef Stage, size_t Offset, size_t Limit) {
   auto &S = *toSession(Sess);
   CSourceMap Map;
   std::optional<SourceDialect> Dialect;
@@ -892,7 +896,14 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
     Regions.push_back(std::move(Item));
   }
   std::string Text;
-  llvm::json::Array Rows;
+  // What each row of the page says: its line, how it maps and the
+  // instructions it shows.
+  struct SourceRow {
+    size_t Line;
+    llvm::StringRef MappingStatus;
+    std::vector<va_t> Addresses;
+  };
+  std::vector<SourceRow> Rows;
   size_t Total = 0, Start = 0, ByteOffset = Full.size();
   bool PageFull = false;
   while (Start < Full.size()) {
@@ -942,49 +953,24 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
             for (const auto &Origin : Match.Occurrences)
               Origins.insert(Origin.Address);
       }
-      llvm::json::Array Addresses;
+      std::vector<va_t> Addresses;
       if (Primary) {
-        Addresses.push_back(vaHex(*Primary));
+        Addresses.push_back(*Primary);
         Origins.erase(*Primary);
       }
-      for (va_t Address : Origins)
-        Addresses.push_back(vaHex(Address));
-      Rows.push_back(llvm::json::Object{
-          {"line", static_cast<int64_t>(Total)},
-          {"object_id",
-           (Stage + ":" + vaHex(Entry) + ":line:" + std::to_string(Total))
-               .str()},
-          {"kind", "source"},
-          {"mapping_status", InstructionAnchor ? "instruction_anchor"
-                             : Origins.empty() ? "unmapped"
-                                               : "library_region"},
-          {"addresses", std::move(Addresses)}});
+      Addresses.insert(Addresses.end(), Origins.begin(), Origins.end());
+      Rows.push_back({Total,
+                      InstructionAnchor ? "instruction_anchor"
+                      : Origins.empty() ? "unmapped"
+                                        : "library_region",
+                      std::move(Addresses)});
     }
     ++Total;
     Start = End;
   }
   const size_t End = std::min(Offset, Total) + Rows.size();
   const size_t PageEnd = ByteOffset + Text.size();
-  llvm::json::Object Page{
-      {"schema_version", 1},
-      {"address", vaHex(Entry)},
-      {"representation", Stage},
-      {"mapping_status",
-       Anchors.empty() ? "library_regions" : "instruction_anchors"},
-      {"provenance_complete", false},
-      {"text", std::move(Text)},
-      {"rows", std::move(Rows)},
-      {"library_regions", std::move(Regions)},
-      {"function_identity", S.functionIdentity(Entry)},
-      {"offset", static_cast<int64_t>(Offset)},
-      {"byte_offset", static_cast<int64_t>(ByteOffset)},
-      {"total_lines", static_cast<int64_t>(Total)},
-      {"complete", End == Total},
-      {"recognition_budget_exhausted",
-       S.PipeResult.LibraryRecognitionBudgetExhausted.contains(Entry)}};
-  Page["next_offset"] = End == Total
-                            ? llvm::json::Value(nullptr)
-                            : llvm::json::Value(static_cast<int64_t>(End));
+  llvm::json::Object Identity = S.functionIdentity(Entry);
   // The functions the C names by another identifier than their symbol, as a
   // start-up function the C runtime defines (`fini` for `_fini`) or a symbol
   // C cannot spell: each with the symbol and the entry a reader finds it by.
@@ -996,17 +982,14 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
           llvm::json::Object{{"identifier", Name.Identifier},
                              {"symbol", jsonSafeText(Name.Symbol)},
                              {"address", vaHex(*Name.Address)}});
-  Page["identifier_symbols"] = std::move(Renamed);
+  // What the page reads in, which a `source` request chose; the
+  // declarations it shows as C; and the source names on the page, which
+  // splitting the text into identifiers would not find whole.
+  llvm::json::Array Reasons;
+  llvm::json::Array PageNames;
   if (Dialect) {
-    // What the page reads in, which a `source` request chose; the
-    // declarations it shows as C; and the source names on the page, which
-    // splitting the text into identifiers would not find whole.
-    Page["dialect"] = sourceDialectKey(*Dialect);
-    llvm::json::Array Reasons;
     for (const std::string &Reason : Unread)
       Reasons.push_back(Reason);
-    Page["unread"] = std::move(Reasons);
-    llvm::json::Array PageNames;
     for (const SourceDialectName &Name : Names) {
       if (Name.End <= ByteOffset || Name.Begin >= PageEnd)
         continue;
@@ -1018,19 +1001,62 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
         Item["address"] = vaHex(*Name.Address);
       PageNames.push_back(std::move(Item));
     }
-    Page["source_names"] = std::move(PageNames);
   }
   // The lines before the function's definition: includes, support types and
   // declarations. Published only where the emitter recorded the definition
   // at the start of a line.
+  std::optional<llvm::json::Object> Prelude;
   if (Map.Definitions.size() == 1) {
     const size_t Begin = Map.Definitions.front().Begin;
     if (Begin > 0 && Begin < Full.size() && Full[Begin - 1] == '\n')
-      Page["prelude"] = llvm::json::Object{
+      Prelude = llvm::json::Object{
           {"lines", static_cast<int64_t>(Full.take_front(Begin).count('\n'))},
           {"end_byte", static_cast<int64_t>(Begin)}};
   }
-  return Page;
+  const std::string Prefix = (Stage + ":" + vaHex(Entry) + ":line:").str();
+  llvm::json::OStream J(OS);
+  J.object([&] {
+    J.attribute("address", vaHex(Entry));
+    J.attribute("byte_offset", static_cast<int64_t>(ByteOffset));
+    J.attribute("complete", End == Total);
+    if (Dialect)
+      J.attribute("dialect", sourceDialectKey(*Dialect));
+    J.attribute("function_identity", std::move(Identity));
+    J.attribute("identifier_symbols", std::move(Renamed));
+    J.attribute("library_regions", std::move(Regions));
+    J.attribute("mapping_status",
+                Anchors.empty() ? "library_regions" : "instruction_anchors");
+    J.attribute("next_offset",
+                End == Total ? llvm::json::Value(nullptr)
+                             : llvm::json::Value(static_cast<int64_t>(End)));
+    J.attribute("offset", static_cast<int64_t>(Offset));
+    if (Prelude)
+      J.attribute("prelude", std::move(*Prelude));
+    J.attribute("provenance_complete", false);
+    J.attribute("recognition_budget_exhausted",
+                S.PipeResult.LibraryRecognitionBudgetExhausted.contains(Entry));
+    J.attribute("representation", Stage);
+    J.attributeArray("rows", [&] {
+      for (const SourceRow &Row : Rows)
+        J.object([&] {
+          J.attributeArray("addresses", [&] {
+            for (va_t Address : Row.Addresses)
+              J.value(vaHex(Address));
+          });
+          J.attribute("kind", "source");
+          J.attribute("line", static_cast<int64_t>(Row.Line));
+          J.attribute("mapping_status", Row.MappingStatus);
+          J.attribute("object_id", Prefix + std::to_string(Row.Line));
+        });
+    });
+    J.attribute("schema_version", 1);
+    if (Dialect)
+      J.attribute("source_names", std::move(PageNames));
+    J.attribute("text", llvm::StringRef(Text));
+    J.attribute("total_lines", static_cast<int64_t>(Total));
+    if (Dialect)
+      J.attribute("unread", std::move(Reasons));
+  });
 }
 
 } // namespace
@@ -1351,8 +1377,11 @@ const char *neverd_ir_view_json(neverd_session_t Sess, neverd_va_t FuncEntry,
             S->Img.ExceptionMetadata.Runtime);
         return dupStr(jsonToString(llvm::json::Value(std::move(Result))));
       }
-      auto Page = sourcePage(Sess, FuncEntry, Stage, Offset, Limit);
-      return dupStr(jsonToString(llvm::json::Value(std::move(Page))));
+      std::string Page;
+      llvm::raw_string_ostream PageOS(Page);
+      writeSourcePage(PageOS, Sess, FuncEntry, Stage, Offset, Limit);
+      PageOS.flush();
+      return dupStr(Page);
     }
     if (Stage == "llvm") {
       if (!S->ensurePipeline(/*NeedHighIR=*/false))
