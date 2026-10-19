@@ -6690,11 +6690,38 @@ analysis, and the published expression must be smaller than the original use.
 Integer views of one parameter share a widest symbolic carrier; narrower views
 extract its low bits without assuming any value for the remaining upper bits.
 
-Synthesis shares one candidate checker within a request. It remembers
-counterexamples and validation-grid mismatches for canonical candidates, but
-never caches inconclusive proof results or shares rejections across requests.
+Opaque-input enumeration and sampling share one candidate checker within a
+request. It remembers counterexamples and validation-grid mismatches for
+canonical candidates, but never caches inconclusive proof results or shares
+rejections across requests.
 Repeated offers still spend search work; only actual verifier calls count as
 proof queries.
+
+Before composite grammar enumeration, semantic synthesis can fit an entire
+modular affine vector from the oracle's zero and unit-vector responses. Equal
+coefficients are grouped without modular division, including even coefficients
+and words wider than 64 bits. The existing search grid rejects nonlinear fits;
+the independent checker and selected full-width proof provider authorize every
+production replacement. Coefficients need not occur in the literal catalog,
+but candidate cost, restored readability and the shared work budget still
+bound the proposal.
+An unsuccessful fitting screen spends at most one eighth of the remaining
+search work; proof and independent validation use the same request allowance.
+Opaque-input refutations share the enumeration/sampler cache, and an incomplete
+proof stops the search. `SynthOptions::UseAffineFitting` can disable this
+proposal; `SynthResult::FromAffine` identifies it without claiming a grammar minimum.
+
+When narrow inputs are hidden behind conversions, a second affine proposal
+retains the complete original DAG, including narrow arithmetic, overlapping
+views and sign/zero extensions. It fits word-sized views of the actual inputs
+and proves the original expression directly; there are no assumed relations
+between independent placeholders. Signed one-bit views use the negative unit.
+The optional typed walk, context assignments and original-body evaluations
+reserve at most one quarter of the remaining work before fitting, including
+the independent validation grid. Incomplete construction reports a budget
+refusal. Inputs wider than the result are outside this search, and mixed
+signed/unsigned views may prevent a fit. The original opaque grammar
+remains available, including when this optional model exceeds its input limit.
 
 The expression builders own local word-mask normalization shared by execution,
 MBA simplification, and expression rebuilding. Constant-masked copies of an

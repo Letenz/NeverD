@@ -85,6 +85,24 @@ across calls and opaque parents, capacity/zero-work limits, unchanged variable
 identities, independent byte evaluation and reduced measured work. This cache
 is separate from per-call Solved maps and low-word projection caching.
 
+`NeverDSymSynthAffineTests` runs both the semantic affine regressions and the
+existing synthesis contract suite without building the CLI. It covers
+8/16/32/64/128/256-bit coefficients, eight-input factoring with noninvertible
+coefficients, root conversions, signed one-bit inputs, an exhaustive byte-pair
+arithmetic oracle, full-width sampling collisions, refusal on incomplete proofs,
+and cost/work ceilings. An equal-budget comparison disables affine fitting to
+isolate its contribution. Enable `NEVERD_ENABLE_Z3` to run the independent Z3 cases;
+unavailable Z3 is explicitly skipped and is not proof coverage.
+`SymSimplifyGuard.SemanticAffineSynthesisAcrossBlocksAndAtCallArguments` checks
+the production LLVM pass across a dominated block boundary and at an observable
+call argument. It requires a proof, verifies the emitted IR and retains the call.
+
+```sh
+python scripts/build.py build-release --target NeverDSymSynthAffineTests NeverDSolverTests --parallel 4
+build-release/bin/NeverDSymSynthAffineTests
+build-release/bin/NeverDSolverTests
+```
+
 `NeverDSymLoadOriginBindingTests` checks transactional history rebinding,
 sorted conflict unions, independent forks and invalid batches. Historical
 metadata never creates available bytes or restores a pre-clobber memory epoch.
