@@ -4956,6 +4956,14 @@ backend.
 
 ## CPU execution
 
+The checked Unicorn ARM64 transport installs and captures complete register
+packets using the shared register inventory. A read packet has private zeroed
+storage: partial failures, cancellation and deadline expiry cannot publish a
+prefix. `captureAArch64State` remains the sole owner of architectural widths
+and NZCV normalization. Retrying a failed transfer reinstalls the entire input;
+instruction admission, RAM transactions and translation-cache invalidation
+retain their existing boundaries.
+
 CPU execution is independent of the guest OS and binary format. Enable
 `NEVERD_ENABLE_CPU_EMULATION` to build it without the Windows driver model;
 `NEVERD_ENABLE_DRIVER_EMULATION` also includes it. The public C++ boundary is

@@ -433,6 +433,55 @@ private:
     }
   }
 };
+/// Borrow a complete register packet for one transport call. IDs and storage
+/// pointers come from the same inventory; architectural width normalization
+/// and publication remain owned by captureAArch64State.
+class AArch64RegisterPacket {
+public:
+  explicit AArch64RegisterPacket(AArch64MachineState &State) {
+    unsigned Next = 0;
+#define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
+  NEVERD_SCALAR_##Arch(Name)
+#define NEVERD_SCALAR_X64(Name)
+#define NEVERD_SCALAR_AArch64(Name)                                            \
+  Values[Next++] = &State.reg(AArch64Register::Name);
+#define NEVERD_VECTOR_REGISTER(Arch, Index, Backend) NEVERD_VECTOR_##Arch(Index)
+#define NEVERD_VECTOR_X64(Index)
+#define NEVERD_VECTOR_AArch64(Index)                                           \
+  Values[Next++] = State.Vectors[Index].data();
+#include "neverd/emulation/Registers.def"
+#undef NEVERD_VECTOR_AArch64
+#undef NEVERD_VECTOR_X64
+#undef NEVERD_VECTOR_REGISTER
+#undef NEVERD_SCALAR_AArch64
+#undef NEVERD_SCALAR_X64
+#undef NEVERD_SCALAR_REGISTER
+  }
+  llvm::Error write(uc_engine *Engine) {
+    return check(uc_reg_write_batch(Engine, IDs, Values.data(), Values.size()));
+  }
+  llvm::Error read(uc_engine *Engine) {
+    return check(uc_reg_read_batch(Engine, IDs, Values.data(), Values.size()));
+  }
+
+private:
+  static constexpr int IDs[] = {
+#define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
+  NEVERD_ID_##Arch(Backend)
+#define NEVERD_VECTOR_REGISTER(Arch, Index, Backend) NEVERD_ID_##Arch(Backend)
+#define NEVERD_ID_X64(Backend)
+#define NEVERD_ID_AArch64(Backend) Backend,
+#include "neverd/emulation/Registers.def"
+#undef NEVERD_ID_AArch64
+#undef NEVERD_ID_X64
+#undef NEVERD_VECTOR_REGISTER
+#undef NEVERD_SCALAR_REGISTER
+  };
+  static_assert(std::size(IDs) ==
+                std::tuple_size_v<decltype(AArch64MachineState::Registers)> +
+                    std::tuple_size_v<decltype(AArch64MachineState::Vectors)>);
+  std::array<void *, std::size(IDs)> Values{};
+};
 class UnicornAArch64Machine final : public AArch64Machine {
 public:
   UnicornStepper CPU;
@@ -486,39 +535,23 @@ public:
                            &Control))
         return E;
     }
-#define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
-  NEVERD_REGISTER_##Arch(Name, Backend)
-#define NEVERD_REGISTER_X64(Name, Backend)
-#define NEVERD_REGISTER_AArch64(Name, Backend)                                 \
-  if (auto E = check(uc_reg_write(CPU.Engine, Backend,                         \
-                                  &State.reg(AArch64Register::Name))))         \
-    return E;
-#include "neverd/emulation/Registers.def"
-#undef NEVERD_SCALAR_REGISTER
-#undef NEVERD_REGISTER_X64
-#undef NEVERD_REGISTER_AArch64
-    for (unsigned Index = 0; Index < State.Vectors.size(); ++Index)
-      if (auto E = check(uc_reg_write(CPU.Engine, UC_ARM64_REG_Q0 + Index,
-                                      State.Vectors[Index].data())))
-        return E;
+    if (auto E = AArch64RegisterPacket(State).write(CPU.Engine))
+      return E;
     if (auto E = CPU.run(State.reg(AArch64Register::PC), 1, &Control))
+      return E;
+    // The engine may write only a narrow register or fail after a prefix.
+    // Zero the private packet and publish nothing until every read succeeds.
+    AArch64MachineState Captured;
+    if (auto E = AArch64RegisterPacket(Captured).read(CPU.Engine))
       return E;
     auto Next = State;
     if (auto E = captureAArch64State(
             Next,
             [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
-              uint64_t Value = 0;
-              if (auto E = check(
-                      uc_reg_read(CPU.Engine, registerID(Register), &Value)))
-                return E;
-              return Value;
+              return Captured.reg(Register);
             },
             [&](unsigned Index) -> llvm::Expected<RegisterValue> {
-              RegisterValue Value{};
-              if (auto E = check(uc_reg_read(
-                      CPU.Engine, UC_ARM64_REG_Q0 + Index, Value.data())))
-                return E;
-              return Value;
+              return Captured.Vectors[Index];
             }))
       return E;
     uint64_t Mode = 0;
@@ -541,21 +574,6 @@ public:
 private:
   std::weak_ptr<AddressSpace> UserSpace;
   uint64_t UserGeneration = 0, UserTransportBase = 0;
-  static int registerID(AArch64Register Register) {
-    switch (Register) {
-#define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
-  NEVERD_REGISTER_##Arch(Name, Backend)
-#define NEVERD_REGISTER_X64(Name, Backend)
-#define NEVERD_REGISTER_AArch64(Name, Backend)                                 \
-  case AArch64Register::Name:                                                  \
-    return Backend;
-#include "neverd/emulation/Registers.def"
-#undef NEVERD_REGISTER_AArch64
-#undef NEVERD_REGISTER_X64
-#undef NEVERD_SCALAR_REGISTER
-    }
-    return UC_ARM64_REG_INVALID;
-  }
 };
 } // namespace
 llvm::Expected<std::unique_ptr<X64Machine>>
