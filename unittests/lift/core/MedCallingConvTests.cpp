@@ -18,6 +18,7 @@
 #include "neverd/ir/med/MedCallingConvDetail.h"
 #include "neverd/ir/med/MedSwitchNorm.h"
 #include "neverd/ir/med/MedTypePass.h"
+#include "neverd/libc/StackProbeIndex.h"
 #include "neverd/lift/ARMRegs.h"
 #include "neverd/lift/X86Regs.h"
 
@@ -27,6 +28,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <random>
 #include <tuple>
 
 namespace neverd {
@@ -3410,6 +3412,120 @@ TEST(MedABIPass, FrameLocalLeafSummaryRejectsUnprovenWrites) {
               Mode == 0 || Mode == 9 ? 1u : 0u);
     EXPECT_TRUE(findFrameLocalLeafCallees({F, F}, A).empty());
   }
+}
+
+TEST(MedABIPass, FrameLocalLeafSummaryKeepsDefinitionIdentityAndDepth) {
+  for (Arch A : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    const auto &TRI = getTargetRegInfo(A);
+    const auto Size = TRI.PointerSize;
+    for (unsigned Mode = 0; Mode < 12; ++Mode) {
+      SCOPED_TRACE(testing::Message() << int(A) << ':' << Mode);
+      MedFunc F;
+      F.Entry = 0x2000;
+      F.Blocks.resize(2);
+      auto &Entry = F.Blocks[0];
+      auto &Body = F.Blocks[1];
+      Entry.Id = 0;
+      Entry.StartAddr = F.Entry;
+      Entry.Succs = {1};
+      Body.Id = 1;
+      Body.StartAddr = F.Entry + 0x100;
+      Body.Preds = {0};
+      const auto SP = reg(10, 0, Size, TRI.StackPointer, A);
+      addLiveIn(Entry, SP);
+      auto Slot = SP;
+      // The last store reaches the real entry marker at depth 128. Adding
+      // one copy must still exceed the proof's original recursion limit.
+      const unsigned Links = Mode == 1 ? 129 : 128;
+      for (unsigned I = 0; I < Links; ++I) {
+        const auto Next = temp(100 + I, 0, Size, A);
+        Body.Ops.push_back(I == 0 ? binary(NdOp::INT_SUB, Next, Slot,
+                                           MedVar::makeConst(32, Size))
+                                  : unary(NdOp::COPY, Next, Slot));
+        Slot = Next;
+      }
+      MedOp Store;
+      Store.Opcode = NdOp::STORE;
+      Store.addInput(Slot);
+      Store.addInput(MedVar::makeConst(42, Size));
+      for (unsigned I = 0; I < 256; ++I)
+        Body.Ops.push_back(Store);
+      if (Mode == 2 || Mode == 3 || Mode == 4) {
+        auto &Output = Body.Ops[Links - 1].Output;
+        if (Mode == 2)
+          Output.Size /= 2;
+        if (Mode == 3)
+          Output.TheArch = Arch::Unknown;
+        if (Mode == 4)
+          Output.RenameTag = 1;
+      }
+      // A definition after the uses must still make their identity
+      // ambiguous. Zero-sized operation outputs are not definitions; PHIs
+      // retain the existing identity rule even when their size is zero.
+      if (Mode == 5 || Mode == 6) {
+        auto Duplicate = unary(NdOp::COPY, Slot, SP);
+        if (Mode == 6)
+          Duplicate.Output.Size = 0;
+        Body.Ops.push_back(Duplicate);
+      }
+      if (Mode == 7 || Mode == 8) {
+        PhiNode Phi;
+        Phi.Output = Slot;
+        if (Mode == 8)
+          Phi.Output.Size = 0;
+        Phi.Args.emplace_back(0, SP);
+        Body.Phis.push_back(Phi);
+      }
+      if (Mode == 9)
+        Body.StartAddr = F.Entry;
+      if (Mode == 10)
+        Entry.Ops.clear();
+      if (Mode == 11)
+        Body.Ops[Links - 1].NumInputs = 0;
+      MedOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Body.Ops.push_back(Return);
+      EXPECT_EQ(findFrameLocalLeafCallees({F}, A).count(F.Entry),
+                Mode == 0 || Mode == 6 ? 1u : 0u);
+    }
+  }
+}
+
+TEST(MedABIPass, FrameLocalLeafSummaryDoesNotReuseAnotherFunctionOrInvocation) {
+  constexpr Arch A = Arch::AArch64;
+  const auto &TRI = getTargetRegInfo(A);
+  MedFunc F;
+  F.Entry = 0x2000;
+  F.Blocks.resize(1);
+  auto &B = F.Blocks[0];
+  B.StartAddr = F.Entry;
+  const auto SP = reg(10, 0, 8, TRI.StackPointer, A);
+  const auto Slot = temp(20, 0, 8, A);
+  addLiveIn(B, SP);
+  B.Ops.push_back(binary(NdOp::INT_SUB, Slot, SP, MedVar::makeConst(16, 8)));
+  MedOp Store;
+  Store.Opcode = NdOp::STORE;
+  Store.addInput(Slot);
+  Store.addInput(MedVar::makeConst(42, 8));
+  B.Ops.push_back(Store);
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  B.Ops.push_back(Return);
+
+  MedFunc Other = F;
+  Other.Entry = Other.Blocks[0].StartAddr = 0x3000;
+  Other.Blocks[0].Ops[1].Opcode = NdOp::INT_ADD;
+  EXPECT_EQ(findFrameLocalLeafCallees({F, Other}, A), std::set<va_t>{F.Entry});
+  EXPECT_EQ(findFrameLocalLeafCallees({Other, F}, A), std::set<va_t>{F.Entry});
+  B.Ops[1].Opcode = NdOp::INT_ADD;
+  EXPECT_TRUE(findFrameLocalLeafCallees({F}, A).empty());
+  B.Ops[1].Opcode = NdOp::INT_SUB;
+  EXPECT_EQ(findFrameLocalLeafCallees({F}, A), std::set<va_t>{F.Entry});
+
+  // Even a rejected function owns its entry for duplicate detection.
+  Other.Entry = Other.Blocks[0].StartAddr = F.Entry;
+  EXPECT_TRUE(findFrameLocalLeafCallees({F, Other}, A).empty());
+  EXPECT_TRUE(findFrameLocalLeafCallees({Other, F}, A).empty());
 }
 
 TEST(MedABIPass, PartialPointerOverwriteDoesNotRemoveAnIndirectCallArgument) {
@@ -7788,6 +7904,78 @@ TEST(CallRegisterEffects, StackProbeIsNoCall) {
   }
 }
 
+TEST(CallRegisterEffects, StackProbeIndexAnswersAsTheLiveLookup) {
+  // The index decides once each address an export or symbol names as a
+  // helper; every other address is none.  The first export with a name, or
+  // else the first symbol (a section's own aside) when stated, is the name.
+  BinaryImage Img = win64Image();
+  const auto AddSymbol = [&](const char *Name, va_t Addr,
+                             NameOrigin Origin = NameOrigin::Stated,
+                             bool IsSection = false) {
+    Symbol Sym;
+    Sym.Name = Name;
+    Sym.Addr = Addr;
+    Sym.Origin = Origin;
+    Sym.IsSection = IsSection;
+    Img.Symbols.push_back(Sym);
+  };
+  const auto AddExport = [&](const char *Name, va_t Addr) {
+    Export Exp;
+    Exp.Name = Name;
+    Exp.Addr = Addr;
+    Img.Exports.push_back(Exp);
+  };
+  AddSymbol("__chkstk", 0x2000);
+  AddExport("", 0x2100);
+  AddSymbol("__chkstk", 0x2100);
+  AddExport("Other", 0x2200);
+  AddSymbol("__chkstk", 0x2200);
+  AddSymbol("Other", 0x2300);
+  AddSymbol("__chkstk", 0x2300);
+  AddSymbol(".text", 0x2400, NameOrigin::Stated, /*IsSection=*/true);
+  AddSymbol("__chkstk", 0x2400);
+  AddSymbol("__chkstk", 0x2500, NameOrigin::Analysis);
+  AddExport("__chkstk", 0x2600);
+  AddExport("___chkstk", 0x2700);
+  AddSymbol("__alloca_probe", 0x2800);
+  const va_t Targets[] = {0x2000, 0x2100, 0x2200, 0x2300, 0x2400,
+                          0x2500, 0x2600, 0x2700, 0x2800, 0x2900};
+  const libc::StackProbeIndex Index(Img);
+  for (va_t Target : Targets) {
+    SCOPED_TRACE(Target);
+    EXPECT_EQ(Index.effect(Img, Target), libc::stackProbeEffect(Img, Target));
+  }
+  EXPECT_EQ(Index.effect(Img, 0x2100), libc::StackProbeEffect::Probe);
+  EXPECT_EQ(Index.effect(Img, 0x2200), std::nullopt);
+  EXPECT_EQ(Index.effect(Img, 0x2300), std::nullopt);
+  EXPECT_EQ(Index.effect(Img, 0x2400), libc::StackProbeEffect::Probe);
+  EXPECT_EQ(Index.effect(Img, 0x2700), libc::StackProbeEffect::Allocate);
+  EXPECT_EQ(Index.effect(Img, 0x2800), std::nullopt);
+
+  // Another image takes the live lookup, which here finds an x86 helper.
+  BinaryImage X86 = win64Image();
+  X86.Arch = Arch::X86;
+  X86.Symbols = Img.Symbols;
+  X86.Exports = Img.Exports;
+  EXPECT_EQ(Index.effect(X86, 0x2800), libc::StackProbeEffect::Allocate);
+  EXPECT_EQ(libc::StackProbeIndex(X86).effect(X86, 0x2800),
+            libc::StackProbeEffect::Allocate);
+
+  // A summary given the index elides the probe exactly as the live lookup.
+  const NdVar Rax = NdVar::reg(x86reg::RAX, 8);
+  for (va_t Target : Targets) {
+    SCOPED_TRACE(Target);
+    LowFunc Low = makeOneBlockLow(0x1000, "large_frame", [&](auto Push) {
+      Push(NdOp::COPY, Rax, {NdVar::cst(0x2000, 8)});
+      Push(NdOp::CALL, NdVar{}, {NdVar::cst(Target, 8)});
+      Push(NdOp::INT_SUB, Rsp, {Rsp, Rax});
+    });
+    EXPECT_EQ(localRegisterEffect(Img, Low, nullptr, nullptr, nullptr, &Index)
+                  .Callees,
+              localRegisterEffect(Img, Low).Callees);
+  }
+}
+
 // A summary tracks the general registers whole and each of xmm0..xmm7 by its
 // low sixteen bytes: a call to a callee that never writes a family keeps
 // exactly those bytes.
@@ -7808,6 +7996,71 @@ TEST(CallRegisterEffects, APreservedFamilyKeepsTheBytesItTracks) {
                                           x86reg::VectorBase, 16));
   EXPECT_FALSE(callPreservesRegisterBytes(Arch::X64, 0, XMM1, 16));
   EXPECT_FALSE(callPreservesRegisterBytes(Arch::AArch64, ~uint32_t(0), 0, 8));
+}
+
+TEST(CallRegisterEffects, JoinedPlainStepsSolveAsTheirSteps) {
+  // Runs of steps that read, kill and partly write register families,
+  // between calls that keep or change some of them, before a block whose
+  // reads make bytes live after the runs: joined or not, a solve gives the
+  // same reads and writes.
+  std::mt19937 Random(20261019);
+  const auto Pick = [&](std::initializer_list<uint8_t> Values) {
+    return *(Values.begin() + Random() % Values.size());
+  };
+  const auto PlainStep = [&] {
+    RegisterStep Step;
+    for (size_t Family = 0; Family < Step.Reads.size(); ++Family) {
+      if (Random() % 3 == 0)
+        Step.Reads[Family] = Pick({1, 2, 4, 8, 16});
+      if (Random() % 4 == 0)
+        Step.LowWrites[Family] = Pick({1, 2, 4});
+      if (Random() % 6 == 0)
+        Step.Kills |= GPRFamilyMask(1) << Family;
+    }
+    return Step;
+  };
+  LocalRegisterEffect Callee;
+  Callee.Writes = (GPRFamilyMask(1) << 1) | (GPRFamilyMask(1) << 18);
+  Callee.Blocks.resize(1);
+  Callee.Blocks[0].Steps.push_back(PlainStep());
+  for (int Trial = 0; Trial < 500; ++Trial) {
+    SCOPED_TRACE(Trial);
+    LocalRegisterEffect Caller;
+    Caller.Blocks.resize(3);
+    Caller.Blocks[0].Succs = {1, 2};
+    Caller.Blocks[1].Succs = {2};
+    for (RegisterBlock &Block : Caller.Blocks) {
+      const int Count = static_cast<int>(Random() % 12);
+      for (int I = 0; I < Count; ++I) {
+        if (Random() % 5 == 0) {
+          RegisterStep Call = PlainStep();
+          Call.Callee = 0x2000;
+          Caller.Callees.insert(0x2000);
+          Block.Steps.push_back(Call);
+        } else {
+          Block.Steps.push_back(PlainStep());
+        }
+      }
+    }
+    LocalRegisterEffect Joined = Caller;
+    joinPlainSteps(Joined);
+    size_t Steps = 0, JoinedSteps = 0;
+    for (size_t B = 0; B < Caller.Blocks.size(); ++B) {
+      Steps += Caller.Blocks[B].Steps.size();
+      JoinedSteps += Joined.Blocks[B].Steps.size();
+    }
+    EXPECT_LE(JoinedSteps, Steps);
+    const auto Solve = [&](const LocalRegisterEffect &Effect) {
+      return solveCallRegisterEffects({{0x1000, Effect}, {0x2000, Callee}},
+                                      /*VolatileFamilies=*/0x00FF0F07,
+                                      /*ArgumentFamilies=*/0x00FF0306);
+    };
+    const CallRegisterSummaries Original = Solve(Caller);
+    const CallRegisterSummaries Result = Solve(Joined);
+    EXPECT_EQ(Result.EntryReads, Original.EntryReads);
+    EXPECT_EQ(Result.MayWrite, Original.MayWrite);
+    EXPECT_EQ(Result.EntryStackArgs, Original.EntryStackArgs);
+  }
 }
 
 TEST(CallRegisterEffects, MaskedByteMergeIsALowWrite) {

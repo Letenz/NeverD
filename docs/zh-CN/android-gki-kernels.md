@@ -47,7 +47,7 @@ Bionic 将原始负错误转换为 `-1` 和线程局部 `errno`；成功保留 `
 
 ## 进程描述符轮询
 
-原始 x64／AArch64 `ppoll`、x64 `poll` 与 Bionic 命名/variadic 包装共用描述符所有者，轮询本身不要求选择 GKI；pidfd 的创建仍遵循所选内核契约。`linux_files.descriptor_limit` 提供来宾 RLIMIT_NOFILE 上限。存活 pidfd 无就绪状态，负描述符被忽略，已关闭描述符返回 `POLLNVAL`；重复条目分别计数。
+原始 x64／AArch64 `ppoll`、x64 `poll` 与 Bionic 命名/variadic 包装共用描述符所有者，轮询本身不要求选择 GKI；pidfd 的创建仍遵循所选内核契约。`linux_files.descriptor_limit` 提供来宾 RLIMIT_NOFILE 上限，`nfds` 的低 32 位无符号值不能超过它。存活 pidfd 无就绪状态，负描述符被忽略，已关闭描述符返回 `POLLNVAL`（`0x20`）；重复条目分别计数。
 
 普通文件、定时 TCP/UDP 输入、有限等待、raw ppoll 剩余时间回写与 Bionic 超时保留，见[共享 poll/epoll 契约](../linux-network-contracts.md#poll-and-epoll-waits)。缺少输入及未支持的描述符类型仍明确停止。
 

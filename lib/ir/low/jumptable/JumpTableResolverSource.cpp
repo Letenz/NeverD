@@ -770,7 +770,7 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
       if (!RelBaseOpt && Disp != 0 && LoadWidth == 4 && LoadIdx > 0 &&
           lastWriteReloadsFrameCell(BlockOps, LoadIdx, BaseReg,
                                     Img.getPointerSize(), TRIcg))
-        RelBaseOpt = linkedI386GlobalOffsetTable(Img);
+        RelBaseOpt = Img.linkedI386GlobalOffsetTable();
       if (!RelBaseOpt)
         return false;
       FoldedTableBase = RelBaseOpt;
@@ -1300,7 +1300,7 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
         }
         return std::nullopt;
       };
-      const std::optional<va_t> I386GOT = linkedI386GlobalOffsetTable(Img);
+      const std::optional<va_t> I386GOT = Img.linkedI386GlobalOffsetTable();
       for (int W = 0; W < 2; ++W) {
         const NdVar &Input = BlockOps[AddD].Inputs[W];
         auto Anchor = traceConstAnchor(Input, AddD - 1);

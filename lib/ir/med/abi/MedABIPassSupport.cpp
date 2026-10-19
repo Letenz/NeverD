@@ -342,10 +342,10 @@ static bool reducedRangesDisjoint(const llvm::APInt &Distance,
 static bool preservesSpillAcrossCall(const MedBlock &Blk, int CallIndex,
                                      const MedVar &Address, uint16_t Size,
                                      const AbiSpillContext &Context, int Depth);
-static std::optional<int64_t> authenticatedStackOffset(const MedFunc &Func,
-                                                       const TargetRegInfo &TRI,
-                                                       const MedVar &V,
-                                                       unsigned Depth = 0);
+static std::optional<int64_t>
+authenticatedStackOffset(const MedFunc &Func, const TargetRegInfo &TRI,
+                         const MedVar &V, unsigned Depth = 0,
+                         MedDefSiteIndex *Defs = nullptr);
 
 // Prove a complete same-block store reaches this load. Unknown calls, aliases,
 // partial overwrites and atomic accesses invalidate the earlier stored value.
@@ -671,10 +671,11 @@ MedDefSite MedDefSiteIndex::find(const MedVar &V) {
 static std::optional<int64_t> authenticatedStackOffset(const MedFunc &Func,
                                                        const TargetRegInfo &TRI,
                                                        const MedVar &V,
-                                                       unsigned Depth) {
+                                                       unsigned Depth,
+                                                       MedDefSiteIndex *Defs) {
   if (Depth > 128 || V.Size != TRI.PointerSize || V.isConst())
     return std::nullopt;
-  const auto Site = findFuncDef(Func, V);
+  const auto Site = Defs ? Defs->find(V) : findFuncDef(Func, V);
   if (Site.Ambiguous || !Site.Op || Site.Op->Output.Size != V.Size ||
       Site.Op->Output.TheArch != V.TheArch ||
       Site.Op->Output.RenameTag != V.RenameTag)
@@ -684,7 +685,7 @@ static std::optional<int64_t> authenticatedStackOffset(const MedFunc &Func,
       safety::detail::isAuthenticatedEntryRegisterLiveIn(Func, V))
     return 0;
   if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1)
-    return authenticatedStackOffset(Func, TRI, Op.Inputs[0], Depth + 1);
+    return authenticatedStackOffset(Func, TRI, Op.Inputs[0], Depth + 1, Defs);
   if ((Op.Opcode != NdOp::INT_ADD && Op.Opcode != NdOp::INT_SUB) ||
       Op.NumInputs != 2)
     return std::nullopt;
@@ -701,8 +702,8 @@ static std::optional<int64_t> authenticatedStackOffset(const MedFunc &Func,
       (Constant.Size < TRI.PointerSize &&
        (*Delta < 0 || static_cast<uint64_t>(*Delta) != Constant.ConstVal)))
     return std::nullopt;
-  auto Base =
-      authenticatedStackOffset(Func, TRI, Op.Inputs[BaseIndex], Depth + 1);
+  auto Base = authenticatedStackOffset(Func, TRI, Op.Inputs[BaseIndex],
+                                       Depth + 1, Defs);
   if (!Base || !Delta)
     return std::nullopt;
   return safety::detail::checkedStackOffset(*Base, *Delta,
@@ -717,35 +718,47 @@ std::set<va_t> findFrameLocalLeafCallees(const std::vector<MedFunc> &Funcs,
     if (!Seen.insert(F.Entry).second)
       Duplicates.insert(F.Entry);
     bool Safe = !F.Blocks.empty();
+    // This summary never changes F. Share its definition index across all
+    // store-address chains, including definitions after the stores themselves.
+    MedDefSiteIndex DefSites(F);
     std::set<va_t> BlockEntries;
     for (const auto &B : F.Blocks)
       BlockEntries.insert(B.StartAddr);
     for (const auto &B : F.Blocks) {
       if (B.Ops.empty() ||
-          (B.Succs.empty() && B.Ops.back().Opcode != NdOp::RETURN))
+          (B.Succs.empty() && B.Ops.back().Opcode != NdOp::RETURN)) {
         Safe = false;
+        break;
+      }
       for (const auto &Op : B.Ops) {
         if (isAbiRecoveryBarrier(Op) || Op.Opcode == NdOp::INDIR_BR ||
             Op.Opcode >= NdOp::_COUNT ||
             safety::detail::isAtomicMemoryAccess(Op.Opcode)) {
           Safe = false;
-          continue;
+          break;
         }
         if ((Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR) &&
             (Op.NumInputs == 0 || !Op.Inputs[0].isConst() ||
-             !BlockEntries.count(Op.Inputs[0].ConstVal)))
+             !BlockEntries.count(Op.Inputs[0].ConstVal))) {
           Safe = false;
+          break;
+        }
         if (Op.Opcode != NdOp::STORE)
           continue;
         const auto *Address = safety::detail::memoryAddress(Op);
         const auto *Value = safety::detail::storedValue(Op);
         auto Offset =
-            Address ? authenticatedStackOffset(F, TRI, *Address) : std::nullopt;
+            Address ? authenticatedStackOffset(F, TRI, *Address, 0, &DefSites)
+                    : std::nullopt;
         if (!Offset || !Value || Value->Size == 0 ||
             Op.MemoryOrdering != NdMemoryOrdering::None ||
-            *Offset > -static_cast<int64_t>(Value->Size))
+            *Offset > -static_cast<int64_t>(Value->Size)) {
           Safe = false;
+          break;
+        }
       }
+      if (!Safe)
+        break;
     }
     if (Safe)
       Result.insert(F.Entry);

@@ -340,22 +340,61 @@ bool liftCoreMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     S.emit(NdOp::NOP, {}, {});
     break;
 
-  // --- MOV (+ MOVABS, plus SSE/SIMD 128-bit register-to-register moves).
-  // MOVAPS/MOVUPS/MOVDQA/MOVDQU/MOVD/MOVQ semantically are just "copy bytes"
-  // for our purposes — the lift doesn't model float arithmetic separately
-  // unless we later promote to FLOAT_* S.Ops. Treating them as bulk COPY at
-  // least preserves dataflow (so the destination XMM reg has a defined
-  // value) instead of dropping the instruction to NOP.
+  // Legacy aligned moves preserve the vector bits above bit 127. A memory
+  // operand additionally requires a 16-byte-aligned linear address, checked
+  // before either a load or a store can affect architectural state.
+  case X86_INS_MOVAPS:
+  case X86_INS_MOVAPD:
+  case X86_INS_MOVDQA: {
+    if (X86.op_count != 2)
+      return false;
+    const cs_x86_op &Destination = X86.operands[0];
+    const cs_x86_op &Source = X86.operands[1];
+    const auto IsXMM = [&](const cs_x86_op &Operand) {
+      return Operand.type == X86_OP_REG && Operand.size == 16 &&
+             Operand.reg >= X86_REG_XMM0 &&
+             Operand.reg <=
+                 (L.targetArch() == Arch::X64 ? X86_REG_XMM15 : X86_REG_XMM7);
+    };
+    const bool Store = Destination.type == X86_OP_MEM;
+    const bool Load = Source.type == X86_OP_MEM;
+    if ((Store ? Destination.size != 16 : !IsXMM(Destination)) ||
+        (Load ? Source.size != 16 : !IsXMM(Source)) || (Store && Load))
+      return false;
+    if (!Store && !Load) {
+      S.emit(NdOp::COPY, L.operandWrite(Destination),
+             {L.operandRead(S, Source)});
+      break;
+    }
+
+    const cs_x86_op &Memory = Store ? Destination : Source;
+    const NdVar Address = S.computeEA(Memory);
+    const NdMemoryAddressSpace AddressSpace = S.memoryAddressSpace(Memory);
+    // The address space is part of the guard: FS/GS alignment is checked
+    // after adding the authenticated base, not against the raw offset.
+    S.emitIntrinsic(Intrinsic::RequireAligned, {},
+                    {Address, NdVar::scalar(16, 8)}, NdMemoryOrdering::None,
+                    AddressSpace);
+    if (Store) {
+      S.emit(NdOp::STORE, {}, {Address, L.operandRead(S, Source)},
+             NdMemoryOrdering::None, AddressSpace);
+    } else {
+      const NdVar Value = S.makeTemp(16);
+      S.emit(NdOp::LOAD, Value, {Address}, NdMemoryOrdering::None,
+             AddressSpace);
+      S.emit(NdOp::COPY, L.operandWrite(Destination), {Value});
+    }
+    break;
+  }
+
+  // --- MOV (+ MOVABS and unaligned or scalar SSE/SIMD moves).
   case X86_INS_MOV:
   case X86_INS_MOVABS:
   case X86_INS_MOVZX:
   case X86_INS_MOVSX:
   case X86_INS_MOVSXD:
-  case X86_INS_MOVAPS:
-  case X86_INS_MOVAPD:
   case X86_INS_MOVUPS:
   case X86_INS_MOVUPD:
-  case X86_INS_MOVDQA:
   case X86_INS_MOVDQU:
   case X86_INS_MOVD:
   case X86_INS_MOVQ:

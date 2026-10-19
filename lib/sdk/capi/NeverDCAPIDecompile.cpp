@@ -552,8 +552,7 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
       return Definitions;
     };
   try {
-    HighCEmitter Emitter;
-    Emitter.emit(Single, OS, Opts, Debug);
+    S->cEmitter().emit(Single, OS, Opts, Debug);
   } catch (const std::exception &Error) {
     S->setError(emissionFailure(Error));
     return dupStr(std::string());

@@ -109,7 +109,7 @@ foreach(_optimization O0 O2)
   endforeach()
 endforeach()
 foreach(_optimization O0 O2)
-  foreach(_file_source android_time.c linux_files.c android_search.c
+  foreach(_file_source android_time.c linux_files.c android_search.c android_copy.c
       android_signals.c android_snapshots.c android_allocation.c android_log.c linux_residency.c
       android_sleep.c linux_devices.c android_proc.c android_jni.c android_binder.c
       android_semaphore.c android_random.c android_network.c android_auxv.c

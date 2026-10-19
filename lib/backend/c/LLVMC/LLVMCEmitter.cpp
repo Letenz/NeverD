@@ -49,6 +49,7 @@
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/PEImportShadow.h"
+#include "neverd/debug/UserPrototype.h"
 #include "neverd/libc/LibCResult.h"
 #include "neverd/libc/MinGWHeaderFunctions.h"
 #include "neverd/loader/DataSymbolBinding.h"
@@ -360,11 +361,9 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
       // listing does (`_Unwind_Resume`).  So does a whole module's `main`,
       // which C holds to the parameters and result it gives main, not those
       // the code has.
-      if (libc::isKnownFunction(CName) ||
+      if (copiesHeaderRoutine(CName, Opts.Format) ||
           (libc::libcPrototype(CName, Opts.Format) &&
            ImportCNames.count(CName.str())) ||
-          (Opts.Format == BinaryFormat::COFF &&
-           libc::mingwHeadersDeclare(CName)) ||
           (!OnlyFunction && CName == "main")) {
         auto VA = rewrite_source::getOriginalVA(Fn);
         if (!VA)
@@ -431,6 +430,7 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   SelectedGlobals =
       Only ? referencedGlobals(*Only) : std::set<const llvm::GlobalValue *>{};
   EmittedGlobalNames.clear();
+  DeclaredCalleeNames.clear();
   RecordPointerTags.clear();
   CurMod = &Mod;
   prepareFunctionIdentifiers(Mod);
@@ -492,17 +492,29 @@ static void spellTagUses(std::string &Text, llvm::StringRef Tag,
 void LLVMCWriter::writeRecordDefinitions(std::string &Text) {
   if (!Opts.EmitIncludes)
     return;
+  // A name the unit gives a function or an object, of its own or one it
+  // declares, is that, not a type.
+  const auto Held = [&](const std::string &Name) {
+    return GlobalIdentifierAllocator.holds(Name) ||
+           EmittedGlobalNames.count(Name) || DeclaredCalleeNames.count(Name);
+  };
   // A record only pointers name, which no definition below completes, is
-  // declared incomplete, as HighC declares it.  A name the unit gives a
-  // function or an object of its own is that, not a type.
+  // declared incomplete, as HighC declares it, unless a function of the
+  // unit or of a C library has its name: it is spelled by its tag
+  // (`struct stat64` beside stat64()).
   auto DeclareIncomplete = [&](const std::set<std::string> &Defined) {
     bool Any = false;
-    for (const std::string &Tag : RecordPointerTags)
-      if (!Defined.count(Tag) && !GlobalIdentifierAllocator.holds(Tag) &&
-          !EmittedGlobalNames.count(Tag)) {
-        OS << "typedef struct " << Tag << " " << Tag << ";\n";
-        Any = true;
+    for (const std::string &Tag : RecordPointerTags) {
+      if (Defined.count(Tag))
+        continue;
+      if (Held(Tag) || libc::isKnownFunction(Tag) ||
+          libc::headerOfDataObject(Tag)) {
+        spellTagUses(Text, Tag, "struct");
+        continue;
       }
+      OS << "typedef struct " << Tag << " " << Tag << ";\n";
+      Any = true;
+    }
     if (Any)
       OS << "\n";
   };
@@ -551,10 +563,6 @@ void LLVMCWriter::writeRecordDefinitions(std::string &Text) {
   std::vector<std::string> Declared = Definitions.Identifiers;
   llvm::append_range(Declared, Spelled);
   llvm::append_range(Declared, Enumerations);
-  const auto Held = [&](const std::string &Name) {
-    return GlobalIdentifierAllocator.holds(Name) ||
-           EmittedGlobalNames.count(Name);
-  };
   for (const std::string &Name : Declared)
     if (Held(Name)) {
       for (const std::string &Tag : Spelled)
@@ -698,6 +706,10 @@ void LLVMCWriter::recordSourceNames(const llvm::Module &Mod) {
 void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   bool HasFloatingArithmetic = false;
   std::set<std::string> Headers;
+  // The routines the user declares that the unit calls: directly, and
+  // through their imports.
+  std::set<const llvm::Function *> UserFunctions;
+  std::set<std::string> UserImports;
   Headers.insert("stdint.h");
   NeedsUnalignedTypes = false;
   std::map<std::string, std::pair<unsigned, bool>> FunnelShifts;
@@ -740,13 +752,17 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
         // declares it, as a direct call does, and one the runtime's tables
         // type the header its prototype's types need (`FILE`).
         if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst);
-            Call && !Call->getCalledFunction())
+            Call && !Call->getCalledFunction()) {
           if (const LibraryCallee Library = libraryCallee(*Call)) {
             if (!Library.Prototype)
               Headers.insert(libc::headerFor(Library.Name));
             else if (!Library.Prototype->Header.empty())
               Headers.insert(std::string(Library.Prototype->Header));
-          }
+          } else if (std::string Name =
+                         importCalleeCName(Call->getCalledOperand());
+                     !Name.empty() && userDeclaresRoutine(Name))
+            UserImports.insert(std::move(Name));
+        }
         if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
           if (isLLVMX86SegmentedAddressSpace(LI->getPointerAddressSpace())) {
             HasCIntrinsics = true;
@@ -876,7 +892,14 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
           if (isX86FastFailName(Name))
             HasCIntrinsics = true;
 
-          if (const char *Hdr = libc::headerFor(stripLeadingUnderscores(Name)))
+          // A routine the user declares is declared as the user does
+          // (writeForwardDecls), not by the header that declares the C
+          // library's routine of its name.
+          if (Callee->isDeclaration() && !Callee->isIntrinsic() &&
+              userDeclaresRoutine(cNameOfGlobal(Callee->getName(), true)))
+            UserFunctions.insert(Callee);
+          else if (const char *Hdr =
+                       libc::headerFor(stripLeadingUnderscores(Name)))
             Headers.insert(Hdr);
           // A callee the image names as a C library routine, as the
           // Windows kernel's own memset is, is declared by that header too
@@ -918,6 +941,31 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
     OS << "\n";
     IncludedHeaders.insert(Headers.begin(), Headers.end());
   }
+  // A routine the user declares under the name of one a header the unit
+  // includes declares otherwise takes another identifier, which links by
+  // the routine's name (writeForwardDecls, writeImportCalleeDecls).
+  UserImportIdentifiers.clear();
+  UserImportLinkNames.clear();
+  auto HeaderDeclares = [&](llvm::StringRef CName) {
+    const char *Header = libc::headerFor(CName);
+    return Header && IncludedHeaders.count(Header);
+  };
+  for (const llvm::Function *Fn : UserFunctions)
+    if (HeaderDeclares(cNameOfGlobal(Fn->getName(), true))) {
+      std::string &Identifier = FunctionIdentifiers[Fn];
+      Identifier =
+          GlobalIdentifierAllocator.allocate(Identifier, "nd_function");
+      FunctionIdentifierNames.insert(Identifier);
+    }
+  for (const std::string &Name : UserImports)
+    if (HeaderDeclares(Name)) {
+      if (!GlobalIdentifierAllocator.holds(Name))
+        GlobalIdentifierAllocator.allocateVerbatim(Name);
+      const std::string Identifier =
+          GlobalIdentifierAllocator.allocate(Name, "nd_import");
+      UserImportIdentifiers.emplace(Name, Identifier);
+      UserImportLinkNames.emplace(Identifier, Name);
+    }
   if (HasFloatingArithmetic)
     c_float::writeContractionPolicy(OS.stream());
   // The accesses' types or assumptions are written only when an access can
@@ -1541,6 +1589,10 @@ LLVMCWriter::libraryCallee(const llvm::CallBase &Call) const {
     // a header declares it, as one an LLVM intrinsic prints as may be.
     if (!Callee->isDeclaration())
       return {};
+    // One the user declares is declared as the user does.
+    if (!Callee->isIntrinsic() &&
+        userDeclaresRoutine(cNameOfGlobal(Callee->getName(), true)))
+      return {};
     std::string Name;
     if (!Callee->isIntrinsic())
       Name = functionIdentifier(*Callee);
@@ -1565,10 +1617,11 @@ LLVMCWriter::libraryCallee(const llvm::CallBase &Call) const {
   // to it would: its header's, or the runtime tables' where the unit
   // declares it from them.
   if (std::string Name = resolveImportCalleeName(Call.getCalledOperand());
-      !Name.empty() && libc::headerFor(Name))
+      !Name.empty() && libc::headerFor(Name) && !userDeclaresRoutine(Name))
     return {std::move(Name), nullptr};
   std::string Name = boundImportCallee(Call);
-  if (Name.empty() || FunctionIdentifierNames.count(Name))
+  if (Name.empty() || FunctionIdentifierNames.count(Name) ||
+      userDeclaresRoutine(Name))
     return {};
   if (const libc::LibCPrototype *Prototype =
           libc::libcPrototype(Name, Opts.Format))
@@ -1636,7 +1689,7 @@ void LLVMCWriter::writeImportCalleeDecls(llvm::Module &Mod) {
         // is declared as the machine calls it.
         std::string Name = boundImportCallee(*Call);
         if (Name.empty() || FunctionIdentifierNames.count(Name) ||
-            libc::isKnownFunction(Name))
+            (libc::isKnownFunction(Name) && !userDeclaresRoutine(Name)))
           continue;
         if (const auto *Symbol = llvm::dyn_cast<llvm::GlobalValue>(
                 Call->getCalledOperand()->stripPointerCasts());
@@ -1678,23 +1731,37 @@ void LLVMCWriter::writeImportCalleeDecls(llvm::Module &Mod) {
   auto Extern = [&](const std::string &Name) {
     return Weak.count(Name) ? "extern __attribute__((weak)) " : "extern ";
   };
-  for (const auto &[Name, Prototype] : Typed)
+  for (const auto &[Name, Prototype] : Typed) {
     OS << Extern(Name)
        << c_library::declaration(*Prototype, Name, Opts.TheArch, Opts.Format)
        << ";\n";
+    DeclaredCalleeNames.insert(Name);
+  }
   for (const auto &[Name, Calls] : Imports) {
     if (!Calls.Return)
       continue;
+    DeclaredCalleeNames.insert(Name);
+    // One the user declares under another identifier links by its name.
+    std::string Label;
+    if (const auto Link = UserImportLinkNames.find(Name);
+        Link != UserImportLinkNames.end()) {
+      llvm::raw_string_ostream Spelled(Label);
+      Spelled << " __asm__(\"";
+      Spelled.write_escaped(
+          symbolOfCName(Link->second, Opts.Format, Opts.TheArch));
+      Spelled << "\")";
+    }
     // Unprototyped, the declaration takes the arguments the machine passed.
     if (!Calls.Params) {
-      OS << Extern(Name) << *Calls.Return << " " << Name << "();\n";
+      OS << Extern(Name) << *Calls.Return << " " << Name << "()" << Label
+         << ";\n";
       continue;
     }
     OS << Extern(Name) << "__attribute__((stdcall)) " << *Calls.Return << " "
        << Name << "(";
     for (size_t I = 0; I < Calls.Params->size(); ++I)
       OS << (I ? ", " : "") << (*Calls.Params)[I];
-    OS << (Calls.Params->empty() ? "void" : "") << ");\n";
+    OS << (Calls.Params->empty() ? "void" : "") << ")" << Label << ";\n";
   }
 }
 
@@ -1831,11 +1898,16 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
         continue;
     }
 
-    if (libc::isKnownFunction(Name))
+    // A routine the user declares is declared as the user does, under
+    // another identifier where a header declares the C library's routine of
+    // its name (writeIncludes).
+    const bool UserDeclared =
+        Fn.isDeclaration() && userDeclaresRoutine(cNameOfGlobal(RawName, true));
+    if (libc::isKnownFunction(Name) && !UserDeclared)
       continue;
     // A routine the runtime's tables type takes their declaration, as its
     // calls take their conversions (libraryCallee).
-    if (Fn.isDeclaration())
+    if (Fn.isDeclaration() && !UserDeclared)
       if (const libc::LibCPrototype *Prototype =
               libc::libcPrototype(Name, Opts.Format)) {
         OS << (Fn.hasExternalWeakLinkage() ? "extern __attribute__((weak)) "

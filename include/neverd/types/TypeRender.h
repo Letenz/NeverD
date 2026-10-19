@@ -101,7 +101,10 @@ struct RenderOptions {
 /// definitions of the records it names and of what they hold by value, the
 /// typedefs and enumerations these name, and declarations of the records
 /// they only point to.  Each type sits under a guard of its own, so that
-/// units holding the same types concatenate.
+/// units holding the same types concatenate.  Where RenderOptions names the
+/// library of the system's headers, a type that library gives and lays out
+/// as the program does comes from its header, which the C includes, with
+/// checks of the program's layout.
 struct EmbeddedC {
   std::string Text;
   /// The records Text defines, by their C names, and whether each is a

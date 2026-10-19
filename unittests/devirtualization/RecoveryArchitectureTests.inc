@@ -278,3 +278,113 @@ TEST_F(PEFixedImageTest, RecoveryArchitectureSelectionPrecedesProvider) {
       EXPECT_EQ(P.Fetches, 0U);
     }
 }
+
+TEST_F(PEFixedImageTest, RawAlignedMovesRequireAProofWithoutMXCSRState) {
+  for (unsigned Mode = 0; Mode != 4; ++Mode) {
+    SCOPED_TRACE(Mode);
+    std::vector<uint8_t> Code;
+    if (Mode != 1)
+      Code = {0x48, 0x83, 0xe3, 0xf0}; // and rbx,-16
+    if (Mode == 2)
+      Code.insert(Code.end(), {0x48, 0x83, 0xcb, 0x01}); // or rbx,1
+    if (Mode == 3)
+      Code.push_back(0x64); // FS still has no admitted alignment base.
+    const auto MoveAddress = Base + 0x1000 + Code.size();
+    Code.insert(Code.end(), {0x66, 0x0f, 0x6f, 0x03}); // movdqa xmm0,[rbx]
+    const auto Exit = Base + 0x1000 + Code.size();
+    Code.push_back(0xc3);
+    auto Loaded = load(machineExitFixture(Code));
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    auto Options = machineExitOptions(Exit, MachineExitKind::Return);
+    Options.X64SegmentedReads = Mode == 3;
+    ASSERT_FALSE(Options.X64MXCSRMask);
+    const auto Result =
+        specializeBinaryInterpreter(*Loaded, Base + 0x1000, Options);
+    if (Mode != 0) {
+      EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported)
+          << Result.Diagnostic;
+      EXPECT_TRUE(Result.Residual.Blocks.empty());
+      EXPECT_FALSE(Result.RawEnvironment);
+      continue;
+    }
+    ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+    ASSERT_TRUE(Result.RawEnvironment);
+    auto Valid = validateSpecializationRawEnvironment(Result, Options);
+    ASSERT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+    va_t ResidualMove = InvalidVA;
+    uint32_t NativeOpCount = 0;
+    for (const auto &Origin : Result.Origins)
+      if (Origin.NativeInstruction.Address == MoveAddress) {
+        ASSERT_EQ(ResidualMove, InvalidVA);
+        ResidualMove = Origin.ResidualAddress;
+        NativeOpCount = Origin.NativeInstruction.OpCount;
+      }
+    ASSERT_NE(ResidualMove, InvalidVA);
+    unsigned Guards = 0, Loads = 0;
+    for (const auto &Block : Result.Residual.Blocks) {
+      for (const auto &Boundary : Block.InstructionBoundaries)
+        if (Boundary.Address == ResidualMove)
+          EXPECT_EQ(Boundary.OpCount, NativeOpCount);
+      bool GuardBeforeLoad = false;
+      for (const auto &Op : Block.Ops) {
+        if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+            Op.Inputs[0].Offset == uint64_t(Intrinsic::RequireAligned)) {
+          ++Guards;
+          EXPECT_EQ(Op.NumInputs, 3U);
+          EXPECT_EQ(Op.Inputs[2], NdVar::scalar(16, 8));
+          EXPECT_EQ(Op.Addr, ResidualMove);
+          GuardBeforeLoad = true;
+        }
+        if (Op.Opcode == NdOp::LOAD && Op.Output.Size == 16) {
+          ++Loads;
+          EXPECT_TRUE(GuardBeforeLoad);
+          EXPECT_EQ(Op.Addr, ResidualMove);
+        }
+      }
+    }
+    EXPECT_EQ(Guards, 1U);
+    EXPECT_EQ(Loads, 1U);
+    Options.MaxOperations = Result.EvaluatedOperations;
+    EXPECT_TRUE(specializeBinaryInterpreter(*Loaded, Base + 0x1000, Options)
+                    .complete());
+    ASSERT_GT(Options.MaxOperations, 1U);
+    --Options.MaxOperations;
+    const auto Short =
+        specializeBinaryInterpreter(*Loaded, Base + 0x1000, Options);
+    EXPECT_EQ(Short.Status, SpecializationStatus::BudgetExceeded);
+    EXPECT_TRUE(Short.Residual.Blocks.empty());
+    EXPECT_FALSE(Short.RawEnvironment);
+  }
+}
+
+TEST_F(PEFixedImageTest, RawAlignmentReceiptBindsRetainedGuard) {
+  const std::vector<uint8_t> Code = {0x48, 0x83, 0xe3, 0xf0, 0x66,
+                                     0x0f, 0x6f, 0x03, 0xc3};
+  auto Loaded = load(machineExitFixture(Code));
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  const auto Options =
+      machineExitOptions(Base + 0x1008, MachineExitKind::Return);
+  const auto Good =
+      specializeBinaryInterpreter(*Loaded, Base + 0x1000, Options);
+  ASSERT_TRUE(Good.complete()) << Good.Diagnostic;
+  for (unsigned Mutation = 0; Mutation != 2; ++Mutation) {
+    auto Changed = Good;
+    unsigned Guards = 0;
+    for (auto &Block : Changed.Residual.Blocks)
+      for (auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+            Op.Inputs[0].Offset == uint64_t(Intrinsic::RequireAligned)) {
+          ++Guards;
+          if (Mutation == 0)
+            Op.Inputs[2] = NdVar::scalar(32, 8);
+          else
+            Op.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+        }
+    ASSERT_EQ(Guards, 1U);
+    auto Error = validateSpecializationRawEnvironment(Changed, Options);
+    ASSERT_TRUE(bool(Error));
+    llvm::consumeError(std::move(Error));
+  }
+  auto Valid = validateSpecializationRawEnvironment(Good, Options);
+  EXPECT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+}

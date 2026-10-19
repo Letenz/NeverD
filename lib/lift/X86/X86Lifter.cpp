@@ -14,7 +14,9 @@
 
 #include "X86BitTestUndefined.h"
 #include "X86DoubleShiftUndefined.h"
+#include "X86LegacyVectorMoveAudit.h"
 #include "X86LiftDetail.h"
+#include "X86NativeStateAudit.h"
 #include "X86OpaqueStateAudit.h"
 #include "X86ShiftUndefined.h"
 #include "X86XaddAudit.h"
@@ -1243,7 +1245,9 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
       EffectsDraft.Diagnostic =
           "undefined-output coverage requires strict lifting";
     } else if (EffectsDraft.OpCount == 0 ||
-               !hasAuditedLegacyIntegerForm(Insn, TargetArch)) {
+               (!hasAuditedLegacyIntegerForm(Insn, TargetArch) &&
+                !vectormoveaudit::form(Insn, TargetArch) &&
+                !nativestateaudit::form(Insn, TargetArch))) {
       EffectsDraft.Diagnostic =
           "instruction form has no complete undefined-output audit";
     } else if (!HasExpectedEffects) {

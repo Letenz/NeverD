@@ -392,8 +392,16 @@ void HighCWriter::prepareFunctionIdentifiers(
     FunctionSymbolNames.emplace(&Func, SymbolName.str());
     const llvm::StringRef RenderedName =
         cDefinitionName(SymbolName, Opts.Format);
-    std::string Identifier =
-        GlobalIdentifierAllocator.allocate(RenderedName, "nd_function");
+    // The image's own copy of a C library routine steps aside from the
+    // header's name, as LLVM-C's does: by the identifier it would take, as a
+    // C++ `sigaddset(unsigned long*, int)` would take `sigaddset`, or by its
+    // prototype, which a C library's headers give (`__strlen_chk`).
+    std::string Stem =
+        canonicalizeCProjectionIdentifier(RenderedName, "nd_function");
+    if (Func.Entry && (copiesHeaderRoutine(Stem, Opts.Format) ||
+                       libraryDeclaresDefinition(Func)))
+      Stem += "_" + llvm::utohexstr(Func.Entry);
+    std::string Identifier = GlobalIdentifierAllocator.allocateVerbatim(Stem);
     FunctionIdentifiers.emplace(&Func, Identifier);
     DefinedFunctionsByIdentifier.emplace(Identifier, &Func);
     FunctionIdentifiersBySourceName.try_emplace(SourceName, Identifier);
@@ -1653,6 +1661,10 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   for (auto &Name : CallTargets) {
     if (isOwnFunctionName(Name, Funcs))
       continue;
+    // A routine the user declares is declared as the user declares it
+    // (writeForwardDecls), not by the header that declares the C library's.
+    if (userDeclaresCallee(Name))
+      continue;
     for (std::string &Header : calleeHeaders(Name))
       Headers.insert(std::move(Header));
   }
@@ -1701,13 +1713,18 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     OS << "\n";
   // The unit spells the records the definitions name by their names alone
   // too, as where a member it reads gives a local its type, unless an
-  // ordinary identifier of the unit's holds the name.
+  // ordinary identifier of the unit's or of a C library header's holds the
+  // name, as <time.h>'s timezone does struct timezone's.
   bool Typedefs = false;
   for (const auto &[Tag, Union] : RecordDefinitions.Tags) {
     const std::string Name = cNamedTypeSpelling(Tag);
-    if (Name.empty() || RecordTypedefs.count(Name) ||
-        GlobalIdentifierAllocator.holds(Name) || CallTargets.count(Name))
+    if (Name.empty() || RecordTypedefs.count(Name))
       continue;
+    if (GlobalIdentifierAllocator.holds(Name) || CallTargets.count(Name) ||
+        libc::headerOfDataObject(Name)) {
+      TagRecords.emplace(Name, Union);
+      continue;
+    }
     OS << "typedef " << (Union ? "union " : "struct ") << Name << " " << Name
        << ";\n";
     RecordTypedefs.insert(Name);
@@ -1772,6 +1789,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   // A function whose address the code takes is declared as a callee is.
   CallTargets.insert(AddressTakenFunctions.begin(),
                      AddressTakenFunctions.end());
+  UnitCallTargets = CallTargets;
 
   for (const auto &[Name, Identifier] : SourceRuntimeDataIdentifiers) {
     if (ConflictingSourceRuntimeDataIdentities.count(Name))
@@ -1855,11 +1873,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
           Function.SourceTypeHint &&
                   I < Function.SourceTypeHint->Parameters.size()
               ? sourceParameterType(Function.SourceTypeHint->Parameters[I])
-              : typeToC(emittedParamTypeAt(Function, I));
+              : declaredAs(emittedParamTypeAt(Function, I), "");
     }
     if (ParamCount == 0)
       Declarator += "void";
-    OS << declarationToC(ReturnType, Declarator + ")") << ";\n";
+    OS << declaredAs(ReturnType, Declarator + ")") << ";\n";
   }
   CurrentFunc = nullptr;
   Analysis = {};
@@ -1879,13 +1897,13 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
           Function->SourceTypeHint &&
                   I < Function->SourceTypeHint->Parameters.size()
               ? sourceParameterType(Function->SourceTypeHint->Parameters[I])
-              : typeToC(emittedParamTypeAt(*Function, I));
+              : declaredAs(emittedParamTypeAt(*Function, I), "");
     }
     if (ParamCount == 0)
       Declarator += "void";
     if (Function->SourceTypeHint)
       OS << sourceConventionAttribute(Function->SourceTypeHint->Convention);
-    OS << declarationToC(ReturnType, Declarator + ")") << ";\n";
+    OS << declaredAs(ReturnType, Declarator + ")") << ";\n";
   }
   CurrentFunc = nullptr;
   Analysis = {};
@@ -1917,11 +1935,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
           Function->SourceTypeHint &&
                   I < Function->SourceTypeHint->Parameters.size()
               ? sourceParameterType(Function->SourceTypeHint->Parameters[I])
-              : typeToC(emittedParamTypeAt(*Function, I));
+              : declaredAs(emittedParamTypeAt(*Function, I), "");
     }
     if (ParamCount == 0)
       Declarator += "void";
-    OS << declarationToC(ReturnType, Declarator + ")") << ";\n";
+    OS << declaredAs(ReturnType, Declarator + ")") << ";\n";
   }
   CurrentFunc = nullptr;
   Analysis = {};
@@ -1933,7 +1951,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
          DefinedFunctionsByIdentifier.count(Name)) &&
         !SourceRuntimeLinkNames.count(Name))
       continue;
-    if (libc::isKnownFunction(Name) &&
+    // A routine the user declares is declared as the user declares it, under
+    // another identifier where a header the unit includes declares the C
+    // library's routine of the name.
+    const bool UserDeclared = userDeclaresCallee(Name);
+    if (libc::isKnownFunction(Name) && !UserDeclared &&
         (!isOwnFunctionName(Name, Funcs) || includesHeaderOf(Name)))
       continue;
     if (CIntrinsicNames.count(Name))
@@ -1946,7 +1968,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     std::string CleanName = Name;
     if (!CleanName.empty() && CleanName[0] == '_')
       CleanName = CleanName.substr(1);
-    if (libc::isKnownFunction(CleanName) &&
+    if (libc::isKnownFunction(CleanName) && !UserDeclared &&
         (!isOwnFunctionName(Name, Funcs) || includesHeaderOf(CleanName)))
       continue;
 
@@ -1963,10 +1985,12 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       return;
     const std::string Record =
         cNamedTypeSpelling(msvcSyntheticRecord(Identifier, *Msvc));
-    if (Record.empty() || ExternFuncs.count(Record) ||
-        isOwnFunctionName(Record, Funcs) ||
-        !DeclaredSyntheticRecords.insert(Record).second)
+    if (Record.empty() || !DeclaredSyntheticRecords.insert(Record).second)
       return;
+    if (ExternFuncs.count(Record) || isOwnFunctionName(Record, Funcs)) {
+      TagRecords.emplace(Record, false);
+      return;
+    }
     OS << "typedef struct " << Record << " " << Record << ";\n";
     RecordTypedefs.insert(Record);
   };
@@ -1980,6 +2004,17 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     // named like it, not the slot.
     const bool ImportSlot = ImportSlotIdentifiers.count(Name);
     const auto Existing = ExternalFunctionIdentifiers.find(Name);
+    // The header that declares the C library's routine of the name holds
+    // the name, where a routine the user declares takes it: the user's
+    // links by the symbol instead (LinkLabel).
+    if (Existing == ExternalFunctionIdentifiers.end() && !ImportSlot &&
+        userDeclaresCallee(Name) &&
+        (includesHeaderOf(RenderedName) ||
+         includesHeaderOf(RenderedName.ltrim('_'))))
+      if (const std::string Held =
+              canonicalizeCProjectionIdentifier(RenderedName, "nd_external");
+          !GlobalIdentifierAllocator.holds(Held))
+        GlobalIdentifierAllocator.allocateVerbatim(Held);
     std::string Identifier =
         Existing != ExternalFunctionIdentifiers.end() ? Existing->second
         : ImportSlot
@@ -2541,6 +2576,25 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       if (auto It = ImageObjects.find(*VA); It != ImageObjects.end())
         It->second.AtomicBytes = std::max(It->second.AtomicBytes, Access->Size);
   };
+  // An alignment precondition belongs to the access it guards: its address
+  // is that access's, which needs the alignment in C as in the image.  The
+  // guard comes before the access that declares the object, so the
+  // alignment applies once the walk is done.
+  std::map<va_t, uint16_t> GuardedAlignments;
+  auto NoteAlignmentGuard = [&](const HighExpr &Call) {
+    if (Call.Kind != ExprKind::Call ||
+        Call.IntrinsicId != Intrinsic::RequireAligned ||
+        Call.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        Call.Operands.size() < 2 || !Call.Operands[0] || !Call.Operands[1] ||
+        Call.Operands[1]->Kind != ExprKind::Const)
+      return;
+    NoteAccessAddress(Call.Operands[0].get());
+    const uint64_t Bytes = Call.Operands[1]->ConstVal;
+    if (auto VA = constAddress(*Call.Operands[0]);
+        VA && Bytes > 1 && Bytes <= UINT16_MAX)
+      GuardedAlignments[*VA] = std::max<uint16_t>(GuardedAlignments[*VA],
+                                                  static_cast<uint16_t>(Bytes));
+  };
   std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
     if (E.Kind == ExprKind::Const && isAddressProvenance(E.ConstProvenance))
       noteFunctionAddress(functionAddressKey(E), Funcs);
@@ -2745,6 +2799,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         ImageObjects[*VA].AddressTaken = true;
       }
     }
+    NoteAlignmentGuard(E);
     // An indirect callee is no printed operand, but the slot it loads is
     // image data all the same, named as the slot the code calls through.
     E.forEachChildExpr([&](const ExprPtr &Op) { Visit(*Op); });
@@ -2768,8 +2823,18 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         noteImageObject(*VA, Expected, false);
     }
   };
-  for (const HighFunc &Func : Funcs)
+  for (const HighFunc &Func : Funcs) {
+    // A function that returns no value prints its returns bare (a returned
+    // call as its statement): what the return register holds there names
+    // nothing in C, such as the GOT address a get-PC sequence left in it.
+    const TypeRef DeclaredReturn = declaredFunctionReturnType(Func);
+    const bool BareReturns = DeclaredReturn
+                                 ? DeclaredReturn->Kind == NdTypeKind::Void
+                                 : analyzeVoidReturn(Func);
     walkStmts(Func.Body, [&](const HighStmt &S) {
+      if (BareReturns && S.Kind == StmtKind::Return && S.RetVal &&
+          !highCExpressionHasEffect(*S.RetVal))
+        return;
       if (S.Kind == StmtKind::Store &&
           S.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
           S.StoreAddr) {
@@ -2789,6 +2854,10 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           Visit(*E);
       });
     });
+  }
+  for (const auto &[VA, Bytes] : GuardedAlignments)
+    if (auto It = ImageObjects.find(VA); It != ImageObjects.end())
+      It->second.AlignedBytes = std::max(It->second.AlignedBytes, Bytes);
 
   // A table the code keeps only the address of, through a variable it
   // indexes, may be relative all the same: every entry an offset to a sized
@@ -2961,19 +3030,25 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       Backing.Words = Backing.Name;
       Backing.Name += ".b";
     }
-    // An atomic access in the bytes needs its address as aligned in C as in
-    // the image: bytes before the group give every address its residue
-    // modulo the widest one.  Words start word-aligned, at the group.
+    // An atomic access in the bytes, or one that requires its alignment,
+    // needs its address as aligned in C as in the image: bytes before the
+    // group give every address its residue modulo the widest one.  Words
+    // start word-aligned, at the group.
     for (auto It = ImageObjects.lower_bound(GroupBase);
          It != ImageObjects.end() && It->first < GroupEnd; ++It) {
-      const uint64_t Bytes = It->second.AtomicBytes;
-      if (!Bytes)
+      const ImageObject &Obj = It->second;
+      const unsigned Align = static_cast<unsigned>(std::max<uint64_t>(
+          Obj.AtomicBytes
+              ? std::min<uint64_t>(llvm::PowerOf2Ceil(Obj.AtomicBytes),
+                                   kMaxAtomicAccessBytes)
+              : 0,
+          Obj.AlignedBytes));
+      if (Align <= 1)
         continue;
-      const unsigned Align = static_cast<unsigned>(
-          std::min<uint64_t>(llvm::PowerOf2Ceil(Bytes), kMaxAtomicAccessBytes));
       if (!Backing.Words.empty() && (It->first - GroupBase) % Align)
         throw std::invalid_argument(
-            "an atomic access in relocated image words at 0x" +
+            std::string(Obj.AtomicBytes ? "an atomic" : "an aligned") +
+            " access in relocated image words at 0x" +
             llvm::utohexstr(It->first) +
             " is less aligned in C than in the image");
       Backing.Align = std::max(Backing.Align, Align);
@@ -3001,8 +3076,13 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       NeedsBacking = true;
     GroupEnd = std::max(GroupEnd, End);
     ++GroupCount;
-    NeedsBacking |= Obj.MemoryWidths.size() > 1 || Obj.IndexedBytes ||
-                    (Obj.HoldsPointers && !Obj.PointsTo && Size > PointerBytes);
+    // An object less aligned in the image than an access there requires
+    // keeps that residue in bytes padded to the alignment: the access
+    // faults in C as in the image.
+    NeedsBacking |=
+        Obj.MemoryWidths.size() > 1 || Obj.IndexedBytes ||
+        (Obj.HoldsPointers && !Obj.PointsTo && Size > PointerBytes) ||
+        (Obj.AlignedBytes > 1 && Addr % Obj.AlignedBytes);
     for (uint16_t Width : Obj.MemoryWidths)
       NeedsBacking |= Width && (Width & (Width - 1)) != 0;
   }
@@ -3096,6 +3176,10 @@ void HighCWriter::writeImageObjects() {
     // A definition so standalone HighC can link, with the value the image
     // holds.  LLVMC keeps `extern` because it projects LLVM `external global`.
     std::string Note;
+    // As aligned as an access at its address requires, which the image's
+    // address is: a less aligned one is bytes (above).
+    if (Obj.AlignedBytes > 1)
+      OS << "_Alignas(" << Obj.AlignedBytes << ") ";
     if (Obj.String) {
       const Segment *Seg = Opts.Image->getSegmentFor(Addr);
       OS << (Seg && !Seg->isWritable() ? "const " : "") << Obj.String->Element
@@ -3554,6 +3638,12 @@ void HighCWriter::writeX64WindowsSyscallHelper() {
 }
 
 void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
+  // The unit spells the records it declares no typedef of, as a function or
+  // an object has the name, by their tags.
+  const auto TagKeyword = [this](llvm::StringRef Name) {
+    return recordTagKeyword(Name);
+  };
+  CRecordTagSpelling Tags(TagKeyword);
   prepareRecordDefinitions(Funcs);
   prepareFunctionIdentifiers(Funcs);
   collectImageObjects(Funcs);

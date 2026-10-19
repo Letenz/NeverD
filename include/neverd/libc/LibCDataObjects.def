@@ -26,5 +26,10 @@ NEVERD_LIBC_DATA_OBJECT("optarg", "unistd.h")
 NEVERD_LIBC_DATA_OBJECT("optind", "unistd.h")
 NEVERD_LIBC_DATA_OBJECT("opterr", "unistd.h")
 NEVERD_LIBC_DATA_OBJECT("optopt", "unistd.h")
+// The time zone <time.h> keeps, whose `timezone` is also struct timezone's
+// tag in <sys/time.h>.
+NEVERD_LIBC_DATA_OBJECT("daylight", "time.h")
+NEVERD_LIBC_DATA_OBJECT("timezone", "time.h")
+NEVERD_LIBC_DATA_OBJECT("tzname", "time.h")
 
 #undef NEVERD_LIBC_DATA_OBJECT

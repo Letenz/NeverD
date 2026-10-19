@@ -142,6 +142,13 @@ public:
   /// The records the unit declares a typedef of their own name for, which
   /// it can spell by that name alone.
   std::set<std::string> RecordTypedefs;
+  /// The records it declares none for because a function or an object of
+  /// the unit has the name, which it spells by their tags (`struct stat`):
+  /// whether each is a union.
+  std::map<std::string, bool> TagRecords;
+  /// The keyword the unit spells record \p Name's tag with, where it spells
+  /// the record by its tag (TagRecords); none otherwise.
+  const char *recordTagKeyword(llvm::StringRef Name) const;
   /// Whether the unit can spell \p Type, a pointer to a named record, by
   /// the record's name alone.
   bool spellsRecordPointer(const TypeRef &Type) const;
@@ -393,6 +400,12 @@ public:
   /// wrap. Segmented offsets disable image backing projection to stay numeric.
   std::string addrStr(const HighExpr &Expr, int ParentPrec = 0,
                       bool ProjectImageBacking = true);
+  /// Whether the object the unit defines at \p Addr holds more than the
+  /// string \p Literal its first bytes spell, which is then no string: a
+  /// vector constant whose first lane is 9 is no L"\t".  A sized object
+  /// that holds a string's bytes is the string itself, as
+  /// imageStringLiteral asks of a symbol.
+  bool objectOutgrowsLiteral(va_t Addr, llvm::StringRef Literal) const;
   std::string renderUnaryOp(const HighExpr &E, int ParentPrec);
   std::string resolvedCallTarget(const HighExpr &E) const;
   /// The name the image lists the function at \p Addr under
@@ -427,6 +440,16 @@ public:
   /// Whether \p Func is the stub of a variadic C library import, which a
   /// call runs as a call through the import's slot.
   bool isVariadicImportStub(const HighFunc &Func) const;
+  /// The C library routine \p Func, an import's stub named like its import,
+  /// forwards to (`strlen: jmp *strlen@GOT`): a call to the stub reaches the
+  /// routine the header declares, by its name, while the stub's definition
+  /// takes its address (copiesHeaderRoutine).  Empty for another function.
+  std::string headerRoutineOfStub(const HighFunc &Func) const;
+  /// Whether a C library's headers declare the routine \p Func defines,
+  /// whose prototype the debug context takes from them
+  /// (FunctionSym::PrototypeFromCLibrary): its definition steps aside from
+  /// the name.
+  bool libraryDeclaresDefinition(const HighFunc &Func) const;
   /// The variadic routine this file defines that the stub \p Func jumps to,
   /// through the slot of a symbol the image defines itself, or null.
   const HighFunc *variadicOwnRoutineOfStub(const HighFunc &Func) const;
@@ -468,13 +491,22 @@ public:
   std::optional<std::pair<const HighExpr *, uint64_t>>
   typedPointerOffset(const HighExpr &Addr) const;
   /// `base[index]` when Addr is `typed_ptr + index * sizeof(*typed_ptr)`.
-  /// ElemType is the loaded pointer/element, not the address of `base`.
+  /// ElemType is the loaded pointer/element, not the address of `base`; for
+  /// an access of \p AccessSize bytes narrower than a record element, the
+  /// element's member at its start that is that wide (Member), whose type
+  /// ElemType is then.  None where no scalar member is.
   struct TypedIndexAccess {
     std::string Base;
     std::string Index;
+    std::string Member;
     TypeRef ElemType;
+    std::string text() const {
+      return Base + "[" + Index + "]" + (Member.empty() ? "" : "." + Member);
+    }
   };
-  std::optional<TypedIndexAccess> typedIndexAccess(const HighExpr &Addr);
+  std::optional<TypedIndexAccess>
+  typedIndexAccess(const HighExpr &Addr, uint16_t AccessSize = 0,
+                   NdAccessClass Class = NdAccessClass::Unknown);
   /// The member \p Load reads: one of its width, else one of another width
   /// it reads as it is, but never a whole record, whose bytes no scalar is.
   std::optional<std::string> loadedMemberAccess(const HighExpr &Load) const;
@@ -584,6 +616,10 @@ public:
   /// True when \p E prints as an unsigned integer of exactly \p Width bytes.
   /// Widening views and untyped add/sub/mul stay wrapped.
   bool isSameWidthUnsigned(const HighExpr &E, uint16_t Width) const;
+  /// The debug information's function at the address call \p E names,
+  /// none for an indirect call whose callee is unknown, which names its own
+  /// instruction: debug information gives the caller there.
+  std::optional<FunctionSym> debugFunctionCalled(const HighExpr &E) const;
   std::optional<FunctionSym> debugCallee(const HighExpr &E) const;
   /// The pointer type a local is declared with where a typed call's pointer
   /// result declares it (collectCallResultNames, emitLocalDecls), whatever
@@ -603,19 +639,34 @@ public:
   /// record's pointer member, or an object of the image declared as a
   /// pointer.  An integer it is stored to takes it as the address it is.
   TypeRef printedPointerType(const HighExpr &Value) const;
+  /// Whether \p Text, as \p Value printed, is a pointer in C: a local the
+  /// text declares one, a typed record's pointer member or a pointer object,
+  /// as the value or as the definition it is forwarded from.  An integer it
+  /// is stored or assigned to takes it as the address it is.
+  bool printsPointer(const HighExpr &Value, llvm::StringRef Text) const;
+  /// What \p Value prints as where that is a pointer printedPointerType
+  /// knows: the value, the definition it is forwarded from, or the member
+  /// load a temporary carries; null otherwise.
+  const HighExpr *printedPointerSource(const HighExpr &Value) const;
   /// Whether the debug information declares \p E's callee: it types its
   /// return or parameters, or names it where the unit includes no header
   /// that declares it.  A public symbol's name alone yields to the header's
   /// prototype of a C library routine the unit includes.
   bool debugDeclaresCallee(const HighExpr &E) const;
   /// Whether \p Type names a record a C library header the unit includes
-  /// for \p E's callee declares: the header's `struct stat`, which the unit
+  /// for \p E's callee declares, points to a typedef of it, or is an array
+  /// it gives a parameter: the header's `struct stat`, which the unit
   /// neither defines nor names by a typedef, and which a function of the
-  /// same name would hide.
-  bool headerRecordOfCallee(const HighExpr &E, const TypeRef &Type) const;
+  /// same name would hide, its time_t, or its jmp_buf, which may be long
+  /// where the unit's exact widths say int32_t.
+  bool headerTypeOfCallee(const HighExpr &E, const TypeRef &Type) const;
   /// Whether the unit includes the standard header that declares the C
   /// library routine \p Name (libc::headerFor).
   bool includesHeaderOf(llvm::StringRef Name) const;
+  /// Whether the user declares the routine the call target \p Name names
+  /// (userPrototype): the unit declares it as the user does, not through
+  /// the header that declares the C library's routine of the name.
+  bool userDeclaresCallee(llvm::StringRef Name) const;
   TypeRef expectedDebugCallArgType(const FunctionSym &FS, size_t Index) const;
   TypeRef displayCallArgType(const HighExpr &Call, size_t Index) const;
   /// Display-only printed arity from TPI/PDB or \ref msvcCallee.
@@ -789,6 +840,10 @@ public:
   /// Parameter display names (`item`, injected `result`) cannot also name a
   /// frame home. The incoming C parameter already owns that identifier.
   bool isReservedParamDisplayName(llvm::StringRef Name) const;
+  /// Whether the unit gives \p Name at file scope to a function or an object
+  /// it declares or calls, or to a type it declares a typedef of: a local of
+  /// the name would hide it from the function's code.
+  bool namesFileScope(llvm::StringRef Name) const;
   bool isAddressTakenSlot(llvm::StringRef Name) const;
   bool hidesAddressTakenParamHome(llvm::StringRef Slot,
                                   const HighExpr &Val) const;
@@ -904,6 +959,8 @@ public:
 
   std::set<std::string> ExternFuncs;
   std::map<std::string, const HighFunc *> DefinedFuncs;
+  /// The identifiers the unit's code calls or takes the address of.
+  std::set<std::string> UnitCallTargets;
   /// True when \p Name is a function this file or the image defines, not a
   /// libc routine of the same name (ntoskrnl implements its own `setjmp`).
   /// A call to the function being written when it is printed as void: its
@@ -1319,6 +1376,10 @@ public:
     /// The widest atomic access (an ordered load or store, or a
     /// read-modify-write) at its address: C keeps it as aligned as the image.
     uint16_t AtomicBytes = 0;
+    /// The widest alignment an access at its address requires (an aligned
+    /// vector move faults on a misaligned address): C keeps it as aligned
+    /// as the image.
+    uint16_t AlignedBytes = 0;
   };
   std::map<va_t, ImageObject> ImageObjects;
   /// The access width that names the unnamed object \p Obj at \p Addr, as

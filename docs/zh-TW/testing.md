@@ -2022,3 +2022,37 @@ KernelFileObjectTests 與 KernelObjectTests 涵蓋具型別指標開啟、型別
 `KernelMDLChain.CreateMdl*` 與 `KernelMDLUserMapping.CreateMdl*` 涵蓋位寬、未改動位元組、空／回繞中繼資料、集區及堆疊生命週期、鎖、別名、失敗釋放、部分重用、IRP 拒絕及 IRQL。真正 WDK 夾具靜態及動態建立自有集區、呼叫者集區內部和堆疊描述符，驗證實體身分與完整卸載。原始探針區分欄位寫入、集區旗標轉換及注入的配置／釋放邊界。
 
 `KernelMDLChain.AdvanceMdl*` 與 `KernelMDLUserMapping.AdvanceMdl*` 檢查重複跨頁、尾標記、末端拒絕、參數位寬、完整映射、失敗清理、權限、儲存與程序生命週期。真正 WDK 夾具執行靜態／動態推進及兩種清理路徑。原始探針區分完整推進、恢復輔助函式及注入映射類型／PTE 釋放邊界的取消包裝，不執行系統頁資料庫。
+
+## 傳統對齊向量移動
+
+`NeverDX86LegacyAlignedMoveTests` 檢查 MOVDQA、MOVAPS 和 MOVAPD 的暫存器保持，以及記憶體存取前的 16 位元組對齊，涵蓋位址寬度回繞和明確的 FS/GS 基底。未對齊存取必須保留目的暫存器與記憶體；缺少區段基底時仍拒絕。此處驗證提升與模擬語義；精確符號還原仍須另外證明保留的對齊條件。
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*` 與 `PEFixedImageTest.RawAlign*` 檢查獨立餘數證明、非法輸入、精確預算、原生檢查的保留與憑據竄改。傳統移動指令稽核綁定包含對齊檢查的完整操作範圍，不證明不透明機器狀態組的保留。
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`NeverDX86NativeStateAuditTests` 檢查標準 x64 REP MOVSQ 與傳統 LDMXCSR 的原生位元組及解碼詳情嚴格准入，完整操作範圍仍綁定至未定義輸出憑據。獨立完整狀態與有序複製預期涵蓋重疊、零次數、位址形式、缺失位元組及保留位元。執行仍須現有次數／方向、記憶體、有效 MXCSR 遮罩與合法性證明；此稽核不證明部分故障後的重新啟動或不透明狀態保留。
+
+```sh
+cmake --build build-release --target NeverDX86NativeStateAuditTests
+ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
+```
+
+`NeverDX86ScalarMoveAuditTests` 對照原始位元組及完整解碼詳情檢查傳統 MOVSS/MOVSD 的嚴格准入。獨立位元組預期涵蓋暫存器合併、記憶體載入零擴展、純量儲存、所有對齊餘數、16/32/64 位元定址，以及完整暫存器、旗標與 MXCSR 保留。記憶體位元組缺失或寫入唯讀記憶體不得提交架構輸出。負例維持字串、VEX/EVEX、分段及格式錯誤形式的拒絕；憑據綁定完整操作範圍，不授予不透明狀態保留能力。
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`SymStorePreservation.Independent*`、`RepeatedRegionsFormAUnionAndChargeEveryScan`、`EmptyIndependentRegionsKeepOriginalWorkAccounting` 與 `ExecutorUsesIndependentRegionsForOnlyOneStore` 涵蓋一次 STORE 保留兩至三個獨立目前根、兩種位元組序、跨相對零點的部分區間、重疊宣告、未保護間隙及寫入後未知值的世代。精確預算及少一單位的預算檢查完整計費，缺少的區域不得具現化。無效或越界參照、窄或常數基底、空或反向區間，以及實際寫入本身的基底均應拒絕且不改變狀態。空 `AdditionalRegions` 維持既有單根及 `AdditionalRanges` 計費。執行器檢查單次事件、同區域相鄰位元組及後續一般寫入的失效效果。`SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget` 涵蓋比較符合及不符合、精確及不足預算、兩個保留根、舊值輸出及既有保守拒絕路徑。
+
+`NeverDSymConditionalStoreTests` 涵蓋獨立根的目前位元組條件效果、128 位元寫入、兩種位元組順序、部分重疊、符號相對座標環繞及絕對記憶體，並檢查自身區域相鄰位元組、目前與歷史事實、寫入後未知時期、不支援的輸入，以及精確與少一單位預算。執行器案例涵蓋沿用既有區段基址處理的 STORE、嚴格 CMPXCHG 的成功與失敗、Old 延後發布、拒絕時 havoc，以及其他操作保持 Invalid。一般寫入與保留契約的預設行為不變。這些測試驗證有界記憶體語義，不認證存取權限或完整程式還原。

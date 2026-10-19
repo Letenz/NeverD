@@ -1,0 +1,192 @@
+name: Native pipeline compatibility
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev, codex/pipeline-performance]
+    paths:
+      - '.github/workflows/native-pipeline.yml'
+      - 'lib/ir/med/abi/**'
+      - 'lib/ir/high/**'
+      - 'unittests/lift/core/High*Tests.cpp'
+      - 'lib/safety/StackSlotFlow.h'
+      - 'unittests/lift/core/MedCallingConvTests.cpp'
+      - 'unittests/lift/core/FPParameterMaskTests.cpp'
+      - 'unittests/PipelineOutcomeTests.cpp'
+  pull_request:
+    paths:
+      - '.github/workflows/native-pipeline.yml'
+      - 'lib/ir/med/abi/**'
+      - 'lib/ir/high/**'
+      - 'unittests/lift/core/High*Tests.cpp'
+      - 'lib/safety/StackSlotFlow.h'
+      - 'unittests/lift/core/MedCallingConvTests.cpp'
+      - 'unittests/lift/core/FPParameterMaskTests.cpp'
+      - 'unittests/PipelineOutcomeTests.cpp'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-pipeline-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            runner: ubuntu-24.04
+            cc: clang
+            cxx: clang++
+          - name: macOS arm64
+            runner: macos-15
+            cc: clang
+            cxx: clang++
+          - name: Windows x64 MSVC
+            runner: windows-2025-vs2026
+            cc: cl
+            cxx: cl
+          - name: Windows x64 clang-cl
+            runner: windows-2025-vs2026
+            cc: clang-cl
+            cxx: clang-cl
+    env:
+      SCCACHE_GHA_ENABLED: 'true'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Initialize the pinned decoder
+        run: git submodule update --init --depth 1 third_party/capstone
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.16.0
+        with:
+          version: v0.16.0
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang cmake lld ninja-build
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja lld
+      - name: Install Windows build tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install ninja --yes --no-progress
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - name: Configure native pipeline, SDK and worker
+        run: |
+          cmake -S . -B build-abi -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -DNEVERD_LLVM_PREBUILT=ON -DNEVERD_BUILD_WORKER=ON \
+            -DNEVERD_TEST_EXPECT_MIMALLOC=ON -DNEVERD_ENABLE_PYTHON_PLUGINS=ON \
+            -DNEVERD_ENABLE_WEB_ANALYSIS=OFF -DNEVERD_ENABLE_CPU_EMULATION=OFF \
+            -DNEVERD_ENABLE_SEMANTIC_TESTS=OFF
+      - name: Build production and complete focused test owners
+        run: |
+          cmake --build build-abi --parallel 4 --target \
+            neverd neverd-worker NeverDAllocatorTests \
+            NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests \
+            NeverDHighControlFlowTests
+      - name: Require every focused C++ case to execute and pass
+        run: |
+          python - <<'PY'
+          import json, os, subprocess, sys
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          from scripts.run_lift_qualification import audit
+          output = Path('build-abi/evidence')
+          output.mkdir(parents=True, exist_ok=True)
+          cache = Path('build-abi/CMakeCache.txt').read_text()
+          assert 'NEVERD_ENABLE_MIMALLOC:BOOL=ON' in cache
+          suffix = '.exe' if os.name == 'nt' else ''
+          # The stderr descriptor checks are compiled only on their hosts.
+          pipeline_minimum = 40 + (os.name != 'nt') + (sys.platform == 'linux')
+          for owner, minimum in (('NeverDFPParameterMaskTests', 180),
+                                  ('NeverDPipelineOutcomeTests', pipeline_minimum),
+                                  ('NeverDSupportThreadTests', 12),
+                                  ('NeverDHighControlFlowTests', 420)):
+              binary = Path('build-abi/bin') / (owner + suffix)
+              listed = subprocess.check_output([str(binary), '--gtest_list_tests'], text=True)
+              (output / (owner + '.inventory.txt')).write_text(listed)
+              names, suite = [], ''
+              for line in listed.splitlines():
+                  value = line.split(' #', 1)[0].strip()
+                  if line and not line.startswith(' ') and value.endswith('.'):
+                      suite = value
+                  elif line.startswith('  ') and suite:
+                      names.append(suite + value.split()[0])
+              assert len(names) >= minimum, (owner, len(names), minimum)
+              assert len(set(names)) == len(names), (owner, 'duplicate test identity')
+              if owner == 'NeverDPipelineOutcomeTests':
+                  for name, supported in (
+                      ('ClosedStderrPreservesNativeResult', os.name != 'nt'),
+                      ('FullStderrPreservesNativeResult', sys.platform == 'linux'),
+                  ):
+                      assert (('PipelineStageTrace.' + name) in names) == supported
+              if owner == 'NeverDFPParameterMaskTests':
+                  for name in ('FrameLocalLeafSummaryKeepsDefinitionIdentityAndDepth',
+                               'FrameLocalLeafSummaryDoesNotReuseAnotherFunctionOrInvocation'):
+                      assert 'MedABIPass.' + name in names
+              xml = output / (owner + '.xml')
+              with (output / (owner + '.log')).open('w') as log:
+                  result = subprocess.run([str(binary), '--gtest_output=xml:' + str(xml)],
+                                          stdout=log, stderr=subprocess.STDOUT, timeout=300)
+              report = audit(ET.parse(xml).getroot(), names, result.returncode)
+              (output / (owner + '.json')).write_text(json.dumps(report, indent=2) + '\n')
+              print(f'{owner}: {len(names)} passed, zero failed, zero skipped')
+          PY
+      - name: Verify actual SDK allocation and native worker requests
+        run: |
+          python - <<'PY'
+          from collections import Counter
+          import json, os, re, subprocess
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          names = ['NeverDAllocatorTests', 'NeverDWorkerNativeMapping',
+                   'NeverDWorkerNativeMakeCode', 'NeverDWorkerPEBrowse',
+                   'NeverDWorkerRealEngine', 'NeverDWorkerUnicodePaths']
+          if os.name == 'nt':
+              names.append('NeverDAllocatorRedirectDisabled')
+          command = ['ctest', '--test-dir', 'build-abi', '-C', 'Release',
+                     '-R', '^(' + '|'.join(re.escape(name) for name in names) + ')$']
+          inventory = json.loads(subprocess.check_output(command + ['--show-only=json-v1'], text=True))
+          assert Counter(test['name'] for test in inventory['tests']) == Counter(names)
+          output = Path('build-abi/evidence')
+          xml = (output / 'integration.xml').resolve()
+          with (output / 'integration.log').open('w') as log:
+              result = subprocess.run(command + ['--no-tests=error', '--output-on-failure',
+                                                  '--output-junit', str(xml)],
+                                      stdout=log, stderr=subprocess.STDOUT, timeout=600)
+          cases = list(ET.parse(xml).getroot().iter('testcase'))
+          assert Counter(case.get('name') for case in cases) == Counter(names)
+          assert result.returncode == 0
+          assert all(case.get('status') == 'run' and
+                     not any(child.tag in {'failure', 'error', 'skipped'} for child in case)
+                     for case in cases)
+          print(f'SDK/worker: {len(cases)} passed, zero failed, zero skipped')
+          PY
+      - name: Retain native results and configuration
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-pipeline-${{ matrix.name }}-${{ github.sha }}
+          path: |
+            build-abi/evidence
+            build-abi/CMakeCache.txt
+          if-no-files-found: warn

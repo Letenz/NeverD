@@ -331,6 +331,18 @@ execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
             return std::nullopt;
           TaskPriority = Value;
         } else if (Op.Inputs[0].Offset ==
+                   static_cast<uint64_t>(Intrinsic::RequireAligned)) {
+          if (Op.NumInputs != 3 || Op.Output.Size || Op.Inputs[0].Size != 2 ||
+              Op.MemoryOrdering != NdMemoryOrdering::None ||
+              Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+              Op.Inputs[1].Size != 8 || !Op.Inputs[2].isConst() ||
+              Op.Inputs[2].Size != 8)
+            return std::nullopt;
+          const uint64_t Alignment = Op.Inputs[2].Offset;
+          if (!Alignment || (Alignment & (Alignment - 1)) ||
+              read(Op.Inputs[1]) % Alignment != 0)
+            return std::nullopt;
+        } else if (Op.Inputs[0].Offset ==
                    static_cast<uint64_t>(Intrinsic::Ldmxcsr)) {
           const auto Address = read(Op.Inputs[1]);
           if (!MXCSR || Address > UINT64_MAX - 3)
@@ -3820,6 +3832,68 @@ TEST(InterpreterSpecialization,
   }
 }
 
+TEST(InterpreterSpecialization,
+     FrameNormalizationCacheStartsFreshAtIndependentNodes) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    Provider P;
+    P.add(0x100, {op(NdOp::COND_BR, {}, {constant(0x200), reg(72, 1)})}, 0x300);
+    const auto Body = [&](uint64_t Bias, uint64_t Tag) {
+      return std::vector<LowOp>{
+          op(NdOp::INT_XOR, reg(0), {reg(32), reg(8)}),
+          op(NdOp::INT_AND, reg(16), {reg(32), reg(8)}),
+          op(NdOp::INT_MULT, reg(16), {reg(16), constant(2)}),
+          op(NdOp::INT_ADD, reg(0), {reg(0), reg(16)}),
+          op(NdOp::INT_SUB, reg(0), {reg(0), reg(8)}),
+          op(NdOp::INT_ADD, reg(0), {reg(0), constant(Bias)}),
+          op(NdOp::STORE, {}, {reg(0), constant(Tag)}),
+          op(NdOp::INT_ADD, reg(16), {reg(0), constant(8)}),
+          op(NdOp::STORE, {}, {reg(16), constant(Tag + 1)}),
+          op(NdOp::LOAD, reg(0), {reg(16)}),
+          ret()};
+    };
+    P.add(0x200, Body(uint64_t{0} - 40, 0x1122334455667788));
+    P.add(0x300, Body(24, 0x8899aabbccddeeff));
+    SpecializationOptions Options;
+    Options.FrameBaseRegister = SymRegisterRange{32, 8};
+    Options.RequireRestoredFrameAtReturn = true;
+    Options.ByteOrder = Order;
+    Options.MaxChainedTransfers = 0;
+    Options.MaxSolverConflicts = 1;
+    const auto Disabled = specializeInterpreter(P, {0x100}, Options);
+    EXPECT_EQ(Disabled.Status, SpecializationStatus::BudgetExceeded);
+    EXPECT_TRUE(Disabled.Residual.Blocks.empty());
+    Options.MaxFrameOffsetNormalizationWorkPerProof = 65536;
+    const auto R = specializeInterpreter(P, {0x100}, Options);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    EXPECT_GE(R.NodeEvaluations, 3u);
+    for (bool Taken : {false, true})
+      for (uint64_t Stack : {uint64_t{0}, uint64_t{0x10008}, UINT64_MAX - 7})
+        for (uint64_t Data :
+             {uint64_t{0}, uint64_t{0x123456789abcdef0}, UINT64_MAX}) {
+          WideByteOracle Actual(Order);
+          Actual.word(reg(32), Stack);
+          Actual.word(reg(8), Data);
+          Actual.word(reg(72, 1), Taken);
+          for (unsigned I = 0; I != 96; ++I)
+            Actual.Memory[Stack - 48 + I] = uint8_t(I ^ 0x4d);
+          auto Expected = Actual.Memory;
+          const uint64_t Bias = Taken ? uint64_t{0} - 40 : 24;
+          const uint64_t Tag = Taken ? 0x1122334455667788 : 0x8899aabbccddeeff;
+          for (unsigned Word = 0; Word != 2; ++Word)
+            for (unsigned I = 0; I != 8; ++I)
+              Expected[Stack + Bias + Word * 8 + I] = uint8_t(
+                  (Tag + Word) >>
+                  (8 * (Order == llvm::endianness::little ? I : 7 - I)));
+          ASSERT_TRUE(Actual.run(R.Residual)) << Actual.Diagnostic;
+          EXPECT_EQ(Actual.number(reg(0)), Tag + 1);
+          EXPECT_EQ(Actual.number(reg(16)), Stack + Bias + 8);
+          EXPECT_EQ(Actual.number(reg(32)), Stack);
+          EXPECT_EQ(Actual.number(reg(8)), Data);
+          EXPECT_EQ(Actual.Memory, Expected);
+        }
+  }
+}
+
 TEST(InterpreterSpecialization, HighAddressOverlappingOriginsShareExclusion) {
   constexpr va_t Half = uint64_t{1} << 63;
   Provider P;
@@ -4660,6 +4734,7 @@ TEST(InterpreterSpecialization, TimestampTransitionMatchesCompleteStateOracle) {
     EXPECT_FALSE(x64::lowerRuntimeTimestampRead(I, Invalid));
 }
 
+#include "AlignmentRecoveryTests.inc"
 #include "MXCSRRecoveryTests.inc"
 #include "SegmentedStoreTests.inc"
 

@@ -16,6 +16,20 @@ function(neverd_check_mimalloc_crt runtime)
   endif()
 endfunction()
 
+# The worker's earlier mimalloc 3.5 kept its settings as cache strings that
+# default to "DEFAULT". The 3.3.2 options read such a leftover as ON, which put
+# assertions, statistics and guard pages into the allocator of build trees
+# configured before this module. Drop the leftovers so the options take their
+# own defaults; values a user set stay.
+function(neverd_drop_stale_mimalloc_settings)
+  get_cmake_property(_variables CACHE_VARIABLES)
+  foreach(_variable IN LISTS _variables)
+    if(_variable MATCHES "^MI_" AND "$CACHE{${_variable}}" STREQUAL "DEFAULT")
+      unset(${_variable} CACHE)
+    endif()
+  endforeach()
+endfunction()
+
 function(neverd_link_mimalloc target)
   if(NOT NEVERD_MIMALLOC_ENABLED)
     return()
@@ -154,6 +168,7 @@ function(neverd_fetch_mimalloc)
         "FETCHCONTENT_SOURCE_DIR_NEVERD_MIMALLOC to use the patched download.")
     endif()
   endif()
+  neverd_drop_stale_mimalloc_settings()
   set(MI_BUILD_STATIC OFF)
   if(WIN32)
     set(MI_BUILD_SHARED ON)

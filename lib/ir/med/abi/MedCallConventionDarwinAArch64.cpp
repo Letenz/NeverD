@@ -22,6 +22,7 @@ extern const CallArgumentConvention DarwinAArch64CallArguments;
 const CallArgumentConvention DarwinAArch64CallArguments = {
     .TheArch = Arch::AArch64,
     .Format = BinaryFormat::MachO,
+    .ImportArgumentsFromPrototype = true,
     .VariadicArgumentsOnStack = true,
     .PrototypeArgCount = itaniumRuntimeArgCount,
     .ArgumentsFromCallSetup = true,

@@ -76,6 +76,219 @@ protected:
   }
 };
 
+LinuxFileMetadata directorySnapshot() {
+  LinuxFileMetadata M;
+  M.Device = 7;
+  M.Inode = 91;
+  M.Mode = 0042775;
+  M.UID = 1000;
+  M.GID = 1234;
+  M.LinkCount = 2;
+  M.Size = 40;
+  M.BlockSize = 4096;
+  M.AccessTime = {3, 4};
+  M.ModificationTime = {5, 6};
+  M.ChangeTime = {7, 8};
+  return M;
+}
+TEST_P(LinuxFileNamespace,
+       CreatedDirectoriesShareInodesMetadataAndOpenCursors) {
+  Options.LinuxFiles->DirectoryCreation.emplace().Parents["/empty"] =
+      directorySnapshot();
+  Options.LinuxTime.emplace().Clocks[0] = {100, 123};
+  ASSERT_FALSE(bool(linux_model::validateFileOptions(*Options.LinuxFiles)));
+  auto D = open("/empty");
+  ASSERT_EQ(D, 3u);
+  EXPECT_EQ(call(ServiceKind::Getdents64, D, Base + 512, 48), 48u);
+  EXPECT_EQ(call(ServiceKind::Getdents64, D, Base + 512, 48), 0u);
+  path("//empty//z///");
+  ProcessServiceEvent Raw{0,
+                          GetParam() == GuestArchitecture::X64 ? 258u : 34u,
+                          {UINT64_MAX, Base, 0xabcdef0000001fffULL, 0, 0, 0},
+                          {}};
+  EXPECT_EQ(llvm::cantFail(Kernel->handle(Raw)), 0u);
+  const auto Child = open("/empty/z");
+  EXPECT_EQ(call(ServiceKind::Fstat, Child, Base + 1024), 0u);
+  const unsigned Size = GetParam() == GuestArchitecture::X64 ? 144 : 128;
+  auto S = bytes(Base + 1024, Size);
+  auto Word = [&](unsigned Offset) {
+    return llvm::support::endian::read64le(S.data() + Offset);
+  };
+  auto Int = [&](unsigned Offset) {
+    return llvm::support::endian::read32le(S.data() + Offset);
+  };
+  const bool X64 = GetParam() == GuestArchitecture::X64;
+  EXPECT_EQ(Word(0), 7u);
+  const auto Inode = Word(8);
+  EXPECT_NE(Inode, 91u);
+  EXPECT_NE(Inode, 42u);
+  EXPECT_NE(Inode, 0u);
+  EXPECT_EQ(Int(X64 ? 24 : 16), 0043755u);
+  EXPECT_EQ(Int(X64 ? 16 : 20), 2u);
+  EXPECT_EQ(Int(X64 ? 28 : 24), 1000u);
+  EXPECT_EQ(Int(X64 ? 32 : 28), 1234u);
+  EXPECT_EQ(Word(48), 40u);
+  EXPECT_EQ(Word(56), 4096u);
+  EXPECT_EQ(Word(64), 0u);
+  for (unsigned At : {72u, 88u, 104u}) {
+    EXPECT_EQ(Word(At), 100u);
+    EXPECT_EQ(Word(At + 8), 123u);
+  }
+  EXPECT_EQ(call(ServiceKind::Getdents64, D, Base + 512, 24), 24u);
+  auto E = bytes(Base + 512, 24);
+  EXPECT_EQ(llvm::support::endian::read64le(E.data()), Inode);
+  EXPECT_EQ(E[18], 4);
+  EXPECT_EQ(E[19], 'z');
+  EXPECT_EQ(E[20], 0);
+  EXPECT_EQ(call(ServiceKind::Getdents64, D, Base + 512, 48), 0u);
+  // Insert a lexically earlier sibling after EOF. Existing cookies do not
+  // repeat z or hide the new a; dup consumes the original description.
+  ASSERT_TRUE(Kernel->clock().advanceTo(1000000007, Report));
+  path("/empty/a");
+  EXPECT_EQ(call(ServiceKind::MkdirAt, uint64_t(-100), Base, 0700), 0u);
+  const auto Alias = call(ServiceKind::Dup, D);
+  ASSERT_TRUE(Alias);
+  EXPECT_EQ(call(ServiceKind::Getdents64, *Alias, Base + 512, 24), 24u);
+  EXPECT_EQ(bytes(Base + 531, 2), (std::vector<uint8_t>{'a', 0}));
+  EXPECT_EQ(call(ServiceKind::Getdents64, D, Base + 512, 48), 0u);
+  EXPECT_EQ(call(ServiceKind::Fstat, D, Base + 1024), 0u);
+  S = bytes(Base + 1024, Size);
+  EXPECT_EQ(Word(8), 91u);
+  EXPECT_EQ(Int(X64 ? 16 : 20), 4u);
+  EXPECT_EQ(Word(48), 80u);
+  EXPECT_EQ(Word(72), 3u); // noatime, including enumeration
+  EXPECT_EQ(Word(80), 4u);
+  EXPECT_EQ(Word(88), 101u);
+  EXPECT_EQ(Word(96), 130u);
+  const auto ParentAfter = S;
+  EXPECT_EQ(call(ServiceKind::MkdirAt, 0, Base, 0), uint64_t(-17));
+  EXPECT_EQ(call(ServiceKind::Fstat, D, Base + 1024), 0u);
+  EXPECT_EQ(bytes(Base + 1024, Size), ParentAfter);
+  EXPECT_EQ(call(ServiceKind::Close, Child), 0u);
+  EXPECT_EQ(call(ServiceKind::Fstat, open("/empty/z"), Base + 1024), 0u);
+  S = bytes(Base + 1024, Size);
+  EXPECT_EQ(Word(8), Inode);
+  path("/empty/z");
+  EXPECT_EQ(call(ServiceKind::FstatAt, UINT64_MAX, Base, Base + 1280, 0), 0u);
+  EXPECT_EQ(bytes(Base + 1280, Size), S);
+  EXPECT_EQ(call(ServiceKind::Lseek, D, 0, 0), 0u);
+  EXPECT_EQ(call(ServiceKind::Getdents64, D, Base + 512, 96), 96u);
+  EXPECT_EQ(bytes(Base + 579, 2), (std::vector<uint8_t>{'z', 0}));
+  EXPECT_EQ(bytes(Base + 603, 2), (std::vector<uint8_t>{'a', 0}));
+}
+TEST_P(LinuxFileNamespace, DirectoryAdmissionIsAtomicForTimeCapacityAndMode) {
+  auto &C = Options.LinuxFiles->DirectoryCreation.emplace();
+  C.Parents["/empty"] = directorySnapshot();
+  C.Limit = 1;
+  path("/empty/new");
+  EXPECT_FALSE(call(ServiceKind::MkdirAt, 0, Base, 0777));
+  EXPECT_EQ(call(ServiceKind::FaccessAt, 0, Base, 0), uint64_t(-2));
+  Options.LinuxTime.emplace().Clocks[0] = {100, 0};
+  EXPECT_EQ(call(ServiceKind::MkdirAt, 0, Base, 0500), 0u);
+  path("/empty/new/sub");
+  EXPECT_EQ(call(ServiceKind::MkdirAt, 0, Base, 0777), uint64_t(-13));
+  path("/empty/second");
+  EXPECT_FALSE(call(ServiceKind::MkdirAt, 0, Base, 0777));
+  EXPECT_NE(Report.Diagnostic.find("reservation"), std::string::npos);
+  EXPECT_EQ(call(ServiceKind::FaccessAt, 0, Base, 0), uint64_t(-2));
+  path("/empty/new");
+  EXPECT_EQ(call(ServiceKind::MkdirAt, 0, Base, 0777), uint64_t(-17));
+}
+TEST_P(LinuxFileNamespace, DirectoryModesUseCallerIdentityAndParentSetgid) {
+  auto &C = Options.LinuxFiles->DirectoryCreation.emplace();
+  auto M = directorySnapshot();
+  M.Mode = 0040777;
+  M.UID = 777;
+  M.GID = 888;
+  C.Parents["/empty"] = M;
+  C.Umask = 0077;
+  Options.LinuxTime.emplace().Clocks[0] = {100, 0};
+  path("/empty/new");
+  EXPECT_EQ(call(ServiceKind::MkdirAt, 0, Base, 07777), 0u);
+  const auto F = open("/empty/new");
+  EXPECT_EQ(call(ServiceKind::Fstat, F, Base + 512), 0u);
+  const bool X64 = GetParam() == GuestArchitecture::X64;
+  auto S = bytes(Base + 512, 144);
+  auto Int = [&](unsigned Offset) {
+    return llvm::support::endian::read32le(S.data() + Offset);
+  };
+  EXPECT_EQ(Int(X64 ? 24 : 16), 0041700u);
+  EXPECT_EQ(Int(X64 ? 28 : 24), 1000u);
+  EXPECT_EQ(Int(X64 ? 32 : 28), 1000u);
+  path("/empty/new/nested");
+  EXPECT_EQ(call(ServiceKind::MkdirAt, 0, Base, 0777), 0u);
+  EXPECT_EQ(call(ServiceKind::Fstat, F, Base + 512), 0u);
+  S = bytes(Base + 512, 144);
+  EXPECT_EQ(Int(X64 ? 16 : 20), 3u);
+}
+
+TEST_P(LinuxFileNamespace, DirectoryMetadataRejectsInodeAndNamespaceConflicts) {
+  auto &C = Options.LinuxFiles->DirectoryCreation.emplace();
+  C.Parents["/empty"] = directorySnapshot();
+  const auto Good = *Options.LinuxFiles;
+  for (unsigned Mode = 0; Mode != 6; ++Mode) {
+    *Options.LinuxFiles = Good;
+    auto &D = *Options.LinuxFiles->DirectoryCreation;
+    if (Mode == 0)
+      D.Parents["/empty"].Inode = 42;
+    if (Mode == 1)
+      Options.LinuxFiles->Files["/empty/child"] = {};
+    if (Mode == 2)
+      Options.LinuxFiles->Directories.push_back("/empty/sub");
+    if (Mode == 3)
+      D.Parents["/empty"].AccessTime.Nanoseconds = 1000000000;
+    if (Mode == 4)
+      D.Parents["/empty"].Mode = 0100755;
+    if (Mode == 5)
+      D.Parents["/proc/self/fd"] = directorySnapshot();
+    auto E = linux_model::validateFileOptions(*Options.LinuxFiles);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+  }
+}
+
+TEST_P(LinuxFileNamespace, WorkingDirectoryHasExactBytesAndKernelErrorOrder) {
+  Options.LinuxFiles->WorkingDirectory = "/empty";
+  EXPECT_EQ(call(ServiceKind::Getcwd, Base + 512, 7), 7u);
+  EXPECT_EQ(bytes(Base + 512, 8),
+            (std::vector<uint8_t>{'/', 'e', 'm', 'p', 't', 'y', 0, 0}));
+  for (uint64_t Size : {0u, 1u, 6u})
+    EXPECT_EQ(call(ServiceKind::Getcwd, UINT64_MAX, Size), uint64_t(-34));
+  EXPECT_EQ(call(ServiceKind::Getcwd, UINT64_MAX, 7), uint64_t(-14));
+  EXPECT_EQ(call(ServiceKind::Getcwd, Base + 1024, UINT64_MAX), 7u);
+  EXPECT_EQ(bytes(Base + 1024, 7), bytes(Base + 512, 7));
+  ProcessServiceEvent Raw{0,
+                          GetParam() == GuestArchitecture::X64 ? 79u : 17u,
+                          {Base + 1536, 7, 0, 0, 0, 0},
+                          {}};
+  EXPECT_EQ(llvm::cantFail(Kernel->handle(Raw)), 7u);
+  EXPECT_EQ(bytes(Base + 1536, 7), bytes(Base + 512, 7));
+  llvm::cantFail(
+      cpu().addressSpace()->protect(Base + 4096, 4096, Read | UserAccessible));
+  EXPECT_FALSE(call(ServiceKind::Getcwd, Base + 4093, 7));
+  EXPECT_EQ(Report.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(bytes(Base + 4093, 3), (std::vector<uint8_t>{0, 0, 0}));
+  Options.LinuxFiles->WorkingDirectory = "/";
+  EXPECT_EQ(call(ServiceKind::Getcwd, Base + 512, 2), 2u);
+  EXPECT_EQ(bytes(Base + 512, 2), (std::vector<uint8_t>{'/', 0}));
+}
+
+TEST_P(LinuxFileNamespace, WorkingDirectoryRequiresExplicitDirectoryIdentity) {
+  EXPECT_FALSE(call(ServiceKind::Getcwd, Base + 512, 16));
+  EXPECT_NE(Report.Diagnostic.find("not supplied"), std::string::npos);
+  for (const char *Path : {"", "relative", "/missing", "/files/data", "/files",
+                           "/empty/", "//empty", "/empty/.."}) {
+    Options.LinuxFiles->WorkingDirectory = Path;
+    auto E = linux_model::validateFileOptions(*Options.LinuxFiles);
+    EXPECT_TRUE(bool(E)) << Path;
+    llvm::consumeError(std::move(E));
+  }
+  Options.LinuxFiles->WorkingDirectory = "/empty";
+  auto E = linux_model::validateFileOptions(*Options.LinuxFiles);
+  EXPECT_FALSE(bool(E));
+  llvm::consumeError(std::move(E));
+}
+
 TEST_P(LinuxFileNamespace,
        RepeatedSeparatorsShareFileBytesAndCapturedMetadata) {
   const auto Writer = open("///files////data", 2);

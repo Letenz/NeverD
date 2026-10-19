@@ -200,6 +200,17 @@ TEST_P(AndroidFiles, FileSystemQueriesPreserveCursorsAndLookupErrorPrecedence) {
   returned(run("files_filesystem_status"));
   returned(run("files_filesystem_status_bionic"));
 }
+TEST_P(AndroidFiles, WorkingDirectoryRawAndBionicShareBytesButNotReturnABI) {
+  Options.LinuxFiles->Directories.push_back("/fixture");
+  Options.LinuxFiles->WorkingDirectory = "/fixture";
+  returned(run("files_cwd_bionic"));
+}
+TEST_P(AndroidFiles, MissingWorkingDirectoryRemainsUnknown) {
+  auto R = run("files_cwd_unknown");
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("working directory is not supplied"),
+            std::string::npos);
+}
 TEST_P(AndroidFiles, RepeatedSeparatorsUseTheSharedFileNamespace) {
   returned(run("files_repeated_slashes"));
   returned(run("files_repeated_slashes_bionic"));
@@ -315,6 +326,24 @@ TEST_P(AndroidFiles, ImportsRawTrapsAndOtherThreadsShareTheSameOpenFile) {
 TEST_P(AndroidFiles, DirectoryLookupErrorsPreserveTheCatalogueAndOpenCursors) {
   Options.LinuxFiles->DescriptorLimit = 4;
   returned(run("files_directory_errors"));
+}
+TEST_P(AndroidFiles, DirectoryCreationHasSharedStatAndLifetimeAcrossCallABIs) {
+  Options.LinuxFiles->Directories = {"/made"};
+  auto &M = Options.LinuxFiles->DirectoryCreation.emplace().Parents["/made"];
+  M.Device = 7;
+  M.Inode = 91;
+  M.Mode = 0042775;
+  M.UID = 1000;
+  M.GID = 1234;
+  M.LinkCount = 2;
+  M.Size = 40;
+  M.BlockSize = 4096;
+  M.AccessTime = {3, 4};
+  M.ModificationTime = {5, 6};
+  M.ChangeTime = {7, 8};
+  Options.LinuxTime.emplace().Clocks[0] = {100, 123};
+  for (uint64_t ABI : {0u, 1u, 2u})
+    returned(run("files_create_directories", {ABI}));
 }
 TEST_P(AndroidFiles, DirectoryCreationRequiresMoreThanAnExistingParent) {
   for (unsigned Mode = 0; Mode < 5; ++Mode) {

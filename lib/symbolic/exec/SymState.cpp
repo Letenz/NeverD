@@ -569,9 +569,14 @@ bool SymState::store(SymRef Addr, SymRef Value,
                      SymStorePreservation &Preservation) {
   Preservation.WorkUsed = 0;
   Preservation.Status = SymStorePreservationStatus::Invalid;
-  if (!Addr || Ctx->width(Addr) != 64 || !Preservation.Base ||
-      Ctx->width(Preservation.Base) != 64 || Ctx->isConst(Preservation.Base) ||
-      Preservation.Begin >= Preservation.End)
+  const auto ValidRef = [&](SymRef Ref) {
+    return Ref && Ref.index() < Ctx->numNodes();
+  };
+  const auto ValidBase = [&](SymRef Base) {
+    return ValidRef(Base) && Ctx->width(Base) == 64 && !Ctx->isConst(Base);
+  };
+  if (!ValidRef(Addr) || Ctx->width(Addr) != 64 || !ValidRef(Value) ||
+      !ValidBase(Preservation.Base) || Preservation.Begin >= Preservation.End)
     return false;
   const Location Where = locate(Addr);
   if (Where.Base == Preservation.Base ||
@@ -593,17 +598,32 @@ bool SymState::store(SymRef Addr, SymRef Value,
   for (const auto &Range : Preservation.AdditionalRanges)
     if (Range.Begin >= Range.End)
       return false;
-  llvm::SmallVector<std::pair<uint64_t, ByteView>, 32> Saved;
-  auto Found = Regions.find(Preservation.Base.index());
-  if (Found != Regions.end()) {
-    const uint64_t Begin = static_cast<uint64_t>(Preservation.Begin);
-    const uint64_t Size = static_cast<uint64_t>(Preservation.End) - Begin;
+  if (!Charge(Preservation.AdditionalRegions.size()))
+    return false;
+  for (const auto &Region : Preservation.AdditionalRegions)
+    if (!ValidBase(Region.Base) || Region.Begin >= Region.End ||
+        Region.Base == Where.Base)
+      return false;
+
+  struct SavedByte {
+    Bank *Storage;
+    uint64_t Offset;
+    ByteView Byte;
+  };
+  llvm::SmallVector<SavedByte, 32> Saved;
+  const auto SaveRegion = [&](SymRef Base, int64_t Lower, int64_t Upper,
+                              llvm::ArrayRef<SymStorePreservationRange> More) {
+    auto Found = Regions.find(Base.index());
+    if (Found == Regions.end())
+      return true;
+    const uint64_t Begin = static_cast<uint64_t>(Lower);
+    const uint64_t Size = static_cast<uint64_t>(Upper) - Begin;
     for (const auto &[Offset, Byte] : Found->second.Bytes) {
       if (!Charge(1))
         return false;
       bool Protected = Offset - Begin < Size;
       if (!Protected)
-        for (const auto &Range : Preservation.AdditionalRanges) {
+        for (const auto &Range : More) {
           if (!Charge(1))
             return false;
           if (Offset - static_cast<uint64_t>(Range.Begin) <
@@ -616,19 +636,102 @@ bool SymState::store(SymRef Addr, SymRef Value,
       if (Protected) {
         if (!Charge(2))
           return false;
-        Saved.emplace_back(Offset, Byte);
+        Saved.push_back({&Found->second, Offset, Byte});
       }
     }
-  }
+    return true;
+  };
+  if (!SaveRegion(Preservation.Base, Preservation.Begin, Preservation.End,
+                  Preservation.AdditionalRanges))
+    return false;
+  for (const auto &Region : Preservation.AdditionalRegions)
+    if (!SaveRegion(Region.Base, Region.Begin, Region.End, {}))
+      return false;
 
   const bool Absolute = store(Addr, Value);
   // Restore only known bytes. The real STORE owns the new epochs, unknown
   // defaults, other banks and provenance; rolling back a whole bank would
   // incorrectly reintroduce untouched entry-memory identities outside bounds.
-  if (Found != Regions.end())
-    for (const auto &[Offset, Byte] : Saved)
-      Found->second.Bytes.emplace(Offset, Byte);
+  for (const auto &Entry : Saved)
+    Entry.Storage->Bytes.emplace(Entry.Offset, Entry.Byte);
   Preservation.Status = SymStorePreservationStatus::Applied;
+  return Absolute;
+}
+
+bool SymState::storeConditional(SymRef Addr, SymRef Value,
+                                SymConditionalStore &Control) {
+  Control.WorkUsed = 0;
+  Control.Status = SymConditionalStoreStatus::Invalid;
+  const auto ValidRef = [&](SymRef Ref) {
+    return Ref && Ref.index() < Ctx->numNodes();
+  };
+  if (!ValidRef(Addr) || Ctx->width(Addr) != 64 || !ValidRef(Value))
+    return false;
+  const Location Where = locate(Addr);
+  if (!validBankWrite(*Ctx, Where.Base, Where.Offset, Value))
+    return false;
+  const uint32_t Width = Ctx->width(Value);
+  const uint64_t Bytes = Width / kByteBits;
+  const auto Charge = [&](uint64_t Work) {
+    if (Work > Control.MaxWork - Control.WorkUsed) {
+      Control.Status = SymConditionalStoreStatus::BudgetExceeded;
+      return false;
+    }
+    Control.WorkUsed += Work;
+    return true;
+  };
+  if (!Charge(Bytes))
+    return false;
+
+  struct PlannedByte {
+    Bank *Storage;
+    SymRef Base;
+    uint64_t Offset;
+    ByteView Byte;
+  };
+  llvm::SmallVector<PlannedByte, 32> Plan;
+  const auto Inspect = [&](SymRef Base, Bank &Storage) {
+    if (!Charge(1))
+      return false;
+    if (Base == Where.Base || Storage.Bytes.empty())
+      return true;
+    if (Base && (!ValidRef(Base) || Ctx->width(Base) != 64))
+      return false;
+    for (const auto &[Offset, Byte] : Storage.Bytes) {
+      if (!Charge(Bytes + 3))
+        return false;
+      Plan.push_back({&Storage, Base, Offset, Byte});
+    }
+    return true;
+  };
+  if (!Inspect({}, AbsoluteMemory))
+    return false;
+  for (auto &[Base, Storage] : Regions)
+    if (!Inspect(SymRef(Base), Storage))
+      return false;
+
+  // Every charge and candidate validation has succeeded. Nothing below reads
+  // missing memory or reconstructs historical facts.
+  llvm::SmallVector<std::pair<SymRef, SymRef>, 8> WriteBytes;
+  for (uint64_t I = 0; I != Bytes; ++I) {
+    const auto Address = Ctx->mkAdd(Addr, Ctx->mkConst(64, I));
+    const uint32_t Low = Order == llvm::endianness::little
+                             ? uint32_t(I) * kByteBits
+                             : Width - (uint32_t(I) + 1) * kByteBits;
+    WriteBytes.emplace_back(Address, Ctx->mkExtract(Value, Low, kByteBits));
+  }
+  for (auto &Entry : Plan) {
+    const auto Offset = Ctx->mkConst(64, Entry.Offset);
+    const auto Address = Entry.Base ? Ctx->mkAdd(Entry.Base, Offset) : Offset;
+    auto Updated = Ctx->mkExtract(Entry.Byte.Value, Entry.Byte.Low, kByteBits);
+    for (const auto &[WriteAddress, Byte] : WriteBytes)
+      Updated = Ctx->mkIte(Ctx->mkEq(Address, WriteAddress), Byte, Updated);
+    Entry.Byte = {Updated};
+  }
+  const bool Absolute = store(Addr, Value);
+  for (const auto &Entry : Plan)
+    Entry.Storage->Bytes.emplace(Entry.Offset, Entry.Byte);
+  Control.Status = SymConditionalStoreStatus::Applied;
   return Absolute;
 }
 

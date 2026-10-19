@@ -12,6 +12,7 @@ extern struct TM *localtime(const S *);
 extern struct TM *gmtime(const S *);
 extern struct TM *localtime_r(const S *, struct TM *);
 extern struct TM *gmtime_r(const S *, struct TM *);
+extern S mktime(struct TM *);
 extern int *__errno(void);
 extern void *dlopen(const char *, int);
 extern void *dlsym(void *, const char *);
@@ -22,6 +23,44 @@ extern int pthread_join(U, void **);
 static void copy(B *d, const B *s, U n) {
   for (U i = 0; i < n; ++i)
     d[i] = s[i];
+}
+U calendar_inverse(B *out, struct TM *input, U named, U shared) {
+  S (*inverse)(struct TM *) = mktime;
+  if (named) {
+    void *library = dlopen("libcalendar.so", 2);
+    inverse = (S (*)(struct TM *))dlsym(library, "mktime");
+    if (named == 2)
+      dlclose(library);
+  }
+  S epoch = 0;
+  struct TM *saved = 0;
+  if (shared == 1 || shared == 2) {
+    saved = gmtime(&epoch);
+    copy(out + 0x400, (B *)saved, 56);
+    if (shared == 2) {
+      copy((B *)saved, (B *)input, 56);
+      input = saved;
+    }
+  }
+  *__errno() = 77;
+  if (shared == 3)
+    mprotect((void *)((U)input & ~(U)4095), 4096, 1);
+  S result = inverse(input);
+  ((S *)out)[0] = result;
+  ((U *)out)[1] = (unsigned)*__errno();
+  if (input) {
+    copy(out + 0x200, (B *)input, 56);
+    /* Failure does not establish a new zone pointer. */
+    if (result != -1 || input->isdst == 0)
+      for (U i = 0; i < 33; ++i) {
+        out[0x300 + i] = input->zone[i];
+        if (!input->zone[i])
+          break;
+      }
+  }
+  if (saved)
+    copy(out + 0x500, (B *)saved, 56);
+  return 0;
 }
 U calendar_call(B *out, U op, S seconds, U mode, U named) {
   struct TM *(*single)(const S *) = op == 0 ? localtime : gmtime;
@@ -105,4 +144,5 @@ U calendar_sequence(B *out, U threaded) {
   return 0;
 }
 __asm__(".type localtime,@function\n.type gmtime,@function\n"
-        ".type localtime_r,@function\n.type gmtime_r,@function");
+        ".type localtime_r,@function\n.type gmtime_r,@function\n"
+        ".type mktime,@function");

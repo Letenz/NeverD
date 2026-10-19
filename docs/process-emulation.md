@@ -189,9 +189,10 @@ Android API levels do not select a kernel. See the
 descriptor behavior, tests and the remaining kernel coverage.
 `poll`/`ppoll` and the supported level-triggered epoll subset use the shared
 `linux_files` descriptor owner without requiring GKI selection. They preserve
-ordered output, duplicate identities and explicitly scheduled TCP/UDP readiness;
-finite waits use virtual idle time. Observed live pidfds remain unready, with no
-invented exit notification. See [poll/epoll](linux-network-contracts.md#poll-and-epoll-waits)
+ordered `revents` output, duplicate identities and explicitly scheduled TCP/UDP
+readiness; finite waits use virtual idle time. Observed live pidfds remain
+unready, with no invented exit notification, and a closed descriptor reports
+`POLLNVAL`. See [poll/epoll](linux-network-contracts.md#poll-and-epoll-waits)
 for timeout, signal-mask, one-shot and unsupported-mode boundaries.
 
 The optional `linux_priority` input declares nice state for fixture-owned tasks

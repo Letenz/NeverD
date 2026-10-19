@@ -1041,3 +1041,71 @@ TEST(HighCStoreForwarding, ByteStorageDoesNotPrintReplacedSlotNames) {
 }
 
 } // namespace
+
+TEST(HighCStoreForwarding, ALandingPadStoresTheExceptionTheUnwinderHandsIt) {
+  // x86 code stores a call's result right after the call, so an unread
+  // result is the value such a store takes.  A landing pad's store after a
+  // call, as a cleanup's after __stack_chk_fail, takes the exception object
+  // the unwinder hands the pad instead, which no call returns: neither a
+  // call that never returns nor one that does gives it.
+  auto I32 = NdType::makeInt(4);
+  const auto &TRI = getTargetRegInfo(Arch::X86);
+  for (const char *Callee : {"__stack_chk_fail", "release"}) {
+    SCOPED_TRACE(Callee);
+    HighFunc Func;
+    Func.Name = "cleanup";
+    Func.Entry = 0x1000;
+    Func.FrameSize = 0x20;
+    Func.ReturnType = NdType::makeVoid();
+
+    MedVar Result;
+    Result.Kind = MedVar::Reg;
+    Result.Id = 1;
+    Result.SSAVer = 1;
+    Result.Size = 4;
+    Result.TheArch = Arch::X86;
+    Result.RegOff = TRI.IntReturnReg;
+    HighStmt Call;
+    Call.Kind = StmtKind::Assign;
+    Call.Addr = 0x1010;
+    Call.Dst = HighExpr::makeVar(Result, I32);
+    Call.Val = HighExpr::makeCall(Callee, 0x2000, {});
+    Call.Val->Type = I32;
+    Func.Body.push_back(std::move(Call));
+
+    MedVar Exception = Result;
+    Exception.Kind = MedVar::EHException;
+    Exception.Id = -1;
+    Exception.SSAVer = 0;
+    HighStmt Save;
+    Save.Kind = StmtKind::Store;
+    Save.Addr = 0x1015;
+    Save.StoreAddr = frameSlot(0x10, Arch::X86);
+    Save.StoreVal = HighExpr::makeVar(Exception, I32);
+    Func.Body.push_back(std::move(Save));
+
+    HighStmt Resume;
+    Resume.Kind = StmtKind::Call;
+    Resume.Addr = 0x101A;
+    Resume.CallExpr = HighExpr::makeCall(
+        "_Unwind_Resume", 0x2010,
+        {HighExpr::makeLoad(frameSlot(0x10, Arch::X86), I32)});
+    Func.Body.push_back(std::move(Resume));
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Func.Body.push_back(std::move(Return));
+
+    std::string Output;
+    llvm::raw_string_ostream OS(Output);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X86;
+    Options.Format = BinaryFormat::ELF;
+    ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+    OS.flush();
+    const auto Body = functionBody(Output, Func.Name);
+    ASSERT_TRUE(Body.has_value()) << Output;
+    EXPECT_FALSE(Body->contains(std::string("= ") + Callee + "("))
+        << Body->str();
+    EXPECT_TRUE(Body->contains("eh_exception")) << Body->str();
+  }
+}

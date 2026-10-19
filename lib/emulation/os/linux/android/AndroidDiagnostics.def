@@ -93,10 +93,11 @@ NEVERD_ANDROID_DIAGNOSTIC(InactiveProviderPrefix,
                           "call through an inactive dynamic library: ")
 NEVERD_ANDROID_DIAGNOSTIC(GuestCalledPrefix, "guest called ")
 NEVERD_ANDROID_DIAGNOSTIC(MemcpyOverlap, "overlapping memcpy operands")
+NEVERD_ANDROID_DIAGNOSTIC(StringCopyOverlap, "overlapping strncpy operands")
 NEVERD_ANDROID_DIAGNOSTIC(StringAddressOverflow, "string address overflows")
 NEVERD_ANDROID_DIAGNOSTIC(StringScanLimit, "string scan exceeds memory limit")
-NEVERD_ANDROID_DIAGNOSTIC(DecimalRange,
-                          "out-of-range decimal integer conversion is unmodeled")
+NEVERD_ANDROID_DIAGNOSTIC(
+    DecimalRange, "out-of-range decimal integer conversion is unmodeled")
 NEVERD_ANDROID_DIAGNOSTIC(FortifyReadPrefix,
                           "FORTIFY read exceeds object bounds in ")
 NEVERD_ANDROID_DIAGNOSTIC(StringCompareLimit,
@@ -107,10 +108,10 @@ NEVERD_ANDROID_DIAGNOSTIC(ImportPrefix, "unmodeled Android import: ")
 NEVERD_ANDROID_DIAGNOSTIC(PthreadAlignment, "unaligned pthread object")
 NEVERD_ANDROID_DIAGNOSTIC(SemaphoreAlignment, "unaligned semaphore word")
 NEVERD_ANDROID_DIAGNOSTIC(SemaphoreState, "invalid semaphore count state")
-NEVERD_ANDROID_DIAGNOSTIC(
-    SemaphoreBlocking, "sem_wait requires enabled guest-thread scheduling")
-NEVERD_ANDROID_DIAGNOSTIC(
-    SemaphoreWaitState, "semaphore sharing changed before waiter resumed")
+NEVERD_ANDROID_DIAGNOSTIC(SemaphoreBlocking,
+                          "sem_wait requires enabled guest-thread scheduling")
+NEVERD_ANDROID_DIAGNOSTIC(SemaphoreWaitState,
+                          "semaphore sharing changed before waiter resumed")
 NEVERD_ANDROID_DIAGNOSTIC(MutexAttributeOperation,
                           "unmodeled mutex attribute operation")
 NEVERD_ANDROID_DIAGNOSTIC(MutexOperation, "unmodeled mutex operation")
@@ -143,20 +144,22 @@ NEVERD_ANDROID_DIAGNOSTIC(ExecutionLimits,
                           "invalid native execution limits or layout")
 NEVERD_ANDROID_DIAGNOSTIC(SnapshotLimits,
                           "invalid memory snapshot extent or output budget")
-NEVERD_ANDROID_DIAGNOSTIC(ObservationOptions,
-                          "execution observations require unique aligned PCs and a positive limit")
-NEVERD_ANDROID_DIAGNOSTIC(ObservationMemory,
-                          "requested execution observation memory is not readable")
+NEVERD_ANDROID_DIAGNOSTIC(
+    ObservationOptions,
+    "execution observations require unique aligned PCs and a positive limit")
+NEVERD_ANDROID_DIAGNOSTIC(
+    ObservationMemory, "requested execution observation memory is not readable")
 NEVERD_ANDROID_DIAGNOSTIC(Property, "invalid Android property name or value")
 NEVERD_ANDROID_DIAGNOSTIC(PropertyArena,
                           "Android property image exceeds its memory bound")
 NEVERD_ANDROID_DIAGNOSTIC(PropertyHandle, "invalid Android property handle")
 NEVERD_ANDROID_DIAGNOSTIC(PropertyChanged,
                           "guest changed the immutable Android property image")
-NEVERD_ANDROID_DIAGNOSTIC(PropertyOutput,
-                          "property output aliases the immutable property image")
-NEVERD_ANDROID_DIAGNOSTIC(PropertyCallbackAlignment,
-                          "property callback address is not instruction aligned")
+NEVERD_ANDROID_DIAGNOSTIC(
+    PropertyOutput, "property output aliases the immutable property image")
+NEVERD_ANDROID_DIAGNOSTIC(
+    PropertyCallbackAlignment,
+    "property callback address is not instruction aligned")
 NEVERD_ANDROID_DIAGNOSTIC(CallbackArguments,
                           "guest callback exceeds the modeled register ABI")
 NEVERD_ANDROID_DIAGNOSTIC(LibraryCount, "too many modeled Android libraries")
@@ -232,10 +235,13 @@ NEVERD_ANDROID_DIAGNOSTIC(AuxiliaryVectorInput,
                           "invalid or excessive auxiliary vector entries")
 NEVERD_ANDROID_DIAGNOSTIC(AuxiliaryVectorUnspecified,
                           "getauxval requires an explicit auxiliary vector")
-NEVERD_ANDROID_DIAGNOSTIC(CalendarZoneInput,
-                          "invalid fixed calendar time zone")
+NEVERD_ANDROID_DIAGNOSTIC(CalendarZoneInput, "invalid fixed calendar time zone")
 NEVERD_ANDROID_DIAGNOSTIC(CalendarZoneUnspecified,
                           "localtime requires an explicit fixed time zone")
+NEVERD_ANDROID_DIAGNOSTIC(MKTimeZoneUnspecified,
+                          "mktime requires an explicit fixed time zone")
+NEVERD_ANDROID_DIAGNOSTIC(CalendarNormalization,
+                          "mktime extreme-field normalization is unmodeled")
 NEVERD_ANDROID_DIAGNOSTIC(CalendarRange,
                           "calendar conversion supports years 1 through 9999")
 NEVERD_ANDROID_DIAGNOSTIC(CalendarZoneChanged,

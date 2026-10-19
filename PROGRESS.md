@@ -1,5 +1,59 @@
 # NeverD Daily Progress
 
+## Current snapshot — 2026-10-19
+
+- Snapshot cutoff: **2026-10-19 01:03 UTC / 09:03 Asia/Shanghai**. Source pin: dev [b139b307](https://github.com/NeverSight/NeverD/commit/b139b307297477fef1ef914865de36a82c8d1aa1), reread before publication.
+- Inventory since [87d12f12](https://github.com/NeverSight/NeverD/commit/87d12f12712d4f1030b84ef9d92af0817bd68065): **386 commits; 715 changed non-directory paths (193 added, 521 modified, 1 removed)**. Commit pagination 100 + 100 + 100 + 86; complete recursive trees used because comparison file output is capped at 300. This is an inventory, not a full-source audit. PROGRESS-only changes do not represent implementation progress.
+- **No new source defect proved or repaired in today's bounded static review.** No build, test, benchmark, target execution, repository script or manual CI action was performed. Existing CI and author-reported results are not this reviewer's validation.
+- Yesterday's [#1282](https://github.com/NeverSight/NeverD/pull/1282) merged externally at 2026-10-18 05:54:35 UTC. Its ProjectFiles I/O-reporting fix [f3dce1e3](https://github.com/NeverSight/NeverD/commit/f3dce1e32bc16367e3a785c232c2af90e1c5ca1f) and source-only regression [0faea67f](https://github.com/NeverSight/NeverD/commit/0faea67f7c9a46eb4cd7b94087c731060e173232) were not rebuilt or executed here.
+- Publication uses a topic branch and draft PR targeting dev, following CONTRIBUTING even though dev currently reports unprotected and no repository rulesets. No merge is performed.
+
+### Review scope and evidence
+
+Read root AGENTS.md, CONTRIBUTING.md, SECURITY.md, relevant architecture/testing sections and existing PROGRESS. No nested AGENTS was present in the complete source tree. Repository execution requirements remain unperformed under the static-only constraint.
+
+The newest merged [#1406](https://github.com/NeverSight/NeverD/pull/1406) was reviewed through its diff, declarations and related callers:
+- lib/debug/DWARFLoader.cpp: convertDwarfType pointer/reference sizing from explicit DW_AT_byte_size or compilation-unit address size, plus related type/return handling.
+- lib/backend/c/DebugParamBinding.cpp and .h; lib/ir/SourceParameterPlacement.cpp, SourceParameterPlacementI386.cpp and the corresponding public header: full binding/placement paths, i386 four-byte slot layout, fallback and stop conditions.
+- lib/backend/c/HighC/HighCExprWriter.cpp and HighCStmtWriter.cpp: selected printedPointerType, frame record member lookup and integer/pointer conversion callers.
+- include/neverd/ir/NdTypes.h: pointer size/defaults and displayFieldTypeAt/member selection; PR test fixture, test registration and assertions read as source only.
+- scripts/check_docs_i18n.py: selected validate_matrix and error-return ordering, cross-checked against existing CI diagnostics.
+
+Static observations: the new 32-bit DWARF pointer width agrees with i386 slot placement, while the renderer propagates recognized frame-member pointer types into integer conversion sites. No contradictory path was proved within this scope. The PR author reports residual i386 regparm limitations; this is a reported limitation, not an independently reproduced result. Explicit pointer sizes outside 4/8 and frame-member ambiguity deserve targeted coverage before broader acceptance. The added i386 signature assertions do not themselves establish ARM32 or frame-record coverage. Do not infer complete decompilation correctness from them.
+
+Not covered: all remaining changed implementations, all architectures/emulation backends, malformed-input behavior across the complete parser, broad runtime/ABI qualification, or all merged-PR discussions. Large source files were inspected in relevant sections, not represented as fully audited. Prior memory-growth issue [#1189](https://github.com/NeverSight/NeverD/issues/1189) remains open; no sample execution or new memory measurement was performed.
+
+### Issues, pull requests and review state
+
+- Before this reporting PR: **54 open ordinary issues; 0 open PRs**, versus 54 / 5 in the previous snapshot. Open collections exhausted, including empty second pages.
+- Activity window **2026-10-18 01:00 UTC through this cutoff**: 125 PRs created, 128 merged, 1 closed without merge ([#1312](https://github.com/NeverSight/NeverD/pull/1312)); no ordinary issues opened or closed in the returned interval. Changed-item pages were 100 + 29 + 0; all matching PR records were reconciled against two 100-record PR pages reaching before the window.
+- These gross PR counts include reporting work (including #1282 created just after the prior snapshot), and must not be treated as business-feature counts. Today's documentation PR is excluded from the pre-publication totals.
+- Previously pending #1278, #1237, #1240, #1244 and #1282 are now merged. No open implementation PR was waiting for review at sampling.
+- Reviews and inline-comment collections for selected #1406 and #1282 were empty. This is not a claim that every merged PR's review discussion was inspected. Today's documentation publication still needs maintainer review.
+
+### Existing CI evidence, sampled 00:59–01:03 UTC
+
+For **dev b139b307** the exact-head run collection contained four runs (empty next page):
+- [CI](https://github.com/NeverSight/NeverD/actions/runs/39181234020): failure. All 13 jobs read: 3 failed, 4 succeeded, 6 skipped. Linux's failed gate and [LLVM Style](https://github.com/NeverSight/NeverD/actions/runs/39181233999), also failed, both show 31 documentation-checker test failures. The log identifies six missing required markers: nfds and 0x20 in docs/zh-CN/android-gki-kernels.md; POLLNVAL and revents in each of docs/process-emulation.md and its zh-CN counterpart. The checker's early return means these baseline errors mask later expected diagnostics, explaining cascading failures. This does not establish 31 separate production defects. No unrelated documentation or checker relaxation was applied.
+- [Lift native qualification](https://github.com/NeverSight/NeverD/actions/runs/39181234026): failure. The log reports earlier 108-case and 154-case phases passing, then rejects SessionCAPITest.DarwinCallsPassWhatLibSystemDeclares and SessionCAPITest.CallsThroughTypedMembersReadEachPointerOnce. The overall workflow failed; root causes were not proved by static review.
+- [Mobile Decompilation](https://github.com/NeverSight/NeverD/actions/runs/39181234008): in progress at cutoff, not a pass.
+
+For **PR #1406 head c0db4eedfe258fea6929ebfa1c0d8ce0fce9a429**, the seven visible runs were three skipped, three cancelled and one successful operational CancelClosedPRRuns job. Those outcomes do not validate the merged dev source and are kept separate from the above failures. PR-body test counts are author reports, not independent verification.
+
+### Suggested priorities (no delivery-date commitment)
+
+1. Restore documentation contract consistency at the current head without weakening validation. Dependency: review the six markers against actual API semantics and the checker. Acceptance: a coherent source/doc/checker change and maintainer-run exact-head gates with terminal results.
+2. Diagnose the two rejected SessionCAPITest qualification cases from complete artifacts and related source. Dependency: available failure artifacts and maintainer-owned execution outside this static review. Acceptance: demonstrated cause, focused regression and terminal exact-head qualification, rather than citing earlier passing phases.
+3. Extend DWARF/HighC ABI coverage for 32-bit parameter placement and typed frame members, including the author's regparm limitation. Dependency: target calling-convention/location evidence and focused fixtures. Acceptance: explicit supported/unsupported behavior and regression evidence for the affected paths; no guessed ABI mapping.
+
+## Daily log — 2026-10-19
+
+Completed the above bounded read-only review, reconciled yesterday's repair as merged, and recorded current CI blockers. No new code or test change was justified; only PROGRESS is proposed today. Historical text below is preserved verbatim. This record is not build/runtime verification. Publication commit and draft-PR references are available from the file history and PR; remote full-text and diff readback are required before delivery.
+
+## Preserved history (unchanged)
+
+# NeverD Daily Progress
+
 ## Current snapshot — 2026-10-18
 
 - Source inventory pinned at **2026-10-18 00:57 UTC / 08:57 Asia/Shanghai** to dev [87d12f12](https://github.com/NeverSight/NeverD/commit/87d12f12712d4f1030b84ef9d92af0817bd68065).

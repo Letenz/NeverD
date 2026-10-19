@@ -82,6 +82,13 @@ public:
   /// symbols do not: publics a single function's load leaves unread.  Its
   /// lookups may run from every shard at once.
   void setDebugContext(const DebugContext *Context) { Dbg = Context; }
+  /// The imports, by the stub or slot a call names each by, whose prototype
+  /// the user declares (PipelineResult::CallUserPrototypes): a call to one
+  /// passes what call-ABI recovery gave it, however many arguments the
+  /// arity tables give a routine of the name.
+  void setUserPrototypeCallees(const std::set<va_t> *Callees) {
+    UserPrototypeCallees = Callees;
+  }
   /// Emit \p Funcs into a fresh module in \p LCtx.
   ///
   /// For parallel (sharded) emission each worker owns its own LLVMContext,
@@ -890,6 +897,23 @@ private:
   bool addrHasSymbolizedSegConst(const MedVar &AddrVar, uint64_t SegVA) const;
 
   std::optional<uint64_t> traceSSAConst(const MedVar &V) const;
+
+  /// i386 PIC reads data at a displacement from the GOT address a get-PC
+  /// sequence computes: `(GOT + index) + disp`, `(GOT + disp) + index` or
+  /// `GOT + disp`.  The GOT is a displacement base, never the data, so the
+  /// data's base is GOT + disp.  Only a linked image whose GOT is known, and
+  /// a GOT term that folds to it, match.
+  struct I386GotRelativeAccess {
+    uint64_t Base = 0;
+    std::optional<MedVar> Index;
+  };
+  std::optional<I386GotRelativeAccess>
+  matchI386GotRelative(const MedVar &Address) const;
+  /// A read of read-only data at a displacement from the GOT: the data's
+  /// global, indexed when the address adds one; null for anything else.
+  llvm::Value *tryResolveI386GotRelativeReadOnlyPtr(const MedVar &AddrVar,
+                                                    uint16_t SizeHint,
+                                                    llvm::IRBuilder<> &Builder);
 
   /// Conservatively fold a side-effect-free integer SSA expression used as a
   /// control condition. Width changes, subpieces, arithmetic/bitwise ops,
@@ -2134,6 +2158,7 @@ private:
   const MedFunc *CurMedFunc = nullptr;
   LLVMSourceMap *SourceMap = nullptr;
   const DebugContext *Dbg = nullptr;
+  const std::set<va_t> *UserPrototypeCallees = nullptr;
   std::optional<MedVar> MutableReturnValue;
   std::map<const MedFunc *, MedMutableSourcePlan> MutableSourcePlans;
   std::map<std::pair<int, int>, llvm::AllocaInst *> VarAllocs;

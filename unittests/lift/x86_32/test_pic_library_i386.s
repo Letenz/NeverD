@@ -9,6 +9,22 @@
 // they were, so `scale` and `twice` keep a value in %ecx across the call.
 // `twice` calls a thunk padded as GCC pads one for in-order Atom
 // (-mtune=bonnell).  Each function has the unwind record GCC gives it.
+// Clang finds the GOT by calling the next instruction and popping the return
+// address, here in -O0 frames realigned to 16 bytes (clang -m32 -O0 -fPIC
+// -mstackrealign):
+//   int clang_scale(int a) { return a * factor; }
+//   int clang_lower(char c) { return tolower((unsigned char)c); }
+// `clang_scale` reads `factor` through the popped address; `clang_lower`
+// keeps it in %ebx only for its PLT call.  A label marks each pop.
+//   int clang_reload(int c) { return tolower(c) + factor; }
+// spills the GOT address before its PLT call and reloads it to read `factor`.
+//   static const int table[8] = {3, 1, 4, 1, 5, 9, 2, 6};
+//   int gcc_lookup(int i) { return table[i & 7]; }
+// `gcc_lookup` adds the index to the GOT register its thunk loads,
+// `clang_lookup` to the address its call/pop leaves, before the GOTOFF
+// displacement of `table`.
+//   void clang_set_factor(int v) { factor = v; }
+// returns with the GOT address its call/pop left in %eax.
 
 	.text
 	.p2align 4
@@ -67,6 +83,160 @@ twice:
 	ret
 	.cfi_endproc
 	.size	twice, .-twice
+
+	.p2align 4
+	.globl	clang_scale
+	.type	clang_scale, @function
+clang_scale:
+	.cfi_startproc
+	pushl	%ebp
+	.cfi_def_cfa_offset 8
+	.cfi_offset %ebp, -8
+	movl	%esp, %ebp
+	.cfi_def_cfa_register %ebp
+	andl	$-16, %esp
+	subl	$16, %esp
+	calll	clang_scale_pop
+clang_scale_pop:
+	popl	%eax
+.Lscale_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Lscale_got-clang_scale_pop), %eax
+	movl	8(%ebp), %ecx
+	movl	%ecx, 12(%esp)
+	movl	12(%esp), %ecx
+	imull	factor@GOTOFF(%eax), %ecx
+	movl	%ecx, %eax
+	movl	%ebp, %esp
+	popl	%ebp
+	.cfi_def_cfa %esp, 4
+	retl
+	.cfi_endproc
+	.size	clang_scale, .-clang_scale
+
+	.p2align 4
+	.globl	clang_lower
+	.type	clang_lower, @function
+clang_lower:
+	.cfi_startproc
+	pushl	%ebp
+	.cfi_def_cfa_offset 8
+	.cfi_offset %ebp, -8
+	movl	%esp, %ebp
+	.cfi_def_cfa_register %ebp
+	pushl	%ebx
+	andl	$-16, %esp
+	subl	$32, %esp
+	.cfi_offset %ebx, -12
+	calll	clang_lower_pop
+clang_lower_pop:
+	popl	%eax
+.Llower_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Llower_got-clang_lower_pop), %eax
+	movb	8(%ebp), %cl
+	movzbl	8(%ebp), %edx
+	movl	%edx, (%esp)
+	movl	%eax, %ebx
+	movb	%cl, 19(%esp)
+	calll	tolower@PLT
+	leal	-4(%ebp), %esp
+	popl	%ebx
+	popl	%ebp
+	.cfi_def_cfa %esp, 4
+	retl
+	.cfi_endproc
+	.size	clang_lower, .-clang_lower
+
+	.p2align 4
+	.globl	clang_reload
+	.type	clang_reload, @function
+clang_reload:
+	.cfi_startproc
+	pushl	%ebp
+	.cfi_def_cfa_offset 8
+	.cfi_offset %ebp, -8
+	movl	%esp, %ebp
+	.cfi_def_cfa_register %ebp
+	pushl	%ebx
+	andl	$-16, %esp
+	subl	$16, %esp
+	.cfi_offset %ebx, -12
+	calll	clang_reload_pop
+clang_reload_pop:
+	popl	%eax
+.Lreload_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Lreload_got-clang_reload_pop), %eax
+	movl	%eax, 8(%esp)
+	movl	8(%ebp), %ecx
+	movl	%ecx, (%esp)
+	movl	%eax, %ebx
+	calll	tolower@PLT
+	movl	8(%esp), %ecx
+	addl	factor@GOTOFF(%ecx), %eax
+	leal	-4(%ebp), %esp
+	popl	%ebx
+	popl	%ebp
+	.cfi_def_cfa %esp, 4
+	retl
+	.cfi_endproc
+	.size	clang_reload, .-clang_reload
+
+	.p2align 4
+	.globl	gcc_lookup
+	.type	gcc_lookup, @function
+gcc_lookup:
+	.cfi_startproc
+	call	__x86.get_pc_thunk.dx
+	addl	$_GLOBAL_OFFSET_TABLE_, %edx
+	movl	4(%esp), %eax
+	andl	$7, %eax
+	movl	table@GOTOFF(%edx,%eax,4), %eax
+	ret
+	.cfi_endproc
+	.size	gcc_lookup, .-gcc_lookup
+
+	.p2align 4
+	.globl	clang_lookup
+	.type	clang_lookup, @function
+clang_lookup:
+	.cfi_startproc
+	calll	.Llookup_pc
+	.cfi_adjust_cfa_offset 4
+.Llookup_pc:
+	popl	%ecx
+	.cfi_adjust_cfa_offset -4
+.Llookup_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Llookup_got-.Llookup_pc), %ecx
+	movl	4(%esp), %eax
+	andl	$7, %eax
+	movl	table@GOTOFF(%ecx,%eax,4), %eax
+	retl
+	.cfi_endproc
+	.size	clang_lookup, .-clang_lookup
+
+	.p2align 4
+	.globl	clang_set_factor
+	.type	clang_set_factor, @function
+clang_set_factor:
+	.cfi_startproc
+	calll	.Lset_factor_pc
+	.cfi_adjust_cfa_offset 4
+.Lset_factor_pc:
+	popl	%eax
+	.cfi_adjust_cfa_offset -4
+.Lset_factor_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Lset_factor_got-.Lset_factor_pc), %eax
+	movl	4(%esp), %ecx
+	movl	%ecx, factor@GOTOFF(%eax)
+	retl
+	.cfi_endproc
+	.size	clang_set_factor, .-clang_set_factor
+
+	.section	.rodata
+	.p2align 2
+	.type	table, @object
+	.size	table, 32
+table:
+	.long	3, 1, 4, 1, 5, 9, 2, 6
 
 	.data
 	.p2align 2

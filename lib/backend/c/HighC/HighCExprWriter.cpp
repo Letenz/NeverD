@@ -18,6 +18,7 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/DataAccessWidths.h"
 #include "neverd/Limits.h"
+#include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X87Context.h"
@@ -258,6 +259,38 @@ std::string castOperand(const std::string &Text) {
     }
   }
   return Text;
+}
+
+/// Whether \p Text is a postfix expression whose last step reads a member:
+/// `p->next`, `(*(T *)&slot).opaque`, and not a cast of one
+/// (`(uint32_t)s.len`) or an operation on it.
+bool readsMemberLast(llvm::StringRef Text) {
+  size_t End = Text.size();
+  while (End && (llvm::isAlnum(Text[End - 1]) || Text[End - 1] == '_'))
+    --End;
+  if (End == Text.size() || End == 0 ||
+      !(Text[End - 1] == '.' || Text.take_front(End).ends_with("->")))
+    return false;
+  int Depth = 0;
+  for (size_t I = 0; I < End; ++I) {
+    const char C = Text[I];
+    if (C == '"' || C == '\'')
+      return false;
+    if (C == '(' || C == '[') {
+      ++Depth;
+    } else if (C == ')' || C == ']') {
+      // A parenthesis the text opens with closes on an operand, which a
+      // member step follows, not on a cast's type.
+      if (--Depth == 0 && Text.front() == '(' && C == ')' &&
+          !Text.drop_front(I + 1).starts_with(".") &&
+          !Text.drop_front(I + 1).starts_with("->") &&
+          !Text.drop_front(I + 1).starts_with("["))
+        return false;
+    } else if (Depth == 0 && C == ' ') {
+      return false;
+    }
+  }
+  return Depth == 0;
 }
 } // namespace
 
@@ -1007,6 +1040,16 @@ std::string HighCWriter::storedValueText(const HighExpr &Value,
       if (const std::string Text = exprStr(Value);
           isBarePointerName(*Inner, Text))
         return "(" + typeToC(To) + ")(uintptr_t)(" + Text + ")";
+    // Or a value forwarded from a typed record's pointer member or from a
+    // pointer object (`*(uint32_t *)slot = funcs->opaque`), printed only
+    // then: printing has effects, such as the temporaries a copy takes.
+    if (printedPointerSource(Value))
+      if (const std::string Text = exprStr(Value); printsPointer(Value, Text))
+        return "(" + typeToC(To) + ")(uintptr_t)(" + Text + ")";
+    // Or the address of a typed record's member (`&s->bl_tree[18]`).
+    if (const HighExpr *Inner = peelIntegerViewOps(&Value);
+        Inner && Inner->Kind == ExprKind::BinOp && typedMemberAddress(*Inner))
+      return "(" + typeToC(To) + ")(uintptr_t)(" + exprStr(Value) + ")";
   }
   if (Ordering == NdMemoryOrdering::None && Value.Type &&
       Value.Type->Kind == NdTypeKind::Int)
@@ -1391,6 +1434,19 @@ std::string HighCWriter::callIdentifier(const HighExpr &E) const {
         return Declared == ExternalFunctionIdentifiers.end() ? Slot
                                                              : Declared->second;
       }
+    // The routine takes the call's arguments as its header declares them;
+    // a call the stub's recovered signature gave fewer stays the stub's.
+    if (std::string Routine = headerRoutineOfStub(*It->second);
+        !Routine.empty()) {
+      const size_t Arguments = E.Operands.size();
+      const libc::LibCVariant Variant = Opts.libcVariant();
+      if (const unsigned Fixed = libc::varArgFixedCount(Routine, Variant))
+        return Arguments >= Fixed ? Routine : Name;
+      if (const auto Arity = libc::libcArity(Routine, Variant);
+          Arity &&
+          Arguments == static_cast<size_t>(Arity->IntArgs + Arity->FpArgs))
+        return Routine;
+    }
     return Name;
   }
   // A thunk named like the import it jumps to (`calloc: jmp [__imp_calloc]`)
@@ -1408,6 +1464,32 @@ std::string HighCWriter::callIdentifier(const HighExpr &E) const {
       !isVariadicImportStub(*At->second))
     return functionIdentifier(*At->second);
   return Name + "_" + llvm::utohexstr(E.CallAddr);
+}
+
+std::string HighCWriter::headerRoutineOfStub(const HighFunc &Func) const {
+  if (!Opts.Image || !Func.Entry)
+    return {};
+  const Import *Imp = Opts.Image->findImportStubAt(Func.Entry);
+  if (!Imp || Imp->Name.empty())
+    return {};
+  const std::string Routine =
+      cNameOfSymbol(symbolOfImportName(Imp->Name, Opts.Format, Opts.TheArch),
+                    Opts.Format, Opts.TheArch)
+          .str();
+  const auto Identifier = FunctionIdentifiers.find(&Func);
+  // A routine the user declares is called as the user declares it.
+  if (!copiesHeaderRoutine(Routine, Opts.Format) ||
+      userDeclaresCallee(Routine) || Identifier == FunctionIdentifiers.end() ||
+      Identifier->second == Routine)
+    return {};
+  return Routine;
+}
+
+bool HighCWriter::libraryDeclaresDefinition(const HighFunc &Func) const {
+  if (!Dbg || !Func.Entry)
+    return false;
+  const std::optional<FunctionSym> Declared = Dbg->resolveFunction(Func.Entry);
+  return Declared && Declared->PrototypeFromCLibrary;
 }
 
 bool HighCWriter::isVariadicImportStub(const HighFunc &Func) const {
@@ -1592,7 +1674,7 @@ std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
     }
   }
   if (DebugName.empty() && E.CallAddr) {
-    if (auto FS = Dbg->resolveFunction(E.CallAddr); FS && !FS->Name.empty())
+    if (auto FS = debugFunctionCalled(E); FS && !FS->Name.empty())
       DebugName = FS->Name;
     else if (auto Data = Dbg->resolveDataObject(E.CallAddr);
              Data && !Data->Name.empty())
@@ -1690,6 +1772,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
         });
     if (!Typed.empty())
       return Typed;
+    // ud2 and int3 are Microsoft's __ud2 and __debugbreak only where the
+    // unit includes <intrin.h>.
+    if (const char *Builtin = x86GnuTrapBuiltin(E.IntrinsicId, Opts.Format))
+      return std::string(Builtin) + "()";
 
     // A trap or a breakpoint whose code the intrinsic keeps spells as its
     // builtin, which takes no code: the statement prints the instruction
@@ -1837,6 +1923,12 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   };
   const llvm::StringRef HeaderCallee = headerDeclaredCallee(E);
   const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format);
+  // A call through a typed member that points to a function passes the
+  // parameters its type declares (debugCallArgLimit), as their types.
+  const TypeRef SlotFunction =
+      !Defined && !Callee && E.IsIndirectCall && E.IndirectTarget
+          ? typedSlotFunction(*E.IndirectTarget)
+          : nullptr;
   // A callee printed in this file fixes the count by its signature; otherwise
   // debug info and MSVC member knowledge may trim ABI-only extra operands.
   size_t PrintedArgs =
@@ -1890,18 +1982,50 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     }
     if (Callee) {
       // A callee this file defines takes what its prototype declares.  A
-      // record the header declaring the callee defines, which the unit does
-      // not name, is reached through void *, which converts to it.
-      if (TypeRef Expected = Defined ? emittedParamTypeAt(*Defined, I)
-                                     : expectedDebugCallArgType(*Callee, I)) {
-        if (!Defined && headerRecordOfCallee(E, Expected))
-          Expected =
-              Expected->Kind == NdTypeKind::Ptr ? NdType::makePtr() : nullptr;
+      // record or a typedef the header declaring the callee defines, which
+      // the unit does not name (bionic's long time_t, where the unit's
+      // exact widths say int32_t), is reached through void *, which
+      // converts to it.
+      const TypeRef Declared = !Defined && I < Callee->Params.size()
+                                   ? Callee->Params[I].second
+                                   : nullptr;
+      const bool Array = Declared && Declared->Kind == NdTypeKind::Array;
+      TypeRef Expected = Defined ? emittedParamTypeAt(*Defined, I)
+                                 : expectedDebugCallArgType(*Callee, I);
+      // An array parameter is the pointer to its element that C passes.
+      if (!Expected && Array)
+        Expected = NdType::makePtr(Declared->ElemType);
+      if (Expected) {
+        // The pointer to a typedef, or the array a parameter declares
+        // (jmp_buf), converts explicitly, as no pointer of the unit's own
+        // types does.
+        const bool Typedef =
+            Array || (Expected->Kind == NdTypeKind::Ptr && Expected->Pointee &&
+                      Expected->Pointee->Kind == NdTypeKind::Int &&
+                      !Expected->Pointee->TypedefName.empty());
+        const bool Header =
+            !Defined && headerTypeOfCallee(E, Array ? Declared : Expected);
+        if (Header)
+          Expected = Expected->Kind == NdTypeKind::Ptr || Array
+                         ? NdType::makePtr()
+                         : nullptr;
         if (Expected) {
-          S += exprStrAsTypedArg(*Op, Expected);
+          std::string Text = exprStrAsTypedArg(*Op, Expected);
+          if (Header && Typedef && Text != "0" &&
+              !llvm::StringRef(Text).starts_with("(void*)"))
+            Text =
+                "(void*)" +
+                std::string(printsAsInteger(*Op, Text) ? "(uintptr_t)" : "") +
+                castOperand(Text);
+          S += Text;
           continue;
         }
       }
+    }
+    if (SlotFunction && I < SlotFunction->ParamTypes.size() &&
+        SlotFunction->ParamTypes[I]) {
+      S += exprStrAsTypedArg(*Op, SlotFunction->ParamTypes[I]);
+      continue;
     }
     if (Msvc) {
       if (const TypeRef Expected = I == 0 ? msvcSyntheticThis(Name, *Msvc)
@@ -2145,13 +2269,20 @@ bool HighCWriter::debugDeclaresCallee(const HighExpr &E) const {
   return !libc::isKnownFunction(Symbol.str()) || !includesHeaderOf(Symbol);
 }
 
-bool HighCWriter::headerRecordOfCallee(const HighExpr &E,
-                                       const TypeRef &Type) const {
+bool HighCWriter::headerTypeOfCallee(const HighExpr &E,
+                                     const TypeRef &Type) const {
   TypeRef Pointee = Type;
   while (Pointee && Pointee->Kind == NdTypeKind::Ptr)
     Pointee = Pointee->Pointee;
-  if (!Pointee || Pointee->Kind != NdTypeKind::Struct || Pointee->IsEnum ||
-      Pointee->SourceName.empty() || E.Kind != ExprKind::Call ||
+  const bool Record = Pointee && Pointee->Kind == NdTypeKind::Struct &&
+                      !Pointee->IsEnum && !Pointee->SourceName.empty();
+  const bool Typedef = Pointee && Pointee != Type &&
+                       Pointee->Kind == NdTypeKind::Int &&
+                       !Pointee->TypedefName.empty();
+  // An array parameter, as jmp_buf is, is a pointer to the header's element,
+  // which may be long where the unit's exact widths say int32_t.
+  const bool Array = Type && Type->Kind == NdTypeKind::Array;
+  if ((!Record && !Typedef && !Array) || E.Kind != ExprKind::Call ||
       E.IsIndirectCall || E.CallTarget.empty() || calledDefinition(E))
     return false;
   llvm::StringRef Symbol = E.CallTarget;
@@ -2163,6 +2294,13 @@ bool HighCWriter::headerRecordOfCallee(const HighExpr &E,
 bool HighCWriter::includesHeaderOf(llvm::StringRef Name) const {
   const char *Header = libc::headerFor(Name);
   return Header && IncludedHeaders.count(Header);
+}
+
+bool HighCWriter::userDeclaresCallee(llvm::StringRef Name) const {
+  const auto It = DebugExternSigs.find(Name.str());
+  return It != DebugExternSigs.end() &&
+         It->second.PrototypeLibrary == UserPrototypeLibrary &&
+         !ConflictingDebugExternSigs.count(Name.str());
 }
 
 const libc::LibCPrototype *
@@ -2343,11 +2481,59 @@ TypeRef HighCWriter::typedPointerMemberLoad(const HighExpr &Value) const {
   return Member && Member->Kind == NdTypeKind::Ptr ? Member : nullptr;
 }
 
+const HighExpr *HighCWriter::printedPointerSource(const HighExpr &Value) const {
+  const HighExpr *Shown = forwardedExpr(&Value);
+  if (!Shown)
+    return nullptr;
+  // A temporary that carries a member prints as the load of it.
+  if (Shown->Kind == ExprKind::Var || Shown->Kind == ExprKind::Phi)
+    if (const auto Source = FieldForwardSources.find(varName(Shown->Var));
+        Source != FieldForwardSources.end() && Source->second)
+      Shown = Source->second;
+  return printedPointerType(*Shown) ? Shown : nullptr;
+}
+
+bool HighCWriter::printsPointer(const HighExpr &Value,
+                                llvm::StringRef Text) const {
+  if (const HighExpr *Shown = forwardedExpr(&Value);
+      Shown && isBarePointerName(*Shown, Text))
+    return true;
+  if (!printedPointerSource(Value))
+    return false;
+  // The text is the pointer itself, not a conversion of it.
+  return readsMemberLast(Text) ||
+         (!Text.empty() &&
+          (llvm::isAlpha(Text.front()) || Text.front() == '_') &&
+          llvm::all_of(Text,
+                       [](char C) { return llvm::isAlnum(C) || C == '_'; }));
+}
+
 TypeRef HighCWriter::printedPointerType(const HighExpr &Value) const {
   if (const TypeRef Local = callResultPointerType(Value))
     return Local;
   if (const TypeRef Member = typedPointerMemberLoad(Value))
     return Member;
+  // A pointer member of a record a frame slot holds, as a debug local's
+  // (`def.opaque`), which the storage's record view reads once the storage
+  // replaces the slot.
+  if (Value.Kind == ExprKind::Load && !Value.Operands.empty() &&
+      Value.Operands[0] && Value.Type)
+    if (const auto Disp = frameDisplacement(*Value.Operands[0]))
+      for (const auto *Slots : {&FrameSlots, &FrameStorageSlots}) {
+        auto Holder = Slots->upper_bound(*Disp);
+        if (Holder == Slots->begin())
+          continue;
+        --Holder;
+        const TypeRef &Record = Holder->second.Type;
+        const int64_t Offset = *Disp - Holder->first;
+        if (!Record || Record->Kind != NdTypeKind::Struct || Record->IsEnum ||
+            Offset < 0 || static_cast<uint64_t>(Offset) >= Record->Size)
+          continue;
+        if (const TypeRef Member = cDisplayType(Record->displayFieldTypeAt(
+                static_cast<uint64_t>(Offset), Value.Type->Size));
+            Member && Member->Kind == NdTypeKind::Ptr)
+          return Member;
+      }
   if (Value.Kind != ExprKind::Load || Value.Operands.empty() ||
       !Value.Operands[0] || !Value.Type)
     return nullptr;
@@ -2362,6 +2548,20 @@ TypeRef HighCWriter::printedPointerType(const HighExpr &Value) const {
                  Declared->Size == Value.Type->Size
              ? Declared
              : nullptr;
+}
+
+std::optional<FunctionSym>
+HighCWriter::debugFunctionCalled(const HighExpr &E) const {
+  if (!Dbg || !E.CallAddr)
+    return std::nullopt;
+  std::optional<FunctionSym> Function = Dbg->resolveFunction(E.CallAddr);
+  // An indirect call whose callee is unknown names its own instruction
+  // (lowerCallInd), which debug information reads as inside its caller: the
+  // function it gives is the caller, not the callee.
+  if (Function && E.IsIndirectCall && Function->Addr &&
+      Function->Addr != E.CallAddr)
+    return std::nullopt;
+  return Function;
 }
 
 std::optional<FunctionSym> HighCWriter::debugCallee(const HighExpr &E) const {
@@ -2388,7 +2588,7 @@ std::optional<FunctionSym> HighCWriter::debugCallee(const HighExpr &E) const {
     }
   }
   if (E.CallAddr)
-    if (auto FS = Dbg->resolveFunction(E.CallAddr); FS) {
+    if (auto FS = debugFunctionCalled(E); FS) {
       if (!FS->Params.empty())
         return FS;
       const std::string Name = callIdentifier(E);
@@ -3087,14 +3287,13 @@ TypeRef HighCWriter::displayCallArgType(const HighExpr &Call,
                                         size_t Index) const {
   auto FromFS = [&](const FunctionSym &FS) -> TypeRef {
     TypeRef Ty = cDisplayType(expectedDebugCallArgType(FS, Index));
-    return isNamedPointerDisplay(Ty) && !headerRecordOfCallee(Call, Ty)
+    return isNamedPointerDisplay(Ty) && !headerTypeOfCallee(Call, Ty)
                ? Ty
                : TypeRef{};
   };
-  if (Dbg && Call.CallAddr)
-    if (auto FS = Dbg->resolveFunction(Call.CallAddr))
-      if (TypeRef Ty = FromFS(*FS))
-        return Ty;
+  if (auto FS = debugFunctionCalled(Call))
+    if (TypeRef Ty = FromFS(*FS))
+      return Ty;
   if (auto FS = debugCallee(Call))
     if (TypeRef Ty = FromFS(*FS))
       return Ty;
@@ -3297,19 +3496,24 @@ std::string HighCWriter::typedArgumentText(const HighExpr &E,
   // C converts an integer argument by the signedness of its own type, so an
   // extension to a wider parameter cannot pass its narrower source unless
   // that source extends the same way.
-  if (Expected && Expected->Kind == NdTypeKind::Int && !Expected->IsEnum) {
-    const HighExpr &Source = lowBytesSource(E, Expected->Size);
-    if (Source.Kind == ExprKind::UnaryOp &&
-        (Source.Op == NdOp::INT_ZEXT || Source.Op == NdOp::INT_SEXT) &&
-        !Source.Operands.empty() && Source.Operands[0] &&
-        Source.Operands[0]->Kind != ExprKind::Const &&
-        Source.Operands[0]->Type &&
-        Source.Operands[0]->Type->Size < Expected->Size) {
-      if (auto Converted = implicitIntegerConversion(E, Expected))
-        return *Converted;
-      return exprStr(E);
-    }
-  }
+  auto WideningExtension = [&](const HighExpr &Value) {
+    if (!Expected || Expected->Kind != NdTypeKind::Int || Expected->IsEnum)
+      return false;
+    const HighExpr &Source = lowBytesSource(Value, Expected->Size);
+    return Source.Kind == ExprKind::UnaryOp &&
+           (Source.Op == NdOp::INT_ZEXT || Source.Op == NdOp::INT_SEXT) &&
+           !Source.Operands.empty() && Source.Operands[0] &&
+           Source.Operands[0]->Kind != ExprKind::Const &&
+           Source.Operands[0]->Type &&
+           Source.Operands[0]->Type->Size < Expected->Size;
+  };
+  auto ExtendedArgument = [&](const HighExpr &Value) {
+    if (auto Converted = implicitIntegerConversion(Value, Expected))
+      return *Converted;
+    return exprStr(Value);
+  };
+  if (WideningExtension(E))
+    return ExtendedArgument(E);
   const HighExpr *Inner = peelIntegerViewOps(&E);
   if (!Inner)
     Inner = &E;
@@ -3321,6 +3525,10 @@ std::string HighCWriter::typedArgumentText(const HighExpr &E,
     auto Fwd = ValueForward.find(Name);
     if (Fwd == ValueForward.end() || !Fwd->second || Fwd->second == Inner)
       break;
+    // So does a forwarded definition: peeling its extension would pass the
+    // narrower source's own conversion instead.
+    if (WideningExtension(*Fwd->second))
+      return ExtendedArgument(*Fwd->second);
     const HighExpr *Next = peelIntegerViewOps(Fwd->second);
     if (!Next || Next == Inner)
       break;
@@ -3350,8 +3558,16 @@ std::string HighCWriter::typedArgumentText(const HighExpr &E,
       Inner = &E;
     if (Inner->Kind == ExprKind::Load && !Inner->Operands.empty() &&
         Inner->Operands[0]) {
-      if (auto Slot = namedFrameSlot(*Inner->Operands[0]))
+      // A slot the unit declares an integer holds the address as one.
+      if (auto Slot = namedFrameSlot(*Inner->Operands[0])) {
+        const auto Disp = frameDisplacement(*Inner->Operands[0]);
+        const auto Held = Disp ? FrameSlots.find(*Disp) : FrameSlots.end();
+        if (Held != FrameSlots.end() && Held->second.Type &&
+            Held->second.Type->Kind == NdTypeKind::Int)
+          return "(" + typeToC(Expected) + ")(uintptr_t)" +
+                 copyForwardName(*Slot);
         return copyForwardName(*Slot);
+      }
     }
     if (auto Slot = namedFrameSlot(*Inner))
       return "&" + *Slot;
@@ -3691,6 +3907,8 @@ bool readsWholeRecord(const NdType &Record, uint64_t Offset,
          !Type->displayFieldPathAt(0, AccessSize, /*EnterNestedAtZero=*/true,
                                    /*ArrayElements=*/true, Class);
 }
+
+std::optional<std::string> canonicalizeDisplayPath(llvm::StringRef Field);
 } // namespace
 
 TypeRef HighCWriter::declaredRecordPointee(const HighExpr &Base) const {
@@ -3846,7 +4064,8 @@ HighCWriter::typedPointerOffset(const HighExpr &Addr) const {
 }
 
 std::optional<HighCWriter::TypedIndexAccess>
-HighCWriter::typedIndexAccess(const HighExpr &Addr) {
+HighCWriter::typedIndexAccess(const HighExpr &Addr, uint16_t AccessSize,
+                              NdAccessClass Class) {
   const HighExpr *Add = unwrapIntegerView(&Addr);
   if (!Add || Add->Kind != ExprKind::BinOp || Add->Op != NdOp::INT_ADD ||
       Add->Operands.size() != 2 || !Add->Operands[0] || !Add->Operands[1])
@@ -3935,12 +4154,18 @@ HighCWriter::typedIndexAccess(const HighExpr &Addr) {
       PtrTy = nullptr;
     if (!PtrTy && Base->Type && Base->Type->Kind == NdTypeKind::Ptr)
       PtrTy = Base->Type;
-    if (BasePath.empty()) {
-      if (auto Member = typedMemberAccess(*Base))
-        BasePath = *Member;
-      else
-        BasePath = Name;
-    }
+    // A pointer that holds an array member's address names that member,
+    // as `s->heap` is the array `s + 0x10` indexes; a pointer to a record
+    // holds the address of its elements, not of the first one's member.
+    if (BasePath.empty())
+      if (const auto Peeled = typedPointerOffset(*Base);
+          Peeled && Peeled->second != 0)
+        if (const TypeRef MemberTy = typedMemberType(*Base);
+            MemberTy && MemberTy->Kind == NdTypeKind::Array)
+          if (auto Member = typedMemberAccess(*Base))
+            BasePath = *Member;
+    if (BasePath.empty())
+      BasePath = Name;
   }
   if (PtrTy && PtrTy->Kind == NdTypeKind::Struct && !PtrTy->IsEnum &&
       Stride != 0 && Stride <= 0xFFFF) {
@@ -3964,9 +4189,32 @@ HighCWriter::typedIndexAccess(const HighExpr &Addr) {
   completeDisplayRecord(Dbg, PtrTy);
   completeDisplayRecord(Dbg, PtrTy->Pointee);
   TypedIndexAccess Out;
+  Out.ElemType = PtrTy->Pointee;
+  // An access narrower than the element reads the member at its start of
+  // its width, as `tree[n].fc.freq`, where one is; no scalar is a record,
+  // and none is the element of another width.
+  if (AccessSize && AccessSize != Out.ElemType->Size) {
+    const NdType &Element = *Out.ElemType;
+    if (Element.Kind != NdTypeKind::Struct || Element.IsEnum ||
+        readsWholeRecord(Element, 0, AccessSize, /*EnterNestedAtZero=*/true,
+                         Class))
+      return std::nullopt;
+    const auto Field =
+        Element.displayFieldPathAt(0, AccessSize, /*EnterNestedAtZero=*/true,
+                                   /*ArrayElements=*/true, Class);
+    auto Path = Field ? canonicalizeDisplayPath(*Field) : std::nullopt;
+    TypeRef FieldTy = Element.displayFieldTypeAt(0, AccessSize,
+                                                 /*ArrayElements=*/true, Class);
+    if (!Path || !FieldTy)
+      return std::nullopt;
+    Out.Member = std::move(*Path);
+    Out.ElemType = std::move(FieldTy);
+  } else if (AccessSize && Out.ElemType->Kind == NdTypeKind::Struct &&
+             !Out.ElemType->IsEnum) {
+    return std::nullopt;
+  }
   Out.Base = std::move(BasePath);
   Out.Index = exprStr(*Index);
-  Out.ElemType = PtrTy->Pointee;
   return Out;
 }
 
@@ -5190,6 +5438,18 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec,
   UntypedArithmeticTexts.erase(&E);
   UnsignedCarrierTexts.erase(&E);
   std::string Text = exprStrImpl(E, ParentPrec, Destination);
+  // C has no bitwise, shift, multiplicative or remainder operator on a
+  // pointer: a local the text declares one, or a pointer member, is the
+  // address it holds as an integer there.
+  if (IntegerViewOperands.count(&E) && printsPointer(E, Text)) {
+    Text = "(uintptr_t)" + castOperand(Text);
+    if (getTargetRegInfo(Opts.TheArch).PointerSize == sizeof(uint64_t))
+      PrintedIntegerTypes[&E] = {sizeof(uint64_t), false};
+    return SourceRecorder && CurrentFunc
+               ? SourceRecorder->expression(CurrentFunc->Entry, E,
+                                            std::move(Text))
+               : Text;
+  }
   // A local's name has its declared type.
   std::string Storage;
   if (const llvm::StringRef Name = plainText(Text, Storage);
@@ -5331,7 +5591,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return "(" + typeToC(E.Type) + ")" + *Anchored;
       return PointerInteger(*Anchored);
     }
-    if (auto Lit = stringLiteralAt(Opts.Image, Dbg, E.ConstVal))
+    if (auto Lit = stringLiteralAt(Opts.Image, Dbg, E.ConstVal);
+        Lit && !objectOutgrowsLiteral(E.ConstVal, *Lit))
       return LiteralAddressOperands.count(&E)
                  ? PointerInteger("(uintptr_t)" + *Lit)
                  : *Lit;
@@ -5454,8 +5715,9 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
               typedMemberAccess(*E.Operands[0], E.Type ? E.Type->Size : 0,
                                 /*EnterNestedAtZero=*/true, accessClassOf(&E)))
         return *Member;
-      if (auto Index = typedIndexAccess(*E.Operands[0]))
-        return Index->Base + "[" + Index->Index + "]";
+      if (auto Index = typedIndexAccess(
+              *E.Operands[0], E.Type ? E.Type->Size : 0, accessClassOf(&E)))
+        return Index->text();
       if (auto Field = cxxCatchFieldAccess(*E.Operands[0]))
         return *Field;
     }
@@ -5969,7 +6231,12 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
       Expr.Type->Size == FuncReturnType->Size)
     if (auto Converted = implicitIntegerConversion(Expr, FuncReturnType))
       return *Converted;
-  return exprStr(Expr);
+  // A pointer a local, a member or an object holds returns as the address
+  // it is, which the integer result takes.
+  std::string Text = exprStr(Expr);
+  if (printsPointer(Expr, Text))
+    return "(" + typeToC(FuncReturnType) + ")(uintptr_t)" + castOperand(Text);
+  return Text;
 }
 
 std::string HighCWriter::printedForwardedVar(const std::string &Name,
@@ -6227,6 +6494,32 @@ HighCWriter::indexedObjectAt(va_t Addr) const {
   return std::pair{Begin, static_cast<uint64_t>(End - Begin)};
 }
 
+bool HighCWriter::objectOutgrowsLiteral(va_t Addr,
+                                        llvm::StringRef Literal) const {
+  const auto Object = ImageObjects.find(Addr);
+  if (!Opts.Image || Object == ImageObjects.end() || Object->second.String)
+    return false;
+  const ImageObject &Held = Object->second;
+  uint64_t Extent =
+      std::max<uint64_t>({Held.Type ? Held.Type->Size : uint64_t{0},
+                          Held.ArrayBytes, Held.IndexedBytes});
+  for (const uint16_t Width : Held.MemoryWidths)
+    Extent = std::max<uint64_t>(Extent, Width);
+  // The literal's units run to its terminator, which ends it inside the
+  // object when the object holds more.
+  const unsigned Unit = Literal.starts_with("L\"")   ? 2
+                        : Literal.starts_with("U\"") ? 4
+                                                     : 1;
+  for (uint64_t At = 0; At + Unit <= Extent; At += Unit) {
+    const uint8_t *Bytes = Opts.Image->readVA(Addr + At, Unit);
+    if (!Bytes)
+      return false;
+    if (std::all_of(Bytes, Bytes + Unit, [](uint8_t Byte) { return !Byte; }))
+      return At + Unit < Extent;
+  }
+  return false;
+}
+
 std::optional<std::string> HighCWriter::imageBackingAddress(va_t Addr) const {
   for (const ImageBacking &Backing : ImageBackings) {
     if (Addr < Backing.Base)
@@ -6465,6 +6758,13 @@ bool HighCWriter::isEmittedParamName(llvm::StringRef Name) const {
       }))
     return true;
   return false;
+}
+
+bool HighCWriter::namesFileScope(llvm::StringRef Name) const {
+  const std::string Key = Name.str();
+  return GlobalIdentifierAllocator.holds(Name) || UnitCallTargets.count(Key) ||
+         ExternFuncs.count(Key) || DefinedFuncs.count(Key) ||
+         RecordTypedefs.count(Key);
 }
 
 bool HighCWriter::isReservedParamDisplayName(llvm::StringRef Name) const {

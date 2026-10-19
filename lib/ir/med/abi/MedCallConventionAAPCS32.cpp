@@ -43,6 +43,7 @@ bool externalFloatsInCoreRegisters(const BinaryImage &Img) {
 extern const CallArgumentConvention AAPCS32CallArguments;
 const CallArgumentConvention AAPCS32CallArguments = {
     .TheArch = Arch::ARM,
+    .ImportArgumentsFromPrototype = true,
     .PairAlignedWideArguments = true,
     .ExternalFloatsInCoreRegisters = externalFloatsInCoreRegisters,
     .PrototypeArgCount = itaniumRuntimeArgCount,

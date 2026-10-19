@@ -232,6 +232,7 @@ private:
   BionicResult kernelCall(std::optional<linux_model::ServiceKind> Kind,
                           const NativeCallEvent &Call);
   BionicResult usleep(const NativeCallEvent &Call);
+  BionicResult getcwd(const NativeCallEvent &Call);
   BionicResult pollCall(const NativeCallEvent &Call);
   BionicResult openLibrary(NativeCallEvent &Call);
   BionicResult lookupSymbol(NativeCallEvent &Call);
@@ -335,6 +336,8 @@ private:
   BionicResult registerExit(const NativeCallEvent &Call);
   BionicResult finalize(uint64_t DSO);
   BionicResult tokenize(const NativeCallEvent &Call);
+  BionicResult findSubstring(const NativeCallEvent &Call);
+  BionicResult copyBoundedString(const NativeCallEvent &Call);
   BionicResult findCharacter(const NativeCallEvent &Call);
   class ArgumentReader;
   class StringFormatter;

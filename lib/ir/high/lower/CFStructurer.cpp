@@ -683,8 +683,11 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
       const size_t StatementBegin = Func.Body.size();
       switch (CurOp.Opcode) {
       case NdOp::STORE:
-        // A prologue save keeps the caller's register, which no source reads.
-        if (!CurOp.PrologueSave)
+        // A prologue save keeps the caller's register, which no source reads,
+        // and a get-PC call pushes the return address only for its pop, as a
+        // spill of a PC-rooted value is stored only for its reloads.
+        if (!CurOp.PrologueSave &&
+            !I386PcRootedStores.count({CurOp.Addr, CurOp.OriginSeq}))
           lowerStore(Func, CurOp);
         break;
       case NdOp::CALL:

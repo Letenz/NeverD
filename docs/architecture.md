@@ -8,6 +8,10 @@ This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
 
+## Checked alignment recovery
+
+`arch/x86_64` owns checked `RequireAligned` transitions for 64-bit addresses in the default address space. The common recovery engine charges the scalar proof operations and proves the rejection predicate is zero before retaining the original guard. Explicit nonfaulting execution does not supply that proof. Alignment does not require MXCSR state; segmented addresses and optional guards remain unsupported by this recovery adapter.
+
 ## Checked MXCSR recovery
 
 `X64MXCSRMask` enables raw MXCSR loads and scalar state reads/writes with an explicit effective mask (`0xffbf` or `0xffff`). The x64 adapter owns the legal initial-state domain and transitions. Core charges work and requires a proof that reserved bits are clear; the nonfaulting flag alone supplies no such proof. Original intrinsics remain observable. MXCSR memory stores, source wrapping and native/LLVM certificates still require their own contracts.
@@ -777,6 +781,16 @@ alternatives of the class stay raw. HighC reads a float the code loads or
 stores as the bits of such a union as its floating alternative: `v->d`,
 not `__builtin_bit_cast(double, v->i)`.
 
+An array of no stated length holds no access whole. A flexible array
+member, the last of its record, holds every element from its start, so a
+store there names one (`v->array[0] = p`); no array is assignable. An
+indexed access through a record pointer (`typedIndexAccess`) reads the
+element only where it is that wide. A narrower one reads the member of
+that width at the element's start (`tree[n].freq`); union alternatives of
+the same width leave none, and the access stays raw. A pointer names a
+member as the array it indexes only where it holds an array member's
+address (`s->heap[i]`), never the first member of the record it points to.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and
@@ -1013,8 +1027,46 @@ runtime reads as C++ whatever its name. The C++ printer uses the shared symbol
 spelling rules for namespaces, STL aliases and qualified ATL types; non-default
 template arguments and explicit ABI arguments remain visible. DWARF record
 identities supply type spellings, not guessed layouts or implicit member-call
-conventions. The GUI offers a separate C choice for non-C images and omits it
-when only C is offered.
+conventions. Overloads that C numbers apart (`f` and `f_2`) read by their one
+C++ name, each linking its own symbol; two functions of one symbol, or a
+function and an object of one name, keep their C identifiers. C declares a
+record by the last component of its C++ name (`std::__ndk1::__sp_mut` is
+`__sp_mut`), which the C++ view names back, and spells one whose name a
+function of the unit or of the C library has by its tag (`struct stat`,
+`struct stat64`), or an object a C library header declares (`struct
+timezone` beside <time.h>'s `timezone`, `LibCDataObjects.def`): no typedef
+can declare the name beside the function or the object. The C
+the views read is C a compiler accepts. A local takes no name the unit gives
+a function, an object or a typedef at file scope (`td_ta_event_getmsg`'s
+result is no `msg` where the code calls `msg()`), and a bitwise, shift or
+multiplicative operator, an integer local and integer memory take a pointer as
+its address, an integer (`(uintptr_t)p & ~0xFF`): a local the text declares a
+pointer, a typed record's pointer member, a pointer object, or a value
+forwarded from one, or a pointer member of a record a frame slot holds, which
+the storage's record view reads (`(*(def *)&stack_storage.var_m114).opaque`).
+So does an integer result returning one, integer memory taking a member's
+address (`&s->bl_tree[18]`), and an integer local taking a call's pointer
+result. A local the text declares a pointer takes an integer,
+as an indirect call's result, as the address it is. A C library routine
+takes a pointer to a typedef of its header's (bionic's long time_t, which the
+unit's exact widths call int32_t) and an array parameter (jmp_buf) through
+void *, as it takes a pointer to a record of its header's. An indirect call
+whose callee is unknown names its own instruction (`lowerCallInd`), where
+debug information finds its caller: it takes no signature from there
+(`debugFunctionCalled`), so the caller's `void *` result is not the call's. A function the image defines under the name of a routine
+a C library declares is the image's copy of it and takes its address in
+HighC as in LLVM C (`strlen_5B130`): a C++ function whose C identifier would
+be the name (`sigaddset(unsigned long*, int)`), a routine of the call model's
+tables, and one whose prototype the debug context takes from a C library's
+header library (`__strlen_chk`, `FunctionSym::PrototypeFromCLibrary`). A call
+to a stub of such a routine names the routine where it passes the arguments
+the routine's header declares, and the stub otherwise. Both C routes spell
+x86's `ud2` `__builtin_trap()` and its `int3` `__builtin_debugtrap()` where no
+Windows header declares `__debugbreak`, and a variadic import's stub declares
+its fixed parameters as the program's C library does
+(`NEVERD_LIBC_VARIANT_FORWARD_FIXED`: bionic's and musl's ptrace and ioctl
+requests are ints, glibc's an enumeration and an unsigned long). The GUI offers a separate C choice for non-C
+images and omits it when only C is offered.
 
 The reader reads the definitions a unit holds of the program's local types:
 unions, anonymous structures and unions, bit-fields, enumerations,
@@ -1072,7 +1124,12 @@ of two branches keeps none (`withMergedCallSites`). A call of no single
 instruction, a jump into a scope, or a covered call in a handler's code keeps
 the pad in place. In C, every landing pad of the
 call-site table keeps its label, so a pad that only runs cleanups is not read
-as dead code after a return.
+as dead code after a return. A pad stores the exception object and selector
+the unwinder hands it: HighC prints a store of an unread call result as the
+call (`var_m30 = f()`, as x86 code spills a result right after the call), but
+never at a statement that a jump or the unwinder enters, after a call that
+never returns, or of the exception values, which no call returns
+(`collectUnusedCallStoreAlias`).
 
 DWARF subprogram extents are collected, sorted and swept once before publication
 instead of comparing every pair during ingestion. Duplicate entries, overlaps
@@ -2886,7 +2943,15 @@ pointer). Gaps are named `gapXX` by offset. A debug object of another type (a
 record, an array, a pointer or an enumeration) keeps its bytes raw, and a debug
 integer must have the access width. `frame_base`, the entry stack pointer's
 address in the storage, is declared only when the body reads it: for such raw
-bytes and for displacements outside the storage. Every access reaches the same
+bytes and for displacements outside the storage. The storage is aligned to
+sixteen bytes, and the entry stack pointer sits in it at the phase the target's
+callers keep (`syntheticEntryStackResidue`): 8 mod 16 on x86-64, and 12 mod 16
+on i386 under the System V psABI and on Darwin. A slot in which the code keeps
+a vector with `movaps` is then as aligned in C as on the machine, so its
+alignment guard holds there too. An address prints as the object the unit
+defines there, not as a string the object's first bytes spell, wherever the
+object holds more than that string (`(uintptr_t)&LCPI0_2 & 15`, not
+`L"\t" & 15`; `objectOutgrowsLiteral`). Every access reaches the same
 object, so a member and the bytes around it always alias. The record's tag is
 `frame_<entry>`: the C++, Go and Rust views parse the HighC text into one
 namespace of record tags, and the Go and Rust views print the record's type
@@ -4421,7 +4486,9 @@ Control and guard refinement precedes optional frame-partition retries; necessar
 
 Shared `SymContext::constantWindow` reports a bitwise window only when every result bit is proved constant. It follows existing extracts, a window contained in one concatenation operand, zero extension, and bitwise operations; unknown XOR inputs and arithmetic carries remain opaque. Results are limited to 64 bits, recursion to 32 levels, and work to 256 units. Every visited node, depth rejection and inspected concatenation operand is charged; copying a constant also costs its complete 64-bit word count. An incomplete proof yields no constant. `SymState` uses this read-only query to export constant register and temporary bytes; stored expressions and whole-word reconstruction keep their original identities. Memory-region export retains literal byte facts: eagerly adding derived partial-memory facts can fragment later input provenance and increase control-discovery work.
 
-`SymState` owns per-STORE preservation of already materialized bytes under an explicit separation contract. The actual STORE still executes; other memory regions, invalidation epochs and unknown defaults retain their post-store state. No missing byte is loaded or initialized. `SymExec` applies the contract to one ordinary STORE only. Recovery separately retains bounded affine spills and origin facts; joins remain conservative.
+`SymState` owns per-STORE preservation of already materialized bytes under an explicit separation contract. The actual STORE still executes; other memory regions, invalidation epochs and unknown defaults retain their post-store state. No missing byte is loaded or initialized. `SymExec` applies the contract to one ordinary STORE or one supported atomic write phase. Recovery separately retains bounded affine spills and origin facts; joins remain conservative.
+
+`SymStorePreservation::AdditionalRegions` extends that single-store contract to independently based current regions. `AdditionalRanges` remains relative to the primary base. Each declared exact symbolic base and half-open modular interval requires a caller-established separation proof for the complete actual write; no fixed relation among bases is inferred. References belong to the state context by caller contract: index, validity and width checks cannot authenticate an in-range reference from another context. A declaration naming the actual store's canonical base is rejected; ordinary same-region byte overlap already owns that region. Repeated or overlapping declarations form a union and are validated and scanned separately under the same budget. Complete validation and capture/restore accounting precede the one ordinary STORE. Only saved current byte views are restored afterward, without importing historical facts, materializing missing bytes or resetting the store's unknown epochs. Empty `AdditionalRegions` retains existing work accounting. Invalid or insufficient-budget `SymState::store` requests do not mutate state; `SymExec` retains its existing fail-closed behavior on refusal.
 
 `StringTransfer` owns bounded ordered scalar lowering. Recovery owns value proofs, shared budgets and re-certification of complete copied frame pointers; generated accesses reuse ordinary memory checks.
 
@@ -5018,6 +5085,12 @@ time solely from LinuxClock. Directory and stdio buffers belong to Bionic,
 which delegates refill, write, seek and close to this same kernel owner. Neither
 the JSON adapter nor a private workload supplies a second descriptor table.
 
+`LinuxFiles` also owns the opt-in directory creation provider, mutable directory
+metadata and append-stable directory cookies. LinuxClock supplies timestamps;
+JSON carries only initial snapshots, umask and bounds. Bionic `strstr` stays in
+the common string owner with bounded linear search and provider lifetime checks.
+See [directory creation contracts](android-directory-creation.md).
+
 `LinuxFiles` also owns explicit device open descriptions in the file/link
 namespace. `LinuxDeviceFiles` validates and applies per-open ioctl transactions:
 all guest pointer resolution and byte expectations precede output writes and
@@ -5257,6 +5330,12 @@ ownership and immutable zone names. Backend selection and thread scheduling
 do not change that identity. Its explicit fixed zone is independent of the
 kernel's legacy `gettimeofday` timezone pair; neither inherits host tzdata.
 Calendar conversion reads caller timestamps and does not advance guest clocks.
+The same owner admits `mktime`, normalizes signed civil inputs and encodes the
+result through the forward conversion's field writer. It checks intermediate
+integer arithmetic and the complete output extent before publishing normalized
+fields; API 28's `-1`/errno and fixed-zone DST failure effects are explicit.
+Caller `tm_wday`, `tm_yday`, `tm_gmtoff` and `tm_zone` are not environmental
+inputs. The inverse never allocates a second zone or a separate static result.
 
 Bionic also owns the API 28 `pthread_once` control state. It requests guest
 initialization through an internal callback result; the native runner suspends
@@ -7189,7 +7268,7 @@ HighIR tail copying consults `SourceCallTypeHint::requiresUniqueSourceOccurrence
 
 The shared `SourceABI` owner distinguishes a logical by-value record from its physical address carrier. Darwin ARM64 C declarations for six or sixteen doubles keep the complete record type and use an eight-byte integer-register or naturally aligned stack carrier, independently of floating argument registers and the x8 result pointer. ABI equality and projection batching retain this distinction, calling convention and parameter roles. Partial, overlapping, incompatible or stale carriers are rejected. This declaration alone does not bind LowIR calls, project entries, emit HighC calls or authorize frame borrows: those require a separate copy-storage proof. Compiler and native ABI tests cover register exhaustion, stack packing, arbitrary floating bits, copy mutation isolation and independent indirect results; they are not a complete `setTransform:` recovery test.
 
-Debug signatures name recovered parameters by where they arrive, never by position. `SourceParameterPlacement` places each source parameter under the ordinary convention of its target: System V x86-64, Microsoft x64, AAPCS64 and i386 cdecl/stdcall, each in its own file. It returns the registers and stack slots that hold each parameter's pieces, and the hidden result pointer. HighC binds a recovered parameter to the piece at its register or entry stack offset; an i386 stack parameter's offset counts from the lowest stack parameter number, since MedABIPass numbers the stack parameters before it promotes a register parameter a call passes on. LLVM-C binds its arguments the same way, through the binding the two writers share (`bindDebugParams`, `lib/backend/c/DebugParamBinding`): the LLVM emitter records where each argument arrives in the `neverd.parameter-sites` function metadata, its register or the MedIR parameter index that numbers its stack slot. An argument of no recorded place binds by position only while every parameter before it fills one integer slot, as in every convention, and an MSVC indirect result keeps its arguments' positions in both writers. A later piece is named after its parameter and byte offset (`p_8`), and the declared type applies only where the location holds the whole value as its bytes. Placement stops at the first parameter whose place the rules cannot be sure of: a record whose passing the source does not state, a scalar wider than a register, a memory record of unknown alignment, or Apple arm64 stack packing. Later parameters keep their machine names, and functions of languages with their own conventions, such as Go, bind nothing. The DWARF loader gives parameter and result types alone a passing mode and scalar layout: C records pass by value, C++ classes as `DW_AT_calling_convention` states, and `_Complex` values as complex numbers. Rust records stay unknown, because Rust's own ABI and `extern "C"` pass some records differently. PDB records follow the Microsoft C++ ABI: i386 passes them as their bytes, while x64 passes them as their bytes or as an address in the same position. Call prototypes and argument casts still come only from signatures that map by position, whose parameters are all integers or all floating values.
+Debug signatures name recovered parameters by where they arrive, never by position. `SourceParameterPlacement` places each source parameter under the ordinary convention of its target: System V x86-64, Microsoft x64, AAPCS64 and i386 cdecl/stdcall, each in its own file. It returns the registers and stack slots that hold each parameter's pieces, and the hidden result pointer. HighC binds a recovered parameter to the piece at its register or entry stack offset; an i386 stack parameter's offset counts from the lowest stack parameter number, since MedABIPass numbers the stack parameters before it promotes a register parameter a call passes on. LLVM-C binds its arguments the same way, through the binding the two writers share (`bindDebugParams`, `lib/backend/c/DebugParamBinding`): the LLVM emitter records where each argument arrives in the `neverd.parameter-sites` function metadata, its register or the MedIR parameter index that numbers its stack slot. An argument of no recorded place binds by position only while every parameter before it fills one integer slot, as in every convention, and an MSVC indirect result keeps its arguments' positions in both writers. A later piece is named after its parameter and byte offset (`p_8`), and the declared type applies only where the location holds the whole value as its bytes. A DWARF pointer is as wide as its unit's addresses, four bytes on i386 and 32-bit ARM, so the parameter after it is the next slot's. An i386 function whose DWARF says its parameters enter it in registers is placed where it says (`FunctionSym::ParamEntryLocations`, `placeEnteredParameters`): GCC passes a local function's first three in EAX, EDX and ECX (regparm), clang its first two in ECX and EDX (fastcc), and the rest follow in stack slots while every parameter before has a known place. No call to such a function takes argument types by position. Unoptimized code locates parameters only in their spill slots, so it binds by cdecl's. Placement stops at the first parameter whose place the rules cannot be sure of: a record whose passing the source does not state, a scalar wider than a register, a memory record of unknown alignment, or Apple arm64 stack packing. Later parameters keep their machine names, and functions of languages with their own conventions, such as Go, bind nothing. The DWARF loader gives parameter and result types alone a passing mode and scalar layout: C records pass by value, C++ classes as `DW_AT_calling_convention` states, and `_Complex` values as complex numbers. Rust records stay unknown, because Rust's own ABI and `extern "C"` pass some records differently. PDB records follow the Microsoft C++ ABI: i386 passes them as their bytes, while x64 passes them as their bytes or as an address in the same position. Call prototypes and argument casts still come only from signatures that map by position, whose parameters are all integers or all floating values.
 
 The shared `SourceFrameAnalysis` can check initialized private by-value copies at an original call when independent effect certificates describe the consumer and any complete indirect-result producer. It checks all reaching paths and loop backedges, exact active ranges, other argument aliases and later uses. Consuming a copy invalidates its initialization and saved-byte identities; a later read requires a new definite write. Initialization facts also expire on possible writes and frame release, while retained Swift scratch obligations remain intact. The query returns parameter extents only after complete frame restoration; it grants no machine identity, SDK effect, call binding or source-publication permission. Tests include branches, loops, partial writes, aliases and retained scratch; native ARM64 fixtures with real ObjC/CALayer reject reads of consumed copies and accept independently initialized disposable copies.
 
@@ -8085,6 +8164,11 @@ boundary and heap; native thread detach never resets that process state. JSON
 supplies an optional snapshot, not inferred initialization or a second object
 owner. See [application snapshots](android-application-runtime.md) for the
 admitted methods, loader namespace and unsupported lifecycle transitions.
+The retained application files directory and File path values use the same
+heap. Native setup validates its declared directory against LinuxFiles; Dalvik
+does not acquire an independent host filesystem. LinuxFiles owns getcwd bytes
+and user-copy outcomes; Bionic alone owns pointer returns, errno and allocation
+lifetimes. Both cwd and application paths require explicit input.
 `LinuxBinderTransactions` routes object-free messages between guest-owned opens;
 LinuxMemory owns their read-only arenas and every service body remains guest code.
 It preserves admitted libbinder request/status flags at this shared transport
@@ -8304,3 +8388,7 @@ these semantics. `AndroidKernelCalls` adapts libc timeout-copy and errno rules.
 `Bionic::StreamReadWait` owns FILE progress across nested reads. Kernel byte
 counts never directly complete an enclosing fread/fgets import. The FILE
 reservation explicitly excludes unsupported concurrent operations.
+
+`X86LegacyVectorMoveAudit` admits legacy MOVSS/MOVSD register and unsegmented memory forms through the same raw-prefix, opcode, ModRM/SIB and decoder-detail checks as packed moves. XMM operands remain 16 bytes while memory operands are exactly 4 or 8 bytes. The existing scalar move owners merge register sources and zero the remaining low-128-bit destination bytes on memory loads, preserving higher vector bits. Complete emitted spans bind the undefined-output receipt. This does not admit string MOVSD, VEX/EVEX forms, segmented memory or an opaque-state preservation contract.
+
+`SymState::storeConditional` optionally applies one STORE or atomic write phase without a nonalias contract. It constructs byte-equality conditions for current materialized bytes in other absolute or 64-bit symbolic banks; the actual bank uses ordinary overlap handling. Missing bytes retain the write's new unknown epochs, and historical facts are never imported. Complete plan validation and work charges precede conditional expression construction and the single store. Owner refusal leaves state unchanged. `SymExec::stepWithConditionalStore` uses this only for STORE and strictly admitted scalar CMPXCHG, retaining existing refusal havoc and publishing Old only after success. Other operations leave the policy Invalid. This does not prove access validity or initial alias consistency, or guarantee inexpensive downstream solving.

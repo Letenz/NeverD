@@ -7,6 +7,7 @@
 #include "LocalTypesDebugContext.h"
 
 #include "neverd/Limits.h"
+#include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/types/TypeParse.h"
@@ -260,8 +261,18 @@ private:
         continue;
       Into.FieldDisplayOffsets.push_back(uint16_t(Byte));
       Into.FieldDisplayNames.push_back(Field.Name);
-      Into.FieldDisplayTypes.push_back(convert(*Field.Type, Depth + 1));
+      Into.FieldDisplayTypes.push_back(memberType(*Field.Type, Depth + 1));
     }
+  }
+
+  /// A member's type.  A flexible array member's, an array of no stated
+  /// length, is an array of its elements of no size, as DWARF's is: an
+  /// access there reads an element (NdType::isFlexibleArrayAt).
+  TypeRef memberType(const types::TypeExpr &Type, unsigned Depth) {
+    if (Type.Kind == types::TypeExprKind::Array && !Type.Count && Type.Element)
+      if (TypeRef Element = convert(*Type.Element, Depth + 1))
+        return NdType::makeArray(std::move(Element), 0, 0);
+    return convert(Type, Depth);
   }
 
   const types::TypeLibrary &Library;
@@ -600,6 +611,13 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
     // with; the checks make a layout no compiler agrees with an error.
     Options.Spelling = types::BuiltinSpelling::Portable;
     Options.Asserts = true;
+    // The system's own types come from its headers, which the unit includes:
+    // the first library of a system's headers the program joins.
+    for (const types::HeaderLibrary Library : Headers)
+      if (types::headerLibrarySystem(Library)) {
+        Options.SystemLibrary = Library;
+        break;
+      }
     CRenderer = std::make_unique<types::EmbeddedCRenderer>(*Types, Options);
   }
   const types::EmbeddedC Embedded = CRenderer->render(Roots);
@@ -652,8 +670,10 @@ LocalTypesDebugContext::resolvePrototype(llvm::StringRef Name) const {
     return Signature;
   const std::optional<types::HeaderLibrary> Header =
       prototypeHeader(Name, Function->second.get());
-  Signature->PrototypeLibrary =
-      Header ? types::headerLibraryName(*Header).str() : "local-types";
+  Signature->PrototypeLibrary = Header ? types::headerLibraryName(*Header).str()
+                                       : UserPrototypeLibrary.str();
+  Signature->PrototypeFromCLibrary =
+      Header && types::headerLibrarySystem(*Header).has_value();
   types::RenderOptions Options;
   Options.Lang = types::Language::C;
   if (Header)
@@ -741,7 +761,10 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
     Declared.Params = std::move(User->Params);
     if (User->CallConv != DebugCallConv::Unknown)
       Declared.CallConv = User->CallConv;
+    // The declaration's parameters follow its convention, not where the
+    // debug information's entered.
     Declared.PlatformConvention = true;
+    Declared.ParamEntryLocations.clear();
     return Declared;
   }
   // A declaration of the program's own describes its build.
@@ -791,8 +814,10 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
   if (Known->CallConv != DebugCallConv::Unknown)
     Typed.CallConv = Known->CallConv;
   Typed.PlatformConvention = true;
+  Typed.ParamEntryLocations.clear();
   Typed.PrototypeLibrary = std::move(Known->PrototypeLibrary);
   Typed.PrototypeDeclaration = std::move(Known->PrototypeDeclaration);
+  Typed.PrototypeFromCLibrary = Known->PrototypeFromCLibrary;
   Typed.NoReturn = Known->NoReturn;
   return Typed;
 }

@@ -856,6 +856,99 @@ U64 files_repeated_slashes_bionic(void) {
   return 0;
 }
 
+U64 files_create_directories(U64 Mode) {
+  struct FileStatus Parent, Child, Again;
+  int F = open("/made", 0);
+  CHECK(F, 3);
+  *__errno() = 73;
+  U64 R = Mode == 0   ? (U64)mkdir("//made//child///", 07777)
+          : Mode == 1 ? (U64)syscall(MkdirAt, -1UL, "/made/child", 07777UL)
+                      : raw(MkdirAt, -1UL, (U64) "/made/child", 07777, 0);
+  CHECK(R, 0);
+  CHECK(*__errno(), 73);
+  CHECK(fstat(F, &Parent), 0);
+  CHECK(Parent.Links, 3);
+  CHECK(Parent.Size, 60);
+  CHECK(Parent.Modification.Seconds, 100);
+  CHECK(Parent.Change.Seconds, 100);
+  CHECK(Parent.Access.Seconds, 3);
+  int D = open("/made/child", 0);
+  CHECK(D, 4);
+  CHECK(fstat(D, &Child), 0);
+  CHECK(Child.Mode, 0043755);
+  CHECK(Child.UID, 1000);
+  CHECK(Child.GID, 1234);
+  CHECK(Child.Links, 2);
+  CHECK(Child.Size, 40);
+  CHECK(Child.Blocks, 0);
+  CHECK(Child.BlockSize, 4096);
+  CHECK(Child.Access.Seconds, 100);
+  CHECK(Child.Access.Nanoseconds, 123);
+  CHECK(mkdirat(-1, "/made/child", 0), -1);
+  CHECK(*__errno(), 17);
+  CHECK(fstat(D, &Again), 0);
+  for (unsigned I = 0; I < sizeof(Child); ++I)
+    CHECK(((unsigned char *)&Child)[I], ((unsigned char *)&Again)[I]);
+  CHECK(mkdirat(-1, "/made/child/deep", 0700), 0);
+  CHECK(fstat(D, &Child), 0);
+  CHECK(Child.Links, 3);
+  CHECK(Child.Size, 60);
+  CHECK(close(D), 0);
+  CHECK(close(F), 0);
+  CHECK(access("/made/child/deep", 0), 0);
+  return 0;
+}
+
+extern char *getcwd(char *, U64);
+extern void free(void *);
+static int cwd_text(const char *p) {
+  static const char Text[] = "/fixture";
+  if (!p)
+    return 0;
+  for (unsigned I = 0; I < sizeof(Text); ++I)
+    if (p[I] != Text[I])
+      return 0;
+  return 1;
+}
+U64 files_cwd_bionic(void) {
+  char Text[24];
+  for (unsigned I = 0; I < sizeof(Text); ++I)
+    Text[I] = 'X';
+  *__errno() = 73;
+  CHECK(getcwd(Text, sizeof(Text)), Text);
+  CHECK(cwd_text(Text), 1);
+  CHECK(Text[9], 'X');
+  CHECK(*__errno(), 73);
+  CHECK(getcwd(Text, 0), 0);
+  CHECK(*__errno(), 22);
+  CHECK(getcwd((void *)1, 8), 0);
+  CHECK(*__errno(), 34);
+  CHECK(getcwd((void *)1, 9), 0);
+  CHECK(*__errno(), 14);
+  CHECK(getcwd((void *)0, 8), 0);
+  CHECK(*__errno(), 34);
+  *__errno() = 79;
+  char *Allocated = getcwd((void *)0, 24);
+  CHECK(cwd_text(Allocated), 1);
+  CHECK(*__errno(), 79);
+  free(Allocated);
+  Allocated = getcwd((void *)0, 0);
+  CHECK(cwd_text(Allocated), 1);
+  CHECK(*__errno(), 79);
+  free(Allocated);
+  CHECK(getcwd((void *)0, ~0UL), 0);
+  CHECK(*__errno(), 12);
+  *__errno() = 83;
+  CHECK(raw(17, (U64)Text, 9, 0, 0), 9);
+  CHECK(*__errno(), 83);
+  CHECK(syscall(17, Text, 8UL), -1);
+  CHECK(*__errno(), 34);
+  return 0;
+}
+U64 files_cwd_unknown(void) {
+  return (U64)getcwd((char *)Pages, sizeof(Pages));
+}
+
 U64 files_links_bionic(void) {
   for (unsigned Route = 0; Route != 3; ++Route) {
     *__errno() = 73;

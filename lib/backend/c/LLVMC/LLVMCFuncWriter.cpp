@@ -25,6 +25,7 @@
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
+#include "neverd/debug/UserPrototype.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/ExceptionCommon.h"
 #include "neverd/loader/ExceptionEncoding.h"
@@ -2431,11 +2432,12 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
       // recovered anyway, such as an ECX a call passes on, comes before the
       // stack arguments and moves every name after it.  Where more arguments
       // were recovered than declared, none is named.
-      DebugPositional = Opts.TheArch != Arch::X86 ||
-                        (DebugFn->CallConv != DebugCallConv::Cdecl &&
-                         DebugFn->CallConv != DebugCallConv::Stdcall &&
-                         DebugFn->CallConv != DebugCallConv::Unknown) ||
-                        Fn.arg_size() <= DebugFn->Params.size();
+      DebugPositional = DebugFn->ParamEntryLocations.empty() &&
+                        (Opts.TheArch != Arch::X86 ||
+                         (DebugFn->CallConv != DebugCallConv::Cdecl &&
+                          DebugFn->CallConv != DebugCallConv::Stdcall &&
+                          DebugFn->CallConv != DebugCallConv::Unknown) ||
+                         Fn.arg_size() <= DebugFn->Params.size());
       bindDebugArguments(Fn);
       // The record the first parameter points to is reached through the
       // argument that holds that pointer, where the convention put it.  A
@@ -2758,6 +2760,10 @@ LLVMCWriter::debugFunction(const llvm::Function &Callee) const {
         return FS;
   }
   return std::nullopt;
+}
+
+bool LLVMCWriter::userDeclaresRoutine(llvm::StringRef CName) const {
+  return !CName.empty() && userPrototype(Dbg, CName).has_value();
 }
 
 bool LLVMCWriter::calleeReturnsNothing(const llvm::CallBase &Call) const {
@@ -8912,7 +8918,7 @@ void LLVMCWriter::writeFunction(llvm::Function &Fn) {
             cNameOfGlobal(Fn.getName(), /*Declaration=*/false), "nd_function");
       c_stub::writeVariadicImportStub(
           Stub, c_stub::variadicStubName(Name, Import, *Entry), Import, {},
-          libc::libcVariadicForward(Import));
+          libc::libcVariadicForward(Import), libcVariant());
       OS << Text;
       return;
     }

@@ -329,7 +329,7 @@ class X87CallGraphCache {
     std::optional<std::vector<va_t>> Entries;
     std::optional<std::vector<va_t>> ProtectedSlots;
     std::optional<std::vector<va_t>> UnsafeBranches;
-    // The cache's immutable inventory when Entries was frozen from it.
+    // The cache's immutable inventory, borrowed in place of Entries.
     const std::set<va_t> *EntriesSource = nullptr;
   };
   struct Entry {
@@ -525,12 +525,8 @@ private:
                       Witness.NoReturnAnswers.size()))
       return;
     size_t EstimatedContext = sizeof(Context);
-    for (const auto *Values :
-         {B.KnownFuncEntries, B.ProtectedJumpTableRelocationSlots,
-          B.UnsafeJumpTableBranches})
-      if (Values &&
-          !accountAllocation(EstimatedContext, Values->size(), sizeof(va_t)))
-        return;
+    if (!accountFrozenInputs(EstimatedContext, B))
+      return;
     try {
       // The completed builder no longer needs geometric growth capacity.
       // Keeping that slack would evict live bodies much sooner than the old
@@ -670,10 +666,12 @@ private:
            C.NoReturnDepth == B.NoReturnCalleeDepth + 1 &&
            C.RelocationRoots == B.AbsoluteRelocationRoots &&
            C.CodeOwners == B.ExecutableCodeOwners &&
-           // The immutable inventory a context was frozen from still holds
-           // what it held; any other set is compared entry by entry.
-           ((C.EntriesSource && C.EntriesSource == B.KnownFuncEntries) ||
-            sameSet(C.Entries, B.KnownFuncEntries)) &&
+           // The immutable inventory a context borrows still holds what it
+           // held; any other set is compared entry by entry.
+           (C.EntriesSource ? B.KnownFuncEntries &&
+                                  (C.EntriesSource == B.KnownFuncEntries ||
+                                   *C.EntriesSource == *B.KnownFuncEntries)
+                            : sameSet(C.Entries, B.KnownFuncEntries)) &&
            sameSet(C.ProtectedSlots, B.ProtectedJumpTableRelocationSlots) &&
            sameSet(C.UnsafeBranches, B.UnsafeJumpTableBranches);
   }
@@ -708,7 +706,23 @@ private:
         return std::nullopt;
     return Bytes;
   }
+  /// Whether \p B's entries are the cache's immutable inventory, which a
+  /// context borrows instead of copying: tens of thousands of entries on a
+  /// large image, frozen again for every graph a request misses.
+  bool borrowsEntries(const CFGBuilder &B) const {
+    return ImmutableEntries && B.KnownFuncEntries == ImmutableEntries;
+  }
+  /// Charge \p Bytes for the inputs a context frozen from \p B copies.
+  bool accountFrozenInputs(size_t &Bytes, const CFGBuilder &B) const {
+    for (const auto *Values :
+         {borrowsEntries(B) ? nullptr : B.KnownFuncEntries,
+          B.ProtectedJumpTableRelocationSlots, B.UnsafeJumpTableBranches})
+      if (Values && !accountAllocation(Bytes, Values->size(), sizeof(va_t)))
+        return false;
+    return true;
+  }
   Context freezeContext(const CFGBuilder &B) const {
+    const bool Borrowed = borrowsEntries(B);
     return {B.CurrentImg,
             B.CurrentImg->Arch,
             B.CurrentImg->Mode,
@@ -720,12 +734,10 @@ private:
             B.NoReturnCalleeDepth + 1,
             B.AbsoluteRelocationRoots,
             B.ExecutableCodeOwners,
-            freeze(B.KnownFuncEntries),
+            Borrowed ? std::nullopt : freeze(B.KnownFuncEntries),
             freeze(B.ProtectedJumpTableRelocationSlots),
             freeze(B.UnsafeJumpTableBranches),
-            ImmutableEntries && B.KnownFuncEntries == ImmutableEntries
-                ? ImmutableEntries
-                : nullptr};
+            Borrowed ? ImmutableEntries : nullptr};
   }
   Request acquire(const CFGBuilder &B, va_t Address) {
     std::unique_lock<std::mutex> Lock(Mutex);
@@ -763,11 +775,8 @@ private:
       return {};
     }
     size_t Estimated = sizeof(PendingGraph) + 8 * sizeof(void *);
-    for (const auto *Values :
-         {B.KnownFuncEntries, B.ProtectedJumpTableRelocationSlots,
-          B.UnsafeJumpTableBranches})
-      if (Values && !accountAllocation(Estimated, Values->size(), sizeof(va_t)))
-        return {};
+    if (!accountFrozenInputs(Estimated, B))
+      return {};
     if (Estimated > MaxPendingBytes - PendingBytes) {
       ++NonWaitingMisses;
       return {};
@@ -860,11 +869,8 @@ private:
     // capacities before publication. The limit is retained payload, not RSS
     // of in-flight builds or graphs still used by an active private index.
     size_t Estimated = sizeof(Context);
-    for (const auto *Values :
-         {B.KnownFuncEntries, B.ProtectedJumpTableRelocationSlots,
-          B.UnsafeJumpTableBranches})
-      if (Values && !accountAllocation(Estimated, Values->size(), sizeof(va_t)))
-        return Graph;
+    if (!accountFrozenInputs(Estimated, B))
+      return Graph;
     if (*Bytes > MaxBytes - Estimated)
       return Graph;
     std::lock_guard<std::mutex> Lock(Mutex);

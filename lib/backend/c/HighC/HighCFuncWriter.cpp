@@ -988,8 +988,8 @@ void HighCWriter::writeFunction(const HighFunc &Func) {
           OS,
           c_stub::variadicStubName(functionIdentifier(Func), Import,
                                    Func.Entry),
-          Import, importSlotIdentifier(Slot),
-          libc::libcVariadicForward(Import));
+          Import, importSlotIdentifier(Slot), libc::libcVariadicForward(Import),
+          Opts.libcVariant());
       return;
     }
   // So does one of a variadic routine this file defines, which the image
@@ -998,7 +998,8 @@ void HighCWriter::writeFunction(const HighFunc &Func) {
     if (EmitFunctionWrapper)
       OS << "/* neverd.entry: 0x" << llvm::utohexstr(Func.Entry) << " */\n";
     c_stub::writeVariadicImportStub(OS, functionIdentifier(Func),
-                                    functionIdentifier(*Routine), {}, nullptr);
+                                    functionIdentifier(*Routine), {}, nullptr,
+                                    Opts.libcVariant());
     return;
   }
   if (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(Func)) {
@@ -1947,7 +1948,8 @@ void HighCWriter::collectFieldLoadTypes(const HighFunc &Func) {
         const uint16_t Size = Val->Type ? Val->Type->Size : 0;
         Type = typedMemberType(*Val->Operands[0], Size, accessClassOf(Val));
         if (!Type)
-          if (auto Index = typedIndexAccess(*Val->Operands[0]))
+          if (auto Index =
+                  typedIndexAccess(*Val->Operands[0], Size, accessClassOf(Val)))
             Type = Index->ElemType;
       } else if (Val->Kind == ExprKind::Var || Val->Kind == ExprKind::Phi) {
         if (auto It = FieldForwardTypes.find(varName(Val->Var));
@@ -2015,9 +2017,10 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
         if (TypeRef Ty = typedMemberType(*Val->Operands[0], AccessSize,
                                          accessClassOf(Val)))
           FieldForwardTypes[DestName] = std::move(Ty);
-      } else if (auto Index = typedIndexAccess(*Val->Operands[0])) {
+      } else if (auto Index = typedIndexAccess(*Val->Operands[0], AccessSize,
+                                               accessClassOf(Val))) {
         if (ForwardName) {
-          FieldForward[DestName] = Index->Base + "[" + Index->Index + "]";
+          FieldForward[DestName] = Index->text();
           FieldForwardSources[DestName] = S.Val.get();
         }
         if (Index->ElemType)
@@ -2417,8 +2420,9 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
                                 /*EnterNestedAtZero=*/true, accessClassOf(Val));
           Member && *Member == It->second)
         return;
-      if (auto Index = typedIndexAccess(*Val->Operands[0])) {
-        if (Index->Base + "[" + Index->Index + "]" == It->second)
+      if (auto Index = typedIndexAccess(*Val->Operands[0], AccessSize,
+                                        accessClassOf(Val))) {
+        if (Index->text() == It->second)
           return;
       }
     }
@@ -2552,10 +2556,9 @@ TypeRef HighCWriter::enumTypeForCallArg(const HighExpr &Call, size_t Index,
   // Site FunctionSym first. debugCallee falls back to the colliding stem
   // winner when that site has no S_LOCAL params, which would hide an
   // enum overload behind a pointer prototype.
-  if (Dbg && Call.CallAddr)
-    if (auto FS = Dbg->resolveFunction(Call.CallAddr))
-      if (TypeRef Ty = Consider(*FS))
-        return Ty;
+  if (auto FS = debugFunctionCalled(Call))
+    if (TypeRef Ty = Consider(*FS))
+      return Ty;
   if (auto FS = debugCallee(Call))
     if (TypeRef Ty = Consider(*FS))
       return Ty;
@@ -2806,7 +2809,9 @@ bool HighCWriter::isTypedIndexLoad(const HighExpr &E) {
       !Cur->Operands[0] || Cur->MemoryOrdering != NdMemoryOrdering::None ||
       Cur->MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
-  return typedIndexAccess(*Cur->Operands[0]).has_value();
+  return typedIndexAccess(*Cur->Operands[0], Cur->Type ? Cur->Type->Size : 0,
+                          accessClassOf(Cur))
+      .has_value();
 }
 
 bool HighCWriter::isCxxCatchObjectName(llvm::StringRef Name) const {
@@ -4315,8 +4320,13 @@ void HighCWriter::collectUnusedCallStoreAlias(const HighFunc &Func) {
                             (Size == 4 && Cur->Var.Size == 8) ||
                             (Size == 8 && Cur->Var.Size == 4);
         // The entry stack pointer is never assigned either, but the frame
-        // storage defines it: it is no call's result.
+        // storage defines it: it is no call's result.  Nor are the exception
+        // object and selector the unwinder hands a landing pad, or the code
+        // an SEH filter receives.
         if (Name.empty() || Cur->Var.Kind == MedVar::Param ||
+            Cur->Var.Kind == MedVar::EHException ||
+            Cur->Var.Kind == MedVar::EHSelector ||
+            Cur->Var.Kind == MedVar::SEHExceptionCode ||
             isReservedParamDisplayName(Name) || Assigned.count(Name) ||
             ValueForward.count(Name) || FieldForward.count(Name) || !SizeOk ||
             isSyntheticEntryStackPointer(Cur->Var, Func, Opts.TheArch))
@@ -4370,8 +4380,12 @@ void HighCWriter::collectUnusedCallStoreAlias(const HighFunc &Func) {
             continue;
           if (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi)
             continue;
+          // A call that never returns leaves no result for what follows, and
+          // a statement a jump or the unwinder enters stores what reaches it
+          // from there too.
           const HighStmt *N = NextPrinted(I);
-          if (!N)
+          if (!N || isNoreturnCallExpr(*S.Val) ||
+              (N->Addr && GotoTargets.count(N->Addr)))
             continue;
           const HighExpr *Val = nullptr;
           if (N->Kind == StmtKind::Store && N->StoreVal)
@@ -4456,7 +4470,11 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
     if (ReturnType)
       CallResultTypes[Name] = ReturnType;
     std::string Stem = callResultStem(callIdentifier(*S.Val));
-    if (Stem.empty() || isReservedParamDisplayName(Stem))
+    // A local of a file-scope name would hide it from the code: `msg` for
+    // td_ta_event_getmsg's result where it calls msg(), or `addrinfo` for
+    // getaddrinfo's where it casts to the record's typedef.
+    if (Stem.empty() || isReservedParamDisplayName(Stem) ||
+        namesFileScope(Stem))
       return;
     if (Taken.count(Stem)) {
       auto Mentions = [&](const HighExpr *E, const std::string &Want) {
@@ -4652,7 +4670,10 @@ std::string HighCWriter::debugParamName(const HighFunc &Func,
 }
 
 bool HighCWriter::positionalDebugSignature(const FunctionSym &FS) const {
-  if (!FS.PlatformConvention)
+  // A call's arguments come in the order of the registers they travel in,
+  // which a function the debug information says enters with them in
+  // registers need not follow.
+  if (!FS.PlatformConvention || !FS.ParamEntryLocations.empty())
     return false;
   if (isMsvcIndirectReturn(FS.ReturnType, Opts.TheArch, Opts.Format))
     return true;

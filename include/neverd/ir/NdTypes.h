@@ -167,7 +167,10 @@ struct NdType {
       bool Record = false;
       if (FilterSize) {
         const auto &Ty = FieldDisplayTypes[I];
-        if (Ty && Ty->Size != 0 && Ty->Size != AccessSize)
+        // An array of no stated length holds no access whole: one of a
+        // flexible array member reads its elements.
+        if (Ty && ((Ty->Size != 0 && Ty->Size != AccessSize) ||
+                   (Ty->Kind == NdTypeKind::Array && Ty->Size == 0)))
           continue;
         Record = Ty && Ty->Kind == NdTypeKind::Struct && !Ty->IsEnum;
       }
@@ -335,6 +338,23 @@ struct NdType {
     return Name + "." + *Inner;
   }
 
+  /// Whether display field \p I is a flexible array member, an array of no
+  /// stated length that ends its record (`const fde *array[]`): it holds
+  /// every byte from its start.
+  bool isFlexibleArrayAt(size_t I) const {
+    if (FieldDisplayTypes.size() != FieldDisplayOffsets.size() ||
+        I >= FieldDisplayTypes.size())
+      return false;
+    const auto &Ty = FieldDisplayTypes[I];
+    if (!Ty || Ty->Kind != NdTypeKind::Array || Ty->Size != 0 ||
+        !Ty->ElemType || Ty->ElemType->Size == 0)
+      return false;
+    for (const uint16_t Offset : FieldDisplayOffsets)
+      if (Offset > FieldDisplayOffsets[I])
+        return false;
+    return true;
+  }
+
   /// The display field of a record type that holds the byte at \p Offset
   /// with others: the record or array member that starts last at or before
   /// it.  None where none holds it, or two such members start together
@@ -348,15 +368,16 @@ struct NdType {
     std::optional<size_t> Best;
     for (size_t I = 0; I < FieldDisplayOffsets.size(); ++I) {
       const auto &Ty = FieldDisplayTypes[I];
+      const bool Flexible = ArrayElements && isFlexibleArrayAt(I);
       if (FieldDisplayNames[I].empty() || !Ty ||
-          (Ty->Kind != NdTypeKind::Struct &&
+          (Ty->Kind != NdTypeKind::Struct && !Flexible &&
            (!ArrayElements || Ty->Kind != NdTypeKind::Array || !Ty->ElemType ||
             Ty->ElemType->Size == 0 || Ty->Size == 0)) ||
           FieldDisplayOffsets[I] > Offset)
         continue;
       const uint64_t Rel =
           Offset - static_cast<uint64_t>(FieldDisplayOffsets[I]);
-      if (Rel != 0 && (Ty->Size == 0 || Rel >= Ty->Size))
+      if (Rel != 0 && !Flexible && (Ty->Size == 0 || Rel >= Ty->Size))
         continue;
       if (!Best || FieldDisplayOffsets[I] > FieldDisplayOffsets[*Best]) {
         Best = I;
@@ -382,14 +403,15 @@ struct NdType {
   /// \p AccessSize bytes \p Rel bytes into it: `Name[i]` where the access
   /// reads the element whole or takes an address in the array, or a path
   /// into a record or array element (`Name[i].x`, `Name[i][j]`).  None
-  /// where no element holds the bytes whole.
+  /// where no element holds the bytes whole.  An array of no stated length
+  /// (a flexible array member) holds every element.
   static std::optional<std::string>
   displayElementPathAt(const std::string &Name, const NdType &Array,
                        uint64_t Rel, uint16_t AccessSize,
                        bool EnterNestedAtZero,
                        NdAccessClass Class = NdAccessClass::Unknown) {
     const std::shared_ptr<NdType> &Elem = Array.ElemType;
-    if (!Elem || Elem->Size == 0 || Rel >= Array.Size)
+    if (!Elem || Elem->Size == 0 || (Array.Size != 0 && Rel >= Array.Size))
       return std::nullopt;
     const std::string Element =
         Name + "[" + std::to_string(Rel / Elem->Size) + "]";
@@ -423,7 +445,7 @@ struct NdType {
   displayElementTypeAt(const NdType &Array, uint64_t Rel, uint16_t AccessSize,
                        NdAccessClass Class = NdAccessClass::Unknown) {
     const std::shared_ptr<NdType> &Elem = Array.ElemType;
-    if (!Elem || Elem->Size == 0 || Rel >= Array.Size)
+    if (!Elem || Elem->Size == 0 || (Array.Size != 0 && Rel >= Array.Size))
       return nullptr;
     const uint64_t Inner = Rel % Elem->Size;
     const bool Record = Elem->Kind == NdTypeKind::Struct && !Elem->IsEnum;

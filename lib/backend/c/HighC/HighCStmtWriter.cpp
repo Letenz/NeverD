@@ -787,6 +787,11 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           if (ProjectedDestType && ProjectedDestType->Kind == NdTypeKind::Ptr)
             OS << "(" << typeToC(ProjectedDestType) << ")(uintptr_t)("
                << ValueText << ")";
+          else if (ProjectedDestType &&
+                   ProjectedDestType->Kind == NdTypeKind::Int &&
+                   printsPointer(*Stmt.Val, ValueText))
+            OS << "(" << typeToC(ProjectedDestType) << ")(uintptr_t)("
+               << ValueText << ")";
           else
             OS << ValueText;
           OS << ";\n";
@@ -969,10 +974,23 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         else
           OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)(" << ValueText
              << ")";
-      } else if (DeclaredType && ProjectedValueType &&
-                 DeclaredType->Kind == NdTypeKind::Int &&
-                 ProjectedValueType->Kind == NdTypeKind::Ptr)
-        OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)(" << ValueText
+      } else if (const TypeRef IntegerDestination =
+                     DeclaredType
+                         ? (DeclaredType->Kind == NdTypeKind::Int ? DeclaredType
+                                                                  : nullptr)
+                     : DestinationType != DeclaredCTypes.end() &&
+                             DestinationType->second &&
+                             DestinationType->second->Kind == NdTypeKind::Int
+                         ? DestinationType->second
+                         : nullptr;
+                 IntegerDestination &&
+                 ((ProjectedValueType &&
+                   ProjectedValueType->Kind == NdTypeKind::Ptr) ||
+                  printsPointer(*Stmt.Val, ValueText) ||
+                  (Stmt.Val->Kind == ExprKind::Call &&
+                   callResultType(*Stmt.Val) &&
+                   callResultType(*Stmt.Val)->Kind == NdTypeKind::Ptr)))
+        OS << "(" << typeToC(IntegerDestination) << ")(uintptr_t)(" << ValueText
            << ")";
       else if (DeclaredType && DeclaredType->Kind == NdTypeKind::Int &&
                !ValueText.empty() &&
@@ -989,6 +1007,14 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
                                                    DestinationType->second)
                        : std::nullopt)
         OS << *Converted;
+      // A local the unit declares a pointer takes an integer, as an indirect
+      // call's result the cast of its callee types, as the address it is.
+      else if (DestinationType != DeclaredCTypes.end() &&
+               DestinationType->second &&
+               DestinationType->second->Kind == NdTypeKind::Ptr &&
+               printsAsInteger(*Stmt.Val, ValueText))
+        OS << "(" << typeToC(DestinationType->second) << ")(uintptr_t)("
+           << ValueText << ")";
       else
         OS << ValueText;
     } else {
@@ -1210,7 +1236,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         else if (ProjectedDestType &&
                  ProjectedDestType->Kind == NdTypeKind::Int &&
                  (isStringLiteralText(ValueText) ||
-                  printedPointerType(*Stmt.StoreVal)))
+                  printedPointerType(*Stmt.StoreVal) ||
+                  printsPointer(*Stmt.StoreVal, ValueText)))
           OS << "(" << typeToC(ProjectedDestType) << ")(uintptr_t)("
              << ValueText << ")";
         else

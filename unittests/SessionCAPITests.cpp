@@ -128,6 +128,38 @@ std::string takeString(const char *Value) {
   return Text;
 }
 
+/// The arguments the first call to \p Callee after \p Caller's name in the
+/// C \p Text passes, by their text.
+std::vector<std::string> callArguments(llvm::StringRef Text,
+                                       llvm::StringRef Caller,
+                                       llvm::StringRef Callee) {
+  std::vector<std::string> Arguments;
+  const std::string Call = (Callee + "(").str();
+  size_t At = Text.find((Caller + "(").str());
+  while (At != llvm::StringRef::npos) {
+    At = Text.find(Call, At + 1);
+    if (At == llvm::StringRef::npos ||
+        (!llvm::isAlnum(Text[At - 1]) && Text[At - 1] != '_'))
+      break;
+  }
+  if (At == llvm::StringRef::npos)
+    return Arguments;
+  std::string Argument;
+  int Depth = 0;
+  for (const char C : Text.drop_front(At + Call.size())) {
+    if (Depth == 0 && (C == ',' || C == ')')) {
+      Arguments.push_back(llvm::StringRef(Argument).trim().str());
+      Argument.clear();
+      if (C == ')')
+        break;
+      continue;
+    }
+    Depth += C == '(' ? 1 : C == ')' ? -1 : 0;
+    Argument += C;
+  }
+  return Arguments;
+}
+
 TEST(SessionARMFunctionMode, RejectsInvalidModeAndAcceptsObjectAddressZero) {
   EXPECT_EQ(neverd_session_set_arm_function_mode(
                 nullptr, 0, NEVERD_ARM_FUNCTION_MODE_THUMB),
@@ -5512,7 +5544,8 @@ TEST_F(SessionCAPITest, MuslProgramsJoinTheirMuslLibrary) {
   // which takes stat's prototype.  <sys/stat.h> declares stat, whose record
   // the call reaches through void *, and no typedef names the record as the
   // function; the output declares __stat_time64 itself, with the record's
-  // type, which a typedef names.
+  // type.  A typedef names the record, which is still spelled by its tag:
+  // the C library has a function of its name.
   struct Program {
     const char *File, *Library, *Model, *ABI;
     int64_t StatSize;
@@ -5523,7 +5556,7 @@ TEST_F(SessionCAPITest, MuslProgramsJoinTheirMuslLibrary) {
       {"musl_libc_calls_x64", "musl-x64", "LP64", "itanium", 144,
        "stat((char*)(uintptr_t)arg0, (void*)&", false},
       {"musl_libc_calls_x86", "musl-x86", "ILP32", "i386-sysv", 144,
-       "__stat_time64((char*)(uintptr_t)arg0, (stat*)&", true},
+       "__stat_time64((char*)(uintptr_t)arg0, (struct stat*)&", true},
   };
   const auto Fixtures =
       std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
@@ -5577,8 +5610,8 @@ TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
   };
   const Program Programs[] = {
       {"darwin_libc_calls_x64", "macos-x64", "itanium",
-       "stat_INODE64((char*)(uintptr_t)arg0, (stat*)&",
-       "extern int32_t stat_INODE64(char* arg0, stat* arg1) "
+       "stat_INODE64((char*)(uintptr_t)arg0, (struct stat*)&",
+       "extern int32_t stat_INODE64(char* arg0, struct stat* arg1) "
        "__asm__(\"_stat$INODE64\");"},
       {"darwin_libc_calls_arm64", "macos-arm64", "apple-arm64",
        "stat((char*)(uintptr_t)arg0, (void*)&", "#include <sys/stat.h>"},
@@ -5620,6 +5653,101 @@ TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
         takeString(neverd_decompile(Darwin, neverd_func_entry(Darwin, Index)));
     EXPECT_NE(HighC.find(P.Call), std::string::npos) << HighC;
     EXPECT_NE(HighC.find(P.Declaration), std::string::npos) << HighC;
+  }
+}
+
+TEST_F(SessionCAPITest, AProgramsOwnDeclarationOfAnImportDecides) {
+  // The user declares the routine a program imports as read, as a library of
+  // its own may export it: every call passes the parameters it declares, in
+  // both C backends, whatever the C library's read takes.  With one, the
+  // call passes that one; with four, the fourth too, from the register or
+  // the stack slot the convention gives it: on x64, i386, AArch64 and ARM.
+  for (const char *Fixture : {"linux_libc_calls_x64", "linux_libc_calls_x86",
+                              "linux_libc_calls_arm64", "linux_libc_calls_arm"})
+    for (const auto &[Declaration, Count] :
+         {std::pair<const char *, size_t>{"long read(int File);", 1},
+          {"long read(int File, void *Buffer, unsigned long Count, int Extra);",
+           4}}) {
+      SCOPED_TRACE(std::string(Fixture) + ": " + Declaration);
+      std::ifstream Input(std::filesystem::path(__FILE__).parent_path() /
+                              "types" / "fixtures" / Fixture,
+                          std::ios::binary);
+      const std::string Path = write(
+          Fixture, std::string(std::istreambuf_iterator<char>(Input), {}));
+      neverd_session_t Own = neverd_session_create();
+      ASSERT_NE(Own, nullptr);
+      auto Close = llvm::make_scope_exit([&] { neverd_session_destroy(Own); });
+      ASSERT_EQ(neverd_session_load(Own, Path.c_str()), 1)
+          << takeString(neverd_last_error(Own));
+      ASSERT_GE(neverd_session_discover_functions(Own), 0);
+      const int Index = neverd_func_find_by_name(Own, "Read");
+      ASSERT_GE(Index, 0);
+      const neverd_va_t Entry = neverd_func_entry(Own, Index);
+      const std::string Before = takeString(neverd_decompile(Own, Entry));
+      EXPECT_EQ(callArguments(Before, "Read", "read").size(), 3u) << Before;
+      const std::string Declared =
+          takeString(neverd_local_types_declare(Own, Declaration, nullptr));
+      ASSERT_NE(Declared.find("\"read\""), std::string::npos) << Declared;
+      for (const std::string &Text :
+           {takeString(neverd_decompile(Own, Entry)),
+            takeString(neverd_decompile_llvm(Own, Entry))}) {
+        const std::vector<std::string> Arguments =
+            callArguments(Text, "Read", "read");
+        ASSERT_EQ(Arguments.size(), Count) << Text;
+        EXPECT_NE(Arguments[0].find("arg0"), std::string::npos) << Text;
+      }
+    }
+}
+
+TEST_F(SessionCAPITest, AUserDeclarationOfAHeadersRoutineDeclaresItself) {
+  // The user declares read with one parameter.  A function that calls read
+  // alone declares it as the user does, without <unistd.h>, which declares
+  // the C library's read.  One that calls write too keeps the header for
+  // write, so read takes another identifier, which links by read's name.
+  // Either is C a compiler takes, in both C backends.
+  struct Case {
+    const char *Fixture;
+    const char *Function;
+    bool Header;
+  };
+  for (const Case &C : {Case{"linux_libc_calls_x64", "Read", false},
+                        Case{"user_declared_calls_x64", "Copy", true}}) {
+    SCOPED_TRACE(C.Fixture);
+    std::ifstream Input(std::filesystem::path(__FILE__).parent_path() /
+                            "types" / "fixtures" / C.Fixture,
+                        std::ios::binary);
+    const std::string Path = write(
+        C.Fixture, std::string(std::istreambuf_iterator<char>(Input), {}));
+    neverd_session_t Own = neverd_session_create();
+    ASSERT_NE(Own, nullptr);
+    auto Close = llvm::make_scope_exit([&] { neverd_session_destroy(Own); });
+    ASSERT_EQ(neverd_session_load(Own, Path.c_str()), 1)
+        << takeString(neverd_last_error(Own));
+    ASSERT_GE(neverd_session_discover_functions(Own), 0);
+    const int Index = neverd_func_find_by_name(Own, C.Function);
+    ASSERT_GE(Index, 0);
+    const neverd_va_t Entry = neverd_func_entry(Own, Index);
+    const std::string Declared = takeString(
+        neverd_local_types_declare(Own, "long read(int File);", nullptr));
+    ASSERT_NE(Declared.find("\"read\""), std::string::npos) << Declared;
+    const std::string Callee = C.Header ? "read_2" : "read";
+    for (const std::string &Text :
+         {takeString(neverd_decompile(Own, Entry)),
+          takeString(neverd_decompile_llvm(Own, Entry))}) {
+      EXPECT_EQ(Text.find("#include <unistd.h>") != std::string::npos, C.Header)
+          << Text;
+      // The routine is declared before the function that calls it.
+      const size_t Definition = Text.find(std::string(C.Function) + "(");
+      ASSERT_NE(Definition, std::string::npos) << Text;
+      const llvm::StringRef Declarations =
+          llvm::StringRef(Text).take_front(Definition);
+      EXPECT_TRUE(Declarations.contains(" " + Callee + "(")) << Text;
+      EXPECT_EQ(Declarations.contains("__asm__(\"read\")"), C.Header) << Text;
+      const std::vector<std::string> Arguments =
+          callArguments(Text, C.Function, Callee);
+      ASSERT_EQ(Arguments.size(), 1u) << Text;
+      EXPECT_NE(Arguments[0].find("arg0"), std::string::npos) << Text;
+    }
   }
 }
 
@@ -5695,7 +5823,9 @@ TEST_F(SessionCAPITest, DarwinCallsPassWhatLibSystemDeclares) {
        "0x201, arg2)"},
       {"_Shared", "shm_open((void *)(uintptr_t)arg0, 0x202, 0x180)",
        "0x202, 0x180)"},
-      {"_Send", "sendfile(arg0, arg1, 0, (int64_t*)(uintptr_t)arg2, 0, 0)",
+      // off_t is libSystem's typedef, which the unit does not name: the
+      // address passes through void *, which converts to it.
+      {"_Send", "sendfile(arg0, arg1, 0, (void*)(uintptr_t)arg2, 0, 0)",
        "sendfile(arg0, arg1, 0, (void *)(uintptr_t)(arg2), 0, 0)"},
   };
   const auto Fixture = std::filesystem::path(__FILE__).parent_path() / "types" /
@@ -7384,6 +7514,53 @@ TEST_F(SessionCAPITest, SelectionsKeepTheFunctionListARebuildWouldMake) {
   EXPECT_GE(neverd_func_find_by_addr(Session, Entry + 0x48), 0);
   EXPECT_TRUE(SessionTestAccess::keepsFunctionList(State));
   EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
+}
+
+TEST_F(SessionCAPITest, SessionCReadsTheImageFunctionNamesItsSymbolsHold) {
+  using neverd::sdk::SessionTestAccess;
+  const auto Path = write("own-names.elf", makeAnalysisCacheELF(false));
+  // A function of the image named like a C library routine is the image's
+  // own: its caller's C declares it rather than including its header.
+  const auto NameCallee = [](neverd_session_t Target, llvm::StringRef Name) {
+    auto &State = *neverd::sdk::toSession(Target);
+    auto Named =
+        neverd::Symbol::makeFunc(neverd_session_entry_addr(Target) + 0x40, 6);
+    Named.Name = Name.str();
+    Named.Origin = neverd::NameOrigin::Stated;
+    State.Img.Symbols.push_back(std::move(Named));
+  };
+  const auto Fresh = [&](llvm::ArrayRef<llvm::StringRef> Names) {
+    neverd_session_t Other = neverd_session_create();
+    EXPECT_EQ(neverd_session_load(Other, Path.c_str()), 1);
+    const auto Entry = seedAnalysisCacheSymbols(Other);
+    for (llvm::StringRef Name : Names)
+      NameCallee(Other, Name);
+    SessionTestAccess::resetFunctions(*neverd::sdk::toSession(Other));
+    auto Text = takeString(neverd_decompile(Other, Entry));
+    neverd_session_destroy(Other);
+    return Text;
+  };
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Entry = seedAnalysisCacheSymbols(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  const auto Unnamed = takeString(neverd_decompile(Session, Entry));
+  ASSERT_FALSE(Unnamed.empty()) << takeString(neverd_last_error(Session));
+  EXPECT_EQ(Unnamed, Fresh({}));
+  // A symbol the image gains is read again at the next emission: the
+  // callee it names is the image's own, which no header declares.
+  NameCallee(Session, "strlen");
+  SessionTestAccess::resetFunctions(State);
+  SessionTestAccess::selectFunction(State, Entry);
+  const auto Own = takeString(neverd_decompile(Session, Entry));
+  EXPECT_NE(Own.find("strlen("), std::string::npos) << Own;
+  EXPECT_EQ(Own.find("#include <string.h>"), std::string::npos) << Own;
+  // Any other change to the symbols goes with retiring the pipeline, which
+  // drops the names read before, even when the table keeps its size.
+  for (auto &Sym : State.Img.Symbols)
+    if (Sym.Name == "strlen")
+      Sym.Name = "strcpy";
+  SessionTestAccess::clearPipeline(State);
+  EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Fresh({"strcpy"}));
 }
 
 TEST_F(SessionCAPITest, AnalysisCacheSurvivesOnlyFunctionNavigation) {

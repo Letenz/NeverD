@@ -341,7 +341,10 @@ std::string renderX86Fence(llvm::AtomicOrdering Ordering) {
   }
 }
 
-const char *renderX86DebugBreak() { return "__debugbreak();\n"; }
+const char *renderX86DebugBreak(BinaryFormat Format) {
+  return Format == BinaryFormat::COFF ? "__debugbreak();\n"
+                                      : "__builtin_debugtrap();\n";
+}
 
 bool isX86FastFailName(llvm::StringRef Name) {
   return stripLeadingUnderscores(Name) == "fastfail";

@@ -49,6 +49,11 @@ struct Pointers {
 /// they replace the GNU C Library's.
 std::optional<Pointers> pointers(std::string_view Name, LibCVariant Variant);
 
+/// The C types of the fixed parameters of the variadic routine \p Name in
+/// \p Variant, where a row gives them.
+std::optional<llvm::ArrayRef<std::string_view>>
+forwardFixed(std::string_view Name, LibCVariant Variant);
+
 } // namespace neverd::libc::variant_rows
 
 #endif // NEVERD_LIB_LIBC_LIBCVARIANTROWS_H

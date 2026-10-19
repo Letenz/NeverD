@@ -2177,3 +2177,37 @@ Las comprobaciones MDL antiguas cubren llamadas WDK reales estáticas y dinámic
 `KernelMDLChain.CreateMdl*` y `KernelMDLUserMapping.CreateMdl*` cubren anchuras, bytes conservados, metadatos vacíos/desbordados, vida de pool/pila, bloqueos, alias, liberación fallida, reutilización parcial, rechazo IRP e IRQL. El controlador WDK real ejecuta creación estática/dinámica, pool propio, interior del pool y pila del llamador, identidad física y descarga completa. Las sondas originales distinguen escrituras, traducción de banderas y límites inyectados de asignación/liberación.
 
 `KernelMDLChain.AdvanceMdl*` y `KernelMDLUserMapping.AdvanceMdl*` comprueban cruces repetidos, cola PFN, rechazo al final, ancho de argumentos, mapeos completos, fallos de limpieza, permisos y duración. El WDK real ejecuta llamadas estáticas/dinámicas y ambas limpiezas. Las sondas distinguen la rutina completa, el ayudante de restauración y el wrapper de desmapeo con límites de tipo de mapeo/liberación PTE inyectados; no ejecutan la base de páginas del sistema.
+
+## Transferencias vectoriales alineadas clásicas
+
+`NeverDX86LegacyAlignedMoveTests` comprueba la conservación de registros de MOVDQA, MOVAPS y MOVAPD y la alineación de 16 bytes antes del acceso a memoria, incluido el desbordamiento por ancho de dirección y las bases FS/GS explícitas. Los accesos no alineados deben conservar los registros de destino y la memoria. Las bases de segmento ausentes siguen rechazándose. Estas pruebas cubren el lifting y el emulador; la recuperación simbólica exacta debe demostrar por separado la condición de alineación conservada.
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*` y `PEFixedImageTest.RawAlign*` comprueban pruebas independientes mediante resto, entradas inválidas, presupuestos exactos, comprobaciones nativas conservadas y recibos manipulados. Las auditorías de movimientos clásicos vinculan todas las operaciones, incluida la comprobación de alineación, sin certificar la conservación de bancos opacos de estado.
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`NeverDX86NativeStateAuditTests` comprueba estrictamente los bytes nativos y los detalles del decodificador para REP MOVSQ x64 canónico y LDMXCSR clásico. Los recibos de salidas indefinidas vinculan todas las operaciones. Oráculos independientes de estado completo y copia ordenada cubren solapamiento, cuenta cero, direccionamiento, bytes ausentes y bits reservados. Siguen siendo necesarias las pruebas existentes de cuenta, dirección, memoria, máscara MXCSR efectiva y validez. Esta auditoría no certifica reinicio tras fallos parciales ni conservación del estado opaco.
+
+```sh
+cmake --build build-release --target NeverDX86NativeStateAuditTests
+ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
+```
+
+`NeverDX86ScalarMoveAuditTests` verifica la admisión estricta de MOVSS/MOVSD clásico frente a los bytes originales y todos los detalles del decodificador. Oráculos independientes por byte cubren combinación de registros, extensión con ceros en cargas, escrituras escalares, todos los residuos de alineación, direccionamiento de 16/32/64 bits y conservación completa de registros, indicadores y MXCSR. La ausencia de bytes o una escritura en memoria de solo lectura no debe confirmar salidas arquitectónicas. Las formas de cadenas, VEX/EVEX, segmentadas y malformadas siguen rechazadas; los recibos vinculan todas las operaciones sin certificar la conservación del estado opaco.
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`SymStorePreservation.Independent*`, `RepeatedRegionsFormAUnionAndChargeEveryScan`, `EmptyIndependentRegionsKeepOriginalWorkAccounting` y `ExecutorUsesIndependentRegionsForOnlyOneStore` cubren un STORE que conserva dos o tres raíces actuales independientes, ambos órdenes de bytes, rangos parciales que cruzan el cero relativo, declaraciones solapadas, huecos no protegidos y generaciones desconocidas posteriores a la escritura. Los presupuestos exactos y reducidos en una unidad comprueban el coste completo; las regiones ausentes no deben materializarse. Se rechazan sin modificar el estado las referencias inválidas o fuera de rango, bases estrechas o constantes, intervalos vacíos o invertidos y la base de la propia escritura. Un `AdditionalRegions` vacío mantiene los costes existentes de una raíz y de `AdditionalRanges`. El ejecutor comprueba un único evento, los bytes vecinos de la misma región y la invalidación por una escritura ordinaria posterior. `SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget` cubre comparaciones coincidentes y diferentes, presupuestos exactos e insuficientes, dos raíces protegidas, la salida del valor anterior y la ruta conservadora de rechazo existente.
+
+`NeverDSymConditionalStoreTests` cubre efectos condicionales sobre bytes actuales de raíces independientes, escrituras de 128 bits, ambos órdenes de bytes, solapamientos parciales, desbordamiento modular de coordenadas simbólicas relativas y memoria absoluta. Comprueba vecinos del propio banco, hechos actuales e históricos, épocas desconocidas tras la escritura, entradas no admitidas y presupuestos exactos o inferiores en una unidad. Los casos del ejecutor cubren STORE con el tratamiento existente de bases de segmento, éxito y rechazo de CMPXCHG estricto, publicación diferida de Old, havoc y mantenimiento de Invalid en otras operaciones. Los comportamientos predeterminados de escritura ordinaria y preservación no cambian. Estas pruebas validan semántica de memoria acotada, no permisos de acceso ni recuperación completa de programas.

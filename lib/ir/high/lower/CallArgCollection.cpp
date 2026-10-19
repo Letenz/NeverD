@@ -27,6 +27,7 @@
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/FunctionNames.h"
 #include "neverd/loader/SymbolDecoration.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -365,6 +366,9 @@ unsigned MedToHighConverter::importFixedArgCount(size_t CallIdx,
     return 0;
   const va_t Key =
       Call.Inputs[0].isConst() ? Call.Inputs[0].ConstVal : ResolvedSlot;
+  // One whose prototype the user declares reads what its summary counts.
+  if (Key && UserPrototypeCallees && UserPrototypeCallees->count(Key))
+    return static_cast<unsigned>(std::max<int>(0, Call.CalleeRegisterArgs));
   const std::string Import = Key ? importCalleeName(*Image, Key) : "";
   if (Import.empty())
     return 0;
@@ -1109,22 +1113,30 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   // An outgoing stack argument is placed by the stack pointer the call is
   // made with (CallArgCollectionX86.cpp): the last one its block defines, or
   // else the one reaching the block.
-  {
-    MedVar CallStack;
-    bool Known = false;
-    for (size_t J = CallIdx; J-- > 0;)
-      if (const MedOp &Op = Ops[J]; Op.Output.Kind == MedVar::Reg &&
-                                    Op.Output.RegOff == SpRegOff &&
-                                    Op.Output.Size) {
-        CallStack = Op.Output;
-        Known = true;
-        break;
-      }
-    if (!Known)
-      Known = reachingRegAtBlockEntry(CurBlock, SpRegOff, CallStack);
-    if (Known)
-      Scan.CallStackEntryOffset = EntryOffsetOf(CallStack);
-  }
+  MedVar CallStack;
+  bool CallStackKnown = false;
+  for (size_t J = CallIdx; J-- > 0;)
+    if (const MedOp &Op = Ops[J]; Op.Output.Kind == MedVar::Reg &&
+                                  Op.Output.RegOff == SpRegOff &&
+                                  Op.Output.Size) {
+      CallStack = Op.Output;
+      CallStackKnown = true;
+      break;
+    }
+  if (!CallStackKnown)
+    CallStackKnown = reachingRegAtBlockEntry(CurBlock, SpRegOff, CallStack);
+  if (CallStackKnown)
+    Scan.CallStackEntryOffset = EntryOffsetOf(CallStack);
+  // A frame realigned by `and esp, -16` relates the two only through its
+  // alignment, as call-ABI recovery's call-SP map does (MedABIPass.cpp).
+  auto CallStackOffsetOf =
+      [&](const MedVar &Address) -> std::optional<int64_t> {
+    if (!CurMed || !CallStackKnown)
+      return std::nullopt;
+    indexMedDefinitions();
+    return EntryStackOffsets->offsetFrom(Address, CallStack);
+  };
+  Scan.CallStackOffsetOf = CallStackOffsetOf;
   // A stack slot below the stack pointer an address is made from, another
   // pointer (read from memory, or a register this function received), or a
   // fixed address holds no outgoing argument.  An address this cannot
@@ -1271,6 +1283,18 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     if (PassesOwnSignature)
       return MatchOwnSignature(std::move(Collected));
     const MedOp &Call = Ops[CallIdx];
+    // A call to an import whose prototype the user declares, through its
+    // stub or its slot, passes what call-ABI recovery gave it.
+    if (UserPrototypeCallees) {
+      if (Call.NumInputs >= 1 && Call.Inputs[0].isConst() &&
+          UserPrototypeCallees->count(Call.Inputs[0].ConstVal))
+        return Collected;
+      if (CurMed)
+        if (const MedCallInfo *Info =
+                CurMed->findCall(CurBlock.Id, static_cast<int>(CallIdx));
+            Info && UserPrototypeCallees->count(Info->TargetAddr))
+          return Collected;
+    }
     std::string Name;
     if (Call.SourceCallHint && !Call.SourceCallHint->TargetName.empty())
       Name = Call.SourceCallHint->TargetName;
@@ -1633,26 +1657,18 @@ void MedToHighConverter::resolveCalleeNames(
 
   // BinaryImage keeps publicly editable metadata vectors, so build these
   // exact-address indexes for this immutable pipeline stage rather than
-  // caching them on the image.  They choose what calleeDisplayName does: the
-  // *first* import or export at an address, including an empty name, as
-  // findImportAt and findExportAt do, and the symbol getFunctionNameAt
-  // chooses, numbered as the function is listed.  The first symbol at a
-  // MinGW function's start is often its object's `.text` section symbol.
+  // caching them on the image, and only for the targets: an image can hold
+  // a hundred thousand symbols.  They choose what calleeDisplayName does: the
+  // *first* import at an address, including an empty name, as findImportAt
+  // does, then the name getFunctionNameAt gives the function.  The first
+  // symbol at a MinGW function's start is often its object's `.text` section
+  // symbol, which that name skips.
   std::map<va_t, const Import *> ImportsByIAT;
   for (const Import &Imp : Image->Imports)
-    ImportsByIAT.try_emplace(Imp.IATAddr, &Imp);
-  std::map<va_t, std::string> ExportsByAddr;
-  for (const Export &Exp : Image->Exports)
-    ExportsByAddr.try_emplace(Exp.Addr, Exp.Name);
-  std::map<va_t, const Symbol *> SymbolsByAddr;
-  for (const Symbol &Sym : Image->Symbols) {
-    if (Sym.Name.empty() || Sym.IsSection)
-      continue;
-    auto [It, Inserted] = SymbolsByAddr.try_emplace(Sym.Addr, &Sym);
-    if (!Inserted && BinaryImage::functionNameRank(Sym) >
-                         BinaryImage::functionNameRank(*It->second))
-      It->second = &Sym;
-  }
+    if (Targets.count(Imp.IATAddr))
+      ImportsByIAT.try_emplace(Imp.IATAddr, &Imp);
+  const std::map<va_t, std::string> ImageNames =
+      functionNamesAt(*Image, Targets);
 
   auto Usable = [](llvm::StringRef Name) {
     return !Name.empty() && !Name.starts_with(kAutoFuncPrefix);
@@ -1681,15 +1697,9 @@ void MedToHighConverter::resolveCalleeNames(
       Names[Target] = Imp->Name;
       continue;
     }
-    auto Exp = ExportsByAddr.find(Target);
-    auto Sym = SymbolsByAddr.find(Target);
-    std::string FromImage;
-    if (Exp != ExportsByAddr.end() && !Exp->second.empty())
-      FromImage = Exp->second;
-    else if (Sym != SymbolsByAddr.end())
-      FromImage = Image->functionListName(Target, Sym->second->Name);
+    const std::string &FromImage = ImageNames.at(Target);
     Names[Target] = Usable(FromImage)
-                        ? std::move(FromImage)
+                        ? FromImage
                         : (kAutoFuncPrefix + llvm::utohexstr(Target)).str();
   }
 }

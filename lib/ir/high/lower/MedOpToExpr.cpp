@@ -33,6 +33,8 @@ ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
     return Dynamic;
   if (const auto Displacement = i386GotDisplacement(Op))
     return i386GotRelativeAddress(Op, *Displacement);
+  if (ExprPtr Rooted = i386PcRootedValue(Op))
+    return Rooted;
   if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
       Op.Inputs[1].isConst() && SourceRecordValues.count(varKey(Op.Inputs[0])))
     return sourceBitSlice(medvarToExpr(Op.Inputs[0]), Op.Inputs[1].ConstVal,

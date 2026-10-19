@@ -119,6 +119,16 @@ public:
   StepResult step(const LowOp &Op, const SymCallEffect *CallEffect,
                   SymStorePreservation *Preservation);
 
+  /// Execute one operation, conditionally updating current cross-region bytes
+  /// for STORE or a strict scalar CMPXCHG write phase. No separation contract
+  /// is accepted. Other opcodes execute normally and leave Control Invalid.
+  /// Refusal retains ordinary fail-closed memory havoc; CMPXCHG publishes its
+  /// old value only after a successful write. Unmaterialized memory remains
+  /// conservative, including the existing symbolic-store diagnostics.
+  StepResult
+  stepWithConditionalStore(const LowOp &Op, SymConditionalStore &Control,
+                           const SymCallEffect *CallEffect = nullptr);
+
   /// Read one operand through the same width, space, and memory semantics used
   /// by \c step.  This may materialise an untouched symbolic input in \c State.
   /// Concrete shadow execution uses it instead of duplicating NdVar semantics.
@@ -183,7 +193,8 @@ public:
   unsigned callHavocCount() const { return CallHavocs; }
 
   /// Stores modelled at their target region while conservatively forgetting
-  /// other regions that may alias it.
+  /// untracked memory in regions that may alias it. Explicit write policies
+  /// may retain conditional or proven-separated current bytes there.
   unsigned memoryHavocCount() const { return MemoryHavocs; }
 
 private:
@@ -192,12 +203,16 @@ private:
   /// Fit \p Value to \p Bits, extending with zeros or dropping the top.
   SymRef fit(SymRef Value, uint32_t Bits);
 
+  StepResult stepImpl(const LowOp &Op, const SymCallEffect *CallEffect,
+                      SymStorePreservation *Preservation,
+                      SymConditionalStore *Conditional);
   StepResult stepBinary(const LowOp &Op);
   StepResult stepCompare(const LowOp &Op);
   StepResult stepUnary(const LowOp &Op);
   StepResult stepBoolean(const LowOp &Op);
   StepResult stepBits(const LowOp &Op);
-  StepResult stepMemory(const LowOp &Op, SymStorePreservation *Preservation);
+  StepResult stepMemory(const LowOp &Op, SymStorePreservation *Preservation,
+                        SymConditionalStore *Conditional);
   StepResult stepControl(const LowOp &Op, const SymCallEffect *CallEffect);
   StepResult stepX87Intrinsic(const LowOp &Op);
   StepResult unmodelled(const LowOp &Op);

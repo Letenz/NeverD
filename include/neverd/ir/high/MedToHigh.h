@@ -283,6 +283,12 @@ public:
       std::function<void(const MedOp &, const HighStmt &)> Observer) {
     StatementObserver = std::move(Observer);
   }
+  /// Forget what the observers recorded for the function being converted.
+  /// With it, convert() lets the observers watch the conversion it most
+  /// likely keeps instead of converting once more only for them.
+  void setObservationReset(std::function<void()> Reset) {
+    ObservationReset = std::move(Reset);
+  }
 
   void setFuncNames(const std::map<va_t, std::string> *Names) {
     FuncNames = Names;
@@ -300,6 +306,13 @@ public:
   /// argument register, then that many stack slots.
   void setVariadicVectorCallees(const std::map<va_t, int> *Entries) {
     VariadicVectorCallees = Entries;
+  }
+  /// The imports, by the stub or slot a call names each by, whose prototype
+  /// the user declares (PipelineResult::CallUserPrototypes): a call to one
+  /// passes what call-ABI recovery gave it, however many arguments a
+  /// platform prototype or the arity tables give a routine of the name.
+  void setUserPrototypeCallees(const std::set<va_t> *Callees) {
+    UserPrototypeCallees = Callees;
   }
 
   struct CallIndTarget {
@@ -359,6 +372,20 @@ private:
   ExprPtr i386GotRelativeAddress(const MedOp &Op, unsigned Displacement);
   VarKeySet I386GotBase;
   VarKeySet I386GotRooted;
+  /// i386 PIC (I386PicAddresses.cpp): the values the CFG proved to be the
+  /// return address a get-PC call pushed, outside unlinked ELF objects, and
+  /// the exact sums of them and constants, such as the GOT address.
+  void collectI386PcRootedValues(const MedFunc &Med);
+  /// The PC-rooted value \p Op computes, or null.
+  ExprPtr i386PcRootedValue(const MedOp &Op) const;
+  /// \p Value, a PC-rooted value of \p Size bytes, as an expression.
+  ExprPtr i386PcRootedConstant(uint32_t Value, uint16_t Size) const;
+  std::unordered_map<VarKey, std::pair<uint32_t, uint16_t>, VarKeyHash>
+      I386PcRootedValues;
+  /// Stores, by address and origin sequence, that only reads of a PC-rooted
+  /// value observe, which read the value above instead: a get-PC call's push,
+  /// which only its pop reads, and a spill only reloads read.
+  std::set<std::pair<va_t, int>> I386PcRootedStores;
   /// Recover a target-width memory address from the wider LowIR VA carrier
   /// only when an explicit zero extension proves that no high bits are lost.
   ExprPtr memoryAddressExpr(const MedVar &V, bool InlineDefinition = true);
@@ -535,10 +562,12 @@ private:
   std::function<void(const MedOp &, const ExprPtr &)> ExpressionObserver;
   std::function<void(const ExprPtr &, const ExprPtr &)> ExpressionCloneObserver;
   std::function<void(const MedOp &, const HighStmt &)> StatementObserver;
+  std::function<void()> ObservationReset;
   Arch TargetArch = Arch::Unknown;
   const std::map<va_t, std::string> *FuncNames = nullptr;
   const std::map<va_t, std::string> *ResolvedCalleeNames = nullptr;
   const std::map<va_t, int> *VariadicVectorCallees = nullptr;
+  const std::set<va_t> *UserPrototypeCallees = nullptr;
   int NextHighTempId = 0;
   std::optional<MedVar> SwiftErrorEntryInput;
   int ExprRecurseDepth = 0;

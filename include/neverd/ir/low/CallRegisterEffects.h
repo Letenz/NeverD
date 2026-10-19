@@ -38,6 +38,7 @@ namespace neverd {
 
 namespace libc {
 class NoReturnTargetIndex;
+class StackProbeIndex;
 } // namespace libc
 
 struct BinaryImage;
@@ -184,18 +185,28 @@ struct LocalRegisterEffect {
 /// A call whose instruction address \p FixedCallReads names reads exactly
 /// those bytes (RegisterStep::FixedArguments).  A call through a
 /// function-pointer variable whose address \p ArgumentSources names reads
-/// what the routine it names reads (RegisterStep::ArgumentsFrom).
+/// what the routine it names reads (RegisterStep::ArgumentsFrom).  \p
+/// StackProbes answers which calls enter a stack probe, when given.
 LocalRegisterEffect localRegisterEffect(
     const BinaryImage &Img, const LowFunc &F,
     const libc::NoReturnTargetIndex *NoReturnTargets = nullptr,
     const std::map<va_t, GPRReadWidths> *FixedCallReads = nullptr,
-    const std::map<va_t, va_t> *ArgumentSources = nullptr);
+    const std::map<va_t, va_t> *ArgumentSources = nullptr,
+    const libc::StackProbeIndex *StackProbes = nullptr);
 
 LocalRegisterEffect localRegisterEffect(
     const BinaryImage &Img, CallRegisterBodyView F,
     const libc::NoReturnTargetIndex *NoReturnTargets = nullptr,
     const std::map<va_t, GPRReadWidths> *FixedCallReads = nullptr,
-    const std::map<va_t, va_t> *ArgumentSources = nullptr);
+    const std::map<va_t, va_t> *ArgumentSources = nullptr,
+    const libc::StackProbeIndex *StackProbes = nullptr);
+
+/// Join each run of \p Effect's steps that only read and write registers
+/// (no callee, no import, no exit, no fixed arguments, no vector copy) into
+/// one step with the same effect on the bytes live before it.
+/// localRegisterEffect returns summaries so joined: solving them gives what
+/// solving the instruction-by-instruction steps gives, over fewer steps.
+void joinPlainSteps(LocalRegisterEffect &Effect);
 
 struct CallRegisterSummaries {
   /// Families a call may change, for functions whose whole call tree is

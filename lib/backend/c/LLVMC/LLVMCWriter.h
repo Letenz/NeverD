@@ -552,6 +552,10 @@ public:
   /// \p Callee is: by its original address, its slot, or the address its
   /// name spells.
   std::optional<FunctionSym> debugFunction(const llvm::Function &Callee) const;
+  /// Whether the user declares the routine of C name \p CName
+  /// (userPrototype): the unit declares it as the user does, not through the
+  /// header that declares the C library's routine of the name.
+  bool userDeclaresRoutine(llvm::StringRef CName) const;
   /// How many arguments the calls to \p Callee pass where its prototype
   /// decides them (printedCallArgLimit), which its declaration then takes;
   /// none where its machine parameters do.
@@ -674,6 +678,8 @@ public:
   bool edgePrintsPhiCopy(const llvm::BasicBlock *From,
                          const llvm::BasicBlock *To);
   std::string resolveImportCalleeName(const llvm::Value *Callee) const;
+  /// resolveImportCalleeName before UserImportIdentifiers renames it.
+  std::string importCalleeCName(const llvm::Value *Callee) const;
   bool isImportCalleeOnlyLoad(const llvm::LoadInst *LI) const;
   bool writeIntrinsicCall(llvm::CallBase &Call, int Indent);
   bool writeInlineAsmCall(llvm::CallInst &Call, const std::string &Name,
@@ -791,6 +797,9 @@ public:
   const llvm::Function *OnlyFunction = nullptr;
   std::set<const llvm::GlobalValue *> SelectedGlobals;
   std::set<std::string> EmittedGlobalNames;
+  /// The routines writeImportCalleeDecls declares, ordinary identifiers a
+  /// record of the same name leaves to its tag (`struct stat64`).
+  std::set<std::string> DeclaredCalleeNames;
   /// When false, emit recovered statements without a C wrapper so analysis-only
   /// functions can nest the listing inside `#if 0` of the trap stub.
   bool EmitFunctionWrapper = true;
@@ -801,6 +810,12 @@ public:
   std::map<const llvm::Function *, std::string> FunctionIdentifiers;
   /// The identifiers FunctionIdentifiers gives the module's functions.
   std::set<std::string> FunctionIdentifierNames;
+  /// The identifier each routine the user declares, called through its
+  /// import, takes where a header the unit includes declares the C library's
+  /// routine of its name, by that name (writeIncludes), and the name each
+  /// such identifier links by.
+  std::map<std::string, std::string> UserImportIdentifiers;
+  std::map<std::string, std::string> UserImportLinkNames;
   /// Exact projected prototypes captured while rendering definitions. They
   /// include source presentation choices such as inferred void and sret.
   std::map<const llvm::Function *, std::string> DefinitionDeclarations;

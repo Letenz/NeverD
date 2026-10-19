@@ -424,7 +424,7 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
       const auto &TRI = getTargetRegInfo(TargetArch);
       llvm::IRBuilder<> FrameB(FrameSetupBB);
       // Preserve the target ABI's entry-SP residue: AArch64 enters aligned,
-      // x86-64 is 8 mod 16, and Darwin i386 is 12 mod 16.
+      // x86-64 is 8 mod 16, and System V and Darwin i386 are 12 mod 16.
       uint64_t AlignedFrameSize = alignSyntheticStack(
           Func.FrameSize > 0 ? static_cast<uint64_t>(Func.FrameSize) : 0);
       uint64_t EntryResidue =

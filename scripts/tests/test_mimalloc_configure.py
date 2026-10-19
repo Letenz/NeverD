@@ -100,6 +100,39 @@ class MimallocConfigureTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_stale_string_settings_take_the_option_defaults(self):
+        # mimalloc 3.5 cached its settings as strings defaulting to DEFAULT,
+        # which a 3.3.2 option() reads as ON. A value set on purpose stays.
+        with tempfile.TemporaryDirectory(prefix="neverd-allocator-cache-") as temp:
+            source = pathlib.Path(temp)
+            source.joinpath("CMakeLists.txt").write_text(
+                "cmake_minimum_required(VERSION 3.20)\n"
+                "project(StaleAllocatorSettings NONE)\n"
+                f'include("{ROOT.as_posix()}/cmake/NeverDMimalloc.cmake")\n'
+                "neverd_drop_stale_mimalloc_settings()\n"
+                'option(MI_DEBUG "" OFF)\n'
+                'option(MI_GUARDED "" OFF)\n'
+                'option(MI_PADDING "" OFF)\n'
+                "if(MI_DEBUG OR MI_GUARDED OR NOT MI_PADDING OR\n"
+                '   NOT MI_SECURE STREQUAL "OFF")\n'
+                '  message(FATAL_ERROR "Unexpected settings: ${MI_DEBUG} '
+                '${MI_GUARDED} ${MI_PADDING} ${MI_SECURE}")\n'
+                "endif()\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [
+                    "cmake", "-S", temp, "-B", str(source / "build"),
+                    "-DNEVERD_ENABLE_MIMALLOC=OFF",
+                    "-DMI_DEBUG:STRING=DEFAULT", "-DMI_GUARDED:STRING=DEFAULT",
+                    "-DMI_SECURE:STRING=OFF", "-DMI_PADDING:BOOL=ON",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_worker_reuses_process_policy_and_preserves_legacy_opt_out(self):
         # A pre-existing process allocator must prevent the worker wrapper
         # from fetching another version or rejecting non-Linux platforms.

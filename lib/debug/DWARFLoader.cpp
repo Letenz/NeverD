@@ -13,6 +13,7 @@
 
 #include "neverd/debug/CompressedSections.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/support/FilePath.h"
 
 #define DEBUG_TYPE "neverd-dwarf-loader"
@@ -356,6 +357,18 @@ struct DWARFDebugContext::Impl {
   TypeRef convertDwarfType(llvm::DWARFDie Die, int Depth = 0);
   std::optional<AuthenticatedRecordParameter>
   recordParameter(llvm::DWARFDie Die, va_t Entry) const;
+  /// Where each formal parameter of the i386 function \p Die enters it at
+  /// \p Entry, where one enters in a register: GCC passes a local function's
+  /// first three there (regparm) and clang its first two (fastcc), where
+  /// cdecl, the platform's convention, passes none.  Empty where none does.
+  std::vector<SourceABIValueLocation>
+  parameterEntryLocations(llvm::DWARFDie Die, va_t Entry) const;
+  /// Where the formal parameter \p Param enters its function at \p Entry: the
+  /// general register a location covering the entry names, or the one whose
+  /// entry value another location takes; the caller's slots, where the
+  /// covering location is memory the frame base or ESP addresses; else none.
+  SourceABIValueLocation parameterEntryLocation(llvm::DWARFDie Param,
+                                                va_t Entry) const;
   DeclaredTypeResolution resolveDeclaredType(llvm::DWARFDie Die) const;
   llvm::DWARFDie declaredTypeDie(llvm::DWARFDie Die) const;
   AuthenticatedReturnValueState classifyReturnValue(llvm::DWARFDie Die,
@@ -642,6 +655,96 @@ DWARFDebugContext::load(const std::filesystem::path &BinaryPath,
   LLVM_DEBUG(llvm::dbgs() << "debug: loaded " << Ctx->PImpl->FuncList.size()
                           << " functions with debug info" << "\n");
   return Ctx;
+}
+
+std::vector<SourceABIValueLocation>
+DWARFDebugContext::Impl::parameterEntryLocations(llvm::DWARFDie Die,
+                                                 va_t Entry) const {
+  std::vector<SourceABIValueLocation> Entries;
+  if (MachineArch != llvm::Triple::x86)
+    return Entries;
+  bool InRegister = false;
+  for (llvm::DWARFDie Child : Die.children()) {
+    if (Child.getTag() != llvm::dwarf::DW_TAG_formal_parameter)
+      continue;
+    Entries.push_back(parameterEntryLocation(Child, Entry));
+    InRegister |= Entries.back().Kind == SourceABICarrierKind::IntegerRegister;
+  }
+  if (!InRegister)
+    Entries.clear();
+  return Entries;
+}
+
+SourceABIValueLocation
+DWARFDebugContext::Impl::parameterEntryLocation(llvm::DWARFDie Param,
+                                                va_t Entry) const {
+  auto Locations = Param.getLocations(llvm::dwarf::DW_AT_location);
+  if (!Locations) {
+    llvm::consumeError(Locations.takeError());
+    return {};
+  }
+  // i386's DWARF numbers the general registers as its encoding does: EAX,
+  // ECX, EDX, EBX, ESP, EBP, ESI, EDI.  No parameter enters in ESP.
+  auto GeneralRegister = [](uint8_t Code) -> std::optional<uint64_t> {
+    if (Code < llvm::dwarf::DW_OP_reg0 || Code > llvm::dwarf::DW_OP_reg7 ||
+        Code == llvm::dwarf::DW_OP_reg4)
+      return std::nullopt;
+    return x86reg::generalReg(Code - llvm::dwarf::DW_OP_reg0);
+  };
+  std::optional<SourceABIValueLocation> Found;
+  bool Conflict = false;
+  auto Note = [&](SourceABICarrierKind Kind, uint64_t Register) {
+    if (Found && (Found->Kind != Kind || Found->RegisterOffset != Register))
+      Conflict = true;
+    Found.emplace();
+    Found->Kind = Kind;
+    Found->RegisterOffset = Register;
+  };
+  auto *Unit = Param.getDwarfUnit();
+  for (const auto &Location : *Locations) {
+    llvm::StringRef Raw(reinterpret_cast<const char *>(Location.Expr.data()),
+                        Location.Expr.size());
+    llvm::DataExtractor Data(Raw, Unit->isLittleEndian(),
+                             Unit->getAddressByteSize());
+    llvm::DWARFExpression Expression(Data, Unit->getAddressByteSize(),
+                                     Unit->getFormat());
+    llvm::SmallVector<std::pair<uint8_t, uint64_t>, 4> Ops;
+    bool Valid = true;
+    for (const auto &Op : Expression) {
+      if (Op.isError() || Ops.size() == 4) {
+        Valid = false;
+        break;
+      }
+      Ops.push_back({Op.getCode(),
+                     Op.getNumOperands() ? Op.getRawOperand(0) : uint64_t()});
+    }
+    if (!Valid || Ops.empty())
+      continue;
+    // The value the register held at the entry, wherever the location
+    // applies: DWARF 5's DW_OP_entry_value, GCC's DW_OP_GNU_entry_value.
+    if (Ops.size() == 3 &&
+        (Ops[0].first == llvm::dwarf::DW_OP_entry_value ||
+         Ops[0].first == llvm::dwarf::DW_OP_GNU_entry_value) &&
+        Ops[0].second == 1 && Ops[2].first == llvm::dwarf::DW_OP_stack_value) {
+      if (const auto Register = GeneralRegister(Ops[1].first))
+        Note(SourceABICarrierKind::IntegerRegister, *Register);
+      continue;
+    }
+    if (Location.Range &&
+        !(Location.Range->valid() && Location.Range->LowPC <= Entry &&
+          Entry < Location.Range->HighPC))
+      continue;
+    if (Ops.size() != 1)
+      continue;
+    if (const auto Register = GeneralRegister(Ops[0].first))
+      Note(SourceABICarrierKind::IntegerRegister, *Register);
+    else if (Ops[0].first == llvm::dwarf::DW_OP_fbreg ||
+             Ops[0].first == llvm::dwarf::DW_OP_breg4)
+      Note(SourceABICarrierKind::Stack, 0);
+  }
+  if (!Found || Conflict)
+    return {};
+  return *Found;
 }
 
 std::optional<AuthenticatedRecordParameter>
@@ -1174,7 +1277,18 @@ TypeRef DWARFDebugContext::Impl::convertDwarfType(llvm::DWARFDie Die,
         Die.getAttributeValueAsReferencedDie(llvm::dwarf::DW_AT_type);
     auto PT = PointeeDie.isValid() ? convertDwarfType(PointeeDie, Depth + 1)
                                    : NdType::makeVoid();
-    return NdType::makePtr(PT);
+    // A pointer is as wide as its unit's addresses unless it says otherwise:
+    // four bytes on i386 and 32-bit ARM, where a parameter after it is the
+    // next slot's.
+    TypeRef Pointer = NdType::makePtr(PT);
+    const auto Bytes = Die.find(llvm::dwarf::DW_AT_byte_size);
+    const uint64_t Size =
+        Bytes ? Bytes->getAsUnsignedConstant().value_or(0)
+              : (Die.getDwarfUnit() ? Die.getDwarfUnit()->getAddressByteSize()
+                                    : 0);
+    if (Size == 4 || Size == 8)
+      Pointer->Size = static_cast<uint16_t>(Size);
+    return Pointer;
   }
   case llvm::dwarf::DW_TAG_typedef:
   case llvm::dwarf::DW_TAG_const_type:
@@ -1679,6 +1793,7 @@ void DWARFDebugContext::Impl::parseFunction(llvm::DWARFDie Die,
     Sym.Params.emplace_back(std::move(Name), std::move(Type));
   }
   Sym.PlatformConvention = platformConvention(Die);
+  Sym.ParamEntryLocations = parameterEntryLocations(Die, Addr);
 
   RecordParameters[Addr] = std::move(EntryRecords);
   FunctionInfo &Info = Functions[Addr];

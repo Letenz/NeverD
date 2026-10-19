@@ -21,6 +21,10 @@
 //                              Type)
 //   Its parameters there: those that point to objects, by position, and the
 //   one that points to a function (-1 for none), of C type Type.
+// NEVERD_LIBC_VARIANT_FORWARD_FIXED(Variant, Name, Types...)
+//   The C types of the fixed parameters of the variadic routine there, which
+//   a function passing its arguments on to it declares
+//   (LibCVariadicForwards.inc).
 //
 //===----------------------------------------------------------------------===//
 
@@ -37,6 +41,9 @@
 #define NEVERD_LIBC_VARIANT_POINTERS(Variant, Name, ObjectPointers,            \
                                      FunctionPointer, Type)
 #endif
+#ifndef NEVERD_LIBC_VARIANT_FORWARD_FIXED
+#define NEVERD_LIBC_VARIANT_FORWARD_FIXED(Variant, Name, ...)
+#endif
 
 // Darwin's libSystem: BSD's sendfile, qsort_r and setlinebuf, and
 // pthread_setname_np naming only the calling thread.
@@ -51,12 +58,18 @@ NEVERD_LIBC_VARIANT_RESULT(Darwin, "setlinebuf", Value)
 NEVERD_LIBC_VARIANT_RESULT(Darwin, "pthread_self", Pointer)
 NEVERD_LIBC_VARIANT_RESULT(Darwin, "strerror_r", Value)
 
-// musl: POSIX's strerror_r, and a pthread_t that points to the thread.
+// musl: POSIX's strerror_r, a pthread_t that points to the thread, and
+// ptrace and ioctl requests that are ints, which glibc's headers declare an
+// enumeration and an unsigned long.
 NEVERD_LIBC_VARIANT_RESULT(Musl, "pthread_self", Pointer)
 NEVERD_LIBC_VARIANT_RESULT(Musl, "strerror_r", Value)
+NEVERD_LIBC_VARIANT_FORWARD_FIXED(Musl, "ioctl", "int", "int")
+NEVERD_LIBC_VARIANT_FORWARD_FIXED(Musl, "ptrace", "int")
 
-// bionic: BSD's setlinebuf.
+// bionic: BSD's setlinebuf, and musl's ptrace and ioctl requests.
 NEVERD_LIBC_VARIANT_RESULT(Bionic, "setlinebuf", Value)
+NEVERD_LIBC_VARIANT_FORWARD_FIXED(Bionic, "ioctl", "int", "int")
+NEVERD_LIBC_VARIANT_FORWARD_FIXED(Bionic, "ptrace", "int")
 
 // FreeBSD's libc: BSD's sendfile and setlinebuf, POSIX's strerror_r, a
 // pthread_t that points to the thread, and an __assert that names the
@@ -72,3 +85,4 @@ NEVERD_LIBC_VARIANT_RESULT(FreeBSD, "strerror_r", Value)
 #undef NEVERD_LIBC_VARIANT_VARIADIC
 #undef NEVERD_LIBC_VARIANT_RESULT
 #undef NEVERD_LIBC_VARIANT_POINTERS
+#undef NEVERD_LIBC_VARIANT_FORWARD_FIXED

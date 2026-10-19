@@ -3996,7 +3996,7 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     if (AfterCxxThrow)
       return true;
     emitIndent(Indent);
-    OS << renderDebugBreak(Opts.TheArch);
+    OS << renderDebugBreak(Opts.TheArch, Opts.Format);
     AfterCxxThrow = false;
     return true;
   }
@@ -6707,6 +6707,14 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
 
 std::string
 LLVMCWriter::resolveImportCalleeName(const llvm::Value *Callee) const {
+  std::string Name = importCalleeCName(Callee);
+  if (const auto Renamed = UserImportIdentifiers.find(Name);
+      Renamed != UserImportIdentifiers.end())
+    return Renamed->second;
+  return Name;
+}
+
+std::string LLVMCWriter::importCalleeCName(const llvm::Value *Callee) const {
   if (!Callee)
     return {};
   const llvm::Value *Op = Callee->stripPointerCasts();

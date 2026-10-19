@@ -9,6 +9,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
 #include "neverd/loader/ELF/ELFLoaderUtils.h"
+#include "neverd/loader/FunctionNames.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -23,7 +24,10 @@
 
 #include <cstdint>
 #include <cstring>
+#include <map>
 #include <memory>
+#include <set>
+#include <string>
 #include <vector>
 
 namespace {
@@ -964,6 +968,56 @@ TEST(RuntimeMetadata, NumbersANameLowerFunctionsTakeAsIDANumbersIt) {
   EXPECT_EQ(Img.getFunctionNameAt(0x500), "start");
   EXPECT_EQ(Img.getFunctionNameAt(0x5000), "run");
   EXPECT_EQ(Img.functionListName(0x2000, "helper"), "helper_1");
+}
+
+TEST(RuntimeMetadata, ManyAddressesTakeTheNamesEachTakesAlone) {
+  // functionNamesAt answers in one pass what getFunctionNameAt answers per
+  // address: the first export when it has a name, else the best symbol by
+  // rank (the first of equal rank, never a section's own), numbered as the
+  // function is listed, else a synthesized name.
+  BinaryImage Img;
+  const auto AddSymbol = [&](const char *Name, va_t Addr, bool IsFunc,
+                             NameOrigin Origin = NameOrigin::Stated,
+                             bool IsSection = false) {
+    Symbol Sym;
+    Sym.Name = Name;
+    Sym.Addr = Addr;
+    Sym.IsFunc = IsFunc;
+    Sym.Origin = Origin;
+    Sym.IsSection = IsSection;
+    Img.Symbols.push_back(Sym);
+  };
+  const auto AddExport = [&](const char *Name, va_t Addr) {
+    Export Exp;
+    Exp.Name = Name;
+    Exp.Addr = Addr;
+    Img.Exports.push_back(Exp);
+  };
+  AddExport("exported", 0x1000);
+  AddSymbol("symbol", 0x1000, true);
+  AddExport("", 0x2000);
+  AddExport("second_export", 0x2000);
+  AddSymbol("label", 0x2000, false);
+  AddSymbol("function", 0x2000, true);
+  AddSymbol(".text", 0x3000, false, NameOrigin::Stated, /*IsSection=*/true);
+  AddSymbol("thunk", 0x3000, false);
+  AddSymbol("first_label", 0x4000, false);
+  AddSymbol("second_label", 0x4000, false);
+  AddSymbol("sub_5000", 0x5000, true, NameOrigin::Synthesized);
+  AddSymbol("stated", 0x5000, false);
+  AddSymbol("helper", 0x6000, true);
+  AddSymbol("helper", 0x7000, true);
+  AddSymbol("", 0x8000, true);
+  Img.numberSharedFunctionNames();
+  const std::set<va_t> Addrs = {0x1000, 0x2000, 0x3000, 0x4000, 0x5000,
+                                0x6000, 0x7000, 0x8000, 0x9000};
+  std::map<va_t, std::string> Alone;
+  for (va_t Addr : Addrs)
+    Alone.emplace(Addr, Img.getFunctionNameAt(Addr));
+  EXPECT_EQ(functionNamesAt(Img, Addrs), Alone);
+  EXPECT_EQ(Alone.at(0x2000), "function");
+  EXPECT_EQ(Alone.at(0x7000), "helper_0");
+  EXPECT_EQ(Alone.at(0x9000), "sub_9000");
 }
 
 TEST(RuntimeMetadata, ParsesRVADelayImportWithExactIATSlot) {

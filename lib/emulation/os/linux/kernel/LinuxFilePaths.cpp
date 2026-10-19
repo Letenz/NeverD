@@ -4,11 +4,39 @@
 //
 //===----------------------------------------------------------------------===//
 #include "LinuxFiles.h"
+#include "LinuxUserMemory.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
 namespace neverd::emulation::linux_model {
+llvm::Expected<std::optional<uint64_t>>
+LinuxFiles::getWorkingDirectory(uint64_t Address, uint64_t Size,
+                                ProcessResult &Result) {
+  if (!Options->WorkingDirectory)
+    return unsupported(Result, "Linux working directory is not supplied");
+  const auto &Path = *Options->WorkingDirectory;
+  // Linux returns the terminating NUL in the count; capacity is checked
+  // before the user copy. The declared cwd is linked and reachable.
+  if (Size < Path.size() + 1)
+    return std::optional<uint64_t>(uint64_t(0) - RangeError);
+  std::vector<uint8_t> Bytes(Path.begin(), Path.end());
+  Bytes.push_back(0);
+  auto Stored = writeUserMemory(CPU, Layout, Address, Bytes);
+  if (!Stored)
+    return Stored.takeError();
+  switch (*Stored) {
+  case UserWriteResult::Stored:
+    return std::optional<uint64_t>(Bytes.size());
+  case UserWriteResult::BadAddress:
+    return std::optional<uint64_t>(uint64_t(0) - BadAddress);
+  case UserWriteResult::MixedAccess:
+    return unsupported(Result,
+                       "partial Linux getcwd output fault is unmodeled");
+  }
+  llvm_unreachable("unknown Linux user-copy outcome");
+}
+
 bool isCanonicalFilePath(llvm::StringRef Path) {
   if (!Path.consume_front("/") || Path.empty() || Path.contains('\0'))
     return false;
@@ -71,7 +99,8 @@ LinuxFiles::parsePath(llvm::StringRef Path) {
 
 LinuxFiles::PathKind LinuxFiles::lookupPath(const std::string &Path,
                                             bool RequiresDirectory) const {
-  if (Path == "/" || llvm::is_contained(Options->Directories, Path))
+  if (Path == "/" || DirectoryMetadata.contains(Path) ||
+      llvm::is_contained(Options->Directories, Path))
     return PathKind::Directory;
   if (auto Kind = procKind(Path, RequiresDirectory))
     return *Kind;
@@ -155,45 +184,6 @@ LinuxFiles::access(uint64_t Address, uint32_t Mode, ProcessResult &Result) {
     return std::optional<uint64_t>(0);
   }
   llvm_unreachable("unknown Linux catalogue entry kind");
-}
-
-llvm::Expected<std::optional<uint64_t>>
-LinuxFiles::makeDirectory(uint64_t Address, ProcessResult &Result) {
-  auto Imported = readPath(Address);
-  if (!Imported)
-    return Imported.takeError();
-  if (const auto *Error = std::get_if<uint32_t>(&*Imported))
-    return std::optional<uint64_t>(uint64_t(0) - *Error);
-  auto Parsed = parsePath(std::get<std::string>(*Imported));
-  if (!Parsed)
-    return unsupported(Result, FilePathForm);
-  const auto &Path = Parsed->Name;
-
-  // Linux resolves the parent and final component before applying mode,
-  // umask or creation policy. Only these catalogue-derived failures are known.
-  const size_t Slash = Path.rfind('/');
-  const std::string Parent = Slash ? Path.substr(0, Slash) : "/";
-  switch (lookupPath(Parent)) {
-  case PathKind::SymbolicLink:
-  case PathKind::LinkTraversal:
-    return unsupported(Result, FileLinkTraversal);
-  case PathKind::UnmodeledProc:
-    return unsupported(Result, "proc entry has no modeled semantics");
-  case PathKind::Missing:
-    return std::optional<uint64_t>(uint64_t(0) - NoEntry);
-  case PathKind::ProcFile:
-  case PathKind::File:
-  case PathKind::Device:
-  case PathKind::NotDirectory:
-    return std::optional<uint64_t>(uint64_t(0) - NotDirectory);
-  case PathKind::Directory:
-    break;
-  }
-  // Creation checks the final name itself: even a regular file followed by
-  // slashes already exists. The directory requirement applies to its parent.
-  if (lookupPath(Path) != PathKind::Missing)
-    return std::optional<uint64_t>(uint64_t(0) - AlreadyExists);
-  return unsupported(Result, FileDirectoryCreation);
 }
 
 llvm::Expected<std::optional<uint64_t>> LinuxFiles::open(uint64_t Address,

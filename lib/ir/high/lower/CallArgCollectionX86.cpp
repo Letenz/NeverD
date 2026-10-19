@@ -216,8 +216,10 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
   //
   // With the stack pointer the call is made with known, a store's slot is
   // its offset from it instead: a push, a `mov [esp+N]` in any order, or
-  // clang -O0's store through a copy of ESP.  A slot below it (a get-PC
-  // push the code popped again) or past the callee's arguments holds none.
+  // clang -O0's store through a copy of ESP, also in a frame realigned by
+  // `and esp, -16`, where only the alignment relates the two.  A slot below
+  // it (a get-PC push the code popped again) or past the callee's arguments
+  // holds none.
   //
   // Stores outnumbering the arguments found make a cdecl call, whose ECX
   // and EDX written before it are scratch (clang -O0 loads a value there
@@ -244,13 +246,14 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
       !(WideStore && Scan.CalleeInImage &&
         Scan.CalleeStackArgs > static_cast<int>(Args.size())))
     return;
-  if (Scan.CallStackEntryOffset && Scan.EntryOffsetOf) {
+  if (Scan.CallStackOffsetOf) {
     std::vector<ExprPtr> Slots(static_cast<size_t>(Scan.MaxArgs));
     stores([&](const MedOp &Store) {
-      const std::optional<int64_t> Entry = Scan.EntryOffsetOf(Store.Inputs[0]);
-      if (!Entry || *Entry < *Scan.CallStackEntryOffset)
+      const std::optional<int64_t> Above =
+          Scan.CallStackOffsetOf(Store.Inputs[0]);
+      if (!Above || *Above < 0)
         return true;
-      const int64_t Offset = *Entry - *Scan.CallStackEntryOffset;
+      const int64_t Offset = *Above;
       if (Offset % SlotBytes != 0)
         return true;
       // A store wider than a slot, clang's `movsd [esp], xmm0` copying an

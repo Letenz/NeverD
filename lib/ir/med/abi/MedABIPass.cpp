@@ -429,20 +429,21 @@ IntegerArgumentLayout integerArgumentLayoutOf(const MedFunc &Func,
   return Layout;
 }
 
-void recoverCallAbi(
-    MedFunc &Func, Arch TheArch, const std::map<va_t, std::string> &FuncNames,
-    const BinaryImage *Img, std::map<va_t, int> *CalleeRegArity,
-    std::map<va_t, int> *CalleeTotalArity,
-    const std::map<va_t, int> *CalleeFPArity,
-    const std::map<va_t, uint16_t> *CalleeFPReturnSize,
-    const std::map<va_t, std::vector<uint64_t>> *CalleeFPRegs,
-    const std::map<va_t, bool> *CalleeHasSret,
-    std::map<va_t, bool> *CalleeIsVariadic,
-    const std::map<va_t, bool> *CalleeConsumesVaList,
-    const std::set<va_t> *FrameLocalLeafCallees,
-    const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs,
-    const std::set<va_t> *VectorArgumentCallees,
-    const std::map<va_t, PointerVariableCallee> *PointerCallees) {
+void recoverCallAbi(MedFunc &Func, Arch TheArch,
+                    const std::map<va_t, std::string> &FuncNames,
+                    const BinaryImage *Img, std::map<va_t, int> *CalleeRegArity,
+                    std::map<va_t, int> *CalleeTotalArity,
+                    const std::map<va_t, int> *CalleeFPArity,
+                    const std::map<va_t, uint16_t> *CalleeFPReturnSize,
+                    const std::map<va_t, std::vector<uint64_t>> *CalleeFPRegs,
+                    const std::map<va_t, bool> *CalleeHasSret,
+                    std::map<va_t, bool> *CalleeIsVariadic,
+                    const std::map<va_t, bool> *CalleeConsumesVaList,
+                    const std::set<va_t> *FrameLocalLeafCallees,
+                    const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs,
+                    const std::set<va_t> *VectorArgumentCallees,
+                    const std::map<va_t, PointerVariableCallee> *PointerCallees,
+                    const std::set<va_t> *UserPrototypeCallees) {
   Func.CallInfos.clear();
 
   const auto &TRI = getTargetRegInfo(TheArch);
@@ -799,10 +800,24 @@ void recoverCallAbi(
       const bool IsObjCMessageStub =
           TargetSection && Img->isMachO() &&
           TargetSection->Name == section_names::macho::ObjCStubs;
+      // The integer arguments the call's summary counts, where it counts
+      // them: a prototype's (importPrototypeArguments, LowToMed).
+      const bool IntegerSummary = Op.CalleeRegisterArgs >= 0 &&
+                                  Op.CalleeVectorSlots == 0 &&
+                                  Op.CalleeVectorArgs <= 0;
+      // An import whose prototype the user declares takes what that prototype
+      // declares, as its summary counts it, not what the tables give a
+      // routine of its name: through its stub, its slot, or a variable that
+      // points to it.
+      const bool UserPrototype =
+          IntegerSummary && UserPrototypeCallees &&
+          (UserPrototypeCallees->count(CI.TargetAddr) ||
+           (CallSlot && UserPrototypeCallees->count(*CallSlot)));
       std::optional<libc::LibCArity> ExternalArity;
-      if (!CI.IsIndirect || IsIndirectImport)
+      if (!UserPrototype && (!CI.IsIndirect || IsIndirectImport))
         ExternalArity = libc::libcArityForSymbol(CI.TargetName, LibC);
-      else if (VariableCallee && !VariableCallee->ImportName.empty())
+      else if (!UserPrototype && VariableCallee &&
+               !VariableCallee->ImportName.empty())
         ExternalArity =
             libc::libcArityForSymbol(VariableCallee->ImportName, LibC);
       // An import the tables do not know, whose prototype the program's types
@@ -812,9 +827,9 @@ void recoverCallAbi(
       // one the tables know does, and no register it happens to hold, through
       // its slot or through the thunk an import library links (MinGW's
       // `_NlsValidateLocale@8`).
-      if (!ExternalArity && (IsIndirectImport || IsDirectImport) &&
-          Op.CalleeRegisterArgs >= 0 && Op.CalleeVectorSlots == 0 &&
-          Op.CalleeVectorArgs <= 0) {
+      if (!ExternalArity &&
+          (IsIndirectImport || IsDirectImport || UserPrototype) &&
+          IntegerSummary) {
         libc::LibCArity Declared;
         Declared.IntArgs =
             std::max<int>(Op.CalleeRegisterArgs, Op.CalleeStackArgs);

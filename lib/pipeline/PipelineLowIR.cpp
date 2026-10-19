@@ -15,6 +15,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/debug/DebugContext.h"
+#include "neverd/debug/UserPrototype.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
@@ -27,10 +28,12 @@
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/StackProbeIndex.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/DataSymbolBinding.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
+#include "neverd/loader/FunctionNames.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -3131,6 +3134,10 @@ struct ImportPrototypeArguments {
   /// The integer arguments each import's prototype counts, where the setup
   /// of each call gives it its arguments (Windows on ARM64).
   std::map<va_t, int> Counts;
+  /// The imports listed by the prototype the user declares (userPrototype),
+  /// which takes only integer arguments: their calls pass what it declares,
+  /// however many the arity tables give a routine of the name.
+  std::set<va_t> UserDeclared;
 };
 
 /// The arguments of the libc imports that \p Funcs and the callees
@@ -3139,7 +3146,9 @@ struct ImportPrototypeArguments {
 /// import directory or not (importCalleeName).  A stub lifted as a function
 /// is keyed too.  A call in a function whose own summary is incomplete still
 /// passes its import's parameters.  Only a routine with a fixed prototype is
-/// listed: one of the image format's own runtime (LibCPrototype, such as the
+/// listed: the one the user declares (userPrototype), where it takes only
+/// integer arguments, which decides over the tables (UserDeclared); else one
+/// of the image format's own runtime (LibCPrototype, such as the
 /// Windows C runtime's `_initterm`), else one the arity tables give
 /// (LibCNames.h), by the exact name where the import entry is the C name,
 /// else one the program's types declare (\p Dbg's resolvePrototype), as the
@@ -3243,6 +3252,10 @@ ImportPrototypeArguments importPrototypeArguments(
       if (!Integer && Type->Kind != NdTypeKind::Ptr &&
           (Type->Kind != NdTypeKind::Struct || !Positional))
         return std::nullopt;
+      // An integer wider than a register takes more than one, an ARM pair's
+      // aligned, which these positions do not describe.
+      if (Integer && Type->Size > TRI.PointerSize)
+        return std::nullopt;
       ++Result.Integers;
       Result.Order.push_back(0);
       // A record takes its whole slot, by value or by its address.
@@ -3257,6 +3270,19 @@ ImportPrototypeArguments importPrototypeArguments(
       [&](const std::string &Name) -> std::optional<Arguments> {
     const std::optional<FunctionSym> Function = Declared(Name);
     return Function ? SignatureArguments(*Function) : std::nullopt;
+  };
+  // The prototype the user declares for a routine of another module, where
+  // it takes only integer arguments: the user may declare a routine of a C
+  // library's name that a library of the program's own exports.
+  auto UserArguments =
+      [&](const std::string &Name) -> std::optional<Arguments> {
+    const std::optional<FunctionSym> Function =
+        userPrototype(Dbg, cNameOfStatedName(Name, Img.Format, Img.Arch));
+    std::optional<Arguments> Result =
+        Function ? SignatureArguments(*Function) : std::nullopt;
+    if (Result && !Result->Floats.empty())
+      return std::nullopt;
+    return Result;
   };
   // A routine the image exports, whose name binds a prototype
   // (LocalTypesDebugContext), takes what that prototype declares from every
@@ -3374,10 +3400,14 @@ ImportPrototypeArguments importPrototypeArguments(
     std::optional<Arguments> Routine;
     // The summary of an exported routine's own body joins its prototype.
     bool Joins = false;
+    bool User = false;
     if (!Name.empty()) {
       if (const uint16_t Bytes = RoutineFloatReturn(Name))
         Result.FloatReturns[Addr] = Bytes;
-      Routine = RoutineArguments(Name);
+      Routine = UserArguments(Name);
+      User = Routine.has_value();
+      if (!Routine)
+        Routine = RoutineArguments(Name);
       if (!Routine)
         Routine = DecoratedArguments(Addr);
     } else {
@@ -3436,6 +3466,8 @@ ImportPrototypeArguments importPrototypeArguments(
       if (Routine->CalleePops && *Count > 0)
         Result.StackPops[Addr] = *Count * static_cast<int>(TRI.PointerSize);
     }
+    if (User)
+      Result.UserDeclared.insert(Addr);
   };
   for (const LowFunc &F : Funcs)
     for (const LowBlock &Block : F.Blocks)
@@ -3475,6 +3507,7 @@ ImportPrototypeArguments importPrototypeArguments(
 void computeCallRegisterEffects(
     const BinaryImage &Img, const std::set<va_t> &FuncEntries,
     const libc::NoReturnTargetIndex &NoReturnTargets,
+    const libc::StackProbeIndex &StackProbes,
     const NoReturnCalleeProver &NoReturnCallees,
     const detail::AbsoluteRelocationRootIndex &AbsoluteRelocationRoots,
     const ExecutableCodeOwnerIndex *CodeOwnerIndex,
@@ -3486,6 +3519,7 @@ void computeCallRegisterEffects(
   const std::map<va_t, PointerVariableCallee> PointerCallees =
       collectPointerVariableCallees(Img);
   Result.CallArgumentSources.clear();
+  Result.CallUserPrototypes.clear();
   for (const auto &[Slot, Callee] : PointerCallees)
     Result.CallArgumentSources.emplace(
         Slot, Callee.ImportName.empty() ? Callee.LocalEntry : Slot);
@@ -3504,15 +3538,16 @@ void computeCallRegisterEffects(
       Result.CallEntryStackArgs = std::move(Prototyped.StackArgs);
       Result.CallEntryStackSlots = std::move(Prototyped.StackSlots);
       Result.CallEntryStackPops = std::move(Prototyped.StackPops);
+      Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
     } else if (Convention && Convention->ImportArgumentsFromPrototype &&
                Convention->ArgumentsFromCallSetup) {
       // Where the setup of each call gives it its arguments (Windows on
       // ARM64), a prototyped import's declaration still counts them.
-      Result.CallEntryArgumentCounts =
-          importPrototypeArguments(Img, Result.LowFuncs, {},
-                                   /*StackArguments=*/true, Dbg,
-                                   /*RegisterArguments=*/true, &PointerCallees)
-              .Counts;
+      ImportPrototypeArguments Prototyped = importPrototypeArguments(
+          Img, Result.LowFuncs, {}, /*StackArguments=*/true, Dbg,
+          /*RegisterArguments=*/true, &PointerCallees);
+      Result.CallEntryArgumentCounts = std::move(Prototyped.Counts);
+      Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
     }
     return;
   }
@@ -3542,7 +3577,7 @@ void computeCallRegisterEffects(
     CollectFormattedCalls(LF.Blocks, /*Converted=*/true);
     Effects[LF.Entry] =
         localRegisterEffect(Img, LF, &NoReturnTargets, &FixedCallReads,
-                            &Result.CallArgumentSources);
+                            &Result.CallArgumentSources, &StackProbes);
     if (forwardsToGuardDispatch(Img, LF.Blocks))
       GuardForwarders.insert(LF.Entry);
     Depth[LF.Entry] = 0;
@@ -3641,7 +3676,7 @@ void computeCallRegisterEffects(
         CollectFormattedCalls(Body.Blocks, /*Converted=*/false);
         Effects[Callee] =
             localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads,
-                                &Result.CallArgumentSources);
+                                &Result.CallArgumentSources, &StackProbes);
         if (forwardsToGuardDispatch(Img, Body.Blocks))
           GuardForwarders.insert(Callee);
         Work.push_back(Callee);
@@ -3693,8 +3728,11 @@ void computeCallRegisterEffects(
         Widths[Win64Args[I] / 8] = Proto->ArgWidths[I];
       FixedEntryReads[Entry] = Widths;
     };
+    std::set<va_t> Callees;
     for (const auto &[Entry, Effect] : Effects)
-      Classify(Entry, Img.getFunctionNameAt(Entry));
+      Callees.insert(Entry);
+    for (const auto &[Entry, Name] : functionNamesAt(Img, Callees))
+      Classify(Entry, Name);
     for (const Import &Imp : Img.Imports)
       Classify(Imp.IATAddr, Imp.Name);
   }
@@ -3707,9 +3745,13 @@ void computeCallRegisterEffects(
     ImportPrototypeArguments Prototyped = importPrototypeArguments(
         Img, Result.LowFuncs, Effects, Convention->StackArgumentSummary, Dbg,
         /*RegisterArguments=*/true, &PointerCallees);
+    // The user's declaration of an import decides where no documented
+    // contract does.
     for (auto &[Addr, Widths] : Prototyped.Reads)
-      if (!DispatchThunks.count(Addr))
-        FixedEntryReads.try_emplace(Addr, Widths);
+      if (!DispatchThunks.count(Addr) &&
+          FixedEntryReads.try_emplace(Addr, Widths).second &&
+          Prototyped.UserDeclared.count(Addr))
+        Result.CallUserPrototypes.insert(Addr);
     for (auto &[Addr, Count] : Prototyped.StackArgs)
       if (!DispatchThunks.count(Addr))
         FixedEntryStackArgs.try_emplace(Addr, Count);
@@ -3748,6 +3790,7 @@ struct PipelineAnalysisCache::Impl {
   const std::set<va_t> Entries;
   std::set<uint64_t> VerifiedEntries;
   libc::NoReturnTargetIndex Targets;
+  libc::StackProbeIndex StackProbes;
   detail::AbsoluteRelocationRootIndex Roots;
   ExecutableCodeOwnerIndex Owners;
   InternalNoReturnIndex Callees;
@@ -3769,7 +3812,7 @@ struct PipelineAnalysisCache::Impl {
                             return Prototype && Prototype->NoReturn;
                           })
                     : libc::NoReturnTargetIndex::DeclaredNoReturn()),
-        Roots(Img), Owners(Img),
+        StackProbes(Img), Roots(Img), Owners(Img),
         Callees(Img, &this->Entries, &Targets, &Roots, &Owners),
         Graphs(createX87CallGraphCache(&Callees, &Targets, RetainBodies,
                                        {limits::kMaxPipelineCallGraphEntries,
@@ -3777,15 +3820,36 @@ struct PipelineAnalysisCache::Impl {
                                         limits::kMaxPipelineCallBodyBytes},
                                        &this->Entries)) {}
 
+  /// \p CandidateEntries is sorted and holds each entry once.
   bool matches(const BinaryImage &Img, DebugContext *Dbg,
-               const std::set<va_t> &CandidateEntries) const {
+               llvm::ArrayRef<va_t> CandidateEntries) const {
     // Object identity is only a guard: the owner must retire this state on
     // reload/mutation. These two inventories can grow during const analysis,
     // and affect CFG boundaries, ownership and proof work charges.
-    return Image == &Img && Debug == Dbg && Entries == CandidateEntries &&
+    return Image == &Img && Debug == Dbg &&
+           std::equal(Entries.begin(), Entries.end(), CandidateEntries.begin(),
+                      CandidateEntries.end()) &&
            VerifiedEntries == Img.VerifiedFunctionEntries;
   }
 };
+
+namespace {
+/// The starts of the image's function symbols that are not boundary
+/// guesses, sorted and each once: the entries every run knows.  An image
+/// holds tens of thousands, which a sorted vector gathers and compares with
+/// the kept facts' far sooner than a set is built and torn down per run.
+std::vector<va_t> symbolFunctionStarts(const BinaryImage &Img,
+                                       const std::set<va_t> &BoundaryGuesses) {
+  std::vector<va_t> Starts;
+  Starts.reserve(Img.Symbols.size());
+  for (const auto &Sym : Img.Symbols)
+    if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr))
+      Starts.push_back(Sym.Addr);
+  llvm::sort(Starts);
+  Starts.erase(std::unique(Starts.begin(), Starts.end()), Starts.end());
+  return Starts;
+}
+} // namespace
 
 std::optional<AnalysisCacheWarmup>
 Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
@@ -3794,16 +3858,15 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
     return std::nullopt;
   // The entries a selected-function run of a symbol start knows (buildLowIR
   // below): its own entry adds nothing to them, so its run shares this state.
-  const std::set<va_t> BoundaryGuesses = Img.boundaryGuessFunctionStarts();
-  std::set<va_t> CandidateEntries;
-  for (const auto &Sym : Img.Symbols)
-    if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr))
-      CandidateEntries.insert(Sym.Addr);
+  const std::vector<va_t> CandidateEntries =
+      symbolFunctionStarts(Img, Img.boundaryGuessFunctionStarts());
   PipelineAnalysisCache &Cache = *Opts.AnalysisCache;
   // Facts for another symbol inventory serve no later run.
   if (!Cache.Facts || !Cache.Facts->matches(Img, Dbg, CandidateEntries)) {
     Cache.Facts = std::make_shared<PipelineAnalysisCache::Impl>(
-        Img, Dbg, std::move(CandidateEntries), /*RetainBodies=*/true);
+        Img, Dbg,
+        std::set<va_t>(CandidateEntries.begin(), CandidateEntries.end()),
+        /*RetainBodies=*/true);
   } else {
     Cache.Facts->Callees.trimMemoizedProofs(
         limits::kMaxRetainedNoReturnAnswers);
@@ -3834,22 +3897,35 @@ void Pipeline::buildLowIR(
   const std::set<va_t> BoundaryGuesses = Img.boundaryGuessFunctionStarts();
   // The same symbol inventory owns both full-image and selected-function CFGs;
   // unselected bodies need not be lifted to preserve their entry boundaries.
-  std::set<va_t> CandidateEntries;
-  for (const auto &Sym : Img.Symbols)
-    if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr))
-      CandidateEntries.insert(Sym.Addr);
-  bool AddsEntries = false;
+  std::vector<va_t> CandidateEntries =
+      symbolFunctionStarts(Img, BoundaryGuesses);
+  std::vector<va_t> Added;
+  const auto Add = [&](va_t Entry) {
+    if (!std::binary_search(CandidateEntries.begin(), CandidateEntries.end(),
+                            Entry))
+      Added.push_back(Entry);
+  };
   for (const auto &C : Candidates)
     if (!BoundaryGuesses.count(C.first))
-      AddsEntries |= CandidateEntries.insert(C.first).second;
+      Add(C.first);
   if (Opts.OnlyFunctionEntries.empty()) {
     // A chained-unwind continuation is part of its parent function: a jump
     // to it must be followed, not modeled as a tail call to a missing one.
     for (const auto &[Start, End] : Img.KnownCodeRanges) {
       (void)End;
       if (Start != 0 && !Img.ContinuationCodeStarts.count(Start))
-        AddsEntries |= CandidateEntries.insert(Start).second;
+        Add(Start);
     }
+  }
+  const bool AddsEntries = !Added.empty();
+  if (AddsEntries) {
+    llvm::sort(Added);
+    Added.erase(std::unique(Added.begin(), Added.end()), Added.end());
+    const size_t Symbols = CandidateEntries.size();
+    CandidateEntries.insert(CandidateEntries.end(), Added.begin(), Added.end());
+    std::inplace_merge(CandidateEntries.begin(),
+                       CandidateEntries.begin() + Symbols,
+                       CandidateEntries.end());
   }
   const bool Restricted =
       !Opts.OnlyFunctionEntries.empty() || Opts.MaxFunctions != 0;
@@ -3864,7 +3940,9 @@ void Pipeline::buildLowIR(
       AddsEntries ? Cache.SelectionFacts : Cache.Facts;
   if (!Kept || !Kept->matches(Img, Dbg, CandidateEntries))
     Kept = std::make_shared<PipelineAnalysisCache::Impl>(
-        Img, Dbg, std::move(CandidateEntries), Restricted);
+        Img, Dbg,
+        std::set<va_t>(CandidateEntries.begin(), CandidateEntries.end()),
+        Restricted);
   else {
     // Earlier runs' no-return answers hold for the same facts, and replaying
     // a retained body asks them again; the screening data behind them does
@@ -4347,9 +4425,9 @@ void Pipeline::buildLowIR(
     ++FuncCount;
   }
 
-  computeCallRegisterEffects(Img, FuncEntries, NoReturnTargets, NoReturnCallees,
-                             AbsoluteRelocationRoots, CodeOwnerIndex, X87Graphs,
-                             Dbg, Result);
+  computeCallRegisterEffects(
+      Img, FuncEntries, NoReturnTargets, Facts.StackProbes, NoReturnCallees,
+      AbsoluteRelocationRoots, CodeOwnerIndex, X87Graphs, Dbg, Result);
 }
 
 } // namespace neverd

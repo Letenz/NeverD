@@ -2066,3 +2066,37 @@ CRT 회귀는 모든 바이트/UTF-16 단위, 인수 폭, 변경이 없는 읽�
 `KernelMDLChain.CreateMdl*` 및 `KernelMDLUserMapping.CreateMdl*`는 인수 폭, 보존 바이트, 빈 범위와 순환, 풀 및 스택 수명, 잠금, 별칭, 해제 실패, 부분 재사용, IRP 거부와 IRQL을 검사합니다. 실제 WDK 픽스처는 정적·동적 생성, 소유 풀, 호출자 풀 내부 및 스택 기술자, 물리 동일성과 완전한 언로드를 실행합니다. 원본 탐침은 필드 쓰기, 풀 플래그 변환과 주입된 할당／해제 경계를 구분합니다.
 
 `KernelMDLChain.AdvanceMdl*`과 `KernelMDLUserMapping.AdvanceMdl*`은 반복 페이지 이동, 꼬리, 끝 거절, 인수 폭, 전체 매핑, 정리 실패, 권한과 저장소/프로세스 수명을 검사합니다. 실제 WDK는 정적/동적 호출과 명시적 매핑 해제 및 자동 잠금 해제를 실행합니다. 원본 검사는 전체 진행, 복원 도우미, 매핑 종류/PTE 해제 경계를 주입한 래퍼를 구분하며 OS 페이지 데이터베이스 실행을 주장하지 않습니다.
+
+## 기존 정렬 벡터 이동
+
+`NeverDX86LegacyAlignedMoveTests`는 MOVDQA, MOVAPS, MOVAPD의 레지스터 보존과 메모리 접근 전 16바이트 정렬 검사를 확인합니다. 주소 폭에 따른 순환과 명시적 FS/GS 기준 주소도 포함합니다. 정렬되지 않은 접근은 대상 레지스터와 메모리를 보존해야 하며, 세그먼트 기준 주소가 없으면 거부합니다. 이 검증은 리프팅과 에뮬레이터에 해당합니다. 정확한 기호 복원은 유지된 정렬 조건을 별도로 증명해야 합니다.
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*`와 `PEFixedImageTest.RawAlign*`는 독립적인 나머지 증명, 잘못된 입력, 정확한 예산, 원래 검사 보존 및 증명 기록 변조를 검사합니다. 레거시 이동 명령 감사는 정렬 검사를 포함한 전체 연산 범위를 연결하며 불투명한 기계 상태의 보존을 증명하지 않습니다.
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`NeverDX86NativeStateAuditTests`는 표준 x64 REP MOVSQ와 레거시 LDMXCSR의 명령 바이트 및 디코더 세부 정보를 엄격히 검증합니다. 전체 연산 범위는 정의되지 않은 출력 증명 기록에 연결됩니다. 독립적인 전체 상태 및 순차 복사 오라클은 겹침, 0회 복사, 주소 형식, 누락 바이트, 예약 비트를 검사합니다. 실행에는 기존 횟수/방향, 메모리, 유효 MXCSR 마스크 및 값의 유효성 증명이 필요합니다. 이 감사는 부분 오류 후 재시작이나 불투명 상태 보존을 증명하지 않습니다.
+
+```sh
+cmake --build build-release --target NeverDX86NativeStateAuditTests
+ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
+```
+
+`NeverDX86ScalarMoveAuditTests`는 원본 바이트와 완전한 디코더 세부 정보를 기준으로 레거시 MOVSS/MOVSD의 엄격한 허용 여부를 검사합니다. 독립적인 바이트 오라클은 레지스터 병합, 메모리 로드의 0 확장, 스칼라 저장, 모든 정렬 나머지, 16/32/64비트 주소 지정과 전체 레지스터·플래그·MXCSR 보존을 검증합니다. 메모리 바이트 누락이나 읽기 전용 메모리 저장은 아키텍처 출력을 확정해서는 안 됩니다. 문자열, VEX/EVEX, 세그먼트 및 잘못된 형식은 계속 거부하며 기록은 전체 연산 범위를 결속하지만 불투명 상태 보존 권한을 부여하지 않습니다.
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`SymStorePreservation.Independent*`, `RepeatedRegionsFormAUnionAndChargeEveryScan`, `EmptyIndependentRegionsKeepOriginalWorkAccounting`, `ExecutorUsesIndependentRegionsForOnlyOneStore`는 한 번의 STORE로 독립적인 현재 루트 두세 개를 보존하는 동작, 두 바이트 순서, 상대 좌표 0을 지나는 부분 구간, 중첩 선언, 보호되지 않은 간격, 쓰기 이후 미지 값 세대를 검사합니다. 정확한 예산과 한 단위 부족한 예산으로 전체 비용을 확인하며, 없는 영역은 구체화하지 않아야 합니다. 잘못되거나 범위를 벗어난 참조, 좁거나 상수인 기준 주소, 빈 구간이나 역방향 구간, 실제 쓰기 자체의 기준 주소는 상태 변경 없이 거부합니다. 비어 있는 `AdditionalRegions`는 기존 단일 루트 및 `AdditionalRanges` 비용을 유지합니다. 실행기는 단일 이벤트, 같은 영역의 인접 바이트, 이후 일반 쓰기의 무효화를 검사합니다. `SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget`는 비교 일치·불일치, 정확·부족 예산, 보호 루트 두 개, 이전 값 출력, 기존의 보수적 거부 경로를 검사합니다.
+
+`NeverDSymConditionalStoreTests`는 독립 루트 사이의 현재 바이트 조건부 효과, 128비트 쓰기, 두 바이트 순서, 부분 중첩, 기호 상대 좌표의 순환 및 절대 메모리를 다룹니다. 자체 뱅크의 인접 바이트, 현재 사실과 과거 사실, 쓰기 후 미지 에포크, 지원하지 않는 입력, 정확한 예산과 한 단위 부족한 예산도 확인합니다. 실행기 사례는 기존 세그먼트 기준 주소 처리를 사용하는 STORE, 엄격한 CMPXCHG의 성공과 실패, Old의 지연 공개, 거부 시 havoc 및 다른 연산에서 Invalid 유지 여부를 확인합니다. 일반 쓰기와 보존 계약의 기본 동작은 유지됩니다. 이 테스트는 제한된 메모리 의미론을 검증하며 접근 권한이나 전체 프로그램 복원을 인증하지 않습니다.

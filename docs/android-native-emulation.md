@@ -147,6 +147,17 @@ model. Symbol versions are not used to select alternate implementations.
 The supported Bionic subset is:
 
 - `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `strnlen`, `strcmp`, `strncmp`.
+- `strncpy` copies at most the requested count through the first NUL, then pads
+  the destination to exactly that count with zeros. Truncated copies need not
+  terminate. It returns the original destination and retains errno; zero count
+  accesses neither pointer. The full LP64 count is bounded by the process memory
+  limit. Source reads stop at NUL or count, including page-end strings. The
+  model stages all bytes and refuses overlapping accessed ranges, inaccessible
+  memory or an expired budget before committing guest writes. This atomic
+  refusal is a model diagnostic, not native fault/undefined-behavior emulation.
+  Checked `__strncpy_chk`/`__strncpy_chk2` entry points remain unsupported.
+  The valid-call contract follows the pinned API 28
+  [Bionic implementation](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/upstream-openbsd/lib/libc/string/strncpy.c).
 - `__FD_SET_chk`, `__FD_CLR_chk`, `__FD_ISSET_chk`, using the Bionic LP64
   1024-bit descriptor bitmap. The signed low 32-bit descriptor must be 0..1023,
   then the full-width object extent must be at least 128 bytes. Invalid values
@@ -272,6 +283,23 @@ The supported Bionic subset is:
   tzdata transitions, leap seconds, `tzset` and calendar formatting remain
   unsupported. No host clock, locale or environment is consulted. The ABI and
   storage contract follow [API 28 Bionic's calendar implementation](https://raw.githubusercontent.com/aosp-mirror/platform_bionic/android-9.0.0_r1/libc/tzcode/localtime.c).
+- `mktime`, the inverse conversion with the same explicit complete fixed zone.
+  Signed seconds, minutes, hours, days and months normalize across date and
+  century boundaries before the local civil year is checked against 1..9999.
+  Input weekday, year-day, offset and zone pointer are ignored. The complete
+  output fields are recomputed in caller storage, including `tm_isdst = 0`,
+  `tm_gmtoff` and the shared immutable zone pointer; ABI padding is preserved.
+  It leaves the static forward-conversion object alone unless the caller
+  passes that object. UTC seconds may lie outside the forward UTC range when
+  an endpoint local date has a nonzero offset. As in API 28, any result of
+  `-1` sets `EOVERFLOW` (75), including the valid epoch second `-1` and null
+  input; other successful results preserve errno. A positive `tm_isdst`
+  cannot be satisfied by a complete zone without DST: it returns `-1`, clamps
+  values greater than one to one, and retains all other caller bytes. Missing
+  zone input, excluded civil years and intermediate signed-int normalization
+  overflow stop explicitly. Full output admission precedes field writes; no
+  guest clock advances and no host calendar function is called. The inverse
+  and errno contract uses the same pinned API 28 source linked above.
 - `getauxval`, reading the complete immutable `android.auxiliary_vector`
   input. Each entry has unsigned 64-bit `type` and `value` fields; numeric
   strings, including hexadecimal values, are accepted. At most 128 unique,

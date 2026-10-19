@@ -21,5 +21,6 @@ private:
   std::optional<AndroidApplicationSnapshot> snapshot;
   uint32_t thread = 0, application = 0, context = 0;
   uint32_t boot_loader = 0, system_loader = 0, app_loader = 0, package = 0;
+  uint32_t files_directory = 0, files_path = 0;
 };
 } // namespace neverd::mobile::dalvik

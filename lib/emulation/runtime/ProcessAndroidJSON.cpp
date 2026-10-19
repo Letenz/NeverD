@@ -222,11 +222,16 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
           if (Text->empty() || Text->size() > 1024 || Text->contains('\0'))
             return invalid(Key);
           Snapshot.package_name = Text->str();
+        } else if (Key == field::ApplicationFilesDirectory) {
+          if (Text->empty() || !Text->starts_with('/') || Text->size() > 4095 ||
+              Text->contains('\0'))
+            return invalid(Key);
+          Snapshot.files_directory = Text->str();
         } else
           return invalid(Key);
       }
       if (!HasPhase ||
-          (Snapshot.package_name &&
+          ((Snapshot.package_name || Snapshot.files_directory) &&
            Snapshot.phase !=
                mobile::dalvik::AndroidApplicationSnapshot::Phase::Application))
         return invalid(Name);

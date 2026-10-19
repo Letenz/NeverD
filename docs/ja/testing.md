@@ -2076,3 +2076,37 @@ CRT 回帰は全バイト／UTF-16 単位、引数幅、変更不要な読み取
 `KernelMDLChain.CreateMdl*` と `KernelMDLUserMapping.CreateMdl*` は全幅検査、保持バイト、空・折返し値、プール／スタック寿命、ロック、別名、解放失敗、部分再利用、IRP 拒否、IRQL を検証します。実際の WDK フィクスチャは静的・動的生成、所有プール、呼出側プール内部とスタック、物理同一性、アンロードを実行します。原コードの観測はフィールド書込、プールフラグ変換、注入した確保／解放境界を区別します。
 
 `KernelMDLChain.AdvanceMdl*` と `KernelMDLUserMapping.AdvanceMdl*` は反復ページ境界、末尾、終端拒否、引数幅、全マッピング、解放失敗、権限、格納域とプロセス寿命を検証します。実 WDK は静的／動的呼出と明示解除・自動アンロックを実行します。原コード観測は完全な進行、復元ヘルパー、マッピング種類／PTE 解放を注入した解除ラッパーを区別し、OS ページデータベースの実行を主張しません。
+
+## 従来形式のアラインされたベクトル転送
+
+`NeverDX86LegacyAlignedMoveTests` は MOVDQA、MOVAPS、MOVAPD のレジスタ保存と、メモリアクセス前の16バイト境界チェックを検証します。アドレス幅による折り返しと明示的な FS/GS ベースも対象です。非整列アクセスは宛先レジスタとメモリを変更せず、セグメントベースが不明なら拒否します。これはリフトとエミュレータの検証です。厳密なシンボリック復元では、保持された整列条件を別途証明する必要があります。
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*` と `PEFixedImageTest.RawAlign*` は独立した剰余証明、不正入力、厳密な予算、元の検査の保持、証明記録の改ざんを検査します。従来の移動命令の監査はアラインメント検査を含む全操作を結び付けますが、不透明な機械状態の保持は証明しません。
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`NeverDX86NativeStateAuditTests` は標準x64 REP MOVSQと従来のLDMXCSRの命令バイトとデコーダ詳細を厳密に照合します。全操作範囲は未定義出力の証明記録に結び付けられます。独立した全状態・順次コピーの期待値は重なり、回数ゼロ、アドレス形式、不足バイト、予約ビットを検査します。実行には回数・方向、メモリ、有効MXCSRマスク、値の妥当性の既存証明が必要です。この監査は部分フォールト後の再開や不透明状態の保持を証明しません。
+
+```sh
+cmake --build build-release --target NeverDX86NativeStateAuditTests
+ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
+```
+
+`NeverDX86ScalarMoveAuditTests` は従来の MOVSS/MOVSD を元の命令バイトと完全なデコーダ詳細に照らして厳密に検査します。独立したバイト単位の期待値はレジスタマージ、メモリロードのゼロ拡張、スカラーストア、全アラインメント剰余、16/32/64 ビットのアドレス計算、全レジスタ・フラグ・MXCSR の保持を確認します。メモリ不足や読み取り専用領域へのストアはアーキテクチャ上の出力を確定してはなりません。文字列、VEX/EVEX、セグメント、不正形式は受理せず、記録は全操作範囲を束縛しても不透明状態の保持を保証しません。
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`SymStorePreservation.Independent*`、`RepeatedRegionsFormAUnionAndChargeEveryScan`、`EmptyIndependentRegionsKeepOriginalWorkAccounting`、`ExecutorUsesIndependentRegionsForOnlyOneStore` は、1 回の STORE による 2〜3 個の独立した現在のルートの保持、両バイト順、相対座標のゼロをまたぐ部分範囲、重複宣言、保護外の隙間、書き込み後の未知値の世代を確認します。正確な予算と 1 単位不足の予算で全作業量を確認し、存在しない領域を生成しません。無効・範囲外参照、狭い基底や定数基底、空・逆向き区間、書き込み自身の基底は状態を変更せず拒否します。空の `AdditionalRegions` では従来の単一ルートと `AdditionalRanges` の費用を保ちます。実行器では単一イベント、同一領域の隣接バイト、後続の通常書き込みによる無効化を確認します。`SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget` は比較の一致・不一致、正確・不足予算、2 つの保護ルート、旧値の出力、既存の保守的な拒否経路を確認します。
+
+`NeverDSymConditionalStoreTests` は独立したルート間の現在のバイトの条件付き効果、128 ビット書き込み、両エンディアン、部分的な重なり、シンボリック相対座標の折り返し、絶対メモリを対象とします。自身のバンクの隣接バイト、現在と過去の事実、書き込み後の未知エポック、非対応入力、必要量ちょうどと一単位不足の予算も確認します。実行器では既存のセグメント基址処理を使う STORE、厳格な CMPXCHG の成功と失敗、Old の遅延公開、拒否時の havoc、他の操作で Invalid が維持されることを確認します。通常の書き込みと保持契約の既定動作は変わりません。これらは有界メモリの意味論を検証するテストであり、アクセス権やプログラム全体の復元を認証するものではありません。

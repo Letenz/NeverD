@@ -18,6 +18,7 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X86FPState.h"
+#include "neverd/ir/med/I386PicAddress.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/Diagnostic.h"
 
@@ -4359,6 +4360,71 @@ std::optional<uint64_t> MedLLVMEmitter::traceSSAConst(const MedVar &V) const {
   return std::nullopt;
 }
 
+std::optional<MedLLVMEmitter::I386GotRelativeAccess>
+MedLLVMEmitter::matchI386GotRelative(const MedVar &Address) const {
+  if (!CurMedFunc || !Img || TargetArch != Arch::X86 || Address.isConst())
+    return std::nullopt;
+  const std::optional<va_t> GOT = Img->linkedI386GlobalOffsetTable();
+  if (!GOT)
+    return std::nullopt;
+  // GCC's thunk leaves the GOT a folded constant; clang's call/pop leaves
+  // arithmetic rooted at the authenticated PC.
+  auto IsGOT = [&](const MedVar &V) {
+    if (V.isConst() || V.Size != 4)
+      return false;
+    if (const auto C = traceSSAConst(V); C && uint32_t(*C) == uint32_t(*GOT))
+      return true;
+    const auto Folded = foldI386PicAddress(
+        *CurMedFunc, V, [&](const MedVar &X) { return lookupDef(X); });
+    return Folded && uint32_t(*Folded) == uint32_t(*GOT);
+  };
+  auto Displacement = [&](const MedVar &V) -> std::optional<uint32_t> {
+    if (V.isConst() && isAddressProvenance(V.Provenance))
+      return std::nullopt;
+    const auto C = traceSSAConst(V);
+    return C ? std::optional<uint32_t>(uint32_t(*C)) : std::nullopt;
+  };
+  auto Sum = [&](const MedVar &V) -> const MedOp * {
+    const MedOp *Def = lookupDef(V);
+    return Def && Def->Opcode == NdOp::INT_ADD && Def->NumInputs == 2 &&
+                   Def->Output.Size == 4
+               ? Def
+               : nullptr;
+  };
+  auto At = [&](uint32_t Offset) { return uint64_t(uint32_t(*GOT) + Offset); };
+
+  MedVar Root = Address;
+  if (const MedOp *Wide = lookupDef(Root);
+      Wide && Wide->Opcode == NdOp::INT_ZEXT && Wide->NumInputs == 1 &&
+      Wide->Inputs[0].Size == 4)
+    Root = Wide->Inputs[0];
+  const MedOp *Outer = Sum(Root);
+  if (!Outer)
+    return std::nullopt;
+  for (unsigned K = 0; K < 2; ++K) {
+    const MedVar &Other = Outer->Inputs[1 - K];
+    if (const auto Disp = Displacement(Outer->Inputs[K])) {
+      // GOT + disp, and (GOT + index) + disp.
+      if (IsGOT(Other))
+        return I386GotRelativeAccess{At(*Disp), std::nullopt};
+      if (const MedOp *Inner = Sum(Other))
+        for (unsigned J = 0; J < 2; ++J)
+          if (!Inner->Inputs[1 - J].isConst() && IsGOT(Inner->Inputs[J]))
+            return I386GotRelativeAccess{At(*Disp), Inner->Inputs[1 - J]};
+      continue;
+    }
+    // (GOT + disp) + index.
+    if (Other.isConst())
+      continue;
+    if (const MedOp *Inner = Sum(Outer->Inputs[K]))
+      for (unsigned J = 0; J < 2; ++J)
+        if (IsGOT(Inner->Inputs[J]))
+          if (const auto Disp = Displacement(Inner->Inputs[1 - J]))
+            return I386GotRelativeAccess{At(*Disp), Other};
+  }
+  return std::nullopt;
+}
+
 std::optional<uint64_t>
 MedLLVMEmitter::traceTableBaseConst(const MedVar &V, int Depth, bool *SawLoad,
                                     uint16_t *OriginSize,
@@ -5809,6 +5875,17 @@ bool MedLLVMEmitter::collectIndexedGlobalBaseImpl(
       return false;
     Base = V.ConstVal;
     HaveBase = true;
+    return true;
+  }
+
+  // An i386 PIC table at a displacement from the GOT: the base is the sum,
+  // which the caller validates as any other (matchI386GotRelative).
+  if (const auto Got = matchI386GotRelative(V); Got && Got->Index) {
+    if (HaveBase && Base != Got->Base)
+      return false;
+    Base = Got->Base;
+    HaveBase = true;
+    IdxTerms.push_back(*Got->Index);
     return true;
   }
 

@@ -596,4 +596,315 @@ TEST(SymAtomicCmpxchg, NoDescriptorRetainsExistingAtomicValueBehavior) {
     }
 }
 
+TEST(SymStorePreservation, IndependentRegionsCommitOnceAtTheExactBudget) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (unsigned Count : {2u, 3u}) {
+      SCOPED_TRACE(Count);
+      SymContext C;
+      SymState Initial(C, Order);
+      const SymRef Roots[] = {C.mkVar("first", 64), C.mkVar("second", 64),
+                              C.mkVar("third", 64)};
+      const auto External = C.mkVar("external", 64);
+      std::vector<SymRef> Current;
+      std::vector<SymStorePreservationRegion> More;
+      for (unsigned I = 0; I != Count; ++I) {
+        Current.push_back(Initial.load(Roots[I], 8));
+        if (I)
+          More.push_back({Roots[I], 0, 8});
+      }
+      // One validation per additional region; eight inspections and sixteen
+      // save/restore units per current word. The bases have no fixed relation.
+      const uint64_t Work = Count - 1 + Count * 24;
+      SymStorePreservation P{Roots[0], 0, 8, Work - 1};
+      P.AdditionalRegions = More;
+      auto Short = Initial;
+      EXPECT_FALSE(Short.store(External, C.mkConst(64, 17), P));
+      EXPECT_EQ(P.Status, SymStorePreservationStatus::BudgetExceeded);
+      EXPECT_LE(P.WorkUsed, P.MaxWork);
+      EXPECT_TRUE(Short.mergeIdentical(Initial));
+      P.MaxWork = Work;
+      auto Exact = Initial;
+      EXPECT_FALSE(Exact.store(External, C.mkConst(64, 17), P));
+      ASSERT_EQ(P.Status, SymStorePreservationStatus::Applied);
+      EXPECT_EQ(P.WorkUsed, Work);
+      EXPECT_EQ(Exact.numLiveBytes(), 8 * (Count + 1));
+      for (unsigned I = 0; I != Count; ++I)
+        EXPECT_EQ(Exact.load(Roots[I], 8), Current[I]);
+      EXPECT_EQ(Exact.load(External, 8), C.mkConst(64, 17));
+    }
+}
+
+TEST(SymStorePreservation, IndependentRegionsPreservePartialWrappingBytes) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    SymContext C;
+    SymState S(C, Order);
+    const SymRef Roots[] = {C.mkVar("first", 64), C.mkVar("second", 64)};
+    const auto At = [&](SymRef Base, int64_t Offset) {
+      return C.mkAdd(Base, C.mkConst(64, static_cast<uint64_t>(Offset)));
+    };
+    const uint64_t Words[] = {0x1020304050607080, 0x91a2b3c4d5e6f708};
+    // Entry facts are specified independently of the preservation operation.
+    SymState::MemoryKnowledge Entry{&C, Order, {}};
+    for (unsigned I = 0; I != 2; ++I)
+      Entry.Facts.push_back({Roots[I], uint64_t(-3), C.mkConst(64, Words[I])});
+    ASSERT_TRUE(S.restoreMemoryKnowledge(Entry));
+    const SymStorePreservationRegion More[] = {{Roots[1], -1, 3}};
+    SymStorePreservation P{Roots[0], -2, 2, 33};
+    P.AdditionalRegions = More;
+    EXPECT_TRUE(S.store(C.mkConst(64, 0x30000), C.mkConst(8, 7), P));
+    ASSERT_EQ(P.Status, SymStorePreservationStatus::Applied);
+    EXPECT_EQ(P.WorkUsed,
+              33u); // 1 descriptor + 16 inspected + 8 saved/restored.
+    EXPECT_EQ(S.numLiveBytes(), 9u);
+    for (unsigned R = 0; R != 2; ++R)
+      for (unsigned I = 0; I != 8; ++I) {
+        const int64_t Offset = int64_t(I) - 3;
+        const auto Byte = S.load(At(Roots[R], Offset), 1);
+        const int64_t Begin = R ? -1 : -2;
+        if (Offset >= Begin && Offset < Begin + 4) {
+          const unsigned Lane = Order == llvm::endianness::little ? I : 7 - I;
+          EXPECT_EQ(Byte, C.mkConst(8, (Words[R] >> (8 * Lane)) & 0xff));
+        } else {
+          EXPECT_FALSE(C.isConst(Byte));
+        }
+      }
+    EXPECT_EQ(S.load(C.mkConst(64, 0x30000), 1), C.mkConst(8, 7));
+  }
+}
+
+TEST(SymStorePreservation, IndependentRegionsKeepCurrentBytesAndNewEpochs) {
+  SymContext C;
+  SymState S(C);
+  const auto A = C.mkVar("first", 64);
+  const auto B = C.mkVar("second", 64);
+  const auto Other = C.mkVar("unprotected", 64);
+  const auto External = C.mkVar("external", 64);
+  const auto At = [&](SymRef Base, uint64_t Offset) {
+    return C.mkAdd(Base, C.mkConst(64, Offset));
+  };
+  const auto History = C.mkVar("history", 64);
+  const auto HistoricalValue = S.load(History, 8);
+  S.clobberMemory();
+  ASSERT_FALSE(S.loadOrigins(HistoricalValue).empty());
+  const auto AValue = S.load(A, 4);
+  const auto BValue = S.load(B, 4);
+  const auto AGap = S.load(At(A, 8), 2);
+  const auto BGap = S.load(At(B, 8), 2);
+  const auto OtherValue = S.load(Other, 2);
+  const auto Absent = C.mkVar("absent", 64);
+  auto Before = S;
+  const SymStorePreservationRegion More[] = {
+      {B, 0, 4}, {Absent, INT64_MIN, INT64_MAX}, {History, 0, 8}};
+  SymStorePreservation P{A, 0, 4, 31};
+  P.AdditionalRegions = More;
+  EXPECT_FALSE(S.store(External, C.mkConst(16, 7), P));
+  ASSERT_EQ(P.Status, SymStorePreservationStatus::Applied);
+  EXPECT_EQ(P.WorkUsed, 31u);
+  EXPECT_EQ(S.numLiveBytes(), 10u);
+  EXPECT_EQ(S.numMemoryRegions(), 5u); // Absent has not been materialized.
+  EXPECT_EQ(S.load(A, 4), AValue);
+  EXPECT_EQ(S.load(B, 4), BValue);
+  for (auto [Base, OldGap] : {std::pair{A, AGap}, std::pair{B, BGap}}) {
+    const auto Gap = S.load(At(Base, 8), 2);
+    EXPECT_NE(Gap, OldGap);
+    EXPECT_TRUE(S.memoryInputOrigins(Gap).empty());
+    const auto Missing = S.load(At(Base, 16), 1);
+    EXPECT_NE(Missing, Before.load(At(Base, 16), 1));
+    EXPECT_TRUE(S.memoryInputOrigins(Missing).empty());
+  }
+  EXPECT_NE(S.load(Other, 2), OtherValue);
+  EXPECT_NE(S.load(History, 8), HistoricalValue);
+  EXPECT_NE(S.load(Absent, 1), Before.load(Absent, 1));
+  auto Fork = S;
+  EXPECT_EQ(S.load(At(Other, 32), 1), Fork.load(At(Other, 32), 1));
+}
+
+TEST(SymStorePreservation, RepeatedRegionsFormAUnionAndChargeEveryScan) {
+  SymContext C;
+  SymState S(C);
+  const auto A = C.mkVar("first", 64);
+  const auto B = C.mkVar("second", 64);
+  const auto AValue = S.load(A, 8);
+  const auto BValue = S.load(B, 8);
+  const auto Before = S;
+  const SymStorePreservationRange Ranges[] = {{6, 8}};
+  const SymStorePreservationRegion Regions[] = {
+      {B, 0, 4}, {B, 2, 6}, {A, 1, 3}, {B, 0, 4}};
+  SymStorePreservation P{A, 0, 2, 86};
+  P.AdditionalRanges = Ranges;
+  P.AdditionalRegions = Regions;
+  auto Short = S;
+  EXPECT_FALSE(Short.store(C.mkConst(64, 0x4000), C.mkConst(8, 9), P));
+  EXPECT_EQ(P.Status, SymStorePreservationStatus::BudgetExceeded);
+  EXPECT_TRUE(Short.mergeIdentical(Before));
+  P.MaxWork = 87;
+  EXPECT_TRUE(S.store(C.mkConst(64, 0x4000), C.mkConst(8, 9), P));
+  ASSERT_EQ(P.Status, SymStorePreservationStatus::Applied);
+  // Five declarations, 22 primary work units, three 16-unit scans of B,
+  // and one 12-unit scan of A. Repeated saves do not create extra bytes.
+  EXPECT_EQ(P.WorkUsed, 87u);
+  EXPECT_EQ(S.numLiveBytes(), 12u);
+  for (unsigned I = 0; I != 8; ++I) {
+    const auto AByte = S.load(C.mkAdd(A, C.mkConst(64, I)), 1);
+    const auto BByte = S.load(C.mkAdd(B, C.mkConst(64, I)), 1);
+    EXPECT_EQ(AByte == C.mkExtract(AValue, I * 8, 8), I < 3 || I >= 6);
+    EXPECT_EQ(BByte == C.mkExtract(BValue, I * 8, 8), I < 6);
+  }
+}
+
+TEST(SymStorePreservation, IndependentRegionValidationNeverMutatesState) {
+  SymContext C;
+  SymState S(C);
+  const auto A = C.mkVar("first", 64);
+  const auto B = C.mkVar("second", 64);
+  const auto External = C.mkVar("external", 64);
+  const auto Value = C.mkConst(8, 9);
+  S.load(A, 8);
+  S.load(B, 8);
+  const auto Narrow = C.mkVar("narrow", 32);
+  const auto Constant = C.mkConst(64, 19);
+  const auto Displaced = C.mkAdd(External, C.mkConst(64, 7));
+  const auto Bad = SymRef(uint32_t(C.numNodes() + 100));
+  const auto Before = S;
+  for (const auto Invalid :
+       std::vector<SymStorePreservationRegion>{{{}, 0, 8},
+                                               {Bad, 0, 8},
+                                               {Narrow, 0, 8},
+                                               {Constant, 0, 8},
+                                               {B, 8, 8},
+                                               {B, 9, 8},
+                                               {External, 0, 1}}) {
+    const SymStorePreservationRegion More[] = {{B, 0, 8}, Invalid};
+    SymStorePreservation P{A, 0, 8, 100};
+    P.AdditionalRegions = More;
+    EXPECT_FALSE(S.store(Displaced, Value, P));
+    EXPECT_EQ(P.Status, SymStorePreservationStatus::Invalid);
+    EXPECT_EQ(P.WorkUsed, 2u); // All descriptors precede byte capture.
+    EXPECT_TRUE(S.mergeIdentical(Before));
+  }
+  const SymStorePreservationRegion More[] = {{B, 0, 8}};
+  for (unsigned BadField = 0; BadField != 3; ++BadField) {
+    SymStorePreservation P{A, 0, 8, 100};
+    P.AdditionalRegions = More;
+    if (BadField == 0)
+      P.Base = Bad;
+    EXPECT_FALSE(S.store(BadField == 1 ? Bad : External,
+                         BadField == 2 ? Bad : Value, P));
+    EXPECT_EQ(P.Status, SymStorePreservationStatus::Invalid);
+    EXPECT_EQ(P.WorkUsed, 0u);
+    EXPECT_TRUE(S.mergeIdentical(Before));
+  }
+  SymStorePreservation P{A, 0, 8, 0};
+  P.AdditionalRegions = More;
+  EXPECT_FALSE(S.store(External, Value, P));
+  EXPECT_EQ(P.Status, SymStorePreservationStatus::BudgetExceeded);
+  EXPECT_EQ(P.WorkUsed, 0u);
+  EXPECT_TRUE(S.mergeIdentical(Before));
+}
+
+TEST(SymStorePreservation, EmptyIndependentRegionsKeepOriginalWorkAccounting) {
+  SymContext C;
+  const auto A = C.mkVar("first", 64);
+  const auto External = C.mkVar("external", 64);
+  for (bool ExtraRange : {false, true}) {
+    SymState S(C);
+    S.load(A, 8);
+    const SymStorePreservationRange More[] = {{16, 24}};
+    SymStorePreservation P{A, 0, 8, ExtraRange ? 57u : 24u};
+    if (ExtraRange) {
+      S.load(C.mkAdd(A, C.mkConst(64, 16)), 8);
+      P.AdditionalRanges = More;
+    }
+    P.AdditionalRegions = {};
+    EXPECT_FALSE(S.store(External, C.mkConst(8, 7), P));
+    ASSERT_EQ(P.Status, SymStorePreservationStatus::Applied);
+    EXPECT_EQ(P.WorkUsed, ExtraRange ? 57u : 24u);
+  }
+}
+
+TEST(SymStorePreservation, ExecutorUsesIndependentRegionsForOnlyOneStore) {
+  SymContext C;
+  SymState S(C);
+  SymExec E(C, S);
+  const auto A = C.mkVar("first", 64);
+  const auto B = C.mkVar("second", 64);
+  const auto External = C.mkVar("external", 64);
+  const auto AValue = S.load(A, 8);
+  const auto BValue = S.load(B, 8);
+  const auto NeighborAddress = C.mkAdd(External, C.mkConst(64, 8));
+  const auto Neighbor = S.load(NeighborAddress, 8);
+  S.write(SymSpace::Register, 8, External);
+  LowOp Store;
+  Store.Opcode = NdOp::STORE;
+  Store.addInput(NdVar::reg(8, 8));
+  Store.addInput(NdVar::scalar(17, 8));
+  const SymStorePreservationRegion More[] = {{B, 0, 8}};
+  SymStorePreservation P{A, 0, 8, 49};
+  P.AdditionalRegions = More;
+  EXPECT_EQ(E.step(Store, nullptr, &P), StepResult::Continue);
+  ASSERT_EQ(P.Status, SymStorePreservationStatus::Applied);
+  EXPECT_EQ(P.WorkUsed, 49u);
+  EXPECT_EQ(E.memoryHavocCount(), 1u);
+  EXPECT_EQ(E.opaqueOperationCount(), 0u);
+  EXPECT_EQ(S.load(A, 8), AValue);
+  EXPECT_EQ(S.load(B, 8), BValue);
+  EXPECT_EQ(S.load(External, 8), C.mkConst(64, 17));
+  EXPECT_EQ(S.load(NeighborAddress, 8), Neighbor);
+  EXPECT_EQ(S.read(SymSpace::Register, 8, 8), External);
+  EXPECT_EQ(E.step(Store), StepResult::Continue);
+  EXPECT_EQ(E.memoryHavocCount(), 2u);
+  EXPECT_NE(S.load(A, 8), AValue);
+  EXPECT_NE(S.load(B, 8), BValue);
+}
+
+TEST(SymAtomicCmpxchg, IndependentRegionsShareTheWritePhaseAndItsBudget) {
+  SymContext C;
+  const auto A = C.mkVar("first", 64);
+  const auto B = C.mkVar("second", 64);
+  const auto Address = C.mkConst(64, 0x4000);
+  SymState Initial(C);
+  SymState::MemoryKnowledge Entry{&C,
+                                  llvm::endianness::little,
+                                  {{A, 0, C.mkConst(64, 19)},
+                                   {B, 0, C.mkConst(64, 23)},
+                                   {{}, 0x4000, C.mkConst(32, 7)}}};
+  ASSERT_TRUE(Initial.restoreMemoryKnowledge(Entry));
+  Initial.write(SymSpace::Register, 0, C.mkConst(32, 0xdeadbeef));
+  const SymStorePreservationRegion More[] = {{B, 0, 8}};
+  for (bool Match : {false, true})
+    for (uint64_t Budget : {49, 48}) {
+      SCOPED_TRACE(Match);
+      SCOPED_TRACE(Budget);
+      auto S = Initial;
+      SymExec E(C, S);
+      SymStorePreservation P{A, 0, 8, Budget};
+      P.AdditionalRegions = More;
+      const auto Op = preservingCmpxchg(
+          NdVar::reg(0, 4), NdVar::scalar(0x4000, 8),
+          NdVar::scalar(Match ? 7 : 9, 4), NdVar::scalar(11, 4));
+      const auto Flow = E.step(Op, nullptr, &P);
+      if (Budget == 49) {
+        EXPECT_EQ(Flow, StepResult::Continue);
+        EXPECT_EQ(P.Status, SymStorePreservationStatus::Applied);
+        EXPECT_EQ(P.WorkUsed, 49u);
+        EXPECT_EQ(S.read(SymSpace::Register, 0, 4), C.mkConst(32, 7));
+        EXPECT_EQ(S.load(Address, 4), C.mkConst(32, Match ? 11 : 7));
+        EXPECT_EQ(S.load(A, 8), C.mkConst(64, 19));
+        EXPECT_EQ(S.load(B, 8), C.mkConst(64, 23));
+        EXPECT_EQ(E.opaqueOperationCount(), 0u);
+      } else {
+        EXPECT_EQ(Flow, StepResult::Unmodelled);
+        EXPECT_EQ(P.Status, SymStorePreservationStatus::BudgetExceeded);
+        EXPECT_LE(P.WorkUsed, Budget);
+        EXPECT_EQ(E.opaqueOperationCount(), 1u);
+        EXPECT_FALSE(C.isConst(S.read(SymSpace::Register, 0, 4)));
+        EXPECT_FALSE(C.isConst(S.load(Address, 4)));
+        EXPECT_FALSE(C.isConst(S.load(A, 8)));
+        EXPECT_FALSE(C.isConst(S.load(B, 8)));
+        // The executor's established refusal path havocs outputs and memory;
+        // only SymState::store itself promises failure without mutation.
+      }
+    }
+}
+
 } // namespace

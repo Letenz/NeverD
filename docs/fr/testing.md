@@ -2191,3 +2191,37 @@ Les contrôles MDL historiques couvrent les appels WDK réels statiques et dynam
 `KernelMDLChain.CreateMdl*` et `KernelMDLUserMapping.CreateMdl*` vérifient largeurs, octets conservés, métadonnées vides ou débordantes, durées de vie, verrous, alias, échecs de libération, réemploi partiel, refus IRP et IRQL. Le pilote WDK réel couvre appels statiques/dynamiques, pool propre, stockage intérieur et pile, identité physique et déchargement complet. Les sondes originales distinguent écritures, traduction des drapeaux et frontières d’allocation/libération injectées.
 
 `KernelMDLChain.AdvanceMdl*` et `KernelMDLUserMapping.AdvanceMdl*` vérifient les franchissements répétés, la marque PFN, les refus en fin, la largeur des arguments, le mapping complet, les échecs de nettoyage, les droits et les durées de vie. Le vrai WDK exécute les appels statiques/dynamiques et les deux nettoyages. Les sondes distinguent la routine complète, la restauration et le wrapper de démontage avec frontières type de mapping/libération PTE injectées, sans exécuter la base de pages du système.
+
+## Transferts vectoriels alignés classiques
+
+`NeverDX86LegacyAlignedMoveTests` vérifie la préservation des registres de MOVDQA, MOVAPS et MOVAPD et leur alignement de 16 octets avant tout accès mémoire, y compris le débordement de largeur d’adresse et les bases FS/GS explicites. Un accès non aligné doit préserver les registres de destination et la mémoire. Une base de segment absente reste refusée. Ces tests couvrent le lifting et l’émulateur ; la récupération symbolique exacte doit prouver séparément la garde d’alignement conservée.
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*` et `PEFixedImageTest.RawAlign*` vérifient une preuve indépendante par reste, les entrées invalides, les budgets exacts, la conservation des gardes natives et la falsification des reçus. Les audits des déplacements classiques lient toutes les opérations, garde d’alignement comprise, sans certifier la conservation des banques d’état opaques.
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`NeverDX86NativeStateAuditTests` vérifie strictement les octets natifs et les détails du décodeur pour REP MOVSQ x64 canonique et LDMXCSR classique. Les reçus des sorties indéfinies lient toutes les opérations. Des oracles indépendants d’état complet et de copie ordonnée couvrent chevauchement, compte nul, adressage, octets manquants et bits réservés. Les preuves existantes du compte, de la direction, de la mémoire, du masque MXCSR effectif et de la validité restent nécessaires. Cet audit ne certifie ni la reprise après faute partielle ni la conservation de l’état opaque.
+
+```sh
+cmake --build build-release --target NeverDX86NativeStateAuditTests
+ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
+```
+
+`NeverDX86ScalarMoveAuditTests` vérifie strictement MOVSS/MOVSD classique contre les octets originaux et tous les détails du décodeur. Des oracles indépendants par octet couvrent fusion des registres, extension à zéro des chargements, écritures scalaires, tous les résidus d’alignement, adressage 16/32/64 bits et conservation complète des registres, indicateurs et MXCSR. Des octets absents ou une écriture en mémoire non modifiable ne doivent valider aucune sortie architecturale. Les formes chaîne, VEX/EVEX, segmentées et malformées restent refusées ; les reçus lient toutes les opérations sans certifier la conservation de l’état opaque.
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`SymStorePreservation.Independent*`, `RepeatedRegionsFormAUnionAndChargeEveryScan`, `EmptyIndependentRegionsKeepOriginalWorkAccounting` et `ExecutorUsesIndependentRegionsForOnlyOneStore` couvrent un STORE conservant deux ou trois racines courantes indépendantes, les deux ordres des octets, les plages partielles traversant le zéro relatif, les déclarations chevauchantes, les lacunes non protégées et les générations inconnues après écriture. Les budgets exacts et inférieurs d’une unité vérifient le coût complet ; les régions absentes ne doivent pas être matérialisées. Références invalides ou hors limites, bases étroites ou constantes, intervalles vides ou inversés et base propre à l’écriture sont refusés sans modifier l’état. Un `AdditionalRegions` vide conserve les coûts existants de la racine unique et de `AdditionalRanges`. L’exécuteur vérifie l’événement unique, les octets voisins de la même région et l’invalidation par une écriture ordinaire ultérieure. `SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget` couvre les comparaisons égales ou différentes, les budgets exacts ou insuffisants, deux racines protégées, la sortie de l’ancienne valeur et le refus conservateur existant.
+
+`NeverDSymConditionalStoreTests` couvre les effets conditionnels sur les octets courants de racines indépendantes, les écritures de 128 bits, les deux ordres d'octets, les recouvrements partiels, le bouclage des coordonnées symboliques relatives et la mémoire absolue. Il vérifie les voisins dans la banque cible, les faits courants et historiques, les époques inconnues après écriture, les entrées non prises en charge et les budgets exacts ou inférieurs d'une unité. Les cas d'exécution couvrent STORE avec le traitement existant des bases de segment, les succès et refus de CMPXCHG strict, la publication différée de Old, le havoc et le maintien d'Invalid pour les autres opérations. Les comportements par défaut des écritures ordinaires et des contrats de préservation restent inchangés. Ces tests valident une sémantique mémoire bornée, pas les droits d'accès ni la récupération complète d'un programme.

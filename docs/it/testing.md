@@ -2172,3 +2172,37 @@ I controlli MDL precedenti coprono chiamate WDK reali statiche e dinamiche, work
 `KernelMDLChain.CreateMdl*` e `KernelMDLUserMapping.CreateMdl*` verificano larghezza, byte conservati, metadati vuoti/in overflow, durata di pool/stack, blocchi, alias, rilascio fallito, riuso parziale, rifiuto IRP e IRQL. Il driver WDK reale esegue creazione statica/dinamica, pool proprio, interno e stack del chiamante, identità fisica e scaricamento completo. Le sonde originali distinguono scritture, traduzione dei flag e confini iniettati di allocazione/rilascio.
 
 `KernelMDLChain.AdvanceMdl*` e `KernelMDLUserMapping.AdvanceMdl*` verificano attraversamenti ripetuti, coda PFN, rifiuto alla fine, larghezza degli argomenti, mappature complete, pulizia fallita, permessi e durata. Il vero WDK esegue chiamate statiche/dinamiche ed entrambe le pulizie. Le sonde distinguono routine completa, ausiliario di ripristino e wrapper di rimozione con confini di tipo mappatura/rilascio PTE iniettati; non eseguono il database delle pagine del sistema.
+
+## Trasferimenti vettoriali allineati classici
+
+`NeverDX86LegacyAlignedMoveTests` verifica la conservazione dei registri di MOVDQA, MOVAPS e MOVAPD e l’allineamento a 16 byte prima dell’accesso alla memoria, compresi il riavvolgimento dovuto alla larghezza dell’indirizzo e le basi FS/GS esplicite. Gli accessi non allineati devono preservare registri di destinazione e memoria. Le basi di segmento mancanti restano rifiutate. Questi test coprono lifting ed emulatore; il recupero simbolico esatto deve dimostrare separatamente la condizione di allineamento conservata.
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*` e `PEFixedImageTest.RawAlign*` verificano prove indipendenti tramite resto, input non validi, budget esatti, controlli nativi conservati e ricevute alterate. Gli audit dei movimenti classici vincolano tutte le operazioni, incluso il controllo di allineamento, senza certificare la conservazione dei banchi opachi di stato.
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`NeverDX86NativeStateAuditTests` verifica rigorosamente byte nativi e dettagli del decoder per REP MOVSQ x64 canonico e LDMXCSR classico. Le ricevute delle uscite indefinite vincolano tutte le operazioni. Oracoli indipendenti di stato completo e copia ordinata coprono sovrapposizione, conteggio zero, indirizzamento, byte mancanti e bit riservati. Restano necessarie le prove esistenti su conteggio, direzione, memoria, maschera MXCSR effettiva e validità. Questo audit non certifica la ripresa dopo errori parziali né la conservazione dello stato opaco.
+
+```sh
+cmake --build build-release --target NeverDX86NativeStateAuditTests
+ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
+```
+
+`NeverDX86ScalarMoveAuditTests` verifica rigorosamente MOVSS/MOVSD classico rispetto ai byte originali e a tutti i dettagli del decoder. Oracoli indipendenti per byte coprono fusione dei registri, estensione con zeri dei caricamenti, scritture scalari, tutti i residui di allineamento, indirizzamento a 16/32/64 bit e conservazione completa di registri, flag e MXCSR. Byte mancanti o scritture in memoria di sola lettura non devono confermare uscite architetturali. Le forme per stringhe, VEX/EVEX, segmentate e malformate restano rifiutate; le ricevute vincolano tutte le operazioni senza certificare la conservazione dello stato opaco.
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`SymStorePreservation.Independent*`, `RepeatedRegionsFormAUnionAndChargeEveryScan`, `EmptyIndependentRegionsKeepOriginalWorkAccounting` ed `ExecutorUsesIndependentRegionsForOnlyOneStore` verificano un STORE che conserva due o tre radici correnti indipendenti, entrambi gli ordini dei byte, intervalli parziali che attraversano lo zero relativo, dichiarazioni sovrapposte, lacune non protette e generazioni sconosciute dopo la scrittura. I budget esatti e inferiori di un’unità verificano il costo completo; le regioni assenti non devono essere materializzate. Referenze non valide o fuori intervallo, basi strette o costanti, intervalli vuoti o invertiti e la base della scrittura stessa vengono rifiutati senza modificare lo stato. `AdditionalRegions` vuoto conserva i costi esistenti della singola radice e di `AdditionalRanges`. L’esecutore verifica un solo evento, i byte adiacenti nella stessa regione e l’invalidazione causata da una successiva scrittura ordinaria. `SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget` copre confronti uguali o diversi, budget esatti o insufficienti, due radici protette, l’uscita del vecchio valore e il percorso conservativo di rifiuto esistente.
+
+`NeverDSymConditionalStoreTests` copre gli effetti condizionali sui byte correnti di radici indipendenti, scritture a 128 bit, entrambi gli ordini dei byte, sovrapposizioni parziali, avvolgimento delle coordinate simboliche relative e memoria assoluta. Verifica i byte adiacenti del proprio banco, fatti correnti e storici, epoche sconosciute dopo la scrittura, ingressi non supportati e budget esatti o inferiori di un'unità. I casi dell'esecutore coprono STORE con la gestione esistente delle basi di segmento, successo e rifiuto di CMPXCHG rigoroso, pubblicazione ritardata di Old, havoc e mantenimento di Invalid per le altre operazioni. I comportamenti predefiniti delle scritture ordinarie e della preservazione non cambiano. Questi test validano una semantica di memoria limitata, non i diritti d'accesso o il recupero completo dei programmi.

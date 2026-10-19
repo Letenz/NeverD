@@ -42,10 +42,10 @@ std::string renderFence(Arch TheArch, llvm::AtomicOrdering Ordering) {
   return renderX86Fence(Ordering);
 }
 
-const char *renderDebugBreak(Arch TheArch) {
+const char *renderDebugBreak(Arch TheArch, BinaryFormat Format) {
   if (TheArch == Arch::ARM || TheArch == Arch::AArch64)
     return renderARMDebugBreak();
-  return renderX86DebugBreak();
+  return renderX86DebugBreak(Format);
 }
 
 } // namespace neverd

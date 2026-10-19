@@ -153,6 +153,31 @@ if(UNIX AND NOT APPLE)
         "-Wl,--end-group")
 endif()
 
+# Calls inside libneverd reach its own functions directly rather than through
+# the PLT, as they do on macOS and Windows; the indirection cost an ELF build
+# up to a tenth of its decompile time.  LLVM's functions stay preemptible
+# (preemptible-symbols.list), and data binds as before.  The other functions
+# that programs export over libneverd's are template instances and stateless
+# helpers compiled from the same sources.  This needs GNU ld 2.35 or lld 14.
+if(UNIX AND NOT APPLE)
+    set(_neverd_preemptible_symbols
+        "${CMAKE_CURRENT_SOURCE_DIR}/preemptible-symbols.list")
+    include(CheckCXXSourceCompiles)
+    set(CMAKE_REQUIRED_LINK_OPTIONS
+        "LINKER:-Bsymbolic-functions"
+        "LINKER:--export-dynamic-symbol-list=${_neverd_preemptible_symbols}")
+    check_cxx_source_compiles("int main() { return 0; }"
+        NEVERD_LINKER_BINDS_OWN_FUNCTIONS)
+    unset(CMAKE_REQUIRED_LINK_OPTIONS)
+    if(NEVERD_LINKER_BINDS_OWN_FUNCTIONS)
+        target_link_options(neverd_shared PRIVATE
+            "LINKER:-Bsymbolic-functions"
+            "LINKER:--export-dynamic-symbol-list=${_neverd_preemptible_symbols}")
+        set_property(TARGET neverd_shared APPEND PROPERTY
+            LINK_DEPENDS "${_neverd_preemptible_symbols}")
+    endif()
+endif()
+
 # On macOS, shared-backed frontends resolve LLVM support APIs from libneverd.
 # Static archives only contribute referenced objects, so force the complete
 # support archive into the dylib (notably InitLLVM and the single command-line

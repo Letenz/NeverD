@@ -18,6 +18,7 @@ namespace neverd::emulation::linux_model {
 class LinuxMemory;
 class LinuxClock;
 bool isCanonicalFilePath(llvm::StringRef Path);
+bool isDeclaredDirectory(const LinuxFileOptions &Options, llvm::StringRef Path);
 llvm::Error validateFileOptions(const LinuxFileOptions &Options);
 llvm::Error validateDeviceOptions(const LinuxDeviceOptions &Options,
                                   uint64_t &Bytes, uint64_t &Transactions);
@@ -200,6 +201,9 @@ private:
   tracedIoctl(const ProcessServiceEvent &Event, ProcessResult &Result);
   std::vector<std::weak_ptr<LinuxDeviceState>> DeviceDescriptions;
   std::map<std::string, MutableFile> MutableFiles;
+  std::map<std::string, LinuxFileMetadata> DirectoryMetadata;
+  std::vector<std::string> CreatedDirectories;
+  const LinuxFileMetadata *directoryMetadata(const std::string &Path) const;
   std::map<std::string, uint64_t> Inodes;
   std::set<uint64_t> UsedInodes;
   uint64_t NextInode = 1;
@@ -260,11 +264,13 @@ private:
            ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>>
   access(uint64_t Address, uint32_t Mode, ProcessResult &Result);
-  llvm::Expected<std::optional<uint64_t>> makeDirectory(uint64_t Address,
-                                                        ProcessResult &Result);
+  llvm::Expected<std::optional<uint64_t>>
+  makeDirectory(uint64_t Address, uint32_t Mode, ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>>
   open(uint64_t Address, uint32_t Flags, ProcessResult &Result,
        uint32_t Directory = AtCurrentDirectory);
+  llvm::Expected<std::optional<uint64_t>>
+  getWorkingDirectory(uint64_t Address, uint64_t Size, ProcessResult &Result);
   llvm::Expected<uint64_t> read(OpenFile &File, uint64_t Address,
                                 uint64_t Size);
   uint64_t seek(OpenFile &File, uint64_t Offset, uint32_t Whence);

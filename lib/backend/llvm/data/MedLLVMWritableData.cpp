@@ -94,6 +94,12 @@ MedLLVMEmitter::writableDataSegOf(const MedVar &AddrVar,
     const Segment *S = writableSeg(AddrVar.ConstVal, &AddrVar);
     return S ? std::optional<uint64_t>(S->VA) : std::nullopt;
   }
+  // i386 PIC data at a displacement from the GOT lies in the segment of that
+  // sum, not in the GOT's own (matchI386GotRelative).
+  if (const auto Got = matchI386GotRelative(AddrVar)) {
+    const Segment *S = writableSeg(Got->Base, nullptr);
+    return S ? std::optional<uint64_t>(S->VA) : std::nullopt;
+  }
 
   // Memoize the DAG walk per non-constant address value: it is a pure function
   // of the (immutable during emit) function body, and the same address value is

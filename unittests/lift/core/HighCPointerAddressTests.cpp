@@ -738,6 +738,38 @@ bool declaresLocal(const std::string &Source, const std::string &Name) {
                                               Name + "(\\[[0-9]+\\])?;"));
 }
 
+TEST(NdTypeDisplayPaths, FlexibleArrayMembersHoldTheirElements) {
+  // libgcc's fde_vector ends in `const fde *array[]`, an array of no stated
+  // length: an access at or past its start reads an element, which a store
+  // names, as no array is assignable.
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Vector = NdType::makeNamedRecord("FDE_VECTOR_LIKE", 16);
+  Vector->FieldDisplayNames = {"orig_data", "count", "array"};
+  Vector->FieldDisplayOffsets = {0, 8, 16};
+  Vector->FieldDisplayTypes = {Pointer, NdType::makeInt(8, false),
+                               NdType::makeArray(Pointer, 0, 0)};
+  const auto path = [](const TypeRef &Record, uint64_t Offset, uint16_t Bytes) {
+    return Record->displayFieldPathAt(Offset, Bytes).value_or("(none)");
+  };
+  EXPECT_EQ(path(Vector, 16, 8), "array[0]");
+  EXPECT_EQ(path(Vector, 24, 8), "array[1]");
+  EXPECT_EQ(Vector->displayFieldTypeAt(24, 8), Pointer);
+  // Its address is the array's; half a pointer is no element.
+  EXPECT_EQ(path(Vector, 16, 0), "array");
+  EXPECT_EQ(path(Vector, 20, 4), "(none)");
+
+  // A zero-length array that other members follow holds none of their
+  // bytes: an access there reads the member that starts with it.
+  auto Header = NdType::makeNamedRecord("HEADER_LIKE", 24);
+  Header->FieldDisplayNames = {"count", "marker", "tail", "more"};
+  Header->FieldDisplayOffsets = {0, 8, 8, 16};
+  Header->FieldDisplayTypes = {NdType::makeInt(8, false),
+                               NdType::makeArray(Pointer, 0, 0), Pointer,
+                               NdType::makeInt(8, false)};
+  EXPECT_EQ(path(Header, 8, 8), "tail");
+  EXPECT_EQ(path(Header, 16, 8), "more");
+}
+
 TEST(NdTypeDisplayPaths, ArrayMembersNameTheirElements) {
   // An array member holds its elements as a record holds its members: an
   // access of an element's width, or an address inside the array, names
@@ -22000,6 +22032,7 @@ TEST(HighCPointerAddresses, CxxThrowCallPrintsThrowWithoutDebugBreak) {
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("throw 0x140001100"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("__debugbreak"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("__builtin_debugtrap"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, ZeroArgMsvcThrowCtorDropsStaleCallOperands) {
@@ -24441,6 +24474,7 @@ TEST(LLVMCPointerAddresses, CxxThrowCallPrintsThrowWithoutDebugTrap) {
   OS.flush();
   EXPECT_NE(Source.find("throw;"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("__debugbreak"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("__builtin_debugtrap"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, EmptyIfCallReturnDoesNotLeaveUninitOrUnknownArgs) {
@@ -35395,7 +35429,9 @@ TEST(HighCPointerAddresses, ReturningCallFollowedByInt3PreservesDebugBreak) {
   ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS));
   OS.flush();
   EXPECT_NE(Source.find("abort_like("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__debugbreak"), std::string::npos) << Source;
+  // An ELF unit's breakpoint is the GNU builtin; no header declares
+  // Microsoft's __debugbreak there.
+  EXPECT_NE(Source.find("__builtin_debugtrap()"), std::string::npos) << Source;
   EXPECT_NE(Source.find("= abort_like("), std::string::npos) << Source;
   // The int32_t return converts the 64-bit value itself.
   EXPECT_NE(Source.find("return v0;"), std::string::npos) << Source;
@@ -43460,6 +43496,41 @@ TEST(HighCPointerAddresses, UnwindlessNonLeafCandidateIsNotAFunction) {
   EXPECT_EQ(DispositionOf(Leaf), PipelineFunctionDisposition::Accepted);
 }
 
+TEST(HighCPointerAddresses, OnlyAPrimaryUnwindRecordVouchesForANonLeafStart) {
+  constexpr va_t Primary = 0x140001000;
+  constexpr va_t NonLeaf = 0x140001010;
+  std::vector<uint8_t> Code = {0xc3};
+  Code.resize(0x10, 0xcc);
+  Code.insert(Code.end(), {0x54, 0x5c, 0xc3}); // push rsp; pop rsp; ret
+  const auto DispositionOf = [&](std::vector<std::pair<va_t, va_t>> Ranges,
+                                 std::set<va_t> Continuations) {
+    BinaryImage Img = makeCodeFixture(Primary, Code);
+    Img.KnownCodeRanges = std::move(Ranges);
+    Img.ContinuationCodeStarts = std::move(Continuations);
+    llvm::LLVMContext Ctx;
+    PipelineOptions Opts;
+    Opts.EmitDumpOutput = false;
+    Opts.OnlyFunctionEntries.insert(NonLeaf);
+    auto Result = Pipeline().run(Img, Ctx, Opts);
+    for (const auto &Audit : Result.FunctionAudits)
+      if (Audit.Entry == NonLeaf)
+        return Audit.Disposition;
+    return PipelineFunctionDisposition::Candidate;
+  };
+  const std::pair<va_t, va_t> Other{Primary, Primary + 1};
+  const std::pair<va_t, va_t> Own{NonLeaf, NonLeaf + 3};
+  // A record that starts at the candidate vouches for it, in whatever order
+  // the ranges are listed; one that continues another function does not.
+  EXPECT_EQ(DispositionOf({Other, Own}, {}),
+            PipelineFunctionDisposition::Accepted);
+  EXPECT_EQ(DispositionOf({Own, Other}, {}),
+            PipelineFunctionDisposition::Accepted);
+  EXPECT_EQ(DispositionOf({Other, Own}, {NonLeaf}),
+            PipelineFunctionDisposition::RejectedUnwindlessNonLeaf);
+  EXPECT_EQ(DispositionOf({Own, Other}, {NonLeaf}),
+            PipelineFunctionDisposition::RejectedUnwindlessNonLeaf);
+}
+
 TEST(HighCPointerAddresses, CalleeBranchToAnotherFunctionCountsItsWrites) {
   // The callee leaves through `jz g` to a separate function that clears
   // EDX.  The CFG keeps no block for g, so the summary must follow it.
@@ -46374,4 +46445,470 @@ TEST(HighCPointerAddresses, LinkRegisterHoldsAValueOnceSaved) {
   compileAndRunCallOrdering("#include <stdint.h>\n" + HighC + R"(
 int main(void) { return triple(14) != 42 || triple(-5) != -15; }
 )");
+}
+
+TEST(HighCPointerAddresses, IntegerOperatorsTakePointerLocalsAsIntegers) {
+  // x86's setcc writes the low byte of a register that holds a pointer:
+  // `(p & ~0xFF) | flag`, which C computes on the address as an integer.
+  HighFunc Func;
+  Func.Name = "low_flag";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(8);
+  const TypeRef Pointer = NdType::makePtr(NdType::makeInt(4));
+  MedVar Node = temporary(7);
+  auto Made = HighExpr::makeCall("make_node", 0x140002000, {});
+  Made->Type = Pointer;
+  auto Masked =
+      HighExpr::makeBinop(NdOp::INT_AND, HighExpr::makeVar(Node, Pointer),
+                          HighExpr::makeConst(0xFFFFFFFFFFFFFF00ULL, 8));
+  Masked->Type = NdType::makeInt(8);
+  auto Flagged =
+      HighExpr::makeBinop(NdOp::INT_OR, Masked, HighExpr::makeConst(1, 8));
+  Flagged->Type = NdType::makeInt(8);
+  HighStmt Assign = assignTo(Node, Made);
+  Assign.Dst->Type = Pointer;
+  Func.Body = {Assign, callStmt("keep_node", 0x140002100,
+                                {HighExpr::makeVar(Node, Pointer)})};
+  returnValue(Func, Flagged);
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("(uintptr_t)t7 & "), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, CallResultsTakeNoFileScopeName) {
+  // td_ta_event_getmsg's result would read as `msg`, which hides the msg()
+  // the function calls; getaddrinfo's as `addrinfo`, which hides the
+  // record's typedef a cast names.
+  HighFunc Func;
+  Func.Name = "handle_messages";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(4);
+  MedVar Message = temporary(3, 0, 4);
+  auto Get = HighExpr::makeCall("td_ta_event_getmsg", 0x140002000, {});
+  Get->Type = NdType::makeInt(4);
+  MedVar Shown = temporary(4, 0, 4);
+  auto Show = HighExpr::makeCall("msg", 0x140002100,
+                                 {HighExpr::makeVar(Message, Get->Type)});
+  Show->Type = NdType::makeInt(4);
+  auto Sum =
+      HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeVar(Message, Get->Type),
+                          HighExpr::makeVar(Shown, Show->Type));
+  Sum->Type = NdType::makeInt(4);
+  Func.Body = {assignTo(Message, Get), assignTo(Shown, Show)};
+  returnValue(Func, Sum);
+  const std::string Source = emitFunctions({Func});
+  EXPECT_EQ(Source.find("msg = td_ta_event_getmsg("), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("msg(t3)"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, RecordsNamedLikeFunctionsAreSpelledByTheirTags) {
+  // glibc's stat64() and statx() take records of their own names, which no
+  // typedef can declare beside the functions: C spells their tags, in the
+  // signatures and in the casts alike.
+  HighFunc Func;
+  Func.Name = "probe_stat";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(4);
+  auto Record = std::make_shared<NdType>();
+  Record->Kind = NdTypeKind::Struct;
+  Record->SourceName = "stat64";
+  Func.Params = {{"buffer", NdType::makePtr(Record)}};
+  MedVar Buffer;
+  Buffer.Kind = MedVar::Param;
+  Buffer.Id = 0;
+  Buffer.Size = 8;
+  Buffer.TheArch = Arch::X64;
+  auto Call =
+      HighExpr::makeCall("stat64", 0x140002000,
+                         {HighExpr::makeConst(0, 8),
+                          HighExpr::makeVar(Buffer, Func.Params[0].Type)});
+  Call->Type = NdType::makeInt(4);
+  returnValue(Func, Call);
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("probe_stat(struct stat64* buffer)"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("typedef struct stat64 stat64;"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, RecordsNamedLikeLibraryObjectsAreSpelledByTags) {
+  // gettimeofday() fills a struct timezone, whose name <time.h> gives the
+  // object `long timezone`: no typedef can declare it beside the object.
+  HighFunc Func;
+  Func.Name = "probe_zone";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(4);
+  auto Record = std::make_shared<NdType>();
+  Record->Kind = NdTypeKind::Struct;
+  Record->SourceName = "timezone";
+  Func.Params = {{"zone", NdType::makePtr(Record)}};
+  returnValue(Func, HighExpr::makeConst(0, 4));
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("probe_zone(struct timezone* zone)"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("typedef struct timezone timezone;"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, IntegersTakeForwardedPointerMembersAsIntegers) {
+  // zlib's zlib_filefunc64_def holds `voidpf opaque`, which the machine
+  // copies through integer registers: the integer memory and the integer
+  // local it lands in take the pointer as the address it is.
+  auto Record = NdType::makeNamedRecord("FILEFUNC_LIKE", 16);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  Record->FieldDisplayNames = {"open", "opaque"};
+  Record->FieldDisplayOffsets = {0, 8};
+  Record->FieldDisplayTypes = {Pointer, Pointer};
+  class FileFuncDbg : public NullDebugContext {
+  public:
+    explicit FileFuncDbg(TypeRef Record) : Record(std::move(Record)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x401000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "copy_opaque";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeInt(8);
+      FS.Params = {{"funcs", NdType::makePtr(Record)},
+                   {"slot", NdType::makeInt(8, false)}};
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Record;
+  } Dbg(Record);
+
+  const auto Word = NdType::makeInt(8, false);
+  HighFunc Copy;
+  Copy.Name = "copy_opaque";
+  Copy.Entry = 0x401000;
+  Copy.ReturnType = NdType::makeInt(8);
+  Copy.Params = {{"arg0", Word}, {"arg1", Word}};
+  const auto Opaque = [&] {
+    return HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD,
+                                                  parameter(0, Word),
+                                                  HighExpr::makeConst(8, 8)),
+                              Word);
+  };
+  MedVar Copied = temporary(5);
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr = parameter(1, Word);
+  Store.StoreVal = HighExpr::makeVar(Copied, Word);
+  Copy.Body = {assignTo(Copied, Opaque()), Store};
+  MedVar Kept = temporary(6);
+  Copy.Body.push_back(assignTo(Kept, Opaque()));
+  auto Flipped =
+      HighExpr::makeBinop(NdOp::INT_XOR, HighExpr::makeVar(Kept, Word),
+                          HighExpr::makeVar(Kept, Word));
+  Flipped->Type = Word;
+  returnValue(Copy, Flipped);
+
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text = R"c(
+struct FILEFUNC_LIKE {
+  void *open;
+  void *opaque;
+};
+)c";
+    Definitions.Records = {{"FILEFUNC_LIKE", false}};
+    Definitions.Tags = {{"FILEFUNC_LIKE", false}};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Copy}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("(uintptr_t)(funcs->opaque)"), std::string::npos)
+      << Source;
+  expectCSyntax("#include <stdint.h>\n" + Source);
+}
+
+TEST(HighCPointerAddresses, TrapsUseTheBuiltinsTheirHeadersDeclare) {
+  // ud2 and int3 are Microsoft's __ud2 and __debugbreak only where the unit
+  // includes <intrin.h>; elsewhere they are the GNU builtins.
+  for (const BinaryFormat Format : {BinaryFormat::ELF, BinaryFormat::COFF}) {
+    HighFunc Func;
+    Func.Name = "stop";
+    Func.Entry = 0x401000;
+    Func.ReturnType = NdType::makeVoid();
+    for (const Intrinsic Id : {Intrinsic::Int3, Intrinsic::Ud2}) {
+      HighStmt Trap;
+      Trap.Kind = StmtKind::Call;
+      Trap.CallExpr = HighExpr::makeCall("trap", 0, {});
+      Trap.CallExpr->IntrinsicId = Id;
+      Func.Body.push_back(std::move(Trap));
+    }
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = Format;
+    ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+    OS.flush();
+    const bool Coff = Format == BinaryFormat::COFF;
+    EXPECT_EQ(Source.find(Coff ? "__debugbreak()" : "__builtin_debugtrap()") !=
+                  std::string::npos,
+              true)
+        << Source;
+    EXPECT_EQ(Source.find(Coff ? "__ud2()" : "__builtin_trap()") !=
+                  std::string::npos,
+              true)
+        << Source;
+    if (!Coff)
+      expectCSyntax(Source);
+  }
+}
+
+TEST(HighCPointerAddresses, PointerLocalsTakeIntegersAsAddresses) {
+  // zlib calls through a function pointer whose cast types the result an
+  // integer, into a stream the code held a pointer in before: the local the
+  // unit declares a pointer takes the integer as the address it is.
+  HighFunc Func;
+  Func.Name = "reopen";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(8);
+  const TypeRef Pointer = NdType::makePtr(NdType::makeVoid());
+  MedVar Stream = temporary(7);
+  auto Made =
+      HighExpr::makeCall("malloc", 0x140002000, {HighExpr::makeConst(16, 8)});
+  Made->Type = Pointer;
+  HighStmt First = assignTo(Stream, Made);
+  First.Dst->Type = Pointer;
+  auto Opened = HighExpr::makeCall("open_stream", 0x140002100, {});
+  Opened->Type = NdType::makeInt(8, false);
+  HighStmt Second = assignTo(Stream, Opened);
+  Second.Dst->Type = Pointer;
+  Func.Body = {
+      First,
+      callStmt("keep", 0x140002200, {HighExpr::makeVar(Stream, Pointer)}),
+      Second,
+      callStmt("keep", 0x140002200, {HighExpr::makeVar(Stream, Pointer)})};
+  returnValue(Func, HighExpr::makeConst(0, 8));
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("(uintptr_t)(open_stream())"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, IntegerResultsReturnPointersAsAddresses) {
+  // A function declared to return an int hands back the pointer a local
+  // holds, as the machine leaves it in the integer result register.
+  HighFunc Func;
+  Func.Name = "handle_of";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(4);
+  const TypeRef Pointer = NdType::makePtr(NdType::makeVoid());
+  MedVar Handle = temporary(7);
+  auto Made =
+      HighExpr::makeCall("malloc", 0x140002000, {HighExpr::makeConst(16, 8)});
+  Made->Type = Pointer;
+  HighStmt Assign = assignTo(Handle, Made);
+  Assign.Dst->Type = Pointer;
+  Func.Body = {Assign, callStmt("keep", 0x140002200,
+                                {HighExpr::makeVar(Handle, Pointer)})};
+  returnValue(Func, HighExpr::makeVar(Handle, Pointer));
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("return (int32_t)(uintptr_t)t7;"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, PointersToHeaderTypedefsPassThroughVoidPointers) {
+  // time() takes the time_t * its header declares, which bionic makes long
+  // where the unit's exact widths say int32_t: an address passes through
+  // void *, which converts to the header's pointer whatever its typedef.
+  auto TimeT = NdType::makeInt(8);
+  TimeT->TypedefName = "time_t";
+  class TimeDbg final : public NullDebugContext {
+  public:
+    explicit TimeDbg(TypeRef TimeT) : TimeT(std::move(TimeT)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      FunctionSym FS;
+      FS.Addr = Addr;
+      FS.PrototypeFromCLibrary = true;
+      if (Addr == 0x140002000) {
+        FS.Name = "time";
+        FS.ReturnType = TimeT;
+        FS.Params = {{"__t", NdType::makePtr(TimeT)}};
+        return FS;
+      }
+      // jmp_buf, an array C passes as the pointer to its element.
+      if (Addr == 0x140002300) {
+        FS.Name = "longjmp";
+        FS.ReturnType = NdType::makeVoid();
+        FS.Params = {{"__env", NdType::makeArray(NdType::makeInt(8), 8, 64)},
+                     {"__value", NdType::makeInt(4)}};
+        return FS;
+      }
+      return std::nullopt;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef TimeT;
+  } Dbg(TimeT);
+  HighFunc Func;
+  Func.Name = "stamp";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(8);
+  const TypeRef Slot = NdType::makePtr(NdType::makeInt(8));
+  MedVar Where = temporary(7);
+  auto Made =
+      HighExpr::makeCall("malloc", 0x140002100, {HighExpr::makeConst(8, 8)});
+  Made->Type = Slot;
+  HighStmt Assign = assignTo(Where, Made);
+  Assign.Dst->Type = Slot;
+  auto Now =
+      HighExpr::makeCall("time", 0x140002000, {HighExpr::makeVar(Where, Slot)});
+  Now->Type = NdType::makeInt(8);
+  // The buffer's address, which the machine holds as an integer.
+  Func.Params = {{"arg0", NdType::makeInt(8)}};
+  auto Buffer =
+      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, NdType::makeInt(8)),
+                          HighExpr::makeConst(0xBC, 8));
+  Buffer->Type = NdType::makeInt(8);
+  // longjmp never returns: what the function returns comes before.
+  Func.ReturnType = NdType::makeVoid();
+  Func.Body = {
+      Assign, callStmt("keep", 0x140002200, {HighExpr::makeVar(Where, Slot)}),
+      callStmt("keep", 0x140002200, {Now}),
+      callStmt("longjmp", 0x140002300, {Buffer, HighExpr::makeConst(1, 4)})};
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("time((void*)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("longjmp((void*)(uintptr_t)"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, IndirectCallResultsConvertToPointerLocals) {
+  // zlib's ZOPEN64 calls through a member whose type returns a pointer,
+  // which the machine's call leaves in an integer register: the call's cast
+  // returns that integer, and the local declared a pointer takes it as the
+  // address it is.
+  HighFunc Func;
+  Func.Name = "open_through";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(8);
+  Func.Params = {{"p", NdType::makePtr(NdType::makeInt(8))}};
+  auto Object = parameter(0, Func.Params[0].Type);
+  const TypeRef Pointer = NdType::makePtr(NdType::makeVoid());
+  MedVar Stream = temporary(7);
+  auto Opened = HighExpr::makeCall("indirect", 0, {Object});
+  Opened->IsIndirectCall = true;
+  Opened->IndirectTarget = HighExpr::makeLoad(Object, NdType::makePtr());
+  Opened->Type = NdType::makeInt(4, false);
+  HighStmt Assign = assignTo(Stream, Opened);
+  Assign.Dst->Type = Pointer;
+  Func.Body = {Assign, callStmt("keep", 0x140002200,
+                                {HighExpr::makeVar(Stream, Pointer)})};
+  returnValue(Func, HighExpr::makeConst(0, 8));
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("(uintptr_t)(((uint32_t (*)())"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, IndirectCallsTakeNoSignatureFromTheirCaller) {
+  // An indirect call whose callee is unknown names its own instruction,
+  // inside its caller, where debug information finds the caller: the
+  // caller's pointer result is no result of the call's, which C compares
+  // as the integer the call returns.
+  class CallerDbg final : public NullDebugContext {
+  public:
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr < 0x140001000 || Addr >= 0x140001100)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "open_through";
+      FS.Addr = 0x140001000;
+      FS.ReturnType = NdType::makePtr(NdType::makeVoid());
+      FS.Params = {{"p", NdType::makePtr(NdType::makeInt(8))}};
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+  } Dbg;
+  HighFunc Func;
+  Func.Name = "open_through";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(8);
+  Func.Params = {{"p", NdType::makePtr(NdType::makeInt(8))}};
+  auto Object = parameter(0, Func.Params[0].Type);
+  MedVar Result = temporary(7, 0, 4);
+  auto Opened = HighExpr::makeCall("indirect", 0x140001010, {Object});
+  Opened->CallSiteAddr = 0x140001010;
+  Opened->IsIndirectCall = true;
+  Opened->IndirectTarget = HighExpr::makeLoad(Object, NdType::makePtr());
+  Opened->Type = NdType::makeInt(4, false);
+  const TypeRef Word = NdType::makeInt(4, false);
+  Func.Body = {
+      assignTo(Result, Opened),
+      callStmt("keep", 0x140002200, {HighExpr::makeVar(Result, Word)})};
+  returnValue(Func, HighExpr::makeConst(0, 8));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_EQ(Source.find("void* t7"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, RecordElementsReadTheirMembers) {
+  // zlib reads tree[n].Freq, two bytes at the start of a four-byte element
+  // of the array a ct_data pointer holds: that member of the element, not
+  // the element, which no scalar is, nor a member of the first element
+  // indexed as an array (`tree->freq[n]`).
+  const auto Half = NdType::makeInt(2, false);
+  auto Record = NdType::makeNamedRecord("CT_LIKE", 4);
+  Record->FieldDisplayNames = {"freq", "len"};
+  Record->FieldDisplayOffsets = {0, 2};
+  Record->FieldDisplayTypes = {Half, Half};
+  HighFunc Func;
+  Func.Name = "freq_of";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = Half;
+  Func.Params = {{"tree", NdType::makePtr(Record)},
+                 {"n", NdType::makeInt(8, false)}};
+  returnValue(Func, HighExpr::makeLoad(
+                        HighExpr::makeBinop(
+                            NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
+                            HighExpr::makeBinop(NdOp::INT_MULT, parameter(1),
+                                                HighExpr::makeConst(4, 8))),
+                        Half));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text = R"c(
+struct CT_LIKE {
+  uint16_t freq;
+  uint16_t len;
+};
+)c";
+    Definitions.Records = {{"CT_LIKE", false}};
+    Definitions.Tags = {{"CT_LIKE", false}};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("tree[n].freq"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("tree->freq["), std::string::npos) << Source;
+  expectCSyntax("#include <stdint.h>\n" + Source);
 }

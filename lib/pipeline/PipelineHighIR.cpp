@@ -248,14 +248,17 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
     Local.setFuncNames(&AllFuncNames);
     Local.setResolvedCalleeNames(&ResolvedCalleeNames);
     Local.setVariadicVectorCallees(&VariadicVectorCallees);
+    Local.setUserPrototypeCallees(&Result.CallUserPrototypes);
     for (size_t FI; (FI = Claim()) < N;) {
       const MedFunc &MF = Result.MedFuncs[FI];
       Local.setExpressionObserver({});
       Local.setExpressionCloneObserver({});
       Local.setStatementObserver({});
+      Local.setObservationReset({});
       std::map<const HighExpr *, std::vector<size_t>> SourceIndex;
       bool SourceOverflow = false;
-      size_t SourceWork = 250000;
+      constexpr size_t SourceWorkBudget = 250000;
+      size_t SourceWork = SourceWorkBudget;
       std::vector<const sigs::LibraryRecognition *> SourceRegions;
       for (const auto &R : Result.LibraryRecognitions)
         if (R.Function == MF.Entry && R.Isolated &&
@@ -325,6 +328,12 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
                S.Kind == StmtKind::Store ? HighSourceKind::Store
                                          : HighSourceKind::Statement,
                S.Kind);
+      });
+      Local.setObservationReset([&] {
+        Sources[FI].clear();
+        SourceIndex.clear();
+        SourceOverflow = false;
+        SourceWork = SourceWorkBudget;
       });
       if (RecognizedFunctions.contains(MF.Entry)) {
         Local.setExpressionObserver(

@@ -77,11 +77,21 @@ neverd::bindDebugParams(Arch A, BinaryFormat F, const FunctionSym &Signature,
       Sites.empty() || llvm::any_of(Sites, [](const RecoveredParamSite &Site) {
         return Site.RegOff != kNoParamReg || Site.MedIndex >= 0;
       });
+  // Where the debug information says the parameters enter in registers, as
+  // an i386 local function's do, they are there, whatever the convention.
   const auto Placement =
-      OrdinaryConvention && Located
+      !Located ? std::nullopt
+      : !Signature.ParamEntryLocations.empty()
+          ? placeEnteredParameters(A, F, Signature.ReturnType, Types,
+                                   Signature.ParamEntryLocations)
+      : OrdinaryConvention
           ? placeSourceParameters(A, F, Signature.ReturnType, Types)
           : std::nullopt;
   if (!Placement) {
+    // A function that takes values in registers takes them in no order its
+    // positions describe.
+    if (!Signature.ParamEntryLocations.empty())
+      return Bindings;
     // Without rules or locations, a debug parameter is the one at its
     // position only while each before it fills one integer slot, as in
     // every convention.

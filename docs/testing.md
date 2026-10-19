@@ -13,6 +13,29 @@ two native threads, global/local reference deletion and detach/reattach against
 the same process objects. `ProcessReport.AndroidApplicationSnapshot*` checks
 strict JSON input. These tests use synthetic inputs without a phone, host JVM
 or network; they do not establish arbitrary framework lifecycle equivalence.
+The File cases check retained JNI references across detach, shared DEX/library
+objects, exact path/name/parent strings, missing input, foreign instances and
+terminal budget refusal. `LinuxFileNamespace.WorkingDirectory*` independently
+checks both LP64 ABIs, output bounds, root and unknown snapshots.
+`AndroidFiles.*WorkingDirectory*` executes raw, syscall and Bionic callers at
+O0/O2 across relocation packing, including guest allocation/free and errno.
+`ProcessReport.GuestDirectoriesAreExplicitAndTyped` checks JSON boundaries.
+
+`LinuxFileNamespace.CreatedDirectories*` and `Directory*` check directory
+inodes, complete stat layouts, parent updates, setgid/umask, reservation/time
+refusal, EOF insertion and duplicated cursors on both LP64 ABIs.
+`AndroidFiles.DirectoryCreationHasSharedStatAndLifetimeAcrossCallABIs` checks
+native, variadic and raw callers. `AndroidSearch.Substring*` checks exact first
+match, empty/overlapping inputs, high bytes, page ends, errno and dynamic library
+closure; `AndroidSearchMemory.*` checks memory/time bounds. The strict directory
+JSON check is `ProcessReport.DirectoryCreationRequiresCompleteBoundedMetadata`.
+
+`AndroidStringCopy.*` checks `strncpy` using independent AArch64 callers at
+O0/O2 across three relocation formats and available CPU backends: exact padding,
+truncation, high bytes, errno, full-width and zero counts, page ends, read-only
+source/destination, overlap and dynamic provider lifetime.
+`AndroidStringCopyMemory.*` checks atomic refusal, memory limits and timeout
+against complete guarded guest bytes. No host libc copy is used as the oracle.
 
 `NeverDDirectTailCallMetadataTests` builds real x86, x64 and AArch64 CFGs and
 validates direct tail-call targets at strict instruction boundaries. It covers
@@ -531,7 +554,40 @@ NEVERD_SOURCE_DIALECT=go \
 
 `NeverDSourceDialectTests` checks C++ symbol validation, STL aliases, preserved
 custom template arguments, ATL names, and the C exception projection's native
-calls and handlers. `ReadsTheDefinitionsOfTheProgramsTypes` reads a unit's
+calls and handlers. `CxxOverloadsShareTheirName` reads two numbered overloads by
+their one C++ name and keeps C identifiers for an object and a function of one
+name and for two functions of one symbol; `ReadsTheDeclarationsHighCWrites`
+reads a typedef name declared again, a block's variable of a typedef's name, a
+C23 enumeration's type and `va_arg` without showing C, and
+`GoViewComputesWhatCComputes` runs a pointer to a copy (`&(int64_t){v}`) in Go.
+`SourceAggregate.SourceNamesAreSpelledAsC` checks the C spelling of C++ record
+names and of records that share a C library function's name;
+`HighCPointerAddresses.RecordsNamedLikeFunctionsAreSpelledByTheirTags`,
+`CallResultsTakeNoFileScopeName`, `IntegerOperatorsTakePointerLocalsAsIntegers`
+and `IntegersTakeForwardedPointerMembersAsIntegers` check that HighC writes such
+a record, a call's result, a pointer operand and a pointer an integer receives
+as C a compiler accepts. `CSymbolNames.CopiesOfHeaderRoutinesStepAsideFromTheirNames`
+renames a stub and a C++ function named like C library routines and calls the
+stub's routine by its name, `HighCPointerAddresses.TrapsUseTheBuiltinsTheirHeadersDeclare`
+spells x86 traps for ELF and COFF, and
+`AAPCS64CallContract.PLTEntriesPassArgumentsOnAsTheirCLibraryDeclares` declares
+bionic's ptrace request an int.
+`HighCStoreForwarding.ALandingPadStoresTheExceptionTheUnwinderHandsIt` keeps a
+landing pad's store of `eh_exception` after a call that returns and one that
+does not. `TypeRender.UnitsTakeTheSystemsOwnTypesFromItsHeaders` takes glibc's
+struct stat from its header with checks of its layout and keeps a record of
+the name the program lays out its own way, and
+`HighCPointerAddresses.RecordsNamedLikeLibraryObjectsAreSpelledByTags` spells
+`struct timezone` beside <time.h>'s object.
+`PointerLocalsTakeIntegersAsAddresses`, `IntegerResultsReturnPointersAsAddresses`,
+`IndirectCallResultsConvertToPointerLocals` and
+`PointersToHeaderTypedefsPassThroughVoidPointers` compile the conversions
+between pointers and integers that locals, results and a C library routine's
+typedef parameters need, and `IndirectCallsTakeNoSignatureFromTheirCaller`
+keeps the caller's signature off an indirect call inside it.
+`X86_32_DebugParams.ParametersAfterAPointerTakeTheNextSlot` decompiles
+`test_debug_params32.o`, built with `-g`, whose parameters follow a pointer of
+four bytes. `ReadsTheDefinitionsOfTheProgramsTypes` reads a unit's
 local types definitions back in C as written, whole in C++, and in Rust and
 Go as far as their structures lay them out, saying why for the rest.
 `TheProgramsTypesSpellTheirRecordsAndTheirMembers` gives Rust and Go the
@@ -6713,6 +6769,13 @@ LP64 fields, padding, zone bytes, aliasing, fixed offsets in both directions,
 shared process storage across APIs/threads, caller storage and errno isolation.
 Missing zones, excluded ranges, closed providers, invalid memory and malformed
 zone input remain visible failures. Tests never read the host time zone.
+Inverse cases use independent expected timestamps and complete buffer images
+for signed carries, Gregorian centuries, ignored derived fields, padding,
+fixed offsets, endpoint dates, static-object aliasing and the API 28 valid
+`-1` errno rule. Positive DST and null input check the exact failure effects,
+including read-only storage when `tm_isdst` is already one. Direct model tests
+check an `mktime`-only zone arena, cross-page write refusal, exact memory-limit
+admission and expired-budget atomicity against all original guest bytes.
 
 `AndroidObservation.*` checks complete workload equality with and without
 selected PC observations across ordinary/APS2/RELR images and Unicorn/HVF.
@@ -7642,6 +7705,17 @@ analysis level stay apart, and another image object never reads the record.
 `MedStackDelta.*` (in `NeverDLiftTests`) resolves the stack-pointer offset
 behind 64 joins in a row, each merging two arms; every path reaches the live-in
 stack pointer exactly at the depth limit, and one more join exceeds it.
+`MedABIPass.FrameLocalLeafSummary*` (in `NeverDFPParameterMaskTests`) checks
+the indexed leaf summary against duplicate definitions and entries, PHIs,
+value widths and identities, authenticated stack live-ins, the depth limit,
+and reuse across functions or invocations. The index belongs to one immutable
+function; a rejected function must still count toward duplicate-entry rejection.
+The `Native pipeline compatibility` workflow runs the complete focused ABI,
+pipeline-outcome, thread and HighIR control-flow owners on Linux, macOS and
+Windows x64 (MSVC and clang-cl), together with actual SDK allocation and native
+worker requests. It requires registered cases to execute without failures or
+skips and asserts that the normal build enables mimalloc by default. This
+focused profile does not replace CPU-emulation or full semantic qualification.
 `NeverDGraphCyclesTests` checks component grouping and a million-node chain.
 
 `MedCxxContinuationFrame.ProtectedSourcesFollowCompactedBlockIdentities` uses
@@ -8124,6 +8198,8 @@ The earlier 204-observation translation-profile receipt is historical. Current f
 `PEFixedImageTest.RawCode*` covers returning supplemental code in both address halves, original return words, full registers and byte memory, unknown writable globals, full-slot import reads, missing code, full image exclusion, malformed/unused declarations, refinement, explicit alias contracts and receipt mutations. Exact/short preparation, result and operation budgets include many mappings, multiple bindings and mixed terminal exits. `PipelineRefusesUnusedRawEnvironmentDomains` verifies source refusal before recovery.
 
 `RawCodeNativeReturn*` checks two physical saved return words, an aliasing gap, a discarded unproved cell, narrow-address refusal, complete register/memory effects and exact proof budgets. `SymStorePreservation.Additional*` and `SymStorePreservation.AbsentAdditional*` check range unions in both byte orders, post-store epochs, absent bytes, malformed ranges and failure without mutation at insufficient work limits.
+
+`SymStorePreservation.Independent*`, `RepeatedRegionsFormAUnionAndChargeEveryScan`, `EmptyIndependentRegionsKeepOriginalWorkAccounting` and `ExecutorUsesIndependentRegionsForOnlyOneStore` cover a single STORE preserving two or three independent current roots, both byte orders, partial ranges across relative zero, overlapping declarations, untouched gaps and post-store unknown epochs. Exact and one-short budgets check the complete charge, while absent regions must stay unmaterialized. Invalid and out-of-range references, narrow or constant bases, empty/reversed intervals and the actual store's own base reject without state mutation. Existing single-root and `AdditionalRanges` costs remain unchanged when `AdditionalRegions` is empty. The executor case checks one event, its neighboring same-region bytes and later ordinary-store invalidation. `SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget` checks matching and mismatching comparisons with exact and one-short preservation budgets, two protected roots, the old-value output and the existing fail-closed refusal path.
 
 `FrameOffsets.*Normalization*` covers exact identities, extra inputs, root identity, infeasible predicates without cached witnesses, default behavior, prefix/measurement charges and post-call node refusal. `FrameNormalizationPreservesStoresAndNativeReturns` and `RawCodeFrameNormalization*` exercise original memory effects and physical return words with independent byte oracles, both byte orders where applicable, exact/short operation budgets and receipt mutation. `FrameNormalizationStrategyBindsIndependentProof` checks both binary proof identities.
 
@@ -8728,3 +8804,35 @@ that shadow known classes. ProcessReport tests cover the JSON request and full
 64-bit targets. Run the JNI, Dalvik and process-public suites; runtime tests for
 existing DEX state/language workloads protect initialization order. These tests
 do not claim native Java method execution or custom loader support.
+
+## Legacy aligned vector moves
+
+`NeverDX86LegacyAlignedMoveTests` checks MOVDQA, MOVAPS and MOVAPD register preservation and 16-byte alignment before memory access, including address-width wrapping and explicit FS/GS bases. Misaligned accesses must preserve destination registers and memory. Missing segment bases remain rejected. This is lifting/emulator coverage; exact symbolic recovery must separately prove the retained alignment guard.
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*` and `PEFixedImageTest.RawAlign*` check independent remainder proofs, invalid inputs, exact budgets, retained native guards and receipt tampering. Legacy move audits bind the complete operation span, including the alignment guard; they do not certify preservation of opaque machine-state banks.
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`NeverDX86NativeStateAuditTests` checks strict native-byte and decoder-detail admission for canonical x64 REP MOVSQ and legacy LDMXCSR. Complete operation spans remain bound to their undefined-output receipts. Independent full-state and ordered-copy oracles cover overlap, zero counts, address forms, missing bytes and reserved bits. Execution still requires the existing count/direction, memory, effective MXCSR-mask and validity proofs; this audit does not certify partial-fault restart or opaque-state preservation.
+
+```sh
+cmake --build build-release --target NeverDX86NativeStateAuditTests
+ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
+```
+
+`NeverDX86ScalarMoveAuditTests` checks strict legacy MOVSS/MOVSD admission against original bytes and complete decoder detail. Independent byte oracles cover register merge, memory-load zero extension, scalar stores, every alignment, 16/32/64-bit addressing and complete register/flag/MXCSR preservation. Missing memory and read-only stores must not commit architectural outputs. Negative cases retain closed string, VEX/EVEX, segmented and malformed forms, and receipts bind the complete emitted span without granting opaque-state preservation.
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`NeverDSymConditionalStoreTests` covers conditional effects on current bytes across independent roots, 128-bit writes, both byte orders, partial overlaps, symbolic relative wrapping and absolute memory. It checks own-bank neighbors, current versus historical facts, post-write unknown epochs, unsupported inputs, and exact versus one-short budgets. Executor cases cover STORE with existing segment-base handling, strict CMPXCHG success/failure and delayed Old publication, refusal havoc, and other operations leaving the policy Invalid. Ordinary store and preservation defaults retain their existing behavior. These tests validate bounded memory semantics; they do not certify access permissions or complete program recovery.

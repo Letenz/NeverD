@@ -1339,6 +1339,19 @@ bool x86UsesMsvcIntrinsicHeader(Intrinsic Id) {
   }
 }
 
+const char *x86GnuTrapBuiltin(Intrinsic Id, BinaryFormat Format) {
+  if (Format == BinaryFormat::COFF)
+    return nullptr;
+  switch (Id) {
+  case Intrinsic::Ud2:
+    return "__builtin_trap";
+  case Intrinsic::Int3:
+    return "__builtin_debugtrap";
+  default:
+    return nullptr;
+  }
+}
+
 bool x86UsesImplicitRegisterAsm(Intrinsic Id) {
   switch (Id) {
   case Intrinsic::Vmcall:

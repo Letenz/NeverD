@@ -2192,3 +2192,37 @@ Die alten MDL-Aufrufe werden mit echten statischen und dynamischen WDK-Aufrufen,
 `KernelMDLChain.CreateMdl*` und `KernelMDLUserMapping.CreateMdl*` prüfen Breiten, erhaltene Bytes, leere/überlaufende Metadaten, Pool-/Stacklebensdauer, Sperren, Aliase, fehlgeschlagene Freigaben, partielle Wiederverwendung, IRP-Ablehnung und IRQL. Der echte WDK-Treiber prüft statische/dynamische Erstellung, eigenen Pool, inneren Pool und Stackspeicher, physische Identität und vollständiges Entladen. Originalproben trennen Feldschreibzugriffe, Flagübersetzung und injizierte Allokations-/Freigabegrenzen.
 
 `KernelMDLChain.AdvanceMdl*` und `KernelMDLUserMapping.AdvanceMdl*` prüfen wiederholte Seitengrenzen, PFN-Endmarkierung, Endablehnung, Argumentbreite, vollständige Abbildungen, fehlgeschlagenen Abbau, Rechte und Lebensdauer. Echtes WDK führt statische/dynamische Aufrufe und beide Abbauwege aus. Originalproben trennen vollständige Routine, Wiederherstellungshelfer und Unmap-Wrapper mit injizierten Abbildungstyp-/PTE-Freigabegrenzen; die OS-Seitendatenbank wird nicht ausgeführt.
+
+## Klassische ausgerichtete Vektortransfers
+
+`NeverDX86LegacyAlignedMoveTests` prüft die Registererhaltung von MOVDQA, MOVAPS und MOVAPD sowie die 16-Byte-Ausrichtung vor Speicherzugriffen, einschließlich Überlauf bei begrenzter Adressbreite und expliziter FS/GS-Basen. Nicht ausgerichtete Zugriffe müssen Zielregister und Speicher unverändert lassen. Fehlende Segmentbasen werden weiterhin abgelehnt. Dies prüft Lifting und Emulator; die exakte symbolische Wiederherstellung muss die erhaltene Ausrichtungsbedingung gesondert beweisen.
+
+```sh
+cmake --build build-release --target NeverDX86LegacyAlignedMoveTests
+ctest --test-dir build-release -L '^NeverDX86LegacyAlignedMoveTests$' --output-on-failure
+```
+
+`InterpreterSpecialization.Alignment*` und `PEFixedImageTest.RawAlign*` prüfen unabhängige Restwertbeweise, ungültige Eingaben, genaue Budgets, erhaltene native Prüfungen und manipulierte Nachweise. Audits klassischer Verschiebeoperationen binden den gesamten Operationsbereich einschließlich Ausrichtungsprüfung, bescheinigen aber nicht den Erhalt opaker Zustandsbanken.
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests NeverDPEFixedImageTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDInterpreterSpecializationTests|NeverDPEFixedImageTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`NeverDX86NativeStateAuditTests` prüft native Bytes und Decoderdetails für kanonisches x64 REP MOVSQ und klassisches LDMXCSR streng. Die Nachweise undefinierter Ausgaben binden den vollständigen Operationsbereich. Unabhängige Orakel für vollständigen Zustand und geordnetes Kopieren prüfen Überlappung, Nullanzahl, Adressformen, fehlende Bytes und reservierte Bits. Die bisherigen Beweise für Anzahl, Richtung, Speicher, wirksame MXCSR-Maske und Gültigkeit bleiben erforderlich. Dieses Audit bescheinigt weder Wiederaufnahme nach einem Teilfehler noch Erhalt opaker Zustände.
+
+```sh
+cmake --build build-release --target NeverDX86NativeStateAuditTests
+ctest --test-dir build-release -L "^NeverDX86NativeStateAuditTests$" --output-on-failure
+```
+
+`NeverDX86ScalarMoveAuditTests` prüft die strenge Zulassung klassischer MOVSS/MOVSD anhand der Originalbytes und vollständigen Decoderdetails. Unabhängige Byte-Orakel prüfen Registermischung, Nullerweiterung bei Speicherladungen, skalare Schreibzugriffe, alle Ausrichtungsreste, 16/32/64-Bit-Adressierung und vollständigen Erhalt von Registern, Flags und MXCSR. Fehlende Speicherbytes oder Schreibzugriffe auf schreibgeschützten Speicher dürfen keine architektonischen Ausgaben übernehmen. String-, VEX/EVEX-, segmentierte und fehlerhafte Formen bleiben abgelehnt; die Nachweise binden alle Operationen, ohne den Erhalt opaker Zustände zu bescheinigen.
+
+```sh
+cmake --build build-release --target NeverDX86ScalarMoveAuditTests NeverDX86LegacyAlignedMoveTests NeverDX86UndefinedEffectsTests
+ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86LegacyAlignedMoveTests|NeverDX86UndefinedEffectsTests)$" --output-on-failure
+```
+
+`SymStorePreservation.Independent*`, `RepeatedRegionsFormAUnionAndChargeEveryScan`, `EmptyIndependentRegionsKeepOriginalWorkAccounting` und `ExecutorUsesIndependentRegionsForOnlyOneStore` prüfen einen STORE mit zwei oder drei unabhängigen aktuellen Wurzeln, beide Byteordnungen, Teilbereiche über den relativen Nullpunkt, überlappende Deklarationen, ungeschützte Lücken und unbekannte Generationen nach dem Schreiben. Exakte und um eine Einheit zu kleine Budgets prüfen die vollständigen Kosten; fehlende Regionen dürfen nicht materialisiert werden. Ungültige oder außerhalb liegende Referenzen, schmale oder konstante Basen, leere oder umgekehrte Intervalle sowie die eigene Basis des Schreibzugriffs werden ohne Zustandsänderung abgelehnt. Leere `AdditionalRegions` erhalten die bisherigen Kosten der Einzelwurzel und von `AdditionalRanges`. Der Ausführer prüft das einzelne Ereignis, benachbarte Bytes derselben Region und die Invalidierung durch einen späteren gewöhnlichen Schreibzugriff. `SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget` prüft passende und abweichende Vergleiche, exakte und unzureichende Budgets, zwei geschützte Wurzeln, die Ausgabe des alten Werts und den bestehenden konservativen Ablehnungspfad.
+
+`NeverDSymConditionalStoreTests` prüft bedingte Effekte auf aktuelle Bytes unabhängiger Wurzeln, 128-Bit-Schreibvorgänge, beide Byte-Reihenfolgen, Teilüberlappungen, den Umlauf relativer symbolischer Koordinaten und absoluten Speicher. Geprüft werden außerdem Nachbarbytes der eigenen Bank, aktuelle gegenüber historischen Fakten, unbekannte Epochen nach dem Schreiben, nicht unterstützte Eingaben sowie exakte und um eine Einheit zu kleine Budgets. Ausführungsfälle umfassen STORE mit bestehender Segmentbasisbehandlung, Erfolg und Ablehnung strikter CMPXCHG, verzögerte Veröffentlichung von Old, havoc und Invalid bei anderen Operationen. Die Standardverhalten gewöhnlicher Schreibvorgänge und Erhaltungsverträge bleiben unverändert. Die Tests validieren begrenzte Speichersemantik, keine Zugriffsrechte oder vollständige Programmrekonstruktion.
