@@ -1923,6 +1923,12 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   };
   const llvm::StringRef HeaderCallee = headerDeclaredCallee(E);
   const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format);
+  // A call through a typed member that points to a function passes the
+  // parameters its type declares (debugCallArgLimit), as their types.
+  const TypeRef SlotFunction =
+      !Defined && !Callee && E.IsIndirectCall && E.IndirectTarget
+          ? typedSlotFunction(*E.IndirectTarget)
+          : nullptr;
   // A callee printed in this file fixes the count by its signature; otherwise
   // debug info and MSVC member knowledge may trim ABI-only extra operands.
   size_t PrintedArgs =
@@ -2015,6 +2021,11 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
           continue;
         }
       }
+    }
+    if (SlotFunction && I < SlotFunction->ParamTypes.size() &&
+        SlotFunction->ParamTypes[I]) {
+      S += exprStrAsTypedArg(*Op, SlotFunction->ParamTypes[I]);
+      continue;
     }
     if (Msvc) {
       if (const TypeRef Expected = I == 0 ? msvcSyntheticThis(Name, *Msvc)

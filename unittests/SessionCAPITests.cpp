@@ -5823,7 +5823,9 @@ TEST_F(SessionCAPITest, DarwinCallsPassWhatLibSystemDeclares) {
        "0x201, arg2)"},
       {"_Shared", "shm_open((void *)(uintptr_t)arg0, 0x202, 0x180)",
        "0x202, 0x180)"},
-      {"_Send", "sendfile(arg0, arg1, 0, (int64_t*)(uintptr_t)arg2, 0, 0)",
+      // off_t is libSystem's typedef, which the unit does not name: the
+      // address passes through void *, which converts to it.
+      {"_Send", "sendfile(arg0, arg1, 0, (void*)(uintptr_t)arg2, 0, 0)",
        "sendfile(arg0, arg1, 0, (void *)(uintptr_t)(arg2), 0, 0)"},
   };
   const auto Fixture = std::filesystem::path(__FILE__).parent_path() / "types" /
