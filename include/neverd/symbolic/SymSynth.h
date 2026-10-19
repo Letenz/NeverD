@@ -28,6 +28,8 @@
 /// expression in a small grammar that produces the same outputs.  Two searches
 /// share that specification. Before enumerating composite trees, a modular
 /// affine fit proposes coefficients read from zero and unit-vector inputs.
+/// An optional quadratic fit also probes doubled units and pairs of units to
+/// recover squares and products, including noninvertible modular coefficients.
 /// The complete sample grids may reject that fit; only the supplied verifier
 /// can authorize a production rewrite. This shortcut does not establish a
 /// minimum over the grammar.
@@ -129,9 +131,9 @@ struct SynthOptions {
   /// Run the sampler when the enumeration comes back empty.
   bool UseStochasticFallback = true;
 
-  /// Search work shared by enumeration, affine fitting and the sampler.
-  /// Enumeration and sampling charge candidates; affine fitting also charges
-  /// word evaluations and optional typed-problem construction.
+  /// Search work shared by enumeration, coefficient fitting and the sampler.
+  /// Enumeration and sampling charge candidates; fitting also charges word
+  /// evaluations and optional problem construction.
   ///
   /// This is a resource budget rather than a shape cutoff: nothing about which
   /// expressions can be expressed depends on it, only how much of the space is
@@ -158,6 +160,12 @@ struct SynthOptions {
   /// literal-terminal limit. Both MaxCost and the shared MaxWork still apply;
   /// agreement with samples never establishes equivalence.
   bool UseAffineFitting = true;
+
+  /// Propose a modular polynomial of degree at most two over grammar inputs.
+  /// Extra oracle probes recover squares and pairwise products. Samples only
+  /// nominate a candidate; the independent checker and full-width verifier
+  /// still gate every production rewrite. Enabled by the source-view policy.
+  bool UseQuadraticFitting = false;
 
   /// Operations in the straight-line program the sampler mutates.  This bounds
   /// the size of what the sampler can express, the way \c MaxCost bounds the
@@ -200,6 +208,7 @@ struct SynthOptions {
     Options.MaxCost = 32;
     Options.MaxWork = 20000;
     Options.VerifySamples = 64;
+    Options.UseQuadraticFitting = true;
     return Options;
   }
 };
@@ -285,6 +294,8 @@ struct SynthResult {
   /// A direct modular affine fit produced the answer. As with the sampler,
   /// this identifies a discovered short form, not a global grammar minimum.
   bool FromAffine = false;
+  /// A modular quadratic fit produced the answer, without a minimum claim.
+  bool FromQuadratic = false;
 };
 
 /// Discover a short candidate that behaves like \p E on independent samples.

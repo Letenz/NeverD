@@ -13,7 +13,6 @@
 
 #include "llvm/ADT/SmallVector.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <utility>
@@ -85,37 +84,9 @@ SearchOutcome fitAffine(SymContext &Ctx, const SynthProblem &P,
   }
   const SymRef Candidate =
       Terms.empty() ? Ctx.mkZero(P.Width) : Ctx.mkAdd(Terms);
-  const size_t Cost = Ctx.readabilityCost(Candidate);
-  if (Cost > Opts.MaxCost || Candidate == P.Body)
-    return Result;
-
-  // Compare restored spellings before a potentially expensive proof. Hidden
-  // subterms retain their original identities and widths under substitution.
-  if (!Opts.AllowGrowth &&
-      Ctx.readability(Ctx.substitute(Candidate, P.Hidden)) >=
-          Ctx.readability(Ctx.substitute(P.Body, P.Hidden)))
-    return Result;
-  if (!Effort.spend(std::max<size_t>(Check.Grid.size(), 1)))
-    return Result;
-  switch (Check.check(Candidate, Verify, ProofQueries)) {
-  case Verdict::Refuted:
-    Result.SawRefuted = true;
-    return Result;
-  case Verdict::ProofIncomplete:
-    Result.SawProofIncomplete = true;
-    Result.StopForProof = true;
-    return Result;
-  case Verdict::AcceptedBySamples:
-    Result.Evidence = SynthEvidence::Samples;
-    break;
-  case Verdict::AcceptedByVerifier:
-    Result.Evidence = SynthEvidence::Verifier;
-    break;
-  }
-  Result.Candidate = Candidate;
-  Result.Cost = Cost;
-  Result.FromAffine = true;
-  Result.NumLeaves = static_cast<unsigned>(Inputs);
+  Result = checkFittedCandidate(Ctx, Candidate, P, Opts, Effort, Check, Verify,
+                                ProofQueries);
+  Result.FromAffine = Result.Candidate.isValid();
   return Result;
 }
 

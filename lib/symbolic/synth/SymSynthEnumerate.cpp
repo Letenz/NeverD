@@ -194,6 +194,16 @@ SearchOutcome enumerateShortest(SymContext &Ctx, const SynthProblem &P,
     Result.SawBudgetExhausted = Typed.SawBudgetExhausted;
   }
 
+  if (Opts.UseQuadraticFitting) {
+    SearchOutcome Quadratic =
+        fitQuadratic(Ctx, P, Opts, Effort, Check, Verify, ProofQueries);
+    Quadratic.SawRefuted |= Result.SawRefuted;
+    Quadratic.SawBudgetExhausted |= Result.SawBudgetExhausted;
+    if (Quadratic.Candidate.isValid() || Quadratic.StopForProof)
+      return Quadratic;
+    Result.SawRefuted = Quadratic.SawRefuted;
+  }
+
   // Literal terms alone, for the shifts: an amount that is itself computed
   // multiplies the branching factor of every shift by the whole pool, for a
   // shape that hardly occurs in what this engine is aimed at.  Read back out
