@@ -20,6 +20,7 @@ struct ExecutionExitFacts {
   bool BackendFailed = false;
   bool InstructionRejected = false;
   bool StopRequested = false, DeadlineReached = false;
+  std::optional<ResourcePause> Resource;
 };
 
 inline ExecutionExit makeExecutionExit(llvm::Error Error,
@@ -46,6 +47,9 @@ inline ExecutionExit makeExecutionExit(llvm::Error Error,
   else if (Facts.Service) {
     Result.Kind = ExecutionExitKind::ServiceRequest;
     Result.Service = Facts.Service;
+  } else if (Facts.Resource) {
+    Result.Kind = ExecutionExitKind::ResourcePause;
+    Result.Resource = Facts.Resource;
   } else if (Facts.DeadlineReached)
     Result.Kind = ExecutionExitKind::Deadline;
   else if (Facts.StopRequested)

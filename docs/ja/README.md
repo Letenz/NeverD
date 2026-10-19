@@ -1,6 +1,6 @@
 **Languages**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 1af6ecd5944b90deebffd661bc746dba46c505fcb5c57991ad0de2f45c50968e -->
+<!-- i18n-source: 32288410e4352dcbe779ee091bfc8728b8d4e783203704b4d3a6d09f0421c96a -->
 
 [← NeverD プロジェクト](project.md)
 
@@ -48,3 +48,5 @@
 | [ロードマップ](roadmap.md) | 状態：native format、EVM、Solana SBF を実装済み |
 | 各言語のドキュメント | 上部の言語リンクから各言語の索引とプロジェクト概要を開けます |
 | [パックされた実行ファイルのアンパック](unpack.md) | 有界なゲストプロセスの観測によるパックされた PE32+ イメージの復元：エントリの規則、再構築されたイメージ、識別、制限 |
+
+- [明示的な実行時モジュールと永続実行（英語）](../runtime-modules.md)

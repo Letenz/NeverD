@@ -424,14 +424,6 @@ ExceptionHandlerState exceptionHandlerState(const BinaryImage &Img) {
   return State;
 }
 
-bool exceptionHandlersSettled(const BinaryImage &Img) {
-  return Img.COFFPDataRecords.empty() &&
-         llvm::all_of(Img.ExceptionMetadata.Functions,
-                      [](const ExceptionFunction &F) {
-                        return F.LanguageTablesResolved;
-                      });
-}
-
 void resolveExceptionHandlers(BinaryImage &Img) {
   ensureExceptionHandlers(Img, Img.LoadOnlyFunctionEntries);
 }

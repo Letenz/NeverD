@@ -1,6 +1,6 @@
 **اللغات**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](README.md)
 
-<!-- i18n-source: 1af6ecd5944b90deebffd661bc746dba46c505fcb5c57991ad0de2f45c50968e -->
+<!-- i18n-source: 32288410e4352dcbe779ee091bfc8728b8d4e783203704b4d3a6d09f0421c96a -->
 
 [← مشروع NeverD](project.md)
 
@@ -48,3 +48,5 @@
 | [خارطة الطريق](roadmap.md) | الحالة: الصيغ الأصلية وEVM وSolana SBF مكتملة |
 | الوثائق المترجمة | تفتح روابط اللغات أعلاه فهرس كل لغة ونظرة المشروع |
 | [فك حزم الملفات التنفيذية المحزومة](unpack.md) | استعادة صور PE32+ المحزومة برصد عملية ضيف محدودة: قواعد نقطة الدخول، الصورة المعاد بناؤها، التعرّف والحدود |
+
+- [وحدات تشغيل صريحة وتنفيذ مستمر (بالإنجليزية)](../runtime-modules.md)

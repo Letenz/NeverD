@@ -16,6 +16,7 @@
 
 #include "neverd/loader/BinaryImage.h"
 
+#include <algorithm>
 #include <set>
 
 namespace neverd::coff_loader {
@@ -62,7 +63,14 @@ ExceptionHandlerState exceptionHandlerState(const BinaryImage &Img);
 /// functions it is given: no runtime-function record is left to materialize
 /// (a whole image decodes every record when it loads) and every record's
 /// language tables are resolved.  Only a load changes that.
-bool exceptionHandlersSettled(const BinaryImage &Img);
+inline bool exceptionHandlersSettled(const BinaryImage &Img) {
+  return Img.COFFPDataRecords.empty() &&
+         std::all_of(Img.ExceptionMetadata.Functions.begin(),
+                     Img.ExceptionMetadata.Functions.end(),
+                     [](const ExceptionFunction &F) {
+                       return F.LanguageTablesResolved;
+                     });
+}
 
 /// Materialize the x64 RUNTIME_FUNCTION covering \p Address from
 /// BinaryImage::COFFPDataRecords when `--func` skipped it at load.

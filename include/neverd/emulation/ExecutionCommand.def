@@ -1,0 +1,24 @@
+//===- ExecutionCommand.def - Interactive workload operations -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_EXECUTION_COMMAND
+NEVERD_EXECUTION_COMMAND(Run, "run")
+NEVERD_EXECUTION_COMMAND(State, "state")
+NEVERD_EXECUTION_COMMAND(Pause, "pause")
+NEVERD_EXECUTION_COMMAND(Resume, "resume")
+NEVERD_EXECUTION_COMMAND(Inspect, "inspect")
+NEVERD_EXECUTION_COMMAND(Instances, "instances")
+NEVERD_EXECUTION_COMMAND(Declare, "declare")
+NEVERD_EXECUTION_COMMAND(Supply, "supply")
+NEVERD_EXECUTION_COMMAND(Invoke, "invoke")
+NEVERD_EXECUTION_COMMAND(Read, "read")
+NEVERD_EXECUTION_COMMAND(Write, "write")
+NEVERD_EXECUTION_COMMAND(Lookup, "lookup")
+NEVERD_EXECUTION_COMMAND(ModuleAdd, "module_add")
+NEVERD_EXECUTION_COMMAND(ModuleRevise, "module_revise")
+NEVERD_EXECUTION_COMMAND(ModuleDebug, "module_debug")
+NEVERD_EXECUTION_COMMAND(Modules, "modules")
+NEVERD_EXECUTION_COMMAND(Quit, "quit")
+#endif

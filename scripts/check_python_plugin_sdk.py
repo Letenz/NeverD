@@ -17,6 +17,8 @@ SANITIZER_HEADER = ROOT / "include" / "neverd" / "sdk" / "NeverDCAPIPatch.h"
 SYMBOLIC_HEADER = ROOT / "include" / "neverd" / "sdk" / "NeverDCAPISymbolic.h"
 TRANSLATE_HEADER = ROOT / "include" / "neverd" / "sdk" / "NeverDCAPITranslate.h"
 EMULATION_HEADER = ROOT / "include" / "neverd" / "sdk" / "NeverDCAPIEmulation.h"
+MODULE_HEADER = ROOT / "include" / "neverd" / "sdk" / "NeverDCAPIModules.h"
+EXECUTION_HEADER = ROOT / "include" / "neverd" / "sdk" / "NeverDCAPIExecution.h"
 PLUGIN_HEADER = ROOT / "include" / "neverd" / "sdk" / "NeverDPlugin.h"
 OUTPUT_LANGUAGES = ROOT / "include" / "neverd" / "OutputLanguages.def"
 PYTHON_PACKAGE = ROOT / "pluginsdk" / "python"
@@ -339,6 +341,52 @@ def check_source_patch_abi(errors: list[str]) -> None:
         actual = tuple(struct._fields_)
         if expected != actual or any(kind is None for _, kind in expected):
             errors.append(f"{name} field/type mismatch: native={native!r}, Python={actual!r}")
+
+
+def check_module_resources_abi(errors: list[str]) -> None:
+    import ctypes
+
+    from neverd_plugin import abi
+
+    source = MODULE_HEADER.read_text(encoding="utf-8")
+    if not re.search(r"\btypedef\s+uint64_t\s+neverd_module_set_t\s*;", source):
+        errors.append("neverd_module_set_t must use fixed uint64_t storage")
+    if abi.ModuleSetHandle is not ctypes.c_uint64:
+        errors.append("Python ModuleSetHandle must use ctypes.c_uint64")
+    name = "neverd_module_set_options_v1"
+    native = parse_c_struct_layout(source, name)
+    types = {"size_t": ctypes.c_size_t, "const char *": ctypes.c_char_p}
+    expected = tuple((field, types.get(kind)) for field, kind in native)
+    actual = tuple(abi.NeverDModuleSetOptionsV1._fields_)
+    if expected != actual or any(kind is None for _, kind in expected):
+        errors.append(f"{name} field/type mismatch: native={native!r}, Python={actual!r}")
+    for function, spec in abi.FUNCTION_SPECS.items():
+        if function.startswith("neverd_module_set_"):
+            if not spec.argtypes or spec.argtypes[-1] is not ctypes.POINTER(ctypes.c_void_p):
+                errors.append(f"{function} must retain owned error output addresses")
+
+
+def check_execution_resources_abi(errors: list[str]) -> None:
+    import ctypes
+
+    from neverd_plugin import abi
+
+    source = EXECUTION_HEADER.read_text(encoding="utf-8")
+    if not re.search(r"\btypedef\s+uint64_t\s+neverd_execution_t\s*;", source):
+        errors.append("neverd_execution_t must use fixed uint64_t storage")
+    if abi.ExecutionHandle is not ctypes.c_uint64:
+        errors.append("Python ExecutionHandle must use ctypes.c_uint64")
+    name = "neverd_execution_options_v1"
+    native = parse_c_struct_layout(source, name)
+    types = {"size_t": ctypes.c_size_t, "neverd_module_set_t": ctypes.c_uint64,
+             "const char *": ctypes.c_char_p}
+    expected = tuple((field, types.get(kind)) for field, kind in native)
+    if expected != tuple(abi.NeverDExecutionOptionsV1._fields_) or any(kind is None for _, kind in expected):
+        errors.append(f"{name} field/type mismatch: native={native!r}")
+    for function, spec in abi.FUNCTION_SPECS.items():
+        if function.startswith("neverd_execution_"):
+            if not spec.argtypes or spec.argtypes[-1] is not ctypes.POINTER(ctypes.c_void_p):
+                errors.append(f"{function} must retain owned error output addresses")
 
 
 def check_plugin_enums(errors: list[str]) -> None:
@@ -933,6 +981,8 @@ def audit_repository(*, include_workflows: bool = True) -> list[str]:
     check_translation_abi(errors)
     check_devirtualization_abi(errors)
     check_driver_emulation_abi(errors)
+    check_module_resources_abi(errors)
+    check_execution_resources_abi(errors)
     check_sanitizer_abi(errors)
     check_source_patch_abi(errors)
     check_concolic_abi(errors)
