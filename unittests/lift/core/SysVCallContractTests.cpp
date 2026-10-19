@@ -238,6 +238,12 @@ void compileAndRun(const std::string &Source) {
         SourcePath,
         "-o",
         BinaryPath};
+#if defined(__APPLE__) && defined(__aarch64__)
+    // These x86-64 fixtures retain MXCSR and x86 floating-point helpers.
+    // Compile for their ISA and execute with Rosetta on Apple Silicon.
+    Arguments.push_back("-arch");
+    Arguments.push_back("x86_64");
+#endif
 #ifdef _WIN32
     Arguments.push_back("-shared-libasan");
 #endif
