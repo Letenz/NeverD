@@ -233,6 +233,9 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
 
   // --- .got / .got.plt ---
   elf_loader::parseGOTEntries(ELF, *SectionsOr, Data, Size, Img);
+  // Every symbol has stated its mode by now; the pointers the image stores
+  // state the modes of the routines no symbol names.
+  recordARMStoredCodePointerModes(Img);
 
   // --- PT_NOTE (build-id, ABI tag) ---
   elf_loader::parseNotes(ELF, Data, Size, Img);
@@ -372,6 +375,8 @@ ELFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   // `-fasynchronous-unwind-tables` has both, and the two agree about the
   // frames they share.
   arm_ehabi::parseARMEHABIExceptions(Img);
+  if (llvm::Error E = discoverARMLandingPadModes(Img))
+    return std::move(E);
   // Go emits no DWARF frame information for its own functions, so a Go image
   // reaches this point with nothing recovered.  Its metadata lives in the
   // runtime's own table, which is present in every container format.

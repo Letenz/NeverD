@@ -14,9 +14,11 @@
 
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/ELF/ELFLoaderUtils.h"
+#include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Error.h"
 
@@ -204,6 +206,44 @@ std::optional<uint32_t> r7Value(const cs_insn &Insn, InstructionMode Mode,
   return std::nullopt;
 }
 
+/// The register a PC-relative word load writes and the word it loads.
+std::optional<std::pair<unsigned, uint32_t>>
+pcRelativeWord(const cs_insn &Insn, InstructionMode Mode,
+               const BinaryImage &Img) {
+  const cs_arm &Arm = Insn.detail->arm;
+  if (Insn.id != ARM_INS_LDR || Arm.cc < ARMCC_AL || Arm.op_count != 2 ||
+      Arm.operands[0].type != ARM_OP_REG)
+    return std::nullopt;
+  const auto Literal = literalRead(Insn, Mode);
+  if (!Literal || Literal->second - Literal->first != 4)
+    return std::nullopt;
+  const uint8_t *Bytes = Img.readVA(Literal->first, 4);
+  if (!Bytes)
+    return std::nullopt;
+  return std::make_pair(Arm.operands[0].reg, readLE<uint32_t>(Bytes));
+}
+
+/// The register `add rN, pc` (Thumb) or `add rN, pc, rN` (ARM, either
+/// operand order) adds the PC to: the second half of the position-independent
+/// `ldr rN, [pc, #k]` that takes an address.
+std::optional<unsigned> pcAddedRegister(const cs_insn &Insn) {
+  const cs_arm &Arm = Insn.detail->arm;
+  if (Insn.id != ARM_INS_ADD || Arm.cc < ARMCC_AL || Arm.update_flags)
+    return std::nullopt;
+  for (uint8_t Index = 0; Index < Arm.op_count; ++Index)
+    if (Arm.operands[Index].type != ARM_OP_REG ||
+        Arm.operands[Index].shift.type != ARM_SFT_INVALID)
+      return std::nullopt;
+  const unsigned Dest = Arm.operands[0].reg;
+  if (Arm.op_count == 2 && Arm.operands[1].reg == ARM_REG_PC)
+    return Dest;
+  if (Arm.op_count == 3 &&
+      ((Arm.operands[1].reg == ARM_REG_PC && Arm.operands[2].reg == Dest) ||
+       (Arm.operands[1].reg == Dest && Arm.operands[2].reg == ARM_REG_PC)))
+    return Dest;
+  return std::nullopt;
+}
+
 /// An address and the instruction set its bytes are decoded in.  Bytes a
 /// path reached in the wrong mode decode as something else, so what a
 /// routine does is read only from its own mode.
@@ -380,7 +420,137 @@ verifyARMFunctionModeHints(const BinaryImage &Img,
   return llvm::Error::success();
 }
 
+void recordARMCodePointerMode(BinaryImage &Img, uint64_t Pointer,
+                              ARMCodePointerUse Use) {
+  if (Img.Arch != Arch::ARM || Img.IsRelocatable || Pointer > UINT32_MAX)
+    return;
+  const bool Thumb = (Pointer & 1u) != 0;
+  if (!Thumb && Use == ARMCodePointerUse::Stored)
+    return;
+  const va_t Address = clearThumbBit(static_cast<va_t>(Pointer));
+  const InstructionMode Mode =
+      Thumb ? InstructionMode::Thumb : InstructionMode::ARM;
+  const uint64_t Width = Thumb ? 2 : 4;
+  if (!Img.isCodeRange(Address, Width) || !Img.readVA(Address, Width))
+    return;
+  // Without a section table a whole executable segment reads as code,
+  // including any read-only data the linker placed in it, and a pointer to
+  // an odd byte of a string there has bit 0 set too.
+  if (Use == ARMCodePointerUse::Stored && !Img.getSectionFor(Address))
+    return;
+  const auto Contradiction = [&](llvm::StringRef What) {
+    if (Use == ARMCodePointerUse::Called)
+      Img.addLoadDiagnostic("elf.arm_code_pointer_mode",
+                            "the " + std::string(Thumb ? "Thumb" : "ARM") +
+                                " code pointer the runtime calls at 0x" +
+                                llvm::utohexstr(Address) + " contradicts " +
+                                What.str());
+  };
+  // `blx` to an ARM address with bit 1 set is unpredictable.
+  if ((Address & (Width - 1)) != 0)
+    return Contradiction("the alignment of ARM code");
+  if (Img.ARMRequiredMode != InstructionMode::Default &&
+      Img.ARMRequiredMode != Mode)
+    return Contradiction("the image's required instruction state");
+  if (const ARMCodeRegion *Region = Img.armMappingRegionAt(Address)) {
+    if (Region->Kind !=
+        (Thumb ? ARMCodeRegionKind::Thumb : ARMCodeRegionKind::ARM))
+      Contradiction("its mapping symbol");
+    return;
+  }
+  const auto [Existing, Inserted] =
+      Img.ARMCodeModeEntries.try_emplace(Address, Mode);
+  if (!Inserted && Existing->second != Mode)
+    Contradiction("the mode its symbol or the entry point states");
+}
+
+void recordARMStoredCodePointerModes(BinaryImage &Img) {
+  if (Img.Arch != Arch::ARM || Img.IsRelocatable)
+    return;
+  for (const BaseRelocation &Slot : Img.BaseRelocations)
+    if (const uint8_t *Bytes = Img.readVA(Slot.Address, sizeof(uint32_t)))
+      recordARMCodePointerMode(Img, readLE<uint32_t>(Bytes),
+                               ARMCodePointerUse::Stored);
+}
+
+namespace {
+/// The guarded ranges of an image's exception call sites and their landing
+/// pads, by range start.
+struct CallSitePads {
+  struct Site {
+    va_t Begin = 0;
+    va_t End = 0;
+    va_t Pad = 0;
+  };
+  std::vector<Site> Sites;
+  /// The longest guarded range, which bounds the search for the ranges an
+  /// address lies in.
+  va_t Longest = 0;
+
+  explicit CallSitePads(const BinaryImage &Img) {
+    for (const ExceptionFunction &Function : Img.ExceptionMetadata.Functions)
+      if (Function.Itanium)
+        for (const ItaniumCallSite &Call : Function.Itanium->CallSites)
+          if (Call.LandingPadVA && Call.GuardedRange.isValid()) {
+            Sites.push_back({Call.GuardedRange.Begin, Call.GuardedRange.End,
+                             Call.LandingPadVA});
+            Longest = std::max(Longest, Call.GuardedRange.size());
+          }
+    llvm::sort(Sites, [](const Site &Left, const Site &Right) {
+      return Left.Begin < Right.Begin;
+    });
+  }
+
+  /// Calls \p Visit with the pad of each call site guarding \p Address.
+  template <typename Fn> void forEachPadAt(va_t Address, Fn Visit) const {
+    auto It = std::upper_bound(
+        Sites.begin(), Sites.end(), Address,
+        [](va_t Value, const Site &Entry) { return Value < Entry.Begin; });
+    while (It != Sites.begin()) {
+      --It;
+      if (Address - It->Begin >= Longest)
+        break;
+      if (Address < It->End)
+        Visit(It->Pad);
+    }
+  }
+};
+
+/// Reachable mode discovery, following, when \p Pads is given, the landing
+/// pad of every call site whose guarded code a path decodes.
+llvm::Error discoverReachableModes(BinaryImage &Img, const CallSitePads *Pads);
+} // namespace
+
 llvm::Error discoverARMReachableModes(BinaryImage &Img) {
+  return discoverReachableModes(Img, nullptr);
+}
+
+llvm::Error discoverARMLandingPadModes(BinaryImage &Img) {
+  if (Img.Arch != Arch::ARM || !Img.ARMReachabilityConstrained)
+    return llvm::Error::success();
+  const CallSitePads Pads(Img);
+  // A pass with nothing to follow would only repeat the one before it.
+  const auto DecodedIn = [&](va_t Begin, va_t End) {
+    const auto &Regions = Img.ARMReachableCodeRegions;
+    auto It = std::upper_bound(Regions.begin(), Regions.end(), Begin,
+                               [](va_t Value, const ARMCodeRegion &Region) {
+                                 return Value < Region.Start;
+                               });
+    if (It != Regions.begin() && Begin < std::prev(It)->End)
+      return true;
+    return It != Regions.end() && It->Start < End;
+  };
+  if (llvm::none_of(Pads.Sites, [&](const CallSitePads::Site &Site) {
+        return DecodedIn(Site.Begin, Site.End) &&
+               !DecodedIn(Site.Pad, Site.Pad + 1);
+      }))
+    return llvm::Error::success();
+  Img.ARMReachableCodeRegions.clear();
+  return discoverReachableModes(Img, &Pads);
+}
+
+namespace {
+llvm::Error discoverReachableModes(BinaryImage &Img, const CallSitePads *Pads) {
   // Mapping symbols describe their own section intervals, but a rewritten
   // ELF can append executable program bytes without adding a section-table
   // owner. Mach-O has exact Thumb symbols but no mapping intervals. Follow
@@ -479,12 +649,17 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
   // a detectable conflict, rather than accidentally decoding from there.
   std::map<va_t, ARMCodeRegion> Decoded;
   std::map<va_t, InstructionMode> VeneerCandidates;
+  // Thumb code addresses the code takes: position-independent code loads
+  // `routine + 1 - (here + 4)` and adds the PC, and what it gets is the
+  // routine's address with bit 0 set.
+  std::set<va_t> TakenThumbAddresses;
   constexpr size_t kMaxDiscoveredInstructions = 4'000'000;
   std::unordered_map<CodeKey, ControlStep, CodeKeyHash> Steps;
   std::set<CodeKey> Entries;
   while (true) {
     Decoded.clear();
     VeneerCandidates.clear();
+    TakenThumbAddresses.clear();
     Steps.clear();
     Entries.clear();
     for (const auto &[Address, Mode] : Img.ARMCodeModeEntries)
@@ -513,6 +688,8 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
       va_t Cur = Start;
       // The system call number, while this path has set it.
       std::optional<uint32_t> R7;
+      // The words PC-relative loads on this path gave registers.
+      std::map<unsigned, uint32_t> LoadedWords;
       while (true) {
         const Segment *Seg = Img.getSegmentFor(Cur);
         if (!Seg || !Img.isCodeAddress(Cur) || Cur < Seg->VA ||
@@ -584,6 +761,13 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
                                            ? ARMCodeRegionKind::Thumb
                                            : ARMCodeRegionKind::ARM;
         Decoded.emplace(Cur, ARMCodeRegion{Cur, Cur + Insn->size, Kind});
+        // `_Unwind_SetIP` keeps the Thumb bit of the PC it replaces, so a
+        // landing pad runs in the mode of the code its call site guards.
+        if (Pads)
+          Pads->forEachPadAt(Cur, [&](va_t Pad) {
+            if (Origins.try_emplace({Pad, Mode}, Cur).second)
+              Pending.emplace_back(Pad, Mode);
+          });
         if (const auto Literal = literalRead(*Insn, Mode))
           FoundLiterals |= Literals.insert(Literal->first, Literal->second);
         // This exact instruction reads the following literal and transfers
@@ -664,6 +848,26 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
           Step.Stops = true;
         if (Writes(ARM_REG_R7))
           R7 = r7Value(*Insn, Mode, Img);
+        if (const auto Added = pcAddedRegister(*Insn)) {
+          const auto Word = LoadedWords.find(*Added);
+          const va_t PC =
+              Cur + (Mode == InstructionMode::Thumb ? branch::ThumbPCOffset
+                                                    : branch::ArmPCOffset);
+          if (Word != LoadedWords.end()) {
+            const uint32_t Address = Word->second + static_cast<uint32_t>(PC);
+            const va_t Code = clearThumbBit(Address);
+            if ((Address & 1u) && Img.getSectionFor(Code) &&
+                Img.isCodeRange(Code, 2) &&
+                TakenThumbAddresses.insert(Code).second) {
+              Pending.emplace_back(Code, InstructionMode::Thumb);
+              Origins.try_emplace({Code, InstructionMode::Thumb}, Cur);
+            }
+          }
+        }
+        for (uint8_t Index = 0; Accessed && Index < WriteCount; ++Index)
+          LoadedWords.erase(Written[Index]);
+        if (const auto Loaded = pcRelativeWord(*Insn, Mode, Img))
+          LoadedWords[Loaded->first] = Loaded->second;
         Steps.emplace(CodeKey(Cur, Mode), Step);
         if (Step.Stops && !Conditional)
           break;
@@ -717,6 +921,10 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
     else if (Img.Mode != Reached)
       Img.Mode = InstructionMode::MixedARMThumb;
   }
+  for (const va_t Code : TakenThumbAddresses)
+    if (const auto It = Decoded.find(Code);
+        It != Decoded.end() && It->second.Kind == ARMCodeRegionKind::Thumb)
+      Img.ARMCodeModeEntries.try_emplace(Code, InstructionMode::Thumb);
   for (const auto &[Target, Mode] : VeneerCandidates)
     if (const auto It = Decoded.find(Target);
         It != Decoded.end() &&
@@ -729,6 +937,8 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
   Img.ARMReachabilityConstrained = true;
   return llvm::Error::success();
 }
+
+} // namespace
 
 size_t scanImportThunksARM(BinaryImage &Img, const Segment &Seg,
                            const std::map<va_t, size_t> &Targets,

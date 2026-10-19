@@ -263,6 +263,75 @@ TEST(FunctionDiscoveryARM, PreservesVerifiedMachODirectCallInsideBroadRange) {
             0u);
 }
 
+// A code pointer's bit 0 is the instruction set `blx` enters.  One the
+// runtime calls states either set; a stored one only Thumb, since an even
+// address may be data.  A pointer that contradicts other evidence states
+// nothing, and the runtime's own pointers say so in a load diagnostic.
+TEST(FunctionDiscoveryThumb, CodePointersStateTheModeOfWhatTheyAddress) {
+  BinaryImage Img;
+  Img.Arch = Arch::ARM;
+  Img.Bits = Bitness::Bits32;
+  Img.Base = 0x1000;
+  const std::array<uint8_t, 12> Code = {
+      0x01, 0x20, 0x70, 0x47, // 0x1000: movs r0, #1; bx lr
+      0x1e, 0xff, 0x2f, 0xe1, // 0x1004: bx lr
+      0x1e, 0xff, 0x2f, 0xe1, // 0x1008: bx lr
+  };
+  Img.Segments.push_back(makeExecutableSegment(0x1000, Code));
+  Section Text;
+  Text.Name = ".text";
+  Text.VA = 0x1000;
+  Text.Size = Code.size();
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Code.begin(), Code.end());
+  Img.Sections.push_back(Text);
+  const auto ModeAt = [&](va_t Address) -> std::optional<InstructionMode> {
+    const auto It = Img.ARMCodeModeEntries.find(Address);
+    if (It == Img.ARMCodeModeEntries.end())
+      return std::nullopt;
+    return It->second;
+  };
+
+  recordARMCodePointerMode(Img, 0x1001, ARMCodePointerUse::Stored);
+  EXPECT_EQ(ModeAt(0x1000), InstructionMode::Thumb);
+  recordARMCodePointerMode(Img, 0x1004, ARMCodePointerUse::Stored);
+  EXPECT_EQ(ModeAt(0x1004), std::nullopt);
+  recordARMCodePointerMode(Img, 0x1004, ARMCodePointerUse::Called);
+  EXPECT_EQ(ModeAt(0x1004), InstructionMode::ARM);
+  // Outside the code, a pointer is no code pointer.
+  recordARMCodePointerMode(Img, 0x2001, ARMCodePointerUse::Called);
+  EXPECT_EQ(ModeAt(0x2000), std::nullopt);
+  EXPECT_TRUE(Img.LoadDiagnostics.empty());
+
+  // Contradictions keep the entry as it was.
+  recordARMCodePointerMode(Img, 0x1005, ARMCodePointerUse::Stored);
+  EXPECT_TRUE(Img.LoadDiagnostics.empty());
+  recordARMCodePointerMode(Img, 0x1005, ARMCodePointerUse::Called);
+  EXPECT_EQ(ModeAt(0x1004), InstructionMode::ARM);
+  ASSERT_EQ(Img.LoadDiagnostics.size(), 1u);
+  EXPECT_EQ(Img.LoadDiagnostics.back().Code, "elf.arm_code_pointer_mode");
+  // `blx` to an ARM address with bit 1 set is unpredictable.
+  recordARMCodePointerMode(Img, 0x1002, ARMCodePointerUse::Called);
+  EXPECT_EQ(ModeAt(0x1002), std::nullopt);
+  EXPECT_EQ(Img.LoadDiagnostics.size(), 2u);
+  // Mapping symbols already decide what they cover.
+  Img.ARMCodeRegions.push_back({0x1008, 0x100c, ARMCodeRegionKind::ARM});
+  recordARMCodePointerMode(Img, 0x1008, ARMCodePointerUse::Called);
+  EXPECT_EQ(ModeAt(0x1008), std::nullopt);
+  recordARMCodePointerMode(Img, 0x1009, ARMCodePointerUse::Called);
+  EXPECT_EQ(ModeAt(0x1008), std::nullopt);
+  EXPECT_EQ(Img.LoadDiagnostics.size(), 3u);
+
+  // Without a section table read-only data can share the executable
+  // segment, so a stored odd address there may be a string's.
+  Img.Sections.clear();
+  Img.ARMCodeModeEntries.clear();
+  recordARMCodePointerMode(Img, 0x1001, ARMCodePointerUse::Stored);
+  EXPECT_EQ(ModeAt(0x1000), std::nullopt);
+  recordARMCodePointerMode(Img, 0x1001, ARMCodePointerUse::Called);
+  EXPECT_EQ(ModeAt(0x1000), InstructionMode::Thumb);
+}
+
 TEST(FunctionDiscoveryThumb, NormalizesOnlyFunctionSymbols) {
   std::vector<uint8_t> Bytes = readFixture("test_patch_coff_arm.obj");
   if (Bytes.empty())
