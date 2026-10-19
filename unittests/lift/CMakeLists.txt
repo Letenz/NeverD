@@ -1647,6 +1647,11 @@ add_neverd_unittest(NeverDLLVMMemoryAlignmentTests
   LINK_COMPONENTS BackendLLVM
 )
 
+add_neverd_unittest(NeverDMedLLVMDirectDataTests
+  core/MedLLVMDirectDataTests.cpp
+  LINK_COMPONENTS BackendLLVM BackendC
+)
+
 add_neverd_unittest(NeverDMedLLVMDeadSlotsTests
   core/MedLLVMDeadSlotsTests.cpp
   LINK_COMPONENTS BackendLLVM

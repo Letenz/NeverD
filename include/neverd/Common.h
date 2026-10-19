@@ -246,6 +246,9 @@ inline constexpr llvm::StringLiteral kSBFArchName("sbf");
 /// dispatch).  Each entry is `ptrtoint @func`, so the recompiled object's
 /// indirect call reaches the recompiled function rather than the stale
 /// original VA (which points nowhere after relinking).
+/// A `.bytes` suffix names a relocation-free subrange of that storage used by
+/// finite direct accesses. Single-function C declares either form as original
+/// image storage rather than defining a private snapshot.
 inline constexpr llvm::StringLiteral kNdCodePtrPrefix("__nd_codeptr_");
 
 /// Build the canonical `__nd_data_<hex VA>` symbol name that encodes an

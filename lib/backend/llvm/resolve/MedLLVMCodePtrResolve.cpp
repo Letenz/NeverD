@@ -565,6 +565,7 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(uint64_t SlotVA,
     GV->setAlignment(llvm::Align(16));
     GV->setDSOLocal(true);
     CodePtrTableGlobals[RunStart] = GV;
+    rebindDirectDataBytes(GV, RunStart, RunEnd);
     return GV;
   }
 
@@ -583,6 +584,7 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(uint64_t SlotVA,
   // cyclic pointer that resolves back into this run returns this global
   // (tryResolveGlobalData GEPs into it) instead of recursing without bound.
   CodePtrTableGlobals[RunStart] = GV;
+  rebindDirectDataBytes(GV, RunStart, RunEnd);
 
   // Value pass: fill byte runs verbatim and each slot with its resolved target.
   std::vector<llvm::Constant *> Fields;
