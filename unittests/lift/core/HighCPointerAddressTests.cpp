@@ -47023,3 +47023,37 @@ TEST(HighCPointerAddresses, CLibraryObjectsTheImageCopiesAreTheHeaders) {
   EXPECT_EQ(Source.find(" stdout;"), std::string::npos) << Source;
   expectCSyntax(Source);
 }
+
+TEST(HighCPointerAddresses, OtherPlatformsFunctionsReadTheirThreadsFS) {
+  // An ELF function's DWARF FDE is exception metadata, but not Windows':
+  // the stack protector's canary at FS:0x28 is the thread's, not the x86
+  // SEH registration memory the C leaves out.  mawk's canary reads lost
+  // their definitions and kept their uses, and others spelled MSVC's
+  // __readfsqword, which no header the unit includes declares.
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "guarded";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  Func.ExceptionMetadata = ExceptionFunction{};
+  Func.ExceptionMetadata->Encoding = ExceptionEncoding::DwarfFDE;
+  MedVar Canary = temporary(16, 1);
+  HighStmt Read =
+      assignTo(Canary, HighExpr::makeLoad(HighExpr::makeConst(0x28, 8), Word,
+                                          NdMemoryOrdering::None,
+                                          NdMemoryAddressSpace::X86FS));
+  Read.Dst->Type = Word;
+  HighStmt Keep = callStmt("keep", 0x2000, {HighExpr::makeVar(Canary, Word)});
+  Func.Body = {Read, Keep};
+  returnValue(Func, HighExpr::makeVar(Canary, Word));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_EQ(Source.find("__readfsqword"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("t16_1 = "), std::string::npos) << Source;
+  expectCSyntax(Source);
+}

@@ -99,6 +99,12 @@ bool HighCWriter::preservesRegistrationMemory(const HighFunc &Func) {
          Func.ExceptionMetadata->Registration->RealignedFrame.has_value();
 }
 
+bool HighCWriter::hidesRegistrationMemory(const HighFunc &Func) {
+  return Func.ExceptionMetadata &&
+         !exceptionEncodingIsOutsideWindows(Func.ExceptionMetadata->Encoding) &&
+         !preservesRegistrationMemory(Func);
+}
+
 bool HighCWriter::isEmbeddedRegistrationCallback(const HighStmt &Stmt,
                                                  size_t I) const {
   if (Opts.TheArch != Arch::X86 || !CurrentFunc ||

@@ -554,9 +554,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       return;
     }
   }
-  const bool HideEHRuntimeMemory = CurrentFunc &&
-                                   CurrentFunc->ExceptionMetadata.has_value() &&
-                                   !preservesRegistrationMemory(*CurrentFunc);
+  const bool HideEHRuntimeMemory =
+      CurrentFunc && hidesRegistrationMemory(*CurrentFunc);
   auto IsEHRuntimeSpace = [&](NdMemoryAddressSpace Space) {
     return HideEHRuntimeMemory && Space == NdMemoryAddressSpace::X86FS;
   };
