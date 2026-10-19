@@ -348,8 +348,9 @@ ELFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   }();
   if (llvm::Error E = applyARMFunctionModeHints(Img, ARMFunctionModes))
     return std::move(E);
+  ARMModeDiscovery ARMModes(Img);
   if (Img.Arch == Arch::ARM && !Img.IsRelocatable && HasProgramHeaders)
-    if (llvm::Error E = discoverARMReachableModes(Img))
+    if (llvm::Error E = ARMModes.discover())
       return std::move(E);
   if (llvm::Error E = verifyARMFunctionModeHints(Img, ARMFunctionModes))
     return std::move(E);
@@ -375,7 +376,7 @@ ELFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   // `-fasynchronous-unwind-tables` has both, and the two agree about the
   // frames they share.
   arm_ehabi::parseARMEHABIExceptions(Img);
-  if (llvm::Error E = discoverARMLandingPadModes(Img))
+  if (llvm::Error E = ARMModes.followLandingPads())
     return std::move(E);
   // Go emits no DWARF frame information for its own functions, so a Go image
   // reaches this point with nothing recovered.  Its metadata lives in the
