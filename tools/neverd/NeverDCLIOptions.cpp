@@ -207,6 +207,31 @@ cl::SubCommand
 cl::SubCommand CPUCapabilitiesCmd(execution_cli::CapabilitiesCommand,
                                   execution_cli::CapabilitiesHelp);
 cl::SubCommand EmulateProcessCmd(process_cli::Command, process_cli::Help);
+cl::SubCommand
+    ModulesCmd("modules",
+               "Inspect or validate explicit binary/debug resources");
+cl::opt<std::string> ModulesAction(cl::Positional,
+                                   cl::desc("validate|inspect|lookup"),
+                                   cl::Required, cl::sub(ModulesCmd));
+cl::opt<std::string> ModulesConfiguration(cl::Positional,
+                                          cl::desc("configuration.json"),
+                                          cl::Required, cl::sub(ModulesCmd));
+cl::opt<std::string> ModulesID("module", cl::desc("Resource ID for lookup"),
+                               cl::sub(ModulesCmd));
+cl::opt<std::string> ModulesSymbol("symbol",
+                                   cl::desc("Exact symbol name for lookup"),
+                                   cl::sub(ModulesCmd));
+cl::SubCommand
+    ExecutionCmd("execution",
+                 "Control one persistent workload with JSON lines on stdin");
+cl::opt<std::string> ExecutionConfiguration(cl::Positional,
+                                            cl::desc("execution.json"),
+                                            cl::Required,
+                                            cl::sub(ExecutionCmd));
+cl::opt<std::string>
+    ExecutionModules("modules",
+                     cl::desc("Explicit module resource configuration"),
+                     cl::sub(ExecutionCmd));
 cl::SubCommand UnpackCmd(unpack_cli::Command, unpack_cli::Help);
 cl::SubCommand TranslateObjectCmd(
     "translate-object",

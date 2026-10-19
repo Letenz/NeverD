@@ -14,6 +14,9 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPIDecompile.cpp
     capi/NeverDCAPIDevirtualize.cpp
     capi/NeverDCAPIEmulation.cpp
+    capi/NeverDCAPIModules.cpp
+    capi/NeverDCAPIExecution.cpp
+    capi/ResourceHandles.cpp
     capi/NeverDCAPIObjC.cpp
     capi/NeverDCAPISwift.cpp
     capi/NeverDCAPIDisasm.cpp
@@ -109,6 +112,7 @@ target_link_libraries(neverd_shared PRIVATE
     NeverDPassMIR
     NeverDLibC
     NeverDDebugInfo
+    NeverDModules
     NeverDSolver
     NeverDSymbolic
     NeverDConcolic
@@ -122,7 +126,7 @@ target_link_libraries(neverd_shared PRIVATE
     ${NEVERD_COMMON_LIBS})
 
 if(NEVERD_ENABLE_CPU_EMULATION OR NEVERD_ENABLE_DRIVER_EMULATION)
-    target_link_libraries(neverd_shared PRIVATE NeverDEmulationCPU NeverDEmulationProcess)
+    target_link_libraries(neverd_shared PRIVATE NeverDEmulationCPU NeverDEmulationProcess NeverDEmulationWorkload)
     target_compile_definitions(neverd_shared PRIVATE
         NEVERD_ENABLE_CPU_EMULATION=1)
 endif()

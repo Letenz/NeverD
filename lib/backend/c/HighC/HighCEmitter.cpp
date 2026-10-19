@@ -1466,6 +1466,11 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
           x86UsesGnuIntrinsicHeader(Ex.IntrinsicId))
         NeedsGnuX86Intrinsics = true;
+      // GCC's and Clang's CPUID is <cpuid.h>'s.
+      if (Opts.Format != BinaryFormat::COFF &&
+          (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
+          Ex.IntrinsicId == Intrinsic::Cpuid)
+        NeedsGnuCpuid = true;
       const std::string SourceName = resolvedCallTarget(Ex);
       std::string Name = SourceName;
       if (!Name.empty()) {
@@ -1697,7 +1702,13 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     Headers.insert("intrin.h");
   if (NeedsGnuX86Intrinsics)
     Headers.insert("x86intrin.h");
+  if (NeedsGnuCpuid)
+    Headers.insert("cpuid.h");
 
+  // The headers declare what the unit's types and routines name as NeverD
+  // read them: with _GNU_SOURCE, for the GNU C Library, musl and bionic.
+  if (libc::headersReadWithGnuSource(Opts.libcVariant()))
+    OS << "#define _GNU_SOURCE 1\n";
   for (auto &H : Headers)
     OS << "#include <" << H << ">\n";
   IncludedHeaders = Headers;
@@ -2364,12 +2375,389 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     OwnDataObjects = collectImageDataObjects(*Opts.Image);
     DataObjects = &OwnDataObjects;
   }
+  // The function the walk reads, and the statement in it.
+  const HighFunc *Reading = nullptr;
+  const HighStmt *ReadingStmt = nullptr;
+  // Where each statement of the function being read sits: the list holding
+  // it, its index there, and the statement holding that list.
+  struct StmtPlace {
+    const std::vector<HighStmt> *List = nullptr;
+    size_t Index = 0;
+    const HighStmt *Parent = nullptr;
+  };
+  std::unordered_map<const HighStmt *, StmtPlace> Places;
+  // The statements a goto enters, or that hold one it enters: control
+  // reaches them without passing what comes before them in their list.
+  std::unordered_set<const HighStmt *> Entered;
+  // The assignment of each register and temporary that the function assigns
+  // once and never takes the address of.
+  std::map<VarKey, const HighStmt *> SingleDefinitions;
+  const HighFunc *DefinitionsOf = nullptr;
+  // Read once the walk asks about a variable of the function.  Exception
+  // dispatch enters handlers and landing pads at addresses no goto names, so
+  // a function with any assigns nothing this reads.
+  auto ReadDefinitions = [&] {
+    if (DefinitionsOf == Reading)
+      return;
+    DefinitionsOf = Reading;
+    Places.clear();
+    Entered.clear();
+    SingleDefinitions.clear();
+    if (!Reading || Reading->ExceptionMetadata)
+      return;
+    std::set<va_t> Targets;
+    bool Dispatched = false;
+    walkStmts(Reading->Body, [&](const HighStmt &S) {
+      if (S.Kind == StmtKind::Goto)
+        Targets.insert(S.GotoTarget);
+      Targets.insert(S.CxxContinuationReturnTargets.begin(),
+                     S.CxxContinuationReturnTargets.end());
+      Dispatched |= !S.EHClauses.empty();
+    });
+    if (Dispatched)
+      return;
+    std::map<VarKey, unsigned> Assignments;
+    std::set<VarKey> AddressTaken;
+    HighExprSet Seen;
+    std::function<void(const HighExpr &)> NoteAddresses =
+        [&](const HighExpr &E) {
+          if (!Seen.insert(&E).second)
+            return;
+          if (E.Kind == ExprKind::Addr && !E.Operands.empty() &&
+              E.Operands[0] &&
+              (E.Operands[0]->Kind == ExprKind::Var ||
+               E.Operands[0]->Kind == ExprKind::Phi))
+            AddressTaken.insert(varKey(E.Operands[0]->Var));
+          E.forEachChildExpr([&](const ExprPtr &Child) {
+            if (Child)
+              NoteAddresses(*Child);
+          });
+        };
+    std::function<bool(const std::vector<HighStmt> &, const HighStmt *)> Place =
+        [&](const std::vector<HighStmt> &List, const HighStmt *Parent) {
+          bool Holds = false;
+          for (size_t I = 0; I < List.size(); ++I) {
+            const HighStmt &S = List[I];
+            Places[&S] = {&List, I, Parent};
+            bool In = S.Addr && Targets.count(S.Addr);
+            In |= Place(S.Body, &S);
+            In |= Place(S.ElseBody, &S);
+            for (const SwitchCase &Case : S.Cases)
+              In |= Place(Case.Body, &S);
+            In |= Place(S.DefaultBody, &S);
+            for (const std::vector<HighStmt> &Body : S.EHClauseBodies)
+              In |= Place(Body, &S);
+            if (In)
+              Entered.insert(&S);
+            Holds |= In;
+            if (S.Kind == StmtKind::Assign && S.Dst && S.Val &&
+                (S.Dst->Kind == ExprKind::Var ||
+                 S.Dst->Kind == ExprKind::Phi)) {
+              const VarKey Key = varKey(S.Dst->Var);
+              if (++Assignments[Key] == 1 && (S.Dst->Var.Kind == MedVar::Reg ||
+                                              S.Dst->Var.Kind == MedVar::Temp))
+                SingleDefinitions[Key] = &S;
+              else
+                SingleDefinitions.erase(Key);
+            }
+            forEachExpr(S, [&](const ExprPtr &E) {
+              if (E)
+                NoteAddresses(*E);
+            });
+          }
+          return Holds;
+        };
+    Place(Reading->Body, nullptr);
+    for (const VarKey &Key : AddressTaken)
+      SingleDefinitions.erase(Key);
+  };
+  // Whether \p Def runs before \p Use on every path that reaches it: it
+  // comes first in a list that holds \p Use, and no goto enters between.
+  auto Dominates = [&](const HighStmt &Def, const HighStmt &Use) {
+    const auto Defined = Places.find(&Def);
+    if (Defined == Places.end())
+      return false;
+    for (const HighStmt *At = &Use; At;) {
+      const auto Place = Places.find(At);
+      if (Place == Places.end())
+        return false;
+      if (Place->second.List == Defined->second.List) {
+        if (Place->second.Index <= Defined->second.Index)
+          return false;
+        for (size_t I = Defined->second.Index + 1; I <= Place->second.Index;
+             ++I)
+          if (Entered.count(&(*Place->second.List)[I]))
+            return false;
+        return true;
+      }
+      At = Place->second.Parent;
+    }
+    return false;
+  };
+  // The largest unsigned value an integer expression takes at its width,
+  // where its form proves one: a constant, a load's width, a mask, an
+  // unsigned quotient or remainder, an extension or truncation of a value
+  // whose sign is known, the sums, scales and shifts of those that cannot
+  // wrap, and a register or temporary its one assignment before the
+  // statement \p At gives.  Any other form proves nothing.
+  const auto Ones = [](uint64_t Bytes) -> std::optional<uint64_t> {
+    if (!Bytes || Bytes > 8)
+      return std::nullopt;
+    return Bytes == 8 ? ~uint64_t{0} : (uint64_t{1} << (8 * Bytes)) - 1;
+  };
+  // Whether \p Value, as a \p Bytes-wide integer, is non-negative.
+  const auto Nonnegative = [](uint64_t Value, uint64_t Bytes) {
+    return Bytes && Bytes <= 8 && Value < (uint64_t{1} << (8 * Bytes - 1));
+  };
+  // \p Value, the largest a value of type \p From takes, once the value is
+  // converted to \p Bytes: a narrowing keeps its low bytes, and a widening
+  // keeps an unsigned or non-negative value.
+  const auto Converted = [&](std::optional<uint64_t> Value, const TypeRef &From,
+                             uint64_t Bytes) -> std::optional<uint64_t> {
+    if (!Value || !From)
+      return std::nullopt;
+    if (From->Size > Bytes) {
+      const auto Top = Ones(Bytes);
+      if (!Top)
+        return std::nullopt;
+      return std::min(*Value, *Top);
+    }
+    if (From->Size == Bytes || From->Kind == NdTypeKind::Ptr ||
+        (From->Kind == NdTypeKind::Int && !From->IsSigned) ||
+        Nonnegative(*Value, From->Size))
+      return Value;
+    return std::nullopt;
+  };
+  std::function<std::optional<uint64_t>(const HighExpr &, const HighStmt *,
+                                        unsigned)>
+      Maximum = [&](const HighExpr &E, const HighStmt *At,
+                    unsigned Depth) -> std::optional<uint64_t> {
+    if (Depth > limits::kMaxIntegerViewUnwrapDepth || !E.Type)
+      return std::nullopt;
+    const uint64_t Width = E.Type->Size;
+    // An operand's largest value as this expression's width reads it.
+    const auto Of = [&](const HighExpr *Operand) -> std::optional<uint64_t> {
+      if (!Operand || !Operand->Type)
+        return std::nullopt;
+      return Converted(Maximum(*Operand, At, Depth + 1), Operand->Type, Width);
+    };
+    const auto Within = [&](uint64_t Value) -> std::optional<uint64_t> {
+      const auto Top = Ones(Width);
+      if (!Top || Value > *Top)
+        return std::nullopt;
+      return Value;
+    };
+    const auto Operand = [&](size_t I) -> const HighExpr * {
+      return I < E.Operands.size() ? E.Operands[I].get() : nullptr;
+    };
+    switch (E.Kind) {
+    case ExprKind::Const:
+      if (!Nonnegative(E.ConstVal, Width))
+        return std::nullopt;
+      return E.ConstVal;
+    case ExprKind::Var:
+    case ExprKind::Phi: {
+      if (!At || (E.Var.Kind != MedVar::Reg && E.Var.Kind != MedVar::Temp))
+        return std::nullopt;
+      ReadDefinitions();
+      const auto Definition = SingleDefinitions.find(varKey(E.Var));
+      if (Definition == SingleDefinitions.end())
+        return std::nullopt;
+      const HighStmt &Def = *Definition->second;
+      if (!Def.Dst->Type || !Def.Val->Type || Def.Dst->Type->Size != Width ||
+          Def.Val->Type->Size != Width || !Dominates(Def, *At))
+        return std::nullopt;
+      const auto Value = Maximum(*Def.Val, &Def, Depth + 1);
+      return Value ? Within(*Value) : std::nullopt;
+    }
+    case ExprKind::Load:
+      if (E.Type->Kind != NdTypeKind::Int && E.Type->Kind != NdTypeKind::Ptr)
+        return std::nullopt;
+      return Ones(Width);
+    case ExprKind::Cast:
+    case ExprKind::BitCast: {
+      const HighExpr *From = Operand(0);
+      if (!From || !From->Type ||
+          (From->Type->Kind != NdTypeKind::Int &&
+           From->Type->Kind != NdTypeKind::Ptr) ||
+          (E.Type->Kind != NdTypeKind::Int && E.Type->Kind != NdTypeKind::Ptr))
+        return std::nullopt;
+      return Of(From);
+    }
+    case ExprKind::UnaryOp: {
+      const HighExpr *From = Operand(0);
+      if (!From || !From->Type)
+        return std::nullopt;
+      const auto Value = Maximum(*From, At, Depth + 1);
+      if (E.Op == NdOp::INT_ZEXT)
+        return Value ? Value : Ones(From->Type->Size);
+      if (E.Op == NdOp::INT_SEXT && Value &&
+          Nonnegative(*Value, From->Type->Size))
+        return Value;
+      return std::nullopt;
+    }
+    case ExprKind::BinOp: {
+      const HighExpr *Left = Operand(0);
+      const HighExpr *Right = Operand(1);
+      if (!Left || !Right)
+        return std::nullopt;
+      const auto RightConst = [&]() -> std::optional<uint64_t> {
+        if (Right->Kind != ExprKind::Const)
+          return std::nullopt;
+        return Right->ConstVal;
+      };
+      switch (E.Op) {
+      case NdOp::INT_AND: {
+        const auto L = Of(Left);
+        const auto R = Of(Right);
+        if (L && R)
+          return std::min(*L, *R);
+        return L ? L : R;
+      }
+      case NdOp::INT_ADD: {
+        const auto L = Of(Left);
+        const auto R = Of(Right);
+        if (!L || !R || *L > ~uint64_t{0} - *R)
+          return std::nullopt;
+        return Within(*L + *R);
+      }
+      case NdOp::INT_MULT: {
+        const auto L = Of(Left);
+        const auto R = Of(Right);
+        if (!L || !R || (*R && *L > ~uint64_t{0} / *R))
+          return std::nullopt;
+        return Within(*L * *R);
+      }
+      case NdOp::INT_LEFT: {
+        const auto L = Of(Left);
+        const auto Shift = RightConst();
+        if (!L || !Shift || *Shift >= 64 || (*L >> (63 - *Shift)) > 1)
+          return std::nullopt;
+        return Within(*L << *Shift);
+      }
+      case NdOp::INT_RIGHT: {
+        auto L = Of(Left);
+        if (!L)
+          L = Ones(Width);
+        const auto Shift = RightConst();
+        if (!L)
+          return std::nullopt;
+        return Shift && *Shift < 64 ? *L >> *Shift : *L;
+      }
+      case NdOp::INT_REM:
+        if (const auto Divisor = RightConst(); Divisor && *Divisor) {
+          const auto L = Of(Left);
+          return L ? std::min(*L, *Divisor - 1) : *Divisor - 1;
+        }
+        return std::nullopt;
+      case NdOp::INT_DIV:
+        if (const auto Divisor = RightConst(); Divisor && *Divisor) {
+          auto L = Of(Left);
+          if (!L)
+            L = Ones(Width);
+          if (!L)
+            return std::nullopt;
+          return *L / *Divisor;
+        }
+        return std::nullopt;
+      case NdOp::SUBBYTES:
+        if (const auto Offset = RightConst(); Offset && *Offset == 0) {
+          const auto Top = Ones(Width);
+          const auto L = Maximum(*Left, At, Depth + 1);
+          if (!Top)
+            return std::nullopt;
+          return L ? std::min(*L, *Top) : *Top;
+        }
+        return std::nullopt;
+      default:
+        return std::nullopt;
+      }
+    }
+    default:
+      return std::nullopt;
+    }
+  };
+  // The bytes from \p Base that an access of \p Bytes at \p Address
+  // reaches, in whole accesses, when every term of the sum but \p Base
+  // proves its range at the statement \p At.
+  const unsigned AddressBytes = pointerBytes(Opts.TheArch);
+  auto ProvenReach = [&](const HighExpr &Address, va_t Base, uint64_t Bytes,
+                         const HighStmt *At) -> std::optional<uint64_t> {
+    if (!Bytes || Bytes > (~uint64_t{0} >> 2))
+      return std::nullopt;
+    uint64_t Offset = 0;
+    bool SawBase = false;
+    std::function<bool(const HighExpr &, unsigned)> Terms =
+        [&](const HighExpr &E, unsigned Depth) {
+          if (Depth > limits::kMaxIntegerViewUnwrapDepth)
+            return false;
+          if (E.Kind == ExprKind::BinOp && E.Op == NdOp::INT_ADD &&
+              E.Operands.size() == 2 && E.Operands[0] && E.Operands[1])
+            return Terms(*E.Operands[0], Depth + 1) &&
+                   Terms(*E.Operands[1], Depth + 1);
+          // A view of the whole sum at its own width.
+          if ((E.Kind == ExprKind::Cast || E.Kind == ExprKind::BitCast) &&
+              E.Type && E.Operands.size() == 1 && E.Operands[0] &&
+              E.Operands[0]->Type && E.Operands[0]->Type->Size == E.Type->Size)
+            return Terms(*E.Operands[0], Depth + 1);
+          if (!SawBase && E.Kind == ExprKind::Const && E.ConstVal == Base) {
+            SawBase = true;
+            return true;
+          }
+          const auto Value = Maximum(E, At, 0);
+          const uint64_t Width = E.Type ? E.Type->Size : 0;
+          if (!Value ||
+              (Width != AddressBytes && !Nonnegative(*Value, Width)) ||
+              *Value > (~uint64_t{0} >> 2) - Offset)
+            return false;
+          Offset += *Value;
+          return true;
+        };
+    if (!Terms(Address, 0) || !SawBase)
+      return std::nullopt;
+    return (Offset + Bytes + Bytes - 1) / Bytes * Bytes;
+  };
+  // Whether a symbol sizes the object holding \p Addr, or a data symbol
+  // begins \p Object, the stretch indexedObjectAt() gives \p Addr.
+  auto SymbolBounds = [&](va_t Addr, const std::pair<va_t, uint64_t> &Object) {
+    if (sizedObjectAt(Addr))
+      return true;
+    const auto &Starts = DataObjects->DataSymbolStarts;
+    if (std::binary_search(Starts.begin(), Starts.end(), Object.first))
+      return true;
+    return Dbg && Dbg->dataSymbolsAround(Addr).first == Object.first;
+  };
+  // A table read or written at offsets whose range the code proves, in a
+  // stretch no symbol bounds.  It is declared once the walk has shown what
+  // else reaches that stretch.
+  struct BoundedAccess {
+    va_t Table;
+    std::pair<va_t, uint64_t> Stretch;
+    uint64_t Reach;
+    TypeRef Access;
+    bool Written;
+  };
+  std::vector<BoundedAccess> BoundedAccesses;
+  // The stretches the code reaches whole.
+  std::set<va_t> WholeStretches;
   // The code reaches all of an object through an address that varies or
-  // points into it: the object is declared whole, as bytes.
-  auto NoteWhole = [&](va_t Addr, const TypeRef &Access, bool Written) {
+  // points into it: the object is declared whole, as bytes.  Where no symbol
+  // bounds it, the bytes from \p Addr that the access at \p Address
+  // provably reaches may be all it declares (BoundedAccesses).
+  auto NoteWhole = [&](va_t Addr, const TypeRef &Access, bool Written,
+                       const HighExpr *Address = nullptr) {
     const auto Object = indexedObjectAt(Addr);
     if (!Object)
       return;
+    if (Address && Access && Addr - Object->first < Object->second &&
+        !SymbolBounds(Addr, *Object))
+      if (const auto Reach =
+              ProvenReach(*Address, Addr, Access->Size, ReadingStmt);
+          Reach && *Reach <= Object->second - (Addr - Object->first)) {
+        BoundedAccesses.push_back({Addr, *Object, *Reach, Access, Written});
+        return;
+      }
+    WholeStretches.insert(Object->first);
     noteImageObject(Object->first, Access, Written, Access != nullptr);
     ImageObject &Obj = ImageObjects[Object->first];
     Obj.IndexedBytes = std::max(Obj.IndexedBytes, Object->second);
@@ -2702,13 +3090,13 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         !E.Operands.empty() && E.Operands[0])
       if (const HighExpr *Base = indexedImageBase(*E.Operands[0])) {
-        NoteWhole(Base->ConstVal,
-                  E.Kind == ExprKind::Load
-                      ? E.Type
-                      : (E.Operands.size() > 1 && E.Operands[1]
-                             ? E.Operands[1]->Type
-                             : nullptr),
-                  E.Kind == ExprKind::Store);
+        const TypeRef Access =
+            E.Kind == ExprKind::Load
+                ? E.Type
+                : (E.Operands.size() > 1 && E.Operands[1] ? E.Operands[1]->Type
+                                                          : nullptr);
+        NoteWhole(Base->ConstVal, Access, E.Kind == ExprKind::Store,
+                  E.Operands[0].get());
         // `*(T *)(table + table[i])`: the offset the code adds to the table
         // is an entry of the same table.
         std::function<void(const HighExpr &, unsigned)> Terms =
@@ -2826,7 +3214,9 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     const bool BareReturns = DeclaredReturn
                                  ? DeclaredReturn->Kind == NdTypeKind::Void
                                  : analyzeVoidReturn(Func);
+    Reading = &Func;
     walkStmts(Func.Body, [&](const HighStmt &S) {
+      ReadingStmt = &S;
       if (BareReturns && S.Kind == StmtKind::Return && S.RetVal &&
           !highCExpressionHasEffect(*S.RetVal))
         return;
@@ -2842,13 +3232,102 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         // A table written at a variable offset is the whole table too.
         if (const HighExpr *Base = indexedImageBase(*S.StoreAddr))
           NoteWhole(Base->ConstVal, S.StoreVal ? S.StoreVal->Type : nullptr,
-                    true);
+                    true, S.StoreAddr.get());
       }
       forEachExpr(S, [&](const ExprPtr &E) {
         if (E)
           Visit(*E);
       });
     });
+  }
+  Reading = nullptr;
+  ReadingStmt = nullptr;
+  ReadDefinitions();
+  // A stretch the code reaches whole is declared whole, and so is one that
+  // holds an address the code keeps as a value: through it the code may
+  // reach any byte of the stretch.  Otherwise the bounded accesses declare
+  // the bytes they reach of each table.
+  if (!BoundedAccesses.empty()) {
+    std::vector<va_t> Values;
+    std::function<void(const HighExpr &, bool)> NoteValues =
+        [&](const HighExpr &E, bool Addressing) {
+          if (E.Kind == ExprKind::Const) {
+            if (!Addressing)
+              Values.push_back(E.ConstVal);
+            return;
+          }
+          const auto Each = [&](bool Addresses) {
+            E.forEachChildExpr([&](const ExprPtr &Child) {
+              if (Child)
+                NoteValues(*Child, Addresses);
+            });
+          };
+          // What a load or store reads or writes at, as the sum of a base
+          // and offsets in any view, is an address it uses, not a value; the
+          // address of an element it would read is a value.
+          switch (E.Kind) {
+          case ExprKind::Load:
+          case ExprKind::Store:
+            for (size_t I = 0; I < E.Operands.size(); ++I)
+              if (E.Operands[I])
+                NoteValues(*E.Operands[I], I == 0);
+            return;
+          case ExprKind::Addr:
+            if (!E.Operands.empty() && E.Operands[0] &&
+                E.Operands[0]->Kind == ExprKind::Load &&
+                !E.Operands[0]->Operands.empty() &&
+                E.Operands[0]->Operands[0]) {
+              NoteValues(*E.Operands[0]->Operands[0], false);
+              return;
+            }
+            Each(false);
+            return;
+          case ExprKind::BinOp:
+            Each(Addressing && E.Op == NdOp::INT_ADD);
+            return;
+          case ExprKind::Cast:
+          case ExprKind::BitCast:
+            Each(Addressing);
+            return;
+          case ExprKind::UnaryOp:
+            Each(Addressing &&
+                 (E.Op == NdOp::INT_ZEXT || E.Op == NdOp::INT_SEXT));
+            return;
+          // An alignment guard takes the address of the access it guards.
+          case ExprKind::Call:
+            if (E.IntrinsicId == Intrinsic::RequireAligned) {
+              for (size_t I = 0; I < E.Operands.size(); ++I)
+                if (E.Operands[I])
+                  NoteValues(*E.Operands[I], I == 0);
+              return;
+            }
+            Each(false);
+            return;
+          default:
+            Each(false);
+            return;
+          }
+        };
+    for (const HighFunc &Func : Funcs)
+      walkStmts(Func.Body, [&](const HighStmt &S) {
+        forEachExpr(S, [&](const ExprPtr &E) {
+          if (E)
+            NoteValues(*E, S.Kind == StmtKind::Store && &E == &S.StoreAddr);
+        });
+      });
+    llvm::sort(Values);
+    for (const BoundedAccess &Bounded : BoundedAccesses) {
+      const auto [Begin, Bytes] = Bounded.Stretch;
+      const auto Kept = llvm::lower_bound(Values, Begin);
+      const bool Whole = WholeStretches.count(Begin) ||
+                         (Kept != Values.end() && *Kept - Begin < Bytes);
+      const va_t At = Whole ? Begin : Bounded.Table;
+      noteImageObject(At, Bounded.Access, Bounded.Written,
+                      Bounded.Access != nullptr);
+      ImageObject &Obj = ImageObjects[At];
+      Obj.IndexedBytes =
+          std::max(Obj.IndexedBytes, Whole ? Bytes : Bounded.Reach);
+    }
   }
   for (const auto &[VA, Bytes] : GuardedAlignments)
     if (auto It = ImageObjects.find(VA); It != ImageObjects.end())

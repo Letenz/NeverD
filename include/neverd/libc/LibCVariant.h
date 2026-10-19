@@ -36,6 +36,16 @@ enum class LibCVariant : uint8_t {
   Windows  ///< A Windows C runtime.
 };
 
+/// Whether NeverD reads the headers of C library \p Variant with
+/// `_GNU_SOURCE` defined, as its type libraries were generated
+/// (lib/types/headers), and as GNU programs build: a unit that includes
+/// them defines it too, or the GNU declarations its types and routines name
+/// (re_search, struct re_registers, strverscmp) are missing.
+inline bool headersReadWithGnuSource(LibCVariant Variant) {
+  return Variant == LibCVariant::GNU || Variant == LibCVariant::Musl ||
+         Variant == LibCVariant::Bionic;
+}
+
 /// The C library a program of object format \p Format links: Darwin's for a
 /// Mach-O program, a Windows C runtime for a PE one, and the GNU C
 /// Library's otherwise.

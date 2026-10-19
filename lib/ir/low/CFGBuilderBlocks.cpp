@@ -75,7 +75,8 @@ void detail::mergeRelativeRelocationRootSources(
 
 void CFGBuilder::splitBlocks() {
   const ExceptionFunction *EH =
-      CurrentImg ? CurrentImg->ExceptionMetadata.findFunction(CurrentFuncEntry)
+      CurrentImg ? registration_state::installedRegistration(*CurrentImg,
+                                                             CurrentFuncEntry)
                  : nullptr;
   const bool Registration =
       CurrentImg && CurrentImg->Arch == Arch::X86 && EH && EH->Registration;

@@ -1,6 +1,6 @@
 **Langues**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 1af6ecd5944b90deebffd661bc746dba46c505fcb5c57991ad0de2f45c50968e -->
+<!-- i18n-source: 32288410e4352dcbe779ee091bfc8728b8d4e783203704b4d3a6d09f0421c96a -->
 
 [← Projet NeverD](project.md)
 
@@ -48,3 +48,5 @@ Les guides anglais se trouvent directement dans `docs/`. Les traductions sont re
 | [Feuille de route](roadmap.md) | État : formats natifs, EVM et Solana SBF implémentés |
 | Documentation traduite | Les liens de langue ci-dessus ouvrent l’index et la présentation de chaque langue |
 | [Dépaquetage des exécutables compressés](unpack.md) | Récupération d'images PE32+ compressées par observation d'un processus invité borné : règles d'entrée, image reconstruite, identification et limites |
+
+- [Modules explicites et exécution persistante (anglais)](../runtime-modules.md)

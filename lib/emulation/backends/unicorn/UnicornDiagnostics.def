@@ -104,5 +104,7 @@ NEVERD_UNICORN_DIAGNOSTIC(CannotRecursivelyExecuteACPUInstance,
 NEVERD_UNICORN_DIAGNOSTIC(ExecuteGuestAfterException,
                           "execute guest after synchronous exception")
 NEVERD_UNICORN_DIAGNOSTIC(ExecuteGuest, "execute guest")
+NEVERD_UNICORN_DIAGNOSTIC(InitializeRunControl,
+                          "cannot create Unicorn deadline controller")
 NEVERD_UNICORN_DIAGNOSTIC(InvalidateCPUTranslations,
                           "invalidate CPU translations")

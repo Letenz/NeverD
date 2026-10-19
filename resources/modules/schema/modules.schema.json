@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NeverD explicit module inputs",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "base_directory": {
+      "$ref": "#/$defs/path"
+    },
+    "module_defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "load": {
+          "enum": [
+            "eager",
+            "lazy"
+          ],
+          "default": "eager"
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_modules": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "max_image_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8589934592
+        },
+        "max_debug_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8589934592
+        },
+        "max_total_source_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 68719476736
+        },
+        "max_symbols": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000000
+        }
+      }
+    },
+    "modules": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "image"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          },
+          "image": {
+            "$ref": "#/$defs/path"
+          },
+          "load": {
+            "enum": [
+              "eager",
+              "lazy"
+            ]
+          },
+          "debug": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "path"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "pdb",
+                  "dwarf",
+                  "map"
+                ]
+              },
+              "path": {
+                "$ref": "#/$defs/path"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\\u0000]+$"
+    }
+  }
+}

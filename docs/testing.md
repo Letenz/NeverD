@@ -7913,6 +7913,10 @@ slot and an inner loop's record pointer `&table[i]` in another, around a call
 with a pushed argument; it is refused the same way without the affine frame
 keys, as the inner loop's merge on the outer back edge leaves its pushes
 unkeyed.
+`ARuntimeIndexedReadOnlyTableResolves` reads an `.rdata` int table at a live-in
+object pointer's field scaled by four, as GOF2's `sub_4028D4` does. Without the
+run-mirror redirect it is refused as an ambiguous read-only table base; with it
+the read is a GEP into a read-only global and the table VA survives nowhere.
 `I386CallContract.ABlockPhiIsNoArgumentPastAnEarlierCallInItsBlock` joins a
 callback's address and an import call's leftover in EDX, calls the import
 again in the join block, then a routine reading ECX and EDX: the argument is
@@ -8922,3 +8926,10 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 ```
 
 `NeverDSymConditionalStoreTests` covers conditional effects on current bytes across independent roots, 128-bit writes, both byte orders, partial overlaps, symbolic relative wrapping and absolute memory. It checks own-bank neighbors, current versus historical facts, post-write unknown epochs, unsupported inputs, and exact versus one-short budgets. Executor cases cover STORE with existing segment-base handling, strict CMPXCHG success/failure and delayed Old publication, refusal havoc, and other operations leaving the policy Invalid. Ordinary store and preservation defaults retain their existing behavior. These tests validate bounded memory semantics; they do not certify access permissions or complete program recovery.
+
+## Runtime module resources and persistent buffers
+
+The [runtime module reference](runtime-modules.md#verification) lists the focused
+resource, mapping, pause/resume, execution, C SDK and CLI suites. Qualify the
+CPU-on/Driver-off configuration as well as disabled execution. The Windows
+adapter remains a separate integration and is rejected when unregistered.

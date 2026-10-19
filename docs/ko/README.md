@@ -1,6 +1,6 @@
 **언어**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 1af6ecd5944b90deebffd661bc746dba46c505fcb5c57991ad0de2f45c50968e -->
+<!-- i18n-source: 32288410e4352dcbe779ee091bfc8728b8d4e783203704b4d3a6d09f0421c96a -->
 
 [← NeverD 프로젝트](project.md)
 
@@ -48,3 +48,5 @@
 | [로드맵](roadmap.md) | 상태: native format, EVM, Solana SBF 구현 완료 |
 | 다국어 문서 | 위의 언어 링크에서 각 언어의 색인과 프로젝트 개요를 열 수 있습니다 |
 | [패킹된 실행 파일 언패킹](unpack.md) | 유한한 게스트 프로세스 관찰을 통한 패킹된 PE32+ 이미지 복구: 진입점 규칙, 재구성된 이미지, 식별, 제한 |
+
+- [명시적 런타임 모듈 및 지속 실행 (영문)](../runtime-modules.md)

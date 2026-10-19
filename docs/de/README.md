@@ -1,6 +1,6 @@
 **Sprachen**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 1af6ecd5944b90deebffd661bc746dba46c505fcb5c57991ad0de2f45c50968e -->
+<!-- i18n-source: 32288410e4352dcbe779ee091bfc8728b8d4e783203704b4d3a6d09f0421c96a -->
 
 [← NeverD-Projekt](project.md)
 
@@ -48,3 +48,5 @@ Englische Anleitungen liegen direkt unter `docs/`. Übersetzungen sind in `ar/`,
 | [Roadmap](roadmap.md) | Status: Native Formate, EVM und Solana SBF implementiert |
 | Übersetzte Dokumentation | Die Sprachlinks oben öffnen den jeweiligen Index und die Projektübersicht |
 | [Entpacken gepackter ausführbarer Dateien](unpack.md) | Wiederherstellung gepackter PE32+-Abbilder durch Beobachtung eines begrenzten Gastprozesses: Einstiegsregeln, neu aufgebautes Abbild, Identifikation und Grenzen |
+
+- [Explizite Laufzeitmodule und persistente Ausführung (Englisch)](../runtime-modules.md)

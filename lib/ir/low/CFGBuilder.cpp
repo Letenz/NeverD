@@ -1021,8 +1021,13 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
       break;
     }
   }
-  if (!Exception)
+  if (!Exception) {
     Exception = Img.ExceptionMetadata.findFunction(EntryAddr);
+    // A registration record is its installer's alone; its range also covers
+    // what lies after the installer, up to the next function the loader knew.
+    if (Exception && Exception->Registration)
+      Exception = registration_state::installedRegistration(Img, EntryAddr);
+  }
   std::vector<va_t> ExceptionalRoots;
   std::vector<va_t> ContinuationRoots;
   if (Exception) {
@@ -2355,8 +2360,8 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
 
       restoreAdjacentNoReturnCall(Rec, Dec.directCallTarget(DI));
       if (Img.Arch == Arch::X86 && Rec.Ops.size() == 2)
-        if (const auto *EH =
-                Img.ExceptionMetadata.findFunction(CurrentFuncEntry))
+        if (const auto *EH = registration_state::installedRegistration(
+                Img, CurrentFuncEntry))
           registration_state::restoreAdjacentSEHFinallyCall(Img, *EH, Rec.Addr,
                                                             Rec.Size, Rec.Ops);
       rewriteI386PLTJump(Img, Rec);
@@ -2475,17 +2480,15 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
 
       // This runtime call retires a registration-state transition just like
       // a source try-level store. Give its ordinary continuation a new block.
-      if (Saved.IsCall && Img.Arch == Arch::X86)
-        if (const auto *EH =
-                Img.ExceptionMetadata.findFunction(CurrentFuncEntry);
-            EH && EH->Registration)
-          for (const auto &Op : Saved.Ops)
-            if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
-                Op.NumInputs == 1 && Op.Inputs[0].isConst() &&
-                Op.Inputs[0].Size == 4 &&
-                getCheckedX86LocalUnwindContract(Img, Op.Inputs[0].Offset,
-                                                 Op.Opcode == NdOp::INDIR_CALL))
-              BlockStarts.insert(Next);
+      if (Saved.IsCall && Img.Arch == Arch::X86 &&
+          registration_state::installedRegistration(Img, CurrentFuncEntry))
+        for (const auto &Op : Saved.Ops)
+          if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+              Op.NumInputs == 1 && Op.Inputs[0].isConst() &&
+              Op.Inputs[0].Size == 4 &&
+              getCheckedX86LocalUnwindContract(Img, Op.Inputs[0].Offset,
+                                               Op.Opcode == NdOp::INDIR_CALL))
+            BlockStarts.insert(Next);
 
       Cur = Next;
     }

@@ -942,6 +942,10 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
 
   IncludedHeaders.clear();
   if (Opts.EmitIncludes) {
+    // As NeverD read the headers: with _GNU_SOURCE, for the GNU C Library,
+    // musl and bionic.
+    if (libc::headersReadWithGnuSource(libcVariant()))
+      OS << "#define _GNU_SOURCE 1\n";
     for (auto &H : Headers)
       OS << "#include <" << H << ">\n";
     OS << "\n";
