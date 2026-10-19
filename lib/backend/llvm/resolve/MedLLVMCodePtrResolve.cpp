@@ -676,58 +676,9 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(
         return nullptr;
       }
     } else {
-      const std::string Name =
-          llvm_name::fromObjectSymbol(K.ImportName, TargetFormat).str();
-      bool CollidesWithLiftedSymbol = false;
-      for (const auto &[Address, EmittedName] : EmittedFuncNames) {
-        (void)Address;
-        if (EmittedName == Name) {
-          CollidesWithLiftedSymbol = true;
-          break;
-        }
-      }
-      if (CollidesWithLiftedSymbol) {
-        if (!FatalCodePointerResolution)
-          llvm::WithColor::error()
-              << "med_llvm_emitter: import " << Name
-              << " collides with a lifted symbol; refusing ambiguous "
-                 "code-pointer identity\n";
-        FatalCodePointerResolution = true;
+      llvm::GlobalValue *Symbol = importedSymbolIdentity(K.ImportName);
+      if (!Symbol)
         return nullptr;
-      }
-      llvm::GlobalValue *Symbol = Mod->getNamedValue(Name);
-      const auto Placeholder = ImportedSymbolPlaceholders.find(Name);
-      const bool IsTrackedPlaceholder =
-          Placeholder != ImportedSymbolPlaceholders.end() &&
-          Placeholder->second == Symbol;
-      const auto *ExternalFunction =
-          llvm::dyn_cast_or_null<llvm::Function>(Symbol);
-      const bool IsCompatibleExternalFunction =
-          ExternalFunction && ExternalFunction->isDeclaration() &&
-          ExternalFunction->getLinkage() ==
-              llvm::GlobalValue::ExternalLinkage &&
-          ExternalFunction->getVisibility() ==
-              llvm::GlobalValue::DefaultVisibility &&
-          !ExternalFunction->isDSOLocal();
-      if (Symbol && !IsTrackedPlaceholder && !IsCompatibleExternalFunction) {
-        if (!FatalCodePointerResolution)
-          llvm::WithColor::error()
-              << "med_llvm_emitter: import " << Name
-              << " collides with a non-import symbol; refusing ambiguous "
-                 "code-pointer identity\n";
-        FatalCodePointerResolution = true;
-        return nullptr;
-      }
-      if (!Symbol) {
-        // Only the symbol's address is known here; C reaches it through an
-        // opaque alias until a call proves its type.
-        auto *Placeholder = new llvm::GlobalVariable(
-            *Mod, llvm::Type::getInt8Ty(*Ctx), /*isConstant=*/false,
-            llvm::GlobalValue::ExternalLinkage, /*Initializer=*/nullptr, Name);
-        data_symbol::mark(*Placeholder);
-        ImportedSymbolPlaceholders[Name] = Placeholder;
-        Symbol = Placeholder;
-      }
       FieldVal = llvm::ConstantExpr::getPtrToInt(Symbol, PtrIntTy);
       if (K.ImportAddend != 0)
         FieldVal = llvm::ConstantExpr::getAdd(
@@ -740,6 +691,61 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(
 
   GV->setInitializer(llvm::ConstantStruct::get(StructTy, Fields));
   return GV;
+}
+
+llvm::GlobalValue *
+MedLLVMEmitter::importedSymbolIdentity(llvm::StringRef ImportName) {
+  const std::string Name =
+      llvm_name::fromObjectSymbol(ImportName, TargetFormat).str();
+  bool CollidesWithLiftedSymbol = false;
+  for (const auto &[Address, EmittedName] : EmittedFuncNames) {
+    (void)Address;
+    if (EmittedName == Name) {
+      CollidesWithLiftedSymbol = true;
+      break;
+    }
+  }
+  if (CollidesWithLiftedSymbol) {
+    if (!FatalCodePointerResolution)
+      llvm::WithColor::error()
+          << "med_llvm_emitter: import " << Name
+          << " collides with a lifted symbol; refusing ambiguous "
+             "code-pointer identity\n";
+    FatalCodePointerResolution = true;
+    return nullptr;
+  }
+  llvm::GlobalValue *Symbol = Mod->getNamedValue(Name);
+  const auto Placeholder = ImportedSymbolPlaceholders.find(Name);
+  const bool IsTrackedPlaceholder =
+      Placeholder != ImportedSymbolPlaceholders.end() &&
+      Placeholder->second == Symbol;
+  const auto *ExternalFunction = llvm::dyn_cast_or_null<llvm::Function>(Symbol);
+  const bool IsCompatibleExternalFunction =
+      ExternalFunction && ExternalFunction->isDeclaration() &&
+      ExternalFunction->getLinkage() == llvm::GlobalValue::ExternalLinkage &&
+      ExternalFunction->getVisibility() ==
+          llvm::GlobalValue::DefaultVisibility &&
+      !ExternalFunction->isDSOLocal();
+  if (Symbol && !IsTrackedPlaceholder && !IsCompatibleExternalFunction) {
+    if (!FatalCodePointerResolution)
+      llvm::WithColor::error()
+          << "med_llvm_emitter: import " << Name
+          << " collides with a non-import symbol; refusing ambiguous "
+             "code-pointer identity\n";
+    FatalCodePointerResolution = true;
+    return nullptr;
+  }
+  if (!Symbol) {
+    // Only the symbol's address is known here; C reaches it through an
+    // opaque alias until a call proves its type.
+    auto *Placeholder = new llvm::GlobalVariable(
+        *Mod, llvm::Type::getInt8Ty(*Ctx), /*isConstant=*/false,
+        llvm::GlobalValue::ExternalLinkage, /*Initializer=*/nullptr, Name);
+    data_symbol::mark(*Placeholder);
+    ImportedSymbolPlaceholders[Name] = Placeholder;
+    Symbol = Placeholder;
+  }
+  return Symbol;
 }
 
 std::optional<uint64_t>
