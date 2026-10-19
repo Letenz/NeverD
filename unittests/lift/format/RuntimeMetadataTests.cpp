@@ -12,6 +12,7 @@
 #include "neverd/loader/FunctionNames.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/loader/PointerRelocation.h"
+#include "neverd/loader/RelocationProvenance.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/BinaryLoading.h"
 
@@ -540,6 +541,40 @@ TEST(RuntimeMetadata, RecordsOnlyExactMappedImportStorageSlots) {
   const ImportStorageSlotCollection Collected = Img.collectImportStorageSlots();
   EXPECT_EQ(Collected.Slots.count(0x1010), 0u);
   EXPECT_FALSE(Img.hasRelocationProvenanceAt(0x1010));
+}
+
+TEST(RuntimeMetadata, ARangeHasRelocationProvenanceWhereOneOfItsBytesHas) {
+  // The range query reads every source the per-byte one does, and accepts
+  // an import slot only where that one does: at a valid storage slot.
+  BinaryImage Img;
+  Img.Bits = Bitness::Bits64;
+  Img.Segments.push_back(makeSegment(0x1000, 0x100, true));
+  Img.Segments.push_back(makeSegment(0x3000, 0x100, false));
+  Img.CodePtrRelocSlots.insert(0x3008);
+  Img.DataPtrRelocSlots.insert(0x3018);
+  Img.RelDataPtrRelocSlots.insert(0x3028);
+  Img.RelCodeRelocSlots.insert(0x3038);
+  ASSERT_TRUE(Img.recordImportStorageSlot(
+      0x3048, "stored", 0, ImportStorageEvidence::ImportDirectory));
+  Img.ImportPtrSlots[0x3058] = "pointer";
+  Img.ImportPtrSlots[0x3061] = "unaligned";
+  Img.ImportPtrSlots[0x1020] = "executable";
+  Img.ImportPtrSlots[0x3070] = "";
+  Img.DyldBindSlots[0x3080] = ImportBindSlot{"bound"};
+  Img.DyldBindSlots[0x3089] = ImportBindSlot{"unaligned"};
+  Img.BaseRelocations.push_back(BaseRelocation{0x3093, 3});
+  RelocationEntry Reloc;
+  Reloc.Address = 0x30a5;
+  Img.Relocations.push_back(Reloc);
+  for (const va_t Base : {va_t{0x1000}, va_t{0x3000}})
+    for (va_t First = Base - 8; First < Base + 0xb0; ++First)
+      for (va_t End = First; End <= First + 20; ++End) {
+        bool Any = false;
+        for (va_t Byte = First; Byte < End; ++Byte)
+          Any |= Img.hasRelocationProvenanceAt(Byte);
+        EXPECT_EQ(hasRelocationProvenanceIn(Img, First, End), Any)
+            << std::hex << First << ".." << End;
+      }
 }
 
 TEST(RuntimeMetadata, ELFSlotBindingsOfUndefinedSymbolsAreImportStorage) {
