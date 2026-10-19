@@ -309,6 +309,28 @@ TEST(PointerRelocationBatch, TwoAdjacentEightBytePointersAreDataAmongX64Code) {
   EXPECT_TRUE(Img.CodeAddressRelocOperands.count(0x1062));
 }
 
+TEST(PointerRelocationBatch, PointerRunsAmongCodeToDataBecomePointersToData) {
+  // A kernel also keeps tables of pointers to its literals among its code in
+  // PAGE.  A run of them is data whose pointers lead to code until the debug
+  // information places a target in data; that pointer then leads to data,
+  // and it is no instruction's operand for its section's sake.
+  BinaryImage Img = makeCodeRelocationImage(
+      Arch::X64, {{0x1080, 0x1040, InvalidVA}, {0x1088, 0x1060, InvalidVA}});
+  coff_loader::recordRelocatedPointerRunsInCode(Img);
+  ASSERT_EQ(Img.CodePtrRelocSlots, (std::set<va_t>{0x1080, 0x1088}));
+
+  const auto Places = [](va_t Addr) { return Addr == 0x1040; };
+  EXPECT_EQ(recordDataPointerTargets(Img, Places), 1u);
+  EXPECT_EQ(Img.CodePtrRelocSlots, (std::set<va_t>{0x1088}));
+  EXPECT_EQ(Img.DataPtrRelocSlots, (std::set<va_t>{0x1080}));
+  EXPECT_EQ(Img.DataPtrRelocTargetOwners.at(0x1080), 0x1000u);
+  EXPECT_TRUE(Img.RelocDataAddrs.count(0x1040));
+  EXPECT_FALSE(Img.CodeAddressRelocOperands.count(0x1080));
+  EXPECT_FALSE(Img.DataAddressRelocOperands.count(0x1080));
+  // Done once, it is done.
+  EXPECT_EQ(recordDataPointerTargets(Img, Places), 0u);
+}
+
 TEST(PointerRelocationBatch, PointerRunsAmongOtherCodeStayOperands) {
   // An ARM literal pool's relocated words are what its loads read; nothing
   // here bounds how many sit together.  An object file's relocations are its
