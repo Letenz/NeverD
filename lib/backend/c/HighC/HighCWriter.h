@@ -1075,6 +1075,8 @@ public:
   bool NeedsMsvcIntrinsics = false;
   /// A non-Windows x86 function renders an <x86intrin.h>-only intrinsic.
   bool NeedsGnuX86Intrinsics = false;
+  /// A CPUID GCC or Clang compiles, which <cpuid.h> spells.
+  bool NeedsGnuCpuid = false;
   bool NeedsFEnvAccess = false;
   std::set<std::string> CIntrinsicNames;
   bool NeedsObjCRuntime = false;

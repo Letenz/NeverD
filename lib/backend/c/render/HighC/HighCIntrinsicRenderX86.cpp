@@ -1190,16 +1190,37 @@ renderMemoryIntrinsic(Arch TheArch, const HighExpr &Call,
   return Result;
 }
 
+/// GCC's and Clang's <cpuid.h> spelling of CPUID, whose leaf is \p Leaf and
+/// sub-leaf \p Subleaf where the code sets ECX (`__cpuid_count`), into the
+/// array cpuInfo; MSVC's __cpuid takes the array first and the leaf alone.
+std::string gnuCpuid(llvm::StringRef Leaf, llvm::StringRef Subleaf) {
+  const std::string Outputs = "cpuInfo[0], cpuInfo[1], cpuInfo[2], cpuInfo[3]";
+  return Subleaf.empty() ? "__cpuid(" + Leaf.str() + ", " + Outputs + ")"
+                         : "__cpuid_count(" + Leaf.str() + ", " +
+                               Subleaf.str() + ", " + Outputs + ")";
+}
+
 std::string renderCpuid(const std::vector<MedVar> &Outs,
                         const std::vector<ExprPtr> &Ops,
                         std::function<std::string(const HighExpr &)> ExprFn,
                         std::function<std::string(const MedVar &)> VarFn,
-                        const IsAliveFn &IsAlive) {
+                        const IsAliveFn &IsAlive, bool GnuToolchain) {
   std::string Leaf = Ops.empty() ? "0" : ExprFn(*Ops[0]);
   // A block scope, so a second CPUID in the function does not redeclare
   // cpuInfo.
-  std::string Result = "{\n    int cpuInfo[4];\n";
-  Result += "    __cpuid(cpuInfo, " + Leaf + ");\n";
+  std::string Result;
+  if (GnuToolchain) {
+    // The sub-leaf the code puts in ECX, where it puts a known one.
+    const std::string Subleaf =
+        Ops.size() > 1 && Ops[1] && Ops[1]->Kind != ExprKind::Undef
+            ? ExprFn(*Ops[1])
+            : std::string();
+    Result = "{\n    unsigned int cpuInfo[4];\n";
+    Result += "    " + gnuCpuid(Leaf, Subleaf) + ";\n";
+  } else {
+    Result = "{\n    int cpuInfo[4];\n";
+    Result += "    __cpuid(cpuInfo, " + Leaf + ");\n";
+  }
   const char *Names[] = {"cpuInfo[0]", "cpuInfo[1]", "cpuInfo[2]",
                          "cpuInfo[3]"};
   for (size_t I = 0; I < Outs.size() && I < 4; ++I)
@@ -2000,11 +2021,11 @@ renderX86MultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
                      const std::vector<ExprPtr> &Operands,
                      std::function<std::string(const HighExpr &)> ExprFn,
                      std::function<std::string(const MedVar &)> VarFn,
-                     IsAliveFn IsAlive) {
+                     IsAliveFn IsAlive, bool GnuToolchain) {
   using I = Intrinsic;
   switch (IID) {
   case I::Cpuid:
-    return renderCpuid(Outputs, Operands, ExprFn, VarFn, IsAlive);
+    return renderCpuid(Outputs, Operands, ExprFn, VarFn, IsAlive, GnuToolchain);
   case I::Xgetbv:
     return renderXgetbv(Outputs, Operands, ExprFn, VarFn, IsAlive);
   case I::Rdtsc:
@@ -2080,6 +2101,13 @@ std::string renderX86IntrinsicCall(Intrinsic Id,
   case I::Cpuid: {
     std::string Leaf = Ops.empty() ? "0" : Ops[0];
     HasCIntrinsics = true;
+    if (GnuToolchain) {
+      // An unknown ECX prints as a trap: CPUID then takes no sub-leaf.
+      const bool KnownSubleaf =
+          Ops.size() > 1 && Ops[1].find("__builtin_trap") == std::string::npos;
+      return "{ unsigned int cpuInfo[4]; " +
+             gnuCpuid(Leaf, KnownSubleaf ? Ops[1] : std::string()) + "; }";
+    }
     return "{ int cpuInfo[4]; __cpuid(cpuInfo, " + Leaf + "); }";
   }
   case I::Rdtscp: {

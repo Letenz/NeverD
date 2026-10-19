@@ -605,7 +605,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     }
     if (Stmt.Val->Kind == ExprKind::Call &&
         !Stmt.Val->IntrinsicOutputs.empty()) {
-      auto Rendered = MultiOutputRender{}(
+      auto Rendered = MultiOutputRender{Opts.Format != BinaryFormat::COFF}(
           Opts.TheArch, Stmt.Val->IntrinsicId, Stmt.Val->IntrinsicOutputs,
           Stmt.Val->Operands, [this](const HighExpr &E) { return exprStr(E); },
           [this](const MedVar &V) { return varName(V); },
@@ -1305,7 +1305,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       }
     }
     if (!Stmt.CallExpr->IntrinsicOutputs.empty()) {
-      auto Rendered = MultiOutputRender{}(
+      auto Rendered = MultiOutputRender{Opts.Format != BinaryFormat::COFF}(
           Opts.TheArch, Stmt.CallExpr->IntrinsicId,
           Stmt.CallExpr->IntrinsicOutputs, Stmt.CallExpr->Operands,
           [this](const HighExpr &E) { return exprStr(E); },

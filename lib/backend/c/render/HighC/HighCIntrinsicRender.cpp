@@ -28,7 +28,8 @@ std::string MultiOutputRender::operator()(
         "raw environment requirement has no C runtime contract");
   if (TheArch == Arch::ARM || TheArch == Arch::AArch64)
     return renderARMMultiOutput(IID, Outputs, Operands, ExprFn, VarFn, IsAlive);
-  return renderX86MultiOutput(IID, Outputs, Operands, ExprFn, VarFn, IsAlive);
+  return renderX86MultiOutput(IID, Outputs, Operands, ExprFn, VarFn, IsAlive,
+                              GnuToolchain);
 }
 
 std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,

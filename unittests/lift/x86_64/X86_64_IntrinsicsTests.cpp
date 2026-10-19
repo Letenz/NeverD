@@ -71,17 +71,25 @@ void expectIntrinsicStyle(const std::string &Source, bool LLVMPath = false) {
   }
 }
 
+// The objects are ELF, whose CPUID GCC and Clang spell with <cpuid.h>'s
+// macros, which store each register into an lvalue operand.
 constexpr const char *CpuidStub = R"C(
 static unsigned stub_calls;
 static int stub_leaf;
 static uint32_t stub_words[4];
-static void stub_cpuid(int output[4], int leaf) {
-    _Static_assert(sizeof(int) == sizeof(uint32_t), "CPUID word width");
+static void stub_cpuid(unsigned leaf, unsigned *a, unsigned *b, unsigned *c,
+                       unsigned *d) {
+    _Static_assert(sizeof(unsigned) == sizeof(uint32_t), "CPUID word width");
     ++stub_calls;
-    stub_leaf = leaf;
-    memcpy(output, stub_words, sizeof(stub_words));
+    stub_leaf = (int)leaf;
+    *a = stub_words[0];
+    *b = stub_words[1];
+    *c = stub_words[2];
+    *d = stub_words[3];
 }
-#define __cpuid stub_cpuid
+#define __cpuid(leaf, a, b, c, d) stub_cpuid((leaf), &(a), &(b), &(c), &(d))
+#define __cpuid_count(leaf, subleaf, a, b, c, d) \
+    ((void)(subleaf), stub_cpuid((leaf), &(a), &(b), &(c), &(d)))
 )C";
 
 constexpr const char *ClflushStub = R"C(

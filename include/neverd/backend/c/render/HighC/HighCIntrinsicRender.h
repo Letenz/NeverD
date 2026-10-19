@@ -42,6 +42,9 @@ using IsAliveFn = std::function<bool(const MedVar &)>;
 using SameWidthUnsignedFn = std::function<bool(const HighExpr &, uint16_t)>;
 
 struct MultiOutputRender {
+  /// The output is compiled by GCC or Clang rather than MSVC, whose
+  /// intrinsics it spells otherwise (renderIntrinsicCall).
+  bool GnuToolchain = false;
   std::string operator()(Arch TheArch, Intrinsic IID,
                          const std::vector<MedVar> &Outputs,
                          const std::vector<ExprPtr> &Operands,
@@ -88,7 +91,7 @@ renderX86MultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
                      const std::vector<ExprPtr> &Operands,
                      std::function<std::string(const HighExpr &)> ExprFn,
                      std::function<std::string(const MedVar &)> VarFn,
-                     IsAliveFn IsAlive);
+                     IsAliveFn IsAlive, bool GnuToolchain = false);
 
 std::string renderX86IntrinsicCall(Intrinsic Id,
                                    const std::vector<std::string> &Ops,
