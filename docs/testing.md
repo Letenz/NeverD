@@ -8025,6 +8025,10 @@ unaligned scan took for a frame setup. `AnInt3ByteInsideAnInstructionIsNoPadding
 runs the loader's padding scan over a loop whose `jne` displacement is 0xcc:
 the entry falls into the start guessed after it, which it owns, while the start
 guessed after real padding past the entry's return stays an entry.
+`CallbacksPushedPastTheReturnAreFunctions` pushes a constructor and a
+destructor that sit right after the pushing function's return, with no call,
+prologue or padding to mark them, and recovers both as functions; a catch
+block's `mov eax, offset continuation; ret` keeps its continuation a label.
 `I386CallContract.ABlockPhiIsNoArgumentPastAnEarlierCallInItsBlock` joins a
 callback's address and an import call's leftover in EDX, calls the import
 again in the join block, then a routine reading ECX and EDX: the argument is

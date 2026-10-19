@@ -67,6 +67,12 @@ void scanCodePointersX64(const BinaryImage &Img, Decoder &Dec,
 void scanCodeAddressImmediatesX86(const BinaryImage &Img, Decoder &Dec,
                                   std::vector<std::pair<va_t, va_t>> &Out);
 
+/// Whether the x86 instruction at \p Insn lets the code address its
+/// immediate names escape: `push imm32` passes it as an argument and
+/// `mov dword ptr [mem], imm32` stores it.  A register load of it, such as a
+/// catch block's `mov eax, offset continuation`, does not.
+bool isX86EscapingCodeImmediate(const BinaryImage &Img, va_t Insn);
+
 void scanSegmentCallsX86(const BinaryImage &Img, Decoder &Dec,
                          const Segment *Seg, va_t Start, va_t End,
                          std::set<va_t> &Out);

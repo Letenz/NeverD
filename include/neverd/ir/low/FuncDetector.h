@@ -18,6 +18,8 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/ADT/ArrayRef.h"
+
 #include <set>
 #include <vector>
 
@@ -51,6 +53,13 @@ private:
       const BinaryImage &Img, Decoder &Dec, const std::set<va_t> &Evidenced,
       const std::set<va_t> &Guessed,
       const std::vector<std::pair<va_t, va_t>> &TableCases);
+  /// The x86 code the function at \p Entry reaches before \p End: falling
+  /// through, by conditional and direct jumps, past calls that may return,
+  /// and into the \p Cases its tables among the code name.  \p Computed is
+  /// set when the code has an indirect jump the walk cannot follow.
+  std::set<va_t> x86OwnCodeReached(const BinaryImage &Img, Decoder &Dec,
+                                   va_t Entry, va_t End,
+                                   llvm::ArrayRef<va_t> Cases, bool &Computed);
   /// Validate a heuristic entry.  When KeepInconclusive is true, bounded
   /// probes that exhaust their budget remain candidates for the formal audit;
   /// definite decode or mapping failures are still rejected.
