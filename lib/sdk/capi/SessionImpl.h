@@ -889,23 +889,29 @@ struct Session {
   /// Only navigation may keep immutable image facts. Edits, reloads and
   /// policy changes continue through clearPipeline()/invalidatePipeline().
   void selectFunction(va_t Entry) {
-    // Selecting another function does not edit the image. Rebuilding the
-    // presentation inventory must not discard its decoded access widths.
-    // dataAccessWidths still compares every extent after synchronization;
-    // newly discovered or differently sized functions force a fresh scan.
+    clearPipelineResult();
+    refreshFunctionList();
+    OnlyFunctionEntries = {Entry};
+  }
+
+  /// The function list as a selection reads it.  A list built from inputs
+  /// that have not changed since is the list a rebuild makes, and its names
+  /// are derived again as a rebuild derives them; any other list is built
+  /// again, an image's tens of thousands of functions.  Selecting another
+  /// function does not edit the image, so a rebuild keeps the decoded access
+  /// widths: dataAccessWidths still compares every extent after
+  /// synchronization, and newly discovered or differently sized functions
+  /// force a fresh scan.
+  void refreshFunctionList() {
+    if (functionListCurrent()) {
+      refreshFunctionNames();
+      return;
+    }
     auto KeptWidths = std::move(AccessWidths);
     auto KeptExtents = std::move(AccessWidthsFunctions);
-    clearPipelineResult();
-    // A list built from inputs that have not changed since is the list a
-    // rebuild makes, and its names are derived again as a rebuild derives
-    // them.  An image lists tens of thousands of functions.
-    if (functionListCurrent())
-      refreshFunctionNames();
-    else
-      resetFunctionsFromImage();
+    resetFunctionsFromImage();
     AccessWidths = std::move(KeptWidths);
     AccessWidthsFunctions = std::move(KeptExtents);
-    OnlyFunctionEntries = {Entry};
   }
 
   void invalidatePipeline() {

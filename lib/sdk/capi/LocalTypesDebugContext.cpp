@@ -512,19 +512,48 @@ void LocalTypesDebugContext::completeType(const TypeRef &Type) const {
   takeLibraryNames(Record);
 }
 
+void LocalTypesDebugContext::readRenamedInC() const {
+  if (RenamedInC)
+    return;
+  RenamedInC.emplace();
+  for (const auto &[Name, Spelled] :
+       types::renamedNames(*Types, types::Language::C)) {
+    RenamedInC->insert(Name);
+    // An enumerator's key is its enumeration's: Owner::Value.
+    if (const size_t Scope = Name.find("::"); Scope != std::string::npos)
+      RenamedInC->insert(Name.substr(0, Scope) + "::");
+  }
+}
+
+void LocalTypesDebugContext::makeCRenderer() const {
+  if (CRenderer)
+    return;
+  types::RenderOptions Options;
+  Options.Lang = types::Language::C;
+  // Exact widths, which mean the same on every compiler the unit builds
+  // with; the checks make a layout no compiler agrees with an error.
+  Options.Spelling = types::BuiltinSpelling::Portable;
+  Options.Asserts = true;
+  // The system's own types come from its headers, which the unit includes:
+  // the first library of a system's headers the program joins.
+  for (const types::HeaderLibrary Library : Headers)
+    if (types::headerLibrarySystem(Library)) {
+      Options.SystemLibrary = Library;
+      break;
+    }
+  CRenderer = std::make_unique<types::EmbeddedCRenderer>(*Types, Options);
+}
+
+void LocalTypesDebugContext::prepareDefinitions() const {
+  std::lock_guard<std::mutex> Guard(Mutex);
+  readRenamedInC();
+  makeCRenderer();
+}
+
 CRecordDefinitions
 LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
   std::lock_guard<std::mutex> Guard(Mutex);
-  if (!RenamedInC) {
-    RenamedInC.emplace();
-    for (const auto &[Name, Spelled] :
-         types::renamedNames(*Types, types::Language::C)) {
-      RenamedInC->insert(Name);
-      // An enumerator's key is its enumeration's: Owner::Value.
-      if (const size_t Scope = Name.find("::"); Scope != std::string::npos)
-        RenamedInC->insert(Name.substr(0, Scope) + "::");
-    }
-  }
+  readRenamedInC();
   // Whether \p Type, of the library's type \p Local, names its members or
   // enumerators as the library does.
   const auto Agrees = [&](const NdType &Type, const types::LocalType &Local) {
@@ -605,22 +634,7 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
   }
   if (Roots.empty())
     return Result;
-  if (!CRenderer) {
-    types::RenderOptions Options;
-    Options.Lang = types::Language::C;
-    // Exact widths, which mean the same on every compiler the unit builds
-    // with; the checks make a layout no compiler agrees with an error.
-    Options.Spelling = types::BuiltinSpelling::Portable;
-    Options.Asserts = true;
-    // The system's own types come from its headers, which the unit includes:
-    // the first library of a system's headers the program joins.
-    for (const types::HeaderLibrary Library : Headers)
-      if (types::headerLibrarySystem(Library)) {
-        Options.SystemLibrary = Library;
-        break;
-      }
-    CRenderer = std::make_unique<types::EmbeddedCRenderer>(*Types, Options);
-  }
+  makeCRenderer();
   const types::EmbeddedC Embedded = CRenderer->render(Roots);
   Result.Text = Embedded.Text;
   for (const auto &[Name, Union] : Embedded.Records)
