@@ -2555,6 +2555,7 @@ set(X86_64_TEST_SOURCES
   x86_64/test_jumptable_rbp_base.s
   x86_64/test_jumptable_tail_stub.s
   x86_64/test_jumptable_frame_tail_jump.s
+  x86_64/test_jumptable_slot_reload_guard.s
   x86_64/test_jumptable_guard_chain.c
   x86_64/test_jumptable_masked_byte.s
   x86_64/test_jumptable_byte_switch.s
