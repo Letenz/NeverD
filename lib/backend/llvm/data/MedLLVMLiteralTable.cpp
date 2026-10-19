@@ -1723,6 +1723,16 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   }
   if (Proof == BaseProof::Invalid && SawInvalidPointerExpression &&
       (!Bases.empty() || SawTableShapedInvalidExpression)) {
+    // A single read-only table base with an unprovable runtime index
+    // (`table[obj->field]`) is invalid only because the offset is not a proven
+    // address offset, not because the base is ambiguous.  Redirect it through
+    // the region's read-only run mirror before refusing; a true ambiguity (a
+    // pointer merge, a PHI, a frame reload or a mutable base) still falls
+    // through.
+    if (!SawPhi && !SawPointerValueMerge)
+      if (llvm::Value *Table = tryResolveRuntimeIndexedReadOnlyTable(
+              AddrVar, SizeHint, Bases.size(), Builder))
+        return Table;
     failAmbiguousAddress("literal-ambiguity-L1603");
     return nullptr;
   }
