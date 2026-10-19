@@ -759,6 +759,45 @@ TEST(HighSymSimplify, SourceSynthesisPreservesNarrowOverflow) {
                 uint64_t(uint8_t(A + B)) + 37);
 }
 
+TEST(HighSymSimplify, SourceToggleReachesQuadraticSynthesisAndTypedRegions) {
+  for (uint16_t Bytes : {1, 2, 4, 8, 16, 32}) {
+    SCOPED_TRACE(Bytes);
+    auto X = HighExpr::makeVar(tempOfSize(1, Bytes));
+    auto Y = HighExpr::makeVar(tempOfSize(2, Bytes));
+    auto C = [&](uint64_t V) { return HighExpr::makeConst(V, Bytes); };
+    auto Add = [](ExprPtr A, ExprPtr B) {
+      return HighExpr::makeBinop(NdOp::INT_ADD, A, B);
+    };
+    auto Mul = [](ExprPtr A, ExprPtr B) {
+      return HighExpr::makeBinop(NdOp::INT_MULT, A, B);
+    };
+    auto Shift = [&](ExprPtr V, unsigned N) {
+      return HighExpr::makeBinop(NdOp::INT_RIGHT, V, C(N));
+    };
+    auto Expected = Add(Add(Mul(C(11), Mul(X, X)), Mul(C(73), Mul(X, Y))),
+                        Add(Mul(C(182), Y), C(37)));
+    auto Before = Add(Expected, HighExpr::makeBinop(NdOp::INT_SUB, Shift(X, 4),
+                                                    Shift(Shift(X, 2), 2)));
+    Before->Type = NdType::makeInt(Bytes, false);
+    Expected->Type = Before->Type;
+    // Exercise an enclosing conversion as well as the complete word. The
+    // quadratic must keep its own wrapping width inside that conversion.
+    for (bool Cast : {false, true}) {
+      SCOPED_TRACE(Cast);
+      auto Input = Cast ? integerCast(Before, Bytes == 4 ? 8 : 4) : Before;
+      auto Want = Cast ? integerCast(Expected, Bytes == 4 ? 8 : 4) : Expected;
+      auto After = simplified(Input);
+      EXPECT_EQ(After->str().find(">>"), std::string::npos) << After->str();
+      EXPECT_NE(After.get(), Input.get());
+      for (uint64_t A : {0ull, 1ull, 127ull, 128ull, 255ull, ~0ull})
+        for (uint64_t B : {0ull, 1ull, 128ull, 255ull, ~0ull}) {
+          EXPECT_EQ(integerValue(Input, A, B), integerValue(Want, A, B));
+          EXPECT_EQ(integerValue(After, A, B), integerValue(Want, A, B));
+        }
+    }
+  }
+}
+
 TEST(HighSymSimplify, SourceSynthesisReachesInsideWidthConversions) {
   for (uint16_t FromBytes : {1, 2, 4, 8})
     for (uint16_t ToBytes : {1, 4, 8, 16}) {
