@@ -1870,8 +1870,10 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
       if (auto Text = ValueTexts.find(LI);
           Text != ValueTexts.end() && !Text->second.empty())
         return;
+      // An object the unit declares as wide as the load reads by its name;
+      // a header's object, of the header's type, through its address.
       if (std::string Image = imageDataCName(LI->getPointerOperand());
-          !Image.empty())
+          !Image.empty() && !headerDeclaresObject(Image))
         OS << Name << " = " << Image << ";\n";
       else
         OS << Name << " = *(" << typeToCLLVM(LI->getType()) << "*)"
@@ -2245,7 +2247,7 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
         else
           OS << Member->Text << " = " << StoredText << ";\n";
       } else if (std::string Image = imageDataCName(SI->getPointerOperand());
-                 !Image.empty()) {
+                 !Image.empty() && !headerDeclaresObject(Image)) {
         emitIndent(Indent);
         OS << Image << " = " << valueStr(SI->getValueOperand()) << ";\n";
       } else if (Size && Size <= 4) {
@@ -5115,9 +5117,14 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
                       : "(" + std::string(*Function) + ")(uintptr_t)(" +
                             Argument + ")";
     // A parameter the runtime's tables type takes an integer converted to
-    // its pointer, and an address converted to its integer.
+    // its pointer, and an address converted to its integer: one the text
+    // spells, or a value of pointer type (`__vfprintf_chk`'s flag, which the
+    // IR passes as the pointer its register held).
     else if (Prototype &&
-             (libc::isPointerType(Param) ? Integer : PointerSpelling))
+             (libc::isPointerType(Param)
+                  ? Integer
+                  : PointerSpelling ||
+                        Call.getArgOperand(ArgIdx)->getType()->isPointerTy()))
       Argument = Null && Integer
                      ? "0"
                      : "(" + Param + ")(uintptr_t)(" + Argument + ")";

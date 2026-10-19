@@ -389,6 +389,24 @@ LLVMCWriter::uniqueAllocaImageImmediate(const llvm::AllocaInst *Slot) const {
   return Found;
 }
 
+std::optional<std::pair<std::string, std::string>>
+LLVMCWriter::imageDataSymbolName(va_t Addr) const {
+  if (!Img)
+    return std::nullopt;
+  const Symbol *Sym = Img->findSymbolAt(Addr);
+  if (!Sym || Sym->IsFunc || Sym->Name.empty() ||
+      llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) == 0)
+    return std::nullopt;
+  // A mangled name keeps the underscores its scheme starts with
+  // (`_ZTV8QDomNode` is `QDomNode_vtable`).
+  const llvm::StringRef CName =
+      cNameOfSymbol(Sym->Name, Opts.Format, Opts.TheArch);
+  return std::pair{symbolScheme(CName) != SymbolScheme::None
+                       ? CName.str()
+                       : stripLeadingUnderscores(Sym->Name).str(),
+                   CName.str()};
+}
+
 std::string LLVMCWriter::namedImageObject(va_t Addr) const {
   if (auto It = ImageObjectNames.find(Addr); It != ImageObjectNames.end())
     return It->second;
@@ -405,20 +423,11 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
       Raw = Data->Name;
   }
   Spelling = Raw;
-  if (Raw.empty() && Img) {
-    if (const Symbol *Sym = Img->findSymbolAt(Addr);
-        Sym && !Sym->IsFunc && !Sym->Name.empty() &&
-        llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0) {
-      // A mangled name keeps the underscores its scheme starts with
-      // (`_ZTV8QDomNode` is `QDomNode_vtable`).
-      const llvm::StringRef CName =
-          cNameOfSymbol(Sym->Name, Opts.Format, Opts.TheArch);
-      Raw = symbolScheme(CName) != SymbolScheme::None
-                ? CName.str()
-                : stripLeadingUnderscores(Sym->Name).str();
-      Spelling = CName.str();
+  if (Raw.empty())
+    if (auto Named = imageDataSymbolName(Addr)) {
+      Raw = std::move(Named->first);
+      Spelling = std::move(Named->second);
     }
-  }
   if (Raw.empty()) {
     // As the listing names it: a pointer slot, or the size of its accesses.
     const auto Use = ImageDataUses.find(Addr);
@@ -620,7 +629,8 @@ std::optional<uint64_t> LLVMCWriter::foldReadonlyScalar(va_t Addr,
   return Value;
 }
 
-std::string LLVMCWriter::imageDataCName(const llvm::Value *V) const {
+std::optional<va_t>
+LLVMCWriter::declaredImageDataVA(const llvm::Value *V) const {
   // Full-module output owns the bytes of a pointer mirror or a section's
   // byte array it defines. Their interior fields are offsets into that
   // object, as the code spells them, not separate globals at the original
@@ -634,8 +644,12 @@ std::string LLVMCWriter::imageDataCName(const llvm::Value *V) const {
         Global && Global->hasInitializer() &&
         (parseNdCodePtrSymbol(Global->getName()) ||
          parseNdDataSymbol(Global->getName())))
-      return {};
-  const auto VA = imageDataVA(V);
+      return std::nullopt;
+  return imageDataVA(V);
+}
+
+std::string LLVMCWriter::imageDataCName(const llvm::Value *V) const {
+  const auto VA = declaredImageDataVA(V);
   if (!VA)
     return {};
   return namedImageObject(*VA);

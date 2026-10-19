@@ -11,6 +11,7 @@ namespace neverd::libc {
 /// POSIX sched.h — process scheduling
 inline constexpr std::string_view kSchedHeader = "sched.h";
 
+/// The CPU_ALLOC, CPU_COUNT and CPU_FREE macros call the __sched_ routines.
 inline constexpr std::array kSchedFunctions = {
     "sched_get_priority_max",
     "sched_get_priority_min",
@@ -23,6 +24,9 @@ inline constexpr std::array kSchedFunctions = {
     "sched_setparam",
     "sched_setscheduler",
     "sched_yield",
+    "__sched_cpualloc",
+    "__sched_cpucount",
+    "__sched_cpufree",
 };
 
 /// Fixed arity of the sched.h functions.  {IntArgs, FpArgs}.
@@ -38,6 +42,9 @@ inline constexpr auto kSchedArity = std::to_array<LibCArityEntry>({
     {"sched_setparam", {2, 0}},
     {"sched_setscheduler", {3, 0}},
     {"sched_yield", {0, 0}},
+    {"__sched_cpualloc", {1, 0}},
+    {"__sched_cpucount", {2, 0}},
+    {"__sched_cpufree", {1, 0}},
 });
 
 } // namespace neverd::libc
