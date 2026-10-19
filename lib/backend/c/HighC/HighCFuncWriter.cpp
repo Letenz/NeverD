@@ -990,7 +990,7 @@ void HighCWriter::writeFunction(const HighFunc &Func) {
           c_stub::variadicStubName(functionIdentifier(Func), Import,
                                    Func.Entry),
           Import, importSlotIdentifier(Slot), libc::libcVariadicForward(Import),
-          Opts.libcVariant());
+          Opts.libcVariant(), Opts.TheArch, Opts.Format);
       return;
     }
   // So does one of a variadic routine this file defines, which the image
@@ -998,9 +998,9 @@ void HighCWriter::writeFunction(const HighFunc &Func) {
   if (const HighFunc *Routine = variadicOwnRoutineOfStub(Func)) {
     if (EmitFunctionWrapper)
       OS << "/* neverd.entry: 0x" << llvm::utohexstr(Func.Entry) << " */\n";
-    c_stub::writeVariadicImportStub(OS, functionIdentifier(Func),
-                                    functionIdentifier(*Routine), {}, nullptr,
-                                    Opts.libcVariant());
+    c_stub::writeVariadicImportStub(
+        OS, functionIdentifier(Func), functionIdentifier(*Routine), {}, nullptr,
+        Opts.libcVariant(), Opts.TheArch, Opts.Format);
     return;
   }
   if (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(Func)) {

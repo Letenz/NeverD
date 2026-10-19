@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/backend/c/VariadicImportStub.h"
 #include "SourceCallExecution.h"
 #include "gtest/gtest.h"
 
@@ -1343,6 +1344,44 @@ TEST(CSymbolNames, MicrosoftImportsLinkByTheirDecoratedNames) {
         << *Assembly;
     EXPECT_EQ(Assembly->find("_?Get"), NotFound) << *Assembly;
   }
+}
+
+TEST(CSymbolNames, AStubPassesItsListAsTheWordATabledFormTakes) {
+  // glibc's fortified __fprintf_chk stub hands its arguments to
+  // __vfprintf_chk, which no header the unit includes declares: the unit
+  // declares it from the runtime's table, which takes the list as the
+  // machine word a call passes, as the program's own calls of it do.  The
+  // stub declares it the same, once: `va_list` beside `void *` conflicted.
+  const libc::LibCVariadicForward *Forward =
+      libc::libcVariadicForward("__fprintf_chk");
+  ASSERT_NE(Forward, nullptr);
+  for (const auto &[TheArch, Word] : {std::pair{Arch::X64, "arguments)"},
+                                      {Arch::AArch64, "(void *)&arguments)"},
+                                      {Arch::ARM, "*(void **)&arguments)"}}) {
+    SCOPED_TRACE(static_cast<int>(TheArch));
+    std::string Text;
+    llvm::raw_string_ostream OS(Text);
+    c_stub::writeVariadicImportStub(OS, "fprintf_chk_stub", "__fprintf_chk", {},
+                                    Forward, libc::LibCVariant::GNU, TheArch,
+                                    BinaryFormat::ELF);
+    OS.flush();
+    EXPECT_EQ(Text.find("va_list);"), std::string::npos) << Text;
+    EXPECT_NE(Text.find("const char *, void *);"), std::string::npos) << Text;
+    EXPECT_NE(
+        Text.find("__vfprintf_chk(arg0, arg1, format, " + std::string(Word)),
+        std::string::npos)
+        << Text;
+  }
+  // A form a header declares keeps the header's va_list.
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  c_stub::writeVariadicImportStub(
+      OS, "fprintf_stub", "fprintf", {}, libc::libcVariadicForward("fprintf"),
+      libc::LibCVariant::GNU, Arch::X64, BinaryFormat::ELF);
+  OS.flush();
+  EXPECT_NE(Text.find("extern int vfprintf(FILE *, const char *, va_list);"),
+            std::string::npos)
+      << Text;
 }
 
 } // namespace
