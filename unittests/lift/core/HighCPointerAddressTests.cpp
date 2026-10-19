@@ -47214,3 +47214,68 @@ TEST(HighCPointerAddresses, FunctionPointersOfAnotherSpellingPassCast) {
       << Source;
   expectCSyntax("#include <stdint.h>\n" + Source);
 }
+
+TEST(HighCPointerAddresses, GnuToolchainsReadCpuidThroughCpuidH) {
+  // CPUID's leaf is EAX and its sub-leaf ECX.  GCC and Clang spell it with
+  // <cpuid.h>'s macros; MSVC's __cpuid(int[4], leaf) declares nothing there,
+  // and gzip called it undeclared 14 times.
+  const auto Word = NdType::makeInt(4, false);
+  HighFunc Func;
+  Func.Name = "features";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  std::vector<MedVar> Outputs;
+  for (int I = 0; I < 4; ++I)
+    Outputs.push_back(temporary(20 + I, 0, 4));
+  auto Cpuid = HighExpr::makeCall(
+      "__cpuid", 0, {HighExpr::makeConst(7, 4), HighExpr::makeConst(0, 4)});
+  Cpuid->IntrinsicId = Intrinsic::Cpuid;
+  Cpuid->IntrinsicOutputs = Outputs;
+  Cpuid->Type = Word;
+  HighStmt Assign = assignTo(Outputs[0], Cpuid);
+  Assign.Dst->Type = Word;
+  Func.Body = {Assign};
+  returnValue(Func, HighExpr::makeVar(Outputs[1], Word));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <cpuid.h>"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("__cpuid_count(7, 0, cpuInfo[0], cpuInfo[1], "
+                        "cpuInfo[2], cpuInfo[3])"),
+            std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("__cpuid(cpuInfo"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, GnuLibrariesHeadersDeclareTheirExtensions) {
+  // NeverD reads the GNU C Library's headers with _GNU_SOURCE, which sed's
+  // and less's calls of strverscmp, memrchr and the GNU regex routines
+  // need: the unit defines it before its includes.
+  HighFunc Func;
+  Func.Name = "newer";
+  Func.Entry = 0x1000;
+  Func.ReturnType = NdType::makeInt(4);
+  Func.Params = {{"a", NdType::makePtr(NdType::makeInt(1))},
+                 {"b", NdType::makePtr(NdType::makeInt(1))}};
+  auto Call = HighExpr::makeCall(
+      "strverscmp", 0x2000,
+      {parameter(0, Func.Params[0].Type), parameter(1, Func.Params[1].Type)});
+  Call->Type = NdType::makeInt(4);
+  returnValue(Func, Call);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  const size_t Define = Source.find("#define _GNU_SOURCE 1\n");
+  ASSERT_NE(Define, std::string::npos) << Source;
+  EXPECT_LT(Define, Source.find("#include <")) << Source;
+  expectCSyntax(Source);
+}

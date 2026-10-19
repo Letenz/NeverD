@@ -1466,6 +1466,11 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
           x86UsesGnuIntrinsicHeader(Ex.IntrinsicId))
         NeedsGnuX86Intrinsics = true;
+      // GCC's and Clang's CPUID is <cpuid.h>'s.
+      if (Opts.Format != BinaryFormat::COFF &&
+          (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
+          Ex.IntrinsicId == Intrinsic::Cpuid)
+        NeedsGnuCpuid = true;
       const std::string SourceName = resolvedCallTarget(Ex);
       std::string Name = SourceName;
       if (!Name.empty()) {
@@ -1697,7 +1702,13 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     Headers.insert("intrin.h");
   if (NeedsGnuX86Intrinsics)
     Headers.insert("x86intrin.h");
+  if (NeedsGnuCpuid)
+    Headers.insert("cpuid.h");
 
+  // The headers declare what the unit's types and routines name as NeverD
+  // read them: with _GNU_SOURCE, for the GNU C Library, musl and bionic.
+  if (libc::headersReadWithGnuSource(Opts.libcVariant()))
+    OS << "#define _GNU_SOURCE 1\n";
   for (auto &H : Headers)
     OS << "#include <" << H << ">\n";
   IncludedHeaders = Headers;
