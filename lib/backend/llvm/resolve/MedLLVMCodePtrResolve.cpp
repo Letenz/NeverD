@@ -287,8 +287,9 @@ llvm::Constant *MedLLVMEmitter::resolveDeclaredFunctionInterior(va_t Address) {
       llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx), Address - Owner));
 }
 
-llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(uint64_t SlotVA,
-                                                          uint64_t &OutSegVA) {
+llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(
+    uint64_t SlotVA, uint64_t &OutSegVA,
+    std::optional<uint64_t> InCodeObjectAddr) {
   if (!Img)
     return nullptr;
   ensureImportStorageSnapshot();
@@ -298,11 +299,35 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(uint64_t SlotVA,
 
   const Segment *Seg = Img->getSegmentFor(SlotVA);
   // An executable segment holds relocated pointer slots only inside the data
-  // objects placed among its code (embedExecSegmentRun).
+  // objects placed among its code (embedExecSegmentRun).  A segment too large
+  // to mirror whole still mirrors one such object: a run of consecutive
+  // pointer-wide relocated slots from a DataInCode start (a jump table MSVC
+  // lays among its code), which is a few hundred bytes though its `.text` is
+  // megabytes.
+  std::optional<std::pair<uint64_t, uint64_t>> InCodeRun;
+  if (InCodeObjectAddr && Seg && Seg->isExecutable() && !Seg->Data.empty() &&
+      Seg->Data.size() > limits::kMaxSingleGlobalEmbedLen && PtrSz != 0) {
+    const uint64_t SegEnd = Seg->VA + Seg->Data.size();
+    const uint64_t Target = *InCodeObjectAddr;
+    auto It = Img->DataInCode.upper_bound(Target);
+    if (It != Img->DataInCode.begin()) {
+      const uint64_t Start = *std::prev(It);
+      auto isSlot = [&](uint64_t A) {
+        return Img->CodePtrRelocSlots.count(A) != 0 ||
+               Img->DataPtrRelocSlots.count(A) != 0;
+      };
+      uint64_t End = Start;
+      while (End + PtrSz <= SegEnd && isSlot(End))
+        End += PtrSz;
+      if (Start >= Seg->VA && Start <= Target && Target < End &&
+          End - Start <= limits::kMaxSingleGlobalEmbedLen)
+        InCodeRun = {Start, End};
+    }
+  }
   if (!Seg || Seg->Data.empty() ||
       (Seg->isExecutable() &&
        (!segHasLoaderPtrRelocSlots(Seg) ||
-        Seg->Data.size() > limits::kMaxSingleGlobalEmbedLen)))
+        (Seg->Data.size() > limits::kMaxSingleGlobalEmbedLen && !InCodeRun))))
     return nullptr;
 
   // A relocated pointer table (`.data.rel.ro`, or a `.rodata` dispatch/string-
@@ -320,7 +345,12 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(uint64_t SlotVA,
   // (readOnlyAfterRelocRun returns just `Seg`): it stays a single writable
   // mirror.
   uint64_t RunStart = 0, RunEnd = 0;
-  readOnlyAfterRelocRun(Seg, RunStart, RunEnd);
+  if (InCodeRun) {
+    RunStart = InCodeRun->first;
+    RunEnd = InCodeRun->second;
+  } else {
+    readOnlyAfterRelocRun(Seg, RunStart, RunEnd);
+  }
   OutSegVA = RunStart;
 
   // Mirror a segment/run that holds code- OR data-pointer slots (a
@@ -453,7 +483,11 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(uint64_t SlotVA,
   // Verbatim bytes come from a combined run buffer so a contiguous neighbour
   // (the `.rodata` chain tail above) is preserved at its run-relative offset.
   std::vector<uint8_t> RunBuf(static_cast<size_t>(RunEnd - RunStart), 0);
-  if (RunStart == Seg->VA && RunEnd == Seg->VA + Seg->Data.size()) {
+  if (InCodeRun) {
+    std::memcpy(RunBuf.data(),
+                Seg->Data.data() + static_cast<size_t>(RunStart - Seg->VA),
+                static_cast<size_t>(RunEnd - RunStart));
+  } else if (RunStart == Seg->VA && RunEnd == Seg->VA + Seg->Data.size()) {
     std::memcpy(RunBuf.data(), Seg->Data.data(), Seg->Data.size());
   } else {
     for (const auto &S : Img->Segments)

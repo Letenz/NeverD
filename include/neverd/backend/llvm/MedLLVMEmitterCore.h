@@ -1579,8 +1579,14 @@ private:
   /// \p OutSegVA to the segment base.  Null when \p SlotVA is not applicable;
   /// an unresolved executable target also sets FatalCodePointerResolution so
   /// no caller may fall back to stale raw bytes.
-  llvm::Constant *buildCodePtrSegmentGlobal(uint64_t SlotVA,
-                                            uint64_t &OutSegVA);
+  /// \p InCodeObjectAddr opts into mirroring just one DataInCode run (the
+  /// run of consecutive relocated pointer slots containing that address) when
+  /// the executable segment is too large to mirror whole; without it a large
+  /// executable segment still refuses, and every other caller keeps the whole-
+  /// segment behaviour.
+  llvm::Constant *buildCodePtrSegmentGlobal(
+      uint64_t SlotVA, uint64_t &OutSegVA,
+      std::optional<uint64_t> InCodeObjectAddr = std::nullopt);
 
   /// If \p AddrVar is defined by `INT_ADD(const_base, index)` (or the symmetric
   /// form) where const_base lands in a resolvable read-only/data segment — i.e.
@@ -1605,10 +1611,9 @@ private:
   /// plus the runtime index, as the pointer-table resolver does for a pointer
   /// table.  Returns null (never fatal) for any other shape, so a true
   /// ambiguity still fails closed in the caller.
-  llvm::Value *tryResolveRuntimeIndexedReadOnlyTable(const MedVar &AddrVar,
-                                                     uint16_t SizeHint,
-                                                     size_t AuditedBaseCount,
-                                                     llvm::IRBuilder<> &Builder);
+  llvm::Value *tryResolveRuntimeIndexedReadOnlyTable(
+      const MedVar &AddrVar, uint16_t SizeHint, size_t AuditedBaseCount,
+      llvm::IRBuilder<> &Builder);
 
   /// Speculatively symbolize an integer call argument that may be a pointer,
   /// mirroring the LOAD/STORE address resolvers.
