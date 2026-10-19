@@ -344,16 +344,22 @@ static int prepareFunction(neverd_session_t Sess, neverd_va_t FuncEntry,
       S->setError(*Reason);
       return 0;
     }
-    if (S->Img.Format == BinaryFormat::COFF) {
+    if (S->Img.Format == BinaryFormat::COFF && !S->ExceptionHandlersSettled) {
       // Handler discovery can grow metadata that the borrowed CFG facts
       // read.  When it adds anything, even if it then throws, they are
       // dropped before any reads them again; nothing reads them during it.
+      // Each call scans every record, so once discovery can add nothing for
+      // any function, preparing one skips it.
       const auto Before = coff_loader::exceptionHandlerState(S->Img);
-      const llvm::scope_exit Retire([&] {
-        if (coff_loader::exceptionHandlerState(S->Img) != Before)
-          S->AnalysisCache.reset();
-      });
-      coff_loader::ensureExceptionHandlers(S->Img, {FuncEntry});
+      {
+        const llvm::scope_exit Retire([&] {
+          if (coff_loader::exceptionHandlerState(S->Img) != Before)
+            S->AnalysisCache.reset();
+        });
+        coff_loader::ensureExceptionHandlers(S->Img, {FuncEntry});
+      }
+      S->ExceptionHandlersSettled =
+          coff_loader::exceptionHandlersSettled(S->Img);
     }
 
     if (!S->PipeRan)

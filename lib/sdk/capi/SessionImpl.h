@@ -234,6 +234,10 @@ struct Session {
   PipelineAnalysisCache AnalysisCache;
   bool PipeRan = false;
   uint64_t PipelineFeatureGeneration = 0;
+  /// Whether handler discovery can add nothing more to Img for any function
+  /// (coff_loader::exceptionHandlersSettled): preparing a function then
+  /// skips it.  Only a load changes that, and a load clears it.
+  bool ExceptionHandlersSettled = false;
   std::optional<bool> LlvmModuleNoOpt;
   /// Scoped by an extended source-page request; never a project/analysis
   /// option.
