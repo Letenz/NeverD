@@ -434,6 +434,18 @@ void HighCWriter::collectFrameRecordMembers(const HighFunc &Func,
   };
   std::map<int64_t, std::vector<Access>> Accesses;
   std::set<int64_t> Addresses;
+  // A va_start forwarder's va_list, register save area and overflow homes
+  // are C's va_start's: recognizeVaStartForwarder proved nothing else uses
+  // them, and no member holds them.
+  const HighFunc::VaStartForwarder *Va = currentVaStart();
+  const auto VaStartArea = [&](int64_t Disp) {
+    return Va &&
+           ((Disp >= Va->VaList &&
+             Disp < Va->VaList + HighFunc::VaStartForwarder::VaListBytes) ||
+            (Disp >= Va->SaveArea &&
+             Disp < Va->SaveArea + HighFunc::VaStartForwarder::SaveAreaBytes) ||
+            Disp >= 0);
+  };
   auto NoteAccess = [&](int64_t Disp, const TypeRef &Type, bool Plain,
                         bool Read) {
     const uint64_t Size = Type && Type->Size ? Type->Size : 1;
@@ -467,13 +479,15 @@ void HighCWriter::collectFrameRecordMembers(const HighFunc &Func,
         ProjectFrameAliasesIntoStorage)
       if (const auto Alias = FrameAliases.find(varName(E.Var));
           Alias != FrameAliases.end()) {
-        Addresses.insert(Alias->second);
+        if (!VaStartArea(Alias->second))
+          Addresses.insert(Alias->second);
         return;
       }
     if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi ||
         E.Kind == ExprKind::BinOp)
       if (const auto Disp = certifiedFrameStorageDisplacement(E)) {
-        Addresses.insert(*Disp);
+        if (!VaStartArea(*Disp))
+          Addresses.insert(*Disp);
         return;
       }
     E.forEachChildExpr([&](const ExprPtr &Child) {
@@ -482,6 +496,9 @@ void HighCWriter::collectFrameRecordMembers(const HighFunc &Func,
     });
   };
   walkStmts(Func.Body, [&](const HighStmt &S) {
+    // va_start's own stores leave no member: C's va_start does them.
+    if (vaStartStatement(S))
+      return;
     // A frame alias's own assignments print nothing: each use prints the
     // address it holds. Every other statement counts, a dead one too, whose
     // value can print where it is forwarded.
@@ -728,6 +745,11 @@ std::string HighCWriter::frameStorageView(int64_t Disp, const TypeRef &Ty,
 }
 
 std::string HighCWriter::frameAddressText(const HighExpr &E, int64_t Disp) {
+  // A va_start forwarder's va_list is C's own: its address is the list.
+  if (const HighFunc::VaStartForwarder *Va = currentVaStart();
+      Va && Disp == Va->VaList)
+    return typedText(E, "(uintptr_t)arguments", sizeof(uint64_t),
+                     /*Signed=*/false);
   // The rebuilt storage has the host's pointer width, which a 64-bit
   // target's source is compiled with: a frame address is a uint64_t already.
   std::string Text = frameRecordAddress(Disp);
@@ -1525,11 +1547,80 @@ const HighFunc *HighCWriter::calledDefinition(const HighExpr &E) const {
                                                               : nullptr;
 }
 
+bool HighCWriter::vaStartUnknownOperand(const HighExpr *Op) const {
+  for (unsigned Depth = 0; Op && Depth < 8; ++Depth) {
+    if (isUnknownCallOperand(Op))
+      return true;
+    const bool LowBytes = Op->Kind == ExprKind::BinOp &&
+                          Op->Op == NdOp::SUBBYTES &&
+                          Op->Operands.size() == 2 && Op->Operands[1] &&
+                          Op->Operands[1]->Kind == ExprKind::Const &&
+                          Op->Operands[1]->ConstVal == 0;
+    if (!LowBytes &&
+        !((Op->Kind == ExprKind::Cast || Op->Kind == ExprKind::BitCast ||
+           (Op->Kind == ExprKind::UnaryOp && Op->Op == NdOp::INT_ZEXT)) &&
+          Op->Operands.size() == 1))
+      return false;
+    Op = Op->Operands[0].get();
+  }
+  return false;
+}
+
+std::vector<size_t>
+HighCWriter::vaStartCallOperands(const HighExpr &E, const HighFunc &Callee,
+                                 const HighFunc::VaStartForwarder &Va,
+                                 bool Printed) const {
+  const size_t Count = std::min(E.Operands.size(), Callee.Params.size());
+  const auto &TRI = getTargetRegInfo(Opts.TheArch);
+  std::vector<size_t> Named, Integers, Vectors, Stack;
+  for (size_t I = 0; I < Count; ++I) {
+    const uint64_t Register = Callee.Params[I].RegOff;
+    if (I < Va.NamedParams)
+      Named.push_back(I);
+    else if (Register == kNoParamReg)
+      Stack.push_back(I);
+    else if (TRI.isFPArgReg(Register, Opts.Format))
+      Vectors.push_back(I);
+    else
+      Integers.push_back(I);
+  }
+  std::vector<size_t> Indices = std::move(Named);
+  if (!Printed) {
+    llvm::append_range(Indices, Integers);
+    llvm::append_range(Indices, Vectors);
+    llvm::append_range(Indices, Stack);
+    return Indices;
+  }
+  // A register the call never set past the last it set carries no argument.
+  const auto Trim = [&](std::vector<size_t> &Kind) {
+    while (!Kind.empty() &&
+           vaStartUnknownOperand(E.Operands[Kind.back()].get()))
+      Kind.pop_back();
+  };
+  const size_t IntegerSlots = Integers.size(), VectorSlots = Vectors.size();
+  Trim(Integers);
+  Trim(Vectors);
+  // A scalar argument goes on the stack only once its kind's registers are
+  // all taken, the integer ones perhaps by the named parameters: what lies
+  // at the stack pointer otherwise is the caller's own.
+  const bool IntegersTaken = Integers.size() == IntegerSlots;
+  const bool VectorsTaken = VectorSlots && Vectors.size() == VectorSlots;
+  if (!IntegersTaken && !VectorsTaken)
+    Stack.clear();
+  Trim(Stack);
+  llvm::append_range(Indices, Integers);
+  llvm::append_range(Indices, Vectors);
+  llvm::append_range(Indices, Stack);
+  return Indices;
+}
+
 std::vector<size_t> HighCWriter::printedCallOperands(const HighExpr &E) const {
   const HighFunc *Defined = calledDefinition(E);
   if (!Defined || Defined->SourceTypeHint ||
       ParamIndicesInProgress.count(Defined))
     return {};
+  if (const HighFunc::VaStartForwarder *Va = vaStartForwarder(*Defined))
+    return vaStartCallOperands(E, *Defined, *Va, /*Printed=*/false);
   // A call passes the declared parameters the definition prints after its
   // HighIR ones (unreadDeclaredParams) in the slots that follow theirs.
   const size_t Unread = unreadDeclaredParams(*Defined).size();
@@ -1897,10 +1988,18 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   // A callee defined in this file has a prototype: convert between pointer
   // and integer arguments the way the machine passed them, in the register.
   const HighFunc *Defined = calledDefinition(E);
+  // A va_start forwarder takes what each call passes past its named
+  // parameters, as the type the register or slot carries it in.
+  const HighFunc::VaStartForwarder *VaCallee =
+      Defined ? vaStartForwarder(*Defined) : nullptr;
   // Its printed signature also fixes how many arguments the call passes: a
   // value past its parameters is not read by it, and a parameter the call
   // site did not determine is an unknown value.
-  const size_t ArgCount = Defined && !Defined->SourceTypeHint
+  const std::vector<size_t> VaCallOperands =
+      VaCallee ? vaStartCallOperands(E, *Defined, *VaCallee, /*Printed=*/true)
+               : std::vector<size_t>();
+  const size_t ArgCount = VaCallee ? VaCallOperands.size()
+                          : Defined && !Defined->SourceTypeHint
                               ? emittedParamCount(*Defined)
                               : E.Operands.size();
   std::string S = Name + "(";
@@ -1915,7 +2014,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
           : std::nullopt;
   const size_t ArityIntegers = Arity ? std::max(0, Arity->IntArgs) : 0;
   const size_t ArityFloats = Arity ? std::max(0, Arity->FpArgs) : 0;
-  const std::vector<size_t> DefinedIndices = printedCallOperands(E);
+  const std::vector<size_t> DefinedIndices =
+      VaCallee ? VaCallOperands : printedCallOperands(E);
   auto OperandIndex = [&](size_t I) {
     if (I < DefinedIndices.size())
       return DefinedIndices[I];
@@ -1965,6 +2065,37 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       Op = Missing.get();
     }
     Note = stringArgumentNote(*Op);
+    // A va_start forwarder passing its own va_list on passes C's.
+    if (const HighFunc::VaStartForwarder *Va = currentVaStart();
+        Va && E.CallSiteAddr &&
+        Va->Passes.count({E.CallSiteAddr, static_cast<unsigned>(Source)})) {
+      const TypeRef Expected =
+          Defined && (!VaCallee || I < VaCallee->NamedParams)
+              ? emittedParamTypeAt(*Defined, I)
+              : nullptr;
+      S += Expected && Expected->Kind == NdTypeKind::Int
+               ? "(" + typeToC(Expected) + ")(uintptr_t)arguments"
+               : std::string("arguments");
+      continue;
+    }
+    if (VaCallee && I >= VaCallee->NamedParams &&
+        Source < Defined->Params.size() && Defined->Params[Source].Type) {
+      const TypeRef &Carrier = Defined->Params[Source].Type;
+      // A register the call left unset between ones it set passes nothing
+      // the callee reads: zero, of the type the register carries.
+      if (vaStartUnknownOperand(Op)) {
+        S += Carrier->Kind == NdTypeKind::Float ? "0.0" : "0";
+        continue;
+      }
+      // A vector register passes its low double as one.  An integer
+      // register or a stack slot passes the machine word printed below: no
+      // parameter type converts a variadic argument, so its text must have
+      // the word's width already.
+      if (Carrier->Kind == NdTypeKind::Float) {
+        S += exprStrAsTypedArg(*Op, Carrier);
+        continue;
+      }
+    }
     if (const HighExpr *Imm = unwrapIntegerView(Op)) {
       if ((Imm->Kind == ExprKind::Var || Imm->Kind == ExprKind::Phi)) {
         const std::string Fwd = copyForwardName(varName(Imm->Var));
@@ -5480,6 +5611,91 @@ bool HighCWriter::frameStorageAlignmentHolds(const HighExpr &Call) {
   return ((*Disp + Residue) % Alignment + Alignment) % Alignment == 0;
 }
 
+const HighFunc::VaStartForwarder *
+HighCWriter::vaStartForwarder(const HighFunc &Func) const {
+  if (!Func.VaStart || Func.SourceTypeHint ||
+      (Dbg && Dbg->resolveFunction(Func.Entry)))
+    return nullptr;
+  if (!Func.VaStart->Junk.empty()) {
+    // Decided once; a call back into the function while it is decided
+    // counts as passing one.
+    auto [It, Inserted] = VaStartJunkPassedCache.emplace(&Func, true);
+    if (Inserted)
+      It->second = vaStartJunkPassed(Func);
+    if (It->second)
+      return nullptr;
+  }
+  return &*Func.VaStart;
+}
+
+bool HighCWriter::vaStartJunkPassed(const HighFunc &Func) const {
+  const auto &Junk = Func.VaStart->Junk;
+  bool Passed = false;
+  std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
+    if (Passed)
+      return;
+    if (E.Kind == ExprKind::Call && E.CallSiteAddr)
+      for (auto It = Junk.lower_bound({E.CallSiteAddr, 0});
+           It != Junk.end() && It->first == E.CallSiteAddr; ++It) {
+        // Only past the parameters its callee's definition prints does a
+        // call pass none of its operands: the ones printedCallOperands
+        // lists, or else the first as many as the definition declares.
+        const HighFunc *Defined = calledDefinition(E);
+        const std::vector<size_t> Printed = printedCallOperands(E);
+        if (!Defined || Defined->SourceTypeHint ||
+            (Printed.empty() ? It->second < emittedParamCount(*Defined)
+                             : llvm::is_contained(Printed, It->second))) {
+          Passed = true;
+          return;
+        }
+      }
+    E.forEachChildExpr([&](const ExprPtr &Child) {
+      if (Child)
+        Visit(*Child);
+    });
+  };
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      if (E)
+        Visit(*E);
+    });
+  });
+  return Passed;
+}
+
+bool HighCWriter::vaStartStatement(const HighStmt &Stmt) const {
+  const HighFunc::VaStartForwarder *Va = currentVaStart();
+  if (!Va)
+    return false;
+  ExprPtr Address;
+  bool Check = false;
+  if (Stmt.Kind == StmtKind::Store)
+    Address = Stmt.StoreAddr;
+  else if (Stmt.Kind == StmtKind::Assign && Stmt.Dst &&
+           Stmt.Dst->Kind == ExprKind::Load && Stmt.Dst->Operands.size() == 1)
+    Address = Stmt.Dst->Operands[0];
+  else if (Stmt.Kind == StmtKind::Call && Stmt.CallExpr &&
+           Stmt.CallExpr->IntrinsicId == Intrinsic::RequireAligned &&
+           !Stmt.CallExpr->Operands.empty()) {
+    Address = Stmt.CallExpr->Operands[0];
+    Check = true;
+  }
+  if (!Address)
+    return false;
+  const auto Disp = certifiedFrameStorageDisplacement(*Address);
+  if (!Disp)
+    return false;
+  // recognizeVaStartForwarder proved every write to these is va_start's.
+  const bool InSaveArea =
+      *Disp >= Va->SaveArea &&
+      *Disp < Va->SaveArea + HighFunc::VaStartForwarder::SaveAreaBytes;
+  if (Check)
+    return InSaveArea;
+  return InSaveArea || *Disp >= 0 ||
+         (*Disp >= Va->VaList &&
+          *Disp < Va->VaList + HighFunc::VaStartForwarder::VaListBytes);
+}
+
 bool HighCWriter::reachesFrameThroughIndex(const HighExpr &E) const {
   if (E.Kind != ExprKind::BinOp)
     return false;
@@ -7477,6 +7693,8 @@ bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
        JoinPhiNames.count(varName(Stmt.Dst->Var))))
     return false;
   if (Analysis.DeadStmts.count(&Stmt) || Stmt.Kind == StmtKind::Nop)
+    return true;
+  if (vaStartStatement(Stmt))
     return true;
   if (Stmt.Kind == StmtKind::Block)
     return stmtsEffectivelyEmpty(Stmt.Body);

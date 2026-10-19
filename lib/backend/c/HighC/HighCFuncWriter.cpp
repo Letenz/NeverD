@@ -4796,6 +4796,15 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
   std::vector<size_t> All;
   const auto DebugFn = debugFunction(Dbg, Func.Entry);
   const size_t N = Func.Params.size();
+  // A va_start forwarder declares its named parameters; the saved registers
+  // are its `...`.
+  if (const HighFunc::VaStartForwarder *Va = vaStartForwarder(Func)) {
+    All.resize(std::min<size_t>(Va->NamedParams, N));
+    for (size_t I = 0; I < All.size(); ++I)
+      All[I] = I;
+    EmittedParamIndices[Key] = All;
+    return All;
+  }
   if (DebugFn &&
       isMsvcIndirectReturn(DebugFn->ReturnType, Opts.TheArch, Opts.Format)) {
     All.resize(N);
@@ -5981,12 +5990,14 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     const std::vector<size_t> ParamIndices = emittedParamIndices(Func);
     const bool Indirect = !IndirectReturnName.empty();
     size_t Emitted = 0;
+    VaStartLastNamed.clear();
     auto emitParam = [&](TypeRef Ty, std::string Name) {
       if (Emitted > 0)
         Declarator += ", ";
       const std::string Identifier =
           ParameterIdentifiers.allocate(Name, "nd_arg");
       Declarator += declaredAs(Ty, Identifier);
+      VaStartLastNamed = Identifier;
       // A parameter's name has its declared type, as a local's has.
       if (const TypeRef Display = cDisplayType(Ty);
           Display && Display->Kind == NdTypeKind::Int && !Display->IsEnum)
@@ -6046,6 +6057,8 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       emitParam(unreadDeclaredParamType(Func, Index),
                 Name.empty() ? "unread" + std::to_string(Index) : Name);
     }
+    if (currentVaStart() && Emitted > 0)
+      Declarator += ", ...";
     if (Emitted == 0)
       Declarator += "void";
     OS << declaredAs(ReturnType, Declarator + ")") << " {\n";
@@ -6541,6 +6554,13 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       continue;
     emitIndent(1);
     OS << Type << " " << Name << ";\n";
+  }
+  // A va_start forwarder's va_list is C's own.
+  if (currentVaStart() && !VaStartLastNamed.empty()) {
+    emitIndent(1);
+    OS << "va_list arguments;\n";
+    emitIndent(1);
+    OS << "va_start(arguments, " << VaStartLastNamed << ");\n";
   }
   if (SourceRecorder && SourceRecorder->recordsPositions())
     SourceRecorder->appendPositionBuffer(FirstBodyAnchor, Body.size(),

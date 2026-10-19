@@ -540,6 +540,16 @@ struct MedFunc {
   /// the convention saves none.
   int VariadicFirstVectorRegister = -1;
 
+  /// System V x86-64 va_start, where the prologue initializes one va_list:
+  /// the va_list's and the register save area's displacements from the entry
+  /// stack pointer, and how many integer argument registers carry named
+  /// parameters (gp_offset / 8).  Only the C writer reads them, to print the
+  /// function with `...`; call recovery and the LLVM route keep taking the
+  /// saved registers as parameters (VariadicFirstRegister stays unset).
+  std::optional<int64_t> VaListDisplacement;
+  std::optional<int64_t> VaRegisterSaveArea;
+  int VaNamedIntegerRegisters = -1;
+
   /// Whether this variadic function's register save area holds the vector
   /// argument registers (System V x86-64): it then takes every integer and
   /// vector argument register as a parameter, in that order, before the

@@ -593,6 +593,33 @@ struct HighFunc {
   /// MedFunc::IsVariadic: its prologue saves its argument registers for
   /// va_arg, which reads no more of them than a caller passes.
   bool IsVariadic = false;
+  /// A System V x86-64 function whose va_start only builds a va_list it
+  /// passes on (`error(fmt, ...)` calling `verror(fmt, va)`): C prints it as
+  /// `T f(named, ...)` with va_start, and its calls with the arguments each
+  /// caller passes.  The rest of its body never reads the saved registers,
+  /// the va_list or the overflow parameters (recognizeVaStartForwarder).
+  struct VaStartForwarder {
+    /// The System V x86-64 va_list's bytes, and the register save area's:
+    /// the six integer argument registers' then the eight vector ones'.
+    static constexpr int64_t VaListBytes = 24;
+    static constexpr int64_t SaveAreaBytes = 6 * 8 + 8 * 16;
+    /// The va_list's and the register save area's entry displacements.
+    int64_t VaList = 0;
+    int64_t SaveArea = 0;
+    /// The integer parameters ahead of the saved registers.
+    unsigned NamedParams = 0;
+    /// The call operands that pass the va_list, as (call address, operand).
+    std::set<std::pair<va_t, unsigned>> Passes;
+    /// Call operands that only hold the address of one of va_start's areas:
+    /// its fields, stored where a stack argument would be, read back as one.
+    /// The C writer prints the function this way only if no call passes one.
+    std::set<std::pair<va_t, unsigned>> Junk;
+  };
+  std::optional<VaStartForwarder> VaStart;
+  /// MedFunc's va_start geometry, which recognizeVaStartForwarder reads.
+  std::optional<int64_t> VaListDisplacement;
+  std::optional<int64_t> VaRegisterSaveArea;
+  int VaNamedIntegerRegisters = -1;
   /// How execution reaches Entry (MedFunc::EntryKind).
   StackEntryKind EntryKind = StackEntryKind::Call;
   TypeRef ReturnType;
