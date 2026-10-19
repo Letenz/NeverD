@@ -92,7 +92,10 @@ def run(executable):
                 for query in (function["name"], hex(entry + 1)):
                     resolved = client.call("resolve", {"query": query})
                     assert resolved["status"] == "ok", resolved
-                    assert resolved["payload"]["function_address"] == hex(entry)
+                    assert resolved["payload"]["function_address"] == hex(entry), {
+                        "architecture": "arm64" if arm64 else "x86_64",
+                        "query": query, "expected_function": function, "response": resolved,
+                    }
                 for stage in ("c", "llvmc"):
                     reply = client.call("decompile", {"address": hex(entry), "representation": stage, "limit": 2048})
                     assert reply["status"] == "ok", reply
