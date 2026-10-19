@@ -183,6 +183,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_CmpxchgTests.cpp
   x86_64/X86_64_CFGEntryTests.cpp
   x86_64/X86_64_ColdFragmentTests.cpp
+  x86_64/X86_64_NoReturnCallTests.cpp
   x86_64/X86_64_ComputedGotoTests.cpp
   x86_64/X86_64_ControlFlowTests.cpp
   x86_64/X86_64_ControlSemanticsTests.cpp
@@ -3751,6 +3752,29 @@ if(LLD_EXEC)
     COMMENT "Linking x86-64 GCC cold fragment fixtures")
   list(APPEND ELF_EXECUTABLES ${gcc_cold_x64_obj} ${gcc_cold_x64_so}
                               ${gcc_cold_x64_stripped})
+
+  # Functions that never return, and callers whose compiler knew it, linked
+  # and stripped.
+  set(noreturn_calls_x64_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_noreturn_calls_x64.s")
+  set(noreturn_calls_x64_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_noreturn_calls_x64.o")
+  set(noreturn_calls_x64_stripped
+      "${CMAKE_CURRENT_BINARY_DIR}/test_noreturn_calls_x64_stripped.so")
+  add_custom_command(
+    OUTPUT ${noreturn_calls_x64_obj}
+    COMMAND ${CLANG_EXEC} -target x86_64-linux-gnu -c ${noreturn_calls_x64_src}
+            -o ${noreturn_calls_x64_obj}
+    DEPENDS ${noreturn_calls_x64_src}
+    COMMENT "Compiling x86-64 no-return call fixture")
+  add_custom_command(
+    OUTPUT ${noreturn_calls_x64_stripped}
+    COMMAND ${LLD_EXEC} -shared --eh-frame-hdr -s -o
+            ${noreturn_calls_x64_stripped} ${noreturn_calls_x64_obj}
+    DEPENDS ${noreturn_calls_x64_obj}
+    COMMENT "Linking x86-64 no-return call fixture")
+  list(APPEND ELF_EXECUTABLES ${noreturn_calls_x64_obj}
+                              ${noreturn_calls_x64_stripped})
 
   # Switch tables of an i386 shared library, relative to its GOT address.
   set(pic_switch_i386_src
