@@ -175,6 +175,25 @@ SearchOutcome enumerateShortest(SymContext &Ctx, const SynthProblem &P,
   if (Opts.MaxCost == 1)
     return Result;
 
+  // Whole coefficient vectors are cheap to read and expensive to enumerate.
+  // Keep terminal proofs first, and share their refutation cache with this
+  // optional proposal so a sampling collision is never proved twice.
+  if (Opts.UseAffineFitting) {
+    SearchOutcome Affine =
+        fitAffine(Ctx, P, Opts, Effort, Check, Verify, ProofQueries);
+    Affine.SawRefuted |= Result.SawRefuted;
+    if (Affine.Candidate.isValid() || Affine.StopForProof)
+      return Affine;
+    Result.SawRefuted = Affine.SawRefuted;
+    SearchOutcome Typed =
+        fitTypedAffine(Ctx, P, Opts, Effort, Verify, ProofQueries);
+    Typed.SawRefuted |= Result.SawRefuted;
+    if (Typed.Candidate.isValid() || Typed.StopForProof)
+      return Typed;
+    Result.SawRefuted = Typed.SawRefuted;
+    Result.SawBudgetExhausted = Typed.SawBudgetExhausted;
+  }
+
   // Literal terms alone, for the shifts: an amount that is itself computed
   // multiplies the branching factor of every shift by the whole pool, for a
   // shape that hardly occurs in what this engine is aimed at.  Read back out

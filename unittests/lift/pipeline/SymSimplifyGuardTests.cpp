@@ -1342,6 +1342,57 @@ TEST(SymSimplifyGuard, SynthesisEquivalent) {
   EXPECT_EQ(LogicalShiftsByFour, 1u) << printFunction(*F);
 }
 
+TEST(SymSimplifyGuard, SemanticAffineSynthesisAcrossBlocksAndAtCallArguments) {
+  for (bool AtCall : {false, true}) {
+    SCOPED_TRACE(AtCall);
+    llvm::LLVMContext C;
+    llvm::Module M("semantic_affine", C);
+    auto *I32 = llvm::Type::getInt32Ty(C);
+    auto *FT = llvm::FunctionType::get(I32, {I32, I32, I32}, false);
+    auto *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                     "affine", M);
+    for (llvm::Argument &A : F->args())
+      A.addAttr(llvm::Attribute::NoUndef);
+    auto *Entry = llvm::BasicBlock::Create(C, "entry", F);
+    auto *Use = llvm::BasicBlock::Create(C, "use", F);
+    llvm::IRBuilder<> B(Entry);
+    llvm::Value *X = F->getArg(0), *Y = F->getArg(1), *Z = F->getArg(2);
+    llvm::Value *Direct = B.CreateLShr(X, B.getInt32(4));
+    llvm::Value *Half = B.CreateLShr(X, B.getInt32(2));
+    B.CreateBr(Use);
+    B.SetInsertPoint(Use);
+    llvm::Value *Nested = B.CreateLShr(Half, B.getInt32(2));
+    llvm::Value *Sum = B.CreateAdd(B.CreateMul(X, B.getInt32(182)),
+                                   B.CreateMul(Y, B.getInt32(73)));
+    Sum = B.CreateAdd(Sum, B.CreateMul(Z, B.getInt32(211)));
+    Sum = B.CreateAdd(Sum, B.CreateSub(Direct, Nested));
+    if (AtCall) {
+      auto Sink = M.getOrInsertFunction(
+          "observable_sink", llvm::FunctionType::get(I32, {I32}, false));
+      B.CreateRet(B.CreateCall(Sink, {Sum}));
+    } else {
+      B.CreateRet(Sum);
+    }
+    ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    SymSimplifyOptions Opts = synthesisOptions();
+    Opts.Synthesis.MaxCost = 32;
+    Opts.Synthesis.MaxConstants = 0;
+    Opts.Synthesis.MaxWork = 20000;
+    const auto Result = SymSimplifyPass::simplifyWithResult(*F, Opts);
+    EXPECT_GT(Result.Rewrites, 0u) << printFunction(*F);
+    EXPECT_EQ(Result.Proof, solver::ProofStatus::Equivalent);
+    EXPECT_GT(Result.ProofWork.Queries, 0u);
+    EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    unsigned Shifts = 0, Calls = 0;
+    for (const llvm::Instruction &I : llvm::instructions(*F)) {
+      Shifts += I.getOpcode() == llvm::Instruction::LShr;
+      Calls += llvm::isa<llvm::CallInst>(I);
+    }
+    EXPECT_EQ(Shifts, 0u) << printFunction(*F);
+    EXPECT_EQ(Calls, unsigned(AtCall));
+  }
+}
+
 TEST(SymSimplifyGuard, SynthesisDifferentLeavesIRUnchanged) {
   llvm::LLVMContext C;
   llvm::Module M("m", C);
