@@ -300,6 +300,12 @@ public:
   void setFuncNames(const std::map<va_t, std::string> *Names) {
     FuncNames = Names;
   }
+  /// The name of the function at every address an export or a symbol of the
+  /// image names, as functionNamesAt() gives it: resolveCalleeNames() reads
+  /// it rather than scanning the image's symbols for its targets.
+  void setImageFunctionNames(const std::map<va_t, std::string> *Names) {
+    ImageFunctionNames = Names;
+  }
   /// Resolve call targets once before parallel conversion. Workers read the
   /// resulting snapshot while lowering functions from the same image.
   void resolveCalleeNames(const std::set<va_t> &Targets,
@@ -573,6 +579,7 @@ private:
   Arch TargetArch = Arch::Unknown;
   const std::map<va_t, std::string> *FuncNames = nullptr;
   const std::map<va_t, std::string> *ResolvedCalleeNames = nullptr;
+  const std::map<va_t, std::string> *ImageFunctionNames = nullptr;
   const std::map<va_t, int> *VariadicVectorCallees = nullptr;
   const std::set<va_t> *UserPrototypeCallees = nullptr;
   int NextHighTempId = 0;

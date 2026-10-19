@@ -416,6 +416,10 @@ const char *neverd_warm_functions_json(neverd_session_t Sess,
       Opts.AnalysisCache = &S->AnalysisCache;
       Warmup = Pipeline().warmAnalysisCache(S->Img, Opts, S->decompileDebug(),
                                             Entries);
+      // The prototypes of callees are read by the names the image states
+      // for them; read those here too.
+      if (const LocalTypesDebugContext *Local = S->LocalTypesDbg.get())
+        Local->indexStatedNames();
       Next = Page.NextEntry;
     }
     llvm::json::Object Result;
