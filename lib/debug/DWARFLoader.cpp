@@ -337,6 +337,21 @@ struct DWARFDebugContext::Impl {
   };
 
   std::map<va_t, FunctionInfo> Functions;
+  /// Each range of each of Functions, by its start, and the greatest end of
+  /// the ranges up to each, so that the functions whose ranges contain an
+  /// address are found without reading every function (functionsContaining).
+  struct FunctionRange {
+    va_t Begin;
+    va_t End;
+    va_t Entry;
+  };
+  std::vector<FunctionRange> FunctionRanges;
+  std::vector<va_t> FunctionRangeEndsSoFar;
+  /// Reads FunctionRanges from Functions, which loading has filled.
+  void indexFunctionRanges();
+  /// The entries of the functions one of whose ranges contains \p PC, in
+  /// entry order and each once: those of Functions containsPC finds.
+  llvm::SmallVector<va_t, 4> functionsContaining(va_t PC) const;
   dwarf_loader_detail::SubprogramExtentRegistry SubprogramExtents;
   std::vector<DataObjectSym> DataObjects;
 
@@ -1967,6 +1982,44 @@ void DWARFDebugContext::Impl::parseCompileUnits(
             [](const FunctionSym &A, const FunctionSym &B) {
               return A.Addr < B.Addr;
             });
+  indexFunctionRanges();
+}
+
+void DWARFDebugContext::Impl::indexFunctionRanges() {
+  FunctionRanges.clear();
+  for (const auto &[Entry, Info] : Functions)
+    for (const auto &[Begin, End] : Info.Ranges)
+      if (Begin < End)
+        FunctionRanges.push_back({Begin, End, Entry});
+  std::sort(FunctionRanges.begin(), FunctionRanges.end(),
+            [](const FunctionRange &A, const FunctionRange &B) {
+              return A.Begin < B.Begin;
+            });
+  FunctionRangeEndsSoFar.resize(FunctionRanges.size());
+  va_t Greatest = 0;
+  for (size_t I = 0; I < FunctionRanges.size(); ++I)
+    FunctionRangeEndsSoFar[I] = Greatest =
+        std::max(Greatest, FunctionRanges[I].End);
+}
+
+llvm::SmallVector<va_t, 4>
+DWARFDebugContext::Impl::functionsContaining(va_t PC) const {
+  llvm::SmallVector<va_t, 4> Entries;
+  // Of the ranges that start at or before PC, those that end after it
+  // contain it; none does before the last range whose end so far is past PC.
+  size_t I = std::upper_bound(FunctionRanges.begin(), FunctionRanges.end(), PC,
+                              [](va_t Value, const FunctionRange &Range) {
+                                return Value < Range.Begin;
+                              }) -
+             FunctionRanges.begin();
+  while (I > 0 && FunctionRangeEndsSoFar[I - 1] > PC) {
+    --I;
+    if (FunctionRanges[I].End > PC)
+      Entries.push_back(FunctionRanges[I].Entry);
+  }
+  std::sort(Entries.begin(), Entries.end());
+  Entries.erase(std::unique(Entries.begin(), Entries.end()), Entries.end());
+  return Entries;
 }
 
 VariableExtentLookup DWARFDebugContext::Impl::lookupLocal(
@@ -1978,14 +2031,12 @@ VariableExtentLookup DWARFDebugContext::Impl::lookupLocal(
       return VariableExtentLookup::ambiguous();
     Function = &It->second;
   } else {
-    for (const auto &[Entry, Candidate] : Functions) {
-      if (!containsPC(FuncAddr, Candidate.Ranges))
-        continue;
+    for (const va_t Entry : functionsContaining(FuncAddr)) {
       if (SubprogramExtents.isAmbiguous(Entry))
         return VariableExtentLookup::ambiguous();
       if (Function)
         return VariableExtentLookup::ambiguous();
-      Function = &Candidate;
+      Function = &Functions.at(Entry);
     }
   }
   if (!Function)
@@ -2116,9 +2167,7 @@ std::optional<FunctionSym> DWARFDebugContext::resolveFunction(va_t Addr) const {
     return It->second;
 
   const FunctionSym *Resolved = nullptr;
-  for (const auto &[Entry, Info] : PImpl->Functions) {
-    if (!containsPC(Addr, Info.Ranges))
-      continue;
+  for (const va_t Entry : PImpl->functionsContaining(Addr)) {
     auto Sym = PImpl->FuncMap.find(Entry);
     if (Sym == PImpl->FuncMap.end() || Resolved)
       return std::nullopt;
