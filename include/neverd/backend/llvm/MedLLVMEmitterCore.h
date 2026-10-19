@@ -1240,6 +1240,17 @@ private:
   const JumpTable *jumpTableForLoad(const MedOp &Load,
                                     bool RequireTerminalExclusive) const;
 
+  /// Collect, for \p Func, the operations that only form the address of a
+  /// target LOAD recoveredJumpTableForLoad omits: the address's forwarding
+  /// copies and extensions, back to the addition of the table's base.  Each
+  /// one's value is used nowhere else, so emitOp skips it, and the base is
+  /// never materialized: a table placed among the code of a segment too large
+  /// to mirror has no global, and the switch dispatches on its selector.
+  void collectSuppressedTableAddressOps(const MedFunc &Func);
+  /// (block id, op index) of each operation collectSuppressedTableAddressOps
+  /// found in the function being emitted.
+  std::set<std::pair<int, int>> SuppressedTableAddressOps;
+
   /// Resolve a load/store whose address folds to a constant inside a segment
   /// holding relocated pointer slots — a *writable* function-pointer global
   /// (`static int (*fp)(int)=f; fp=cond?f:g;`) in plain .data, whose i386 PIC
@@ -1962,6 +1973,33 @@ private:
   mutable std::unordered_map<
       BoundFrameSlotQuery, std::optional<med_llvm::SlotKey>, FrameSlotQueryHash>
       BoundFrameSlotCache;
+  /// The slot key of each value an affine chain from a frame root reaches on
+  /// every feasible path of the function being emitted (affineFrameKey).
+  struct AffineFrameKey {
+    med_llvm::SlotKey Key;
+    /// The root is the entry stack pointer, rather than a live-in frame
+    /// pointer or a runtime definition.
+    bool EntryStackPointer = false;
+  };
+  struct AffineFrameKeyHash {
+    size_t operator()(const AddressProvenanceVarKey &K) const {
+      return llvm::hash_value(K);
+    }
+  };
+  mutable const MedFunc *AffineFrameKeysFor = nullptr;
+  mutable uint64_t AffineFrameKeysGeneration = 0;
+  mutable std::unordered_map<AddressProvenanceVarKey, AffineFrameKey,
+                             AffineFrameKeyHash>
+      AffineFrameKeys;
+  /// The slot key of \p V among the function's affine frame keys, solved
+  /// once per function and feasible-edge generation by an optimistic fixed
+  /// point, which closes every stack-pointer cycle at once; nullopt for a
+  /// value no such chain reaches, and under \p RequireEntryStackPointer for
+  /// one rooted elsewhere.  canonicalFrameSlotKey's walk closes a cycle only
+  /// back to the value it resolves, so an inner loop's merge on an outer
+  /// loop's back edge defeats it.
+  std::optional<med_llvm::SlotKey>
+  affineFrameKey(const MedVar &V, bool RequireEntryStackPointer) const;
   // A failed select/PHI table audit has no LLVM value to cache, but its
   // MedIR result is independent of the current IRBuilder.
   mutable const MedFunc *SelectMergeFailureCacheFor = nullptr;

@@ -21,7 +21,11 @@
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 
@@ -816,4 +820,182 @@ TEST(X86_32_FunctionDiscovery, SwitchTableAmongCodeBelongsToItsFunction) {
   EXPECT_EQ(std::set<va_t>(Switch.JumpTables.front().Targets.begin(),
                            Switch.JumpTables.front().Targets.end()),
             (std::set<va_t>{0x401012, 0x401019, 0x401020}));
+}
+
+TEST(X86_32_FunctionDiscovery, SwitchTableAmongCodeLiftsPastTheMirrorLimit) {
+  // The table follows its dispatcher in a .text larger than the LLVM emitter
+  // mirrors as one global.  The recovered switch dispatches on its selector
+  // and omits the table LOAD, so the address that LOAD would read, and the
+  // table's base in it, are never formed and need no global.
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  std::vector<uint8_t> Text;
+  auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Text.insert(Text.end(), Bytes);
+  };
+  Emit({0x55, 0x8B, 0xEC});                         // push ebp; mov ebp, esp
+  Emit({0x8B, 0x45, 0x08});                         // mov eax, [ebp+8]
+  Emit({0x83, 0xF8, 0x02, 0x77, 0x1D});             // cmp eax, 2; ja 0x401028
+  Emit({0xFF, 0x24, 0x85, 0x2E, 0x10, 0x40, 0x00}); // jmp [eax*4+0x40102E]
+  Emit({0xB8, 0x0A, 0x00, 0x00, 0x00, 0x5D, 0xC3}); // 0x401012: case 0
+  Emit({0xB8, 0x14, 0x00, 0x00, 0x00, 0x5D, 0xC3}); // 0x401019: case 1
+  Emit({0xB8, 0x1E, 0x00, 0x00, 0x00, 0x5D, 0xC3}); // 0x401020: case 2
+  Emit({0x90, 0x33, 0xC0, 0x5D, 0xC3});             // nop; 0x401028: default
+  Emit({0x8B, 0xC0});                               // mov eax, eax
+  Emit({0x12, 0x10, 0x40, 0x00, 0x19, 0x10});       // 0x40102E: the table
+  Emit({0x40, 0x00, 0x20, 0x10, 0x40, 0x00});       //
+  Text.resize(limits::kMaxSingleGlobalEmbedLen + 0x1000, 0xCC);
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+  recordAbsolutePointerRelocations(Img, {{0x40100E, 0x40102E, InvalidVA},
+                                         {0x40102E, 0x401012, InvalidVA},
+                                         {0x401032, 0x401019, InvalidVA},
+                                         {0x401036, 0x401020, InvalidVA}});
+  coff_loader::recordRelocatedPointerRunsInCode(Img);
+  ASSERT_TRUE(Img.DataInCode.count(0x40102E));
+
+  // A large module's arbitration runs out of budget and leaves no slot
+  // suppressible; a budget of zero does the same here.
+  for (std::optional<size_t> Budget :
+       {std::optional<size_t>(), std::optional<size_t>(0)})
+    for (bool NoOpt : {true, false}) {
+      SCOPED_TRACE(NoOpt);
+      SCOPED_TRACE(Budget.has_value());
+      llvm::LLVMContext Ctx;
+      PipelineOptions Opts;
+      Opts.EmitDumpOutput = false;
+      Opts.LiftMode = true;
+      Opts.NoOpt = NoOpt;
+      Opts.JumpTableEvidenceBudgetForTesting = Budget;
+      Opts.OnlyFunctionEntries = {0x401000};
+      const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      ASSERT_NE(Result.LlvmModule, nullptr);
+      EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+      if (!NoOpt)
+        continue; // the optimizer folds the cases' constants into arithmetic
+      bool Dispatches = false;
+      for (const llvm::Function &Function : *Result.LlvmModule)
+        for (const llvm::BasicBlock &Block : Function)
+          if (const auto *Switch = llvm::dyn_cast_or_null<llvm::SwitchInst>(
+                  Block.getTerminator()))
+            Dispatches |= Switch->getNumCases() == 3;
+      EXPECT_TRUE(Dispatches) << "the three cases dispatch through a switch";
+    }
+}
+
+TEST(X86_32_FunctionDiscovery, APointerSpilledAcrossALoopsCallsKeepsItsTable) {
+  // A loop walks an array of integers in .rdata with a pointer it keeps in a
+  // frame slot across the call in its body: `add dword ptr [ebp-4], 4`.  The
+  // slot holds the array's address or itself advanced, so every read through
+  // it reads the array, which the LLVM emitter mirrors with the code pointer
+  // beside it.
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  std::vector<uint8_t> Text;
+  auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Text.insert(Text.end(), Bytes);
+  };
+  Emit({0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x08}); // push ebp; mov ebp, esp; sub
+  Emit({0xC7, 0x45, 0xFC, 0x00, 0x20, 0x40, 0x00}); // mov [ebp-4], 0x402000
+  Emit({0xC7, 0x45, 0xF8, 0x00, 0x00, 0x00, 0x00}); // mov [ebp-8], 0
+  Emit({0x8B, 0x45, 0xFC});                   // 0x401014: mov eax, [ebp-4]
+  Emit({0x8B, 0x00, 0x50});                   // mov eax, [eax]; push eax
+  Emit({0xE8, 0x21, 0x00, 0x00, 0x00});       // call 0x401040
+  Emit({0x83, 0xC4, 0x04});                   // add esp, 4
+  Emit({0x83, 0x45, 0xFC, 0x04});             // add [ebp-4], 4
+  Emit({0xFF, 0x45, 0xF8});                   // inc [ebp-8]
+  Emit({0x83, 0x7D, 0xF8, 0x03, 0x7C, 0xE5}); // cmp [ebp-8], 3; jl
+  Emit({0x8B, 0xE5, 0x5D, 0xC3});             // mov esp, ebp; pop; ret
+  Text.resize(0x40, 0xCC);
+  Emit({0x8B, 0x44, 0x24, 0x04, 0xC3}); // 0x401040: mov eax, [esp+4]; ret
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+  addPeSection(Img, ".rdata", 0x402000,
+               {0x05, 0, 0, 0, 0x0F, 0, 0, 0, 0x1E, 0, 0, 0, // the integers
+                0x40, 0x10, 0x40, 0x00},                     // &0x401040
+               SegmentFlags::Readable);
+  recordAbsolutePointerRelocations(
+      Img, {{0x401009, 0x402000, InvalidVA}, {0x40200C, 0x401040, InvalidVA}});
+  ASSERT_TRUE(Img.CodePtrRelocSlots.count(0x40200C));
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.LiftMode = true;
+  Opts.OnlyFunctionEntries = {0x401000, 0x401040};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_NE(Result.LlvmModule, nullptr);
+  EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+}
+
+TEST(X86_32_FunctionDiscovery, ANestedLoopsSpilledIndexStaysAnOffset) {
+  // An outer loop keeps its index in a frame slot and an inner loop its
+  // record pointer, `&table[i]` advanced by 4, across a call that takes a
+  // pushed argument.  Each loop header merges ESP, and the inner loop's merge
+  // lies on the outer one's back edge; every value it merges is the frame's
+  // own ESP, so the pushes stay frame slots apart from the two spills.
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  std::vector<uint8_t> Text;
+  auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Text.insert(Text.end(), Bytes);
+  };
+  Emit({0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x0C}); // push ebp; mov ebp, esp; sub
+  Emit({0xC7, 0x45, 0xFC, 0x00, 0x00, 0x00, 0x00}); // mov [ebp-4], 0
+  Emit({0x8B, 0x45, 0xFC});             // 0x40100D: mov eax, [ebp-4]
+  Emit({0x6B, 0xC0, 0x0C});             // imul eax, eax, 12
+  Emit({0x05, 0x00, 0x20, 0x40, 0x00}); // add eax, 0x402000
+  Emit({0x89, 0x45, 0xF8});             // mov [ebp-8], eax
+  Emit({0xC7, 0x45, 0xF4, 0x00, 0x00, 0x00, 0x00}); // mov [ebp-0Ch], 0
+  Emit({0x8B, 0x45, 0xF8});                   // 0x401022: mov eax, [ebp-8]
+  Emit({0x8B, 0x00, 0x50});                   // mov eax, [eax]; push eax
+  Emit({0xE8, 0x33, 0x00, 0x00, 0x00});       // call 0x401060
+  Emit({0x83, 0xC4, 0x04});                   // add esp, 4
+  Emit({0x83, 0x45, 0xF8, 0x04});             // add [ebp-8], 4
+  Emit({0xFF, 0x45, 0xF4});                   // inc [ebp-0Ch]
+  Emit({0x83, 0x7D, 0xF4, 0x03, 0x7C, 0xE5}); // cmp [ebp-0Ch], 3; jl
+  Emit({0xFF, 0x45, 0xFC});                   // inc [ebp-4]
+  Emit({0x83, 0x7D, 0xFC, 0x02, 0x7C, 0xC7}); // cmp [ebp-4], 2; jl
+  Emit({0x8B, 0xE5, 0x5D, 0xC3});             // mov esp, ebp; pop; ret
+  Text.resize(0x60, 0xCC);
+  Emit({0x8B, 0x44, 0x24, 0x04, 0xC3}); // 0x401060: mov eax, [esp+4]; ret
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+  // Two records of three integers, then the helper's address.
+  std::vector<uint8_t> Rdata;
+  for (uint32_t Word : {5u, 15u, 30u, 7u, 8u, 9u, 0x401060u})
+    for (unsigned Byte = 0; Byte < 4; ++Byte)
+      Rdata.push_back(static_cast<uint8_t>(Word >> (8 * Byte)));
+  addPeSection(Img, ".rdata", 0x402000, std::move(Rdata),
+               SegmentFlags::Readable);
+  recordAbsolutePointerRelocations(
+      Img, {{0x401014, 0x402000, InvalidVA}, {0x402018, 0x401060, InvalidVA}});
+  ASSERT_TRUE(Img.CodePtrRelocSlots.count(0x402018));
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.LiftMode = true;
+  Opts.OnlyFunctionEntries = {0x401000, 0x401060};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_NE(Result.LlvmModule, nullptr);
+  EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
 }

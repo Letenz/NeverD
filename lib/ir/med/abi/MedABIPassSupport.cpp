@@ -1199,6 +1199,30 @@ const PhiNode *selectAuthoritativeArgPhi(const MedFunc &Func,
   return Best;
 }
 
+const PhiNode *argPhiReachingCall(const MedFunc &Func, const MedBlock &Block,
+                                  int CallIdx, const TargetRegInfo &TRI,
+                                  int ArgIdx,
+                                  const IntegerArgumentLayout &Layout,
+                                  BinaryFormat Format) {
+  if (ArgIdx < 0 || ArgIdx >= static_cast<int>(Layout.Registers.size()))
+    return nullptr;
+  const uint64_t ArgReg = Layout.Registers[ArgIdx];
+  const auto ArgBytes = static_cast<uint16_t>(TRI.PointerSize);
+  auto writesArgument = [&](const MedVar &V) {
+    return V.Kind == MedVar::Reg && V.Size > 0 &&
+           Layout.registerIndex(V.RegOff) == ArgIdx;
+  };
+  const int End = std::min(CallIdx, static_cast<int>(Block.Ops.size()));
+  for (int J = 0; J < End; ++J) {
+    const MedOp &Op = Block.Ops[J];
+    if (writesArgument(Op.Output) ||
+        llvm::any_of(Op.IntrinsicOutputs, writesArgument) ||
+        callClobbersRegister(Op, ArgReg, ArgBytes, TRI, Format))
+      return nullptr;
+  }
+  return selectAuthoritativeArgPhi(Func, Block, TRI, ArgIdx, Layout);
+}
+
 // Value reaching argument register \p ArgIdx at the call in (\p BlockId,
 // \p OpIdx), found by walking the CFG backwards into predecessor blocks: the
 // nearest write to that argument register, then a block PHI for it.  Returns
