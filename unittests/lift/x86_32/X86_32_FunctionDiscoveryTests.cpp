@@ -28,6 +28,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <iterator>
 
 using namespace neverd;
 
@@ -110,6 +111,77 @@ static bool hasEntry(const std::vector<std::pair<va_t, std::string>> &Functions,
                      [Addr](const auto &F) { return F.first == Addr; });
 }
 
+TEST(X86_32_FunctionDiscovery, PrologueMatchesInsideAFunctionAreItsCode) {
+  // The entry's own code falls into a 16-byte-aligned `push esi; push edi`
+  // in its prologue and branches back to an aligned loop head `mov esi,
+  // [esp+38h]` that it otherwise jumps over: both match the unsymbolized
+  // prologue scan, yet both are the entry's code.  A padded function after
+  // it, and one only the entry's tail jump reaches, remain entries.
+  std::vector<uint8_t> Bytes(0x70, 0xCC);
+  const uint8_t Entry[] = {0x55,                   // 401000 push ebp
+                           0x8B, 0xEC,             // 401001 mov ebp, esp
+                           0x83, 0xEC, 0x40,       // 401003 sub esp, 40h
+                           0x53,                   // 401006 push ebx
+                           0x8B, 0x5D, 0x08,       // 401007 mov ebx, [ebp+8]
+                           0x8B, 0x45, 0x0C,       // 40100A mov eax, [ebp+0Ch]
+                           0x8B, 0x4D, 0x10,       // 40100D mov ecx, [ebp+10h]
+                           0x56,                   // 401010 push esi
+                           0x57,                   // 401011 push edi
+                           0x33, 0xF6,             // 401012 xor esi, esi
+                           0xEB, 0x0E,             // 401014 jmp 401024h
+                           0x90, 0x90, 0x90, 0x90, // 401016 loop-head alignment
+                           0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+                           0x8B, 0x74, 0x24, 0x38, // 401020 mov esi, [esp+38h]
+                           0x46,                   // 401024 inc esi
+                           0x83, 0xFE, 0x10,       // 401025 cmp esi, 10h
+                           0x72, 0xF6,             // 401028 jb 401020h
+                           0x5F,                   // 40102A pop edi
+                           0x5E,                   // 40102B pop esi
+                           0x5B,                   // 40102C pop ebx
+                           0xE9, 0x2E, 0x00, 0x00, 0x00}; // 40102D jmp 401060h
+  std::copy(std::begin(Entry), std::end(Entry), Bytes.begin());
+  const uint8_t Padded[] = {0x8B, 0x44, 0x24, 0x04, 0xC3};
+  std::copy(std::begin(Padded), std::end(Padded), Bytes.begin() + 0x40);
+  const uint8_t TailTarget[] = {0x56, 0x57, 0x8B, 0x44, 0x24,
+                                0x0C, 0x5F, 0x5E, 0xC3};
+  std::copy(std::begin(TailTarget), std::end(TailTarget), Bytes.begin() + 0x60);
+
+  BinaryImage Img = makePeText(std::move(Bytes));
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  const auto Functions = Detector.detect(Img, Dec);
+  EXPECT_TRUE(hasEntry(Functions, 0x401000));
+  EXPECT_FALSE(hasEntry(Functions, 0x401010)) << "fallen into";
+  EXPECT_FALSE(hasEntry(Functions, 0x401020)) << "a loop's back edge";
+  EXPECT_TRUE(hasEntry(Functions, 0x401040)) << "a padded function";
+  EXPECT_TRUE(hasEntry(Functions, 0x401060)) << "a tail jump's target";
+}
+
+TEST(X86_32_FunctionDiscovery, AFramePrologueAfterACallStaysAnEntry) {
+  // A call the detector cannot prove returns may be the last instruction of
+  // its function, so a frame prologue right after it is the next function.
+  std::vector<uint8_t> Bytes(0x50, 0xCC);
+  Bytes[0] = 0x55; // 401000 push ebp
+  Bytes[1] = 0x8B; // 401001 mov ebp, esp
+  Bytes[2] = 0xEC;
+  std::fill(Bytes.begin() + 3, Bytes.begin() + 0x1B, 0x90);
+  const uint8_t Call[] = {0xE8, 0x20, 0x00, 0x00, 0x00}; // 40101B call 401040h
+  std::copy(std::begin(Call), std::end(Call), Bytes.begin() + 0x1B);
+  const uint8_t Frame[] = {0x55, 0x8B, 0xEC, 0x5D, 0xC3};
+  std::copy(std::begin(Frame), std::end(Frame), Bytes.begin() + 0x20);
+  std::copy(std::begin(Frame), std::end(Frame), Bytes.begin() + 0x40);
+
+  BinaryImage Img = makePeText(std::move(Bytes));
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  const auto Functions = Detector.detect(Img, Dec);
+  EXPECT_TRUE(hasEntry(Functions, 0x401000));
+  EXPECT_TRUE(hasEntry(Functions, 0x401020));
+  EXPECT_TRUE(hasEntry(Functions, 0x401040));
+}
+
 TEST(X86_32_FunctionDiscovery, RecoversUnalignedFramePrologue) {
   std::vector<uint8_t> Bytes(0x20, 0xCC);
   const uint8_t Entry[] = {0x55, 0x8B, 0xEC, 0x5D, 0xC3};
@@ -125,6 +197,67 @@ TEST(X86_32_FunctionDiscovery, RecoversUnalignedFramePrologue) {
   EXPECT_TRUE(hasEntry(Functions, 0x401000));
   EXPECT_TRUE(hasEntry(Functions, 0x401009))
       << "expected unaligned push-ebp frame prologue";
+}
+
+TEST(X86_32_FunctionDiscovery,
+     APushOfEbpWithoutTheFrameMoveIsNoUnalignedEntry) {
+  // `push 55h; mov eax, esi` holds the bytes 55 8B C6 one byte into its
+  // first instruction.  A push of EBP followed by just any move is no frame
+  // setup, so the unaligned scan takes it for none.
+  std::vector<uint8_t> Bytes(0x20, 0xCC);
+  const uint8_t Entry[] = {0x55, 0x8B, 0xEC, // 401000 push ebp; mov ebp, esp
+                           0x6A, 0x55,       // 401003 push 55h
+                           0x8B, 0xC6,       // 401005 mov eax, esi
+                           0x83, 0xC4, 0x04, // 401007 add esp, 4
+                           0x5D, 0xC3};      // 40100A pop ebp; ret
+  std::copy(std::begin(Entry), std::end(Entry), Bytes.begin());
+
+  BinaryImage Img = makePeText(std::move(Bytes));
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  const auto Functions = Detector.detect(Img, Dec);
+  EXPECT_TRUE(hasEntry(Functions, 0x401000));
+  EXPECT_FALSE(hasEntry(Functions, 0x401004))
+      << "55 8B C6 inside an instruction is no frame prologue";
+}
+
+TEST(X86_32_FunctionDiscovery, AnInt3ByteInsideAnInstructionIsNoPadding) {
+  // A loop's `jne` back to its head has the displacement CC, which the
+  // loader's padding scan reads as an int3 before a boundary.  The entry
+  // falls through the `jne` into that guessed start, so it is the entry's
+  // code.  A start after real padding, past the entry's return, stays one.
+  std::vector<uint8_t> Bytes(0x60, 0xCC);
+  const uint8_t Entry[] = {0x55, 0x8B, 0xEC, // 401000 push ebp; mov ebp, esp
+                           0x8B, 0x45, 0x08, // 401003 mov eax, [ebp+8]
+                           0x85, 0xC0,       // 401006 test eax, eax
+                           0x48};            // 401008 dec eax
+  std::copy(std::begin(Entry), std::end(Entry), Bytes.begin());
+  std::fill(Bytes.begin() + 0x09, Bytes.begin() + 0x38, 0x90);
+  const uint8_t Tail[] = {0x75, 0xCC,       // 401038 jne 401006h
+                          0x8B, 0x4D, 0x0C, // 40103A mov ecx, [ebp+0Ch]
+                          0x5D, 0xC3};      // 40103D pop ebp; ret
+  std::copy(std::begin(Tail), std::end(Tail), Bytes.begin() + 0x38);
+  const uint8_t Padded[] = {0x56,                   // 401041 push esi
+                            0x8B, 0x74, 0x24, 0x08, // mov esi, [esp+8]
+                            0x8B, 0xC6,             // mov eax, esi
+                            0x5E, 0xC3};            // pop esi; ret
+  std::copy(std::begin(Padded), std::end(Padded), Bytes.begin() + 0x41);
+
+  BinaryImage Img = makePeText(std::move(Bytes));
+  Img.KnownCodeRanges.clear();
+  runPostLoadDiscovery(Img, "test");
+  const std::set<va_t> Guesses = Img.boundaryGuessFunctionStarts();
+  ASSERT_TRUE(Guesses.count(0x40103A)) << "the loader guesses after the CC";
+  ASSERT_TRUE(Guesses.count(0x401041));
+
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  const auto Functions = Detector.detect(Img, Dec);
+  EXPECT_TRUE(hasEntry(Functions, 0x401000));
+  EXPECT_FALSE(hasEntry(Functions, 0x40103A)) << "fallen into past a jne";
+  EXPECT_TRUE(hasEntry(Functions, 0x401041)) << "a start after real padding";
 }
 
 TEST(X86_32_FunctionDiscovery, RecoversAlignedPushRegAndSehPrologues) {
@@ -820,6 +953,58 @@ TEST(X86_32_FunctionDiscovery, SwitchTableAmongCodeBelongsToItsFunction) {
   EXPECT_EQ(std::set<va_t>(Switch.JumpTables.front().Targets.begin(),
                            Switch.JumpTables.front().Targets.end()),
             (std::set<va_t>{0x401012, 0x401019, 0x401020}));
+}
+
+TEST(X86_32_FunctionDiscovery, SwitchCasesStayLabelsPastAnEntryBeforeTheTable) {
+  // MSVC's seven-byte cases set a result and jump to a shared tail.  The
+  // table follows an aligned prologue match in dead code past that tail.
+  // The cases still belong to the dispatcher reading the table, so they are
+  // its labels, though that entry lies between them and the table's slots.
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  std::vector<uint8_t> Text;
+  auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Text.insert(Text.end(), Bytes);
+  };
+  Emit({0x55, 0x8B, 0xEC});                         // push ebp; mov ebp, esp
+  Emit({0x8B, 0x45, 0x08});                         // mov eax, [ebp+8]
+  Emit({0x83, 0xF8, 0x02, 0x77, 0x1C});             // cmp eax, 2; ja 0x401027
+  Emit({0xFF, 0x24, 0x85, 0x3C, 0x10, 0x40, 0x00}); // jmp [eax*4+0x40103C]
+  Emit({0xB8, 0x0A, 0x00, 0x00, 0x00, 0xEB, 0x10}); // 0x401012: case 0
+  Emit({0xB8, 0x14, 0x00, 0x00, 0x00, 0xEB, 0x09}); // 0x401019: case 1
+  Emit({0xB8, 0x1E, 0x00, 0x00, 0x00, 0xEB, 0x02}); // 0x401020: case 2
+  Emit({0x33, 0xC0});                               // 0x401027: default
+  Emit({0x5D, 0xC3});                               // 0x401029: the tail
+  Emit({0xCC, 0xCC, 0xCC, 0xCC, 0xCC});             //
+  Emit({0x56, 0x57, 0x8B, 0x44, 0x24, 0x0C});       // 0x401030: dead code
+  Emit({0x5F, 0x5E, 0xC3, 0xCC, 0xCC, 0xCC});       //
+  Emit({0x12, 0x10, 0x40, 0x00, 0x19, 0x10});       // 0x40103C: the table
+  Emit({0x40, 0x00, 0x20, 0x10, 0x40, 0x00});       //
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+  recordAbsolutePointerRelocations(Img, {{0x40100E, 0x40103C, InvalidVA},
+                                         {0x40103C, 0x401012, InvalidVA},
+                                         {0x401040, 0x401019, InvalidVA},
+                                         {0x401044, 0x401020, InvalidVA}});
+  coff_loader::recordRelocatedPointerRunsInCode(Img);
+  ASSERT_TRUE(Img.DataInCode.count(0x40103C));
+  ASSERT_TRUE(Img.DataAddressRelocOperands.count(0x40100E));
+
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  const auto Functions = Detector.detect(Img, Dec);
+  EXPECT_TRUE(hasEntry(Functions, 0x401000));
+  ASSERT_TRUE(hasEntry(Functions, 0x401030))
+      << "the entry between the cases and the table";
+  for (va_t Case : {0x401012u, 0x401019u, 0x401020u})
+    EXPECT_FALSE(hasEntry(Functions, Case))
+        << "0x" << std::hex << Case << " is a case of the dispatcher";
 }
 
 TEST(X86_32_FunctionDiscovery, SwitchTableAmongCodeLiftsPastTheMirrorLimit) {
