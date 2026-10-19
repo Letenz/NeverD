@@ -7827,23 +7827,20 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                                                 Def.Output.Size, Depth + 1);
           if (Loaded.Kind == ResolverResultKind::Value)
             Full = Loaded.Value;
-          else
-            // Even when the frame-memory origin is deliberately opaque (an
-            // atomic/call/unknown-alias barrier), this particular LOAD still
-            // defines one stable SSA-like occurrence.  Two later uses of that
-            // same occurrence may be compared; a distinct reload gets a
-            // distinct root and therefore cannot borrow stale guard evidence.
-            Full = namedResolverRoot(Def.Output.Size, "D",
-                                     {Def.Addr, static_cast<uint64_t>(Def.Seq),
-                                      static_cast<unsigned>(Def.Output.Space),
-                                      Def.Output.Offset, Def.Output.Size});
-        } else if (!Full) {
+        }
+        if (!Full) {
           // A load of the address an earlier load read, of the same width and
           // with nothing between them that may write memory, reads the value
           // the earlier load read: `cmp dword [rcx], 6; ja default` bounds the
           // index `mov eax, [rcx]` loads next.  Only a straight path back
           // through single predecessors, stopping at a root of the graph, is
           // searched, so the earlier load runs before this one on every path.
+          // A frame slot whose stores do not settle its value (an atomic,
+          // call or unknown-alias barrier before them) is matched by its slot:
+          // `cmp byte [rbp-0x38], 3; ja default` bounds the index
+          // `movzx edx, byte [rbp-0x38]` reloads next.  Otherwise the LOAD
+          // defines its own occurrence, which a later use of it may compare
+          // but a distinct reload cannot borrow guard evidence from.
           const auto MayWriteMemory = [](const LowOp &Op) {
             return Op.Opcode == NdOp::STORE || Op.Opcode == NdOp::ATOMIC_XCHG ||
                    Op.Opcode == NdOp::ATOMIC_ADD ||
@@ -7876,23 +7873,32 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                 }
                 if (!SameLoad(Op))
                   continue;
-                if (!resolveLoadAddress()) {
-                  Stop = true;
-                  break;
-                }
                 const NdVar &EarlierAddress =
                     Op.NumInputs >= 2 ? Op.Inputs[1] : Op.Inputs[0];
-                const std::array<ResolverResult, 2> Addresses = {
-                    AddressValue,
-                    resolveOperand(SearchBlock, J, EarlierAddress, Depth + 1)};
-                if (Addresses[1].Kind != ResolverResultKind::Value ||
-                    mergeResolverResults(Addresses, /*MergeRoot=*/{},
-                                         /*IgnoreTransparentCycles=*/false,
-                                         consumeEvidence,
-                                         &EvidenceBudgetExhausted,
-                                         /*CompareAddressArithmetic=*/true)
-                            .Kind != ResolverResultKind::Value)
-                  continue;
+                if (HasFrameSlot) {
+                  uint64_t EarlierBase = InvalidVA;
+                  int64_t EarlierOffset = 0;
+                  if (!canonicalFrameSlotKey(SearchBlock, J - 1, EarlierAddress,
+                                             EarlierBase, EarlierOffset) ||
+                      EarlierBase != SlotBase || EarlierOffset != SlotOffset)
+                    continue;
+                } else {
+                  if (!resolveLoadAddress()) {
+                    Stop = true;
+                    break;
+                  }
+                  const std::array<ResolverResult, 2> Addresses = {
+                      AddressValue, resolveOperand(SearchBlock, J,
+                                                   EarlierAddress, Depth + 1)};
+                  if (Addresses[1].Kind != ResolverResultKind::Value ||
+                      mergeResolverResults(Addresses, /*MergeRoot=*/{},
+                                           /*IgnoreTransparentCycles=*/false,
+                                           consumeEvidence,
+                                           &EvidenceBudgetExhausted,
+                                           /*CompareAddressArithmetic=*/true)
+                              .Kind != ResolverResultKind::Value)
+                    continue;
+                }
                 const ResolverResult Earlier =
                     resolveValue(SearchBlock, J + 1, Op.Output, Depth + 1);
                 if (Earlier.Kind == ResolverResultKind::Value &&

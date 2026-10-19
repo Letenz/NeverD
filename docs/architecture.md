@@ -12,6 +12,10 @@ Capstone, and Unicorn submodules keep their own internal architecture.
 
 `arch/x86_64` owns checked `RequireAligned` transitions for 64-bit addresses in the default address space. The common recovery engine charges the scalar proof operations and proves the rejection predicate is zero before retaining the original guard. Explicit nonfaulting execution does not supply that proof. Alignment does not require MXCSR state; segmented addresses and optional guards remain unsupported by this recovery adapter.
 
+## Legacy GS recovery
+
+`X64LegacyGSState` declares 64-bit CPL0 execution with CR4.FRED disabled under `KernelX64NoFaultV1` and explicit nonfaulting machine state. `arch/x86_64` owns SWAPGS, its arbitrary 64-bit active/inactive bases and the atomic update of GS address interpretation. Both bases may alias any memory; FS stays fixed. Segmented reads/writes still need their separate options. Projection forgets correlations while retaining the original intrinsic and the full input domain. The declaration is bound into raw receipts. Source/native/LLVM interfaces without authenticated GS/MSR inputs refuse it; concrete Unicorn/KVM/WHP/HVF execution gains no capability. Only exact `0F 01 F8` receives native undefined-output and separate opaque-bank receipts; neither receipt proves the execution preconditions.
+
 ## Checked MXCSR recovery
 
 `X64MXCSRMask` enables raw MXCSR loads and scalar state reads/writes with an explicit effective mask (`0xffbf` or `0xffff`). The x64 adapter owns the legal initial-state domain and transitions. Core charges work and requires a proof that reserved bits are clear; the nonfaulting flag alone supplies no such proof. Original intrinsics remain observable. MXCSR memory stores, source wrapping and native/LLVM certificates still require their own contracts.
@@ -942,6 +946,27 @@ decompilation takes symbolic simplification as an explicit session choice
 then simplify every function with whole-program evidence such as the wide
 returns its callers observe, which one function's view lacks. Source options
 never change the lifting, patching or general module optimizer defaults.
+
+The explicit source `symbolic` switch enables exact MBA derivations and
+proof-gated semantic synthesis in both HighC and LLVM-to-C. HighC tries
+synthesis after exact derivation, retaining the derivation if synthesis
+cannot improve it. Width conversions also start inner numeric regions, so
+extensions do not hide narrow arithmetic or change its overflow semantics.
+Generated wide constants retain explicit zero extensions when their 64-bit
+payload would otherwise be ambiguous to an enclosing symbolic region.
+LLVM source enables synthesis in the existing semantic fixed point. Both consume
+`SynthOptions::sourceView()` and `SolverOptions::sourceView()`: at most 20,000
+search-work units, candidate cost 32 and 64 independent validation samples per
+attempt, with finite bit-blasting/SAT allowances (262,144 gates, 20,000
+conflicts, 4,194,304 propagations and 16,777,216 watch visits per query).
+Samples only propose a
+rewrite; the full-width verifier must accept it before the normal type,
+effect and profitability checks can publish it. Exhaustion preserves the
+expression. GUI menu requests, CLI single-function options and whole-program
+source sessions all reach these same policies.
+The source proof ceiling applies only to the newly enabled heuristic synthesis;
+existing split-word arithmetic recovery keeps its original proof allowance.
+`SymSimplifyOptions::SynthesisSolver` separates those policies in LLVM source.
 
 LLVMC defaults to LLVM O2 after ordinary frame and SSA promotion. Basic scalar
 cleanup, O0, O1, O3 and a bounded custom pass selection are explicit alternatives.

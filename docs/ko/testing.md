@@ -10,6 +10,10 @@ NeverD 테스트는 표현 모양이 예상과 같은지, 바이너리 fixture�
 
 `PipelineOutcome.ResolvedCalls*`는 레지스터 그룹, call/invoke 식별, 스택 바이트 결합·분할, 좁은 값의 자기 슬롯 배치, 누락 바이트 거부를 검사합니다. `MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue`는 기록된 오프셋을 검사합니다. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument`는 x64, ARM32, AArch64의 ELF, PE, Mach-O를 다룹니다. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths`는 세 형식에서 변경된 길이, 쓰기 가능·범위 초과 데이터, 같은 이름의 로컬 함수, 잘못된 원본 레지스터, 대체 진입점 및 재배치 가능 이미지를 거부합니다. 호스트 C 차등 테스트는 참조 C를 별도 번역 단위에서 O0로, 생성 C를 O2로 컴파일하여 호스트 최적화기의 순환식 오컴파일이 기준값을 오염시키지 않도록 합니다. AArch64 FMA 검사는 x86 호스트에서만 `-mfma`를 요청합니다.
 
+## 레거시 GS 복원 테스트
+
+`NeverDX86LegacyGSRecoveryTests`는 교환/이중 교환의 보편적 후조건, 전체 폭 세그먼트 메모리 주소, 별칭, FS/메모리/플래그 유지, MXCSR 공존, 잘못된 상태와 임시 슬롯, 원자적 거부, 효과 유지와 예산 경계를 검사합니다. `PEFixedImageTest.RawLegacyGS*`는 네이티브 인코딩 허용과 증거 결합을 검사합니다. 기계 상태 및 네이티브/LLVM 정제 테스트는 미사용 선언을 포함하여 지원하지 않는 소스 계약을 거부합니다. `LegacyGSExecutionPolicy.RemainsUnmodeled`은 구체 실행 거부를 유지합니다. 이는 기호 및 정책 테스트이며 네이티브 특권 명령 실행이 아닙니다.
+
 ## MXCSR 복원 검사
 
 `InterpreterSpecialization.MXCSR*`는 임의 초기 상태, 정확한 메모리 값, 예약 비트, DAZ, 별칭, 잘못된 형식, 노드 투영과 예산 경계를 검사합니다. `PEFixedImageTest.RawMXCSR*`는 legacy/VEX 바이트와 마스크가 결합된 기록을 검사합니다. 기계 상태와 네이티브/LLVM 정제 테스트는 사용하지 않은 기능도 인터페이스를 확장할 수 없음을 확인합니다.

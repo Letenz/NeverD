@@ -52,7 +52,8 @@ bool supportsRuntimeMemoryOperation(const LowOp &Op,
 void seedRuntimeMemoryState(symbolic::SymContext &Ctx,
                             symbolic::SymState &State,
                             const SpecializationOptions &Options) {
-  if (!Options.X64SegmentedReads && !Options.X64SegmentedWrites)
+  if (!Options.X64SegmentedReads && !Options.X64SegmentedWrites &&
+      !Options.X64LegacyGSState)
     return;
   // Projection forgets base correlations across nodes, enlarging the input
   // domain. Distinct variables do not assert distinct linear addresses.

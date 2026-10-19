@@ -217,6 +217,9 @@ public:
   /// Reads the names the image states for its functions (statedNames()),
   /// where nothing waits for them, as warming the analysis does.
   void indexStatedNames() const;
+  /// Reads what the record definitions of every unit read (definitions()),
+  /// where nothing waits for it, as warming the analysis does.
+  void prepareDefinitions() const;
 
 private:
   /// The record the library defines as \p Name, of \p Size bytes unless
@@ -267,6 +270,10 @@ private:
       StatedNames;
   /// Fills StatedNames.  Holds Mutex.
   void readStatedNames() const;
+  /// Fills RenamedInC.  Holds Mutex.
+  void readRenamedInC() const;
+  /// Makes CRenderer.  Holds Mutex.
+  void makeCRenderer() const;
   mutable std::map<va_t, std::string> ImportNames;
   mutable std::map<va_t, std::optional<FunctionSym>> DeclaredSignatures;
   /// A type of the debug information it gave the library's names, with

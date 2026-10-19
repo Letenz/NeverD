@@ -70,6 +70,13 @@ InterpreterLLVMRefinementResult checkBinaryLLVMRefinement(
     Result.Native.Proof.Diagnostic = Result.Diagnostic;
     return Result;
   }
+  if (Options.X64LegacyGSState) {
+    Result.Stage = InterpreterLLVMRefinementStage::Native;
+    Result.Native.Proof.Status = LowIRRefinementStatus::Unsupported;
+    Result.Diagnostic = "native proof requires authenticated legacy GS state";
+    Result.Native.Proof.Diagnostic = Result.Diagnostic;
+    return Result;
+  }
   if (Options.X64MXCSRMask) {
     Result.Stage = InterpreterLLVMRefinementStage::Native;
     Result.Native.Proof.Status = LowIRRefinementStatus::Unsupported;

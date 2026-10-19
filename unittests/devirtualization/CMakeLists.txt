@@ -45,6 +45,22 @@ add_neverd_unittest(NeverDX86NativeStateAuditTests
   LINK_COMPONENTS InterpreterSpecialization Decode Lift IRLow Loader
 )
 
+add_neverd_unittest(NeverDX86LegacyGSRecoveryTests
+  LegacyGSRecoveryTests.cpp
+  LINK_COMPONENTS InterpreterSpecialization Decode Lift IRLow Loader
+)
+
+# A raw recovery declaration must not enable concrete execution. Exercise the
+# production admission owner even when emulation backends are disabled.
+add_neverd_unittest(NeverDLegacyGSExecutionPolicyTests
+  LegacyGSExecutionPolicyTests.cpp
+  ${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/driver/WindowsX64ExecutionPolicy.cpp
+  LINK_LIBS capstone_static LLVMSupport)
+target_include_directories(NeverDLegacyGSExecutionPolicyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${CMAKE_SOURCE_DIR}/lib/emulation
+  ${LLVM_INCLUDE_DIRS})
+
 add_neverd_unittest(NeverDX86ScalarMoveAuditTests
   ScalarMoveAuditTests.cpp
   LINK_COMPONENTS Decode Lift IRLow Loader

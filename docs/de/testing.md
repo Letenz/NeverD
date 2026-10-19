@@ -12,6 +12,10 @@ risikoreichen Pull Request das breitere Aggregat aus.
 
 `PipelineOutcome.ResolvedCalls*` prüft Registergruppen, call/invoke-Identität, Zusammenfügen und Aufteilen von Stackbytes, schmale Werte in ihren eigenen Plätzen sowie die Ablehnung fehlender Bytes. `MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` prüft die aufgezeichneten Offsets. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` deckt x64, ARM32 und AArch64 für ELF, PE und Mach-O ab. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` prüft alle drei Formate und verwirft überschriebene Längen, beschreibbare oder zu große Bereiche, gleichnamige lokale Funktionen, falsche Quellregister, alternative Einstiege und verschiebbare Objektdateien. C-Differenztests kompilieren die Referenz separat mit O0 und den erzeugten C-Code mit O2, damit ein fehlerhaft optimierter Rekurrenzwert des Hostcompilers die Referenz nicht verfälscht. Der AArch64-FMA-Test fordert `-mfma` nur auf x86-Hosts an.
 
+## Tests des klassischen GS-Zustands
+
+`NeverDX86LegacyGSRecoveryTests` prüft universelle Nachbedingungen von Austausch/Doppelaustausch, vollständige segmentierte Adressen, Aliase, Erhaltung von FS/Speicher/Flags, MXCSR-Koexistenz, fehlerhafte Zustände und Temporärplätze, atomare Ablehnung, erhaltene Effekte und Budgets. `PEFixedImageTest.RawLegacyGS*` prüft native Zulassung und Belegbindung. Maschinenzustands- und Native-/LLVM-Verfeinerungstests lehnen nicht unterstützte Quellverträge auch bei ungenutzten Deklarationen ab. `LegacyGSExecutionPolicy.RemainsUnmodeled` erhält die konkrete Ablehnung. Dies sind symbolische und Richtlinientests, keine native Ausführung privilegierter Befehle.
+
 ## Prüfungen der MXCSR-Wiederherstellung
 
 `InterpreterSpecialization.MXCSR*` prüft beliebige Anfangszustände, exakte Speicherwerte, reservierte Bits, DAZ, Aliase, ungültige Formen, Knotenprojektion und Budgetgrenzen. `PEFixedImageTest.RawMXCSR*` prüft Legacy/VEX-Bytes und maskengebundene Nachweise. Maschinenzustands- und native/LLVM-Verfeinerungstests verhindern, dass ungenutzte Fähigkeiten die Schnittstellen erweitern.

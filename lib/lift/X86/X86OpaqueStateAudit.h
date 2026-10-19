@@ -13,7 +13,8 @@ namespace neverd::opaqueaudit {
 // Intel SDM vol. 2, rev. 093: on normal completion, these legacy scalar
 // families affect scalar destinations, memory, flags or control, not the
 // closed LegacyIntegerOpaqueV1 banks. This separate frozen instruction-ID
-// audit is consumed ONLY after the shared strict legacy form check. It is
+// audit is consumed ONLY after the shared strict legacy form check or the
+// separate exact SWAPGS encoding check. GS bases are not opaque banks. It is
 // not undefined-output coverage. New forms require both audits separately;
 // adding an undefined-output instruction cannot silently extend this list.
 inline bool hasLegacyIntegerBankAudit(unsigned Id) {
@@ -126,6 +127,7 @@ inline bool hasLegacyIntegerBankAudit(unsigned Id) {
   case X86_INS_STD:
   case X86_INS_STI:
   case X86_INS_SUB:
+  case X86_INS_SWAPGS:
   case X86_INS_TEST:
   case X86_INS_XADD:
   case X86_INS_XCHG:

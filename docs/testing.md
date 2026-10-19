@@ -251,6 +251,10 @@ Decode-only results do not measure the allocation-heavy IR stages; an allocator
 change does not guarantee an improvement for every workload.
 
 
+## Legacy GS recovery tests
+
+`NeverDX86LegacyGSRecoveryTests` checks universal exchange/twice-exchange postconditions, full-width segmented memory addresses, aliasing, unchanged FS/memory/flags, coexistence with MXCSR, malformed states and scratch slots, atomic refusal, retained effects and budget boundaries. `PEFixedImageTest.RawLegacyGS*` checks native admission and receipt binding. Machine-state and native/LLVM refinement tests refuse unsupported source contracts, including unused declarations. `LegacyGSExecutionPolicy.RemainsUnmodeled` preserves concrete execution refusal. These are symbolic and policy tests, not native privileged-instruction execution.
+
 ## MXCSR recovery checks
 
 `InterpreterSpecialization.MXCSR*` covers arbitrary entry state, exact memory values, reserved bits, DAZ, aliases, malformed forms, node projection and exact/short budgets. `PEFixedImageTest.RawMXCSR*` checks legacy/VEX native bytes and mask-bound receipts. The machine-state and native/LLVM refinement owners verify that unused capabilities cannot expand their interfaces.
@@ -421,6 +425,21 @@ checks exact masked status bits, signed extensions, shared expressions and
 effect preservation without the symbolic bridge. The x87 classification test
 executes ordinary HighC against native extended-precision encodings; ARM mode
 tests execute both ordinary and explicitly enhanced source.
+
+`NeverDHighSymSimplifyTests` provides the focused HighIR suite, including
+8–256-bit affine synthesis, synthesis inside signed/unsigned width conversions
+and exhaustive byte-pair overflow preservation. Wide-constant roundtrips check
+positive, negated and complemented high-bit payloads in enclosing regions.
+`SymSimplifyGuard.SourceSymbolicToggleEnablesBoundedSemanticSearch` checks
+actual search work through every source LLVM profile. Proof-budget cases check
+that synthesis exhaustion preserves IR while the separate split-word recovery
+still completes. The real-engine
+`NeverDWorkerSourceSynthesis` test sends the GUI's `source_options` request,
+checks enhanced/ordinary cache isolation, and, when a CLI is configured,
+exercises single-function and whole-program source in both routes. With
+Clang available it compiles all six enhanced outputs at O0/O2 and executes
+each against 1,331 boundary triples and 4,096 deterministic random triples.
+Missing Clang explicitly skips only that generated-C execution coverage.
 
 `NeverDGuiMicrosoftSymbols` uses an in-memory network reply and the fixture SDK
 to check the Load PDB file dialog (a matching local copy, declining, downloads

@@ -187,19 +187,29 @@ struct SpecializationOptions {
   bool NormalNonfaultingExecution = false;
   bool X64CetDisabled = false;
   /// Retain scalar FS/GS reads with arbitrary 64-bit long-mode bases, fixed
-  /// throughout supported execution. Requires ExplicitMachineState and
+  /// throughout supported execution unless X64LegacyGSState is declared.
+  /// Requires ExplicitMachineState and
   /// NormalNonfaultingExecution. Bases may alias each other, the frame or any
   /// other address; this grants no operating-system layout or nonalias facts.
   /// Only the raw residual API supports this environment contract. V1 source
   /// wrapping and native proof APIs do not have authenticated base inputs.
   bool X64SegmentedReads = false;
-  /// Retain ordinary scalar FS/GS stores with a 64-bit offset and fixed,
-  /// arbitrary long-mode bases. Requires explicit nonfaulting machine state.
+  /// Retain ordinary scalar FS/GS stores with a 64-bit offset and arbitrary
+  /// long-mode bases, fixed unless X64LegacyGSState is declared. Requires
+  /// explicit nonfaulting machine state.
   /// Full linear addresses may alias any memory, including live return cells;
   /// offset provenance grants no frame or separation fact. This raw-residual
   /// contract is independent of X64SegmentedReads. Source and native proof
   /// interfaces without authenticated base inputs refuse it.
   bool X64SegmentedWrites = false;
+  /// Raw-only SWAPGS state under KernelX64NoFaultV1, explicit nonfaulting
+  /// machine state and little-endian x64. The caller declares CR4.FRED = 0
+  /// throughout execution. Active GS.base and IA32_KERNEL_GS_BASE are arbitrary
+  /// 64-bit inputs; only modeled SWAPGS exchanges them. FS stays fixed. These
+  /// inputs may alias any memory; no observed base or separation is inferred.
+  /// Segmented accesses still require their separate read/write options.
+  /// Source and native proof interfaces without this state contract refuse it.
+  bool X64LegacyGSState = false;
   /// Retain CR8 reads/writes with a symbolic four-bit task-priority state.
   /// Requires explicit nonfaulting machine state and KernelX64NoFaultV1.
   /// Every retained memory access must be ordinary memory without device side

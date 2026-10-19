@@ -31,6 +31,10 @@ add_neverd_unittest(NeverDHighCParamUsageTests
   core/HighCParamUsageTests.cpp
   LINK_COMPONENTS BackendC)
 
+add_neverd_unittest(NeverDHighSymSimplifyTests
+  core/HighSymSimplifyTests.cpp
+  LINK_COMPONENTS BackendC Solver)
+
 add_neverd_unittest(NeverDHighCSupervisorCallTests
   core/HighCSupervisorCallTests.cpp
   LINK_COMPONENTS BackendC)
@@ -183,6 +187,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_CmpxchgTests.cpp
   x86_64/X86_64_CFGEntryTests.cpp
   x86_64/X86_64_ColdFragmentTests.cpp
+  x86_64/X86_64_NoReturnCallTests.cpp
   x86_64/X86_64_ComputedGotoTests.cpp
   x86_64/X86_64_ControlFlowTests.cpp
   x86_64/X86_64_ControlSemanticsTests.cpp
@@ -2555,6 +2560,7 @@ set(X86_64_TEST_SOURCES
   x86_64/test_jumptable_rbp_base.s
   x86_64/test_jumptable_tail_stub.s
   x86_64/test_jumptable_frame_tail_jump.s
+  x86_64/test_jumptable_slot_reload_guard.s
   x86_64/test_jumptable_guard_chain.c
   x86_64/test_jumptable_masked_byte.s
   x86_64/test_jumptable_byte_switch.s
@@ -2637,6 +2643,7 @@ set(AARCH64_TEST_SOURCES
   aarch64/test_param_phi_a64.s
   aarch64/test_linux_svc_a64.s
   aarch64/test_smccc_a64.s
+  aarch64/test_trap_ends_flow_a64.s
   aarch64/test_jumptable_index_identity_a64.s
   aarch64/test_jumptable_gcc_compact_a64.s
   aarch64/test_jumptable_inflate_gcc_a64.s
@@ -3749,6 +3756,29 @@ if(LLD_EXEC)
     COMMENT "Linking x86-64 GCC cold fragment fixtures")
   list(APPEND ELF_EXECUTABLES ${gcc_cold_x64_obj} ${gcc_cold_x64_so}
                               ${gcc_cold_x64_stripped})
+
+  # Functions that never return, and callers whose compiler knew it, linked
+  # and stripped.
+  set(noreturn_calls_x64_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_noreturn_calls_x64.s")
+  set(noreturn_calls_x64_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_noreturn_calls_x64.o")
+  set(noreturn_calls_x64_stripped
+      "${CMAKE_CURRENT_BINARY_DIR}/test_noreturn_calls_x64_stripped.so")
+  add_custom_command(
+    OUTPUT ${noreturn_calls_x64_obj}
+    COMMAND ${CLANG_EXEC} -target x86_64-linux-gnu -c ${noreturn_calls_x64_src}
+            -o ${noreturn_calls_x64_obj}
+    DEPENDS ${noreturn_calls_x64_src}
+    COMMENT "Compiling x86-64 no-return call fixture")
+  add_custom_command(
+    OUTPUT ${noreturn_calls_x64_stripped}
+    COMMAND ${LLD_EXEC} -shared --eh-frame-hdr -s -o
+            ${noreturn_calls_x64_stripped} ${noreturn_calls_x64_obj}
+    DEPENDS ${noreturn_calls_x64_obj}
+    COMMENT "Linking x86-64 no-return call fixture")
+  list(APPEND ELF_EXECUTABLES ${noreturn_calls_x64_obj}
+                              ${noreturn_calls_x64_stripped})
 
   # Switch tables of an i386 shared library, relative to its GOT address.
   set(pic_switch_i386_src

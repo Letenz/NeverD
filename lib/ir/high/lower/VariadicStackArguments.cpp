@@ -92,7 +92,8 @@ namespace {
 bool registerEntering(const MedFunc &Func, const MedBlock &Block,
                       uint64_t RegOff, const TargetRegInfo &TRI,
                       const BinaryFormat *Calls, uint16_t Size, MedVar &Out,
-                      std::optional<MedVar> &Left, bool &ReachedEntry) {
+                      std::optional<MedVar> &Left, bool &ReachedEntry,
+                      bool ParameterAtEntry = false) {
   auto blockById = [&](int Id) { return blockOf(Func, Id); };
 
   std::set<int> Visited;
@@ -150,6 +151,16 @@ bool registerEntering(const MedFunc &Func, const MedBlock &Block,
           return true;
         }
       }
+      // A parameter the body only passes on has no such COPY, nothing in it
+      // reading the register: it enters as the parameter it is.
+      if (ParameterAtEntry && Blk.ExceptionalPreds.empty())
+        for (size_t I = 0; I < Func.Params.size(); ++I)
+          if (Func.Params[I].RegOff == RegOff) {
+            R = Func.Params[I];
+            R.Kind = MedVar::Param;
+            R.Id = static_cast<int>(I);
+            return true;
+          }
       return false;
     }
     for (int P : Blk.Preds)
@@ -198,7 +209,7 @@ bool reachingRegisterAtBlockEntry(const MedFunc &Func, const MedBlock &Block,
 bool reachingRegisterAtCall(const MedFunc &Func, const MedBlock &Block,
                             size_t CallIdx, uint64_t RegOff,
                             const TargetRegInfo &TRI, BinaryFormat Format,
-                            MedVar &Out) {
+                            MedVar &Out, bool ParameterAtEntry) {
   const auto Size = static_cast<uint16_t>(TRI.PointerSize);
   for (size_t J = std::min(CallIdx, Block.Ops.size()); J-- > 0;) {
     const MedOp &Op = Block.Ops[J];
@@ -222,7 +233,7 @@ bool reachingRegisterAtCall(const MedFunc &Func, const MedBlock &Block,
   std::optional<MedVar> Left;
   bool ReachedEntry = false;
   if (registerEntering(Func, Block, RegOff, TRI, &Format, Size, Out, Left,
-                       ReachedEntry))
+                       ReachedEntry, ParameterAtEntry))
     return true;
   if (!Left || ReachedEntry)
     return false;

@@ -401,6 +401,9 @@ const char *neverd_warm_functions_json(neverd_session_t Sess,
         S->clearPipeline();
         S->PipelineFeatureGeneration = S->SigDB.featureGeneration();
       }
+      // The function list as the first selection reads it, built here, where
+      // nothing waits, rather than in that selection.
+      S->refreshFunctionList();
       // The C view of the first function opened reads the widths of the
       // image's data accesses, which scanning every function finds.  Scan
       // them here, where nothing waits, as that view would; the session
@@ -418,8 +421,12 @@ const char *neverd_warm_functions_json(neverd_session_t Sess,
                                             Entries);
       // The prototypes of callees are read by the names the image states
       // for them; read those here too.
-      if (const LocalTypesDebugContext *Local = S->LocalTypesDbg.get())
+      if (const LocalTypesDebugContext *Local = S->LocalTypesDbg.get()) {
         Local->indexStatedNames();
+        Local->prepareDefinitions();
+      }
+      // So is what the C emitter reads of the image for every unit.
+      (void)S->cEmitter();
       Next = Page.NextEntry;
     }
     llvm::json::Object Result;

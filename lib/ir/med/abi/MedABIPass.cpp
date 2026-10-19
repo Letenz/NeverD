@@ -76,6 +76,13 @@ std::optional<int64_t> exactEntrySpDelta(const MedFunc &Func, Arch TheArch,
   }
 
   std::set<EntrySpKey> Active;
+  // Each load runs a reaching-stores walk over the whole function, which
+  // evaluates every store address and call argument in it, loads among them:
+  // without remembering what it found, the walks nest, exponentially through
+  // a loop.  A value met again while it is evaluated depends on itself and
+  // has no exact delta, wherever its evaluation began, so every result is
+  // remembered.
+  std::map<EntrySpKey, std::optional<int64_t>> Known;
   std::function<std::optional<int64_t>(const MedVar &)> Eval =
       [&](const MedVar &V) -> std::optional<int64_t> {
     if (V.isConst()) {
@@ -90,12 +97,16 @@ std::optional<int64_t> exactEntrySpDelta(const MedFunc &Func, Arch TheArch,
       return int64_t{0};
 
     const auto Key = entrySpKey(V);
-    if (Ambiguous.count(Key) || AmbiguousPhis.count(Key) ||
-        !Active.insert(Key).second)
+    if (Ambiguous.count(Key) || AmbiguousPhis.count(Key))
+      return std::nullopt;
+    if (const auto Found = Known.find(Key); Found != Known.end())
+      return Found->second;
+    if (!Active.insert(Key).second)
       return std::nullopt;
     auto It = Definitions.find(Key);
     if (It == Definitions.end()) {
       Active.erase(Key);
+      Known.emplace(Key, std::nullopt);
       return std::nullopt;
     }
     const MedOp &Op = *It->second;
@@ -192,6 +203,7 @@ std::optional<int64_t> exactEntrySpDelta(const MedFunc &Func, Arch TheArch,
       break;
     }
     Active.erase(Key);
+    Known.emplace(Key, Result);
     return Result;
   };
 

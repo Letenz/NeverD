@@ -372,6 +372,21 @@ TEST(SymSimplifyGuard, ProvesPackedDisjointOrAndUnsignedWidenedShift) {
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }
 
+TEST(SymSimplifyGuard, SynthesisProofBudgetDoesNotLimitSplitWordRecovery) {
+  llvm::LLVMContext C;
+  llvm::Module M("m", C);
+  llvm::Function *F = buildSplitWordCarrySave(M, /*SignedNoWrap=*/false);
+  SymSimplifyOptions Options;
+  Options.EnableSynthesis = true;
+  Options.SynthesisSolver = solver::SolverOptions::sourceView();
+  Options.SynthesisSolver->Blast.MaxWidth = 8;
+  const auto Result = SymSimplifyPass::simplifyWithResult(*F, Options);
+  EXPECT_GT(Result.Rewrites, 0u) << printFunction(*F);
+  EXPECT_EQ(Result.Proof, solver::ProofStatus::Equivalent);
+  EXPECT_EQ(printFunction(*F).find("@llvm.fshl"), std::string::npos);
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
 TEST(SymSimplifyGuard, SplitWordBehindASharedWideningStaysAnOrdinaryOr) {
   // Neither word can see the 64-bit value inside the widening it shares with
   // the other, so it must be read as an OR of that opaque leaf, not as a
@@ -1439,6 +1454,34 @@ TEST(SymSimplifyGuard, SynthesisUnknownLeavesIRUnchanged) {
   EXPECT_EQ(printFunction(*F), Before);
 }
 
+TEST(SymSimplifyGuard, SynthesisProofBudgetOverrideLeavesIRUnchanged) {
+  llvm::LLVMContext C;
+  llvm::Module M("m", C);
+  auto *I32 = llvm::Type::getInt32Ty(C);
+  auto *F = llvm::Function::Create(
+      llvm::FunctionType::get(I32, {I32, I32, I32}, false),
+      llvm::Function::ExternalLinkage, "synthesis_proof_budget", M);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", F));
+  auto *X = F->getArg(0);
+  auto *Direct = B.CreateLShr(X, B.getInt32(4));
+  auto *Nested = B.CreateLShr(B.CreateLShr(X, B.getInt32(2)), B.getInt32(2));
+  auto *Sum = B.CreateAdd(B.CreateMul(X, B.getInt32(182)),
+                          B.CreateMul(F->getArg(1), B.getInt32(73)));
+  Sum = B.CreateAdd(Sum, B.CreateMul(F->getArg(2), B.getInt32(211)));
+  B.CreateRet(B.CreateAdd(Sum, B.CreateSub(Direct, Nested)));
+  const std::string Before = printFunction(*F);
+  SymSimplifyOptions Options = synthesisOptions();
+  Options.Synthesis = symbolic::SynthOptions::sourceView();
+  Options.SynthesisSolver = solver::SolverOptions::sourceView();
+  Options.SynthesisSolver->Blast.MaxWidth = 8;
+  const auto Result = SymSimplifyPass::simplifyWithResult(*F, Options);
+  EXPECT_EQ(Result.Rewrites, 0u);
+  EXPECT_EQ(Result.Outcome, SymSimplifyOutcome::ProofIncomplete);
+  EXPECT_EQ(Result.Proof, solver::ProofStatus::Unknown);
+  EXPECT_EQ(Result.ProofWork.Queries, 1u);
+  EXPECT_EQ(printFunction(*F), Before);
+}
+
 TEST(SymSimplifyGuard, SynthesisDisabledProviderLeavesIRUnchanged) {
   llvm::LLVMContext C;
   llvm::Module M("m", C);
@@ -1951,6 +1994,46 @@ TEST(SymSimplifyGuard, SourceDefaultRunsO2WithoutSymbolicWork) {
   EXPECT_EQ(Result.SearchWork, 0u);
   EXPECT_EQ(Result.ProofWork.Queries, 0u);
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, SourceSymbolicToggleEnablesBoundedSemanticSearch) {
+  using Level = SourceViewOptions::LLVMOptimization;
+  for (const auto Profile : {Level::Basic, Level::O0, Level::O1, Level::O2,
+                             Level::O3, Level::Custom}) {
+    for (bool Symbolic : {false, true}) {
+      SCOPED_TRACE(static_cast<unsigned>(Profile));
+      SCOPED_TRACE(Symbolic);
+      llvm::LLVMContext C;
+      llvm::Module M("source_synthesis", C);
+      auto *I32 = llvm::Type::getInt32Ty(C);
+      auto *F = llvm::Function::Create(
+          llvm::FunctionType::get(I32, {I32}, false),
+          llvm::Function::ExternalLinkage, "nonlinear", M);
+      F->getArg(0)->addAttr(llvm::Attribute::NoUndef);
+      llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", F));
+      B.CreateRet(
+          B.CreateMul(F->getArg(0), B.CreateAdd(F->getArg(0), B.getInt32(1))));
+      SourceViewOptions Options;
+      Options.LLVM = Profile;
+      Options.Symbolic = Symbolic;
+      Options.Passes = 0;
+      const auto Result =
+          Pipeline::optimizeOrPromoteModule(M, nullptr, Options);
+      ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+      EXPECT_NE(Result.Stop, OptimizationStopReason::InputInvalid);
+      EXPECT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
+      // A nonlinear expression has no affine answer. Work here demonstrates
+      // that the real source request reaches bounded semantic search, even
+      // when the selected LLVM cleanup profile leaves it unchanged.
+      if (Symbolic)
+        EXPECT_GT(Result.SearchWork, 0u);
+      else
+        EXPECT_EQ(Result.SearchWork, 0u);
+      EXPECT_LE(Result.SearchWork,
+                Result.Rounds * symbolic::SynthOptions::sourceView().MaxWork);
+      EXPECT_EQ(Result.SemanticRewrites, 0u);
+    }
+  }
 }
 
 TEST(SymSimplifyGuard, DeepDefaultO2InlinesAndEliminatesInternalHelper) {
