@@ -2482,6 +2482,17 @@ out of budget and protects every slot; the witness elides a table's LOAD only
 where its slots are suppressible, except for a table among the code, which
 often has no mirror at all, and whose LOAD only the switch reads needs none.
 
+A table among the code that is read as data, not elided, still mirrors. The
+whole executable segment cannot become one global past the single-global
+embed limit (1 MiB), but the table's own object can: the run of consecutive
+pointer-wide relocated slots from its `DataInCode` start, a few hundred bytes
+though its `.text` is megabytes. `buildCodePtrSegmentGlobal` mirrors that run
+when a data address inside it is resolved (`InCodeObjectAddr`), its slots
+becoming the mirror's relocatable fields and its bytes copied from the
+segment; the read GEPs into it at the slot's offset. A segment within the
+limit keeps its whole-segment mirror, and every code pointer in the run must
+still resolve to a lifted owner or the emission fails closed.
+
 The LLVM pointer-table role proof treats a frame slot as a PHI over the
 values stored to it (`collectFrameReloadSources`). As a PHI's recurrent arm
 does, a stored value that is the slot's reload advanced by a stable offset

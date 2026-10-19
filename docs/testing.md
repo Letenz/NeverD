@@ -7951,6 +7951,10 @@ unkeyed.
 object pointer's field scaled by four, as GOF2's `sub_4028D4` does. Without the
 run-mirror redirect it is refused as an ambiguous read-only table base; with it
 the read is a GEP into a read-only global and the table VA survives nowhere.
+`InCodePointerTableMirrorsPastTheLimit` reads a function-pointer table MSVC
+lays among its code as data, in a `.text` over the 1 MiB single-global limit;
+the read resolves through the table run's own mirror rather than refusing that
+the code segment cannot mirror.
 `I386CallContract.ABlockPhiIsNoArgumentPastAnEarlierCallInItsBlock` joins a
 callback's address and an import call's leftover in EDX, calls the import
 again in the join block, then a routine reading ECX and EDX: the argument is

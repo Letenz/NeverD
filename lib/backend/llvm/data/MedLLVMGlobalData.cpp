@@ -478,7 +478,8 @@ llvm::Constant *MedLLVMEmitter::tryResolveGlobalData(uint64_t Addr,
   // the stale original VA this boundary exists to eliminate.
   if (segHasPtrRelocSlots(Seg)) {
     uint64_t SegOut = 0;
-    if (llvm::Constant *Tbl = buildCodePtrSegmentGlobal(Seg->VA, SegOut)) {
+    if (llvm::Constant *Tbl = buildCodePtrSegmentGlobal(
+            Seg->VA, SegOut, /*InCodeObjectAddr=*/Addr)) {
       // GEP relative to the mirror's run base (SegOut), which may start before
       // Seg->VA when the run extends backward over an adjacent read-only
       // neighbour.
