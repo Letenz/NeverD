@@ -233,6 +233,10 @@ Decode-only results do not measure the allocation-heavy IR stages; an allocator
 change does not guarantee an improvement for every workload.
 
 
+## Legacy GS recovery tests
+
+`NeverDX86LegacyGSRecoveryTests` checks universal exchange/twice-exchange postconditions, full-width segmented memory addresses, aliasing, unchanged FS/memory/flags, coexistence with MXCSR, malformed states and scratch slots, atomic refusal, retained effects and budget boundaries. `PEFixedImageTest.RawLegacyGS*` checks native admission and receipt binding. Machine-state and native/LLVM refinement tests refuse unsupported source contracts, including unused declarations. `LegacyGSExecutionPolicy.RemainsUnmodeled` preserves concrete execution refusal. These are symbolic and policy tests, not native privileged-instruction execution.
+
 ## MXCSR recovery checks
 
 `InterpreterSpecialization.MXCSR*` covers arbitrary entry state, exact memory values, reserved bits, DAZ, aliases, malformed forms, node projection and exact/short budgets. `PEFixedImageTest.RawMXCSR*` checks legacy/VEX native bytes and mask-bound receipts. The machine-state and native/LLVM refinement owners verify that unused capabilities cannot expand their interfaces.

@@ -511,6 +511,17 @@ add_neverd_unittest(NeverDExecutionConfigurationTests
   ExecutionReportTests.cpp
   LINK_COMPONENTS EmulationCPU)
 
+# Exercise the production admission owner without starting a backend or
+# rebuilding the complete driver fixture/test aggregate.
+add_neverd_unittest(NeverDLegacyGSExecutionPolicyTests
+  LegacyGSExecutionPolicyTests.cpp
+  ${CMAKE_SOURCE_DIR}/lib/emulation/os/windows/driver/WindowsX64ExecutionPolicy.cpp
+  LINK_LIBS capstone_static LLVMSupport)
+target_include_directories(NeverDLegacyGSExecutionPolicyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${CMAKE_SOURCE_DIR}/lib/emulation
+  ${LLVM_INCLUDE_DIRS})
+
 if(TARGET neverd_shared AND TARGET neverd)
   add_neverd_unittest(NeverDExecutionCapabilitiesPublicTests
     ExecutionCapabilitiesPublicTests.cpp

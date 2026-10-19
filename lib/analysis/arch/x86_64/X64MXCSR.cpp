@@ -84,8 +84,8 @@ lowerOperation(const LowOp &Op, symbolic::SymState &State,
                const SpecializationOptions &Options,
                llvm::function_ref<NdVar(uint16_t)> Temporary) {
   const auto Kind = operation(Op);
-  if (!Kind || !Options.X64MXCSRMask || Controls.Values.size() != 1 ||
-      !Controls.Values[0] || State.context().width(Controls.Values[0]) != 32)
+  if (!Kind || !Options.X64MXCSRMask ||
+      !control::validState(State, Controls, Options))
     return std::nullopt;
   RuntimeControlTransition Result;
   Result.InvalidValueDiagnostic = "MXCSR write may set reserved bits";

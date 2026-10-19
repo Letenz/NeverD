@@ -52,6 +52,18 @@ TEST(InterpreterLLVMRefinement, MXCSRContractRequiresAuthenticatedState) {
   EXPECT_FALSE(Proof.Native.Certificate);
 }
 
+TEST(InterpreterLLVMRefinement, LegacyGSContractRequiresAuthenticatedState) {
+  Program P({0xb8, 7, 0, 0, 0, 0xc3});
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete());
+  P.Options.X64LegacyGSState = true;
+  const auto Proof = P.check(R.Residual, constantResult());
+  rejected(Proof, Stage::Native);
+  EXPECT_EQ(Proof.Native.Proof.Status, Status::Unsupported);
+  EXPECT_NE(Proof.Diagnostic.find("legacy GS state"), std::string::npos);
+  EXPECT_FALSE(Proof.Native.Certificate);
+}
+
 TEST(InterpreterLLVMRefinement,
      ExplicitFrameBoundsMatchAndBindTheNativeContract) {
   Program P({0xb8, 7, 0, 0, 0, 0xeb, 0, 0xc3});
