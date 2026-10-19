@@ -54,6 +54,18 @@
 // `clang_maybe_scale` returns with %eax holding what `clang_scale_three`
 // returned on one path and the GOT address on the other:
 //   void clang_maybe_scale(int v) { if (v) clang_scale_three(); else factor = 0; }
+// `clang_nothrow_call`, as clang -O1 -fexceptions builds
+//   extern "C" void clang_nothrow_call(int v) noexcept { may_throw(v); }
+// has a landing pad that passes the exception object in %eax on the stack:
+// `movl %eax, (%esp); calll __clang_call_terminate`.
+// `clang_catch_what`, as clang -O0 -fomit-frame-pointer -fexceptions builds
+//   struct Error { virtual ~Error(); virtual const char *what() const noexcept; };
+//   extern "C" const char *clang_catch_what(int v) {
+//     try { may_throw(v); } catch (const Error &e) { return e.what(); }
+//     return nullptr;
+//   }
+// keeps its locals at ESP offsets, and its landing pad passes the exception
+// object, then the caught one, on the stack.
 
 	.text
 	.p2align 4
@@ -527,6 +539,200 @@ clang_maybe_scale:
 	retl
 	.cfi_endproc
 	.size	clang_maybe_scale, .-clang_maybe_scale
+
+	.p2align 4
+	.globl	clang_nothrow_call
+	.type	clang_nothrow_call, @function
+clang_nothrow_call:
+.Lnothrow_begin:
+	.cfi_startproc
+	.cfi_personality 155, DW.ref.__gxx_personality_v0
+	.cfi_lsda 27, .Lnothrow_lsda
+	pushl	%ebx
+	.cfi_def_cfa_offset 8
+	subl	$8, %esp
+	.cfi_def_cfa_offset 16
+	.cfi_offset %ebx, -8
+	calll	.Lnothrow_pc
+	.cfi_adjust_cfa_offset 4
+.Lnothrow_pc:
+	popl	%ebx
+	.cfi_adjust_cfa_offset -4
+.Lnothrow_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Lnothrow_got-.Lnothrow_pc), %ebx
+	movl	16(%esp), %eax
+.Lnothrow_try_begin:
+	movl	%eax, (%esp)
+	calll	_Z9may_throwi@PLT
+.Lnothrow_try_end:
+	addl	$8, %esp
+	.cfi_def_cfa_offset 8
+	popl	%ebx
+	.cfi_def_cfa_offset 4
+	retl
+.Lnothrow_pad:
+	.cfi_def_cfa_offset 16
+	movl	%eax, (%esp)
+	calll	__clang_call_terminate
+.Lnothrow_end:
+	.size	clang_nothrow_call, .Lnothrow_end-clang_nothrow_call
+	.cfi_endproc
+
+	.section	.gcc_except_table,"a",@progbits
+	.p2align	2, 0x0
+.Lnothrow_lsda:
+	.byte	255
+	.byte	155
+	.uleb128 .Lnothrow_ttbase-.Lnothrow_ttbaseref
+.Lnothrow_ttbaseref:
+	.byte	1
+	.uleb128 .Lnothrow_cst_end-.Lnothrow_cst_begin
+.Lnothrow_cst_begin:
+	.uleb128 .Lnothrow_try_begin-.Lnothrow_begin
+	.uleb128 .Lnothrow_try_end-.Lnothrow_try_begin
+	.uleb128 .Lnothrow_pad-.Lnothrow_begin
+	.byte	1
+.Lnothrow_cst_end:
+	.byte	1
+	.byte	0
+	.p2align	2, 0x0
+	.long	0
+.Lnothrow_ttbase:
+
+	.section	.text.__clang_call_terminate,"axG",@progbits,__clang_call_terminate,comdat
+	.hidden	__clang_call_terminate
+	.weak	__clang_call_terminate
+	.p2align 4
+	.type	__clang_call_terminate, @function
+__clang_call_terminate:
+	pushl	%ebx
+	subl	$8, %esp
+	calll	.Lterminate_pc
+.Lterminate_pc:
+	popl	%ebx
+.Lterminate_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Lterminate_got-.Lterminate_pc), %ebx
+	movl	16(%esp), %eax
+	movl	%eax, (%esp)
+	calll	__cxa_begin_catch@PLT
+	calll	_ZSt9terminatev@PLT
+.Lterminate_end:
+	.size	__clang_call_terminate, .Lterminate_end-__clang_call_terminate
+
+	.globl	clang_catch_what
+	.p2align 4
+	.type	clang_catch_what,@function
+clang_catch_what:
+.Lwhat_begin:
+	.cfi_startproc
+	.cfi_personality 155, DW.ref.__gxx_personality_v0
+	.cfi_lsda 27, .Lwhat_lsda
+	pushl	%ebx
+	.cfi_def_cfa_offset 8
+	subl	$24, %esp
+	.cfi_def_cfa_offset 32
+	.cfi_offset %ebx, -8
+	calll	.Lwhat_pb
+	.cfi_adjust_cfa_offset 4
+.Lwhat_pb:
+	popl	%ebx
+	.cfi_adjust_cfa_offset -4
+.Lwhat_tmp3:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Lwhat_tmp3-.Lwhat_pb), %ebx
+	movl	%ebx, 4(%esp)
+	movl	32(%esp), %eax
+	movl	32(%esp), %ecx
+.Lwhat_tmp0:
+	movl	%esp, %eax
+	movl	%ecx, (%eax)
+	calll	_Z9may_throwi@PLT
+.Lwhat_tmp1:
+	jmp	.Lwhat_bb1
+.Lwhat_bb1:
+	jmp	.Lwhat_bb5
+.Lwhat_bb2:
+.Lwhat_tmp2:
+	movl	%eax, 16(%esp)
+	movl	%edx, 12(%esp)
+	movl	12(%esp), %eax
+	movl	$1, %ecx
+	cmpl	%ecx, %eax
+	jne	.Lwhat_bb7
+	movl	4(%esp), %ebx
+	movl	16(%esp), %eax
+	movl	%eax, (%esp)
+	calll	__cxa_begin_catch@PLT
+	movl	4(%esp), %ebx
+	movl	%eax, 8(%esp)
+	movl	8(%esp), %ecx
+	movl	(%ecx), %eax
+	movl	%ecx, (%esp)
+	calll	*8(%eax)
+	movl	4(%esp), %ebx
+	movl	%eax, 20(%esp)
+	calll	__cxa_end_catch@PLT
+	jmp	.Lwhat_bb6
+.Lwhat_bb5:
+	movl	$0, 20(%esp)
+.Lwhat_bb6:
+	movl	20(%esp), %eax
+	addl	$24, %esp
+	.cfi_def_cfa_offset 8
+	popl	%ebx
+	.cfi_def_cfa_offset 4
+	retl
+.Lwhat_bb7:
+	.cfi_def_cfa_offset 32
+	movl	4(%esp), %ebx
+	movl	16(%esp), %eax
+	movl	%eax, (%esp)
+	calll	_Unwind_Resume@PLT
+.Lwhat_end:
+	.size	clang_catch_what, .Lwhat_end-clang_catch_what
+	.cfi_endproc
+	.section	.gcc_except_table,"a",@progbits
+	.p2align	2, 0x0
+.Lwhat_table:
+.Lwhat_lsda:
+	.byte	255
+	.byte	155
+	.uleb128 .Lwhat_ttbase-.Lwhat_ttbaseref
+.Lwhat_ttbaseref:
+	.byte	1
+	.uleb128 .Lwhat_cst_end-.Lwhat_cst_begin
+.Lwhat_cst_begin:
+	.uleb128 .Lwhat_tmp0-.Lwhat_begin
+	.uleb128 .Lwhat_tmp1-.Lwhat_tmp0
+	.uleb128 .Lwhat_tmp2-.Lwhat_begin
+	.byte	1
+	.uleb128 .Lwhat_tmp1-.Lwhat_begin
+	.uleb128 .Lwhat_end-.Lwhat_tmp1
+	.byte	0
+	.byte	0
+.Lwhat_cst_end:
+	.byte	1
+	.byte	0
+	.p2align	2, 0x0
+.Lwhat_tmp4:
+	.long	.Lwhat_ZTI5Error_stub-.Lwhat_tmp4
+.Lwhat_ttbase:
+	.p2align	2, 0x0
+	.data
+	.p2align	2, 0x0
+.Lwhat_ZTI5Error_stub:
+	.long	_ZTI5Error
+
+
+	.hidden	DW.ref.__gxx_personality_v0
+	.weak	DW.ref.__gxx_personality_v0
+	.section	.data.DW.ref.__gxx_personality_v0,"awG",@progbits,DW.ref.__gxx_personality_v0,comdat
+	.p2align	2, 0x0
+	.type	DW.ref.__gxx_personality_v0, @object
+	.size	DW.ref.__gxx_personality_v0, 4
+DW.ref.__gxx_personality_v0:
+	.long	__gxx_personality_v0
+
+	.text
 
 	.section	.rodata
 	.p2align 2

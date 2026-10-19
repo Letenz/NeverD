@@ -98,6 +98,29 @@ bool registerEntering(const MedFunc &Func, const MedBlock &Block,
   std::set<int> Visited;
   std::function<bool(const MedBlock &, MedVar &)> entryOf;
   std::function<bool(const MedBlock &, MedVar &)> exitOf;
+  // The stack pointer as the unwinder enters landing pad \p Pad.  MedSSA
+  // carries the frame's registers over each exceptional edge from the end of
+  // the block it protects, as over an ordinary edge, and joins them in a phi
+  // where they differ.  With no phi every edge brings one value, so the first
+  // that resolves names it; two that resolve must agree.
+  const auto stackPointerEnteringLandingPad = [&](const MedBlock &Pad,
+                                                  MedVar &R) {
+    std::optional<MedVar> Common;
+    for (const ExceptionalEdge &Edge : Pad.ExceptionalPreds) {
+      const MedBlock *Source = blockById(Edge.BlockId);
+      MedVar Value;
+      if (!Source || !exitOf(*Source, Value))
+        continue;
+      if (Common && (Common->Kind != Value.Kind || Common->Id != Value.Id ||
+                     Common->SSAVer != Value.SSAVer))
+        return false;
+      Common = Value;
+    }
+    if (!Common)
+      return false;
+    R = *Common;
+    return true;
+  };
   entryOf = [&](const MedBlock &Blk, MedVar &R) -> bool {
     if (!Visited.insert(Blk.Id).second)
       return false;
@@ -107,6 +130,11 @@ bool registerEntering(const MedFunc &Func, const MedBlock &Block,
     }
     if (Calls && !Blk.ExceptionalPreds.empty() && !Left)
       Left = MedVar::makeUnspecified(Size, TRI.TheArch);
+    // A landing pad has no ordinary predecessor: the unwinder enters it with
+    // the stack pointer of the call it protects.
+    if (Blk.Preds.empty() && RegOff == TRI.StackPointer &&
+        !Blk.ExceptionalPreds.empty())
+      return stackPointerEnteringLandingPad(Blk, R);
     if (Blk.Preds.empty()) {
       ReachedEntry |= Blk.ExceptionalPreds.empty();
       // Function entry: the identity COPY is the live-in. Do not invent every
