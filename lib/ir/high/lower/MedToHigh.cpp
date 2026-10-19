@@ -1127,16 +1127,57 @@ void MedToHighConverter::attachSEHHandlerEntryCopies(HighFunc &Func,
   });
 }
 
+std::set<va_t> MedToHighConverter::dispatcherEntries() const {
+  std::set<va_t> Entries;
+  if (!CurMed)
+    return Entries;
+  for (const MedBlock &Block : CurMed->Blocks)
+    if (!Block.ExceptionalPreds.empty() && Block.StartAddr != 0 &&
+        Block.StartAddr != InvalidVA)
+      Entries.insert(Block.StartAddr);
+  return Entries;
+}
+
+void MedToHighConverter::anchorDispatcherEntries(HighFunc &Func) const {
+  if (!CurMed)
+    return;
+  std::set<va_t> Present;
+  walkStmts(static_cast<const std::vector<HighStmt> &>(Func.Body),
+            [&](const HighStmt &S) { Present.insert(S.Addr); });
+  for (const MedBlock &Block : CurMed->Blocks) {
+    if (Block.ExceptionalPreds.empty() || Block.StartAddr == 0 ||
+        Block.StartAddr == InvalidVA || Block.EndAddr <= Block.StartAddr ||
+        Present.count(Block.StartAddr))
+      continue;
+    auto First = std::find_if(
+        Func.Body.begin(), Func.Body.end(), [&](const HighStmt &S) {
+          return S.Addr > Block.StartAddr && S.Addr < Block.EndAddr;
+        });
+    if (First == Func.Body.end())
+      continue;
+    HighStmt Anchor;
+    Anchor.Kind = StmtKind::Block;
+    Anchor.Addr = Block.StartAddr;
+    Func.Body.insert(First, std::move(Anchor));
+    Present.insert(Block.StartAddr);
+  }
+}
+
 void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
   if (Func.Body.size() > limits::kMaxLateGotoReductionStmts)
     return;
   // The join-default sink models Win64 register joins (structureIfElse).
   const bool LateJoinSink = !CurMed || CurMed->CC == CallingConv::Win64;
+  // The dispatcher enters a landing pad without a jump, so one jump to a pad
+  // is not its only way in.  Moving the pad's code to that jump would leave
+  // its address with no code.
+  const std::set<va_t> DispatcherEntries = dispatcherEntries();
   bool Dirty = hoistTryExitJumps(Func.Body);
   // Cases that only jump to the same tail become one case first; copying
   // the tail into each of them would multiply it.
   Dirty |= groupSwitchCases(Func.Body);
-  Dirty |= duplicateSmallReturnTails(Func.Body);
+  Dirty |= duplicateSmallReturnTails(Func.Body, /*PrintedSize=*/false,
+                                     DispatcherEntries);
   // Region splices nest whole multi-block regions, so they run only after
   // the local rewrites have settled.  The late rewrites can leave new jumps
   // to a small return tail; those get one more tail-duplication pass.
@@ -1160,8 +1201,9 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
         Rewritten = busiestExitFollowsTheSwitch(Func.Body);
         Rewritten |= breakToTheLoopFollow(Func.Body);
       } else
-        Rewritten = duplicateSmallReturnTails(Func.Body) |
-                    duplicateSmallJumpTails(Func.Body);
+        Rewritten = duplicateSmallReturnTails(Func.Body, /*PrintedSize=*/false,
+                                              DispatcherEntries) |
+                    duplicateSmallJumpTails(Func.Body, DispatcherEntries);
       // The last phase always runs its rounds: the dead-code cleanup above
       // can leave a jump that now just falls through.
       if (!Rewritten && Phase != 5)
@@ -1183,7 +1225,8 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
           (Phase != 0 && flattenBlocks(Func.Body)) |
           (Phase != 0 && loopifyTrailingArmBodies(Func.Body)) |
           (Phase != 0 && hoistSharedArmTails(Func.Body));
-      if (!reduceSingleUseGotos(Func.Body, /*SpliceRegions=*/Phase != 0) &&
+      if (!reduceSingleUseGotos(Func.Body, /*SpliceRegions=*/Phase != 0,
+                                DispatcherEntries) &&
           !Grouped)
         break;
       Dirty = true;
@@ -1482,6 +1525,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
       structureExceptionRegions(Func, Med);
     attachSEHHandlerEntryCopies(Func, Med);
     reduceLateGotos(Func);
+    anchorDispatcherEntries(Func);
     Trace.high(Func, "after-exceptions");
     return Func;
   }
@@ -1539,7 +1583,8 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   loopJumpsAsBreakAndContinue(Func.Body);
   // Jumps to a return tail that structuring left become copies of it when
   // the tail prints short; earlier, such a jump may still become a break.
-  duplicateSmallReturnTails(Func.Body, /*PrintedSize=*/true);
+  duplicateSmallReturnTails(Func.Body, /*PrintedSize=*/true,
+                            dispatcherEntries());
   foldTempsInReturnTails(Func.Body);
   mergeJumpsIntoNextIfArms(Func);
   // Names merge last: every earlier pass may still move statements as if
@@ -1553,6 +1598,10 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   narrowLocals(Func);
   chooseIntegerSignedness(Func);
   nameRepeatedValues(Func);
+  // The passes since the last dead-code round fold and merge statements by
+  // the jumps that enter them, so a landing pad can lose the statement its
+  // label sits on.
+  anchorDispatcherEntries(Func);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();
 

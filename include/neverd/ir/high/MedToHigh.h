@@ -76,8 +76,12 @@ void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med = nullptr);
 /// With \p PrintedSize, a temporary read once later in the tail does not
 /// count toward the limit, since it prints inside that read; that is meant
 /// for the jumps left once structuring is done, where each copy removes one.
+/// A label in \p DispatcherEntries starts no tail: the dispatcher enters it
+/// without a jump, so copying its code to every jump would leave the
+/// original unreferenced.
 bool duplicateSmallReturnTails(std::vector<HighStmt> &Body,
-                               bool PrintedSize = false);
+                               bool PrintedSize = false,
+                               const std::set<va_t> &DispatcherEntries = {});
 
 /// Move the jump that ends a `__try` body after the try statement when every
 /// `__except` body ends in a jump or return of its own, so the protected code
@@ -89,8 +93,12 @@ bool hoistTryExitJumps(std::vector<HighStmt> &Body);
 /// fall-through path into `if`/`else`.  Returns true when anything changed.
 /// With \p SpliceRegions, a single-use label may also start a multi-block
 /// region that is entered only from inside itself; that region moves too.
+/// \p DispatcherEntries names the addresses that something other than a jump
+/// in \p Body enters, such as the landing pads the unwinder runs.  Each keeps
+/// its place and its label, as an `__except` handler does.
 bool reduceSingleUseGotos(std::vector<HighStmt> &Body,
-                          bool SpliceRegions = false);
+                          bool SpliceRegions = false,
+                          const std::set<va_t> &DispatcherEntries = {});
 /// Share one body among switch cases that go to the same place, and drop
 /// cases that go where `default` goes.
 bool groupSwitchCases(std::vector<HighStmt> &Body);
@@ -100,8 +108,11 @@ bool groupSwitchCases(std::vector<HighStmt> &Body);
 bool flattenBlocks(std::vector<HighStmt> &Body);
 /// Replace each jump to a label nothing falls into with a copy of its tail
 /// when that tail is a few pure assignments followed by a forward jump or by
-/// the next label. Returns true when a jump was replaced.
-bool duplicateSmallJumpTails(std::vector<HighStmt> &Body);
+/// the next label. Returns true when a jump was replaced.  A label in
+/// \p DispatcherEntries starts no tail, and a jump at one of those addresses
+/// leaves an anchor ahead of its copy.
+bool duplicateSmallJumpTails(std::vector<HighStmt> &Body,
+                             const std::set<va_t> &DispatcherEntries = {});
 /// Remove a goto whose target is exactly the next statement in its list,
 /// when no other statement starts at that address. Returns true when a goto
 /// was removed.
@@ -557,6 +568,12 @@ private:
   /// Late goto reduction on the finished statement tree (tail duplication,
   /// splices, if/else joins, loop recovery), bounded by statement count.
   void reduceLateGotos(HighFunc &Func);
+  /// The start of each CurMed block that the exception dispatcher enters:
+  /// a landing pad, a handler or a cleanup.  No jump in the body names one.
+  std::set<va_t> dispatcherEntries() const;
+  /// Give each such block whose start address no statement carries an empty
+  /// anchor ahead of its first top-level statement, so its label stays.
+  void anchorDispatcherEntries(HighFunc &Func) const;
   const MedFunc *CurMed = nullptr;
   /// Entry-relative stack slots CurMed loads anywhere or whose address
   /// escapes; such a slot is a local, not an outgoing argument (cached per

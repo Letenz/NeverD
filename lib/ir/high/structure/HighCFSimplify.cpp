@@ -800,9 +800,10 @@ static bool tailMayFault(const std::vector<HighStmt> &Tail) {
 /// never returns such as the fail-fast trap, becomes a copy of those
 /// statements.  The labelled original stays for any other path, so no code
 /// is removed; only the jump is.
-bool duplicateSmallJumpTails(std::vector<HighStmt> &Body) {
+bool duplicateSmallJumpTails(std::vector<HighStmt> &Body,
+                             const std::set<va_t> &DispatcherEntries) {
   std::map<va_t, unsigned> Uses;
-  std::set<va_t> Pinned;
+  std::set<va_t> Pinned = DispatcherEntries;
   walkStmts(Body, [&](const HighStmt &S) {
     if (S.Kind == StmtKind::Goto && S.GotoTarget != 0 &&
         S.GotoTarget != InvalidVA)
@@ -907,9 +908,17 @@ bool duplicateSmallJumpTails(std::vector<HighStmt> &Body) {
           if (L[I].Kind == StmtKind::Goto) {
             auto It = Tails.find(L[I].GotoTarget);
             if (It != Tails.end() && TailContexts.at(It->first) == Ctx) {
+              // The dispatcher enters a jump at its own address: an empty
+              // block keeps that address ahead of the copy.
+              const bool Entered = DispatcherEntries.count(L[I].Addr) != 0;
+              HighStmt Anchor;
+              Anchor.Kind = StmtKind::Block;
+              Anchor.Addr = L[I].Addr;
               L.erase(L.begin() + I);
               L.insert(L.begin() + I, It->second.begin(), It->second.end());
-              I += It->second.size() - 1;
+              if (Entered)
+                L.insert(L.begin() + I, std::move(Anchor));
+              I += It->second.size() - (Entered ? 0 : 1);
               Changed = true;
               continue;
             }
@@ -1002,7 +1011,8 @@ static unsigned readsOf(const HighExpr *E, const VarKey &K) {
   return N;
 }
 
-bool duplicateSmallReturnTails(std::vector<HighStmt> &Body, bool PrintedSize) {
+bool duplicateSmallReturnTails(std::vector<HighStmt> &Body, bool PrintedSize,
+                               const std::set<va_t> &DispatcherEntries) {
   constexpr size_t kMaxTailAssigns = limits::kMaxReturnTailStatements;
   constexpr size_t kMaxComposedTail = 2 * kMaxTailAssigns + 1;
   std::set<va_t> Targets;
@@ -1095,6 +1105,7 @@ bool duplicateSmallReturnTails(std::vector<HighStmt> &Body, bool PrintedSize) {
         for (size_t I = 0; I < Stmts.size(); ++I) {
           const va_t Label = Stmts[I].Addr;
           if (Starts.unique(Label) && !Tails.count(Label) &&
+              !DispatcherEntries.count(Label) &&
               LabelStarts::beginsGroup(Stmts, I, Parent))
             if (auto Tail = TailAt(Stmts, I, Cont, Ctx)) {
               Tails.emplace(Label, std::move(*Tail));
@@ -3894,12 +3905,15 @@ bool groupSwitchCases(std::vector<HighStmt> &Body) {
   return Changed;
 }
 
-bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
+bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions,
+                          const std::set<va_t> &DispatcherEntries) {
   // These indexes are queried by address only. Rewrite order comes from the
   // statement traversal, including the first label at a duplicate address.
-  // Every way a statement address is entered: gotos and __except handlers.
+  // Every way a statement address is entered: gotos, __except handlers, and
+  // the entries the caller names, such as landing pads.
   std::unordered_map<va_t, unsigned> Uses;
-  std::unordered_set<va_t> Pinned;
+  std::unordered_set<va_t> Pinned(DispatcherEntries.begin(),
+                                  DispatcherEntries.end());
   walkStmts(Body, [&](const HighStmt &S) {
     if (S.Kind == StmtKind::Goto && S.GotoTarget != 0 &&
         S.GotoTarget != InvalidVA)
@@ -3908,6 +3922,11 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
       if (Clause.HandlerVA != 0 && Clause.HandlerVA != InvalidVA)
         Pinned.insert(Clause.HandlerVA);
   });
+  // The jumps that enter \p Addr, whatever else enters it.
+  auto jumpsTo = [&](va_t Addr) -> unsigned {
+    auto It = Uses.find(Addr);
+    return It == Uses.end() ? 0 : It->second;
+  };
   auto usesOf = [&](va_t Addr) -> unsigned {
     if (Addr == 0 || Addr == InvalidVA)
       return 0;
@@ -4304,10 +4323,15 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
         Changed = true;
       }
       // T0: a temporary read only by the next condition is evaluated at
-      // exactly the same point when folded into it.
+      // exactly the same point when folded into it.  At a label only the
+      // dispatcher enters, an anchor keeps the label where the read was.
+      const bool DispatcherLabel = I + 1 < L.size() && labelStart(L, I) &&
+                                   DispatcherEntries.count(L[I].Addr) &&
+                                   jumpsTo(L[I].Addr) == 0;
       if (I + 1 < L.size() && L[I].Kind == StmtKind::Assign &&
           !L[I].IsPhiCopy && L[I].Dst && L[I].Dst->Kind == ExprKind::Var &&
-          L[I].Val && !labelStart(L, I) && !labelStart(L, I + 1) &&
+          L[I].Val && (!labelStart(L, I) || DispatcherLabel) &&
+          !labelStart(L, I + 1) &&
           (L[I + 1].Kind == StmtKind::If ||
            L[I + 1].Kind == StmtKind::IfElse) &&
           L[I + 1].Cond) {
@@ -4341,7 +4365,14 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
           }
           if (CondReads == 1 && Substitute(L[I + 1].Cond, Key, L[I].Val)) {
             ReadIt->second = 0;
-            L.erase(L.begin() + I);
+            if (DispatcherLabel) {
+              HighStmt Anchor;
+              Anchor.Kind = StmtKind::Block;
+              Anchor.Addr = L[I].Addr;
+              L[I] = std::move(Anchor);
+            } else {
+              L.erase(L.begin() + I);
+            }
             Changed = true;
           }
         }
