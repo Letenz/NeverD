@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "updated": "2026-10-19",
+  "kind": "incremental-static-source-review",
+  "upstream": {
+    "repository": "https://github.com/torvalds/linux",
+    "version": "7.2",
+    "commit": "8d3ae59288f1e7d58d76558a6ee96d533bc5019f",
+    "files": [
+      {
+        "path": "Makefile",
+        "git_blob_sha1": "ddcc6dca1ece826a67e29f2dc24e1c1d9d6dd186"
+      },
+      {
+        "path": "arch/x86/entry/syscalls/syscall_64.tbl",
+        "git_blob_sha1": "524155d655da15478e81117a7b547cf3b172ad82"
+      },
+      {
+        "path": "arch/arm/tools/syscall.tbl",
+        "git_blob_sha1": "94351e22bfcf76834c6e4cc2184d1388ad3b169c"
+      },
+      {
+        "path": "arch/arm64/kernel/Makefile.syscalls",
+        "git_blob_sha1": "0542a718871afa712446f8c674e680e9d187bb09"
+      },
+      {
+        "path": "arch/arm64/tools/syscall_64.tbl",
+        "git_blob_sha1": "63135cf34b6595a4a656e4939839ed4912a77082"
+      },
+      {
+        "path": "scripts/syscall.tbl",
+        "git_blob_sha1": "7a42b32b65776773b8117a5e2d6131acfdf4e505"
+      },
+      {
+        "path": "include/linux/syscalls.h",
+        "git_blob_sha1": "874d9067a43b50ed77e5dbcba82bc54fc1aab519"
+      },
+      {
+        "path": "kernel/bpf/syscall.c",
+        "git_blob_sha1": "6db306d23b479fda606813fb6598a8f61a0ce504"
+      }
+    ]
+  },
+  "baseline": {
+    "description": "Existing Linux 6.1-derived entries retained except the three bpf arities below; original kernel commit was not recorded and remains unknown.",
+    "neverd_commit": "f8e6e66129a059625a87629ba30c250f7a7c9970",
+    "git_blob_sha1": "eee5c37556dc951772287700b76f1f7e61429f75"
+  },
+  "scope": {
+    "added_numbers": {
+      "first": 451,
+      "last": 471,
+      "architectures": [
+        "X64",
+        "AArch64",
+        "ARM"
+      ],
+      "rows": 63
+    },
+    "corrected": [
+      {
+        "arch": "X64",
+        "number": 321,
+        "name": "bpf",
+        "old_count": 3,
+        "new_count": 5
+      },
+      {
+        "arch": "AArch64",
+        "number": 280,
+        "name": "bpf",
+        "old_count": 3,
+        "new_count": 5
+      },
+      {
+        "arch": "ARM",
+        "number": 386,
+        "name": "bpf",
+        "old_count": 3,
+        "new_count": 5
+      }
+    ],
+    "counts_451_through_471": [
+      4,
+      4,
+      3,
+      4,
+      6,
+      4,
+      4,
+      4,
+      4,
+      4,
+      3,
+      3,
+      6,
+      6,
+      5,
+      4,
+      5,
+      5,
+      5,
+      4,
+      0
+    ]
+  },
+  "method": [
+    "Matched number and handler in each target table to include/linux/syscalls.h; corroborated bpf with SYSCALL_DEFINE5 in kernel/bpf/syscall.c.",
+    "All added arguments are pointers or word-sized scalars for these ABIs; pointers to u64 remain single registers on ARM EABI.",
+    "Preserved all unrelated legacy entries and all unlisted-number conservative fallback behavior. This table describes register inputs, not emulator support or syscall availability on a particular kernel.",
+    "This was an incremental static update, not execution of scripts/generate_linux_syscall_arguments.py and not a full Linux 7.2 regeneration. Future regeneration must update this provenance and review historical/configuration-specific handlers rather than indiscriminately reducing arities."
+  ],
+  "limitations": [
+    "Original baseline exact Linux revision unknown.",
+    "Legacy omissions (including AArch64 and x86-64 uprobe/uretprobe) remain conservative unknowns; legacy conditional prototypes require separate review.",
+    "No build, test, generator, project script, or kernel code was executed."
+  ]
+}
