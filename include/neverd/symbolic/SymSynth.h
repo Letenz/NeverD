@@ -26,7 +26,13 @@
 /// So this treats the expression as a blackbox.  Pick a set of points, ask the
 /// expression what it produces at each of them, and then look for the shortest
 /// expression in a small grammar that produces the same outputs.  Two searches
-/// share that specification:
+/// share that specification. Before enumerating composite trees, a modular
+/// affine fit proposes coefficients read from zero and unit-vector inputs.
+/// The complete sample grids may reject that fit; only the supplied verifier
+/// can authorize a production rewrite. This shortcut does not establish a
+/// minimum over the grammar.
+///
+/// The remaining searches are:
 ///
 ///   - *Enumeration*, in ascending cost, keeping one representative of each
 ///     distinct behaviour.  Two candidates that agree at every sample point
@@ -115,15 +121,17 @@ struct SynthOptions {
   /// most likely to agree by accident, and random points besides.
   size_t MaxSamples = 64;
 
-  /// Points an accepted candidate is re-checked at, none of which it was
-  /// selected by.  Only meaningful when no \c SynthVerifyFn is supplied, and
-  /// then it is the entire strength of the answer.
+  /// Points a candidate is re-checked at, independently of the selection grid.
+  /// This screen runs before a supplied verifier. Without a verifier it is
+  /// the entire strength of the answer, which remains discovery-only.
   unsigned VerifySamples = 512;
 
   /// Run the sampler when the enumeration comes back empty.
   bool UseStochasticFallback = true;
 
-  /// Candidates both searches may consider between them.
+  /// Search work shared by enumeration, affine fitting and the sampler.
+  /// Enumeration and sampling charge candidates; affine fitting also charges
+  /// word evaluations and optional typed-problem construction.
   ///
   /// This is a resource budget rather than a shape cutoff: nothing about which
   /// expressions can be expressed depends on it, only how much of the space is
@@ -144,6 +152,12 @@ struct SynthOptions {
   /// than guessed — see the note on coefficient reading in the implementation
   /// — so a small number goes a long way.
   unsigned MaxConstants = 8;
+
+  /// Propose a complete modular affine expression before enumerating composite
+  /// trees. Its coefficients come from the oracle, independently of the
+  /// literal-terminal limit. Both MaxCost and the shared MaxWork still apply;
+  /// agreement with samples never establishes equivalence.
+  bool UseAffineFitting = true;
 
   /// Operations in the straight-line program the sampler mutates.  This bounds
   /// the size of what the sampler can express, the way \c MaxCost bounds the
@@ -176,6 +190,18 @@ struct SynthOptions {
   /// build produce the same answer, which is what makes a difference in output
   /// a real change rather than a reshuffle.
   uint64_t Seed = 0x243F6A8885A308D3ull;
+
+  /// Bounded search shared by explicitly requested source simplification.
+  /// Affine answers may contain several coefficients; the work allowance,
+  /// rather than a tiny grammar cost, bounds interactive source requests.
+  /// This policy still needs a full-width verifier for production rewrites.
+  static SynthOptions sourceView() {
+    SynthOptions Options;
+    Options.MaxCost = 32;
+    Options.MaxWork = 20000;
+    Options.VerifySamples = 64;
+    return Options;
+  }
 };
 
 /// What became of an attempt to synthesize, and why nothing did when nothing
@@ -256,6 +282,9 @@ struct SynthResult {
   /// which also means it is the shortest form *found* rather than the shortest
   /// form that exists within the grammar.
   bool FromSampler = false;
+  /// A direct modular affine fit produced the answer. As with the sampler,
+  /// this identifies a discovered short form, not a global grammar minimum.
+  bool FromAffine = false;
 };
 
 /// Discover a short candidate that behaves like \p E on independent samples.

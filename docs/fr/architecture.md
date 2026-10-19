@@ -13,6 +13,10 @@ leur propre architecture interne.
 
 `arch/x86_64` possède les transitions vérifiées `RequireAligned` pour les adresses de 64 bits dans l’espace par défaut. Le moteur commun comptabilise les opérations scalaires et prouve que le prédicat de rejet est nul avant de conserver la garde originale. Une exécution explicitement sans faute ne constitue pas cette preuve. Aucun état MXCSR n’est requis ; cet adaptateur refuse encore les adresses segmentées et les gardes optionnelles.
 
+## Récupération de GS legacy
+
+`X64LegacyGSState` déclare une exécution 64 bits CPL0, CR4.FRED désactivé, sous `KernelX64NoFaultV1` et état machine explicitement sans faute. `arch/x86_64` possède SWAPGS, les bases active/inactive arbitraires de 64 bits et la mise à jour conjointe de l’interprétation des adresses GS. Les bases peuvent aliaser toute mémoire ; FS reste fixe. Les accès segmentés exigent toujours leurs options distinctes. La projection oublie les corrélations mais conserve l’intrinsèque et le domaine complet. La déclaration est liée aux attestations raw. Les interfaces source/native/LLVM sans entrées GS/MSR authentifiées la refusent ; l’exécution concrète Unicorn/KVM/WHP/HVF reste inchangée. Seul `0F 01 F8` exact obtient les attestations de sorties indéfinies et, séparément, de banques opaques ; aucune ne prouve les préconditions d’exécution.
+
 ## Récupération MXCSR avec validation
 
 `X64MXCSRMask` active les chargements MXCSR bruts et les lectures/écritures scalaires avec un masque effectif explicite (`0xffbf` ou `0xffff`). L’adaptateur x64 définit les états initiaux valides et les transitions. Le cœur compte le travail et exige la preuve que les bits réservés sont nuls ; le mode sans faute ne suffit pas. Les intrinsèques d’origine restent observables. Les écritures mémoire MXCSR, l’interface source et les certificats natifs/LLVM demandent leurs propres contrats.

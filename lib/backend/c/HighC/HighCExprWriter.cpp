@@ -5430,6 +5430,31 @@ HighCWriter::certifiedFrameStorageDisplacement(const HighExpr &E) const {
   return std::nullopt;
 }
 
+bool HighCWriter::frameStorageAlignmentHolds(const HighExpr &Call) {
+  if (!CurrentFunc || Call.IntrinsicId != Intrinsic::RequireAligned ||
+      Call.Operands.size() != 2 || !Call.Operands[0] || !Call.Operands[1] ||
+      Call.Operands[1]->Kind != ExprKind::Const ||
+      Call.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const uint64_t Bytes = Call.Operands[1]->ConstVal;
+  if (Bytes == 0 || (Bytes & (Bytes - 1)) != 0 ||
+      Bytes > kSyntheticStackAlignment)
+    return false;
+  // A certified frame address prints as an address in the storage, not as a
+  // local of the slot's own type, once the function keeps its frame there.
+  if (!FrameStorageActive || !ProjectFrameAliasesIntoStorage)
+    return false;
+  const auto Disp = certifiedFrameStorageDisplacement(*Call.Operands[0]);
+  if (!Disp)
+    return false;
+  // The storage is aligned to the synthetic stack alignment, and the entry
+  // stack pointer sits at its residue above an aligned lower part.
+  const int64_t Residue = static_cast<int64_t>(syntheticEntryStackResidue(
+      Opts.TheArch, Opts.Format, CurrentFunc->EntryKind));
+  const int64_t Alignment = static_cast<int64_t>(Bytes);
+  return ((*Disp + Residue) % Alignment + Alignment) % Alignment == 0;
+}
+
 bool HighCWriter::reachesFrameThroughIndex(const HighExpr &E) const {
   if (E.Kind != ExprKind::BinOp)
     return false;
@@ -6072,11 +6097,24 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
       llvm::report_fatal_error("HighC cannot render an invalid source record");
     std::string Result = "(" + typeToC(E.Type) + "){";
     for (size_t I = 0; I < E.Operands.size(); ++I) {
-      if (!E.Operands[I] ||
-          !equalSourceTypes(E.Type->Fields[I], E.Operands[I]->Type))
+      const TypeRef &Field = E.Type->Fields[I];
+      const HighExpr *Operand = E.Operands[I].get();
+      const bool Equal = Operand && equalSourceTypes(Field, Operand->Type);
+      // HighIR passes choose an integer value's signedness for its other
+      // readers: a slice folds into the local it reads, and a local takes
+      // the signedness most of its uses read.  The field takes the same bits
+      // as its own integer type, as a call argument does.
+      const bool Reinterpreted = Operand && !Equal && isPlainInteger(Field) &&
+                                 isPlainInteger(Operand->Type) &&
+                                 Operand->Type->Size == Field->Size;
+      if (!Equal && !Reinterpreted)
         llvm::report_fatal_error("HighC source record field type disagrees");
       if (I)
         Result += ", ";
+      if (Reinterpreted) {
+        Result += integerView(*Operand, Field, /*ParentPrec=*/0);
+        continue;
+      }
       const auto Text = exprStr(*E.Operands[I]);
       if (E.Type->Fields[I]->Kind == NdTypeKind::Ptr) {
         // Pointer expressions retain their integer machine carrier in HighC.

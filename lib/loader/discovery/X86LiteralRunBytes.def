@@ -1,0 +1,67 @@
+//===- X86LiteralRunBytes.def - Bytes a string-literal run test reads -*- C++
+//-*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The x86 bytes X86StringLiteralRuns (FunctionDiscoveryX86.cpp) reads when
+/// it follows execution through the string literals of an executable
+/// section: the legacy prefixes an instruction may begin with, and the
+/// one-byte opcodes 64-bit mode rejects (Intel SDM Vol. 2, Table A-2, "i64"),
+/// which raise #UD and so end a path.  0x62, 0xC4, 0xC5 and 0xD5 are left
+/// out: 64-bit mode reads them as EVEX, VEX and REX2 prefixes.  An EVEX
+/// prefix whose map field selects map 0 raises #UD too: AVX-512 and APX
+/// both reserve it.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_X86_LEGACY_PREFIX(Byte)
+#ifndef NEVERD_X86_LEGACY_PREFIX
+#define NEVERD_X86_LEGACY_PREFIX(Byte)
+#endif
+NEVERD_X86_LEGACY_PREFIX(0x26) // ES
+NEVERD_X86_LEGACY_PREFIX(0x2E) // CS
+NEVERD_X86_LEGACY_PREFIX(0x36) // SS
+NEVERD_X86_LEGACY_PREFIX(0x3E) // DS
+NEVERD_X86_LEGACY_PREFIX(0x64) // FS
+NEVERD_X86_LEGACY_PREFIX(0x65) // GS
+NEVERD_X86_LEGACY_PREFIX(0x66) // operand size
+NEVERD_X86_LEGACY_PREFIX(0x67) // address size
+NEVERD_X86_LEGACY_PREFIX(0xF0) // LOCK
+NEVERD_X86_LEGACY_PREFIX(0xF2) // REPNE
+NEVERD_X86_LEGACY_PREFIX(0xF3) // REP
+#undef NEVERD_X86_LEGACY_PREFIX
+
+// NEVERD_X86_INVALID_IN_64BIT(Byte)
+#ifndef NEVERD_X86_INVALID_IN_64BIT
+#define NEVERD_X86_INVALID_IN_64BIT(Byte)
+#endif
+NEVERD_X86_INVALID_IN_64BIT(0x06) // PUSH ES
+NEVERD_X86_INVALID_IN_64BIT(0x07) // POP ES
+NEVERD_X86_INVALID_IN_64BIT(0x0E) // PUSH CS
+NEVERD_X86_INVALID_IN_64BIT(0x16) // PUSH SS
+NEVERD_X86_INVALID_IN_64BIT(0x17) // POP SS
+NEVERD_X86_INVALID_IN_64BIT(0x1E) // PUSH DS
+NEVERD_X86_INVALID_IN_64BIT(0x1F) // POP DS
+NEVERD_X86_INVALID_IN_64BIT(0x27) // DAA
+NEVERD_X86_INVALID_IN_64BIT(0x2F) // DAS
+NEVERD_X86_INVALID_IN_64BIT(0x37) // AAA
+NEVERD_X86_INVALID_IN_64BIT(0x3F) // AAS
+NEVERD_X86_INVALID_IN_64BIT(0x60) // PUSHA
+NEVERD_X86_INVALID_IN_64BIT(0x61) // POPA
+NEVERD_X86_INVALID_IN_64BIT(0x82) // group 1 alias of 0x80
+NEVERD_X86_INVALID_IN_64BIT(0x9A) // CALLF ptr16:32
+NEVERD_X86_INVALID_IN_64BIT(0xCE) // INTO
+NEVERD_X86_INVALID_IN_64BIT(0xD4) // AAM
+NEVERD_X86_INVALID_IN_64BIT(0xEA) // JMPF ptr16:32
+#undef NEVERD_X86_INVALID_IN_64BIT
+
+// NEVERD_X86_EVEX_RESERVED_MAP(Prefix, MapMask): the EVEX prefix byte and the
+// bits of the byte after it that select the opcode map, which may not be 0.
+#ifndef NEVERD_X86_EVEX_RESERVED_MAP
+#define NEVERD_X86_EVEX_RESERVED_MAP(Prefix, MapMask)
+#endif
+NEVERD_X86_EVEX_RESERVED_MAP(0x62, 0x07)
+#undef NEVERD_X86_EVEX_RESERVED_MAP

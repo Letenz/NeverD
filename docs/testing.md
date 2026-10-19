@@ -85,6 +85,24 @@ across calls and opaque parents, capacity/zero-work limits, unchanged variable
 identities, independent byte evaluation and reduced measured work. This cache
 is separate from per-call Solved maps and low-word projection caching.
 
+`NeverDSymSynthAffineTests` runs both the semantic affine regressions and the
+existing synthesis contract suite without building the CLI. It covers
+8/16/32/64/128/256-bit coefficients, eight-input factoring with noninvertible
+coefficients, root conversions, signed one-bit inputs, an exhaustive byte-pair
+arithmetic oracle, full-width sampling collisions, refusal on incomplete proofs,
+and cost/work ceilings. An equal-budget comparison disables affine fitting to
+isolate its contribution. Enable `NEVERD_ENABLE_Z3` to run the independent Z3 cases;
+unavailable Z3 is explicitly skipped and is not proof coverage.
+`SymSimplifyGuard.SemanticAffineSynthesisAcrossBlocksAndAtCallArguments` checks
+the production LLVM pass across a dominated block boundary and at an observable
+call argument. It requires a proof, verifies the emitted IR and retains the call.
+
+```sh
+python scripts/build.py build-release --target NeverDSymSynthAffineTests NeverDSolverTests --parallel 4
+build-release/bin/NeverDSymSynthAffineTests
+build-release/bin/NeverDSolverTests
+```
+
 `NeverDSymLoadOriginBindingTests` checks transactional history rebinding,
 sorted conflict unions, independent forks and invalid batches. Historical
 metadata never creates available bytes or restores a pre-clobber memory epoch.
@@ -232,6 +250,10 @@ for equality before attributing a speed difference to the allocator. Use
 Decode-only results do not measure the allocation-heavy IR stages; an allocator
 change does not guarantee an improvement for every workload.
 
+
+## Legacy GS recovery tests
+
+`NeverDX86LegacyGSRecoveryTests` checks universal exchange/twice-exchange postconditions, full-width segmented memory addresses, aliasing, unchanged FS/memory/flags, coexistence with MXCSR, malformed states and scratch slots, atomic refusal, retained effects and budget boundaries. `PEFixedImageTest.RawLegacyGS*` checks native admission and receipt binding. Machine-state and native/LLVM refinement tests refuse unsupported source contracts, including unused declarations. `LegacyGSExecutionPolicy.RemainsUnmodeled` preserves concrete execution refusal. These are symbolic and policy tests, not native privileged-instruction execution.
 
 ## MXCSR recovery checks
 
@@ -403,6 +425,21 @@ checks exact masked status bits, signed extensions, shared expressions and
 effect preservation without the symbolic bridge. The x87 classification test
 executes ordinary HighC against native extended-precision encodings; ARM mode
 tests execute both ordinary and explicitly enhanced source.
+
+`NeverDHighSymSimplifyTests` provides the focused HighIR suite, including
+8–256-bit affine synthesis, synthesis inside signed/unsigned width conversions
+and exhaustive byte-pair overflow preservation. Wide-constant roundtrips check
+positive, negated and complemented high-bit payloads in enclosing regions.
+`SymSimplifyGuard.SourceSymbolicToggleEnablesBoundedSemanticSearch` checks
+actual search work through every source LLVM profile. Proof-budget cases check
+that synthesis exhaustion preserves IR while the separate split-word recovery
+still completes. The real-engine
+`NeverDWorkerSourceSynthesis` test sends the GUI's `source_options` request,
+checks enhanced/ordinary cache isolation, and, when a CLI is configured,
+exercises single-function and whole-program source in both routes. With
+Clang available it compiles all six enhanced outputs at O0/O2 and executes
+each against 1,331 boundary triples and 4,096 deterministic random triples.
+Missing Clang explicitly skips only that generated-C execution coverage.
 
 `NeverDGuiMicrosoftSymbols` uses an in-memory network reply and the fixture SDK
 to check the Load PDB file dialog (a matching local copy, declining, downloads
@@ -7933,6 +7970,10 @@ unkeyed.
 object pointer's field scaled by four, as GOF2's `sub_4028D4` does. Without the
 run-mirror redirect it is refused as an ambiguous read-only table base; with it
 the read is a GEP into a read-only global and the table VA survives nowhere.
+`InCodePointerTableMirrorsPastTheLimit` reads a function-pointer table MSVC
+lays among its code as data, in a `.text` over the 1 MiB single-global limit;
+the read resolves through the table run's own mirror rather than refusing that
+the code segment cannot mirror.
 `I386CallContract.ABlockPhiIsNoArgumentPastAnEarlierCallInItsBlock` joins a
 callback's address and an import call's leftover in EDX, calls the import
 again in the join block, then a routine reading ECX and EDX: the argument is

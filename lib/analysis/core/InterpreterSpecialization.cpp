@@ -2205,7 +2205,7 @@ bool Specializer::evaluate(int Id) {
       Options.FrameBaseRegister ? Ctx.mkFreshVar(64, "entry_frame") : SymRef();
   seed(Ctx, State, FrameRoot, Draft.Incoming);
   seedRuntimeMemoryState(Ctx, State, Options);
-  auto RuntimeControls = seedRuntimeControlState(Ctx, Options);
+  auto RuntimeControls = seedRuntimeControlState(Ctx, State, Options);
   // Rebuilt nodes forget correlations, including prior writes, but retain the
   // full architectural domain. Runtime intrinsics are never removed.
   SymRef TaskPriority =
@@ -3059,10 +3059,11 @@ bool Specializer::evaluate(int Id) {
         }
         if (Transition->OutputState) {
           const auto &[Index, Value] = *Transition->OutputState;
-          if (Index >= RuntimeControls.Values.size())
+          if (auto Error =
+                  commitRuntimeControlState(State, RuntimeControls, Index,
+                                            Exec.operandValue(Value), Options))
             return fail(SpecializationStatus::InvalidInput,
-                        "runtime control state index is invalid");
-          RuntimeControls.Values[Index] = Exec.operandValue(Value);
+                        llvm::toString(std::move(Error)));
         }
       } else if (PriorityOperation) {
         // Scratch is live only for this transition. Keeping the resulting

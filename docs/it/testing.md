@@ -12,6 +12,10 @@ request ad alto rischio.
 
 `PipelineOutcome.ResolvedCalls*` verifica gruppi di registri, identità call/invoke, unione e divisione dei byte dello stack, valori stretti nei propri slot e rifiuto di byte mancanti. `MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` verifica gli offset registrati. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` copre x64, ARM32 e AArch64 in ELF, PE e Mach-O. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` copre i tre formati e rifiuta lunghezze sovrascritte, intervalli scrivibili o eccessivi, funzioni locali omonime, registri sorgente errati, ingressi alternativi e immagini rilocabili. I test differenziali C compilano il riferimento separatamente a O0 e il C generato a O2, evitando che un errore dell’ottimizzatore host su una ricorrenza alteri il riferimento. Il controllo FMA AArch64 richiede `-mfma` soltanto sugli host x86.
 
+## Test dello stato GS legacy
+
+`NeverDX86LegacyGSRecoveryTests` verifica postcondizioni universali di scambio/doppio scambio, indirizzi segmentati completi, alias, conservazione di FS/memoria/flag, coesistenza con MXCSR, stati e temporanei malformati, rifiuto atomico, effetti conservati e budget. `PEFixedImageTest.RawLegacyGS*` verifica ammissione nativa e vincolo delle ricevute. I test dello stato macchina e di raffinamento nativo/LLVM rifiutano contratti sorgente non supportati, anche dichiarazioni inutilizzate. `LegacyGSExecutionPolicy.RemainsUnmodeled` mantiene il rifiuto concreto. Sono test simbolici e di policy, non esecuzione nativa privilegiata.
+
 ## Test del recupero MXCSR
 
 `InterpreterSpecialization.MXCSR*` verifica stati iniziali arbitrari, valori esatti in memoria, bit riservati, DAZ, alias, forme non valide, proiezione e limiti di budget. `PEFixedImageTest.RawMXCSR*` controlla byte legacy/VEX e attestazioni legate alla maschera. I test dello stato macchina e del raffinamento nativo/LLVM impediscono che capacità inutilizzate estendano le interfacce.

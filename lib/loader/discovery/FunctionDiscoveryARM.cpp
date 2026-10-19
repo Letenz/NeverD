@@ -18,15 +18,19 @@
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/bit.h"
 #include "llvm/Support/Error.h"
 
+#include <array>
 #include <capstone/arm.h>
 #include <capstone/capstone.h>
+#include <cassert>
 #include <deque>
-#include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <unordered_map>
@@ -98,6 +102,14 @@ public:
     if (It == Ranges.begin())
       return false;
     return std::prev(It)->second > Begin;
+  }
+
+  /// Whether \p Pred holds for any of the ranges, merged where they touch.
+  template <typename Fn> bool any(Fn Pred) const {
+    for (const auto &[Begin, End] : Ranges)
+      if (Pred(Begin, End))
+        return true;
+    return false;
   }
 
   /// Adds [Begin, End), and says whether any of it was new.
@@ -249,24 +261,17 @@ std::optional<unsigned> pcAddedRegister(const cs_insn &Insn) {
 /// routine does is read only from its own mode.
 using CodeKey = std::pair<va_t, InstructionMode>;
 
-struct CodeKeyHash {
-  size_t operator()(const CodeKey &Key) const {
-    return std::hash<va_t>()(Key.first * 2 +
-                             (Key.second == InstructionMode::Thumb));
-  }
-};
-
 /// Whether a routine entered at \p Entry can return to its caller, as far as
-/// the instructions of \p Steps show: some path from it reaches a return or
-/// a jump nobody can follow, falls into or jumps to another routine that can
-/// return, or runs into code that was not decoded.  Only a routine every path
-/// of which ends in a trap, an exiting system call, or a call to a routine
-/// \p IsNoReturn names cannot.
+/// the instructions \p StepAt describes show: some path from it reaches a
+/// return or a jump nobody can follow, falls into or jumps to another routine
+/// that can return, or runs into code that was not decoded.  Only a routine
+/// every path of which ends in a trap, an exiting system call, or a call to a
+/// routine \p IsNoReturn names cannot.
 bool mayReturn(
     const CodeKey &Entry,
-    const std::unordered_map<CodeKey, ControlStep, CodeKeyHash> &Steps,
+    llvm::function_ref<std::optional<ControlStep>(const CodeKey &)> StepAt,
     const std::set<CodeKey> &Entries,
-    const std::function<bool(va_t)> &IsNoReturn) {
+    llvm::function_ref<bool(va_t)> IsNoReturn) {
   const InstructionMode Mode = Entry.second;
   std::vector<va_t> Pending{Entry.first};
   std::unordered_set<va_t> Seen;
@@ -282,10 +287,10 @@ bool mayReturn(
         return true;
       continue;
     }
-    const auto It = Steps.find({Address, Mode});
-    if (It == Steps.end())
+    const std::optional<ControlStep> Found = StepAt({Address, Mode});
+    if (!Found)
       return true;
-    const ControlStep &Step = It->second;
+    const ControlStep &Step = *Found;
     const va_t Next = Address + Step.Size;
     if (Step.Stops) {
       if (Step.Conditional)
@@ -516,89 +521,259 @@ struct CallSitePads {
   }
 };
 
-/// Reachable mode discovery, following, when \p Pads is given, the landing
-/// pad of every call site whose guarded code a path decodes.
-llvm::Error discoverReachableModes(BinaryImage &Img, const CallSitePads *Pads);
+using ModeAt = std::pair<va_t, InstructionMode>;
+
+struct Disassemblers {
+  csh ARM = 0;
+  csh Thumb = 0;
+  cs_insn *ARMInsn = nullptr;
+  cs_insn *ThumbInsn = nullptr;
+  ~Disassemblers() {
+    if (ARMInsn)
+      cs_free(ARMInsn, 1);
+    if (ThumbInsn)
+      cs_free(ThumbInsn, 1);
+    if (ARM)
+      cs_close(&ARM);
+    if (Thumb)
+      cs_close(&Thumb);
+  }
+};
+
+std::string hexAddress(va_t Address) { return "0x" + llvm::utohexstr(Address); }
+
+const char *modeName(InstructionMode Mode) {
+  return Mode == InstructionMode::Thumb ? "Thumb" : "ARM";
+}
+
+ARMCodeRegionKind regionKind(InstructionMode Mode) {
+  return Mode == InstructionMode::Thumb ? ARMCodeRegionKind::Thumb
+                                        : ARMCodeRegionKind::ARM;
+}
+
+/// The bit of general-purpose register \p Reg in InstructionFacts::Written,
+/// or zero for any other register.
+uint16_t gprBit(unsigned Reg) {
+  if (Reg >= ARM_REG_R0 && Reg <= ARM_REG_R12)
+    return uint16_t(1u << (Reg - ARM_REG_R0));
+  switch (Reg) {
+  case ARM_REG_SP:
+    return uint16_t(1u << 13);
+  case ARM_REG_LR:
+    return uint16_t(1u << 14);
+  case ARM_REG_PC:
+    return uint16_t(1u << 15);
+  default:
+    return 0;
+  }
+}
+
+constexpr uint8_t kNoRegister = 0xff;
+
+/// The number of general-purpose register \p Reg, or kNoRegister.
+uint8_t gprIndex(unsigned Reg) {
+  const uint16_t Bit = gprBit(Reg);
+  return Bit ? static_cast<uint8_t>(llvm::countr_zero(Bit)) : kNoRegister;
+}
+
+/// What the walk reads of the instruction at one address, decoded in one
+/// mode.  It depends on the bytes and the mode alone, so a pass that starts
+/// again reads it instead of decoding the instruction again.
+struct InstructionFacts {
+  enum : uint16_t {
+    // Decoded as Thumb.
+    Thumb = 1u << 0,
+    Call = 1u << 1,
+    Jump = 1u << 2,
+    Conditional = 1u << 3,
+    // `blx #imm`: the target runs in the other instruction set.
+    SwitchesMode = 1u << 4,
+    Trap = 1u << 5,
+    // `svc #0`: a system call, which may end the program.
+    SupervisorCall = 1u << 6,
+    WritesR7 = 1u << 7,
+    // The value it gives r7, in R7, is known.
+    KnownR7 = 1u << 8,
+    ReadsLiteral = 1u << 9,
+    LoadsWord = 1u << 10,
+    AddsPC = 1u << 11,
+  };
+  /// The first non-negative immediate of a call or jump: its target.
+  va_t Target = InvalidVA;
+  /// Where the literal a PC-relative load reads starts, from the instruction.
+  int32_t LiteralOffset = 0;
+  uint32_t R7 = 0;
+  /// The word a PC-relative load gives LoadedRegister.
+  uint32_t LoadedWord = 0;
+  uint16_t Flags = 0;
+  /// The general-purpose registers it writes, as gprBit.
+  uint16_t Written = 0;
+  /// Two or four; zero where no instruction decodes.
+  uint8_t Size = 0;
+  uint8_t LiteralSize = 0;
+  /// The registers, as gprIndex, a PC-relative word load writes and
+  /// `add rN, pc` adds the PC to.
+  uint8_t LoadedRegister = kNoRegister;
+  uint8_t AddedRegister = kNoRegister;
+
+  bool has(uint16_t Flag) const { return (Flags & Flag) != 0; }
+};
+
+/// Where the facts of an instruction are kept.  Most instructions do nothing
+/// the walk follows besides writing registers, and their facts fit in the
+/// slot itself; the others are kept in a list the slot indexes.  A zero slot
+/// has no facts yet.
+namespace fact_slot {
+constexpr uint32_t Inline = 1u << 31;
+constexpr uint32_t InlineThumb = 1u << 30;
+constexpr uint32_t InlineWide = 1u << 29;
+constexpr uint32_t InlineConditional = 1u << 28;
+// No instruction decodes there.
+constexpr uint32_t InlineInvalid = 1u << 27;
+constexpr uint16_t InlineFlags =
+    InstructionFacts::Thumb | InstructionFacts::Conditional;
+
+bool fitsInline(const InstructionFacts &F) {
+  return (F.Flags & ~InlineFlags) == 0;
+}
+
+uint32_t encode(const InstructionFacts &F) {
+  uint32_t Slot = Inline | F.Written;
+  if (F.has(InstructionFacts::Thumb))
+    Slot |= InlineThumb;
+  if (F.has(InstructionFacts::Conditional))
+    Slot |= InlineConditional;
+  if (F.Size == 0)
+    Slot |= InlineInvalid;
+  else if (F.Size == 4)
+    Slot |= InlineWide;
+  return Slot;
+}
+
+InstructionFacts decode(uint32_t Slot) {
+  InstructionFacts F;
+  F.Written = static_cast<uint16_t>(Slot);
+  if (Slot & InlineThumb)
+    F.Flags |= InstructionFacts::Thumb;
+  if (Slot & InlineConditional)
+    F.Flags |= InstructionFacts::Conditional;
+  if (!(Slot & InlineInvalid))
+    F.Size = (Slot & InlineWide) ? 4 : 2;
+  return F;
+}
+} // namespace fact_slot
+
+/// Per-halfword state of the code the walk reaches, in pages allocated as it
+/// reaches them.  Every ARM and Thumb instruction starts on a halfword and is
+/// two or four bytes long, so one entry per halfword describes them all.
+class HalfwordMap {
+public:
+  /// What the current pass decoded at a halfword.
+  enum : uint8_t {
+    // An instruction starts here.
+    Start = 1u << 0,
+    // It was decoded as Thumb.
+    ThumbStart = 1u << 1,
+    // It is four bytes long.
+    Wide = 1u << 2,
+    // An `svc #0` its path knew to call exit or exit_group.
+    Exits = 1u << 3,
+  };
+
+  /// One plus the index of the facts of the instruction at \p Address in the
+  /// mode first decoded there, or zero before it is decoded.
+  uint32_t &factSlot(va_t Address) {
+    return page(Address).FactSlots[index(Address)];
+  }
+  uint32_t factSlotIfAny(va_t Address) {
+    const Page *P = find(Address);
+    return P ? P->FactSlots[index(Address)] : 0;
+  }
+
+  /// What the current pass decoded at \p Address, which starts an
+  /// instruction only when even.
+  uint8_t decoded(va_t Address) {
+    if (Address & 1)
+      return 0;
+    const Page *P = find(Address);
+    return P ? P->Decoded[index(Address)] : 0;
+  }
+  uint8_t &decodedRef(va_t Address) {
+    return page(Address).Decoded[index(Address)];
+  }
+
+  void clearDecoded() {
+    for (auto &Entry : Pages)
+      Entry.second->Decoded.fill(0);
+  }
+
+  /// Calls \p Visit with the address and state of every instruction the
+  /// current pass decoded, in address order.
+  template <typename Fn> void forEachDecoded(Fn Visit) const {
+    std::vector<va_t> Keys;
+    Keys.reserve(Pages.size());
+    for (const auto &Entry : Pages)
+      Keys.push_back(Entry.first);
+    llvm::sort(Keys);
+    for (const va_t Key : Keys) {
+      const Page &P = *Pages.find(Key)->second;
+      for (size_t Index = 0; Index < kPageHalfwords; ++Index)
+        if (P.Decoded[Index] & Start)
+          Visit((Key << kPageShift) | (va_t(Index) << 1), P.Decoded[Index]);
+    }
+  }
+
+private:
+  static constexpr unsigned kPageShift = 12;
+  static constexpr size_t kPageHalfwords = size_t(1) << (kPageShift - 1);
+  struct Page {
+    std::array<uint32_t, kPageHalfwords> FactSlots{};
+    std::array<uint8_t, kPageHalfwords> Decoded{};
+  };
+  llvm::DenseMap<va_t, std::unique_ptr<Page>> Pages;
+  va_t LastKey = InvalidVA;
+  Page *Last = nullptr;
+
+  static size_t index(va_t Address) {
+    return static_cast<size_t>(Address >> 1) & (kPageHalfwords - 1);
+  }
+  Page *find(va_t Address) {
+    const va_t Key = Address >> kPageShift;
+    if (Key == LastKey)
+      return Last;
+    const auto It = Pages.find(Key);
+    if (It == Pages.end())
+      return nullptr;
+    LastKey = Key;
+    Last = It->second.get();
+    return Last;
+  }
+  Page &page(va_t Address) {
+    if (Page *P = find(Address))
+      return *P;
+    const va_t Key = Address >> kPageShift;
+    std::unique_ptr<Page> &Slot = Pages[Key];
+    Slot = std::make_unique<Page>();
+    LastKey = Key;
+    Last = Slot.get();
+    return *Last;
+  }
+};
+
+InstructionMode decodedMode(uint8_t Bits) {
+  return (Bits & HalfwordMap::ThumbStart) ? InstructionMode::Thumb
+                                          : InstructionMode::ARM;
+}
+
+va_t decodedEnd(va_t Address, uint8_t Bits) {
+  return Address + ((Bits & HalfwordMap::Wide) ? 4 : 2);
+}
 } // namespace
 
-llvm::Error discoverARMReachableModes(BinaryImage &Img) {
-  return discoverReachableModes(Img, nullptr);
-}
-
-llvm::Error discoverARMLandingPadModes(BinaryImage &Img) {
-  if (Img.Arch != Arch::ARM || !Img.ARMReachabilityConstrained)
-    return llvm::Error::success();
-  const CallSitePads Pads(Img);
-  // A pass with nothing to follow would only repeat the one before it.
-  const auto DecodedIn = [&](va_t Begin, va_t End) {
-    const auto &Regions = Img.ARMReachableCodeRegions;
-    auto It = std::upper_bound(Regions.begin(), Regions.end(), Begin,
-                               [](va_t Value, const ARMCodeRegion &Region) {
-                                 return Value < Region.Start;
-                               });
-    if (It != Regions.begin() && Begin < std::prev(It)->End)
-      return true;
-    return It != Regions.end() && It->Start < End;
-  };
-  if (llvm::none_of(Pads.Sites, [&](const CallSitePads::Site &Site) {
-        return DecodedIn(Site.Begin, Site.End) &&
-               !DecodedIn(Site.Pad, Site.Pad + 1);
-      }))
-    return llvm::Error::success();
-  Img.ARMReachableCodeRegions.clear();
-  return discoverReachableModes(Img, &Pads);
-}
-
-namespace {
-llvm::Error discoverReachableModes(BinaryImage &Img, const CallSitePads *Pads) {
-  // Mapping symbols describe their own section intervals, but a rewritten
-  // ELF can append executable program bytes without adding a section-table
-  // owner. Mach-O has exact Thumb symbols but no mapping intervals. Follow
-  // exact entries when no interval evidence covers all executable bytes.
-  const bool HasUnmappedExecutableSegment = std::any_of(
-      Img.Segments.begin(), Img.Segments.end(), [&](const Segment &Seg) {
-        return Seg.isExecutable() && !Seg.Data.empty() &&
-               !Img.segmentHasReadableSectionMetadata(Seg);
-      });
-  if (Img.Arch != Arch::ARM || Img.ARMCodeModeEntries.empty() ||
-      (!Img.ARMCodeRegions.empty() && !HasUnmappedExecutableSegment))
-    return llvm::Error::success();
-  const char *Format = Img.Format == BinaryFormat::MachO ? "macho" : "elf";
-
-  struct Disassemblers {
-    csh ARM = 0;
-    csh Thumb = 0;
-    cs_insn *ARMInsn = nullptr;
-    cs_insn *ThumbInsn = nullptr;
-    ~Disassemblers() {
-      if (ARMInsn)
-        cs_free(ARMInsn, 1);
-      if (ThumbInsn)
-        cs_free(ThumbInsn, 1);
-      if (ARM)
-        cs_close(&ARM);
-      if (Thumb)
-        cs_close(&Thumb);
-    }
-  } Dec;
-  if (cs_open(CS_ARCH_ARM, CS_MODE_ARM, &Dec.ARM) != CS_ERR_OK ||
-      cs_open(CS_ARCH_ARM, CS_MODE_THUMB, &Dec.Thumb) != CS_ERR_OK ||
-      cs_option(Dec.ARM, CS_OPT_DETAIL, CS_OPT_ON) != CS_ERR_OK ||
-      cs_option(Dec.Thumb, CS_OPT_DETAIL, CS_OPT_ON) != CS_ERR_OK ||
-      !(Dec.ARMInsn = cs_malloc(Dec.ARM)) ||
-      !(Dec.ThumbInsn = cs_malloc(Dec.Thumb)))
-    return llvm::make_error<llvm::StringError>(
-        std::string(Format) +
-            ": ARM mode discovery could not initialize the disassembler",
-        llvm::inconvertibleErrorCode());
-
-  const auto Hex = [](va_t Address) { return "0x" + llvm::utohexstr(Address); };
-  const auto ModeName = [](InstructionMode Mode) {
-    return Mode == InstructionMode::Thumb ? "Thumb" : "ARM";
-  };
-
-  using ModeAt = std::pair<va_t, InstructionMode>;
-
+struct ARMModeDiscovery::State {
+  BinaryImage &Img;
+  const char *Format;
+  Disassemblers Dec;
   // A PC-relative load proves that what it reads is data: the literal pool a
   // function keeps after its code. The bytes after a call are code only when
   // the callee returns, and after one that does not, such as `bl abort`, the
@@ -620,10 +795,73 @@ llvm::Error discoverReachableModes(BinaryImage &Img, const CallSitePads *Pads) {
   // another module interposes one, so the definition's own code settles
   // whether it returns: the throw helpers of a C++ runtime are no-return
   // without being on any list.
-  const libc::NoReturnTargetIndex NamedNoReturn(Img);
+  std::optional<libc::NoReturnTargetIndex> NamedNoReturn;
   std::set<va_t> NoReturnVeneers;
   std::map<va_t, va_t> VeneerDefinitions;
-  {
+  std::set<va_t> InferredNoReturn;
+  // What each pass decoded, one entry per instruction: a branch into an
+  // instruction's interior is a conflict rather than code decoded from
+  // there.  And the facts of every instruction any pass decoded.
+  HalfwordMap Halfwords;
+  size_t DecodedCount = 0;
+  std::deque<InstructionFacts> Facts;
+  // The fact slots of the second mode decoded at an address, by address.
+  llvm::DenseMap<va_t, uint32_t> OtherModeFactSlots;
+  std::map<va_t, InstructionMode> VeneerCandidates;
+  // Thumb code addresses the code takes: position-independent code loads
+  // `routine + 1 - (here + 4)` and adds the PC, and what it gets is the
+  // routine's address with bit 0 set.
+  std::set<va_t> TakenThumbAddresses;
+  std::set<CodeKey> Entries;
+  // The first conflict of a pass, which fails only if the pass found no
+  // literal it did not start with.
+  std::optional<std::string> Conflict;
+  bool FoundLiterals = false;
+  // The branch each target was first reached from, for the diagnostics.
+  std::map<ModeAt, va_t> Origins;
+  // The landing pads a pass follows, once the exception tables are read.
+  std::optional<CallSitePads> Pads;
+  // Whether the discovery decoded the image and published what it reached.
+  bool Published = false;
+
+  // The owner's count of the instructions disassembled.
+  size_t &Disassembled;
+
+  State(BinaryImage &Image, size_t &DisassembledCount)
+      : Img(Image),
+        Format(Image.Format == BinaryFormat::MachO ? "macho" : "elf"),
+        Disassembled(DisassembledCount) {}
+
+  static constexpr size_t kMaxDiscoveredInstructions = 4'000'000;
+
+  bool isNoReturn(va_t Target) const {
+    if (const auto It = VeneerDefinitions.find(Target);
+        It != VeneerDefinitions.end())
+      Target = It->second;
+    return InferredNoReturn.count(Target) || NoReturnVeneers.count(Target) ||
+           NamedNoReturn->contains(Img, Target);
+  }
+
+  std::string from(va_t Start, InstructionMode Mode) const {
+    const auto It = Origins.find({Start, Mode});
+    return hexAddress(Start) +
+           (It == Origins.end()
+                ? std::string(", an entry")
+                : ", the target of the branch at " + hexAddress(It->second));
+  }
+
+  llvm::Error open() {
+    if (cs_open(CS_ARCH_ARM, CS_MODE_ARM, &Dec.ARM) != CS_ERR_OK ||
+        cs_open(CS_ARCH_ARM, CS_MODE_THUMB, &Dec.Thumb) != CS_ERR_OK ||
+        cs_option(Dec.ARM, CS_OPT_DETAIL, CS_OPT_ON) != CS_ERR_OK ||
+        cs_option(Dec.Thumb, CS_OPT_DETAIL, CS_OPT_ON) != CS_ERR_OK ||
+        !(Dec.ARMInsn = cs_malloc(Dec.ARM)) ||
+        !(Dec.ThumbInsn = cs_malloc(Dec.Thumb)))
+      return llvm::make_error<llvm::StringError>(
+          std::string(Format) +
+              ": ARM mode discovery could not initialize the disassembler",
+          llvm::inconvertibleErrorCode());
+    NamedNoReturn.emplace(Img);
     std::unordered_map<std::string_view, va_t> Defined;
     for (const Symbol &Sym : Img.Symbols)
       if (Sym.IsFunc && !Sym.Name.empty() && Img.isCodeAddress(Sym.Addr))
@@ -635,310 +873,529 @@ llvm::Error discoverReachableModes(BinaryImage &Img, const CallSitePads *Pads) {
       else if (const auto It = Defined.find(Name); It != Defined.end())
         VeneerDefinitions.emplace(Veneer, It->second);
     }
+    return llvm::Error::success();
   }
-  std::set<va_t> InferredNoReturn;
-  const auto IsNoReturn = [&](va_t Target) {
-    if (const auto It = VeneerDefinitions.find(Target);
-        It != VeneerDefinitions.end())
-      Target = It->second;
-    return InferredNoReturn.count(Target) || NoReturnVeneers.count(Target) ||
-           NamedNoReturn.contains(Img, Target);
-  };
-  // One entry per decoded instruction until the final adjacent-span merge.
-  // Keeping the extents separate makes a branch into an instruction interior
-  // a detectable conflict, rather than accidentally decoding from there.
-  std::map<va_t, ARMCodeRegion> Decoded;
-  std::map<va_t, InstructionMode> VeneerCandidates;
-  // Thumb code addresses the code takes: position-independent code loads
-  // `routine + 1 - (here + 4)` and adds the PC, and what it gets is the
-  // routine's address with bit 0 set.
-  std::set<va_t> TakenThumbAddresses;
-  constexpr size_t kMaxDiscoveredInstructions = 4'000'000;
-  std::unordered_map<CodeKey, ControlStep, CodeKeyHash> Steps;
-  std::set<CodeKey> Entries;
-  while (true) {
-    Decoded.clear();
-    VeneerCandidates.clear();
-    TakenThumbAddresses.clear();
-    Steps.clear();
-    Entries.clear();
-    for (const auto &[Address, Mode] : Img.ARMCodeModeEntries)
-      if (Mode == InstructionMode::ARM || Mode == InstructionMode::Thumb)
-        Entries.emplace(Address, Mode);
-    std::deque<ModeAt> Pending;
-    for (const auto &[Address, Mode] : Img.ARMCodeModeEntries)
-      if (Mode == InstructionMode::ARM || Mode == InstructionMode::Thumb)
-        Pending.emplace_back(Address, Mode);
-    // The first conflict of this pass, which fails only if the pass found no
-    // literal it did not start with.
-    std::optional<std::string> Conflict;
-    bool FoundLiterals = false;
-    // The branch each target was first reached from, for the diagnostics.
-    std::map<ModeAt, va_t> Origins;
-    const auto From = [&](va_t Start, InstructionMode Mode) {
-      const auto It = Origins.find({Start, Mode});
-      return Hex(Start) +
-             (It == Origins.end()
-                  ? std::string(", an entry")
-                  : ", the target of the branch at " + Hex(It->second));
-    };
-    while (!Pending.empty()) {
-      const auto [Start, Mode] = Pending.front();
-      Pending.pop_front();
-      va_t Cur = Start;
-      // The system call number, while this path has set it.
-      std::optional<uint32_t> R7;
-      // The words PC-relative loads on this path gave registers.
-      std::map<unsigned, uint32_t> LoadedWords;
-      while (true) {
-        const Segment *Seg = Img.getSegmentFor(Cur);
-        if (!Seg || !Img.isCodeAddress(Cur) || Cur < Seg->VA ||
-            Cur - Seg->VA >= Seg->Data.size())
-          break;
-        if (Literals.overlaps(Cur, Cur + 1))
-          break;
-        const uint64_t Align = Mode == InstructionMode::Thumb ? 2 : 4;
-        if ((Cur & (Align - 1)) != 0 ||
-            Img.instructionModeAt(Cur, Mode) != Mode) {
-          if (!Conflict)
-            Conflict = std::string(Format) +
-                       ": conflicting or misaligned reachable ARM/Thumb mode "
-                       "at " +
-                       Hex(Cur) + ", reached as " + ModeName(Mode) + " from " +
-                       From(Start, Mode);
-          break;
-        }
-        const auto Existing = Decoded.lower_bound(Cur);
-        if (Existing != Decoded.end() && Existing->first == Cur) {
-          if (Existing->second.Kind != (Mode == InstructionMode::Thumb
-                                            ? ARMCodeRegionKind::Thumb
-                                            : ARMCodeRegionKind::ARM) &&
-              !Conflict)
-            Conflict = std::string(Format) +
-                       ": conflicting reachable ARM/Thumb instructions at " +
-                       Hex(Cur) + ", reached as " + ModeName(Mode) + " from " +
-                       From(Start, Mode);
-          break;
-        }
-        if (Existing != Decoded.begin() &&
-            std::prev(Existing)->second.End > Cur) {
-          if (!Conflict)
-            Conflict = std::string(Format) + ": " + ModeName(Mode) +
-                       " code reached at " + Hex(Cur) + " from " +
-                       From(Start, Mode) +
-                       " enters the middle of the instruction at " +
-                       Hex(std::prev(Existing)->first);
-          break;
-        }
 
-        const size_t Offset = static_cast<size_t>(Cur - Seg->VA);
-        const uint8_t *Bytes = Seg->Data.data() + Offset;
-        size_t Remaining = Seg->Data.size() - Offset;
-        uint64_t DecodeAddress = Cur;
-        const csh Handle = Mode == InstructionMode::Thumb ? Dec.Thumb : Dec.ARM;
-        cs_insn *Insn =
-            Mode == InstructionMode::Thumb ? Dec.ThumbInsn : Dec.ARMInsn;
-        if (!cs_disasm_iter(Handle, &Bytes, &Remaining, &DecodeAddress, Insn) ||
-            !Img.isCodeRange(Cur, Insn->size) ||
-            Literals.overlaps(Cur, Cur + Insn->size))
-          break;
-        if (Insn->size > InvalidVA - Cur ||
-            (Existing != Decoded.end() && Existing->first < Cur + Insn->size)) {
-          if (!Conflict)
-            Conflict = std::string(Format) + ": the " + ModeName(Mode) +
-                       " instruction at " + Hex(Cur) + ", reached from " +
-                       From(Start, Mode) + ", overlaps the instruction at " +
-                       Hex(Existing == Decoded.end() ? Cur : Existing->first);
-          break;
-        }
-        if (Decoded.size() == kMaxDiscoveredInstructions)
-          return llvm::make_error<llvm::StringError>(
-              std::string(Format) +
-                  ": ARM/Thumb reachable decode limit exceeded",
-              llvm::inconvertibleErrorCode());
+  /// Decode the instruction at \p Cur of \p Seg in \p Mode.
+  InstructionFacts decodeFacts(va_t Cur, InstructionMode Mode,
+                               const Segment &Seg);
 
-        const ARMCodeRegionKind Kind = Mode == InstructionMode::Thumb
-                                           ? ARMCodeRegionKind::Thumb
-                                           : ARMCodeRegionKind::ARM;
-        Decoded.emplace(Cur, ARMCodeRegion{Cur, Cur + Insn->size, Kind});
-        // `_Unwind_SetIP` keeps the Thumb bit of the PC it replaces, so a
-        // landing pad runs in the mode of the code its call site guards.
-        if (Pads)
-          Pads->forEachPadAt(Cur, [&](va_t Pad) {
-            if (Origins.try_emplace({Pad, Mode}, Cur).second)
-              Pending.emplace_back(Pad, Mode);
-          });
-        if (const auto Literal = literalRead(*Insn, Mode))
-          FoundLiterals |= Literals.insert(Literal->first, Literal->second);
-        // This exact instruction reads the following literal and transfers
-        // control to its tagged code pointer. The literal itself is never an
-        // instruction. Linked code and rewritten functions both use this
-        // veneer, including when no section table survives.
-        if (Mode == InstructionMode::ARM && Insn->size == arm::kInsnSize &&
-            Seg->Data.size() - Offset >= arm::kLdrPCTrampLen &&
-            Img.isCodeRange(Cur, arm::kLdrPCTrampLen) &&
-            readLE<uint32_t>(Seg->Data.data() + Offset) == arm::kLdrPC) {
-          const uint32_t Tagged =
-              readLE<uint32_t>(Seg->Data.data() + Offset + arm::kInsnSize);
-          const va_t Target = clearThumbBit(Tagged);
-          if (Img.isCodeAddress(Target)) {
-            const InstructionMode TargetMode =
-                (Tagged & 1u) ? InstructionMode::Thumb : InstructionMode::ARM;
-            Pending.emplace_back(Target, TargetMode);
-            Origins.try_emplace({Target, TargetMode}, Cur);
-            VeneerCandidates.emplace(Target, TargetMode);
-          }
-        }
-        const auto HasGroup = [&](uint8_t Group) {
-          for (uint8_t Index = 0; Index < Insn->detail->groups_count; ++Index)
-            if (Insn->detail->groups[Index] == Group)
-              return true;
-          return false;
-        };
-        const bool IsCall = HasGroup(CS_GRP_CALL);
-        const bool IsJump = HasGroup(CS_GRP_JUMP);
-        const bool Conditional = Insn->detail->arm.cc < ARMCC_AL ||
-                                 Insn->id == ARM_INS_CBZ ||
-                                 Insn->id == ARM_INS_CBNZ;
-        ControlStep Step;
-        Step.Size = Insn->size;
-        Step.Call = IsCall;
-        Step.Jump = IsJump;
-        Step.Conditional = Conditional;
-        // A supervisor call's immediate is an argument, not a target.
-        if ((IsCall || IsJump) && Insn->id != ARM_INS_SVC) {
-          for (uint8_t Index = 0; Index < Insn->detail->arm.op_count; ++Index) {
-            const cs_arm_op &Op = Insn->detail->arm.operands[Index];
-            if (Op.type != ARM_OP_IMM || Op.imm < 0)
-              continue;
-            InstructionMode TargetMode = Mode;
-            if (Insn->id == ARM_INS_BLX)
-              TargetMode = Mode == InstructionMode::Thumb
-                               ? InstructionMode::ARM
-                               : InstructionMode::Thumb;
-            const va_t Target = clearThumbBit(static_cast<va_t>(Op.imm));
-            Step.Target = Target;
-            if (Img.isCodeAddress(Target)) {
-              Pending.emplace_back(Target, TargetMode);
-              Origins.try_emplace({Target, TargetMode}, Cur);
-              if (IsCall)
-                Entries.emplace(Target, TargetMode);
-            }
-            break;
-          }
-        }
-        uint16_t Read[64], Written[64];
-        uint8_t ReadCount = 0, WriteCount = 0;
-        const bool Accessed = cs_regs_access(Handle, Insn, Read, &ReadCount,
-                                             Written, &WriteCount) == CS_ERR_OK;
-        const auto Writes = [&](uint16_t Reg) {
-          return Accessed && std::find(Written, Written + WriteCount, Reg) !=
-                                 Written + WriteCount;
-        };
-        const bool WritesPC = Writes(ARM_REG_PC);
-        Step.Leaves = WritesPC && !IsCall && Step.Target == InvalidVA;
-        // A trap does not go on, and neither does exit or exit_group: the
-        // EABI passes the call number in r7 and ignores the immediate.
-        if (Insn->id == ARM_INS_UDF || Insn->id == ARM_INS_BKPT ||
-            Insn->id == ARM_INS_TRAP)
-          Step.Stops = true;
-        if (Insn->id == ARM_INS_SVC && Insn->detail->arm.op_count == 1 &&
-            Insn->detail->arm.operands[0].type == ARM_OP_IMM &&
-            Insn->detail->arm.operands[0].imm == 0 && R7 && isExitSyscall(*R7))
-          Step.Stops = true;
-        if (Writes(ARM_REG_R7))
-          R7 = r7Value(*Insn, Mode, Img);
-        if (const auto Added = pcAddedRegister(*Insn)) {
-          const auto Word = LoadedWords.find(*Added);
-          const va_t PC =
-              Cur + (Mode == InstructionMode::Thumb ? branch::ThumbPCOffset
-                                                    : branch::ArmPCOffset);
-          if (Word != LoadedWords.end()) {
-            const uint32_t Address = Word->second + static_cast<uint32_t>(PC);
-            const va_t Code = clearThumbBit(Address);
-            if ((Address & 1u) && Img.getSectionFor(Code) &&
-                Img.isCodeRange(Code, 2) &&
-                TakenThumbAddresses.insert(Code).second) {
-              Pending.emplace_back(Code, InstructionMode::Thumb);
-              Origins.try_emplace({Code, InstructionMode::Thumb}, Cur);
-            }
-          }
-        }
-        for (uint8_t Index = 0; Accessed && Index < WriteCount; ++Index)
-          LoadedWords.erase(Written[Index]);
-        if (const auto Loaded = pcRelativeWord(*Insn, Mode, Img))
-          LoadedWords[Loaded->first] = Loaded->second;
-        Steps.emplace(CodeKey(Cur, Mode), Step);
-        if (Step.Stops && !Conditional)
-          break;
-        if (IsCall && !Conditional && Step.Target != InvalidVA &&
-            IsNoReturn(Step.Target))
-          break;
-        if ((IsJump || (WritesPC && !IsCall)) && !Conditional)
-          break;
-        Cur += Insn->size;
-      }
+  bool slotIsThumb(uint32_t Slot) const {
+    return (Slot & fact_slot::Inline)
+               ? (Slot & fact_slot::InlineThumb) != 0
+               : Facts[Slot - 1].has(InstructionFacts::Thumb);
+  }
+
+  InstructionFacts factsOf(uint32_t Slot) const {
+    return (Slot & fact_slot::Inline) ? fact_slot::decode(Slot)
+                                      : Facts[Slot - 1];
+  }
+
+  /// The facts of the instruction at \p Cur of \p Seg in \p Mode, decoded
+  /// once; a zero Size where no instruction decodes.
+  InstructionFacts factsAt(va_t Cur, InstructionMode Mode, const Segment &Seg) {
+    const bool Thumb = Mode == InstructionMode::Thumb;
+    uint32_t *Slot = &Halfwords.factSlot(Cur);
+    if (*Slot) {
+      if (slotIsThumb(*Slot) == Thumb)
+        return factsOf(*Slot);
+      Slot = &OtherModeFactSlots[Cur];
+      if (*Slot)
+        return factsOf(*Slot);
     }
-    if (FoundLiterals &&
-        (Conflict ||
-         std::any_of(Decoded.begin(), Decoded.end(), [&](const auto &Entry) {
-           return Literals.overlaps(Entry.second.Start, Entry.second.End);
-         })))
-      continue;
-    // Settle which routines return, each proof possibly enabling the next:
-    // a routine whose last call is to one just proven no-return is one too.
+    const InstructionFacts F = decodeFacts(Cur, Mode, Seg);
+    if (fact_slot::fitsInline(F)) {
+      *Slot = fact_slot::encode(F);
+    } else {
+      Facts.push_back(F);
+      assert(Facts.size() < fact_slot::Inline && "fact slots overflow");
+      *Slot = static_cast<uint32_t>(Facts.size());
+    }
+    return F;
+  }
+
+  /// The facts of an instruction a pass decoded.
+  InstructionFacts decodedFacts(va_t Address, InstructionMode Mode) {
+    const uint32_t Slot = Halfwords.factSlotIfAny(Address);
+    assert(Slot && "a decoded instruction has facts");
+    if (slotIsThumb(Slot) == (Mode == InstructionMode::Thumb))
+      return factsOf(Slot);
+    return factsOf(OtherModeFactSlots.lookup(Address));
+  }
+
+  /// What the instruction this pass decoded at \p Key does with control, or
+  /// nothing when the pass decoded none there in that mode.
+  std::optional<ControlStep> stepAt(const CodeKey &Key) {
+    const uint8_t Bits = Halfwords.decoded(Key.first);
+    if (!(Bits & HalfwordMap::Start) || decodedMode(Bits) != Key.second)
+      return std::nullopt;
+    const InstructionFacts F = decodedFacts(Key.first, Key.second);
+    ControlStep Step;
+    Step.Size = F.Size;
+    Step.Target = F.Target;
+    Step.Call = F.has(InstructionFacts::Call);
+    Step.Jump = F.has(InstructionFacts::Jump);
+    Step.Conditional = F.has(InstructionFacts::Conditional);
+    Step.Leaves = (F.Written & gprBit(ARM_REG_PC)) && !Step.Call &&
+                  Step.Target == InvalidVA;
+    Step.Stops =
+        F.has(InstructionFacts::Trap) || (Bits & HalfwordMap::Exits) != 0;
+    return Step;
+  }
+
+  /// Decode every path from \p Pending, adding to what earlier paths decoded.
+  llvm::Error decodePaths(std::deque<ModeAt> &Pending);
+
+  /// Settle which routines return, each proof possibly enabling the next: a
+  /// routine whose last call is to one just proven no-return is one too.
+  /// Whether it proved any routine no-return it did not know of.
+  bool settleNoReturn() {
+    const auto StepAt = [this](const CodeKey &Key) { return stepAt(Key); };
+    const auto NoReturn = [this](va_t Target) { return isNoReturn(Target); };
     bool FoundNoReturn = false;
     for (bool Changed = true; Changed;) {
       Changed = false;
       for (const CodeKey &Entry : Entries)
-        if (!IsNoReturn(Entry.first) && Steps.count(Entry) &&
-            !mayReturn(Entry, Steps, Entries, IsNoReturn)) {
+        if (!isNoReturn(Entry.first) && stepAt(Entry) &&
+            !mayReturn(Entry, StepAt, Entries, NoReturn)) {
           InferredNoReturn.insert(Entry.first);
           Changed = FoundNoReturn = true;
         }
     }
-    if (FoundNoReturn)
-      continue;
-    if (Conflict)
-      return llvm::make_error<llvm::StringError>(
-          *Conflict, llvm::inconvertibleErrorCode());
-    break;
+    return FoundNoReturn;
   }
 
-  for (const auto &[Address, Region] : Decoded) {
-    (void)Address;
-    if (!Img.ARMReachableCodeRegions.empty() &&
-        Img.ARMReachableCodeRegions.back().End == Region.Start &&
-        Img.ARMReachableCodeRegions.back().Kind == Region.Kind)
-      Img.ARMReachableCodeRegions.back().End = Region.End;
-    else
-      Img.ARMReachableCodeRegions.push_back(Region);
-    const InstructionMode Reached = Region.Kind == ARMCodeRegionKind::Thumb
-                                        ? InstructionMode::Thumb
-                                        : InstructionMode::ARM;
-    if (Img.Mode == InstructionMode::Default)
-      Img.Mode = Reached;
-    else if (Img.Mode != Reached)
-      Img.Mode = InstructionMode::MixedARMThumb;
+  /// Whether a pass decoded an instruction across a proven literal.
+  bool decodedAcrossALiteral() {
+    return Literals.any([&](va_t Begin, va_t End) {
+      // An instruction that overlaps the literal starts at most a halfword
+      // before it.
+      for (va_t At = (Begin < 2 ? 0 : Begin - 2) & ~va_t(1); At < End; At += 2)
+        if (const uint8_t Bits = Halfwords.decoded(At);
+            (Bits & HalfwordMap::Start) && decodedEnd(At, Bits) > Begin)
+          return true;
+      return false;
+    });
   }
-  for (const va_t Code : TakenThumbAddresses)
-    if (const auto It = Decoded.find(Code);
-        It != Decoded.end() && It->second.Kind == ARMCodeRegionKind::Thumb)
-      Img.ARMCodeModeEntries.try_emplace(Code, InstructionMode::Thumb);
-  for (const auto &[Target, Mode] : VeneerCandidates)
-    if (const auto It = Decoded.find(Target);
-        It != Decoded.end() &&
-        It->second.Kind == (Mode == InstructionMode::Thumb
-                                ? ARMCodeRegionKind::Thumb
-                                : ARMCodeRegionKind::ARM)) {
-      Img.ARMVeneerTargets.insert(Target);
-      Img.ARMCodeModeEntries.try_emplace(Target, Mode);
+
+  /// Every pass from the exact entries until one settles: a pass that found
+  /// literals or no-return routines it did not start with is repeated.
+  llvm::Error run() {
+    while (true) {
+      Halfwords.clearDecoded();
+      DecodedCount = 0;
+      VeneerCandidates.clear();
+      TakenThumbAddresses.clear();
+      Entries.clear();
+      Origins.clear();
+      Conflict.reset();
+      FoundLiterals = false;
+      std::deque<ModeAt> Pending;
+      for (const auto &[Address, Mode] : Img.ARMCodeModeEntries)
+        if (Mode == InstructionMode::ARM || Mode == InstructionMode::Thumb) {
+          Entries.emplace(Address, Mode);
+          Pending.emplace_back(Address, Mode);
+        }
+      if (llvm::Error E = decodePaths(Pending))
+        return E;
+      if (FoundLiterals && (Conflict || decodedAcrossALiteral()))
+        continue;
+      if (settleNoReturn())
+        continue;
+      if (Conflict)
+        return llvm::make_error<llvm::StringError>(
+            *Conflict, llvm::inconvertibleErrorCode());
+      return llvm::Error::success();
     }
-  Img.ARMReachabilityConstrained = true;
+  }
+
+  /// Publish what the passes decoded: the reachable regions, the image's mode
+  /// and the exact entries the passes proved.
+  void publish() {
+    Img.ARMReachableCodeRegions.clear();
+    Halfwords.forEachDecoded([&](va_t Address, uint8_t Bits) {
+      const InstructionMode Reached = decodedMode(Bits);
+      const ARMCodeRegion Region{Address, decodedEnd(Address, Bits),
+                                 regionKind(Reached)};
+      if (!Img.ARMReachableCodeRegions.empty() &&
+          Img.ARMReachableCodeRegions.back().End == Region.Start &&
+          Img.ARMReachableCodeRegions.back().Kind == Region.Kind)
+        Img.ARMReachableCodeRegions.back().End = Region.End;
+      else
+        Img.ARMReachableCodeRegions.push_back(Region);
+      if (Img.Mode == InstructionMode::Default)
+        Img.Mode = Reached;
+      else if (Img.Mode != Reached)
+        Img.Mode = InstructionMode::MixedARMThumb;
+    });
+    const auto DecodedIn = [&](va_t Address, InstructionMode Mode) {
+      const uint8_t Bits = Halfwords.decoded(Address);
+      return (Bits & HalfwordMap::Start) && decodedMode(Bits) == Mode;
+    };
+    for (const va_t Code : TakenThumbAddresses)
+      if (DecodedIn(Code, InstructionMode::Thumb))
+        Img.ARMCodeModeEntries.try_emplace(Code, InstructionMode::Thumb);
+    for (const auto &[Target, Mode] : VeneerCandidates)
+      if (DecodedIn(Target, Mode)) {
+        Img.ARMVeneerTargets.insert(Target);
+        Img.ARMCodeModeEntries.try_emplace(Target, Mode);
+      }
+    Img.ARMReachabilityConstrained = true;
+    Published = true;
+  }
+};
+
+InstructionFacts ARMModeDiscovery::State::decodeFacts(va_t Cur,
+                                                      InstructionMode Mode,
+                                                      const Segment &Seg) {
+  InstructionFacts F;
+  if (Mode == InstructionMode::Thumb)
+    F.Flags |= InstructionFacts::Thumb;
+  ++Disassembled;
+  const size_t Offset = static_cast<size_t>(Cur - Seg.VA);
+  const uint8_t *Bytes = Seg.Data.data() + Offset;
+  size_t Remaining = Seg.Data.size() - Offset;
+  uint64_t DecodeAddress = Cur;
+  const csh Handle = Mode == InstructionMode::Thumb ? Dec.Thumb : Dec.ARM;
+  cs_insn *Insn = Mode == InstructionMode::Thumb ? Dec.ThumbInsn : Dec.ARMInsn;
+  // Both instruction sets encode in two or four bytes.
+  if (!cs_disasm_iter(Handle, &Bytes, &Remaining, &DecodeAddress, Insn) ||
+      (Insn->size != 2 && Insn->size != 4))
+    return F;
+  F.Size = static_cast<uint8_t>(Insn->size);
+  const auto HasGroup = [&](uint8_t Group) {
+    for (uint8_t Index = 0; Index < Insn->detail->groups_count; ++Index)
+      if (Insn->detail->groups[Index] == Group)
+        return true;
+    return false;
+  };
+  const bool IsCall = HasGroup(CS_GRP_CALL);
+  const bool IsJump = HasGroup(CS_GRP_JUMP);
+  if (IsCall)
+    F.Flags |= InstructionFacts::Call;
+  if (IsJump)
+    F.Flags |= InstructionFacts::Jump;
+  if (Insn->detail->arm.cc < ARMCC_AL || Insn->id == ARM_INS_CBZ ||
+      Insn->id == ARM_INS_CBNZ)
+    F.Flags |= InstructionFacts::Conditional;
+  // A supervisor call's immediate is an argument, not a target.
+  if ((IsCall || IsJump) && Insn->id != ARM_INS_SVC)
+    for (uint8_t Index = 0; Index < Insn->detail->arm.op_count; ++Index) {
+      const cs_arm_op &Op = Insn->detail->arm.operands[Index];
+      if (Op.type != ARM_OP_IMM || Op.imm < 0)
+        continue;
+      F.Target = clearThumbBit(static_cast<va_t>(Op.imm));
+      if (Insn->id == ARM_INS_BLX)
+        F.Flags |= InstructionFacts::SwitchesMode;
+      break;
+    }
+  if (Insn->id == ARM_INS_UDF || Insn->id == ARM_INS_BKPT ||
+      Insn->id == ARM_INS_TRAP)
+    F.Flags |= InstructionFacts::Trap;
+  if (Insn->id == ARM_INS_SVC && Insn->detail->arm.op_count == 1 &&
+      Insn->detail->arm.operands[0].type == ARM_OP_IMM &&
+      Insn->detail->arm.operands[0].imm == 0)
+    F.Flags |= InstructionFacts::SupervisorCall;
+  uint16_t Read[64], Written[64];
+  uint8_t ReadCount = 0, WriteCount = 0;
+  if (cs_regs_access(Handle, Insn, Read, &ReadCount, Written, &WriteCount) ==
+      CS_ERR_OK)
+    for (uint8_t Index = 0; Index < WriteCount; ++Index)
+      F.Written |= gprBit(Written[Index]);
+  if (F.Written & gprBit(ARM_REG_R7)) {
+    F.Flags |= InstructionFacts::WritesR7;
+    if (const auto Value = r7Value(*Insn, Mode, Img)) {
+      F.Flags |= InstructionFacts::KnownR7;
+      F.R7 = *Value;
+    }
+  }
+  if (const auto Literal = literalRead(*Insn, Mode)) {
+    F.Flags |= InstructionFacts::ReadsLiteral;
+    // Within the reach of a PC-relative load, which wraps as the address
+    // arithmetic does.
+    F.LiteralOffset =
+        static_cast<int32_t>(static_cast<int64_t>(Literal->first - Cur));
+    F.LiteralSize = static_cast<uint8_t>(Literal->second - Literal->first);
+  }
+  if (const auto Loaded = pcRelativeWord(*Insn, Mode, Img)) {
+    F.Flags |= InstructionFacts::LoadsWord;
+    F.LoadedRegister = gprIndex(Loaded->first);
+    F.LoadedWord = Loaded->second;
+  }
+  if (const auto Added = pcAddedRegister(*Insn)) {
+    F.Flags |= InstructionFacts::AddsPC;
+    F.AddedRegister = gprIndex(*Added);
+  }
+  return F;
+}
+
+llvm::Error ARMModeDiscovery::State::decodePaths(std::deque<ModeAt> &Pending) {
+  while (!Pending.empty()) {
+    const auto [Start, Mode] = Pending.front();
+    Pending.pop_front();
+    va_t Cur = Start;
+    // The system call number, while this path has set it.
+    std::optional<uint32_t> R7;
+    // The words PC-relative loads on this path gave registers, by gprIndex.
+    uint16_t KnownWords = 0;
+    std::array<uint32_t, 16> LoadedWords{};
+    while (true) {
+      const Segment *Seg = Img.getSegmentFor(Cur);
+      if (!Seg || !Img.isCodeAddress(Cur) || Cur < Seg->VA ||
+          Cur - Seg->VA >= Seg->Data.size())
+        break;
+      if (Literals.overlaps(Cur, Cur + 1))
+        break;
+      const uint64_t Align = Mode == InstructionMode::Thumb ? 2 : 4;
+      if ((Cur & (Align - 1)) != 0 ||
+          Img.instructionModeAt(Cur, Mode) != Mode) {
+        if (!Conflict)
+          Conflict = std::string(Format) +
+                     ": conflicting or misaligned reachable ARM/Thumb mode "
+                     "at " +
+                     hexAddress(Cur) + ", reached as " + modeName(Mode) +
+                     " from " + from(Start, Mode);
+        break;
+      }
+      if (const uint8_t Here = Halfwords.decoded(Cur);
+          Here & HalfwordMap::Start) {
+        if (decodedMode(Here) != Mode && !Conflict)
+          Conflict = std::string(Format) +
+                     ": conflicting reachable ARM/Thumb instructions at " +
+                     hexAddress(Cur) + ", reached as " + modeName(Mode) +
+                     " from " + from(Start, Mode);
+        break;
+      }
+      if (const uint8_t Before = Cur >= 2 ? Halfwords.decoded(Cur - 2) : 0;
+          (Before & HalfwordMap::Start) && decodedEnd(Cur - 2, Before) > Cur) {
+        if (!Conflict)
+          Conflict = std::string(Format) + ": " + modeName(Mode) +
+                     " code reached at " + hexAddress(Cur) + " from " +
+                     from(Start, Mode) +
+                     " enters the middle of the instruction at " +
+                     hexAddress(Cur - 2);
+        break;
+      }
+
+      const InstructionFacts F = factsAt(Cur, Mode, *Seg);
+      if (!F.Size || !Img.isCodeRange(Cur, F.Size) ||
+          Literals.overlaps(Cur, Cur + F.Size))
+        break;
+      if (F.Size > 2 && (Halfwords.decoded(Cur + 2) & HalfwordMap::Start)) {
+        if (!Conflict)
+          Conflict = std::string(Format) + ": the " + modeName(Mode) +
+                     " instruction at " + hexAddress(Cur) + ", reached from " +
+                     from(Start, Mode) + ", overlaps the instruction at " +
+                     hexAddress(Cur + 2);
+        break;
+      }
+      if (DecodedCount == kMaxDiscoveredInstructions)
+        return llvm::make_error<llvm::StringError>(
+            std::string(Format) + ": ARM/Thumb reachable decode limit exceeded",
+            llvm::inconvertibleErrorCode());
+
+      uint8_t &Bits = Halfwords.decodedRef(Cur);
+      Bits = HalfwordMap::Start;
+      if (Mode == InstructionMode::Thumb)
+        Bits |= HalfwordMap::ThumbStart;
+      if (F.Size > 2)
+        Bits |= HalfwordMap::Wide;
+      ++DecodedCount;
+      // `_Unwind_SetIP` keeps the Thumb bit of the PC it replaces, so a
+      // landing pad runs in the mode of the code its call site guards.
+      if (Pads)
+        Pads->forEachPadAt(Cur, [&](va_t Pad) {
+          if (Origins.try_emplace({Pad, Mode}, Cur).second)
+            Pending.emplace_back(Pad, Mode);
+        });
+      if (F.has(InstructionFacts::ReadsLiteral)) {
+        const va_t Literal =
+            Cur + static_cast<va_t>(static_cast<int64_t>(F.LiteralOffset));
+        FoundLiterals |= Literals.insert(Literal, Literal + F.LiteralSize);
+      }
+      // This exact instruction reads the following literal and transfers
+      // control to its tagged code pointer. The literal itself is never an
+      // instruction. Linked code and rewritten functions both use this
+      // veneer, including when no section table survives.
+      const size_t Offset = static_cast<size_t>(Cur - Seg->VA);
+      if (Mode == InstructionMode::ARM && F.Size == arm::kInsnSize &&
+          Seg->Data.size() - Offset >= arm::kLdrPCTrampLen &&
+          Img.isCodeRange(Cur, arm::kLdrPCTrampLen) &&
+          readLE<uint32_t>(Seg->Data.data() + Offset) == arm::kLdrPC) {
+        const uint32_t Tagged =
+            readLE<uint32_t>(Seg->Data.data() + Offset + arm::kInsnSize);
+        const va_t Target = clearThumbBit(Tagged);
+        if (Img.isCodeAddress(Target)) {
+          const InstructionMode TargetMode =
+              (Tagged & 1u) ? InstructionMode::Thumb : InstructionMode::ARM;
+          Pending.emplace_back(Target, TargetMode);
+          Origins.try_emplace({Target, TargetMode}, Cur);
+          VeneerCandidates.emplace(Target, TargetMode);
+        }
+      }
+      const bool IsCall = F.has(InstructionFacts::Call);
+      const bool IsJump = F.has(InstructionFacts::Jump);
+      const bool Conditional = F.has(InstructionFacts::Conditional);
+      if (F.Target != InvalidVA && Img.isCodeAddress(F.Target)) {
+        InstructionMode TargetMode = Mode;
+        if (F.has(InstructionFacts::SwitchesMode))
+          TargetMode = Mode == InstructionMode::Thumb ? InstructionMode::ARM
+                                                      : InstructionMode::Thumb;
+        Pending.emplace_back(F.Target, TargetMode);
+        Origins.try_emplace({F.Target, TargetMode}, Cur);
+        if (IsCall)
+          Entries.emplace(F.Target, TargetMode);
+      }
+      const bool WritesPC = (F.Written & gprBit(ARM_REG_PC)) != 0;
+      // A trap does not go on, and neither does exit or exit_group: the
+      // EABI passes the call number in r7 and ignores the immediate.
+      bool Stops = F.has(InstructionFacts::Trap);
+      if (F.has(InstructionFacts::SupervisorCall) && R7 && isExitSyscall(*R7)) {
+        Bits |= HalfwordMap::Exits;
+        Stops = true;
+      }
+      if (F.has(InstructionFacts::WritesR7))
+        R7 = F.has(InstructionFacts::KnownR7) ? std::optional<uint32_t>(F.R7)
+                                              : std::nullopt;
+      if (F.has(InstructionFacts::AddsPC) && F.AddedRegister != kNoRegister &&
+          (KnownWords & (1u << F.AddedRegister))) {
+        const va_t PC =
+            Cur + (Mode == InstructionMode::Thumb ? branch::ThumbPCOffset
+                                                  : branch::ArmPCOffset);
+        const uint32_t Address =
+            LoadedWords[F.AddedRegister] + static_cast<uint32_t>(PC);
+        const va_t Code = clearThumbBit(Address);
+        if ((Address & 1u) && Img.getSectionFor(Code) &&
+            Img.isCodeRange(Code, 2) &&
+            TakenThumbAddresses.insert(Code).second) {
+          Pending.emplace_back(Code, InstructionMode::Thumb);
+          Origins.try_emplace({Code, InstructionMode::Thumb}, Cur);
+        }
+      }
+      KnownWords &= ~F.Written;
+      if (F.has(InstructionFacts::LoadsWord) &&
+          F.LoadedRegister != kNoRegister) {
+        KnownWords |= uint16_t(1u << F.LoadedRegister);
+        LoadedWords[F.LoadedRegister] = F.LoadedWord;
+      }
+      if (Stops && !Conditional)
+        break;
+      if (IsCall && !Conditional && F.Target != InvalidVA &&
+          isNoReturn(F.Target))
+        break;
+      if ((IsJump || (WritesPC && !IsCall)) && !Conditional)
+        break;
+      Cur += F.Size;
+    }
+  }
   return llvm::Error::success();
 }
 
-} // namespace
+ARMModeDiscovery::ARMModeDiscovery(BinaryImage &Image) : Img(Image) {}
+
+ARMModeDiscovery::~ARMModeDiscovery() = default;
+
+llvm::Error ARMModeDiscovery::discover() {
+  // Mapping symbols describe their own section intervals, but a rewritten
+  // ELF can append executable program bytes without adding a section-table
+  // owner. Mach-O has exact Thumb symbols but no mapping intervals. Follow
+  // exact entries when no interval evidence covers all executable bytes.
+  const bool HasUnmappedExecutableSegment = std::any_of(
+      Img.Segments.begin(), Img.Segments.end(), [&](const Segment &Seg) {
+        return Seg.isExecutable() && !Seg.Data.empty() &&
+               !Img.segmentHasReadableSectionMetadata(Seg);
+      });
+  if (Img.Arch != Arch::ARM || Img.ARMCodeModeEntries.empty() ||
+      (!Img.ARMCodeRegions.empty() && !HasUnmappedExecutableSegment))
+    return llvm::Error::success();
+  S = std::make_unique<State>(Img, Disassembled);
+  if (llvm::Error E = S->open())
+    return E;
+  if (llvm::Error E = S->run())
+    return E;
+  S->publish();
+  // What the passes committed needs no keeping until the pads extend them.
+  S->Origins.clear();
+  S->VeneerCandidates.clear();
+  S->TakenThumbAddresses.clear();
+  return llvm::Error::success();
+}
+
+llvm::Error ARMModeDiscovery::followLandingPads() {
+  if (!S || !S->Published)
+    return llvm::Error::success();
+  // Nothing reads the decode after its last phase.
+  const std::unique_ptr<State> Done = std::move(S);
+  State &D = *Done;
+  const CallSitePads &Pads = D.Pads.emplace(D.Img);
+  // The modes of the instructions the passes decoded in a call site's
+  // guarded range, by the first of each.
+  const auto GuardedModes = [&](const CallSitePads::Site &Site, auto Visit) {
+    bool Seen[2] = {false, false};
+    for (va_t At = (Site.Begin + 1) & ~va_t(1); At < Site.End; At += 2)
+      if (const uint8_t Bits = D.Halfwords.decoded(At);
+          Bits & HalfwordMap::Start) {
+        const InstructionMode Mode = decodedMode(Bits);
+        bool &Visited = Seen[Mode == InstructionMode::Thumb];
+        if (!Visited) {
+          Visited = true;
+          Visit(At, Mode);
+        }
+      }
+  };
+  const auto Covered = [&](va_t Address) {
+    for (va_t At = (Address < 2 ? 0 : Address - 2) & ~va_t(1); At <= Address;
+         At += 2)
+      if (const uint8_t Bits = D.Halfwords.decoded(At);
+          (Bits & HalfwordMap::Start) && decodedEnd(At, Bits) > Address)
+        return true;
+    return false;
+  };
+  // Nothing to follow when every pad of a call site the passes decoded is
+  // decoded already.
+  if (llvm::none_of(Pads.Sites, [&](const CallSitePads::Site &Site) {
+        bool Guarded = false;
+        GuardedModes(Site, [&](va_t, InstructionMode) { Guarded = true; });
+        return Guarded && !Covered(Site.Pad);
+      }))
+    return llvm::Error::success();
+  // `_Unwind_SetIP` keeps the Thumb bit of the PC it replaces, so a landing
+  // pad runs in the mode of the code its call site guards.  The pads of the
+  // call sites the passes decoded start paths of their own, which add to what
+  // the passes decoded, and the pads of the call sites those paths decode
+  // follow in turn.  Mode evidence comes from the entries and the exact
+  // decode, not from the regions the passes published.
+  D.Img.ARMReachableCodeRegions.clear();
+  D.Conflict.reset();
+  D.FoundLiterals = false;
+  D.Origins.clear();
+  // The entries a pass would start from now include those the passes proved.
+  for (const auto &[Address, Mode] : D.Img.ARMCodeModeEntries)
+    if (Mode == InstructionMode::ARM || Mode == InstructionMode::Thumb)
+      D.Entries.emplace(Address, Mode);
+  std::deque<ModeAt> Pending;
+  for (const CallSitePads::Site &Site : Pads.Sites)
+    GuardedModes(Site, [&](va_t At, InstructionMode Mode) {
+      if (D.Origins.try_emplace({Site.Pad, Mode}, At).second)
+        Pending.emplace_back(Site.Pad, Mode);
+    });
+  if (llvm::Error E = D.decodePaths(Pending))
+    return E;
+  // A pad's code that met a conflict, decoded across a literal it found, or
+  // proved a routine no-return changes what the passes could decode: decode
+  // the image again from its entries, following every pad from the start,
+  // as the passes do.
+  if (D.Conflict || (D.FoundLiterals && D.decodedAcrossALiteral()) ||
+      D.settleNoReturn())
+    if (llvm::Error E = D.run())
+      return E;
+  D.publish();
+  return llvm::Error::success();
+}
+
+llvm::Error discoverARMReachableModes(BinaryImage &Img) {
+  return ARMModeDiscovery(Img).discover();
+}
 
 size_t scanImportThunksARM(BinaryImage &Img, const Segment &Seg,
                            const std::map<va_t, size_t> &Targets,

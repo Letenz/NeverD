@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <optional>
 #include <set>
 
 #define DEBUG_TYPE "neverd-func-discovery"
@@ -363,6 +364,10 @@ void scanPaddingBoundaries(BinaryImage &Img) {
 
   const uint8_t PadByte = codePaddingByte(Img.Arch);
   const size_t Alignment = prologueAlignment(Img.Arch);
+  // An x86 prologue is a single byte, and text is full of them.
+  std::optional<X86StringLiteralRuns> Literals;
+  if (Img.Arch == Arch::X86 || Img.Arch == Arch::X64)
+    Literals.emplace(Img);
 
   [[maybe_unused]] size_t Added = 0;
   for (const auto &Seg : Img.Segments) {
@@ -373,7 +378,8 @@ void scanPaddingBoundaries(BinaryImage &Img) {
     auto Consider = [&](size_t I) {
       const va_t Addr = Seg.VA + I;
       if (checkCodePrologueAtOffset(Img, Seg, I, Img.Arch) &&
-          !insideInterval(Known, Addr) && Existing.insert(Addr).second) {
+          !insideInterval(Known, Addr) && !(Literals && Literals->at(Seg, I)) &&
+          Existing.insert(Addr).second) {
         Symbol Guess = Symbol::makeFunc(Addr);
         Guess.IsBoundaryGuess = true;
         Img.Symbols.push_back(std::move(Guess));
@@ -498,6 +504,10 @@ void scanDataFuncPointers(BinaryImage &Img) {
   // same owner end, unless an ARM mapping symbol makes a slot data or
   // segments or sections overlap; otherwise it is looked up once per range.
   const bool OwnerPerRange = Img.Arch != Arch::ARM && hasDisjointOwners(Img);
+  // A table of strings an executable section keeps points at data.
+  std::optional<X86StringLiteralRuns> Literals;
+  if (Img.Arch == Arch::X86 || Img.Arch == Arch::X64)
+    Literals.emplace(Img);
 
   [[maybe_unused]] size_t Added = 0;
   auto ScanRange = [&](const Segment *Seg, va_t Start, uint64_t RequestedLen) {
@@ -539,7 +549,8 @@ void scanDataFuncPointers(BinaryImage &Img) {
       if (!ESeg)
         continue;
       size_t Off = static_cast<size_t>(Val - ESeg->VA);
-      if (!checkCodePrologueAtOffset(Img, *ESeg, Off, Img.Arch))
+      if (!checkCodePrologueAtOffset(Img, *ESeg, Off, Img.Arch) ||
+          (Literals && Literals->at(*ESeg, Off)))
         continue;
       if (!Existing.insert(Val).second)
         continue;

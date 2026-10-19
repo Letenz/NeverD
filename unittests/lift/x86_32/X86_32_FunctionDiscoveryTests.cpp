@@ -889,6 +889,63 @@ TEST(X86_32_FunctionDiscovery, SwitchTableAmongCodeLiftsPastTheMirrorLimit) {
     }
 }
 
+TEST(X86_32_FunctionDiscovery, InCodePointerTableMirrorsPastTheLimit) {
+  // A function-pointer table MSVC lays among its code, read as data, in a
+  // .text larger than the emitter mirrors as one global.  The whole segment
+  // cannot be a single global, but the table's own run (three code-pointer
+  // slots) can: the read resolves through that run's mirror instead of
+  // refusing because the segment is too large.
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  std::vector<uint8_t> Text;
+  auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Text.insert(Text.end(), Bytes);
+  };
+  // 0x401000: load the second table slot as data and return it.
+  Emit({0xA1, 0x54, 0x10, 0x40, 0x00, 0xC3}); // mov eax, [0x401054]; ret
+  Text.resize(0x10, 0xCC);
+  Emit({0x33, 0xC0, 0xC3}); // 0x401010 case0: xor eax, eax; ret
+  Text.resize(0x18, 0xCC);
+  Emit({0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3}); // 0x401018 case1: mov eax,1; ret
+  Text.resize(0x20, 0xCC);
+  Emit({0xB8, 0x02, 0x00, 0x00, 0x00, 0xC3}); // 0x401020 case2: mov eax,2; ret
+  Text.resize(0x50, 0xCC);
+  // 0x401050: three consecutive relocated code-pointer slots (a run).
+  for (uint32_t T : {0x401010u, 0x401018u, 0x401020u})
+    for (unsigned B = 0; B < 4; ++B)
+      Text.push_back(static_cast<uint8_t>(T >> (8 * B)));
+  Text.resize(limits::kMaxSingleGlobalEmbedLen + 0x1000, 0xCC);
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+  recordAbsolutePointerRelocations(Img, {{0x401001, 0x401054, InvalidVA},
+                                         {0x401050, 0x401010, InvalidVA},
+                                         {0x401054, 0x401018, InvalidVA},
+                                         {0x401058, 0x401020, InvalidVA}});
+  coff_loader::recordRelocatedPointerRunsInCode(Img);
+  ASSERT_TRUE(Img.DataInCode.count(0x401050));
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.LiftMode = true;
+  Opts.OnlyFunctionEntries = {0x401000, 0x401010, 0x401018, 0x401020};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_NE(Result.LlvmModule, nullptr);
+  EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+  // The read resolves through a mirror global, not a stale load of 0x401054.
+  std::string Text2;
+  llvm::raw_string_ostream OS(Text2);
+  Result.LlvmModule->print(OS, nullptr);
+  EXPECT_EQ(Text2.find("inttoptr (i32 4198484"), std::string::npos) << Text2;
+  EXPECT_NE(Text2.find("getelementptr"), std::string::npos) << Text2;
+}
+
 TEST(X86_32_FunctionDiscovery, ARuntimeIndexedReadOnlyTableResolves) {
   // `table[obj->field]`: a live-in object pointer in EBX, its field loaded at
   // pointer width, scaled by the int stride and added to a read-only .rdata

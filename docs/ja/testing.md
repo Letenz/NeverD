@@ -11,6 +11,10 @@ NeverD のテストは、表現が期待した形か、バイナリ fixture の�
 
 `PipelineOutcome.ResolvedCalls*` はレジスタ群、call/invoke の同一性、スタックバイトの結合と分割、狭い値が自分のスロットに収まること、バイト不足の拒否を検証します。`MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` は記録されたオフセットを検証します。`MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` は x64、ARM32、AArch64 の ELF、PE、Mach-O を対象とします。`LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` は 3 形式で、長さの破壊、書き込み可能・範囲外のソース、同名のローカル関数、誤ったソースレジスタ、別の入口、再配置可能なイメージを拒否します。ホスト C 差分テストでは参照 C を別の翻訳単位で O0、生成 C を O2 でコンパイルし、ホスト最適化器の漸化式の誤コンパイルが参照値を汚さないようにします。AArch64 FMA テストが `-mfma` を要求するのは x86 ホストのみです。
 
+## レガシー GS 復元テスト
+
+`NeverDX86LegacyGSRecoveryTests` は交換と二重交換の普遍的事後条件、全幅のセグメントメモリアドレス、別名、FS・メモリ・フラグ保持、MXCSR との共存、不正な状態と一時領域、原子的拒否、効果保持、予算境界を確認します。`PEFixedImageTest.RawLegacyGS*` はネイティブ符号化の受け入れと証跡の結び付けを確認します。機械状態とネイティブ/LLVM 詳細化テストは未使用の宣言も含め未対応のソース契約を拒否します。`LegacyGSExecutionPolicy.RemainsUnmodeled` は具体実行の拒否を維持します。これは記号実行とポリシーのテストであり、ネイティブ特権命令の実行ではありません。
+
 ## MXCSR 復元のテスト
 
 `InterpreterSpecialization.MXCSR*` は任意の初期状態、正確なメモリ値、予約ビット、DAZ、別名、無効な形式、ノード投影、予算境界を検証します。`PEFixedImageTest.RawMXCSR*` は legacy/VEX バイトとマスクを結び付けた記録を検証します。マシン状態とネイティブ/LLVM 精緻化のテストは、未使用の機能でもインターフェースを拡張できないことを確認します。
