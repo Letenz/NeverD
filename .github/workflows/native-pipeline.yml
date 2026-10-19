@@ -143,28 +143,44 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=${{ matrix.cc }} \
             -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
             -DCAPSTONE_ARCHITECTURE_DEFAULT=OFF -DCAPSTONE_X86_SUPPORT=ON \
+            -DCAPSTONE_ARM_SUPPORT=ON -DCAPSTONE_AARCH64_SUPPORT=ON \
             -DCAPSTONE_BUILD_CSTEST=ON -DCAPSTONE_BUILD_CSTOOL=OFF \
             -DCAPSTONE_BUILD_LEGACY_TESTS=OFF -DCAPSTONE_BUILD_MACOS_THIN=ON \
             -DENABLE_ASAN="$sanitize"
           python - <<'PY'
           from collections import Counter
-          import json, subprocess
+          import json, os, re, subprocess
           from pathlib import Path
           import xml.etree.ElementTree as ET
           build = Path('build-capstone-core')
           command = ['ctest', '--test-dir', str(build), '-R', '^unit_']
           inventory = json.loads(subprocess.check_output(command + ['--show-only=json-v1'], text=True))
           names = [test['name'] for test in inventory['tests']]
-          assert len(names) >= 82 and len(names) == len(set(names))
-          assert {'unit_x86_buffer_bounds', 'unit_x86_far_immediate_encoding'} <= set(names)
+          assert len(names) >= 83 and len(names) == len(set(names))
+          assert {'unit_mcinst', 'unit_x86_buffer_bounds', 'unit_x86_far_immediate_encoding'} <= set(names)
           targets = ['unit_test' if name == 'unit_cstest' else name.removeprefix('unit_') for name in names]
-          subprocess.run(['cmake', '--build', str(build), '--parallel', '3', '--target', *targets], check=True)
+          subprocess.run(['cmake', '--build', str(build), '--parallel', '3', '--target', *targets, 'cstest'], check=True)
           subprocess.run(command + ['--no-tests=error', '--output-on-failure', '--output-junit', 'results.xml'], check=True)
           cases = list(ET.parse(build / 'results.xml').getroot().iter('testcase'))
           assert Counter(case.get('name') for case in cases) == Counter(names)
           assert all(case.get('status') == 'run' and not any(child.tag in {'failure', 'error', 'skipped'} for child in case) for case in cases)
           (build / 'source.txt').write_text(subprocess.check_output(['git', '-C', 'third_party/capstone', 'rev-parse', 'HEAD'], text=True))
           print(f'Capstone: {len(cases)} passed, zero failed, zero skipped')
+          decoder = build / 'suite/cstest' / ('cstest.exe' if os.name == 'nt' else 'cstest')
+          details = subprocess.run([str(decoder), 'third_party/capstone/tests/details/arm.yaml',
+                                    'third_party/capstone/tests/details/aarch64.yaml'],
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                   encoding='utf-8', errors='replace', timeout=180)
+          (build / 'arm-details.log').write_text(details.stdout, encoding='utf-8')
+          counts = {key: int(value) for key, value in re.findall(
+              r'^\s*(Valid files|Invalid files|Errors|Total|Successful|Skipped|Failed):\s*(\d+)\s*$',
+              details.stdout, re.M)}
+          (build / 'arm-details.json').write_text(json.dumps(counts, indent=2) + '\n')
+          assert details.returncode == 0, details.stdout
+          assert counts['Valid files'] == 2 and counts['Total'] >= 2, counts
+          assert counts['Successful'] == counts['Total'], counts
+          assert all(counts[key] == 0 for key in ('Invalid files', 'Errors', 'Skipped', 'Failed')), counts
+          print(f"ARM/ARM64 details: {counts['Successful']} passed, zero failed, zero skipped")
           PY
       - name: Configure native pipeline, SDK and worker
         run: |
@@ -323,6 +339,8 @@ jobs:
             build-capstone-core/CMakeCache.txt
             build-capstone-core/source.txt
             build-capstone-core/results.xml
+            build-capstone-core/arm-details.log
+            build-capstone-core/arm-details.json
             build-capstone-core/Testing/Temporary/LastTest.log
             build-abi/evidence
             build-abi/evidence-native
