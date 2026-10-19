@@ -32,6 +32,13 @@ bool supportsRuntimeControlOperation(const LowOp &Op,
 RuntimeControlState
 seedRuntimeControlState(symbolic::SymContext &Ctx,
                         const SpecializationOptions &Options);
+RuntimeControlState
+seedRuntimeControlState(symbolic::SymContext &Ctx, symbolic::SymState &State,
+                        const SpecializationOptions &Options);
+llvm::Error commitRuntimeControlState(symbolic::SymState &State,
+                                      RuntimeControlState &Controls,
+                                      size_t Index, symbolic::SymRef Value,
+                                      const SpecializationOptions &Options);
 std::optional<RuntimeControlTransition>
 lowerRuntimeControlOperation(const LowOp &Op, symbolic::SymState &State,
                              const RuntimeControlState &Controls,

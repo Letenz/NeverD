@@ -625,6 +625,10 @@ binaryExecutionDigest(const BinaryImage &Image,
     Number(Options.X64SegmentedWrites);
   }
   Number(Options.X64CR8State);
+  if (Options.X64LegacyGSState) {
+    Hash.update("x64-legacy-gs-state-v1");
+    Number(Options.X64LegacyGSState);
+  }
   if (Options.X64MXCSRMask) {
     Hash.update("x64-mxcsr-mask-v1");
     Number(*Options.X64MXCSRMask);
@@ -751,6 +755,9 @@ prepareBinaryRelation(const BinaryImage &Image,
   if (Options.X64CR8State)
     return Fail(Status::Unsupported,
                 "native proof requires authenticated task-priority state");
+  if (Options.X64LegacyGSState)
+    return Fail(Status::Unsupported,
+                "native proof requires authenticated legacy GS state");
   if (Options.X64MXCSRMask)
     return Fail(Status::Unsupported,
                 "native proof requires authenticated MXCSR state");

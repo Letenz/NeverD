@@ -13,6 +13,10 @@ arquitectura interna.
 
 `arch/x86_64` define las transiciones verificadas de `RequireAligned` para direcciones de 64 bits en el espacio predeterminado. El motor común contabiliza las operaciones escalares y demuestra que el predicado de rechazo es cero antes de conservar la comprobación original. Declarar una ejecución sin fallos no aporta esa prueba. No se requiere estado MXCSR; este adaptador sigue rechazando direcciones segmentadas y condiciones opcionales.
 
+## Recuperación del estado GS clásico
+
+`X64LegacyGSState` declara ejecución de 64 bits CPL0 con CR4.FRED deshabilitado, bajo `KernelX64NoFaultV1` y estado de máquina explícitamente sin fallos. `arch/x86_64` controla SWAPGS, las bases activa/inactiva arbitrarias de 64 bits y la actualización conjunta de la interpretación de direcciones GS. Ambas bases pueden aliasar cualquier memoria; FS permanece fijo. Los accesos segmentados siguen requiriendo sus opciones separadas. La proyección olvida correlaciones pero conserva el intrínseco original y todo el dominio de entrada. La declaración queda ligada a los comprobantes raw. Las interfaces de fuente/nativas/LLVM sin entradas GS/MSR autenticadas la rechazan; la ejecución concreta Unicorn/KVM/WHP/HVF no cambia. Solo `0F 01 F8` exacto recibe comprobantes de salidas indefinidas y, por separado, de bancos opacos; ninguno demuestra las precondiciones de ejecución.
+
 ## Recuperación de MXCSR con comprobación
 
 `X64MXCSRMask` habilita cargas MXCSR y lecturas/escrituras escalares con una máscara efectiva explícita (`0xffbf` o `0xffff`). El adaptador x64 define los estados iniciales válidos y sus transiciones. El núcleo contabiliza el trabajo y exige demostrar que los bits reservados son cero; la opción sin fallos no basta. Las operaciones intrínsecas originales siguen siendo observables. Las escrituras MXCSR en memoria, la interfaz de código fuente y los certificados nativos/LLVM necesitan contratos propios.

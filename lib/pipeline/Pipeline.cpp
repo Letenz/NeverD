@@ -321,6 +321,12 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       Trace.finish(false);
       return Result;
     }
+    if (Opts.InterpreterSpecialization->X64LegacyGSState) {
+      Result.Error = "machine-state recovery requires a versioned legacy GS "
+                     "source interface";
+      Trace.finish(false);
+      return Result;
+    }
     if (Opts.InterpreterSpecialization->X64MXCSRMask) {
       Result.Error =
           "machine-state recovery requires a versioned MXCSR source interface";

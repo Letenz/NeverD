@@ -667,11 +667,16 @@ TEST(InterpreterMachineStateTest, PipelineRefusesUnmappedSegmentEnvironment) {
   Options.InterpreterSpecialization->ExplicitMachineState = true;
   Options.InterpreterSpecialization->NormalNonfaultingExecution = true;
   llvm::LLVMContext Context;
-  for (unsigned Kind = 0; Kind != 4; ++Kind) {
+  const char *Diagnostics[] = {
+      "task-priority source interface", "FS/GS base source interface",
+      "FS/GS base source interface", "MXCSR source interface",
+      "legacy GS source interface"};
+  for (unsigned Kind = 0; Kind != 5; ++Kind) {
     SCOPED_TRACE(Kind);
     Options.InterpreterSpecialization->X64SegmentedReads = Kind == 1;
     Options.InterpreterSpecialization->X64SegmentedWrites = Kind == 2;
     Options.InterpreterSpecialization->X64CR8State = Kind == 0;
+    Options.InterpreterSpecialization->X64LegacyGSState = Kind == 4;
     Options.InterpreterSpecialization->X64MXCSRMask =
         Kind == 3 ? std::optional<uint32_t>(0xffbf) : std::nullopt;
     Options.InterpreterSpecialization->X64FlagsProfile =
@@ -679,10 +684,7 @@ TEST(InterpreterMachineStateTest, PipelineRefusesUnmappedSegmentEnvironment) {
     Pipeline P;
     const auto Result = P.run(Image, Context, Options);
     EXPECT_FALSE(Result.Success);
-    EXPECT_NE(Result.Error.find(Kind == 3 ? "MXCSR source interface"
-                                : Kind    ? "FS/GS base source interface"
-                                          : "task-priority source interface"),
-              std::string::npos);
+    EXPECT_NE(Result.Error.find(Diagnostics[Kind]), std::string::npos);
     EXPECT_FALSE(Result.LlvmModule);
   }
 }

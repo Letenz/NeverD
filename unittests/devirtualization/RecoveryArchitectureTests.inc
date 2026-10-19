@@ -146,6 +146,54 @@ TEST_F(PEFixedImageTest, RawMXCSRContractBindsBothWritableMasks) {
   }
 }
 
+TEST_F(PEFixedImageTest,
+       RawLegacyGSContractBindsUnusedStateAndExecutionProfile) {
+  auto Loaded = load(machineExitFixture({0xff, 0xd0}));
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  auto O = machineExitOptions(Base + 0x1000, MachineExitKind::Call);
+  O.X64FlagsProfile = InterpreterMachineStateProfile::KernelX64NoFaultV1;
+  const auto Before = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+  ASSERT_TRUE(Before.complete()) << Before.Diagnostic;
+  ASSERT_TRUE(Before.RawEnvironment);
+  O.X64LegacyGSState = true;
+  const auto After = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+  ASSERT_TRUE(After.complete()) << After.Diagnostic;
+  ASSERT_TRUE(After.RawEnvironment);
+  EXPECT_NE(Before.RawEnvironment->Domain->DomainDigest,
+            After.RawEnvironment->Domain->DomainDigest);
+  auto Error = validateSpecializationRawEnvironment(After, O);
+  EXPECT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+  Error = validateSpecializationRawEnvironment(Before, O);
+  ASSERT_TRUE(bool(Error));
+  llvm::consumeError(std::move(Error));
+  O.X64LegacyGSState = false;
+  Error = validateSpecializationRawEnvironment(After, O);
+  ASSERT_TRUE(bool(Error));
+  llvm::consumeError(std::move(Error));
+}
+
+TEST_F(PEFixedImageTest, RawLegacyGSNativeExchangeRequiresTheExplicitDomain) {
+  auto Loaded = load(machineExitFixture({0x0f, 0x01, 0xf8, 0xc3}));
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  auto O = machineExitOptions(Base + 0x1003, MachineExitKind::Return);
+  O.X64FlagsProfile = InterpreterMachineStateProfile::KernelX64NoFaultV1;
+  EXPECT_FALSE(
+      specializeBinaryInterpreter(*Loaded, Base + 0x1000, O).complete());
+  O.X64LegacyGSState = true;
+  const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  unsigned Exchanges = 0;
+  for (const auto &Block : R.Residual.Blocks)
+    for (const auto &Op : Block.Ops)
+      Exchanges +=
+          Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == 1 &&
+          Op.Inputs[0] == NdVar::scalar(uint64_t(Intrinsic::Swapgs), 2);
+  EXPECT_EQ(Exchanges, 1U);
+  ASSERT_TRUE(R.RawEnvironment);
+  auto Error = validateSpecializationRawEnvironment(R, O);
+  EXPECT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+}
+
 TEST_F(PEFixedImageTest, RawMXCSRNativeLoadsRetainReservedBitProofs) {
   for (bool Vex : {false, true})
     for (bool Invalid : {false, true}) {
