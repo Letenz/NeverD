@@ -751,6 +751,14 @@ public:
   /// The text \p E passes to a parameter of type \p Expected, before a
   /// pointer converts to an integer parameter.
   std::string typedArgumentText(const HighExpr &E, const TypeRef &Expected);
+  /// \p Text, which \p Value prints, as the value an object C declares as
+  /// \p Declared is assigned: C converts no integer to a pointer, no pointer
+  /// to an integer and no pointer to one of another type by assignment.
+  std::string assignedText(const TypeRef &Declared, const HighExpr &Value,
+                           std::string Text) const;
+  /// The type an image object at \p Addr is declared with, where C can assign
+  /// it: its header's for a C library object, otherwise its own.
+  TypeRef assignedImageObjectType(va_t Addr) const;
   /// Whether \p E, printed as \p Text, has an integer type in C that a
   /// pointer parameter does not take as it is (not a null pointer constant).
   bool printsAsInteger(const HighExpr &E, llvm::StringRef Text) const;

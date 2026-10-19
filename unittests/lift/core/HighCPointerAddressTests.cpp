@@ -47571,3 +47571,89 @@ TEST(HighCPointerAddresses, GnuLibrariesHeadersDeclareTheirExtensions) {
   EXPECT_LT(Define, Source.find("#include <")) << Source;
   expectCSyntax(Source);
 }
+
+TEST(HighCPointerAddresses, ImageObjectsTakeAssignedValuesAsTheyAreDeclared) {
+  // bc stores integers into image objects the code reads as pointers, and
+  // pointers into ones it reads as integers, which C converts by no
+  // assignment: its unit failed 55 times.  Each value converts to the type
+  // the object is declared with, the header's for optarg; a null pointer
+  // needs none.  An object also stored narrower is its bytes, never
+  // assigned whole.
+  constexpr va_t OptArg = 0x6000, Counter = 0x6008, Cursor = 0x6010,
+                 In = 0x6018, Flags = 0x6020;
+  BinaryImage Img =
+      makeImageObjectFixture(OptArg, std::vector<uint8_t>(40), true);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  for (const auto &[Name, Addr] : {std::pair{"optarg", OptArg},
+                                   {"counter", Counter},
+                                   {"cursor", Cursor},
+                                   {"stdin", In},
+                                   {"flags", Flags}}) {
+    Symbol Data;
+    Data.Name = Name;
+    Data.Addr = Addr;
+    Data.Size = 8;
+    Img.Symbols.push_back(Data);
+  }
+  const auto Word = NdType::makeInt(8);
+  const auto IntPointer = NdType::makePtr(NdType::makeInt(4));
+  auto Store = [](va_t Addr, ExprPtr Value) {
+    HighStmt Write;
+    Write.Kind = StmtKind::Store;
+    Write.StoreAddr = HighExpr::makeConst(Addr, 8);
+    Write.StoreVal = std::move(Value);
+    return Write;
+  };
+  // The code reads counter as an integer and cursor as a pointer to int32_t
+  // before it stores into them.
+  HighFunc Count;
+  Count.Name = "count_value";
+  Count.Entry = 0x1200;
+  Count.ReturnType = Word;
+  returnValue(Count, HighExpr::makeLoad(HighExpr::makeConst(Counter, 8), Word));
+  HighFunc Get;
+  Get.Name = "cursor_value";
+  Get.Entry = 0x1100;
+  Get.ReturnType = IntPointer;
+  returnValue(Get,
+              HighExpr::makeLoad(HighExpr::makeConst(Cursor, 8), IntPointer));
+  HighFunc Func;
+  Func.Name = "configure";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  Func.Params = {{"text", Word}, {"where", NdType::makePtr()}};
+  Func.Body = {Store(OptArg, parameter(0, Word)),
+               Store(Counter, parameter(1, NdType::makePtr())),
+               Store(Counter, HighExpr::makeLoad(HighExpr::makeConst(In, 8),
+                                                 NdType::makePtr())),
+               Store(Cursor, parameter(0, Word)),
+               Store(Cursor, HighExpr::makeConst(0, 8)),
+               Store(Flags, HighExpr::makeConst(5, 4))};
+  auto Sum = HighExpr::makeBinop(
+      NdOp::INT_ADD, HighExpr::makeLoad(HighExpr::makeConst(Counter, 8), Word),
+      HighExpr::makeLoad(HighExpr::makeConst(Flags, 8), Word));
+  Sum->Type = Word;
+  returnValue(Func, Sum);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Count, Get, Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("optarg = (void*)(uintptr_t)text;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("counter = (uintptr_t)where;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("counter = (int64_t)(uintptr_t)stdin;"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("cursor = (int32_t*)(uintptr_t)text;"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("cursor = 0;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("flags = "), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
