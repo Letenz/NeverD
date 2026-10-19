@@ -1366,6 +1366,55 @@ TEST(CFGBuilderCoverage,
                    }));
 }
 
+TEST(CFGBuilderCoverage, FH4ContinuationRootsAreReadOncePerImage) {
+  // The catch continuation an FH4 handler names in another function of its
+  // record is that function's root.  A selected run that shares the
+  // analysis cache reads such continuations from the cache's inventory, once
+  // for every run.
+  constexpr va_t CatchVA = 0x140001000;
+  constexpr va_t OwnerVA = CatchVA + 0x100;
+  constexpr va_t TargetVA = OwnerVA + 0x20;
+  BinaryImage Img = continuationPipelineImage(/*ReturnAddress=*/false);
+  for (ExceptionFunction &Function : Img.ExceptionMetadata.Functions)
+    Function.Cxx->NativeEncoding = CxxExceptionInfo::Encoding::FH4;
+  ExceptionFunction &Catch = Img.ExceptionMetadata.Functions.front();
+  ASSERT_EQ(Catch.CodeRange.Begin, CatchVA);
+  CxxCatchHandler Handler;
+  Handler.HandlerVA = CatchVA;
+  Handler.ContinuationVAs = {TargetVA};
+  CxxTryBlock Try;
+  Try.Handlers.push_back(std::move(Handler));
+  Catch.Cxx->TryBlocks.push_back(std::move(Try));
+
+  EXPECT_EQ(pipeline_detail::fh4ContinuationCandidates(Img),
+            (std::vector<std::pair<va_t, va_t>>{{OwnerVA, TargetVA}}));
+  const auto Roots =
+      pipeline_detail::collectWindowsEHContinuationRootsForTesting(
+          Img, {}, {OwnerVA}, std::nullopt, /*CompleteModule=*/false);
+  EXPECT_EQ(Roots.RootsByOwner,
+            (std::map<va_t, std::set<va_t>>{{OwnerVA, {TargetVA}}}));
+
+  PipelineAnalysisCache Cache;
+  for (int Run = 0; Run < 2; ++Run) {
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.DumpLow = true;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {OwnerVA};
+    Options.AnalysisCache = &Cache;
+    const PipelineResult Result = Pipeline().run(Img, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    const auto Owner = std::find_if(
+        Result.LowFuncs.begin(), Result.LowFuncs.end(),
+        [&](const LowFunc &Function) { return Function.Entry == OwnerVA; });
+    ASSERT_NE(Owner, Result.LowFuncs.end()) << "run " << Run;
+    EXPECT_TRUE(std::any_of(
+        Owner->Blocks.begin(), Owner->Blocks.end(),
+        [&](const LowBlock &Block) { return Block.StartAddr == TargetVA; }))
+        << "run " << Run;
+  }
+}
+
 TEST(CFGBuilderCoverage, LocalUnwindTargetRequiresExclusiveSameFrameUses) {
   constexpr va_t Entry = 0x140001000, Target = Entry + 0x20;
   constexpr va_t Stub = Entry + 0x180;

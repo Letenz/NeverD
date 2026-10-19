@@ -691,6 +691,11 @@ struct PDBDebugContext::Impl {
   /// Stream offset of each seen `ProcSym`. A later request for a prefix
   /// callee seeks here instead of replaying the CU head.
   mutable std::map<uint32_t, std::map<va_t, uint32_t>> ModuleProcedureOffs;
+  /// The debug stream of each module ensureLocalsForAddress() has opened,
+  /// for its later procedures: opening one reads the module's descriptor
+  /// and substream headers again.  Guarded by LocalMutex.
+  mutable std::map<uint32_t, llvm::pdb::ModuleDebugStreamRef>
+      LocalModuleStreams;
   mutable std::mutex RecordParameterMutex;
   mutable std::set<uint32_t> RecordParameterModules;
   mutable std::map<va_t, std::vector<AuthenticatedRecordParameter>>
@@ -2140,14 +2145,21 @@ void PDBDebugContext::ensureLocalsForAddress(va_t Addr) const {
   }
   PImpl->LoadedModules.insert(ModuleIndex);
 
-  llvm::Expected<llvm::pdb::ModuleDebugStreamRef> ModuleOr =
-      PImpl->Native->getModuleDebugStream(ModuleIndex);
-  if (!ModuleOr) {
-    llvm::consumeError(ModuleOr.takeError());
-    return;
+  auto Stream = PImpl->LocalModuleStreams.find(ModuleIndex);
+  if (Stream == PImpl->LocalModuleStreams.end()) {
+    llvm::Expected<llvm::pdb::ModuleDebugStreamRef> ModuleOr =
+        PImpl->Native->getModuleDebugStream(ModuleIndex);
+    if (!ModuleOr) {
+      llvm::consumeError(ModuleOr.takeError());
+      return;
+    }
+    Stream =
+        PImpl->LocalModuleStreams.emplace(ModuleIndex, std::move(*ModuleOr))
+            .first;
   }
 
-  const llvm::codeview::CVSymbolArray &Records = ModuleOr->getSymbolArray();
+  const llvm::codeview::CVSymbolArray &Records =
+      Stream->second.getSymbolArray();
   bool HadError = false;
   uint32_t StartOff = Records.skew();
   // Seek a ProcSym we already saw. Resume only for a VA the prefix walk

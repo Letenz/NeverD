@@ -126,11 +126,13 @@ public:
               DebugContext *Dbg, bool GuardAnalysisOnlyFunctions = true,
               const std::unordered_set<std::string_view> *SharedNames = nullptr,
               CSourceRecorder *Recorder = nullptr,
-              const HighCImageDataObjects *SharedDataObjects = nullptr)
+              const HighCImageDataObjects *SharedDataObjects = nullptr,
+              const HighCImageFunctionSymbols *SharedFunctionSymbols = nullptr)
       : Out(OS), OS(Out), Opts(Opts), Dbg(Dbg),
         GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions),
         SharedImageFunctionNames(SharedNames), SourceRecorder(Recorder),
-        SharedDataObjects(SharedDataObjects) {}
+        SharedDataObjects(SharedDataObjects),
+        SharedFunctionSymbols(SharedFunctionSymbols) {}
 
   //--- Module-level (HighCEmitter.cpp) ---
   void writeAll(const std::vector<HighFunc> &Funcs);
@@ -1492,6 +1494,11 @@ public:
     StatementCall = Outer;
     return Text;
   }
+  /// The image's function symbols by address, which noteFunctionAddress()
+  /// reads: those the emitter prepared for the image when it did, else the
+  /// writer's own, read at the first address it asks about.
+  const HighCImageFunctionSymbols *SharedFunctionSymbols;
+  std::optional<HighCImageFunctionSymbols> OwnFunctionSymbols;
   /// Functions the code takes the address of, by entry: the C name the
   /// address prints as.
   std::map<va_t, std::string> FunctionAddressNames;
