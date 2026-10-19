@@ -87,9 +87,10 @@ Unknown names and foreign loader instances still stop explicitly. The array is
 limited to 256 unique loader/name pairs, binary names to 1024 ASCII bytes with
 nonempty Java identifier components, and messages to 4096 UTF-8 bytes. Empty
 messages and null messages remain distinct. Application loader outcomes require
-the application phase. A failure cannot shadow a declaration visible to that
-loader. Custom delegation, exception causes and a closed complete classpath are
-not supplied by these observations.
+an established application loader: the application phase or an explicit `true`
+loader input in the attached phase. A failure cannot shadow a declaration visible
+to that loader. Custom delegation, exception causes and a closed complete
+classpath are not supplied by these observations.
 
 The lifecycle phase is fixed per workload; modeled mutable fields retain guest writes. It does not execute
 `bindApplication`, custom Application constructors, framework class initializers,
