@@ -2019,6 +2019,31 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                 "(void*)" +
                 std::string(printsAsInteger(*Op, Text) ? "(uintptr_t)" : "") +
                 castOperand(Text);
+          // A C library routine the header declares, called by its own name,
+          // takes a function-pointer argument converted to the type the
+          // header gives the parameter, as a header callee's does below: the
+          // type library's function type keeps no const (qsort's `int
+          // (*)(const void *, const void *)`).  An import the unit declares
+          // under another identifier takes its own declaration's type.
+          if (const std::optional<std::string_view> Function =
+                  !Defined && Callee->PrototypeFromCLibrary &&
+                          Name == Callee->Name && libc::headerFor(Name) &&
+                          Expected->Kind == NdTypeKind::Ptr &&
+                          Expected->Pointee &&
+                          Expected->Pointee->Kind == NdTypeKind::Func
+                      ? libc::functionPointerParameter(
+                            Name, static_cast<unsigned>(I), Opts.libcVariant())
+                      : std::nullopt) {
+            const HighExpr *Value = unwrapIntegerView(Op);
+            if (!Value)
+              Value = Op;
+            if (Value->Kind != ExprKind::Const || Value->ConstVal != 0) {
+              const std::string Raw = exprStr(*Value);
+              Text = "(" + std::string(*Function) + ")" +
+                     (printsAsInteger(*Value, Raw) ? "(uintptr_t)" : "") +
+                     castOperand(Raw);
+            }
+          }
           S += Text;
           continue;
         }
