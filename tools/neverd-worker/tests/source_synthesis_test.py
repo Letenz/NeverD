@@ -36,6 +36,25 @@ def quadratic_elf():
     return elf(code)
 
 
+def masked_elf():
+    # System V x64: 37 * (((x ^ 0x39) | (y ^ 0x6d)) +
+    #                    (x ^ ~0x39)) + 37, then OR 0x55 and add z.
+    # The equivalent two-XOR form is (37*((x ^ ~0x39)&(y ^ 0x6d))|0x55)+z.
+    code = bytes.fromhex(
+        "89f8 3539000000 89f1 83f16d 09c8 83f7c6 01f8 "
+        "6bc025 83c025 83c855 01d0 c3")
+    return elf(code)
+
+
+def frame_elf():
+    # Store all three incoming registers. The unused middle store leaves an
+    # empty source block; the two surviving homes feed (z|~x)+z+1+(z&~x).
+    code = bytes.fromhex(
+        "55 4889e5 897dfc 8975f8 8955f4 8b4dfc f7d1 "
+        "8b45f4 09c8 0345f4 ffc0 234df4 01c8 5d c3")
+    return elf(code)
+
+
 def elf(code):
     ident = b"\x7fELF\x02\x01\x01" + bytes(9)
     header = struct.pack("<16sHHIQQQIHHHHHH", ident, 2, 62, 1, ENTRY,
@@ -109,6 +128,14 @@ def execute_source(root, name, text, compiler, expected):
 
 
 def run_fixture(worker, cli, compiler, kind, image, expected):
+    def enhanced_shape(text):
+        if kind == "masked":
+            assert text.count("^") <= 2, text
+        elif kind == "frame":
+            assert all(op not in text for op in ("|", "^", "&")), text
+        else:
+            assert ">>" not in text, text
+
     with tempfile.TemporaryDirectory(prefix="neverd-source-synthesis-") as directory:
         root = Path(directory)
         fixture = root / (kind + ".elf")
@@ -120,9 +147,14 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                 ordinary = source(client, representation, False)
                 enhanced = source(client, representation, True)
                 function_name(enhanced)
-                assert ">>" not in enhanced, enhanced
+                enhanced_shape(enhanced)
                 if representation == "source":
-                    assert ">>" in ordinary, ordinary
+                    if kind == "masked":
+                        assert ordinary.count("^") >= 3, ordinary
+                    elif kind == "frame":
+                        assert "|" in ordinary, ordinary
+                    else:
+                        assert ">>" in ordinary, ordinary
                     assert enhanced != ordinary
                 # Turning the menu off restores its independent ordinary page.
                 assert source(client, representation, False) == ordinary
@@ -142,7 +174,7 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                     subprocess.run(args + ["-o", str(output), str(fixture)],
                                    check=True, capture_output=True, text=True, timeout=90)
                     text = output.read_text(encoding="utf-8")
-                    assert ">>" not in text, text
+                    enhanced_shape(text)
                     outputs[name] = text
 
         if compiler:
@@ -165,6 +197,8 @@ if __name__ == "__main__":
         for kind, image, expected in (
             ("affine", affine_elf(), "182U*x + 73U*y + 211U*z + 37U"),
             ("quadratic", quadratic_elf(), "11U*x*x + 73U*x*y + 182U*y + 211U*z + 37U"),
+            ("masked", masked_elf(), "(37U*((x ^ ~0x39U)&(y ^ 0x6dU))|0x55U)+z"),
+            ("frame", frame_elf(), "2U*z-x"),
         ):
             run_fixture(options.worker, options.cli, options.compiler, kind,
                         image, expected)

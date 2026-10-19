@@ -1391,7 +1391,7 @@ TEST(HighSymSimplify, EffectBoundariesInvalidateAvailableDefinitions) {
   EXPECT_NE(Body.back().RetVal->str().find('|'), std::string::npos);
 }
 
-TEST(HighSymSimplify, DefinitionBindingsRequireMatchingIntegerTypes) {
+TEST(HighSymSimplify, DefinitionBindingsPreserveAssignmentWidthAndSignedness) {
   const auto X = HighExpr::makeVar(tempOfSize(1, 4));
   const auto Y = HighExpr::makeVar(tempOfSize(2, 4));
   for (uint16_t Bytes : {4, 8}) {
@@ -1402,9 +1402,104 @@ TEST(HighSymSimplify, DefinitionBindingsRequireMatchingIntegerTypes) {
         assignValue(T, HighExpr::makeBinop(NdOp::INT_AND, X, Y)),
         returnValue(sharedMaskUse(X, Y, Use))};
     simplifyExprSemantics(Body);
-    EXPECT_NE(Body.back().RetVal->str().find('|'), std::string::npos)
-        << Body.back().RetVal->str();
+    const auto Text = Body.back().RetVal->str();
+    if (Bytes == 4) {
+      EXPECT_EQ(Text.find('|'), std::string::npos) << Text;
+      EXPECT_EQ(Text.find('&'), std::string::npos) << Text;
+    } else {
+      EXPECT_NE(Text.find('|'), std::string::npos) << Text;
+    }
   }
+}
+
+TEST(HighSymSimplify, MixedSignednessDefinitionKeepsItsWideningMeaning) {
+  for (bool DestinationSigned : {false, true}) {
+    const auto X = HighExpr::makeVar(tempOfSize(1, 1),
+                                     NdType::makeInt(1, !DestinationSigned));
+    const auto Y = HighExpr::makeVar(tempOfSize(2, 4));
+    const auto T = HighExpr::makeVar(tempOfSize(3, 1),
+                                     NdType::makeInt(1, DestinationSigned));
+    const auto Before =
+        HighExpr::makeBinop(NdOp::INT_SUB, carrySum(integerCast(T, 4), Y), Y);
+    std::vector<HighStmt> Body{assignValue(T, X), returnValue(Before)};
+    simplifyExprSemantics(Body);
+    EXPECT_FALSE(containsNode(Body.back().RetVal, T));
+    EXPECT_EQ(X->Type->IsSigned, !DestinationSigned);
+    for (uint64_t Value = 0; Value != 256; ++Value) {
+      const auto Byte = llvm::APInt(8, Value);
+      const auto Expected = DestinationSigned ? Byte.sext(32) : Byte.zext(32);
+      EXPECT_EQ(integerValue(Body.back().RetVal, Value, 0xdeadbeef), Expected);
+    }
+  }
+}
+
+TEST(HighSymSimplify, RelatesDisjointFrameLocalsAndRejectsAliasingBoundaries) {
+  const auto X = HighExpr::makeVar(tempOfSize(1, 4));
+  const auto Y = HighExpr::makeVar(tempOfSize(2, 4));
+  auto Frame = [](int64_t Offset, uint16_t Size = 4) {
+    auto V = tempOfSize(3, Size);
+    V.Kind = MedVar::Stack;
+    V.StackOff = Offset;
+    return HighExpr::makeVar(V);
+  };
+  for (unsigned Boundary = 0; Boundary != 6; ++Boundary) {
+    SCOPED_TRACE(Boundary);
+    const auto T = Frame(-16);
+    std::vector<HighStmt> Body{
+        assignValue(T, HighExpr::makeBinop(NdOp::INT_AND, X, Y))};
+    if (Boundary == 1) {
+      // Adjacent frame storage is independent.
+      Body.push_back(assignValue(Frame(-12), X));
+    } else if (Boundary == 2 || Boundary == 3) {
+      // A partial overlap or a differently sized view at the same offset
+      // must not leave the earlier whole-word value available.
+      Body.push_back(
+          assignValue(Frame(Boundary == 2 ? -14 : -16, 2), integerCast(X, 2)));
+    } else if (Boundary == 4) {
+      HighStmt Store;
+      Store.Kind = StmtKind::Store;
+      Store.StoreAddr = HighExpr::makeConst(0x700000, 8);
+      Store.StoreVal = X;
+      Body.push_back(Store);
+    } else if (Boundary == 5) {
+      // Taking a peer's address can expose T through pointer arithmetic.
+      auto Address = std::make_shared<HighExpr>();
+      Address->Kind = ExprKind::Addr;
+      Address->Type = NdType::makePtr();
+      Address->Operands = {Frame(-12)};
+      HighStmt Escape;
+      Escape.Kind = StmtKind::ExprStmt;
+      Escape.Val = Address;
+      Body.insert(Body.begin(), Escape);
+    }
+    Body.push_back(returnValue(sharedMaskUse(X, Y, T)));
+    simplifyExprSemantics(Body);
+    const auto Text = Body.back().RetVal->str();
+    if (Boundary < 2) {
+      EXPECT_EQ(Text.find('|'), std::string::npos) << Text;
+      EXPECT_EQ(Text.find('&'), std::string::npos) << Text;
+    } else {
+      EXPECT_NE(Text.find('|'), std::string::npos) << Text;
+    }
+  }
+}
+
+TEST(HighSymSimplify, MemoryWritesKillTransitiveFrameDependencies) {
+  auto V = tempOfSize(3, 4);
+  V.Kind = MedVar::Stack;
+  V.StackOff = -16;
+  const auto Frame = HighExpr::makeVar(V);
+  const auto X = HighExpr::makeVar(tempOfSize(1, 4));
+  const auto T = HighExpr::makeVar(tempOfSize(4, 4));
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr = HighExpr::makeConst(0x700000, 8);
+  Store.StoreVal = X;
+  std::vector<HighStmt> Body{
+      assignValue(T, HighExpr::makeBinop(NdOp::INT_AND, X, Frame)), Store,
+      returnValue(sharedMaskUse(X, Frame, T))};
+  simplifyExprSemantics(Body);
+  EXPECT_NE(Body.back().RetVal->str().find('|'), std::string::npos);
 }
 
 TEST(HighSymSimplify, ImplicitOutputsInvalidateAvailableDefinitions) {

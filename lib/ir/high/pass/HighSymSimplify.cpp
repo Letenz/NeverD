@@ -367,7 +367,7 @@ bool isScalarLocal(const ExprPtr &E) {
          E->Type->Kind == NdTypeKind::Int && widthFromBytes(E->Type->Size) &&
          E->Type->Size == E->Var.Size &&
          (E->Var.Kind == MedVar::Reg || E->Var.Kind == MedVar::Temp ||
-          E->Var.Kind == MedVar::Param);
+          E->Var.Kind == MedVar::Param || E->Var.Kind == MedVar::Stack);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1312,6 +1312,8 @@ definitionInputs(const ExprPtr &Value, const AvailableDefinitions &Definitions,
 void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
                               unsigned MaxThreads) {
   std::set<LocalIdentity> Escaped;
+  std::map<LocalIdentity, std::pair<int64_t, uint16_t>> StackViews;
+  bool FrameAddressTaken = false;
   std::unordered_set<va_t> Entries;
   HighExprSet Seen;
   size_t StatementCount = 0;
@@ -1332,6 +1334,17 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
         Work.pop_back();
         if (!E || !Seen.insert(E.get()).second)
           continue;
+        if (E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Stack) {
+          const auto Key = highSourceLocalIdentity(E->Var);
+          const auto View = std::make_pair(E->Var.StackOff, E->Var.Size);
+          auto [It, Added] = StackViews.emplace(Key, View);
+          if ((!Added && It->second != View) || !E->Var.Size ||
+              E->Var.StackOff >
+                  std::numeric_limits<int64_t>::max() - E->Var.Size) {
+            Escaped.insert(Key);
+            FrameAddressTaken = true;
+          }
+        }
         if (E->Kind == ExprKind::Addr) {
           std::vector<ExprPtr> AddressWork{E};
           HighExprSet AddressSeen;
@@ -1340,8 +1353,10 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
             AddressWork.pop_back();
             if (!A || !AddressSeen.insert(A.get()).second)
               continue;
-            if (A->Kind == ExprKind::Var)
+            if (A->Kind == ExprKind::Var) {
               Escaped.insert(highSourceLocalIdentity(A->Var));
+              FrameAddressTaken |= A->Var.Kind == MedVar::Stack;
+            }
             A->forEachChildExpr(
                 [&](const ExprPtr &Child) { AddressWork.push_back(Child); });
           }
@@ -1353,6 +1368,35 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
   });
   Entries.erase(0);
   Entries.erase(InvalidVA);
+
+  // Only disjoint, unescaped frame objects are scalar definitions. Different
+  // spellings/widths of overlapping storage cannot be independent variables.
+  // Taking any frame address also permits pointer arithmetic into its peers.
+  for (const auto &[Key, View] : StackViews)
+    FrameAddressTaken |= Escaped.count(Key) != 0;
+  std::vector<decltype(StackViews)::const_iterator> OrderedStack;
+  for (auto It = StackViews.begin(); It != StackViews.end(); ++It) {
+    if (FrameAddressTaken)
+      Escaped.insert(It->first);
+    if (!Escaped.count(It->first))
+      OrderedStack.push_back(It);
+  }
+  std::sort(OrderedStack.begin(), OrderedStack.end(),
+            [](auto A, auto B) { return A->second.first < B->second.first; });
+  if (!OrderedStack.empty()) {
+    auto Furthest = OrderedStack.front();
+    for (auto It : OrderedStack) {
+      if (It == Furthest)
+        continue;
+      const auto End = Furthest->second.first + Furthest->second.second;
+      if (It->second.first < End) {
+        Escaped.insert(Furthest->first);
+        Escaped.insert(It->first);
+      }
+      if (It->second.first + It->second.second > End)
+        Furthest = It;
+    }
+  }
 
   struct StatementProperties {
     bool ResetBefore;
@@ -1392,12 +1436,23 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
       Definitions.clear();
       return;
     }
-    // An ordinary store changes memory, not a scalar register, temporary,
-    // or unescaped parameter.  Its address and value have already been
-    // checked for effects; keep proven scalar definitions available to the
-    // following expressions, including a store/reload pair in the frame.
-    if (S.Kind == StmtKind::Store)
+    // Unknown stores may touch a frame object. Kill every definition that
+    // reads one, including transitive dependents, while retaining independent
+    // register/temporary facts whose values a memory store cannot change.
+    if (S.Kind == StmtKind::Store) {
+      for (auto It = Definitions.begin(); It != Definitions.end();) {
+        const bool ReadsFrame =
+            StackViews.count(It->first) ||
+            std::any_of(It->second.Dependencies.begin(),
+                        It->second.Dependencies.end(),
+                        [&](const auto &Key) { return StackViews.count(Key); });
+        if (ReadsFrame)
+          It = Definitions.erase(It);
+        else
+          ++It;
+      }
       return;
+    }
     if (S.Kind != StmtKind::Assign)
       return;
     if (!isScalarLocal(S.Dst)) {
@@ -1415,9 +1470,22 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
     }
     if (Inputs && !Inputs->count(Key) && !Escaped.count(Key) &&
         Definitions.size() < 256 && S.Val && S.Val->Type &&
-        S.Val->Type->Size == S.Dst->Type->Size &&
-        S.Val->Type->IsSigned == S.Dst->Type->IsSigned)
-      Definitions.emplace(Key, AvailableDefinition{S.Val, std::move(*Inputs)});
+        S.Val->Type->Kind == NdTypeKind::Int &&
+        S.Val->Type->Size == S.Dst->Type->Size) {
+      // A same-width assignment keeps the word's bits even when the emitted
+      // local has the other signedness. Retain the conversion explicitly so
+      // later widening reads the destination's signedness, not the source's.
+      ExprPtr Value = S.Val;
+      if (Value->Type->IsSigned != S.Dst->Type->IsSigned) {
+        auto Converted = std::make_shared<HighExpr>();
+        Converted->Kind = ExprKind::Cast;
+        Converted->Type = S.Dst->Type;
+        Converted->CastTo = S.Dst->Type;
+        Converted->Operands = {Value};
+        Value = std::move(Converted);
+      }
+      Definitions.emplace(Key, AvailableDefinition{Value, std::move(*Inputs)});
+    }
   };
   std::vector<std::vector<HighStmt> *> Scopes{&Stmts};
   auto AppendChildren = [&](HighStmt &S) {

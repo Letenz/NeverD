@@ -116,6 +116,25 @@ build-release/bin/NeverDSymSynthQuadraticTests
 build-release/bin/NeverDSymSynthAffineTests
 ```
 
+`NeverDSymMBAMaskRelationTests` checks full-word mask complements and masked-XOR
+abstraction at 8/16/32/64/128/257 bits. It combines independent bitvector proofs,
+full-width APInt arithmetic, exhaustive byte pairs and nearby nonidentities;
+zero and incomplete work allowances must preserve semantics. The 257-bit test
+explicitly increases only its verifier's width allowance, retaining finite SAT
+and gate budgets. Production proof policies are unchanged.
+`HighSymSimplify` covers signedness-preserving definition conversion, disjoint
+frame locals, overlapping views, address escape and transitive store kills.
+`HighFrameStoreForwarding.EmptyDeadStoreAnchorsPreservePrivateFacts` checks
+empty versus effectful/malformed block boundaries across four architectures.
+
+For reproducible performance comparisons, keep each CLI beside its matching
+shared SDK and run `tools/neverd-bench/benchmark_symbolic_masks.py BASELINE
+CANDIDATE --output REPORT.json`. The fixed seed generates complementary and
+nearby noncomplementary expressions at four widths. Alternating warmed runs
+record both binaries/libraries' hashes, results, work and in-process latency;
+timings are measurements rather than CI thresholds. Copying an executable
+without its SDK does not preserve an old engine.
+
 `NeverDSymLoadOriginBindingTests` checks transactional history rebinding,
 sorted conflict unions, independent forks and invalid batches. Historical
 metadata never creates available bytes or restores a pre-clobber memory epoch.
@@ -453,9 +472,9 @@ also requires a proof across a dominated block boundary and retains the
 observable call. The real-engine
 `NeverDWorkerSourceSynthesis` test sends the GUI's `source_options` request,
 checks enhanced/ordinary cache isolation, and, when a CLI is configured,
-exercises single-function and whole-program source in both routes, using both
-affine and quadratic machine-code fixtures. With
-Clang available it compiles all twelve enhanced outputs at O0/O2 and executes
+exercises single-function and whole-program source in both routes, using
+affine, quadratic, complemented-mask and private-frame machine-code fixtures.
+With Clang available it compiles all 24 enhanced outputs at O0/O2 and executes
 each against 1,331 boundary triples and 4,096 deterministic random triples.
 Missing Clang explicitly skips only that generated-C execution coverage.
 
