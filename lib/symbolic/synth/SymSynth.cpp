@@ -180,6 +180,7 @@ SynthResult synthesizeImpl(SymContext &Ctx, SymRef E, const SynthOptions &Opts,
   Result.Evidence = Found.Evidence;
   Result.FromSampler = FromSampler;
   Result.FromAffine = Found.FromAffine;
+  Result.FromQuadratic = Found.FromQuadratic;
   return Result;
 }
 

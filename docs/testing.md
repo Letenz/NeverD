@@ -103,6 +103,19 @@ build-release/bin/NeverDSymSynthAffineTests
 build-release/bin/NeverDSolverTests
 ```
 
+`NeverDSymSynthQuadraticTests` checks oracle reconstruction of squares and
+pairwise products, full-width coefficients, the noninvertible diagonal, opaque
+typed inputs, narrow wrapping, nonlinear rejection and budget/proof refusal.
+It includes exhaustive byte-pair arithmetic and a same-budget comparison with
+quadratic fitting disabled. The Z3 cases explicitly skip when unavailable.
+Run it with the affine/contract suite after changing shared fitting gates:
+
+```sh
+python scripts/build.py build-release --target NeverDSymSynthQuadraticTests NeverDSymSynthAffineTests --parallel 4
+build-release/bin/NeverDSymSynthQuadraticTests
+build-release/bin/NeverDSymSynthAffineTests
+```
+
 `NeverDSymLoadOriginBindingTests` checks transactional history rebinding,
 sorted conflict unions, independent forks and invalid batches. Historical
 metadata never creates available bytes or restores a pre-clobber memory epoch.
@@ -427,17 +440,22 @@ executes ordinary HighC against native extended-precision encodings; ARM mode
 tests execute both ordinary and explicitly enhanced source.
 
 `NeverDHighSymSimplifyTests` provides the focused HighIR suite, including
-8–256-bit affine synthesis, synthesis inside signed/unsigned width conversions
+8–256-bit affine and quadratic synthesis, synthesis inside signed/unsigned
+width conversions
 and exhaustive byte-pair overflow preservation. Wide-constant roundtrips check
 positive, negated and complemented high-bit payloads in enclosing regions.
 `SymSimplifyGuard.SourceSymbolicToggleEnablesBoundedSemanticSearch` checks
 actual search work through every source LLVM profile. Proof-budget cases check
 that synthesis exhaustion preserves IR while the separate split-word recovery
-still completes. The real-engine
+still completes.
+`SymSimplifyGuard.SemanticQuadraticSynthesisAcrossBlocksAndAtCallArguments`
+also requires a proof across a dominated block boundary and retains the
+observable call. The real-engine
 `NeverDWorkerSourceSynthesis` test sends the GUI's `source_options` request,
 checks enhanced/ordinary cache isolation, and, when a CLI is configured,
-exercises single-function and whole-program source in both routes. With
-Clang available it compiles all six enhanced outputs at O0/O2 and executes
+exercises single-function and whole-program source in both routes, using both
+affine and quadratic machine-code fixtures. With
+Clang available it compiles all twelve enhanced outputs at O0/O2 and executes
 each against 1,331 boundary triples and 4,096 deterministic random triples.
 Missing Clang explicitly skips only that generated-C execution coverage.
 

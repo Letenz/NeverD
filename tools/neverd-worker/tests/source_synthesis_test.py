@@ -23,6 +23,20 @@ def affine_elf():
     code = bytes.fromhex(
         "69c7b6000000 6bce49 01c8 69cad3000000 01c8 83c025 "
         "89f9 c1e904 89fa c1ea02 c1ea02 29d1 01c8 c3")
+    return elf(code)
+
+
+def quadratic_elf():
+    # System V x64: 11*x*x + 73*x*y + 182*y + 211*z + 37, plus the
+    # same right-shift residual as the affine fixture.
+    code = bytes.fromhex(
+        "89f8 0fafc7 6bc00b 89f9 0fafce 6bc949 01c8 "
+        "69ceb6000000 01c8 69cad3000000 01c8 83c025 "
+        "89f9 c1e904 89fa c1ea02 c1ea02 29d1 01c8 c3")
+    return elf(code)
+
+
+def elf(code):
     ident = b"\x7fELF\x02\x01\x01" + bytes(9)
     header = struct.pack("<16sHHIQQQIHHHHHH", ident, 2, 62, 1, ENTRY,
                          64, 0, 0, 64, 56, 1, 64, 0, 0)
@@ -62,8 +76,8 @@ int main(void) {
     for (unsigned j = 0; j < sizeof(edges) / sizeof(*edges); ++j)
       for (unsigned k = 0; k < sizeof(edges) / sizeof(*edges); ++k) {
         uint32_t x = edges[i], y = edges[j], z = edges[k];
-        uint32_t want = 182U*x + 73U*y + 211U*z + 37U;
-        if ((uint32_t)neverd_affine_subject(x, y, z) != want)
+        uint32_t want = EXPECTED_RESULT;
+        if ((uint32_t)neverd_synthesis_subject(x, y, z) != want)
           return 1;
       }
   uint32_t state = 0x12345678U;
@@ -71,7 +85,7 @@ int main(void) {
     uint32_t x = (state = 1664525U*state + 1013904223U);
     uint32_t y = (state = 1664525U*state + 1013904223U);
     uint32_t z = (state = 1664525U*state + 1013904223U);
-    if ((uint32_t)neverd_affine_subject(x, y, z) != 182U*x + 73U*y + 211U*z + 37U)
+    if ((uint32_t)neverd_synthesis_subject(x, y, z) != EXPECTED_RESULT)
       return 2;
   }
   return 0;
@@ -79,10 +93,12 @@ int main(void) {
 """
 
 
-def execute_source(root, name, text, compiler):
+def execute_source(root, name, text, compiler, expected):
     path = root / (name + ".c")
-    alias = f"\n#define neverd_affine_subject {function_name(text)}\n"
-    path.write_text("#include <stdint.h>\n" + text + alias + HARNESS, encoding="utf-8")
+    alias = f"\n#define neverd_synthesis_subject {function_name(text)}\n"
+    harness = HARNESS.replace("EXPECTED_RESULT", expected)
+    path.write_text("#include <stdint.h>\n" + text + alias + harness,
+                    encoding="utf-8")
     for level in ("-O0", "-O2"):
         binary = root / (name + level + ".exe")
         subprocess.run([compiler, "-std=c11", level, "-Werror=return-type",
@@ -92,11 +108,11 @@ def execute_source(root, name, text, compiler):
         subprocess.run([str(binary)], check=True, timeout=30)
 
 
-def run(worker, cli, compiler):
+def run_fixture(worker, cli, compiler, kind, image, expected):
     with tempfile.TemporaryDirectory(prefix="neverd-source-synthesis-") as directory:
         root = Path(directory)
-        fixture = root / "affine.elf"
-        fixture.write_bytes(affine_elf())
+        fixture = root / (kind + ".elf")
+        fixture.write_bytes(image)
         outputs = {}
         with Client(worker) as client:
             ok(client, "open", {"path": str(fixture), "read_only": True})
@@ -131,8 +147,8 @@ def run(worker, cli, compiler):
 
         if compiler:
             for name, text in outputs.items():
-                execute_source(root, name, text, compiler)
-            print(f"{len(outputs)} source outputs executed at O0/O2; "
+                execute_source(root, name, text, compiler, expected)
+            print(f"{kind}: {len(outputs)} source outputs executed at O0/O2; "
                   "1,331 boundary triples and 4,096 random triples per run")
         else:
             print("SKIP generated-C execution: clang is unavailable")
@@ -146,7 +162,12 @@ if __name__ == "__main__":
     parser.add_argument("--compiler", default=shutil.which("clang"))
     options = parser.parse_args()
     try:
-        run(options.worker, options.cli, options.compiler)
+        for kind, image, expected in (
+            ("affine", affine_elf(), "182U*x + 73U*y + 211U*z + 37U"),
+            ("quadratic", quadratic_elf(), "11U*x*x + 73U*x*y + 182U*y + 211U*z + 37U"),
+        ):
+            run_fixture(options.worker, options.cli, options.compiler, kind,
+                        image, expected)
     except subprocess.CalledProcessError as error:
         if error.stdout:
             sys.stderr.write(error.stdout)

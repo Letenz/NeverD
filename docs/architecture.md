@@ -961,6 +961,9 @@ rewrite; the full-width verifier must accept it before the normal type,
 effect and profitability checks can publish it. Exhaustion preserves the
 expression. GUI menu requests, CLI single-function options and whole-program
 source sessions all reach these same policies.
+The source policy also enables modular quadratic oracle fitting: it can propose
+squares and pairwise products as well as affine terms. This is one shared core
+option, so the CLI flag and GUI menu cannot select different fitting engines.
 The source proof ceiling applies only to the newly enabled heuristic synthesis;
 existing split-word arithmetic recovery keeps its original proof allowance.
 `SymSimplifyOptions::SynthesisSolver` separates those policies in LLVM source.
@@ -6746,6 +6749,31 @@ search work; proof and independent validation use the same request allowance.
 Opaque-input refutations share the enumeration/sampler cache, and an incomplete
 proof stops the search. `SynthOptions::UseAffineFitting` can disable this
 proposal; `SynthResult::FromAffine` identifies it without claiming a grammar minimum.
+
+`SynthOptions::UseQuadraticFitting` adds a degree-two proposal over the ordinary
+grammar's independent word-sized inputs. Zero, unit, doubled-unit and paired-unit
+responses nominate a constant, linear coefficients, squares and cross products.
+The diagonal equation is solved modulo the complete word width: two is not
+invertible modulo a power of two. Its two coefficient representatives differ by
+a multiple of `2^(w-1)*x*(x-1)`, which vanishes modulo `2^w`; choosing a shorter
+representative still does not establish that the original oracle is quadratic.
+The complete training grid, independent checker and full-width proof remain
+mandatory gates. Affine and quadratic proposals share their publication checks.
+Quadratic proposals also try both orders of a factored spelling, preferring
+existing shared products when they do not increase readability cost. The
+built-in synthesis verifier cancels identical addends on both sides of its
+equality query before bit-blasting, with a shallow 64-term limit per side.
+This is exact cancellation over the complete modular word, not cancellation of
+merely similar terms or coefficients. Counterexamples still refute the original
+pair; cancelled-only inputs may take arbitrary values.
+Extra probes, the bounded DAG walk and word evaluations consume at most a quarter
+of the remaining search work before independent checking. Opaque conversions
+retain their original identities under substitution; the quadratic route does
+not assume correlations or move narrow overflow through a conversion.
+`SynthResult::FromQuadratic` identifies a successful proposal. It is enabled in
+`SynthOptions::sourceView()` and otherwise opt-in. Neither a degree-two fit nor
+a completed proof establishes a globally shortest expression; difficult
+nonlinear proofs can still exceed the selected solver budget.
 
 When narrow inputs are hidden behind conversions, a second affine proposal
 retains the complete original DAG, including narrow arithmetic, overlapping

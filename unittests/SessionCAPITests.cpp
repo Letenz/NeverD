@@ -2913,6 +2913,35 @@ TEST_F(SessionCAPITest, WarmingScansTheDataAccessWidthsTheFirstViewReads) {
   EXPECT_EQ(&*State.AccessWidths->begin(), Storage);
 }
 
+TEST_F(SessionCAPITest, WarmingPreparesWhatTheFirstSelectionsRead) {
+  // Warming leaves the function list as a selection reads it, and the C
+  // emitter prepared for the image, so the first views opened build
+  // neither; the views are those a cold session prints.
+  const auto Input = write("widths.elf", accessWidthCacheELF());
+  std::vector<std::string> Cold;
+  {
+    neverd_session_t Plain = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Plain, Input.c_str()), 1);
+    seedAccessWidthFunctions(Plain);
+    for (const auto Entry : {DataELFEntry, DataELFEntry + 0x20})
+      Cold.push_back(takeString(neverd_decompile(Plain, Entry)));
+    neverd_session_destroy(Plain);
+  }
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  seedAccessWidthFunctions(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  ASSERT_FALSE(
+      takeString(neverd_warm_functions_json(Session, 0, 4096)).empty());
+  EXPECT_TRUE(State.functionListCurrent());
+  EXPECT_EQ(State.CEmitterSymbols, State.Img.Symbols.data());
+  EXPECT_EQ(State.CEmitterSymbolCount, State.Img.Symbols.size());
+  size_t Index = 0;
+  for (const auto Entry : {DataELFEntry, DataELFEntry + 0x20}) {
+    EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Cold[Index++]);
+    EXPECT_TRUE(State.functionListCurrent());
+  }
+}
+
 TEST_F(SessionCAPITest, DataAccessWidthsSurviveNavigationWithFreshSource) {
   const auto Input = write("widths.elf", accessWidthCacheELF());
   ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);

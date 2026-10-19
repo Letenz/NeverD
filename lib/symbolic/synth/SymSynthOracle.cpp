@@ -745,6 +745,46 @@ Verdict Checker::check(SymRef Candidate,
   llvm_unreachable("unhandled synthesis verification");
 }
 
+SearchOutcome checkFittedCandidate(SymContext &Ctx, SymRef Candidate,
+                                   const SynthProblem &P,
+                                   const SynthOptions &Opts,
+                                   SearchEffort &Effort, Checker &Check,
+                                   const std::optional<SynthVerifyFn> &Verify,
+                                   uint64_t &ProofQueries) {
+  SearchOutcome Result;
+  const size_t Cost = Ctx.readabilityCost(Candidate);
+  if (Cost > Opts.MaxCost || Candidate == P.Body)
+    return Result;
+
+  // Compare restored spellings before a potentially expensive proof. Hidden
+  // subterms retain their original identities and widths under substitution.
+  if (!Opts.AllowGrowth &&
+      Ctx.readability(Ctx.substitute(Candidate, P.Hidden)) >=
+          Ctx.readability(Ctx.substitute(P.Body, P.Hidden)))
+    return Result;
+  if (!Effort.spend(std::max<size_t>(Check.Grid.size(), 1)))
+    return Result;
+  switch (Check.check(Candidate, Verify, ProofQueries)) {
+  case Verdict::Refuted:
+    Result.SawRefuted = true;
+    return Result;
+  case Verdict::ProofIncomplete:
+    Result.SawProofIncomplete = true;
+    Result.StopForProof = true;
+    return Result;
+  case Verdict::AcceptedBySamples:
+    Result.Evidence = SynthEvidence::Samples;
+    break;
+  case Verdict::AcceptedByVerifier:
+    Result.Evidence = SynthEvidence::Verifier;
+    break;
+  }
+  Result.Candidate = Candidate;
+  Result.Cost = Cost;
+  Result.NumLeaves = static_cast<unsigned>(P.Leaves.size());
+  return Result;
+}
+
 Checker makeChecker(SymContext &Ctx, const SynthProblem &P,
                     const SynthOptions &Opts) {
   Checker C(Ctx, P.Body);

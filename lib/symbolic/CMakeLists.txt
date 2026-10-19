@@ -32,6 +32,7 @@ add_neverd_component_library(NeverDSymbolic
   synth/SymSynthAffine.cpp
   synth/SymSynthEnumerate.cpp
   synth/SymSynthOracle.cpp
+  synth/SymSynthQuadratic.cpp
   synth/SymSynthStochastic.cpp
 
   LINK_COMPONENTS

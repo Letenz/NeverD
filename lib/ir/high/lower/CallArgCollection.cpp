@@ -413,11 +413,13 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     return std::move(*Registration);
   // The integer argument register at RegOff as this call reads it, where a
   // call that may change the register ends a path back from it.
-  auto ReachingAtCall = [&](uint64_t RegOff, MedVar &Out) {
+  auto ReachingAtCall = [&](uint64_t RegOff, MedVar &Out,
+                            bool ParameterAtEntry = false) {
     return CurMed &&
            detail::reachingRegisterAtCall(
                *CurMed, CurBlock, CallIdx, RegOff, getTargetRegInfo(TargetArch),
-               Image ? Image->abiFormat() : BinaryFormat::Unknown, Out);
+               Image ? Image->abiFormat() : BinaryFormat::Unknown, Out,
+               ParameterAtEntry);
   };
   // A value this function sets: a constant, a parameter, or a definition
   // other than a register's incoming value.  A join is set when every value
@@ -847,8 +849,12 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
          ++K) {
       if (Found[K])
         continue;
+      // An import's fixed argument may be a parameter this function only
+      // passes on, which its entry holds no copy of (`open(path, 0)` with
+      // RDI untouched).
       MedVar LiveIn;
-      if (!ReachingAtCall(ParamRegs[K], LiveIn))
+      if (!ReachingAtCall(ParamRegs[K], LiveIn,
+                          /*ParameterAtEntry=*/K < static_cast<int>(Fixed)))
         continue;
       // The arguments end before such a join, and past the fixed ones an
       // import reads, before what earlier calls left.

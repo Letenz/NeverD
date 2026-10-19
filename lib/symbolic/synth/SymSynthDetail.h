@@ -335,9 +335,19 @@ struct SearchOutcome {
   bool StopForProof = false;
   bool SawBudgetExhausted = false;
   bool FromAffine = false;
+  bool FromQuadratic = false;
   /// A typed proposal may use a different number of inputs than the grammar.
   unsigned NumLeaves = 0;
 };
+
+/// Apply the shared cost, restored readability, independent-sample and proof
+/// gates to an oracle fit. No fitting route may publish its samples as proof.
+SearchOutcome checkFittedCandidate(SymContext &Ctx, SymRef Candidate,
+                                   const SynthProblem &P,
+                                   const SynthOptions &Opts,
+                                   SearchEffort &Effort, Checker &Check,
+                                   const std::optional<SynthVerifyFn> &Verify,
+                                   uint64_t &ProofQueries);
 
 /// Propose a modular affine reading from the oracle's zero/unit-vector grid.
 /// Uses the same independent checker and budget as the grammar searches.
@@ -352,12 +362,19 @@ SearchOutcome fitTypedAffine(SymContext &Ctx, const SynthProblem &P,
                              const std::optional<SynthVerifyFn> &Verify,
                              uint64_t &ProofQueries);
 
-/// Check terminals, try the optional affine fit, then build composite grammar
+/// Propose a degree-two polynomial over the independent, word-sized inputs.
+SearchOutcome fitQuadratic(SymContext &Ctx, const SynthProblem &P,
+                           const SynthOptions &Opts, SearchEffort &Effort,
+                           Checker &Check,
+                           const std::optional<SynthVerifyFn> &Verify,
+                           uint64_t &ProofQueries);
+
+/// Check terminals, try the optional coefficient fits, then build grammar
 /// candidates in ascending cost until one survives \p Check.
 ///
-/// With affine fitting disabled, enumeration is exhaustive up to the cost it
-/// reaches, and the first accepted candidate is shortest in the grammar up to
-/// the one liberty the cost model takes, which is that it counts the tree a
+/// With coefficient fitting disabled, enumeration is exhaustive up to the cost
+/// it reaches, and the first accepted candidate is shortest in the grammar up
+/// to the one liberty the cost model takes, which is that it counts the tree a
 /// candidate is written as before the builders canonicalize it.
 SearchOutcome enumerateShortest(SymContext &Ctx, const SynthProblem &P,
                                 const SynthOptions &Opts,

@@ -997,6 +997,47 @@ TEST(SysVCallContract, AVariadicImportsFixedArgumentsReachItFromAJoin) {
   EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
 }
 
+TEST(SysVCallContract, AVariadicImportTakesTheParameterPassedThroughToIt) {
+  // reader(path, flags) opens path with flags & 3 and writer(path, flags)
+  // creates it with a mode, as less and gzip do.  Each reads ESI itself, so
+  // RDI is the parameter before it, which the body never reads: the entry
+  // holds no copy of it, yet it reaches open as it entered.  open is
+  // variadic, so no prototype says what its stub reads.  less's unit called
+  // open() with no argument.
+  constexpr va_t Reader = Text, Writer = Text + 0x20, Stub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  auto Define = [&](va_t At, std::vector<uint8_t> Setup) {
+    std::vector<uint8_t> Bytes = {0x48, 0x83, 0xEC, 0x08}; // sub rsp, 8
+    Bytes.insert(Bytes.end(), Setup.begin(), Setup.end());
+    Bytes.push_back(0xE8); // call open
+    for (uint8_t B : rel32(At + Bytes.size() + 4, Stub))
+      Bytes.push_back(B);
+    for (uint8_t B : {0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                      0xC3})                  // ret
+      Bytes.push_back(B);
+    put(Code, At, Bytes);
+  };
+  Define(Reader, {0x83, 0xE6, 0x03,             // and esi, 3
+                  0x31, 0xC0});                 // xor eax, eax
+  Define(Writer, {0x83, 0xCE, 0x41,             // or esi, O_CREAT | O_WRONLY
+                  0xBA, 0xA4, 0x01, 0x00, 0x00, // mov edx, 0644
+                  0x31, 0xC0});                 // xor eax, eax
+  const BinaryImage Img = makeImportImage(
+      Code, {{Reader, "reader"}, {Writer, "writer"}}, {{Stub, "open"}});
+  const std::string Source = liftEntries(Img, {Reader, Writer});
+  const std::string Read = body(Source, "reader");
+  const std::string Write = body(Source, "writer");
+  ASSERT_FALSE(Read.empty()) << Source;
+  ASSERT_FALSE(Write.empty()) << Source;
+  EXPECT_EQ(Read.find("open()"), std::string::npos) << Read;
+  EXPECT_TRUE(llvm::Regex("open\\([^,]*arg0[^,]*, [^,]*arg1").match(Read))
+      << Read;
+  EXPECT_TRUE(llvm::Regex("open\\([^,]*arg0[^,]*, [^,]*arg1[^,]*, 0x1A4\\)")
+                  .match(Write))
+      << Write;
+  EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+}
+
 TEST(SysVCallContract, AJumpThroughALoadedSlotPassesTheArgumentsSetBefore) {
   // GCC's register_tm_clones: RDI and RSI are set and tested, RAX is
   // loaded from the GOT slot of _ITM_registerTMCloneTable and tested, and

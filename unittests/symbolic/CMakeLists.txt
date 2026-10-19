@@ -52,6 +52,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymReadabilityTests.cpp
   SymSynthTests.cpp
   SymSynthAffineTests.cpp
+  SymSynthQuadraticTests.cpp
   SymX87Tests.cpp
 
   LINK_COMPONENTS Symbolic Solver
@@ -70,6 +71,11 @@ add_dependencies(NeverDSymbolicTests neverd)
 add_neverd_unittest(NeverDSymSynthAffineTests
   SymSynthAffineTests.cpp
   SymSynthTests.cpp
+  LINK_COMPONENTS Symbolic Solver
+)
+
+add_neverd_unittest(NeverDSymSynthQuadraticTests
+  SymSynthQuadraticTests.cpp
   LINK_COMPONENTS Symbolic Solver
 )
 
