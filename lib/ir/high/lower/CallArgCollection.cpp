@@ -155,6 +155,12 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
       return;
 
     const MedVar &AddrVar = Prev.Inputs[0];
+    // A store below the stack pointer the call is made with was popped
+    // again before it, as the get-PC push is: no argument.
+    if (Scan.CallStackOffsetOf)
+      if (const std::optional<int64_t> Above = Scan.CallStackOffsetOf(AddrVar);
+          Above && *Above < 0)
+        return;
     int64_t StackOff = -1;
 
     if (AddrVar.Kind == MedVar::Reg && AddrVar.RegOff == Scan.SpRegOff)
