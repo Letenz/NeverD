@@ -693,8 +693,10 @@ struct PDBDebugContext::Impl {
   mutable std::map<uint32_t, std::map<va_t, uint32_t>> ModuleProcedureOffs;
   /// The debug stream of each module ensureLocalsForAddress() has opened,
   /// for its later procedures: opening one reads the module's descriptor
-  /// and substream headers again.  Guarded by LocalMutex.
-  mutable std::map<uint32_t, llvm::pdb::ModuleDebugStreamRef>
+  /// and substream headers again.  None for a module that has no stream to
+  /// open, as no module of a stripped PDB has, which is then not asked
+  /// again.  Guarded by LocalMutex.
+  mutable std::map<uint32_t, std::optional<llvm::pdb::ModuleDebugStreamRef>>
       LocalModuleStreams;
   mutable std::mutex RecordParameterMutex;
   mutable std::set<uint32_t> RecordParameterModules;
@@ -2151,15 +2153,18 @@ void PDBDebugContext::ensureLocalsForAddress(va_t Addr) const {
         PImpl->Native->getModuleDebugStream(ModuleIndex);
     if (!ModuleOr) {
       llvm::consumeError(ModuleOr.takeError());
+      PImpl->LocalModuleStreams.emplace(ModuleIndex, std::nullopt);
       return;
     }
     Stream =
         PImpl->LocalModuleStreams.emplace(ModuleIndex, std::move(*ModuleOr))
             .first;
   }
+  if (!Stream->second)
+    return;
 
   const llvm::codeview::CVSymbolArray &Records =
-      Stream->second.getSymbolArray();
+      Stream->second->getSymbolArray();
   bool HadError = false;
   uint32_t StartOff = Records.skew();
   // Seek a ProcSym we already saw. Resume only for a VA the prefix walk

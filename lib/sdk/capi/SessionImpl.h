@@ -16,6 +16,7 @@
 #include "../../pipeline/PipelineCallAbiDetail.h"
 #include "../plugin/PluginManager.h"
 #include "ImageStrings.h"
+#include "InstructionFlow.h"
 #include "LoadOptions.h"
 #include "LocalTypesDebugContext.h"
 
@@ -299,6 +300,8 @@ struct Session {
   /// were read from. Navigation can keep these image facts, but no output IR.
   std::optional<DataAccessWidths> AccessWidths;
   std::vector<std::pair<va_t, uint64_t>> AccessWidthsFunctions;
+  /// What each function read for AccessWidths, which goes with them.
+  DataAccessScan AccessScan;
   /// Native functions prepared for LLVM call-site lowering. This must not
   /// mutate the HighIR route's MedIR: later source variants rebuild from that
   /// same prepared input.
@@ -665,6 +668,7 @@ struct Session {
     OriginalNames.clear();
     AccessWidths.reset();
     AccessWidthsFunctions.clear();
+    AccessScan.clear();
     if (!Loaded)
       return;
     const auto Symbols = Img.getFunctionSymbols();
@@ -867,6 +871,7 @@ struct Session {
     AnalysisCache.reset();
     AccessWidths.reset();
     AccessWidthsFunctions.clear();
+    AccessScan.clear();
     ListInputs.reset();
     RecoveredSizes.clear();
     CEmitterSymbols = nullptr;
@@ -900,8 +905,8 @@ struct Session {
   /// again, an image's tens of thousands of functions.  Selecting another
   /// function does not edit the image, so a rebuild keeps the decoded access
   /// widths: dataAccessWidths still compares every extent after
-  /// synchronization, and newly discovered or differently sized functions
-  /// force a fresh scan.
+  /// synchronization, and reads newly discovered or differently sized
+  /// functions again.
   void refreshFunctionList() {
     if (functionListCurrent()) {
       refreshFunctionNames();
@@ -909,9 +914,11 @@ struct Session {
     }
     auto KeptWidths = std::move(AccessWidths);
     auto KeptExtents = std::move(AccessWidthsFunctions);
+    auto KeptScan = std::move(AccessScan);
     resetFunctionsFromImage();
     AccessWidths = std::move(KeptWidths);
     AccessWidthsFunctions = std::move(KeptExtents);
+    AccessScan = std::move(KeptScan);
   }
 
   void invalidatePipeline() {

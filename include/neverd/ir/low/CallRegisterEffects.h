@@ -252,6 +252,17 @@ CallRegisterSummaries solveCallRegisterEffects(
     const std::map<va_t, GPRReadWidths> &FixedEntryReads = {},
     const std::map<va_t, int> &FixedEntryStackArgs = {});
 
+/// Each function's local effect, by entry, where another owner keeps it (as
+/// a cache of callee effects does).
+using LocalRegisterEffectRefs = std::map<va_t, const LocalRegisterEffect *>;
+
+/// As above, over effects \p Funcs points at.
+CallRegisterSummaries solveCallRegisterEffects(
+    const LocalRegisterEffectRefs &Funcs, GPRFamilyMask VolatileFamilies,
+    GPRFamilyMask ArgumentFamilies, const std::set<va_t> &DispatchThunks = {},
+    const std::map<va_t, GPRReadWidths> &FixedEntryReads = {},
+    const std::map<va_t, int> &FixedEntryStackArgs = {});
+
 } // namespace neverd
 
 #endif // NEVERD_IR_LOW_CALLREGISTEREFFECTS_H

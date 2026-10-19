@@ -18,7 +18,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cassert>
+#include <iterator>
 #include <map>
+#include <tuple>
 
 namespace neverd::sdk {
 namespace {
@@ -315,8 +318,11 @@ FunctionPage functionPage(llvm::ArrayRef<FuncInfo> Functions, va_t FirstEntry,
   return Page;
 }
 
-bool decodeFunctions(
-    const BinaryImage &Img, const FunctionPage &Page,
+namespace {
+/// decodeFunctions over the functions of \p Extents, each an entry and its
+/// recorded size.
+bool decodeExtents(
+    const BinaryImage &Img, llvm::ArrayRef<std::pair<va_t, uint64_t>> Extents,
     llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &)>
         Visit) {
   // A function without a recorded size is decoded only up to its first
@@ -329,22 +335,22 @@ bool decodeFunctions(
   for (const auto &Chunk : Img.ExceptionMetadata.outlyingChunks())
     Chunks[Chunk.Function].push_back(Chunk.Range);
   std::atomic<bool> DecoderFailed{false};
-  parallelForEach(Page.Functions.size(), [&](auto Claim, size_t Total) {
+  parallelForEach(Extents.size(), [&](auto Claim, size_t Total) {
     Decoder Local;
     if (!Local.init(Img)) {
       DecoderFailed = true;
       return;
     }
     for (size_t Index = Claim(); Index < Total; Index = Claim()) {
-      const FuncInfo &F = *Page.Functions[Index];
-      const uint64_t Limit = F.Size > 0 ? F.Size : MaxUnsizedInstructions;
-      (void)decodeNativeRange(Img, Local, F.Entry, F.Size, Limit,
+      const auto [Entry, Size] = Extents[Index];
+      const uint64_t Limit = Size > 0 ? Size : MaxUnsizedInstructions;
+      (void)decodeNativeRange(Img, Local, Entry, Size, Limit,
                               [&](const DecodedInsn &DI, const uint8_t *, int) {
                                 Visit(Index, Local, DI);
-                                return F.Size > 0 ||
+                                return Size > 0 ||
                                        !Local.isFunctionTerminator(DI);
                               });
-      if (const auto It = Chunks.find(F.Entry); It != Chunks.end())
+      if (const auto It = Chunks.find(Entry); It != Chunks.end())
         for (const ExceptionAddressRange &Range : It->second)
           (void)decodeNativeRange(
               Img, Local, Range.Begin, Range.End - Range.Begin,
@@ -356,6 +362,23 @@ bool decodeFunctions(
     }
   });
   return !DecoderFailed;
+}
+
+/// Whether \p Ref states a width that names data (DataAccessWidths::add).
+bool isDataAccess(const InstructionRef &Ref) {
+  return Ref.Kind == kReadReferenceKind || Ref.Kind == kWriteReferenceKind;
+}
+} // namespace
+
+bool decodeFunctions(
+    const BinaryImage &Img, const FunctionPage &Page,
+    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &)>
+        Visit) {
+  std::vector<std::pair<va_t, uint64_t>> Extents;
+  Extents.reserve(Page.Functions.size());
+  for (const FuncInfo *F : Page.Functions)
+    Extents.emplace_back(F->Entry, F->Size);
+  return decodeExtents(Img, Extents, Visit);
 }
 
 std::optional<DataAccessWidths>
@@ -372,8 +395,7 @@ collectDataAccessWidths(const BinaryImage &Img,
         Img, Page, [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
           for (const InstructionRef &Ref :
                summarizeInstructionFlow(Img, Dec, DI).Refs)
-            if (Ref.Kind == kReadReferenceKind ||
-                Ref.Kind == kWriteReferenceKind)
+            if (isDataAccess(Ref))
               Slots[Index].emplace_back(Ref.To, Ref.Bytes);
         });
     if (!Decoded)
@@ -386,6 +408,83 @@ collectDataAccessWidths(const BinaryImage &Img,
   DataAccessWidths Widths;
   for (const auto &[Address, Width] : Accesses)
     Widths.add(Address, Width);
+  return Widths;
+}
+
+std::optional<DataAccessWidths>
+DataAccessScan::update(const BinaryImage &Img,
+                       llvm::ArrayRef<FuncInfo> Functions) {
+  // The extent collectDataAccessWidths reads each function with: the one
+  // its pages give the function's entry.
+  std::vector<std::pair<va_t, uint64_t>> Next;
+  for (std::optional<va_t> Cursor = va_t{0}; Cursor;) {
+    const FunctionPage Page =
+        functionPage(Functions, *Cursor, FunctionPage::MaxFunctionsPerPage);
+    for (const FuncInfo *F : Page.Functions)
+      Next.emplace_back(F->Entry, F->Size);
+    Cursor = Page.NextEntry;
+  }
+  // The extents read again: those read before that the list no longer
+  // holds, which stop counting, and then those not read before.
+  std::vector<std::pair<va_t, uint64_t>> Read;
+  std::set_difference(Extents.begin(), Extents.end(), Next.begin(), Next.end(),
+                      std::back_inserter(Read));
+  const size_t Dropped = Read.size();
+  std::set_difference(Next.begin(), Next.end(), Extents.begin(), Extents.end(),
+                      std::back_inserter(Read));
+  // Each extent's accesses, which only the thread decoding it writes.
+  std::vector<std::vector<std::pair<va_t, unsigned>>> Slots(Read.size());
+  if (!Read.empty() &&
+      !decodeExtents(Img, Read,
+                     [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
+                       for (const InstructionRef &Ref :
+                            summarizeInstructionFlow(Img, Dec, DI).Refs)
+                         if (isDataAccess(Ref))
+                           Slots[Index].emplace_back(Ref.To, Ref.Bytes);
+                     })) {
+    clear();
+    return std::nullopt;
+  }
+  // A function counts once for each width it states at an address, and
+  // only for a width that names data.
+  std::vector<std::tuple<va_t, unsigned, int>> Changes;
+  for (size_t Index = 0; Index < Read.size(); ++Index) {
+    auto &Slot = Slots[Index];
+    llvm::sort(Slot);
+    Slot.erase(std::unique(Slot.begin(), Slot.end()), Slot.end());
+    for (const auto &[Address, Width] : Slot)
+      if (Width && Width <= MaxDataAccessWidth)
+        Changes.emplace_back(Address, Width, Index < Dropped ? -1 : 1);
+  }
+  llvm::sort(Changes);
+  std::vector<Count> Merged;
+  Merged.reserve(Counts.size() + Changes.size());
+  auto Kept = Counts.begin();
+  for (size_t I = 0; I < Changes.size();) {
+    const va_t Address = std::get<0>(Changes[I]);
+    const unsigned Width = std::get<1>(Changes[I]);
+    int64_t Total = 0;
+    for (; I < Changes.size() && std::get<0>(Changes[I]) == Address &&
+           std::get<1>(Changes[I]) == Width;
+         ++I)
+      Total += std::get<2>(Changes[I]);
+    for (; Kept != Counts.end() &&
+           std::pair(Kept->Address, Kept->Width) < std::pair(Address, Width);
+         ++Kept)
+      Merged.push_back(*Kept);
+    if (Kept != Counts.end() && Kept->Address == Address &&
+        Kept->Width == Width)
+      Total += (Kept++)->Functions;
+    assert(Total >= 0 && "an extent stops counting a width it never stated");
+    if (Total > 0)
+      Merged.push_back({Address, Width, static_cast<uint32_t>(Total)});
+  }
+  Merged.insert(Merged.end(), Kept, Counts.end());
+  Counts = std::move(Merged);
+  Extents = std::move(Next);
+  DataAccessWidths Widths;
+  for (const Count &Stated : Counts)
+    Widths.add(Stated.Address, Stated.Width);
   return Widths;
 }
 
@@ -408,7 +507,7 @@ const DataAccessWidths *Session::dataAccessWidths() {
   // C kept from before names data by the widths of other functions.
   if (AccessWidths)
     forgetEmittedSources();
-  AccessWidths = collectDataAccessWidths(Img, Functions);
+  AccessWidths = AccessScan.update(Img, Functions);
   AccessWidthsFunctions = std::move(Extents);
   return AccessWidths ? &*AccessWidths : nullptr;
 }
