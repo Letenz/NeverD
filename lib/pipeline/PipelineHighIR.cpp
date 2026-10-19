@@ -11,6 +11,7 @@
 
 #include "PipelineCallAbiDetail.h"
 #include "PipelineHighIRDetail.h"
+#include "PipelineLowIRDetail.h"
 #include "PipelineReturnModelingDetail.h"
 
 #include "neverd/Common.h"
@@ -211,6 +212,13 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
   MedToHighConverter NameResolver;
   NameResolver.setBinaryImage(&Img);
   NameResolver.setFuncNames(&AllFuncNames);
+  // A run that shares the analysis cache names them from its symbol
+  // inventory, read once for every run.
+  std::shared_ptr<const PipelineAnalysisCache::SymbolInventory> Inventory;
+  if (PipelineAnalysisCache *Shared = sharedAnalysisCache(Img, Opts)) {
+    Inventory = PipelineAnalysisCache::SymbolInventory::of(Img, *Shared);
+    NameResolver.setImageFunctionNames(&Inventory->functionNames(Img));
+  }
   NameResolver.resolveCalleeNames(CallTargets, ResolvedCalleeNames);
   std::map<va_t, int> VariadicVectorCallees;
   for (const MedFunc &MF : Result.MedFuncs)

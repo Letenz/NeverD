@@ -12,6 +12,7 @@
 #ifndef NEVERD_LIB_PIPELINE_PIPELINELOWIRDETAIL_H
 #define NEVERD_LIB_PIPELINE_PIPELINELOWIRDETAIL_H
 
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/FormattedCall.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/loader/BinaryImage.h"
@@ -51,6 +52,12 @@ struct PipelineAnalysisCache::SymbolInventory {
   const std::map<va_t, std::string> &
   functionNames(const BinaryImage &Img) const;
 
+  /// The addresses that name a runtime routine one intrinsic models in
+  /// \p Img, which this was read from (runtimeRoutineCallsOf), read on the
+  /// first request.
+  const std::map<va_t, Intrinsic> &
+  runtimeRoutineCalls(const BinaryImage &Img) const;
+
   const std::set<va_t> BoundaryGuesses;
   const std::vector<va_t> Starts;
 
@@ -64,6 +71,7 @@ private:
   size_t RangeCount;
   size_t ContinuationCount;
   mutable std::optional<std::map<va_t, std::string>> FunctionNames;
+  mutable std::optional<std::map<va_t, Intrinsic>> RuntimeRoutineCalls;
 };
 
 /// The analysis cache a run of \p Img under \p Opts shares with other runs:

@@ -27,11 +27,15 @@ using ImportPops = std::map<std::string, std::optional<unsigned>, std::less<>>;
 /// twice.
 inline ImportPops stdcallImportPops(const BinaryImage &Img) {
   ImportPops Pops;
+  const BinaryFormat Format = Img.abiFormat();
+  // Most images' names carry no argument bytes: nothing to read in them.
+  if (!stdcallNamesCarryArgumentBytes(Format, Img.Arch))
+    return Pops;
   for (const Symbol &Sym : Img.Symbols)
     if (const std::optional<unsigned> Bytes =
-            stdcallArgumentBytes(Sym.Name, Img.abiFormat(), Img.Arch)) {
+            stdcallArgumentBytes(Sym.Name, Format, Img.Arch)) {
       const auto [Entry, Added] = Pops.emplace(
-          importNameOfSymbol(Sym.Name, Img.abiFormat(), Img.Arch).str(), Bytes);
+          importNameOfSymbol(Sym.Name, Format, Img.Arch).str(), Bytes);
       if (!Added && Entry->second != Bytes)
         Entry->second.reset();
     }

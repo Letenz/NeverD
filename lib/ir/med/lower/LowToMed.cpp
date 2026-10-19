@@ -60,32 +60,40 @@ namespace neverd {
 // Runtime routines one intrinsic models
 //===----------------------------------------------------------------------===//
 
+std::map<va_t, Intrinsic> runtimeRoutineCallsOf(const BinaryImage &Img,
+                                                Arch TargetArch) {
+  std::map<va_t, Intrinsic> Calls;
+  for (const auto &[Addr, Name] : Img.getImportAddressNames())
+    if (const std::optional<Intrinsic> Id =
+            runtimeRoutineIntrinsic(TargetArch, Name))
+      Calls.emplace(Addr, *Id);
+  // A static image defines the routine itself, at any address: an object's
+  // first function starts at 0.
+  for (const Symbol &Sym : Img.Symbols)
+    if (Sym.IsFunc && !Sym.IsSection)
+      if (const std::optional<Intrinsic> Id =
+              runtimeRoutineIntrinsic(TargetArch, Sym.Name))
+        Calls.emplace(Sym.Addr, *Id);
+  return Calls;
+}
+
 void LowToMedConverter::liftRuntimeRoutineCalls(MedFunc &Func) {
   if (!Image)
     return;
-  if (!RuntimeRoutineCalls) {
-    RuntimeRoutineCalls.emplace();
-    for (const auto &[Addr, Name] : Image->getImportAddressNames())
-      if (const std::optional<Intrinsic> Id =
-              runtimeRoutineIntrinsic(TargetArch, Name))
-        RuntimeRoutineCalls->emplace(Addr, *Id);
-    // A static image defines the routine itself, at any address: an object's
-    // first function starts at 0.
-    for (const Symbol &Sym : Image->Symbols)
-      if (Sym.IsFunc && !Sym.IsSection)
-        if (const std::optional<Intrinsic> Id =
-                runtimeRoutineIntrinsic(TargetArch, Sym.Name))
-          RuntimeRoutineCalls->emplace(Sym.Addr, *Id);
-  }
-  if (RuntimeRoutineCalls->empty())
+  if (!SharedRuntimeRoutineCalls && !RuntimeRoutineCalls)
+    RuntimeRoutineCalls = runtimeRoutineCallsOf(*Image, TargetArch);
+  const std::map<va_t, Intrinsic> &Calls = SharedRuntimeRoutineCalls
+                                               ? *SharedRuntimeRoutineCalls
+                                               : *RuntimeRoutineCalls;
+  if (Calls.empty())
     return;
   for (MedBlock &Block : Func.Blocks)
     for (MedOp &Op : Block.Ops) {
       if (Op.Opcode != NdOp::CALL || Op.NumInputs < 1 ||
           !Op.Inputs[0].isConst() || Op.Output.Kind != MedVar::Reg)
         continue;
-      const auto It = RuntimeRoutineCalls->find(Op.Inputs[0].ConstVal);
-      if (It == RuntimeRoutineCalls->end())
+      const auto It = Calls.find(Op.Inputs[0].ConstVal);
+      if (It == Calls.end())
         continue;
       MedOp Read;
       Read.Opcode = NdOp::INTRINSIC;
