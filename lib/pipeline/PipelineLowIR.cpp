@@ -2206,10 +2206,63 @@ struct EHContinuationRootDiscovery {
 /// dataflow must prove that the referenced address reaches an ordinary return
 /// value.  The result stays pipeline-local so provisional evidence can be
 /// discarded and recomputed after module arbitration.
+} // namespace
+
+namespace pipeline_detail {
+std::vector<std::pair<va_t, va_t>>
+fh4ContinuationCandidates(const BinaryImage &Img) {
+  std::vector<std::pair<va_t, va_t>> Candidates;
+  if (Img.Format != BinaryFormat::COFF)
+    return Candidates;
+  const auto IsFH4 = [](const ExceptionFunction &F) {
+    return F.Kind == RuntimeFunctionKind::Primary &&
+           F.ParseStatus == ExceptionParseStatus::Complete && F.Cxx &&
+           F.Cxx->NativeEncoding == CxxExceptionInfo::Encoding::FH4;
+  };
+  // The functions of each FH4 function information record, in order: a
+  // continuation names one of them.
+  std::map<va_t, std::vector<const ExceptionFunction *>> ByFuncInfo;
+  for (const ExceptionFunction &F : Img.ExceptionMetadata.Functions)
+    if (IsFH4(F))
+      ByFuncInfo[F.Cxx->NativeFuncInfoVA].push_back(&F);
+  for (const ExceptionFunction &Declaring : Img.ExceptionMetadata.Functions) {
+    if (!IsFH4(Declaring) || Declaring.Cxx->NativeFuncInfoVA == 0)
+      continue;
+    const std::vector<const ExceptionFunction *> &Sharing =
+        ByFuncInfo.at(Declaring.Cxx->NativeFuncInfoVA);
+    for (const CxxTryBlock &Try : Declaring.Cxx->TryBlocks)
+      for (const CxxCatchHandler &Handler : Try.Handlers)
+        for (va_t Target : Handler.ContinuationVAs) {
+          Target = normalizeCodeAddress(Target, Img.Arch, Img.Mode);
+          if (Declaring.CodeRange.contains(Target))
+            continue;
+          // The one function of the record that holds the target past its
+          // start.
+          const ExceptionFunction *Owner = nullptr;
+          for (const ExceptionFunction *Candidate : Sharing) {
+            if (Target <= Candidate->CodeRange.Begin ||
+                Target >= Candidate->CodeRange.End)
+              continue;
+            if (Owner) {
+              Owner = nullptr;
+              break;
+            }
+            Owner = Candidate;
+          }
+          if (Owner && Img.hasExecutableCodeOwnerAt(Target))
+            Candidates.emplace_back(Owner->CodeRange.Begin, Target);
+        }
+  }
+  return Candidates;
+}
+} // namespace pipeline_detail
+
+namespace {
 EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
     const BinaryImage &Img, const std::vector<LowFunc> &Funcs,
     const std::set<va_t> &FunctionEntries, std::optional<size_t> TestBudget,
-    bool CompleteModule = true) {
+    bool CompleteModule = true,
+    const std::vector<std::pair<va_t, va_t>> *FH4Candidates = nullptr) {
   EHContinuationRootDiscovery Result;
   Result.CxxContinuationExitsByFunction.assign(Funcs.size(), {});
   Result.CxxContinuationExitAnalysisCompleteByFunction.assign(Funcs.size(),
@@ -2222,43 +2275,15 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
            Img.hasKnownFunctionEntryAt(Addr);
   };
 
-  for (const ExceptionFunction &Declaring : Img.ExceptionMetadata.Functions) {
-    if (Declaring.Kind != RuntimeFunctionKind::Primary ||
-        Declaring.ParseStatus != ExceptionParseStatus::Complete ||
-        !Declaring.Cxx ||
-        Declaring.Cxx->NativeEncoding != CxxExceptionInfo::Encoding::FH4 ||
-        Declaring.Cxx->NativeFuncInfoVA == 0)
-      continue;
-    for (const CxxTryBlock &Try : Declaring.Cxx->TryBlocks)
-      for (const CxxCatchHandler &Handler : Try.Handlers)
-        for (va_t Target : Handler.ContinuationVAs) {
-          Target = normalizeCodeAddress(Target, Img.Arch, Img.Mode);
-          if (Declaring.CodeRange.contains(Target))
-            continue;
-          const ExceptionFunction *Owner = nullptr;
-          for (const ExceptionFunction &Candidate :
-               Img.ExceptionMetadata.Functions) {
-            if (Candidate.Kind != RuntimeFunctionKind::Primary ||
-                Candidate.ParseStatus != ExceptionParseStatus::Complete ||
-                !Candidate.Cxx ||
-                Candidate.Cxx->NativeEncoding !=
-                    CxxExceptionInfo::Encoding::FH4 ||
-                Candidate.Cxx->NativeFuncInfoVA !=
-                    Declaring.Cxx->NativeFuncInfoVA ||
-                Target <= Candidate.CodeRange.Begin ||
-                Target >= Candidate.CodeRange.End)
-              continue;
-            if (Owner) {
-              Owner = nullptr;
-              break;
-            }
-            Owner = &Candidate;
-          }
-          if (Owner && isFunctionEntry(Owner->CodeRange.Begin) &&
-              !isFunctionEntry(Target) && Img.hasExecutableCodeOwnerAt(Target))
-            Result.RootsByOwner[Owner->CodeRange.Begin].insert(Target);
-        }
-  }
+  // A catch continuation an FH4 handler names in another function of its
+  // record is a root of that function where it starts no function.
+  std::vector<std::pair<va_t, va_t>> OwnFH4Candidates;
+  if (!FH4Candidates)
+    OwnFH4Candidates = pipeline_detail::fh4ContinuationCandidates(Img);
+  for (const auto &[Owner, Target] :
+       FH4Candidates ? *FH4Candidates : OwnFH4Candidates)
+    if (isFunctionEntry(Owner) && !isFunctionEntry(Target))
+      Result.RootsByOwner[Owner].insert(Target);
 
   // FH3 separated funclets return continuation addresses only in the x64
   // table ABI.  Other Windows targets either use registration records or
@@ -4121,6 +4146,14 @@ PipelineAnalysisCache::SymbolInventory::functionNames(
   return *FunctionNames;
 }
 
+const std::vector<std::pair<va_t, va_t>> &
+PipelineAnalysisCache::SymbolInventory::fh4ContinuationCandidates(
+    const BinaryImage &Img) const {
+  if (!FH4ContinuationCandidates)
+    FH4ContinuationCandidates = pipeline_detail::fh4ContinuationCandidates(Img);
+  return *FH4ContinuationCandidates;
+}
+
 const std::map<va_t, Intrinsic> &
 PipelineAnalysisCache::SymbolInventory::runtimeRoutineCalls(
     const BinaryImage &Img) const {
@@ -4235,6 +4268,11 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
   PipelineAnalysisCache &Cache = *Opts.AnalysisCache;
   const auto Inventory = PipelineAnalysisCache::SymbolInventory::of(Img, Cache);
   const std::vector<va_t> &CandidateEntries = Inventory->Starts;
+  // What every run reads of the image's names, runtime routines and catch
+  // continuations, read here rather than in the first run.
+  (void)Inventory->functionNames(Img);
+  (void)Inventory->runtimeRoutineCalls(Img);
+  (void)Inventory->fh4ContinuationCandidates(Img);
   // Facts for another symbol inventory serve no later run.
   if (!Cache.Facts ||
       !Cache.Facts->matches(Img, Dbg, CandidateEntries, Inventory.get())) {
@@ -4601,7 +4639,8 @@ void Pipeline::buildLowIR(
               Img, AllLow, FuncEntries,
               Opts.EHContinuationEvidenceBudgetForTesting,
               Opts.OnlyFunctionEntries.empty() && !Opts.MaxFunctions &&
-                  Opts.FunctionEdits.empty());
+                  Opts.FunctionEdits.empty(),
+              Shared ? &Inventory->fh4ContinuationCandidates(Img) : nullptr);
       if (!Discovered.AnalysisComplete) {
         clearContinuationRoots();
         return false;
