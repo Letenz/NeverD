@@ -302,6 +302,13 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
         continue;
       if (Scan.IsCalleeSave(Prev.Inputs[1]) && Prev.Inputs[1].SSAVer == 0)
         continue;
+      // A store below the stack pointer the call is made with was popped
+      // again before it, as the get-PC push is: no argument and no push.
+      if (Scan.CallStackOffsetOf)
+        if (const std::optional<int64_t> Above =
+                Scan.CallStackOffsetOf(Prev.Inputs[0]);
+            Above && *Above < 0)
+          continue;
       ExprPtr Value = Scan.ToExpr(Prev.Inputs[1]);
       if (!Scan.IsNoArgumentStore || !Scan.IsNoArgumentStore(Prev.Inputs[0]))
         Arguments.push_back(Value);

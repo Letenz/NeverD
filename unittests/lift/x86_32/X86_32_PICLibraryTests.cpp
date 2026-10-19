@@ -178,6 +178,25 @@ TEST(X86_32PICLibrary, AGOTAddressLeftInTheReturnRegisterIsNoValue) {
       << Source;
 }
 
+// `clang_call_handler` calls through its argument after its call/pop, with no
+// stack argument.  The return address the call/pop pushed lies below the
+// stack pointer of the call: it was popped, and is no argument.  The call had
+// passed it, as libc++'s `std::__terminate` passed its PC to the terminate
+// handler: `func(0x1CA9B0)`.
+TEST(X86_32PICLibrary, APoppedGetPcPushIsNoCallArgument) {
+  const std::optional<BinaryImage> Img = loadLibrary();
+  if (!Img)
+    GTEST_SKIP() << "the fixture links with ld.lld";
+  const Symbol *Pop = Img->findSymbol("clang_call_handler_pop");
+  ASSERT_NE(Pop, nullptr);
+  const std::string Source = decompile(*Img, "clang_call_handler");
+  EXPECT_FALSE(std::regex_search(
+      Source, std::regex("\\b0x" + llvm::utohexstr(Pop->Addr) + "\\b")))
+      << Source;
+  EXPECT_TRUE(std::regex_search(Source, std::regex("\\)\\(\\);"))) << Source;
+  EXPECT_NE(Source.find("factor = 1"), std::string::npos) << Source;
+}
+
 // A linked library reads a `.rodata` table at its GOTOFF displacement from the
 // GOT plus an index.  The LLVM module took the GOT for the table's base: GCC's
 // read went into the writable run that holds the GOT, at a negative offset,
