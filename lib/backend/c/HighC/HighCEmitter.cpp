@@ -55,6 +55,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 
@@ -2884,14 +2885,30 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   // is declared, data whole, so the slot can name it; a string stays its
   // literal.  A target table may hold slots of its own.
   const unsigned PointerBytes = pointerBytes(Opts.TheArch);
-  std::set<va_t> PointerSlots(Opts.Image->CodePtrRelocSlots.begin(),
-                              Opts.Image->CodePtrRelocSlots.end());
-  PointerSlots.insert(Opts.Image->DataPtrRelocSlots.begin(),
-                      Opts.Image->DataPtrRelocSlots.end());
+  // Those slots and the ones a data symbol binds, in address order.  The
+  // image's sets are read where they are: it relocates tens of thousands.
+  std::set<va_t> BoundSlots;
   for (const auto &[Slot, Binding] : DataSymbolBindings) {
     (void)Binding;
-    PointerSlots.insert(Slot);
+    BoundSlots.insert(Slot);
   }
+  const std::set<va_t> *const SlotSets[] = {&Opts.Image->CodePtrRelocSlots,
+                                            &Opts.Image->DataPtrRelocSlots,
+                                            &BoundSlots};
+  // The first of them at or after Addr.
+  auto NextSlot = [&](va_t Addr) -> std::optional<va_t> {
+    std::optional<va_t> Next;
+    for (const std::set<va_t> *Slots : SlotSets)
+      if (const auto It = Slots->lower_bound(Addr);
+          It != Slots->end() && (!Next || *It < *Next))
+        Next = *It;
+    return Next;
+  };
+  auto SlotAfter = [&](va_t Slot) -> std::optional<va_t> {
+    if (Slot == std::numeric_limits<va_t>::max())
+      return std::nullopt;
+    return NextSlot(Slot + 1);
+  };
   // An object the code keeps the address of reaches each of its slots
   // through that address, whichever the code indexes (`T = c ? FA : FB;
   // T[i]` indexes neither table directly): its symbol sizes it.
@@ -2905,14 +2922,13 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     return Bytes;
   };
   std::set<va_t> NotedSlots;
-  for (bool Changed = !PointerSlots.empty(); Changed;) {
+  for (bool Changed = NextSlot(0).has_value(); Changed;) {
     Changed = false;
     for (auto &[Addr, Obj] : ImageObjects) {
       const uint64_t Size = Extent(Addr, Obj);
-      for (auto Slot = PointerSlots.lower_bound(Addr);
-           Slot != PointerSlots.end() && *Slot - Addr < Size &&
-           *Slot - Addr + PointerBytes <= Size;
-           ++Slot) {
+      for (auto Slot = NextSlot(Addr);
+           Slot && *Slot - Addr < Size && *Slot - Addr + PointerBytes <= Size;
+           Slot = SlotAfter(*Slot)) {
         if (!NotedSlots.insert(*Slot).second)
           continue;
         Changed = true;
@@ -3028,8 +3044,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                   makeSyntheticGlobalName(GroupBase) + "_bytes", "g"),
         {},
         {}};
-    for (auto Slot = PointerSlots.lower_bound(GroupBase);
-         Slot != PointerSlots.end() && *Slot < GroupEnd; ++Slot) {
+    for (auto Slot = NextSlot(GroupBase); Slot && *Slot < GroupEnd;
+         Slot = SlotAfter(*Slot)) {
       if ((*Slot - GroupBase) % PointerBytes ||
           *Slot + PointerBytes > GroupEnd) {
         Backing.PointerSlots.clear();
@@ -3366,7 +3382,9 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
         OS << (I ? ",\n  " : "\n  ");
       else
         OS << (I ? ", " : " ");
-      if (llvm::is_contained(Backing.PointerSlots, Slot))
+      // The backing lists its slots in address order.
+      if (std::binary_search(Backing.PointerSlots.begin(),
+                             Backing.PointerSlots.end(), Slot))
         if (auto Target = relocatedSlotTarget(Slot)) {
           OS << *Target;
           continue;

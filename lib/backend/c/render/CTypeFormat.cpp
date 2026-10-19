@@ -18,6 +18,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/RelocationProvenance.h"
 #include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/StringScan.h"
@@ -216,11 +217,7 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
     const uint32_t PointerBytes = Img->getPointerSize();
     const va_t Reach = PointerBytes ? PointerBytes - 1 : 7;
     const va_t First = Addr >= Reach ? Addr - Reach : 0;
-    const va_t End = Addr + Extent;
-    for (va_t Byte = First; Byte < End; ++Byte)
-      if (Img->hasRelocationProvenanceAt(Byte))
-        return false;
-    return true;
+    return !hasRelocationProvenanceIn(*Img, First, Addr + Extent);
   };
   if (Remain >= 2 && Base[1] == 0) {
     std::string Body;
@@ -509,9 +506,9 @@ std::optional<ImageCString> imageCString(const BinaryImage *Img, va_t Addr) {
       Result.Bytes > InvalidVA - Addr)
     return std::nullopt;
   // Bytes a relocation writes are an address, not text.
-  for (va_t Byte = Addr >= 7 ? Addr - 7 : 0; Byte < Addr + Result.Bytes; ++Byte)
-    if (Img->hasRelocationProvenanceAt(Byte))
-      return std::nullopt;
+  if (hasRelocationProvenanceIn(*Img, Addr >= 7 ? Addr - 7 : 0,
+                                Addr + Result.Bytes))
+    return std::nullopt;
   const llvm::ArrayRef<uint8_t> Text = Bytes->take_front(First->Bytes);
   std::string Body;
   CLiteralWriter Writer(Body);
