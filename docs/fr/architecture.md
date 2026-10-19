@@ -999,9 +999,9 @@ Un fait sur une ISA est un trait de `TargetRegInfo` défini dans son
 `lib/ir/med/abi/MedCallConvention<Name>.cpp`, recensée dans
 `MedCallConvention.cpp`. Les fonctions qui ne reviennent jamais sont listées par
 runtime sous `include/neverd/libc` (`LibCNoReturn.inc`,
-`CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`). Prendre en charge une autre
-cible ajoute alors un fichier ou une entrée de table plutôt qu'une branche dans
-la passe partagée.
+`CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`, `RustRuntimeNoReturn.inc`).
+Prendre en charge une autre cible ajoute alors un fichier ou une entrée de table
+plutôt qu'une branche dans la passe partagée.
 
 Les symboles non définis d'un objet relogeable sont résolus dans une couche
 partagée, `include/neverd/loader/ObjectExterns.h`. Le chargeur de chaque format

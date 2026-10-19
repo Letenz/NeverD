@@ -993,9 +993,9 @@ ein `CallArgumentConvention`-Eintrag in einer eigenen
 `lib/ir/med/abi/MedCallConvention<Name>.cpp`, der in `MedCallConvention.cpp`
 registriert ist. Funktionen, die nie zurückkehren, stehen pro Laufzeitumgebung
 unter `include/neverd/libc` (`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`,
-`WindowsNoReturn.inc`). Die Unterstützung eines weiteren Ziels fügt dann eine
-Datei oder einen Tabelleneintrag hinzu statt einer Verzweigung im gemeinsamen
-Pass.
+`WindowsNoReturn.inc`, `RustRuntimeNoReturn.inc`). Die Unterstützung eines
+weiteren Ziels fügt dann eine Datei oder einen Tabelleneintrag hinzu statt einer
+Verzweigung im gemeinsamen Pass.
 
 Die undefinierten Symbole eines relozierbaren Objekts werden in einer
 gemeinsamen Schicht aufgelöst, `include/neverd/loader/ObjectExterns.h`. Der

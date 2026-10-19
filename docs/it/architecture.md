@@ -991,8 +991,9 @@ voce `CallArgumentConvention` nel proprio
 `lib/ir/med/abi/MedCallConvention<Name>.cpp`, registrata in
 `MedCallConvention.cpp`. Le funzioni che non ritornano mai sono elencate per
 runtime in `include/neverd/libc` (`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`,
-`WindowsNoReturn.inc`). Supportare un altro target aggiunge quindi un file o una
-voce di tabella invece di un ramo nel pass condiviso.
+`WindowsNoReturn.inc`, `RustRuntimeNoReturn.inc`). Supportare un altro target
+aggiunge quindi un file o una voce di tabella invece di un ramo nel pass
+condiviso.
 
 I simboli non definiti di un oggetto rilocabile si risolvono in un unico livello
 condiviso, `include/neverd/loader/ObjectExterns.h`. Il loader di ogni formato

@@ -6806,7 +6806,8 @@ An entry for a format wins over one for every format of its architecture:
 Microsoft x64 is COFF's, and System V x86-64 that of ELF and Mach-O, whose
 x86-64 convention Apple took from it.
 Functions that never return are listed per runtime under `include/neverd/libc`
-(`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`).
+(`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`,
+`RustRuntimeNoReturn.inc`).
 Supporting another target then adds a file or a table entry instead of a branch
 in the shared pass.
 
