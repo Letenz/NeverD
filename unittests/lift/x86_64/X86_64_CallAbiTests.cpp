@@ -19,6 +19,15 @@
 
 class X86_64_CallAbi : public HighCHostExecutionTest {
 protected:
+  void SetUp() override {
+    HighCHostExecutionTest::SetUp();
+#if defined(__APPLE__) && defined(__aarch64__)
+    // The generated C and LLVM IR retain x86 instructions and va_list layout.
+    // Execute both them and the source oracle as x86-64 through Rosetta.
+    HostFlags = {"-arch", "x86_64"};
+#endif
+  }
+
   /// Lifts \p Source's object to LLVM IR, links it with \p Source renamed,
   /// and compares \p Entry with the original over a range of arguments.
   /// \p Callee is the source's other function.
@@ -54,9 +63,11 @@ protected:
                           << "      return 1;\n"
                           << "  return 0;\n"
                           << "}\n";
-    const auto Built =
-        exec(NEVERD_TEST_CLANG, {"-O1", "-w", IR.string(), Reference.string(),
-                                 Driver.string(), "-o", Program.string()});
+    std::vector<std::string> HostArgs = HostFlags;
+    HostArgs.insert(HostArgs.end(),
+                    {"-O1", "-w", IR.string(), Reference.string(),
+                     Driver.string(), "-o", Program.string()});
+    const auto Built = exec(NEVERD_TEST_CLANG, HostArgs);
     ASSERT_EQ(Built.exitCode, 0) << Built.err;
     EXPECT_EQ(exec(Program.string(), {}).exitCode, 0);
   }
@@ -247,12 +258,15 @@ TEST_F(X86_64_CallAbi, AByteReadOfAParameterTakesTheWholeRegister) {
                            "  return sext8(0x1FE) == -2 && sext8(0x17F) == 127 "
                            "? 0 : 1;\n"
                            "}\n";
-  const auto BuiltC = exec(NEVERD_TEST_CLANG, {"-O2", "-c", HighC.string(),
-                                               "-o", HighCObject.string()});
+  std::vector<std::string> CompileArgs = HostFlags;
+  CompileArgs.insert(CompileArgs.end(),
+                     {"-O2", "-c", HighC.string(), "-o", HighCObject.string()});
+  const auto BuiltC = exec(NEVERD_TEST_CLANG, CompileArgs);
   ASSERT_EQ(BuiltC.exitCode, 0) << BuiltC.err << "\n" << C;
-  const auto Linked =
-      exec(NEVERD_TEST_CLANG, {"-O2", Driver.string(), HighCObject.string(),
-                               "-o", Program.string()});
+  std::vector<std::string> LinkArgs = HostFlags;
+  LinkArgs.insert(LinkArgs.end(), {"-O2", Driver.string(), HighCObject.string(),
+                                   "-o", Program.string()});
+  const auto Linked = exec(NEVERD_TEST_CLANG, LinkArgs);
   ASSERT_EQ(Linked.exitCode, 0) << Linked.err;
   EXPECT_EQ(exec(Program.string(), {}).exitCode, 0) << C;
 }
