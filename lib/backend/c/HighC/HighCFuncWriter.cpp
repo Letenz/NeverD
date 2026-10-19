@@ -454,7 +454,9 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
 
   auto VarFn = [this](const MedVar &V) { return varName(V); };
   auto ExprFn = [this](const HighExpr &E) { return exprStr(E); };
-  auto ArgLimit = [this](const HighExpr &E) { return debugCallArgLimit(E); };
+  auto ArgLimit = [this](const HighExpr &E) {
+    return renderedCallOperandBound(E);
+  };
   auto AllArgs = [](const HighExpr &E) { return E.Operands.size(); };
   collectUnknownOnlyNames(Func);
   // Whether C shows the function `void` decides what its returns read.
@@ -5633,7 +5635,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     hideUnusedFrameSlotWrites(Func);
   {
     auto VarFn = [this](const MedVar &V) { return varName(V); };
-    auto ArgLimit = [this](const HighExpr &E) { return debugCallArgLimit(E); };
+    auto ArgLimit = [this](const HighExpr &E) {
+      return renderedCallOperandBound(E);
+    };
     auto AllArgs = [](const HighExpr &E) { return E.Operands.size(); };
     markHiddenControlDead(Func.Body);
     analyzeUnusedAssigns(Analysis, Func, VarFn, AllArgs);

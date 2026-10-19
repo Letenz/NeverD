@@ -681,6 +681,30 @@ TEST_F(X86_64_CallAbi, ArgumentSetupCrossesFloatingConversions) {
   EXPECT_EQ(Arguments(One + 4), 2u) << C;
 }
 
+// Debug information declares `sum(int n, ...)`, which C defines with every
+// argument register: the results of the calls the variadic arguments take
+// are read, and assigned.
+TEST_F(X86_64_CallAbi, ACallResultPassedAsAVariadicArgumentIsAssigned) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu", "-g"}, R"C(
+#include <stdarg.h>
+static int sum(int n, ...) __attribute__((noinline));
+static int twice(int x) __attribute__((noinline));
+static int sum(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  int s = 0;
+  for (int i = 0; i < n; i++)
+    s += va_arg(ap, int) * (i + 1);
+  va_end(ap);
+  return s;
+}
+static int twice(int x) { return 2 * x + 1; }
+int entry(int x) { return sum((x & 1) + 1, twice(x), twice(x + 3)); }
+)C",
+                            "entry", {"entry", "sum", "twice"},
+                            {0, 1, -1, 7, 1000});
+}
+
 // A relocatable object's first function sits at address 0, which a call
 // still names: GCC emits a static function first, and a call to it reads
 // the callee's summary as any other does.

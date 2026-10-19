@@ -1908,7 +1908,8 @@ bool HighCWriter::tryWriteCursorForLoop(const std::vector<HighStmt> &Stmts,
     if (S.Kind == StmtKind::Return)
       MissRet = &S;
   }
-  if (!MissRet || !MissRet->RetVal)
+  // A function printed `void` returns no value the fold could print.
+  if (!MissRet || !MissRet->RetVal || InferredVoid)
     return false;
 
   auto Targeted = [&](const HighStmt &S) {
@@ -2255,7 +2256,9 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
         continue;
       }
     }
-    if (S.Kind == StmtKind::IfElse && S.Cond && I + 1 < End) {
+    // `if (c) j = x; else j = f(); return j;` returns the call's value on
+    // one path, which a function printed `void` has none of.
+    if (S.Kind == StmtKind::IfElse && S.Cond && I + 1 < End && !InferredVoid) {
       const HighStmt &Ret = Stmts[I + 1];
       if (Ret.Kind == StmtKind::Return && Ret.RetVal &&
           Ret.RetVal->Kind == ExprKind::Var) {

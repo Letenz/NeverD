@@ -3320,6 +3320,24 @@ bool HighCWriter::debugExternUsesHiddenSret(const FunctionSym &FS,
   return DebugExternHiddenSret.count(ExternName.str()) != 0;
 }
 
+size_t HighCWriter::renderedCallOperandBound(const HighExpr &E) const {
+  const size_t Have = E.Operands.size();
+  if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None)
+    return Have;
+  // A callee this unit defines takes what its definition prints, whatever
+  // arity debug information gives it (a variadic `abort_message(format,
+  // ...)` defined with every argument register).
+  if (const HighFunc *Defined = calledDefinition(E);
+      Defined && !Defined->SourceTypeHint)
+    return Have;
+  // Otherwise the call prints what debugCallArgLimit leaves, and at least
+  // the arity of the external declaration it calls.
+  size_t Bound = debugCallArgLimit(E);
+  if (const std::optional<size_t> Declared = plainDeclarationArity(E))
+    Bound = std::max(Bound, *Declared);
+  return std::min(Bound, Have);
+}
+
 size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
   const size_t Have = E.Operands.size();
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None)
