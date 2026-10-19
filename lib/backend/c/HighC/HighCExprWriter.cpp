@@ -1467,7 +1467,9 @@ std::string HighCWriter::callIdentifier(const HighExpr &E) const {
 }
 
 std::string HighCWriter::headerRoutineOfStub(const HighFunc &Func) const {
-  if (!Opts.Image || !Func.Entry)
+  // A stub of a name of its own, as a MinGW `fputs_thunk: jmp [__imp_fputs]`
+  // is, is called by that name.
+  if (!Opts.Image || !Func.Entry || !HeaderRoutineCopies.count(&Func))
     return {};
   const Import *Imp = Opts.Image->findImportStubAt(Func.Entry);
   if (!Imp || Imp->Name.empty())
