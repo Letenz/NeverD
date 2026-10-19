@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   workflow_call:
   push:
-    branches: [dev]
+    branches: [dev, codex/performance-libraries]
     paths:
       - 'lib/web/**'
       - 'include/neverd/web/**'
@@ -12,6 +12,9 @@ on:
       - 'tools/neverd-web-mcp/**'
       - 'tools/neverd-worker/**'
       - 'cmake/NeverDWeb*.cmake'
+      - 'cmake/NeverDPerformance.cmake'
+      - 'lib/support/**'
+      - 'tools/common/transport/**'
       - 'cmake/web-product-dependencies.json'
       - 'CMakeLists.txt'
       - 'include/neverd/sdk/NeverDCAPIWeb.h'
@@ -27,6 +30,9 @@ on:
       - 'tools/neverd-web-mcp/**'
       - 'tools/neverd-worker/**'
       - 'cmake/NeverDWeb*.cmake'
+      - 'cmake/NeverDPerformance.cmake'
+      - 'lib/support/**'
+      - 'tools/common/transport/**'
       - 'cmake/web-product-dependencies.json'
       - 'CMakeLists.txt'
       - 'include/neverd/sdk/NeverDCAPIWeb.h'
