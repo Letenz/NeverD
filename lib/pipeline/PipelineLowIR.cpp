@@ -2165,6 +2165,29 @@ bool collectLowAddressUses(
   return true;
 }
 
+/// The exception records whose code range begins at \p Entry, in no
+/// particular order.  The start index, sorted by start, finds them when it
+/// lists every record; an image holds tens of thousands.
+llvm::SmallVector<const ExceptionFunction *, 2>
+exceptionRecordsStartingAt(const ExceptionInfo &Info, va_t Entry) {
+  llvm::SmallVector<const ExceptionFunction *, 2> Found;
+  if (Info.FunctionIndex.size() != Info.Functions.size()) {
+    for (const ExceptionFunction &F : Info.Functions)
+      if (F.CodeRange.Begin == Entry)
+        Found.push_back(&F);
+    return Found;
+  }
+  const auto Starts = [&](size_t Index) {
+    return Info.Functions[Index].CodeRange.Begin;
+  };
+  for (auto It = llvm::partition_point(
+           Info.FunctionIndex,
+           [&](size_t Index) { return Starts(Index) < Entry; });
+       It != Info.FunctionIndex.end() && Starts(*It) == Entry; ++It)
+    Found.push_back(&Info.Functions[*It]);
+  return Found;
+}
+
 struct EHContinuationRootDiscovery {
   std::map<va_t, std::set<va_t>> RootsByOwner;
   std::map<va_t, std::vector<LowCxxContinuationEntryEvidence>> EntriesByOwner;
@@ -2244,15 +2267,15 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
 
   auto exactFH3Record = [&](va_t Entry) -> const ExceptionFunction * {
     const ExceptionFunction *Match = nullptr;
-    for (const ExceptionFunction &F : Img.ExceptionMetadata.Functions) {
-      if (F.Kind != RuntimeFunctionKind::Primary ||
-          F.CodeRange.Begin != Entry ||
-          F.ParseStatus != ExceptionParseStatus::Complete || !F.Cxx ||
-          F.Cxx->NativeEncoding != CxxExceptionInfo::Encoding::FH3)
+    for (const ExceptionFunction *F :
+         exceptionRecordsStartingAt(Img.ExceptionMetadata, Entry)) {
+      if (F->Kind != RuntimeFunctionKind::Primary ||
+          F->ParseStatus != ExceptionParseStatus::Complete || !F->Cxx ||
+          F->Cxx->NativeEncoding != CxxExceptionInfo::Encoding::FH3)
         continue;
       if (Match)
         return nullptr;
-      Match = &F;
+      Match = F;
     }
     return Match;
   };
@@ -2397,16 +2420,16 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
     const LowFunc &Source = Funcs[FuncIndex];
     const ExceptionFunction *SourceRuntimeFunction = nullptr;
     bool SourceRuntimeFunctionAmbiguous = false;
-    for (const ExceptionFunction &Candidate : Img.ExceptionMetadata.Functions) {
-      if (Candidate.ParseStatus != ExceptionParseStatus::Complete ||
-          Candidate.CodeRange.Begin != Source.Entry)
+    for (const ExceptionFunction *Candidate :
+         exceptionRecordsStartingAt(Img.ExceptionMetadata, Source.Entry)) {
+      if (Candidate->ParseStatus != ExceptionParseStatus::Complete)
         continue;
       if (SourceRuntimeFunction) {
         SourceRuntimeFunction = nullptr;
         SourceRuntimeFunctionAmbiguous = true;
         break;
       }
-      SourceRuntimeFunction = &Candidate;
+      SourceRuntimeFunction = Candidate;
     }
     if (SourceRuntimeFunctionAmbiguous || !SourceRuntimeFunction)
       continue;

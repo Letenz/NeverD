@@ -583,6 +583,14 @@ struct Listing::Impl {
   std::uint64_t generation = 1;
   std::vector<Region> regions;
   std::vector<Function> functions;
+  /// The first function listed under each name, and how many functions are
+  /// not chunks, as functions held them at generation (namedFunction and
+  /// indexState read them; a listing holds tens of thousands of functions).
+  /// Names change only in a build, which advances generation first.
+  std::unordered_map<std::string, const Function *> functionsByName;
+  std::uint64_t functionsByNameGeneration = 0;
+  mutable std::size_t ownFunctionCount = 0;
+  mutable std::uint64_t ownFunctionCountGeneration = 0;
   std::unordered_map<std::uint64_t, std::string> dataNames;
   std::unordered_map<std::uint64_t, ImportSlot> slots;
   std::vector<StringItem> strings;
@@ -867,6 +875,30 @@ struct Listing::Impl {
       if (function.name == name)
         return &function;
     return nullptr;
+  }
+
+  /// functionNamed() of a built listing, from an index of its names.  A
+  /// build renames functions as it goes, so it asks functionNamed() itself.
+  const Function *namedFunction(const std::string &name) {
+    if (functionsByNameGeneration != generation) {
+      functionsByName.clear();
+      functionsByName.reserve(functions.size());
+      for (const auto &function : functions)
+        functionsByName.try_emplace(function.name, &function);
+      functionsByNameGeneration = generation;
+    }
+    const auto found = functionsByName.find(name);
+    return found == functionsByName.end() ? nullptr : found->second;
+  }
+
+  std::size_t ownFunctions() const {
+    if (ownFunctionCountGeneration != generation) {
+      ownFunctionCount = static_cast<std::size_t>(std::count_if(
+          functions.begin(), functions.end(),
+          [](const auto &function) { return !function.chunkOf; }));
+      ownFunctionCountGeneration = generation;
+    }
+    return ownFunctionCount;
   }
 
   /// The import an instruction transfers to: a direct call to a veneer or an
@@ -3726,17 +3758,14 @@ void Listing::idleStep() {
 }
 
 Json Listing::indexState() const {
-  return {
-      {"state", impl_->indexStateName()},
-      {"done", impl_->indexDone},
-      {"total", impl_->indexTotal},
-      {"references", impl_->indexState == Impl::IndexState::Ready
-                         ? impl_->references.size()
-                         : 0},
-      {"generation", std::to_string(impl_->generation)},
-      {"functions",
-       std::count_if(impl_->functions.begin(), impl_->functions.end(),
-                     [](const auto &function) { return !function.chunkOf; })}};
+  return {{"state", impl_->indexStateName()},
+          {"done", impl_->indexDone},
+          {"total", impl_->indexTotal},
+          {"references", impl_->indexState == Impl::IndexState::Ready
+                             ? impl_->references.size()
+                             : 0},
+          {"generation", std::to_string(impl_->generation)},
+          {"functions", impl_->ownFunctions()}};
 }
 
 Json Listing::page(const Json &payload) {
@@ -4100,7 +4129,7 @@ std::optional<std::uint64_t> Listing::resolveName(const std::string &name) {
     return it->second;
   // listingNames keeps only the names the listing gives functions; the others
   // show their engine's, a symbol's or the user's name.
-  if (const auto *function = d.functionNamed(name))
+  if (const auto *function = d.namedFunction(name))
     return function->entry;
   if (auto it = d.importTargets.find(name); it != d.importTargets.end())
     return it->second;

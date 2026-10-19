@@ -1298,7 +1298,8 @@ struct BinaryImage {
   /// normalized absolute/relative pointer-slot sets all answer through the
   /// same query.  Target-address evidence such as RelocDataAddrs and
   /// CodeRefTargets is excluded because those sets do not identify the bytes
-  /// being loaded.
+  /// being loaded.  hasRelocationProvenanceIn (RelocationProvenance.h) asks
+  /// the same of a range of bytes; the two read the same sources.
   bool hasRelocationProvenanceAt(va_t Address) const {
     if (CodePtrRelocSlots.count(Address) || DataPtrRelocSlots.count(Address) ||
         RelDataPtrRelocSlots.count(Address) || RelCodeRelocSlots.count(Address))

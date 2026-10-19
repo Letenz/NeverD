@@ -30,6 +30,7 @@ bool SessionTestAccess::functionListIsRebuilt(Session &State) {
       State.Functions == Functions && State.OriginalNames == OriginalNames;
   State.Functions = std::move(Functions);
   State.OriginalNames = std::move(OriginalNames);
+  State.functionListChanged();
   State.ListInputs = std::move(Inputs);
   State.AccessWidths = std::move(Widths);
   State.AccessWidthsFunctions = std::move(Extents);

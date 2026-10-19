@@ -3453,6 +3453,30 @@ TEST_F(SessionCAPITest, SidecarWritesRecordInputAndKeepAMatchingManifest) {
   EXPECT_EQ(ReadManifest(), Before);
 }
 
+TEST_F(SessionCAPITest, FunctionsAreFoundUnderTheNamesTheyHaveNow) {
+  // A function is found under the name the list gives it now: each rename,
+  // reload of the renames and rename of its address changes that name.
+  const std::string Path = write("names.evm", "6001600055");
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "evm_entry"), 0);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "reviewed_entry"), -1);
+  ASSERT_EQ(neverd_rename_func(Session, "evm_entry", "reviewed_entry"), 0);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "reviewed_entry"), 0);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "evm_entry"), -1);
+
+  write("names.evm.neverd/renames.json", "[]");
+  ASSERT_EQ(neverd_renames_load(Session), 0);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "evm_entry"), 0);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "reviewed_entry"), -1);
+
+  ASSERT_EQ(
+      neverd_rename_addr(Session, neverd_func_entry(Session, 0), "by_address"),
+      0);
+  EXPECT_EQ(takeString(neverd_func_name(Session, 0)), "by_address");
+  EXPECT_EQ(neverd_func_find_by_name(Session, "by_address"), 0);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "evm_entry"), -1);
+}
+
 TEST_F(SessionCAPITest, ReloadingRenamesRestoresNamesRemovedFromTheSidecar) {
   const std::string Original = write("original.evm", "6001600055");
   ASSERT_EQ(neverd_session_load(Session, Original.c_str()), 1);
@@ -4084,6 +4108,11 @@ TEST_F(SessionCAPIKernelInputs, KernelExportsTakeTheirPrototypesWithoutThePDB) {
       << takeString(neverd_last_error(Session));
   const int Index = neverd_func_find_by_name(Session, "NtCreateFile");
   ASSERT_GE(Index, 0);
+  // The linker folded these two into one routine, which it exports under
+  // both: each name finds it, whichever the list shows.
+  const int Folded = neverd_func_find_by_name(Session, "ObDereferenceObject");
+  ASSERT_GE(Folded, 0);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "ObfDereferenceObject"), Folded);
   const std::string Source =
       takeString(neverd_decompile(Session, neverd_func_entry(Session, Index)));
   EXPECT_NE(Source.find("/* neverd.prototype: windows-kernel-x64: NTSTATUS "
