@@ -202,6 +202,11 @@ extern llvm::cl::SubCommand SymbolicCmd;
 extern llvm::cl::SubCommand OptimizeIRCmd;
 extern llvm::cl::SubCommand TranslateObjectCmd;
 extern llvm::cl::SubCommand EmulateDriverCmd;
+extern llvm::cl::SubCommand ModulesCmd;
+extern llvm::cl::SubCommand ExecutionCmd;
+extern llvm::cl::opt<std::string> ExecutionConfiguration, ExecutionModules;
+extern llvm::cl::opt<std::string> ModulesAction, ModulesConfiguration,
+    ModulesID, ModulesSymbol;
 extern llvm::cl::SubCommand CPUCapabilitiesCmd;
 extern llvm::cl::SubCommand EmulateProcessCmd;
 extern llvm::cl::SubCommand UnpackCmd;
@@ -714,6 +719,8 @@ int runOptimizeIR();
 // publish, dispatch, execute, or debug.
 int runTranslateObject();
 int runEmulateDriver();
+int runModules();
+int runExecution();
 int runCPUCapabilities();
 int runEmulateProcess();
 int runUnpack();

@@ -1678,8 +1678,11 @@ void MedToHighConverter::resolveCalleeNames(
   for (const Import &Imp : Image->Imports)
     if (Targets.count(Imp.IATAddr))
       ImportsByIAT.try_emplace(Imp.IATAddr, &Imp);
-  const std::map<va_t, std::string> ImageNames =
-      functionNamesAt(*Image, Targets);
+  std::map<va_t, std::string> ScannedNames;
+  if (!ImageFunctionNames)
+    ScannedNames = functionNamesAt(*Image, Targets);
+  const std::map<va_t, std::string> &ImageNames =
+      ImageFunctionNames ? *ImageFunctionNames : ScannedNames;
 
   auto Usable = [](llvm::StringRef Name) {
     return !Name.empty() && !Name.starts_with(kAutoFuncPrefix);
@@ -1708,9 +1711,10 @@ void MedToHighConverter::resolveCalleeNames(
       Names[Target] = Imp->Name;
       continue;
     }
-    const std::string &FromImage = ImageNames.at(Target);
-    Names[Target] = Usable(FromImage)
-                        ? FromImage
+    // An address no export or symbol names has none of its own.
+    const auto FromImage = ImageNames.find(Target);
+    Names[Target] = FromImage != ImageNames.end() && Usable(FromImage->second)
+                        ? FromImage->second
                         : (kAutoFuncPrefix + llvm::utohexstr(Target)).str();
   }
 }

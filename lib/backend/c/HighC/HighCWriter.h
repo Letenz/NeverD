@@ -126,11 +126,13 @@ public:
               DebugContext *Dbg, bool GuardAnalysisOnlyFunctions = true,
               const std::unordered_set<std::string_view> *SharedNames = nullptr,
               CSourceRecorder *Recorder = nullptr,
-              const HighCImageDataObjects *SharedDataObjects = nullptr)
+              const HighCImageDataObjects *SharedDataObjects = nullptr,
+              const HighCImageFunctionSymbols *SharedFunctionSymbols = nullptr)
       : Out(OS), OS(Out), Opts(Opts), Dbg(Dbg),
         GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions),
         SharedImageFunctionNames(SharedNames), SourceRecorder(Recorder),
-        SharedDataObjects(SharedDataObjects) {}
+        SharedDataObjects(SharedDataObjects),
+        SharedFunctionSymbols(SharedFunctionSymbols) {}
 
   //--- Module-level (HighCEmitter.cpp) ---
   void writeAll(const std::vector<HighFunc> &Funcs);
@@ -751,6 +753,14 @@ public:
   /// The text \p E passes to a parameter of type \p Expected, before a
   /// pointer converts to an integer parameter.
   std::string typedArgumentText(const HighExpr &E, const TypeRef &Expected);
+  /// \p Text, which \p Value prints, as the value an object C declares as
+  /// \p Declared is assigned: C converts no integer to a pointer, no pointer
+  /// to an integer and no pointer to one of another type by assignment.
+  std::string assignedText(const TypeRef &Declared, const HighExpr &Value,
+                           std::string Text) const;
+  /// The type an image object at \p Addr is declared with, where C can assign
+  /// it: its header's for a C library object, otherwise its own.
+  TypeRef assignedImageObjectType(va_t Addr) const;
   /// Whether \p E, printed as \p Text, has an integer type in C that a
   /// pointer parameter does not take as it is (not a null pointer constant).
   bool printsAsInteger(const HighExpr &E, llvm::StringRef Text) const;
@@ -1075,6 +1085,8 @@ public:
   bool NeedsMsvcIntrinsics = false;
   /// A non-Windows x86 function renders an <x86intrin.h>-only intrinsic.
   bool NeedsGnuX86Intrinsics = false;
+  /// A CPUID GCC or Clang compiles, which <cpuid.h> spells.
+  bool NeedsGnuCpuid = false;
   bool NeedsFEnvAccess = false;
   std::set<std::string> CIntrinsicNames;
   bool NeedsObjCRuntime = false;
@@ -1482,6 +1494,11 @@ public:
     StatementCall = Outer;
     return Text;
   }
+  /// The image's function symbols by address, which noteFunctionAddress()
+  /// reads: those the emitter prepared for the image when it did, else the
+  /// writer's own, read at the first address it asks about.
+  const HighCImageFunctionSymbols *SharedFunctionSymbols;
+  std::optional<HighCImageFunctionSymbols> OwnFunctionSymbols;
   /// Functions the code takes the address of, by entry: the C name the
   /// address prints as.
   std::map<va_t, std::string> FunctionAddressNames;
@@ -1517,6 +1534,9 @@ public:
     /// needs that.  1 and 0 for a backing without one.
     unsigned Align = 1;
     uint64_t Pad = 0;
+    /// The bytes are a C library header's object (ImageObject::Header),
+    /// reached through its address: the unit defines none of its own.
+    bool Header = false;
   };
   std::vector<ImageBacking> ImageBackings;
   /// The symbol the object a backing is named after has in its comment, as

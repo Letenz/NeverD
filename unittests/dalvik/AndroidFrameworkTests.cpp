@@ -32,6 +32,181 @@ protected:
   }
 };
 using Instrumentation = AndroidApplicationSnapshot::Instrumentation;
+using LookupFailure = AndroidApplicationSnapshot::ClassLookupFailure;
+using Loader = LookupFailure::Loader;
+TEST_F(AndroidFrameworkTest, ExplicitLookupFailuresAreScopedAndRetainMessages) {
+  for (auto selected : {Loader::Boot, Loader::System, Loader::Application}) {
+    for (auto message :
+         {std::optional<std::string>{}, std::optional<std::string>{""},
+          std::optional<std::string>{"declared \xc3\xa9"}}) {
+      AndroidApplicationSnapshot snapshot{Phase::Application};
+      snapshot.class_lookup_failures = {{selected, "test.Absent", message}};
+      Runtime state(program, heap, snapshot);
+      auto app =
+          state.library(operation(CurrentApplication), 0, {}, Admit).value;
+      auto sys =
+          state.library(operation(SystemClassLoader), 0, {}, Admit).value;
+      auto boot = state.library(operation(LoaderParent), sys, {}, Admit).value;
+      auto loader =
+          selected == Loader::Boot ? boot
+          : selected == Loader::System
+              ? sys
+              : state.library(operation(ContextClassLoader), app, {}, Admit)
+                    .value;
+      const uint64_t args[]{heap->literal("test.Absent")->Identity};
+      uint64_t previous = 0;
+      for (unsigned i = 0; i != 2; ++i) {
+        auto result = state.library(operation(LoadClass), loader, args, Admit);
+        ASSERT_EQ(result.stop, ExecutionStop::Thrown) << result.diagnostic;
+        EXPECT_EQ(result.exception, "java/lang/ClassNotFoundException");
+        ASSERT_NE(result.throwable, 0u);
+        EXPECT_NE(result.throwable, previous);
+        previous = result.throwable;
+        auto value = state.library(operation(ThrowableMessage),
+                                   result.throwable, {}, Admit);
+        ASSERT_EQ(value.stop, ExecutionStop::Returned);
+        if (message) {
+          ASSERT_NE(value.value, 0u);
+          EXPECT_EQ(heap->get(value.value)->Bytes, javaStringBytes(*message));
+        } else {
+          EXPECT_EQ(value.value, 0u);
+        }
+      }
+      const uint64_t known[]{heap->literal("java.lang.String")->Identity};
+      EXPECT_EQ(state.library(operation(LoadClass), loader, known, Admit).stop,
+                ExecutionStop::Returned);
+      auto other = loader == boot ? sys : boot;
+      EXPECT_EQ(state.library(operation(LoadClass), other, args, Admit).stop,
+                ExecutionStop::Unsupported);
+    }
+  }
+}
+TEST_F(AndroidFrameworkTest,
+       LookupFailuresRejectInvalidAndVisibleDeclarations) {
+  AndroidApplicationSnapshot snapshot{Phase::Application};
+  snapshot.class_lookup_failures = {LookupFailure{}};
+  snapshot.class_lookup_failures[0].binary_name = "test.Absent";
+  EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  for (auto name :
+       {"", ".a", "a.", "a..b", "a/b", "[I", "La;", "a.1B", "a.\xc3\xa9"}) {
+    snapshot.class_lookup_failures = {{Loader::Boot, name, {}}};
+    EXPECT_THROW(Runtime(program, heap, snapshot), Error) << name;
+  }
+  for (auto loader : {Loader::Boot, Loader::System, Loader::Application}) {
+    snapshot.class_lookup_failures = {{loader, "java.lang.String", {}}};
+    EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  }
+  snapshot.class_lookup_failures = {{Loader(9), "test.Absent", {}}};
+  EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  snapshot.class_lookup_failures = {{Loader::Boot, "test.Absent", {}}};
+  snapshot.class_lookup_failures.push_back(snapshot.class_lookup_failures[0]);
+  EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  snapshot.class_lookup_failures = {
+      {Loader::Boot, "test.Absent", std::string(4097, 'x')}};
+  EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  snapshot.class_lookup_failures = {{Loader::Boot, std::string(1025, 'x'), {}}};
+  EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  snapshot.class_lookup_failures.assign(257, {Loader::Boot, "test.Absent", {}});
+  EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  snapshot.class_lookup_failures = {{Loader::Application, "test.Absent", {}}};
+  snapshot.phase = Phase::Attached;
+  EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  Class type;
+  type.name = "Ltest/Visible;";
+  type.superclass = "Ljava/lang/Object;";
+  Program code({type}, Properties{});
+  snapshot.phase = Phase::Application;
+  snapshot.class_lookup_failures = {{Loader::Application, "test.Visible", {}}};
+  EXPECT_THROW(Runtime(code, heap, snapshot), Error);
+  // A supplied app declaration need not be visible to the boot loader.
+  snapshot.class_lookup_failures[0].loader = Loader::Boot;
+  EXPECT_NO_THROW(Runtime(code, heap, snapshot));
+}
+TEST_F(AndroidFrameworkTest, LookupFailuresRespectHeapAndInstructionLimits) {
+  for (bool exhaustion : {false, true}) {
+    auto storage = std::make_shared<Heap>(1024, exhaustion ? 4 : 128);
+    AndroidApplicationSnapshot snapshot{Phase::Attached};
+    snapshot.class_lookup_failures = {{Loader::System, "test.Absent", {}}};
+    Runtime state(program, storage, snapshot);
+    auto loader =
+        state.library(operation(SystemClassLoader), 0, {}, Admit).value;
+    const uint64_t args[]{storage->literal("test.Absent")->Identity};
+    if (exhaustion) {
+      while (storage->allocate(Object::Instance, "java/lang/Object", 0)) {
+      }
+    }
+    unsigned ticks = 0;
+    auto result = state.library(operation(LoadClass), loader, args, [&] {
+      return !exhaustion && ++ticks > 3 ? ExecutionStop::InstructionLimit
+                                        : ExecutionStop::Returned;
+    });
+    EXPECT_EQ(result.stop, exhaustion ? ExecutionStop::HeapLimit
+                                      : ExecutionStop::InstructionLimit);
+    EXPECT_EQ(state.library(operation(LoadClass), loader, args, Admit).stop,
+              result.stop);
+  }
+}
+TEST_F(AndroidFrameworkTest, DexCatchObservesTheSameLookupThrowableAndMessage) {
+  Class reader;
+  reader.name = "Ltest/LoaderReader;";
+  reader.superclass = "Ljava/lang/Object;";
+  reader.access = {"public"};
+  Method method;
+  method.reference = {reader.name,
+                      "lookup",
+                      {"Ljava/lang/ClassLoader;", "Ljava/lang/String;"},
+                      "Ljava/lang/Throwable;"};
+  method.access = {"public", "static"};
+  method.registers = 3;
+  Instruction invoke;
+  invoke.opcode = "invoke-virtual";
+  invoke.registers = {1, 2};
+  invoke.reference = MethodRef{"Ljava/lang/ClassLoader;",
+                               "loadClass",
+                               {"Ljava/lang/String;"},
+                               "Ljava/lang/Class;"};
+  Instruction zero;
+  zero.pc = 3;
+  zero.opcode = "const/4";
+  zero.registers = {0};
+  zero.literal = int64_t(0);
+  Instruction ret;
+  ret.pc = 4;
+  ret.opcode = "return-object";
+  ret.registers = {0};
+  Instruction caught;
+  caught.pc = 5;
+  caught.opcode = "move-exception";
+  caught.registers = {0};
+  method.instructions = {invoke, zero, ret, caught, ret};
+  method.instructions.back().pc = 6;
+  method.tries = {{0, 3, {{"Ljava/lang/ClassNotFoundException;", 5}}}};
+  reader.methods = {method};
+  Program code({reader}, Properties{});
+  AndroidApplicationSnapshot snapshot{Phase::Attached};
+  snapshot.class_lookup_failures = {
+      {Loader::System, "test.Absent", "explicit result"}};
+  Runtime state(code, heap, snapshot);
+  auto loader = state.library(operation(SystemClassLoader), 0, {}, Admit).value;
+  const uint64_t args[]{loader, heap->literal("test.Absent")->Identity};
+  auto result =
+      state.execute(*code.findStatic(method.reference), args, Admit, 65536);
+  ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+  ASSERT_NE(result.value, 0u);
+  EXPECT_EQ(heap->get(result.value)->ClassName,
+            "java/lang/ClassNotFoundException");
+  auto message =
+      state.library(operation(ThrowableMessage), result.value, {}, Admit);
+  ASSERT_EQ(message.stop, ExecutionStop::Returned);
+  ASSERT_NE(message.value, 0u);
+  EXPECT_EQ(heap->get(message.value)->Bytes,
+            javaStringBytes("explicit result"));
+  const uint64_t missing[]{loader, heap->literal("test.Other")->Identity};
+  EXPECT_EQ(
+      state.execute(*code.findStatic(method.reference), missing, Admit, 65536)
+          .stop,
+      ExecutionStop::Unsupported);
+}
 const FieldRef InstrumentationField{"Landroid/app/ActivityThread;",
                                     "mInstrumentation",
                                     "Landroid/app/Instrumentation;"};

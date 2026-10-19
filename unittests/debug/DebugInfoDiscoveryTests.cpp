@@ -1626,6 +1626,36 @@ TEST(ELFObjectExtentProducer,
   EXPECT_EQ(Extent.Precision, ExactDataObjectPrecision::Storage);
 }
 
+TEST(LoadDebugInfoTest, ExplicitDwarfCompanionKeepsCompanionTrust) {
+  ScratchDir Dir;
+  DebugInfoRequest Req;
+  Req.DWARFPath = Dir.writeBytes(
+      "provided.debug",
+      makeELFDWARFReturnFixture(DWARFReturnFixtureKind::PointerSizeExplicit));
+  const auto Binary = Dir.writeBytes("main.elf", makeELFObjectExtentFixture());
+  auto Img = loadBinary(Binary);
+  ASSERT_TRUE(bool(Img)) << llvm::toString(Img.takeError());
+  auto Result = loadDebugInfo(Binary, *Img, Req);
+  ASSERT_TRUE(static_cast<bool>(Result)) << Result.Error;
+  EXPECT_EQ(Result.Kind, DebugInfoKind::DWARF);
+  EXPECT_EQ(Result.Path, Req.DWARFPath);
+  EXPECT_FALSE(Result.Context->hasAuthenticatedFunctionSignatures());
+  EXPECT_FALSE(Result.Context->hasAuthenticatedObjectExtents());
+  EXPECT_FALSE(Result.Context->allFunctions().empty());
+}
+
+TEST(LoadDebugInfoTest, MissingExplicitDwarfDoesNotFallBackToAValidMap) {
+  ScratchDir Dir;
+  DebugInfoRequest Req;
+  Req.DWARFPath = Dir.path("missing.debug");
+  Dir.write("probe.map", kELFLLDMap);
+  BinaryImage Img;
+  Img.Format = BinaryFormat::ELF;
+  auto Result = loadDebugInfo(Dir.path("probe.elf"), Img, Req);
+  EXPECT_FALSE(static_cast<bool>(Result));
+  EXPECT_NE(Result.Error.find("DWARF file not found"), std::string::npos);
+}
+
 TEST(DebugInfoKindNameTest, NamesEveryKind) {
   EXPECT_STREQ(debugInfoKindName(DebugInfoKind::None), "none");
   EXPECT_STREQ(debugInfoKindName(DebugInfoKind::DWARF), "dwarf");

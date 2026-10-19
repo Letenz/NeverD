@@ -1,6 +1,6 @@
 **語言**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 1af6ecd5944b90deebffd661bc746dba46c505fcb5c57991ad0de2f45c50968e -->
+<!-- i18n-source: 32288410e4352dcbe779ee091bfc8728b8d4e783203704b4d3a6d09f0421c96a -->
 
 [← NeverD 專案](project.md)
 
@@ -48,3 +48,5 @@
 | [路線圖](roadmap.md) | 狀態：原生格式、EVM 與 Solana SBF 均已實作 |
 | 本地化文件 | 使用上方語言連結開啟各語言的文件索引與專案概覽 |
 | [加殼可執行檔的脫殼](unpack.md) | 透過觀察有界來賓行程還原加殼的 PE32+ 映像：入口規則、重建的映像、識別與限制 |
+
+- [明確的執行階段模組與持續執行（英文）](../runtime-modules.md)

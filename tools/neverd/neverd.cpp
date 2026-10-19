@@ -106,6 +106,10 @@ static int realMain(int Argc, char *Argv[]) {
     return runEmulateDriver();
   if (CPUCapabilitiesCmd)
     return runCPUCapabilities();
+  if (ModulesCmd)
+    return runModules();
+  if (ExecutionCmd)
+    return runExecution();
   if (EmulateProcessCmd)
     return runEmulateProcess();
   if (UnpackCmd)

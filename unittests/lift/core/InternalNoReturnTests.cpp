@@ -401,6 +401,32 @@ TEST(InternalNoReturn, CalleeEndingInAKnownNoReturnCallEndsItsBlock) {
   EXPECT_TRUE(callAtBaseEndsItsBlock(Image));
 }
 
+TEST(InternalNoReturn, RustNeverReturningRoutinesEndTheirCallersBlock) {
+  // Rust's standard library declares its panic entry points `-> !`.  A body
+  // that reaches the runtime through more calls than a proof follows (here
+  // through a pointer, then `ret`) is known by its name, as `abort` is; the
+  // bytes after the call can be a jump table rustc keeps in __text.
+  const std::vector<uint8_t> CallsThroughAPointer = {0xff, 0xd0, 0xc3};
+  for (const char *Name :
+       {"_RNvNtCs1a2b3c4d5e6_4core6option13unwrap_failed",
+        "__RNvNtCsbAqs9W1eE8G_4core9panicking16panic_in_cleanup",
+        "__RINvNtCsbAqs9W1eE8G_4core9panicking13assert_failedyyEB4_",
+        "_ZN4core9panicking5panic17h0123456789abcdefE"}) {
+    SCOPED_TRACE(Name);
+    EXPECT_TRUE(callAtBaseEndsItsBlock(imageWith(
+        callerThen(CallsThroughAPointer), {{Base, "caller"}, {0x1010, Name}})));
+  }
+  // What only inspects a panic returns, and so does the runtime's attempt to
+  // start one when no unwinder takes it.
+  for (const char *Name :
+       {"_RNvNtCsgejaSCmAoRz_3std6thread9panicking",
+        "__RNvCs9wFQrvczXsK_7___rustc18___rust_start_panic"}) {
+    SCOPED_TRACE(Name);
+    EXPECT_FALSE(callAtBaseEndsItsBlock(imageWith(
+        callerThen(CallsThroughAPointer), {{Base, "caller"}, {0x1010, Name}})));
+  }
+}
+
 TEST(InternalNoReturn, WhatTheUserStatesOfACalleeDecides) {
   // As IDA's Edit function does, a statement decides over the callee's name
   // and its body, in either direction.

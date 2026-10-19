@@ -24,6 +24,60 @@ static Handle attach(void) {
     return 0;
   return env;
 }
+int jni_loader_failure(int unknown) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "java/lang/ClassLoader");
+  Ref system_id =
+      C(e, Ref, 113, type, "getSystemClassLoader", "()Ljava/lang/ClassLoader;");
+  Ref system = C(e, Ref, 114, type, system_id);
+  Ref parent_id = C(e, Ref, 33, type, "getParent", "()Ljava/lang/ClassLoader;");
+  Ref boot = C(e, Ref, 34, system, parent_id);
+  Ref load_id =
+      C(e, Ref, 33, type, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;");
+  Ref name = C(e, Ref, 167, "fixture.Optional");
+  Ref global_loader = C(e, Ref, 21, boot);
+  for (int i = 0; i < 2; ++i) {
+    CHECK(!C(e, Ref, 34, global_loader, load_id, name));
+    CHECK(C(e, int, 228));
+    Ref failure = C(e, Ref, 15);
+    Ref repeated = C(e, Ref, 15);
+    C(e, void, 17);
+    CHECK(failure && C(e, int, 24, failure, repeated));
+    Ref exception_type = C(e, Ref, 6, "java/lang/ClassNotFoundException");
+    CHECK(C(e, int, 32, failure, exception_type));
+    Ref throwable = C(e, Ref, 6, "java/lang/Throwable");
+    Ref message_id =
+        C(e, Ref, 33, throwable, "getMessage", "()Ljava/lang/String;");
+    Ref message = C(e, Ref, 34, failure, message_id);
+    const char *text = C(e, const char *, 169, message, (void *)0);
+    const char expected[] = "declared missing";
+    CHECK(text);
+    for (unsigned j = 0; j < sizeof(expected); ++j)
+      CHECK(text[j] == expected[j]);
+    C(e, void, 170, message, text);
+    CHECK(!C(vm, int, 5));
+    e = attach();
+    CHECK(e);
+    name = C(e, Ref, 167, "fixture.Optional");
+  }
+  if (unknown) {
+    // Boot failure must not close the system namespace or affect FindClass.
+    if (unknown == 1) {
+      type = C(e, Ref, 6, "java/lang/ClassLoader");
+      system = C(e, Ref, 114, type, system_id);
+      C(e, Ref, 34, system, load_id, name);
+    } else
+      C(e, Ref, 6, "fixture/Optional");
+    return 1;
+  }
+  Ref known = C(e, Ref, 167, "java.lang.String");
+  CHECK(C(e, Ref, 34, global_loader, load_id, known));
+  CHECK(!C(e, int, 228));
+  C(e, void, 22, global_loader);
+  return C(vm, int, 5);
+}
+
 int jni_instrumentation(int mode) {
   Handle e = attach();
   CHECK(e);

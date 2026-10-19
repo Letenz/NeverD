@@ -944,8 +944,9 @@ Lifter архитектур находятся в `lib/lift/X86`, `lib/lift/AArc
 `lib/ir/med/abi/MedCallConvention<Name>.cpp`, зарегистрированная в
 `MedCallConvention.cpp`. Функции, которые никогда не возвращают управление,
 перечислены по средам выполнения в `include/neverd/libc` (`LibCNoReturn.inc`,
-`CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`). Поддержка новой цели тогда
-добавляет файл или запись таблицы, а не ветвление в общем проходе.
+`CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`, `RustRuntimeNoReturn.inc`).
+Поддержка новой цели тогда добавляет файл или запись таблицы, а не ветвление в
+общем проходе.
 
 Неопределённые символы перемещаемого объекта разрешаются в одном общем слое,
 `include/neverd/loader/ObjectExterns.h`. Загрузчик каждого формата собирает

@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <map>
+#include <memory>
 
 namespace neverd {
 
@@ -68,9 +69,69 @@ void scanX86HotpatchEntries(BinaryImage &Img);
 /// executable segments at plausible function prologues.
 void scanDataFuncPointers(BinaryImage &Img);
 
-/// Follow direct ARM/Thumb control-flow edges from exact code entries.
-/// Records only decoded reachable instruction spans; malformed or conflicting
-/// state transitions fail instead of assigning a file-wide default mode.
+/// How an image holds an AArch32 code pointer, which says how much of the
+/// instruction set its bit 0 states.
+enum class ARMCodePointerUse : uint8_t {
+  /// The runtime calls through it, as `blx` does: an ELF DT_INIT or DT_FINI
+  /// value, an init, fini or preinit array entry, or an IRELATIVE resolver.
+  /// Bit 0 set is Thumb code, clear is ARM code.
+  Called,
+  /// A relocated or GOT slot, which may hold a data address.  Bit 0 set is
+  /// still a Thumb code address, in a section the image marks executable;
+  /// clear, it states nothing.
+  Stored,
+};
+
+/// Record the instruction set that \p Pointer, an AArch32 code pointer of a
+/// linked image, states for the code it addresses, as an exact entry that
+/// reachable mode discovery follows.  A pointer outside executable code
+/// states nothing.  Mapping symbols already decide what they cover, and a
+/// called pointer that contradicts them or an exact entry is reported as a
+/// load diagnostic instead of recorded.
+void recordARMCodePointerMode(BinaryImage &Img, uint64_t Pointer,
+                              ARMCodePointerUse Use);
+
+/// Record the modes the stored code pointers of a linked AArch32 image state:
+/// the values of its relocated pointer slots and GOT entries (BaseRelocations)
+/// once every symbol has stated its own.
+void recordARMStoredCodePointerModes(BinaryImage &Img);
+
+/// Reachable ARM/Thumb mode discovery for one image, which keeps what it
+/// decoded: evidence read later, the landing pads of the exception tables,
+/// extends it without decoding the image again.
+class ARMModeDiscovery {
+public:
+  explicit ARMModeDiscovery(BinaryImage &Image);
+  ~ARMModeDiscovery();
+  ARMModeDiscovery(const ARMModeDiscovery &) = delete;
+  ARMModeDiscovery &operator=(const ARMModeDiscovery &) = delete;
+
+  /// Follow direct ARM/Thumb control-flow edges from exact code entries.
+  /// Records only decoded reachable instruction spans; malformed or
+  /// conflicting state transitions fail instead of assigning a file-wide
+  /// default mode.
+  llvm::Error discover();
+
+  /// After the exception tables are read, follow the landing pads of the call
+  /// sites decoding reached, in the mode of that code: the unwinder resumes a
+  /// frame in the instruction set of its PC.  The last phase: it releases
+  /// what the discovery kept.
+  llvm::Error followLandingPads();
+
+  /// How many instructions the discovery disassembled: each address once in
+  /// each mode a path reached it in, however many passes walk it.
+  size_t disassembledInstructions() const { return Disassembled; }
+
+private:
+  struct State;
+  BinaryImage &Img;
+  size_t Disassembled = 0;
+  /// What the discovery keeps between its phases, once it decodes.
+  std::unique_ptr<State> S;
+};
+
+/// ARMModeDiscovery(Img).discover(), for a loader that reads no exception
+/// tables afterwards.
 llvm::Error discoverARMReachableModes(BinaryImage &Img);
 
 /// Add caller-asserted exact function entry modes after format metadata and

@@ -338,6 +338,41 @@ TEST(X86_32PICLibrary, WhatAVoidFunctionsReturnMergesIsNoAssignment) {
       << Source;
 }
 
+// `clang_nothrow_call`'s landing pad stores the exception object at (%esp) and
+// calls __clang_call_terminate.  The unwinder enters the pad with the stack
+// pointer of the call it protects, so the store is the call's argument, and
+// the pad is the catch-all that terminates a noexcept function.  The call
+// had no argument, and the C passed an unknown value.
+TEST(X86_32PICLibrary, ALandingPadPassesTheExceptionObjectOnTheStack) {
+  const std::optional<BinaryImage> Img = loadLibrary();
+  if (!Img)
+    GTEST_SKIP() << "the fixture links with ld.lld";
+  const std::string Source = decompile(*Img, "clang_nothrow_call");
+  EXPECT_TRUE(std::regex_search(
+      Source, std::regex("catch \\(\\.\\.\\.\\) \\{\\s*std_terminate\\(\\);")))
+      << Source;
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+}
+
+// `clang_catch_what`'s landing pad passes the exception object to
+// __cxa_begin_catch and _Unwind_Resume on the stack, and calls the caught
+// object's `what` through its vtable with that object alone.  The pad is
+// entered with the stack pointer of the call it protects: before, both
+// runtime calls passed an unknown value, and the virtual call took the
+// caught object's local copy for a second argument.
+TEST(X86_32PICLibrary, ACatchHandlerPassesWhatItsPadStores) {
+  const std::optional<BinaryImage> Img = loadLibrary();
+  if (!Img)
+    GTEST_SKIP() << "the fixture links with ld.lld";
+  const std::string Source = decompile(*Img, "clang_catch_what");
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+  std::smatch Call;
+  ASSERT_TRUE(std::regex_search(Source, Call,
+                                std::regex("\\+ 8\\)\\)\\)\\(([^()]*)\\);")))
+      << Source;
+  EXPECT_EQ(Call[1].str().find(','), std::string::npos) << Source;
+}
+
 // A linked library reads a `.rodata` table at its GOTOFF displacement from the
 // GOT plus an index.  The LLVM module took the GOT for the table's base: GCC's
 // read went into the writable run that holds the GOT, at a negative offset,

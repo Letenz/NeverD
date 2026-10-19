@@ -308,6 +308,10 @@ struct StackFrameModel {
   BinaryFormat Format = BinaryFormat::Unknown;
   StackOffsetKey StackPointer{VnodeSpace::REG, 0, 0};
   uint16_t Width = 0;
+  /// Every call leaves the stack pointer as it found it: the callee pops its
+  /// own return address and nothing else, as under both x86-64 conventions.
+  /// An i386 callee may pop its arguments too (`ret imm`).
+  bool CallsKeepStackPointer = false;
 
   StackFrameModel(const TargetRegInfo &Info, BinaryFormat F)
       : TRI(&Info), Format(F),
@@ -344,8 +348,9 @@ void transferStackOffsets(const StackFrameModel &M, const LowOp &Op,
   if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
     for (auto It = S.begin(); It != S.end();)
       It = It->first.Space == VnodeSpace::REG &&
-                   M.TRI->isCallPreserved(It->first.Offset, It->first.Size,
-                                          M.Format)
+                   (M.TRI->isCallPreserved(It->first.Offset, It->first.Size,
+                                           M.Format) ||
+                    (M.CallsKeepStackPointer && It->first == M.StackPointer))
                ? std::next(It)
                : S.erase(It);
     if (Op.Output.Size)
@@ -486,6 +491,46 @@ void solveStackOffsets(const StackFrameModel &M, const LowFunc &Func,
       }
     }
   }
+}
+
+/// The register-target jumps of \p Func that run once their own block has
+/// released a frame: every path into the block reaches it with the stack
+/// pointer below the one the function was entered with, and the block raises
+/// it back to that one before the jump.
+std::set<va_t> frameReleasingIndirectJumps(const BinaryImage &Img,
+                                           const LowFunc &Func) {
+  std::set<va_t> Jumps;
+  const size_t N = Func.Blocks.size();
+  if (N == 0)
+    return Jumps;
+  StackFrameModel M(getTargetRegInfo(Img.Arch), Img.abiFormat());
+  M.CallsKeepStackPointer = Img.Arch == Arch::X64;
+  std::vector<std::optional<StackOffsetState>> FromEntry(N);
+  FromEntry[0] = StackOffsetState{{M.StackPointer, {0, 0, 0}}};
+  for (size_t B = 1; B < N; ++B)
+    if (Func.Blocks[B].Preds.empty() ||
+        !Func.Blocks[B].ExceptionalPreds.empty())
+      FromEntry[B] = StackOffsetState{};
+  solveStackOffsets(M, Func, FromEntry);
+  for (size_t B = 0; B < N; ++B) {
+    if (!FromEntry[B])
+      continue;
+    StackOffsetState State = *FromEntry[B];
+    const auto Entering = State.find(M.StackPointer);
+    if (Entering == State.end() || Entering->second.Base != 0 ||
+        Entering->second.Hi >= 0)
+      continue;
+    for (const LowOp &Op : Func.Blocks[B].Ops) {
+      if (Op.Opcode == NdOp::INDIR_BR) {
+        const auto Before = State.find(M.StackPointer);
+        if (Before != State.end() &&
+            Before->second == StackOffsetRange{0, 0, 0})
+          Jumps.insert(Op.Addr);
+      }
+      transferStackOffsets(M, Op, State);
+    }
+  }
+  return Jumps;
 }
 
 } // namespace
@@ -5502,13 +5547,11 @@ void CFGBuilder::multiStageResolve(const BinaryImage &Img, Decoder &Dec,
   // as the call model assumes for every other indirect call.  A resumable
   // trap (`__debugbreak()`) also resumes at its fall-through; only one whose
   // continuation was not decoded leaves the graph incomplete.
-  auto CanReenterAtUnknownAddress = [](const InsnRecord &Rec) {
-    return (Rec.IsResumableTerminator && Rec.IsRet) ||
-           (Rec.IsIndirect && !Rec.IsRet && !Rec.IsCall &&
-            Rec.JumpTableTargets.empty()) ||
-           (Rec.IsBranch && !Rec.IsIndirect && !Rec.IsCall &&
-            Rec.BranchTarget == InvalidVA);
-  };
+  //
+  // A register jump that runs once its block has released the frame every
+  // path into the block allocated leaves this function as a tail call does:
+  // the function's code past its prologue runs only inside its frame.  Like
+  // an indirect call, it enters a function entry, not a dispatch.
   if (Img.Arch == Arch::X64 && !ResolvedTableInfo.empty()) {
     size_t ClosureBudget = limits::kMaxJumpTableMaskFixedPointEvidenceWork;
     auto DebitClosure = [&](size_t Work) {
@@ -5518,6 +5561,26 @@ void CFGBuilder::multiStageResolve(const BinaryImage &Img, Decoder &Dec,
       }
       ClosureBudget -= Work;
       return true;
+    };
+    std::optional<std::set<va_t>> FrameReleasingJumps;
+    auto CanReenterAtUnknownAddress = [&](const InsnRecord &Rec) {
+      if (Rec.IsIndirect && !Rec.IsRet && !Rec.IsCall &&
+          Rec.JumpTableTargets.empty()) {
+        if (!FrameReleasingJumps) {
+          // The frame analysis visits every operation; an exhausted budget
+          // grants nothing.
+          size_t Operations = 0;
+          for (const LowBlock &Block : Func.Blocks)
+            Operations += Block.Ops.size();
+          FrameReleasingJumps = DebitClosure(Operations)
+                                    ? frameReleasingIndirectJumps(Img, Func)
+                                    : std::set<va_t>{};
+        }
+        return !FrameReleasingJumps->count(Rec.Addr);
+      }
+      return (Rec.IsResumableTerminator && Rec.IsRet) ||
+             (Rec.IsBranch && !Rec.IsIndirect && !Rec.IsCall &&
+              Rec.BranchTarget == InvalidVA);
     };
     bool HasRelativeTable = false;
     bool RevokePublishedTables = !DebitClosure(ResolvedTableInfo.size());

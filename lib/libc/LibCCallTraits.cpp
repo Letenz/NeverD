@@ -17,6 +17,7 @@
 #include "neverd/libc/StackProbeIndex.h"
 #include "neverd/libc/WindowsCRT.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/LanguageRuntime.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -249,9 +250,12 @@ bool isCStringParameter(std::string_view Name, unsigned Index) {
 #include "neverd/libc/LibCStringParams.inc"
 #undef LIBC_STRING_PARAM
   };
+  // A row names the routine as its header declares it (`__fwriting`); the
+  // lookup ignores leading underscores on both sides, as the variant rows'.
   const std::string_view Bare = stripLeadingUnderscores(Name);
   for (const StringParam &Param : StringParams)
-    if (Param.Index == Index && Param.Name == Bare)
+    if (Param.Index == Index &&
+        std::string_view(stripLeadingUnderscores(Param.Name)) == Bare)
       return true;
   return false;
 }
@@ -277,18 +281,22 @@ std::optional<std::string_view> functionPointerParameter(std::string_view Name,
                  ? std::optional<std::string_view>(Pointers->Type)
                  : std::nullopt;
   for (const FunctionPointerParam &Param : FunctionPointerParams)
-    if (Param.Index == Index && Param.Name == Bare)
+    if (Param.Index == Index &&
+        std::string_view(stripLeadingUnderscores(Param.Name)) == Bare)
       return Param.Type;
   return std::nullopt;
 }
 
 bool isObjectPointerParameter(std::string_view Name, unsigned Index,
                               LibCVariant Variant) {
-  // Each function's object pointer parameters, as a mask of positions.
+  // Each function's object pointer parameters, as a mask of positions, by
+  // its name without leading underscores: a row names the routine as its
+  // header declares it (`__fwriting`), and the lookup strips the query's.
   static const std::unordered_map<std::string_view, uint64_t> Masks = [] {
     std::unordered_map<std::string_view, uint64_t> Map;
 #define LIBC_OBJECT_POINTER_PARAM(Name, Index)                                 \
-  Map[Name] |= uint64_t(1) << (Index);
+  Map[std::string_view(stripLeadingUnderscores(Name))] |= uint64_t(1)          \
+                                                          << (Index);
 #include "neverd/libc/LibCObjectPointerParams.inc"
 #undef LIBC_OBJECT_POINTER_PARAM
     return Map;
@@ -384,6 +392,32 @@ std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
   return Index ? Index->effect(Img, Target) : stackProbeEffect(Img, Target);
 }
 
+namespace {
+/// Whether \p Name names a routine of Rust's standard library whose
+/// declaration returns `!` (RustRuntimeNoReturn.inc).  A mangled name is
+/// matched by its demangled path without generic arguments; an unmangled one
+/// by its name.
+bool isRustNoReturnRoutine(std::string_view Name) {
+  const llvm::StringRef Symbol(Name.data(), Name.size());
+  const std::string Demangled = demangleRustName(Symbol);
+  llvm::StringRef Path = Demangled;
+  if (Demangled.empty()) {
+    const std::string_view Bare = stripLeadingUnderscores(Name);
+    Path = llvm::StringRef(Bare.data(), Bare.size());
+  } else if (const size_t Generic = Path.find("::<");
+             Generic != llvm::StringRef::npos) {
+    Path = Path.take_front(Generic);
+  }
+  return llvm::StringSwitch<bool>(Path)
+#define RUST_NO_RETURN_PATH(Path) .Case(Path, true)
+#define RUST_NO_RETURN_PATH_PREFIX(Prefix) .StartsWith(Prefix, true)
+#include "neverd/libc/RustRuntimeNoReturn.inc"
+#undef RUST_NO_RETURN_PATH_PREFIX
+#undef RUST_NO_RETURN_PATH
+      .Default(false);
+}
+} // namespace
+
 bool isNoReturnFunction(std::string_view Name) {
   // Every entry is unconditionally __attribute__((noreturn)) in its standard
   // header.  Names whose canonical form keeps a leading underscore appear here
@@ -391,13 +425,14 @@ bool isNoReturnFunction(std::string_view Name) {
   // that only *sometimes* return (warn/warnx, GNU error/error_at_line) are
   // deliberately excluded so the CFG builder never drops genuinely reachable
   // fall-through code.
-  return llvm::StringSwitch<bool>(stripLeadingUnderscores(Name))
+  const bool Listed = llvm::StringSwitch<bool>(stripLeadingUnderscores(Name))
 #define LIBC_NO_RETURN_SYMBOL(Name) .Case(Name, true)
 #include "neverd/libc/CxxRuntimeNoReturn.inc"
 #include "neverd/libc/LibCNoReturn.inc"
 #include "neverd/libc/WindowsNoReturn.inc"
 #undef LIBC_NO_RETURN_SYMBOL
-      .Default(false);
+                          .Default(false);
+  return Listed || isRustNoReturnRoutine(Name);
 }
 
 namespace {

@@ -291,6 +291,20 @@ findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
     if (FoundBoundary)
       continue;
 
+    // A landing pad has no ordinary predecessor: the unwinder enters it with
+    // the stack pointer of the call it protects, which MedSSA carries over
+    // the exceptional edge from the end of the block that call ends.
+    if (Block.Preds.empty() && !Block.ExceptionalPreds.empty()) {
+      for (const ExceptionalEdge &Edge : Block.ExceptionalPreds) {
+        const MedBlock *Source = Blocks.first(Edge.BlockId);
+        if (!Source)
+          return {};
+        Worklist.emplace_back(Edge.BlockId,
+                              static_cast<int>(Source->Ops.size()));
+      }
+      continue;
+    }
+
     if (Block.Preds.empty()) {
       CommonBasis.reset();
       BasisExact = false;

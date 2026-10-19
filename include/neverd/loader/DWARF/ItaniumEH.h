@@ -41,6 +41,14 @@ void recordFrameExtents(BinaryImage &Img);
 /// of the same image.
 void parseItaniumExceptions(BinaryImage &Img);
 
+/// Bind each frame GCC's hot/cold partitioning split from its function
+/// (`foo.cold`, entered by a jump with the function's frame) to the one
+/// function whose direct branches enter it with the frame its rules
+/// describe: the parent owns its code, as an x64 chained unwind record's
+/// primary does, and its start begins no function.  Frames with landing pads
+/// of their own stay functions.  Called by parseItaniumExceptions.
+void bindColdFragments(BinaryImage &Img);
+
 /// Re-decode one function's LSDA after its personality has changed.
 ///
 /// \p Function is a staging copy whose personality already carries the new

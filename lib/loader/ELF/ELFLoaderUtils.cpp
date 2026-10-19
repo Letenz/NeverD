@@ -6,6 +6,7 @@
 
 #include "neverd/loader/ELF/ELFLoaderUtils.h"
 
+#include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/object/ELFLayout.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
@@ -185,6 +186,7 @@ void recordRuntimePointerArray(va_t Addr, uint64_t Size, std::vector<va_t> &Out,
     va_t Target = static_cast<va_t>(readPtr(P, Img.is64Bit()));
     if (Target == 0)
       continue;
+    recordARMCodePointerMode(Img, Target, ARMCodePointerUse::Called);
     Target = normalizeELFFunctionAddress(Target, Img);
     if (!Img.recordRuntimeFunction(Target))
       continue;
@@ -354,10 +356,12 @@ void parseDynamic(const llvm::object::ELFFile<ELFT> &ELF,
     case DT_INIT:
       Img.DynInfo.InitAddr = normalizeELFFunctionAddress(E.Val, Img);
       Img.recordRuntimeFunction(Img.DynInfo.InitAddr);
+      recordARMCodePointerMode(Img, E.Val, ARMCodePointerUse::Called);
       break;
     case DT_FINI:
       Img.DynInfo.FiniAddr = normalizeELFFunctionAddress(E.Val, Img);
       Img.recordRuntimeFunction(Img.DynInfo.FiniAddr);
+      recordARMCodePointerMode(Img, E.Val, ARMCodePointerUse::Called);
       break;
     case DT_PREINIT_ARRAY:
       recordRuntimePointerArray(E.Val, FindVal(DT_PREINIT_ARRAYSZ),

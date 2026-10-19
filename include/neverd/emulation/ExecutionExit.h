@@ -7,6 +7,7 @@
 #define NEVERD_EMULATION_EXECUTIONEXIT_H
 
 #include "neverd/emulation/BackendFault.h"
+#include "neverd/emulation/ResourceEvent.h"
 #include "neverd/emulation/ServiceRequest.h"
 
 #include <string>
@@ -33,6 +34,7 @@ struct ExecutionExit {
   /// Present only for ServiceRequest. The CPU retains the request until its
   /// owner consumes it; returning this record does not release the CPU.
   std::optional<ServiceRequest> Service = std::nullopt;
+  std::optional<ResourcePause> Resource = std::nullopt;
 };
 } // namespace neverd::emulation
 #endif

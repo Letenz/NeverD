@@ -502,7 +502,7 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
     if (S.Kind == StmtKind::Assign && S.Dst && S.Val &&
         S.Dst->Kind == ExprKind::Var && S.Val->Kind == ExprKind::Call &&
         !S.Val->IntrinsicOutputs.empty()) {
-      auto Rendered = MultiOutputRender{}(
+      auto Rendered = MultiOutputRender{Opts.Format != BinaryFormat::COFF}(
           Opts.TheArch, S.Val->IntrinsicId, S.Val->IntrinsicOutputs,
           S.Val->Operands, [this](const HighExpr &E) { return exprStr(E); },
           [this](const MedVar &V) { return varName(V); },

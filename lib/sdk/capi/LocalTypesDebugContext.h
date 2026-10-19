@@ -214,6 +214,10 @@ public:
   /// one changes what the decompiler prints.
   llvm::StringSet<> readTypes() const;
 
+  /// Reads the names the image states for its functions (statedNames()),
+  /// where nothing waits for them, as warming the analysis does.
+  void indexStatedNames() const;
+
 private:
   /// The record the library defines as \p Name, of \p Size bytes unless
   /// that is unknown.
@@ -256,7 +260,13 @@ private:
   /// What renders the records a unit embeds: spelling the library's names
   /// for each unit would name every type again.
   mutable std::unique_ptr<types::EmbeddedCRenderer> CRenderer;
-  mutable std::map<va_t, std::vector<std::string>> StatedNames;
+  /// The names the image states for each function entry that has any, read
+  /// at the first statedNames(): one pass over the image's exports and
+  /// symbols, where reading them for each entry scans them all again.
+  mutable std::optional<std::unordered_map<va_t, std::vector<std::string>>>
+      StatedNames;
+  /// Fills StatedNames.  Holds Mutex.
+  void readStatedNames() const;
   mutable std::map<va_t, std::string> ImportNames;
   mutable std::map<va_t, std::optional<FunctionSym>> DeclaredSignatures;
   /// A type of the debug information it gave the library's names, with

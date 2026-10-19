@@ -1626,6 +1626,42 @@ TEST(ProcessReport, AndroidInstrumentationInputIsExplicitAndStrict) {
   }
 }
 
+TEST(ProcessReport, AndroidLoaderFailuresRequireExactTypedOutcomes) {
+  auto Wrap = [](std::string Body) {
+    return std::string(
+               R"({"android":{"jni":true,"application_snapshot":{"phase":"application","class_lookup_failures":)") +
+           Body + "}}}";
+  };
+  for (const char *Loader : {"boot", "system", "application"}) {
+    auto Good = processOptionsFromJSON(
+        Wrap(std::string(R"([{"loader":")") + Loader +
+             R"(","binary_name":"test.Absent","message":null}])"));
+    ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+    const auto &Rows = Good->Android->Application->class_lookup_failures;
+    ASSERT_EQ(Rows.size(), 1u);
+    EXPECT_EQ(Rows[0].binary_name, "test.Absent");
+    EXPECT_FALSE(Rows[0].message);
+  }
+  auto Text = processOptionsFromJSON(Wrap(
+      R"([{"loader":"boot","binary_name":"test.Absent","message":"explicit \u00e9"}])"));
+  ASSERT_TRUE(bool(Text)) << llvm::toString(Text.takeError());
+  EXPECT_EQ(Text->Android->Application->class_lookup_failures[0].message,
+            "explicit \xc3\xa9");
+  for (
+      const char *Bad :
+      {"null", "{}", "[null]",
+       R"([{"loader":"boot","binary_name":"test.Absent"}])",
+       R"([{"loader":"boot","binary_name":"test.Absent","message":false}])",
+       R"([{"loader":"custom","binary_name":"test.Absent","message":null}])",
+       R"([{"loader":"boot","binary_name":"test/Absent","message":null}])",
+       R"([{"loader":"boot","binary_name":"test.Absent","message":null,"extra":0}])",
+       R"([{"loader":"boot","binary_name":"test.Absent","message":null},{"loader":"boot","binary_name":"test.Absent","message":"different"}])"}) {
+    auto Result = processOptionsFromJSON(Wrap(Bad));
+    EXPECT_FALSE(bool(Result)) << Bad;
+    llvm::consumeError(Result.takeError());
+  }
+}
+
 TEST(ProcessReport, AndroidApplicationSnapshotIsExplicitAndStrict) {
   auto Parsed = processOptionsFromJSON(R"({"android":{"jni":true,
     "application_snapshot":{"phase":"application","package_name":"test.app"}}})");

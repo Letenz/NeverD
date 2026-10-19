@@ -110,12 +110,13 @@ bool Session::synchronizeFunctions() {
     const auto PublishRecoveredSize = [&](FuncInfo &Listed,
                                           const LowFunc &Recovered) {
       // Discovery publishes entries without extents. Once a complete lift
-      // supplies one, every SDK consumer must see it regardless of call order.
-      // Keep nonzero loader/debug/user extents authoritative.
+      // supplies one, every SDK consumer must see it regardless of call order,
+      // and a rebuild of the list gives it again (RecoveredSizes).  Keep
+      // nonzero loader/debug/user extents authoritative.
       if (Listed.Size == 0 && Recovered.OriginalSize != 0) {
         Listed.Size = Recovered.OriginalSize;
+        RecoveredSizes[Listed.Entry] = Recovered.OriginalSize;
         functionListChanged();
-        ListInputs.reset();
       }
     };
     // A selected run lifts functions the list, kept in address order,

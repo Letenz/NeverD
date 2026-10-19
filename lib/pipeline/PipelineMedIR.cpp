@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "PipelineLowIRDetail.h"
 #include "PipelineMedAudit.h"
 #include "PipelineSEHRuntimeMemory.h"
 #include "PipelineTrimStorage.h"
@@ -119,9 +120,22 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Weight[I] = W;
   }
 
+  // The runtime routines a call may name, read once for the run, or once
+  // for every run that shares the analysis cache.
+  std::shared_ptr<const PipelineAnalysisCache::SymbolInventory> Inventory;
+  std::map<va_t, Intrinsic> OwnRuntimeRoutines;
+  const std::map<va_t, Intrinsic> *RuntimeRoutines = &OwnRuntimeRoutines;
+  if (PipelineAnalysisCache *Shared = sharedAnalysisCache(Img, Opts)) {
+    Inventory = PipelineAnalysisCache::SymbolInventory::of(Img, *Shared);
+    RuntimeRoutines = &Inventory->runtimeRoutineCalls(Img);
+  } else {
+    OwnRuntimeRoutines = runtimeRoutineCallsOf(Img, Img.Arch);
+  }
+
   parallelForEachWeighted(Weight, [&](auto Claim, size_t N) {
     LowToMedConverter Local;
     Local.setBinaryImage(&Img);
+    Local.setRuntimeRoutineCalls(RuntimeRoutines);
     Local.setSourceCallHintsEnabled(!Opts.PatchMode && !Opts.LiftMode);
     Local.setSourceEntryTypeHints(&SourceEntryHints);
     Local.setSourceCalleeTypeHints(&SourceCalleeHints);

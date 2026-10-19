@@ -57,6 +57,7 @@ add_neverd_component_library(NeverDEmulationNative
 if(NEVERD_EMULATION_BACKEND_UNICORN)
   add_neverd_component_library(NeverDEmulationUnicorn
     backends/unicorn/UnicornBackend.cpp
+    backends/unicorn/UnicornResourcePause.cpp
     backends/unicorn/UnicornMachine.cpp
     backends/unicorn/UnicornArchitecture.cpp
     backends/unicorn/UnicornAArch64Atomic.cpp
@@ -92,6 +93,23 @@ add_neverd_component_library(NeverDEmulationRuntime
 add_neverd_component_library(NeverDEmulationImage
   runtime/ImageMapping.cpp
   LINK_COMPONENTS Loader EmulationCore
+  LLVM_COMPONENTS Support)
+
+add_neverd_component_library(NeverDEmulationModules
+  runtime/ModuleBinding.cpp
+  runtime/ModuleMappingTransaction.cpp
+  runtime/ModuleResolver.cpp
+  LINK_COMPONENTS Modules EmulationImage EmulationRuntime
+  LLVM_COMPONENTS Support)
+
+add_neverd_component_library(NeverDEmulationWorkload
+  runtime/BufferExecution.cpp
+  runtime/ExecutionCommandJSON.cpp
+  runtime/ExecutionRun.cpp
+  runtime/ExecutionRunJSON.cpp
+  runtime/ExecutionRunInvocation.cpp
+  runtime/GuestInvocation.cpp
+  LINK_COMPONENTS EmulationModules EmulationABI
   LLVM_COMPONENTS Support)
 
 add_subdirectory(os/linux)

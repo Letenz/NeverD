@@ -20,10 +20,25 @@ llvm::Error ExecutionBackend::run(uint64_t PC, uint64_t Timeout) {
         Exit->Diagnostic);
   if (Exit->Kind == ExecutionExitKind::ServiceRequest)
     return diagnostic::error(diagnostic::PendingService);
+  if (Exit->Kind == ExecutionExitKind::ResourcePause)
+    return diagnostic::error(diagnostic::ResourcePausePending);
   if (!Exit->Diagnostic.empty())
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    Exit->Diagnostic);
   return llvm::Error::success();
+}
+llvm::Error ExecutionBackend::acknowledgeResourcePause() {
+  return diagnostic::error(diagnostic::ResourcePauseUnsupported);
+}
+const char *resourceRestartKindName(ResourceRestartKind Kind) {
+  switch (Kind) {
+#define NEVERD_RESOURCE_RESTART(Name, Text)                                    \
+  case ResourceRestartKind::Name:                                              \
+    return Text;
+#include "neverd/emulation/ResourceEvent.def"
+#undef NEVERD_RESOURCE_RESTART
+  }
+  llvm_unreachable("invalid resource restart kind");
 }
 
 llvm::Expected<ExecutionExit> ExecutionBackend::runUntilExit(uint64_t,

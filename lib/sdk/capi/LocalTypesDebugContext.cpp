@@ -9,6 +9,7 @@
 #include "neverd/Limits.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/low/ImportCallee.h"
+#include "neverd/loader/FunctionNames.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
@@ -712,15 +713,25 @@ std::optional<FunctionSym> LocalTypesDebugContext::entrySignature() const {
   return Signature;
 }
 
+void LocalTypesDebugContext::readStatedNames() const {
+  if (!StatedNames)
+    StatedNames = Image ? statedFunctionNamesByAddress(*Image)
+                        : std::unordered_map<va_t, std::vector<std::string>>();
+}
+
+void LocalTypesDebugContext::indexStatedNames() const {
+  std::lock_guard<std::mutex> Guard(Mutex);
+  readStatedNames();
+}
+
 std::vector<std::string> LocalTypesDebugContext::statedNames(va_t Entry) const {
   if (!Image)
     return {};
   std::lock_guard<std::mutex> Guard(Mutex);
-  auto [Known, Added] = StatedNames.try_emplace(Entry);
-  if (Added)
-    for (const llvm::StringRef Name : Image->statedFunctionNamesAt(Entry))
-      Known->second.push_back(Name.str());
-  return Known->second;
+  readStatedNames();
+  if (const auto Known = StatedNames->find(Entry); Known != StatedNames->end())
+    return Known->second;
+  return {};
 }
 
 std::string LocalTypesDebugContext::importName(va_t Addr) const {

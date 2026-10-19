@@ -133,6 +133,18 @@ inline llvm::StringRef importNameOfSymbol(llvm::StringRef Symbol,
 }
 
 /// The bytes of arguments stdcall symbol \p Symbol says its routine takes
+/// Whether stdcall names on \p Format and \p Target carry the bytes their
+/// routine's arguments take (SymbolDecorations.def): stdcallArgumentBytes
+/// reads none from any other name.
+inline bool stdcallNamesCarryArgumentBytes(BinaryFormat Format, Arch Target) {
+  bool ArgumentBytes = false;
+#define NEVERD_ABI_ARGUMENT_BYTES_SUFFIX(FormatId, ArchId)                     \
+  if (Format == BinaryFormat::FormatId && Target == Arch::ArchId)              \
+    ArgumentBytes = true;
+#include "neverd/loader/SymbolDecorations.def"
+  return ArgumentBytes && hasABIUnderscore(Format, Target);
+}
+
 /// and pops, on a format and architecture whose stdcall names carry them
 /// (SymbolDecorations.def): 8 for an import library's thunk
 /// `_NlsValidateLocale@8` and its slot `__imp__NlsValidateLocale@8`.  None
@@ -140,12 +152,7 @@ inline llvm::StringRef importNameOfSymbol(llvm::StringRef Symbol,
 /// registers) or a C++ one.
 inline std::optional<unsigned>
 stdcallArgumentBytes(llvm::StringRef Symbol, BinaryFormat Format, Arch Target) {
-  bool ArgumentBytes = false;
-#define NEVERD_ABI_ARGUMENT_BYTES_SUFFIX(FormatId, ArchId)                     \
-  if (Format == BinaryFormat::FormatId && Target == Arch::ArchId)              \
-    ArgumentBytes = true;
-#include "neverd/loader/SymbolDecorations.def"
-  if (!ArgumentBytes || !hasABIUnderscore(Format, Target))
+  if (!stdcallNamesCarryArgumentBytes(Format, Target))
     return std::nullopt;
   Symbol.consume_front(importSlotPrefix(Format));
   if (!Symbol.consume_front("_"))

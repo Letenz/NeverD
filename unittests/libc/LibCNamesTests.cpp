@@ -480,6 +480,48 @@ TEST(HeaderFor, DataObjectsTheirHeadersDeclare) {
   EXPECT_STREQ(typeOfDataObject("optind"), "int");
   EXPECT_STREQ(typeOfDataObject("timezone"), "long");
   EXPECT_EQ(typeOfDataObject("my_stream"), nullptr);
+  // The GNU objects 398 Debian programs copy (program_invocation_short_name)
+  // and 187 reach (__environ), which <errno.h> and <unistd.h> declare under
+  // _GNU_SOURCE, as the units define it.
+  EXPECT_STREQ(headerOfDataObject("environ"), "unistd.h");
+  EXPECT_STREQ(typeOfDataObject("__environ"), "char **");
+  EXPECT_STREQ(headerOfDataObject("program_invocation_short_name"), "errno.h");
+  EXPECT_STREQ(typeOfDataObject("program_invocation_name"), "char *");
+}
+
+TEST(HeaderFor, RoutinesTheGnuLibrarysMacrosCall) {
+  // The GNU C Library's headers declare the routines their macros and
+  // inline functions call, which programs import by these names: getline's
+  // __getdelim, SIGRTMIN's __libc_current_sigrtmin, sigsetjmp's
+  // __sigsetjmp, CPU_COUNT's __sched_cpucount, gettext's __dcgettext and
+  // mbrlen's __mbrlen.  A unit that includes the header takes their
+  // declarations and declares none of its own beside them.
+  EXPECT_STREQ(headerFor("__getdelim"), "stdio.h");
+  EXPECT_STREQ(headerFor("__libc_current_sigrtmin"), "signal.h");
+  EXPECT_STREQ(headerFor("__libc_current_sigrtmax"), "signal.h");
+  EXPECT_STREQ(headerFor("__sigsetjmp"), "setjmp.h");
+  EXPECT_STREQ(headerFor("__sched_cpucount"), "sched.h");
+  EXPECT_STREQ(headerFor("__dcgettext"), "libintl.h");
+  EXPECT_STREQ(headerFor("__mbrlen"), "wchar.h");
+  const auto Getdelim = libcArity("__getdelim", LibCVariant::GNU);
+  ASSERT_TRUE(Getdelim.has_value());
+  EXPECT_EQ(Getdelim->IntArgs, 4);
+  EXPECT_TRUE(isObjectPointerParameter("__getdelim", 3, LibCVariant::GNU));
+  EXPECT_FALSE(isObjectPointerParameter("__getdelim", 2, LibCVariant::GNU));
+  EXPECT_EQ(libcResult("__sched_cpualloc", LibCVariant::GNU),
+            LibCResult::Pointer);
+}
+
+TEST(HeaderFor, UnderscoredRoutinesTakeTheirObjectPointers) {
+  // A row names a routine as its header declares it, and the lookups ignore
+  // leading underscores on both sides: __fwriting's and __fpending's
+  // streams and __assert_fail's strings are pointers C converts no integer
+  // to, as __memcpy's are memcpy's.  The rows never matched before.
+  EXPECT_TRUE(isObjectPointerParameter("__fwriting", 0, LibCVariant::GNU));
+  EXPECT_TRUE(isObjectPointerParameter("__fpending", 0, LibCVariant::GNU));
+  EXPECT_TRUE(isObjectPointerParameter("__overflow", 0, LibCVariant::GNU));
+  EXPECT_TRUE(isObjectPointerParameter("__assert_fail", 1, LibCVariant::GNU));
+  EXPECT_FALSE(isObjectPointerParameter("__assert_fail", 2, LibCVariant::GNU));
 }
 
 TEST(HeaderFor, StdioFunctions) {
@@ -774,6 +816,38 @@ TEST(IsNoReturnFunction, ItaniumCxxTerminators) {
   EXPECT_TRUE(isNoReturnFunction("_ZSt9terminatev"));
   EXPECT_TRUE(isNoReturnFunction("__cxa_call_terminate"));
   EXPECT_TRUE(isNoReturnFunction("__clang_call_terminate"));
+}
+
+TEST(IsNoReturnFunction, RustRoutinesDeclaredToReturnNever) {
+  // v0 names in ELF and Mach-O spelling, a legacy name, a generic instance,
+  // the panic_const family, and the panic handler std exports under its own
+  // name or as a member of the synthetic `__rustc` crate.
+  for (const char *Name :
+       {"_RNvNtCsbAqs9W1eE8G_4core6option13unwrap_failed",
+        "__RNvNtCsbAqs9W1eE8G_4core6option13unwrap_failed",
+        "_ZN4core9panicking5panic17h0123456789abcdefE",
+        "__RINvNtCsbAqs9W1eE8G_4core9panicking13assert_failedyyEB4_",
+        "__RNvNtNtCsbAqs9W1eE8G_4core9panicking11panic_const"
+        "24panic_const_add_overflow",
+        "__RNvNtNtCsbAqs9W1eE8G_4core5slice5index16slice_index_fail",
+        "__RNvNtCsl2jJwwz0T1e_5alloc7raw_vec12handle_error",
+        "__RNvCs9wFQrvczXsK_7___rustc17rust_begin_unwind",
+        "_rust_begin_unwind"}) {
+    SCOPED_TRACE(Name);
+    EXPECT_TRUE(isNoReturnFunction(Name));
+  }
+  // std::thread::panicking, std::panicking::panic_count::increase and
+  // std::process::id return; __rust_start_panic returns when no unwinder
+  // takes the panic; a crate's own `panicking::panic` is not core's.
+  for (const char *Name :
+       {"_RNvNtCsgejaSCmAoRz_3std6thread9panicking",
+        "__RNvNtNtCsgejaSCmAoRz_3std9panicking11panic_count8increase",
+        "_RNvNtCsgejaSCmAoRz_3std7process2id",
+        "__RNvCs9wFQrvczXsK_7___rustc18___rust_start_panic",
+        "_RNvNtCs1a2b3c4d5e6_7mycrate9panicking5panic"}) {
+    SCOPED_TRACE(Name);
+    EXPECT_FALSE(isNoReturnFunction(Name));
+  }
 }
 
 TEST(IsNoReturnFunction, MsvcGsHelpers) {

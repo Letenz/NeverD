@@ -4780,6 +4780,15 @@ should orchestrate those components rather than absorb their algorithms.
 
 ## LLVM C object storage
 
+Finite direct native memory accesses into pointer-bearing data use a canonical
+relocation-free byte interval in `MedLLVMEmitter`. They do not recursively
+materialize unrelated pointer slots. An address-valued, indexed or pointer-slot
+access still demands the complete relocation mirror; its creation rebinds all
+earlier direct accesses to that same storage. Required unresolved pointers keep
+failing emission. Mergeable shards retain whole-run storage so masked bodies
+cannot give the same image bytes different identities across modules. Runtime
+callable and registration-owned storage keep their original-image contracts.
+
 `LLVMCStackAllocation` owns counted and non-entry stack allocations on the private C clone. It retains DataLayout allocation stride, unsigned count, alignment and execution position. A side-effecting private call renders plain `__builtin_alloca` at the original instruction, checks size overflow and aligns within extra bytes; allocation lifetime therefore reaches function return on Clang and GCC. Entry allocations of one object retain ordinary local declarations. Wider counts, scalable storage, non-default address spaces, inalloca/swifterror and explicit stack save/restore refuse before normalization. Private markers in input IR also refuse; caller IR is unchanged.
 
 `LLVMCStorage` shares explicit over-alignment across local and global objects and their declarations. String definitions retain the complete LLVM array extent, including trailing zero bytes. LLVM global values denote addresses in expressions and initializers; only object declarations and direct loads/stores use bare C names. Imported data bindings retain their existing address representation.
@@ -5333,6 +5342,10 @@ existing budget; OS models do not replace CPU hooks to collect traces.
 Selected Android execution observations instead use `ExecutionSession` watches
 to read stopped scalar state and explicit memory. `AndroidObservation` owns
 shared C++/JSON admission and capture, and the runtime owns watch continuation.
+Register-relative observations resolve the captured x0–x30/SP state in that
+same owner, with checked signed offsets and complete readable extents. They
+share fixed-read output reservation, snapshot ordering and fail-stop behavior;
+JSON only translates explicit register names and scalar inputs.
 Checked quantum boundaries precede a watch of the next instruction, so a
 cooperatively selected thread cannot inherit another thread's skipped watch.
 Observation stops preserve the current quantum and do not charge a service.
@@ -6830,7 +6843,8 @@ An entry for a format wins over one for every format of its architecture:
 Microsoft x64 is COFF's, and System V x86-64 that of ELF and Mach-O, whose
 x86-64 convention Apple took from it.
 Functions that never return are listed per runtime under `include/neverd/libc`
-(`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`).
+(`LibCNoReturn.inc`, `CxxRuntimeNoReturn.inc`, `WindowsNoReturn.inc`,
+`RustRuntimeNoReturn.inc`).
 Supporting another target then adds a file or a table entry instead of a branch
 in the shared pass.
 
@@ -8227,6 +8241,12 @@ Program registers framework field ownership by declaration identity, independent
 of supplied source metadata. Runtime routes those instance fields to the same
 AndroidFramework state as library getters. Instrumentation starts from explicit
 optional state and retains compatible guest writes; JNI IDs do not own a copy.
+Exact loader-scoped negative class lookup observations are admitted by the
+shared Android application validator and checked against the Runtime's actual
+Program visibility. AndroidFramework creates the shared throwable and message;
+JNI transports that identity, and DEX catches it through the existing Runtime.
+JSON does not execute or infer lookup outcomes, and a negative parent observation
+does not close a child namespace or change JNI FindClass.
 The retained application files directory and File path values use the same
 heap. Native setup validates its declared directory against LinuxFiles; Dalvik
 does not acquire an independent host filesystem. LinuxFiles owns getcwd bytes
@@ -8455,3 +8475,13 @@ reservation explicitly excludes unsupported concurrent operations.
 `X86LegacyVectorMoveAudit` admits legacy MOVSS/MOVSD register and unsegmented memory forms through the same raw-prefix, opcode, ModRM/SIB and decoder-detail checks as packed moves. XMM operands remain 16 bytes while memory operands are exactly 4 or 8 bytes. The existing scalar move owners merge register sources and zero the remaining low-128-bit destination bytes on memory loads, preserving higher vector bits. Complete emitted spans bind the undefined-output receipt. This does not admit string MOVSD, VEX/EVEX forms, segmented memory or an opaque-state preservation contract.
 
 `SymState::storeConditional` optionally applies one STORE or atomic write phase without a nonalias contract. It constructs byte-equality conditions for current materialized bytes in other absolute or 64-bit symbolic banks; the actual bank uses ordinary overlap handling. Missing bytes retain the write's new unknown epochs, and historical facts are never imported. Complete plan validation and work charges precede conditional expression construction and the single store. Owner refusal leaves state unchanged. `SymExec::stepWithConditionalStore` uses this only for STORE and strictly admitted scalar CMPXCHG, retaining existing refusal havoc and publishing Old only after success. Other operations leave the policy Invalid. This does not prove access validity or initial alias consistency, or guarantee inexpensive downstream solving.
+
+## Explicit runtime modules and persistent execution
+
+`modules/ModuleSet` owns caller-declared files and debug identity independently
+of CPU or OS models. `emulation/runtime/ModuleBinding` owns transactional guest
+instances; environments contribute their publication transaction through that
+boundary. `ExecutionRun` owns persistent stage, resource pause and finite call
+control over one `ExecutionSession`. Transport adapters delegate to these owners.
+The registered raw-buffer factory requires CPU emulation only. See
+[runtime modules](runtime-modules.md) for contracts, bounds and C/CLI entry points.

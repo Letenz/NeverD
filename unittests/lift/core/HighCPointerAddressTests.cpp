@@ -1633,9 +1633,9 @@ int main(void) {
 
 TEST(HighCPointerAddresses, DebugSymbolsBoundAnUnsizedIndexedTable) {
   // An eight-byte table no symbol sizes, with other data after it in its
-  // section.  Without debug information the table the code indexes runs to
-  // the section's end; with a data symbol right after it, as a PDB public
-  // names the next object without sizing it, the table ends there.
+  // section.  Without debug information the index `arg0 & 7` proves the code
+  // reaches eight bytes of it; with a data symbol right after it, as a PDB
+  // public names the next object without sizing it, the table ends there.
   BinaryImage Img = makeImageObjectFixture(
       0x140003700, {1, 10, 10, 10, 11, 11, 11, 11, 7, 7, 7, 7, 7, 7, 7, 7,
                     7, 7,  7,  7,  7,  7,  7,  7,  7, 7, 7, 7, 7, 7, 7, 7},
@@ -1683,14 +1683,306 @@ TEST(HighCPointerAddresses, DebugSymbolsBoundAnUnsizedIndexedTable) {
     OS.flush();
     return Source;
   };
-  const std::string Section = Emit(nullptr);
-  EXPECT_NE(Section.find("[32]"), std::string::npos) << Section;
+  const std::string Proven = Emit(nullptr);
+  EXPECT_NE(Proven.find("[8]"), std::string::npos) << Proven;
+  EXPECT_EQ(Proven.find("[32]"), std::string::npos) << Proven;
   const std::string Bounded = Emit(&Dbg);
   EXPECT_NE(Bounded.find("[8]"), std::string::npos) << Bounded;
   EXPECT_EQ(Bounded.find("[32]"), std::string::npos) << Bounded;
-  compileAndRunCallOrdering(Bounded + R"c(
+  for (const std::string &Source : {Proven, Bounded})
+    compileAndRunCallOrdering(Source + R"c(
 int main(void) {
   return pick(0) == 1 && pick(4) == 11 && pick(9) == 10 ? 0 : 1;
+}
+)c");
+}
+
+// A 64-byte section no symbol divides, whose byte at offset I is 3 * I + 1,
+// and functions of the word `arg0` that read it.
+struct UnnamedSection {
+  static constexpr va_t Base = 0x140003800;
+  BinaryImage Img;
+  TypeRef Word = NdType::makeInt(8, false);
+  TypeRef Byte = NdType::makeInt(1, false);
+  TypeRef Result = NdType::makeInt(4, false);
+
+  explicit UnnamedSection(bool Writable = false) {
+    std::vector<uint8_t> Bytes(64);
+    for (size_t I = 0; I < Bytes.size(); ++I)
+      Bytes[I] = static_cast<uint8_t>(3 * I + 1);
+    Img = makeImageObjectFixture(Base, std::move(Bytes), Writable);
+    Section Sec;
+    Sec.Name = Writable ? ".data" : ".rdata";
+    Sec.VA = Base;
+    Sec.Size = 64;
+    Sec.Flags = SegmentFlags::Readable;
+    if (Writable)
+      Sec.Flags = Sec.Flags | SegmentFlags::Writable;
+    Img.Sections.push_back(Sec);
+  }
+
+  HighFunc function(const char *Name) const {
+    HighFunc Func;
+    Func.Name = Name;
+    Func.ReturnType = Result;
+    Func.Params = {{"arg0", Word}};
+    return Func;
+  }
+
+  // The \p Element at \p Table + \p Index, as the function's result.
+  ExprPtr readAt(ExprPtr Index, TypeRef Element, va_t Table = Base) const {
+    const bool Widens = Element->Size < Result->Size;
+    ExprPtr Value = HighExpr::makeLoad(
+        HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeConst(Table, 8),
+                            std::move(Index)),
+        Widens ? std::move(Element) : Result);
+    if (Widens)
+      Value = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Value));
+    Value->Type = Result;
+    return Value;
+  }
+
+  ExprPtr mask(uint64_t Bits) const {
+    return HighExpr::makeBinop(NdOp::INT_AND, parameter(0, Word),
+                               HighExpr::makeConst(Bits, 8));
+  }
+
+  MedVar temporary(int Id) const {
+    MedVar Var;
+    Var.Kind = MedVar::Temp;
+    Var.Id = Id;
+    Var.Size = 8;
+    Var.TheArch = Arch::X64;
+    return Var;
+  }
+
+  static HighStmt assign(const MedVar &Var, TypeRef Type, ExprPtr Value,
+                         va_t Addr = 0) {
+    HighStmt Assign;
+    Assign.Kind = StmtKind::Assign;
+    Assign.Addr = Addr;
+    Assign.Dst = HighExpr::makeVar(Var, std::move(Type));
+    Assign.Val = std::move(Value);
+    return Assign;
+  }
+
+  std::string emit(const std::vector<HighFunc> &Funcs) const {
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    Options.Image = &Img;
+    EXPECT_TRUE(HighCEmitter().emit(Funcs, OS, Options));
+    OS.flush();
+    return Source;
+  }
+};
+
+TEST(HighCPointerAddresses, ProvenIndexesBoundTablesNoSymbolSizes) {
+  // Each function reads a table through an index whose form proves how far
+  // it reaches: the table the C declares holds those bytes and no more, and
+  // reads as the image does.  An index nothing bounds, or a narrow one
+  // sign-extended, may reach anywhere in the section, which stays whole.
+  const UnnamedSection Data;
+
+  HighFunc Masked = Data.function("masked");
+  returnValue(Masked, Data.readAt(Data.mask(3), Data.Byte));
+  const std::string MaskedSource = Data.emit({Masked});
+  EXPECT_NE(MaskedSource.find("[4]"), std::string::npos) << MaskedSource;
+  EXPECT_EQ(MaskedSource.find("[64]"), std::string::npos) << MaskedSource;
+  compileAndRunCallOrdering(MaskedSource + R"c(
+int main(void) {
+  return masked(0) == 1 && masked(3) == 10 && masked(6) == 7 ? 0 : 1;
+}
+)c");
+
+  // A table inside the section, not at its start.
+  HighFunc Inside = Data.function("inside");
+  returnValue(Inside,
+              Data.readAt(Data.mask(3), Data.Byte, UnnamedSection::Base + 16));
+  const std::string InsideSource = Data.emit({Inside});
+  EXPECT_NE(InsideSource.find("[4]"), std::string::npos) << InsideSource;
+  EXPECT_EQ(InsideSource.find("[64]"), std::string::npos) << InsideSource;
+  compileAndRunCallOrdering(InsideSource + R"c(
+int main(void) {
+  return inside(0) == 49 && inside(3) == 58 && inside(5) == 52 ? 0 : 1;
+}
+)c");
+
+  // The index reaches the read through a temporary assigned once before it.
+  HighFunc Assigned = Data.function("assigned");
+  const MedVar Index = Data.temporary(7);
+  Assigned.Body.push_back(
+      UnnamedSection::assign(Index, Data.Word, Data.mask(7)));
+  returnValue(Assigned,
+              Data.readAt(HighExpr::makeVar(Index, Data.Word), Data.Byte));
+  const std::string AssignedSource = Data.emit({Assigned});
+  EXPECT_NE(AssignedSource.find("[8]"), std::string::npos) << AssignedSource;
+  EXPECT_EQ(AssignedSource.find("[64]"), std::string::npos) << AssignedSource;
+  compileAndRunCallOrdering(AssignedSource + R"c(
+int main(void) {
+  return assigned(0) == 1 && assigned(7) == 22 && assigned(9) == 4 ? 0 : 1;
+}
+)c");
+
+  // Four-byte entries: `(arg0 & 3) << 2` reaches sixteen bytes.
+  HighFunc Scaled = Data.function("scaled");
+  returnValue(Scaled,
+              Data.readAt(HighExpr::makeBinop(NdOp::INT_LEFT, Data.mask(3),
+                                              HighExpr::makeConst(2, 8)),
+                          Data.Result));
+  const std::string ScaledSource = Data.emit({Scaled});
+  EXPECT_NE(ScaledSource.find("[16]"), std::string::npos) << ScaledSource;
+  EXPECT_EQ(ScaledSource.find("[64]"), std::string::npos) << ScaledSource;
+  compileAndRunCallOrdering(ScaledSource + R"c(
+int main(void) {
+  return scaled(1) == 0x1613100Du && scaled(3) == 0x2E2B2825u ? 0 : 1;
+}
+)c");
+
+  // Nothing bounds a parameter, and a sign-extended byte may be negative.
+  HighFunc Open = Data.function("open");
+  returnValue(Open, Data.readAt(parameter(0, Data.Word), Data.Byte));
+  const std::string OpenSource = Data.emit({Open});
+  EXPECT_NE(OpenSource.find("[64]"), std::string::npos) << OpenSource;
+  HighFunc Signed = Data.function("signed_index");
+  auto Extended = HighExpr::makeUnary(
+      NdOp::INT_SEXT,
+      HighExpr::makeLoad(parameter(0, Data.Word), NdType::makeInt(1, true)));
+  Extended->Type = Data.Word;
+  returnValue(Signed, Data.readAt(std::move(Extended), Data.Byte));
+  const std::string SignedSource = Data.emit({Signed});
+  EXPECT_NE(SignedSource.find("[64]"), std::string::npos) << SignedSource;
+}
+
+TEST(HighCPointerAddresses, ProvenIndexesNeedTheirAssignmentFirst) {
+  // A variable bounds an index only through an assignment every path to the
+  // read runs first.  Otherwise the read may see another value, and the
+  // section stays whole.
+  const UnnamedSection Data;
+  const MedVar Index = Data.temporary(7);
+  const auto Read = [&] {
+    return Data.readAt(HighExpr::makeVar(Index, Data.Word), Data.Byte);
+  };
+  const auto Whole = [&](const HighFunc &Func) {
+    const std::string Source = Data.emit({Func});
+    EXPECT_NE(Source.find("[64]"), std::string::npos) << Source;
+    EXPECT_EQ(Source.find("[8]"), std::string::npos) << Source;
+  };
+
+  // Assigned in a branch the read does not need to take.
+  HighFunc Branch = Data.function("branch");
+  HighStmt Guard;
+  Guard.Kind = StmtKind::If;
+  Guard.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0, Data.Word),
+                                   HighExpr::makeConst(0, 8));
+  Guard.Body.push_back(UnnamedSection::assign(Index, Data.Word, Data.mask(7)));
+  Branch.Body.push_back(std::move(Guard));
+  returnValue(Branch, Read());
+  Whole(Branch);
+
+  // Read once before the assignment and once after.
+  HighFunc Early = Data.function("early");
+  HighStmt Before;
+  Before.Kind = StmtKind::If;
+  Before.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(0, Data.Word),
+                                    HighExpr::makeConst(1, 8));
+  HighStmt EarlyReturn;
+  EarlyReturn.Kind = StmtKind::Return;
+  EarlyReturn.RetVal = Read();
+  Before.Body.push_back(std::move(EarlyReturn));
+  Early.Body.push_back(std::move(Before));
+  Early.Body.push_back(UnnamedSection::assign(Index, Data.Word, Data.mask(7)));
+  returnValue(Early, Read());
+  Whole(Early);
+
+  // A goto enters between the assignment and the read.
+  HighFunc Entered = Data.function("entered");
+  HighStmt Jump;
+  Jump.Kind = StmtKind::Goto;
+  Jump.GotoTarget = 0x30;
+  HighStmt Skip;
+  Skip.Kind = StmtKind::If;
+  Skip.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(0, Data.Word),
+                                  HighExpr::makeConst(1, 8));
+  Skip.Body.push_back(std::move(Jump));
+  Entered.Body.push_back(std::move(Skip));
+  Entered.Body.push_back(
+      UnnamedSection::assign(Index, Data.Word, Data.mask(7), 0x20));
+  returnValue(Entered, Read());
+  Entered.Body.back().Addr = 0x30;
+  Whole(Entered);
+
+  // A signed byte assigned to a word is sign-extended there.
+  HighFunc Widened = Data.function("widened");
+  Widened.Body.push_back(UnnamedSection::assign(
+      Index, Data.Word,
+      HighExpr::makeLoad(parameter(0, Data.Word), NdType::makeInt(1, true))));
+  returnValue(Widened, Read());
+  Whole(Widened);
+}
+
+TEST(HighCPointerAddresses, BoundedTablesKeepWhatElseReachesTheirStretch) {
+  // The bytes a bounded index reaches are all a table declares only when no
+  // other code reaches the stretch around it: a read there that nothing
+  // bounds, or an address into it kept as a value, keeps the section whole.
+  constexpr va_t Table = UnnamedSection::Base + 16;
+  {
+    const UnnamedSection Data;
+    HighFunc Masked = Data.function("masked");
+    returnValue(Masked, Data.readAt(Data.mask(3), Data.Byte, Table));
+    HighFunc Open = Data.function("open");
+    returnValue(Open, Data.readAt(parameter(0, Data.Word), Data.Byte, Table));
+    const std::string Source = Data.emit({Masked, Open});
+    EXPECT_NE(Source.find("[64]"), std::string::npos) << Source;
+    EXPECT_EQ(Source.find("[4]"), std::string::npos) << Source;
+    compileAndRunCallOrdering(Source + R"c(
+int main(void) {
+  return masked(1) == 52 && open(5) == 64 && open(0) == 49 ? 0 : 1;
+}
+)c");
+
+    HighFunc Kept = Data.function("kept");
+    Kept.ReturnType = Data.Word;
+    returnValue(Kept, HighExpr::makeConst(Table + 24, 8,
+                                          ConstantAddressProvenance::Address));
+    const std::string KeptSource = Data.emit({Masked, Kept});
+    EXPECT_NE(KeptSource.find("[64]"), std::string::npos) << KeptSource;
+    EXPECT_EQ(KeptSource.find("[4]"), std::string::npos) << KeptSource;
+  }
+
+  // A store through a bounded index and a read at a fixed address inside
+  // the bytes it reaches name the same bytes.
+  const UnnamedSection Data(/*Writable=*/true);
+  HighFunc Write = Data.function("write");
+  Write.ReturnType = NdType::makeVoid();
+  Write.Params.push_back({"arg1", Data.Byte});
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr = HighExpr::makeBinop(
+      NdOp::INT_ADD, HighExpr::makeConst(Table, 8), Data.mask(7));
+  Store.StoreVal = parameter(1, Data.Byte);
+  Write.Body.push_back(std::move(Store));
+  HighStmt Done;
+  Done.Kind = StmtKind::Return;
+  Write.Body.push_back(std::move(Done));
+  HighFunc Pair = Data.function("pair");
+  Pair.Params.clear();
+  auto Halves = HighExpr::makeUnary(
+      NdOp::INT_ZEXT, HighExpr::makeLoad(HighExpr::makeConst(Table + 2, 8),
+                                         NdType::makeInt(2, false)));
+  Halves->Type = Data.Result;
+  returnValue(Pair, std::move(Halves));
+  const std::string Source = Data.emit({Write, Pair});
+  EXPECT_EQ(Source.find("[64]"), std::string::npos) << Source;
+  compileAndRunCallOrdering(Source + R"c(
+int main(void) {
+  if (pair() != 0x3A37u)
+    return 1;
+  write(2, 0xAA);
+  write(11, 0xBB);
+  return pair() == 0xBBAAu ? 0 : 2;
 }
 )c");
 }
@@ -47213,4 +47505,270 @@ TEST(HighCPointerAddresses, FunctionPointersOfAnotherSpellingPassCast) {
             std::string::npos)
       << Source;
   expectCSyntax("#include <stdint.h>\n" + Source);
+}
+
+TEST(HighCPointerAddresses, GnuToolchainsReadCpuidThroughCpuidH) {
+  // CPUID's leaf is EAX and its sub-leaf ECX.  GCC and Clang spell it with
+  // <cpuid.h>'s macros; MSVC's __cpuid(int[4], leaf) declares nothing there,
+  // and gzip called it undeclared 14 times.
+  const auto Word = NdType::makeInt(4, false);
+  HighFunc Func;
+  Func.Name = "features";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  std::vector<MedVar> Outputs;
+  for (int I = 0; I < 4; ++I)
+    Outputs.push_back(temporary(20 + I, 0, 4));
+  auto Cpuid = HighExpr::makeCall(
+      "__cpuid", 0, {HighExpr::makeConst(7, 4), HighExpr::makeConst(0, 4)});
+  Cpuid->IntrinsicId = Intrinsic::Cpuid;
+  Cpuid->IntrinsicOutputs = Outputs;
+  Cpuid->Type = Word;
+  HighStmt Assign = assignTo(Outputs[0], Cpuid);
+  Assign.Dst->Type = Word;
+  Func.Body = {Assign};
+  returnValue(Func, HighExpr::makeVar(Outputs[1], Word));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <cpuid.h>"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("__cpuid_count(7, 0, cpuInfo[0], cpuInfo[1], "
+                        "cpuInfo[2], cpuInfo[3])"),
+            std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("__cpuid(cpuInfo"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, GnuLibrariesHeadersDeclareTheirExtensions) {
+  // NeverD reads the GNU C Library's headers with _GNU_SOURCE, which sed's
+  // and less's calls of strverscmp, memrchr and the GNU regex routines
+  // need: the unit defines it before its includes.
+  HighFunc Func;
+  Func.Name = "newer";
+  Func.Entry = 0x1000;
+  Func.ReturnType = NdType::makeInt(4);
+  Func.Params = {{"a", NdType::makePtr(NdType::makeInt(1))},
+                 {"b", NdType::makePtr(NdType::makeInt(1))}};
+  auto Call = HighExpr::makeCall(
+      "strverscmp", 0x2000,
+      {parameter(0, Func.Params[0].Type), parameter(1, Func.Params[1].Type)});
+  Call->Type = NdType::makeInt(4);
+  returnValue(Func, Call);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  const size_t Define = Source.find("#define _GNU_SOURCE 1\n");
+  ASSERT_NE(Define, std::string::npos) << Source;
+  EXPECT_LT(Define, Source.find("#include <")) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, ImageObjectsTakeAssignedValuesAsTheyAreDeclared) {
+  // bc stores integers into image objects the code reads as pointers, and
+  // pointers into ones it reads as integers, which C converts by no
+  // assignment: its unit failed 55 times.  Each value converts to the type
+  // the object is declared with, the header's for optarg; a null pointer
+  // needs none.  An object also stored narrower is its bytes, never
+  // assigned whole.
+  constexpr va_t OptArg = 0x6000, Counter = 0x6008, Cursor = 0x6010,
+                 In = 0x6018, Flags = 0x6020;
+  BinaryImage Img =
+      makeImageObjectFixture(OptArg, std::vector<uint8_t>(40), true);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  for (const auto &[Name, Addr] : {std::pair{"optarg", OptArg},
+                                   {"counter", Counter},
+                                   {"cursor", Cursor},
+                                   {"stdin", In},
+                                   {"flags", Flags}}) {
+    Symbol Data;
+    Data.Name = Name;
+    Data.Addr = Addr;
+    Data.Size = 8;
+    Img.Symbols.push_back(Data);
+  }
+  const auto Word = NdType::makeInt(8);
+  const auto IntPointer = NdType::makePtr(NdType::makeInt(4));
+  auto Store = [](va_t Addr, ExprPtr Value) {
+    HighStmt Write;
+    Write.Kind = StmtKind::Store;
+    Write.StoreAddr = HighExpr::makeConst(Addr, 8);
+    Write.StoreVal = std::move(Value);
+    return Write;
+  };
+  // The code reads counter as an integer and cursor as a pointer to int32_t
+  // before it stores into them.
+  HighFunc Count;
+  Count.Name = "count_value";
+  Count.Entry = 0x1200;
+  Count.ReturnType = Word;
+  returnValue(Count, HighExpr::makeLoad(HighExpr::makeConst(Counter, 8), Word));
+  HighFunc Get;
+  Get.Name = "cursor_value";
+  Get.Entry = 0x1100;
+  Get.ReturnType = IntPointer;
+  returnValue(Get,
+              HighExpr::makeLoad(HighExpr::makeConst(Cursor, 8), IntPointer));
+  HighFunc Func;
+  Func.Name = "configure";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  Func.Params = {{"text", Word}, {"where", NdType::makePtr()}};
+  Func.Body = {Store(OptArg, parameter(0, Word)),
+               Store(Counter, parameter(1, NdType::makePtr())),
+               Store(Counter, HighExpr::makeLoad(HighExpr::makeConst(In, 8),
+                                                 NdType::makePtr())),
+               Store(Cursor, parameter(0, Word)),
+               Store(Cursor, HighExpr::makeConst(0, 8)),
+               Store(Flags, HighExpr::makeConst(5, 4))};
+  auto Sum = HighExpr::makeBinop(
+      NdOp::INT_ADD, HighExpr::makeLoad(HighExpr::makeConst(Counter, 8), Word),
+      HighExpr::makeLoad(HighExpr::makeConst(Flags, 8), Word));
+  Sum->Type = Word;
+  returnValue(Func, Sum);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Count, Get, Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("optarg = (void*)(uintptr_t)text;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("counter = (uintptr_t)where;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("counter = (int64_t)(uintptr_t)stdin;"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("cursor = (int32_t*)(uintptr_t)text;"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("cursor = 0;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("flags = "), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, UnderscoredHeaderRoutinesTakeTheirStreams) {
+  // <stdio_ext.h> declares __fwriting(FILE *), whose stream an integer the
+  // machine holds it in converts to.  The table's row names the routine
+  // with its underscores, which the lookup stripped from the call's name
+  // alone: sed's unit passed `arg0` to it twice.
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "writing";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  Func.Params = {{"stream", Word}};
+  auto Call = HighExpr::makeCall("__fwriting", 0x2000, {parameter(0)});
+  Call->Type = NdType::makeInt(4);
+  returnValue(Func, Call);
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("#include <stdio_ext.h>"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("__fwriting(stream)"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, GnuProgramObjectsAreTheHeaders) {
+  // 187 Debian programs reach __environ's environ and 398 copy
+  // program_invocation_short_name, which <unistd.h> and <errno.h> declare
+  // under _GNU_SOURCE, as the unit defines it: it declares neither beside
+  // them (`uint64_t environ;` was a redefinition), and the integers the
+  // code moves the pointers through convert.
+  constexpr va_t Environ = 0x6000, ShortName = 0x6008;
+  BinaryImage Img =
+      makeImageObjectFixture(Environ, std::vector<uint8_t>(16), true);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  for (const auto &[Name, Addr] :
+       {std::pair{"environ", Environ},
+        {"program_invocation_short_name", ShortName}}) {
+    Symbol Data;
+    Data.Name = Name;
+    Data.Addr = Addr;
+    Data.Size = 8;
+    Img.Symbols.push_back(Data);
+  }
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "first_variable";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  Func.Params = {{"name", Word}};
+  MedVar Variables = temporary(7);
+  HighStmt Load = assignTo(
+      Variables, HighExpr::makeLoad(HighExpr::makeConst(Environ, 8), Word));
+  Load.Dst->Type = Word;
+  HighStmt Rename;
+  Rename.Kind = StmtKind::Store;
+  Rename.StoreAddr = HighExpr::makeConst(ShortName, 8);
+  Rename.StoreVal = parameter(0, Word);
+  Func.Body = {Load, Rename};
+  returnValue(Func, HighExpr::makeVar(Variables, Word));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <unistd.h>"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("#include <errno.h>"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" environ;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" program_invocation_short_name;"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, HeaderObjectsReadAsBytesStayTheHeaders) {
+  // paper reads stderr through an address its code computes, which makes
+  // the object bytes the unit reaches by offset: they are the header's
+  // object's, reached through its address, not an array of the unit's own
+  // (`unsigned char stderr[8];` was a redefinition beside <stdio.h>).
+  constexpr va_t Err = 0x6000;
+  BinaryImage Img = makeImageObjectFixture(Err, std::vector<uint8_t>(8), true);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  Symbol Data;
+  Data.Name = "stderr";
+  Data.Addr = Err;
+  Data.Size = 8;
+  Img.Symbols.push_back(Data);
+  const auto Word = NdType::makeInt(8);
+  const auto Byte = NdType::makeInt(1, false);
+  HighFunc Func;
+  Func.Name = "stream_byte";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Byte;
+  Func.Params = {{"index", Word}};
+  auto Address = HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeConst(Err, 8),
+                                     parameter(0, Word));
+  Address->Type = Word;
+  Func.Body = {callStmt(
+      "fflush", 0x2000,
+      {HighExpr::makeLoad(HighExpr::makeConst(Err, 8), NdType::makePtr())})};
+  returnValue(Func, HighExpr::makeLoad(Address, Byte));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <stdio.h>"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("unsigned char stderr["), std::string::npos) << Source;
+  EXPECT_NE(Source.find("((unsigned char *)&stderr)"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
 }

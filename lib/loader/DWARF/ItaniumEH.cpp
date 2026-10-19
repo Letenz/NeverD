@@ -589,6 +589,7 @@ void parseItaniumExceptions(BinaryImage &Img) {
   Img.KnownCodeRanges.erase(
       std::unique(Img.KnownCodeRanges.begin(), Img.KnownCodeRanges.end()),
       Img.KnownCodeRanges.end());
+  bindColdFragments(Img);
   Out.rebuildIndex();
   Out.rebuildParseSummary();
 

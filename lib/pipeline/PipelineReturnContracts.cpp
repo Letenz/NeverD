@@ -115,10 +115,12 @@ struct FunctionFacts {
 };
 
 /// What the return register holds at the RETURN \p Index of \p Block: the
-/// RETURN's operand where that is the register (an x86 RETURN can read a
-/// temporary copy propagation left it), else the last full write to it on
-/// the way there.  None for the value the function entered with.  On ARM
-/// and AArch64 the operand is the return address.
+/// RETURN's operand where that is the register, and any x86 RETURN's operand,
+/// which copy propagation may have left reading the register's source (a
+/// temporary, a constant, or another register: `mov %rdi, %rax; ret` reads
+/// RDI); else the last full write to it on the way there.  None for the
+/// value the function entered with.  On ARM and AArch64 the operand is the
+/// return address.
 std::optional<MedVar> returnRegisterAt(const MedFunc &Func,
                                        const MedBlock &Block, size_t Index,
                                        const TargetRegInfo &TRI, Arch Target) {
@@ -127,8 +129,7 @@ std::optional<MedVar> returnRegisterAt(const MedFunc &Func,
     const MedVar &Operand = Return.Inputs[0];
     if (Operand.Kind == MedVar::Reg && Operand.RegOff == TRI.IntReturnReg)
       return Operand;
-    if ((Target == Arch::X86 || Target == Arch::X64) &&
-        (Operand.isConst() || Operand.Kind == MedVar::Temp))
+    if (Target == Arch::X86 || Target == Arch::X64)
       return Operand;
   }
   auto Writes = [&](const MedVar &Value) {

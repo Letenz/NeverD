@@ -11,10 +11,22 @@ namespace neverd::libc {
 /// ISO C signal.h — signal handling
 inline constexpr std::string_view kSignalHeader = "signal.h";
 
+/// SIGRTMIN and SIGRTMAX call the __libc_current_ routines.
 inline constexpr std::array kSignalFunctions = {
-    "kill",        "raise",       "sigaction",       "sigaddset",
-    "sigaltstack", "sigdelset",   "sigemptyset",     "sigfillset",
-    "signal",      "sigprocmask", "pthread_sigmask", "sigismember",
+    "kill",
+    "raise",
+    "sigaction",
+    "sigaddset",
+    "sigaltstack",
+    "sigdelset",
+    "sigemptyset",
+    "sigfillset",
+    "signal",
+    "sigprocmask",
+    "pthread_sigmask",
+    "sigismember",
+    "__libc_current_sigrtmax",
+    "__libc_current_sigrtmin",
 };
 
 /// Fixed arity of the signal.h functions.  {IntArgs, FpArgs}.
@@ -31,6 +43,8 @@ inline constexpr auto kSignalArity = std::to_array<LibCArityEntry>({
     {"sigprocmask", {3, 0}},
     {"pthread_sigmask", {3, 0}},
     {"sigismember", {2, 0}},
+    {"__libc_current_sigrtmax", {0, 0}},
+    {"__libc_current_sigrtmin", {0, 0}},
 });
 
 } // namespace neverd::libc

@@ -120,6 +120,48 @@ TEST_F(SessionFunctionDiscovery,
 }
 
 TEST_F(SessionFunctionDiscovery,
+       RecoveredExtentsSurviveSelectingAnotherFunction) {
+  // An x86-64 entry that calls the function after it: discovery lists both
+  // without extents, and each complete lift gives its function one.
+  // Selecting the second keeps the first's, and the list read from the
+  // image stays the one a rebuild would make.
+  const std::string EntryCode("\xe8\x01\x00\x00\x00\xc3", 6);
+  const std::string CalleeCode("\xb8\x07\x00\x00\x00\xc3", 6);
+  const std::string Path =
+      write("calls.elf", makeNativeELF(false, 0x400000, CalleeCode, EntryCode));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Entry = neverd_session_entry_addr(Session);
+  const auto Callee = Entry + EntryCode.size();
+  ASSERT_EQ(neverd_session_discover_functions(Session), 2);
+  const int EntryIndex = neverd_func_find_by_addr(Session, Entry);
+  const int CalleeIndex = neverd_func_find_by_addr(Session, Callee);
+  ASSERT_GE(EntryIndex, 0);
+  ASSERT_GE(CalleeIndex, 0);
+  EXPECT_EQ(neverd_func_size(Session, EntryIndex), 0);
+  EXPECT_EQ(neverd_func_size(Session, CalleeIndex), 0);
+
+  // As warming leaves a session: its analysis reads the current signature
+  // features, so each view prepared selects its function rather than
+  // starting the analysis over.
+  auto &State = *reinterpret_cast<neverd::sdk::Session *>(Session);
+  State.PipelineFeatureGeneration = State.SigDB.featureGeneration();
+  ASSERT_EQ(neverd_prepare_function_view(Session, Entry, "low"), 1);
+  EXPECT_EQ(State.OnlyFunctionEntries, std::set<neverd::va_t>{Entry});
+  EXPECT_EQ(neverd_func_size(Session, EntryIndex), 6);
+  ASSERT_EQ(neverd_prepare_function_view(Session, Callee, "low"), 1);
+  EXPECT_EQ(State.OnlyFunctionEntries, std::set<neverd::va_t>{Callee});
+  EXPECT_EQ(neverd_func_find_by_addr(Session, Entry), EntryIndex);
+  EXPECT_EQ(neverd_func_size(Session, CalleeIndex), 6);
+  EXPECT_EQ(neverd_func_size(Session, EntryIndex), 6);
+  EXPECT_TRUE(State.functionListCurrent());
+
+  // A rebuild from the image keeps them too.
+  State.resetFunctionsFromImage();
+  EXPECT_EQ(neverd_func_size(Session, EntryIndex), 6);
+  EXPECT_EQ(neverd_func_size(Session, CalleeIndex), 6);
+}
+
+TEST_F(SessionFunctionDiscovery,
        NativeRecoveryKeepsKnownExtentsAndDeletedEntries) {
   for (bool MissingEntry : {false, true}) {
     auto &State = *reinterpret_cast<neverd::sdk::Session *>(Session);

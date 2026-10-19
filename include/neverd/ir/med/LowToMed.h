@@ -160,6 +160,12 @@ public:
   /// call by its target).  Mach-O only (the slot table is empty otherwise);
   /// optional, null = no-op.
   void setStackProbeSlots(const std::set<va_t> *S) { StackProbeSlots = S; }
+  /// The addresses that name a runtime routine one intrinsic models
+  /// (runtimeRoutineCallsOf), read once for every converter of a run.
+  /// Without them a converter reads its own from its image.
+  void setRuntimeRoutineCalls(const std::map<va_t, Intrinsic> *Calls) {
+    SharedRuntimeRoutineCalls = Calls;
+  }
 
   /// Provide the set of direct-call targets proven to return a 64-bit integer
   /// in the register pair (i386 EDX:EAX, ARM32 R1:R0).  When set, a direct CALL
@@ -400,8 +406,10 @@ private:
   const std::set<va_t> *StackProbeSlots = nullptr;
 
   /// The addresses that name a runtime routine one intrinsic models (its
-  /// imports' stubs and slots, and its symbols), with that intrinsic; built
-  /// from Image on first use.  See liftRuntimeRoutineCalls.
+  /// imports' stubs and slots, and its symbols), with that intrinsic: those
+  /// the run gave (setRuntimeRoutineCalls), else built from Image on first
+  /// use.  See liftRuntimeRoutineCalls.
+  const std::map<va_t, Intrinsic> *SharedRuntimeRoutineCalls = nullptr;
   std::optional<std::map<va_t, Intrinsic>> RuntimeRoutineCalls;
 
   /// Direct-call targets proven to return i64 in the register pair; see
@@ -452,6 +460,13 @@ inline bool debugVerifyMedFunc(const MedFunc &Func, const char *PassName) {
   return verifyMedFunc(Func, PassName);
 #endif
 }
+
+/// The addresses that name a runtime routine one intrinsic models in \p Img
+/// for \p TargetArch, with that intrinsic: the stubs and slots of its
+/// imports, then its function symbols, as a static image defines the routine
+/// itself at any address (an object's first function starts at 0).
+std::map<va_t, Intrinsic> runtimeRoutineCallsOf(const BinaryImage &Img,
+                                                Arch TargetArch);
 
 } // namespace neverd
 

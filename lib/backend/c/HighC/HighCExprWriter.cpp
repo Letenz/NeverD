@@ -3683,6 +3683,60 @@ bool HighCWriter::printsAsInteger(const HighExpr &E,
   return Integer(E.Type);
 }
 
+std::string HighCWriter::assignedText(const TypeRef &Declared,
+                                      const HighExpr &Value,
+                                      std::string Text) const {
+  // A floating or record value converts by its value, not its bits.
+  const bool Scalar =
+      !Value.Type || Value.Type->Kind == NdTypeKind::Int ||
+      Value.Type->Kind == NdTypeKind::Ptr ||
+      (Value.Type->Kind == NdTypeKind::Struct && Value.Type->IsEnum);
+  if (!Declared || !Scalar)
+    return Text;
+  // Through the address's integer, which the text may print already.
+  auto Converted = [&] {
+    return "(" + typeToC(Declared) + ")" +
+           (llvm::StringRef(Text).starts_with("(uintptr_t)")
+                ? Text
+                : "(uintptr_t)" + castOperand(Text));
+  };
+  if (Declared->Kind == NdTypeKind::Ptr) {
+    if (printsAsInteger(Value, Text))
+      return Converted();
+    // A pointer of another type, unless either is void's.
+    TypeRef Printed = declaredTypeNamed(Text);
+    if (!Printed || Printed->Kind != NdTypeKind::Ptr)
+      Printed = printedPointerType(Value);
+    auto Void = [](const TypeRef &Pointer) {
+      return !Pointer->Pointee || Pointer->Pointee->Kind == NdTypeKind::Void;
+    };
+    if (Printed && Printed->Kind == NdTypeKind::Ptr && !Void(Printed) &&
+        !Void(Declared) && typeToC(Printed) != typeToC(Declared))
+      return "(" + typeToC(Declared) + ")" + castOperand(Text);
+    return Text;
+  }
+  if (Declared->Kind != NdTypeKind::Int || Declared->IsEnum)
+    return Text;
+  const TypeRef Called =
+      Value.Kind == ExprKind::Call ? callResultType(Value) : nullptr;
+  if (isStringLiteralText(Text) || printsAsPointer(Text) ||
+      printsPointer(Value, Text) || printedPointerType(Value) ||
+      (Called && Called->Kind == NdTypeKind::Ptr))
+    return Converted();
+  return Text;
+}
+
+TypeRef HighCWriter::assignedImageObjectType(va_t Addr) const {
+  const auto Object = ImageObjects.find(Addr);
+  // A string is an array, and a string's pointer is declared from its
+  // literal, not its type.
+  if (Object == ImageObjects.end() || Object->second.String ||
+      Object->second.PointsTo)
+    return nullptr;
+  return Object->second.HeaderType ? Object->second.HeaderType
+                                   : Object->second.Type;
+}
+
 bool HighCWriter::printsAsPointer(llvm::StringRef Text) const {
   if (Text.starts_with("\"") || Text.starts_with("L\"") ||
       Text.starts_with("u\"") || Text.starts_with("U\"") ||
