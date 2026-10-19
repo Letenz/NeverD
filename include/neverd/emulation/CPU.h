@@ -10,6 +10,7 @@
 #include "neverd/emulation/ExecutionExit.h"
 #include "neverd/emulation/GuestMemory.h"
 #include "neverd/emulation/Registers.h"
+#include "neverd/emulation/ResourceEvent.h"
 #include "neverd/emulation/X64BranchModel.h"
 
 #include <array>
@@ -53,6 +54,12 @@ struct BackendHooks {
   /// describe the next boundary. Faults and service requests retain priority.
   /// This is distinct from Write, which observes an access before its effects.
   std::function<void()> MemoryWritten;
+  /// Pure opt-in policy for an unmapped candidate within the backend's restart
+  /// shapes. Final validation after CPU exit can still make the stop terminal.
+  /// Do not perform IO, mutate/execute a CPU, or resolve files in this
+  /// callback. Acceptance requests a typed resource pause; it grants no fault
+  /// recovery.
+  std::function<bool(const emulation::ResourcePause &)> ResourcePause;
 };
 /// An owning CPU snapshot associated with exactly one backend instance.
 /// Guest memory and hooks are shared by all contexts and are never rolled back.
@@ -162,6 +169,14 @@ public:
   virtual bool hasDeviceError() const = 0;
   virtual std::optional<BackendFault> fault() const = 0;
   virtual std::optional<BackendFault> takeRecoverableFault() = 0;
+  virtual bool supportsResourcePause() const { return false; }
+  virtual std::optional<ResourcePause> pendingResourcePause() const {
+    return std::nullopt;
+  }
+  /// Acknowledge only after mapping repair while stopped. The CPU verifies
+  /// access and retains a mandatory continuation PC; it rejects CPU mutation,
+  /// snapshots and any different run PC until that continuation starts.
+  virtual llvm::Error acknowledgeResourcePause();
   /// Inspect an intercepted service request without releasing the CPU. A
   /// pending request prevents run, state mutation, rebind and CPU snapshots.
   virtual std::optional<ServiceRequest> pendingServiceRequest() const {

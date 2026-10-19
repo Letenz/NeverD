@@ -1,6 +1,6 @@
 **语言**: [English](../README.md) | [简体中文](README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 1af6ecd5944b90deebffd661bc746dba46c505fcb5c57991ad0de2f45c50968e -->
+<!-- i18n-source: 32288410e4352dcbe779ee091bfc8728b8d4e783203704b4d3a6d09f0421c96a -->
 
 [← NeverD 项目](project.md)
 
@@ -48,3 +48,5 @@
 | [路线图](roadmap.md) | 状态：原生格式、EVM 与 Solana SBF 均已实现 |
 | 本地化文档 | 使用上方语言链接打开各语言的文档索引和项目概览 |
 | [加壳可执行文件的脱壳](unpack.md) | 通过观察有界来宾进程恢复加壳的 PE32+ 镜像：入口规则、重建的镜像、识别与限制 |
+
+- [显式运行时模块与持久执行（英文）](../runtime-modules.md)

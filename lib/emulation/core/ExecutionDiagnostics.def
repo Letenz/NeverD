@@ -203,3 +203,13 @@ NEVERD_EXECUTION_DIAGNOSTIC(
     "atomic device transaction interrupted before commit")
 NEVERD_EXECUTION_DIAGNOSTIC(DeviceOperand,
                             "invalid private device operand projection")
+NEVERD_EXECUTION_DIAGNOSTIC(ResourcePauseUnsupported,
+                            "CPU does not implement resource pauses")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    ResourcePausePending, "CPU retains an unacknowledged resource continuation")
+NEVERD_EXECUTION_DIAGNOSTIC(ResourcePauseMissing,
+                            "CPU has no resource pause to acknowledge")
+NEVERD_EXECUTION_DIAGNOSTIC(ResourcePauseUnresolved,
+                            "resource access is still unresolved")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    ResourceResumePC, "resource continuation requires its recorded machine PC")

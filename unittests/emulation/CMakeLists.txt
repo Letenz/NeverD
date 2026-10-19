@@ -1,3 +1,28 @@
+add_neverd_unittest(NeverDExecutionRunJSONTests
+  ExecutionRunJSONTests.cpp
+  TIMEOUT 20
+  LINK_COMPONENTS EmulationWorkload)
+
+add_neverd_unittest(NeverDExecutionRunTests
+  ExecutionRunTests.cpp
+  GuestInvocationABITests.cpp
+  TIMEOUT 30
+  LINK_COMPONENTS EmulationWorkload)
+
+add_neverd_unittest(NeverDResourcePauseTests
+  ResourcePauseTests.cpp
+  TIMEOUT 20
+  LINK_COMPONENTS EmulationRuntime)
+
+add_neverd_unittest(NeverDModuleBindingTests
+  ModuleBindingTests.cpp
+  MappingTransactionTests.cpp
+  TIMEOUT 20
+  LINK_COMPONENTS EmulationModules)
+
+target_include_directories(NeverDModuleBindingTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
 add_neverd_unittest(NeverDHvfTests
   HvfTests.cpp
   HvfExecutorTests.cpp

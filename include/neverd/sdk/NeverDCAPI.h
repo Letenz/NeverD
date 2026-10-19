@@ -9,9 +9,9 @@
 /// one file; it pulls in the domain headers the API is split across so no
 /// include site has to know which one declares what.
 ///
-/// All returned strings are heap-allocated via strdup(); callers free them
-/// with neverd_free_string() unless a specific entry point documents its own
-/// disposer.
+/// Returned strings are NUL-terminated, owned heap allocations; callers free
+/// them with neverd_free_string() unless a specific entry point documents its
+/// own disposer.
 ///
 ///   - NeverDCAPITypes.h    -- shared handle / address / language types
 ///   - NeverDCAPISession.h  -- session lifecycle, metadata, errors, version
@@ -28,6 +28,7 @@
 ///   - NeverDCAPIOptimize.h -- transactional textual LLVM IR optimization
 ///   - NeverDCAPITranslate.h -- x86-64 to AArch64 relocatable objects
 ///   - NeverDCAPIEmulation.h -- bounded Windows driver initialization
+///   - NeverDCAPIModules.h -- explicit binary/debug resource catalogues
 ///   - NeverDCAPICPU.h     -- CPU configuration and capability queries
 ///   - NeverDCAPIProcess.h -- explicit guest process workloads
 ///   - NeverDCAPIUnpack.h -- packed executable recovery
@@ -43,7 +44,9 @@
 #include "neverd/sdk/NeverDCAPIDevirtualize.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPIEmulation.h"
+#include "neverd/sdk/NeverDCAPIExecution.h"
 #include "neverd/sdk/NeverDCAPILocalTypes.h"
+#include "neverd/sdk/NeverDCAPIModules.h"
 #include "neverd/sdk/NeverDCAPIOptimize.h"
 #include "neverd/sdk/NeverDCAPIPatch.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"

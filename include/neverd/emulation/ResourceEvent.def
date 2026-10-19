@@ -1,0 +1,10 @@
+//===- ResourceEvent.def - Resource restart vocabulary ------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#ifdef NEVERD_RESOURCE_RESTART
+NEVERD_RESOURCE_RESTART(ArchitecturalRetry, "architectural_retry")
+NEVERD_RESOURCE_RESTART(RepeatProgress, "repeat_progress")
+NEVERD_RESOURCE_RESTART(FetchBoundary, "fetch_boundary")
+#endif
