@@ -21,6 +21,7 @@
 #include "../StdcallImportPops.h"
 
 #include "neverd/backend/c/CEmitterOptions.h"
+#include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/pass/HighC/HighCPasses.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
@@ -107,6 +108,10 @@ bool printsIntegerArithmetic(const HighExpr &E);
 /// extension is that value at any width, with no view of its own byte.
 bool printsTruthValue(const HighExpr &E);
 
+/// Whether \p Addr in \p Img is data an object can hold, not code or an
+/// import (HighCWriter::isImageDataAddress).
+bool isImageDataAt(const BinaryImage &Img, va_t Addr);
+
 class HighCWriter {
 public:
   static llvm::StringRef
@@ -120,10 +125,12 @@ public:
   HighCWriter(llvm::raw_ostream &OS, const CEmitterOptions &Opts,
               DebugContext *Dbg, bool GuardAnalysisOnlyFunctions = true,
               const std::unordered_set<std::string_view> *SharedNames = nullptr,
-              CSourceRecorder *Recorder = nullptr)
+              CSourceRecorder *Recorder = nullptr,
+              const HighCImageDataObjects *SharedDataObjects = nullptr)
       : Out(OS), OS(Out), Opts(Opts), Dbg(Dbg),
         GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions),
-        SharedImageFunctionNames(SharedNames), SourceRecorder(Recorder) {}
+        SharedImageFunctionNames(SharedNames), SourceRecorder(Recorder),
+        SharedDataObjects(SharedDataObjects) {}
 
   //--- Module-level (HighCEmitter.cpp) ---
   void writeAll(const std::vector<HighFunc> &Funcs);
@@ -1429,13 +1436,12 @@ public:
   /// table a compiler emits under an assembler-local label), cut at the data
   /// symbols around \p Addr, which begin objects even when unsized.
   std::optional<std::pair<va_t, uint64_t>> indexedObjectAt(va_t Addr) const;
-  /// The image's sized data objects by address, each as large as the
-  /// largest symbol there, and the furthest end of any object up to each.
-  std::vector<std::pair<va_t, uint64_t>> SizedObjects;
-  std::vector<va_t> SizedObjectReach;
-  /// Where the image's data symbols begin, sized or not, in order: a PDB
-  /// public names an object without sizing it.
-  std::vector<va_t> DataSymbolStarts;
+  /// The image's data objects, read by collectImageObjects(): those the
+  /// emitter prepared for the image when it did (SharedDataObjects), else the
+  /// writer's own.  Until then none, as before they were shared.
+  const HighCImageDataObjects *SharedDataObjects;
+  HighCImageDataObjects OwnDataObjects;
+  const HighCImageDataObjects *DataObjects = &OwnDataObjects;
   /// The image object a call argument prints as when it is a string: the
   /// array's address, or a load of a pointer to one.  The expression is the
   /// one that prints the object's name.
@@ -1524,6 +1530,11 @@ public:
   /// The C address a relocated pointer slot holds: the function or data it
   /// names, or none when no C object names it.
   std::optional<std::string> relocatedSlotTarget(va_t Slot) const;
+  /// stringLiteralAt() of the image and debug information, which a writer
+  /// asks of one address again and again; each answer reads the image's
+  /// symbols and relocations.
+  std::optional<std::string> stringLiteral(va_t Addr) const;
+  mutable std::unordered_map<va_t, std::optional<std::string>> StringLiterals;
   /// A pointer-sized object at a relocated slot: the address it holds, as
   /// its initializer.
   std::optional<std::string>
