@@ -468,6 +468,20 @@ int main() {
   check(renamedOverDisplay.at("text").get<std::string>().find(
             "temp = value + renamed_callee(value)") != std::string::npos,
         "A display name replaced the analyst's rename");
+  // A function the code takes the address of, in an image initializer or as
+  // an argument, shows the name its declaration shows, or the C names a
+  // function nothing declares.
+  auto addressed = page("extern int callee();\n"
+                        "union g_bytes_words g_bytes = { .w = {\n"
+                        "  0x10ull, (uintptr_t)&callee, 0 } };\n"
+                        "int target(void) { return install(callee); }\n");
+  decorate(addressed, nullptr, Json::array(), displayNames);
+  const auto addressedText = addressed.at("text").get<std::string>();
+  check(addressedText.find("extern int start();") != std::string::npos &&
+            addressedText.find("(uintptr_t)&start, 0") != std::string::npos &&
+            addressedText.find("install(start)") != std::string::npos &&
+            addressedText.find("callee") == std::string::npos,
+        "A function's address kept a name its declaration no longer has");
   auto shadowed =
       page("int target(int value) { { int value = 1; } return value; }\n");
   decorate(shadowed);

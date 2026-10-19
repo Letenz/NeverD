@@ -739,6 +739,13 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
       replacements.push_back({begin, end, *shown});
   }
   const SourceSpanIndex covered(spelled.begin(), spelled.end());
+  // A name the view calls or declares as a function names that function at
+  // every use, also where the code takes its address: in an initializer, or
+  // as an argument.  Each use then shows the name its declaration shows.
+  std::set<std::string> functionNames;
+  for (std::size_t i = 0; i + 1 < ts.size(); ++i)
+    if (identifier(ts[i].text) && ts[i + 1].text == "(" && !member(ts, i))
+      functionNames.insert(ts[i].text);
   for (std::size_t i = 0; i < ts.size(); ++i) {
     const auto &token = ts[i];
     if (covered.contains(token.begin, token.end))
@@ -767,8 +774,9 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
       name["address"] = hexAddress(globals.at(token.text));
       if (const auto shown = shownName(globals.at(token.text), token.text))
         display = *shown;
-    } else if (i + 1 < ts.size() &&
-               (ts[i + 1].text == "(" || links.contains(token.text))) {
+    } else if ((i + 1 < ts.size() &&
+                (ts[i + 1].text == "(" || links.contains(token.text))) ||
+               functionNames.contains(token.text)) {
       const auto at = imageAddress(token.text);
       if (!at)
         continue;
