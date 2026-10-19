@@ -235,6 +235,24 @@ TEST(X86_32PICLibrary, AResultPastAnEmptyFirstSlotStaysAnArgument) {
       << Source;
 }
 
+// `clang_call_keep_got`, built at -O0, spills the GOT address to 4(%esp),
+// one slot past the empty first one, calls through its argument with no
+// argument and reloads the address to read `factor`.  The spill is the GOT
+// address only its reload reads, no argument: the call had passed it.
+TEST(X86_32PICLibrary, AGOTSpillIsNoCallArgument) {
+  const std::optional<BinaryImage> Img = loadLibrary();
+  if (!Img)
+    GTEST_SKIP() << "the fixture links with ld.lld";
+  const Symbol *GOT = Img->findSymbol("_GLOBAL_OFFSET_TABLE_");
+  ASSERT_NE(GOT, nullptr);
+  const std::string Source = decompile(*Img, "clang_call_keep_got");
+  EXPECT_FALSE(std::regex_search(
+      Source, std::regex("\\b0x" + llvm::utohexstr(GOT->Addr) + "\\b")))
+      << Source;
+  EXPECT_TRUE(std::regex_search(Source, std::regex("\\)\\(\\);"))) << Source;
+  EXPECT_NE(Source.find("factor"), std::string::npos) << Source;
+}
+
 // A linked library reads a `.rodata` table at its GOTOFF displacement from the
 // GOT plus an index.  The LLVM module took the GOT for the table's base: GCC's
 // read went into the writable run that holds the GOT, at a negative offset,

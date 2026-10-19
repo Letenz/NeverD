@@ -100,6 +100,8 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
           continue;
         if (Scan.IsCalleeSave(Prev.Inputs[1]) && Prev.Inputs[1].SSAVer == 0)
           continue;
+        if (Scan.IsPcRootedStore && Scan.IsPcRootedStore(Prev))
+          continue;
         if (!Take(Prev))
           return false;
       }
@@ -301,6 +303,8 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
           Prev.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         continue;
       if (Scan.IsCalleeSave(Prev.Inputs[1]) && Prev.Inputs[1].SSAVer == 0)
+        continue;
+      if (Scan.IsPcRootedStore && Scan.IsPcRootedStore(Prev))
         continue;
       // The slot placement above found no first argument.  A store the stack
       // pointer the call is made with places below that pointer was popped
