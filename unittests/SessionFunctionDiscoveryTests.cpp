@@ -6,6 +6,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SessionImpl.h"
+#include "SessionTestAccess.h"
 #include "gtest/gtest.h"
 
 #include "neverd/sdk/NeverDCAPI.h"
@@ -156,7 +157,7 @@ TEST_F(SessionFunctionDiscovery,
   EXPECT_TRUE(State.functionListCurrent());
 
   // A rebuild from the image keeps them too.
-  State.resetFunctionsFromImage();
+  neverd::sdk::SessionTestAccess::resetFunctions(State);
   EXPECT_EQ(neverd_func_size(Session, EntryIndex), 6);
   EXPECT_EQ(neverd_func_size(Session, CalleeIndex), 6);
 }
