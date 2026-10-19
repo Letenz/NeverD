@@ -39,10 +39,16 @@ struct HighCImageDataObjects {
 /// \p Image's data objects, as every emission over it reads them.
 HighCImageDataObjects collectImageDataObjects(const BinaryImage &Image);
 
+/// The first function symbol with a name at each address of \p Image, in
+/// the order of its symbols: the one an address the code takes names.
+using HighCImageFunctionSymbols = std::unordered_map<va_t, const Symbol *>;
+HighCImageFunctionSymbols collectImageFunctionSymbols(const BinaryImage &Image);
+
 class HighCEmitter {
   const BinaryImage *PreparedImage = nullptr;
   std::unordered_set<std::string_view> PreparedImageFunctionNames;
   HighCImageDataObjects PreparedDataObjects;
+  HighCImageFunctionSymbols PreparedFunctionSymbols;
 
 public:
   /// Reuse the image's defined-function index and data objects across a

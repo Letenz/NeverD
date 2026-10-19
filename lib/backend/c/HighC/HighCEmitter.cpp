@@ -3589,13 +3589,16 @@ void HighCWriter::noteFunctionAddress(va_t Addr,
       return;
     }
   // A function the image names; this output declares it.
-  for (const Symbol &Sym : Opts.Image->Symbols)
-    if (Sym.Addr == Addr && Sym.IsFunc && !Sym.Name.empty()) {
-      FunctionAddressNames.emplace(
-          Addr, functionIdentifier(llvm::StringRef(Sym.Name)));
-      AddressTakenFunctions.insert(Sym.Name);
-      return;
-    }
+  if (!SharedFunctionSymbols && !OwnFunctionSymbols)
+    OwnFunctionSymbols = collectImageFunctionSymbols(*Opts.Image);
+  const HighCImageFunctionSymbols &Symbols =
+      SharedFunctionSymbols ? *SharedFunctionSymbols : *OwnFunctionSymbols;
+  if (const auto Found = Symbols.find(Addr); Found != Symbols.end()) {
+    const Symbol &Sym = *Found->second;
+    FunctionAddressNames.emplace(Addr,
+                                 functionIdentifier(llvm::StringRef(Sym.Name)));
+    AddressTakenFunctions.insert(Sym.Name);
+  }
 }
 
 void HighCWriter::writeImageObjects() {
@@ -4264,10 +4267,20 @@ HighCImageDataObjects collectImageDataObjects(const BinaryImage &Image) {
   return Objects;
 }
 
+HighCImageFunctionSymbols
+collectImageFunctionSymbols(const BinaryImage &Image) {
+  HighCImageFunctionSymbols Symbols;
+  for (const Symbol &Sym : Image.Symbols)
+    if (Sym.IsFunc && !Sym.Name.empty())
+      Symbols.try_emplace(Sym.Addr, &Sym);
+  return Symbols;
+}
+
 void HighCEmitter::prepareImageFunctionNames(const BinaryImage &Image) {
   PreparedImage = nullptr;
   PreparedImageFunctionNames = collectImageFunctionNameViews(Image);
   PreparedDataObjects = collectImageDataObjects(Image);
+  PreparedFunctionSymbols = collectImageFunctionSymbols(Image);
   PreparedImage = &Image;
 }
 
@@ -4317,7 +4330,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
     const bool Prepared = Opts.Image && Opts.Image == PreparedImage;
     HighCWriter W(OS, Opts, Dbg, true,
                   Prepared ? &PreparedImageFunctionNames : nullptr, Recorder,
-                  Prepared ? &PreparedDataObjects : nullptr);
+                  Prepared ? &PreparedDataObjects : nullptr,
+                  Prepared ? &PreparedFunctionSymbols : nullptr);
     W.ExtraRecords = Extra;
     W.WantedRecords = Wanted;
     W.prepareFunctionReturns(Working);
