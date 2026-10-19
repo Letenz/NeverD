@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-import datetime
 import json
 import os
 from pathlib import Path
@@ -366,7 +365,7 @@ def generate(arguments, name, target, checkouts, read):
     text = (
         f"The Darwin types and prototypes for {target.describes}, as a "
         "program declares them with libSystem's headers.  Generated on "
-        f"{datetime.date.today().isoformat()} by "
+        f"{linux.generation_date()} by "
         f"scripts/generate_darwin_types.py --target {name} from the headers "
         f"of {tags} (https://github.com/apple-oss-distributions): changed "
         "from them, as NeverD reads and renders their declarations again.")
