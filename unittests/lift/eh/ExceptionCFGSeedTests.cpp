@@ -297,6 +297,44 @@ TEST(ExceptionCFGSeed, DecodesRegistrationThunksLabeledAsFunctionEntries) {
             (std::vector<va_t>{kEntry, kEntry + 1, kEntry + 3}));
 }
 
+TEST(ExceptionCFGSeed, LeavesAnInstallersScopesToTheInstaller) {
+  // An x86 registration record's range runs from the function that installed
+  // it to the next function the loader knew of.  A function found later
+  // inside that range -- MSVC's optimized `call $finally+3`, or a routine the
+  // loader did not know -- runs none of the installer's handlers, which run
+  // on the installer's frame.
+  BinaryImage Img = makeImage(Arch::X86, BinaryFormat::COFF);
+  ExceptionFunction EH = makeRecord(ExceptionEncoding::X86ScopeTableEH3,
+                                    ExceptionPersonality::ExceptHandler3);
+  RegistrationChainInfo Chain;
+  RegistrationScopeRecord Except;
+  Except.FilterVA = kEntry + 1;
+  Except.HandlerVA = kEntry + 3;
+  Chain.Scopes.push_back(Except);
+  RegistrationScopeRecord Finally;
+  Finally.HandlerVA = kEntry + 5;
+  Finally.IsFinally = true;
+  Chain.Scopes.push_back(Finally);
+  EH.Registration = std::move(Chain);
+  Img.ExceptionMetadata.Functions.push_back(std::move(EH));
+  Img.ExceptionMetadata.rebuildIndex();
+
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  const LowFunc Installer = CFGBuilder().build(Img, Dec, kEntry, "installer");
+  EXPECT_EQ(blockStarts(Installer),
+            (std::vector<va_t>{kEntry, kEntry + 1, kEntry + 3, kEntry + 5}));
+  ASSERT_TRUE(Installer.ExceptionMetadata);
+  EXPECT_TRUE(Installer.ExceptionMetadata->Registration);
+
+  for (const va_t Inner : {kEntry + 7, kEntry + 9}) {
+    SCOPED_TRACE(Inner);
+    const LowFunc Func = CFGBuilder().build(Img, Dec, Inner, "inner");
+    EXPECT_EQ(blockStarts(Func), (std::vector<va_t>{Inner}));
+    EXPECT_FALSE(Func.ExceptionMetadata);
+  }
+}
+
 TEST(ExceptionCFGSeed, DecodesAFinallyBodyThatDeclaresNoFilter) {
   BinaryImage Img = makeImage(Arch::X86, BinaryFormat::COFF);
   ExceptionFunction EH = makeRecord(ExceptionEncoding::X86ScopeTableEH4,
