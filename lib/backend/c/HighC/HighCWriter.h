@@ -1376,6 +1376,10 @@ public:
     /// The widest atomic access (an ordered load or store, or a
     /// read-modify-write) at its address: C keeps it as aligned as the image.
     uint16_t AtomicBytes = 0;
+    /// The widest alignment an access at its address requires (an aligned
+    /// vector move faults on a misaligned address): C keeps it as aligned
+    /// as the image.
+    uint16_t AlignedBytes = 0;
   };
   std::map<va_t, ImageObject> ImageObjects;
   /// The access width that names the unnamed object \p Obj at \p Addr, as
