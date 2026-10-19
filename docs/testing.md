@@ -422,6 +422,18 @@ effect preservation without the symbolic bridge. The x87 classification test
 executes ordinary HighC against native extended-precision encodings; ARM mode
 tests execute both ordinary and explicitly enhanced source.
 
+`NeverDHighSymSimplifyTests` provides the focused HighIR suite, including
+8–256-bit affine synthesis, synthesis inside signed/unsigned width conversions
+and exhaustive byte-pair overflow preservation.
+`SymSimplifyGuard.SourceSymbolicToggleEnablesBoundedSemanticSearch` checks
+actual search work through every source LLVM profile. The real-engine
+`NeverDWorkerSourceSynthesis` test sends the GUI's `source_options` request,
+checks enhanced/ordinary cache isolation, and, when a CLI is configured,
+exercises single-function and whole-program source in both routes. With
+Clang available it compiles all six enhanced outputs at O0/O2 and executes
+each against 1,331 boundary triples and 4,096 deterministic random triples.
+Missing Clang explicitly skips only that generated-C execution coverage.
+
 `NeverDGuiMicrosoftSymbols` uses an in-memory network reply and the fixture SDK
 to check the Load PDB file dialog (a matching local copy, declining, downloads
 into the store the worker names, 404 and another build's file leaving the store

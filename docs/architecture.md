@@ -940,6 +940,22 @@ then simplify every function with whole-program evidence such as the wide
 returns its callers observe, which one function's view lacks. Source options
 never change the lifting, patching or general module optimizer defaults.
 
+The explicit source `symbolic` switch enables exact MBA derivations and
+proof-gated semantic synthesis in both HighC and LLVM-to-C. HighC tries
+synthesis after exact derivation, retaining the derivation if synthesis
+cannot improve it. Width conversions also start inner numeric regions, so
+extensions do not hide narrow arithmetic or change its overflow semantics.
+LLVM source enables synthesis in the existing semantic fixed point. Both consume
+`SynthOptions::sourceView()` and `SolverOptions::sourceView()`: at most 20,000
+search-work units, candidate cost 32 and 64 independent validation samples per
+attempt, with finite bit-blasting/SAT allowances (262,144 gates, 20,000
+conflicts, 4,194,304 propagations and 16,777,216 watch visits per query).
+Samples only propose a
+rewrite; the full-width verifier must accept it before the normal type,
+effect and profitability checks can publish it. Exhaustion preserves the
+expression. GUI menu requests, CLI single-function options and whole-program
+source sessions all reach these same policies.
+
 LLVMC defaults to LLVM O2 after ordinary frame and SSA promotion. Basic scalar
 cleanup, O0, O1, O3 and a bounded custom pass selection are explicit alternatives.
 A view's module holds some of the image's functions, so a writable table of

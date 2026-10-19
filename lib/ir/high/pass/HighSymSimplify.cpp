@@ -12,9 +12,9 @@
 /// is enough for the residue of ordinary lifting and useless against anything
 /// deliberate: an expression mixing `+ - *` with `& | ^ ~` blocks every rule
 /// either algebra can state, which is the entire point of writing one.  This
-/// general MBA pass measures what the expression computes and writes the
-/// shortest thing that computes the same. A separate proof-gated search
-/// reconstructs arithmetic spanning two machine words.
+/// general MBA pass measures what the expression computes and writes
+/// a shorter expression with the same semantics. Proof-gated searches also
+/// reconstruct modular affine expressions and arithmetic spanning two words.
 ///
 /// Translation in both directions is deliberately narrow. Integer arithmetic,
 /// exact word concatenation, and byte-valued integer predicates with known
@@ -1118,7 +1118,7 @@ void simplifyOne(ExprPtr &E, const AvailableDefinitions &Definitions) {
   if (Result.Changed && Result.Evidence != sym::MBAEvidence::Derivation)
     return;
 
-  solver::SymSynthVerifier WideVerifier;
+  solver::SymSynthVerifier WideVerifier(solver::SolverOptions::sourceView());
   const sym::SymRef Recovered = sym::recoverSplitWordArithmetic(
       Ctx, Result.Expr,
       [&](sym::SymContext &Context, sym::SymRef A, sym::SymRef B) {
@@ -1127,44 +1127,61 @@ void simplifyOne(ExprPtr &E, const AvailableDefinitions &Definitions) {
   if (Recovered != Result.Expr)
     Result.Expr = Recovered;
 
-  ExprPtr After =
-      Xlat.out(Result.Expr, Width, hasOnlyScalarLiteralInputs(E, Definitions));
-  if (!After)
-    return;
-  if (After->Kind == ExprKind::Var && E->Type && After->Type &&
-      E->Type->IsSigned != After->Type->IsSigned) {
-    auto Cast = std::make_shared<HighExpr>();
-    Cast->Kind = ExprKind::Cast;
-    Cast->Type = Cast->CastTo = E->Type;
-    Cast->Operands = {After};
-    After = std::move(Cast);
-  } else {
-    // A solver variable may be a shared source node. Do not change its type
-    // at another use when preserving the enclosing expression's result type.
-    After = std::make_shared<HighExpr>(*After);
-    if (E->Type) {
-      After->Type = E->Type;
-      if (After->Kind == ExprKind::Cast)
-        After->CastTo = E->Type;
+  const bool ScalarLiterals = hasOnlyScalarLiteralInputs(E, Definitions);
+  auto Publish = [&](sym::SymRef Candidate) {
+    ExprPtr After = Xlat.out(Candidate, Width, ScalarLiterals);
+    if (!After)
+      return false;
+    if (After->Kind == ExprKind::Var && E->Type && After->Type &&
+        E->Type->IsSigned != After->Type->IsSigned) {
+      auto Cast = std::make_shared<HighExpr>();
+      Cast->Kind = ExprKind::Cast;
+      Cast->Type = Cast->CastTo = E->Type;
+      Cast->Operands = {After};
+      After = std::move(Cast);
+    } else {
+      // A solver variable may be a shared source node. Do not change its type
+      // at another use when preserving the enclosing expression's result type.
+      After = std::make_shared<HighExpr>(*After);
+      if (E->Type) {
+        After->Type = E->Type;
+        if (After->Kind == ExprKind::Cast)
+          After->CastTo = E->Type;
+      }
     }
-  }
-  const std::optional<size_t> AfterCost = expressionCost(After);
-  // An equal-size source expression can hide a much larger proved expansion
-  // through earlier scalar definitions. Accept that tie when the expanded
-  // algebra became strictly smaller; dead definitions can then be removed.
-  const bool ShorterExpandedDefinition =
-      AfterCost && *AfterCost == *BeforeCost && !Definitions.empty() &&
-      Result.Changed && Result.SizeAfter < Result.SizeBefore;
-  if (!AfterCost ||
-      (*BeforeCost < *AfterCost + kMinGain && !ShorterExpandedDefinition))
+    const std::optional<size_t> AfterCost = expressionCost(After);
+    // A same-size source expression can hide a much larger proved expansion
+    // through earlier definitions; dead definitions can then be removed.
+    const bool ShorterExpandedDefinition =
+        AfterCost && *AfterCost == *BeforeCost && !Definitions.empty() &&
+        Candidate != Before &&
+        Ctx.readabilityCost(Candidate) < Ctx.readabilityCost(Before);
+    if (!AfterCost ||
+        (*BeforeCost < *AfterCost + kMinGain && !ShorterExpandedDefinition))
+      return false;
+    E = std::move(After);
+    return true;
+  };
+  // The source toggle also opts into semantic synthesis. Both renderers use
+  // the same finite search/proof policies; samples alone never reach HighIR.
+  solver::SymSynthVerifier Verifier(solver::SolverOptions::sourceView());
+  const sym::SynthResult Synth =
+      sym::synthesize(Ctx, Result.Expr, sym::SynthOptions::sourceView(),
+                      [&](sym::SymContext &Context, sym::SymRef A,
+                          sym::SymRef B) { return Verifier(Context, A, B); });
+  if (Synth.Changed && Synth.Evidence == sym::SynthEvidence::Verifier &&
+      Synth.Verification == sym::SynthVerification::Equivalent &&
+      Publish(Synth.Expr))
     return;
-  E = After;
+  Publish(Result.Expr);
 }
 
 /// Simplify maximal numeric regions, including those beneath opaque operators
 /// such as POPCOUNT and comparisons. Rebuild only changed ancestor nodes so a
 /// call, memory access, pointer cast, or other boundary stays in its original
-/// evaluation position. Each numeric region reaches the solver once.
+/// evaluation position. A width change starts an inner region too: a wrapped
+/// narrow sum need not be affine at the wider width of its extension. Simplify
+/// the inner expression at its actual width before considering the outer one.
 void simplifyRegions(ExprPtr &Root, const AvailableDefinitions &Definitions) {
   struct Item {
     ExprPtr Expr;
@@ -1217,6 +1234,11 @@ void simplifyRegions(ExprPtr &Root, const AvailableDefinitions &Definitions) {
     if (!Safe.at(E.get()) || !Translatable)
       E->forEachChildExpr(
           [&](const ExprPtr &Child) { Regions.insert(Child.get()); });
+    else
+      E->forEachChildExpr([&](const ExprPtr &Child) {
+        if (WidthOf(Child) != WidthOf(E))
+          Regions.insert(Child.get());
+      });
   }
 
   std::unordered_map<const HighExpr *, ExprPtr> Rebuilt;

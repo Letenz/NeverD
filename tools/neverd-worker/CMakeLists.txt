@@ -207,6 +207,14 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
       elseif(EXISTS "${NEVERD_WORKER_CLI_EXECUTABLE}")
         set(_neverd_worker_test_cli "${NEVERD_WORKER_CLI_EXECUTABLE}")
       endif()
+      set(_neverd_source_synthesis_args)
+      if(_neverd_worker_test_cli)
+        list(APPEND _neverd_source_synthesis_args --cli "${_neverd_worker_test_cli}")
+      endif()
+      add_test(NAME NeverDWorkerSourceSynthesis
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/source_synthesis_test.py"
+                "$<TARGET_FILE:neverd-worker>" ${_neverd_source_synthesis_args})
+      set_tests_properties(NeverDWorkerSourceSynthesis PROPERTIES TIMEOUT 180)
       if(_neverd_worker_test_cli)
         add_test(NAME NeverDWorkerCLIWriterLock
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_writer_lock_test.py"

@@ -1953,6 +1953,46 @@ TEST(SymSimplifyGuard, SourceDefaultRunsO2WithoutSymbolicWork) {
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }
 
+TEST(SymSimplifyGuard, SourceSymbolicToggleEnablesBoundedSemanticSearch) {
+  using Level = SourceViewOptions::LLVMOptimization;
+  for (const auto Profile : {Level::Basic, Level::O0, Level::O1, Level::O2,
+                             Level::O3, Level::Custom}) {
+    for (bool Symbolic : {false, true}) {
+      SCOPED_TRACE(static_cast<unsigned>(Profile));
+      SCOPED_TRACE(Symbolic);
+      llvm::LLVMContext C;
+      llvm::Module M("source_synthesis", C);
+      auto *I32 = llvm::Type::getInt32Ty(C);
+      auto *F = llvm::Function::Create(
+          llvm::FunctionType::get(I32, {I32}, false),
+          llvm::Function::ExternalLinkage, "nonlinear", M);
+      F->getArg(0)->addAttr(llvm::Attribute::NoUndef);
+      llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", F));
+      B.CreateRet(
+          B.CreateMul(F->getArg(0), B.CreateAdd(F->getArg(0), B.getInt32(1))));
+      SourceViewOptions Options;
+      Options.LLVM = Profile;
+      Options.Symbolic = Symbolic;
+      Options.Passes = 0;
+      const auto Result =
+          Pipeline::optimizeOrPromoteModule(M, nullptr, Options);
+      ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+      EXPECT_NE(Result.Stop, OptimizationStopReason::InputInvalid);
+      EXPECT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
+      // A nonlinear expression has no affine answer. Work here demonstrates
+      // that the real source request reaches bounded semantic search, even
+      // when the selected LLVM cleanup profile leaves it unchanged.
+      if (Symbolic)
+        EXPECT_GT(Result.SearchWork, 0u);
+      else
+        EXPECT_EQ(Result.SearchWork, 0u);
+      EXPECT_LE(Result.SearchWork,
+                Result.Rounds * symbolic::SynthOptions::sourceView().MaxWork);
+      EXPECT_EQ(Result.SemanticRewrites, 0u);
+    }
+  }
+}
+
 TEST(SymSimplifyGuard, DeepDefaultO2InlinesAndEliminatesInternalHelper) {
   llvm::LLVMContext C;
   llvm::Module M("m", C);
