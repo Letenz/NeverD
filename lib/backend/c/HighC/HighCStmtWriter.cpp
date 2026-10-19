@@ -224,26 +224,6 @@ bool stmtAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
   }
 }
 
-/// The call \p E returns through casts and integer views, which a function
-/// printed `void` makes as a statement.
-const HighExpr *returnedCall(const HighExpr &E) {
-  const HighExpr *Cur = &E;
-  for (unsigned Depth = 0; Cur && Depth <= limits::kMaxIntegerViewUnwrapDepth;
-       ++Depth) {
-    if (Cur->Kind == ExprKind::Call)
-      return Cur;
-    const bool View =
-        Cur->Kind == ExprKind::Cast || Cur->Kind == ExprKind::BitCast ||
-        (Cur->Kind == ExprKind::UnaryOp &&
-         (Cur->Op == NdOp::INT_ZEXT || Cur->Op == NdOp::INT_SEXT)) ||
-        (Cur->Kind == ExprKind::BinOp && Cur->Op == NdOp::SUBBYTES);
-    if (!View || Cur->Operands.empty())
-      return nullptr;
-    Cur = Cur->Operands[0].get();
-  }
-  return nullptr;
-}
-
 bool stmtsAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
                      const std::vector<HighStmt> &Stmts, size_t End) {
   for (size_t I = End; I > 0; --I) {
