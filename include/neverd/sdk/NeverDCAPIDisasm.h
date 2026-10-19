@@ -186,8 +186,10 @@ NEVERD_API int neverd_prepare_function_view(neverd_session_t Sess,
 /// and nothing already prepared is discarded.  Returns
 /// {"available":bool,"prepared":int,"full":bool,"next_entry":"0x..."|null}:
 /// "prepared" counts the functions the session now holds prepared, "full"
-/// says it refused one for lack of room, so further calls prepare nothing
-/// new.  "available" is false where calls keep no such state, images other
+/// says it refused one for lack of room, so further calls prepare no more
+/// functions.  They still keep what a decompile reads of calls to the
+/// page's functions, so a pass goes on to "next_entry" null either way.
+/// "available" is false where calls keep no such state, images other
 /// than x86-64.  A function that is not a symbol start keeps its own state
 /// beside it.  A PE function's preparation keeps it unless discovering the
 /// function's exception handlers adds metadata, which after a full load it
