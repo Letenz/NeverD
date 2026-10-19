@@ -170,27 +170,37 @@ TEST_P(AndroidJNI,
   ASSERT_TRUE(bool(File));
   auto Bytes = (*File)->getBuffer();
   Options.Android->DexImages.emplace_back(Bytes.begin(), Bytes.end());
-  auto Before = run("jni_native_registration");
-  Options.Android->ObserveJavaState = true;
-  auto After = run("jni_native_registration");
-  ASSERT_EQ(After.Stop, ProcessStopReason::Returned) << After.Diagnostic;
-  ASSERT_TRUE(After.JavaState);
-  EXPECT_FALSE(After.JNIRegistrations.empty());
-  unsigned Supplied = 0, Materialized = 0;
-  for (const auto &C : After.JavaState->classes) {
-    if (!C.supplied)
-      continue;
-    ++Supplied;
-    Materialized += C.class_object != 0;
-    EXPECT_EQ(C.source_id, "supplied-dex-0");
-    EXPECT_EQ(C.initialization,
-              mobile::dalvik::JavaClassState::Initialization::NotStarted);
-    EXPECT_FALSE(C.projected_loader); // No application snapshot was supplied.
+  Options.Android->TraceLimit = 50000;
+  for (unsigned Mode : {0u, 5u}) {
+    SCOPED_TRACE(Mode);
+    Options.Android->Arguments = {Mode};
+    Options.Android->ObserveJavaState = false;
+    auto Before = run("jni_native_registration");
+    Options.Android->ObserveJavaState = true;
+    auto After = run("jni_native_registration");
+    ASSERT_EQ(After.Stop, ProcessStopReason::Returned) << After.Diagnostic;
+    ASSERT_TRUE(After.JavaState);
+    EXPECT_FALSE(After.JavaState->terminal);
+    EXPECT_FALSE(After.JNIRegistrations.empty());
+    unsigned Supplied = 0, Materialized = 0;
+    for (const auto &C : After.JavaState->classes) {
+      if (!C.supplied)
+        continue;
+      ++Supplied;
+      Materialized += C.class_object != 0;
+      EXPECT_EQ(C.source_id, "supplied-dex-0");
+      using Init = mobile::dalvik::JavaClassState::Initialization;
+      EXPECT_EQ(C.initialization,
+                Mode == 5 && C.descriptor == "Lregistration/Deferred;"
+                    ? Init::Erroneous
+                    : Init::NotStarted);
+      EXPECT_FALSE(C.projected_loader); // No application snapshot was supplied.
+    }
+    EXPECT_EQ(Supplied, 3u);
+    EXPECT_EQ(Materialized, 3u);
+    After.JavaState.reset();
+    EXPECT_EQ(processResultJSON(After), processResultJSON(Before));
   }
-  EXPECT_GT(Supplied, 0u);
-  EXPECT_GT(Materialized, 0u);
-  After.JavaState.reset();
-  EXPECT_EQ(processResultJSON(After), processResultJSON(Before));
 #endif
 }
 TEST_P(AndroidJNI, ApplicationUnknownStateAndPackageDoNotBecomeNullOrDefaults) {
