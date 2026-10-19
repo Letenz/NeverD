@@ -89,6 +89,29 @@ TEST(LinuxSyscallArguments, Linux72IncrementalMetadata) {
   EXPECT_EQ(linuxSyscallArgumentCount(Arch::X64, 512), std::nullopt);
 }
 
+TEST(LinuxSyscallArguments, AArch64NativeNotCompat) {
+  using neverd::Arch;
+  using neverd::linuxSyscallArgumentCount;
+  constexpr unsigned Numbers[] = {
+      43, 44, 45, 46, 84, 86, 87, 99, 100, 115, 122, 123, 127, 137, 138, 183, 240};
+  constexpr unsigned Counts[] = {
+      2, 2, 2, 2, 4, 4, 2, 2, 3, 4, 3, 3, 2, 4, 3, 5, 4};
+  for (unsigned I = 0; I < sizeof(Numbers) / sizeof(Numbers[0]); ++I) {
+    SCOPED_TRACE(Numbers[I]);
+    EXPECT_EQ(linuxSyscallArgumentCount(Arch::AArch64, Numbers[I]), Counts[I]);
+  }
+  for (unsigned Number = 403; Number <= 423; ++Number) {
+    SCOPED_TRACE(Number);
+    EXPECT_EQ(linuxSyscallArgumentCount(Arch::AArch64, Number), std::nullopt);
+  }
+  // These really are assigned in the 32-bit EABI and must remain intact.
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 403), 2u);
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 422), 6u);
+  // A removed kernel implementation does not erase the historical ABI.
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::AArch64, 18), 3u);
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 249), 4u);
+}
+
 class LinuxSyscall : public NeverDLiftTest {
 protected:
   std::string highC(const fs::path &Object) {

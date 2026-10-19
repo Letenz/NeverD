@@ -18,6 +18,7 @@ import argparse
 from pathlib import Path
 import re
 import sys
+import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = (ROOT / "include" / "neverd" / "ir" / "intrinsics" /
@@ -118,25 +119,33 @@ def table(path, abis):
     return rows
 
 
-def generic_table(tree):
-    """AArch64's (number, name, handler) rows: scripts/syscall.tbl's, or those
-    asm-generic/unistd.h declares for a 64-bit kernel."""
+def generic_table(tree, cpp="cpp"):
+    """Native AArch64 rows, never compat/time32 rows.
+
+    New kernels own an architecture-specific table. Older kernels use a
+    generic table or a conditional UAPI header. Preprocess that header under
+    the target architecture, rather than regex-scanning inactive branches.
+    """
+    abis = {"common", "64", "renameat", "rlimit", "memfd_secret"}
+    native = tree / "arch/arm64/tools/syscall_64.tbl"
+    if native.exists():
+        return table(native, abis)
     script = tree / "scripts/syscall.tbl"
     if script.exists():
-        return table(script, {"common", "64", "renameat", "rlimit",
-                              "memfd_secret"})
-    text = (tree / "include/uapi/asm-generic/unistd.h").read_text()
-    numbers = {name: int(value) for name, value in re.findall(
-        r"#define\s+(__NR(?:3264)?_\w+)\s+(\d+)\b", text)}
-    rows = []
-    entry = re.compile(r"__(SYSCALL|SC_COMP|SC_3264|SC_COMP_3264)\((__NR\w+),"
-                       r"\s*(\w+)(?:,\s*(\w+))?(?:,\s*(\w+))?\)")
-    for kind, macro, first, second, _ in entry.findall(text):
-        if macro not in numbers:
-            continue
-        handler = second if kind in ("SC_3264", "SC_COMP_3264") else first
-        name = macro.replace("__NR3264_", "").replace("__NR_", "")
-        rows.append((numbers[macro], name, handler))
+        return table(script, abis)
+    driver = ("#define __SYSCALL(nr, call) NEVERD_SYSCALL(nr, call)\n"
+              "#include <asm/unistd.h>\n")
+    result = subprocess.run(
+        [cpp, "-E", "-P", "-undef", "-nostdinc", "-D__aarch64__",
+         "-I", str(tree / "arch/arm64/include/uapi"),
+         "-I", str(tree / "include/uapi"), "-"],
+        input=driver, text=True, capture_output=True, check=True)
+    rows = [(int(number), handler.removeprefix("sys_"), handler)
+            for number, handler in re.findall(
+                r"NEVERD_SYSCALL\(\s*(\d+)\s*,\s*(\w+)\s*\)",
+                result.stdout)]
+    if not rows:
+        raise ValueError("AArch64 UAPI preprocessing produced no syscall rows")
     return rows
 
 
@@ -145,6 +154,8 @@ def main():
     parser.add_argument("--kernel", type=Path, required=True,
                         help="a Linux source tree")
     parser.add_argument("--output", type=Path, default=OUTPUT)
+    parser.add_argument("--cpp", default="cpp",
+                        help="C preprocessor for legacy AArch64 UAPI headers")
     args = parser.parse_args()
     tree = args.kernel
     version = "unknown"
@@ -157,7 +168,7 @@ def main():
     arches = [
         ("X64", table(tree / "arch/x86/entry/syscalls/syscall_64.tbl",
                       {"common", "64"}), False, {}),
-        ("AArch64", generic_table(tree), False, {}),
+        ("AArch64", generic_table(tree, args.cpp), False, {}),
         ("ARM", table(tree / "arch/arm/tools/syscall.tbl",
                       {"common", "eabi"}), True, ARM_ENTRY_ALIASES),
     ]
@@ -183,6 +194,11 @@ def main():
         for number, name, handler in sorted(rows):
             if number in seen:
                 continue
+            # A current ENOSYS stub does not describe historical ABI inputs.
+            # Leave such entries unknown instead of claiming zero arguments.
+            if handler == "sys_ni_syscall":
+                missing.append(handler + " (" + name + ")")
+                continue
             types = known.get(aliases.get(handler, handler))
             if types is None:
                 missing.append(handler)
@@ -193,7 +209,7 @@ def main():
         print(f"{arch}: {len(seen)} calls; no prototype for {missing}",
               file=sys.stderr)
     # The names align in a column, as clang-format aligns trailing comments.
-    width = max(len(code) for code, _ in entries)
+    width = max((len(code) for code, _ in entries), default=0)
     lines += [f"{code.ljust(width)} // {name}" for code, name in entries]
     lines += ["", "#undef NEVERD_LINUX_SYSCALL_ARGUMENTS"]
     args.output.write_text("\n".join(lines) + "\n")
