@@ -38,6 +38,16 @@
 //   int clang_call_keep_got(void (*f)(void)) { f(); return factor; }
 // built at -O0 spills the GOT address to 4(%esp) before calling `f` and
 // reloads it to read `factor`.
+//   void clang_set_factor_o0(int v) { factor = v; }
+// built at -O0 spills the GOT address and returns with its reload in %eax.
+// `clang_ui_value` is the IDA SDK's `vmsg` at -O0: the pointer `clang_hook`
+// returns a one-word struct in memory and pops its hidden pointer, so
+//   int clang_ui_value(void) { return clang_hook(23).i; }
+// takes the popped word back with `subl $4, %esp` and reads the result.  A
+// stack model that does not know the callee pops reads the GOT's spill
+// there.  `clang_ui_caller` stores what it returns, calling it by a local
+// alias as clang does under -fno-semantic-interposition:
+//   void clang_ui_caller(void) { factor = clang_ui_value(); }
 
 	.text
 	.p2align 4
@@ -369,6 +379,98 @@ clang_call_keep_got:
 	retl
 	.cfi_endproc
 	.size	clang_call_keep_got, .-clang_call_keep_got
+
+	.p2align 4
+	.globl	clang_set_factor_o0
+	.type	clang_set_factor_o0, @function
+clang_set_factor_o0:
+	.cfi_startproc
+	pushl	%ebp
+	.cfi_def_cfa_offset 8
+	.cfi_offset %ebp, -8
+	movl	%esp, %ebp
+	.cfi_def_cfa_register %ebp
+	subl	$8, %esp
+	calll	.Lset_factor_o0_pc
+.Lset_factor_o0_pc:
+	popl	%eax
+.Lset_factor_o0_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Lset_factor_o0_got-.Lset_factor_o0_pc), %eax
+	movl	%eax, 4(%esp)
+	movl	8(%ebp), %ecx
+	movl	4(%esp), %eax
+	movl	%ecx, factor@GOTOFF(%eax)
+	addl	$8, %esp
+	popl	%ebp
+	.cfi_def_cfa %esp, 4
+	retl
+	.cfi_endproc
+	.size	clang_set_factor_o0, .-clang_set_factor_o0
+
+	.p2align 4
+	.globl	clang_ui_value
+	.type	clang_ui_value, @function
+clang_ui_value:
+.Lui_value_local:
+	.cfi_startproc
+	pushl	%ebp
+	.cfi_def_cfa_offset 8
+	.cfi_offset %ebp, -8
+	movl	%esp, %ebp
+	.cfi_def_cfa_register %ebp
+	pushl	%ebx
+	pushl	%esi
+	.cfi_offset %esi, -16
+	.cfi_offset %ebx, -12
+	andl	$-16, %esp
+	subl	$32, %esp
+	calll	.Lui_value_pc
+.Lui_value_pc:
+	popl	%eax
+.Lui_value_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Lui_value_got-.Lui_value_pc), %eax
+	movl	clang_hook@GOTOFF(%eax), %esi
+	movl	%eax, 20(%esp)
+	leal	24(%esp), %ecx
+	movl	%ecx, (%esp)
+	movl	$23, 4(%esp)
+	movl	20(%esp), %ebx
+	calll	*%esi
+	subl	$4, %esp
+	movl	24(%esp), %eax
+	leal	-8(%ebp), %esp
+	popl	%esi
+	popl	%ebx
+	popl	%ebp
+	.cfi_def_cfa %esp, 4
+	retl
+	.cfi_endproc
+	.size	clang_ui_value, .-clang_ui_value
+
+	.p2align 4
+	.globl	clang_ui_caller
+	.type	clang_ui_caller, @function
+clang_ui_caller:
+	.cfi_startproc
+	pushl	%ebx
+	.cfi_def_cfa_offset 8
+	.cfi_offset %ebx, -8
+	subl	$8, %esp
+	.cfi_def_cfa_offset 16
+	calll	.Lui_caller_pc
+.Lui_caller_pc:
+	popl	%ebx
+.Lui_caller_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Lui_caller_got-.Lui_caller_pc), %ebx
+	calll	.Lui_value_local
+	movl	%eax, factor@GOTOFF(%ebx)
+	addl	$8, %esp
+	.cfi_def_cfa_offset 8
+	popl	%ebx
+	.cfi_def_cfa_offset 4
+	retl
+	.cfi_endproc
+	.size	clang_ui_caller, .-clang_ui_caller
 
 	.section	.rodata
 	.p2align 2

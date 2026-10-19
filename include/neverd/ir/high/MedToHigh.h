@@ -256,6 +256,13 @@ public:
   HighFunc convert(const MedFunc &Med, Arch TheArch = Arch::Unknown);
 
   void setBinaryImage(const BinaryImage *Img) { Image = Img; }
+  /// The 4-byte i386 values a conversion of \p Med reads as numbers, by
+  /// varKey: the PC an authenticated get-PC sequence leaves, a constant added
+  /// to it, and copies, joins and reloads of its proven spills
+  /// (collectI386PcRootedValues).  The return contract, which settles on
+  /// MedIR, reads the GOT address from the same proof.
+  static std::map<VarKey, uint32_t>
+  i386PcRootedNumbers(const MedFunc &Med, Arch TheArch, const BinaryImage *Img);
 
   /// Reserve workers for semantic rewriting inside this conversion. Keep the
   /// default serial setting when conversions themselves already run in

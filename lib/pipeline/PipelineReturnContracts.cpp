@@ -40,6 +40,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/X87Context.h"
+#include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/intrinsics/IntrinsicValueEffects.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/I386PicAddress.h"
@@ -74,6 +75,12 @@ enum class ReturnedValue : uint8_t {
   /// A system call's result, which the call writes to the return register
   /// whatever the function means: a value where a caller reads it.
   SystemCallResult,
+  /// The GOT address reloaded from its spill: no value the function means,
+  /// unless a caller reads what a call to it returns.  A read the stack model
+  /// places on the spill slot by mistake looks the same: after a
+  /// struct-returning call that pops its hidden pointer, `vmsg` reads the
+  /// result's first field four bytes from the slot.
+  ReloadedGOTAddress,
   /// A constant or a comparison: a value the function means.
   Deliberate,
   /// Any other value.
@@ -263,6 +270,9 @@ private:
   const TargetRegInfo &TRI;
   std::map<va_t, FunctionFacts> Facts;
   std::map<va_t, bool> NoValue;
+  /// The numbers the i386 PC-rooted proof gives each function's values
+  /// (MedToHighConverter::i386PcRootedNumbers), computed on first use.
+  mutable std::map<const MedFunc *, std::map<VarKey, uint32_t>> PcRootedNumbers;
   /// What each declared function's declaration says: true for none.
   std::map<va_t, bool> Declared;
   std::map<va_t, std::string> Names;
@@ -372,21 +382,36 @@ private:
     return false;
   }
 
-  /// Whether \p Value is the linked GOT's address that an authenticated i386
-  /// get-PC sequence computes (`call 1f; 1: pop %eax; add $GOT-1b, %eax`):
-  /// the base the function addresses its data from, not a value it means.
-  bool isI386GOTAddress(const FunctionFacts &F, const MedVar &Value) const {
+  /// How \p Value is the linked GOT's address that an authenticated i386
+  /// get-PC sequence computes (`call 1f; 1: pop %eax; add $GOT-1b, %eax`),
+  /// the base the function addresses its data from: computed from the PC
+  /// alone, or reloaded from a frame slot every write of which stores it.
+  enum class GOTAddressKind : uint8_t { None, Computed, Reloaded };
+  GOTAddressKind i386GOTAddress(const FunctionFacts &F,
+                                const MedVar &Value) const {
     if (Img.Arch != Arch::X86 || !F.Func || F.Func->I386GetPcModels.empty())
-      return false;
+      return GOTAddressKind::None;
     const std::optional<va_t> GOT = Img.linkedI386GlobalOffsetTable();
     if (!GOT)
-      return false;
+      return GOTAddressKind::None;
     const std::optional<uint64_t> Folded = foldI386PicAddress(
         *F.Func, Value, [&](const MedVar &Each) -> const MedOp * {
           const auto Def = F.Defs.find(keyOf(Each));
           return Def == F.Defs.end() ? nullptr : Def->second;
         });
-    return Folded && uint32_t(*Folded) == uint32_t(*GOT);
+    if (Folded)
+      return uint32_t(*Folded) == uint32_t(*GOT) ? GOTAddressKind::Computed
+                                                 : GOTAddressKind::None;
+    // clang -O0 spills the GOT address and reloads it: the reload is the
+    // address by the proof the HighIR route reads it with.
+    auto [Numbers, Computed] = PcRootedNumbers.try_emplace(F.Func);
+    if (Computed)
+      Numbers->second =
+          MedToHighConverter::i386PcRootedNumbers(*F.Func, Img.Arch, &Img);
+    const auto Number = Numbers->second.find(varKey(Value));
+    return Number != Numbers->second.end() && Number->second == uint32_t(*GOT)
+               ? GOTAddressKind::Reloaded
+               : GOTAddressKind::None;
   }
 
   /// What \p Value hands back, each path a PHI joins counted on its own.
@@ -398,9 +423,20 @@ private:
       Paths.push_back(ReturnedValue::Deliberate);
       return;
     }
-    if (Value.Kind == MedVar::Unspecified || isI386GOTAddress(F, Value)) {
+    if (Value.Kind == MedVar::Unspecified) {
       Paths.push_back(ReturnedValue::Undefined);
       return;
+    }
+    // The GOT address computed from the PC is nothing the function means.
+    switch (i386GOTAddress(F, Value)) {
+    case GOTAddressKind::Computed:
+      Paths.push_back(ReturnedValue::Undefined);
+      return;
+    case GOTAddressKind::Reloaded:
+      Paths.push_back(ReturnedValue::ReloadedGOTAddress);
+      return;
+    case GOTAddressKind::None:
+      break;
     }
     if (Value.Kind == MedVar::Param || Depth > MaxDepth ||
         !Seen.insert(keyOf(Value)).second) {
@@ -572,7 +608,8 @@ private:
     const bool Read = callerReadsResult(Func);
     for (ReturnedValue &Path : Paths)
       if (Path == ReturnedValue::Incoming ||
-          Path == ReturnedValue::SystemCallResult)
+          Path == ReturnedValue::SystemCallResult ||
+          Path == ReturnedValue::ReloadedGOTAddress)
         Path = Read ? ReturnedValue::Other : ReturnedValue::Undefined;
     const auto Count = [&](ReturnedValue Kind) {
       return llvm::count(Paths, Kind);

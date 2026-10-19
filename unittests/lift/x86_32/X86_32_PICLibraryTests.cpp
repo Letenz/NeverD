@@ -19,6 +19,7 @@
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Instructions.h"
@@ -54,8 +55,10 @@ std::optional<BinaryImage> loadLibrary() {
   return loadFixture("test_pic_library_i386.so");
 }
 
-/// The HighC source of the library's function \p Name.
-std::string decompile(const BinaryImage &Img, llvm::StringRef Name) {
+/// The HighC source of the library's function \p Name, lifted with the
+/// functions \p With so that the contracts between them settle.
+std::string decompile(const BinaryImage &Img, llvm::StringRef Name,
+                      llvm::ArrayRef<llvm::StringRef> With = {}) {
   const Symbol *Function = Img.findSymbol(Name);
   if (!Function)
     return "no symbol " + Name.str();
@@ -63,6 +66,12 @@ std::string decompile(const BinaryImage &Img, llvm::StringRef Name) {
   PipelineOptions Opts;
   Opts.EmitDumpOutput = false;
   Opts.OnlyFunctionEntries = {Function->Addr};
+  for (llvm::StringRef Other : With) {
+    const Symbol *Each = Img.findSymbol(Other);
+    if (!Each)
+      return "no symbol " + Other.str();
+    Opts.OnlyFunctionEntries.insert(Each->Addr);
+  }
   const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
   if (!Result.Success)
     return "pipeline failed: " + Result.Error;
@@ -251,6 +260,40 @@ TEST(X86_32PICLibrary, AGOTSpillIsNoCallArgument) {
       << Source;
   EXPECT_TRUE(std::regex_search(Source, std::regex("\\)\\(\\);"))) << Source;
   EXPECT_NE(Source.find("factor"), std::string::npos) << Source;
+}
+
+// `clang_set_factor_o0`, built at -O0, spills the GOT address and returns
+// with its reload in %eax.  The reload is the GOT address by the spill proof,
+// no value the function means: the C returns nothing.
+TEST(X86_32PICLibrary, AReloadedGOTAddressLeftInTheReturnRegisterIsNoValue) {
+  const std::optional<BinaryImage> Img = loadLibrary();
+  if (!Img)
+    GTEST_SKIP() << "the fixture links with ld.lld";
+  const Symbol *GOT = Img->findSymbol("_GLOBAL_OFFSET_TABLE_");
+  ASSERT_NE(GOT, nullptr);
+  const std::string Source = decompile(*Img, "clang_set_factor_o0");
+  EXPECT_NE(Source.find("void clang_set_factor_o0("), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("factor = "), std::string::npos) << Source;
+  EXPECT_FALSE(std::regex_search(
+      Source, std::regex("\\b0x" + llvm::utohexstr(GOT->Addr) + "\\b")))
+      << Source;
+}
+
+// `clang_ui_value` reads its result four bytes from the GOT's spill, after a
+// call that pops its hidden pointer.  The stack model does not know the
+// callee pops, so the read looks like the GOT's reload.  `clang_ui_caller`
+// stores what a call to it returns, so the function keeps a value.
+TEST(X86_32PICLibrary, AReloadedGOTAddressACallerReadsStaysAValue) {
+  const std::optional<BinaryImage> Img = loadLibrary();
+  if (!Img)
+    GTEST_SKIP() << "the fixture links with ld.lld";
+  const std::string Source =
+      decompile(*Img, "clang_ui_value", {"clang_ui_caller"});
+  EXPECT_NE(Source.find("int32_t clang_ui_value("), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("void clang_ui_value("), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
 }
 
 // A linked library reads a `.rodata` table at its GOTOFF displacement from the
