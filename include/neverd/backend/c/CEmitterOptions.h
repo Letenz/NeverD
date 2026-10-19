@@ -51,6 +51,11 @@ struct CRecordDefinitions {
   /// unit defines as its own.
   std::vector<std::string> Types;
   std::vector<std::string> DeclaredTypes;
+  /// The records the unit's headers name by a typedef alone, as bionic's
+  /// <pthread.h> does pthread_mutex_t: the unit spells each by that name
+  /// and declares no typedef of its own, which would contradict the
+  /// header's.
+  std::vector<std::string> HeaderTypedefs;
 };
 
 struct CEmitterOptions {

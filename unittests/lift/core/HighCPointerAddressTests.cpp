@@ -46912,3 +46912,33 @@ struct CT_LIKE {
   EXPECT_EQ(Source.find("tree->freq["), std::string::npos) << Source;
   expectCSyntax("#include <stdint.h>\n" + Source);
 }
+
+TEST(HighCPointerAddresses, RecordsHeadersNameByTypedefsTakeTheirTypedefs) {
+  // bionic's <pthread.h> names pthread_mutex_t by a typedef alone, which
+  // leaves it no tag: the unit spells the record by that typedef and
+  // declares no `typedef struct pthread_mutex_t pthread_mutex_t;` of its
+  // own, which would contradict the header's.
+  HighFunc Func;
+  Func.Name = "probe_lock";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(4);
+  Func.Params = {
+      {"lock", NdType::makePtr(NdType::makeNamedRecord("pthread_mutex_t"))}};
+  returnValue(Func, HighExpr::makeConst(0, 4));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.HeaderTypedefs = {"pthread_mutex_t"};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("probe_lock(pthread_mutex_t* lock)"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("typedef struct pthread_mutex_t"), std::string::npos)
+      << Source;
+  expectCSyntax("#include <pthread.h>\n" + Source);
+}
