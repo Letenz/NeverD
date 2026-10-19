@@ -454,17 +454,61 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   // still decides whether a target is an entry.
   std::set<va_t> CodeNamedTargets;
   if (IsX86LinkedCOFF && Img.Entry != 0) {
+    const size_t TableNames = CodeNamedByCode.size();
     func_detect_detail::scanCodeAddressImmediatesX86(Img, Dec, CodeNamedByCode);
     const std::vector<va_t> Starts(Entries.begin(), Entries.end());
+    // The function an address lies in: the entry before it, and the next.
+    auto functionOf = [&](va_t Addr) -> std::optional<std::pair<va_t, va_t>> {
+      const auto Next = std::upper_bound(Starts.begin(), Starts.end(), Addr);
+      if (Next == Starts.begin())
+        return std::nullopt;
+      return std::make_pair(*std::prev(Next),
+                            Next == Starts.end() ? InvalidVA : *Next);
+    };
     auto NamesOwnLabel = [&](va_t Namer, va_t Target) {
-      const auto Next = std::upper_bound(Starts.begin(), Starts.end(), Namer);
-      return Next != Starts.begin() && *std::prev(Next) < Target &&
-             (Next == Starts.end() || Target < *Next);
+      const auto Function = functionOf(Namer);
+      return Function && Function->first < Target && Target < Function->second;
+    };
+    // Code whose address an instruction pushes or stores is a label only
+    // where its function's code reaches it.  Code past the function's own
+    // returns, which nothing in it reaches (a constructor pushed for an
+    // array iterator, a callback for atexit), is a function the code takes
+    // the address of.  A function with an indirect jump the walk cannot
+    // follow may reach any label, as a computed goto does, and an address
+    // loaded into a register, such as a catch block's continuation, keeps
+    // the label it names.
+    std::map<va_t, std::vector<va_t>> FunctionCases;
+    for (size_t I = 0; I < TableNames; ++I)
+      if (const auto Function = functionOf(CodeNamedByCode[I].first);
+          Function &&
+          NamesOwnLabel(CodeNamedByCode[I].first, CodeNamedByCode[I].second))
+        FunctionCases[Function->first].push_back(CodeNamedByCode[I].second);
+    std::map<va_t, std::optional<std::set<va_t>>> Reached;
+    auto Reaches = [&](va_t Namer, va_t Target) {
+      const auto Function = functionOf(Namer);
+      auto [It, Inserted] = Reached.try_emplace(Function->first);
+      if (Inserted) {
+        const auto Cases = FunctionCases.find(Function->first);
+        bool Computed = false;
+        std::set<va_t> Code = x86OwnCodeReached(
+            Img, Dec, Function->first, Function->second,
+            Cases == FunctionCases.end() ? llvm::ArrayRef<va_t>()
+                                         : llvm::ArrayRef<va_t>(Cases->second),
+            Computed);
+        if (!Computed)
+          It->second = std::move(Code);
+      }
+      return !It->second || It->second->count(Target) != 0;
     };
     std::set<va_t> Labels;
-    for (const auto &[Namer, Target] : CodeNamedByCode)
-      if (NamesOwnLabel(Namer, Target))
+    for (size_t I = 0; I < CodeNamedByCode.size(); ++I) {
+      const auto &[Namer, Target] = CodeNamedByCode[I];
+      if (NamesOwnLabel(Namer, Target) &&
+          (I < TableNames ||
+           !func_detect_detail::isX86EscapingCodeImmediate(Img, Namer) ||
+           Reaches(Namer, Target)))
         Labels.insert(Target);
+    }
     for (const auto &Named : CodeNamedByCode) {
       const va_t Target = Named.second;
       // An instruction starts with its opcode, never with a relocated field.

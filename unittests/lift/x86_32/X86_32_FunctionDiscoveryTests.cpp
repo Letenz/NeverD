@@ -917,6 +917,61 @@ TEST(X86_32_FunctionDiscovery, CallbackStoredByARelocatedImmediateIsAFunction) {
       << "a callback a relocated immediate names is a function of its own";
 }
 
+TEST(X86_32_FunctionDiscovery, CallbacksPushedPastTheReturnAreFunctions) {
+  // MSVC passes an array's constructor and destructor to its iterator with
+  // `push offset`, and places them right after the function pushing them,
+  // past its return.  The function's own code never reaches them, so they
+  // are functions of their own though no call, prologue or padding marks
+  // them.  A catch block's `mov eax, offset continuation; ret` only loads the
+  // address it hands back, which stays the label it names.
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  std::vector<uint8_t> Text;
+  auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Text.insert(Text.end(), Bytes);
+  };
+  Emit({0x55, 0x8B, 0xEC});             // 401000 push ebp; mov ebp, esp
+  Emit({0x68, 0x14, 0x10, 0x40, 0x00}); // 401003 push 0x401014
+  Emit({0x68, 0x17, 0x10, 0x40, 0x00}); // 401008 push 0x401017
+  Emit({0xE8, 0x1E, 0x00, 0x00, 0x00}); // 40100D call 0x401030
+  Emit({0x5D, 0xC3});                   // 401012 pop ebp; ret
+  Emit({0x8B, 0xC1, 0xC3});             // 401014 mov eax, ecx; ret
+  Emit({0x33, 0xC0, 0xC3});             // 401017 xor eax, eax; ret
+  Text.resize(0x30, 0xCC);
+  Emit({0x55, 0x8B, 0xEC});             // 401030 push ebp; mov ebp, esp
+  Emit({0xE8, 0x08, 0x00, 0x00, 0x00}); // 401033 call 0x401040
+  Emit({0x5D, 0xC2, 0x08, 0x00});       // 401038 pop ebp; ret 8
+  Text.resize(0x40, 0xCC);
+  Emit({0xB8, 0x47, 0x10, 0x40, 0x00}); // 401040 mov eax, 0x401047
+  Emit({0xC3, 0xCC});                   // 401045 ret
+  Emit({0x33, 0xC0, 0xC3});             // 401047 xor eax, eax; ret
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+  for (const auto [Field, Target] : {std::pair<va_t, va_t>{0x401004, 0x401014},
+                                     std::pair<va_t, va_t>{0x401009, 0x401017},
+                                     std::pair<va_t, va_t>{0x401041, 0x401047}})
+    Img.CodeAddressRelocOperands.emplace(
+        Field, RelocatedAddressField{.EncodedValue = Target,
+                                     .TargetVA = Target,
+                                     .Width = 4,
+                                     .TargetOwnerVA = Target});
+
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  const auto Functions = Detector.detect(Img, Dec);
+  for (va_t Entry : {0x401000u, 0x401030u, 0x401040u})
+    EXPECT_TRUE(hasEntry(Functions, Entry)) << std::hex << Entry;
+  EXPECT_TRUE(hasEntry(Functions, 0x401014)) << "the pushed constructor";
+  EXPECT_TRUE(hasEntry(Functions, 0x401017)) << "the pushed destructor";
+  EXPECT_FALSE(hasEntry(Functions, 0x401047)) << "a catch's continuation";
+}
+
 TEST(X86_32_FunctionDiscovery, SwitchTableAmongCodeBelongsToItsFunction) {
   BinaryImage Img = makeSwitchTableAmongCode();
   // The table is data the code reads, though .text holds it; the two fields
