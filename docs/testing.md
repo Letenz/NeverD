@@ -271,6 +271,8 @@ number boundaries, BOMs, depth and error precedence; nested/concurrent queues,
 thread limits, original exceptions and large stacks. The full build additionally
 runs `NeverDStringScanTests`, `NeverDTextEncodingTests`, pipeline, SDK and worker
 owners. Compare complete string metadata and output, not only throughput.
+Native pipeline CI repeats the complete selected owners and actual SDK/worker
+checks with both the default native scheduler and the optional oneTBB backend.
 
 The optional scheduler retains oneTBB workers between synchronous calls and
 uses one native large-stack coordinator per batch. It does not support fork
@@ -281,6 +283,8 @@ worker stack. It never links `tbbmalloc` or `tbbmalloc_proxy`.
 Performance measurements belong in ignored build directories. Measure Release
 with matching inputs, process allocator and thread count; separate primitive
 throughput from whole-request latency and compare all non-timing output.
+The full build's `neverd-acceleration-bench` target reports wall and process CPU
+time separately; use both when the host has competing workloads.
 
 ## Configure a test build
 

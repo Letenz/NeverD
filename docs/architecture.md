@@ -820,6 +820,19 @@ Applications embedding the SDK continue to own their allocator policy. On macOS,
 initializers can allocate before the executable registers its malloc zone;
 those existing system allocations must remain valid through process shutdown.
 Allocator selection does not alter lifted-program semantics or generated code.
+
+`cmake/NeverDPerformance.cmake` owns the pinned acceleration providers.
+The private text helper uses Highway only after an inline short-run scan and
+simdutf only to prove that an entire UTF-8 span needs no repair. Existing string
+metadata and byte-preserving repair remain authoritative. Transport admission
+uses simdjson to validate decoded keys, then retains the nlohmann DOM's numeric
+and serialization contract; refused SIMD input uses the original admission path.
+The optional task helper uses oneTBB with checked 8 MiB worker stacks and a
+native coordinator. Nested work receives a fresh stack. It preserves per-batch
+thread limits and synchronous exception delivery, and supplies no allocator.
+It stays disabled for ordinary builds because fork after initialization and
+dynamic SDK unloading are not supported by this backend.
+
 Function preparation uses `neverd_prepare_function_view`, which shares the
 source route's ARM mode, exception-handler discovery and analysis-scope checks
 without emitting C. Source, IR and CFG views consume that prepared pipeline.
