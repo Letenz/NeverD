@@ -16,6 +16,7 @@
 #ifndef NEVERD_LIB_SUPPORT_TEXTEVIDENCE_H
 #define NEVERD_LIB_SUPPORT_TEXTEVIDENCE_H
 
+#include "neverd/support/ByteScan.h"
 #include "neverd/support/StringScan.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -23,10 +24,6 @@
 #include <cstdint>
 
 namespace neverd::strings::detail {
-
-inline bool isTextASCII(uint32_t C) {
-  return (C >= 0x20 && C < 0x7f) || C == '\t' || C == '\n' || C == '\r';
-}
 
 /// A printable character beyond ASCII: no control, surrogate, private-use
 /// or noncharacter code point.

@@ -61,9 +61,12 @@ add_neverd_unittest(NeverDTestProcessTests
 
 add_neverd_unittest(NeverDSupportThreadTests
   SupportThreadTests.cpp
+  LINK_LIBS neverd_task_scheduler
 )
 target_include_directories(NeverDSupportThreadTests PRIVATE
   "${CMAKE_SOURCE_DIR}/include")
+
+add_subdirectory(acceleration)
 
 add_neverd_unittest(NeverDLowUndefinedDigestTests
   LowUndefinedDigestTests.cpp
@@ -72,6 +75,11 @@ add_neverd_unittest(NeverDLowUndefinedDigestTests
 
 add_neverd_unittest(NeverDStringScanTests
   StringScanTests.cpp
+  LINK_COMPONENTS Support
+)
+
+add_neverd_unittest(NeverDTextEncodingTests
+  TextEncodingTests.cpp
   LINK_COMPONENTS Support
 )
 

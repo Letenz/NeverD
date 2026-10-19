@@ -1,0 +1,126 @@
+name: Performance library compatibility
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev, codex/performance-libraries]
+    paths:
+      - '.github/workflows/performance-libraries.yml'
+      - 'cmake/NeverDPerformance.cmake'
+      - 'include/neverd/support/ByteScan.h'
+      - 'include/neverd/support/Parallel.h'
+      - 'lib/support/ByteScan.cpp'
+      - 'lib/support/Unicode.cpp'
+      - 'lib/support/Parallel.cpp'
+      - 'tools/common/transport/**'
+      - 'unittests/acceleration/**'
+  pull_request:
+    paths:
+      - '.github/workflows/performance-libraries.yml'
+      - 'cmake/NeverDPerformance.cmake'
+      - 'include/neverd/support/ByteScan.h'
+      - 'include/neverd/support/Parallel.h'
+      - 'lib/support/ByteScan.cpp'
+      - 'lib/support/Unicode.cpp'
+      - 'lib/support/Parallel.cpp'
+      - 'tools/common/transport/**'
+      - 'unittests/acceleration/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: performance-libraries-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  libraries:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: Linux x64, runner: ubuntu-24.04, cc: clang, cxx: clang++, arch: x64}
+          - {name: macOS arm64, runner: macos-15, cc: clang, cxx: clang++, arch: arm64}
+          - {name: Windows x64 MSVC, runner: windows-2025-vs2026, cc: cl, cxx: cl, arch: x64}
+          - {name: Windows x64 clang-cl, runner: windows-2025-vs2026, cc: clang-cl, cxx: clang-cl, arch: x64}
+          - {name: Windows ARM64, runner: windows-11-arm, cc: cl, cxx: cl, arch: arm64}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install Linux tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes clang cmake ninja-build
+      - name: Install macOS tools
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+      - name: Install Windows tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install ninja --yes --no-progress
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        if: runner.os == 'Windows'
+        with:
+          arch: ${{ matrix.arch }}
+      - name: Test enabled and disabled libraries, including installed binaries
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          set -euo pipefail
+          suffix=""
+          if [ "$RUNNER_OS" = Windows ]; then suffix=.exe; fi
+          for mode in ON OFF; do
+            for profile in Release Debug; do
+              build="build-accel-$mode-$profile"
+              cmake -S unittests/acceleration -B "$build" -G Ninja \
+                -DCMAKE_BUILD_TYPE="$profile" -DNEVERD_TEST_EXPECT_MIMALLOC=ON \
+                -DNEVERD_ENABLE_TBB="$mode" -DNEVERD_ENABLE_HIGHWAY="$mode" \
+                -DNEVERD_ENABLE_SIMDUTF="$mode" -DNEVERD_ENABLE_SIMDJSON="$mode"
+              cmake --build "$build" --parallel 3
+              python unittests/acceleration/verify.py "$build/bin/NeverDAccelerationTests$suffix" "$build/evidence"
+              cmake --install "$build" --prefix "$build/installed"
+              python unittests/acceleration/verify.py "$build/installed/bin/NeverDAccelerationTests$suffix" "$build/installed-evidence"
+              if find "$build/installed" -iname '*tbbmalloc*' | grep -q .; then
+                echo 'Unexpected oneTBB allocator in installation' >&2
+                exit 1
+              fi
+            done
+          done
+      - name: Test system allocator and sanitizer coexistence
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          set -euo pipefail
+          suffix=""
+          if [ "$RUNNER_OS" = Windows ]; then suffix=.exe; fi
+          cmake -S unittests/acceleration -B build-accel-system -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_TBB=ON -DNEVERD_ENABLE_MIMALLOC=OFF
+          cmake --build build-accel-system --parallel 3
+          python unittests/acceleration/verify.py "build-accel-system/bin/NeverDAccelerationTests$suffix" build-accel-system/evidence
+          if [ "$RUNNER_OS" != Windows ]; then
+            cmake -S unittests/acceleration -B build-accel-asan -G Ninja \
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo -DNEVERD_ENABLE_TBB=ON \
+              -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
+              -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
+            cmake --build build-accel-asan --parallel 3
+            python unittests/acceleration/verify.py build-accel-asan/bin/NeverDAccelerationTests build-accel-asan/evidence
+          fi
+      - name: Retain complete native evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: acceleration-${{ matrix.name }}-${{ github.sha }}
+          path: |
+            build-accel-*/evidence
+            build-accel-*/installed-evidence
+            build-accel-*/CMakeCache.txt
+          if-no-files-found: error

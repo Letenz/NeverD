@@ -3,7 +3,7 @@ name: Native pipeline compatibility
 on:
   workflow_dispatch:
   push:
-    branches: [dev, codex/pipeline-performance]
+    branches: [dev, codex/pipeline-performance, codex/performance-libraries]
     paths:
       - '.github/workflows/native-pipeline.yml'
       - 'lib/ir/med/abi/**'
@@ -13,6 +13,13 @@ on:
       - 'unittests/lift/core/MedCallingConvTests.cpp'
       - 'unittests/lift/core/FPParameterMaskTests.cpp'
       - 'unittests/PipelineOutcomeTests.cpp'
+      - 'cmake/NeverDPerformance.cmake'
+      - 'include/neverd/support/ByteScan.h'
+      - 'include/neverd/support/Parallel.h'
+      - 'lib/support/**'
+      - 'tools/common/transport/**'
+      - 'unittests/acceleration/**'
+      - 'unittests/TextEncodingTests.cpp'
   pull_request:
     paths:
       - '.github/workflows/native-pipeline.yml'
@@ -23,6 +30,13 @@ on:
       - 'unittests/lift/core/MedCallingConvTests.cpp'
       - 'unittests/lift/core/FPParameterMaskTests.cpp'
       - 'unittests/PipelineOutcomeTests.cpp'
+      - 'cmake/NeverDPerformance.cmake'
+      - 'include/neverd/support/ByteScan.h'
+      - 'include/neverd/support/Parallel.h'
+      - 'lib/support/**'
+      - 'tools/common/transport/**'
+      - 'unittests/acceleration/**'
+      - 'unittests/TextEncodingTests.cpp'
 
 permissions:
   contents: read
@@ -102,7 +116,8 @@ jobs:
           cmake --build build-abi --parallel 4 --target \
             neverd neverd-worker NeverDAllocatorTests \
             NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests \
-            NeverDHighControlFlowTests
+            NeverDHighControlFlowTests NeverDAccelerationTests \
+            NeverDStringScanTests NeverDTextEncodingTests
       - name: Require every focused C++ case to execute and pass
         run: |
           python - <<'PY'
@@ -120,7 +135,10 @@ jobs:
           for owner, minimum in (('NeverDFPParameterMaskTests', 180),
                                   ('NeverDPipelineOutcomeTests', pipeline_minimum),
                                   ('NeverDSupportThreadTests', 12),
-                                  ('NeverDHighControlFlowTests', 420)):
+                                  ('NeverDHighControlFlowTests', 420),
+                                  ('NeverDAccelerationTests', 14),
+                                  ('NeverDStringScanTests', 17),
+                                  ('NeverDTextEncodingTests', 3)):
               binary = Path('build-abi/bin') / (owner + suffix)
               listed = subprocess.check_output([str(binary), '--gtest_list_tests'], text=True)
               (output / (owner + '.inventory.txt')).write_text(listed)

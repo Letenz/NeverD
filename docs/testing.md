@@ -247,6 +247,41 @@ high-risk pull request.
 
 `PipelineOutcome.ResolvedCalls*` checks register banks, call/invoke identity, packed and split stack bytes, narrow values in their own slots, and refusal of missing bytes. `MedCallABI.AnIndirectCallRecordsTheSlotOfEachNarrowStackValue` checks the recorded offsets. `MedCallABI.CallbackTableAddressDoesNotReplaceTheActualFirstArgument` covers x64, ARM32 and AArch64 in ELF, PE and Mach-O. `LowInstructionBoundary.AArch64ImportedCopyNeedsExactLengthSourceOwnerAndAllPaths` checks all three formats and rejects clobbered lengths, writable or oversized spans, local names, wrong source registers, alternate entries and relocatable images. Host C differentials compile the source reference independently at O0 and emitted C at O2, preserving an independent oracle when a host optimizer miscompiles a recurrence. The AArch64 FMA check requests `-mfma` only on x86 hosts.
 
+## Acceleration libraries
+
+The bounded byte/Unicode, JSON and scheduler contracts can be checked without
+LLVM. This includes the opt-in oneTBB scheduler and the default mimalloc:
+
+```bash
+cmake -S unittests/acceleration -B build-acceleration -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_TBB=ON
+cmake --build build-acceleration --parallel 4
+ctest --test-dir build-acceleration --output-on-failure --no-tests=error
+```
+
+Repeat with all four `NEVERD_ENABLE_{TBB,HIGHWAY,SIMDUTF,SIMDJSON}` options
+set to `OFF` for the native/scalar/parser baseline; allocator settings remain
+independent. Also check `NEVERD_ENABLE_MIMALLOC=OFF`, Debug, and Unix
+AddressSanitizer/UBSan. Do not treat a skipped, absent or cancelled case as a
+pass. The acceleration CI also runs installed binaries on each native host.
+
+`NeverDAccelerationTests` checks supported host SIMD targets, every byte value,
+alignments and inaccessible tails; UTF-8 validity; JSON decoded duplicates,
+number boundaries, BOMs, depth and error precedence; nested/concurrent queues,
+thread limits, original exceptions and large stacks. The full build additionally
+runs `NeverDStringScanTests`, `NeverDTextEncodingTests`, pipeline, SDK and worker
+owners. Compare complete string metadata and output, not only throughput.
+
+The optional scheduler retains oneTBB workers between synchronous calls and
+uses one native large-stack coordinator per batch. It does not support fork
+after first use or dynamic SDK unloading; ordinary builds keep it disabled.
+Its task arena limits each batch, while nested batches drain on a fresh native
+worker stack. It never links `tbbmalloc` or `tbbmalloc_proxy`.
+
+Performance measurements belong in ignored build directories. Measure Release
+with matching inputs, process allocator and thread count; separate primitive
+throughput from whole-request latency and compare all non-timing output.
+
 ## Configure a test build
 
 Tests are disabled unless `BUILD_TESTING` is enabled. A Release build is the

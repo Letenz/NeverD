@@ -117,6 +117,25 @@ apply the callback fix to a disposable source copy first:
 See [allocator validation](docs/testing.md#allocator-validation) for smoke tests
 and performance comparison guidance.
 
+### Performance libraries
+
+Normal builds enable hash-pinned Highway 1.4.0 byte scanning, simdutf 9.3.2
+UTF-8 validation and simdjson 5.0.5 transport admission. They retain the process
+allocator. JSON still uses the existing nlohmann DOM and serialization; the
+original admission path handles inputs outside simdjson's numeric domain.
+Invalid external text retains its byte-preserving escapes.
+
+`NEVERD_ENABLE_HIGHWAY`, `NEVERD_ENABLE_SIMDUTF` and `NEVERD_ENABLE_SIMDJSON`
+can be set to `OFF` for comparisons. `NEVERD_ENABLE_TBB=ON` selects the optional
+oneTBB 2023.1.0 scheduler; its default is `OFF`. It retains workers between
+batches, checks their 8 MiB stacks, and never builds or loads an allocator proxy.
+This experimental scheduler is for processes that neither fork after first
+use nor dynamically unload the SDK. It does not finalize a host's shared TBB
+scheduler. Distribute its runtime DLL/shared library with enabled builds.
+
+See [acceleration validation](docs/testing.md#acceleration-libraries) for
+native tests, opt-out comparisons and the limits of the scheduler experiment.
+
 ### Prebuilt LLVM on macOS
 
 Apple Silicon contributors can avoid compiling the LLVM fork locally:

@@ -138,9 +138,10 @@ void scanCStrings(llvm::ArrayRef<uint8_t> Data, const ScanOptions &Options,
     bool Multibyte = false;
     while (Cursor < End && *Cursor) {
       if (isTextASCII(*Cursor)) {
-        ++Chars;
-        ++Columns;
-        ++Cursor;
+        const size_t Run = textASCIIPrefix(Cursor, End - Cursor);
+        Chars += Run;
+        Columns += Run;
+        Cursor += Run;
         continue;
       }
       uint32_t Code = 0;

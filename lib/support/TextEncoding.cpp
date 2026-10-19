@@ -6,11 +6,15 @@
 
 #include "neverd/support/TextEncoding.h"
 
+#include "neverd/support/ByteScan.h"
+
 #include "llvm/Support/ConvertUTF.h"
 
 namespace neverd {
 
 std::string escapeInvalidUTF8(llvm::StringRef Text) {
+  if (Text.size() >= 64 && knownValidUTF8({Text.data(), Text.size()}))
+    return Text.str();
   static constexpr char Hex[] = "0123456789ABCDEF";
   const auto *Cursor = reinterpret_cast<const llvm::UTF8 *>(Text.bytes_begin());
   const auto *End = reinterpret_cast<const llvm::UTF8 *>(Text.bytes_end());

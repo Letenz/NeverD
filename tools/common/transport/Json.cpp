@@ -11,6 +11,10 @@
 
 #include "Json.h"
 
+#if NEVERD_USE_SIMDJSON
+#include "simdjson.h"
+#endif
+
 #include <cstdint>
 #include <ostream>
 #include <set>
@@ -54,6 +58,45 @@ public:
     return false;
   }
 };
+
+#if NEVERD_USE_SIMDJSON
+// Inspect decoded keys while the parser's tape owns their bytes. The final
+// nlohmann DOM remains authoritative for numeric types and representation.
+void checkUniqueKeys(simdjson::dom::element Value) {
+  if (Value.type() == simdjson::dom::element_type::OBJECT) {
+    std::set<std::string_view> Keys;
+    const auto Object = Value.get_object().value_unsafe();
+    for (const auto Field : Object) {
+      if (!Keys.insert(Field.key).second)
+        throw Error("invalid_json", "Duplicate object key in JSON frame");
+      checkUniqueKeys(Field.value);
+    }
+  } else if (Value.type() == simdjson::dom::element_type::ARRAY) {
+    const auto Array = Value.get_array().value_unsafe();
+    for (const auto Child : Array)
+      checkUniqueKeys(Child);
+  }
+}
+
+bool admitWithSIMD(std::string_view Text) {
+  // Keep retained storage bounded per transport thread. Larger frames get a
+  // temporary parser whose tape is released before parsing the final DOM.
+  constexpr size_t RetainedBytes = 64 * 1024;
+  auto Admit = [&](simdjson::dom::parser &Parser) {
+    simdjson::dom::element Root;
+    if (Parser.parse(Text.data(), Text.size()).get(Root))
+      return false;
+    checkUniqueKeys(Root);
+    return true;
+  };
+  if (Text.size() > RetainedBytes) {
+    simdjson::dom::parser Parser;
+    return Admit(Parser);
+  }
+  thread_local simdjson::dom::parser Parser(RetainedBytes);
+  return Admit(Parser);
+}
+#endif
 
 class BoundedBuffer final : public std::streambuf {
   std::size_t Maximum;
@@ -130,9 +173,17 @@ Json parseJson(std::string_view Text, std::size_t MaxBytes) {
       --Depth;
   }
   try {
-    UniqueKeys Keys;
-    if (!Json::sax_parse(Text, &Keys))
-      throw Error("invalid_json", "Malformed UTF-8 JSON frame");
+    bool Admitted = false;
+#if NEVERD_USE_SIMDJSON
+    Admitted = admitWithSIMD(Text);
+#endif
+    if (!Admitted) {
+      // Preserve the existing acceptance and diagnostic precedence for BOMs,
+      // large JSON numbers and malformed input that simdjson refuses.
+      UniqueKeys Keys;
+      if (!Json::sax_parse(Text, &Keys))
+        throw Error("invalid_json", "Malformed UTF-8 JSON frame");
+    }
     return Json::parse(Text);
   } catch (const Json::exception &) {
     throw Error("invalid_json", "Malformed UTF-8 JSON frame");
