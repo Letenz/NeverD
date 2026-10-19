@@ -11,6 +11,7 @@
 
 #include "neverd/pipeline/Pipeline.h"
 
+#include "PipelineCallAbiDetail.h"
 #include "PipelineHighIRDetail.h"
 #include "PipelineLowIRDetail.h"
 
@@ -199,6 +200,14 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                              const PipelineOptions &Opts, DebugContext *Dbg) {
   PipelineResult Result;
   Result.SourceImage = &Img;
+  // Restricted runs of an image read the same callees for their signatures.
+  if (Opts.AnalysisCache &&
+      (!Opts.OnlyFunctionEntries.empty() || Opts.MaxFunctions != 0)) {
+    auto &Memo = Opts.AnalysisCache->CalleeSignatures;
+    if (!Memo)
+      Memo = std::make_shared<OmittedCalleeMemo>();
+    Result.CalleeSignatureMemo = Memo;
+  }
 
   if (Opts.InterpreterSpecialization &&
       (Opts.PatchMode || Opts.OnlyFunctionEntries.size() != 1 ||

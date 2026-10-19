@@ -62,6 +62,8 @@ struct AnalysisCacheWarmup {
   bool Full = false;
 };
 
+struct OmittedCalleeMemo;
+
 /// Optional facts for consecutive restricted x64 analyses of an unchanged
 /// image. Owns the indexes borrowed by bounded machine-graph/body caches, not
 /// output IR or caller-dependent summaries. The image and debug context must
@@ -84,6 +86,7 @@ public:
     Facts.reset();
     SelectionFacts.reset();
     Inventory.reset();
+    CalleeSignatures.reset();
   }
 
 private:
@@ -95,6 +98,9 @@ private:
   /// The latest selection whose entries the symbol inventory lacks.
   std::shared_ptr<Impl> SelectionFacts;
   std::shared_ptr<const SymbolInventory> Inventory;
+  /// The callees' signature bodies of restricted runs on any architecture
+  /// (PipelineResult::CalleeSignatureMemo).
+  std::shared_ptr<OmittedCalleeMemo> CalleeSignatures;
 };
 
 struct PipelineOptions {
@@ -276,6 +282,10 @@ struct PipelineResult {
   /// (the native LLVM route of a session) reuses them instead of lifting them
   /// again, which costs as much as the rest of recovery.
   std::shared_ptr<const OmittedCalleeBodies> OmittedCallees;
+  /// What reading those bodies read of each callee, shared by the restricted
+  /// runs of the image (PipelineAnalysisCache): one selection's callees are
+  /// mostly another's.
+  std::shared_ptr<OmittedCalleeMemo> CalleeSignatureMemo;
   /// Bytes of the scalar float each prototyped import returns in the vector
   /// return register, keyed by the stub or slot a call names it by.
   std::map<va_t, uint16_t> CallFloatReturns;

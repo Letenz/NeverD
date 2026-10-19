@@ -43,6 +43,48 @@
 
 namespace neverd {
 
+void OmittedCalleeMemo::adopt(const BinaryImage &Img,
+                              const PipelineResult &Result) {
+  if (Image == &Img && SymbolData == Img.Symbols.data() &&
+      SymbolCount == Img.Symbols.size() &&
+      CallMayWriteGPRs == Result.CallMayWriteGPRs &&
+      CallEntryReadGPRs == Result.CallEntryReadGPRs &&
+      CallArgumentSources == Result.CallArgumentSources &&
+      CallEntryStackArgs == Result.CallEntryStackArgs &&
+      CallEntryStackSlots == Result.CallEntryStackSlots &&
+      CallEntryArgumentCounts == Result.CallEntryArgumentCounts)
+    return;
+  Image = &Img;
+  SymbolData = Img.Symbols.data();
+  SymbolCount = Img.Symbols.size();
+  CallMayWriteGPRs = Result.CallMayWriteGPRs;
+  CallEntryReadGPRs = Result.CallEntryReadGPRs;
+  CallArgumentSources = Result.CallArgumentSources;
+  CallEntryStackArgs = Result.CallEntryStackArgs;
+  CallEntryStackSlots = Result.CallEntryStackSlots;
+  CallEntryArgumentCounts = Result.CallEntryArgumentCounts;
+  Callees.clear();
+  Bytes = 0;
+  Full = false;
+}
+
+OmittedCalleeMemo::Callee *OmittedCalleeMemo::find(va_t Entry) {
+  if (const auto Found = Callees.find(Entry); Found != Callees.end())
+    return &Found->second;
+  return Full ? nullptr : &Callees[Entry];
+}
+
+void OmittedCalleeMemo::remember(const MedFunc &Body) {
+  // Bodies of a large image's every callee would hold most of its MedIR.
+  constexpr size_t MaxBytes = size_t{256} << 20;
+  size_t Size = sizeof(MedFunc);
+  for (const MedBlock &Block : Body.Blocks)
+    Size += sizeof(MedBlock) + Block.Ops.size() * sizeof(MedOp) +
+            Block.Phis.size() * sizeof(PhiNode);
+  Bytes += Size;
+  Full = Bytes > MaxBytes;
+}
+
 namespace {
 
 /// A selected function still calls the image's other native functions. Use
@@ -98,6 +140,11 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
   std::vector<MedFunc> Signatures;
   if (Pending.empty())
     return Signatures;
+  // Each callee is read as an earlier run of the image read it, where the
+  // run shares what those read.
+  OmittedCalleeMemo *Memo = Result.CalleeSignatureMemo.get();
+  if (Memo)
+    Memo->adopt(Img, Result);
   Decoder Dec;
   if (!Dec.init(Img))
     return Signatures;
@@ -117,39 +164,68 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
     const va_t Target = Pending.front();
     Pending.pop();
     Present.insert(Target);
-    LowFunc Low =
-        Builder.build(Img, Dec, Target, Img.getFunctionNameAt(Target));
-    if (!Low.hasCompleteLiftCoverage() ||
-        !Low.UnsafeIndirectBranchAddresses.empty())
+    OmittedCalleeMemo::Callee Local;
+    OmittedCalleeMemo::Callee *Read = Memo ? Memo->find(Target) : nullptr;
+    if (!Read)
+      Read = &Local;
+    std::optional<LowFunc> Low;
+    auto lift = [&]() -> LowFunc & {
+      if (!Low)
+        Low.emplace(
+            Builder.build(Img, Dec, Target, Img.getFunctionNameAt(Target)));
+      return *Low;
+    };
+    if (!Read->Lifted) {
+      const LowFunc &Lifted = lift();
+      if (Lifted.hasCompleteLiftCoverage() &&
+          Lifted.UnsafeIndirectBranchAddresses.empty()) {
+        Read->BlockOps.emplace();
+        for (const auto &Block : Lifted.Blocks)
+          Read->BlockOps->push_back(Block.Ops.size());
+      }
+      Read->Lifted = true;
+    }
+    if (!Read->BlockOps)
       continue;
-    for (const auto &Block : Low.Blocks) {
-      if (Block.Ops.size() > limits::kMaxSSAFunctionOps - Operations)
+    for (const size_t BlockOps : *Read->BlockOps) {
+      if (BlockOps > limits::kMaxSSAFunctionOps - Operations)
         return Signatures;
-      Operations += Block.Ops.size();
+      Operations += BlockOps;
     }
-    try {
-      LowToMedConverter Converter;
-      Converter.setBinaryImage(&Img);
-      Converter.setSourceCallHintsEnabled(false);
-      Converter.setCallMayWriteGPRs(&Result.CallMayWriteGPRs);
-      Converter.setCallEntryReadGPRs(&Result.CallEntryReadGPRs);
-      Converter.setCallArgumentSources(&Result.CallArgumentSources);
-      Converter.setCallEntryStackArgs(&Result.CallEntryStackArgs);
-      Converter.setCallEntryStackSlots(&Result.CallEntryStackSlots);
-      Converter.setCallEntryArgumentCounts(&Result.CallEntryArgumentCounts);
-      MedFunc Med = Converter.convert(Low, Img.Arch, Img.abiFormat());
-      size_t MedOperations = 0;
-      for (const auto &Block : Med.Blocks)
-        MedOperations += Block.Ops.size();
-      if (Med.Blocks.size() > limits::kMaxStructurableMedBlocks ||
-          MedOperations > static_cast<size_t>(limits::kMaxSSANodes))
-        continue;
-      inferMedTypes(Med, Img.Arch);
-      enqueueCallees(Med);
-      Signatures.push_back(std::move(Med));
-    } catch (const LowToMedConversionError &) {
-      // An unsupported callee's body supplies no signature evidence.
+    if (!Read->Converted) {
+      const LowFunc &Lifted = lift();
+      std::shared_ptr<const MedFunc> Body;
+      try {
+        LowToMedConverter Converter;
+        Converter.setBinaryImage(&Img);
+        Converter.setSourceCallHintsEnabled(false);
+        Converter.setCallMayWriteGPRs(&Result.CallMayWriteGPRs);
+        Converter.setCallEntryReadGPRs(&Result.CallEntryReadGPRs);
+        Converter.setCallArgumentSources(&Result.CallArgumentSources);
+        Converter.setCallEntryStackArgs(&Result.CallEntryStackArgs);
+        Converter.setCallEntryStackSlots(&Result.CallEntryStackSlots);
+        Converter.setCallEntryArgumentCounts(&Result.CallEntryArgumentCounts);
+        MedFunc Med = Converter.convert(Lifted, Img.Arch, Img.abiFormat());
+        size_t MedOperations = 0;
+        for (const auto &Block : Med.Blocks)
+          MedOperations += Block.Ops.size();
+        if (Med.Blocks.size() <= limits::kMaxStructurableMedBlocks &&
+            MedOperations <= static_cast<size_t>(limits::kMaxSSANodes)) {
+          inferMedTypes(Med, Img.Arch);
+          Body = std::make_shared<const MedFunc>(std::move(Med));
+        }
+      } catch (const LowToMedConversionError &) {
+        // An unsupported callee's body supplies no signature evidence.
+      }
+      if (Body && Memo && Read != &Local)
+        Memo->remember(*Body);
+      Read->Body = std::move(Body);
+      Read->Converted = true;
     }
+    if (!Read->Body)
+      continue;
+    enqueueCallees(*Read->Body);
+    Signatures.push_back(*Read->Body);
   }
   return Signatures;
 }
