@@ -25,6 +25,9 @@
 // displacement of `table`.
 //   void clang_set_factor(int v) { factor = v; }
 // returns with the GOT address its call/pop left in %eax.
+//   void clang_call_handler(void (*f)(void)) { f(); factor = 1; }
+// calls through its argument with no stack argument, in a realigned frame,
+// after its call/pop.
 
 	.text
 	.p2align 4
@@ -230,6 +233,35 @@ clang_set_factor:
 	retl
 	.cfi_endproc
 	.size	clang_set_factor, .-clang_set_factor
+
+	.p2align 4
+	.globl	clang_call_handler
+	.type	clang_call_handler, @function
+clang_call_handler:
+	.cfi_startproc
+	pushl	%ebp
+	.cfi_def_cfa_offset 8
+	.cfi_offset %ebp, -8
+	movl	%esp, %ebp
+	.cfi_def_cfa_register %ebp
+	pushl	%esi
+	.cfi_offset %esi, -12
+	andl	$-16, %esp
+	subl	$16, %esp
+	calll	clang_call_handler_pop
+clang_call_handler_pop:
+	popl	%esi
+.Lcall_handler_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Lcall_handler_got-clang_call_handler_pop), %esi
+	calll	*8(%ebp)
+	movl	$1, factor@GOTOFF(%esi)
+	leal	-4(%ebp), %esp
+	popl	%esi
+	popl	%ebp
+	.cfi_def_cfa %esp, 4
+	retl
+	.cfi_endproc
+	.size	clang_call_handler, .-clang_call_handler
 
 	.section	.rodata
 	.p2align 2
