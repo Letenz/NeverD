@@ -166,6 +166,24 @@ int realigned_call(int x) {
       {0, 1, -3, 77, 0x80, 0x1C1});
 }
 
+// The System V i386 psABI aligns the stack to sixteen at a call, so a
+// function enters at 12 mod 16, and Clang keeps a vector in a frame slot with
+// `movdqa %xmm0, (%esp)` without realigning.  The C frame enters at the same
+// residue: at 0 mod 16 the slot is misaligned, and the move's check traps.
+TEST_F(X86_32_CallAbi, AVectorSlotIsAlignedAsTheCallerAlignsTheStack) {
+  HostFlags = {"-m32", "-msse2"};
+  expectHighCRunsLikeSource({"-target", "i386-linux-gnu", "-march=pentium4"},
+                            R"C(
+typedef unsigned v4u __attribute__((vector_size(16)));
+int spill(int a) {
+  v4u v = {(unsigned)a, (unsigned)a * 3u, (unsigned)a ^ 5u, (unsigned)a + 7u};
+  v = v * v + (v4u){1u, 2u, 3u, 4u};
+  return (int)v[(unsigned)a & 3u];
+}
+)C",
+                            "spill", {"spill"}, {0, 1, -3, 77, 0x80, 0x1C1});
+}
+
 // A call through a function pointer takes its arguments on the stack, as
 // many as its caller pushes, whatever ECX and EDX hold at the call: here a
 // quotient in EDX and the first argument in ECX, as Clang leaves them in a
