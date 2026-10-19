@@ -556,6 +556,15 @@ records:
   `unsigned long long` there, is not. A record whose members the unit, or the debug information
   anywhere in the session, names otherwise than the library does stays
   declared only: its definition would disagree with the code.
+- A type the system's header library declares, and lays out as the program
+  does, comes from its header: the unit includes the header and checks the
+  layout with `static_assert` instead of defining the type (`systemsOwn`).
+  A record such a header names by a typedef alone (bionic's
+  `typedef struct {...} pthread_mutex_t;`, glibc's `fd_set`) has no tag. The
+  unit spells it by that name in its checks and its records, and neither
+  HighC nor LLVM-C declares a `typedef struct X X;` of it
+  (`CRecordDefinitions::HeaderTypedefs`), which would contradict the
+  header's.
 - HighC asks for the records and enumerations its types reach before it
   writes, and the typedefs and enumerators the definitions declare reserve
   their names from the unit's own. LLVM-C asks after it writes for every
