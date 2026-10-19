@@ -379,7 +379,7 @@ TEST(SymSimplifyGuard, SynthesisProofBudgetDoesNotLimitSplitWordRecovery) {
   SymSimplifyOptions Options;
   Options.EnableSynthesis = true;
   Options.SynthesisSolver = solver::SolverOptions::sourceView();
-  Options.SynthesisSolver->Blast.MaxGates = 1;
+  Options.SynthesisSolver->Blast.MaxWidth = 8;
   const auto Result = SymSimplifyPass::simplifyWithResult(*F, Options);
   EXPECT_GT(Result.Rewrites, 0u) << printFunction(*F);
   EXPECT_EQ(Result.Proof, solver::ProofStatus::Equivalent);
@@ -1461,7 +1461,7 @@ TEST(SymSimplifyGuard, SynthesisProofBudgetOverrideLeavesIRUnchanged) {
   const std::string Before = printFunction(*F);
   SymSimplifyOptions Options = synthesisOptions();
   Options.SynthesisSolver = solver::SolverOptions::sourceView();
-  Options.SynthesisSolver->Blast.MaxGates = 1;
+  Options.SynthesisSolver->Blast.MaxWidth = 8;
   const auto Result = SymSimplifyPass::simplifyWithResult(*F, Options);
   EXPECT_EQ(Result.Rewrites, 0u);
   EXPECT_EQ(Result.Outcome, SymSimplifyOutcome::ProofIncomplete);
