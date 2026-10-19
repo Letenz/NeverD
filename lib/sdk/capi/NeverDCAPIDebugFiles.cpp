@@ -177,6 +177,7 @@ int neverd::sdk::reloadDebugInformation(Session &S, DebugInfoRequest Request,
   // Retire analysis while its old image and debug owners still exist.
   S.clearPipeline();
   S.Img = std::move(Image);
+  S.ExceptionHandlersSettled = false;
   S.applyUserNoReturn();
   S.Dbg = std::move(Found.Context);
   S.DbgKind = Found.Kind;

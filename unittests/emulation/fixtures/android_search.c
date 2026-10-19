@@ -115,3 +115,27 @@ u64 substring_dynamic(const char *text, const char *needle, u64 closed) {
     return 95;
   return (u64)find(text, needle);
 }
+
+extern u64 strspn(const char *, const char *);
+u64 span_supplied(const char *text, const char *accept, unsigned *error) {
+  *__errno() = 733;
+  u64 result = strspn(text, accept);
+  *error = *__errno();
+  return result;
+}
+u64 span_readonly(void *page, const char *text, const char *accept) {
+  if (mprotect(page, 4096, 1))
+    return 98;
+  return strspn(text, accept);
+}
+u64 span_dynamic(const char *text, const char *accept, u64 closed) {
+  void *library = dlopen("libsearch.so", 2);
+  if (!library)
+    return 97;
+  u64 (*span)(const char *, const char *) = dlsym(library, "strspn");
+  if (!span)
+    return 96;
+  if (closed && dlclose(library))
+    return 95;
+  return span(text, accept);
+}

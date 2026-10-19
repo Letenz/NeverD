@@ -2182,8 +2182,9 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
           Arg = *Pointer;
       // A string or another pointer the machine passes as an integer still
       // converts to an integer parameter.
-      const bool ArgPtr = Op->Type->Kind == NdTypeKind::Ptr ||
-                          (!ParamPtr && printsAsPointer(Arg));
+      const bool ArgPtr =
+          Op->Type->Kind == NdTypeKind::Ptr ||
+          (!ParamPtr && (printsAsPointer(Arg) || printsPointer(*Op, Arg)));
       if (ParamPtr != ArgPtr && (ParamPtr ? Op->Type->Kind == NdTypeKind::Int
                                           : Param->Kind == NdTypeKind::Int))
         Arg = "(" + typeToC(Param) + ")(uintptr_t)(" + Arg + ")";
@@ -6641,6 +6642,27 @@ HighCWriter::ImageSymbolName HighCWriter::imageSymbolName(va_t Addr) const {
   return Named;
 }
 
+namespace {
+/// The type of a C library header's data object (LibCDataObjects.def) as
+/// HighC holds it: a pointer of the target's width, an int, or a long; null
+/// for another type, which the code's accesses then give the object.
+TypeRef headerDataObjectType(const char *Type, Arch A, BinaryFormat F) {
+  if (!Type)
+    return nullptr;
+  const llvm::StringRef Spelled(Type);
+  if (Spelled.ends_with("*")) {
+    TypeRef Pointer = NdType::makePtr();
+    Pointer->Size = pointerBytes(A);
+    return Pointer;
+  }
+  if (Spelled == "int")
+    return NdType::makeInt(4, true);
+  if (Spelled == "long")
+    return NdType::makeInt(F == BinaryFormat::COFF ? 4 : pointerBytes(A), true);
+  return nullptr;
+}
+} // namespace
+
 void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
                                   bool MemoryAccess) {
   if (!isImageDataAddress(Addr))
@@ -6652,6 +6674,15 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
     const ImageSymbolName Named = imageSymbolName(Addr);
     if (!Named.Raw.empty())
       Obj.Name = GlobalIdentifierAllocator.allocate(Named.Raw, "g");
+    // The image's copy of an object a C library header declares is the
+    // header's, by its name: the copy relocation gives the program one.
+    if (!Named.Raw.empty() && Obj.Name == Named.Raw)
+      if (const char *Header = libc::headerOfDataObject(Named.Raw))
+        if (TypeRef Declared = headerDataObjectType(
+                libc::typeOfDataObject(Named.Raw), Opts.TheArch, Opts.Format)) {
+          Obj.Header = Header;
+          Obj.HeaderType = std::move(Declared);
+        }
     // An identifier spelled from the name, or numbered after another object
     // took it, has the name in its comment.
     Obj.Readable = !Named.Readable.empty() || Named.Raw.empty()
@@ -6680,6 +6711,14 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
   }
   if (!Obj.Type)
     Obj.Type = NdType::makeInt(4);
+  // A header's object has the type the header declares it with; of a
+  // pointer, the accesses may say what it points to.
+  if (Obj.HeaderType && !(Obj.HeaderType->Kind == NdTypeKind::Ptr &&
+                          Obj.Type->Kind == NdTypeKind::Ptr &&
+                          Obj.Type->Size == Obj.HeaderType->Size)) {
+    Obj.Type = Obj.HeaderType;
+    Obj.WeakType = false;
+  }
   Obj.Written |= Written;
 }
 

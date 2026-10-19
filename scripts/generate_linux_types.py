@@ -48,6 +48,7 @@ import argparse
 from dataclasses import dataclass
 import datetime
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -166,6 +167,20 @@ TARGETS = {
                           None, "ARM (ILP32)", HEADERS / "AndroidARM.h",
                           "asm-arm"),
 }
+
+
+def generation_date():
+    """Use a reproducible UTC date when SOURCE_DATE_EPOCH is provided."""
+    epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if epoch is None:
+        return datetime.date.today().isoformat()
+    if not re.fullmatch(r"[0-9]+", epoch):
+        raise ValueError("SOURCE_DATE_EPOCH must be non-negative integer seconds")
+    try:
+        return (datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc) +
+                datetime.timedelta(seconds=int(epoch))).date().isoformat()
+    except (OverflowError, ValueError) as error:
+        raise ValueError("SOURCE_DATE_EPOCH is outside the supported date range") from error
 
 
 def run(command, **options):
@@ -312,7 +327,7 @@ def generate(arguments, name, target):
         text = (
             f"The Linux types and prototypes for {target.describes}, as a "
             "program declares them with musl's headers and _GNU_SOURCE.  "
-            f"Generated on {datetime.date.today().isoformat()} by "
+            f"Generated on {generation_date()} by "
             f"scripts/generate_linux_types.py --target {name} from the "
             f"headers of musl {version}: changed from them, as NeverD reads "
             "and renders their declarations again.  The headers' notices "
@@ -330,7 +345,7 @@ def generate(arguments, name, target):
             f"The Android types and prototypes for {target.describes}, as a "
             "program declares them with bionic's headers, <jni.h> and "
             "<android/log.h> and _GNU_SOURCE, for API level 35.  Generated "
-            f"on {datetime.date.today().isoformat()} by "
+            f"on {generation_date()} by "
             f"scripts/generate_linux_types.py --target {name} from the "
             f"headers of bionic at commit {commit(arguments.bionic)}, "
             "libnativehelper at commit "
@@ -346,7 +361,7 @@ def generate(arguments, name, target):
             f"The Linux types and prototypes for {target.describes}, as a "
             "program declares them with the GNU C Library's headers and "
             "_GNU_SOURCE.  Generated on "
-            f"{datetime.date.today().isoformat()} by "
+            f"{generation_date()} by "
             f"scripts/generate_linux_types.py --target {name} from the "
             f"headers of glibc {version}: changed from them, as NeverD "
             "reads and renders their declarations again.  The headers' "

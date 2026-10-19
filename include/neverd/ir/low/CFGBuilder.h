@@ -729,8 +729,9 @@ public:
   /// Builds into \p Cache the raw graphs and bodies of \p Functions that the
   /// call proofs of a build configured with these indexes would build on
   /// demand, with at most \p MaxThreads builders at once, and without
-  /// evicting anything the cache holds.  Later builds read them instead; their
-  /// results are unchanged.
+  /// evicting anything the cache holds.  It also keeps whether a retained
+  /// body's call to each of them refuses that body, as cachedCallRegisterBody
+  /// asks.  Later builds read them instead; their results are unchanged.
   static CallGraphWarmup warmCallGraphs(
       const std::shared_ptr<X87CallGraphCache> &Cache, const BinaryImage &Img,
       llvm::ArrayRef<va_t> Functions, const std::set<va_t> *Entries,

@@ -149,6 +149,10 @@ private:
   WarmState warmState_ = WarmState::Off;
   std::uint64_t warmCursor_ = 0;
   std::size_t warmPrepared_ = 0;
+  /// Whether the engine refused a function for lack of room.  The pass goes
+  /// on to the last function: each page still leaves the answers a
+  /// decompile reads of calls to its functions.
+  bool warmFull_ = false;
   std::string warmError_;
   void restartWarming();
   void warmStep();

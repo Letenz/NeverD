@@ -111,6 +111,10 @@ struct CallArgScan {
   /// below the stack pointer it is made from, through another pointer, or
   /// at a fixed address.
   llvm::function_ref<bool(const MedVar &)> IsNoArgumentStore;
+  /// Whether \p Store is one only reads of a PC-rooted value observe: the
+  /// get-PC push, or a spill of the GOT address its reloads read.  The GOT
+  /// address is never a C argument.
+  llvm::function_ref<bool(const MedOp &)> IsPcRootedStore;
   /// Offset of an address from the stack pointer at function entry, when it
   /// resolves through copies and constant adjustments (an `r11 = rsp`
   /// frame); nullopt otherwise.

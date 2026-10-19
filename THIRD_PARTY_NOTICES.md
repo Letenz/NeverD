@@ -213,14 +213,19 @@ parameter attributes assigned to `swift_willThrow` by
 
 `lib/loader/COFF/RichCompIds.inc` derives the tool kind, Visual Studio year
 and description of each @comp.id record from richprint's
-[`comp_id.txt`](https://github.com/dishather/richprint/blob/49f2dc93504db4a669c968fa80eb9b34591cb557/comp_id.txt),
-and `lib/loader/COFF/RichHeader.cpp` decodes the Rich header as
+[`comp_id.txt`](https://github.com/dishather/richprint/blob/b0a4f598cc076a8c2ff4b1b90850004bc17da31c/comp_id.txt)
+at revision `b0a4f598cc076a8c2ff4b1b90850004bc17da31c`.
+The table was updated on 2026-10-19 by
+`scripts/generate_rich_comp_ids.py`'s deterministic record mapping.
+
+`lib/loader/COFF/RichHeader.cpp` decodes the Rich header as
 [`richprint.cpp`](https://github.com/dishather/richprint/blob/49f2dc93504db4a669c968fa80eb9b34591cb557/richprint.cpp)
-does, at revision `49f2dc93504db4a669c968fa80eb9b34591cb557`.
+does, at revision `49f2dc93504db4a669c968fa80eb9b34591cb557`;
+the decoder adds a check of the header's checksum. Adapted on 2026-09-28.
+
 Copyright (c) 2015-2024 dishather. The original BSD 2-Clause license is
 preserved in [LICENSES/richprint.txt](LICENSES/richprint.txt).
-`scripts/generate_rich_comp_ids.py` regenerates the table from that file; the
-decoder adds a check of the header's checksum. Adapted on 2026-09-28.
+`scripts/generate_rich_comp_ids.py` regenerates the table from its pinned file.
 
 ## WHATWG Encoding Standard indexes
 

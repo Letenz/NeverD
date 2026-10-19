@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-import datetime
 import json
 from pathlib import Path
 import re
@@ -214,7 +213,7 @@ def generate(arguments, name, target, read):
     text = (
         f"The FreeBSD types and prototypes for {target.describes}, as a "
         "program declares them with FreeBSD's headers.  Generated on "
-        f"{datetime.date.today().isoformat()} by "
+        f"{linux.generation_date()} by "
         f"scripts/generate_freebsd_types.py --target {name} from the headers "
         f"of FreeBSD {RELEASE}-RELEASE (FreeBSD {version}, base.txz of "
         "https://download.freebsd.org/releases/): changed from them, as "

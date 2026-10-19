@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "updated": "2026-10-19",
+  "kind": "incremental-source-review-and-focused-executable-validation",
+  "upstream": {
+    "repository": "https://github.com/torvalds/linux",
+    "version": "7.2",
+    "commit": "8d3ae59288f1e7d58d76558a6ee96d533bc5019f",
+    "files": [
+      {
+        "path": "Makefile",
+        "git_blob_sha1": "ddcc6dca1ece826a67e29f2dc24e1c1d9d6dd186"
+      },
+      {
+        "path": "arch/x86/entry/syscalls/syscall_64.tbl",
+        "git_blob_sha1": "524155d655da15478e81117a7b547cf3b172ad82"
+      },
+      {
+        "path": "arch/arm/tools/syscall.tbl",
+        "git_blob_sha1": "94351e22bfcf76834c6e4cc2184d1388ad3b169c"
+      },
+      {
+        "path": "arch/arm64/kernel/Makefile.syscalls",
+        "git_blob_sha1": "0542a718871afa712446f8c674e680e9d187bb09"
+      },
+      {
+        "path": "arch/arm64/tools/syscall_64.tbl",
+        "git_blob_sha1": "63135cf34b6595a4a656e4939839ed4912a77082"
+      },
+      {
+        "path": "scripts/syscall.tbl",
+        "git_blob_sha1": "7a42b32b65776773b8117a5e2d6131acfdf4e505"
+      },
+      {
+        "path": "include/linux/syscalls.h",
+        "git_blob_sha1": "874d9067a43b50ed77e5dbcba82bc54fc1aab519"
+      },
+      {
+        "path": "kernel/bpf/syscall.c",
+        "git_blob_sha1": "6db306d23b479fda606813fb6598a8f61a0ce504"
+      }
+    ]
+  },
+  "baseline": {
+    "description": "Existing Linux 6.1-derived entries retained except the three bpf arities below; original kernel commit was not recorded and remains unknown.",
+    "neverd_commit": "f8e6e66129a059625a87629ba30c250f7a7c9970",
+    "git_blob_sha1": "eee5c37556dc951772287700b76f1f7e61429f75"
+  },
+  "scope": {
+    "added_numbers": {
+      "first": 451,
+      "last": 471,
+      "architectures": [
+        "X64",
+        "AArch64",
+        "ARM"
+      ],
+      "rows": 63
+    },
+    "corrected": [
+      {
+        "arch": "X64",
+        "number": 321,
+        "name": "bpf",
+        "old_count": 3,
+        "new_count": 5
+      },
+      {
+        "arch": "AArch64",
+        "number": 280,
+        "name": "bpf",
+        "old_count": 3,
+        "new_count": 5
+      },
+      {
+        "arch": "ARM",
+        "number": 386,
+        "name": "bpf",
+        "old_count": 3,
+        "new_count": 5
+      }
+    ],
+    "counts_451_through_471": [
+      4,
+      4,
+      3,
+      4,
+      6,
+      4,
+      4,
+      4,
+      4,
+      4,
+      3,
+      3,
+      6,
+      6,
+      5,
+      4,
+      5,
+      5,
+      5,
+      4,
+      0
+    ],
+    "aarch64_legacy_corrections": {
+      "added_native_numbers": [
+        43,
+        44,
+        45,
+        46,
+        84,
+        86,
+        87,
+        99,
+        100,
+        115,
+        122,
+        123,
+        127,
+        137,
+        138,
+        183,
+        240
+      ],
+      "removed_compat_only_numbers": [
+        403,
+        404,
+        405,
+        406,
+        407,
+        408,
+        409,
+        410,
+        411,
+        412,
+        413,
+        414,
+        416,
+        417,
+        418,
+        419,
+        420,
+        421,
+        422,
+        423
+      ],
+      "reason": "Legacy regex did not join continued declarations or evaluate preprocessor conditionals. Native 64-bit table and preprocessing agree."
+    }
+  },
+  "method": [
+    "Matched number and handler in each target table to include/linux/syscalls.h; corroborated bpf with SYSCALL_DEFINE5 in kernel/bpf/syscall.c.",
+    "All added arguments are pointers or word-sized scalars for these ABIs; pointers to u64 remain single registers on ARM EABI.",
+    "Preserved all unrelated legacy entries and all unlisted-number conservative fallback behavior. This table describes register inputs, not emulator support or syscall availability on a particular kernel.",
+    "This was an incremental static update, not execution of scripts/generate_linux_syscall_arguments.py and not a full Linux 7.2 regeneration. Future regeneration must update this provenance and review historical/configuration-specific handlers rather than indiscriminately reducing arities.",
+    "Executed focused generator regression tests and compared AArch64 selections with preprocessed Linux v6.1 UAPI headers and the pinned Linux 7.2 native table. Preserve unrelated legacy metadata, including historical syscall arities now mapped to sys_ni_syscall.",
+    "Executed the corrected generator twice against all 4164 source files read by its scan from the pinned Linux archive; outputs match byte-for-byte. Every shared row agrees with checked-in metadata. Historical rows remain and two architecture-specific x86 probe syscalls are not imported."
+  ],
+  "limitations": [
+    "Original baseline exact Linux revision unknown.",
+    "No complete NeverD build or lift/emulation integration tests: CMake, Clang, LLVM/Capstone submodules and fixtures unavailable. Focused Python and standalone C++ metadata checks are separate from end-to-end validation."
+  ],
+  "validation_sources": {
+    "legacy_kernel_commit": "830b3c68c1fb1e9176028d02ef86f3cf76aa2476",
+    "legacy_tag": "v6.1",
+    "files": [
+      {
+        "path": "arch/arm64/include/uapi/asm/bitsperlong.h",
+        "git_blob_sha1": "485d60bee26ca313ad15797f230efe10072befc9"
+      },
+      {
+        "path": "arch/arm64/include/uapi/asm/unistd.h",
+        "git_blob_sha1": "ce2ee8f1e361091e462cd658257709bf09fc9c84"
+      },
+      {
+        "path": "include/uapi/asm-generic/bitsperlong.h",
+        "git_blob_sha1": "693d9a40eb7b029c12282527636372e936693204"
+      },
+      {
+        "path": "include/uapi/asm-generic/unistd.h",
+        "git_blob_sha1": "45fa180cc56adf335ebfa7c2c6bf85b9704e25fa"
+      }
+    ]
+  },
+  "validation": {
+    "python_regressions_passed": 7,
+    "pinned_source_files_scanned": 4164,
+    "full_generator_rows": {
+      "X64": 368,
+      "AArch64": 325,
+      "ARM": 419
+    },
+    "checked_in_rows": {
+      "X64": 368,
+      "AArch64": 327,
+      "ARM": 422
+    },
+    "all_common_generated_rows_match": true,
+    "repeat_generation_byte_identical": true,
+    "standalone_cpp_table_harness": "GCC 14.2, C++20, -Wall -Wextra -Werror; passed. This is not the complete NeverD test binary.",
+    "unimported_generated_rows": [
+      "X64 335 uretprobe",
+      "X64 336 uprobe"
+    ],
+    "preserved_legacy_rows": [
+      "X64 156",
+      "X64 212",
+      "AArch64 18",
+      "AArch64 42",
+      "ARM 134",
+      "ARM 149",
+      "ARM 249"
+    ]
+  }
+}

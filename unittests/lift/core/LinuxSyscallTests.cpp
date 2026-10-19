@@ -61,6 +61,57 @@ TEST(LinuxSyscallArguments, CountTheKernelHandlersRegisters) {
   EXPECT_EQ(neverd::x64SyscallRegistersRead(4), 5u);
 }
 
+// Linux 7.2 at 8d3ae59288f1e7d58d76558a6ee96d533bc5019f.
+// These calls have no by-value 64-bit scalar on ARM EABI: u64 pointers
+// (listmount, lsm_list_modules, listns) still occupy one register.
+TEST(LinuxSyscallArguments, Linux72IncrementalMetadata) {
+  using neverd::Arch;
+  using neverd::linuxSyscallArgumentCount;
+  constexpr unsigned Counts[] = {
+      4, 4, 3, 4, 6, 4, 4, 4, 4, 4, 3, 3, 6, 6, 5, 4, 5, 5, 5, 4, 0};
+  for (const Arch Target : {Arch::X64, Arch::AArch64, Arch::ARM}) {
+    SCOPED_TRACE(static_cast<unsigned>(Target));
+    for (unsigned I = 0; I < sizeof(Counts) / sizeof(Counts[0]); ++I) {
+      SCOPED_TRACE(451 + I);
+      EXPECT_EQ(linuxSyscallArgumentCount(Target, 451 + I), Counts[I]);
+    }
+    EXPECT_EQ(linuxSyscallArgumentCount(Target, 472), std::nullopt);
+    EXPECT_EQ(linuxSyscallArgumentCount(Target, 100000), std::nullopt);
+  }
+  // The syscall is SYSCALL_DEFINE5(bpf), not the three-argument internal
+  // BPF helper. Keeping five inputs is conservative for older kernels.
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::X64, 321), 5u);
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::AArch64, 280), 5u);
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 386), 5u);
+  // Architecture-specific holes must not inherit another ABI's definition.
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 447), std::nullopt);
+  // Native x86-64 metadata must not silently adopt x32 entries.
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::X64, 512), std::nullopt);
+}
+
+TEST(LinuxSyscallArguments, AArch64NativeNotCompat) {
+  using neverd::Arch;
+  using neverd::linuxSyscallArgumentCount;
+  constexpr unsigned Numbers[] = {
+      43, 44, 45, 46, 84, 86, 87, 99, 100, 115, 122, 123, 127, 137, 138, 183, 240};
+  constexpr unsigned Counts[] = {
+      2, 2, 2, 2, 4, 4, 2, 2, 3, 4, 3, 3, 2, 4, 3, 5, 4};
+  for (unsigned I = 0; I < sizeof(Numbers) / sizeof(Numbers[0]); ++I) {
+    SCOPED_TRACE(Numbers[I]);
+    EXPECT_EQ(linuxSyscallArgumentCount(Arch::AArch64, Numbers[I]), Counts[I]);
+  }
+  for (unsigned Number = 403; Number <= 423; ++Number) {
+    SCOPED_TRACE(Number);
+    EXPECT_EQ(linuxSyscallArgumentCount(Arch::AArch64, Number), std::nullopt);
+  }
+  // These really are assigned in the 32-bit EABI and must remain intact.
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 403), 2u);
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 422), 6u);
+  // A removed kernel implementation does not erase the historical ABI.
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::AArch64, 18), 3u);
+  EXPECT_EQ(linuxSyscallArgumentCount(Arch::ARM, 249), 4u);
+}
+
 class LinuxSyscall : public NeverDLiftTest {
 protected:
   std::string highC(const fs::path &Object) {

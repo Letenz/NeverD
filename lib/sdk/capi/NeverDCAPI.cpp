@@ -296,6 +296,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   // exist. clearPipeline also releases LLVM modules before their context.
   S.clearPipeline();
   S.Img = std::move(Image);
+  S.ExceptionHandlersSettled = false;
   S.FilePath = std::move(Path);
   S.SanitizeSourcePath = std::move(SanitizeSourcePath);
   S.MemoryInputBytes = MemoryBytes;

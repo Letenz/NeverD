@@ -21,9 +21,9 @@ import json
 import re
 from pathlib import Path
 
-REVISION = "49f2dc93504db4a669c968fa80eb9b34591cb557"
+REVISION = "b0a4f598cc076a8c2ff4b1b90850004bc17da31c"
 SOURCE = "https://github.com/dishather/richprint/blob/" + REVISION + "/comp_id.txt"
-SOURCE_SHA256 = "f5f196791faf8d6e90b90b720b362707ff460df592330299f3610e81dd059907"
+SOURCE_SHA256 = "61b88ed326eece56ab6007ec1fd00ae43b9acc2ee8a1c77111cca7e2da01760f"
 
 # richprint's marks, from the legend at the top of comp_id.txt.  The "Std" and
 # "Book" editions of the old compilers produce code like the others.
@@ -99,7 +99,7 @@ def render(products, builds, digest):
         "// Copyright (c) 2015-2024 dishather (https://github.com/dishather).",
         "// BSD-2-Clause; see LICENSES/richprint.txt.",
         "// Changes: keep each record's tool kind, Visual Studio year and",
-        "// description, sorted by product id and build, 2026-09-28.",
+        "// description, sorted by product id and build, 2026-10-19.",
         "static constexpr RichProductRecord RichProducts[] = {",
     ]
     for prod_id, (tool, year, _, text) in sorted(products.items()):
