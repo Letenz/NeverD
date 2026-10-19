@@ -780,7 +780,10 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         if (auto VA = constAddress(*Stmt.Dst->Operands[0])) {
           if (auto Name = imageObjectName(*VA)) {
             emitIndent(Indent);
-            OS << *Name << " = " << exprStr(*Stmt.Val) << ";\n";
+            OS << *Name << " = "
+               << assignedText(assignedImageObjectType(*VA), *Stmt.Val,
+                               exprStr(*Stmt.Val))
+               << ";\n";
             break;
           }
         }
@@ -1229,13 +1232,11 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         if (auto Name = imageObjectName(*VA)) {
           emitIndent(Indent);
           OS << *Name << " = ";
-          const std::string ValueText = exprStr(*Stmt.StoreVal);
           if (isUnknownCallOperand(Stmt.StoreVal.get()))
             OS << "0";
-          else if (isStringLiteralText(ValueText))
-            OS << "(uintptr_t)(" << ValueText << ")";
           else
-            OS << ValueText;
+            OS << assignedText(assignedImageObjectType(*VA), *Stmt.StoreVal,
+                               exprStr(*Stmt.StoreVal));
           OS << ";\n";
           break;
         }
