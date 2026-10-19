@@ -261,8 +261,18 @@ private:
         continue;
       Into.FieldDisplayOffsets.push_back(uint16_t(Byte));
       Into.FieldDisplayNames.push_back(Field.Name);
-      Into.FieldDisplayTypes.push_back(convert(*Field.Type, Depth + 1));
+      Into.FieldDisplayTypes.push_back(memberType(*Field.Type, Depth + 1));
     }
+  }
+
+  /// A member's type.  A flexible array member's, an array of no stated
+  /// length, is an array of its elements of no size, as DWARF's is: an
+  /// access there reads an element (NdType::isFlexibleArrayAt).
+  TypeRef memberType(const types::TypeExpr &Type, unsigned Depth) {
+    if (Type.Kind == types::TypeExprKind::Array && !Type.Count && Type.Element)
+      if (TypeRef Element = convert(*Type.Element, Depth + 1))
+        return NdType::makeArray(std::move(Element), 0, 0);
+    return convert(Type, Depth);
   }
 
   const types::TypeLibrary &Library;
@@ -751,7 +761,10 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
     Declared.Params = std::move(User->Params);
     if (User->CallConv != DebugCallConv::Unknown)
       Declared.CallConv = User->CallConv;
+    // The declaration's parameters follow its convention, not where the
+    // debug information's entered.
     Declared.PlatformConvention = true;
+    Declared.ParamEntryLocations.clear();
     return Declared;
   }
   // A declaration of the program's own describes its build.
@@ -801,6 +814,7 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
   if (Known->CallConv != DebugCallConv::Unknown)
     Typed.CallConv = Known->CallConv;
   Typed.PlatformConvention = true;
+  Typed.ParamEntryLocations.clear();
   Typed.PrototypeLibrary = std::move(Known->PrototypeLibrary);
   Typed.PrototypeDeclaration = std::move(Known->PrototypeDeclaration);
   Typed.PrototypeFromCLibrary = Known->PrototypeFromCLibrary;

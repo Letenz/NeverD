@@ -2576,6 +2576,25 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       if (auto It = ImageObjects.find(*VA); It != ImageObjects.end())
         It->second.AtomicBytes = std::max(It->second.AtomicBytes, Access->Size);
   };
+  // An alignment precondition belongs to the access it guards: its address
+  // is that access's, which needs the alignment in C as in the image.  The
+  // guard comes before the access that declares the object, so the
+  // alignment applies once the walk is done.
+  std::map<va_t, uint16_t> GuardedAlignments;
+  auto NoteAlignmentGuard = [&](const HighExpr &Call) {
+    if (Call.Kind != ExprKind::Call ||
+        Call.IntrinsicId != Intrinsic::RequireAligned ||
+        Call.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        Call.Operands.size() < 2 || !Call.Operands[0] || !Call.Operands[1] ||
+        Call.Operands[1]->Kind != ExprKind::Const)
+      return;
+    NoteAccessAddress(Call.Operands[0].get());
+    const uint64_t Bytes = Call.Operands[1]->ConstVal;
+    if (auto VA = constAddress(*Call.Operands[0]);
+        VA && Bytes > 1 && Bytes <= UINT16_MAX)
+      GuardedAlignments[*VA] = std::max<uint16_t>(GuardedAlignments[*VA],
+                                                  static_cast<uint16_t>(Bytes));
+  };
   std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
     if (E.Kind == ExprKind::Const && isAddressProvenance(E.ConstProvenance))
       noteFunctionAddress(functionAddressKey(E), Funcs);
@@ -2780,6 +2799,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         ImageObjects[*VA].AddressTaken = true;
       }
     }
+    NoteAlignmentGuard(E);
     // An indirect callee is no printed operand, but the slot it loads is
     // image data all the same, named as the slot the code calls through.
     E.forEachChildExpr([&](const ExprPtr &Op) { Visit(*Op); });
@@ -2824,6 +2844,9 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           Visit(*E);
       });
     });
+  for (const auto &[VA, Bytes] : GuardedAlignments)
+    if (auto It = ImageObjects.find(VA); It != ImageObjects.end())
+      It->second.AlignedBytes = std::max(It->second.AlignedBytes, Bytes);
 
   // A table the code keeps only the address of, through a variable it
   // indexes, may be relative all the same: every entry an offset to a sized
@@ -2996,19 +3019,25 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       Backing.Words = Backing.Name;
       Backing.Name += ".b";
     }
-    // An atomic access in the bytes needs its address as aligned in C as in
-    // the image: bytes before the group give every address its residue
-    // modulo the widest one.  Words start word-aligned, at the group.
+    // An atomic access in the bytes, or one that requires its alignment,
+    // needs its address as aligned in C as in the image: bytes before the
+    // group give every address its residue modulo the widest one.  Words
+    // start word-aligned, at the group.
     for (auto It = ImageObjects.lower_bound(GroupBase);
          It != ImageObjects.end() && It->first < GroupEnd; ++It) {
-      const uint64_t Bytes = It->second.AtomicBytes;
-      if (!Bytes)
+      const ImageObject &Obj = It->second;
+      const unsigned Align = static_cast<unsigned>(std::max<uint64_t>(
+          Obj.AtomicBytes
+              ? std::min<uint64_t>(llvm::PowerOf2Ceil(Obj.AtomicBytes),
+                                   kMaxAtomicAccessBytes)
+              : 0,
+          Obj.AlignedBytes));
+      if (Align <= 1)
         continue;
-      const unsigned Align = static_cast<unsigned>(
-          std::min<uint64_t>(llvm::PowerOf2Ceil(Bytes), kMaxAtomicAccessBytes));
       if (!Backing.Words.empty() && (It->first - GroupBase) % Align)
         throw std::invalid_argument(
-            "an atomic access in relocated image words at 0x" +
+            std::string(Obj.AtomicBytes ? "an atomic" : "an aligned") +
+            " access in relocated image words at 0x" +
             llvm::utohexstr(It->first) +
             " is less aligned in C than in the image");
       Backing.Align = std::max(Backing.Align, Align);
@@ -3036,8 +3065,13 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       NeedsBacking = true;
     GroupEnd = std::max(GroupEnd, End);
     ++GroupCount;
-    NeedsBacking |= Obj.MemoryWidths.size() > 1 || Obj.IndexedBytes ||
-                    (Obj.HoldsPointers && !Obj.PointsTo && Size > PointerBytes);
+    // An object less aligned in the image than an access there requires
+    // keeps that residue in bytes padded to the alignment: the access
+    // faults in C as in the image.
+    NeedsBacking |=
+        Obj.MemoryWidths.size() > 1 || Obj.IndexedBytes ||
+        (Obj.HoldsPointers && !Obj.PointsTo && Size > PointerBytes) ||
+        (Obj.AlignedBytes > 1 && Addr % Obj.AlignedBytes);
     for (uint16_t Width : Obj.MemoryWidths)
       NeedsBacking |= Width && (Width & (Width - 1)) != 0;
   }
@@ -3131,6 +3165,10 @@ void HighCWriter::writeImageObjects() {
     // A definition so standalone HighC can link, with the value the image
     // holds.  LLVMC keeps `extern` because it projects LLVM `external global`.
     std::string Note;
+    // As aligned as an access at its address requires, which the image's
+    // address is: a less aligned one is bytes (above).
+    if (Obj.AlignedBytes > 1)
+      OS << "_Alignas(" << Obj.AlignedBytes << ") ";
     if (Obj.String) {
       const Segment *Seg = Opts.Image->getSegmentFor(Addr);
       OS << (Seg && !Seg->isWritable() ? "const " : "") << Obj.String->Element

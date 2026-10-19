@@ -491,13 +491,22 @@ public:
   std::optional<std::pair<const HighExpr *, uint64_t>>
   typedPointerOffset(const HighExpr &Addr) const;
   /// `base[index]` when Addr is `typed_ptr + index * sizeof(*typed_ptr)`.
-  /// ElemType is the loaded pointer/element, not the address of `base`.
+  /// ElemType is the loaded pointer/element, not the address of `base`; for
+  /// an access of \p AccessSize bytes narrower than a record element, the
+  /// element's member at its start that is that wide (Member), whose type
+  /// ElemType is then.  None where no scalar member is.
   struct TypedIndexAccess {
     std::string Base;
     std::string Index;
+    std::string Member;
     TypeRef ElemType;
+    std::string text() const {
+      return Base + "[" + Index + "]" + (Member.empty() ? "" : "." + Member);
+    }
   };
-  std::optional<TypedIndexAccess> typedIndexAccess(const HighExpr &Addr);
+  std::optional<TypedIndexAccess>
+  typedIndexAccess(const HighExpr &Addr, uint16_t AccessSize = 0,
+                   NdAccessClass Class = NdAccessClass::Unknown);
   /// The member \p Load reads: one of its width, else one of another width
   /// it reads as it is, but never a whole record, whose bytes no scalar is.
   std::optional<std::string> loadedMemberAccess(const HighExpr &Load) const;
@@ -1367,6 +1376,10 @@ public:
     /// The widest atomic access (an ordered load or store, or a
     /// read-modify-write) at its address: C keeps it as aligned as the image.
     uint16_t AtomicBytes = 0;
+    /// The widest alignment an access at its address requires (an aligned
+    /// vector move faults on a misaligned address): C keeps it as aligned
+    /// as the image.
+    uint16_t AlignedBytes = 0;
   };
   std::map<va_t, ImageObject> ImageObjects;
   /// The access width that names the unnamed object \p Obj at \p Addr, as

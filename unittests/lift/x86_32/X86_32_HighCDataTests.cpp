@@ -11,6 +11,11 @@
 
 #include "HighCHostExecution.h"
 
+#include <fstream>
+#include <iterator>
+#include <regex>
+#include <string>
+
 class X86_32_HighCData : public HighCHostExecutionTest {};
 
 // Clang keeps the initializer of a local constant array in .rodata under an
@@ -137,4 +142,36 @@ int editdist(int a) {
 )C",
                             "editdist", {"editdist", "SA", "SB"},
                             {-3, 0, 1, 0x53, 77});
+}
+
+// `movdqa` faults on a misaligned address, so the lift checks the address of
+// the constant it reads.  That address is the constant's object, as the read
+// is: its first int, 9, and the zero bytes after it also read as the UTF-16
+// string "\t", a literal C would place elsewhere.  The object is declared as
+// aligned as the image places it.
+TEST_F(X86_32_HighCData, AnAlignedVectorReadChecksItsConstantsObject) {
+  HostFlags = {"-m32", "-msse2"};
+  expectHighCRunsLikeSource({"-target", "i386-linux-gnu", "-march=pentium4"},
+                            R"C(
+typedef unsigned v4u __attribute__((vector_size(16)));
+int scale(int a) {
+  v4u x = {(unsigned)a, (unsigned)a * 3u, (unsigned)a ^ 5u, (unsigned)a + 7u};
+  v4u v = x * (v4u){9u, 10u, 11u, 12u};
+  return (int)(v[0] ^ v[1] ^ v[2] ^ v[3]);
+}
+)C",
+                            "scale", {"scale"}, {-3, 0, 1, 7, 77, 0x12345});
+  if (HasFatalFailure() || IsSkipped())
+    return;
+  std::ifstream Input(tmpFile("decompiled_high.c"));
+  const std::string C((std::istreambuf_iterator<char>(Input)),
+                      std::istreambuf_iterator<char>());
+  std::smatch Checked;
+  ASSERT_TRUE(
+      std::regex_search(C, Checked, std::regex(R"(\(&(\w+)\)\) & 15\) != 0)")))
+      << C;
+  EXPECT_TRUE(std::regex_search(
+      C, std::regex("_Alignas\\(16\\) [^;\\n]*\\b" + Checked[1].str() + " =")))
+      << C;
+  EXPECT_EQ(C.find("L\""), std::string::npos) << C;
 }

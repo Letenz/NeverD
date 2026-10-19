@@ -1948,7 +1948,8 @@ void HighCWriter::collectFieldLoadTypes(const HighFunc &Func) {
         const uint16_t Size = Val->Type ? Val->Type->Size : 0;
         Type = typedMemberType(*Val->Operands[0], Size, accessClassOf(Val));
         if (!Type)
-          if (auto Index = typedIndexAccess(*Val->Operands[0]))
+          if (auto Index =
+                  typedIndexAccess(*Val->Operands[0], Size, accessClassOf(Val)))
             Type = Index->ElemType;
       } else if (Val->Kind == ExprKind::Var || Val->Kind == ExprKind::Phi) {
         if (auto It = FieldForwardTypes.find(varName(Val->Var));
@@ -2016,9 +2017,10 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
         if (TypeRef Ty = typedMemberType(*Val->Operands[0], AccessSize,
                                          accessClassOf(Val)))
           FieldForwardTypes[DestName] = std::move(Ty);
-      } else if (auto Index = typedIndexAccess(*Val->Operands[0])) {
+      } else if (auto Index = typedIndexAccess(*Val->Operands[0], AccessSize,
+                                               accessClassOf(Val))) {
         if (ForwardName) {
-          FieldForward[DestName] = Index->Base + "[" + Index->Index + "]";
+          FieldForward[DestName] = Index->text();
           FieldForwardSources[DestName] = S.Val.get();
         }
         if (Index->ElemType)
@@ -2418,8 +2420,9 @@ void HighCWriter::collectFieldLoadForward(const HighFunc &Func) {
                                 /*EnterNestedAtZero=*/true, accessClassOf(Val));
           Member && *Member == It->second)
         return;
-      if (auto Index = typedIndexAccess(*Val->Operands[0])) {
-        if (Index->Base + "[" + Index->Index + "]" == It->second)
+      if (auto Index = typedIndexAccess(*Val->Operands[0], AccessSize,
+                                        accessClassOf(Val))) {
+        if (Index->text() == It->second)
           return;
       }
     }
@@ -2806,7 +2809,9 @@ bool HighCWriter::isTypedIndexLoad(const HighExpr &E) {
       !Cur->Operands[0] || Cur->MemoryOrdering != NdMemoryOrdering::None ||
       Cur->MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
-  return typedIndexAccess(*Cur->Operands[0]).has_value();
+  return typedIndexAccess(*Cur->Operands[0], Cur->Type ? Cur->Type->Size : 0,
+                          accessClassOf(Cur))
+      .has_value();
 }
 
 bool HighCWriter::isCxxCatchObjectName(llvm::StringRef Name) const {
@@ -4665,7 +4670,10 @@ std::string HighCWriter::debugParamName(const HighFunc &Func,
 }
 
 bool HighCWriter::positionalDebugSignature(const FunctionSym &FS) const {
-  if (!FS.PlatformConvention)
+  // A call's arguments come in the order of the registers they travel in,
+  // which a function the debug information says enters with them in
+  // registers need not follow.
+  if (!FS.PlatformConvention || !FS.ParamEntryLocations.empty())
     return false;
   if (isMsvcIndirectReturn(FS.ReturnType, Opts.TheArch, Opts.Format))
     return true;

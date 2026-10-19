@@ -319,6 +319,31 @@ TEST(LocalTypesDebugContext, GivesTheDebugInformationsRecordsTheirMembers) {
   EXPECT_EQ(Own->FieldDisplayOffsets, std::vector<uint16_t>{0});
 }
 
+TEST(LocalTypesDebugContext, FlexibleArrayMembersHoldTheirElements) {
+  using namespace neverd;
+  auto Library = std::make_shared<types::TypeLibrary>();
+  ASSERT_TRUE(types::parseCTypes(R"(
+    struct fde_vector {
+      const void *orig_data;
+      unsigned long long count;
+      const void *array[];
+    };
+  )",
+                                 *Library)
+                  .ok());
+  NamesOnlyDebugContext Names;
+  auto Context = std::make_unique<sdk::LocalTypesDebugContext>(Names, Library);
+  // libgcc stores into the first element of the array of no stated length
+  // that ends the record: a store names the element, as no array is
+  // assignable.
+  const TypeRef Vector = NdType::makeNamedRecord("fde_vector", 16);
+  Context->completeType(NdType::makePtr(Vector));
+  ASSERT_EQ(Vector->FieldDisplayNames.size(), 3u);
+  EXPECT_EQ(Vector->displayFieldPathAt(16, 8), "array[0]");
+  EXPECT_EQ(Vector->displayFieldPathAt(24, 8), "array[1]");
+  EXPECT_EQ(Vector->displayFieldPathAt(8, 8), "count");
+}
+
 TEST(LocalTypesDebugContext, AccessesTakeTheUnionAlternativeOfTheirClass) {
   using namespace neverd;
   auto Library = std::make_shared<types::TypeLibrary>();

@@ -738,6 +738,38 @@ bool declaresLocal(const std::string &Source, const std::string &Name) {
                                               Name + "(\\[[0-9]+\\])?;"));
 }
 
+TEST(NdTypeDisplayPaths, FlexibleArrayMembersHoldTheirElements) {
+  // libgcc's fde_vector ends in `const fde *array[]`, an array of no stated
+  // length: an access at or past its start reads an element, which a store
+  // names, as no array is assignable.
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Vector = NdType::makeNamedRecord("FDE_VECTOR_LIKE", 16);
+  Vector->FieldDisplayNames = {"orig_data", "count", "array"};
+  Vector->FieldDisplayOffsets = {0, 8, 16};
+  Vector->FieldDisplayTypes = {Pointer, NdType::makeInt(8, false),
+                               NdType::makeArray(Pointer, 0, 0)};
+  const auto path = [](const TypeRef &Record, uint64_t Offset, uint16_t Bytes) {
+    return Record->displayFieldPathAt(Offset, Bytes).value_or("(none)");
+  };
+  EXPECT_EQ(path(Vector, 16, 8), "array[0]");
+  EXPECT_EQ(path(Vector, 24, 8), "array[1]");
+  EXPECT_EQ(Vector->displayFieldTypeAt(24, 8), Pointer);
+  // Its address is the array's; half a pointer is no element.
+  EXPECT_EQ(path(Vector, 16, 0), "array");
+  EXPECT_EQ(path(Vector, 20, 4), "(none)");
+
+  // A zero-length array that other members follow holds none of their
+  // bytes: an access there reads the member that starts with it.
+  auto Header = NdType::makeNamedRecord("HEADER_LIKE", 24);
+  Header->FieldDisplayNames = {"count", "marker", "tail", "more"};
+  Header->FieldDisplayOffsets = {0, 8, 8, 16};
+  Header->FieldDisplayTypes = {NdType::makeInt(8, false),
+                               NdType::makeArray(Pointer, 0, 0), Pointer,
+                               NdType::makeInt(8, false)};
+  EXPECT_EQ(path(Header, 8, 8), "tail");
+  EXPECT_EQ(path(Header, 16, 8), "more");
+}
+
 TEST(NdTypeDisplayPaths, ArrayMembersNameTheirElements) {
   // An array member holds its elements as a record holds its members: an
   // access of an element's width, or an address inside the array, names
@@ -46834,4 +46866,49 @@ TEST(HighCPointerAddresses, IndirectCallsTakeNoSignatureFromTheirCaller) {
   OS.flush();
   EXPECT_EQ(Source.find("void* t7"), std::string::npos) << Source;
   expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, RecordElementsReadTheirMembers) {
+  // zlib reads tree[n].Freq, two bytes at the start of a four-byte element
+  // of the array a ct_data pointer holds: that member of the element, not
+  // the element, which no scalar is, nor a member of the first element
+  // indexed as an array (`tree->freq[n]`).
+  const auto Half = NdType::makeInt(2, false);
+  auto Record = NdType::makeNamedRecord("CT_LIKE", 4);
+  Record->FieldDisplayNames = {"freq", "len"};
+  Record->FieldDisplayOffsets = {0, 2};
+  Record->FieldDisplayTypes = {Half, Half};
+  HighFunc Func;
+  Func.Name = "freq_of";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = Half;
+  Func.Params = {{"tree", NdType::makePtr(Record)},
+                 {"n", NdType::makeInt(8, false)}};
+  returnValue(Func, HighExpr::makeLoad(
+                        HighExpr::makeBinop(
+                            NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
+                            HighExpr::makeBinop(NdOp::INT_MULT, parameter(1),
+                                                HighExpr::makeConst(4, 8))),
+                        Half));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text = R"c(
+struct CT_LIKE {
+  uint16_t freq;
+  uint16_t len;
+};
+)c";
+    Definitions.Records = {{"CT_LIKE", false}};
+    Definitions.Tags = {{"CT_LIKE", false}};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("tree[n].freq"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("tree->freq["), std::string::npos) << Source;
+  expectCSyntax("#include <stdint.h>\n" + Source);
 }
