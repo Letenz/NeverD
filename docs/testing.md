@@ -8011,6 +8011,20 @@ the read is a GEP into a read-only global and the table VA survives nowhere.
 lays among its code as data, in a `.text` over the 1 MiB single-global limit;
 the read resolves through the table run's own mirror rather than refusing that
 the code segment cannot mirror.
+`SwitchCasesStayLabelsPastAnEntryBeforeTheTable` puts an aligned prologue
+match in dead code between a switch's seven-byte `mov eax, N; jmp tail` cases
+and its table among the code; the cases stay labels only because the
+instruction reading the table, not the table's slots, names them.
+`PrologueMatchesInsideAFunctionAreItsCode` falls into an aligned `push esi;
+push edi` and branches back to an aligned loop head, both prologue matches the
+entry owns, while a padded function and a tail jump's target stay entries;
+`AFramePrologueAfterACallStaysAnEntry` keeps a frame prologue right after a
+call that may not return. `APushOfEbpWithoutTheFrameMoveIsNoUnalignedEntry`
+finds no entry at the 55 8B C6 inside `push 55h; mov eax, esi`, which the
+unaligned scan took for a frame setup. `AnInt3ByteInsideAnInstructionIsNoPadding`
+runs the loader's padding scan over a loop whose `jne` displacement is 0xcc:
+the entry falls into the start guessed after it, which it owns, while the start
+guessed after real padding past the entry's return stays an entry.
 `I386CallContract.ABlockPhiIsNoArgumentPastAnEarlierCallInItsBlock` joins a
 callback's address and an import call's leftover in EDX, calls the import
 again in the join block, then a routine reading ECX and EDX: the argument is
@@ -9027,3 +9041,17 @@ The [runtime module reference](runtime-modules.md#verification) lists the focuse
 resource, mapping, pause/resume, execution, C SDK and CLI suites. Qualify the
 CPU-on/Driver-off configuration as well as disabled execution. The Windows
 adapter remains a separate integration and is rejected when unregistered.
+
+`DalvikSnapshot.*` checks read-only declaration/initialization reporting, forged
+source labels, unknown and explicit phases, identity materialization, mutable
+Instrumentation, erroneous/terminal initializers and unchanged heap/work limits.
+`AndroidJNI.JavaState*` compares complete native reports with observation enabled
+and disabled across relocation forms and available backends, including unknown
+lifecycle stops and native registration without class initialization.
+`ProcessReport.JavaStateObservation*` checks strict opt-in JSON and unknown/null
+state serialization. These checks do not establish execution of ART startup.
+`DalvikSnapshot.ExplicitApplicationLoader*`,
+`AndroidJNI.ApplicationLoaderIsIndependentOfApplicationCreation` and
+`ProcessReport.AndroidLoaderMayBeEstablishedBeforeApplication` cover independent
+loader setup, unchanged null Application, exact lookup outcomes, retained loader
+identity after detach and contradictory/unknown lifecycle inputs.

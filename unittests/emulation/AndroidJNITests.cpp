@@ -9,6 +9,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
+#include "neverd/emulation/ProcessReport.h"
 #include "neverd/emulation/ProcessSession.h"
 
 #include "llvm/Support/MemoryBuffer.h"
@@ -114,6 +115,94 @@ TEST_P(AndroidJNI, ApplicationSnapshotHasThreeDistinctLifecyclePhases) {
     EXPECT_EQ(R.ReturnValue, 0u);
   }
 }
+TEST_P(AndroidJNI, JavaStateObservationPreservesCompleteExecution) {
+  using Phase = mobile::dalvik::AndroidApplicationSnapshot::Phase;
+  Options.Android->TraceLimit = 50000;
+  for (auto P :
+       {std::optional<Phase>{}, std::optional{Phase::Unattached},
+        std::optional{Phase::Attached}, std::optional{Phase::Application}}) {
+    Options.Android->Application =
+        P ? std::optional{mobile::dalvik::AndroidApplicationSnapshot{*P, {}}}
+          : std::nullopt;
+    Options.Android->Arguments = {uint64_t(P.value_or(Phase::Unattached))};
+    Options.Android->ObserveJavaState = false;
+    auto Baseline = run("jni_application_snapshot");
+    ASSERT_FALSE(Baseline.JavaState);
+    Options.Android->ObserveJavaState = true;
+    auto Observed = run("jni_application_snapshot");
+    ASSERT_TRUE(Observed.JavaState);
+    const auto &State = *Observed.JavaState;
+    EXPECT_EQ(State.framework.declared_phase, P);
+    EXPECT_FALSE(State.classes.empty());
+    if (P == Phase::Application) {
+      EXPECT_NE(State.framework.application, 0u);
+      EXPECT_NE(State.framework.application_loader, 0u);
+      EXPECT_NE(State.framework.boot_loader,
+                State.framework.application_loader);
+    } else {
+      EXPECT_EQ(State.framework.application, 0u);
+      EXPECT_EQ(State.framework.application_loader, 0u);
+    }
+    EXPECT_EQ(Observed.Stop, P ? ProcessStopReason::Returned
+                               : ProcessStopReason::UnsupportedService);
+    // Covers counters, references/return bits, threads, calls, trace, memory,
+    // diagnostics and existing observations, not just the final result code.
+    Observed.JavaState.reset();
+    EXPECT_EQ(processResultJSON(Observed), processResultJSON(Baseline));
+  }
+  Options.Android->JNI = false;
+  Options.Android->Application.reset();
+  auto Bad =
+      emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+  ASSERT_FALSE(bool(Bad));
+  EXPECT_NE(llvm::toString(Bad.takeError()).find("observation requires JNI"),
+            std::string::npos);
+}
+TEST_P(AndroidJNI,
+       JavaStateSeparatesNativeRegistrationFromClassInitialization) {
+#ifndef NEVERD_ANDROID_DEX_FIXTURE_DIR
+  GTEST_SKIP() << "Python DEX fixture generator unavailable";
+#else
+  auto File = llvm::MemoryBuffer::getFile(
+      (std::filesystem::path(NEVERD_ANDROID_DEX_FIXTURE_DIR) /
+       "registration.dex")
+          .string());
+  ASSERT_TRUE(bool(File));
+  auto Bytes = (*File)->getBuffer();
+  Options.Android->DexImages.emplace_back(Bytes.begin(), Bytes.end());
+  Options.Android->TraceLimit = 50000;
+  for (unsigned Mode : {0u, 5u}) {
+    SCOPED_TRACE(Mode);
+    Options.Android->Arguments = {Mode};
+    Options.Android->ObserveJavaState = false;
+    auto Before = run("jni_native_registration");
+    Options.Android->ObserveJavaState = true;
+    auto After = run("jni_native_registration");
+    ASSERT_EQ(After.Stop, ProcessStopReason::Returned) << After.Diagnostic;
+    ASSERT_TRUE(After.JavaState);
+    EXPECT_FALSE(After.JavaState->terminal);
+    EXPECT_FALSE(After.JNIRegistrations.empty());
+    unsigned Supplied = 0, Materialized = 0;
+    for (const auto &C : After.JavaState->classes) {
+      if (!C.supplied)
+        continue;
+      ++Supplied;
+      Materialized += C.class_object != 0;
+      EXPECT_EQ(C.source_id, "supplied-dex-0");
+      using Init = mobile::dalvik::JavaClassState::Initialization;
+      EXPECT_EQ(C.initialization,
+                Mode == 5 && C.descriptor == "Lregistration/Deferred;"
+                    ? Init::Erroneous
+                    : Init::NotStarted);
+      EXPECT_FALSE(C.projected_loader); // No application snapshot was supplied.
+    }
+    EXPECT_EQ(Supplied, 3u);
+    EXPECT_EQ(Materialized, 3u);
+    After.JavaState.reset();
+    EXPECT_EQ(processResultJSON(After), processResultJSON(Before));
+  }
+#endif
+}
 TEST_P(AndroidJNI, ApplicationUnknownStateAndPackageDoNotBecomeNullOrDefaults) {
   auto Unknown = run("jni_application_snapshot");
   EXPECT_EQ(Unknown.Stop, ProcessStopReason::UnsupportedService);
@@ -127,6 +216,40 @@ TEST_P(AndroidJNI, ApplicationUnknownStateAndPackageDoNotBecomeNullOrDefaults) {
   auto Known = run("jni_application_package");
   EXPECT_EQ(Known.Stop, ProcessStopReason::Returned) << Known.Diagnostic;
   EXPECT_EQ(Known.ReturnValue, 0u);
+}
+TEST_P(AndroidJNI, ApplicationLoaderIsIndependentOfApplicationCreation) {
+#ifndef NEVERD_ANDROID_DEX_FIXTURE_DIR
+  GTEST_SKIP() << "Python DEX fixture generator unavailable";
+#else
+  auto File = llvm::MemoryBuffer::getFile(
+      (std::filesystem::path(NEVERD_ANDROID_DEX_FIXTURE_DIR) /
+       "registration.dex")
+          .string());
+  ASSERT_TRUE(bool(File));
+  auto Bytes = (*File)->getBuffer();
+  Options.Android->DexImages.emplace_back(Bytes.begin(), Bytes.end());
+  using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
+  Options.Android->Application = Snapshot{Snapshot::Phase::Attached};
+  Options.Android->ObserveJavaState = true;
+  for (auto Established :
+       {std::optional<bool>{}, std::optional{false}, std::optional{true}}) {
+    Options.Android->Application->application_loader_established = Established;
+    auto R = run("jni_loader_before_application");
+    ASSERT_TRUE(R.JavaState);
+    EXPECT_EQ(R.JavaState->framework.application_loader_established,
+              Established);
+    EXPECT_EQ(R.JavaState->framework.application, 0u);
+    EXPECT_EQ(R.Stop, Established == true
+                          ? ProcessStopReason::Returned
+                          : ProcessStopReason::UnsupportedService)
+        << R.Diagnostic;
+    if (Established == true) {
+      EXPECT_EQ(R.ReturnValue, 0u);
+      EXPECT_NE(R.JavaState->framework.application_loader, 0u);
+      EXPECT_NE(R.JavaState->framework.boot_loader, 0u);
+    }
+  }
+#endif
 }
 TEST_P(AndroidJNI, ApplicationInputRequiresJNIAndValidPhaseMetadata) {
   Options.Android->EntrySymbol = "jni_application_snapshot";

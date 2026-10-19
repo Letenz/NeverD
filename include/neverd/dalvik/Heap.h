@@ -38,6 +38,7 @@ public:
   std::shared_ptr<Object> get(uint64_t identity) const;
   bool replaceBytes(Object &object, std::vector<uint8_t> bytes);
   std::shared_ptr<Object> classObject(std::string_view name);
+  uint32_t classObjectIdentity(std::string_view name) const;
   std::shared_ptr<Object> stringConstant(std::string_view key,
                                          std::vector<uint8_t> bytes);
   std::shared_ptr<Object> intern(std::shared_ptr<Object> string);

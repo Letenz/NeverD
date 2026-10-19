@@ -20,17 +20,32 @@ bool platformType(std::string_view type) {
 }
 } // namespace
 
+std::optional<bool>
+androidApplicationLoaderState(const AndroidApplicationSnapshot &input) {
+  using Phase = AndroidApplicationSnapshot::Phase;
+  if ((input.phase == Phase::Unattached &&
+       input.application_loader_established == true) ||
+      (input.phase == Phase::Application &&
+       input.application_loader_established == false))
+    throw Error("Android application loader contradicts lifecycle phase");
+  if (input.phase == Phase::Unattached)
+    return false;
+  if (input.phase == Phase::Application)
+    return true;
+  return input.application_loader_established;
+}
+
 void validateAndroidClassLookupFailures(
     const AndroidApplicationSnapshot &input) {
   using Loader = AndroidApplicationSnapshot::ClassLookupFailure::Loader;
+  auto loader_state = androidApplicationLoaderState(input);
   if (input.class_lookup_failures.size() > 256)
     throw Error("Android class lookup failure inventory exceeds its budget");
   std::set<std::pair<Loader, std::string>> seen;
   for (const auto &failure : input.class_lookup_failures) {
     if ((failure.loader != Loader::Boot && failure.loader != Loader::System &&
          failure.loader != Loader::Application) ||
-        (failure.loader == Loader::Application &&
-         input.phase != AndroidApplicationSnapshot::Phase::Application))
+        (failure.loader == Loader::Application && loader_state != true))
       throw Error("invalid Android class lookup failure loader");
     const auto &name = failure.binary_name;
     bool first = true;
@@ -225,6 +240,44 @@ ExecutionResult AndroidFramework::field(Heap &heap, const Field &field,
           "Android framework field is not modeled"};
 }
 
+AndroidFrameworkState AndroidFramework::inspect() const {
+  AndroidFrameworkState result;
+  if (snapshot) {
+    result.declared_phase = snapshot->phase;
+    result.application_loader_established =
+        androidApplicationLoaderState(*snapshot);
+  }
+  result.activity_thread = thread;
+  result.application = application;
+  result.context = context;
+  result.boot_loader = boot_loader;
+  result.system_loader = system_loader;
+  result.application_loader = app_loader;
+  result.instrumentation = instrumentation;
+  return result;
+}
+
+std::optional<AndroidApplicationSnapshot::ClassLookupFailure::Loader>
+AndroidFramework::definingLoader(std::string_view type,
+                                 const Program &program) const {
+  using Loader = AndroidApplicationSnapshot::ClassLookupFailure::Loader;
+  if (!snapshot)
+    return std::nullopt;
+  const bool array = type.starts_with('[');
+  while (type.starts_with('['))
+    type.remove_prefix(1);
+  if (array && type.size() == 1 &&
+      std::string_view("ZBCSIJFD").find(type[0]) != std::string_view::npos)
+    return Loader::Boot;
+  if (!program.knownReference(type))
+    return std::nullopt;
+  if (platformType(type))
+    return Loader::Boot;
+  if (androidApplicationLoaderState(*snapshot) == true)
+    return Loader::Application;
+  return std::nullopt;
+}
+
 ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
                                           const LibraryMethod &method,
                                           uint64_t receiver,
@@ -263,7 +316,7 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
     return identity(boot_loader, "java/lang/BootClassLoader");
   };
   auto appLoader = [&] {
-    if (snapshot->phase != AndroidApplicationSnapshot::Phase::Application)
+    if (androidApplicationLoaderState(*snapshot) != true)
       unsupported("Android application class loader is not established");
     return identity(app_loader, "dalvik/system/PathClassLoader");
   };
@@ -363,19 +416,19 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
       return unsupported("unmodeled Android ClassLoader instance");
     case ClassLoaderOf: {
       auto type = heap.get(receiver)->ClassName;
-      bool array = type.starts_with('[');
-      if (!array)
+      if (!type.starts_with('['))
         type = "L" + type + ";";
+      const auto owner = definingLoader(type, program);
+      if (owner == AndroidApplicationSnapshot::ClassLookupFailure::Loader::Boot)
+        return boot();
+      if (owner)
+        return appLoader();
       while (type.starts_with('['))
         type.erase(type.begin());
-      // Class objects representing primitive arrays have the boot loader;
-      // this profile does not manufacture primitive Class objects.
-      if (array && type.size() == 1 &&
-          std::string_view("ZBCSIJFD").find(type[0]) != std::string_view::npos)
-        return boot();
-      if (!program.knownReference(type))
-        return unsupported("unmodeled class loader ownership");
-      return platformType(type) ? boot() : appLoader();
+      if (program.knownReference(type) && !platformType(type))
+        return unsupported(
+            "Android application class loader is not established");
+      return unsupported("unmodeled class loader ownership");
     }
     case LoadClass: {
       if (receiver != boot_loader && receiver != system_loader &&

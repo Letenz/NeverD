@@ -596,7 +596,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   Result.Instructions = Resources->instructions();
   Result.Events = Resources->events();
   Threads.report();
-  LibC.reportJNIRegistrations();
+  LibC.reportJNIState();
   // A terminal CPU fault can prohibit model memory access. Preserve that
   // original failure; memory snapshots are produced only at resumable stops.
   if (Result.Stop != ProcessStopReason::CPUFailure &&

@@ -44,7 +44,13 @@ struct AndroidApplicationSnapshot {
     std::optional<std::string> message;
   };
   std::vector<ClassLookupFailure> class_lookup_failures;
+  // A LoadedApk can establish its application loader before constructing the
+  // Application. Absent is unknown in Attached; the other phases imply false
+  // and true respectively. Explicit contradictory values are rejected.
+  std::optional<bool> application_loader_established;
 };
+std::optional<bool>
+androidApplicationLoaderState(const AndroidApplicationSnapshot &input);
 // Shared structural admission for typed callers and the JSON adapter.
 // Declaration conflicts additionally require the Runtime's actual Program.
 void validateAndroidClassLookupFailures(

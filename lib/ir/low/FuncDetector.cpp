@@ -36,6 +36,7 @@
 #include <iterator>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <thread>
 #include <vector>
@@ -338,10 +339,54 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
       RelocationCodeTargets.insert(Target);
     }
 
+  // A table among the code names its dispatcher's cases.  What names them is
+  // the instruction reading the table, whose operand the loader records as
+  // naming data, rather than the table's own slots: an entry between the
+  // cases and the table (a prologue match in dead code before it) does not
+  // bound the dispatcher.  A table no instruction is known to read keeps its
+  // slots as the namers.
+  if (IsX86LinkedCOFF && PointerSize != 0 && !CodeNamedByCode.empty()) {
+    auto runOf = [&](va_t Addr) -> std::optional<va_t> {
+      auto It = Img.DataInCode.upper_bound(Addr);
+      if (It == Img.DataInCode.begin())
+        return std::nullopt;
+      const va_t Start = *std::prev(It);
+      va_t End = Start;
+      while (End <= Addr && (Img.CodePtrRelocSlots.count(End) ||
+                             Img.DataPtrRelocSlots.count(End)))
+        End += PointerSize;
+      if (Addr >= End)
+        return std::nullopt;
+      return Start;
+    };
+    std::map<va_t, std::vector<va_t>> Readers;
+    for (const auto &[Field, Named] : Img.DataAddressRelocOperands)
+      if (Img.hasExecutableCodeOwnerAt(Field))
+        if (const auto Run = runOf(Named.TargetVA))
+          Readers[*Run].push_back(Field);
+    if (!Readers.empty()) {
+      std::vector<std::pair<va_t, va_t>> ByReader;
+      ByReader.reserve(CodeNamedByCode.size());
+      for (const auto &[Slot, Target] : CodeNamedByCode) {
+        const auto Run = runOf(Slot);
+        const auto It = Run ? Readers.find(*Run) : Readers.end();
+        if (It == Readers.end()) {
+          ByReader.emplace_back(Slot, Target);
+          continue;
+        }
+        for (va_t Reader : It->second)
+          ByReader.emplace_back(Reader, Target);
+      }
+      CodeNamedByCode = std::move(ByReader);
+    }
+  }
+
   std::set<va_t> DirectCallTargets;
   // Functions a binary file's code takes the address of, whose prologue
   // already vouches for them.
   std::set<va_t> CodePointerTargets;
+  // The entries other evidence found before the prologue scan adds its own.
+  std::set<va_t> EvidencedX86Entries;
   if (Img.Entry != 0) {
     scanCallTargets(Img, Dec, DirectCallTargets);
     Entries.insert(DirectCallTargets.begin(), DirectCallTargets.end());
@@ -355,8 +400,10 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
     }
     if (Img.Arch == Arch::ARM)
       Entries.insert(Img.ARMVeneerTargets.begin(), Img.ARMVeneerTargets.end());
-    if (IsX86LinkedCOFF)
+    if (IsX86LinkedCOFF) {
+      EvidencedX86Entries = Entries;
       scanX86UnsymbolizedEntries(Img, Dec, Entries);
+    }
   }
 
   if (RegistrationPointerRoles)
@@ -366,6 +413,37 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
 
   for (va_t Thunk : ExceptionThunks)
     Entries.erase(Thunk);
+
+  // A prologue match that a function with other evidence reaches as its own
+  // code is that function's body, and so is a start the loader only guessed
+  // from the padding before it: an int3 byte inside an instruction (a
+  // `jne` whose displacement is 0xcc) reads as padding too.  Drop both
+  // before the entries bound the functions that name their own labels below.
+  if (IsX86LinkedCOFF && Img.Entry != 0) {
+    std::set<va_t> Stated{Img.Entry};
+    for (const auto &Exp : Img.Exports)
+      Stated.insert(Exp.Addr);
+    for (const auto &Sym : Img.Symbols)
+      if (Sym.IsFunc && !Sym.IsBoundaryGuess)
+        Stated.insert(Sym.Addr);
+    std::set<va_t> Guessed;
+    for (const auto &Sym : Img.Symbols)
+      if (Sym.IsFunc && Sym.IsBoundaryGuess && Entries.count(Sym.Addr) &&
+          !Stated.count(Sym.Addr) && !ExceptionEntries.count(Sym.Addr) &&
+          !DirectCallTargets.count(Sym.Addr) &&
+          !RelocationCodeTargets.count(Sym.Addr))
+        Guessed.insert(Sym.Addr);
+    std::set<va_t> Evidenced;
+    for (va_t Entry : EvidencedX86Entries)
+      if (Entries.count(Entry) && !Guessed.count(Entry))
+        Evidenced.insert(Entry);
+    const std::set<va_t> Interior =
+        rejectX86InteriorEntries(Img, Dec, Evidenced, Guessed, CodeNamedByCode);
+    if (!Interior.empty())
+      llvm::erase_if(Results, [&](const std::pair<va_t, std::string> &R) {
+        return Interior.count(R.first) != 0;
+      });
+  }
 
   // Code that other code names is a function of its own, except inside the
   // function naming it, where it is that function's label: a pointer table

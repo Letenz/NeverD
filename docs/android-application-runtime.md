@@ -30,6 +30,19 @@ does not select `unattached`. `package_name` is optional, at most 1024 UTF-8 byt
 nonempty, and allowed only in the application phase. An absent name stops
 `getPackageName`; properties and DEX names are not used to guess it.
 
+`application_loader_established` optionally supplies the independent loader
+stage. With `phase: attached`, `true` makes the application PathClassLoader
+available through supplied classes' `Class.getClassLoader` while
+`currentApplication`/`getApplication` still return null. The loader retains the
+boot parent and exact supplied-declaration namespace across thread detach.
+Explicit application-loader lookup failures are also admitted in this stage.
+Absent means unknown in `attached`; `false` explicitly declares it unestablished.
+Neither case permits application-class loader queries to return a guessed value.
+`unattached` implies false and `application` implies true; contradictory explicit
+values are rejected. This separates loader setup from Application construction,
+as in API 28 [LoadedApk.makeApplication](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/LoadedApk.java).
+It does not infer the path, APK identity, custom factory or constructor body.
+
 The application phase represents a base `android.app.Application` already
 attached to a distinct `ContextImpl`. `getBaseContext()` returns that context;
 both objects' `getApplicationContext()` return the same Application and their
@@ -74,9 +87,10 @@ Unknown names and foreign loader instances still stop explicitly. The array is
 limited to 256 unique loader/name pairs, binary names to 1024 ASCII bytes with
 nonempty Java identifier components, and messages to 4096 UTF-8 bytes. Empty
 messages and null messages remain distinct. Application loader outcomes require
-the application phase. A failure cannot shadow a declaration visible to that
-loader. Custom delegation, exception causes and a closed complete classpath are
-not supplied by these observations.
+an established application loader: the application phase or an explicit `true`
+loader input in the attached phase. A failure cannot shadow a declaration visible
+to that loader. Custom delegation, exception causes and a closed complete
+classpath are not supplied by these observations.
 
 The lifecycle phase is fixed per workload; modeled mutable fields retain guest writes. It does not execute
 `bindApplication`, custom Application constructors, framework class initializers,
@@ -140,6 +154,38 @@ Unknown paths and foreign File objects stop explicitly. Arbitrary File
 constructors, relative Java paths, canonicalization, filesystem queries and
 mutations are outside this existing-directory projection. Directory availability
 is not evidence of the actual installed application.
+
+## Read-only Java state directory
+
+Set `android.observe_java_state: true` with `jni: true` to include
+`android.java_state` at the final native workload stop. This reads the shared
+Runtime, including after a Java/resource failure. It does not initialize a
+class, look up a new Java object, consume guest instructions, or create loaders.
+The default is off. The C++ equivalent is `Runtime::snapshot()`.
+
+`classes` lists the admitted Program declarations in descriptor order, with
+their superclass, `source_id`, `supplied` ownership, class-object identity and
+initialization state (`not_started`, `prepared`, `initializing`, `initialized`,
+or `erroneous`). `initialized` records Runtime state; it does not imply that
+a `<clinit>` body existed. Native DEX source IDs are `supplied-dex-N`, indexing the explicit
+input images. Source labels do not establish ownership: `supplied` is recorded
+by Program independently. Library-only intrinsics and array types are outside
+this declaration inventory; it is not a complete Android boot classpath.
+
+`framework` separates `declared_phase` from the identities materialized by
+actual model operations. Zero means not materialized, not proof of absence on a
+device. `instrumentation: null` means unknown/unread, whereas `"0"` is a known
+null value. Identities are workload heap tokens, **not JNI handles or guest
+addresses**. `terminal` means Runtime has retained a non-Java stop; an ordinary
+Java exception instead retains the class's erroneous initialization state.
+
+`projected_loader` uses the same ownership decision as `Class.getClassLoader`.
+It is null when no lifecycle snapshot establishes that ownership. It records
+boot/application ownership in the current single-application-loader projection,
+not the actual definer of an unavailable APK. The system loader is distinct
+from the application loader; both have the boot parent in this projection.
+Reading this directory does not turn a declared Application snapshot into
+execution of `LoadedApk.makeApplication`, a custom constructor or `onCreate`.
 
 ## Guest working directory
 
