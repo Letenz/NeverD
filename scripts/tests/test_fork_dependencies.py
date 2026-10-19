@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -54,6 +55,15 @@ class ForkDependenciesTests(unittest.TestCase):
     def run_git(directory, *args):
         return subprocess.check_output(["git", "-C", str(directory), *args],
                                        stderr=subprocess.STDOUT, text=True).strip()
+
+    @staticmethod
+    def remove_git_directory(directory):
+        # Git object files are read-only on Windows. Only change permissions
+        # inside this test's disposable repository before removing it.
+        for path in directory.rglob("*"):
+            if path.is_file():
+                path.chmod(stat.S_IREAD | stat.S_IWRITE)
+        shutil.rmtree(directory)
 
     def git(self, *args):
         return subprocess.check_output(["git", "-C", str(self.repository), *args],
@@ -144,13 +154,13 @@ class ForkDependenciesTests(unittest.TestCase):
         relative = "third_party/highway"
         source = self.workspace / relative
         self.run_git(self.workspace, "submodule", "deinit", "-f", "--", relative)
-        shutil.rmtree(self.workspace / ".git/modules" / relative)
+        self.remove_git_directory(self.workspace / ".git/modules" / relative)
         with patch.dict(os.environ, {"GIT_ALLOW_PROTOCOL": "file"}):
             self.refresh()
         self.assertEqual(self.run_git(source, "rev-parse", "HEAD"), latest)
         # Existing CI caches can contain disconnected shallow A/B roots.
         self.run_git(self.workspace, "submodule", "deinit", "-f", "--", relative)
-        shutil.rmtree(self.workspace / ".git/modules" / relative)
+        self.remove_git_directory(self.workspace / ".git/modules" / relative)
         shutil.rmtree(source)
         self.run_git(self.workspace, "clone", "--depth", "1", self.repository.as_uri(), relative)
         self.run_git(source, "fetch", "--depth", "1", "origin", original)
@@ -293,6 +303,33 @@ class ForkDependenciesTests(unittest.TestCase):
             build_driver.build(self.build, ["--config", "Release", "--target", "install"])
         receipt = json.loads((self.build / "neverd-build-receipt.json").read_text())
         self.assertEqual(receipt["status"], "failed")
+
+    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake/Ninja required")
+    def test_notice_staging_before_transport_provider_configuration(self):
+        (self.repository / "CMakeLists.txt").write_text("add_library(simdjson STATIC stub.c)\n")
+        (self.repository / "stub.c").write_text("int placeholder(void) { return 1; }\n")
+        (self.repository / "LICENSE").write_text("Test fixture notice\n")
+        self.git("add", ".")
+        self.git("commit", "-m", "transport provider fixture")
+        self.refresh()
+        source = self.root / "consumer"
+        source.mkdir()
+        module = (SOURCE_ROOT / "cmake/NeverDPerformance.cmake").as_posix()
+        (source / "CMakeLists.txt").write_text(
+            'cmake_minimum_required(VERSION 3.20)\nproject(Consumer C CXX)\n'
+            f'include("{module}")\nadd_executable(early main.c)\n'
+            'neverd_stage_performance_notices(early)\n'
+            'neverd_add_simdjson()\n')
+        (source / "main.c").write_text("int main(void) { return 0; }\n")
+        subprocess.run(["cmake", "-S", str(source), "-B", str(self.build), "-G", "Ninja",
+                        "-DCMAKE_BUILD_TYPE=Release", "-DNEVERD_ENABLE_HIGHWAY=OFF",
+                        "-DNEVERD_ENABLE_SIMDUTF=OFF", "-DNEVERD_ENABLE_TBB=OFF"],
+                       check=True, capture_output=True)
+        build_driver.build(self.build, ["--target", "early"])
+        notice = self.build / "licenses/simdjson/LICENSE"
+        self.assertEqual(notice.read_text(), "Test fixture notice\n")
+        self.assertIn(self.git("rev-parse", "HEAD"),
+                      (notice.parent / "SOURCE.md").read_text())
 
 
 if __name__ == "__main__":

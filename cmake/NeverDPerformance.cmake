@@ -52,6 +52,9 @@ function(neverd_stage_task_runtime Target)
 endfunction()
 
 function(neverd_stage_performance_notices Target)
+  # The SDK registers its post-build notices before the transport directory
+  # is configured. Resolve that provider before capturing its notice path.
+  neverd_add_simdjson()
   foreach(_pair "HIGHWAY;highway" "SIMDUTF;simdutf" "SIMDJSON;simdjson" "TBB;oneTBB")
     list(GET _pair 0 _option)
     list(GET _pair 1 _directory)
