@@ -140,26 +140,30 @@ and performance comparison guidance.
 
 ### Performance libraries
 
-Normal builds enable Highway byte scanning, simdutf UTF-8 validation and
-simdjson transport admission. They retain the process
-allocator. JSON still uses the existing nlohmann DOM and serialization; the
-original admission path handles inputs outside simdjson's numeric domain.
+Normal builds enable Highway byte scanning, simdutf UTF-8 validation,
+simdjson transport parsing and oneTBB pipeline scheduling. They retain the process
+allocator. JSON keeps the existing nlohmann DOM and serialization. Valid integer-only
+frames copy directly from the SIMD tape; decimal numbers and negative zero
+retain the original numeric conversion. Inputs outside simdjson's domain
+use the original admission path.
 Invalid external text retains its byte-preserving escapes.
 These libraries and mimalloc come from the NeverSight forks listed in
 `third_party/forks.json`. Compatibility fixes live on each fork's default branch.
 The build copies the current source's licenses and records its exact commit;
 NeverD does not pin these five dependencies to an earlier release.
 
-`NEVERD_ENABLE_HIGHWAY`, `NEVERD_ENABLE_SIMDUTF` and `NEVERD_ENABLE_SIMDJSON`
-can be set to `OFF` for comparisons. `NEVERD_ENABLE_TBB=ON` selects the optional
-oneTBB scheduler; its default is `OFF`. It retains workers between
-batches, checks their 8 MiB stacks, and never builds or loads an allocator proxy.
-This experimental scheduler is for processes that neither fork after first
-use nor dynamically unload the SDK. It does not finalize a host's shared TBB
+`NEVERD_ENABLE_HIGHWAY`, `NEVERD_ENABLE_SIMDUTF`, `NEVERD_ENABLE_SIMDJSON`
+and `NEVERD_ENABLE_TBB` default to `ON`; each can be set to `OFF` for comparisons.
+The oneTBB scheduler retains workers between batches, checks their 8 MiB stacks,
+and never builds or loads an allocator proxy. Large-stack callers reuse their
+available headroom; small callers receive a native coordinator. Hosts that fork
+after first use or dynamically unload the SDK must use the native-thread
+baseline (`NEVERD_ENABLE_TBB=OFF`); these lifecycles remain unsupported by the
+retained scheduler. It does not finalize a host's shared TBB
 scheduler. Distribute its runtime DLL/shared library with enabled builds.
 
 See [acceleration validation](docs/testing.md#acceleration-libraries) for
-native tests, opt-out comparisons and the limits of the scheduler experiment.
+native tests, opt-out comparisons and the scheduler compatibility limits.
 
 ### Prebuilt LLVM on macOS
 

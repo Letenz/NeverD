@@ -263,11 +263,11 @@ high-risk pull request.
 ## Acceleration libraries
 
 The bounded byte/Unicode, JSON and scheduler contracts can be checked without
-LLVM. This includes the opt-in oneTBB scheduler and the default mimalloc:
+LLVM. This includes the default oneTBB scheduler and mimalloc:
 
 ```bash
 cmake -S unittests/acceleration -B build-acceleration -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_TBB=ON
+  -DCMAKE_BUILD_TYPE=Release -DNEVERD_TEST_EXPECT_ACCELERATION=ON
 python scripts/build.py build-acceleration --parallel 4
 ctest --test-dir build-acceleration --output-on-failure --no-tests=error
 ```
@@ -285,11 +285,12 @@ thread limits, original exceptions and large stacks. The full build additionally
 runs `NeverDStringScanTests`, `NeverDTextEncodingTests`, pipeline, SDK and worker
 owners. Compare complete string metadata and output, not only throughput.
 Native pipeline CI repeats the complete selected owners and actual SDK/worker
-checks with both the default native scheduler and the optional oneTBB backend.
+checks with both the default oneTBB backend and the explicit native-thread baseline.
 
-The optional scheduler retains oneTBB workers between synchronous calls and
-uses one native large-stack coordinator per batch. It does not support fork
-after first use or dynamic SDK unloading; ordinary builds keep it disabled.
+The default scheduler retains oneTBB workers between synchronous calls. Large
+callers reuse spare stack headroom; small callers use a native coordinator.
+It does not support fork after first use or dynamic SDK unloading; those hosts
+must select `NEVERD_ENABLE_TBB=OFF`.
 Its task arena limits each batch, while nested batches drain on a fresh native
 worker stack. It never links `tbbmalloc` or `tbbmalloc_proxy`.
 

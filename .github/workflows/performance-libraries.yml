@@ -106,10 +106,14 @@ jobs:
           for mode in ON OFF; do
             for profile in Release Debug; do
               build="build-accel-$mode-$profile"
+              options=()
+              if [ "$mode" = OFF ]; then
+                options=(-DNEVERD_ENABLE_TBB=OFF -DNEVERD_ENABLE_HIGHWAY=OFF
+                         -DNEVERD_ENABLE_SIMDUTF=OFF -DNEVERD_ENABLE_SIMDJSON=OFF)
+              fi
               cmake -S unittests/acceleration -B "$build" -G Ninja \
                 -DCMAKE_BUILD_TYPE="$profile" -DNEVERD_TEST_EXPECT_MIMALLOC=ON \
-                -DNEVERD_ENABLE_TBB="$mode" -DNEVERD_ENABLE_HIGHWAY="$mode" \
-                -DNEVERD_ENABLE_SIMDUTF="$mode" -DNEVERD_ENABLE_SIMDJSON="$mode"
+                -DNEVERD_TEST_EXPECT_ACCELERATION="$mode" "${options[@]}"
               python scripts/build.py "$build" --parallel 3
               python unittests/acceleration/verify.py "$build/bin/NeverDAccelerationTests$suffix" "$build/evidence"
               cmake --install "$build" --prefix "$build/installed"
@@ -120,7 +124,7 @@ jobs:
               fi
             done
           done
-      - name: Verify the fork's dynamic loader regression
+      - name: Verify the fork's loader and process allocator policies
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
@@ -129,18 +133,20 @@ jobs:
           tbb_source=$(python -c 'import json; from pathlib import Path; s=json.load(open("build-accel-ON-Release/.neverd-deps/snapshot.json"))["sources"]["neverd_tbb"]; print(Path(s["archive"]).parent / "src")')
           cmake -S "$tbb_source" -B build-tbb-loader -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DTBB_TEST=ON -DTBB_STRICT=OFF -DTCM_BUILD=OFF -DTCM_TEST=OFF \
-            -DTBBMALLOC_BUILD=OFF -DTBBMALLOC_PROXY_BUILD=OFF \
+            -DTBBMALLOC_BUILD=ON -DTBBMALLOC_PROXY_BUILD=OFF -DTBB_USE_SYSTEM_ALLOCATOR=ON \
             -DTBB_ENABLE_IPO=OFF -DTBB_DISABLE_HWLOC_AUTOMATIC_SEARCH=ON
-          cmake --build build-tbb-loader --target test_dynamic_link --parallel 3
+          # The isolated regression provides a real allocator sidecar to prove
+          # the scheduler refuses discovery. Product builds never build it.
+          cmake --build build-tbb-loader --target test_dynamic_link test_system_allocator --parallel 3
           cd build-tbb-loader
-          ctest -R '^test_dynamic_link$' \
+          ctest -R '^(test_dynamic_link|test_system_allocator)$' \
             --no-tests=error --output-on-failure --output-junit loader.xml
           python - <<'PYTHON'
           import xml.etree.ElementTree as ET
           cases = list(ET.parse('loader.xml').getroot().iter('testcase'))
-          assert len(cases) == 1 and cases[0].get('name') == 'test_dynamic_link'
-          assert cases[0].get('status') == 'run'
-          assert not any(child.tag in {'failure', 'error', 'skipped'} for child in cases[0])
+          assert {c.get('name') for c in cases} == {'test_dynamic_link', 'test_system_allocator'}
+          assert all(c.get('status') == 'run' for c in cases)
+          assert not any(child.tag in {'failure', 'error', 'skipped'} for c in cases for child in c)
           PYTHON
       - name: Test system allocator and sanitizer coexistence
         env:

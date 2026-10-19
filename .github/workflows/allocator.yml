@@ -85,6 +85,32 @@ jobs:
             -DCMAKE_CXX_FLAGS=-fsanitize=address,undefined
           python scripts/build.py build-allocator-asan --parallel 2
           ctest --test-dir build-allocator-asan --output-on-failure --no-tests=error
+      - name: Verify macOS lazy initialization and system allocation contracts
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=$(python -c 'import json; from pathlib import Path; s=json.load(open("build-allocator-default/.neverd-deps/snapshot.json"))["sources"]["neverd_mimalloc"]; print(Path(s["archive"]).parent / "src")')
+          for profile in Release Debug; do
+            build="build-mimalloc-fork-$profile"
+            cmake -S "$source" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE="$profile" \
+              -DMI_BUILD_TESTS=ON -DMI_BUILD_OBJECT=ON -DMI_BUILD_STATIC=ON \
+              -DMI_BUILD_SHARED=OFF -DMI_OVERRIDE=ON -DMI_OSX_ZONE=ON \
+              -DMI_OSX_INTERPOSE=ON -DMI_NO_OPT_ARCH=ON
+            cmake --build "$build" --parallel 2 --target mimalloc-test-api \
+              mimalloc-test-osx-override mimalloc-test-osx-early-zone
+            ctest --test-dir "$build" --no-tests=error --output-on-failure \
+              -R '^test-(api|osx-override|osx-early-zone)$' --output-junit results.xml
+          done
+          python - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          for profile in ('Release', 'Debug'):
+              cases = list(ET.parse(Path('build-mimalloc-fork-' + profile) / 'results.xml').getroot().iter('testcase'))
+              assert {case.get('name') for case in cases} == {'test-api', 'test-osx-override', 'test-osx-early-zone'}
+              assert len(cases) == 3
+              assert all(case.get('status') == 'run' and not any(child.tag in {'failure', 'error', 'skipped'} for child in case) for case in cases)
+          PY
       - name: Retain allocator source and build receipts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -93,6 +119,8 @@ jobs:
           path: |
             build-allocator-*/neverd-*.json
             build-allocator-*/Testing/Temporary/LastTest.log
+            build-mimalloc-fork-*/results.xml
+            build-mimalloc-fork-*/Testing/Temporary/LastTest.log
 
   windows:
     name: Windows ${{ matrix.arch }} (${{ matrix.compiler }})

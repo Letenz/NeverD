@@ -29,7 +29,7 @@ class CiConfigurationTests(unittest.TestCase):
     def test_native_scheduler_selects_test_audits_on_windows_and_unix(self):
         native = WORKFLOW.with_name("native-pipeline.yml").read_text()
         step = self.workflow_step_containing(
-            native, "Repeat native contracts with the optional task scheduler")
+            native, "Repeat native contracts with native threads")
         selection = re.search(
             r"Path\('build-abi/evidence'\)\.glob\('([^']+)'\)", step)
         self.assertIsNotNone(selection)
@@ -55,7 +55,7 @@ class CiConfigurationTests(unittest.TestCase):
         owners = {"NeverDX86NativeStateAuditTests", "NeverDX86LegacyAlignedMoveTests",
                   "NeverDX86UndefinedEffectsTests"}
         for name in ("Build production and complete focused test owners",
-                     "Repeat native contracts with the optional task scheduler"):
+                     "Repeat native contracts with native threads"):
             step = self.workflow_step_containing(native, name)
             command = step.split("--target", 1)[1].split("\n          python", 1)[0]
             self.assertTrue(owners <= set(re.findall(r"\bNeverD\w+Tests\b", command)))

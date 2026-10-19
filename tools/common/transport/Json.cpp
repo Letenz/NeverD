@@ -16,6 +16,7 @@
 #endif
 
 #include <cstdint>
+#include <optional>
 #include <ostream>
 #include <set>
 #include <streambuf>
@@ -60,41 +61,71 @@ public:
 };
 
 #if NEVERD_USE_SIMDJSON
-// Inspect decoded keys while the parser's tape owns their bytes. The final
-// nlohmann DOM remains authoritative for numeric types and representation.
-void checkUniqueKeys(simdjson::dom::element Value) {
-  if (Value.type() == simdjson::dom::element_type::OBJECT) {
-    std::set<std::string_view> Keys;
-    const auto Object = Value.get_object().value_unsafe();
-    for (const auto Field : Object) {
-      if (!Keys.insert(Field.key).second)
+// Copy the validated tape directly into the owned DOM. Object insertion also
+// checks decoded duplicate keys, without a separate set or a second text parse.
+Json copySIMDValue(simdjson::dom::element Value, bool &NeedsNumberParser) {
+  using Type = simdjson::dom::element_type;
+  switch (Value.type()) {
+  case Type::OBJECT: {
+    Json::object_t Result;
+    for (const auto Field : Value.get_object().value_unsafe()) {
+      auto [It, Inserted] = Result.emplace(std::string(Field.key), nullptr);
+      if (!Inserted)
         throw Error("invalid_json", "Duplicate object key in JSON frame");
-      checkUniqueKeys(Field.value);
+      It->second = copySIMDValue(Field.value, NeedsNumberParser);
     }
-  } else if (Value.type() == simdjson::dom::element_type::ARRAY) {
-    const auto Array = Value.get_array().value_unsafe();
-    for (const auto Child : Array)
-      checkUniqueKeys(Child);
+    return Json(std::move(Result));
   }
+  case Type::ARRAY: {
+    const auto Array = Value.get_array().value_unsafe();
+    Json::array_t Result;
+    Result.reserve(Array.size());
+    for (const auto Child : Array)
+      Result.push_back(copySIMDValue(Child, NeedsNumberParser));
+    return Json(std::move(Result));
+  }
+  case Type::STRING:
+    return std::string(Value.get_string().value_unsafe());
+  case Type::INT64: {
+    const auto Number = Value.get_int64().value_unsafe();
+    // nlohmann uses unsigned storage for nonnegative integer tokens.
+    return Number < 0 ? Json(Number) : Json(static_cast<uint64_t>(Number));
+  }
+  case Type::UINT64:
+    return Value.get_uint64().value_unsafe();
+  case Type::BIGINT:
+  case Type::DOUBLE:
+    // Retain the existing decimal conversion and underflow/rounding contract.
+    NeedsNumberParser = true;
+    return nullptr;
+  case Type::BOOL:
+    return Value.get_bool().value_unsafe();
+  case Type::NULL_VALUE:
+    return nullptr;
+  }
+  throw Error("invalid_json", "Malformed UTF-8 JSON frame");
 }
 
-bool admitWithSIMD(std::string_view Text) {
+std::optional<Json> parseWithSIMD(std::string_view Text) {
   // Keep retained storage bounded per transport thread. Larger frames get a
   // temporary parser whose tape is released before parsing the final DOM.
   constexpr size_t RetainedBytes = 64 * 1024;
-  auto Admit = [&](simdjson::dom::parser &Parser) {
+  auto Parse = [&](simdjson::dom::parser &Parser) -> std::optional<Json> {
     simdjson::dom::element Root;
     if (Parser.parse(Text.data(), Text.size()).get(Root))
-      return false;
-    checkUniqueKeys(Root);
-    return true;
+      return std::nullopt;
+    // The DOM tape does not preserve the signed integer spelling of -0.
+    // This conservative check also covers occurrences inside strings.
+    bool NeedsNumberParser = Text.find("-0") != std::string_view::npos;
+    auto Result = copySIMDValue(Root, NeedsNumberParser);
+    return NeedsNumberParser ? Json::parse(Text) : std::move(Result);
   };
   if (Text.size() > RetainedBytes) {
     simdjson::dom::parser Parser;
-    return Admit(Parser);
+    return Parse(Parser);
   }
   thread_local simdjson::dom::parser Parser(RetainedBytes);
-  return Admit(Parser);
+  return Parse(Parser);
 }
 #endif
 
@@ -173,17 +204,15 @@ Json parseJson(std::string_view Text, std::size_t MaxBytes) {
       --Depth;
   }
   try {
-    bool Admitted = false;
 #if NEVERD_USE_SIMDJSON
-    Admitted = admitWithSIMD(Text);
+    if (auto Parsed = parseWithSIMD(Text))
+      return std::move(*Parsed);
 #endif
-    if (!Admitted) {
-      // Preserve the existing acceptance and diagnostic precedence for BOMs,
-      // large JSON numbers and malformed input that simdjson refuses.
-      UniqueKeys Keys;
-      if (!Json::sax_parse(Text, &Keys))
-        throw Error("invalid_json", "Malformed UTF-8 JSON frame");
-    }
+    // Preserve acceptance and diagnostic precedence for BOMs, large JSON
+    // numbers and malformed input that simdjson refuses.
+    UniqueKeys Keys;
+    if (!Json::sax_parse(Text, &Keys))
+      throw Error("invalid_json", "Malformed UTF-8 JSON frame");
     return Json::parse(Text);
   } catch (const Json::exception &) {
     throw Error("invalid_json", "Malformed UTF-8 JSON frame");

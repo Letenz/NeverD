@@ -29,6 +29,38 @@ void rejects(const std::string &Text, const char *Code,
 }
 } // namespace
 
+TEST(AcceleratedJson, NestedValuesPreserveNumericStorageAndOwnedStrings) {
+  const std::vector<std::string> Numbers = {"0",
+                                            "-0",
+                                            "-1",
+                                            "1",
+                                            "9223372036854775807",
+                                            "9223372036854775808",
+                                            "18446744073709551615",
+                                            "18446744073709551616",
+                                            "-9223372036854775808",
+                                            "-9223372036854775809",
+                                            "1.0",
+                                            "-0.0",
+                                            "1e-1000",
+                                            "2.2250738585072014e-308",
+                                            "4.9406564584124654e-324",
+                                            "9007199254740993.0",
+                                            "1.7976931348623157e308"};
+  for (const auto &Number : Numbers) {
+    SCOPED_TRACE(Number);
+    std::string Text = "{\"nested\":[{\"value\":" + Number +
+                       ",\"string\":\"a\\u0000b\",\"\\u0000key\":true},null]}";
+    const auto Want = Json::parse(Text);
+    const auto Got = parseJson(Text);
+    Text.assign(Text.size(), 'x');
+    EXPECT_EQ(Got, Want);
+    EXPECT_EQ(Got.dump(), Want.dump());
+    EXPECT_EQ(Got["nested"][0]["value"].type(),
+              Want["nested"][0]["value"].type());
+  }
+}
+
 TEST(AcceleratedJson, PreservesNumbersStringsAndRepresentation) {
   for (const std::string Text : {"null",
                                  "true",

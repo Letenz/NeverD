@@ -32,7 +32,7 @@
 
 namespace neverd {
 
-/// Synchronous optional task scheduler. The callback owns/drains its work
+/// Synchronous task scheduler. The callback owns/drains its work
 /// queue, just as in runWithLargeStackThreads.
 void runTaskWorkers(unsigned Count, void (*Body)(void *), void *Context);
 

@@ -174,6 +174,20 @@ TEST(TaskScheduler, NestedCallbacksRetainIndependentLargeFrames) {
 }
 
 #if NEVERD_USE_TBB
+TEST(TaskScheduler, LargeCallerReusesAvailableHeadroom) {
+  const auto Main = [](int, char *[]) {
+    const auto Caller = std::this_thread::get_id();
+    bool SameThread = false;
+    auto Work = [&] {
+      SameThread = std::this_thread::get_id() == Caller;
+      EXPECT_EQ(touchLargeStack(), 163200u);
+    };
+    neverd::runPipelineWorkers(1, Work);
+    return SameThread ? 0 : 1;
+  };
+  EXPECT_EQ(neverd::runWithLargeStack(Main, 0, nullptr), 0);
+}
+
 TEST(TaskScheduler, ForeignSerialLimitStillCompletes) {
   oneapi::tbb::global_control Limit(
       oneapi::tbb::global_control::max_allowed_parallelism, 1);

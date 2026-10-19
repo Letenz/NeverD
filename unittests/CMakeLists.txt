@@ -196,6 +196,17 @@ if(TARGET neverd_shared)
     SessionCAPITests.cpp
     LINK_LIBS neverd_shared
   )
+  add_neverd_unittest(NeverDSessionFunctionDiscoveryTests
+    SessionFunctionDiscoveryTests.cpp
+    LINK_LIBS neverd_shared LLVMSupport
+  )
+  target_include_directories(NeverDSessionFunctionDiscoveryTests PRIVATE
+    "${CMAKE_SOURCE_DIR}/include" "${CMAKE_SOURCE_DIR}/lib/sdk/capi"
+    ${LLVM_INCLUDE_DIRS})
+  if(WIN32)
+    target_sources(NeverDSessionFunctionDiscoveryTests PRIVATE
+      "${CMAKE_SOURCE_DIR}/lib/ir/NdTypes.cpp")
+  endif()
   target_include_directories(NeverDSessionCAPITests PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/lib/sdk/capi"

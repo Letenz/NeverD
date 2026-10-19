@@ -77,6 +77,16 @@ bool Session::synchronizeFunctions() {
     const auto ByEntry = [](const FuncInfo &Left, const FuncInfo &Right) {
       return Left.Entry < Right.Entry;
     };
+    const auto PublishRecoveredSize = [&](FuncInfo &Listed,
+                                          const LowFunc &Recovered) {
+      // Discovery publishes entries without extents. Once a complete lift
+      // supplies one, every SDK consumer must see it regardless of call order.
+      // Keep nonzero loader/debug/user extents authoritative.
+      if (Listed.Size == 0 && Recovered.OriginalSize != 0) {
+        Listed.Size = Recovered.OriginalSize;
+        ListInputs.reset();
+      }
+    };
     // A selected run lifts functions the list, kept in address order,
     // already holds: find those there instead of indexing and sorting a list
     // of tens of thousands after every run.
@@ -88,7 +98,10 @@ bool Session::synchronizeFunctions() {
               llvm::partition_point(Functions, [&](const FuncInfo &F) {
                 return F.Entry < Function.Entry;
               });
-          return Found != Functions.end() && Found->Entry == Function.Entry;
+          if (Found == Functions.end() || Found->Entry != Function.Entry)
+            return false;
+          PublishRecoveredSize(*Found, Function);
+          return true;
         })) {
       NativeFunctionsSynchronized = true;
       refreshFunctionNames();
@@ -101,11 +114,16 @@ bool Session::synchronizeFunctions() {
     for (size_t Index = 0; Index < Functions.size(); ++Index)
       FunctionIndices.try_emplace(Functions[Index].Entry, Index);
     for (const LowFunc &Function : PipeResult.LowFuncs) {
-      if (isDeletedFunction(Function.Entry) ||
-          !FunctionIndices.try_emplace(Function.Entry, Functions.size()).second)
+      if (isDeletedFunction(Function.Entry))
         continue;
-      // Existing loader/debug names and sizes remain authoritative. A saved
-      // rename can precede discovery when reopening a stripped image.
+      const auto [Index, Added] =
+          FunctionIndices.try_emplace(Function.Entry, Functions.size());
+      if (!Added) {
+        PublishRecoveredSize(Functions[Index->second], Function);
+        continue;
+      }
+      // Existing loader/debug names and known sizes remain authoritative. A
+      // saved rename can precede discovery when reopening a stripped image.
       OriginalNames.try_emplace(Function.Entry, Function.Name);
       const auto Rename = Renames.find(Function.Entry);
       // This entry was absent from the image inventory. Its recovered name

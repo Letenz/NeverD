@@ -140,7 +140,7 @@ jobs:
       - name: Build production and complete focused test owners
         run: |
           python scripts/build.py build-abi --parallel 4 --target \
-            neverd neverd-worker NeverDAllocatorTests \
+            neverd neverd-worker NeverDAllocatorTests NeverDSessionFunctionDiscoveryTests \
             NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests \
             NeverDX86NativeStateAuditTests NeverDX86LegacyAlignedMoveTests \
             NeverDX86UndefinedEffectsTests \
@@ -212,7 +212,9 @@ jobs:
           import xml.etree.ElementTree as ET
           names = ['NeverDAllocatorTests', 'NeverDWorkerNativeMapping',
                    'NeverDWorkerNativeMakeCode', 'NeverDWorkerPEBrowse',
-                   'NeverDWorkerRealEngine', 'NeverDWorkerUnicodePaths']
+                   'NeverDWorkerRealEngine', 'NeverDWorkerUnicodePaths',
+                   'SessionFunctionDiscovery.NativeDiscoveryBeforeAnalysisPublishesRecoveredExtents',
+                   'SessionFunctionDiscovery.NativeRecoveryKeepsKnownExtentsAndDeletedEntries']
           if os.name == 'nt':
               names.append('NeverDAllocatorRedirectDisabled')
           command = ['ctest', '--test-dir', 'build-abi', '-C', 'Release',
@@ -238,11 +240,11 @@ jobs:
           cp build-abi/CMakeCache.txt build-abi/evidence/CMakeCache.txt
       - name: Retain default dependency snapshot
         run: cp build-abi/neverd-*.json build-abi/evidence/
-      - name: Repeat native contracts with the optional task scheduler
+      - name: Repeat native contracts with native threads
         run: |
-          cmake -S . -B build-abi -DNEVERD_ENABLE_TBB=ON
+          cmake -S . -B build-abi -DNEVERD_ENABLE_TBB=OFF
           python scripts/build.py build-abi --parallel 4 --target \
-            neverd neverd-worker NeverDAllocatorTests \
+            neverd neverd-worker NeverDAllocatorTests NeverDSessionFunctionDiscoveryTests \
             NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests \
             NeverDX86NativeStateAuditTests NeverDX86LegacyAlignedMoveTests \
             NeverDX86UndefinedEffectsTests \
@@ -255,17 +257,23 @@ jobs:
           suffix = '.exe' if os.name == 'nt' else ''
           for previous in sorted(Path('build-abi/evidence').glob('NeverD*Tests.json')):
               expected = json.loads(previous.read_text())['tests']
-              output = Path('build-abi/evidence-tbb') / previous.stem
-              minimum = len(expected) + (2 if previous.stem == 'NeverDAccelerationTests' else 0)
+              output = Path('build-abi/evidence-native') / previous.stem
+              if previous.stem == 'NeverDAccelerationTests':
+                  tbb_only = {'TaskScheduler.ForeignWorkersBeforeFirstBatch',
+                              'TaskScheduler.ForeignSerialLimitStillCompletes',
+                              'TaskScheduler.LargeCallerReusesAvailableHeadroom'}
+                  assert tbb_only <= set(expected)
+                  expected = sorted(set(expected) - tbb_only)
+              minimum = len(expected)
               subprocess.run(['python', 'unittests/acceleration/verify.py',
                               'build-abi/bin/' + previous.stem + suffix, str(output),
                               '--minimum', str(minimum), '--timeout', '300'], check=True)
               actual = json.loads((output / 'audit.json').read_text())['tests']
-              assert set(expected) <= set(actual), previous.stem
+              assert set(expected) == set(actual), previous.stem
           PY
-          NEVERD_NATIVE_EVIDENCE=evidence-tbb python build-abi/verify-sdk-worker.py
-          cp build-abi/CMakeCache.txt build-abi/evidence-tbb/CMakeCache.txt
-          cp build-abi/neverd-*.json build-abi/evidence-tbb/
+          NEVERD_NATIVE_EVIDENCE=evidence-native python build-abi/verify-sdk-worker.py
+          cp build-abi/CMakeCache.txt build-abi/evidence-native/CMakeCache.txt
+          cp build-abi/neverd-*.json build-abi/evidence-native/
       - name: Retain native results and configuration
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -273,7 +281,7 @@ jobs:
           name: native-pipeline-${{ matrix.name }}-${{ github.sha }}
           path: |
             build-abi/evidence
-            build-abi/evidence-tbb
+            build-abi/evidence-native
             build-abi/CMakeCache.txt
             build-abi/neverd-*.json
           if-no-files-found: warn

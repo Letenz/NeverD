@@ -35,7 +35,8 @@ def paged_view(client, entry, stage):
 
 def run(executable):
     with tempfile.TemporaryDirectory(prefix="neverd-native-map-") as directory:
-        for arm64 in (False, True):
+        for arm64, discover_first in ((False, False), (True, False),
+                                      (False, True), (True, True)):
             client = Client(executable)
             try:
                 data, entry = native_elf(arm64, 0xffff800000400000 if arm64 else 0x400000)
@@ -45,6 +46,13 @@ def run(executable):
                 assert opened["status"] == "ok"
                 assert opened["analysis_state"] == "not_analyzed"
                 assert opened["payload"]["function_count"] == 0
+                if discover_first:
+                    # The background index can discover entries before the
+                    # pipeline knows their extents. Force that ordering rather
+                    # than depending on the runner's scheduling speed.
+                    references = client.call("xrefs", {"address": hex(entry),
+                                                       "direction": "to"})
+                    assert references["status"] == "ok", references
                 decoded = client.call("disasm", {"address": hex(entry), "limit": 2})
                 assert decoded["status"] == "ok", decoded
                 instruction_addresses = {row["address"] for row in decoded["payload"]["items"]}
@@ -94,6 +102,7 @@ def run(executable):
                     assert resolved["status"] == "ok", resolved
                     assert resolved["payload"]["function_address"] == hex(entry), {
                         "architecture": "arm64" if arm64 else "x86_64",
+                        "discover_first": discover_first,
                         "query": query, "expected_function": function, "response": resolved,
                     }
                 for stage in ("c", "llvmc"):

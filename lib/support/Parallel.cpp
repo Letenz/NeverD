@@ -1,4 +1,4 @@
-//===- Parallel.cpp - Optional large-stack task scheduling
+//===- Parallel.cpp - Large-stack task scheduling
 //-----------------===//
 //
 // NeverD Decompiler
@@ -58,6 +58,42 @@ bool hasWorkerStack() {
 #endif
 }
 
+bool hasSpareWorkerStack() {
+  const char Marker = 0;
+  const auto Cursor = reinterpret_cast<uintptr_t>(&Marker);
+  uintptr_t Base = 0;
+#ifdef _WIN32
+  MEMORY_BASIC_INFORMATION Info{};
+  if (!VirtualQuery(&Marker, &Info, sizeof(Info)) || !Info.AllocationBase)
+    return false;
+  Base = reinterpret_cast<uintptr_t>(Info.AllocationBase);
+#elif defined(__APPLE__)
+  const auto High =
+      reinterpret_cast<uintptr_t>(pthread_get_stackaddr_np(pthread_self()));
+  const auto Size = pthread_get_stacksize_np(pthread_self());
+  if (High < Size)
+    return false;
+  Base = High - Size;
+#elif defined(__linux__)
+  pthread_attr_t Attr;
+  if (pthread_getattr_np(pthread_self(), &Attr) != 0)
+    return false;
+  void *Address = nullptr;
+  size_t Size = 0;
+  const int Result = pthread_attr_getstack(&Attr, &Address, &Size);
+  pthread_attr_destroy(&Attr);
+  if (Result != 0)
+    return false;
+  Base = reinterpret_cast<uintptr_t>(Address);
+#else
+  return false;
+#endif
+  // These supported hosts grow stacks downward. Reserve another full worker
+  // stack below the caller's live frames, plus room for scheduler frames.
+  return Cursor > Base &&
+         Cursor - Base >= kDecompilerWorkerStackSize + 64 * 1024;
+}
+
 struct TaskScope {
   bool Previous = InPipelineTask;
   TaskScope() { InPipelineTask = true; }
@@ -82,12 +118,10 @@ void runTaskWorkers(unsigned Count, void (*Body)(void *), void *Context) {
     runWithLargeStackThreads(1, Nested);
     return;
   }
-  // This opt-in backend retains workers between calls. It is intentionally
-  // unavailable by default for hosts that fork or dynamically unload the SDK.
+  // Keep workers available between synchronous pipeline phases.
   static SchedulerLifetime Lifetime;
-  const auto Caller = std::this_thread::get_id();
   auto Coordinate = [&] {
-    if (std::this_thread::get_id() == Caller || !hasWorkerStack())
+    if (!hasWorkerStack())
       throw std::runtime_error("cannot allocate a large pipeline worker stack");
     const unsigned Limit =
         std::min<unsigned>(Count, std::numeric_limits<int>::max());
@@ -132,9 +166,12 @@ void runTaskWorkers(unsigned Count, void (*Body)(void *), void *Context) {
       if (Failure)
         std::rethrow_exception(Failure);
   };
-  // wait() can execute tasks. Give its caller the same stack as a worker,
-  // even when the SDK entry was invoked from a small foreign thread.
-  runWithLargeStackThreads(1, Coordinate);
+  // The CLI already has a 128 MiB stack. Reuse that headroom; small SDK
+  // callers still receive a fresh coordinator because wait() executes tasks.
+  if (hasSpareWorkerStack())
+    Coordinate();
+  else
+    runWithLargeStackThreads(1, Coordinate);
 }
 } // namespace neverd
 #else
