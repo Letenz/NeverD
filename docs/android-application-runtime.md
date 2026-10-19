@@ -141,6 +141,38 @@ constructors, relative Java paths, canonicalization, filesystem queries and
 mutations are outside this existing-directory projection. Directory availability
 is not evidence of the actual installed application.
 
+## Read-only Java state directory
+
+Set `android.observe_java_state: true` with `jni: true` to include
+`android.java_state` at the final native workload stop. This reads the shared
+Runtime, including after a Java/resource failure. It does not initialize a
+class, look up a new Java object, consume guest instructions, or create loaders.
+The default is off. The C++ equivalent is `Runtime::snapshot()`.
+
+`classes` lists the admitted Program declarations in descriptor order, with
+their superclass, `source_id`, `supplied` ownership, class-object identity and
+initialization state (`not_started`, `prepared`, `initializing`, `initialized`,
+or `erroneous`). `initialized` records Runtime state; it does not imply that
+a `<clinit>` body existed. Native DEX source IDs are `supplied-dex-N`, indexing the explicit
+input images. Source labels do not establish ownership: `supplied` is recorded
+by Program independently. Library-only intrinsics and array types are outside
+this declaration inventory; it is not a complete Android boot classpath.
+
+`framework` separates `declared_phase` from the identities materialized by
+actual model operations. Zero means not materialized, not proof of absence on a
+device. `instrumentation: null` means unknown/unread, whereas `"0"` is a known
+null value. Identities are workload heap tokens, **not JNI handles or guest
+addresses**. `terminal` means Runtime has retained a non-Java stop; an ordinary
+Java exception instead retains the class's erroneous initialization state.
+
+`projected_loader` uses the same ownership decision as `Class.getClassLoader`.
+It is null when no lifecycle snapshot establishes that ownership. It records
+boot/application ownership in the current single-application-loader projection,
+not the actual definer of an unavailable APK. The system loader is distinct
+from the application loader; both have the boot parent in this projection.
+Reading this directory does not turn a declared Application snapshot into
+execution of `LoadedApk.makeApplication`, a custom constructor or `onCreate`.
+
 ## Guest working directory
 
 `linux_files.working_directory` optionally supplies a linked, reachable guest

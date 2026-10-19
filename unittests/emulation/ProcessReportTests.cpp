@@ -1692,6 +1692,67 @@ TEST(ProcessReport, AndroidApplicationSnapshotIsExplicitAndStrict) {
   }
 }
 
+TEST(ProcessReport, JavaStateObservationIsOptInStrictAndRetainsUnknownValues) {
+  for (bool Enabled : {false, true}) {
+    auto Parsed = processOptionsFromJSON(
+        std::string(R"({"android":{"jni":true,"observe_java_state":)") +
+        (Enabled ? "true" : "false") + "}}");
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+    EXPECT_EQ(Parsed->Android->ObserveJavaState, Enabled);
+  }
+  for (auto Input : {R"({"observe_java_state":true})",
+                     R"({"jni":false,"observe_java_state":true})",
+                     R"({"jni":true,"observe_java_state":1})",
+                     R"({"jni":true,"observe_java_state":null})",
+                     R"({"jni":true,"observe_java_state":{}})"}) {
+    auto Bad =
+        processOptionsFromJSON(std::string("{\"android\":") + Input + "}");
+    ASSERT_FALSE(bool(Bad)) << Input;
+    llvm::consumeError(Bad.takeError());
+  }
+  ProcessResult R{ProcessProfile::AndroidNativeAArch64,
+                  GuestArchitecture::AArch64,
+                  ExecutionBackendKind::Unicorn,
+                  {}};
+  auto read = [&] {
+    return llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+  };
+  EXPECT_FALSE(read().getAsObject()->getObject("android")->get("java_state"));
+  R.JavaState.emplace();
+  mobile::dalvik::JavaClassState C;
+  C.descriptor = "Lfixture/Observed;";
+  C.source_id = "supplied-dex-0";
+  C.supplied = true;
+  R.JavaState->classes.push_back(C);
+  auto Unknown = read();
+  auto *S =
+      Unknown.getAsObject()->getObject("android")->getObject("java_state");
+  ASSERT_NE(S, nullptr);
+  EXPECT_EQ(S->getObject("framework")->get("declared_phase")->kind(),
+            llvm::json::Value::Null);
+  EXPECT_EQ(S->getObject("framework")->get("instrumentation")->kind(),
+            llvm::json::Value::Null);
+  auto *Class = S->getArray("classes")->front().getAsObject();
+  EXPECT_EQ(Class->getString("initialization"), "not_started");
+  EXPECT_EQ(Class->getString("class_object"), "0");
+  EXPECT_EQ(Class->get("projected_loader")->kind(), llvm::json::Value::Null);
+  R.JavaState->framework.instrumentation = 0;
+  R.JavaState->framework.declared_phase =
+      mobile::dalvik::AndroidApplicationSnapshot::Phase::Attached;
+  R.JavaState->classes[0].class_object = UINT32_MAX;
+  R.JavaState->classes[0].initialization =
+      mobile::dalvik::JavaClassState::Initialization::Erroneous;
+  R.JavaState->terminal = true;
+  auto Known = read();
+  auto *K = Known.getAsObject()->getObject("android")->getObject("java_state");
+  EXPECT_EQ(K->getObject("framework")->getString("declared_phase"), "attached");
+  EXPECT_EQ(K->getObject("framework")->getString("instrumentation"), "0");
+  EXPECT_EQ(
+      K->getArray("classes")->front().getAsObject()->getString("class_object"),
+      "ffffffff");
+  EXPECT_EQ(K->getBoolean("terminal"), true);
+}
+
 TEST(ProcessReport, RejectsMalformedRequestsBeforeWorkloadConstruction) {
 #define NEVERD_PROCESS_INVALID_JSON(Name, Text)                                \
   {                                                                            \

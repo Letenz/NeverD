@@ -462,6 +462,11 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       if (!Observation)
         return Observation.takeError();
       Out.ObserveExecution = std::move(*Observation);
+    } else if (Name == field::ObserveJavaState) {
+      auto B = V.getAsBoolean();
+      if (!B)
+        return invalid(Name);
+      Out.ObserveJavaState = *B;
     } else if (Name == field::ReadMemory) {
       auto Reads = memoryReads(V);
       if (!Reads)
@@ -514,6 +519,8 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
   }
   if (auto E = android_model::validateLogRecords(Out.LogRecords))
     return std::move(E);
+  if (Out.ObserveJavaState && !Out.JNI)
+    return invalid(field::ObserveJavaState);
   return Out;
 }
 llvm::json::Object androidResultJSON(const ProcessResult &Result) {
@@ -556,6 +563,82 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
                              {field::JNISignature, Binding.Signature},
                              {field::Address, bits(Binding.Address)}});
     Out[field::JNIRegistrations] = std::move(Bindings);
+  }
+  if (Result.JavaState) {
+    using namespace mobile::dalvik;
+    const auto &State = *Result.JavaState;
+    const auto &F = State.framework;
+    auto Phase = [](AndroidApplicationSnapshot::Phase V) {
+      switch (V) {
+      case AndroidApplicationSnapshot::Phase::Unattached:
+        return "unattached";
+      case AndroidApplicationSnapshot::Phase::Attached:
+        return "attached";
+      case AndroidApplicationSnapshot::Phase::Application:
+        return "application";
+      }
+      llvm_unreachable("invalid Android phase");
+    };
+    auto Loader = [](AndroidApplicationSnapshot::ClassLookupFailure::Loader V) {
+      using L = AndroidApplicationSnapshot::ClassLookupFailure::Loader;
+      switch (V) {
+      case L::Boot:
+        return "boot";
+      case L::System:
+        return "system";
+      case L::Application:
+        return "application";
+      case L::Unspecified:
+        return "unspecified";
+      }
+      llvm_unreachable("invalid Android loader");
+    };
+    auto Initialization = [](JavaClassState::Initialization V) {
+      using I = JavaClassState::Initialization;
+      switch (V) {
+      case I::NotStarted:
+        return "not_started";
+      case I::Prepared:
+        return "prepared";
+      case I::Initializing:
+        return "initializing";
+      case I::Initialized:
+        return "initialized";
+      case I::Erroneous:
+        return "erroneous";
+      }
+      llvm_unreachable("invalid Java initialization state");
+    };
+    llvm::json::Object Framework{
+        {field::JavaDeclaredPhase,
+         F.declared_phase ? llvm::json::Value(Phase(*F.declared_phase))
+                          : nullptr},
+        {field::JavaActivityThread, bits(F.activity_thread)},
+        {field::JavaApplication, bits(F.application)},
+        {field::JavaContext, bits(F.context)},
+        {field::JavaBootLoader, bits(F.boot_loader)},
+        {field::JavaSystemLoader, bits(F.system_loader)},
+        {field::JavaApplicationLoader, bits(F.application_loader)},
+        {field::ApplicationInstrumentation,
+         F.instrumentation ? llvm::json::Value(bits(*F.instrumentation))
+                           : nullptr}};
+    llvm::json::Array Classes;
+    for (const auto &C : State.classes)
+      Classes.push_back(llvm::json::Object{
+          {field::JavaDescriptor, C.descriptor},
+          {field::JavaSourceID, C.source_id},
+          {field::JavaSuperclass,
+           C.superclass ? llvm::json::Value(*C.superclass) : nullptr},
+          {field::JavaSupplied, C.supplied},
+          {field::JavaInitialization, Initialization(C.initialization)},
+          {field::JavaClassObject, bits(C.class_object)},
+          {field::JavaProjectedLoader,
+           C.projected_loader ? llvm::json::Value(Loader(*C.projected_loader))
+                              : nullptr}});
+    Out[field::JavaState] =
+        llvm::json::Object{{field::JavaClasses, std::move(Classes)},
+                           {field::JavaFramework, std::move(Framework)},
+                           {field::JavaTerminal, State.terminal}};
   }
   if (Result.ExecutionObservationsEnabled) {
     llvm::json::Array Observations;

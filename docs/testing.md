@@ -8990,3 +8990,12 @@ The [runtime module reference](runtime-modules.md#verification) lists the focuse
 resource, mapping, pause/resume, execution, C SDK and CLI suites. Qualify the
 CPU-on/Driver-off configuration as well as disabled execution. The Windows
 adapter remains a separate integration and is rejected when unregistered.
+
+`DalvikSnapshot.*` checks read-only declaration/initialization reporting, forged
+source labels, unknown and explicit phases, identity materialization, mutable
+Instrumentation, erroneous/terminal initializers and unchanged heap/work limits.
+`AndroidJNI.JavaState*` compares complete native reports with observation enabled
+and disabled across relocation forms and available backends, including unknown
+lifecycle stops and native registration without class initialization.
+`ProcessReport.JavaStateObservation*` checks strict opt-in JSON and unknown/null
+state serialization. These checks do not establish execution of ART startup.

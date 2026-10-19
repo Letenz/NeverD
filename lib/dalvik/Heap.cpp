@@ -47,6 +47,10 @@ std::shared_ptr<Object> Heap::classObject(std::string_view name) {
     classes.emplace(std::move(key), value);
   return value;
 }
+uint32_t Heap::classObjectIdentity(std::string_view name) const {
+  auto it = classes.find(std::string(name));
+  return it == classes.end() ? 0 : it->second->Identity;
+}
 std::shared_ptr<Object> Heap::stringConstant(std::string_view key,
                                              std::vector<uint8_t> bytes) {
   if (auto it = constants.find(std::string(key)); it != constants.end())
