@@ -171,7 +171,7 @@ jobs:
           PY
       - name: Verify actual SDK allocation and native worker requests
         run: |
-          python - <<'PY'
+          cat > build-abi/verify-sdk-worker.py <<'PY'
           from collections import Counter
           import json, os, re, subprocess
           from pathlib import Path
@@ -185,7 +185,8 @@ jobs:
                      '-R', '^(' + '|'.join(re.escape(name) for name in names) + ')$']
           inventory = json.loads(subprocess.check_output(command + ['--show-only=json-v1'], text=True))
           assert Counter(test['name'] for test in inventory['tests']) == Counter(names)
-          output = Path('build-abi/evidence')
+          output = Path('build-abi') / os.environ.get('NEVERD_NATIVE_EVIDENCE', 'evidence')
+          output.mkdir(parents=True, exist_ok=True)
           xml = (output / 'integration.xml').resolve()
           with (output / 'integration.log').open('w') as log:
               result = subprocess.run(command + ['--no-tests=error', '--output-on-failure',
@@ -199,6 +200,32 @@ jobs:
                      for case in cases)
           print(f'SDK/worker: {len(cases)} passed, zero failed, zero skipped')
           PY
+          python build-abi/verify-sdk-worker.py
+          cp build-abi/CMakeCache.txt build-abi/evidence/CMakeCache.txt
+      - name: Repeat native contracts with the optional task scheduler
+        run: |
+          cmake -S . -B build-abi -DNEVERD_ENABLE_TBB=ON
+          cmake --build build-abi --parallel 4 --target \
+            neverd neverd-worker NeverDAllocatorTests \
+            NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests \
+            NeverDHighControlFlowTests NeverDAccelerationTests \
+            NeverDStringScanTests NeverDTextEncodingTests
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          suffix = '.exe' if os.name == 'nt' else ''
+          for previous in sorted(Path('build-abi/evidence').glob('NeverD*.json')):
+              expected = json.loads(previous.read_text())['tests']
+              output = Path('build-abi/evidence-tbb') / previous.stem
+              minimum = len(expected) + (2 if previous.stem == 'NeverDAccelerationTests' else 0)
+              subprocess.run(['python', 'unittests/acceleration/verify.py',
+                              'build-abi/bin/' + previous.stem + suffix, str(output),
+                              '--minimum', str(minimum), '--timeout', '300'], check=True)
+              actual = json.loads((output / 'audit.json').read_text())['tests']
+              assert set(expected) <= set(actual), previous.stem
+          PY
+          NEVERD_NATIVE_EVIDENCE=evidence-tbb python build-abi/verify-sdk-worker.py
+          cp build-abi/CMakeCache.txt build-abi/evidence-tbb/CMakeCache.txt
       - name: Retain native results and configuration
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -206,5 +233,6 @@ jobs:
           name: native-pipeline-${{ matrix.name }}-${{ github.sha }}
           path: |
             build-abi/evidence
+            build-abi/evidence-tbb
             build-abi/CMakeCache.txt
           if-no-files-found: warn

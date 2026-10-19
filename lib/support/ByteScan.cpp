@@ -54,7 +54,7 @@ namespace neverd::strings::detail {
 HWY_EXPORT(asciiPrefix);
 #endif
 
-size_t textASCIIPrefix(const uint8_t *Data, size_t Size) {
+size_t longTextASCIIPrefix(const uint8_t *Data, size_t Size) {
 #if NEVERD_USE_HIGHWAY
   if (Size >= 32)
     return HWY_DYNAMIC_DISPATCH(asciiPrefix)(Data, Size);

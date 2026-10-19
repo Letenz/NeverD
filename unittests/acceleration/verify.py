@@ -15,6 +15,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--minimum", type=int, default=14)
+    parser.add_argument("--timeout", type=int, default=180)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     binary = args.binary.resolve()
@@ -27,14 +29,14 @@ def main():
             suite = value
         elif line.startswith("  ") and suite:
             names.append(suite + value.split()[0])
-    if len(names) < 14 or len(set(names)) != len(names):
+    if args.minimum < 1 or len(names) < args.minimum or len(set(names)) != len(names):
         raise RuntimeError(f"incomplete or duplicate inventory: {names}")
     xml = (args.output / "results.xml").resolve()
     xml.unlink(missing_ok=True)
     with (args.output / "run.log").open("w", encoding="utf-8") as log:
         result = subprocess.run(
             [str(binary), "--gtest_output=xml:" + str(xml)],
-            stdout=log, stderr=subprocess.STDOUT, timeout=180,
+            stdout=log, stderr=subprocess.STDOUT, timeout=args.timeout,
         )
     try:
         report = audit(ET.parse(xml).getroot(), names, result.returncode)

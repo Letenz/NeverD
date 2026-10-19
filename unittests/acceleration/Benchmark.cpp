@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <ctime>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -32,9 +33,11 @@ template <class Fn>
 Json measure(const char *Name, size_t Bytes, unsigned Rounds, Fn Work) {
   const uint64_t Expected = Work();
   Json Times = Json::array();
+  Json CPUTimes = Json::array();
   uint64_t Digest = 0;
   for (unsigned Sample = 0; Sample < 7; ++Sample) {
     const auto Begin = std::chrono::steady_clock::now();
+    const auto CPUBegin = std::clock();
     for (unsigned I = 0; I < Rounds; ++I) {
       const auto Result = Work();
       if (Result != Expected)
@@ -45,9 +48,18 @@ Json measure(const char *Name, size_t Bytes, unsigned Rounds, Fn Work) {
                              std::chrono::steady_clock::now() - Begin)
                              .count();
     Times.push_back(Elapsed / Rounds);
+    const auto CPUEnd = std::clock();
+    if (CPUBegin != std::clock_t(-1) && CPUEnd != std::clock_t(-1))
+      CPUTimes.push_back(1e6 * double(CPUEnd - CPUBegin) / CLOCKS_PER_SEC /
+                         Rounds);
   }
-  return {{"name", Name},       {"bytes", Bytes},   {"rounds", Rounds},
-          {"result", Expected}, {"digest", Digest}, {"microseconds", Times}};
+  return {{"name", Name},
+          {"bytes", Bytes},
+          {"rounds", Rounds},
+          {"result", Expected},
+          {"digest", Digest},
+          {"microseconds", Times},
+          {"cpu_microseconds", CPUTimes}};
 }
 
 uint64_t scanASCII(const std::string &Bytes) {

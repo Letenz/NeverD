@@ -40,7 +40,7 @@ function(neverd_add_task_scheduler)
   add_subdirectory("${neverd_tbb_SOURCE_DIR}"
     "${neverd_tbb_BINARY_DIR}" EXCLUDE_FROM_ALL)
   target_compile_definitions(neverd_task_scheduler PRIVATE NEVERD_USE_TBB=1)
-  target_link_libraries(neverd_task_scheduler PUBLIC TBB::tbb)
+  target_link_libraries(neverd_task_scheduler PRIVATE TBB::tbb)
   install(TARGETS tbb RUNTIME DESTINATION bin LIBRARY DESTINATION lib)
   install(DIRECTORY "${_root}/LICENSES/oneTBB/" DESTINATION share/neverd/licenses/oneTBB)
 endfunction()

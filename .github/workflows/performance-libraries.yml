@@ -103,12 +103,14 @@ jobs:
           suffix=""
           if [ "$RUNNER_OS" = Windows ]; then suffix=.exe; fi
           cmake -S unittests/acceleration -B build-accel-system -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_TBB=ON -DNEVERD_ENABLE_MIMALLOC=OFF
+            -DCMAKE_BUILD_TYPE=Release -DNEVERD_ENABLE_TBB=ON \
+            -DNEVERD_ENABLE_MIMALLOC=OFF -DNEVERD_TEST_EXPECT_MIMALLOC=OFF
           cmake --build build-accel-system --parallel 3
           python unittests/acceleration/verify.py "build-accel-system/bin/NeverDAccelerationTests$suffix" build-accel-system/evidence
           if [ "$RUNNER_OS" != Windows ]; then
             cmake -S unittests/acceleration -B build-accel-asan -G Ninja \
               -DCMAKE_BUILD_TYPE=RelWithDebInfo -DNEVERD_ENABLE_TBB=ON \
+              -DNEVERD_TEST_EXPECT_MIMALLOC=OFF \
               -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
               -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
             cmake --build build-accel-asan --parallel 3
