@@ -45,6 +45,12 @@ struct PipelineAnalysisCache::SymbolInventory {
   /// Whether this was read from \p Img as it stands.
   bool readFrom(const BinaryImage &Img) const;
 
+  /// The name of the function at every address an export or a symbol names
+  /// (functionNamesAt), read from \p Img, which this was read from, on the
+  /// first request.  Every other address is named `sub_` and its address.
+  const std::map<va_t, std::string> &
+  functionNames(const BinaryImage &Img) const;
+
   const std::set<va_t> BoundaryGuesses;
   const std::vector<va_t> Starts;
 
@@ -52,9 +58,12 @@ private:
   const BinaryImage *Image;
   const Symbol *SymbolData;
   size_t SymbolCount;
+  const Export *ExportData;
+  size_t ExportCount;
   const std::pair<va_t, va_t> *RangeData;
   size_t RangeCount;
   size_t ContinuationCount;
+  mutable std::optional<std::map<va_t, std::string>> FunctionNames;
 };
 
 /// The analysis cache a run of \p Img under \p Opts shares with other runs:

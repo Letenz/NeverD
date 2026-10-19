@@ -594,6 +594,34 @@ TEST(FunctionDiscoveryAlignment,
 }
 
 TEST(FunctionDiscoveryAlignment,
+     MachOFunctionStartsSuppressPaddingBoundaryGuesses) {
+  // Rust's x86-64 macOS dylib: `call` with an int3 byte in its displacement,
+  // then `mov rax, [rbp-0x40]`.  The byte after the int3 is the next one of
+  // the displacement, and it reads as a prologue (`ff`).
+  const std::array<uint8_t, 14> Body = {0x55, 0x48, 0x89, 0xe5, 0xe8,
+                                        0x9a, 0xcc, 0xff, 0xff, 0x48,
+                                        0x8b, 0x45, 0xc0, 0xc3};
+  for (const bool FunctionStarts : {false, true}) {
+    SCOPED_TRACE(FunctionStarts);
+    BinaryImage Img;
+    Img.Arch = Arch::X64;
+    Img.Bits = Bitness::Bits64;
+    Img.Format = BinaryFormat::MachO;
+    Img.MachOHasFunctionStarts = FunctionStarts;
+    Img.Segments.push_back(executableSegment(0x1000, Body));
+    Img.Symbols.push_back(Symbol::makeFunc(0x1000));
+
+    scanPaddingBoundaries(Img);
+
+    // Without the command nothing bounds the function, and the guess is what
+    // the scan has; with it, the bytes belong to the function it lists.
+    ASSERT_EQ(Img.Symbols.size(), FunctionStarts ? 1u : 2u);
+    if (!FunctionStarts)
+      EXPECT_EQ(Img.Symbols.back().Addr, 0x1007u);
+  }
+}
+
+TEST(FunctionDiscoveryAlignment,
      MachOFunctionStartsAcceptZeroBasedLinkedImages) {
   BinaryImage Img;
   Img.Arch = Arch::AArch64;

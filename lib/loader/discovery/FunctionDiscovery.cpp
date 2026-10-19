@@ -348,6 +348,16 @@ collectClaimedCodeRanges(const BinaryImage &Img) {
 }
 
 void scanPaddingBoundaries(BinaryImage &Img) {
+  // LC_FUNCTION_STARTS lists every function a linked Mach-O image lays out,
+  // so a byte between two of its starts belongs to the function before it.
+  // Padding there begins no function: an `int3` byte inside an instruction
+  // (`call` with a displacement of 0xffffcc9a) or among the jump tables a
+  // function keeps in __text reads as padding, and the byte after it as a
+  // prologue.
+  if (Img.Format == BinaryFormat::MachO && !Img.IsRelocatable &&
+      Img.MachOHasFunctionStarts)
+    return;
+
   const auto Known = collectClaimedCodeRanges(Img);
   auto Existing = Img.getSymbolAddresses();
 
