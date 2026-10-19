@@ -119,6 +119,11 @@ struct EmbeddedC {
   std::vector<std::string> Types;
   /// The library's records Text only declares, by their names.
   std::vector<std::string> DeclaredTypes;
+  /// The records the system's headers name by a typedef alone, which Text
+  /// takes from them (`typedef struct {...} pthread_mutex_t;`), by their C
+  /// names: a unit spells each by its name and declares no typedef of it,
+  /// which would contradict the header's.
+  std::vector<std::string> HeaderTypedefs;
 };
 /// \p Roots, records, as another unit holds them, in C: \p Options gives
 /// the spelling, offsets and checks.

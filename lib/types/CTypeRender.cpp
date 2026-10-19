@@ -168,6 +168,13 @@ public:
   const TypeExpr *spelledThrough(llvm::StringRef Name) const {
     return Embedded ? reservedTypedef(Library, Name) : nullptr;
   }
+  /// Take the record \p Name from the system's headers, which name it by a
+  /// typedef alone (`typedef struct {...} pthread_mutex_t;`): C spells it by
+  /// that name, in a decompiled unit too, which has no tag of it.
+  void takeFromHeaders(llvm::StringRef Name) { FromHeaders.insert(Name); }
+  bool fromHeaders(llvm::StringRef Name) const {
+    return FromHeaders.contains(Name);
+  }
 
 private:
   void record(const LocalType &Type, std::string &Out);
@@ -230,6 +237,7 @@ private:
   bool MicrosoftBitfields = false;
   bool GnuBitfields = false;
   bool Asserted = false;
+  llvm::StringSet<> FromHeaders;
 };
 
 std::string CWriter::builtin(Builtin Type) const {
@@ -514,6 +522,8 @@ bool CWriter::typedefNamed(const LocalType &Type) const {
 }
 
 bool CWriter::bare(const LocalType &Type) const {
+  if (!Cpp && FromHeaders.contains(Type.Name))
+    return true;
   if (Embedded || Cpp ||
       (Type.Kind != TypeKind::Struct && Type.Kind != TypeKind::Union &&
        Type.Kind != TypeKind::Enum))
@@ -1110,14 +1120,13 @@ namespace {
 /// does: a type of the same kind and size whose named members are where the
 /// program's are.  Null for a type the program defines its own way, or
 /// where the system gives none.  A record the header names by a typedef
-/// alone (`typedef struct {...} pthread_mutex_t;`) stays the program's: a
-/// unit declares a typedef of each record it names by its tag's name, which
-/// would contradict the header's.
+/// alone (`typedef struct {...} pthread_mutex_t;`) has no tag: a unit spells
+/// it by that name and declares no typedef of its own (EmbeddedC's
+/// HeaderTypedefs).
 const LocalType *systemsOwn(const TypeLibrary &Library, const LocalType &Type,
                             const TypeLibrary *System) {
   const LocalType *Their = System ? System->find(Type.Name) : nullptr;
-  if (!Their || Their->Header.empty() || Their->Kind != Type.Kind ||
-      Their->TypedefNamed)
+  if (!Their || Their->Header.empty() || Their->Kind != Type.Kind)
     return nullptr;
   if (Their == &Type)
     return Their;
@@ -1314,6 +1323,29 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
   });
   CWriter Writer(Library, Options, /*Embedded=*/true, /*Prelude=*/false,
                  Spelled);
+  // A record a header names by a typedef alone comes from it by that name:
+  // one the unit holds, which the header lays out as the program does, and
+  // one its definitions only point to, whose members the header's agree
+  // with.
+  auto TakeTheirs = [&](const LocalType &Type) {
+    if (const LocalType *Their = systemsOwn(Library, Type, System);
+        Their && Their->TypedefNamed &&
+        (Type.Kind == TypeKind::Struct || Type.Kind == TypeKind::Union) &&
+        !Writer.fromHeaders(Type.Name)) {
+      Writer.takeFromHeaders(Type.Name);
+      Result.HeaderTypedefs.push_back(Writer.names().type(Type.Name));
+    }
+  };
+  for (const LocalType *Type : Theirs)
+    TakeTheirs(*Type);
+  for (const LocalType *Type : All) {
+    std::vector<std::string> Named;
+    mentionedTypes(*Type, Named);
+    for (const std::string &Name : Named)
+      if (const LocalType *Found = Library.find(Name);
+          Found && !Defined.contains(Name))
+        TakeTheirs(*Found);
+  }
   std::string TheirChecks;
   for (const LocalType *Type : Theirs)
     Writer.checks(*Type, TheirChecks);
@@ -1335,7 +1367,7 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
         mentionedTypes(*Library.find(Named[I]), Named);
     for (const std::string &Name : Named)
       if (const LocalType *Found = Library.find(Name);
-          Found && !Defined.contains(Name) &&
+          Found && !Defined.contains(Name) && !Writer.fromHeaders(Name) &&
           (Found->Kind == TypeKind::Struct || Found->Kind == TypeKind::Union) &&
           Declared.insert(Name).second) {
         Writer.forwardDeclaration(*Found, Declarations);

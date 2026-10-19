@@ -635,6 +635,7 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
   }
   Result.Types = Embedded.Types;
   Result.DeclaredTypes = Embedded.DeclaredTypes;
+  Result.HeaderTypedefs = Embedded.HeaderTypedefs;
   return Result;
 }
 

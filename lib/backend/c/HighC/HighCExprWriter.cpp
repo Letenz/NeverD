@@ -6187,6 +6187,17 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
         Fwd != ValueForward.end() && Fwd->second && Fwd->second != Inner)
       Inner = PeelReturnViews(Fwd->second);
   }
+  // A call that returns a pointer returns the address it is, which the
+  // integer result takes.
+  auto PointerCall = [&](const HighExpr &Value) {
+    if (Value.Kind != ExprKind::Call)
+      return false;
+    const TypeRef Result = callResultType(Value);
+    return Result && Result->Kind == NdTypeKind::Ptr;
+  };
+  if (Inner && PointerCall(*Inner))
+    return "(" + typeToC(FuncReturnType) + ")(uintptr_t)" +
+           castOperand(exprStr(*Inner));
   if (Inner && Inner != &Expr) {
     const bool SameWidth = Inner->Type &&
                            Inner->Type->Kind == NdTypeKind::Int &&

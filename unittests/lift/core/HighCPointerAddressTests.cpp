@@ -46912,3 +46912,59 @@ struct CT_LIKE {
   EXPECT_EQ(Source.find("tree->freq["), std::string::npos) << Source;
   expectCSyntax("#include <stdint.h>\n" + Source);
 }
+
+TEST(HighCPointerAddresses, RecordsHeadersNameByTypedefsTakeTheirTypedefs) {
+  // bionic's <pthread.h> names pthread_mutex_t by a typedef alone, which
+  // leaves it no tag: the unit spells the record by that typedef and
+  // declares no `typedef struct pthread_mutex_t pthread_mutex_t;` of its
+  // own, which would contradict the header's.
+  HighFunc Func;
+  Func.Name = "probe_lock";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(4);
+  Func.Params = {
+      {"lock", NdType::makePtr(NdType::makeNamedRecord("pthread_mutex_t"))}};
+  returnValue(Func, HighExpr::makeConst(0, 4));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.HeaderTypedefs = {"pthread_mutex_t"};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("probe_lock(pthread_mutex_t* lock)"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("typedef struct pthread_mutex_t"), std::string::npos)
+      << Source;
+  expectCSyntax("#include <pthread.h>\n" + Source);
+}
+
+TEST(HighCPointerAddresses, HeaderRoutinesReturnTheirDeclaredPointers) {
+  // <semaphore.h> declares sem_open variadic, so no prototype here gives
+  // its result: its declaration returns a sem_t *, which an integer local
+  // the machine moves it into takes converted, and its name is a pointer
+  // the machine passes as an integer.  No `extern int sem_open();` of the
+  // unit's own contradicts the header's.
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "open_semaphore";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = Word;
+  Func.Params = {{"name", Word}};
+  MedVar Handle = temporary(7);
+  auto Opened = HighExpr::makeCall("sem_open", 0x140002000,
+                                   {parameter(0), HighExpr::makeConst(0, 8)});
+  Opened->Type = Word;
+  HighStmt Assign = assignTo(Handle, Opened);
+  Assign.Dst->Type = Word;
+  Func.Body = {Assign};
+  returnValue(Func, HighExpr::makeVar(Handle, Word));
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("#include <semaphore.h>"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("sem_open();"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}

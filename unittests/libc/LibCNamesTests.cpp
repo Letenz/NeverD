@@ -453,6 +453,25 @@ TEST(HeaderFor, GnuAndPosixHeadersOfTheArityTables) {
   EXPECT_STREQ(headerFor("re_search"), "regex.h");
 }
 
+TEST(HeaderFor, SemaphoreRoutines) {
+  // A unit that takes bionic's typedef-named sem_t from <semaphore.h>
+  // includes the header, which declares these routines: one the unit
+  // declared `extern int sem_open();` beside it did not compile.
+  for (const char *Name :
+       {"sem_close", "sem_destroy", "sem_getvalue", "sem_init", "sem_open",
+        "sem_post", "sem_timedwait", "sem_trywait", "sem_unlink", "sem_wait"})
+    EXPECT_STREQ(headerFor(Name), "semaphore.h") << Name;
+  EXPECT_EQ(varArgFixedCount("sem_open", LibCVariant::Bionic), 2u);
+  // Its name is a pointer C does not convert an integer to, and its result
+  // a pointer, which an integer local takes converted.
+  EXPECT_TRUE(isObjectPointerParameter("sem_open", 0, LibCVariant::Bionic));
+  EXPECT_TRUE(isCStringParameter("sem_open", 0));
+  EXPECT_EQ(libcReturnsValue("sem_open", LibCVariant::Bionic), true);
+  const auto Init = libcArityForSymbol("sem_init", LibCVariant::Bionic);
+  ASSERT_TRUE(Init.has_value());
+  EXPECT_EQ(Init->IntArgs, 3);
+}
+
 TEST(HeaderFor, StdioFunctions) {
   EXPECT_STREQ(headerFor("printf"), "stdio.h");
   EXPECT_STREQ(headerFor("fprintf"), "stdio.h");
