@@ -1456,11 +1456,13 @@ struct BinaryImage {
                : StackEntryKind::Call;
   }
 
-  /// Get all function symbols, sorted by address.
+  /// The function symbols, sorted by address.  A symbol naming a fragment
+  /// that continues another function (ContinuationCodeStarts, GCC's
+  /// `foo.cold`) names no function.
   std::vector<const Symbol *> getFunctionSymbols() const {
     std::vector<const Symbol *> Result;
     for (const auto &Sym : Symbols)
-      if (Sym.IsFunc)
+      if (Sym.IsFunc && !ContinuationCodeStarts.count(Sym.Addr))
         Result.push_back(&Sym);
     // Aliases of one address keep their symbol table order, so the name a
     // function is listed under never depends on how many others exist.

@@ -182,6 +182,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_CarryOpsTests.cpp
   x86_64/X86_64_CmpxchgTests.cpp
   x86_64/X86_64_CFGEntryTests.cpp
+  x86_64/X86_64_ColdFragmentTests.cpp
   x86_64/X86_64_ComputedGotoTests.cpp
   x86_64/X86_64_ControlFlowTests.cpp
   x86_64/X86_64_ControlSemanticsTests.cpp
@@ -3715,6 +3716,33 @@ if(LLD_EXEC)
     DEPENDS ${pic_library_i386_obj}
     COMMENT "Linking i386 PIC library fixture")
   list(APPEND ELF_EXECUTABLES ${pic_library_i386_obj} ${pic_library_i386_so})
+
+  # GCC's hot/cold partitioning: an x86-64 cleanup moved to `.cold`, linked
+  # with its symbols and stripped.
+  set(gcc_cold_x64_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_gcc_cold_fragment_x64.s")
+  set(gcc_cold_x64_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_gcc_cold_fragment_x64.o")
+  set(gcc_cold_x64_so
+      "${CMAKE_CURRENT_BINARY_DIR}/test_gcc_cold_fragment_x64.so")
+  set(gcc_cold_x64_stripped
+      "${CMAKE_CURRENT_BINARY_DIR}/test_gcc_cold_fragment_x64_stripped.so")
+  add_custom_command(
+    OUTPUT ${gcc_cold_x64_obj}
+    COMMAND ${CLANG_EXEC} -target x86_64-linux-gnu -c ${gcc_cold_x64_src}
+            -o ${gcc_cold_x64_obj}
+    DEPENDS ${gcc_cold_x64_src}
+    COMMENT "Compiling x86-64 GCC cold fragment fixture")
+  add_custom_command(
+    OUTPUT ${gcc_cold_x64_so} ${gcc_cold_x64_stripped}
+    COMMAND ${LLD_EXEC} -shared --eh-frame-hdr -o ${gcc_cold_x64_so}
+            ${gcc_cold_x64_obj}
+    COMMAND ${LLD_EXEC} -shared --eh-frame-hdr -s -o ${gcc_cold_x64_stripped}
+            ${gcc_cold_x64_obj}
+    DEPENDS ${gcc_cold_x64_obj}
+    COMMENT "Linking x86-64 GCC cold fragment fixtures")
+  list(APPEND ELF_EXECUTABLES ${gcc_cold_x64_obj} ${gcc_cold_x64_so}
+                              ${gcc_cold_x64_stripped})
 
   # Switch tables of an i386 shared library, relative to its GOT address.
   set(pic_switch_i386_src
