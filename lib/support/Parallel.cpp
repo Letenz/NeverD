@@ -38,7 +38,8 @@ bool hasWorkerStack() {
   MEMORY_BASIC_INFORMATION Info{};
   ULONG_PTR Low = 0, High = 0;
   GetCurrentThreadStackLimits(&Low, &High);
-  if (!VirtualQuery(&Info, &Info, sizeof(Info)))
+  if (!VirtualQuery(reinterpret_cast<const void *>(Low), &Info, sizeof(Info)) ||
+      !Info.AllocationBase)
     return false;
   const auto Base = reinterpret_cast<uintptr_t>(Info.AllocationBase);
   return High >= Base && High - Base >= kDecompilerWorkerStackSize;
@@ -84,8 +85,9 @@ void runTaskWorkers(unsigned Count, void (*Body)(void *), void *Context) {
   // This opt-in backend retains workers between calls. It is intentionally
   // unavailable by default for hosts that fork or dynamically unload the SDK.
   static SchedulerLifetime Lifetime;
+  const auto Caller = std::this_thread::get_id();
   auto Coordinate = [&] {
-    if (!hasWorkerStack())
+    if (std::this_thread::get_id() == Caller || !hasWorkerStack())
       throw std::runtime_error("cannot allocate a large pipeline worker stack");
     const unsigned Limit =
         std::min<unsigned>(Count, std::numeric_limits<int>::max());
