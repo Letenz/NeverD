@@ -157,6 +157,18 @@ RegistrationCallCalleeIndex::sehControlContracts(const LowFunc &Function) {
 
 namespace neverd::registration_state {
 
+const ExceptionFunction *installedRegistration(const BinaryImage &Image,
+                                               va_t Entry) {
+  const ExceptionFunction *Exception =
+      Image.ExceptionMetadata.findFunction(Entry);
+  if (!Exception || !Exception->Registration)
+    return nullptr;
+  const va_t Installer = Exception->FunctionEntry != 0
+                             ? Exception->FunctionEntry
+                             : Exception->CodeRange.Begin;
+  return Installer == Entry ? Exception : nullptr;
+}
+
 bool isSEHFinallyCallInstruction(const BinaryImage &Image,
                                  const RegistrationChainInfo &Chain,
                                  va_t Address, uint16_t Size,
