@@ -223,7 +223,11 @@ void validateMemoryAddressSpaceForC(NdMemoryAddressSpace AddressSpace,
 }
 
 bool useMsvcSegmentedRead(const CEmitterOptions &Opts, const HighFunc *Func) {
-  return (Func && Func->ExceptionMetadata) ||
+  // A function Windows' unwind or exception tables describe is Windows code;
+  // an ELF function's DWARF FDE describes another platform's.
+  return (Func && Func->ExceptionMetadata &&
+          !exceptionEncodingIsOutsideWindows(
+              Func->ExceptionMetadata->Encoding)) ||
          (Opts.Image && Opts.Image->abiFormat() == BinaryFormat::COFF);
 }
 
@@ -681,8 +685,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       CollectWideType(Param.Type);
     for (const HighLocal &Local : Func.Locals)
       CollectWideType(Local.Type);
-    HideEHRuntimeMemory = Func.ExceptionMetadata.has_value() &&
-                          !preservesRegistrationMemory(Func);
+    HideEHRuntimeMemory = hidesRegistrationMemory(Func);
     walkStmts(Func.Body, [&](const HighStmt &Stmt) {
       if (Stmt.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
         if (HideEHRuntimeMemory &&
