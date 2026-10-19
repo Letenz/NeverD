@@ -501,3 +501,78 @@ TEST_F(X86_64_CallAbi, AVariadicCalleeTakesItsStackArguments) {
 TEST_F(X86_64_CallAbi, ALiftedVariadicCalleeTakesItsStackArguments) {
   expectLiftedRunsLikeSource(VariadicStackIntegers, "vsum_big", "sb");
 }
+
+static const char *const VariadicForwarders = R"C(
+#include <stdarg.h>
+static int vsum(int n, va_list ap) __attribute__((noinline));
+static int sum(int n, ...) __attribute__((noinline));
+static double vdsum(int n, va_list ap) __attribute__((noinline));
+static double dsum(int n, ...) __attribute__((noinline));
+static int vsum(int n, va_list ap) {
+  int s = 0;
+  for (int i = 0; i < n; i++)
+    s += va_arg(ap, int) * (i + 1);
+  return s;
+}
+static int sum(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  int r = vsum(n, ap);
+  va_end(ap);
+  return r;
+}
+static double vdsum(int n, va_list ap) {
+  double s = 0;
+  for (int i = 0; i < n; i++)
+    s += va_arg(ap, double) * (i + 1);
+  return s;
+}
+static double dsum(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  double r = vdsum(n, ap);
+  va_end(ap);
+  return r;
+}
+int forward(int x) {
+  return sum(0) + sum(2, x, 3) + sum(7, x, 1, 2, 3, 4, 5, x * 2) +
+         sum(6, x, 1, 2, 3, 4, 0) + (int)dsum(2, 1.5, (double)x) +
+         (int)dsum(1, (double)x * 3.0);
+}
+)C";
+
+// A variadic function whose va_list only reaches a call, the
+// `error(fmt, ...)` that calls `verror(fmt, va)`, is C's own: it takes its
+// named parameter and `...`, starts its va_list with va_start, and each
+// call passes what its caller sets.  `sum(0)` passes no argument past the
+// count, though another call passes two on the stack: those of a call that
+// passes fewer were only padding.  `sum(6, ..., 0)` passes its zero.
+TEST_F(X86_64_CallAbi, AVariadicForwarderPassesItsVaListOn) {
+  expectHighCRunsLikeSource(
+      {"-target", "x86_64-linux-gnu"}, VariadicForwarders, "forward",
+      {"forward", "sum", "vsum", "dsum", "vdsum"}, {0, 1, -1, 7, 1000});
+  if (HasFatalFailure() || IsSkipped())
+    return;
+  std::ifstream Input(tmpFile("decompiled_high.c"));
+  const std::string C((std::istreambuf_iterator<char>(Input)),
+                      std::istreambuf_iterator<char>());
+  const auto Definition = [&](const std::string &Name) {
+    const size_t At = C.find(" " + Name + "(int32_t arg0");
+    const size_t Open = At == std::string::npos ? At : C.find('{', At);
+    if (Open == std::string::npos || C.find(';', At) < Open)
+      return std::string();
+    return C.substr(At, C.find("\n}\n", At) - At);
+  };
+  for (const std::string Name : {"sum", "dsum"}) {
+    const std::string Body = Definition(Name);
+    ASSERT_FALSE(Body.empty()) << Name << "\n" << C;
+    EXPECT_EQ(Body.rfind(" " + Name + "(int32_t arg0, ...) {", 0), 0u) << C;
+    EXPECT_NE(Body.find("va_start(arguments, arg0);"), std::string::npos) << C;
+    EXPECT_NE(Body.find("va_end(arguments);"), std::string::npos) << C;
+  }
+  const std::string Caller = C.substr(C.find(" forward(int32_t arg0) {"));
+  EXPECT_NE(Caller.find("sum(0)"), std::string::npos) << C;
+  EXPECT_EQ(Caller.find("0.0"), std::string::npos) << C;
+  EXPECT_EQ(Caller.find(", 0, 0)"), std::string::npos) << C;
+  EXPECT_NE(Caller.find(", 4, 0)"), std::string::npos) << C;
+}

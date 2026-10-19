@@ -138,6 +138,20 @@ private:
 /// The x86-64 one also gives its va_start word, whose offsets say how many
 /// integer and vector registers carry named parameters.
 bool hasX64VariadicPrologue(VariadicScan &S, uint64_t &VaStartWord);
+
+/// Where a System V x86-64 va_start puts its va_list and register save area,
+/// as displacements from the entry stack pointer.
+struct X64VaStartGeometry {
+  int64_t VaList = 0;
+  int64_t SaveArea = 0;
+};
+
+/// The one va_list \p S's function initializes with \p VaStartWord: the
+/// stores of gp_offset and fp_offset (the word, whole or in halves), of
+/// overflow_arg_area at \p OverflowBase, and of reg_save_area.  Nothing when
+/// no single va_list has all four.
+std::optional<X64VaStartGeometry>
+x64VaStartGeometry(VariadicScan &S, uint64_t VaStartWord, int64_t OverflowBase);
 std::optional<int> aapcs64FirstVariadicRegister(VariadicScan &S);
 std::optional<int> aapcs32FirstVariadicRegister(VariadicScan &S);
 bool hasI386VariadicPrologue(VariadicScan &S);

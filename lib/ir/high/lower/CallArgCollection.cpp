@@ -1480,8 +1480,9 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   if (VariadicOverflow) {
     const size_t Integers = ParamRegs.size();
     // Then the slots it stores, read as the pass that sized the callee's
-    // overflow parameters read them (VariadicStackArguments.h), and zero for
-    // one a shorter call leaves unset, which va_arg does not read.
+    // overflow parameters read them (VariadicStackArguments.h).  A shorter
+    // call leaves the rest unset, and va_arg does not read them: no value,
+    // which C passes as zero, and leaves off a call of `T f(named, ...)`.
     std::vector<ExprPtr> Stack;
     if (CurMed) {
       indexMedDefinitions();
@@ -1499,7 +1500,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     const size_t Overflow = static_cast<size_t>(std::max(0, *VariadicOverflow));
     Stack.resize(std::min(Stack.size(), Overflow));
     while (Stack.size() < Overflow)
-      Stack.push_back(HighExpr::makeConst(0, TRI.PointerSize));
+      Stack.push_back(HighExpr::makeUndef(TRI.PointerSize));
     Args.resize(Integers);
     for (ExprPtr &Arg : Args)
       if (!Arg)

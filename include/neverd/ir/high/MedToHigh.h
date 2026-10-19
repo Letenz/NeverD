@@ -223,6 +223,12 @@ void chooseIntegerSignedness(HighFunc &Func);
 /// local before it, when evaluating the value earlier cannot fault or have
 /// an effect.  The C writer prints each read of a shared node in full.
 bool nameRepeatedValues(HighFunc &Func);
+/// Marks a System V x86-64 variadic function whose va_start builds a va_list
+/// only to pass it on (HighFunc::VaStart): every access to the va_list, the
+/// register save area and the overflow homes is va_start's own, the va_list's
+/// address reaches nothing but call arguments, and no saved parameter is read
+/// elsewhere.
+void recognizeVaStartForwarder(HighFunc &Func, Arch Architecture);
 /// `if (a) {..} else { ..; jump; X: S.. }` followed by `if (c) goto X;`
 /// becomes `while (c) { S.. }` in place of the test.
 bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body);

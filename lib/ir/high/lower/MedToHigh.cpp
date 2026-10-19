@@ -1349,6 +1349,9 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   Func.DoesNotReturn = Med.DoesNotReturn;
   Func.ReturnsNoValue = Med.ReturnsNoValue;
   Func.IsVariadic = Med.IsVariadic;
+  Func.VaListDisplacement = Med.VaListDisplacement;
+  Func.VaRegisterSaveArea = Med.VaRegisterSaveArea;
+  Func.VaNamedIntegerRegisters = Med.VaNamedIntegerRegisters;
   Func.EntryKind = Med.EntryKind;
   Func.ExceptionMetadata = Med.ExceptionMetadata;
   Func.HasUnresolvedSEHFrame = Med.HasUnresolvedSEHFrame;
@@ -1602,6 +1605,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   // the jumps that enter them, so a landing pad can lose the statement its
   // label sits on.
   anchorDispatcherEntries(Func);
+  recognizeVaStartForwarder(Func, TheArch);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();
 
