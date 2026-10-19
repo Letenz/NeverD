@@ -457,6 +457,11 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
   auto ArgLimit = [this](const HighExpr &E) { return debugCallArgLimit(E); };
   auto AllArgs = [](const HighExpr &E) { return E.Operands.size(); };
   collectUnknownOnlyNames(Func);
+  // Whether C shows the function `void` decides what its returns read.
+  const TypeRef DeclaredReturn = declaredFunctionReturnType(Func);
+  InferredVoid = DeclaredReturn ? DeclaredReturn->Kind == NdTypeKind::Void
+                                : analyzeVoidReturn(Func);
+  Analysis.VoidReturns = InferredVoid;
   analyzeDeadStores(Analysis, Func, VarFn, ExprFn);
   analyzeUnusedAssigns(Analysis, Func, VarFn, AllArgs);
   analyzeUnusedCallResults(Analysis, Func, VarFn, ArgLimit);
@@ -478,9 +483,6 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
       return;
     Analysis.AssignedVars.insert(VarFn(S.Dst->Var));
   });
-  const TypeRef DeclaredReturn = declaredFunctionReturnType(Func);
-  InferredVoid = DeclaredReturn ? DeclaredReturn->Kind == NdTypeKind::Void
-                                : analyzeVoidReturn(Func);
 
   HiLoPairs.clear();
   auto RegisterHiLo = [this](const HighStmt &S, const HighExpr &CE) {
@@ -1432,6 +1434,13 @@ void HighCWriter::invalidateJoinPhiFrameAliases(const HighFunc &Func) {
           Visit(*Child);
       });
     };
+    // A return of a function printed `void` reads only the call it hands
+    // back, which prints as a statement.
+    if (Analysis.VoidReturns && S.Kind == StmtKind::Return) {
+      if (const HighExpr *Call = S.RetVal ? returnedCall(*S.RetVal) : nullptr)
+        Visit(*Call);
+      return;
+    }
     forEachExpr(S, [&](const ExprPtr &E) {
       if (E && (E != S.Dst ||
                 (E->Kind != ExprKind::Var && E->Kind != ExprKind::Phi)))

@@ -51,6 +51,9 @@
 // `clang_forward_factor`, built with -fno-optimize-sibling-calls, returns
 // with what `clang_set_factor`, called through its PLT entry, left in %eax:
 //   void clang_forward_factor(int v) { clang_set_factor(v); }
+// `clang_maybe_scale` returns with %eax holding what `clang_scale_three`
+// returned on one path and the GOT address on the other:
+//   void clang_maybe_scale(int v) { if (v) clang_scale_three(); else factor = 0; }
 
 	.text
 	.p2align 4
@@ -499,6 +502,31 @@ clang_forward_factor:
 	retl
 	.cfi_endproc
 	.size	clang_forward_factor, .-clang_forward_factor
+
+	.p2align 4
+	.globl	clang_maybe_scale
+	.type	clang_maybe_scale, @function
+clang_maybe_scale:
+	.cfi_startproc
+	subl	$12, %esp
+	.cfi_def_cfa_offset 16
+	cmpl	$0, 16(%esp)
+	je	.Lmaybe_scale_zero
+	calll	clang_scale_three
+	jmp	.Lmaybe_scale_done
+.Lmaybe_scale_zero:
+	calll	.Lmaybe_scale_pc
+.Lmaybe_scale_pc:
+	popl	%eax
+.Lmaybe_scale_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Lmaybe_scale_got-.Lmaybe_scale_pc), %eax
+	movl	$0, factor@GOTOFF(%eax)
+.Lmaybe_scale_done:
+	addl	$12, %esp
+	.cfi_def_cfa_offset 4
+	retl
+	.cfi_endproc
+	.size	clang_maybe_scale, .-clang_maybe_scale
 
 	.section	.rodata
 	.p2align 2

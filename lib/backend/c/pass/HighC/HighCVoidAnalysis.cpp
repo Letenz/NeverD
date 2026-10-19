@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/Limits.h"
 #include "neverd/backend/c/pass/HighC/HighCPasses.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -69,6 +70,23 @@ void collectRenderedUses(const HighCAnalysisState &State, const HighExpr &Expr,
   }
 }
 
+/// Each expression \p S reads as C prints it.  A return of a function printed
+/// `void` reads only the call it hands back, which prints as a statement:
+/// the merge of what its paths left in the result register is no use.
+template <typename FnT>
+void forEachPrintedRhsExpr(const HighCAnalysisState &State, const HighStmt &S,
+                           FnT &&Fn) {
+  if (State.VoidReturns && S.Kind == StmtKind::Return) {
+    if (const HighExpr *Call = S.RetVal ? returnedCall(*S.RetVal) : nullptr)
+      Fn(*Call);
+    return;
+  }
+  forEachRhsExpr(S, [&](const ExprPtr &E) {
+    if (E)
+      Fn(*E);
+  });
+}
+
 } // namespace
 
 bool isNoreturnCallExpr(const HighExpr &E) {
@@ -97,6 +115,24 @@ bool highCExpressionHasEffect(const HighExpr &E) {
     });
   }
   return false;
+}
+
+const HighExpr *returnedCall(const HighExpr &E) {
+  const HighExpr *Cur = &E;
+  for (unsigned Depth = 0; Cur && Depth <= limits::kMaxIntegerViewUnwrapDepth;
+       ++Depth) {
+    if (Cur->Kind == ExprKind::Call)
+      return Cur;
+    const bool View =
+        Cur->Kind == ExprKind::Cast || Cur->Kind == ExprKind::BitCast ||
+        (Cur->Kind == ExprKind::UnaryOp &&
+         (Cur->Op == NdOp::INT_ZEXT || Cur->Op == NdOp::INT_SEXT)) ||
+        (Cur->Kind == ExprKind::BinOp && Cur->Op == NdOp::SUBBYTES);
+    if (!View || Cur->Operands.empty())
+      return nullptr;
+    Cur = Cur->Operands[0].get();
+  }
+  return nullptr;
 }
 
 bool analyzeVoidReturn(const HighFunc &Func) {
@@ -183,9 +219,8 @@ void analyzeUnusedAssigns(HighCAnalysisState &State, const HighFunc &Func,
     walkStmts(Func.Body, [&](const HighStmt &S) {
       if (State.DeadStmts.count(&S))
         return;
-      forEachRhsExpr(S, [&](const ExprPtr &E) {
-        if (E)
-          collectRenderedUses(State, *E, Used, VarFn, ArgLimit);
+      forEachPrintedRhsExpr(State, S, [&](const HighExpr &E) {
+        collectRenderedUses(State, E, Used, VarFn, ArgLimit);
       });
     });
     walkStmts(Func.Body, [&](const HighStmt &S) {
@@ -211,9 +246,8 @@ void analyzeUnusedCallResults(HighCAnalysisState &State, const HighFunc &Func,
   walkStmts(Func.Body, [&](const HighStmt &S) {
     if (State.DeadStmts.count(&S))
       return;
-    forEachRhsExpr(S, [&](const ExprPtr &E) {
-      if (E)
-        collectRenderedUses(State, *E, Used, VarFn, ArgLimit);
+    forEachPrintedRhsExpr(State, S, [&](const HighExpr &E) {
+      collectRenderedUses(State, E, Used, VarFn, ArgLimit);
     });
   });
   walkStmts(Func.Body, [&](const HighStmt &S) {
