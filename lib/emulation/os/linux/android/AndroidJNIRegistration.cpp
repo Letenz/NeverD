@@ -89,8 +89,10 @@ BionicResult Bionic::jniRegistration(unsigned Slot,
   return value(0);
 }
 
-void Bionic::reportJNIRegistrations() {
+void Bionic::reportJNIState() {
   for (const auto &[Key, Binding] : JNI.Registrations)
     Result.JNIRegistrations.push_back(Binding);
+  if (Options.Android->ObserveJavaState && JNI.DexRuntime)
+    Result.JavaState = JNI.DexRuntime->snapshot();
 }
 } // namespace neverd::emulation::android_model

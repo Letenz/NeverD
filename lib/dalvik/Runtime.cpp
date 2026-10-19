@@ -1120,8 +1120,10 @@ Program::Program(
         item.name.starts_with("Landroid/") || item.name.starts_with("Ldalvik/"))
       throw Error("DEX cannot replace platform classes");
     auto name = item.name;
-    if (!classes.emplace(std::move(name), std::move(item)).second)
+    auto [entry, inserted] = classes.emplace(std::move(name), std::move(item));
+    if (!inserted)
       throw Error("duplicate supplied DEX class");
+    supplied_classes.insert(&entry->second);
   }
   if (android_properties) {
     addAndroidVersion(*android_properties);
@@ -1350,6 +1352,43 @@ Runtime::Runtime(const Program &program, std::shared_ptr<Heap> heap,
     throw Error("Android application snapshot requires an Android program");
 }
 Runtime::~Runtime() = default;
+RuntimeSnapshot Runtime::snapshot() const {
+  RuntimeSnapshot result;
+  result.terminal = state->stopped.has_value();
+  result.framework = state->framework.inspect();
+  for (const auto &[name, declaration] : state->program.classes) {
+    JavaClassState row;
+    row.descriptor = name;
+    row.source_id = declaration.source_id;
+    row.superclass = declaration.superclass;
+    row.supplied = state->program.supplied_classes.contains(&declaration);
+    if (name.size() >= 2 && name.front() == 'L' && name.back() == ';')
+      row.class_object = state->heap->classObjectIdentity(
+          std::string_view(name).substr(1, name.size() - 2));
+    row.projected_loader =
+        state->framework.definingLoader(name, state->program);
+    using Initialization = JavaClassState::Initialization;
+    if (auto it = state->classes.find(&declaration);
+        it != state->classes.end()) {
+      switch (it->second.status) {
+      case State::ClassState::Prepared:
+        row.initialization = Initialization::Prepared;
+        break;
+      case State::ClassState::Initializing:
+        row.initialization = Initialization::Initializing;
+        break;
+      case State::ClassState::Initialized:
+        row.initialization = Initialization::Initialized;
+        break;
+      case State::ClassState::Erroneous:
+        row.initialization = Initialization::Erroneous;
+        break;
+      }
+    }
+    result.classes.push_back(std::move(row));
+  }
+  return result;
+}
 ExecutionResult Runtime::allocate(std::string_view descriptor, bool initialized,
                                   const AdmitInstruction &admit,
                                   uint64_t stack_bytes) {

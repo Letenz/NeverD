@@ -47772,3 +47772,66 @@ TEST(HighCPointerAddresses, HeaderObjectsReadAsBytesStayTheHeaders) {
       << Source;
   expectCSyntax(Source);
 }
+
+TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
+  // sed passes a comparator of its own to qsort, whose prototype the header
+  // library gives: its comparison's type keeps no const there, where the
+  // header's __compar_fn_t takes const void * operands, and C rejects a
+  // function pointer of one type for the other.  The argument converts to
+  // the type the header declares.
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Compare =
+      NdType::makePtr(NdType::makeFunc(NdType::makeInt(4), {Pointer, Pointer}));
+  class SortDbg : public NullDebugContext {
+  public:
+    SortDbg(TypeRef Pointer, TypeRef Compare)
+        : Pointer(std::move(Pointer)), Compare(std::move(Compare)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x140002000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "qsort";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeVoid();
+      FS.Params = {{"base", Pointer},
+                   {"nmemb", NdType::makeInt(8, false)},
+                   {"size", NdType::makeInt(8, false)},
+                   {"compar", Compare}};
+      FS.PrototypeFromCLibrary = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Pointer, Compare;
+  } Dbg(Pointer, Compare);
+  HighFunc Order;
+  Order.Name = "compare_items";
+  Order.Entry = 0x140003000;
+  Order.ReturnType = NdType::makeInt(4);
+  Order.Params = {{"a", Pointer}, {"b", Pointer}};
+  returnValue(Order, HighExpr::makeConst(0, 4));
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "sort_items";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  Func.Params = {{"items", Pointer}, {"count", Word}};
+  Func.Body = {callStmt(
+      "qsort", 0x140002000,
+      {parameter(0, Pointer), parameter(1, Word), HighExpr::makeConst(16, 8),
+       HighExpr::makeConst(0x140003000, 8,
+                           ConstantAddressProvenance::Address)})};
+  returnValue(Func, nullptr);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Order, Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("(int (*)(const void *, const void *))"),
+            std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}

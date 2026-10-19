@@ -19,6 +19,8 @@ llvm::Error Bionic::initializeDex() {
     return failure("JNI class lookup failures require JNI");
   if (!Native.JNI && Native.Application)
     return failure("Android application snapshot requires JNI");
+  if (!Native.JNI && Native.ObserveJavaState)
+    return failure("Android Java state observation requires JNI");
   if (Native.Application && Native.Application->files_directory &&
       (!Options.LinuxFiles ||
        !linux_model::isDeclaredDirectory(*Options.LinuxFiles,

@@ -20,6 +20,9 @@ public:
   ExecutionResult field(Heap &heap, const Field &field, uint64_t receiver,
                         std::optional<uint64_t> write,
                         const AdmitInstruction &admit);
+  AndroidFrameworkState inspect() const;
+  std::optional<AndroidApplicationSnapshot::ClassLookupFailure::Loader>
+  definingLoader(std::string_view type, const Program &program) const;
 
 private:
   ExecutionResult instrumentationValue(Heap &heap, uint64_t receiver,

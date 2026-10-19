@@ -615,9 +615,12 @@ holds more pointer-wide relocated fields back to back than
 `mov dword ptr [disp32], imm32`; one of eight), so a longer run is data among
 the code (`recordRelocatedPointerRunsInCode`): its slots become pointer slots
 of data, the operands naming it name data, and its start joins `DataInCode`.
-Function detection keeps a target such a table names inside the function it
-follows as that function's label, which the jump-table resolver reads; a
-target outside it is an entry. A function it takes the address of with a
+Function detection keeps a target such a table names inside the function of
+the instruction reading the table as that function's label, which the
+jump-table resolver reads; a target outside it is an entry. The reader, whose
+operand names the run, decides rather than the table's own slots: an entry
+between the cases and the table (a prologue match in dead code before it)
+bounds neither the dispatcher nor its cases. A function it takes the address of with a
 relocated immediate (`mov [obj+off], offset cb`, a callback stored into an
 object; `push offset filter`, a handler) is likewise a function
 (`scanCodeAddressImmediatesX86`): the base relocation makes the immediate an
@@ -3481,6 +3484,22 @@ ContinuationCodeStarts`), and an entry guessed only from inter-function padding
 either stays inside the jumping function. A guessed entry that another function
 absorbed this way is audited as `AbsorbedFunctionChunk` rather than decompiled
 twice.
+
+In a linked x86 PE, the prologue scan's matches (`scanX86UnsymbolizedEntries`)
+and the starts the loader only guessed from padding are weak entries. A
+function with other evidence (the image entry, an export, exception metadata,
+a stated symbol, a direct call or a relocated pointer) that reaches one as its
+own code, by falling into it, by a conditional branch or as a case of a table
+among its code, owns it, and the weak entry is dropped
+(`rejectX86InteriorEntries`). One only an unconditional jump reaches stays,
+since the jump may be a tail call, and so does a frame prologue right after a
+call that may not return. An int3 byte inside an instruction, a `jne` whose
+displacement is 0xcc or `mov eax, [ebp-34h]`, reads as padding to the loader;
+the descent decodes that instruction whole and falls into the guess, while
+real padding stops it at the int3. Off the 16-byte grid the scan takes only
+the frame setup itself, `push ebp; mov ebp, esp` (55 8B EC or 55 89 E5): a
+byte 0x55 followed by any move opcode starts no function inside an
+instruction.
 
 A whole unit (`neverd_decompile_all`, in every language) begins with a
 `/* neverd.not-decompiled: NAME at 0xENTRY: REASON */` line for each function
@@ -8327,6 +8346,13 @@ Program visibility. AndroidFramework creates the shared throwable and message;
 JNI transports that identity, and DEX catches it through the existing Runtime.
 JSON does not execute or infer lookup outcomes, and a negative parent observation
 does not close a child namespace or change JNI FindClass.
+`Runtime::snapshot()` reads the existing class initialization owner and framework
+identities without guest work. Program records supplied declaration ownership
+independently of source labels; the shared framework owner supplies projected
+loader ownership for both execution and reporting. The explicit application
+loader stage is independent of Application object creation; lookup failures and
+reflection use that same stage. Native `observe_java_state`
+only transports this optional final directory and does not initialize classes.
 The retained application files directory and File path values use the same
 heap. Native setup validates its declared directory against LinuxFiles; Dalvik
 does not acquire an independent host filesystem. LinuxFiles owns getcwd bytes
