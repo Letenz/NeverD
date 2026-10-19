@@ -12,6 +12,7 @@
 #include "neverd/pipeline/Pipeline.h"
 
 #include "PipelineHighIRDetail.h"
+#include "PipelineLowIRDetail.h"
 
 #include "neverd/analysis/BinaryInterpreterSpecialization.h"
 #include "neverd/analysis/InterpreterMachineState.h"
@@ -428,7 +429,12 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     // BinaryImage::boundaryGuessFunctionStarts).  Keep it as a separate
     // function only when nothing absorbed it.
     {
-      const std::set<va_t> Guesses = Img.boundaryGuessFunctionStarts();
+      // A run that shares the analysis cache read them from it (buildLowIR).
+      PipelineAnalysisCache *Shared = sharedAnalysisCache(Img, Opts);
+      const std::set<va_t> Guesses =
+          Shared ? PipelineAnalysisCache::SymbolInventory::of(Img, *Shared)
+                       ->BoundaryGuesses
+                 : Img.boundaryGuessFunctionStarts();
       std::set<va_t> Absorbed;
       if (!Guesses.empty())
         for (const auto &LF : Result.LowFuncs)

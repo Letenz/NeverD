@@ -15,14 +15,58 @@
 #include "neverd/ir/low/FormattedCall.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/ArrayRef.h"
 
 #include <cstddef>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <vector>
+
+namespace neverd {
+
+/// What every run reads of an image's symbols: the padding-boundary guesses
+/// (BinaryImage::boundaryGuessFunctionStarts) and the starts of the other
+/// function symbols, sorted and each once.  An image holds tens of thousands
+/// of symbols, which each selected-function run read several times.  A cache
+/// keeps it for the image its owner leaves unchanged; the tables it was read
+/// from guard it, as Impl::matches guards the facts.
+struct PipelineAnalysisCache::SymbolInventory {
+  explicit SymbolInventory(const BinaryImage &Img);
+
+  /// \p Img's inventory as \p Cache keeps it; one read now when \p Cache
+  /// keeps none for \p Img, which it then keeps.
+  static std::shared_ptr<const SymbolInventory>
+  of(const BinaryImage &Img, PipelineAnalysisCache &Cache);
+
+  /// Whether this was read from \p Img as it stands.
+  bool readFrom(const BinaryImage &Img) const;
+
+  const std::set<va_t> BoundaryGuesses;
+  const std::vector<va_t> Starts;
+
+private:
+  const BinaryImage *Image;
+  const Symbol *SymbolData;
+  size_t SymbolCount;
+  const std::pair<va_t, va_t> *RangeData;
+  size_t RangeCount;
+  size_t ContinuationCount;
+};
+
+/// The analysis cache a run of \p Img under \p Opts shares with other runs:
+/// a restricted x64 run's.  Other runs keep what they read to themselves.
+inline PipelineAnalysisCache *sharedAnalysisCache(const BinaryImage &Img,
+                                                  const PipelineOptions &Opts) {
+  const bool Restricted =
+      !Opts.OnlyFunctionEntries.empty() || Opts.MaxFunctions != 0;
+  return Restricted && Img.Arch == Arch::X64 ? Opts.AnalysisCache : nullptr;
+}
+
+} // namespace neverd
 
 namespace neverd::pipeline_detail {
 
