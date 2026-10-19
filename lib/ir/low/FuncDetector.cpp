@@ -415,14 +415,34 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
     Entries.erase(Thunk);
 
   // A prologue match that a function with other evidence reaches as its own
-  // code is that function's body.  Drop it before the entries bound the
-  // functions that name their own labels below.
+  // code is that function's body, and so is a start the loader only guessed
+  // from the padding before it: an int3 byte inside an instruction (a
+  // `jne` whose displacement is 0xcc) reads as padding too.  Drop both
+  // before the entries bound the functions that name their own labels below.
   if (IsX86LinkedCOFF && Img.Entry != 0) {
+    std::set<va_t> Stated{Img.Entry};
+    for (const auto &Exp : Img.Exports)
+      Stated.insert(Exp.Addr);
+    for (const auto &Sym : Img.Symbols)
+      if (Sym.IsFunc && !Sym.IsBoundaryGuess)
+        Stated.insert(Sym.Addr);
+    std::set<va_t> Guessed;
+    for (const auto &Sym : Img.Symbols)
+      if (Sym.IsFunc && Sym.IsBoundaryGuess && Entries.count(Sym.Addr) &&
+          !Stated.count(Sym.Addr) && !ExceptionEntries.count(Sym.Addr) &&
+          !DirectCallTargets.count(Sym.Addr) &&
+          !RelocationCodeTargets.count(Sym.Addr))
+        Guessed.insert(Sym.Addr);
     std::set<va_t> Evidenced;
     for (va_t Entry : EvidencedX86Entries)
-      if (Entries.count(Entry))
+      if (Entries.count(Entry) && !Guessed.count(Entry))
         Evidenced.insert(Entry);
-    rejectX86InteriorEntries(Img, Dec, Evidenced, CodeNamedByCode);
+    const std::set<va_t> Interior =
+        rejectX86InteriorEntries(Img, Dec, Evidenced, Guessed, CodeNamedByCode);
+    if (!Interior.empty())
+      llvm::erase_if(Results, [&](const std::pair<va_t, std::string> &R) {
+        return Interior.count(R.first) != 0;
+      });
   }
 
   // Code that other code names is a function of its own, except inside the

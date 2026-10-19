@@ -38,16 +38,18 @@ private:
   /// large body is not dropped for exhausting kMaxVerifyInsns.
   void scanX86UnsymbolizedEntries(const BinaryImage &Img, Decoder &Dec,
                                   std::set<va_t> &Out);
-  /// Drop the unsymbolized x86 entries that a function with other entry
-  /// evidence reaches as its own code: by falling into one, by a conditional
-  /// branch, or as a case a pointer table among its code names.  A target only
-  /// an unconditional jump reaches stays an entry, since the jump may be a
-  /// tail call, and so does a frame prologue right after a call that may not
+  /// Drop the unsymbolized x86 entries, and the \p Guessed starts the loader
+  /// only inferred from padding, that a function with other entry evidence
+  /// reaches as its own code: by falling into one, by a conditional branch,
+  /// or as a case a pointer table among its code names.  A target only an
+  /// unconditional jump reaches stays an entry, since the jump may be a tail
+  /// call, and so does a frame prologue right after a call that may not
   /// return.  \p Evidenced holds the entries with other evidence and
-  /// \p TableCases each relocated pointer among the code with the code it
-  /// names.
-  void rejectX86InteriorEntries(
+  /// \p TableCases each code address naming code with the code it names.
+  /// Returns the entries dropped.
+  std::set<va_t> rejectX86InteriorEntries(
       const BinaryImage &Img, Decoder &Dec, const std::set<va_t> &Evidenced,
+      const std::set<va_t> &Guessed,
       const std::vector<std::pair<va_t, va_t>> &TableCases);
   /// Validate a heuristic entry.  When KeepInconclusive is true, bounded
   /// probes that exhaust their budget remain candidates for the formal audit;

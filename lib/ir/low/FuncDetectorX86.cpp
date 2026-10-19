@@ -450,15 +450,19 @@ void FuncDetector::scanX86UnsymbolizedEntries(const BinaryImage &Img,
   Dec.setDetail(PrevDetail);
 }
 
-void FuncDetector::rejectX86InteriorEntries(
+std::set<va_t> FuncDetector::rejectX86InteriorEntries(
     const BinaryImage &Img, Decoder &Dec, const std::set<va_t> &Evidenced,
+    const std::set<va_t> &Guessed,
     const std::vector<std::pair<va_t, va_t>> &TableCases) {
   std::set<va_t> Candidates;
   for (va_t Addr : UnsymbolizedX86Entries)
     if (!Evidenced.count(Addr) && Entries.count(Addr))
       Candidates.insert(Addr);
+  for (va_t Addr : Guessed)
+    if (!Evidenced.count(Addr) && Entries.count(Addr))
+      Candidates.insert(Addr);
   if (Candidates.empty() || Evidenced.empty())
-    return;
+    return {};
 
   // An entry with other evidence owns the code up to the next one.
   const std::vector<va_t> Starts(Evidenced.begin(), Evidenced.end());
@@ -558,6 +562,7 @@ void FuncDetector::rejectX86InteriorEntries(
     Entries.erase(Addr);
     UnsymbolizedX86Entries.erase(Addr);
   }
+  return Interior;
 }
 
 } // namespace neverd

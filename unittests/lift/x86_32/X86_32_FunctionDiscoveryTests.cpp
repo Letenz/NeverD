@@ -222,6 +222,44 @@ TEST(X86_32_FunctionDiscovery,
       << "55 8B C6 inside an instruction is no frame prologue";
 }
 
+TEST(X86_32_FunctionDiscovery, AnInt3ByteInsideAnInstructionIsNoPadding) {
+  // A loop's `jne` back to its head has the displacement CC, which the
+  // loader's padding scan reads as an int3 before a boundary.  The entry
+  // falls through the `jne` into that guessed start, so it is the entry's
+  // code.  A start after real padding, past the entry's return, stays one.
+  std::vector<uint8_t> Bytes(0x60, 0xCC);
+  const uint8_t Entry[] = {0x55, 0x8B, 0xEC, // 401000 push ebp; mov ebp, esp
+                           0x8B, 0x45, 0x08, // 401003 mov eax, [ebp+8]
+                           0x85, 0xC0,       // 401006 test eax, eax
+                           0x48};            // 401008 dec eax
+  std::copy(std::begin(Entry), std::end(Entry), Bytes.begin());
+  std::fill(Bytes.begin() + 0x09, Bytes.begin() + 0x38, 0x90);
+  const uint8_t Tail[] = {0x75, 0xCC,       // 401038 jne 401006h
+                          0x8B, 0x4D, 0x0C, // 40103A mov ecx, [ebp+0Ch]
+                          0x5D, 0xC3};      // 40103D pop ebp; ret
+  std::copy(std::begin(Tail), std::end(Tail), Bytes.begin() + 0x38);
+  const uint8_t Padded[] = {0x56,                   // 401041 push esi
+                            0x8B, 0x74, 0x24, 0x08, // mov esi, [esp+8]
+                            0x8B, 0xC6,             // mov eax, esi
+                            0x5E, 0xC3};            // pop esi; ret
+  std::copy(std::begin(Padded), std::end(Padded), Bytes.begin() + 0x41);
+
+  BinaryImage Img = makePeText(std::move(Bytes));
+  Img.KnownCodeRanges.clear();
+  runPostLoadDiscovery(Img, "test");
+  const std::set<va_t> Guesses = Img.boundaryGuessFunctionStarts();
+  ASSERT_TRUE(Guesses.count(0x40103A)) << "the loader guesses after the CC";
+  ASSERT_TRUE(Guesses.count(0x401041));
+
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  const auto Functions = Detector.detect(Img, Dec);
+  EXPECT_TRUE(hasEntry(Functions, 0x401000));
+  EXPECT_FALSE(hasEntry(Functions, 0x40103A)) << "fallen into past a jne";
+  EXPECT_TRUE(hasEntry(Functions, 0x401041)) << "a start after real padding";
+}
+
 TEST(X86_32_FunctionDiscovery, RecoversAlignedPushRegAndSehPrologues) {
   std::vector<uint8_t> Bytes(0x50, 0xCC);
   const uint8_t Entry[] = {0x55, 0x8B, 0xEC, 0x5D, 0xC3};
