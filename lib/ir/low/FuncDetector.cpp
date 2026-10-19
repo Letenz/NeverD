@@ -342,6 +342,8 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   // Functions a binary file's code takes the address of, whose prologue
   // already vouches for them.
   std::set<va_t> CodePointerTargets;
+  // The entries other evidence found before the prologue scan adds its own.
+  std::set<va_t> EvidencedX86Entries;
   if (Img.Entry != 0) {
     scanCallTargets(Img, Dec, DirectCallTargets);
     Entries.insert(DirectCallTargets.begin(), DirectCallTargets.end());
@@ -355,8 +357,10 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
     }
     if (Img.Arch == Arch::ARM)
       Entries.insert(Img.ARMVeneerTargets.begin(), Img.ARMVeneerTargets.end());
-    if (IsX86LinkedCOFF)
+    if (IsX86LinkedCOFF) {
+      EvidencedX86Entries = Entries;
       scanX86UnsymbolizedEntries(Img, Dec, Entries);
+    }
   }
 
   if (RegistrationPointerRoles)
@@ -366,6 +370,17 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
 
   for (va_t Thunk : ExceptionThunks)
     Entries.erase(Thunk);
+
+  // A prologue match that a function with other evidence reaches as its own
+  // code is that function's body.  Drop it before the entries bound the
+  // functions that name their own labels below.
+  if (IsX86LinkedCOFF && Img.Entry != 0) {
+    std::set<va_t> Evidenced;
+    for (va_t Entry : EvidencedX86Entries)
+      if (Entries.count(Entry))
+        Evidenced.insert(Entry);
+    rejectX86InteriorEntries(Img, Dec, Evidenced, CodeNamedByCode);
+  }
 
   // Code that other code names is a function of its own, except inside the
   // function naming it, where it is that function's label: a pointer table

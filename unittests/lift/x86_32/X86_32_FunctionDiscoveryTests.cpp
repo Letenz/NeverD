@@ -28,6 +28,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <iterator>
 
 using namespace neverd;
 
@@ -108,6 +109,77 @@ static bool hasEntry(const std::vector<std::pair<va_t, std::string>> &Functions,
                      va_t Addr) {
   return std::any_of(Functions.begin(), Functions.end(),
                      [Addr](const auto &F) { return F.first == Addr; });
+}
+
+TEST(X86_32_FunctionDiscovery, PrologueMatchesInsideAFunctionAreItsCode) {
+  // The entry's own code falls into a 16-byte-aligned `push esi; push edi`
+  // in its prologue and branches back to an aligned loop head `mov esi,
+  // [esp+38h]` that it otherwise jumps over: both match the unsymbolized
+  // prologue scan, yet both are the entry's code.  A padded function after
+  // it, and one only the entry's tail jump reaches, remain entries.
+  std::vector<uint8_t> Bytes(0x70, 0xCC);
+  const uint8_t Entry[] = {0x55,                   // 401000 push ebp
+                           0x8B, 0xEC,             // 401001 mov ebp, esp
+                           0x83, 0xEC, 0x40,       // 401003 sub esp, 40h
+                           0x53,                   // 401006 push ebx
+                           0x8B, 0x5D, 0x08,       // 401007 mov ebx, [ebp+8]
+                           0x8B, 0x45, 0x0C,       // 40100A mov eax, [ebp+0Ch]
+                           0x8B, 0x4D, 0x10,       // 40100D mov ecx, [ebp+10h]
+                           0x56,                   // 401010 push esi
+                           0x57,                   // 401011 push edi
+                           0x33, 0xF6,             // 401012 xor esi, esi
+                           0xEB, 0x0E,             // 401014 jmp 401024h
+                           0x90, 0x90, 0x90, 0x90, // 401016 loop-head alignment
+                           0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+                           0x8B, 0x74, 0x24, 0x38, // 401020 mov esi, [esp+38h]
+                           0x46,                   // 401024 inc esi
+                           0x83, 0xFE, 0x10,       // 401025 cmp esi, 10h
+                           0x72, 0xF6,             // 401028 jb 401020h
+                           0x5F,                   // 40102A pop edi
+                           0x5E,                   // 40102B pop esi
+                           0x5B,                   // 40102C pop ebx
+                           0xE9, 0x2E, 0x00, 0x00, 0x00}; // 40102D jmp 401060h
+  std::copy(std::begin(Entry), std::end(Entry), Bytes.begin());
+  const uint8_t Padded[] = {0x8B, 0x44, 0x24, 0x04, 0xC3};
+  std::copy(std::begin(Padded), std::end(Padded), Bytes.begin() + 0x40);
+  const uint8_t TailTarget[] = {0x56, 0x57, 0x8B, 0x44, 0x24,
+                                0x0C, 0x5F, 0x5E, 0xC3};
+  std::copy(std::begin(TailTarget), std::end(TailTarget), Bytes.begin() + 0x60);
+
+  BinaryImage Img = makePeText(std::move(Bytes));
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  const auto Functions = Detector.detect(Img, Dec);
+  EXPECT_TRUE(hasEntry(Functions, 0x401000));
+  EXPECT_FALSE(hasEntry(Functions, 0x401010)) << "fallen into";
+  EXPECT_FALSE(hasEntry(Functions, 0x401020)) << "a loop's back edge";
+  EXPECT_TRUE(hasEntry(Functions, 0x401040)) << "a padded function";
+  EXPECT_TRUE(hasEntry(Functions, 0x401060)) << "a tail jump's target";
+}
+
+TEST(X86_32_FunctionDiscovery, AFramePrologueAfterACallStaysAnEntry) {
+  // A call the detector cannot prove returns may be the last instruction of
+  // its function, so a frame prologue right after it is the next function.
+  std::vector<uint8_t> Bytes(0x50, 0xCC);
+  Bytes[0] = 0x55; // 401000 push ebp
+  Bytes[1] = 0x8B; // 401001 mov ebp, esp
+  Bytes[2] = 0xEC;
+  std::fill(Bytes.begin() + 3, Bytes.begin() + 0x1B, 0x90);
+  const uint8_t Call[] = {0xE8, 0x20, 0x00, 0x00, 0x00}; // 40101B call 401040h
+  std::copy(std::begin(Call), std::end(Call), Bytes.begin() + 0x1B);
+  const uint8_t Frame[] = {0x55, 0x8B, 0xEC, 0x5D, 0xC3};
+  std::copy(std::begin(Frame), std::end(Frame), Bytes.begin() + 0x20);
+  std::copy(std::begin(Frame), std::end(Frame), Bytes.begin() + 0x40);
+
+  BinaryImage Img = makePeText(std::move(Bytes));
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  const auto Functions = Detector.detect(Img, Dec);
+  EXPECT_TRUE(hasEntry(Functions, 0x401000));
+  EXPECT_TRUE(hasEntry(Functions, 0x401020));
+  EXPECT_TRUE(hasEntry(Functions, 0x401040));
 }
 
 TEST(X86_32_FunctionDiscovery, RecoversUnalignedFramePrologue) {
