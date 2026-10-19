@@ -26,6 +26,8 @@ struct SourceViewOptions {
   static constexpr uint32_t BasicPasses =
       InstCombine | EarlyCSE | SimplifyCFG | DCE;
 
+  /// Exact MBA derivations plus bounded, full-width-proved semantic synthesis
+  /// in both HighC and LLVM-to-C. CLI and GUI requests share this switch.
   bool Symbolic = false;
   bool RecoverControlFlow = true;
   LLVMOptimization LLVM = LLVMOptimization::O2;

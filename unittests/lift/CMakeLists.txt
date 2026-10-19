@@ -31,6 +31,10 @@ add_neverd_unittest(NeverDHighCParamUsageTests
   core/HighCParamUsageTests.cpp
   LINK_COMPONENTS BackendC)
 
+add_neverd_unittest(NeverDHighSymSimplifyTests
+  core/HighSymSimplifyTests.cpp
+  LINK_COMPONENTS BackendC Solver)
+
 add_neverd_unittest(NeverDHighCSupervisorCallTests
   core/HighCSupervisorCallTests.cpp
   LINK_COMPONENTS BackendC)

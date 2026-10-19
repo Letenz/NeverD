@@ -190,6 +190,18 @@ struct SynthOptions {
   /// build produce the same answer, which is what makes a difference in output
   /// a real change rather than a reshuffle.
   uint64_t Seed = 0x243F6A8885A308D3ull;
+
+  /// Bounded search shared by explicitly requested source simplification.
+  /// Affine answers may contain several coefficients; the work allowance,
+  /// rather than a tiny grammar cost, bounds interactive source requests.
+  /// This policy still needs a full-width verifier for production rewrites.
+  static SynthOptions sourceView() {
+    SynthOptions Options;
+    Options.MaxCost = 32;
+    Options.MaxWork = 20000;
+    Options.VerifySamples = 64;
+    return Options;
+  }
 };
 
 /// What became of an attempt to synthesize, and why nothing did when nothing
