@@ -8008,6 +8008,52 @@ TEST(HighControlFlowSemantics, ALaneOfAJoinIsThatLane) {
   EXPECT_EQ(Root->Operands[0]->Operands[1]->ConstVal, 5u);
 }
 
+TEST(HighControlFlowSemantics, ARecordFieldTakesItsOwnTypeOfASlicedLocal) {
+  // `return {rax, edx}` where edx holds a signed 32-bit local, read as the
+  // field's uint32_t through the register's low bytes: the whole register, or
+  // its sign extension.  The slice folds into the signed local, and the C
+  // initializer converts it to the field's type.
+  for (const bool Extended : {false, true}) {
+    SCOPED_TRACE(Extended);
+    const TypeRef Record = NdType::makeStruct(
+        {NdType::makeInt(8, false), NdType::makeInt(4, false)});
+    ASSERT_TRUE(Record);
+    Record->RegisterReturnRecord = true;
+    ExprPtr Wide = local(0);
+    Wide->Type = NdType::makeInt(8, false);
+    MedVar Narrow;
+    Narrow.Kind = MedVar::Temp;
+    Narrow.Id = 1;
+    Narrow.Size = 4;
+    ExprPtr Value = HighExpr::makeVar(Narrow, NdType::makeInt(4, true));
+    if (Extended) {
+      Value = HighExpr::makeUnary(NdOp::INT_SEXT, Value);
+      Value->Type = NdType::makeInt(8, true);
+    }
+    ExprPtr Pair = HighExpr::makeRecord(Record, {Wide, byteSlice(Value, 0, 4)});
+    ASSERT_EQ(Pair->Kind, ExprKind::Record);
+    HighFunc F;
+    F.Name = "pair";
+    F.Entry = 0x1000;
+    F.ReturnType = Record;
+    F.Body = {result(0x1000, Pair)};
+    simplifyAllExprs(F.Body);
+    const ExprPtr &Root = F.Body[0].RetVal;
+    ASSERT_EQ(Root->Kind, ExprKind::Record);
+    ASSERT_EQ(Root->Operands.size(), 2u);
+    EXPECT_EQ(Root->Operands[1]->Kind, ExprKind::Var);
+    std::string Source;
+    llvm::raw_string_ostream Stream(Source);
+    ASSERT_TRUE(HighCEmitter().emit({F}, Stream, {}));
+    Stream.flush();
+    const size_t Return = Source.find("return (struct ");
+    ASSERT_NE(Return, std::string::npos) << Source;
+    const std::string Initializer =
+        Source.substr(Return, Source.find(";\n", Return) - Return);
+    EXPECT_NE(Initializer.find(", (uint32_t)"), std::string::npos) << Source;
+  }
+}
+
 TEST(HighControlFlowSemantics, PhiCopiesOfOneRegisterShareItsName) {
   // v1 = x; v2 = v1; L: v3 = v2 + 1; v2 = v3; if (v3 < x + 5) goto L;
   // return v3;  -- the PHI copies of one register never overlap the values
