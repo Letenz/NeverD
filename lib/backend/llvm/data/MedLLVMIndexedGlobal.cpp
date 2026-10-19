@@ -1391,6 +1391,82 @@ MedLLVMEmitter::tryResolveIndexedGlobalPtr(const MedVar &AddrVar,
   return Builder.CreateGEP(llvm::Type::getInt8Ty(*Ctx), G, IdxVal, "tblptr");
 }
 
+llvm::Value *MedLLVMEmitter::tryResolveRuntimeIndexedReadOnlyTable(
+    const MedVar &AddrVar, uint16_t SizeHint, size_t AuditedBaseCount,
+    llvm::IRBuilder<> &Builder) {
+  (void)SizeHint;
+  // The caller's audit must have reached exactly one read-only base; a second
+  // mapped base (a double anchor or a base merge) is a genuine ambiguity.
+  if (!CurMedFunc || !Img || AddrVar.isConst() || AuditedBaseCount != 1)
+    return nullptr;
+
+  // Find the INT_ADD/INT_SUB through any pointer-preserving wrapper (an i386
+  // LOAD address is zero-extended to pointer width).
+  const MedOp *Def = lookupDef(AddrVar);
+  for (int Peel = 0; Peel < 8 && Def; ++Peel) {
+    if (Def->Opcode == NdOp::INT_ADD || Def->Opcode == NdOp::INT_SUB)
+      break;
+    auto Forwarded = pointerPreservingInput(*Def);
+    if (!Forwarded)
+      break;
+    Def = lookupDef(*Forwarded);
+  }
+  if (!Def || (Def->Opcode != NdOp::INT_ADD && Def->Opcode != NdOp::INT_SUB))
+    return nullptr;
+
+  // Recover the single table base and additive index terms.  A SUB with a
+  // non-constant subtrahend is the main resolver's branchless shape, not a
+  // plain index, so collectIndexedGlobalBase declines it and this returns.
+  uint64_t Base = 0;
+  bool HaveBase = false;
+  std::vector<MedVar> IdxTerms;
+  if (!collectIndexedGlobalBase(AddrVar, Base, HaveBase, IdxTerms, /*Depth=*/0,
+                                /*FailClosed=*/false) ||
+      !HaveBase || Base == 0 || IdxTerms.empty())
+    return nullptr;
+
+  // The base must be a genuine read-only table -- a non-writable segment, or
+  // one immutable after relocation -- so it cannot be a mutable array a store
+  // aliases.  A runtime index into it needs no bound: the run mirror preserves
+  // the region's exact layout, so an in-region index is faithful and an
+  // out-of-region one is the program's own undefined behaviour, as the
+  // pointer-table resolver's run redirect is for a pointer table.  Every index
+  // term must be a runtime value, never frame-derived (a stack pointer is not
+  // a table index).
+  const Segment *BaseSeg = Img->getSegmentFor(Base);
+  if (!BaseSeg || !BaseSeg->isReadable() || BaseSeg->isExecutable() ||
+      (BaseSeg->isWritable() && !isReadOnlyAfterReloc(BaseSeg)) ||
+      Base < BaseSeg->VA || Base - BaseSeg->VA >= BaseSeg->Data.size())
+    return nullptr;
+  for (const auto &T : IdxTerms) {
+    if (varIsFrameDerived(T))
+      return nullptr;
+    // A folded second mapped base among the index terms is a genuine double
+    // anchor, not an index.
+    if (T.isConst() && isMaterializableReadOnlyDataAddress(T.ConstVal))
+      return nullptr;
+  }
+
+  auto [RunGV, RunStart] = materializeReadOnlyDataRun(BaseSeg);
+  if (!RunGV || Base < RunStart)
+    return nullptr;
+
+  const unsigned AddrBits = AddrVar.Size > 0 ? AddrVar.Size * 8 : 64;
+  auto *IdxTy = llvm::IntegerType::get(*Ctx, AddrBits);
+  llvm::Value *Off = llvm::ConstantInt::get(IdxTy, Base - RunStart);
+  for (const auto &T : IdxTerms) {
+    llvm::Value *TV = getVar(T, Builder);
+    if (!TV)
+      return nullptr;
+    if (TV->getType()->isPointerTy())
+      TV = Builder.CreatePtrToInt(TV, IdxTy);
+    else if (TV->getType() != IdxTy)
+      TV = Builder.CreateZExtOrTrunc(TV, IdxTy);
+    Off = Builder.CreateAdd(Off, TV, "tblidx");
+  }
+  return Builder.CreateGEP(llvm::Type::getInt8Ty(*Ctx), RunGV, Off, "indptr");
+}
+
 llvm::Value *MedLLVMEmitter::tryResolveI386GotRelativeReadOnlyPtr(
     const MedVar &AddrVar, uint16_t SizeHint, llvm::IRBuilder<> &Builder) {
   const auto Got = matchI386GotRelative(AddrVar);

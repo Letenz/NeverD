@@ -7881,6 +7881,10 @@ slot and an inner loop's record pointer `&table[i]` in another, around a call
 with a pushed argument; it is refused the same way without the affine frame
 keys, as the inner loop's merge on the outer back edge leaves its pushes
 unkeyed.
+`ARuntimeIndexedReadOnlyTableResolves` reads an `.rdata` int table at a live-in
+object pointer's field scaled by four, as GOF2's `sub_4028D4` does. Without the
+run-mirror redirect it is refused as an ambiguous read-only table base; with it
+the read is a GEP into a read-only global and the table VA survives nowhere.
 `I386CallContract.ABlockPhiIsNoArgumentPastAnEarlierCallInItsBlock` joins a
 callback's address and an import call's leftover in EDX, calls the import
 again in the join block, then a routine reading ECX and EDX: the argument is

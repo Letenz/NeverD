@@ -889,6 +889,66 @@ TEST(X86_32_FunctionDiscovery, SwitchTableAmongCodeLiftsPastTheMirrorLimit) {
     }
 }
 
+TEST(X86_32_FunctionDiscovery, ARuntimeIndexedReadOnlyTableResolves) {
+  // `table[obj->field]`: a live-in object pointer in EBX, its field loaded at
+  // pointer width, scaled by the int stride and added to a read-only .rdata
+  // table base, as GOF2's sub_4028D4 does.  The index is an unbounded runtime
+  // value, so the offset is unprovable, but the base is a genuine read-only
+  // table: the read resolves through the .rdata run mirror by the base's own
+  // offset plus the runtime index, rather than refusing as an ambiguous
+  // read-only table base.
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  std::vector<uint8_t> Text;
+  auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Text.insert(Text.end(), Bytes);
+  };
+  // EBX is a live-in with no def, so prove() admits the field load as an
+  // opaque runtime word, exactly GOF2's shape.
+  Emit({0x8B, 0x43, 0x58});                         // mov eax, [ebx+0x58]
+  Emit({0x8B, 0x04, 0x85, 0x00, 0x20, 0x40, 0x00}); // mov eax, [eax*4+0x402000]
+  Emit({0xC3});                                     // ret
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+  std::vector<uint8_t> Rdata;
+  for (uint32_t Word : {3u, 1u, 4u, 1u, 5u, 9u, 2u, 6u})
+    for (unsigned Byte = 0; Byte < 4; ++Byte)
+      Rdata.push_back(static_cast<uint8_t>(Word >> (8 * Byte)));
+  addPeSection(Img, ".rdata", 0x402000, std::move(Rdata),
+               SegmentFlags::Readable);
+  // The base relocation of the displacement operand at 0x401006.
+  recordAbsolutePointerRelocations(Img, {{0x401006, 0x402000, InvalidVA}});
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.LiftMode = true;
+  Opts.OnlyFunctionEntries = {0x401000};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_NE(Result.LlvmModule, nullptr);
+  EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+  // The read lands in a real read-only global addressed by a GEP, not a
+  // reconstructed pointer from the stale absolute table VA (0x402000).
+  std::string Text2;
+  llvm::raw_string_ostream OS(Text2);
+  Result.LlvmModule->print(OS, nullptr);
+  EXPECT_EQ(Text2.find("inttoptr (i32 4202496"), std::string::npos) << Text2;
+  EXPECT_EQ(Text2.find("4202496"), std::string::npos)
+      << "the table base VA must not survive as a constant\n"
+      << Text2;
+  // A .rdata run global exists and the load GEPs into it.
+  const bool HasRodataGlobal = Text2.find("@") != std::string::npos &&
+                               Text2.find(".rodata") != std::string::npos;
+  EXPECT_TRUE(HasRodataGlobal) << Text2;
+  EXPECT_NE(Text2.find("getelementptr i8"), std::string::npos) << Text2;
+}
+
 TEST(X86_32_FunctionDiscovery, APointerSpilledAcrossALoopsCallsKeepsItsTable) {
   // A loop walks an array of integers in .rdata with a pointer it keeps in a
   // frame slot across the call in its body: `add dword ptr [ebp-4], 4`.  The

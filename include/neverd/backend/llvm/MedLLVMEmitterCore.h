@@ -1597,6 +1597,19 @@ private:
                                           uint16_t SizeHint, bool FailClosed,
                                           llvm::IRBuilder<> &Builder);
 
+  /// Resolve a read of a genuinely read-only data table indexed by an
+  /// unbounded runtime scalar (`table[obj->field]`): the base is a single
+  /// read-only table but the index is a loaded field with no provable bound,
+  /// so the offset proof fails even though the base is sound.  Redirect the
+  /// whole access through the region's run mirror at the table's own offset
+  /// plus the runtime index, as the pointer-table resolver does for a pointer
+  /// table.  Returns null (never fatal) for any other shape, so a true
+  /// ambiguity still fails closed in the caller.
+  llvm::Value *tryResolveRuntimeIndexedReadOnlyTable(const MedVar &AddrVar,
+                                                     uint16_t SizeHint,
+                                                     size_t AuditedBaseCount,
+                                                     llvm::IRBuilder<> &Builder);
+
   /// Speculatively symbolize an integer call argument that may be a pointer,
   /// mirroring the LOAD/STORE address resolvers.
   /// A computed `&global[index]` passed to a function would otherwise stay a
