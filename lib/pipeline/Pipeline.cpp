@@ -431,10 +431,15 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     {
       // A run that shares the analysis cache read them from it (buildLowIR).
       PipelineAnalysisCache *Shared = sharedAnalysisCache(Img, Opts);
-      const std::set<va_t> Guesses =
-          Shared ? PipelineAnalysisCache::SymbolInventory::of(Img, *Shared)
-                       ->BoundaryGuesses
-                 : Img.boundaryGuessFunctionStarts();
+      const std::shared_ptr<const PipelineAnalysisCache::SymbolInventory>
+          Inventory =
+              Shared ? PipelineAnalysisCache::SymbolInventory::of(Img, *Shared)
+                     : nullptr;
+      std::set<va_t> OwnGuesses;
+      if (!Inventory)
+        OwnGuesses = Img.boundaryGuessFunctionStarts();
+      const std::set<va_t> &Guesses =
+          Inventory ? Inventory->BoundaryGuesses : OwnGuesses;
       std::set<va_t> Absorbed;
       if (!Guesses.empty())
         for (const auto &LF : Result.LowFuncs)
@@ -454,7 +459,9 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
         // functions, and an image holds tens of thousands of records.  They
         // are sorted once exceptions are parsed; any other order is scanned.
         const auto &Ranges = Img.KnownCodeRanges;
-        const bool Sorted = std::is_sorted(Ranges.begin(), Ranges.end());
+        const bool Sorted = Inventory
+                                ? Inventory->KnownCodeRangesSorted
+                                : std::is_sorted(Ranges.begin(), Ranges.end());
         const auto StartsUnwind = [&](va_t Entry) {
           if (Img.ContinuationCodeStarts.count(Entry))
             return false;
