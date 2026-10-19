@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-import datetime
 import json
 from pathlib import Path
 import re
@@ -139,7 +138,7 @@ def generate(arguments, name, target, include, commit):
         "declares them with EDK II's MdePkg headers: the UEFI and PI "
         "specifications, their protocols and GUIDs, the industry standards "
         "and the library classes.  Generated on "
-        f"{datetime.date.today().isoformat()} by "
+        f"{linux.generation_date()} by "
         f"scripts/generate_uefi_types.py --target {name} from MdePkg at "
         f"commit {commit} of https://github.com/tianocore/edk2: changed from "
         "it, as NeverD reads and renders its declarations again.  The "

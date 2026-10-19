@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-import datetime
 import json
 from pathlib import Path
 import re
@@ -49,6 +48,9 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import generate_linux_types as linux  # noqa: E402
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 
@@ -326,7 +328,7 @@ def generate(arguments, name, target, version):
         text = (
             f"The Windows {target.describes.replace(chr(10) + '// ', ' ')}, "
             "for Windows 11 24H2.  Generated on "
-            f"{datetime.date.today().isoformat()} by "
+            f"{linux.generation_date()} by "
             f"scripts/generate_windows_types.py --target {name} from the SDK "
             f"headers of mingw-w64 {version} and the native API headers of "
             f"phnt at commit {commit}: changed from them, as NeverD reads and "
@@ -339,7 +341,7 @@ def generate(arguments, name, target, version):
         header = (
             f"// The Windows {target.describes} for Windows 10 2004.  "
             "Generated\n"
-            f"// on {datetime.date.today().isoformat()} by "
+            f"// on {linux.generation_date()} by "
             f"scripts/generate_windows_types.py --target {name}\n"
             f"// from the DDK and SDK headers of mingw-w64 {version}: changed "
             "from\n"
