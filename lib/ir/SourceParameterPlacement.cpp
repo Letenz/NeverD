@@ -129,3 +129,14 @@ neverd::placeSourceParameters(Arch A, BinaryFormat F, const TypeRef &ReturnType,
     return std::nullopt;
   }
 }
+
+std::optional<SourceParameterPlacement>
+neverd::placeEnteredParameters(Arch A, BinaryFormat F,
+                               const TypeRef &ReturnType,
+                               llvm::ArrayRef<TypeRef> ParamTypes,
+                               llvm::ArrayRef<SourceABIValueLocation> Entries) {
+  if (A != Arch::X86)
+    return std::nullopt;
+  return placeI386Entered(getTargetRegInfo(A), F, ReturnType, ParamTypes,
+                          Entries);
+}

@@ -3896,6 +3896,8 @@ bool readsWholeRecord(const NdType &Record, uint64_t Offset,
          !Type->displayFieldPathAt(0, AccessSize, /*EnterNestedAtZero=*/true,
                                    /*ArrayElements=*/true, Class);
 }
+
+std::optional<std::string> canonicalizeDisplayPath(llvm::StringRef Field);
 } // namespace
 
 TypeRef HighCWriter::declaredRecordPointee(const HighExpr &Base) const {
@@ -4051,7 +4053,8 @@ HighCWriter::typedPointerOffset(const HighExpr &Addr) const {
 }
 
 std::optional<HighCWriter::TypedIndexAccess>
-HighCWriter::typedIndexAccess(const HighExpr &Addr) {
+HighCWriter::typedIndexAccess(const HighExpr &Addr, uint16_t AccessSize,
+                              NdAccessClass Class) {
   const HighExpr *Add = unwrapIntegerView(&Addr);
   if (!Add || Add->Kind != ExprKind::BinOp || Add->Op != NdOp::INT_ADD ||
       Add->Operands.size() != 2 || !Add->Operands[0] || !Add->Operands[1])
@@ -4140,12 +4143,18 @@ HighCWriter::typedIndexAccess(const HighExpr &Addr) {
       PtrTy = nullptr;
     if (!PtrTy && Base->Type && Base->Type->Kind == NdTypeKind::Ptr)
       PtrTy = Base->Type;
-    if (BasePath.empty()) {
-      if (auto Member = typedMemberAccess(*Base))
-        BasePath = *Member;
-      else
-        BasePath = Name;
-    }
+    // A pointer that holds an array member's address names that member,
+    // as `s->heap` is the array `s + 0x10` indexes; a pointer to a record
+    // holds the address of its elements, not of the first one's member.
+    if (BasePath.empty())
+      if (const auto Peeled = typedPointerOffset(*Base);
+          Peeled && Peeled->second != 0)
+        if (const TypeRef MemberTy = typedMemberType(*Base);
+            MemberTy && MemberTy->Kind == NdTypeKind::Array)
+          if (auto Member = typedMemberAccess(*Base))
+            BasePath = *Member;
+    if (BasePath.empty())
+      BasePath = Name;
   }
   if (PtrTy && PtrTy->Kind == NdTypeKind::Struct && !PtrTy->IsEnum &&
       Stride != 0 && Stride <= 0xFFFF) {
@@ -4169,9 +4178,32 @@ HighCWriter::typedIndexAccess(const HighExpr &Addr) {
   completeDisplayRecord(Dbg, PtrTy);
   completeDisplayRecord(Dbg, PtrTy->Pointee);
   TypedIndexAccess Out;
+  Out.ElemType = PtrTy->Pointee;
+  // An access narrower than the element reads the member at its start of
+  // its width, as `tree[n].fc.freq`, where one is; no scalar is a record,
+  // and none is the element of another width.
+  if (AccessSize && AccessSize != Out.ElemType->Size) {
+    const NdType &Element = *Out.ElemType;
+    if (Element.Kind != NdTypeKind::Struct || Element.IsEnum ||
+        readsWholeRecord(Element, 0, AccessSize, /*EnterNestedAtZero=*/true,
+                         Class))
+      return std::nullopt;
+    const auto Field =
+        Element.displayFieldPathAt(0, AccessSize, /*EnterNestedAtZero=*/true,
+                                   /*ArrayElements=*/true, Class);
+    auto Path = Field ? canonicalizeDisplayPath(*Field) : std::nullopt;
+    TypeRef FieldTy = Element.displayFieldTypeAt(0, AccessSize,
+                                                 /*ArrayElements=*/true, Class);
+    if (!Path || !FieldTy)
+      return std::nullopt;
+    Out.Member = std::move(*Path);
+    Out.ElemType = std::move(FieldTy);
+  } else if (AccessSize && Out.ElemType->Kind == NdTypeKind::Struct &&
+             !Out.ElemType->IsEnum) {
+    return std::nullopt;
+  }
   Out.Base = std::move(BasePath);
   Out.Index = exprStr(*Index);
-  Out.ElemType = PtrTy->Pointee;
   return Out;
 }
 
@@ -5672,8 +5704,9 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
               typedMemberAccess(*E.Operands[0], E.Type ? E.Type->Size : 0,
                                 /*EnterNestedAtZero=*/true, accessClassOf(&E)))
         return *Member;
-      if (auto Index = typedIndexAccess(*E.Operands[0]))
-        return Index->Base + "[" + Index->Index + "]";
+      if (auto Index = typedIndexAccess(
+              *E.Operands[0], E.Type ? E.Type->Size : 0, accessClassOf(&E)))
+        return Index->text();
       if (auto Field = cxxCatchFieldAccess(*E.Operands[0]))
         return *Field;
     }
