@@ -395,6 +395,19 @@ class X87CallGraphCache {
   std::list<SummaryEntry> Summaries;
   std::unordered_map<va_t, std::list<SummaryEntry>::iterator> SummaryIndex;
   size_t SummaryBytes = 0;
+  /// Whether a call to a target makes validatedSummary refuse the body that
+  /// makes it (refusesCall), with the no-return answers of every incomplete
+  /// lift its queries read.  Kept under RefusalInputs while those answers
+  /// hold, so a target is proved once, not once per body and request.
+  struct CallRefusal {
+    bool Refuses = false;
+    std::vector<X87NoReturnAnswer> Dependencies;
+  };
+  // A few dozen bytes per target: room for every function of a kernel.
+  static constexpr size_t MaxRefusals = size_t(1) << 18;
+  static constexpr size_t MaxRefusalDependencies = 256;
+  std::optional<Context> RefusalInputs;
+  std::unordered_map<va_t, CallRefusal> Refusals;
 
 public:
   X87CallGraphCache(const NoReturnCalleeProver *Prover,
@@ -632,6 +645,10 @@ private:
     }
     return {};
   }
+  /// Whether validatedSummary refuses a body for its call to \p Target:
+  /// where the image owns the x87 context the callee uses it, or the call
+  /// pops a register.  An answer the queries cannot give refuses nothing.
+  bool refusesCall(const CFGBuilder &B, va_t Target);
   std::shared_ptr<const SummaryFacts> validatedSummary(
       const std::shared_ptr<X87CallGraphCache> &Cache, const BinaryImage &Img,
       va_t Entry, const std::set<va_t> *Entries,
@@ -1011,6 +1028,9 @@ class X87CallEffectIndex {
   const BinaryImage &Image;
   std::map<va_t, std::shared_ptr<const Graph>> Graphs;
   std::map<va_t, std::optional<int>> Answers;
+  /// Set when this index read an incomplete lift whose no-return answers
+  /// went unrecorded, so nothing derived from it can name what it depends on.
+  bool UnrecordedLift = false;
 
   std::optional<int> importEffect(llvm::StringRef Name) const {
     bool Floating = false, LongDouble = false, Complex = false;
@@ -1220,8 +1240,10 @@ class X87CallEffectIndex {
     // that threw leaves the build above).  Without them, it is not retained.
     if (!F.hasCompleteInstructionLift() || !F.TruncatedPathAddresses.empty() ||
         F.Blocks.empty() || F.Blocks.front().StartAddr != Entry) {
-      if (!SharedGraphs || !AnswersComplete)
+      if (!SharedGraphs || !AnswersComplete) {
+        UnrecordedLift = true;
         return G;
+      }
       G.Rejection = Graph::ProjectionRejection::IncompleteLift;
       G.NoReturnAnswers = std::move(Answers);
       It->second = SharedGraphs->publish(Settings, Entry, Built);
@@ -1418,6 +1440,19 @@ class X87CallEffectIndex {
 public:
   explicit X87CallEffectIndex(const CFGBuilder &Builder)
       : Settings(Builder), Image(*Builder.CurrentImg) {}
+  /// The no-return answers of every incomplete lift this index's queries
+  /// read: their answers hold while these do.  nullopt when a lift's answers
+  /// went unrecorded.
+  std::optional<std::vector<X87NoReturnAnswer>> liftDependencies() const {
+    if (UnrecordedLift)
+      return std::nullopt;
+    std::vector<X87NoReturnAnswer> Dependencies;
+    for (const auto &[Address, G] : Graphs)
+      if (G && G->Rejection == Graph::ProjectionRejection::IncompleteLift)
+        Dependencies.insert(Dependencies.end(), G->NoReturnAnswers.begin(),
+                            G->NoReturnAnswers.end());
+    return Dependencies;
+  }
   std::optional<bool> usesContext(va_t Entry) {
     Query Q;
     std::set<va_t> Active;
@@ -1573,14 +1608,53 @@ X87CallGraphCache::validatedSummary(
   // A wrapper without local stack use can still require context lifetime for
   // its callee. Raw machine bodies must not bypass that normalization. Every
   // query retains the ordinary depth and its full private allowance.
-  X87CallEffectIndex Effects(Request);
-  for (va_t Target : Facts->Calls) {
-    if (ownsX87Context(Img) && Effects.usesContext(Target).value_or(false))
+  for (va_t Target : Facts->Calls)
+    if (Cache->refusesCall(Request, Target))
       return {};
-    if (Effects.effect(Target) == std::optional<int>(-1))
-      return {};
-  }
   return Facts;
+}
+
+bool X87CallGraphCache::refusesCall(const CFGBuilder &B, va_t Target) {
+  std::optional<CallRefusal> Kept;
+  {
+    std::lock_guard<std::mutex> Lock(Mutex);
+    if (RefusalInputs && matches(*RefusalInputs, B))
+      if (const auto Found = Refusals.find(Target); Found != Refusals.end())
+        Kept = Found->second;
+  }
+  // The answer holds while the prover answers as it did for the incomplete
+  // lifts the queries read, as answersHold has a refusal graph hold.
+  if (Kept && llvm::all_of(Kept->Dependencies, [&](const auto &Answer) {
+        return B.NoReturnCallees &&
+               B.NoReturnCallees->neverReturns(Answer.Target, Answer.Depth) ==
+                   Answer.NeverReturns;
+      }))
+    return Kept->Refuses;
+  // Nested summary requests take their ordinary build, as in validatedSummary.
+  llvm::SaveAndRestore<bool> Replaying(ReplayingCallRegisterBody, true);
+  X87CallEffectIndex Effects(B);
+  const bool Refuses = (ownsX87Context(*B.CurrentImg) &&
+                        Effects.usesContext(Target).value_or(false)) ||
+                       Effects.effect(Target) == std::optional<int>(-1);
+  auto Dependencies = Effects.liftDependencies();
+  if (!Dependencies || Dependencies->size() > MaxRefusalDependencies)
+    return Refuses;
+  try {
+    std::lock_guard<std::mutex> Lock(Mutex);
+    if (!RefusalInputs || !matches(*RefusalInputs, B)) {
+      Context Next = freezeContext(B);
+      if (!contextBytes(Next))
+        return Refuses;
+      Refusals.clear();
+      RefusalInputs = std::move(Next);
+    }
+    if (Refusals.size() < MaxRefusals || Refusals.count(Target))
+      Refusals.insert_or_assign(Target,
+                                CallRefusal{Refuses, std::move(*Dependencies)});
+  } catch (const std::bad_alloc &) {
+    // Remembering is optional; the answer itself stands.
+  }
+  return Refuses;
 }
 
 CFGBuilder::CallGraphWarmup CFGBuilder::warmCallGraphs(
@@ -1626,6 +1700,9 @@ CFGBuilder::CallGraphWarmup CFGBuilder::warmCallGraphs(
         for (size_t I; (I = Claim()) < N;)
           try {
             (void)Worker.graph(Functions[I]);
+            // A body that calls the function asks this when it is reused.
+            // The answer stays after the cache has no room for more bodies.
+            (void)Cache->refusesCall(Settings, Functions[I]);
           } catch (...) {
             Failures[I] = std::current_exception();
           }

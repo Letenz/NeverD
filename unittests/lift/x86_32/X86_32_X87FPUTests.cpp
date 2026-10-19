@@ -940,6 +940,53 @@ TEST(X87CallGraphCache, AnIncompleteLiftIsBuiltAgainWhenAnAnswerChanges) {
   EXPECT_GT(Access::stats(Again)[0], Hits);
 }
 
+TEST(X87CallGraphCache, AReusedBodyProvesEachCallOnceWhileItsAnswersHold) {
+  // 0x1180 calls the caller of callThenNoInstructionImage, whose lift is
+  // complete only once 0x1100 is proved never to return.  Reusing the
+  // retained body asks whether that call may change the x87 stack.  The
+  // answer is kept with the no-return answer the incomplete lift read: a
+  // later reuse reads no graph, and once 0x1100 never returns the call is
+  // proved again.
+  using Access = detail::X87CallGraphCacheTestAccess;
+  BinaryImage Image = callThenNoInstructionImage();
+  // call 0x1000; ret
+  const std::vector<uint8_t> Outer = {0xe8, 0x7b, 0xfe, 0xff, 0xff, 0xc3};
+  std::copy(Outer.begin(), Outer.end(), Image.Segments[0].Data.begin() + 0x180);
+  Symbol Sym = Symbol::makeFunc(0x1180, Outer.size());
+  Sym.Name = "outer";
+  Image.Symbols.push_back(Sym);
+  Image.KnownCodeRanges.emplace_back(0x1180, 0x1180 + Outer.size());
+  const std::set<va_t> Entries{0x1000, 0x1100, 0x1180};
+  struct TargetProver final : NoReturnCalleeProver {
+    std::set<va_t> Never;
+    mutable size_t Questions = 0;
+    bool neverReturns(va_t Target, unsigned) const override {
+      ++Questions;
+      return Never.count(Target) != 0;
+    }
+    bool mayNeverReturn(va_t) const override { return true; }
+  } Prover;
+  auto Cache = createX87CallGraphCache(&Prover, nullptr,
+                                       /*RetainCallRegisterBodies=*/true);
+  CFGBuilder::warmCallGraphs(Cache, Image, {0x1180}, &Entries, nullptr, &Prover,
+                             nullptr, nullptr, 1);
+  CFGBuilder Probe;
+  Probe.setX87CallGraphCache(Cache);
+  const auto Reuse = [&] {
+    return CFGBuilder::cachedCallRegisterBody(
+        Cache, Image, 0x1180, &Entries, nullptr, &Prover, nullptr, nullptr);
+  };
+  ASSERT_TRUE(Reuse());
+  const auto Graphs = Access::stats(Probe);
+  const size_t Questions = Prover.Questions;
+  ASSERT_TRUE(Reuse());
+  EXPECT_EQ(Access::stats(Probe), Graphs);
+  EXPECT_GT(Prover.Questions, Questions);
+  Prover.Never = {0x1100};
+  ASSERT_TRUE(Reuse());
+  EXPECT_GT(Access::stats(Probe)[0], Graphs[0]);
+}
+
 TEST(X87CallGraphCache, ChangedBuildContextsCannotHitThePreviousGraph) {
   using Access = detail::X87CallGraphCacheTestAccess;
   struct ReturningProver final : NoReturnCalleeProver {
