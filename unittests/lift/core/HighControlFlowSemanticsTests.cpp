@@ -4960,6 +4960,121 @@ TEST(HighControlFlowSemantics, ArmJumpPastALoopItAloneEntersBecomesStructured) {
   EXPECT_EQ(Exits, 0u);
 }
 
+TEST(HighControlFlowSemantics, ALandingPadOneJumpEntersKeepsItsPlace) {
+  // The tail of std::panicking::panic_with_hook in an AArch64 Rust image.
+  // The unwinder enters 0x1764, which only jumps to 0x1780, and it enters
+  // 0x1780 from another call too.  0x1780 drops a guard and ends in
+  // `brk #1`.  One jump names 0x1780, but moving its code to that jump
+  // would leave no code at the address either entry resumes at.
+  auto Call = [](va_t Address, const char *Callee, bool Returns) {
+    HighStmt S;
+    S.Kind = StmtKind::Call;
+    S.Addr = Address;
+    S.CallExpr = HighExpr::makeCall(Callee, 0x2000, {});
+    S.CallExpr->DoesNotReturn = !Returns;
+    return S;
+  };
+  HighStmt Trap;
+  Trap.Kind = StmtKind::Call;
+  Trap.Addr = 0x1784;
+  Trap.CallExpr = HighExpr::makeCall("trap", 0, {HighExpr::makeConst(1, 2)});
+  Trap.CallExpr->IntrinsicId = Intrinsic::Brk;
+  const std::vector<HighStmt> Tail = {
+      result(0x1700, local(1)), jump(0x1764, 0x1780),
+      Call(0x177c, "panic_in_cleanup", /*Returns=*/false),
+      Call(0x1780, "guard_drop", /*Returns=*/true), Trap};
+  auto Shape = [](const std::vector<HighStmt> &Body) {
+    std::vector<std::pair<unsigned, va_t>> Out;
+    for (const HighStmt &S : Body)
+      Out.emplace_back(static_cast<unsigned>(S.Kind), S.Addr);
+    return Out;
+  };
+  std::vector<HighStmt> Body = Tail;
+  reduceSingleUseGotos(Body, /*SpliceRegions=*/true, {0x1764, 0x1780});
+  EXPECT_EQ(Shape(Body), Shape(Tail));
+  // A copy of 0x1780's code in place of the jump would leave the original
+  // unreferenced after a terminator, and dead-code elimination removes it.
+  Body = Tail;
+  duplicateSmallReturnTails(Body, /*PrintedSize=*/false, {0x1764, 0x1780});
+  EXPECT_EQ(Shape(Body), Shape(Tail));
+}
+
+TEST(HighControlFlowSemantics, APadsFirstReadFoldsBehindAnAnchor) {
+  // The pad at 0xDD9C of std::panicking::panic_handler's closure loads a
+  // slot that only its first test reads.  The read moves into the test, and
+  // an anchor keeps 0xDD9C, where the unwinder enters.
+  HighStmt Panic;
+  Panic.Kind = StmtKind::Call;
+  Panic.Addr = 0xdd98;
+  Panic.CallExpr = HighExpr::makeCall("panic_with_hook", 0x2000, {});
+  Panic.CallExpr->DoesNotReturn = true;
+  HighStmt Read = assign(0xdd9c, 2, 0);
+  Read.Val = HighExpr::makeLoad(local(3), NdType::makeInt(8));
+  HighStmt Test;
+  Test.Kind = StmtKind::If;
+  Test.Addr = 0xdda4;
+  Test.Cond =
+      HighExpr::makeBinop(NdOp::INT_SLESS, local(2), HighExpr::makeConst(1, 8));
+  Test.Body = {result(0xddc0, HighExpr::makeConst(0, 8))};
+  std::vector<HighStmt> Body = {Panic, Read, Test,
+                                result(0xdda8, HighExpr::makeConst(1, 8))};
+  reduceSingleUseGotos(Body, /*SpliceRegions=*/false, {0xdd9c});
+  ASSERT_EQ(Body.size(), 4u);
+  EXPECT_EQ(Body[1].Kind, StmtKind::Block);
+  EXPECT_EQ(Body[1].Addr, 0xdd9cu);
+  ASSERT_EQ(Body[2].Kind, StmtKind::If);
+  bool ReadsTheSlot = false, ReadsTheTemporary = false;
+  std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
+    if (!E)
+      return;
+    ReadsTheSlot |= E->Kind == ExprKind::Load;
+    ReadsTheTemporary |= E->Kind == ExprKind::Var && E->Var.Id == 2;
+    for (const ExprPtr &Operand : E->Operands)
+      Visit(Operand);
+  };
+  Visit(Body[2].Cond);
+  EXPECT_TRUE(ReadsTheSlot);
+  EXPECT_FALSE(ReadsTheTemporary);
+}
+
+TEST(HighControlFlowSemantics, AJumpTailKeepsTheLandingPadsAroundIt) {
+  // 0x1764 is a landing pad whose code is `goto 0x1780`; 0x1768 jumps there
+  // too.  0x1780 sets v1 and goes on to 0x17a0.
+  HighStmt Panic;
+  Panic.Kind = StmtKind::Call;
+  Panic.Addr = 0x177c;
+  Panic.CallExpr = HighExpr::makeCall("panic_in_cleanup", 0x2000, {});
+  Panic.CallExpr->DoesNotReturn = true;
+  HighStmt Join;
+  Join.Kind = StmtKind::Block;
+  Join.Addr = 0x17a0;
+  const std::vector<HighStmt> Tail = {result(0x1700, local(1)),
+                                      jump(0x1764, 0x1780),
+                                      jump(0x1768, 0x1780),
+                                      Panic,
+                                      assign(0x1780, 1, 1),
+                                      jump(0x1784, 0x17a0),
+                                      Join,
+                                      result(0x17a4, local(1))};
+  auto Shape = [](const std::vector<HighStmt> &Body) {
+    std::vector<std::pair<unsigned, va_t>> Out;
+    for (const HighStmt &S : Body)
+      Out.emplace_back(static_cast<unsigned>(S.Kind), S.Addr);
+    return Out;
+  };
+  // A pad that two jumps reach is no tail to copy to them.
+  std::vector<HighStmt> Body = Tail;
+  EXPECT_FALSE(duplicateSmallJumpTails(Body, {0x1780}));
+  EXPECT_EQ(Shape(Body), Shape(Tail));
+  // A pad that jumps to a tail keeps its address ahead of the copy.
+  Body = Tail;
+  ASSERT_TRUE(duplicateSmallJumpTails(Body, {0x1764}));
+  ASSERT_GE(Body.size(), 3u);
+  EXPECT_EQ(Body[1].Kind, StmtKind::Block);
+  EXPECT_EQ(Body[1].Addr, 0x1764u);
+  EXPECT_EQ(Body[2].Kind, StmtKind::Assign);
+}
+
 TEST(HighControlFlowSemantics, ArmJumpingBackAfterWorkBecomesALoop) {
   // v = x; X: v = v + 1; if (v < 5) { v = v + 1; goto X; }  return v;
   auto Bump = [](va_t Address) {
