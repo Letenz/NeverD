@@ -8346,6 +8346,13 @@ Program visibility. AndroidFramework creates the shared throwable and message;
 JNI transports that identity, and DEX catches it through the existing Runtime.
 JSON does not execute or infer lookup outcomes, and a negative parent observation
 does not close a child namespace or change JNI FindClass.
+`Runtime::snapshot()` reads the existing class initialization owner and framework
+identities without guest work. Program records supplied declaration ownership
+independently of source labels; the shared framework owner supplies projected
+loader ownership for both execution and reporting. The explicit application
+loader stage is independent of Application object creation; lookup failures and
+reflection use that same stage. Native `observe_java_state`
+only transports this optional final directory and does not initialize classes.
 The retained application files directory and File path values use the same
 heap. Native setup validates its declared directory against LinuxFiles; Dalvik
 does not acquire an independent host filesystem. LinuxFiles owns getcwd bytes

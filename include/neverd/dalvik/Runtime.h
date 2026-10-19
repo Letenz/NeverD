@@ -10,6 +10,7 @@
 
 #include "neverd/dalvik/AndroidApplication.h"
 #include "neverd/dalvik/Heap.h"
+#include "neverd/dalvik/RuntimeSnapshot.h"
 
 #include <functional>
 #include <memory>
@@ -86,9 +87,11 @@ public:
   bool androidFrameworkField(const Field &field) const;
 
 private:
+  friend class Runtime;
   void addAndroidVersion(const std::map<std::string, std::string> &properties);
   void addAndroidFramework();
   ClassMap classes;
+  std::set<const Class *> supplied_classes;
   std::map<FieldRef, PlatformValue> platform_values;
   std::set<const Field *> android_framework_fields;
 };
@@ -120,6 +123,9 @@ public:
                           std::span<const uint64_t> args,
                           const AdmitInstruction &admit,
                           bool nonvirtual = false);
+  // No guest allocation, initialization, loader lookup or budget consumption.
+  // Available after terminal stops as well as ordinary Java returns/throws.
+  RuntimeSnapshot snapshot() const;
 
 private:
   struct State;

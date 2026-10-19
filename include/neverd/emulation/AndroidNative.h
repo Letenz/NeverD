@@ -7,6 +7,7 @@
 #define NEVERD_EMULATION_ANDROIDNATIVE_H
 
 #include "neverd/dalvik/AndroidApplication.h"
+#include "neverd/dalvik/RuntimeSnapshot.h"
 #include "neverd/emulation/AndroidResolverOptions.h"
 #include "neverd/emulation/ProcessCall.h"
 
@@ -142,6 +143,9 @@ struct AndroidNativeOptions {
   /// share this workload VM. Scalar API 28 Build.VERSION fields project the
   /// explicit Properties snapshot; framework services are not inferred.
   bool JNI = false;
+  /// Opt-in final, read-only declaration/initialization/framework directory.
+  /// Requires JNI; never initializes Java classes or materializes identities.
+  bool ObserveJavaState = false;
   /// Explicit API 28 framework snapshot. Absent means unknown, not unattached.
   std::optional<mobile::dalvik::AndroidApplicationSnapshot> Application;
   /// Explicit negative results from the workload's class loader. Keys are

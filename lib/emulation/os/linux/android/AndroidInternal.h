@@ -137,7 +137,7 @@ public:
   bool timedOut() const { return Expired; }
   BionicResult invoke(NativeCallEvent &Call);
   BionicResult finishCallback(const GuestCallback &Callback);
-  void reportJNIRegistrations();
+  void reportJNIState();
   BionicResult resumeMutex(uint64_t Address, uint16_t Attributes);
   /// Complete a shared kernel result using the current thread's libc errno.
   BionicResult kernelResult(std::optional<uint64_t> Returned);
