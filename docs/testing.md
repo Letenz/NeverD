@@ -585,7 +585,9 @@ the name the program lays out its own way, and
 between pointers and integers that locals, results and a C library routine's
 typedef parameters need, and `IndirectCallsTakeNoSignatureFromTheirCaller`
 keeps the caller's signature off an indirect call inside it.
-`ReadsTheDefinitionsOfTheProgramsTypes` reads a unit's
+`X86_32_DebugParams.ParametersAfterAPointerTakeTheNextSlot` decompiles
+`test_debug_params32.o`, built with `-g`, whose parameters follow a pointer of
+four bytes. `ReadsTheDefinitionsOfTheProgramsTypes` reads a unit's
 local types definitions back in C as written, whole in C++, and in Rust and
 Go as far as their structures lay them out, saying why for the rest.
 `TheProgramsTypesSpellTheirRecordsAndTheirMembers` gives Rust and Go the
