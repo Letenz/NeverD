@@ -58,6 +58,31 @@ TEST_P(AndroidJNI, VMThreadAttachmentAndVersions) {
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
   EXPECT_EQ(R.ReturnValue, 0u);
 }
+TEST_P(AndroidJNI,
+       LoaderFailuresRetainExceptionsAcrossDetachWithoutClosingNamespaces) {
+  using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
+  using Loader = Snapshot::ClassLookupFailure::Loader;
+  Options.Android->Application = Snapshot{Snapshot::Phase::Attached};
+  Options.Android->Application->class_lookup_failures = {
+      {Loader::Boot, "fixture.Optional", "declared missing"}};
+  auto R = run("jni_loader_failure");
+  EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+  for (unsigned Mode : {1u, 2u}) {
+    Options.Android->Arguments = {Mode};
+    auto Unknown = run("jni_loader_failure");
+    EXPECT_EQ(Unknown.Stop, Mode == 1 ? ProcessStopReason::UnsupportedService
+                                      : ProcessStopReason::RuntimeFailure)
+        << Unknown.Diagnostic;
+    if (Mode == 2)
+      EXPECT_NE(Unknown.Diagnostic.find("unmodeled class: fixture/Optional"),
+                std::string::npos);
+  }
+  Options.Android->Arguments.clear();
+  Options.Android->Application->class_lookup_failures.clear();
+  auto Unknown = run("jni_loader_failure");
+  EXPECT_EQ(Unknown.Stop, ProcessStopReason::UnsupportedService);
+}
 TEST_P(AndroidJNI, InstrumentationFieldAndGetterShareLifetimeAndWrites) {
   using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
   for (unsigned Mode : {1u, 2u, 3u}) {

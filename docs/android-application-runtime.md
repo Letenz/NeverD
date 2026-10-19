@@ -54,6 +54,30 @@ descriptor spellings, non-ASCII lookup and unknown loader instances stop
 explicitly. They do not become ClassNotFoundException, empty classes, host
 classpath searches or successful placeholder objects.
 
+An optional `application_snapshot.class_lookup_failures` array declares exact
+negative `loadClass` observations. Each entry requires `loader` (`boot`,
+`system` or `application`), `binary_name` and `message` (a string or explicit
+null). For example:
+
+```json
+{"phase":"attached","class_lookup_failures":[
+  {"loader":"boot","binary_name":"example.Optional","message":null}
+]}
+```
+
+This input is conditional evidence, not automatic inference from an incomplete
+DEX inventory. Only the selected loader's exact lookup throws a fresh shared
+`ClassNotFoundException` with the declared message. The guest can catch or clear
+it and continue; known loads still avoid initialization. Failure in a parent
+does not declare failure in a child, nor does it alter JNI `FindClass` outcomes.
+Unknown names and foreign loader instances still stop explicitly. The array is
+limited to 256 unique loader/name pairs, binary names to 1024 ASCII bytes with
+nonempty Java identifier components, and messages to 4096 UTF-8 bytes. Empty
+messages and null messages remain distinct. Application loader outcomes require
+the application phase. A failure cannot shadow a declaration visible to that
+loader. Custom delegation, exception causes and a closed complete classpath are
+not supplied by these observations.
+
 The lifecycle phase is fixed per workload; modeled mutable fields retain guest writes. It does not execute
 `bindApplication`, custom Application constructors, framework class initializers,
 split/delegate-last/custom class loaders, security-manager policies, framework

@@ -1345,7 +1345,7 @@ Runtime::Runtime(const Program &program, std::shared_ptr<Heap> heap,
                  std::optional<AndroidApplicationSnapshot> application)
     : state(std::make_unique<State>(
           program, heap ? std::move(heap) : std::make_shared<Heap>(),
-          AndroidFramework(application))) {
+          AndroidFramework(application, program))) {
   if (application && !program.containsClass("Landroid/app/ActivityThread;"))
     throw Error("Android application snapshot requires an Android program");
 }

@@ -9,6 +9,7 @@
 #include "../os/linux/android/AndroidObservation.h"
 #include "ProcessNetworkJSON.h"
 
+#include "neverd/dalvik/Budget.h"
 #include "neverd/emulation/ProcessReportFields.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -204,6 +205,38 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       mobile::dalvik::AndroidApplicationSnapshot Snapshot;
       bool HasPhase = false;
       for (const auto &[Key, Value] : *Input) {
+        if (Key == field::ApplicationClassLookupFailures) {
+          const auto *Failures = Value.getAsArray();
+          if (!Failures || Failures->size() > 256)
+            return invalid(Key);
+          for (const auto &Entry : *Failures) {
+            const auto *Failure = Entry.getAsObject();
+            if (!Failure || Failure->size() != 3 ||
+                !Failure->getString("loader") ||
+                !Failure->getString("binary_name") || !Failure->get("message"))
+              return invalid(Key);
+            using Outcome =
+                mobile::dalvik::AndroidApplicationSnapshot::ClassLookupFailure;
+            Outcome Result;
+            auto Loader = *Failure->getString("loader");
+            if (Loader == "boot")
+              Result.loader = Outcome::Loader::Boot;
+            else if (Loader == "system")
+              Result.loader = Outcome::Loader::System;
+            else if (Loader == "application")
+              Result.loader = Outcome::Loader::Application;
+            else
+              return invalid(Key);
+            Result.binary_name = Failure->getString("binary_name")->str();
+            const auto &Message = *Failure->get("message");
+            if (auto Text = Message.getAsString())
+              Result.message = Text->str();
+            else if (Message.kind() != llvm::json::Value::Null)
+              return invalid(Key);
+            Snapshot.class_lookup_failures.push_back(std::move(Result));
+          }
+          continue;
+        }
         auto Text = Value.getAsString();
         if (!Text)
           return invalid(Key);
@@ -247,6 +280,11 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
            Snapshot.phase !=
                mobile::dalvik::AndroidApplicationSnapshot::Phase::Application))
         return invalid(Name);
+      try {
+        mobile::dalvik::validateAndroidClassLookupFailures(Snapshot);
+      } catch (const mobile::Error &) {
+        return invalid(field::ApplicationClassLookupFailures);
+      }
       Out.Application = std::move(Snapshot);
     } else if (Name == field::JNIClassLookupFailures) {
       const auto *Failures = V.getAsObject();
