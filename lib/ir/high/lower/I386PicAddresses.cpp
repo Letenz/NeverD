@@ -72,6 +72,24 @@ void MedToHighConverter::collectI386GotBase(const MedFunc &Med) {
   }
 }
 
+std::map<VarKey, uint32_t>
+MedToHighConverter::i386PcRootedNumbers(const MedFunc &Med, Arch TheArch,
+                                        const BinaryImage *Img) {
+  std::map<VarKey, uint32_t> Numbers;
+  if (TheArch != Arch::X86 || Med.I386GetPcModels.empty())
+    return Numbers;
+  MedToHighConverter Proof;
+  Proof.Image = Img;
+  Proof.CurMed = &Med;
+  Proof.TargetArch = TheArch;
+  Proof.collectI386GotBase(Med);
+  Proof.collectI386PcRootedValues(Med);
+  for (const auto &[Key, Value] : Proof.I386PcRootedValues)
+    if (Value.second == 4)
+      Numbers.emplace(Key, Value.first);
+  return Numbers;
+}
+
 void MedToHighConverter::collectI386PcRootedValues(const MedFunc &Med) {
   // LowToMed binds a call-next/POP only where the raw PC is authenticated:
   // outside an unlinked ELF object, whose GOTPC model replaces it.  Reading

@@ -40,8 +40,10 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/X87Context.h"
+#include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/intrinsics/IntrinsicValueEffects.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/I386PicAddress.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/libc/LibCNames.h"
@@ -74,6 +76,12 @@ enum class ReturnedValue : uint8_t {
   /// A system call's result, which the call writes to the return register
   /// whatever the function means: a value where a caller reads it.
   SystemCallResult,
+  /// The GOT address reloaded from its spill: no value the function means,
+  /// unless a caller reads what a call to it returns.  A read the stack model
+  /// places on the spill slot by mistake looks the same: after a
+  /// struct-returning call that pops its hidden pointer, `vmsg` reads the
+  /// result's first field four bytes from the slot.
+  ReloadedGOTAddress,
   /// A constant or a comparison: a value the function means.
   Deliberate,
   /// Any other value.
@@ -91,7 +99,9 @@ struct FunctionFacts {
   std::set<ValueKey> Read;
   /// Values a return hands back.
   std::set<ValueKey> Returned;
-  /// The results of the calls to each direct callee.
+  /// The results of the calls to each function of this image: a direct
+  /// call's target, or the routine an import's stub or slot reaches
+  /// (ownRoutineOf).
   std::map<va_t, std::vector<ValueKey>> CallResults;
   /// What the return register holds at each return; none for the value it
   /// entered the function with.
@@ -147,10 +157,50 @@ std::optional<MedVar> returnRegisterAt(const MedFunc &Func,
   return std::nullopt;
 }
 
+/// The constant addresses \p Call reaches its callee by: a direct call's
+/// target, or the slot an indirect call reads it from (`call *slot`, or a load
+/// of the slot it calls through), given each value's definition \p Defs.
+struct CallAddress {
+  std::optional<va_t> Target, Slot;
+};
+CallAddress callAddressOf(const MedOp &Call,
+                          const std::map<ValueKey, const MedOp *> &Defs) {
+  CallAddress Address;
+  if (Call.NumInputs < 1)
+    return Address;
+  const MedVar &Callee = Call.Inputs[0];
+  if (Call.Opcode == NdOp::CALL && Callee.isConst())
+    Address.Target = static_cast<va_t>(Callee.ConstVal);
+  else if (Call.Opcode == NdOp::INDIR_CALL && Callee.isConst())
+    Address.Slot = static_cast<va_t>(Callee.ConstVal);
+  else if (Call.Opcode == NdOp::INDIR_CALL)
+    if (const auto Def = Defs.find(keyOf(Callee)); Def != Defs.end())
+      if (const MedOp &Load = *Def->second; Load.Opcode == NdOp::LOAD &&
+                                            Load.NumInputs >= 1 &&
+                                            Load.Inputs[0].isConst())
+        Address.Slot = static_cast<va_t>(Load.Inputs[0].ConstVal);
+  return Address;
+}
+
+/// The routine of this image a call by \p Address reaches through the stub
+/// or slot of an import the loader starts at it (importOwnRoutine): the C
+/// calls that routine, so its contract is the call's.
+std::optional<va_t> ownRoutineOf(const BinaryImage &Img,
+                                 const std::map<va_t, va_t> &ArgumentSources,
+                                 const CallAddress &Address) {
+  if (!Address.Target && !Address.Slot)
+    return std::nullopt;
+  return importOwnRoutine(Img, &ArgumentSources,
+                          Address.Target ? *Address.Target : *Address.Slot);
+}
+
 FunctionFacts collectFacts(const MedFunc &Func, const TargetRegInfo &TRI,
-                           Arch Target) {
+                           const BinaryImage &Img,
+                           const std::map<va_t, va_t> &ArgumentSources) {
+  const Arch Target = Img.Arch;
   FunctionFacts Facts;
   Facts.Func = &Func;
+  std::vector<const MedOp *> Calls;
   for (const MedBlock &Block : Func.Blocks) {
     for (const PhiNode &Phi : Block.Phis) {
       Facts.WritesReturnRegister |= Phi.Output.Kind == MedVar::Reg &&
@@ -189,11 +239,21 @@ FunctionFacts collectFacts(const MedFunc &Func, const TargetRegInfo &TRI,
       for (uint8_t I = 0; I < Op.NumInputs; ++I)
         if (!Op.Inputs[I].isConst())
           Facts.Read.insert(keyOf(Op.Inputs[I]));
-      if (Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
-          Op.Inputs[0].isConst() && Op.Output.Size && !Op.Output.isConst())
-        Facts.CallResults[static_cast<va_t>(Op.Inputs[0].ConstVal)].push_back(
-            keyOf(Op.Output));
+      if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+          Op.Output.Size && !Op.Output.isConst())
+        Calls.push_back(&Op);
     }
+  }
+  // A call's callee is known once every definition is: an indirect call may
+  // load its slot in a later block.
+  for (const MedOp *Call : Calls) {
+    const CallAddress Address = callAddressOf(*Call, Facts.Defs);
+    std::optional<va_t> Callee = Address.Target;
+    if (const std::optional<va_t> Own =
+            ownRoutineOf(Img, ArgumentSources, Address))
+      Callee = Own;
+    if (Callee)
+      Facts.CallResults[*Callee].push_back(keyOf(Call->Output));
   }
   return Facts;
 }
@@ -227,7 +287,8 @@ public:
                   const DebugContext *Dbg)
       : Img(Img), Result(Result), Dbg(Dbg), TRI(getTargetRegInfo(Img.Arch)) {
     for (const MedFunc &Func : Result.MedFuncs) {
-      Facts.emplace(Func.Entry, collectFacts(Func, TRI, Img.Arch));
+      Facts.emplace(Func.Entry,
+                    collectFacts(Func, TRI, Img, Result.CallArgumentSources));
       if (const std::optional<bool> None = declaredNoValue(Func))
         Declared.emplace(Func.Entry, *None);
       if (!Func.Name.empty())
@@ -263,6 +324,9 @@ private:
   const TargetRegInfo &TRI;
   std::map<va_t, FunctionFacts> Facts;
   std::map<va_t, bool> NoValue;
+  /// The numbers the i386 PC-rooted proof gives each function's values
+  /// (MedToHighConverter::i386PcRootedNumbers), computed on first use.
+  mutable std::map<const MedFunc *, std::map<VarKey, uint32_t>> PcRootedNumbers;
   /// What each declared function's declaration says: true for none.
   std::map<va_t, bool> Declared;
   std::map<va_t, std::string> Names;
@@ -326,18 +390,15 @@ private:
       return true;
     if (Call.NumInputs < 1)
       return false;
-    std::optional<va_t> Target, Slot;
-    const MedVar &Callee = Call.Inputs[0];
-    if (Call.Opcode == NdOp::CALL && Callee.isConst())
-      Target = static_cast<va_t>(Callee.ConstVal);
-    else if (Call.Opcode == NdOp::INDIR_CALL && Callee.isConst())
-      Slot = static_cast<va_t>(Callee.ConstVal);
-    else if (Call.Opcode == NdOp::INDIR_CALL)
-      if (const auto Def = F.Defs.find(keyOf(Callee)); Def != F.Defs.end())
-        if (const MedOp &Load = *Def->second; Load.Opcode == NdOp::LOAD &&
-                                              Load.NumInputs >= 1 &&
-                                              Load.Inputs[0].isConst())
-          Slot = static_cast<va_t>(Load.Inputs[0].ConstVal);
+    const CallAddress Address = callAddressOf(Call, F.Defs);
+    std::optional<va_t> Target = Address.Target, Slot = Address.Slot;
+    // A call through the stub or slot of an import the loader starts at
+    // this image's own routine calls that routine, as the C prints it.
+    if (const std::optional<va_t> Own =
+            ownRoutineOf(Img, Result.CallArgumentSources, Address)) {
+      Target = Own;
+      Slot.reset();
+    }
     // A callee's declaration decides, then a prototype of its name, then
     // what this pass settled for it.  One this pass does not decompile is
     // declared as the C writers read it, by the debug information or a
@@ -372,21 +433,36 @@ private:
     return false;
   }
 
-  /// Whether \p Value is the linked GOT's address that an authenticated i386
-  /// get-PC sequence computes (`call 1f; 1: pop %eax; add $GOT-1b, %eax`):
-  /// the base the function addresses its data from, not a value it means.
-  bool isI386GOTAddress(const FunctionFacts &F, const MedVar &Value) const {
+  /// How \p Value is the linked GOT's address that an authenticated i386
+  /// get-PC sequence computes (`call 1f; 1: pop %eax; add $GOT-1b, %eax`),
+  /// the base the function addresses its data from: computed from the PC
+  /// alone, or reloaded from a frame slot every write of which stores it.
+  enum class GOTAddressKind : uint8_t { None, Computed, Reloaded };
+  GOTAddressKind i386GOTAddress(const FunctionFacts &F,
+                                const MedVar &Value) const {
     if (Img.Arch != Arch::X86 || !F.Func || F.Func->I386GetPcModels.empty())
-      return false;
+      return GOTAddressKind::None;
     const std::optional<va_t> GOT = Img.linkedI386GlobalOffsetTable();
     if (!GOT)
-      return false;
+      return GOTAddressKind::None;
     const std::optional<uint64_t> Folded = foldI386PicAddress(
         *F.Func, Value, [&](const MedVar &Each) -> const MedOp * {
           const auto Def = F.Defs.find(keyOf(Each));
           return Def == F.Defs.end() ? nullptr : Def->second;
         });
-    return Folded && uint32_t(*Folded) == uint32_t(*GOT);
+    if (Folded)
+      return uint32_t(*Folded) == uint32_t(*GOT) ? GOTAddressKind::Computed
+                                                 : GOTAddressKind::None;
+    // clang -O0 spills the GOT address and reloads it: the reload is the
+    // address by the proof the HighIR route reads it with.
+    auto [Numbers, Computed] = PcRootedNumbers.try_emplace(F.Func);
+    if (Computed)
+      Numbers->second =
+          MedToHighConverter::i386PcRootedNumbers(*F.Func, Img.Arch, &Img);
+    const auto Number = Numbers->second.find(varKey(Value));
+    return Number != Numbers->second.end() && Number->second == uint32_t(*GOT)
+               ? GOTAddressKind::Reloaded
+               : GOTAddressKind::None;
   }
 
   /// What \p Value hands back, each path a PHI joins counted on its own.
@@ -398,9 +474,20 @@ private:
       Paths.push_back(ReturnedValue::Deliberate);
       return;
     }
-    if (Value.Kind == MedVar::Unspecified || isI386GOTAddress(F, Value)) {
+    if (Value.Kind == MedVar::Unspecified) {
       Paths.push_back(ReturnedValue::Undefined);
       return;
+    }
+    // The GOT address computed from the PC is nothing the function means.
+    switch (i386GOTAddress(F, Value)) {
+    case GOTAddressKind::Computed:
+      Paths.push_back(ReturnedValue::Undefined);
+      return;
+    case GOTAddressKind::Reloaded:
+      Paths.push_back(ReturnedValue::ReloadedGOTAddress);
+      return;
+    case GOTAddressKind::None:
+      break;
     }
     if (Value.Kind == MedVar::Param || Depth > MaxDepth ||
         !Seen.insert(keyOf(Value)).second) {
@@ -572,7 +659,8 @@ private:
     const bool Read = callerReadsResult(Func);
     for (ReturnedValue &Path : Paths)
       if (Path == ReturnedValue::Incoming ||
-          Path == ReturnedValue::SystemCallResult)
+          Path == ReturnedValue::SystemCallResult ||
+          Path == ReturnedValue::ReloadedGOTAddress)
         Path = Read ? ReturnedValue::Other : ReturnedValue::Undefined;
     const auto Count = [&](ReturnedValue Kind) {
       return llvm::count(Paths, Kind);
