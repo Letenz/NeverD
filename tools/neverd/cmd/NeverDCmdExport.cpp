@@ -111,7 +111,9 @@ int runExport(neverd_session_t Sess) {
       for (int I = 0; I < neverd_func_count(Sess); ++I) {
         const char *N = neverd_func_name(Sess, I);
         json::Object Func;
-        Func["name"] = N ? N : "";
+        // A json::Value made from a `const char *` only refers to it, and N
+        // is freed before the array is written.
+        Func["name"] = std::string(N ? N : "");
         Func["addr"] = "0x" + utohexstr(neverd_func_entry(Sess, I));
         Func["size"] = static_cast<int64_t>(neverd_func_size(Sess, I));
         Funcs.push_back(std::move(Func));

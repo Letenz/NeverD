@@ -8029,6 +8029,13 @@ guessed after real padding past the entry's return stays an entry.
 destructor that sit right after the pushing function's return, with no call,
 prologue or padding to mark them, and recovers both as functions; a catch
 block's `mov eax, offset continuation; ret` keeps its continuation a label.
+`AVtableSlotConfirmsAPaddingGuess` runs the loader over a destructor after
+int3 padding that a relocated `.rdata` vtable slot names: it is no boundary
+guess, while a padded start nothing names stays one.
+`LLVMImportVeneerBoundary.APushedVeneerAddressNamesItsImport` stores an
+exact import veneer's code-address constant, as `push offset` does; the
+module names the import rather than refusing that the veneer has no code
+identity.
 `I386CallContract.ABlockPhiIsNoArgumentPastAnEarlierCallInItsBlock` joins a
 callback's address and an import call's leftover in EDX, calls the import
 again in the join block, then a routine reading ECX and EDX: the argument is

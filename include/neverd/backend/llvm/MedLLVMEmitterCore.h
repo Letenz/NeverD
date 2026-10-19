@@ -1561,6 +1561,11 @@ private:
   /// entries become llvm::Function constants; relocation-proven labels inside
   /// an emitted function become llvm::BlockAddress constants.
   llvm::Constant *resolveLiftedCodeAddress(va_t Address);
+  /// The module's symbol for the import named \p ImportName, a placeholder of
+  /// unknown type until a call proves one.  An import veneer the loader
+  /// registered stands for its import: the veneer is absent from MedIR, and a
+  /// name another symbol of the module holds is refused as ambiguous.
+  llvm::GlobalValue *importedSymbolIdentity(llvm::StringRef ImportName);
   llvm::Constant *resolveLiftedFunctionInterior(va_t Address);
 
   /// Resolve a relocation-proven executable VA that may not have a lifted

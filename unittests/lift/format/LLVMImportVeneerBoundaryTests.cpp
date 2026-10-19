@@ -435,6 +435,53 @@ TEST(LLVMImportVeneerBoundary,
   EXPECT_EQ(Module->getNamedValue("iat_collision"), nullptr);
 }
 
+TEST(LLVMImportVeneerBoundary, APushedVeneerAddressNamesItsImport) {
+  // A destructor's `push offset veneer` hands an iterator an import veneer's
+  // address, an instruction operand of code-address provenance.  The veneer
+  // is absent from MedIR, so it stands for its import, as it does in the
+  // pointer mirror, rather than having no code identity.
+  BinaryImage Image = makeCodePointerImage();
+  addImport(Image, "exact_veneer", IATVA);
+  ASSERT_TRUE(Image.recordImportStub(StubVA, 0));
+
+  MedFunc Func;
+  Func.Entry = CallerVA;
+  Func.Name = "pass_veneer";
+  Func.ReturnType = NdType::makeInt(8);
+  MedBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = CallerVA;
+  Block.EndAddr = CallerVA + 8;
+  // `push offset veneer`: the stored operand, not a value the code returns,
+  // whose identity the code-identity proof keeps to lifted owners.
+  MedVar StackPointer;
+  StackPointer.Kind = MedVar::Reg;
+  StackPointer.TheArch = Arch::X64;
+  StackPointer.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
+  StackPointer.Size = 8;
+  MedOp Push;
+  Push.Opcode = NdOp::STORE;
+  Push.Addr = CallerVA;
+  Push.addInput(StackPointer);
+  Push.addInput(
+      MedVar::makeConst(StubVA, 8, ConstantAddressProvenance::CodeAddress));
+  Block.Ops.push_back(std::move(Push));
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = CallerVA + 5;
+  Return.addInput(MedVar::makeConst(0, 8, ConstantAddressProvenance::Scalar));
+  Block.Ops.push_back(std::move(Return));
+  Func.Blocks.push_back(std::move(Block));
+
+  llvm::LLVMContext Context;
+  auto Module =
+      MedLLVMEmitter().emit({Func}, Context, "pushed-veneer", Arch::X64,
+                            importNames(Image), &Image, BinaryFormat::COFF);
+  ASSERT_NE(Module, nullptr);
+  expectValidModule(*Module);
+  EXPECT_NE(Module->getNamedValue("exact_veneer"), nullptr);
+}
+
 TEST(LLVMImportVeneerBoundary, RangeOnlyEvidenceCannotNameACodeRelocation) {
   BinaryImage Image = makeCodePointerImage();
   addImport(Image, "range_iat_collision", StubVA);

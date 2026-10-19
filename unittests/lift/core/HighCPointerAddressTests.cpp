@@ -47835,3 +47835,59 @@ TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
       << Source;
   expectCSyntax(Source);
 }
+
+TEST(HighCPointerAddresses, NarrowObjectsPassedAsPointersStayIntegers) {
+  // make reads its 4-byte output_sync and passes the value, widened, where
+  // a callee's prototype takes a pointer.  The object holds the 4-byte
+  // integer the code reads, not that pointer, which is wider than it: the
+  // unit declared `char* output_sync;`, and the integer locals the code
+  // reads it into took a pointer, which C rejects.
+  constexpr va_t Flag = 0x6000;
+  BinaryImage Img = makeImageObjectFixture(Flag, std::vector<uint8_t>(8), true);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  const auto Handle = NdType::makePtr(NdType::makeNamedRecord("handle"));
+  class UseDbg : public NullDebugContext {
+  public:
+    explicit UseDbg(TypeRef Handle) : Handle(std::move(Handle)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x2000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "release";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeVoid();
+      FS.Params = {{"h", Handle}};
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Handle;
+  } Dbg(Handle);
+  const auto Int = NdType::makeInt(4);
+  HighFunc Func;
+  Func.Name = "flush";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Int;
+  MedVar Value = temporary(7, 0, 4);
+  HighStmt Read =
+      assignTo(Value, HighExpr::makeLoad(HighExpr::makeConst(Flag, 8), Int));
+  Read.Dst->Type = Int;
+  auto Wide =
+      HighExpr::makeUnary(NdOp::INT_ZEXT, HighExpr::makeVar(Value, Int));
+  Wide->Type = NdType::makeInt(8, false);
+  Func.Body = {Read, callStmt("release", 0x2000, {Wide})};
+  returnValue(Func, HighExpr::makeVar(Value, Int));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_EQ(Source.find("handle* dword_6000"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("int32_t dword_6000"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}

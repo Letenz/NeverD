@@ -2355,8 +2355,14 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   AddressTakenDefinitions.clear();
   if (!Opts.Image)
     return;
-  VarKeyMap<va_t> ImageLoadVars;
-  auto imageLoadVA = [&](const HighExpr &E) -> std::optional<va_t> {
+  /// An image load an expression is, through integer views and the locals
+  /// assigned one: its address and the bytes it reads.
+  struct ImageLoad {
+    va_t Addr;
+    uint16_t Bytes;
+  };
+  VarKeyMap<ImageLoad> ImageLoadVars;
+  auto imageLoad = [&](const HighExpr &E) -> std::optional<ImageLoad> {
     const HighExpr *Inner = unwrapIntegerView(&E);
     if (!Inner)
       return std::nullopt;
@@ -2364,12 +2370,19 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         Inner->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         Inner->MemoryOrdering == NdMemoryOrdering::None &&
         !Inner->Operands.empty() && Inner->Operands[0])
-      return constAddress(*Inner->Operands[0]);
+      if (const auto VA = constAddress(*Inner->Operands[0]))
+        return ImageLoad{
+            *VA, static_cast<uint16_t>(Inner->Type ? Inner->Type->Size : 0)};
     if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) {
       if (auto It = ImageLoadVars.find(varKey(Inner->Var));
           It != ImageLoadVars.end())
         return It->second;
     }
+    return std::nullopt;
+  };
+  auto imageLoadVA = [&](const HighExpr &E) -> std::optional<va_t> {
+    if (const auto Load = imageLoad(E))
+      return Load->Addr;
     return std::nullopt;
   };
   for (const HighFunc &Func : Funcs)
@@ -2378,8 +2391,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         return;
       if (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi)
         return;
-      if (auto VA = imageLoadVA(*S.Val))
-        ImageLoadVars[varKey(S.Dst->Var)] = *VA;
+      if (auto Load = imageLoad(*S.Val))
+        ImageLoadVars[varKey(S.Dst->Var)] = *Load;
     });
   // Symbols size the objects; the largest one at an address is the object.
   if (SharedDataObjects) {
@@ -3215,8 +3228,12 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       if (!Expected || Expected->Kind != NdTypeKind::Ptr ||
           !Expected->Pointee || Expected->Pointee->SourceName.empty())
         continue;
-      if (auto VA = imageLoadVA(*E.Operands[I]))
-        noteImageObject(*VA, Expected, false);
+      // The object holds the pointer only where the code reads it whole: a
+      // narrower read widened for the parameter (make's 4-byte output_sync)
+      // is an integer of its own width.
+      if (const auto Load = imageLoad(*E.Operands[I]);
+          Load && Load->Bytes == Expected->Size)
+        noteImageObject(Load->Addr, Expected, false);
     }
   };
   for (const HighFunc &Func : Funcs) {
