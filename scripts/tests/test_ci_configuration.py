@@ -26,6 +26,46 @@ STYLE_EXPECTATIONS = ROOT / "scripts" / "tests" / "CIStyleExpectations.def"
 
 
 class CiConfigurationTests(unittest.TestCase):
+    def test_acceleration_matrix_runs_with_native_bash_and_default_options(self):
+        shell = "/bin/bash" if Path("/bin/bash").is_file() else shutil.which("bash")
+        if shell is None:
+            self.skipTest("bash is unavailable")
+        source = WORKFLOW.with_name("performance-libraries.yml").read_text()
+        step = self.workflow_step_containing(
+            source, "Test enabled and disabled libraries, including installed binaries")
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        # Run the real loop and argument expansion, including macOS Bash 3.2.
+        # Only external build/test commands are replaced by argument capture.
+        commands = r'''
+cmake() { printf '%s\0' "$@"; printf '\n'; }
+python() { return 0; }
+find() { return 0; }
+'''
+        for runner in ("macOS", "Linux", "Windows"):
+            with self.subTest(runner=runner):
+                result = subprocess.run(
+                    [shell, "--noprofile", "--norc", "-c", commands + script],
+                    env={**os.environ, "RUNNER_OS": runner},
+                    capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                calls = [line.rstrip("\0").split("\0")
+                         for line in result.stdout.splitlines()]
+                self.assertEqual(len(calls), 8)
+                for index, (mode, profile) in enumerate(
+                        (m, p) for m in ("ON", "OFF") for p in ("Release", "Debug")):
+                    args = calls[2 * index]
+                    build = f"build-accel-{mode}-{profile}"
+                    self.assertEqual(args[args.index("-B") + 1], build)
+                    self.assertIn(f"-DCMAKE_BUILD_TYPE={profile}", args)
+                    self.assertIn(f"-DNEVERD_TEST_EXPECT_ACCELERATION={mode}", args)
+                    for provider in ("TBB", "HIGHWAY", "SIMDUTF", "SIMDJSON"):
+                        options = [arg for arg in args
+                                   if arg.startswith(f"-DNEVERD_ENABLE_{provider}=")]
+                        self.assertEqual(options, [] if mode == "ON" else
+                                         [f"-DNEVERD_ENABLE_{provider}=OFF"])
+                    self.assertEqual(calls[2 * index + 1],
+                                     ["--install", build, "--prefix", f"{build}/installed"])
+
     def test_native_scheduler_selects_test_audits_on_windows_and_unix(self):
         native = WORKFLOW.with_name("native-pipeline.yml").read_text()
         step = self.workflow_step_containing(
