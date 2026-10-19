@@ -201,6 +201,13 @@ LocalRegisterEffect localRegisterEffect(
     const std::map<va_t, va_t> *ArgumentSources = nullptr,
     const libc::StackProbeIndex *StackProbes = nullptr);
 
+/// Join each run of \p Effect's steps that only read and write registers
+/// (no callee, no import, no exit, no fixed arguments, no vector copy) into
+/// one step with the same effect on the bytes live before it.
+/// localRegisterEffect returns summaries so joined: solving them gives what
+/// solving the instruction-by-instruction steps gives, over fewer steps.
+void joinPlainSteps(LocalRegisterEffect &Effect);
+
 struct CallRegisterSummaries {
   /// Families a call may change, for functions whose whole call tree is
   /// known.

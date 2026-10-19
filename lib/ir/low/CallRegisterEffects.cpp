@@ -869,6 +869,56 @@ bool callPreservesRegisterBytes(Arch A, uint32_t Preserved, uint64_t RegOff,
          ((Preserved >> Family->first) & 1) && Family->second + Size <= 16;
 }
 
+namespace {
+/// Whether \p Step only reads and writes registers: it names no routine,
+/// leaves for nowhere and copies no vector register.
+bool isPlainStep(const RegisterStep &Step) {
+  return Step.Callee == InvalidVA && !Step.TailCallee &&
+         !Step.UnknownTailCall && !Step.VectorCopy && !Step.UnknownCall &&
+         Step.ImportCallee == InvalidVA && Step.ArgumentsFrom == InvalidVA &&
+         !Step.Exits && !Step.FixedArguments && !Step.FixedTailCall;
+}
+} // namespace
+
+/// Join each run of plain steps into one step with the same effect on the
+/// bytes live before it.  Backward, a plain step ends the life of the
+/// families it kills and of a read no wider than its low write there, then
+/// makes each family live as wide as it reads it.  For one family, with \c T
+/// its low-write width (the whole family where killed), that is
+/// \c max(R, w > T ? w : 0) of the width \c w live after it.  Two such steps,
+/// \c First then \c Second, are the one step whose \c T is the larger of
+/// theirs and whose \c R is \c First's read joined with \c Second's where
+/// \c First does not satisfy it.  entryLiveWidths reads plain steps only so,
+/// and every other reader of a summary looks only at steps that are not
+/// plain, so the summary answers as before with a step per run instead of
+/// one per instruction.
+void joinPlainSteps(LocalRegisterEffect &Effect) {
+  for (RegisterBlock &Block : Effect.Blocks) {
+    std::vector<RegisterStep> &Steps = Block.Steps;
+    size_t Kept = 0;
+    for (size_t I = 0; I < Steps.size(); ++I) {
+      if (Kept && isPlainStep(Steps[Kept - 1]) && isPlainStep(Steps[I])) {
+        RegisterStep &First = Steps[Kept - 1];
+        const RegisterStep &Second = Steps[I];
+        for (size_t Family = 0; Family < First.Reads.size(); ++Family) {
+          const bool Killed = (First.Kills >> Family) & 1;
+          if (!Killed && Second.Reads[Family] > First.LowWrites[Family])
+            First.Reads[Family] =
+                std::max(First.Reads[Family], Second.Reads[Family]);
+          First.LowWrites[Family] =
+              std::max(First.LowWrites[Family], Second.LowWrites[Family]);
+        }
+        First.Kills |= Second.Kills;
+        continue;
+      }
+      if (Kept != I)
+        Steps[Kept] = std::move(Steps[I]);
+      ++Kept;
+    }
+    Steps.resize(Kept);
+  }
+}
+
 LocalRegisterEffect
 localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
                     const libc::NoReturnTargetIndex *NoReturnTargets,
@@ -1134,6 +1184,7 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
   }
   summarizeIncomingStackReads(Img, F, IndexOfId, BlockStarts, ArgumentSources,
                               StackProbes, Effect);
+  joinPlainSteps(Effect);
   return Effect;
 }
 
