@@ -1043,13 +1043,33 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
          ++K)
       Found[K] = nullptr;
 
+  // A variadic callee that saves the vector argument registers takes every
+  // integer and vector argument register, as its parameters say: a caller
+  // passes the ones it sets, and the vector registers' low doubles carry its
+  // floating arguments.  Its summary lists none of them.
+  const VariadicVectorCallee *VariadicCallee = nullptr;
+  if (VariadicVectorCallees && CallIdx < Ops.size() &&
+      Ops[CallIdx].Opcode == NdOp::CALL && Ops[CallIdx].NumInputs >= 1 &&
+      Ops[CallIdx].Inputs[0].isConst())
+    if (const auto Callee =
+            VariadicVectorCallees->find(Ops[CallIdx].Inputs[0].ConstVal);
+        Callee != VariadicVectorCallees->end())
+      VariadicCallee = &Callee->second;
+
+  // Stack arguments follow the register arguments found, though a variadic
+  // callee's follow every register: a store to the outgoing area before a
+  // call that sets fewer is the caller's own (clang's `movsd [rsp], xmm1`
+  // keeping a double across the call), not an argument in a register's place.
   int FirstStackSlot = 0;
-  for (int K = 0; K < MaxArgs; ++K) {
-    if (Found[K] && Found[K]->Kind != ExprKind::Undef)
-      FirstStackSlot = K + 1;
-    else
-      break;
-  }
+  if (VariadicCallee)
+    FirstStackSlot = static_cast<int>(ParamRegs.size());
+  else
+    for (int K = 0; K < MaxArgs; ++K) {
+      if (Found[K] && Found[K]->Kind != ExprKind::Undef)
+        FirstStackSlot = K + 1;
+      else
+        break;
+    }
 
   call_args_detail::CallArgScan Scan;
   Scan.Ops = &Ops;
@@ -1465,19 +1485,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       continue;
     Args.push_back(Found[K] ? Found[K] : HighExpr::makeUndef(8));
   }
-  // A variadic callee that saves the vector argument registers takes every
-  // integer and vector argument register, as its parameters say: a caller
-  // passes the ones it sets, and the vector registers' low doubles carry its
-  // floating arguments.  Its summary lists none of them.
-  const int *VariadicOverflow = nullptr;
-  if (VariadicVectorCallees && CallIdx < Ops.size() &&
-      Ops[CallIdx].Opcode == NdOp::CALL && Ops[CallIdx].NumInputs >= 1 &&
-      Ops[CallIdx].Inputs[0].isConst())
-    if (const auto Callee =
-            VariadicVectorCallees->find(Ops[CallIdx].Inputs[0].ConstVal);
-        Callee != VariadicVectorCallees->end())
-      VariadicOverflow = &Callee->second;
-  if (VariadicOverflow) {
+  if (VariadicCallee) {
     const size_t Integers = ParamRegs.size();
     // Then the slots it stores, read as the pass that sized the callee's
     // overflow parameters read them (VariadicStackArguments.h).  A shorter
@@ -1497,15 +1505,66 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
         Stack.push_back(std::move(Value));
       }
     }
-    const size_t Overflow = static_cast<size_t>(std::max(0, *VariadicOverflow));
+    const bool StoresStackArguments = !Stack.empty();
+    const size_t Overflow =
+        static_cast<size_t>(std::max(0, VariadicCallee->OverflowCount));
     Stack.resize(std::min(Stack.size(), Overflow));
     while (Stack.size() < Overflow)
       Stack.push_back(HighExpr::makeUndef(TRI.PointerSize));
-    Args.resize(Integers);
-    for (ExprPtr &Arg : Args)
-      if (!Arg)
-        Arg = HighExpr::makeUndef(TRI.PointerSize);
-    for (uint64_t Vector : TRI.floatingParamRegs(Format)) {
+    // The integer registers the call sets up to the first it leaves unset
+    // are arguments, and a named parameter the callee reads is one, though
+    // this function only passes its own on.  A register set past that hole
+    // is the setup of a later call, which GCC hoists across this one when
+    // the callee leaves it alone (-fipa-ra).  Where the call stores a stack
+    // argument, every integer register is one, as a scalar goes on the stack
+    // only once they are all taken: each may be set on the paths into the
+    // call (`lea r8, s; je; mov r8, [x]`), or before an earlier call that
+    // leaves it alone.  Where one of them holds nothing the function sets,
+    // the store is the caller's own.
+    const auto Reaching = [&](size_t K) -> ExprPtr {
+      MedVar LiveIn;
+      if (!ReachingAtCall(ParamRegs[K], LiveIn, /*ParameterAtEntry=*/true) ||
+          LeftByCall(LiveIn))
+        return nullptr;
+      JoinsSeen.clear();
+      return SetInFunction(LiveIn) ? medvarToExpr(LiveIn) : nullptr;
+    };
+    const int Named = VariadicCallee->NamedIntegerRegisters;
+    std::vector<ExprPtr> Registers(Integers);
+    for (size_t K = 0; K < Integers; ++K) {
+      if (Found[K] && Found[K]->Kind != ExprKind::Undef)
+        Registers[K] = Found[K];
+      else if (static_cast<int>(K) < Named)
+        Registers[K] = Reaching(K);
+    }
+    size_t Passed = 0;
+    while (Passed < Integers && Registers[Passed])
+      ++Passed;
+    if (StoresStackArguments && Passed < Integers) {
+      std::vector<ExprPtr> Every = Registers;
+      bool Complete = true;
+      for (size_t K = Passed; K < Integers && Complete; ++K)
+        if (!Every[K])
+          Complete = static_cast<bool>(Every[K] = Reaching(K));
+      if (Complete) {
+        Registers = std::move(Every);
+        Passed = Integers;
+      }
+    }
+    Args.clear();
+    for (size_t K = 0; K < Integers; ++K)
+      Args.push_back(K < Passed ? std::move(Registers[K])
+                                : HighExpr::makeUndef(TRI.PointerSize));
+    // A vector register past the count the call loads (AL) holds what
+    // earlier code left there, no argument.
+    const int VectorCount = Ops[CallIdx].VariadicVectorCount;
+    const auto VectorRegs = TRI.floatingParamRegs(Format);
+    for (size_t K = 0; K < VectorRegs.size(); ++K) {
+      const uint64_t Vector = VectorRegs[K];
+      if (VectorCount >= 0 && K >= static_cast<size_t>(VectorCount)) {
+        Args.push_back(HighExpr::makeUndef(sizeof(double)));
+        continue;
+      }
       std::optional<MedVar> Reaching;
       for (size_t J = CallIdx; J-- > 0 && !Reaching;) {
         const MedOp &Prev = Ops[J];

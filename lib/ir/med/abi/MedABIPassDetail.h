@@ -44,9 +44,9 @@ namespace neverd {
 
 struct BinaryImage;
 
-/// Whether an operation prevents recovering an earlier ABI value. Explicit
-/// numerical/MXCSR effects do not call a callee or write argument storage.
-/// Unknown intrinsic effects retain the conservative boundary.
+/// Whether an operation prevents recovering an earlier ABI value: where it
+/// ends a later call's argument setup (endsCallArgumentSetup), as call
+/// argument collection in MedToHigh has it too.
 bool isAbiRecoveryBarrier(const MedOp &Op);
 
 /// Recover the sole ECX argument of an exact, source-checked PE32 cookie call.

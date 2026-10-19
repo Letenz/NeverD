@@ -264,6 +264,16 @@ void fillUnstructuredGotoSkeleton(HighFunc &Func, const MedFunc &Med);
 /// arguments for finalizeVariadicCallees to count.
 void sizeVariadicOverflowFromStores(std::vector<MedFunc> &Funcs, Arch TheArch);
 
+/// A variadic function whose register save area holds the vector argument
+/// registers (System V): a call passes it every argument register, then
+/// OverflowCount stack slots.  Its named parameters take the first
+/// NamedIntegerRegisters integer registers (MedFunc::VaNamedIntegerRegisters),
+/// -1 where its va_start says nothing of them.
+struct VariadicVectorCallee {
+  int OverflowCount = 0;
+  int NamedIntegerRegisters = -1;
+};
+
 class MedToHighConverter {
 public:
   /// Convert \p Med.  A frame with only Windows SEH scopes is laid out in
@@ -334,7 +344,8 @@ public:
   /// argument registers too (MedFunc::VariadicFirstVectorRegister), each
   /// with its overflow parameter count: a call passes each of them every
   /// argument register, then that many stack slots.
-  void setVariadicVectorCallees(const std::map<va_t, int> *Entries) {
+  void setVariadicVectorCallees(
+      const std::map<va_t, VariadicVectorCallee> *Entries) {
     VariadicVectorCallees = Entries;
   }
   /// The imports, by the stub or slot a call names each by, whose prototype
@@ -603,7 +614,7 @@ private:
   const std::map<va_t, std::string> *FuncNames = nullptr;
   const std::map<va_t, std::string> *ResolvedCalleeNames = nullptr;
   const std::map<va_t, std::string> *ImageFunctionNames = nullptr;
-  const std::map<va_t, int> *VariadicVectorCallees = nullptr;
+  const std::map<va_t, VariadicVectorCallee> *VariadicVectorCallees = nullptr;
   const std::set<va_t> *UserPrototypeCallees = nullptr;
   int NextHighTempId = 0;
   std::optional<MedVar> SwiftErrorEntryInput;

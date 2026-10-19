@@ -19,6 +19,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedIR.h"
 
@@ -223,21 +224,9 @@ inline bool isNoopRegisterCopy(const MedOp &Op) {
          Op.Output.SSAVer == Op.Inputs[0].SSAVer;
 }
 
-/// True when \p Op ends the setup of a later call's arguments: another call,
-/// or an intrinsic that may write registers or memory.  The x87 wait that
-/// FILD, FABS and FCHS check writes neither (preservesCallSetup), as
-/// MedABIPass's barrier has it.
-inline bool endsCallSetup(const MedOp &Op) {
-  if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
-    return true;
-  if (Op.Opcode != NdOp::INTRINSIC)
-    return false;
-  if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
-    return true;
-  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
-  return static_cast<uint64_t>(Id) != Op.Inputs[0].ConstVal ||
-         !preservesCallSetup(Id);
-}
+/// True when \p Op ends the setup of a later call's arguments
+/// (endsCallArgumentSetup), as MedABIPass's barrier has it.
+inline bool endsCallSetup(const MedOp &Op) { return endsCallArgumentSetup(Op); }
 
 void collectSpilledStackArgs(const CallArgScan &Scan,
                              std::vector<ExprPtr> &Found);

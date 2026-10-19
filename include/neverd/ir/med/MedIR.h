@@ -253,6 +253,10 @@ struct MedOp {
   /// after the register arguments as Inputs[1 + CalleeRegisterArgs..]; -1
   /// when the convention publishes none.
   int8_t CalleeVectorArgs = -1;
+  /// The vector register count the call's own setup loads for a variadic
+  /// callee (CallArgumentConvention::VariadicVectorCountRegister), or -1
+  /// where it loads no constant one.
+  int8_t VariadicVectorCount = -1;
   /// Where a positional convention passes a floating argument in its slot's
   /// vector register instead: bit K for register argument K, Inputs[1 + K].
   uint8_t CalleeVectorSlots = 0;

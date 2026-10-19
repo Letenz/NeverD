@@ -220,10 +220,11 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
     NameResolver.setImageFunctionNames(&Inventory->functionNames(Img));
   }
   NameResolver.resolveCalleeNames(CallTargets, ResolvedCalleeNames);
-  std::map<va_t, int> VariadicVectorCallees;
+  std::map<va_t, VariadicVectorCallee> VariadicVectorCallees;
   for (const MedFunc &MF : Result.MedFuncs)
     if (MF.takesVectorArgumentRegisters())
-      VariadicVectorCallees[MF.Entry] = MF.VariadicOverflowCount;
+      VariadicVectorCallees[MF.Entry] = {MF.VariadicOverflowCount,
+                                         MF.VaNamedIntegerRegisters};
 
   const size_t Total = Result.MedFuncs.size();
   // A worker failure invalidates the whole stage. Keep output private until
