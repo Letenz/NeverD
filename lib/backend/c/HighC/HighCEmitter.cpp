@@ -1736,7 +1736,7 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
       continue;
     }
     if (GlobalIdentifierAllocator.holds(Name) || CallTargets.count(Name) ||
-        libc::headerOfDataObject(Name)) {
+        libc::headerOfDataObject(Name) || libc::isKnownFunction(Name)) {
       TagRecords.emplace(Name, Union);
       continue;
     }

@@ -153,10 +153,12 @@ void HighCWriter::writeSourceRecordDeclarations(
         const char *Keyword = Tag != RecordDefinitions.Tags.end() && Tag->second
                                   ? "union"
                                   : "struct";
+        // So does a C library routine's name, which a header the unit
+        // includes may declare (`struct stat` beside <sys/stat.h>'s stat).
         const bool Ordinary =
             CallTargets.count(Name) || AddressTakenFunctions.count(Name) ||
             Defined.count(Name) || GlobalIdentifierAllocator.holds(Name) ||
-            libc::headerOfDataObject(Name);
+            libc::headerOfDataObject(Name) || libc::isKnownFunction(Name);
         if (Ordinary)
           TagRecords.emplace(Name, Keyword == llvm::StringRef("union"));
         else if (Declared.insert(Name).second) {

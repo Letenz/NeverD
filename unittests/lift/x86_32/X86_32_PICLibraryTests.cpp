@@ -315,6 +315,29 @@ TEST(X86_32PICLibrary, AVoidRoutineCalledThroughItsPLTEntryHandsNothingBack) {
   EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
 }
 
+// `clang_maybe_scale` returns nothing, and %eax merges what its paths left
+// there: a call's result and the GOT address.  The C prints a bare return,
+// so it assigns neither to a local: the call runs as a statement.
+TEST(X86_32PICLibrary, WhatAVoidFunctionsReturnMergesIsNoAssignment) {
+  const std::optional<BinaryImage> Img = loadLibrary();
+  if (!Img)
+    GTEST_SKIP() << "the fixture links with ld.lld";
+  const Symbol *GOT = Img->findSymbol("_GLOBAL_OFFSET_TABLE_");
+  ASSERT_NE(GOT, nullptr);
+  const std::string Source = decompile(*Img, "clang_maybe_scale");
+  const size_t Begin = Source.find("void clang_maybe_scale(");
+  ASSERT_NE(Begin, std::string::npos) << Source;
+  const std::string Body =
+      Source.substr(Begin, Source.find("\n}\n", Begin) - Begin);
+  EXPECT_TRUE(
+      std::regex_search(Body, std::regex("\\n\\s*clang_scale_three\\(\\);")))
+      << Source;
+  EXPECT_FALSE(std::regex_search(Body, std::regex("\\bv[0-9_]+ ="))) << Source;
+  EXPECT_FALSE(std::regex_search(
+      Body, std::regex("\\b0x" + llvm::utohexstr(GOT->Addr) + "\\b")))
+      << Source;
+}
+
 // A linked library reads a `.rodata` table at its GOTOFF displacement from the
 // GOT plus an index.  The LLVM module took the GOT for the table's base: GCC's
 // read went into the writable run that holds the GOT, at a negative offset,

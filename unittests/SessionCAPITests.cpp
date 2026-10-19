@@ -5574,8 +5574,9 @@ TEST_F(SessionCAPITest, MuslProgramsJoinTheirMuslLibrary) {
   // which takes stat's prototype.  <sys/stat.h> declares stat, whose record
   // the call reaches through void *, and no typedef names the record as the
   // function; the output declares __stat_time64 itself, with the record's
-  // type.  A typedef names the record, which is still spelled by its tag:
-  // the C library has a function of its name.
+  // type.  No typedef names the record there either, which is spelled by
+  // its tag: the C library has a function of its name, which a header the
+  // unit includes may declare.
   struct Program {
     const char *File, *Library, *Model, *ABI;
     int64_t StatSize;
@@ -5586,7 +5587,7 @@ TEST_F(SessionCAPITest, MuslProgramsJoinTheirMuslLibrary) {
       {"musl_libc_calls_x64", "musl-x64", "LP64", "itanium", 144,
        "stat((char*)(uintptr_t)arg0, (void*)&", false},
       {"musl_libc_calls_x86", "musl-x86", "ILP32", "i386-sysv", 144,
-       "__stat_time64((char*)(uintptr_t)arg0, (struct stat*)&", true},
+       "__stat_time64((char*)(uintptr_t)arg0, (struct stat*)&", false},
   };
   const auto Fixtures =
       std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";

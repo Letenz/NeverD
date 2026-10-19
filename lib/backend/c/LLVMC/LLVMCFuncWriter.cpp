@@ -8918,7 +8918,8 @@ void LLVMCWriter::writeFunction(llvm::Function &Fn) {
             cNameOfGlobal(Fn.getName(), /*Declaration=*/false), "nd_function");
       c_stub::writeVariadicImportStub(
           Stub, c_stub::variadicStubName(Name, Import, *Entry), Import, {},
-          libc::libcVariadicForward(Import), libcVariant());
+          libc::libcVariadicForward(Import), libcVariant(), Opts.TheArch,
+          Opts.Format);
       OS << Text;
       return;
     }
