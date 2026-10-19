@@ -161,6 +161,35 @@ std::optional<DataAccessWidths>
 collectDataAccessWidths(const BinaryImage &Img,
                         llvm::ArrayRef<FuncInfo> Functions);
 
+/// What collectDataAccessWidths read of a list of functions: the extent it
+/// read each one with, and how many of them state each width at each
+/// address.  Reading another list of the same image then decodes only the
+/// functions whose extent differs, as when a lift gives a function its size.
+class DataAccessScan {
+public:
+  /// The widths collectDataAccessWidths(\p Img, \p Functions) gives.  \p Img
+  /// is the image every earlier update read.  None, and nothing kept, when a
+  /// decoder could not be set up.
+  std::optional<DataAccessWidths> update(const BinaryImage &Img,
+                                         llvm::ArrayRef<FuncInfo> Functions);
+  void clear() {
+    Extents.clear();
+    Counts.clear();
+  }
+
+private:
+  struct Count {
+    va_t Address;
+    unsigned Width;
+    uint32_t Functions;
+  };
+  /// The extent each function was read with, by entry.
+  std::vector<std::pair<va_t, uint64_t>> Extents;
+  /// Each width the functions of Extents state at an address, and how many
+  /// of them state it, by address and width.
+  std::vector<Count> Counts;
+};
+
 } // namespace neverd::sdk
 
 #endif // NEVERD_LIB_SDK_CAPI_INSTRUCTIONFLOW_H

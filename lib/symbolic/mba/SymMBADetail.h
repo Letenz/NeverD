@@ -112,6 +112,9 @@ bool canMeasureAtRoot(const SymContext &Ctx, SymRef R);
 /// that puts the hidden subterms back.
 struct Abstraction {
   SymRef Body;
+  /// A nonlinear product occurs in the source DAG. Without one, enabling
+  /// product roles cannot change this reading or yield a polynomial candidate.
+  bool MayHaveProducts = false;
   /// The same hidden inputs before recovering their affine relations. Keep
   /// this reading available when rebinding an arithmetic use would obscure
   /// its independent occurrence inside a bitwise operator.
@@ -131,7 +134,8 @@ struct Abstraction {
 std::optional<Abstraction>
 abstractToMBA(SymContext &Ctx, SymRef Root, bool AllowProducts,
               WorkBudget *Budget = nullptr,
-              size_t MaxBytes = MBAOptions{}.MaxTableBytes);
+              size_t MaxBytes = MBAOptions{}.MaxTableBytes,
+              bool CoarsenMaskedXors = false);
 
 //===----------------------------------------------------------------------===//
 // Measurement

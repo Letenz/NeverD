@@ -231,6 +231,13 @@ void scanCodeAddressImmediatesX86(const BinaryImage &Img, Decoder &Dec,
   Dec.setText(KeptText);
 }
 
+bool isX86EscapingCodeImmediate(const BinaryImage &Img, va_t Insn) {
+  const uint8_t *Bytes = Img.readVA(Insn, 2);
+  if (!Bytes)
+    return false;
+  return Bytes[0] == 0x68 || (Bytes[0] == 0xC7 && (Bytes[1] >> 6) != 3);
+}
+
 void scanSegmentCallsX86(const BinaryImage &Img, Decoder &Dec,
                          const Segment *Seg, va_t Start, va_t End,
                          std::set<va_t> &Out) {
@@ -450,6 +457,93 @@ void FuncDetector::scanX86UnsymbolizedEntries(const BinaryImage &Img,
   Dec.setDetail(PrevDetail);
 }
 
+namespace {
+
+/// How control reaches an address: falling into it or by a conditional
+/// branch, falling into it right after a call, or only by a jump.
+enum class X86Reach : uint8_t { Inside, AfterCall, Jump };
+
+/// Whether the instruction at [\p Addr, \p Next) reads a table among the code:
+/// one of its operands, which the loader records as naming data, names an
+/// address in executable code.
+bool readsX86TableAmongCode(const BinaryImage &Img, va_t Addr, va_t Next) {
+  auto It = Img.DataAddressRelocOperands.lower_bound(Addr);
+  return It != Img.DataAddressRelocOperands.end() && It->first < Next &&
+         Img.hasExecutableCodeOwnerAt(It->second.TargetVA);
+}
+
+/// Walk the code a function at \p Entry reaches in [\p Entry, \p End):
+/// falling through, by conditional and direct jumps, past calls that may
+/// return, and into the \p Cases its tables among the code name.  \p Take
+/// decides whether an address reached \p How is the function's code to walk
+/// on.  The walk never enters a callee.  Returns whether the code has an
+/// indirect jump the walk cannot follow, through which a computed goto may
+/// reach any of the function's labels.
+template <typename TakeFn>
+bool walkX86OwnCode(const BinaryImage &Img, Decoder &Dec, va_t Entry, va_t End,
+                    llvm::ArrayRef<va_t> Cases, std::set<va_t> &Visited,
+                    TakeFn Take) {
+  bool Computed = false;
+  std::vector<std::pair<va_t, X86Reach>> Work{{Entry, X86Reach::Inside}};
+  for (va_t Case : Cases)
+    Work.emplace_back(Case, X86Reach::Inside);
+  while (!Work.empty()) {
+    const auto [Addr, How] = Work.back();
+    Work.pop_back();
+    if (Addr < Entry || Addr >= End)
+      continue;
+    const Segment *Seg = Img.getSegmentFor(Addr);
+    if (!Seg || Addr < Seg->VA || Addr - Seg->VA >= Seg->Data.size())
+      continue;
+    const size_t Off = static_cast<size_t>(Addr - Seg->VA);
+    const llvm::ArrayRef<uint8_t> Bytes(Seg->Data.data() + Off,
+                                        Seg->Data.size() - Off);
+    if (!Take(Addr, How, Bytes))
+      continue;
+    if (!Visited.insert(Addr).second || Img.DataInCode.count(Addr) ||
+        Img.CodePtrRelocSlots.count(Addr))
+      continue;
+    DecodedInsn DI;
+    const int Size = Dec.decodeOneLight(Bytes.data(), Bytes.size(), Addr, DI);
+    if (Size <= 0 || !DI.Raw || !DI.Raw->detail)
+      continue;
+    const va_t Next = Addr + static_cast<va_t>(Size);
+    const cs_x86 &X86 = DI.Raw->detail->x86;
+    const bool Direct = X86.op_count >= 1 && X86.operands[0].type == X86_OP_IMM;
+    const va_t Target =
+        Direct ? static_cast<va_t>(X86.operands[0].imm) : InvalidVA;
+    // `jmp [slot]` and `call [slot]` name the import the loader binds there.
+    const bool ThroughSlot = !Direct && X86.op_count >= 1 &&
+                             X86.operands[0].type == X86_OP_MEM &&
+                             X86.operands[0].mem.base == X86_REG_INVALID &&
+                             X86.operands[0].mem.index == X86_REG_INVALID;
+    if (DI.Id == X86_INS_JMP) {
+      if (Direct)
+        Work.emplace_back(Target, X86Reach::Jump);
+      else if (!ThroughSlot && !readsX86TableAmongCode(Img, Addr, Next))
+        Computed = true;
+      continue;
+    }
+    if (DI.Id == X86_INS_CALL) {
+      va_t Callee = Target;
+      if (ThroughSlot)
+        Callee =
+            static_cast<va_t>(static_cast<uint32_t>(X86.operands[0].mem.disp));
+      if (Callee == InvalidVA || !libc::isNoReturnTarget(Img, Callee))
+        Work.emplace_back(Next, X86Reach::AfterCall);
+      continue;
+    }
+    if (Dec.isFunctionTerminator(DI))
+      continue;
+    if (Direct && isX86ConditionalJump(DI.Id))
+      Work.emplace_back(Target, X86Reach::Inside);
+    Work.emplace_back(Next, X86Reach::Inside);
+  }
+  return Computed;
+}
+
+} // namespace
+
 std::set<va_t> FuncDetector::rejectX86InteriorEntries(
     const BinaryImage &Img, Decoder &Dec, const std::set<va_t> &Evidenced,
     const std::set<va_t> &Guessed,
@@ -484,76 +578,28 @@ std::set<va_t> FuncDetector::rejectX86InteriorEntries(
     if (const auto Owner = ownerOf(Addr))
       Owners.insert(Owner->first);
 
-  // How control reaches an address: falling into it or by a conditional
-  // branch, falling into it right after a call, or only by a jump.
-  enum class Reach : uint8_t { Inside, AfterCall, Jump };
   std::set<va_t> Interior;
   const bool KeptDetail = Dec.detailEnabled(), KeptText = Dec.textEnabled();
   Dec.setText(true);
   Dec.setDetail(true);
   for (va_t Owner : Owners) {
-    const va_t End = ownerOf(Owner)->second;
+    const auto It = Cases.find(Owner);
     std::set<va_t> Visited;
-    std::vector<std::pair<va_t, Reach>> Work{{Owner, Reach::Inside}};
-    if (const auto It = Cases.find(Owner); It != Cases.end())
-      for (va_t Case : It->second)
-        Work.emplace_back(Case, Reach::Inside);
-    while (!Work.empty()) {
-      const auto [Addr, How] = Work.back();
-      Work.pop_back();
-      if (Addr < Owner || Addr >= End)
-        continue;
-      const Segment *Seg = Img.getSegmentFor(Addr);
-      if (!Seg || Addr < Seg->VA || Addr - Seg->VA >= Seg->Data.size())
-        continue;
-      const size_t Off = static_cast<size_t>(Addr - Seg->VA);
-      const llvm::ArrayRef<uint8_t> Bytes(Seg->Data.data() + Off,
-                                          Seg->Data.size() - Off);
-      if (Addr != Owner && Candidates.count(Addr)) {
-        // Only a jump can be a tail call, and a frame prologue right after a
-        // call can follow one that does not return.
-        if (How == Reach::Jump ||
-            (How == Reach::AfterCall && isX86StrongFramePrologue(Bytes)))
-          continue;
-        Interior.insert(Addr);
-      }
-      if (!Visited.insert(Addr).second || Img.DataInCode.count(Addr) ||
-          Img.CodePtrRelocSlots.count(Addr))
-        continue;
-      DecodedInsn DI;
-      const int Size = Dec.decodeOneLight(Bytes.data(), Bytes.size(), Addr, DI);
-      if (Size <= 0 || !DI.Raw || !DI.Raw->detail)
-        continue;
-      const va_t Next = Addr + static_cast<va_t>(Size);
-      const cs_x86 &X86 = DI.Raw->detail->x86;
-      const bool Direct =
-          X86.op_count >= 1 && X86.operands[0].type == X86_OP_IMM;
-      const va_t Target =
-          Direct ? static_cast<va_t>(X86.operands[0].imm) : InvalidVA;
-      if (DI.Id == X86_INS_JMP) {
-        if (Direct)
-          Work.emplace_back(Target, Reach::Jump);
-        continue;
-      }
-      if (DI.Id == X86_INS_CALL) {
-        va_t Callee = Target;
-        // `call [slot]` names the import the loader binds to the slot.
-        if (!Direct && X86.op_count >= 1 &&
-            X86.operands[0].type == X86_OP_MEM &&
-            X86.operands[0].mem.base == X86_REG_INVALID &&
-            X86.operands[0].mem.index == X86_REG_INVALID)
-          Callee = static_cast<va_t>(
-              static_cast<uint32_t>(X86.operands[0].mem.disp));
-        if (Callee == InvalidVA || !libc::isNoReturnTarget(Img, Callee))
-          Work.emplace_back(Next, Reach::AfterCall);
-        continue;
-      }
-      if (Dec.isFunctionTerminator(DI))
-        continue;
-      if (Direct && isX86ConditionalJump(DI.Id))
-        Work.emplace_back(Target, Reach::Inside);
-      Work.emplace_back(Next, Reach::Inside);
-    }
+    walkX86OwnCode(
+        Img, Dec, Owner, ownerOf(Owner)->second,
+        It == Cases.end() ? llvm::ArrayRef<va_t>()
+                          : llvm::ArrayRef<va_t>(It->second),
+        Visited, [&](va_t Addr, X86Reach How, llvm::ArrayRef<uint8_t> Bytes) {
+          if (Addr == Owner || !Candidates.count(Addr))
+            return true;
+          // Only a jump can be a tail call, and a frame prologue right after
+          // a call can follow one that does not return.
+          if (How == X86Reach::Jump ||
+              (How == X86Reach::AfterCall && isX86StrongFramePrologue(Bytes)))
+            return false;
+          Interior.insert(Addr);
+          return true;
+        });
   }
   Dec.setDetail(KeptDetail);
   Dec.setText(KeptText);
@@ -563,6 +609,23 @@ std::set<va_t> FuncDetector::rejectX86InteriorEntries(
     UnsymbolizedX86Entries.erase(Addr);
   }
   return Interior;
+}
+
+std::set<va_t> FuncDetector::x86OwnCodeReached(const BinaryImage &Img,
+                                               Decoder &Dec, va_t Entry,
+                                               va_t End,
+                                               llvm::ArrayRef<va_t> Cases,
+                                               bool &Computed) {
+  std::set<va_t> Visited;
+  const bool KeptDetail = Dec.detailEnabled(), KeptText = Dec.textEnabled();
+  Dec.setText(true);
+  Dec.setDetail(true);
+  Computed = walkX86OwnCode(
+      Img, Dec, Entry, End, Cases, Visited,
+      [](va_t, X86Reach, llvm::ArrayRef<uint8_t>) { return true; });
+  Dec.setDetail(KeptDetail);
+  Dec.setText(KeptText);
+  return Visited;
 }
 
 } // namespace neverd

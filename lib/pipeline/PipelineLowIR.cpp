@@ -3363,9 +3363,10 @@ struct ImportPrototypeArguments {
 /// \p RegisterArguments an import takes every argument on the stack.
 ImportPrototypeArguments importPrototypeArguments(
     const BinaryImage &Img, const std::vector<LowFunc> &Funcs,
-    const std::map<va_t, LocalRegisterEffect> &Effects, bool StackArguments,
+    const LocalRegisterEffectRefs &Effects, bool StackArguments,
     const DebugContext *Dbg, bool RegisterArguments = true,
-    const std::map<va_t, PointerVariableCallee> *PointerCallees = nullptr) {
+    const std::map<va_t, PointerVariableCallee> *PointerCallees = nullptr,
+    const std::vector<va_t> *ExportStarts = nullptr) {
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const llvm::ArrayRef<uint64_t> Registers =
       RegisterArguments
@@ -3481,6 +3482,13 @@ ImportPrototypeArguments importPrototypeArguments(
       return std::nullopt;
     return Result;
   };
+  // Whether an export names \p Addr; ExportStarts, where given, lists the
+  // address of every export.
+  auto Exported = [&](va_t Addr) {
+    return ExportStarts ? std::binary_search(ExportStarts->begin(),
+                                             ExportStarts->end(), Addr)
+                        : Img.findExportAt(Addr) != nullptr;
+  };
   // A routine the image exports, whose name binds a prototype
   // (LocalTypesDebugContext), takes what that prototype declares from every
   // caller: its export binds the convention, which a compiler keeps for the
@@ -3488,7 +3496,7 @@ ImportPrototypeArguments importPrototypeArguments(
   // pass the parameters its dispatcher reads from the stack.  A body that
   // reads more keeps it.  Only a convention of register summaries reads it.
   auto ExportedArguments = [&](va_t Addr) -> std::optional<Arguments> {
-    if (!Dbg || !RegisterArguments || !Img.findExportAt(Addr))
+    if (!Dbg || !RegisterArguments || !Exported(Addr))
       return std::nullopt;
     const std::optional<FunctionSym> Function = Dbg->resolveFunction(Addr);
     if (!Function || Function->PrototypeLibrary.empty())
@@ -3684,7 +3692,7 @@ ImportPrototypeArguments importPrototypeArguments(
       }
   for (const auto &[Entry, Effect] : Effects) {
     Classify(Entry);
-    for (const RegisterBlock &Block : Effect.Blocks)
+    for (const RegisterBlock &Block : Effect->Blocks)
       for (const RegisterStep &Step : Block.Steps) {
         if (Step.ImportCallee != InvalidVA)
           Classify(Step.ImportCallee);
@@ -3711,7 +3719,8 @@ void computeCallRegisterEffects(
     const std::shared_ptr<X87CallGraphCache> &X87Graphs,
     const std::map<va_t, PointerVariableCallee> &PointerCallees,
     pipeline_detail::CalleeFactsCache &KnownCallees, const DebugContext *Dbg,
-    const std::map<va_t, std::string> *FunctionNames, PipelineResult &Result) {
+    const std::map<va_t, std::string> *FunctionNames,
+    const std::vector<va_t> *ExportStarts, PipelineResult &Result) {
   // A call through a function-pointer variable passes the arguments of the
   // routine the variable starts at (PointerCallees): another module's, whose
   // prototype is kept under the variable's address, or this image's, by its
@@ -3749,7 +3758,11 @@ void computeCallRegisterEffects(
     }
     return;
   }
-  std::map<va_t, LocalRegisterEffect> Effects;
+  // Each function's effect.  A callee's is the one its kept facts hold,
+  // which the run reads in place (Kept holds them); the run copies an
+  // effect only to change it.
+  LocalRegisterEffectRefs Effects;
+  std::vector<std::shared_ptr<const void>> Kept;
   std::map<va_t, int> Depth;
   std::vector<va_t> Work;
   std::set<va_t> GuardForwarders;
@@ -3779,9 +3792,11 @@ void computeCallRegisterEffects(
   };
   for (const LowFunc &LF : Result.LowFuncs) {
     CollectFormattedCalls(LF.Blocks, /*Converted=*/true);
-    Effects[LF.Entry] =
+    auto Effect = std::make_shared<const LocalRegisterEffect>(
         localRegisterEffect(Img, LF, &NoReturnTargets, &FixedCallReads,
-                            &Result.CallArgumentSources, &StackProbes);
+                            &Result.CallArgumentSources, &StackProbes));
+    Effects[LF.Entry] = Effect.get();
+    Kept.push_back(std::move(Effect));
     if (forwardsToGuardDispatch(Img, LF.Blocks))
       GuardForwarders.insert(LF.Entry);
     Depth[LF.Entry] = 0;
@@ -3797,12 +3812,13 @@ void computeCallRegisterEffects(
     for (; Next < FrontierEnd; ++Next) {
       const va_t Caller = Work[Next];
       const int CalleeDepth = Depth[Caller] + 1;
-      std::set<va_t> Callees = Effects[Caller].Callees;
-      Callees.insert(Effects[Caller].NoReturnCallees.begin(),
-                     Effects[Caller].NoReturnCallees.end());
+      const LocalRegisterEffect &CallerEffect = *Effects.at(Caller);
+      std::set<va_t> Callees = CallerEffect.Callees;
+      Callees.insert(CallerEffect.NoReturnCallees.begin(),
+                     CallerEffect.NoReturnCallees.end());
       // A call through a function-pointer variable reads the arguments of
       // the routine of this image the variable starts at.
-      for (const RegisterBlock &Block : Effects[Caller].Blocks)
+      for (const RegisterBlock &Block : CallerEffect.Blocks)
         for (const RegisterStep &Step : Block.Steps)
           if (Step.ArgumentsFrom != InvalidVA)
             Callees.insert(Step.ArgumentsFrom);
@@ -3879,7 +3895,8 @@ void computeCallRegisterEffects(
           pipeline_detail::mergeFixedCallReads(FixedCallReads,
                                                Facts->FormattedReads);
           if (pipeline_detail::consultedReadsHold(*Facts, FixedCallReads)) {
-            Effects[Callee] = Facts->Effect;
+            Effects[Callee] = &Facts->Effect;
+            Kept.push_back(Facts);
             if (Facts->ForwardsToGuardDispatch)
               GuardForwarders.insert(Callee);
             Work.push_back(Callee);
@@ -3899,14 +3916,15 @@ void computeCallRegisterEffects(
             CachedBodies[I] ? CallRegisterBodyView(*CachedBodies[I])
                             : CallRegisterBodyView(Bodies[I]);
         auto Reads = CollectFormattedCalls(Body.Blocks, /*Converted=*/false);
-        Effects[Callee] =
+        auto Facts = std::make_shared<pipeline_detail::CalleeFacts>();
+        Facts->Effect =
             localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads,
                                 &Result.CallArgumentSources, &StackProbes);
+        Effects[Callee] = &Facts->Effect;
+        Kept.push_back(Facts);
         const bool Forwards = forwardsToGuardDispatch(Img, Body.Blocks);
         if (Forwards)
           GuardForwarders.insert(Callee);
-        auto Facts = std::make_shared<pipeline_detail::CalleeFacts>();
-        Facts->Effect = Effects[Callee];
         Facts->FormattedReads = std::move(Reads);
         Facts->Consulted =
             pipeline_detail::consultedCallReads(Body.Blocks, FixedCallReads);
@@ -3988,7 +4006,7 @@ void computeCallRegisterEffects(
       Convention && Convention->ImportArgumentsFromPrototype) {
     ImportPrototypeArguments Prototyped = importPrototypeArguments(
         Img, Result.LowFuncs, Effects, Convention->StackArgumentSummary, Dbg,
-        /*RegisterArguments=*/true, &PointerCallees);
+        /*RegisterArguments=*/true, &PointerCallees, ExportStarts);
     // The user's declaration of an import decides where no documented
     // contract does.
     for (auto &[Addr, Widths] : Prototyped.Reads)
@@ -3999,21 +4017,30 @@ void computeCallRegisterEffects(
     for (auto &[Addr, Count] : Prototyped.StackArgs)
       if (!DispatchThunks.count(Addr))
         FixedEntryStackArgs.try_emplace(Addr, Count);
+    // The run's own copy of an effect it changes.
+    auto Change = [&](const LocalRegisterEffect *&Effect) {
+      auto Changed = std::make_shared<LocalRegisterEffect>(*Effect);
+      Effect = Changed.get();
+      Kept.push_back(Changed);
+      return Changed.get();
+    };
     // An exported routine's body reads its declared parameters at entry, as
     // its callers pass them, whatever else it reads.
     for (const auto &[Addr, Widths] : Prototyped.DeclaredReads)
       if (auto Effect = Effects.find(Addr); Effect != Effects.end() &&
-                                            !Effect->second.Blocks.empty() &&
+                                            !Effect->second->Blocks.empty() &&
                                             !FixedEntryReads.count(Addr)) {
         RegisterStep Declared;
         Declared.Reads = Widths;
-        std::vector<RegisterStep> &Steps = Effect->second.Blocks.front().Steps;
+        std::vector<RegisterStep> &Steps =
+            Change(Effect->second)->Blocks.front().Steps;
         Steps.insert(Steps.begin(), Declared);
       }
     for (const auto &[Addr, Count] : Prototyped.DeclaredStackArgs)
       if (auto Effect = Effects.find(Addr);
-          Effect != Effects.end() && !Effect->second.UnknownStackReads)
-        Effect->second.StackArgs = std::max(Effect->second.StackArgs, Count);
+          Effect != Effects.end() && !Effect->second->UnknownStackReads &&
+          Count > Effect->second->StackArgs)
+        Change(Effect->second)->StackArgs = Count;
     Result.CallFloatReturns = std::move(Prototyped.FloatReturns);
   }
   CallRegisterSummaries Summaries =
@@ -4113,11 +4140,23 @@ std::vector<va_t> symbolFunctionStarts(const BinaryImage &Img,
   Starts.erase(std::unique(Starts.begin(), Starts.end()), Starts.end());
   return Starts;
 }
+
+/// The address of every export of \p Img, sorted and each once.
+std::vector<va_t> exportStarts(const BinaryImage &Img) {
+  std::vector<va_t> Starts;
+  Starts.reserve(Img.Exports.size());
+  for (const Export &Exp : Img.Exports)
+    Starts.push_back(Exp.Addr);
+  llvm::sort(Starts);
+  Starts.erase(std::unique(Starts.begin(), Starts.end()), Starts.end());
+  return Starts;
+}
 } // namespace
 
 PipelineAnalysisCache::SymbolInventory::SymbolInventory(const BinaryImage &Img)
     : BoundaryGuesses(Img.boundaryGuessFunctionStarts()),
       Starts(symbolFunctionStarts(Img, BoundaryGuesses)),
+      ExportStarts(exportStarts(Img)),
       KnownCodeRangesSorted(std::is_sorted(Img.KnownCodeRanges.begin(),
                                            Img.KnownCodeRanges.end())),
       Image(&Img), SymbolData(Img.Symbols.data()),
@@ -4858,7 +4897,7 @@ void Pipeline::buildLowIR(
       Img, FuncEntries, NoReturnTargets, Facts.StackProbes, NoReturnCallees,
       AbsoluteRelocationRoots, CodeOwnerIndex, X87Graphs, Facts.PointerCallees,
       Facts.CalleeFacts, Dbg, Shared ? &Inventory->functionNames(Img) : nullptr,
-      Result);
+      Shared ? &Inventory->ExportStarts : nullptr, Result);
 }
 
 } // namespace neverd

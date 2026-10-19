@@ -211,6 +211,28 @@ TEST(HighFrameStoreForwarding, AcceptsCommutedFrameAdditionOnly) {
   }
 }
 
+TEST(HighFrameStoreForwarding, EmptyDeadStoreAnchorsPreservePrivateFacts) {
+  for (Arch Architecture : Architectures)
+    for (unsigned Variant = 0; Variant != 3; ++Variant) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(Variant);
+      auto Function = roundTrip(Architecture, NdType::makeInt(4, false));
+      HighStmt Anchor;
+      Anchor.Kind = StmtKind::Block;
+      Anchor.Addr = 0x401004;
+      if (Variant == 1)
+        Anchor.Body.push_back(
+            store(frameSlot(Architecture), HighExpr::makeConst(7, 4)));
+      else if (Variant == 2)
+        Anchor.Val = HighExpr::makeConst(7, 4);
+      Function.Body.insert(Function.Body.begin() + 1, Anchor);
+      forwardPrivateFrameLoads(Function, Architecture);
+      EXPECT_EQ(hasLoad(Function.Body.back().RetVal), Variant != 0);
+      EXPECT_EQ(Function.Body[1].Kind, StmtKind::Block);
+      EXPECT_EQ(Function.Body[1].Addr, 0x401004U);
+    }
+}
+
 TEST(HighFrameStoreForwarding, PreservesFloatingOperatorsAroundIntegerReads) {
   for (Arch Architecture : Architectures)
     for (bool FusedMultiplyAdd : {false, true}) {

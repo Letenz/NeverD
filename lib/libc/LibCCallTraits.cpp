@@ -454,11 +454,16 @@ constexpr WindowsKernelPrototype WindowsKernelPrototypes[] = {
 } // namespace
 
 const WindowsKernelPrototype *windowsKernelPrototype(std::string_view Name) {
-  Name = stripLeadingUnderscores(Name);
-  for (const WindowsKernelPrototype &P : WindowsKernelPrototypes)
-    if (P.Name == Name)
-      return &P;
-  return nullptr;
+  // The first prototype the table gives each name; a run asks for every
+  // callee and import it summarizes.
+  static const auto ByName = [] {
+    std::unordered_map<std::string_view, const WindowsKernelPrototype *> Index;
+    for (const WindowsKernelPrototype &P : WindowsKernelPrototypes)
+      Index.try_emplace(P.Name, &P);
+    return Index;
+  }();
+  const auto Found = ByName.find(stripLeadingUnderscores(Name));
+  return Found == ByName.end() ? nullptr : Found->second;
 }
 
 bool isIndirectCallDispatchThunk(std::string_view Name) {

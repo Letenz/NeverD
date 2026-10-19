@@ -3708,6 +3708,29 @@ if(LLD_EXEC)
   list(APPEND ELF_EXECUTABLES ${call_arg_phi_a64_elf_obj}
                               ${call_arg_phi_a64_elf_so})
 
+  # Landing pads that a jump and the unwinder both enter, the shape rustc
+  # gives panic_with_hook.  Linking resolves the LSDA pointer in .eh_frame.
+  set(landing_pad_chain_a64_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/aarch64/test_landing_pad_chain_a64.s")
+  set(landing_pad_chain_a64_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_landing_pad_chain_a64.o")
+  set(landing_pad_chain_a64_so
+      "${CMAKE_CURRENT_BINARY_DIR}/test_landing_pad_chain_a64.so")
+  add_custom_command(
+    OUTPUT ${landing_pad_chain_a64_obj}
+    COMMAND ${CLANG_EXEC} -target aarch64-linux-gnu -fPIC -c
+            ${landing_pad_chain_a64_src} -o ${landing_pad_chain_a64_obj}
+    DEPENDS ${landing_pad_chain_a64_src}
+    COMMENT "Compiling AArch64 landing-pad chain fixture")
+  add_custom_command(
+    OUTPUT ${landing_pad_chain_a64_so}
+    COMMAND ${LLD_EXEC} -shared -m aarch64linux --eh-frame-hdr
+            -o ${landing_pad_chain_a64_so} ${landing_pad_chain_a64_obj}
+    DEPENDS ${landing_pad_chain_a64_obj}
+    COMMENT "Linking AArch64 landing-pad chain fixture")
+  list(APPEND ELF_EXECUTABLES ${landing_pad_chain_a64_obj}
+                              ${landing_pad_chain_a64_so})
+
   # An i386 shared library as GCC builds one: its PLT entry jumps through the
   # GOT by the address in EBX.
   set(pic_library_i386_src

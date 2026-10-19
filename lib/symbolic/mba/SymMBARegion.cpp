@@ -98,9 +98,10 @@ bool isMinimalVariableSum(const SymContext &Ctx, SymRef E,
 
 std::optional<Region> readRegion(SymContext &Ctx, SymRef E,
                                  const MBAOptions &Opts, bool AllowProducts,
-                                 WorkBudget &Budget, SolveReport &Rep) {
-  std::optional<Abstraction> Abstract =
-      abstractToMBA(Ctx, E, AllowProducts, &Budget, Opts.MaxTableBytes);
+                                 WorkBudget &Budget, SolveReport &Rep,
+                                 bool CoarsenMaskedXors = false) {
+  std::optional<Abstraction> Abstract = abstractToMBA(
+      Ctx, E, AllowProducts, &Budget, Opts.MaxTableBytes, CoarsenMaskedXors);
   if (!Abstract)
     return std::nullopt;
 
@@ -136,13 +137,17 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   }
   llvm::SmallVector<Candidate, 6> Candidates;
   bool Measured = false;
+  bool TryCoarseMasks = true;
+  bool TryProducts = true;
   std::optional<Region> LinearRegion;
   std::vector<llvm::APInt> ResidualWeights;
 
   if (std::optional<Region> Linear =
           readRegion(Ctx, E, Opts, /*AllowProducts=*/false, Budget, Rep)) {
     Measured = true;
+    TryProducts = Linear->Abstract.MayHaveProducts;
     auto NumAtoms = static_cast<unsigned>(Linear->AtomIds.size());
+    TryCoarseMasks = NumAtoms > std::min(3u, Limits.MaxOptimalSynthesisAtoms);
     std::optional<size_t> Corners = cornerCount(Linear->AtomIds.size());
     if (!Corners || !Budget.consume(*Corners)) {
       Rep.BudgetExhausted = true;
@@ -193,8 +198,13 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     }
   }
 
+  // With no nonlinear product in the source, the second abstraction would
+  // repeat the linear reading and solvePolynomial would immediately decline.
+  // Reuse that structural fact instead of rebuilding and rescanning the DAG.
   if (std::optional<Region> Poly =
-          readRegion(Ctx, E, Opts, /*AllowProducts=*/true, Budget, Rep)) {
+          TryProducts
+              ? readRegion(Ctx, E, Opts, /*AllowProducts=*/true, Budget, Rep)
+              : std::nullopt) {
     Measured = true;
     if (std::optional<SymRef> Form =
             solvePolynomial(Ctx, Poly->Abstract.Body, Poly->AtomIds,
@@ -214,6 +224,35 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   // Additional readings spend only what remains after the established linear
   // and polynomial candidates have been proved. Refusing the optional search
   // therefore cannot erase a candidate already available at this budget.
+  if (TryCoarseMasks && !Budget.exhausted()) {
+    if (auto Coarse = readRegion(Ctx, E, Opts, false, Budget, Rep, true)) {
+      auto Corners = cornerCount(Coarse->AtomIds.size());
+      const size_t Width = Ctx.width(Coarse->Abstract.Body);
+      const size_t WordBytes =
+          sizeof(llvm::APInt) +
+          (Width / 64 + (Width % 64 != 0)) * sizeof(uint64_t);
+      if (Corners && *Corners <= Opts.MaxTableBytes / 8 / WordBytes &&
+          Budget.consume(*Corners)) {
+        llvm::SmallVector<SymRef, 4> Forms;
+        if (Coarse->AtomIds.empty())
+          Forms.push_back(Coarse->Abstract.Body);
+        else
+          linearCandidates(
+              Ctx, measure(Ctx, Coarse->Abstract.Body, Coarse->AtomIds),
+              Coarse->Atoms, termBudget(Ctx, E, Opts), Limits, Forms);
+        for (SymRef Form : Forms) {
+          if (!proveLinearIdentity(Ctx, Coarse->Abstract.Body, Form,
+                                   Limits.MaxAtoms, Budget, Opts.MaxTableBytes))
+            continue;
+          if (!Budget.consume(Ctx.dagSize(Form)))
+            break;
+          Candidates.push_back({Ctx.substitute(Form, Coarse->Abstract.Hidden),
+                                static_cast<unsigned>(Coarse->Atoms.size()),
+                                true});
+        }
+      }
+    }
+  }
   if (LinearRegion && !Budget.exhausted() &&
       LinearRegion->Abstract.IndependentBody != LinearRegion->Abstract.Body &&
       readingScore(Ctx, LinearRegion->Abstract.IndependentBody) <

@@ -190,6 +190,16 @@ bool isStraightLinePrivateFrameFunction(const HighFunc &Func, Arch Architecture,
         Stmt.MemoryAddressSpace != NdMemoryAddressSpace::Default)
       return false;
     --Budget;
+    if (Stmt.Kind == StmtKind::Block) {
+      // Dead-store removal leaves empty block anchors in the straight-line
+      // body. They neither access memory nor change control flow. Reject
+      // malformed anchors carrying expressions instead of ignoring them.
+      bool Empty = true;
+      forEachExpr(Stmt, [&](const ExprPtr &) { Empty = false; });
+      if (Empty)
+        continue;
+      return false;
+    }
     if (Stmt.Kind != StmtKind::Assign && Stmt.Kind != StmtKind::Store &&
         Stmt.Kind != StmtKind::ExprStmt && Stmt.Kind != StmtKind::Return &&
         Stmt.Kind != StmtKind::Nop)
