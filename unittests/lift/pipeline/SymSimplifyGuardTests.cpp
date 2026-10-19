@@ -1457,9 +1457,21 @@ TEST(SymSimplifyGuard, SynthesisUnknownLeavesIRUnchanged) {
 TEST(SymSimplifyGuard, SynthesisProofBudgetOverrideLeavesIRUnchanged) {
   llvm::LLVMContext C;
   llvm::Module M("m", C);
-  llvm::Function *F = buildSynthesisShiftDouble(M, "synthesis_proof_budget");
+  auto *I32 = llvm::Type::getInt32Ty(C);
+  auto *F = llvm::Function::Create(
+      llvm::FunctionType::get(I32, {I32, I32, I32}, false),
+      llvm::Function::ExternalLinkage, "synthesis_proof_budget", M);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", F));
+  auto *X = F->getArg(0);
+  auto *Direct = B.CreateLShr(X, B.getInt32(4));
+  auto *Nested = B.CreateLShr(B.CreateLShr(X, B.getInt32(2)), B.getInt32(2));
+  auto *Sum = B.CreateAdd(B.CreateMul(X, B.getInt32(182)),
+                          B.CreateMul(F->getArg(1), B.getInt32(73)));
+  Sum = B.CreateAdd(Sum, B.CreateMul(F->getArg(2), B.getInt32(211)));
+  B.CreateRet(B.CreateAdd(Sum, B.CreateSub(Direct, Nested)));
   const std::string Before = printFunction(*F);
   SymSimplifyOptions Options = synthesisOptions();
+  Options.Synthesis = symbolic::SynthOptions::sourceView();
   Options.SynthesisSolver = solver::SolverOptions::sourceView();
   Options.SynthesisSolver->Blast.MaxWidth = 8;
   const auto Result = SymSimplifyPass::simplifyWithResult(*F, Options);

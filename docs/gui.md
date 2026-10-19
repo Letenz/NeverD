@@ -232,6 +232,9 @@ in the same menu. Symbolic simplification is a separate choice for every LLVM
 profile. **Recover LLVM control flow** has its own checked-by-default item;
 disabling symbolic
 expression simplification does not disable recovery or its targeted proofs.
+The source switch enables expression rewriting; path exploration (`sym-explore`),
+concolic testing (`concolic`) and interpreter devirtualization remain separate
+operations. It does not request exhaustive symbolic execution of the program.
 The CLI equivalents are `--llvm-opt=O2`, `--llvm-control-flow=true` and
 `--symbolic-simplify`. LLVM-specific overrides require `--func --llvm`;
 without `--func`, `--symbolic-simplify` simplifies every function of the whole
