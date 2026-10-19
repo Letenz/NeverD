@@ -742,6 +742,10 @@ public:
                                                    uint64_t AccessSize) const;
   std::optional<uint64_t> foldReadonlyScalar(va_t Addr, uint16_t Size) const;
   std::optional<std::string> foldImmediate(const llvm::Value *V) const;
+  /// The image address of the object the unit declares for pointer \p V,
+  /// which imageDataCName names; nullopt for none, or for bytes of an array
+  /// the module defines.
+  std::optional<va_t> declaredImageDataVA(const llvm::Value *V) const;
   std::string imageDataCName(const llvm::Value *V) const;
   std::string getName(const llvm::Value *V);
   std::string freshVar(const std::string &Hint = "v");
@@ -911,6 +915,11 @@ public:
   }
   mutable CProjectionIdentifierAllocator ImageIdentifierAllocator;
   mutable std::map<va_t, std::string> ImageObjectNames;
+  /// The name the image's data symbol at \p Addr gives the object there, and
+  /// the symbol as C spells it, which namedImageObject spells an identifier
+  /// from; nullopt where the image names no data there.
+  std::optional<std::pair<std::string, std::string>>
+  imageDataSymbolName(va_t Addr) const;
   /// The comment naming the symbol of each image object whose identifier is
   /// not that symbol (symbolComment()), by identifier.
   mutable std::map<std::string, std::string> ImageObjectSymbols;
