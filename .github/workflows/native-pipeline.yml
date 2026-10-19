@@ -13,6 +13,9 @@ on:
       - 'unittests/lift/core/MedCallingConvTests.cpp'
       - 'unittests/lift/core/FPParameterMaskTests.cpp'
       - 'unittests/PipelineOutcomeTests.cpp'
+      - 'unittests/SessionFunctionDiscoveryTests.cpp'
+      - 'lib/sdk/capi/**'
+      - 'tools/neverd-worker/tests/native_mapping_test.py'
       - 'cmake/NeverDPerformance.cmake'
       - 'cmake/NeverDForks*'
       - '.gitmodules'
@@ -43,6 +46,9 @@ on:
       - 'unittests/lift/core/MedCallingConvTests.cpp'
       - 'unittests/lift/core/FPParameterMaskTests.cpp'
       - 'unittests/PipelineOutcomeTests.cpp'
+      - 'unittests/SessionFunctionDiscoveryTests.cpp'
+      - 'lib/sdk/capi/**'
+      - 'tools/neverd-worker/tests/native_mapping_test.py'
       - 'cmake/NeverDPerformance.cmake'
       - 'cmake/NeverDForks*'
       - '.gitmodules'
@@ -127,6 +133,39 @@ jobs:
         if: runner.os == 'Windows'
         with:
           arch: x64
+      - name: Verify the decoder's public contracts and buffer bounds
+        env:
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          sanitize=ON
+          if [ "$RUNNER_OS" = Windows ]; then sanitize=OFF; fi
+          cmake -S third_party/capstone -B build-capstone-core -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=${{ matrix.cc }} \
+            -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
+            -DCAPSTONE_ARCHITECTURE_DEFAULT=OFF -DCAPSTONE_X86_SUPPORT=ON \
+            -DCAPSTONE_BUILD_CSTEST=ON -DCAPSTONE_BUILD_CSTOOL=OFF \
+            -DCAPSTONE_BUILD_LEGACY_TESTS=OFF -DCAPSTONE_BUILD_MACOS_THIN=ON \
+            -DENABLE_ASAN="$sanitize"
+          python - <<'PY'
+          from collections import Counter
+          import json, subprocess
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          build = Path('build-capstone-core')
+          command = ['ctest', '--test-dir', str(build), '-R', '^unit_']
+          inventory = json.loads(subprocess.check_output(command + ['--show-only=json-v1'], text=True))
+          names = [test['name'] for test in inventory['tests']]
+          assert len(names) >= 82 and len(names) == len(set(names))
+          assert {'unit_x86_buffer_bounds', 'unit_x86_far_immediate_encoding'} <= set(names)
+          targets = ['unit_test' if name == 'unit_cstest' else name.removeprefix('unit_') for name in names]
+          subprocess.run(['cmake', '--build', str(build), '--parallel', '3', '--target', *targets], check=True)
+          subprocess.run(command + ['--no-tests=error', '--output-on-failure', '--output-junit', 'results.xml'], check=True)
+          cases = list(ET.parse(build / 'results.xml').getroot().iter('testcase'))
+          assert Counter(case.get('name') for case in cases) == Counter(names)
+          assert all(case.get('status') == 'run' and not any(child.tag in {'failure', 'error', 'skipped'} for child in case) for case in cases)
+          (build / 'source.txt').write_text(subprocess.check_output(['git', '-C', 'third_party/capstone', 'rev-parse', 'HEAD'], text=True))
+          print(f'Capstone: {len(cases)} passed, zero failed, zero skipped')
+          PY
       - name: Configure native pipeline, SDK and worker
         run: |
           cmake -S . -B build-abi -G Ninja \
@@ -157,7 +196,8 @@ jobs:
           output = Path('build-abi/evidence')
           output.mkdir(parents=True, exist_ok=True)
           cache = Path('build-abi/CMakeCache.txt').read_text()
-          assert 'NEVERD_ENABLE_MIMALLOC:BOOL=ON' in cache
+          for provider in ('MIMALLOC', 'HIGHWAY', 'SIMDUTF', 'SIMDJSON', 'TBB'):
+              assert f'NEVERD_ENABLE_{provider}:BOOL=ON' in cache, provider
           suffix = '.exe' if os.name == 'nt' else ''
           # The stderr descriptor checks are compiled only on their hosts.
           pipeline_minimum = 40 + (os.name != 'nt') + (sys.platform == 'linux')
@@ -168,7 +208,7 @@ jobs:
                                   ('NeverDX86UndefinedEffectsTests', 52),
                                   ('NeverDSupportThreadTests', 12),
                                   ('NeverDHighControlFlowTests', 420),
-                                  ('NeverDAccelerationTests', 14),
+                                  ('NeverDAccelerationTests', 18),
                                   ('NeverDStringScanTests', 17),
                                   ('NeverDTextEncodingTests', 3),
                                   ('NeverDPythonRuntimeTests', 7),
@@ -280,6 +320,10 @@ jobs:
         with:
           name: native-pipeline-${{ matrix.name }}-${{ github.sha }}
           path: |
+            build-capstone-core/CMakeCache.txt
+            build-capstone-core/source.txt
+            build-capstone-core/results.xml
+            build-capstone-core/Testing/Temporary/LastTest.log
             build-abi/evidence
             build-abi/evidence-native
             build-abi/CMakeCache.txt

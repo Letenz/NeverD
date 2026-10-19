@@ -155,8 +155,8 @@ NeverD does not pin these five dependencies to an earlier release.
 `NEVERD_ENABLE_HIGHWAY`, `NEVERD_ENABLE_SIMDUTF`, `NEVERD_ENABLE_SIMDJSON`
 and `NEVERD_ENABLE_TBB` default to `ON`; each can be set to `OFF` for comparisons.
 The oneTBB scheduler retains workers between batches, checks their 8 MiB stacks,
-and never builds or loads an allocator proxy. Large-stack callers reuse their
-available headroom; small callers receive a native coordinator. Hosts that fork
+and never builds or loads `tbbmalloc` or its allocator proxy. Large-stack callers
+reuse their available headroom; small callers receive a native coordinator. Hosts that fork
 after first use or dynamically unload the SDK must use the native-thread
 baseline (`NEVERD_ENABLE_TBB=OFF`); these lifecycles remain unsupported by the
 retained scheduler. It does not finalize a host's shared TBB

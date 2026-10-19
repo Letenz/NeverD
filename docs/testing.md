@@ -298,6 +298,10 @@ runs `NeverDStringScanTests`, `NeverDTextEncodingTests`, pipeline, SDK and worke
 owners. Compare complete string metadata and output, not only throughput.
 Native pipeline CI repeats the complete selected owners and actual SDK/worker
 checks with both the default oneTBB backend and the explicit native-thread baseline.
+It also runs the pinned Capstone fork's x86 unit inventory, including guard-page
+truncation and far-immediate encoding checks, with MSVC and clang-cl on Windows.
+The Linux and macOS decoder checks enable ASan and UBSan. Every selected case
+must run and pass; the jobs retain the source commit and JUnit records.
 
 The default scheduler retains oneTBB workers between synchronous calls. Large
 callers reuse spare stack headroom; small callers use a native coordinator.
