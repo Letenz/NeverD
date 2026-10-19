@@ -197,6 +197,44 @@ TEST(X86_32PICLibrary, APoppedGetPcPushIsNoCallArgument) {
   EXPECT_NE(Source.find("factor = 1"), std::string::npos) << Source;
 }
 
+// `clang_spill_call`, built at -O0, spills both its arguments and the GOT
+// address to its frame (`mov [esp+0x14], edx` ...) and calls through
+// `clang_hook` with no stack argument.  The stack pointer the call is made
+// with places each spill above the outgoing area: none is a push.  The call
+// had passed them, `clang_hook(arg0, arg1, 0x3788)` in reverse store order,
+// as android_x86_server's `get_idc_filename` passed its spills to
+// `get_lex_vars`.
+TEST(X86_32PICLibrary, ASpillAboveTheOutgoingAreaIsNoPush) {
+  const std::optional<BinaryImage> Img = loadLibrary();
+  if (!Img)
+    GTEST_SKIP() << "the fixture links with ld.lld";
+  const Symbol *GOT = Img->findSymbol("_GLOBAL_OFFSET_TABLE_");
+  ASSERT_NE(GOT, nullptr);
+  const std::string Source = decompile(*Img, "clang_spill_call");
+  EXPECT_FALSE(std::regex_search(
+      Source, std::regex("\\b0x" + llvm::utohexstr(GOT->Addr) + "\\b")))
+      << Source;
+  EXPECT_TRUE(std::regex_search(Source, std::regex("\\)\\(\\);"))) << Source;
+}
+
+// `clang_pass_result` stores the result of its first call at 4(%esp), one
+// slot past a first slot it never writes, and calls through its table again.
+// That store is no spill: the second call keeps the first one's result.
+TEST(X86_32PICLibrary, AResultPastAnEmptyFirstSlotStaysAnArgument) {
+  const std::optional<BinaryImage> Img = loadLibrary();
+  if (!Img)
+    GTEST_SKIP() << "the fixture links with ld.lld";
+  const std::string Source = decompile(*Img, "clang_pass_result");
+  // The first call's result is named and passed to the second call.
+  std::smatch Result;
+  ASSERT_TRUE(std::regex_search(
+      Source, Result, std::regex(R"((\w+) = \(\(uint32_t \(\*\)\(\)\))")))
+      << Source;
+  EXPECT_TRUE(
+      std::regex_search(Source, std::regex("\\(" + Result[1].str() + "\\);")))
+      << Source;
+}
+
 // A linked library reads a `.rodata` table at its GOTOFF displacement from the
 // GOT plus an index.  The LLVM module took the GOT for the table's base: GCC's
 // read went into the writable run that holds the GOT, at a negative offset,
