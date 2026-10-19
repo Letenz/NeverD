@@ -393,13 +393,18 @@ const DataAccessWidths *Session::dataAccessWidths() {
   if (!Loaded || Img.Arch == Arch::EVM || Img.Arch == Arch::SBF ||
       !synchronizeFunctions())
     return nullptr;
-  // The widths are read from the functions' extents.
+  // The widths are read from the functions' extents: those they were read
+  // from serve while each function keeps its entry and size.
+  if (AccessWidths &&
+      llvm::equal(Functions, AccessWidthsFunctions,
+                  [](const FuncInfo &F, const std::pair<va_t, uint64_t> &E) {
+                    return F.Entry == E.first && F.Size == E.second;
+                  }))
+    return &*AccessWidths;
   std::vector<std::pair<va_t, uint64_t>> Extents;
   Extents.reserve(Functions.size());
   for (const FuncInfo &F : Functions)
     Extents.emplace_back(F.Entry, F.Size);
-  if (AccessWidths && AccessWidthsFunctions == Extents)
-    return &*AccessWidths;
   // C kept from before names data by the widths of other functions.
   if (AccessWidths)
     forgetEmittedSources();
