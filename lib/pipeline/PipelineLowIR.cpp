@@ -26,6 +26,7 @@
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/low/SEHFrameProof.h"
+#include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/libc/StackProbeIndex.h"
@@ -4118,6 +4119,14 @@ PipelineAnalysisCache::SymbolInventory::functionNames(
     FunctionNames = functionNamesAt(Img, Named);
   }
   return *FunctionNames;
+}
+
+const std::map<va_t, Intrinsic> &
+PipelineAnalysisCache::SymbolInventory::runtimeRoutineCalls(
+    const BinaryImage &Img) const {
+  if (!RuntimeRoutineCalls)
+    RuntimeRoutineCalls = runtimeRoutineCallsOf(Img, Img.Arch);
+  return *RuntimeRoutineCalls;
 }
 
 std::shared_ptr<const PipelineAnalysisCache::SymbolInventory>

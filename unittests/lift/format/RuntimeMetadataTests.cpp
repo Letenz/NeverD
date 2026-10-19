@@ -1055,6 +1055,73 @@ TEST(RuntimeMetadata, ManyAddressesTakeTheNamesEachTakesAlone) {
   EXPECT_EQ(Alone.at(0x9000), "sub_9000");
 }
 
+TEST(RuntimeMetadata, StatedNamesOfEveryAddressAreThoseOfEachAlone) {
+  // statedFunctionNamesByAddress answers in one pass what
+  // statedFunctionNamesAt answers per address: the shown name from the first
+  // export when it has a name, else from the best symbol by rank where a
+  // producer stated it; then each export's name and each stated function
+  // symbol's, once, in order.  An address whose shown name analysis gave
+  // has none.
+  BinaryImage Img;
+  const auto AddSymbol = [&](const char *Name, va_t Addr, bool IsFunc,
+                             NameOrigin Origin = NameOrigin::Stated,
+                             bool IsSection = false) {
+    Symbol Sym;
+    Sym.Name = Name;
+    Sym.Addr = Addr;
+    Sym.IsFunc = IsFunc;
+    Sym.Origin = Origin;
+    Sym.IsSection = IsSection;
+    Img.Symbols.push_back(Sym);
+  };
+  const auto AddExport = [&](const char *Name, va_t Addr) {
+    Export Exp;
+    Exp.Name = Name;
+    Exp.Addr = Addr;
+    Img.Exports.push_back(Exp);
+  };
+  // Identical functions a linker folded: each name exported and stated.
+  AddExport("folded_a", 0x1000);
+  AddExport("folded_b", 0x1000);
+  AddSymbol("folded_c", 0x1000, true);
+  AddSymbol("folded_a", 0x1000, true);
+  AddSymbol("folded_label", 0x1000, false);
+  // A first export without a name leaves the symbol to show it.
+  AddExport("", 0x2000);
+  AddExport("second_export", 0x2000);
+  AddSymbol("label", 0x2000, false);
+  AddSymbol("function", 0x2000, true);
+  AddSymbol(".text", 0x3000, false, NameOrigin::Stated, /*IsSection=*/true);
+  AddSymbol("thunk", 0x3000, false);
+  AddSymbol("sub_4000", 0x4000, true, NameOrigin::Synthesized);
+  AddSymbol("stated_after", 0x4000, true);
+  AddSymbol("sub_5000", 0x5000, true, NameOrigin::Synthesized);
+  AddSymbol("", 0x6000, true);
+  AddExport("", 0x7000);
+  Img.numberSharedFunctionNames();
+  const auto Every = statedFunctionNamesByAddress(Img);
+  std::set<va_t> Addrs = {0x9000};
+  for (const Export &Exp : Img.Exports)
+    Addrs.insert(Exp.Addr);
+  for (const Symbol &Sym : Img.Symbols)
+    Addrs.insert(Sym.Addr);
+  for (va_t Addr : Addrs) {
+    std::vector<std::string> Alone;
+    for (const llvm::StringRef Name : Img.statedFunctionNamesAt(Addr))
+      Alone.push_back(Name.str());
+    const auto It = Every.find(Addr);
+    EXPECT_EQ(It == Every.end() ? std::vector<std::string>() : It->second,
+              Alone)
+        << "at 0x" << llvm::utohexstr(Addr);
+    EXPECT_EQ(It != Every.end(), !Alone.empty()) << llvm::utohexstr(Addr);
+  }
+  EXPECT_EQ(Every.at(0x1000),
+            (std::vector<std::string>{"folded_a", "folded_b", "folded_c"}));
+  EXPECT_EQ(Every.at(0x2000),
+            (std::vector<std::string>{"function", "second_export"}));
+  EXPECT_FALSE(Every.count(0x5000));
+}
+
 TEST(RuntimeMetadata, ParsesRVADelayImportWithExactIATSlot) {
   DelayImportImage Fixture =
       makeDelayImportImage(/*Is64=*/false, /*LegacyVA=*/false,

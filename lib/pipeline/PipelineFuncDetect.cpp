@@ -11,6 +11,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "PipelineLowIRDetail.h"
+
 #include "neverd/Limits.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/CFGBuilder.h"
@@ -206,6 +208,19 @@ Pipeline::detectFunctions(const BinaryImage &Img, Decoder &Dec,
       }
     }
     FuncEntries.reserve(Wanted.size());
+    // A run that shares the analysis cache names them from its symbol
+    // inventory (getFunctionNameAt() scans every export and symbol).
+    std::shared_ptr<const PipelineAnalysisCache::SymbolInventory> Inventory;
+    if (PipelineAnalysisCache *Shared = sharedAnalysisCache(Img, Opts))
+      Inventory = PipelineAnalysisCache::SymbolInventory::of(Img, *Shared);
+    const auto NameAt = [&](va_t Addr) {
+      if (!Inventory)
+        return Img.getFunctionNameAt(Addr);
+      const std::map<va_t, std::string> &Names = Inventory->functionNames(Img);
+      if (const auto It = Names.find(Addr); It != Names.end())
+        return It->second;
+      return (kAutoFuncPrefix + llvm::utohexstr(Addr)).str();
+    };
     for (va_t Addr : Wanted) {
       // `--func` already chose the work set.  Do not scan every image
       // symbol to prove the VA is a "known" start: C++ unwind ActionVAs
@@ -214,7 +229,7 @@ Pipeline::detectFunctions(const BinaryImage &Img, Decoder &Dec,
       const Segment *Seg = Img.getSegmentFor(Addr);
       if (!Seg || !Seg->isExecutable())
         continue;
-      FuncEntries.push_back({Addr, Img.getFunctionNameAt(Addr)});
+      FuncEntries.push_back({Addr, NameAt(Addr)});
     }
     LLVM_DEBUG(llvm::dbgs() << "pipeline: only-function filter kept "
                             << FuncEntries.size() << " entries\n");
