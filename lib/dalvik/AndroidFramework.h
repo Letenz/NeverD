@@ -11,7 +11,8 @@
 namespace neverd::mobile::dalvik {
 class AndroidFramework {
 public:
-  explicit AndroidFramework(std::optional<AndroidApplicationSnapshot> input);
+  AndroidFramework(std::optional<AndroidApplicationSnapshot> input,
+                   const Program &program);
   ExecutionResult execute(Heap &heap, const Program &program,
                           const LibraryMethod &method, uint64_t receiver,
                           std::span<const uint64_t> arguments,

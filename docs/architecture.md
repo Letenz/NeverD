@@ -8217,6 +8217,12 @@ Program registers framework field ownership by declaration identity, independent
 of supplied source metadata. Runtime routes those instance fields to the same
 AndroidFramework state as library getters. Instrumentation starts from explicit
 optional state and retains compatible guest writes; JNI IDs do not own a copy.
+Exact loader-scoped negative class lookup observations are admitted by the
+shared Android application validator and checked against the Runtime's actual
+Program visibility. AndroidFramework creates the shared throwable and message;
+JNI transports that identity, and DEX catches it through the existing Runtime.
+JSON does not execute or infer lookup outcomes, and a negative parent observation
+does not close a child namespace or change JNI FindClass.
 The retained application files directory and File path values use the same
 heap. Native setup validates its declared directory against LinuxFiles; Dalvik
 does not acquire an independent host filesystem. LinuxFiles owns getcwd bytes

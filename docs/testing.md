@@ -13,6 +13,12 @@ two native threads, global/local reference deletion and detach/reattach against
 the same process objects. `ProcessReport.AndroidApplicationSnapshot*` checks
 strict JSON input. These tests use synthetic inputs without a phone, host JVM
 or network; they do not establish arbitrary framework lifecycle equivalence.
+The loader failure tests check exact loader/name isolation, null versus empty
+and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
+typed/JSON admission, DEX catch and shared message access, terminal instruction
+and heap limits. `AndroidJNI.LoaderFailures*` executes original O0/O2 AArch64
+callers across available backends and relocation formats, including pending
+exception identity, clear/detach/reattach and unknown FindClass/system lookups.
 The File cases check retained JNI references across detach, shared DEX/library
 objects, exact path/name/parent strings, missing input, foreign instances and
 terminal budget refusal. `LinuxFileNamespace.WorkingDirectory*` independently

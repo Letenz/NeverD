@@ -10,8 +10,53 @@
 #include "AndroidFramework.h"
 
 #include <algorithm>
+#include <set>
 
 namespace neverd::mobile::dalvik {
+namespace {
+bool platformType(std::string_view type) {
+  return type.starts_with("Ljava/") || type.starts_with("Ljavax/") ||
+         type.starts_with("Landroid/") || type.starts_with("Ldalvik/");
+}
+} // namespace
+
+void validateAndroidClassLookupFailures(
+    const AndroidApplicationSnapshot &input) {
+  using Loader = AndroidApplicationSnapshot::ClassLookupFailure::Loader;
+  if (input.class_lookup_failures.size() > 256)
+    throw Error("Android class lookup failure inventory exceeds its budget");
+  std::set<std::pair<Loader, std::string>> seen;
+  for (const auto &failure : input.class_lookup_failures) {
+    if ((failure.loader != Loader::Boot && failure.loader != Loader::System &&
+         failure.loader != Loader::Application) ||
+        (failure.loader == Loader::Application &&
+         input.phase != AndroidApplicationSnapshot::Phase::Application))
+      throw Error("invalid Android class lookup failure loader");
+    const auto &name = failure.binary_name;
+    bool first = true;
+    if (name.empty() || name.size() > 1024)
+      throw Error("invalid Android class lookup failure binary name");
+    for (unsigned char byte : name) {
+      if (byte == '.' && !first) {
+        first = true;
+        continue;
+      }
+      if (!((byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
+            byte == '_' || byte == '$' ||
+            (!first && byte >= '0' && byte <= '9')))
+        throw Error("invalid Android class lookup failure binary name");
+      first = false;
+    }
+    if (first || !seen.emplace(failure.loader, name).second)
+      throw Error("duplicate or invalid Android class lookup failure");
+    if (failure.message) {
+      if (failure.message->size() > 4096)
+        throw Error("Android class lookup failure message exceeds its budget");
+      (void)javaStringBytes(*failure.message);
+    }
+  }
+}
+
 void Program::addAndroidFramework() {
   // Only the hierarchy needed by this projection. Unmodeled members are not
   // supplied as empty executable declarations.
@@ -75,10 +120,20 @@ bool Program::androidFrameworkField(const Field &field) const {
 }
 
 AndroidFramework::AndroidFramework(
-    std::optional<AndroidApplicationSnapshot> input)
+    std::optional<AndroidApplicationSnapshot> input, const Program &program)
     : snapshot(std::move(input)) {
   if (!snapshot)
     return;
+  validateAndroidClassLookupFailures(*snapshot);
+  for (const auto &failure : snapshot->class_lookup_failures) {
+    std::string type = "L" + failure.binary_name + ";";
+    std::replace(type.begin(), type.end(), '.', '/');
+    if (program.knownReference(type) &&
+        (platformType(type) || failure.loader ==
+                                   AndroidApplicationSnapshot::
+                                       ClassLookupFailure::Loader::Application))
+      throw Error("Android class lookup failure shadows a visible declaration");
+  }
   using Phase = AndroidApplicationSnapshot::Phase;
   if (snapshot->phase != Phase::Unattached &&
       snapshot->phase != Phase::Attached &&
@@ -217,10 +272,6 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
       return 0;
     return identity(application, "android/app/Application");
   };
-  auto platform = [&](std::string_view type) {
-    return type.starts_with("Ljava/") || type.starts_with("Ljavax/") ||
-           type.starts_with("Landroid/") || type.starts_with("Ldalvik/");
-  };
   auto string = [&](std::string_view text) -> uint32_t {
     auto bytes = javaStringBytes(text);
     for (size_t i = 0; i < bytes.size(); i += 2)
@@ -324,7 +375,7 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
         return boot();
       if (!program.knownReference(type))
         return unsupported("unmodeled class loader ownership");
-      return platform(type) ? boot() : appLoader();
+      return platformType(type) ? boot() : appLoader();
     }
     case LoadClass: {
       if (receiver != boot_loader && receiver != system_loader &&
@@ -343,16 +394,34 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
           return unsupported("non-ASCII Android class lookup is not modeled");
         text.push_back(name->Bytes[i] == '.' ? '/' : name->Bytes[i]);
       }
-      // Only known binary names, without initialization. Array/descriptor
-      // spellings, missing classes and other namespaces remain unknown, not
-      // fabricated ClassNotFoundException results or host classpath queries.
+      // A negative outcome requires an exact declaration for this loader.
+      // Absence from supplied DEX alone never implies class absence.
       if (text.empty() || text.front() == '[' ||
           std::find(name->Bytes.begin(), name->Bytes.end(), '/') !=
               name->Bytes.end())
         return unsupported("Android class lookup requires a known binary name");
       const auto type = "L" + text + ";";
+      using Loader = AndroidApplicationSnapshot::ClassLookupFailure::Loader;
+      const auto loader = receiver == boot_loader     ? Loader::Boot
+                          : receiver == system_loader ? Loader::System
+                                                      : Loader::Application;
+      std::string binary = text;
+      std::replace(binary.begin(), binary.end(), '/', '.');
+      for (const auto &failure : snapshot->class_lookup_failures) {
+        if (failure.loader != loader || failure.binary_name != binary)
+          continue;
+        uint32_t message = failure.message ? string(*failure.message) : 0;
+        tick();
+        auto exception = heap.allocate(Object::Throwable,
+                                       "java/lang/ClassNotFoundException", 0);
+        auto id = ref(exception);
+        exception->Message = message;
+        throw Stop{{ExecutionStop::Thrown, 0,
+                    "java/lang/ClassNotFoundException",
+                    "explicit Android class lookup failure", id}};
+      }
       if (!program.knownReference(type) ||
-          (!platform(type) && receiver != app_loader))
+          (!platformType(type) && receiver != app_loader))
         return unsupported(
             "Android class lookup has no supplied declaration in this loader");
       return ref(heap.classObject(text));
