@@ -47057,3 +47057,95 @@ TEST(HighCPointerAddresses, OtherPlatformsFunctionsReadTheirThreadsFS) {
   EXPECT_NE(Source.find("t16_1 = "), std::string::npos) << Source;
   expectCSyntax(Source);
 }
+
+TEST(HighCPointerAddresses, RecordsNamedLikeLibraryRoutinesAreSpelledByTags) {
+  // mawk names `struct stat` without calling stat(), and includes
+  // <sys/stat.h> for fstat(), which declares stat() too: no typedef of the
+  // routine's name can stand beside it.
+  HighFunc Func;
+  Func.Name = "probe_size";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(4);
+  auto Record = std::make_shared<NdType>();
+  Record->Kind = NdTypeKind::Struct;
+  Record->SourceName = "stat";
+  Func.Params = {{"buffer", NdType::makePtr(Record)}};
+  MedVar Buffer;
+  Buffer.Kind = MedVar::Param;
+  Buffer.Id = 0;
+  Buffer.Size = 8;
+  Buffer.TheArch = Arch::X64;
+  auto Call =
+      HighExpr::makeCall("fstat", 0x140002000,
+                         {HighExpr::makeConst(0, 4),
+                          HighExpr::makeVar(Buffer, Func.Params[0].Type)});
+  Call->Type = NdType::makeInt(4);
+  returnValue(Func, Call);
+  const std::string Source = emitFunctions({Func});
+  EXPECT_EQ(Source.find("typedef struct stat stat;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("struct stat* buffer"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, FunctionPointersOfAnotherSpellingPassCast) {
+  // A stub's definition declares its comparator as the header's typedef,
+  // whose parameters are const, and passes it to the routine its slot
+  // declares from the type library, whose function type keeps no const:
+  // the pointer converts by a cast.
+  const auto Compare = NdType::makePtr(NdType::makeFunc(
+      NdType::makeInt(4), {NdType::makePtr(NdType::makeVoid()),
+                           NdType::makePtr(NdType::makeVoid())}));
+  auto Named = std::make_shared<NdType>(*Compare);
+  Named->TypedefName = "cmp_fn";
+  class SlotDbg : public NullDebugContext {
+  public:
+    explicit SlotDbg(TypeRef Compare) : Compare(std::move(Compare)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x140002000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "sorter";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeVoid();
+      FS.Params = {{"compare", Compare}};
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Compare;
+  } Dbg(Compare);
+  HighFunc Func;
+  Func.Name = "sort_with";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  Func.Params = {{"compare", Named}};
+  MedVar Param;
+  Param.Kind = MedVar::Param;
+  Param.Id = 0;
+  Param.Size = 8;
+  Param.TheArch = Arch::X64;
+  Func.Body = {callStmt("sorter", 0x140002000,
+                        {HighExpr::makeVar(Param, NdType::makeInt(8))})};
+  returnValue(Func, nullptr);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text =
+        "typedef int32_t (*cmp_fn)(const void *, const void *);\n";
+    Definitions.Types = {"cmp_fn"};
+    Definitions.Identifiers = {"cmp_fn"};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("cmp_fn compare"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("sorter((int32_t (*)(void*, void*))compare)"),
+            std::string::npos)
+      << Source;
+  expectCSyntax("#include <stdint.h>\n" + Source);
+}

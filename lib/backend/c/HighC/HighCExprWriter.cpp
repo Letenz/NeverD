@@ -2171,7 +2171,9 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
         libc::isObjectPointerParameter(HeaderCallee, static_cast<unsigned>(I),
                                        Opts.libcVariant()) &&
         printsAsInteger(Imm ? *Imm : *Op, Arg))
-      Arg = "(void *)(uintptr_t)" + castOperand(Arg);
+      Arg = llvm::StringRef(Arg).starts_with("(uintptr_t)")
+                ? "(void *)" + castOperand(Arg)
+                : "(void *)(uintptr_t)" + castOperand(Arg);
     // A callee printed in this file has a prototype: convert between pointer
     // and integer arguments the way the machine passed them, in a register.
     if (Defined && I < Defined->Params.size() && DefinedParam && Op->Type) {
@@ -3484,6 +3486,20 @@ std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
   if (Expected && Expected->Kind == NdTypeKind::Int && !Expected->IsEnum &&
       printsAsPointer(Text))
     return "(" + typeToC(Expected) + ")(uintptr_t)" + castOperand(Text);
+  // So does a function pointer of another type to a function-pointer
+  // parameter: a stub's prototype spells qsort's comparator
+  // `int32_t (*)(void*, void*)` where its caller's parameter keeps the
+  // header's `__compar_fn_t`, whose parameters are const.
+  auto FunctionPointer = [](const TypeRef &Type) {
+    return Type && Type->Kind == NdTypeKind::Ptr && Type->Pointee &&
+           Type->Pointee->Kind == NdTypeKind::Func;
+  };
+  if (FunctionPointer(Expected))
+    if (const HighExpr *Value = unwrapIntegerView(&E);
+        Value && (Value->Kind == ExprKind::Var || Value->Kind == ExprKind::Phi))
+      if (const TypeRef Held = declaredParamType(Value->Var);
+          FunctionPointer(Held) && declaredAs(Held, "") != typeToC(Expected))
+        return "(" + typeToC(Expected) + ")" + castOperand(Text);
   return Text;
 }
 
@@ -3643,6 +3659,10 @@ bool HighCWriter::printsAsInteger(const HighExpr &E,
       Text.starts_with("u\"") || Text.starts_with("U\"") ||
       Text.starts_with("u8\"") || Text.starts_with("&"))
     return false;
+  // An address's integer view is the integer it converts the address to,
+  // as a pointer passed in a machine word prints.
+  if (Text.starts_with("(uintptr_t)"))
+    return true;
   if (E.Kind == ExprKind::Const)
     return E.ConstVal != 0;
   // A name has the type C declares for it, and a member the type its record
