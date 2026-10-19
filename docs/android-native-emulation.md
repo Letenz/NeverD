@@ -199,6 +199,16 @@ The supported Bionic subset is:
   Invalid pointers and memory/deadline limits remain distinct failures. Only
   visited guest bytes are read, including a match at a readable page's last byte.
   These rules follow the pinned [API 28 implementation](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/fortify.cpp).
+- `strspn`, returning the length of the initial byte prefix belonging to the
+  caller's NUL-terminated accept set. Duplicate and high-bit bytes, empty strings,
+  overlapping strings and read-only input are supported; NUL is never accepted.
+  The model reads the complete accept set, then only the source prefix through
+  the first rejected byte or NUL. Even an empty set requires a readable first
+  source byte. Both scans are bounded by the memory limit and shared deadline;
+  inaccessible, wrapping or unterminated required input stops explicitly instead
+  of returning a guessed count. No guest bytes or errno are changed. This
+  independently implemented model follows the byte-set contract of the pinned
+  [API 28 Bionic source](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/upstream-openbsd/lib/libc/string/strspn.c).
 - `strtok_r`, scanning guest byte strings and updating the caller's eight-byte,
   aligned save pointer. Delimiters may change between calls; separate contexts
   remain independent. API 28 clears the saved pointer at the final token or an

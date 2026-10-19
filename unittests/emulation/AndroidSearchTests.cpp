@@ -365,6 +365,126 @@ TEST_P(AndroidSearch, SubstringDynamicProviderRetainsLifetime) {
   EXPECT_FALSE(Closed.NativeCalls.back().Result);
 }
 
+TEST_P(AndroidSearch, SpanCountsAcceptedPrefixAndPreservesErrnoAndInputs) {
+  struct Case {
+    const char *Text, *Accept;
+    uint64_t Count;
+  };
+  const Case Cases[] = {{"", "", 0},
+                        {"abc", "", 0},
+                        {"", "abc", 0},
+                        {"cabba!abc", "abc", 5},
+                        {"abca", "aaabbb", 2},
+                        {"abc", "cba", 3},
+                        {"zabc", "abc", 0},
+                        {"abc", "abcdef", 3},
+                        {" \t\r\nx", "\n\r\t ", 4},
+                        {"\xff\x80\x7f!", "\x7f\xff\x80", 3},
+                        {"\xff\x80", "\xff", 1},
+                        {"ab\0c", "abc", 2},
+                        {"abc", "ab\0c", 2}};
+  for (const auto &C : Cases) {
+    SCOPED_TRACE(C.Text);
+    auto &Bytes = Options.Android->Memory[0].Bytes;
+    Bytes.assign(4096, 0xa5);
+    auto Put = [&](unsigned At, const char *Text) {
+      llvm::StringRef S(Text);
+      std::copy(S.begin(), S.end(), Bytes.begin() + At);
+      Bytes[At + S.size()] = 0;
+    };
+    Put(0, C.Text);
+    Put(64, C.Accept);
+    const auto Before = Bytes;
+    auto R = run("span_supplied", {Buffer, Buffer + 64, Buffer + 124});
+    returned(R, C.Count);
+    ASSERT_EQ(R.MemorySnapshots.size(), 2u);
+    EXPECT_EQ(llvm::support::endian::read32le(
+                  R.MemorySnapshots[0].Bytes.data() + 124),
+              733u);
+    EXPECT_TRUE(std::equal(Before.begin(), Before.begin() + 124,
+                           R.MemorySnapshots[0].Bytes.begin()));
+    EXPECT_EQ(R.MemorySnapshots[1].Bytes,
+              std::vector<uint8_t>(Before.end() - 16, Before.end()));
+    EXPECT_TRUE(R.Services.empty());
+  }
+}
+
+TEST_P(AndroidSearch, SpanUsesAllUnsignedBytesAndReadOnlyAliasedStrings) {
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  Bytes.assign(4096, 0xa5);
+  // Independently constructed permutations contain every nonzero byte.
+  for (unsigned I = 0; I < 255; ++I) {
+    Bytes[I] = uint8_t(I + 1);
+    Bytes[512 + I] = uint8_t(255 - I);
+  }
+  Bytes[255] = Bytes[767] = 0;
+  Options.Android->ReadMemory = {{Buffer, 4096}};
+  for (uint64_t Accept : {Buffer, Buffer + 512}) {
+    auto R = run("span_readonly", {Buffer, Buffer, Accept});
+    returned(R, 255);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Bytes);
+  }
+  const char Text[] = "abcabc";
+  std::copy(std::begin(Text), std::end(Text), Bytes.begin());
+  auto R = run("span_readonly", {Buffer, Buffer, Buffer + 3});
+  returned(R, 6);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Bytes);
+}
+
+TEST_P(AndroidSearch, SpanStopsAtRejectOrNulAndRequiresReadableBoundedInputs) {
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  Bytes.assign(4096, 0xa5);
+  Bytes[0] = 'a';
+  Bytes[1] = 0;
+  Bytes[4093] = Bytes[4094] = 'a';
+  for (uint8_t Last : {uint8_t('b'), uint8_t(0)}) {
+    Bytes[4095] = Last;
+    returned(run("span_readonly", {Buffer, PageEnd - 3, Buffer}), 2);
+  }
+  // A set ending at the final readable byte is also sufficient.
+  returned(run("span_readonly", {Buffer, Buffer, PageEnd - 2}), 1);
+  // Empty sets still need the first source byte; they never read past it.
+  returned(run("span_readonly", {Buffer, PageEnd - 2, Buffer + 1}), 0);
+  for (uint64_t Invalid : {uint64_t(0), PageEnd, UINT64_MAX}) {
+    rejected(run("span_supplied", {Invalid, Buffer + 1, Buffer + 124}),
+             "strspn", "invalid guest pointer");
+    rejected(run("span_supplied", {Buffer, Invalid, Buffer + 124}), "strspn",
+             "invalid guest pointer");
+  }
+  Bytes[4095] = 'a';
+  rejected(run("span_supplied", {PageEnd - 3, Buffer, Buffer + 124}), "strspn",
+           "invalid guest pointer");
+  rejected(run("span_supplied", {Buffer, PageEnd - 1, Buffer + 124}), "strspn",
+           "invalid guest pointer");
+}
+
+TEST_P(AndroidSearch, SpanDynamicProviderRetainsLifetime) {
+  Options.Android->Memory[0].Bytes = {'b', 'a', '!', 0, 'a', 'b', 0};
+  Options.Android->Libraries["libsearch.so"] = {"strspn"};
+  auto R = run("span_dynamic", {Buffer, Buffer + 4, 0});
+  returned(R, 2);
+  uint64_t Target = 0;
+  for (const auto &Call : R.NativeCalls)
+    if (Call.Name == "dlsym") {
+      EXPECT_EQ(Call.Library, "libsearch.so");
+      EXPECT_EQ(Call.Symbol, "strspn");
+      ASSERT_TRUE(Call.Result);
+      Target = *Call.Result;
+    }
+  ASSERT_NE(Target, 0u);
+  ASSERT_FALSE(R.NativeCalls.empty());
+  EXPECT_EQ(R.NativeCalls.back().Name, "strspn");
+  EXPECT_EQ(R.NativeCalls.back().PC, Target);
+  EXPECT_EQ(R.NativeCalls.back().Library, "libsearch.so");
+  auto Closed = run("span_dynamic", {Buffer, Buffer + 4, 1});
+  EXPECT_EQ(Closed.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(Closed.Diagnostic.find("inactive dynamic library"),
+            std::string::npos);
+  EXPECT_FALSE(Closed.NativeCalls.back().Result);
+}
+
 INSTANTIATE_TEST_SUITE_P(
     Compiled, AndroidSearch,
     testing::Combine(testing::Values("search-O0-none", "search-O0-android",
@@ -482,6 +602,74 @@ TEST(AndroidSearchMemory, ObjectBoundsBudgetsAndFailuresPreserveGuestBytes) {
   std::array<uint8_t, 16> After{};
   ASSERT_EQ(llvm::toString(Space.snapshotBacking(Buffer, After)), "");
   EXPECT_EQ(After, Before);
+}
+TEST(AndroidSearchMemory, SpanScanLimitsAndTimeoutDoNotPublishAResultOrWrites) {
+  ExecutionConfiguration Configuration;
+  Configuration.Backend = ExecutionBackendKind::Unicorn;
+  Configuration.Architecture = GuestArchitecture::AArch64;
+  Configuration.Contract = ExecutionContract::CheckedUserAArch64;
+  auto Probe = probeExecutionBackend(Configuration);
+  ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+  if (Probe->Availability != BackendAvailability::Available)
+    GTEST_SKIP() << Probe->Reason;
+  auto Backend = createExecutionBackend(Configuration, 4 * 1024 * 1024);
+  ASSERT_TRUE(bool(Backend)) << llvm::toString(Backend.takeError());
+  auto &CPU = *Backend->CPU;
+  auto &Space = *CPU.addressSpace();
+  llvm::cantFail(Space.map(Buffer, 4096, Read | Write | UserAccessible));
+  std::array<uint8_t, 16> Before{};
+  Before.fill('x');
+  Before[8] = 0;
+  llvm::cantFail(CPU.write(Buffer, Before));
+  llvm::cantFail(Space.protect(Buffer, 4096, Read | UserAccessible));
+  ProcessOptions Options;
+  Options.Android.emplace();
+  const linux_model::MemoryLayout Layout{linux_model::UserLimitARM64, 4096};
+  ProcessResult Result{ProcessProfile::AndroidNativeAArch64,
+                       GuestArchitecture::AArch64,
+                       ExecutionBackendKind::Unicorn,
+                       {}};
+  linux_model::LinuxServices Kernel(CPU, Layout, PageEnd, Options, Result);
+  const android_model::LinkedImage Linked{};
+  struct Case {
+    uint64_t Limit, Text, Accept;
+    bool Expired;
+    const char *Error;
+    uint64_t Expected;
+  };
+  for (const auto C : {Case{8, Buffer, Buffer, false, "scan exceeds", 0},
+                       {8, Buffer, Buffer + 7, false, "scan exceeds", 0},
+                       {9, Buffer, Buffer + 7, false, nullptr, 8},
+                       {1, Buffer + 8, Buffer + 8, false, nullptr, 0},
+                       {0, Buffer, Buffer, false, "scan exceeds", 0},
+                       {9, Buffer, Buffer + 7, true, "timed out", 0}}) {
+    SCOPED_TRACE(C.Limit);
+    SCOPED_TRACE(C.Accept);
+    SCOPED_TRACE(C.Expired);
+    Options.MemoryLimit = C.Limit;
+    auto Budget = llvm::cantFail(ExecutionBudget::create(
+        Options.Limits, C.Expired ? ExecutionBudget::Clock::time_point::min()
+                                  : ExecutionBudget::Clock::now()));
+    android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
+                                Linked);
+    NativeCallEvent Call{};
+    Call.Name = "strspn";
+    Call.Arguments = {C.Text, C.Accept};
+    auto Value = Model.invoke(Call);
+    if (C.Error) {
+      ASSERT_FALSE(bool(Value));
+      EXPECT_NE(llvm::toString(Value.takeError()).find(C.Error),
+                std::string::npos);
+    } else {
+      ASSERT_TRUE(bool(Value)) << llvm::toString(Value.takeError());
+      ASSERT_TRUE(*Value);
+      EXPECT_EQ(std::get<uint64_t>(**Value), C.Expected);
+    }
+    EXPECT_EQ(Model.timedOut(), C.Expired);
+    std::array<uint8_t, 16> After{};
+    llvm::cantFail(Space.snapshotBacking(Buffer, After));
+    EXPECT_EQ(After, Before);
+  }
 }
 } // namespace
 } // namespace neverd::emulation
