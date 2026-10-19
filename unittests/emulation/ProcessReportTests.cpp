@@ -1752,6 +1752,25 @@ TEST(ProcessReport, JavaStateObservationIsOptInStrictAndRetainsUnknownValues) {
       "ffffffff");
   EXPECT_EQ(K->getBoolean("terminal"), true);
 }
+TEST(ProcessReport, AndroidLoaderMayBeEstablishedBeforeApplication) {
+  auto Input =
+      processOptionsFromJSON(R"({"android":{"jni":true,"application_snapshot":{
+    "phase":"attached","application_loader_established":true,
+    "class_lookup_failures":[{"loader":"application","binary_name":"test.Absent","message":null}]}}})");
+  ASSERT_TRUE(bool(Input)) << llvm::toString(Input.takeError());
+  EXPECT_EQ(Input->Android->Application->application_loader_established, true);
+  for (auto Invalid :
+       {R"({"phase":"attached","application_loader_established":null})",
+        R"({"phase":"attached","application_loader_established":1})",
+        R"({"phase":"unattached","application_loader_established":true})",
+        R"({"phase":"application","application_loader_established":false})"}) {
+    auto Bad = processOptionsFromJSON(
+        std::string(R"({"android":{"jni":true,"application_snapshot":)") +
+        Invalid + "}}");
+    ASSERT_FALSE(bool(Bad)) << Invalid;
+    llvm::consumeError(Bad.takeError());
+  }
+}
 
 TEST(ProcessReport, RejectsMalformedRequestsBeforeWorkloadConstruction) {
 #define NEVERD_PROCESS_INVALID_JSON(Name, Text)                                \

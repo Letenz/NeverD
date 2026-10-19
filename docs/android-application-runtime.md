@@ -30,6 +30,19 @@ does not select `unattached`. `package_name` is optional, at most 1024 UTF-8 byt
 nonempty, and allowed only in the application phase. An absent name stops
 `getPackageName`; properties and DEX names are not used to guess it.
 
+`application_loader_established` optionally supplies the independent loader
+stage. With `phase: attached`, `true` makes the application PathClassLoader
+available through supplied classes' `Class.getClassLoader` while
+`currentApplication`/`getApplication` still return null. The loader retains the
+boot parent and exact supplied-declaration namespace across thread detach.
+Explicit application-loader lookup failures are also admitted in this stage.
+Absent means unknown in `attached`; `false` explicitly declares it unestablished.
+Neither case permits application-class loader queries to return a guessed value.
+`unattached` implies false and `application` implies true; contradictory explicit
+values are rejected. This separates loader setup from Application construction,
+as in API 28 [LoadedApk.makeApplication](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/LoadedApk.java).
+It does not infer the path, APK identity, custom factory or constructor body.
+
 The application phase represents a base `android.app.Application` already
 attached to a distinct `ContextImpl`. `getBaseContext()` returns that context;
 both objects' `getApplicationContext()` return the same Application and their

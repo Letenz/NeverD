@@ -217,6 +217,40 @@ TEST_P(AndroidJNI, ApplicationUnknownStateAndPackageDoNotBecomeNullOrDefaults) {
   EXPECT_EQ(Known.Stop, ProcessStopReason::Returned) << Known.Diagnostic;
   EXPECT_EQ(Known.ReturnValue, 0u);
 }
+TEST_P(AndroidJNI, ApplicationLoaderIsIndependentOfApplicationCreation) {
+#ifndef NEVERD_ANDROID_DEX_FIXTURE_DIR
+  GTEST_SKIP() << "Python DEX fixture generator unavailable";
+#else
+  auto File = llvm::MemoryBuffer::getFile(
+      (std::filesystem::path(NEVERD_ANDROID_DEX_FIXTURE_DIR) /
+       "registration.dex")
+          .string());
+  ASSERT_TRUE(bool(File));
+  auto Bytes = (*File)->getBuffer();
+  Options.Android->DexImages.emplace_back(Bytes.begin(), Bytes.end());
+  using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
+  Options.Android->Application = Snapshot{Snapshot::Phase::Attached};
+  Options.Android->ObserveJavaState = true;
+  for (auto Established :
+       {std::optional<bool>{}, std::optional{false}, std::optional{true}}) {
+    Options.Android->Application->application_loader_established = Established;
+    auto R = run("jni_loader_before_application");
+    ASSERT_TRUE(R.JavaState);
+    EXPECT_EQ(R.JavaState->framework.application_loader_established,
+              Established);
+    EXPECT_EQ(R.JavaState->framework.application, 0u);
+    EXPECT_EQ(R.Stop, Established == true
+                          ? ProcessStopReason::Returned
+                          : ProcessStopReason::UnsupportedService)
+        << R.Diagnostic;
+    if (Established == true) {
+      EXPECT_EQ(R.ReturnValue, 0u);
+      EXPECT_NE(R.JavaState->framework.application_loader, 0u);
+      EXPECT_NE(R.JavaState->framework.boot_loader, 0u);
+    }
+  }
+#endif
+}
 TEST_P(AndroidJNI, ApplicationInputRequiresJNIAndValidPhaseMetadata) {
   Options.Android->EntrySymbol = "jni_application_snapshot";
   Options.Android->Application.emplace();

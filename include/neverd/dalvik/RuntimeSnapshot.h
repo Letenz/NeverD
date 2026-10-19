@@ -15,6 +15,7 @@ namespace neverd::mobile::dalvik {
 // materialization and does not certify execution of an Application constructor.
 struct AndroidFrameworkState {
   std::optional<AndroidApplicationSnapshot::Phase> declared_phase;
+  std::optional<bool> application_loader_established;
   uint32_t activity_thread = 0, application = 0, context = 0;
   uint32_t boot_loader = 0, system_loader = 0, application_loader = 0;
   // Unknown/unread is distinct from a guest-written or declared null value.

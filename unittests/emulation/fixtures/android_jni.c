@@ -178,6 +178,41 @@ static void *application_child(void *unused) {
     return (void *)3;
   return (void *)(U64)C(vm, int, 5);
 }
+int jni_loader_before_application(void) {
+  Handle e = attach();
+  CHECK(e);
+  Ref thread_type = C(e, Ref, 6, "android/app/ActivityThread");
+  Ref current_id = C(e, Ref, 113, thread_type, "currentApplication",
+                     "()Landroid/app/Application;");
+  CHECK(!C(e, Ref, 114, thread_type, current_id) && !C(e, int, 228));
+  Ref type = C(e, Ref, 6, "registration/Child");
+  Ref class_type = C(e, Ref, 6, "java/lang/Class");
+  Ref get_loader =
+      C(e, Ref, 33, class_type, "getClassLoader", "()Ljava/lang/ClassLoader;");
+  Ref loader = C(e, Ref, 34, type, get_loader);
+  CHECK(loader);
+  Ref loader_type = C(e, Ref, 6, "java/lang/ClassLoader");
+  Ref parent_id =
+      C(e, Ref, 33, loader_type, "getParent", "()Ljava/lang/ClassLoader;");
+  Ref boot = C(e, Ref, 34, loader, parent_id);
+  CHECK(boot && !C(e, int, 24, loader, boot));
+  Ref load_id = C(e, Ref, 33, loader_type, "loadClass",
+                  "(Ljava/lang/String;)Ljava/lang/Class;");
+  Ref name = C(e, Ref, 167, "registration.Child");
+  Ref again = C(e, Ref, 34, loader, load_id, name);
+  CHECK(C(e, int, 24, type, again));
+  CHECK(!C(e, Ref, 114, thread_type, current_id));
+  Ref retained = C(e, Ref, 21, loader);
+  CHECK(!C(vm, int, 5));
+  e = attach();
+  CHECK(e);
+  type = C(e, Ref, 6, "registration/Child");
+  again = C(e, Ref, 34, type, get_loader);
+  CHECK(C(e, int, 24, retained, again));
+  C(e, void, 22, retained);
+  CHECK(!C(vm, int, 5));
+  return 0;
+}
 int jni_application_snapshot(int phase) {
   Handle e = attach();
   CHECK(e);

@@ -267,7 +267,12 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       mobile::dalvik::AndroidApplicationSnapshot Snapshot;
       bool HasPhase = false;
       for (const auto &[Key, Value] : *Input) {
-        if (Key == field::ApplicationClassLookupFailures) {
+        if (Key == field::ApplicationLoaderEstablished) {
+          auto Established = Value.getAsBoolean();
+          if (!Established)
+            return invalid(Key);
+          Snapshot.application_loader_established = *Established;
+        } else if (Key == field::ApplicationClassLookupFailures) {
           const auto *Failures = Value.getAsArray();
           if (!Failures || Failures->size() > 256)
             return invalid(Key);
@@ -614,6 +619,10 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
          F.declared_phase ? llvm::json::Value(Phase(*F.declared_phase))
                           : nullptr},
         {field::JavaActivityThread, bits(F.activity_thread)},
+        {field::ApplicationLoaderEstablished,
+         F.application_loader_established
+             ? llvm::json::Value(*F.application_loader_established)
+             : nullptr},
         {field::JavaApplication, bits(F.application)},
         {field::JavaContext, bits(F.context)},
         {field::JavaBootLoader, bits(F.boot_loader)},

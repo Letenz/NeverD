@@ -192,5 +192,56 @@ TEST(DalvikSnapshot, ObservationDoesNotChangeBudgetOrHeapExhaustion) {
   };
   EXPECT_EQ(execute(false), execute(true));
 }
+TEST(DalvikSnapshot, ExplicitApplicationLoaderCanPrecedeApplicationCreation) {
+  Program program({declaration()}, std::map<std::string, std::string>{});
+  for (auto established :
+       {std::optional<bool>{}, std::optional{false}, std::optional{true}}) {
+    auto heap = std::make_shared<Heap>();
+    AndroidApplicationSnapshot input{Phase::Attached};
+    input.application_loader_established = established;
+    if (established == true)
+      input.class_lookup_failures = {{Loader::Application, "test.Absent", {}}};
+    Runtime runtime(program, heap, input);
+    auto klass = heap->classObject("test/Observed");
+    auto loader =
+        runtime.library(operation(ClassLoaderOf), klass->Identity, {}, Admit);
+    EXPECT_EQ(loader.stop, established == true ? ExecutionStop::Returned
+                                               : ExecutionStop::Unsupported);
+    auto snapshot = runtime.snapshot();
+    EXPECT_EQ(snapshot.framework.application_loader_established, established);
+    EXPECT_EQ(snapshot.framework.application, 0u);
+    EXPECT_EQ(row(snapshot, "Ltest/Observed;").initialization,
+              Init::NotStarted);
+    if (established != true)
+      continue;
+    EXPECT_NE(loader.value, 0u);
+    EXPECT_EQ(snapshot.framework.application_loader, loader.value);
+    EXPECT_EQ(row(snapshot, "Ltest/Observed;").projected_loader,
+              Loader::Application);
+    auto boot =
+        runtime.library(operation(LoaderParent), loader.value, {}, Admit);
+    ASSERT_EQ(boot.stop, ExecutionStop::Returned);
+    EXPECT_NE(boot.value, loader.value);
+    const uint64_t known[]{heap->literal("test.Observed")->Identity};
+    auto found =
+        runtime.library(operation(LoadClass), loader.value, known, Admit);
+    EXPECT_EQ(found.stop, ExecutionStop::Returned);
+    EXPECT_EQ(found.value, klass->Identity);
+    const uint64_t missing[]{heap->literal("test.Absent")->Identity};
+    auto absent =
+        runtime.library(operation(LoadClass), loader.value, missing, Admit);
+    EXPECT_EQ(absent.stop, ExecutionStop::Thrown);
+    EXPECT_EQ(absent.exception, "java/lang/ClassNotFoundException");
+    auto app = runtime.library(operation(CurrentApplication), 0, {}, Admit);
+    EXPECT_EQ(app.stop, ExecutionStop::Returned);
+    EXPECT_EQ(app.value, 0u);
+    EXPECT_FALSE(runtime.snapshot().terminal);
+  }
+  for (auto phase : {Phase::Unattached, Phase::Application}) {
+    AndroidApplicationSnapshot input{phase};
+    input.application_loader_established = phase == Phase::Unattached;
+    EXPECT_THROW(Runtime(program, {}, input), Error);
+  }
+}
 } // namespace
 } // namespace neverd::mobile::dalvik

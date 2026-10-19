@@ -8999,3 +8999,8 @@ and disabled across relocation forms and available backends, including unknown
 lifecycle stops and native registration without class initialization.
 `ProcessReport.JavaStateObservation*` checks strict opt-in JSON and unknown/null
 state serialization. These checks do not establish execution of ART startup.
+`DalvikSnapshot.ExplicitApplicationLoader*`,
+`AndroidJNI.ApplicationLoaderIsIndependentOfApplicationCreation` and
+`ProcessReport.AndroidLoaderMayBeEstablishedBeforeApplication` cover independent
+loader setup, unchanged null Application, exact lookup outcomes, retained loader
+identity after detach and contradictory/unknown lifecycle inputs.
