@@ -1088,32 +1088,100 @@ std::vector<uint32_t> reachableInOrder(const SymContext &Ctx, SymRef Root) {
 
 std::optional<Abstraction> abstractToMBA(SymContext &Ctx, SymRef Root,
                                          bool AllowProducts, WorkBudget *Budget,
-                                         size_t MaxBytes) {
+                                         size_t MaxBytes,
+                                         bool CoarsenMaskedXors) {
   std::vector<uint32_t> Order = reachableInOrder(Ctx, Root);
   llvm::DenseSet<uint32_t> ForcedAtoms;
   llvm::DenseMap<uint32_t, Role> Roles;
+  if (CoarsenMaskedXors) {
+    for (uint32_t Index : Order) {
+      if (Budget && !Budget->consume(1))
+        return std::nullopt;
+      SymRef R(Index);
+      if (Ctx.op(R) == SymOp::Xor && Ctx.numOperands(R) >= 2 &&
+          Ctx.isConst(Ctx.operand(R, 0)))
+        ForcedAtoms.insert(Index);
+    }
+    if (ForcedAtoms.empty())
+      return std::nullopt;
+  }
   demoteArithmeticUnderBitwise(Ctx, Order, AllowProducts, ForcedAtoms, Roles);
 
   // Nothing to measure when the whole expression is one opaque thing.
   if (Roles.lookup(Root.index()) == Role::Atom)
     return std::nullopt;
 
+  Abstraction Out;
   llvm::DenseSet<uint32_t> Reserved;
-  for (uint32_t Index : Order)
+  for (uint32_t Index : Order) {
     if (Ctx.isVar(SymRef(Index)))
       Reserved.insert(Index);
+    SymRef R(Index);
+    if (Ctx.op(R) == SymOp::Mul &&
+        Ctx.numOperands(R) > 1u + unsigned(Ctx.isConst(Ctx.operand(R, 0))))
+      Out.MayHaveProducts = true;
+  }
 
   Placeholders Pool(Ctx, Reserved);
-  Abstraction Out;
   llvm::DenseMap<uint32_t, SymRef> Rewritten;
   llvm::DenseMap<uint32_t, SymRef> HiddenInputs;
+  AffineResources WidenResources(Budget, MaxBytes);
+  llvm::DenseMap<llvm::APInt, SymRef> MaskInputs;
+  llvm::DenseMap<uint32_t, SymRef> MaskedXorInputs;
   auto Hide = [&](SymRef R) {
     auto It = HiddenInputs.find(R.index());
     if (It != HiddenInputs.end())
       return It->second;
+    // A coarser reading treats a masked XOR as one word, while preserving
+    // its exact complement. Normalize only the sign bit of its literal mask:
+    // XOR with the opposite full-width mask complements the entire result.
+    // This is an identity for arbitrary operands, not a sampled relation.
+    if (CoarsenMaskedXors && Ctx.op(R) == SymOp::Xor &&
+        Ctx.numOperands(R) >= 2 && Ctx.isConst(Ctx.operand(R, 0)) &&
+        WidenResources.charge(1, 128) &&
+        WidenResources.array(Ctx.numOperands(R), 2 * sizeof(SymRef)) &&
+        WidenResources.array(Ctx.constValue(Ctx.operand(R, 0)).getNumWords(),
+                             3 * sizeof(uint64_t))) {
+      const auto &Mask = Ctx.constValue(Ctx.operand(R, 0));
+      const bool Complement = Mask.isNegative();
+      auto Ops = Ctx.operands(R);
+      llvm::SmallVector<SymRef, 8> Canonical(Ops.begin(), Ops.end());
+      Canonical[0] = Ctx.mkConst(Complement ? ~Mask : Mask);
+      SymRef Base = Ctx.mkXor(Canonical);
+      auto Found = MaskedXorInputs.find(Base.index());
+      SymRef V;
+      if (Found != MaskedXorInputs.end()) {
+        V = Found->second;
+      } else {
+        V = Pool.take(Ctx.width(R));
+        MaskedXorInputs[Base.index()] = V;
+        Out.Hidden.emplace(V.index(), Base);
+      }
+      SymRef Result = Complement ? Ctx.mkNot(V) : V;
+      HiddenInputs[R.index()] = Result;
+      return Result;
+    }
+    // Literal masks need not become unrelated inputs. A mask and its exact
+    // full-width complement share one carrier: the linear proof remains
+    // universal over that carrier, and restoration recovers both literals.
+    // Keep partial masks and different widths independent. Charge the word
+    // copies and map storage before trying this optional relation.
+    const bool TrackMask = Ctx.isConst(R) && WidenResources.charge(1, 128) &&
+                           WidenResources.array(Ctx.constValue(R).getNumWords(),
+                                                3 * sizeof(uint64_t));
+    if (TrackMask) {
+      auto Complement = MaskInputs.find(~Ctx.constValue(R));
+      if (Complement != MaskInputs.end()) {
+        SymRef V = Ctx.mkNot(Complement->second);
+        HiddenInputs[R.index()] = V;
+        return V;
+      }
+    }
     SymRef V = Pool.take(Ctx.width(R));
     HiddenInputs[R.index()] = V;
     Out.Hidden.emplace(V.index(), R);
+    if (TrackMask)
+      MaskInputs.try_emplace(Ctx.constValue(R), V);
     return V;
   };
 
@@ -1121,7 +1189,6 @@ std::optional<Abstraction> abstractToMBA(SymContext &Ctx, SymRef Root,
   // Measure the widened bitwise view over shared opaque widened leaves. This
   // preserves relations after the DAG builders contract zero extensions,
   // without moving a narrow carry or complement into the wider word.
-  AffineResources WidenResources(Budget, MaxBytes);
   llvm::DenseMap<uint64_t, SymRef> Widened;
   auto WidenBitwise = [&](auto &&Self, SymRef R, unsigned Width,
                           unsigned Depth) -> std::optional<SymRef> {

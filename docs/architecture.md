@@ -6722,12 +6722,32 @@ extensions, and byte slices. It visits numeric regions beneath predicates and
 other opaque operations without moving their evaluation or removing effects.
 Within a straight-line HighIR statement sequence, the bridge may consult
 previous pure integer definitions while proving a shorter expression. Bindings
-use the emitted local's identity and matching integer types. Writes invalidate
-transitive dependencies; address escape, control flow, calls, and memory effects
-block propagation. Definitions remain in HighIR for the existing dead-store
+use the emitted local's identity and matching integer widths; a signedness
+change retains an explicit destination conversion so later widening keeps its
+meaning. Disjoint, unescaped stack locals are eligible. Overlapping or
+inconsistent frame views and frame-address escape exclude those bindings;
+unknown stores invalidate frame-dependent facts, including transitive uses.
+Writes, control flow and calls also invalidate affected facts. Definitions
+remain in HighIR for the existing dead-store
 analysis, and the published expression must be smaller than the original use.
 Integer views of one parameter share a widest symbolic carrier; narrower views
 extract its low bits without assuming any value for the remaining upper bits.
+
+Literal masks and their complete word complements share one abstract carrier.
+For regions exceeding the small optimal Boolean synthesis allowance, an
+additional bounded reading can hide complete masked XORs while retaining exact
+complements. Independent linear identity checking precedes source restoration;
+nearby masks and different widths never inherit that relation. This reading
+spends only the remaining work/storage allowance and keeps existing candidates.
+When the source DAG contains no nonlinear product, polynomial abstraction is
+redundant and is skipped. This avoids repeated analysis without removing a
+candidate the polynomial solver could produce. Both source renderers and the
+expression CLI use this shared core.
+
+Private-frame forwarding accepts empty block anchors left by dead-store
+cleanup. Nonempty scopes, expression-bearing malformed anchors, memory effects,
+overlaps and address escapes retain their existing barriers. This lets the
+symbolic pass see already-proved frame values before source rendering.
 
 Opaque-input enumeration and sampling share one candidate checker within a
 request. It remembers counterexamples and validation-grid mismatches for
