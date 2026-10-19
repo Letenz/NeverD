@@ -46968,3 +46968,58 @@ TEST(HighCPointerAddresses, HeaderRoutinesReturnTheirDeclaredPointers) {
   EXPECT_EQ(Source.find("sem_open();"), std::string::npos) << Source;
   expectCSyntax(Source);
 }
+
+TEST(HighCPointerAddresses, CLibraryObjectsTheImageCopiesAreTheHeaders) {
+  // xxd's image holds the copies of stdin, stdout and stderr that its copy
+  // relocations give the program, which <stdio.h> declares as FILE *: the
+  // unit includes the header and declares none of its own, which C would
+  // reject beside it (`int64_t stdin;`), and an integer the code moves the
+  // pointer into takes it converted.
+  constexpr va_t In = 0x6000, Out = 0x6008;
+  BinaryImage Img = makeImageObjectFixture(In, std::vector<uint8_t>(16), true);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  for (const auto &[Name, Addr] : {std::pair{"stdin", In}, {"stdout", Out}}) {
+    Symbol Data;
+    Data.Name = Name;
+    Data.Addr = Addr;
+    Data.Size = 8;
+    Img.Symbols.push_back(Data);
+  }
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "input_stream";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  MedVar Stream = temporary(7);
+  HighStmt Load =
+      assignTo(Stream, HighExpr::makeLoad(HighExpr::makeConst(In, 8), Word));
+  Load.Dst->Type = Word;
+  HighStmt Flush = callStmt(
+      "fflush", 0x2000,
+      {HighExpr::makeLoad(HighExpr::makeConst(Out, 8), NdType::makePtr())});
+  // mawk passes stdout to a function of its own that takes an integer.
+  HighFunc Put;
+  Put.Name = "put_to";
+  Put.Entry = 0x1100;
+  Put.ReturnType = NdType::makeVoid();
+  Put.Params = {{"stream", Word}};
+  returnValue(Put, nullptr);
+  Func.Body = {
+      Load, Flush,
+      callStmt("put_to", 0x1100,
+               {HighExpr::makeLoad(HighExpr::makeConst(Out, 8), Word)})};
+  returnValue(Func, HighExpr::makeVar(Stream, Word));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Put, Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <stdio.h>"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" stdin;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" stdout;"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}

@@ -183,6 +183,10 @@ std::optional<bool> libcReturnsValue(std::string_view Name,
 /// (LibCDataObjects.def): "stdio.h" for `stdout`; null for any other name.
 const char *headerOfDataObject(std::string_view Name);
 
+/// The C type the header that declares data object \p Name declares it with
+/// (LibCDataObjects.def): "FILE *" for `stdout`; null for any other name.
+const char *typeOfDataObject(std::string_view Name);
+
 /// Whether the compiler runtime routine C name \p Name returns a double-word
 /// integer in a register pair (CompilerRuntimeDoubleWord.def): `__udivdi3`
 /// on a 32-bit target.

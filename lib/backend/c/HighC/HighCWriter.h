@@ -1383,6 +1383,12 @@ public:
     /// vector move faults on a misaligned address): C keeps it as aligned
     /// as the image.
     uint16_t AlignedBytes = 0;
+    /// The C library header that declares the object, as <stdio.h> does
+    /// stdin, whose copy the image holds (LibCDataObjects.def): the unit
+    /// includes it and declares no object of its own, and the object has the
+    /// type the header gives it (HeaderType).  Empty for any other object.
+    std::string Header;
+    TypeRef HeaderType;
   };
   std::map<va_t, ImageObject> ImageObjects;
   /// The access width that names the unnamed object \p Obj at \p Addr, as

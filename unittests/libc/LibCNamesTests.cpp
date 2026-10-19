@@ -472,6 +472,16 @@ TEST(HeaderFor, SemaphoreRoutines) {
   EXPECT_EQ(Init->IntArgs, 3);
 }
 
+TEST(HeaderFor, DataObjectsTheirHeadersDeclare) {
+  // The image's copy of a header's object is the header's, of the type the
+  // header declares it with.
+  EXPECT_STREQ(headerOfDataObject("stdin"), "stdio.h");
+  EXPECT_STREQ(typeOfDataObject("stdin"), "FILE *");
+  EXPECT_STREQ(typeOfDataObject("optind"), "int");
+  EXPECT_STREQ(typeOfDataObject("timezone"), "long");
+  EXPECT_EQ(typeOfDataObject("my_stream"), nullptr);
+}
+
 TEST(HeaderFor, StdioFunctions) {
   EXPECT_STREQ(headerFor("printf"), "stdio.h");
   EXPECT_STREQ(headerFor("fprintf"), "stdio.h");
