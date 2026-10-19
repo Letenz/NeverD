@@ -1260,6 +1260,13 @@ GPRReadWidths entryLiveWidths(const LocalRegisterEffect &F,
     return Live;
   };
   std::vector<GPRReadWidths> LiveIn(F.Blocks.size(), GPRReadWidths{});
+  // Where every successor follows its block, the pass from the last block
+  // reads each block's successors at their fixed point already, and a second
+  // pass would change nothing.
+  bool Forward = true;
+  for (size_t B = 0; B < F.Blocks.size() && Forward; ++B)
+    for (size_t S : F.Blocks[B].Succs)
+      Forward &= S > B;
   for (bool Changed = true; Changed;) {
     Changed = false;
     for (size_t B = F.Blocks.size(); B-- > 0;) {
@@ -1273,6 +1280,8 @@ GPRReadWidths entryLiveWidths(const LocalRegisterEffect &F,
         Changed = true;
       }
     }
+    if (Forward)
+      break;
   }
   return LiveIn.empty() ? GPRReadWidths{} : LiveIn[0];
 }
@@ -1395,9 +1404,10 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
       for (const RegisterStep &Step : Block.Steps)
         for (va_t Routine :
              {Step.Callee, Step.ImportCallee, Step.ArgumentsFrom})
-          if (const auto Found = SolvedIndex.find(Routine);
-              Found != SolvedIndex.end())
-            Named[I].push_back(Found->second);
+          if (Routine != InvalidVA)
+            if (const auto Found = SolvedIndex.find(Routine);
+                Found != SolvedIndex.end())
+              Named[I].push_back(Found->second);
     llvm::sort(Named[I]);
     Named[I].erase(std::unique(Named[I].begin(), Named[I].end()),
                    Named[I].end());
