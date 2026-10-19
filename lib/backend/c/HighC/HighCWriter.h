@@ -230,6 +230,13 @@ public:
   void writeRegistrationEntryDeclarations(const std::vector<HighFunc> &Funcs);
   std::string registrationEntryExpression(const HighExpr &E) const;
   static bool preservesRegistrationMemory(const HighFunc &Func);
+  /// Whether the FS memory \p Func reads and writes is the x86 SEH
+  /// registration chain its exception metadata implies (FS:[0]), which the
+  /// C leaves out.  A function another platform's tables describe, as an
+  /// ELF function's DWARF FDE does, has none: its FS is the thread's, as
+  /// the stack protector's canary at FS:0x28 is
+  /// (exceptionEncodingIsOutsideWindows).
+  static bool hidesRegistrationMemory(const HighFunc &Func);
   bool isEmbeddedRegistrationCallback(const HighStmt &Stmt, size_t I) const;
   bool isEmbeddedWindowsCallback(const HighStmt &Stmt, size_t I) const;
   void writeEmbeddedNativeCallbacks(const HighStmt &Stmt, int Indent);

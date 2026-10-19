@@ -7335,9 +7335,8 @@ bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
   if (Stmt.Kind == StmtKind::Block)
     return stmtsEffectivelyEmpty(Stmt.Body);
 
-  const bool HideEHRuntimeMemory = CurrentFunc &&
-                                   CurrentFunc->ExceptionMetadata.has_value() &&
-                                   !preservesRegistrationMemory(*CurrentFunc);
+  const bool HideEHRuntimeMemory =
+      CurrentFunc && hidesRegistrationMemory(*CurrentFunc);
   auto HiddenEH = [&](NdMemoryAddressSpace Space) {
     // x86 SEH registration is FS:[0].  x64 GS holds the TEB/TLS pointer and
     // must print when the value is used (NtCurrentTeb / __readgsqword).
