@@ -10,6 +10,7 @@
 
 #include "llvm/Support/Endian.h"
 
+#include <array>
 #include <cstdlib>
 
 namespace neverd::emulation {
@@ -22,14 +23,16 @@ namespace {
 #undef NEVERD_CPU_TEST_CODE
 #undef NEVERD_CPU_TEST_VALUE
 #undef NEVERD_CPU_TEST_TEXT
-llvm::Error code(ExecutionBackend &CPU, llvm::ArrayRef<uint32_t> Words) {
+llvm::Error code(ExecutionBackend &CPU, llvm::ArrayRef<uint32_t> Words,
+                 uint64_t Address = Code) {
   std::vector<uint8_t> Bytes(Words.size() * sizeof(uint32_t));
   for (size_t N = 0; N < Words.size(); ++N)
     llvm::support::endian::write32le(Bytes.data() + N * sizeof(uint32_t),
                                      Words[N]);
-  return CPU.write(Code, Bytes);
+  return CPU.write(Address, Bytes);
 }
-llvm::Error steps(ExecutionBackend &CPU, unsigned Count) {
+llvm::Error steps(ExecutionBackend &CPU, unsigned Count,
+                  uint64_t Address = Code) {
   unsigned Seen = 0;
   BackendHooks Hooks;
   Hooks.Instruction = [&](uint64_t, uint32_t) {
@@ -38,7 +41,7 @@ llvm::Error steps(ExecutionBackend &CPU, unsigned Count) {
   };
   if (auto E = CPU.installHooks(std::move(Hooks)))
     return E;
-  auto Result = CPU.run(Code, Timeout);
+  auto Result = CPU.run(Address, Timeout);
   llvm::consumeError(CPU.installHooks({}));
   return Result;
 }
@@ -225,6 +228,61 @@ TEST(CPUSelection, MatchingGuestUsesTheNativeHostBackend) {
 #else
   GTEST_SKIP();
 #endif
+}
+
+TEST(UnicornAArch64, CheckedRegisterPacketsPreserveEveryLaneAndRestoration) {
+  constexpr uint64_t PacketCode = 0x100000, PacketStack = 0x200000;
+  constexpr uint64_t PacketData = 0x300000;
+  for (bool User : {false, true}) {
+    SCOPED_TRACE(User);
+    auto Backend =
+        createExecutionBackend(ExecutionBackendKind::Unicorn,
+                               User ? ExecutionContract::CheckedUserAArch64
+                                    : ExecutionContract::CheckedAArch64,
+                               Limit, GuestArchitecture::AArch64);
+    ASSERT_TRUE(bool(Backend)) << llvm::toString(Backend.takeError());
+    auto &CPU = *Backend->CPU;
+    const unsigned Rights =
+        Read | Write | Execute | (User ? unsigned(UserAccessible) : 0u);
+    llvm::cantFail(CPU.map(PacketCode, PageSize, Rights));
+    llvm::cantFail(CPU.map(PacketStack, PageSize, Rights & ~Execute));
+    // ADD X0, X0, #1; the NOP is the pre-effect stop marker.
+    llvm::cantFail(code(CPU, {0x91000400, 0xd503201f}, PacketCode));
+    for (unsigned Round = 0; Round < 3; ++Round) {
+      SCOPED_TRACE(Round);
+      std::array<uint64_t, unsigned(AArch64Register::FPSR) + 1> Scalars{};
+      std::array<RegisterValue, 32> Vectors{};
+      for (unsigned I = 0; I <= unsigned(AArch64Register::X30); ++I)
+        Scalars[I] = 0x1122334455660000ULL + 0x1000 * Round + I;
+      Scalars[unsigned(AArch64Register::SP)] = PacketStack + PageSize - 16;
+      Scalars[unsigned(AArch64Register::PC)] = PacketCode;
+      Scalars[unsigned(AArch64Register::NZCV)] = 0xb0000000;
+      Scalars[unsigned(AArch64Register::TPIDR_EL0)] = PacketData + Round;
+      Scalars[unsigned(AArch64Register::TPIDRRO_EL0)] = PacketData + 16 + Round;
+      Scalars[unsigned(AArch64Register::TPIDR_EL1)] = PacketData + 32 + Round;
+      Scalars[unsigned(AArch64Register::FPCR)] = 0x01c00000;
+      Scalars[unsigned(AArch64Register::FPSR)] = 0x08000001;
+      for (unsigned I = 0; I < Scalars.size(); ++I)
+        llvm::cantFail(CPU.setReg(AArch64Register(I), Scalars[I]));
+      for (unsigned I = 0; I < Vectors.size(); ++I) {
+        Vectors[I] = {0x0123456789abcdefULL + 0x100 * Round + I,
+                      0xfedcba9876543210ULL - 0x100 * Round - I};
+        llvm::cantFail(CPU.setVector(I, Vectors[I]));
+      }
+      auto Saved = llvm::cantFail(CPU.saveContext());
+      ++Scalars[unsigned(AArch64Register::X0)];
+      Scalars[unsigned(AArch64Register::PC)] += 4;
+      for (unsigned Retry = 0; Retry < 2; ++Retry) {
+        llvm::cantFail(CPU.restoreContext(*Saved));
+        ASSERT_EQ(llvm::toString(steps(CPU, 1, PacketCode)), "");
+        for (unsigned I = 0; I < Scalars.size(); ++I)
+          EXPECT_EQ(llvm::cantFail(CPU.reg(AArch64Register(I))), Scalars[I])
+              << I;
+        for (unsigned I = 0; I < Vectors.size(); ++I)
+          EXPECT_EQ(llvm::cantFail(CPU.vector(I)), Vectors[I]) << I;
+      }
+    }
+  }
 }
 
 TEST(UnicornAArch64, ExecutesSIMDAndTLSAndRestoresCPUOnly) {

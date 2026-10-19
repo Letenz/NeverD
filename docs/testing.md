@@ -3448,6 +3448,15 @@ writer copies, moves and resets. Both C emitters share this allocator.
 
 ## CPU execution checks
 
+`UnicornAArch64.CheckedRegisterPacketsPreserveEveryLaneAndRestoration` checks
+distinct scalar and SIMD values across repeated checked user/supervisor steps
+and context restoration. Linux's `NeverDUnicornStateTransferTests` injects each
+scalar/vector read failure, partial batch installation, cancellation and expiry;
+normal captures use the real batch API. `NeverDUnicornMachineControlTests`
+retains its pre-entry and RAM rollback controls at the batch capture boundary.
+These Linux linker-wrapper injections require a Linux build; other platforms'
+successful state-transfer tests do not establish that fault-injection coverage.
+
 `NeverDX64FPTests` checks all physical x87 lanes and tags at every TOP, exact
 80-bit push/pop and arithmetic state against independent host FXSAVE/FXRSTOR,
 FP/SSE reset, register-width rejection and complete CPU-context restoration.

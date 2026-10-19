@@ -92,6 +92,20 @@ extern "C" uc_err __wrap_uc_reg_read(uc_engine *Engine, int Register,
   return Result;
 }
 
+extern "C" uc_err __real_uc_reg_read_batch(uc_engine *, const int *, void **,
+                                           int);
+extern "C" uc_err __wrap_uc_reg_read_batch(uc_engine *Engine, const int *IDs,
+                                           void **Values, int Count) {
+  if (Inject != Injection::DuringCapture &&
+      Inject != Injection::ExpiredCapture && Inject != Injection::FailedCapture)
+    return __real_uc_reg_read_batch(Engine, IDs, Values, Count);
+  // Preserve the injected boundary inside a partially populated packet.
+  for (int I = 0; I < Count; ++I)
+    if (auto Status = __wrap_uc_reg_read(Engine, IDs[I], Values[I]))
+      return Status;
+  return UC_ERR_OK;
+}
+
 namespace neverd::emulation {
 namespace {
 using Case = std::tuple<GuestArchitecture, bool, Injection>;

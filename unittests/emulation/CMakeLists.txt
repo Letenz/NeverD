@@ -527,7 +527,8 @@ if(NEVERD_EMULATION_BACKEND_UNICORN)
     target_include_directories(NeverDUnicornStateTransferTests PRIVATE
       ${CMAKE_SOURCE_DIR}/lib/emulation)
     target_link_options(NeverDUnicornStateTransferTests PRIVATE
-      "-Wl,--wrap=uc_reg_read")
+      "-Wl,--wrap=uc_reg_read" "-Wl,--wrap=uc_reg_read_batch"
+      "-Wl,--wrap=uc_reg_write_batch")
     add_neverd_unittest(NeverDUnicornMachineControlTests
       UnicornMachineControlTests.cpp
       TIMEOUT 15
@@ -536,7 +537,8 @@ if(NEVERD_EMULATION_BACKEND_UNICORN)
     target_include_directories(NeverDUnicornMachineControlTests PRIVATE
       ${CMAKE_SOURCE_DIR}/lib/emulation)
     target_link_options(NeverDUnicornMachineControlTests PRIVATE
-      "-Wl,--wrap=uc_emu_start" "-Wl,--wrap=uc_reg_read")
+      "-Wl,--wrap=uc_emu_start" "-Wl,--wrap=uc_reg_read"
+      "-Wl,--wrap=uc_reg_read_batch")
     add_executable(NeverDUnicornDeadlineTests
       ${CMAKE_SOURCE_DIR}/third_party/unicorn/tests/unit/test_pre_entry_deadline.c)
     target_include_directories(NeverDUnicornDeadlineTests PRIVATE
