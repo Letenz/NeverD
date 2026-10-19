@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <map>
+#include <memory>
 
 namespace neverd {
 
@@ -95,15 +96,43 @@ void recordARMCodePointerMode(BinaryImage &Img, uint64_t Pointer,
 /// once every symbol has stated its own.
 void recordARMStoredCodePointerModes(BinaryImage &Img);
 
-/// Follow direct ARM/Thumb control-flow edges from exact code entries.
-/// Records only decoded reachable instruction spans; malformed or conflicting
-/// state transitions fail instead of assigning a file-wide default mode.
-llvm::Error discoverARMReachableModes(BinaryImage &Img);
+/// Reachable ARM/Thumb mode discovery for one image, which keeps what it
+/// decoded: evidence read later, the landing pads of the exception tables,
+/// extends it without decoding the image again.
+class ARMModeDiscovery {
+public:
+  explicit ARMModeDiscovery(BinaryImage &Image);
+  ~ARMModeDiscovery();
+  ARMModeDiscovery(const ARMModeDiscovery &) = delete;
+  ARMModeDiscovery &operator=(const ARMModeDiscovery &) = delete;
 
-/// After reachable mode discovery and the exception tables, follow the
-/// landing pads of the call sites decoded code reaches, in the mode of that
-/// code: the unwinder resumes a frame in the instruction set of its PC.
-llvm::Error discoverARMLandingPadModes(BinaryImage &Img);
+  /// Follow direct ARM/Thumb control-flow edges from exact code entries.
+  /// Records only decoded reachable instruction spans; malformed or
+  /// conflicting state transitions fail instead of assigning a file-wide
+  /// default mode.
+  llvm::Error discover();
+
+  /// After the exception tables are read, follow the landing pads of the call
+  /// sites decoding reached, in the mode of that code: the unwinder resumes a
+  /// frame in the instruction set of its PC.  The last phase: it releases
+  /// what the discovery kept.
+  llvm::Error followLandingPads();
+
+  /// How many instructions the discovery disassembled: each address once in
+  /// each mode a path reached it in, however many passes walk it.
+  size_t disassembledInstructions() const { return Disassembled; }
+
+private:
+  struct State;
+  BinaryImage &Img;
+  size_t Disassembled = 0;
+  /// What the discovery keeps between its phases, once it decodes.
+  std::unique_ptr<State> S;
+};
+
+/// ARMModeDiscovery(Img).discover(), for a loader that reads no exception
+/// tables afterwards.
+llvm::Error discoverARMReachableModes(BinaryImage &Img);
 
 /// Add caller-asserted exact function entry modes after format metadata and
 /// relocations have been parsed, before reachable mode discovery. Contradictory
