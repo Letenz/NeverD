@@ -2502,6 +2502,27 @@ TypeRef HighCWriter::printedPointerType(const HighExpr &Value) const {
     return Local;
   if (const TypeRef Member = typedPointerMemberLoad(Value))
     return Member;
+  // A pointer member of a record a frame slot holds, as a debug local's
+  // (`def.opaque`), which the storage's record view reads once the storage
+  // replaces the slot.
+  if (Value.Kind == ExprKind::Load && !Value.Operands.empty() &&
+      Value.Operands[0] && Value.Type)
+    if (const auto Disp = frameDisplacement(*Value.Operands[0]))
+      for (const auto *Slots : {&FrameSlots, &FrameStorageSlots}) {
+        auto Holder = Slots->upper_bound(*Disp);
+        if (Holder == Slots->begin())
+          continue;
+        --Holder;
+        const TypeRef &Record = Holder->second.Type;
+        const int64_t Offset = *Disp - Holder->first;
+        if (!Record || Record->Kind != NdTypeKind::Struct || Record->IsEnum ||
+            Offset < 0 || static_cast<uint64_t>(Offset) >= Record->Size)
+          continue;
+        if (const TypeRef Member = cDisplayType(Record->displayFieldTypeAt(
+                static_cast<uint64_t>(Offset), Value.Type->Size));
+            Member && Member->Kind == NdTypeKind::Ptr)
+          return Member;
+      }
   if (Value.Kind != ExprKind::Load || Value.Operands.empty() ||
       !Value.Operands[0] || !Value.Type)
     return nullptr;

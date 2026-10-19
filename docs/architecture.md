@@ -1032,9 +1032,11 @@ result is no `msg` where the code calls `msg()`), and a bitwise, shift or
 multiplicative operator, an integer local and integer memory take a pointer as
 its address, an integer (`(uintptr_t)p & ~0xFF`): a local the text declares a
 pointer, a typed record's pointer member, a pointer object, or a value
-forwarded from one. So does an integer result returning one, integer memory
-taking a member's address (`&s->bl_tree[18]`), and an integer local taking a
-call's pointer result. A local the text declares a pointer takes an integer,
+forwarded from one, or a pointer member of a record a frame slot holds, which
+the storage's record view reads (`(*(def *)&stack_storage.var_m114).opaque`).
+So does an integer result returning one, integer memory taking a member's
+address (`&s->bl_tree[18]`), and an integer local taking a call's pointer
+result. A local the text declares a pointer takes an integer,
 as an indirect call's result, as the address it is. A C library routine
 takes a pointer to a typedef of its header's (bionic's long time_t, which the
 unit's exact widths call int32_t) and an array parameter (jmp_buf) through
