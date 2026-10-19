@@ -43,6 +43,7 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/intrinsics/IntrinsicValueEffects.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/I386PicAddress.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/libc/LibCNames.h"
@@ -98,7 +99,9 @@ struct FunctionFacts {
   std::set<ValueKey> Read;
   /// Values a return hands back.
   std::set<ValueKey> Returned;
-  /// The results of the calls to each direct callee.
+  /// The results of the calls to each function of this image: a direct
+  /// call's target, or the routine an import's stub or slot reaches
+  /// (ownRoutineOf).
   std::map<va_t, std::vector<ValueKey>> CallResults;
   /// What the return register holds at each return; none for the value it
   /// entered the function with.
@@ -154,10 +157,50 @@ std::optional<MedVar> returnRegisterAt(const MedFunc &Func,
   return std::nullopt;
 }
 
+/// The constant addresses \p Call reaches its callee by: a direct call's
+/// target, or the slot an indirect call reads it from (`call *slot`, or a load
+/// of the slot it calls through), given each value's definition \p Defs.
+struct CallAddress {
+  std::optional<va_t> Target, Slot;
+};
+CallAddress callAddressOf(const MedOp &Call,
+                          const std::map<ValueKey, const MedOp *> &Defs) {
+  CallAddress Address;
+  if (Call.NumInputs < 1)
+    return Address;
+  const MedVar &Callee = Call.Inputs[0];
+  if (Call.Opcode == NdOp::CALL && Callee.isConst())
+    Address.Target = static_cast<va_t>(Callee.ConstVal);
+  else if (Call.Opcode == NdOp::INDIR_CALL && Callee.isConst())
+    Address.Slot = static_cast<va_t>(Callee.ConstVal);
+  else if (Call.Opcode == NdOp::INDIR_CALL)
+    if (const auto Def = Defs.find(keyOf(Callee)); Def != Defs.end())
+      if (const MedOp &Load = *Def->second; Load.Opcode == NdOp::LOAD &&
+                                            Load.NumInputs >= 1 &&
+                                            Load.Inputs[0].isConst())
+        Address.Slot = static_cast<va_t>(Load.Inputs[0].ConstVal);
+  return Address;
+}
+
+/// The routine of this image a call by \p Address reaches through the stub
+/// or slot of an import the loader starts at it (importOwnRoutine): the C
+/// calls that routine, so its contract is the call's.
+std::optional<va_t> ownRoutineOf(const BinaryImage &Img,
+                                 const std::map<va_t, va_t> &ArgumentSources,
+                                 const CallAddress &Address) {
+  if (!Address.Target && !Address.Slot)
+    return std::nullopt;
+  return importOwnRoutine(Img, &ArgumentSources,
+                          Address.Target ? *Address.Target : *Address.Slot);
+}
+
 FunctionFacts collectFacts(const MedFunc &Func, const TargetRegInfo &TRI,
-                           Arch Target) {
+                           const BinaryImage &Img,
+                           const std::map<va_t, va_t> &ArgumentSources) {
+  const Arch Target = Img.Arch;
   FunctionFacts Facts;
   Facts.Func = &Func;
+  std::vector<const MedOp *> Calls;
   for (const MedBlock &Block : Func.Blocks) {
     for (const PhiNode &Phi : Block.Phis) {
       Facts.WritesReturnRegister |= Phi.Output.Kind == MedVar::Reg &&
@@ -196,11 +239,21 @@ FunctionFacts collectFacts(const MedFunc &Func, const TargetRegInfo &TRI,
       for (uint8_t I = 0; I < Op.NumInputs; ++I)
         if (!Op.Inputs[I].isConst())
           Facts.Read.insert(keyOf(Op.Inputs[I]));
-      if (Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
-          Op.Inputs[0].isConst() && Op.Output.Size && !Op.Output.isConst())
-        Facts.CallResults[static_cast<va_t>(Op.Inputs[0].ConstVal)].push_back(
-            keyOf(Op.Output));
+      if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+          Op.Output.Size && !Op.Output.isConst())
+        Calls.push_back(&Op);
     }
+  }
+  // A call's callee is known once every definition is: an indirect call may
+  // load its slot in a later block.
+  for (const MedOp *Call : Calls) {
+    const CallAddress Address = callAddressOf(*Call, Facts.Defs);
+    std::optional<va_t> Callee = Address.Target;
+    if (const std::optional<va_t> Own =
+            ownRoutineOf(Img, ArgumentSources, Address))
+      Callee = Own;
+    if (Callee)
+      Facts.CallResults[*Callee].push_back(keyOf(Call->Output));
   }
   return Facts;
 }
@@ -234,7 +287,8 @@ public:
                   const DebugContext *Dbg)
       : Img(Img), Result(Result), Dbg(Dbg), TRI(getTargetRegInfo(Img.Arch)) {
     for (const MedFunc &Func : Result.MedFuncs) {
-      Facts.emplace(Func.Entry, collectFacts(Func, TRI, Img.Arch));
+      Facts.emplace(Func.Entry,
+                    collectFacts(Func, TRI, Img, Result.CallArgumentSources));
       if (const std::optional<bool> None = declaredNoValue(Func))
         Declared.emplace(Func.Entry, *None);
       if (!Func.Name.empty())
@@ -336,18 +390,15 @@ private:
       return true;
     if (Call.NumInputs < 1)
       return false;
-    std::optional<va_t> Target, Slot;
-    const MedVar &Callee = Call.Inputs[0];
-    if (Call.Opcode == NdOp::CALL && Callee.isConst())
-      Target = static_cast<va_t>(Callee.ConstVal);
-    else if (Call.Opcode == NdOp::INDIR_CALL && Callee.isConst())
-      Slot = static_cast<va_t>(Callee.ConstVal);
-    else if (Call.Opcode == NdOp::INDIR_CALL)
-      if (const auto Def = F.Defs.find(keyOf(Callee)); Def != F.Defs.end())
-        if (const MedOp &Load = *Def->second; Load.Opcode == NdOp::LOAD &&
-                                              Load.NumInputs >= 1 &&
-                                              Load.Inputs[0].isConst())
-          Slot = static_cast<va_t>(Load.Inputs[0].ConstVal);
+    const CallAddress Address = callAddressOf(Call, F.Defs);
+    std::optional<va_t> Target = Address.Target, Slot = Address.Slot;
+    // A call through the stub or slot of an import the loader starts at
+    // this image's own routine calls that routine, as the C prints it.
+    if (const std::optional<va_t> Own =
+            ownRoutineOf(Img, Result.CallArgumentSources, Address)) {
+      Target = Own;
+      Slot.reset();
+    }
     // A callee's declaration decides, then a prototype of its name, then
     // what this pass settled for it.  One this pass does not decompile is
     // declared as the C writers read it, by the debug information or a

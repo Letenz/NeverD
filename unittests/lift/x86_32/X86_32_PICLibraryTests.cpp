@@ -283,7 +283,8 @@ TEST(X86_32PICLibrary, AReloadedGOTAddressLeftInTheReturnRegisterIsNoValue) {
 // `clang_ui_value` reads its result four bytes from the GOT's spill, after a
 // call that pops its hidden pointer.  The stack model does not know the
 // callee pops, so the read looks like the GOT's reload.  `clang_ui_caller`
-// stores what a call to it returns, so the function keeps a value.
+// stores what a call to it through its PLT entry returns, so the function
+// keeps a value and the caller stores it.
 TEST(X86_32PICLibrary, AReloadedGOTAddressACallerReadsStaysAValue) {
   const std::optional<BinaryImage> Img = loadLibrary();
   if (!Img)
@@ -293,6 +294,24 @@ TEST(X86_32PICLibrary, AReloadedGOTAddressACallerReadsStaysAValue) {
   EXPECT_NE(Source.find("int32_t clang_ui_value("), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("void clang_ui_value("), std::string::npos) << Source;
+  EXPECT_TRUE(std::regex_search(Source, std::regex("= clang_ui_value\\(\\);")))
+      << Source;
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+}
+
+// `clang_forward_factor` returns with what its call of `clang_set_factor`
+// through the PLT left in %eax.  The C calls `clang_set_factor`, which returns
+// nothing, so the forwarder returns nothing either.
+TEST(X86_32PICLibrary, AVoidRoutineCalledThroughItsPLTEntryHandsNothingBack) {
+  const std::optional<BinaryImage> Img = loadLibrary();
+  if (!Img)
+    GTEST_SKIP() << "the fixture links with ld.lld";
+  const std::string Source =
+      decompile(*Img, "clang_forward_factor", {"clang_set_factor"});
+  EXPECT_NE(Source.find("void clang_forward_factor("), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("clang_set_factor(arg0);"), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
 }
 

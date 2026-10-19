@@ -45,9 +45,12 @@
 //   int clang_ui_value(void) { return clang_hook(23).i; }
 // takes the popped word back with `subl $4, %esp` and reads the result.  A
 // stack model that does not know the callee pops reads the GOT's spill
-// there.  `clang_ui_caller` stores what it returns, calling it by a local
-// alias as clang does under -fno-semantic-interposition:
+// there.  `clang_ui_caller` stores what it returns, calling it through its
+// PLT entry, which the loader starts at the routine itself:
 //   void clang_ui_caller(void) { factor = clang_ui_value(); }
+// `clang_forward_factor`, built with -fno-optimize-sibling-calls, returns
+// with what `clang_set_factor`, called through its PLT entry, left in %eax:
+//   void clang_forward_factor(int v) { clang_set_factor(v); }
 
 	.text
 	.p2align 4
@@ -411,7 +414,6 @@ clang_set_factor_o0:
 	.globl	clang_ui_value
 	.type	clang_ui_value, @function
 clang_ui_value:
-.Lui_value_local:
 	.cfi_startproc
 	pushl	%ebp
 	.cfi_def_cfa_offset 8
@@ -462,7 +464,7 @@ clang_ui_caller:
 	popl	%ebx
 .Lui_caller_got:
 	addl	$_GLOBAL_OFFSET_TABLE_+(.Lui_caller_got-.Lui_caller_pc), %ebx
-	calll	.Lui_value_local
+	calll	clang_ui_value@PLT
 	movl	%eax, factor@GOTOFF(%ebx)
 	addl	$8, %esp
 	.cfi_def_cfa_offset 8
@@ -471,6 +473,32 @@ clang_ui_caller:
 	retl
 	.cfi_endproc
 	.size	clang_ui_caller, .-clang_ui_caller
+
+	.p2align 4
+	.globl	clang_forward_factor
+	.type	clang_forward_factor, @function
+clang_forward_factor:
+	.cfi_startproc
+	pushl	%ebx
+	.cfi_def_cfa_offset 8
+	.cfi_offset %ebx, -8
+	subl	$8, %esp
+	.cfi_def_cfa_offset 16
+	calll	.Lforward_factor_pc
+.Lforward_factor_pc:
+	popl	%ebx
+.Lforward_factor_got:
+	addl	$_GLOBAL_OFFSET_TABLE_+(.Lforward_factor_got-.Lforward_factor_pc), %ebx
+	movl	16(%esp), %eax
+	movl	%eax, (%esp)
+	calll	clang_set_factor@PLT
+	addl	$8, %esp
+	.cfi_def_cfa_offset 8
+	popl	%ebx
+	.cfi_def_cfa_offset 4
+	retl
+	.cfi_endproc
+	.size	clang_forward_factor, .-clang_forward_factor
 
 	.section	.rodata
 	.p2align 2
