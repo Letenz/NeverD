@@ -1128,7 +1128,7 @@ void simplifyOne(ExprPtr &E, const AvailableDefinitions &Definitions) {
   if (Result.Changed && Result.Evidence != sym::MBAEvidence::Derivation)
     return;
 
-  solver::SymSynthVerifier WideVerifier(solver::SolverOptions::sourceView());
+  solver::SymSynthVerifier WideVerifier;
   const sym::SymRef Recovered = sym::recoverSplitWordArithmetic(
       Ctx, Result.Expr,
       [&](sym::SymContext &Context, sym::SymRef A, sym::SymRef B) {

@@ -427,7 +427,9 @@ tests execute both ordinary and explicitly enhanced source.
 and exhaustive byte-pair overflow preservation. Wide-constant roundtrips check
 positive, negated and complemented high-bit payloads in enclosing regions.
 `SymSimplifyGuard.SourceSymbolicToggleEnablesBoundedSemanticSearch` checks
-actual search work through every source LLVM profile. The real-engine
+actual search work through every source LLVM profile. Proof-budget cases check
+that synthesis exhaustion preserves IR while the separate split-word recovery
+still completes. The real-engine
 `NeverDWorkerSourceSynthesis` test sends the GUI's `source_options` request,
 checks enhanced/ordinary cache isolation, and, when a CLI is configured,
 exercises single-function and whole-program source in both routes. With

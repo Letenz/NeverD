@@ -957,6 +957,9 @@ rewrite; the full-width verifier must accept it before the normal type,
 effect and profitability checks can publish it. Exhaustion preserves the
 expression. GUI menu requests, CLI single-function options and whole-program
 source sessions all reach these same policies.
+The source proof ceiling applies only to the newly enabled heuristic synthesis;
+existing split-word arithmetic recovery keeps its original proof allowance.
+`SymSimplifyOptions::SynthesisSolver` separates those policies in LLVM source.
 
 LLVMC defaults to LLVM O2 after ordinary frame and SSA promotion. Basic scalar
 cleanup, O0, O1, O3 and a bounded custom pass selection are explicit alternatives.

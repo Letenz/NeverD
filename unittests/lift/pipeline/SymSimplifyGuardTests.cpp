@@ -372,6 +372,21 @@ TEST(SymSimplifyGuard, ProvesPackedDisjointOrAndUnsignedWidenedShift) {
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }
 
+TEST(SymSimplifyGuard, SynthesisProofBudgetDoesNotLimitSplitWordRecovery) {
+  llvm::LLVMContext C;
+  llvm::Module M("m", C);
+  llvm::Function *F = buildSplitWordCarrySave(M, /*SignedNoWrap=*/false);
+  SymSimplifyOptions Options;
+  Options.EnableSynthesis = true;
+  Options.SynthesisSolver = solver::SolverOptions::sourceView();
+  Options.SynthesisSolver->Blast.MaxGates = 1;
+  const auto Result = SymSimplifyPass::simplifyWithResult(*F, Options);
+  EXPECT_GT(Result.Rewrites, 0u) << printFunction(*F);
+  EXPECT_EQ(Result.Proof, solver::ProofStatus::Equivalent);
+  EXPECT_EQ(printFunction(*F).find("@llvm.fshl"), std::string::npos);
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
 TEST(SymSimplifyGuard, SplitWordBehindASharedWideningStaysAnOrdinaryOr) {
   // Neither word can see the 64-bit value inside the widening it shares with
   // the other, so it must be read as an OR of that opaque leaf, not as a
@@ -1436,6 +1451,22 @@ TEST(SymSimplifyGuard, SynthesisUnknownLeavesIRUnchanged) {
   EXPECT_GT(Result.SearchWork, 0u);
   EXPECT_EQ(Result.ProofWork.Queries, 1u);
   EXPECT_FALSE(Result.Counterexample.has_value());
+  EXPECT_EQ(printFunction(*F), Before);
+}
+
+TEST(SymSimplifyGuard, SynthesisProofBudgetOverrideLeavesIRUnchanged) {
+  llvm::LLVMContext C;
+  llvm::Module M("m", C);
+  llvm::Function *F = buildSynthesisShiftDouble(M, "synthesis_proof_budget");
+  const std::string Before = printFunction(*F);
+  SymSimplifyOptions Options = synthesisOptions();
+  Options.SynthesisSolver = solver::SolverOptions::sourceView();
+  Options.SynthesisSolver->Blast.MaxGates = 1;
+  const auto Result = SymSimplifyPass::simplifyWithResult(*F, Options);
+  EXPECT_EQ(Result.Rewrites, 0u);
+  EXPECT_EQ(Result.Outcome, SymSimplifyOutcome::ProofIncomplete);
+  EXPECT_EQ(Result.Proof, solver::ProofStatus::Unknown);
+  EXPECT_EQ(Result.ProofWork.Queries, 1u);
   EXPECT_EQ(printFunction(*F), Before);
 }
 

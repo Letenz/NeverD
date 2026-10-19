@@ -717,7 +717,7 @@ Pipeline::optimizeOrPromoteModule(llvm::Module &Mod, LLVMSourceMap *Sources,
   Options.EnableSemantic = View.Symbolic;
   Options.Semantic.EnableSynthesis = View.Symbolic;
   Options.Semantic.Synthesis = symbolic::SynthOptions::sourceView();
-  Options.Semantic.Solver = solver::SolverOptions::sourceView();
+  Options.Semantic.SynthesisSolver = solver::SolverOptions::sourceView();
   Options.EnableControlFlowRecovery = View.RecoverControlFlow;
   Options.KeepFunctionBoundaries = true;
   switch (View.LLVM) {
