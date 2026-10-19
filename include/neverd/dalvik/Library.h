@@ -50,7 +50,8 @@ enum LibraryOperation {
   FilePath,
   FileName,
   FileParent,
-  FileIsAbsolute
+  FileIsAbsolute,
+  ThreadInstrumentation
 };
 struct LibraryMethod {
   const char *Class, *Name, *Signature;
