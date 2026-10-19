@@ -92,9 +92,10 @@ struct AndroidNativeOptions {
   /// unique nonzero types. Values are guest bits, never host pointers or CPU
   /// capability queries, and do not authorize otherwise unsupported execution.
   std::optional<std::vector<AndroidAuxiliaryValue>> AuxiliaryVector;
-  /// localtime requires this explicit fixed zone. gmtime uses GMT without
-  /// consulting it. Neither queries host time, TZ, properties or tzdata.
-  /// The admitted calendar range is years 1..9999; other years stop clearly.
+  /// localtime and mktime require this explicit fixed zone. gmtime uses GMT
+  /// without consulting it. Neither queries host time, TZ, properties or
+  /// tzdata. The admitted calendar range is years 1..9999; other years stop
+  /// clearly.
   std::optional<AndroidFixedTimeZone> FixedTimeZone;
   /// Exact offline getaddrinfo observations. Missing queries remain unknown.
   std::optional<std::vector<AndroidResolverQuery>> ResolverQueries;

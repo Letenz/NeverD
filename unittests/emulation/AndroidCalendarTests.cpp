@@ -3,7 +3,10 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Independent calendar values, complete guest ABI bytes and failure atomicity.
 #include "gtest/gtest.h"
+#include "os/linux/android/AndroidInternal.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
 #include "neverd/emulation/ProcessReport.h"
@@ -54,8 +57,8 @@ protected:
         {Buffer, 4096, std::vector<uint8_t>(4096, 0xa5), false});
     Options.Android->ReadMemory.push_back({Buffer, 4096});
     Options.Android->FixedTimeZone = AndroidFixedTimeZone{19800, "FIX+0530"};
-    Options.Android->Libraries["libcalendar.so"] = {"localtime", "localtime_r",
-                                                    "gmtime", "gmtime_r"};
+    Options.Android->Libraries["libcalendar.so"] = {
+        "localtime", "localtime_r", "gmtime", "gmtime_r", "mktime"};
     Options.Limits.Instructions = 100000;
     Options.InstructionQuantum = 7;
 #endif
@@ -98,7 +101,199 @@ protected:
     Expected[0x300 + Name.size()] = 0;
     complete(call(Op, Seconds, Mode, Named), Expected);
   }
+  void input(const Fields &F) {
+    putTM(Options.Android->Memory[0].Bytes, 0x100, F, INT64_MIN, UINT64_MAX,
+          0xa5);
+  }
+  void inverse(const Fields &In, int64_t Seconds, const Fields &Out,
+               unsigned Named = 0, unsigned Shared = 0) {
+    input(In);
+    auto Expected = Options.Android->Memory[0].Bytes;
+    llvm::support::endian::write64le(Expected.data(), uint64_t(Seconds));
+    llvm::support::endian::write64le(Expected.data() + 8,
+                                     Seconds == -1 ? 75 : 77);
+    const auto &Zone = *Options.Android->FixedTimeZone;
+    if (Shared != 2)
+      putTM(Expected, 0x100, Out, Zone.OffsetSeconds, GMTName + 64, 0xa5);
+    putTM(Expected, 0x200, Out, Zone.OffsetSeconds, GMTName + 64, 0xa5);
+    std::copy(Zone.Name.begin(), Zone.Name.end(), Expected.begin() + 0x300);
+    Expected[0x300 + Zone.Name.size()] = 0;
+    if (Shared) {
+      const Fields Epoch{0, 0, 0, 1, 0, 70, 4, 0, 0};
+      putTM(Expected, 0x400, Epoch, 0, GMTName, 0);
+      if (Shared == 2)
+        putTM(Expected, 0x500, Out, Zone.OffsetSeconds, GMTName + 64, 0xa5);
+      else
+        putTM(Expected, 0x500, Epoch, 0, GMTName, 0);
+    }
+    complete(run("calendar_inverse", {Buffer, Buffer + 0x100, Named, Shared}),
+             Expected);
+  }
 };
+TEST_P(AndroidCalendar, InverseNormalizesCivilFieldsAndReplacesDerivedFields) {
+  Options.Android->FixedTimeZone = AndroidFixedTimeZone{0, "FIX"};
+  struct Case {
+    Fields In;
+    int64_t Seconds;
+    Fields Out;
+  };
+  // Independently enumerated dates, not expectations computed with host mktime
+  // or by round-tripping the model under test. Input weekday/yday are ignored.
+  const Case Cases[] = {
+      {{0, 0, 0, 1, 0, -1899, 99, -99, -1},
+       -62135596800LL,
+       {0, 0, 0, 1, 0, -1899, 1, 0, 0}},
+      {{0, 0, 0, 29, 1, 0, 99, -99, -1},
+       -2203891200LL,
+       {0, 0, 0, 1, 2, 0, 4, 59, 0}},
+      {{0, 0, 0, 30, 1, 100, 99, -99, -1},
+       951868800LL,
+       {0, 0, 0, 1, 2, 100, 3, 60, 0}},
+      {{0, 0, 0, 29, 1, 200, 99, -99, -1},
+       4107542400LL,
+       {0, 0, 0, 1, 2, 200, 1, 59, 0}},
+      {{60, 59, 23, 31, 11, 99, 99, -99, -1},
+       946684800LL,
+       {0, 0, 0, 1, 0, 100, 6, 0, 0}},
+      {{-1, 0, 0, 1, 0, 70, 99, -99, -1},
+       -1,
+       {59, 59, 23, 31, 11, 69, 3, 364, 0}},
+      {{0, -1, 0, 1, 0, 70, 99, -99, 0},
+       -60,
+       {0, 59, 23, 31, 11, 69, 3, 364, 0}},
+      {{0, 0, -1, 1, 0, 70, 99, -99, -7},
+       -3600,
+       {0, 0, 23, 31, 11, 69, 3, 364, 0}},
+      {{0, 0, 0, 0, 0, 70, 99, -99, -1},
+       -86400,
+       {0, 0, 0, 31, 11, 69, 3, 364, 0}},
+      {{0, 0, 0, 32, -1, 70, 99, -99, -1}, 0, {0, 0, 0, 1, 0, 70, 4, 0, 0}},
+      {{0, 0, 0, 1, 12, 69, 99, -99, -1}, 0, {0, 0, 0, 1, 0, 70, 4, 0, 0}},
+      {{8, 14, 3, 19, 0, 138, 99, -99, -1},
+       2147483648LL,
+       {8, 14, 3, 19, 0, 138, 2, 18, 0}},
+      {{INT32_MIN, 0, 0, 1, 0, 70, 99, -99, -1},
+       -2147483648LL,
+       {52, 45, 20, 13, 11, 1, 5, 346, 0}},
+      {{INT32_MIN, 0, 0, 31, 11, 69, 99, -99, -1},
+       -2147570048LL,
+       {52, 45, 20, 12, 11, 1, 4, 345, 0}},
+      {{INT32_MAX, 0, 0, 1, 0, 70, 99, -99, -1},
+       2147483647LL,
+       {7, 14, 3, 19, 0, 138, 2, 18, 0}},
+      {{59, 59, 23, 31, 11, 8099, 99, -99, -1},
+       253402300799LL,
+       {59, 59, 23, 31, 11, 8099, 5, 364, 0}},
+      // Intermediate years outside 1..9999 can normalize back into the range.
+      {{0, 0, 0, 1, 24, -1901, 99, -99, -1},
+       -62135596800LL,
+       {0, 0, 0, 1, 0, -1899, 1, 0, 0}},
+      {{0, 0, 0, 732, 0, -1901, 99, -99, -1},
+       -62135596800LL,
+       {0, 0, 0, 1, 0, -1899, 1, 0, 0}},
+      {{0, 0, 0, 0, 0, 8100, 99, -99, -1},
+       253402214400LL,
+       {0, 0, 0, 31, 11, 8099, 5, 364, 0}},
+      {{120, -60, 24, 0, 12, 69, 99, -99, -1},
+       -3480,
+       {0, 2, 23, 31, 11, 69, 3, 364, 0}}};
+  for (const auto &C : Cases)
+    for (unsigned Named : {0, 1}) {
+      SCOPED_TRACE(C.Seconds);
+      inverse(C.In, C.Seconds, C.Out, Named);
+    }
+}
+TEST_P(AndroidCalendar,
+       InverseUsesExplicitZoneAndPreservesStaticObjectUnlessAliased) {
+  const Fields In{0, 0, 0, 1, 0, 70, INT32_MIN, INT32_MAX, -1};
+  const Fields Out{0, 0, 0, 1, 0, 70, 4, 0, 0};
+  for (int32_t Offset : {-86400, -3600, 0, 19800, 86400}) {
+    Options.Android->FixedTimeZone = AndroidFixedTimeZone{Offset, "FIX"};
+    for (unsigned Shared : {0, 1, 2})
+      inverse(In, -int64_t(Offset), Out, 1, Shared);
+  }
+  // The admitted range is local civil time, not UTC after offset subtraction.
+  Options.Android->FixedTimeZone = AndroidFixedTimeZone{86400, "FIX"};
+  inverse({0, 0, 0, 1, 0, -1899, 0, 0, -1}, -62135683200LL,
+          {0, 0, 0, 1, 0, -1899, 1, 0, 0});
+  Options.Android->FixedTimeZone = AndroidFixedTimeZone{-86400, "FIX"};
+  inverse({59, 59, 23, 31, 11, 8099, 0, 0, -1}, 253402387199LL,
+          {59, 59, 23, 31, 11, 8099, 5, 364, 0});
+}
+TEST_P(AndroidCalendar, InverseFixedZoneDSTFailureAndNullMatchAPI28Errno) {
+  for (int32_t DST : {1, 2, INT32_MAX}) {
+    Fields F{17, -2, 26, 0, 15, 70, -777, 888, DST};
+    input(F);
+    auto Expected = Options.Android->Memory[0].Bytes;
+    F[8] = 1;
+    putTM(Expected, 0x100, F, INT64_MIN, UINT64_MAX, 0xa5);
+    putTM(Expected, 0x200, F, INT64_MIN, UINT64_MAX, 0xa5);
+    llvm::support::endian::write64le(Expected.data(), UINT64_MAX);
+    llvm::support::endian::write64le(Expected.data() + 8, 75);
+    complete(run("calendar_inverse", {Buffer, Buffer + 0x100, 0, 0}), Expected);
+  }
+  auto Expected = Options.Android->Memory[0].Bytes;
+  llvm::support::endian::write64le(Expected.data(), UINT64_MAX);
+  llvm::support::endian::write64le(Expected.data() + 8, 75);
+  complete(run("calendar_inverse", {Buffer, 0, 1, 0}), Expected);
+}
+TEST_P(AndroidCalendar, InverseDSTOneDoesNotWriteReadOnlyInput) {
+  input({17, -2, 26, 0, 15, 70, -777, 888, 1});
+  constexpr uint64_t ReadOnly = Buffer + 0x10000;
+  auto Original = Options.Android->Memory[0].Bytes;
+  Options.Android->Memory.push_back({ReadOnly, 4096, Original, false});
+  Options.Android->ReadMemory.push_back({ReadOnly, 4096});
+  auto Expected = Original;
+  std::copy_n(Original.begin() + 0x100, 56, Expected.begin() + 0x200);
+  llvm::support::endian::write64le(Expected.data(), UINT64_MAX);
+  llvm::support::endian::write64le(Expected.data() + 8, 75);
+  auto R = run("calendar_inverse", {Buffer, ReadOnly + 0x100, 0, 3});
+  ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  ASSERT_EQ(R.MemorySnapshots.size(), 2u);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+  EXPECT_EQ(R.MemorySnapshots[1].Bytes, Original);
+}
+TEST_P(AndroidCalendar, InverseExcludedInputsStopBeforeChangingCallerBytes) {
+  for (const Fields &F : {Fields{0, 0, 0, 1, 0, -1900, 0, 0, -1},
+                          {0, 0, 0, 1, 0, 8100, 0, 0, -1},
+                          {0, INT32_MAX, INT32_MAX, 1, 0, 70, 0, 0, -1},
+                          {0, 0, 24, INT32_MAX, 0, 70, 0, 0, -1}}) {
+    input(F);
+    auto R = run("calendar_inverse", {Buffer, Buffer + 0x100, 0, 0});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Options.Android->Memory[0].Bytes);
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_FALSE(R.NativeCalls.back().Result);
+  }
+  input({0, 0, 0, 1, 0, 70, 0, 0, -1});
+  auto R = run("calendar_inverse", {Buffer, Buffer + 0x100, 2, 0});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+  Options.Android->FixedTimeZone.reset();
+  R = run("calendar_inverse", {Buffer, Buffer + 0x100, 0, 0});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(R.Diagnostic, "mktime requires an explicit fixed time zone");
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Options.Android->Memory[0].Bytes);
+}
+TEST_P(AndroidCalendar, InverseValidatesFullWriteExtentAndPointerOverflow) {
+  input({0, 0, 0, 1, 0, 70, 0, 0, -1});
+  // Only the nine input ints fit at the end of the mapped page.
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  std::copy_n(Bytes.begin() + 0x100, 36, Bytes.end() - 36);
+  for (uint64_t Address : {uint64_t(1), Buffer + 4096 - 36, UINT64_MAX - 15}) {
+    auto R = run("calendar_inverse", {Buffer, Address, 0, 0});
+    EXPECT_EQ(R.Stop, ProcessStopReason::RuntimeFailure);
+    EXPECT_FALSE(R.ReturnValue);
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_EQ(R.NativeCalls.back().Name, "mktime");
+    EXPECT_FALSE(R.NativeCalls.back().Result);
+  }
+  auto R = run("calendar_inverse", {Buffer, Buffer + 0x100, 0, 3});
+  EXPECT_EQ(R.Stop, ProcessStopReason::RuntimeFailure);
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+}
 TEST_P(AndroidCalendar, UTCUsesSigned64BitTimeAndGregorianCenturyRules) {
   struct Case {
     int64_t Seconds;
@@ -215,6 +410,83 @@ TEST(AndroidCalendarOptions, StrictExplicitZoneShapeAndSignedWidth) {
   ASSERT_TRUE(R->Android->FixedTimeZone);
   EXPECT_EQ(R->Android->FixedTimeZone->OffsetSeconds, -3600);
   EXPECT_EQ(R->Android->FixedTimeZone->Name, "FIX");
+}
+TEST(AndroidCalendarMemory, InverseAdmissionIsAtomicAndCreatesItsOwnZoneArena) {
+  ExecutionConfiguration Configuration;
+  Configuration.Backend = ExecutionBackendKind::Unicorn;
+  Configuration.Architecture = GuestArchitecture::AArch64;
+  Configuration.Contract = ExecutionContract::CheckedUserAArch64;
+  auto Probe = probeExecutionBackend(Configuration);
+  ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+  if (Probe->Availability != BackendAvailability::Available)
+    GTEST_SKIP() << Probe->Reason;
+  auto Backend = createExecutionBackend(Configuration, 4 * 1024 * 1024);
+  ASSERT_TRUE(bool(Backend)) << llvm::toString(Backend.takeError());
+  auto &CPU = *Backend->CPU;
+  auto &Space = *CPU.addressSpace();
+  llvm::cantFail(Space.map(Buffer, 8192, Read | Write | UserAccessible));
+  constexpr unsigned At = 4096 - 32;
+  std::vector<uint8_t> Before(8192, 0xa5);
+  putTM(Before, At, {0, 0, 0, 1, 0, 70, 777, -888, -1}, INT64_MIN, UINT64_MAX,
+        0xa5);
+  llvm::cantFail(CPU.write(Buffer, Before));
+  ProcessOptions Options;
+  Options.Android.emplace();
+  Options.Android->FixedTimeZone = AndroidFixedTimeZone{0, "FIX"};
+  const linux_model::MemoryLayout Layout{linux_model::UserLimitARM64, 4096};
+  ProcessResult Result{ProcessProfile::AndroidNativeAArch64,
+                       GuestArchitecture::AArch64,
+                       ExecutionBackendKind::Unicorn,
+                       {}};
+  linux_model::LinuxServices Kernel(CPU, Layout, Buffer + 8192, Options,
+                                    Result);
+  android_model::LinkedImage Linked{};
+  Linked.Imports.emplace(0x1000, "mktime");
+  llvm::cantFail(
+      android_model::initializeCalendar(Space, *Options.Android, Linked));
+  const auto Unchanged = [&] {
+    std::vector<uint8_t> After(8192);
+    llvm::cantFail(Space.snapshotBacking(Buffer, After));
+    EXPECT_EQ(After, Before);
+  };
+  auto Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
+  android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
+                              Linked);
+  NativeCallEvent Call{};
+  Call.Name = "mktime";
+  Call.Arguments[0] = Buffer + At;
+  for (uint64_t Limit : {35, 55}) {
+    Options.MemoryLimit = Limit;
+    auto V = Model.invoke(Call);
+    ASSERT_FALSE(bool(V));
+    EXPECT_NE(llvm::toString(V.takeError()).find("memory limit"),
+              std::string::npos);
+    Unchanged();
+  }
+  Options.MemoryLimit = 56;
+  llvm::cantFail(Space.protect(Buffer + 4096, 4096, Read | UserAccessible));
+  auto V = Model.invoke(Call);
+  ASSERT_FALSE(bool(V));
+  EXPECT_NE(llvm::toString(V.takeError()).find("invalid guest pointer"),
+            std::string::npos);
+  Unchanged();
+  llvm::cantFail(
+      Space.protect(Buffer + 4096, 4096, Read | Write | UserAccessible));
+  auto Expired = llvm::cantFail(ExecutionBudget::create(
+      {1, 1, 1}, ExecutionBudget::Clock::time_point::min()));
+  android_model::Bionic Timed(CPU, Kernel, Layout, Options, Result, *Expired,
+                              Linked);
+  V = Timed.invoke(Call);
+  ASSERT_FALSE(bool(V));
+  EXPECT_NE(llvm::toString(V.takeError()).find("timed out"), std::string::npos);
+  EXPECT_TRUE(Timed.timedOut());
+  Unchanged();
+  V = Model.invoke(Call);
+  ASSERT_TRUE(bool(V)) << llvm::toString(V.takeError());
+  ASSERT_TRUE(*V);
+  EXPECT_EQ(std::get<uint64_t>(**V), 0u);
+  putTM(Before, At, {0, 0, 0, 1, 0, 70, 4, 0, 0}, 0, GMTName + 64, 0xa5);
+  Unchanged();
 }
 INSTANTIATE_TEST_SUITE_P(
     Native, AndroidCalendar,

@@ -6769,6 +6769,13 @@ LP64 fields, padding, zone bytes, aliasing, fixed offsets in both directions,
 shared process storage across APIs/threads, caller storage and errno isolation.
 Missing zones, excluded ranges, closed providers, invalid memory and malformed
 zone input remain visible failures. Tests never read the host time zone.
+Inverse cases use independent expected timestamps and complete buffer images
+for signed carries, Gregorian centuries, ignored derived fields, padding,
+fixed offsets, endpoint dates, static-object aliasing and the API 28 valid
+`-1` errno rule. Positive DST and null input check the exact failure effects,
+including read-only storage when `tm_isdst` is already one. Direct model tests
+check an `mktime`-only zone arena, cross-page write refusal, exact memory-limit
+admission and expired-budget atomicity against all original guest bytes.
 
 `AndroidObservation.*` checks complete workload equality with and without
 selected PC observations across ordinary/APS2/RELR images and Unicorn/HVF.
