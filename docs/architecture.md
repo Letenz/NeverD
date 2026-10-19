@@ -2531,6 +2531,13 @@ becoming the mirror's relocatable fields and its bytes copied from the
 segment; the read GEPs into it at the slot's offset. A segment within the
 limit keeps its whole-segment mirror, and every code pointer in the run must
 still resolve to a lifted owner or the emission fails closed.
+An exact import veneer the loader registered (`jmp [IAT]` with a named
+import) stands for its import where code names it directly: a pointer-mirror
+slot and an instruction operand of code-address provenance, such as a
+destructor `push offset veneer` for an iterator, both take the module's
+symbol for that import (`importedSymbolIdentity`), since the veneer itself
+is absent from MedIR. A value the code computes from a veneer's address
+still needs a lifted owner, as the code-identity proof requires.
 
 The LLVM pointer-table role proof treats a frame slot as a PHI over the
 values stored to it (`collectFrameReloadSources`). As a PHI's recurrent arm
@@ -3489,7 +3496,11 @@ Function starts follow the same evidence rule. An x64 `RUNTIME_FUNCTION` with
 chained unwind info continues its parent function (`BinaryImage::
 ContinuationCodeStarts`), and an entry guessed only from inter-function padding
 (`Symbol::IsBoundaryGuess`) may be a hot/cold split chunk. A direct jump to
-either stays inside the jumping function. A guessed entry that another function
+either stays inside the jumping function. A relocated pointer a PE keeps in
+its read-only data, a vtable's slot or a callback table's, confirms the start
+the padding scan guessed (`scanDataFuncPointers`): MSVC enters a cold chunk
+only by a jump, so a stored pointer names a function, which no neighbour
+absorbs through its address-taken roots. A guessed entry that another function
 absorbed this way is audited as `AbsorbedFunctionChunk` rather than decompiled
 twice.
 
