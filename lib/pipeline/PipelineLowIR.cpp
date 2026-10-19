@@ -2322,8 +2322,11 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
     CompleteModule &= !F.Blocks.empty() && F.hasCompleteLiftCoverage();
     InspectedEntries.insert(F.Entry);
   }
-  for (va_t Entry : FunctionEntries)
-    if (!InspectedEntries.count(Entry) && !Img.findImportStubAt(Entry))
+  // Only a module, which a selection never is, can be complete: once it is
+  // not, the image's other entries say nothing more.
+  for (auto Entry = FunctionEntries.begin();
+       CompleteModule && Entry != FunctionEntries.end(); ++Entry)
+    if (!InspectedEntries.count(*Entry) && !Img.findImportStubAt(*Entry))
       CompleteModule = false;
   for (size_t I = 0; CompleteModule && I < Funcs.size(); ++I) {
     const LowFunc &F = Funcs[I];
@@ -3964,6 +3967,8 @@ void computeCallRegisterEffects(
 struct PipelineAnalysisCache::Impl {
   const BinaryImage *Image;
   DebugContext *Debug;
+  /// The symbol inventory whose starts Entries are, if they are only those.
+  const std::shared_ptr<const SymbolInventory> BuiltFrom;
   // Never changes, so the graph cache matches it by identity.
   const std::set<va_t> Entries;
   std::set<uint64_t> VerifiedEntries;
@@ -3980,9 +3985,12 @@ struct PipelineAnalysisCache::Impl {
   InternalNoReturnIndex Callees;
   std::shared_ptr<X87CallGraphCache> Graphs;
 
+  /// Entries are the starts of \p BuiltFrom when it is given.
   Impl(const BinaryImage &Img, DebugContext *Dbg, std::set<va_t> Entries,
-       bool RetainBodies)
-      : Image(&Img), Debug(Dbg), Entries(std::move(Entries)),
+       bool RetainBodies,
+       std::shared_ptr<const SymbolInventory> BuiltFrom = nullptr)
+      : Image(&Img), Debug(Dbg), BuiltFrom(std::move(BuiltFrom)),
+        Entries(std::move(Entries)),
         VerifiedEntries(Img.VerifiedFunctionEntries),
         Targets(Img,
                 Dbg ? libc::NoReturnTargetIndex::NameResolver(
@@ -4005,15 +4013,20 @@ struct PipelineAnalysisCache::Impl {
                                         limits::kMaxPipelineCallBodyBytes},
                                        &this->Entries)) {}
 
-  /// \p CandidateEntries is sorted and holds each entry once.
+  /// \p CandidateEntries is sorted and holds each entry once.  They are the
+  /// starts of \p Inventory when it is given.
   bool matches(const BinaryImage &Img, DebugContext *Dbg,
-               llvm::ArrayRef<va_t> CandidateEntries) const {
+               llvm::ArrayRef<va_t> CandidateEntries,
+               const SymbolInventory *Inventory = nullptr) const {
     // Object identity is only a guard: the owner must retire this state on
     // reload/mutation. These two inventories can grow during const analysis,
-    // and affect CFG boundaries, ownership and proof work charges.
+    // and affect CFG boundaries, ownership and proof work charges.  Entries
+    // read from the same inventory are its starts; a grown symbol table reads
+    // another.
     return Image == &Img && Debug == Dbg &&
-           std::equal(Entries.begin(), Entries.end(), CandidateEntries.begin(),
-                      CandidateEntries.end()) &&
+           ((Inventory && BuiltFrom.get() == Inventory) ||
+            std::equal(Entries.begin(), Entries.end(), CandidateEntries.begin(),
+                       CandidateEntries.end())) &&
            VerifiedEntries == Img.VerifiedFunctionEntries;
   }
 };
@@ -4035,6 +4048,31 @@ std::vector<va_t> symbolFunctionStarts(const BinaryImage &Img,
   return Starts;
 }
 } // namespace
+
+PipelineAnalysisCache::SymbolInventory::SymbolInventory(const BinaryImage &Img)
+    : BoundaryGuesses(Img.boundaryGuessFunctionStarts()),
+      Starts(symbolFunctionStarts(Img, BoundaryGuesses)), Image(&Img),
+      SymbolData(Img.Symbols.data()), SymbolCount(Img.Symbols.size()),
+      RangeData(Img.KnownCodeRanges.data()),
+      RangeCount(Img.KnownCodeRanges.size()),
+      ContinuationCount(Img.ContinuationCodeStarts.size()) {}
+
+bool PipelineAnalysisCache::SymbolInventory::readFrom(
+    const BinaryImage &Img) const {
+  return Image == &Img && SymbolData == Img.Symbols.data() &&
+         SymbolCount == Img.Symbols.size() &&
+         RangeData == Img.KnownCodeRanges.data() &&
+         RangeCount == Img.KnownCodeRanges.size() &&
+         ContinuationCount == Img.ContinuationCodeStarts.size();
+}
+
+std::shared_ptr<const PipelineAnalysisCache::SymbolInventory>
+PipelineAnalysisCache::SymbolInventory::of(const BinaryImage &Img,
+                                           PipelineAnalysisCache &Cache) {
+  if (!Cache.Inventory || !Cache.Inventory->readFrom(Img))
+    Cache.Inventory = std::make_shared<const SymbolInventory>(Img);
+  return Cache.Inventory;
+}
 
 namespace {
 /// Keep what a run reads of each of \p Functions as a callee
@@ -4131,15 +4169,16 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
     return std::nullopt;
   // The entries a selected-function run of a symbol start knows (buildLowIR
   // below): its own entry adds nothing to them, so its run shares this state.
-  const std::vector<va_t> CandidateEntries =
-      symbolFunctionStarts(Img, Img.boundaryGuessFunctionStarts());
   PipelineAnalysisCache &Cache = *Opts.AnalysisCache;
+  const auto Inventory = PipelineAnalysisCache::SymbolInventory::of(Img, Cache);
+  const std::vector<va_t> &CandidateEntries = Inventory->Starts;
   // Facts for another symbol inventory serve no later run.
-  if (!Cache.Facts || !Cache.Facts->matches(Img, Dbg, CandidateEntries)) {
+  if (!Cache.Facts ||
+      !Cache.Facts->matches(Img, Dbg, CandidateEntries, Inventory.get())) {
     Cache.Facts = std::make_shared<PipelineAnalysisCache::Impl>(
         Img, Dbg,
         std::set<va_t>(CandidateEntries.begin(), CandidateEntries.end()),
-        /*RetainBodies=*/true);
+        /*RetainBodies=*/true, Inventory);
   } else {
     Cache.Facts->Callees.trimMemoizedProofs(
         limits::kMaxRetainedNoReturnAnswers);
@@ -4177,15 +4216,19 @@ void Pipeline::buildLowIR(
   // A padding-boundary guess is not a tail-call target: MSVC separates
   // hot/cold chunks of one function with the same int3 padding, and a jump
   // into such a chunk must keep its code in the jumping function.
-  const std::set<va_t> BoundaryGuesses = Img.boundaryGuessFunctionStarts();
   // The same symbol inventory owns both full-image and selected-function CFGs;
   // unselected bodies need not be lifted to preserve their entry boundaries.
-  std::vector<va_t> CandidateEntries =
-      symbolFunctionStarts(Img, BoundaryGuesses);
+  const bool Restricted =
+      !Opts.OnlyFunctionEntries.empty() || Opts.MaxFunctions != 0;
+  PipelineAnalysisCache LocalCache;
+  PipelineAnalysisCache *Shared = sharedAnalysisCache(Img, Opts);
+  PipelineAnalysisCache &Cache = Shared ? *Shared : LocalCache;
+  const auto Inventory = PipelineAnalysisCache::SymbolInventory::of(Img, Cache);
+  const std::set<va_t> &BoundaryGuesses = Inventory->BoundaryGuesses;
+  const std::vector<va_t> &SymbolStarts = Inventory->Starts;
   std::vector<va_t> Added;
   const auto Add = [&](va_t Entry) {
-    if (!std::binary_search(CandidateEntries.begin(), CandidateEntries.end(),
-                            Entry))
+    if (!std::binary_search(SymbolStarts.begin(), SymbolStarts.end(), Entry))
       Added.push_back(Entry);
   };
   for (const auto &C : Candidates)
@@ -4201,31 +4244,27 @@ void Pipeline::buildLowIR(
     }
   }
   const bool AddsEntries = !Added.empty();
+  std::vector<va_t> MergedEntries;
   if (AddsEntries) {
     llvm::sort(Added);
     Added.erase(std::unique(Added.begin(), Added.end()), Added.end());
-    const size_t Symbols = CandidateEntries.size();
-    CandidateEntries.insert(CandidateEntries.end(), Added.begin(), Added.end());
-    std::inplace_merge(CandidateEntries.begin(),
-                       CandidateEntries.begin() + Symbols,
-                       CandidateEntries.end());
+    MergedEntries.reserve(SymbolStarts.size() + Added.size());
+    std::merge(SymbolStarts.begin(), SymbolStarts.end(), Added.begin(),
+               Added.end(), std::back_inserter(MergedEntries));
   }
-  const bool Restricted =
-      !Opts.OnlyFunctionEntries.empty() || Opts.MaxFunctions != 0;
-  PipelineAnalysisCache LocalCache;
-  PipelineAnalysisCache &Cache =
-      Opts.AnalysisCache && Restricted && Img.Arch == Arch::X64
-          ? *Opts.AnalysisCache
-          : LocalCache;
+  const std::vector<va_t> &CandidateEntries =
+      AddsEntries ? MergedEntries : SymbolStarts;
   // A selection that is not a symbol start adds its own entry and keys other
   // facts, kept beside the symbol inventory's rather than in their place.
   std::shared_ptr<PipelineAnalysisCache::Impl> &Kept =
       AddsEntries ? Cache.SelectionFacts : Cache.Facts;
-  if (!Kept || !Kept->matches(Img, Dbg, CandidateEntries))
+  const PipelineAnalysisCache::SymbolInventory *Starts =
+      AddsEntries ? nullptr : Inventory.get();
+  if (!Kept || !Kept->matches(Img, Dbg, CandidateEntries, Starts))
     Kept = std::make_shared<PipelineAnalysisCache::Impl>(
         Img, Dbg,
         std::set<va_t>(CandidateEntries.begin(), CandidateEntries.end()),
-        Restricted);
+        Restricted, AddsEntries ? nullptr : Inventory);
   else {
     // Earlier runs' no-return answers hold for the same facts, and replaying
     // a retained body asks them again; the screening data behind them does

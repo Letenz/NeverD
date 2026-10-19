@@ -94,6 +94,11 @@ public:
     return Cache.SelectionFacts;
   }
 
+  static std::shared_ptr<const void>
+  symbolInventory(const PipelineAnalysisCache &Cache) {
+    return Cache.Inventory;
+  }
+
   static void buildLowIR(const BinaryImage &Image, PipelineResult &Result) {
     buildLowIR(Image, Result, {Image.Entry});
   }
@@ -370,6 +375,44 @@ TEST(PipelineOutcome, WarmedAnalysisCacheLeavesSelectedRunsUnchanged) {
       }
     }
   }
+}
+
+TEST(PipelineOutcome, AnalysisCacheReadsTheSymbolInventoryOnce) {
+  // Every run reads the image's boundary guesses and function-symbol starts.
+  // The cache reads them once for its image and each run reads what a cold
+  // run does; a grown symbol table is read again, and a reset drops them.
+  BinaryImage Image = selectionCacheImage(true);
+  Symbol Guess = Symbol::makeFunc(0x1200, 1);
+  Guess.IsBoundaryGuess = true;
+  Image.Symbols.push_back(Guess);
+  PipelineAnalysisCache Cache;
+  const auto Check = [&](va_t Entry) {
+    PipelineResult Kept, Cold;
+    PipelineTestPeer::buildLowIR(Image, Kept, {Entry}, &Cache);
+    PipelineTestPeer::buildLowIR(Image, Cold, {Entry});
+    expectSameSelection(Kept, Cold);
+  };
+  Check(0x1000);
+  const auto Inventory = PipelineTestPeer::symbolInventory(Cache);
+  const auto Facts = PipelineTestPeer::analysisFacts(Cache);
+  ASSERT_NE(Inventory, nullptr);
+  for (const va_t Entry : {va_t{0x1100}, va_t{0x1200}, va_t{0x1000}}) {
+    Check(Entry);
+    EXPECT_EQ(PipelineTestPeer::symbolInventory(Cache), Inventory);
+  }
+  // A guess is no symbol start, so its run shares the symbol facts too.
+  EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), Facts);
+  EXPECT_EQ(PipelineTestPeer::selectionFacts(Cache), nullptr);
+
+  // A symbol that is no guess confirms the start.
+  Image.Symbols.push_back(Symbol::makeFunc(0x1200, 1));
+  Check(0x1000);
+  EXPECT_NE(PipelineTestPeer::symbolInventory(Cache), Inventory);
+  EXPECT_NE(PipelineTestPeer::analysisFacts(Cache), Facts);
+  Check(0x1200);
+
+  Cache.reset();
+  EXPECT_EQ(PipelineTestPeer::symbolInventory(Cache), nullptr);
 }
 
 TEST(PipelineOutcome, SelectionsOutsideTheSymbolInventoryKeepTheirOwnFacts) {

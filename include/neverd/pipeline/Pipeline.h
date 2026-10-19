@@ -70,7 +70,8 @@ struct AnalysisCacheWarmup {
 /// Pipeline checks the exact function-entry and verified-entry inventories.
 /// It keeps the facts of the symbol inventory, which every symbol start and
 /// warming share, apart from those of a selection that adds its own entry, so
-/// passing through such a selection leaves them in place.
+/// passing through such a selection leaves them in place.  It reads that
+/// inventory from the image's symbols once for the cache.
 /// Additive CodeRefTargets publication is allowed, as for the raw graph cache.
 /// Use from one pipeline invocation at a time; its internal workers join
 /// before run() returns. Other architectures and whole-image runs stay local.
@@ -82,15 +83,18 @@ public:
   void reset() {
     Facts.reset();
     SelectionFacts.reset();
+    Inventory.reset();
   }
 
 private:
   friend class Pipeline;
   friend class PipelineTestPeer;
   struct Impl;
+  struct SymbolInventory;
   std::shared_ptr<Impl> Facts;
   /// The latest selection whose entries the symbol inventory lacks.
   std::shared_ptr<Impl> SelectionFacts;
+  std::shared_ptr<const SymbolInventory> Inventory;
 };
 
 struct PipelineOptions {
