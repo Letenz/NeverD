@@ -627,7 +627,15 @@ object; `push offset filter`, a handler) is likewise a function
 instruction operand, so the target is no call site and often has no prologue,
 yet it is still an entry the bounded decoder verifies, and symbolizing it
 corrects a function whose real entry carries a `/GS` or `/RTC` check the
-stored address skipped. Such a table roots no function's code
+stored address skipped. Code an instruction names inside its own function
+is that function's label only where the function's code reaches it, when the
+instruction pushes or stores the address: MSVC places the constructor and
+destructor it pushes for an array iterator, and an `atexit` callback, right
+after the function pushing them, past its return, where nothing in it reaches
+them, so they are functions. A function with an indirect jump the walk cannot
+follow may reach any label, as a computed goto does, and an address loaded
+into a register, such as a catch block's `mov eax, offset continuation; ret`,
+keeps the label it names. Such a table roots no function's code
 (`exploreAddressTakenRoots`): the range of a function before the dispatcher
 reaches the dispatcher's cases when the dispatcher's entry is only a guess.
 A relocation run ends at the next table anchor among its own slots; an anchor
