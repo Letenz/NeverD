@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <map>
 #include <optional>
 #include <set>
 
@@ -509,6 +510,17 @@ void scanDataFuncPointers(BinaryImage &Img) {
   if (Img.Arch == Arch::X86 || Img.Arch == Arch::X64)
     Literals.emplace(Img);
 
+  // A relocated pointer a PE keeps in its read-only data, a vtable's slot or
+  // a callback table's, names a function: MSVC enters the cold chunk of a
+  // function, which the same int3 padding separates, only by a jump.  It
+  // confirms the start the padding scan only guessed.
+  // Indices: the scan below appends symbols.
+  std::map<va_t, size_t> Guesses;
+  if (Img.Format == BinaryFormat::COFF && !Img.CodePtrRelocSlots.empty())
+    for (size_t I = 0; I < Img.Symbols.size(); ++I)
+      if (Img.Symbols[I].IsFunc && Img.Symbols[I].IsBoundaryGuess)
+        Guesses.emplace(Img.Symbols[I].Addr, I);
+
   [[maybe_unused]] size_t Added = 0;
   auto ScanRange = [&](const Segment *Seg, va_t Start, uint64_t RequestedLen) {
     if (!Seg || !Seg->isReadable() || Seg->isWritable() ||
@@ -542,6 +554,11 @@ void scanDataFuncPointers(BinaryImage &Img) {
       const size_t I = static_cast<size_t>(Cur - Seg->VA);
       uint64_t Val = normalizeCodeAddress(
           readPtr(Seg->Data.data() + I, Img.is64Bit()), Img.Arch, Img.Mode);
+      if (const auto Guess = Guesses.find(Val);
+          Guess != Guesses.end() && Img.CodePtrRelocSlots.count(Cur)) {
+        Img.Symbols[Guess->second].IsBoundaryGuess = false;
+        Guesses.erase(Guess);
+      }
       if (!InExecutableSegment(Val) || insideInterval(Known, Val) ||
           Existing.count(Val))
         continue;

@@ -917,6 +917,39 @@ TEST(X86_32_FunctionDiscovery, CallbackStoredByARelocatedImmediateIsAFunction) {
       << "a callback a relocated immediate names is a function of its own";
 }
 
+TEST(X86_32_FunctionDiscovery, AVtableSlotConfirmsAPaddingGuess) {
+  // A destructor follows its neighbour's return past int3 padding and
+  // nothing calls it, so the loader only guesses its start.  A vtable in
+  // .rdata holds a relocated pointer to it, which names a function: MSVC
+  // enters a cold chunk only by a jump.  A start only padding marks stays a
+  // guess.
+  std::vector<uint8_t> Text(0x30, 0xCC);
+  const uint8_t Entry[] = {0x55, 0x8B, 0xEC, 0x5D, 0xC3}; // 401000
+  std::copy(std::begin(Entry), std::end(Entry), Text.begin());
+  const uint8_t Dtor[] = {0x56, 0x8B, 0xF1, 0x5E, 0xC3}; // 401010
+  std::copy(std::begin(Dtor), std::end(Dtor), Text.begin() + 0x10);
+  const uint8_t Other[] = {0x57, 0x8B, 0xF9, 0x5F, 0xC3}; // 401020
+  std::copy(std::begin(Other), std::end(Other), Text.begin() + 0x20);
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+  addPeSection(Img, ".rdata", 0x402000, {0x10, 0x10, 0x40, 0x00},
+               SegmentFlags::Readable);
+  recordAbsolutePointerRelocations(Img, {{0x402000, 0x401010, InvalidVA}});
+  ASSERT_TRUE(Img.CodePtrRelocSlots.count(0x402000));
+
+  runPostLoadDiscovery(Img, "test");
+  const std::set<va_t> Guesses = Img.boundaryGuessFunctionStarts();
+  EXPECT_FALSE(Guesses.count(0x401010)) << "a vtable slot names it";
+  EXPECT_TRUE(Guesses.count(0x401020)) << "only padding marks it";
+}
+
 TEST(X86_32_FunctionDiscovery, CallbacksPushedPastTheReturnAreFunctions) {
   // MSVC passes an array's constructor and destructor to its iterator with
   // `push offset`, and places them right after the function pushing them,
