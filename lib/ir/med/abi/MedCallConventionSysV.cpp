@@ -13,7 +13,9 @@
 // the stack-argument summary does not count.  RAX, R10 and R11 hold nothing
 // at entry, so a function that only aligns the stack for a call with a push
 // of RAX passes no stack argument.  A libc import with a fixed prototype
-// reads exactly its parameters, through its PLT stub or its GOT slot alike.
+// reads exactly its parameters, through its PLT stub or its GOT slot alike,
+// and a variadic one its fixed parameters, which the variadic arguments a
+// call passes follow in the argument registers.
 // A function's register parameters are those its callers pass: the ones its
 // summary lists, not a register whose old value only a byte write keeps
 // (`setg cl` merges into RCX).  The routines of the Itanium C++ ABI's runtime
@@ -46,6 +48,7 @@ const CallArgumentConvention SysVX64CallArguments = {
     .VectorArgumentsFromCalleeSummary = true,
     .ImportArgumentsFromPrototype = true,
     .SummaryListsNoParameters = readsVectorCount,
+    .VariadicImportArgumentsInRegisters = true,
     .StackArgumentSummary = true,
     .UndefinedIncomingScratchRegisters = true,
     .IndirectCallsTakePrecedingSetup = true,

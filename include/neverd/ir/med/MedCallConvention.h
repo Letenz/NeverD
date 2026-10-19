@@ -64,6 +64,13 @@ struct CallArgumentConvention {
   /// argument (Win64 home-slot spills), and the call also passes the argument
   /// registers set on every path from there.
   bool VariadicFromSummary = false;
+  /// A variadic C library import reads its fixed parameters in their
+  /// argument registers, and the variadic arguments a call passes follow
+  /// them there: its summary is its fixed parameters, and a call also passes
+  /// the argument registers set on every path after them (`openat(dirfd,
+  /// path, flags, mode)`).  Where variadic arguments go on the stack, the
+  /// fixed ones alone say nothing about them.
+  bool VariadicImportArgumentsInRegisters = false;
   /// The incoming stack-argument summary counts this convention's positions.
   bool StackArgumentSummary = false;
   /// An integer register that carries no argument and that a call need not
