@@ -161,6 +161,23 @@ TEST(X86_32PICLibrary, ReloadedGOTAddressNamesItsData) {
   EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
 }
 
+// `clang_set_factor` returns with the GOT address its call/pop left in %eax,
+// which addresses its data and is no value it means: the C returns nothing,
+// where it returned the GOT address as an int.
+TEST(X86_32PICLibrary, AGOTAddressLeftInTheReturnRegisterIsNoValue) {
+  const std::optional<BinaryImage> Img = loadLibrary();
+  if (!Img)
+    GTEST_SKIP() << "the fixture links with ld.lld";
+  const Symbol *GOT = Img->findSymbol("_GLOBAL_OFFSET_TABLE_");
+  ASSERT_NE(GOT, nullptr);
+  const std::string Source = decompile(*Img, "clang_set_factor");
+  EXPECT_NE(Source.find("void clang_set_factor("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("factor = "), std::string::npos) << Source;
+  EXPECT_FALSE(std::regex_search(
+      Source, std::regex("\\b0x" + llvm::utohexstr(GOT->Addr) + "\\b")))
+      << Source;
+}
+
 // A linked library reads a `.rodata` table at its GOTOFF displacement from the
 // GOT plus an index.  The LLVM module took the GOT for the table's base: GCC's
 // read went into the writable run that holds the GOT, at a negative offset,
