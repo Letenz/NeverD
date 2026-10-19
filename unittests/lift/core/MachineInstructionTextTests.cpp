@@ -627,6 +627,26 @@ HighStmt callOf(ExprPtr Call) {
   return Statement;
 }
 
+// The code a trap keeps does not make it return: `brk #1` is clang's
+// __builtin_trap() and `brk #0x3e8` GCC's, and LowIR and MedIR end the flow
+// at both.  A breakpoint a debugger resumes from does not end it, nor does an
+// ARM `hlt`, which LowIR and MedIR do not end the flow at either.
+TEST(MachineInstructionText, TrapsEndTheFlowWithTheirCode) {
+  const auto Terminates = [](Intrinsic Id, uint64_t Code) {
+    return isTerminatingHighCall(
+        intrinsicCall(Id, {HighExpr::makeConst(Code, 2)}, NdType::makeVoid()));
+  };
+  EXPECT_TRUE(Terminates(Intrinsic::Brk, 0x1));
+  EXPECT_TRUE(Terminates(Intrinsic::Brk, 0x3E8));
+  EXPECT_TRUE(Terminates(Intrinsic::Udf_A64, 0x0));
+  EXPECT_TRUE(Terminates(Intrinsic::Hlt_A64, 0x0));
+  EXPECT_FALSE(Terminates(Intrinsic::ArmBkpt, 0x1));
+  EXPECT_FALSE(Terminates(Intrinsic::ArmHlt, 0x1));
+  // Without its code, as before.
+  EXPECT_TRUE(isTerminatingHighCall(
+      intrinsicCall(Intrinsic::Brk, {}, NdType::makeVoid())));
+}
+
 TEST(MachineInstructionText, HighCPrintsSystemInstructions) {
   // ACLE names the register an MRS reads and an MSR writes.
   HighStmt Read;
