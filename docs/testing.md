@@ -424,7 +424,8 @@ tests execute both ordinary and explicitly enhanced source.
 
 `NeverDHighSymSimplifyTests` provides the focused HighIR suite, including
 8–256-bit affine synthesis, synthesis inside signed/unsigned width conversions
-and exhaustive byte-pair overflow preservation.
+and exhaustive byte-pair overflow preservation. Wide-constant roundtrips check
+positive, negated and complemented high-bit payloads in enclosing regions.
 `SymSimplifyGuard.SourceSymbolicToggleEnablesBoundedSemanticSearch` checks
 actual search work through every source LLVM profile. The real-engine
 `NeverDWorkerSourceSynthesis` test sends the GUI's `source_options` request,

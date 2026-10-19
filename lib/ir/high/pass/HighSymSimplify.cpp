@@ -797,14 +797,24 @@ ExprPtr literalExpr(const llvm::APInt &Val, uint16_t Bytes,
                     bool ScalarLiterals) {
   const auto Provenance = ScalarLiterals ? ConstantAddressProvenance::Scalar
                                          : ConstantAddressProvenance::Unknown;
+  auto Payload = [&](uint64_t Value) -> ExprPtr {
+    // A wide HighIR literal cannot distinguish a positive 64-bit payload
+    // with bit 63 set from a truncated wider value. Preserve the explicit
+    // zero extension so a surrounding region can read this value exactly.
+    if (Bytes > 8 && (Value >> 63) != 0) {
+      auto Extended = HighExpr::makeUnary(
+          NdOp::INT_ZEXT, HighExpr::makeConst(Value, 8, Provenance));
+      Extended->Type = NdType::makeInt(Bytes, false);
+      return Extended;
+    }
+    return HighExpr::makeConst(Value, Bytes, Provenance);
+  };
   if (std::optional<uint64_t> Direct = Val.tryZExtValue())
-    return HighExpr::makeConst(*Direct, Bytes, Provenance);
+    return Payload(*Direct);
   if (std::optional<uint64_t> Magnitude = (-Val).tryZExtValue())
-    return HighExpr::makeUnary(
-        NdOp::INT_NEG2, HighExpr::makeConst(*Magnitude, Bytes, Provenance));
+    return HighExpr::makeUnary(NdOp::INT_NEG2, Payload(*Magnitude));
   if (std::optional<uint64_t> Complement = (~Val).tryZExtValue())
-    return HighExpr::makeUnary(
-        NdOp::INT_NOT, HighExpr::makeConst(*Complement, Bytes, Provenance));
+    return HighExpr::makeUnary(NdOp::INT_NOT, Payload(*Complement));
   return nullptr;
 }
 

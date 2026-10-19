@@ -806,6 +806,34 @@ TEST(HighSymSimplify, SourceSynthesisReachesInsideWidthConversions) {
     }
 }
 
+TEST(HighSymSimplify, ReimportsWideConstantsWithoutLosingTheirUpperBits) {
+  for (uint16_t Bytes : {16, 32})
+    for (uint64_t Value : {0x8000000000000000ull, 0x8000000000000035ull, ~0ull})
+      for (NdOp Op : {NdOp::COPY, NdOp::INT_NEG2, NdOp::INT_NOT}) {
+        SCOPED_TRACE(Bytes);
+        SCOPED_TRACE(Value);
+        SCOPED_TRACE(static_cast<unsigned>(Op));
+        auto X = HighExpr::makeVar(tempOfSize(1, Bytes));
+        auto Y = HighExpr::makeVar(tempOfSize(2, Bytes));
+        auto Tail = extendInteger(HighExpr::makeConst(Value, 8), Bytes);
+        llvm::APInt Expected(Bytes * 8, Value);
+        if (Op != NdOp::COPY) {
+          Tail = HighExpr::makeUnary(Op, Tail);
+          Expected = Op == NdOp::INT_NEG2 ? -Expected : ~Expected;
+        }
+        const auto Folded = simplified(wideConstantTail(X, Y, Tail, Bytes));
+        EXPECT_EQ(integerValue(Folded, 0, 0), Expected);
+        // A later enclosing region must still recognize the complete constant,
+        // rather than treating a high-bit 64-bit payload as an opaque value.
+        const auto Outer = HighExpr::makeBinop(
+            NdOp::INT_ADD, X, HighExpr::makeBinop(NdOp::INT_SUB, Folded, Tail));
+        const auto After = simplified(Outer);
+        EXPECT_EQ(After->str(), X->str());
+        for (uint64_t A : {0ull, 1ull, 0x8000000000000000ull, ~0ull})
+          EXPECT_EQ(integerValue(After, A), llvm::APInt(Bytes * 8, A));
+      }
+}
+
 // These checks use only ordinary cleanup, with no symbolic bridge or solver.
 ExprPtr basicSimplified(const ExprPtr &E) {
   HighStmt Return;
