@@ -12,6 +12,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/COFFException.h"
 #include "neverd/sdk/NeverDCAPI.h"
 #include "neverd/support/ProjectWriteLock.h"
 
@@ -7686,6 +7687,9 @@ TEST_F(SessionCAPITest, PEAnalysisCacheRetiresOnlyWhenHandlersGrowMetadata) {
       Entries.push_back(F.CodeRange.Begin);
   ASSERT_EQ(Entries.size(), 3u);
   ASSERT_EQ(neverd_prepare_function(Session, Entries[0]), 1);
+  // A whole image's load decoded every record: handler discovery can add
+  // nothing more, so later preparations skip it.
+  EXPECT_TRUE(State.ExceptionHandlersSettled);
   const auto Facts =
       neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache);
   ASSERT_NE(Facts, nullptr);
@@ -7694,10 +7698,17 @@ TEST_F(SessionCAPITest, PEAnalysisCacheRetiresOnlyWhenHandlersGrowMetadata) {
   ASSERT_EQ(neverd_prepare_function(Session, Entries[1]), 1);
   EXPECT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
             Facts);
+  // A record left to materialize leaves discovery work too.
+  neverd::BinaryImage Focused = State.Img;
+  Focused.COFFPDataRecords.push_back({0x1000, 0x1010, 0x2000, 0x3000});
+  EXPECT_FALSE(neverd::coff_loader::exceptionHandlersSettled(Focused));
   auto *Handled = State.Img.ExceptionMetadata.findFunction(Entries[2]);
   ASSERT_NE(Handled, nullptr);
   Handled->PersonalityVA = Entries[0];
   Handled->LanguageTablesResolved = false;
+  EXPECT_FALSE(neverd::coff_loader::exceptionHandlersSettled(State.Img));
+  // Only a load leaves records undecoded, and it clears the flag too.
+  State.ExceptionHandlersSettled = false;
   ASSERT_EQ(neverd_prepare_function(Session, Entries[2]), 1);
   EXPECT_TRUE(State.Img.ExceptionMetadata.findFunction(Entries[2])
                   ->LanguageTablesResolved);

@@ -58,6 +58,12 @@ struct ExceptionHandlerState {
 };
 ExceptionHandlerState exceptionHandlerState(const BinaryImage &Img);
 
+/// Whether ensureExceptionHandlers can add nothing to \p Img, whatever
+/// functions it is given: no runtime-function record is left to materialize
+/// (a whole image decodes every record when it loads) and every record's
+/// language tables are resolved.  Only a load changes that.
+bool exceptionHandlersSettled(const BinaryImage &Img);
+
 /// Materialize the x64 RUNTIME_FUNCTION covering \p Address from
 /// BinaryImage::COFFPDataRecords when `--func` skipped it at load.
 bool ensureX64RuntimeFunction(BinaryImage &Img, va_t Address);
