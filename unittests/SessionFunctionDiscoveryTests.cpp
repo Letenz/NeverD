@@ -129,6 +129,7 @@ TEST_F(SessionFunctionDiscovery,
     State.PipeResult.Success = true;
     State.NativeFunctionsSynchronized = false;
     State.Functions = {{0x1000, 0, "discovered"}, {0x2000, 23, "stated"}};
+    State.functionListChanged();
     State.FunctionEdits[0x4000] = false;
     State.PipeResult.LowFuncs.clear();
     for (auto Entry : {0x1000, 0x2000, 0x4000}) {

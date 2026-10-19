@@ -114,6 +114,7 @@ bool Session::synchronizeFunctions() {
       // Keep nonzero loader/debug/user extents authoritative.
       if (Listed.Size == 0 && Recovered.OriginalSize != 0) {
         Listed.Size = Recovered.OriginalSize;
+        functionListChanged();
         ListInputs.reset();
       }
     };
