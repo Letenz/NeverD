@@ -1294,18 +1294,31 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
                          const std::set<va_t> &DispatchThunks,
                          const std::map<va_t, GPRReadWidths> &FixedEntryReads,
                          const std::map<va_t, int> &FixedEntryStackArgs) {
+  LocalRegisterEffectRefs Refs;
+  for (const auto &[Entry, Effect] : Funcs)
+    Refs.emplace_hint(Refs.end(), Entry, &Effect);
+  return solveCallRegisterEffects(Refs, VolatileFamilies, ArgumentFamilies,
+                                  DispatchThunks, FixedEntryReads,
+                                  FixedEntryStackArgs);
+}
+
+CallRegisterSummaries solveCallRegisterEffects(
+    const LocalRegisterEffectRefs &Funcs, GPRFamilyMask VolatileFamilies,
+    GPRFamilyMask ArgumentFamilies, const std::set<va_t> &DispatchThunks,
+    const std::map<va_t, GPRReadWidths> &FixedEntryReads,
+    const std::map<va_t, int> &FixedEntryStackArgs) {
   CallRegisterSummaries Result;
   // Unknown is absorbing: a function is unknown if it or any callee is.
   std::set<va_t> Unknown;
   for (const auto &[Entry, Effect] : Funcs)
-    if (Effect.Unknown)
+    if (Effect->Unknown)
       Unknown.insert(Entry);
   for (bool Changed = true; Changed;) {
     Changed = false;
     for (const auto &[Entry, Effect] : Funcs) {
       if (Unknown.count(Entry))
         continue;
-      for (va_t Callee : Effect.Callees)
+      for (va_t Callee : Effect->Callees)
         if (!Funcs.count(Callee) || Unknown.count(Callee)) {
           Unknown.insert(Entry);
           Changed = true;
@@ -1321,12 +1334,12 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
   for (const auto &[Entry, Effect] : Funcs)
     if (!Unknown.count(Entry))
       Writes[Entry] =
-          Effect.Writes | (Effect.CallsFixedContract ? VolatileFamilies : 0);
+          Effect->Writes | (Effect->CallsFixedContract ? VolatileFamilies : 0);
   for (bool Changed = true; Changed;) {
     Changed = false;
     for (auto &[Entry, Mask] : Writes) {
       GPRFamilyMask Next = Mask;
-      for (va_t Callee : Funcs.at(Entry).Callees)
+      for (va_t Callee : Funcs.at(Entry)->Callees)
         Next |= Writes.at(Callee);
       if (Next != Mask) {
         Mask = Next;
@@ -1354,8 +1367,8 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
   };
   for (const auto &[Entry, Effect] : Funcs)
     if (!FixedEntryReads.count(Entry) &&
-        (Effect.Incomplete || Effect.UnknownEntryReads ||
-         TailCallsUnknownImport(Effect)))
+        (Effect->Incomplete || Effect->UnknownEntryReads ||
+         TailCallsUnknownImport(*Effect)))
       UnknownReads.insert(Entry);
   for (bool Changed = true; Changed;) {
     Changed = false;
@@ -1363,7 +1376,7 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
       if (UnknownReads.count(Entry) || FixedEntryReads.count(Entry))
         continue;
       const bool ForwardsToUnknown =
-          llvm::any_of(Effect.Blocks, [&](const RegisterBlock &Block) {
+          llvm::any_of(Effect->Blocks, [&](const RegisterBlock &Block) {
             return llvm::any_of(Block.Steps, [&](const RegisterStep &Step) {
               // A tail call through a function-pointer variable forwards to
               // the routine the variable starts at.
@@ -1400,7 +1413,7 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
     }
   std::vector<std::vector<size_t>> Named(Solved.size()), Readers(Solved.size());
   for (size_t I = 0; I < Solved.size(); ++I) {
-    for (const RegisterBlock &Block : Funcs.at(Solved[I]).Blocks)
+    for (const RegisterBlock &Block : Funcs.at(Solved[I])->Blocks)
       for (const RegisterStep &Step : Block.Steps)
         for (va_t Routine :
              {Step.Callee, Step.ImportCallee, Step.ArgumentsFrom})
@@ -1443,7 +1456,7 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
     Queued[I] = 0;
     GPRReadWidths &Widths = Reads[Solved[I]];
     GPRReadWidths Next = Widths;
-    joinReads(Next, entryLiveWidths(Funcs.at(Solved[I]), Writes, Reads,
+    joinReads(Next, entryLiveWidths(*Funcs.at(Solved[I]), Writes, Reads,
                                     VolatileFamilies, ArgumentFamilies,
                                     DispatchThunks));
     if (Next == Widths)
@@ -1461,14 +1474,14 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
   // function's too. A tail callee without a bounded summary leaves none.
   std::set<va_t> UnknownStack;
   for (const auto &[Entry, Effect] : Funcs)
-    if (Effect.UnknownStackReads)
+    if (Effect->UnknownStackReads)
       UnknownStack.insert(Entry);
   for (bool Changed = true; Changed;) {
     Changed = false;
     for (const auto &[Entry, Effect] : Funcs) {
       if (UnknownStack.count(Entry))
         continue;
-      if (llvm::any_of(Effect.StackTailCallees, [&](va_t Callee) {
+      if (llvm::any_of(Effect->StackTailCallees, [&](va_t Callee) {
             return Funcs.count(Callee) ? UnknownStack.count(Callee) != 0
                                        : !FixedEntryStackArgs.count(Callee);
           })) {
@@ -1478,12 +1491,12 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
     }
   }
   for (const auto &[Entry, Effect] : Funcs)
-    if (Effect.VariadicFrom >= 0)
-      Result.VariadicFrom[Entry] = Effect.VariadicFrom;
+    if (Effect->VariadicFrom >= 0)
+      Result.VariadicFrom[Entry] = Effect->VariadicFrom;
   std::map<va_t, int> &StackArgs = Result.EntryStackArgs;
   for (const auto &[Entry, Effect] : Funcs)
     if (!UnknownStack.count(Entry))
-      StackArgs[Entry] = Effect.StackArgs;
+      StackArgs[Entry] = Effect->StackArgs;
   for (const auto &[Entry, Count] : FixedEntryStackArgs)
     if (!Funcs.count(Entry))
       StackArgs[Entry] = Count;
@@ -1493,7 +1506,7 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
       auto Func = Funcs.find(Entry);
       if (Func == Funcs.end())
         continue;
-      for (va_t Callee : Func->second.StackTailCallees)
+      for (va_t Callee : Func->second->StackTailCallees)
         if (StackArgs.at(Callee) > Count) {
           Count = StackArgs.at(Callee);
           Changed = true;

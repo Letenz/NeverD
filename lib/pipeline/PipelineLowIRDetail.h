@@ -67,6 +67,8 @@ struct PipelineAnalysisCache::SymbolInventory {
 
   const std::set<va_t> BoundaryGuesses;
   const std::vector<va_t> Starts;
+  /// The addresses the image's exports name, sorted and each once.
+  const std::vector<va_t> ExportStarts;
   /// Whether the image's KnownCodeRanges are in order, as exception parsing
   /// leaves them.
   const bool KnownCodeRangesSorted;

@@ -23,8 +23,82 @@
 
 #include <cstring>
 #include <iterator>
+#include <mutex>
+#include <utility>
+#include <vector>
 
 namespace neverd {
+
+namespace {
+/// The x86 capstone handles decoders have closed, by mode.  Opening one
+/// builds capstone's instruction tables for that handle anew, which a
+/// decompile did for every decoder it opened: its run's, and each callee
+/// graph's.  Beyond the tables, which depend on the mode alone, a handle
+/// keeps nothing from one instruction to the next but the options a decoder
+/// sets (detail and text), which take() returns to a new handle's.
+class SpareX86Handles {
+public:
+  /// A closed handle of \p Mode as cs_open() with detail on leaves one, or
+  /// 0 when none is spare.
+  csh take(cs_mode Mode) {
+    csh Handle = 0;
+    {
+      std::lock_guard<std::mutex> Lock(Mutex);
+      for (size_t I = Handles.size(); I-- > 0;)
+        if (Handles[I].first == Mode) {
+          Handle = Handles[I].second;
+          Handles.erase(Handles.begin() + static_cast<std::ptrdiff_t>(I));
+          break;
+        }
+    }
+    if (Handle) {
+      cs_option(Handle, CS_OPT_DETAIL, CS_OPT_OFF);
+      cs_option(Handle, CS_OPT_DETAIL, CS_OPT_ON);
+      cs_option(Handle, CS_OPT_TEXT, CS_OPT_ON);
+    }
+    return Handle;
+  }
+  /// Keep \p Handle, of \p Mode, for a later decoder; close it when enough
+  /// are spare.
+  void give(cs_mode Mode, csh Handle) {
+    {
+      std::lock_guard<std::mutex> Lock(Mutex);
+      if (Handles.size() < MaxSpare) {
+        Handles.emplace_back(Mode, Handle);
+        return;
+      }
+    }
+    cs_close(&Handle);
+  }
+
+private:
+  /// More than the decoders a decompile has open at once.
+  static constexpr size_t MaxSpare = 16;
+  std::mutex Mutex;
+  std::vector<std::pair<cs_mode, csh>> Handles;
+};
+
+/// Never destroyed: a decoder may close its handle after static destructors
+/// have run.
+SpareX86Handles &spareX86Handles() {
+  static SpareX86Handles *Spare = new SpareX86Handles;
+  return *Spare;
+}
+
+/// The mode an x86 handle of \p A decodes in.
+cs_mode x86HandleMode(Arch A) {
+  return A == Arch::X64 ? CS_MODE_64 : CS_MODE_32;
+}
+
+/// Close \p Handle, a decoder's for \p A, or keep an x86 one for another.
+void closeHandle(csh &Handle, Arch A) {
+  if (A == Arch::X64 || A == Arch::X86)
+    spareX86Handles().give(x86HandleMode(A), Handle);
+  else
+    cs_close(&Handle);
+  Handle = 0;
+}
+} // namespace
 
 static const char *NdOpNames[] = {
 #define ND_X_NAME(name) #name,
@@ -51,7 +125,7 @@ void Decoder::reset() {
   if (InsnBuf)
     cs_free(InsnBuf, 1);
   if (Handle)
-    cs_close(&Handle);
+    closeHandle(Handle, TargetArch);
   InsnBuf = nullptr;
   Handle = 0;
   TargetArch = Arch::Unknown;
@@ -103,16 +177,19 @@ bool Decoder::init(Arch TheArch, InstructionMode Mode) {
     return false;
   }
 
-  csh NewHandle = 0;
-  if (cs_open(CsArch, CsMode, &NewHandle) != CS_ERR_OK) {
-    syncError() << "failed to init capstone\n";
-    return false;
+  csh NewHandle =
+      CsArch == CS_ARCH_X86 ? spareX86Handles().take(CsMode) : csh(0);
+  if (!NewHandle) {
+    if (cs_open(CsArch, CsMode, &NewHandle) != CS_ERR_OK) {
+      syncError() << "failed to init capstone\n";
+      return false;
+    }
+    cs_option(NewHandle, CS_OPT_DETAIL, CS_OPT_ON);
   }
 
-  cs_option(NewHandle, CS_OPT_DETAIL, CS_OPT_ON);
   cs_insn *NewInsnBuf = cs_malloc(NewHandle);
   if (!NewInsnBuf) {
-    cs_close(&NewHandle);
+    closeHandle(NewHandle, TheArch);
     syncError() << "failed to allocate capstone insn buffer\n";
     return false;
   }
@@ -120,7 +197,7 @@ bool Decoder::init(Arch TheArch, InstructionMode Mode) {
   if (InsnBuf)
     cs_free(InsnBuf, 1);
   if (Handle)
-    cs_close(&Handle);
+    closeHandle(Handle, TargetArch);
 
   Handle = NewHandle;
   InsnBuf = NewInsnBuf;
