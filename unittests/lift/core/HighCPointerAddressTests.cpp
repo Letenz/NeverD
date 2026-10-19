@@ -46942,3 +46942,29 @@ TEST(HighCPointerAddresses, RecordsHeadersNameByTypedefsTakeTheirTypedefs) {
       << Source;
   expectCSyntax("#include <pthread.h>\n" + Source);
 }
+
+TEST(HighCPointerAddresses, HeaderRoutinesReturnTheirDeclaredPointers) {
+  // <semaphore.h> declares sem_open variadic, so no prototype here gives
+  // its result: its declaration returns a sem_t *, which an integer local
+  // the machine moves it into takes converted, and its name is a pointer
+  // the machine passes as an integer.  No `extern int sem_open();` of the
+  // unit's own contradicts the header's.
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "open_semaphore";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = Word;
+  Func.Params = {{"name", Word}};
+  MedVar Handle = temporary(7);
+  auto Opened = HighExpr::makeCall("sem_open", 0x140002000,
+                                   {parameter(0), HighExpr::makeConst(0, 8)});
+  Opened->Type = Word;
+  HighStmt Assign = assignTo(Handle, Opened);
+  Assign.Dst->Type = Word;
+  Func.Body = {Assign};
+  returnValue(Func, HighExpr::makeVar(Handle, Word));
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("#include <semaphore.h>"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("sem_open();"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
