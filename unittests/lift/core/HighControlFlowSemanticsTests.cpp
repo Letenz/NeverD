@@ -8169,6 +8169,40 @@ TEST(HighControlFlowSemantics, ARecordFieldTakesItsOwnTypeOfASlicedLocal) {
   }
 }
 
+TEST(HighControlFlowSemantics, AFunctionReturningNoValueFoldsNoReturnedCall) {
+  // reset(p): if (p == 0) j = x; else j = release(p); return j;  in a
+  // function that returns no value (its tail call leaves release's result
+  // in RAX for no reader): C returns nothing on either path.
+  HighStmt Branch;
+  Branch.Kind = StmtKind::IfElse;
+  Branch.Addr = 0x1004;
+  Branch.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(0, 8));
+  Branch.Body = {assign(0x1008, 1, 5)};
+  HighStmt Call;
+  Call.Kind = StmtKind::Assign;
+  Call.Addr = 0x100C;
+  Call.Dst = local(1);
+  Call.Val = HighExpr::makeCall("release", 0x2000, {local(0)});
+  Call.Val->Type = NdType::makeInt(8);
+  Branch.ElseBody = {Call};
+  HighFunc F;
+  F.Name = "reset";
+  F.Entry = 0x1000;
+  F.ReturnsNoValue = true;
+  F.Body = {Branch, result(0x1010, local(1))};
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  ASSERT_TRUE(HighCEmitter().emit({F}, Stream, {}));
+  Stream.flush();
+  const size_t Definition = Source.find("void reset(");
+  ASSERT_NE(Definition, std::string::npos) << Source;
+  const std::string Body = Source.substr(Definition);
+  EXPECT_NE(Body.find("release("), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("return release("), std::string::npos) << Source;
+  EXPECT_EQ(Body.find("return 5"), std::string::npos) << Source;
+}
+
 TEST(HighControlFlowSemantics, PhiCopiesOfOneRegisterShareItsName) {
   // v1 = x; v2 = v1; L: v3 = v2 + 1; v2 = v3; if (v3 < x + 5) goto L;
   // return v3;  -- the PHI copies of one register never overlap the values

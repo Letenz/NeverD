@@ -689,6 +689,10 @@ public:
   /// MSVC member rows live in MsvcCallees.def; `_ctor` keeps this plus a
   /// pointer/string/fill source and drops leftover register clobbers.
   size_t debugCallArgLimit(const HighExpr &E) const;
+  /// An upper bound on the operands of call \p E its printed text reads, by
+  /// which the analyses decide which call results C assigns: past it, an
+  /// operand's value is no use.
+  size_t renderedCallOperandBound(const HighExpr &E) const;
   /// The fixed arity of the known function \p Symbol, which the C name
   /// \p Identifier reads; a C++ stem is no name the tables know.  An i386
   /// stdcall routine's names spell it (stdcallPops): a 32-bit argument for
