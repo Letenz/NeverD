@@ -1534,6 +1534,9 @@ public:
     /// needs that.  1 and 0 for a backing without one.
     unsigned Align = 1;
     uint64_t Pad = 0;
+    /// The bytes are a C library header's object (ImageObject::Header),
+    /// reached through its address: the unit defines none of its own.
+    bool Header = false;
   };
   std::vector<ImageBacking> ImageBackings;
   /// The symbol the object a backing is named after has in its comment, as

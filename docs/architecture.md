@@ -4769,6 +4769,15 @@ should orchestrate those components rather than absorb their algorithms.
 
 ## LLVM C object storage
 
+Finite direct native memory accesses into pointer-bearing data use a canonical
+relocation-free byte interval in `MedLLVMEmitter`. They do not recursively
+materialize unrelated pointer slots. An address-valued, indexed or pointer-slot
+access still demands the complete relocation mirror; its creation rebinds all
+earlier direct accesses to that same storage. Required unresolved pointers keep
+failing emission. Mergeable shards retain whole-run storage so masked bodies
+cannot give the same image bytes different identities across modules. Runtime
+callable and registration-owned storage keep their original-image contracts.
+
 `LLVMCStackAllocation` owns counted and non-entry stack allocations on the private C clone. It retains DataLayout allocation stride, unsigned count, alignment and execution position. A side-effecting private call renders plain `__builtin_alloca` at the original instruction, checks size overflow and aligns within extra bytes; allocation lifetime therefore reaches function return on Clang and GCC. Entry allocations of one object retain ordinary local declarations. Wider counts, scalable storage, non-default address spaces, inalloca/swifterror and explicit stack save/restore refuse before normalization. Private markers in input IR also refuse; caller IR is unchanged.
 
 `LLVMCStorage` shares explicit over-alignment across local and global objects and their declarations. String definitions retain the complete LLVM array extent, including trailing zero bytes. LLVM global values denote addresses in expressions and initializers; only object declarations and direct loads/stores use bare C names. Imported data bindings retain their existing address representation.
@@ -5322,6 +5331,10 @@ existing budget; OS models do not replace CPU hooks to collect traces.
 Selected Android execution observations instead use `ExecutionSession` watches
 to read stopped scalar state and explicit memory. `AndroidObservation` owns
 shared C++/JSON admission and capture, and the runtime owns watch continuation.
+Register-relative observations resolve the captured x0–x30/SP state in that
+same owner, with checked signed offsets and complete readable extents. They
+share fixed-read output reservation, snapshot ordering and fail-stop behavior;
+JSON only translates explicit register names and scalar inputs.
 Checked quantum boundaries precede a watch of the next instruction, so a
 cooperatively selected thread cannot inherit another thread's skipped watch.
 Observation stops preserve the current quantum and do not charge a service.

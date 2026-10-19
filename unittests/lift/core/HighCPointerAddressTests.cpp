@@ -47657,3 +47657,118 @@ TEST(HighCPointerAddresses, ImageObjectsTakeAssignedValuesAsTheyAreDeclared) {
   EXPECT_EQ(Source.find("flags = "), std::string::npos) << Source;
   expectCSyntax(Source);
 }
+
+TEST(HighCPointerAddresses, UnderscoredHeaderRoutinesTakeTheirStreams) {
+  // <stdio_ext.h> declares __fwriting(FILE *), whose stream an integer the
+  // machine holds it in converts to.  The table's row names the routine
+  // with its underscores, which the lookup stripped from the call's name
+  // alone: sed's unit passed `arg0` to it twice.
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "writing";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  Func.Params = {{"stream", Word}};
+  auto Call = HighExpr::makeCall("__fwriting", 0x2000, {parameter(0)});
+  Call->Type = NdType::makeInt(4);
+  returnValue(Func, Call);
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("#include <stdio_ext.h>"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("__fwriting(stream)"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, GnuProgramObjectsAreTheHeaders) {
+  // 187 Debian programs reach __environ's environ and 398 copy
+  // program_invocation_short_name, which <unistd.h> and <errno.h> declare
+  // under _GNU_SOURCE, as the unit defines it: it declares neither beside
+  // them (`uint64_t environ;` was a redefinition), and the integers the
+  // code moves the pointers through convert.
+  constexpr va_t Environ = 0x6000, ShortName = 0x6008;
+  BinaryImage Img =
+      makeImageObjectFixture(Environ, std::vector<uint8_t>(16), true);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  for (const auto &[Name, Addr] :
+       {std::pair{"environ", Environ},
+        {"program_invocation_short_name", ShortName}}) {
+    Symbol Data;
+    Data.Name = Name;
+    Data.Addr = Addr;
+    Data.Size = 8;
+    Img.Symbols.push_back(Data);
+  }
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "first_variable";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  Func.Params = {{"name", Word}};
+  MedVar Variables = temporary(7);
+  HighStmt Load = assignTo(
+      Variables, HighExpr::makeLoad(HighExpr::makeConst(Environ, 8), Word));
+  Load.Dst->Type = Word;
+  HighStmt Rename;
+  Rename.Kind = StmtKind::Store;
+  Rename.StoreAddr = HighExpr::makeConst(ShortName, 8);
+  Rename.StoreVal = parameter(0, Word);
+  Func.Body = {Load, Rename};
+  returnValue(Func, HighExpr::makeVar(Variables, Word));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <unistd.h>"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("#include <errno.h>"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" environ;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" program_invocation_short_name;"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, HeaderObjectsReadAsBytesStayTheHeaders) {
+  // paper reads stderr through an address its code computes, which makes
+  // the object bytes the unit reaches by offset: they are the header's
+  // object's, reached through its address, not an array of the unit's own
+  // (`unsigned char stderr[8];` was a redefinition beside <stdio.h>).
+  constexpr va_t Err = 0x6000;
+  BinaryImage Img = makeImageObjectFixture(Err, std::vector<uint8_t>(8), true);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  Symbol Data;
+  Data.Name = "stderr";
+  Data.Addr = Err;
+  Data.Size = 8;
+  Img.Symbols.push_back(Data);
+  const auto Word = NdType::makeInt(8);
+  const auto Byte = NdType::makeInt(1, false);
+  HighFunc Func;
+  Func.Name = "stream_byte";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Byte;
+  Func.Params = {{"index", Word}};
+  auto Address = HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeConst(Err, 8),
+                                     parameter(0, Word));
+  Address->Type = Word;
+  Func.Body = {callStmt(
+      "fflush", 0x2000,
+      {HighExpr::makeLoad(HighExpr::makeConst(Err, 8), NdType::makePtr())})};
+  returnValue(Func, HighExpr::makeLoad(Address, Byte));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <stdio.h>"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("unsigned char stderr["), std::string::npos) << Source;
+  EXPECT_NE(Source.find("((unsigned char *)&stderr)"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}

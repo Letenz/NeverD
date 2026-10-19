@@ -1660,6 +1660,12 @@ ctest --test-dir build-release \
 
 ## LLVM C object storage
 
+`NeverDMedLLVMDirectDataTests` covers finite native data accesses in pointer-bearing
+segments, unrelated code/data relocations, exact byte values, partial overlap,
+promotion to a whole mirror, access order, strict pointer-overlap refusal and
+the existing mergeable-shard storage contract. Its synthetic images cover
+x86, x64, ARM and AArch64 with PE/COFF, ELF and Mach-O storage.
+
 `NeverDLLVMCAllocaTests` compiles original LLVM and generated C at O0/O2 with undefined-behavior traps. Native observations check complete dynamic extents, padded element stride, 16/32/64-byte alignment, independent simultaneous/loop allocations and one evaluation of a count-producing call. Both ordinary and preserved-type C routes retain storage. Unsupported/overflowing allocation shapes and explicit stack save/restore refuse before dead-code removal. These tests validate C allocation behavior, not exact source stack addresses or exception-frame identity.
 
 The same target compares static scalar, pointer, array and packed-record alignment through 128 bytes, global alignment, complete padded-string storage and scalar-global address identity in initializers, returns, calls, selects and pointer-to-integer conversions. Ordinary/preserved-type and whole/selected-function routes are covered where applicable.
@@ -6875,6 +6881,10 @@ Exact instruction bytes provide independent before-store register and memory
 expectations. Single- and multi-thread runs use quanta as short as one
 instruction; truncation, unknown imports, unreadable memory and output-budget
 admission are covered. `AndroidObservationOptions.*` checks strict JSON.
+Register-relative cases compare complete reports against unobserved execution,
+follow distinct pointers in interleaved threads, check signed offsets and SP
+against independent instruction bytes, and reject wraparound, inaccessible
+tails, invalid registers and excessive output before guest effects.
 `RuntimeSession.CheckedQuantumEndsBeforeTheNextExecutionWatch` covers the
 shared watch/quantum boundary on checked x64 and AArch64 transports.
 

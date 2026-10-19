@@ -28,6 +28,7 @@
 #include "llvm/TargetParser/Host.h"
 
 #include <stdexcept>
+#include <tuple>
 
 namespace {
 
@@ -2203,6 +2204,70 @@ int main(void) { return caller(41) == 42 ? 0 : 1; }
 )";
     compileAndRun(Source, "-O0");
   }
+}
+
+TEST(LLVMCValues, CLibraryObjectsTheImageCopiesAreTheHeaders) {
+  // The image's copies of optarg and optind, which its copy relocations
+  // give the program, are <unistd.h>'s, as HighC takes them: the unit
+  // includes the header and declares neither beside it, and reads and
+  // writes them through their addresses, as wide as the code does.  file's
+  // unit included <getopt.h> alone, which declares them too, and declared
+  // `extern uint64_t optarg;`, which C rejects beside `char *optarg`.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+@__nd_data_6000 = external global i64
+@__nd_data_6008 = external global i32
+define i64 @arguments(i64 %next) {
+entry:
+  %text = load i64, ptr @__nd_data_6000, align 8
+  %index = load i32, ptr @__nd_data_6008, align 4
+  %wide = zext i32 %index to i64
+  %sum = add i64 %text, %wide
+  store i64 %next, ptr @__nd_data_6000, align 8
+  ret i64 %sum
+}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+  neverd::BinaryImage Img;
+  Img.Arch = neverd::Arch::X64;
+  Img.Bits = neverd::Bitness::Bits64;
+  Img.Format = neverd::BinaryFormat::ELF;
+  neverd::Segment Data;
+  Data.Name = ".bss";
+  Data.VA = 0x6000;
+  Data.Size = 16;
+  Data.Flags = neverd::SegmentFlags::Readable | neverd::SegmentFlags::Writable;
+  Data.Data.assign(16, 0);
+  Img.Segments.push_back(std::move(Data));
+  for (const auto &[Name, Addr, Size] :
+       {std::tuple{"optarg", 0x6000, 8}, {"optind", 0x6008, 4}}) {
+    neverd::Symbol Object;
+    Object.Name = Name;
+    Object.Addr = Addr;
+    Object.Size = Size;
+    Img.Symbols.push_back(Object);
+  }
+  neverd::CEmitterOptions Options;
+  Options.Format = neverd::BinaryFormat::ELF;
+  Options.TheArch = neverd::Arch::X64;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options, nullptr, &Img));
+  EXPECT_NE(Source.find("#include <unistd.h>"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" optarg;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find(" optind;"), std::string::npos) << Source;
+  Source += R"c(
+int main(void) {
+  optarg = 0;
+  optind = 3;
+  if (arguments(7) != 3)
+    return 1;
+  return optarg == (char *)7 ? 0 : 2;
+}
+)c";
+  compileAndRun(Source, "-O0");
 }
 
 TEST(LLVMCValues, ALibraryRoutineCalledThroughItsImportTakesItsDeclaration) {

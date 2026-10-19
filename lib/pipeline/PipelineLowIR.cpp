@@ -4103,8 +4103,11 @@ std::vector<va_t> symbolFunctionStarts(const BinaryImage &Img,
                                        const std::set<va_t> &BoundaryGuesses) {
   std::vector<va_t> Starts;
   Starts.reserve(Img.Symbols.size());
+  // A fragment that continues another function (Img.ContinuationCodeStarts)
+  // begins none, though a symbol names it (`foo.cold`).
   for (const auto &Sym : Img.Symbols)
-    if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr))
+    if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr) &&
+        !Img.ContinuationCodeStarts.count(Sym.Addr))
       Starts.push_back(Sym.Addr);
   llvm::sort(Starts);
   Starts.erase(std::unique(Starts.begin(), Starts.end()), Starts.end());

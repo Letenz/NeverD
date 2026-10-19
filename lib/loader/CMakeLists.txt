@@ -52,6 +52,7 @@ add_neverd_component_library(NeverDLoader
   COFF/unwind/COFFUnwindARM64Codes.cpp
   COFF/unwind/COFFUnwindARMCommon.cpp
   COFF/unwind/COFFUnwindARMPacked.cpp
+  DWARF/ColdFragments.cpp
   DWARF/EHFrame.cpp
   DWARF/EHFrameCFI.cpp
   DWARF/EHFrameEncoding.cpp

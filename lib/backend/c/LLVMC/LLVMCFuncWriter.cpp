@@ -3356,8 +3356,11 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
                    VA && Size == PtrWidth && !StoredImageAddrs.count(*VA) &&
                    !foldReadonlyScalar(*VA, Size) &&
                    !imageByteArrayBacking(LI->getPointerOperand(), Size)) {
+          // A header's object has the header's type, not the load's: it is
+          // read through its address.
           if (std::string Image = imageDataCName(LI->getPointerOperand());
-              !Image.empty() && !synthesizedImageObject(*VA))
+              !Image.empty() && !synthesizedImageObject(*VA) &&
+              !headerDeclaresObject(Image))
             ValueTexts[LI] = std::move(Image);
         }
         continue;
