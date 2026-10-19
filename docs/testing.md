@@ -37,6 +37,13 @@ source/destination, overlap and dynamic provider lifetime.
 `AndroidStringCopyMemory.*` checks atomic refusal, memory limits and timeout
 against complete guarded guest bytes. No host libc copy is used as the oracle.
 
+`AndroidSearch.Span*` checks `strspn` at O0/O2 across relocation formats and
+available CPU backends. Independent expected counts cover empty sets, duplicates,
+all nonzero byte values, read-only/overlapping strings, page-tail termination or
+rejection, pointer faults, unchanged errno and dynamic provider closure.
+`AndroidSearchMemory.Span*` checks both scan limits and terminal deadline refusal
+against unchanged guarded memory. These cases do not call host libc as an oracle.
+
 `NeverDDirectTailCallMetadataTests` builds real x86, x64 and AArch64 CFGs and
 validates direct tail-call targets at strict instruction boundaries. It covers
 fallthrough and conditional transfers into known functions, an existing direct

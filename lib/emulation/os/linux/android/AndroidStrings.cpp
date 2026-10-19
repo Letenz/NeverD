@@ -143,6 +143,39 @@ BionicResult Bionic::findSubstring(const NativeCallEvent &Call) {
   return failure(diagnostic::StringScanLimit);
 }
 
+BionicResult Bionic::spanAcceptedString(const NativeCallEvent &Call) {
+  const auto &A = Call.Arguments;
+  std::array<bool, 256> Accepted{};
+  bool Terminated = false;
+  // Build a fixed-size byte set without copying guest strings to host libc.
+  // Both scans use the same access/deadline checks as other string models.
+  for (uint64_t I = 0; I < Options.MemoryLimit; ++I) {
+    if (A[1] > UINT64_MAX - I)
+      return failure(diagnostic::StringAddressOverflow);
+    auto C = byte(A[1] + I);
+    if (!C)
+      return C.takeError();
+    if (!*C) {
+      Terminated = true;
+      break;
+    }
+    Accepted[*C] = true;
+  }
+  if (!Terminated)
+    return failure(diagnostic::StringScanLimit);
+  for (uint64_t I = 0; I < Options.MemoryLimit; ++I) {
+    if (A[0] > UINT64_MAX - I)
+      return failure(diagnostic::StringAddressOverflow);
+    auto C = byte(A[0] + I);
+    if (!C)
+      return C.takeError();
+    // NUL is never a member. No later source byte is needed after a rejection.
+    if (!Accepted[*C])
+      return value(I);
+  }
+  return failure(diagnostic::StringScanLimit);
+}
+
 BionicResult Bionic::findCharacter(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
   llvm::StringRef Name(Call.Name);
