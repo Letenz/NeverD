@@ -6072,11 +6072,24 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
       llvm::report_fatal_error("HighC cannot render an invalid source record");
     std::string Result = "(" + typeToC(E.Type) + "){";
     for (size_t I = 0; I < E.Operands.size(); ++I) {
-      if (!E.Operands[I] ||
-          !equalSourceTypes(E.Type->Fields[I], E.Operands[I]->Type))
+      const TypeRef &Field = E.Type->Fields[I];
+      const HighExpr *Operand = E.Operands[I].get();
+      const bool Equal = Operand && equalSourceTypes(Field, Operand->Type);
+      // HighIR passes choose an integer value's signedness for its other
+      // readers: a slice folds into the local it reads, and a local takes
+      // the signedness most of its uses read.  The field takes the same bits
+      // as its own integer type, as a call argument does.
+      const bool Reinterpreted = Operand && !Equal && isPlainInteger(Field) &&
+                                 isPlainInteger(Operand->Type) &&
+                                 Operand->Type->Size == Field->Size;
+      if (!Equal && !Reinterpreted)
         llvm::report_fatal_error("HighC source record field type disagrees");
       if (I)
         Result += ", ";
+      if (Reinterpreted) {
+        Result += integerView(*Operand, Field, /*ParentPrec=*/0);
+        continue;
+      }
       const auto Text = exprStr(*E.Operands[I]);
       if (E.Type->Fields[I]->Kind == NdTypeKind::Ptr) {
         // Pointer expressions retain their integer machine carrier in HighC.
