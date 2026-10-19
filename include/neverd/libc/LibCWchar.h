@@ -11,6 +11,7 @@ namespace neverd::libc {
 /// ISO C wchar.h — wide-character string and I/O
 inline constexpr std::string_view kWcharHeader = "wchar.h";
 
+/// The GNU C Library's inline mbrlen calls __mbrlen.
 inline constexpr std::array kWcharFunctions = {
     "btowc",     "mbrlen",   "mbrtowc",    "mbsinit",   "mbsnrtowcs",
     "mbsrtowcs", "wcrtomb",  "wcsnrtombs", "wcsrtombs", "wctob",
@@ -23,7 +24,7 @@ inline constexpr std::array kWcharFunctions = {
     "wcstol",    "wcstold",  "wcstoll",    "wcstoul",   "wcstoull",
     "fgetwc",    "fgetws",   "fputwc",     "fputws",    "fwide",
     "getwc",     "getwchar", "putwc",      "putwchar",  "ungetwc",
-    "wcwidth",   "wcswidth",
+    "wcwidth",   "wcswidth", "__mbrlen",
 };
 
 /// Fixed arity of the wchar.h functions.  {IntArgs, FpArgs}.
@@ -45,7 +46,7 @@ inline constexpr auto kWcharArity = std::to_array<LibCArityEntry>({
     {"fgetws", {3, 0}},  {"fputwc", {2, 0}},     {"fputws", {2, 0}},
     {"fwide", {2, 0}},   {"getwc", {1, 0}},      {"getwchar", {0, 0}},
     {"putwc", {2, 0}},   {"putwchar", {1, 0}},   {"ungetwc", {2, 0}},
-    {"wcwidth", {1, 0}}, {"wcswidth", {2, 0}},
+    {"wcwidth", {1, 0}}, {"wcswidth", {2, 0}},   {"__mbrlen", {3, 0}},
 });
 
 } // namespace neverd::libc

@@ -601,6 +601,15 @@ private:
 
   llvm::Constant *tryResolveGlobalData(uint64_t Addr,
                                        uint16_t DataSizeHint = 0);
+
+  /// A finite direct memory access may use the relocation-free byte interval
+  /// around it without materializing unrelated pointer slots in its segment.
+  /// Address-valued and indexed uses still demand the complete mirror.
+  llvm::Constant *tryResolveDirectDataBytes(uint64_t Addr, uint16_t Size,
+                                            uint64_t OwnerVA = InvalidVA);
+  /// Redirect earlier finite accesses when a complete mirror becomes needed.
+  void rebindDirectDataBytes(llvm::Constant *Mirror, uint64_t Begin,
+                             uint64_t End);
   /// The read-only copy of the string literal an image symbol spells at
   /// \p Addr (StringLiteralSymbols.h), every byte of it, or null.  MSVC puts
   /// literals among a kernel's code, where an address of one has no code
@@ -2291,6 +2300,9 @@ private:
   // One synthesized code-pointer mirror global per data segment base VA (see
   // buildCodePtrSegmentGlobal); reused across every access into that segment.
   std::map<uint64_t, llvm::Constant *> CodePtrTableGlobals;
+  // Relocation-free intervals used only by finite direct loads/stores. They
+  // never enter GlobalDataCache, whose address-valued uses need a whole run.
+  std::map<uint64_t, llvm::GlobalVariable *> DirectDataByteGlobals;
   // External data declarations used while an imported pointer slot has proven
   // symbolic identity but no call has yet proven function type.  A later
   // direct call or native exception lowering promotes the placeholder to its

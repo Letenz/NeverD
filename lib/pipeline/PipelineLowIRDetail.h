@@ -58,6 +58,13 @@ struct PipelineAnalysisCache::SymbolInventory {
   const std::map<va_t, Intrinsic> &
   runtimeRoutineCalls(const BinaryImage &Img) const;
 
+  /// The catch continuations of \p Img's FH4 handlers that lie in another
+  /// function of their record (pipeline_detail::fh4ContinuationCandidates),
+  /// read on the first request.  The cache's owner resets it before the
+  /// image's exception metadata changes.
+  const std::vector<std::pair<va_t, va_t>> &
+  fh4ContinuationCandidates(const BinaryImage &Img) const;
+
   const std::set<va_t> BoundaryGuesses;
   const std::vector<va_t> Starts;
 
@@ -72,6 +79,8 @@ private:
   size_t ContinuationCount;
   mutable std::optional<std::map<va_t, std::string>> FunctionNames;
   mutable std::optional<std::map<va_t, Intrinsic>> RuntimeRoutineCalls;
+  mutable std::optional<std::vector<std::pair<va_t, va_t>>>
+      FH4ContinuationCandidates;
 };
 
 /// The analysis cache a run of \p Img under \p Opts shares with other runs:
@@ -86,6 +95,14 @@ inline PipelineAnalysisCache *sharedAnalysisCache(const BinaryImage &Img,
 } // namespace neverd
 
 namespace neverd::pipeline_detail {
+
+/// The catch continuations \p Img's complete FH4 handlers name outside the
+/// function that declares them, each with the one other function of the
+/// same function information record that holds it past its start, where
+/// the continuation is code: pairs of that function's start and the
+/// continuation.
+std::vector<std::pair<va_t, va_t>>
+fh4ContinuationCandidates(const BinaryImage &Img);
 
 /// A widened logical table root aliases another logical table when their
 /// identities agree or any of their physically occupied storage overlaps.

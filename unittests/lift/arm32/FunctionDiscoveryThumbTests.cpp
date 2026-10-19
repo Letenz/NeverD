@@ -332,6 +332,84 @@ TEST(FunctionDiscoveryThumb, CodePointersStateTheModeOfWhatTheyAddress) {
   EXPECT_EQ(ModeAt(0x1000), InstructionMode::Thumb);
 }
 
+// The passes that decode an image's reachable code repeat when they learn a
+// literal or a routine that never returns, and the landing pads of the
+// exception tables extend what they decoded.  Neither decodes an instruction
+// twice: what an instruction does depends only on its bytes and its mode.
+TEST(FunctionDiscoveryThumb, LandingPadsExtendTheDecodeWithoutRepeatingIt) {
+  BinaryImage Img;
+  Img.Arch = Arch::ARM;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0x1000;
+  const std::array<uint8_t, 40> Code = {
+      0x80, 0xb5,             // 0x1000: push {r7, lr}
+      0x00, 0xf0, 0x0d, 0xf8, // 0x1002: bl 0x1020, guarded
+      0x00, 0x20,             // 0x1006: movs r0, #0
+      0x80, 0xbd,             // 0x1008: pop {r7, pc}
+      0x00, 0xbf,             // 0x100a: nop, unreached
+      0x01, 0x20,             // 0x100c: movs r0, #1, the landing pad
+      0x80, 0xbd,             // 0x100e: pop {r7, pc}
+      0x01, 0x48,             // 0x1010: ldr r0, [pc, #4]
+      0x00, 0xf0, 0x07, 0xf8, // 0x1012: bl 0x1024
+      0x00, 0xbf,             // 0x1016: nop, after a call that never returns
+      0x78, 0x56, 0x34, 0x12, // 0x1018: the literal
+      0x00, 0xbf, 0x00, 0xbf, // 0x101c: padding
+      0x70, 0x47,             // 0x1020: bx lr
+      0x00, 0xbf,             // 0x1022: padding
+      0x00, 0xde,             // 0x1024: udf #0
+      0x00, 0xbf,             // 0x1026: padding
+  };
+  Img.Segments.push_back(makeExecutableSegment(0x1000, Code));
+  Section Text;
+  Text.Name = ".text";
+  Text.VA = 0x1000;
+  Text.Size = Code.size();
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Code.begin(), Code.end());
+  Img.Sections.push_back(Text);
+  Img.ARMCodeModeEntries.emplace(0x1000, InstructionMode::Thumb);
+  Img.ARMCodeModeEntries.emplace(0x1010, InstructionMode::Thumb);
+
+  ARMModeDiscovery Discovery(Img);
+  if (llvm::Error Err = Discovery.discover())
+    FAIL() << llvm::toString(std::move(Err));
+  // The first pass followed the call to 0x1024 and stopped at the literal.
+  // Once it proved 0x1024 never returns, the next pass stopped at the call.
+  EXPECT_EQ(Img.instructionModeAt(0x1012), InstructionMode::Thumb);
+  EXPECT_EQ(Img.instructionModeAt(0x1016), std::nullopt);
+  EXPECT_EQ(Img.instructionModeAt(0x100c), std::nullopt);
+  EXPECT_EQ(Discovery.disassembledInstructions(), 9u);
+
+  ExceptionFunction Function;
+  Function.Itanium.emplace();
+  ItaniumCallSite Site;
+  Site.GuardedRange = {0x1002, 0x1006};
+  Site.LandingPadVA = 0x100c;
+  Function.Itanium->CallSites.push_back(Site);
+  Img.ExceptionMetadata.Functions.push_back(std::move(Function));
+  if (llvm::Error Err = Discovery.followLandingPads())
+    FAIL() << llvm::toString(std::move(Err));
+  EXPECT_EQ(Img.instructionModeAt(0x100c), InstructionMode::Thumb);
+  EXPECT_EQ(Img.instructionModeAt(0x100e), InstructionMode::Thumb);
+  EXPECT_EQ(Img.instructionModeAt(0x100a), std::nullopt);
+  EXPECT_EQ(Img.instructionModeAt(0x1016), std::nullopt);
+  EXPECT_EQ(Discovery.disassembledInstructions(), 11u);
+  const std::vector<ARMCodeRegion> Expected = {
+      {0x1000, 0x100a, ARMCodeRegionKind::Thumb},
+      {0x100c, 0x1016, ARMCodeRegionKind::Thumb},
+      {0x1020, 0x1022, ARMCodeRegionKind::Thumb},
+      {0x1024, 0x1026, ARMCodeRegionKind::Thumb},
+  };
+  ASSERT_EQ(Img.ARMReachableCodeRegions.size(), Expected.size());
+  for (size_t Index = 0; Index < Expected.size(); ++Index) {
+    SCOPED_TRACE(Index);
+    EXPECT_EQ(Img.ARMReachableCodeRegions[Index].Start, Expected[Index].Start);
+    EXPECT_EQ(Img.ARMReachableCodeRegions[Index].End, Expected[Index].End);
+    EXPECT_EQ(Img.ARMReachableCodeRegions[Index].Kind, Expected[Index].Kind);
+  }
+}
+
 TEST(FunctionDiscoveryThumb, NormalizesOnlyFunctionSymbols) {
   std::vector<uint8_t> Bytes = readFixture("test_patch_coff_arm.obj");
   if (Bytes.empty())

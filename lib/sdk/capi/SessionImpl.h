@@ -340,6 +340,11 @@ struct Session {
     std::map<va_t, bool> FunctionEdits;
   };
   std::optional<FunctionListInputs> ListInputs;
+  /// The extents complete lifts gave listed functions that had none, by
+  /// entry (synchronizeFunctions).  A rebuild of the list from the image,
+  /// which states none for them, gives them again; the analysis that found
+  /// them going (clearPipeline) takes them with it.
+  std::map<va_t, uint64_t> RecoveredSizes;
   /// Advances with every change to Functions or to their names, so that what
   /// was read from the list knows whether the list is still the one it read.
   /// Code that changes the list calls functionListChanged().
@@ -697,6 +702,11 @@ struct Session {
     }
     appendDiscoveredFunctions();
     appendCreatedFunctions();
+    for (FuncInfo &F : Functions)
+      if (F.Size == 0)
+        if (const auto Recovered = RecoveredSizes.find(F.Entry);
+            Recovered != RecoveredSizes.end())
+          F.Size = Recovered->second;
     refreshFunctionNames();
     ListInputs = FunctionListInputs{Img.Symbols.data(),
                                     Img.Symbols.size(),
@@ -858,6 +868,7 @@ struct Session {
     AccessWidths.reset();
     AccessWidthsFunctions.clear();
     ListInputs.reset();
+    RecoveredSizes.clear();
     CEmitterSymbols = nullptr;
     CEmitterSymbolCount = 0;
   }

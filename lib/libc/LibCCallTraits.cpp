@@ -250,9 +250,12 @@ bool isCStringParameter(std::string_view Name, unsigned Index) {
 #include "neverd/libc/LibCStringParams.inc"
 #undef LIBC_STRING_PARAM
   };
+  // A row names the routine as its header declares it (`__fwriting`); the
+  // lookup ignores leading underscores on both sides, as the variant rows'.
   const std::string_view Bare = stripLeadingUnderscores(Name);
   for (const StringParam &Param : StringParams)
-    if (Param.Index == Index && Param.Name == Bare)
+    if (Param.Index == Index &&
+        std::string_view(stripLeadingUnderscores(Param.Name)) == Bare)
       return true;
   return false;
 }
@@ -278,18 +281,22 @@ std::optional<std::string_view> functionPointerParameter(std::string_view Name,
                  ? std::optional<std::string_view>(Pointers->Type)
                  : std::nullopt;
   for (const FunctionPointerParam &Param : FunctionPointerParams)
-    if (Param.Index == Index && Param.Name == Bare)
+    if (Param.Index == Index &&
+        std::string_view(stripLeadingUnderscores(Param.Name)) == Bare)
       return Param.Type;
   return std::nullopt;
 }
 
 bool isObjectPointerParameter(std::string_view Name, unsigned Index,
                               LibCVariant Variant) {
-  // Each function's object pointer parameters, as a mask of positions.
+  // Each function's object pointer parameters, as a mask of positions, by
+  // its name without leading underscores: a row names the routine as its
+  // header declares it (`__fwriting`), and the lookup strips the query's.
   static const std::unordered_map<std::string_view, uint64_t> Masks = [] {
     std::unordered_map<std::string_view, uint64_t> Map;
 #define LIBC_OBJECT_POINTER_PARAM(Name, Index)                                 \
-  Map[Name] |= uint64_t(1) << (Index);
+  Map[std::string_view(stripLeadingUnderscores(Name))] |= uint64_t(1)          \
+                                                          << (Index);
 #include "neverd/libc/LibCObjectPointerParams.inc"
 #undef LIBC_OBJECT_POINTER_PARAM
     return Map;

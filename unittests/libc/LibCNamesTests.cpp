@@ -480,6 +480,48 @@ TEST(HeaderFor, DataObjectsTheirHeadersDeclare) {
   EXPECT_STREQ(typeOfDataObject("optind"), "int");
   EXPECT_STREQ(typeOfDataObject("timezone"), "long");
   EXPECT_EQ(typeOfDataObject("my_stream"), nullptr);
+  // The GNU objects 398 Debian programs copy (program_invocation_short_name)
+  // and 187 reach (__environ), which <errno.h> and <unistd.h> declare under
+  // _GNU_SOURCE, as the units define it.
+  EXPECT_STREQ(headerOfDataObject("environ"), "unistd.h");
+  EXPECT_STREQ(typeOfDataObject("__environ"), "char **");
+  EXPECT_STREQ(headerOfDataObject("program_invocation_short_name"), "errno.h");
+  EXPECT_STREQ(typeOfDataObject("program_invocation_name"), "char *");
+}
+
+TEST(HeaderFor, RoutinesTheGnuLibrarysMacrosCall) {
+  // The GNU C Library's headers declare the routines their macros and
+  // inline functions call, which programs import by these names: getline's
+  // __getdelim, SIGRTMIN's __libc_current_sigrtmin, sigsetjmp's
+  // __sigsetjmp, CPU_COUNT's __sched_cpucount, gettext's __dcgettext and
+  // mbrlen's __mbrlen.  A unit that includes the header takes their
+  // declarations and declares none of its own beside them.
+  EXPECT_STREQ(headerFor("__getdelim"), "stdio.h");
+  EXPECT_STREQ(headerFor("__libc_current_sigrtmin"), "signal.h");
+  EXPECT_STREQ(headerFor("__libc_current_sigrtmax"), "signal.h");
+  EXPECT_STREQ(headerFor("__sigsetjmp"), "setjmp.h");
+  EXPECT_STREQ(headerFor("__sched_cpucount"), "sched.h");
+  EXPECT_STREQ(headerFor("__dcgettext"), "libintl.h");
+  EXPECT_STREQ(headerFor("__mbrlen"), "wchar.h");
+  const auto Getdelim = libcArity("__getdelim", LibCVariant::GNU);
+  ASSERT_TRUE(Getdelim.has_value());
+  EXPECT_EQ(Getdelim->IntArgs, 4);
+  EXPECT_TRUE(isObjectPointerParameter("__getdelim", 3, LibCVariant::GNU));
+  EXPECT_FALSE(isObjectPointerParameter("__getdelim", 2, LibCVariant::GNU));
+  EXPECT_EQ(libcResult("__sched_cpualloc", LibCVariant::GNU),
+            LibCResult::Pointer);
+}
+
+TEST(HeaderFor, UnderscoredRoutinesTakeTheirObjectPointers) {
+  // A row names a routine as its header declares it, and the lookups ignore
+  // leading underscores on both sides: __fwriting's and __fpending's
+  // streams and __assert_fail's strings are pointers C converts no integer
+  // to, as __memcpy's are memcpy's.  The rows never matched before.
+  EXPECT_TRUE(isObjectPointerParameter("__fwriting", 0, LibCVariant::GNU));
+  EXPECT_TRUE(isObjectPointerParameter("__fpending", 0, LibCVariant::GNU));
+  EXPECT_TRUE(isObjectPointerParameter("__overflow", 0, LibCVariant::GNU));
+  EXPECT_TRUE(isObjectPointerParameter("__assert_fail", 1, LibCVariant::GNU));
+  EXPECT_FALSE(isObjectPointerParameter("__assert_fail", 2, LibCVariant::GNU));
 }
 
 TEST(HeaderFor, StdioFunctions) {

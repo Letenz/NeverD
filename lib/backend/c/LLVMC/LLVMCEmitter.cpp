@@ -724,6 +724,15 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   std::map<std::string, ScalarUnary> ScalarUnaries;
   FPStateHelperNames.clear();
   SyscallHelperNames.clear();
+  // The image's copy of an object a C library header declares (optarg, by
+  // its copy relocation) is the header's, as HighC's is (ImageObject::
+  // Header): the unit includes the header, and headerDeclaresObject leaves
+  // the object's declaration to it.
+  const auto NoteHeaderObject = [&](va_t Addr) {
+    if (const auto Named = imageDataSymbolName(Addr))
+      if (const char *Header = libc::headerOfDataObject(Named->first))
+        Headers.insert(Header);
+  };
 
   for (auto &Fn : Mod) {
     if (OnlyFunction && &Fn != OnlyFunction)
@@ -737,6 +746,10 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
       Headers.insert("excpt.h");
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
+        for (const llvm::Use &Operand : Inst.operands())
+          if (Operand->getType()->isPointerTy())
+            if (const auto Addr = declaredImageDataVA(Operand.get()))
+              NoteHeaderObject(*Addr);
         HasFloatingArithmetic |= Inst.getOpcode() == llvm::Instruction::FAdd ||
                                  Inst.getOpcode() == llvm::Instruction::FSub ||
                                  Inst.getOpcode() == llvm::Instruction::FMul ||
@@ -904,15 +917,16 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
           if (Callee->isDeclaration() && !Callee->isIntrinsic() &&
               userDeclaresRoutine(cNameOfGlobal(Callee->getName(), true)))
             UserFunctions.insert(Callee);
-          else if (const char *Hdr =
-                       libc::headerFor(stripLeadingUnderscores(Name)))
-            Headers.insert(Hdr);
           // A callee the image names as a C library routine, as the
-          // Windows kernel's own memset is, is declared by that header too
-          // (writeForwardDecls leaves it to the header).
+          // Windows kernel's own memset is, is declared by that header
+          // (writeForwardDecls leaves it to the header): _exit by
+          // <unistd.h>, not exit's <stdlib.h>.
           else if (const char *Named =
                        libc::headerFor(functionIdentifier(*Callee)))
             Headers.insert(Named);
+          else if (const char *Hdr =
+                       libc::headerFor(stripLeadingUnderscores(Name)))
+            Headers.insert(Hdr);
         }
       }
     }
@@ -935,6 +949,12 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
         if (const auto *Forward = libc::libcVariadicForward(Import))
           c_stub::addVariadicStubHeaders(Headers, *Forward);
     }
+
+  // So is one the module names as a global of its own.
+  for (const llvm::GlobalVariable &Global : Mod.globals())
+    if (!Global.hasInitializer() && !Global.use_empty())
+      if (const std::optional<va_t> Addr = parseNdDataSymbol(Global.getName()))
+        NoteHeaderObject(*Addr);
 
   if (HasCIntrinsics)
     for (const char *Hdr : getArchIntrinsicHeaders(Opts.TheArch))

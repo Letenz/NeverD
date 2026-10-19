@@ -41,6 +41,7 @@
 #include <cstddef>
 #include <cstring>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <optional>
@@ -247,6 +248,122 @@ bool MedLLVMEmitter::segHasLoaderPtrRelocSlots(const Segment *S) const {
     return It != Slots.end() && S->contains(*It);
   };
   return holds(Img->CodePtrRelocSlots) || holds(Img->DataPtrRelocSlots);
+}
+
+llvm::Constant *MedLLVMEmitter::tryResolveDirectDataBytes(uint64_t Addr,
+                                                          uint16_t Size,
+                                                          uint64_t OwnerVA) {
+  // Shards must choose the same storage for a segment even if a different
+  // shard takes its address. Keep their existing whole-run contract; local
+  // mirrors below can instead rebind all earlier uses when demand expands.
+  if (!Img || !Size || MergeableGlobals || (Addr == 0 && OwnerVA == InvalidVA))
+    return nullptr;
+  ensureImportStorageSnapshot();
+  const Segment *Seg = Img->getSegmentFor(Addr);
+  if (!Seg || !Seg->isReadable() || Seg->isExecutable() ||
+      !segHasPtrRelocSlots(Seg) || Seg->Data.size() > InvalidVA - Seg->VA ||
+      Addr - Seg->VA >= Seg->Data.size() ||
+      Size > Seg->Data.size() - (Addr - Seg->VA))
+    return nullptr;
+
+  if (OwnerVA != InvalidVA) {
+    const Segment *Owner = Img->getSegmentFor(OwnerVA);
+    const Section *Sec = Img->getSectionFor(OwnerVA);
+    const uint64_t Begin = Sec ? Sec->VA : Owner ? Owner->VA : 0;
+    const uint64_t Extent = Sec ? Sec->Size : Owner ? Owner->Size : 0;
+    if (Extent > InvalidVA - Begin || Owner != Seg ||
+        Img->getSectionFor(Addr) != Sec || Addr < Begin ||
+        Addr - Begin >= Extent || Size > Extent - (Addr - Begin))
+      return nullptr;
+  }
+  const Section *Sec = Img->getSectionFor(Addr);
+  if (Img->isMachO() && Sec &&
+      (llvm::StringRef(Sec->Name).starts_with(
+           section_names::macho::ObjCMetadataPrefix) ||
+       Sec->Name == section_names::macho::CfString))
+    return nullptr;
+
+  uint64_t MirrorBegin = 0, MirrorEnd = 0;
+  readOnlyAfterRelocRun(Seg, MirrorBegin, MirrorEnd);
+  if (CodePtrTableGlobals.count(MirrorBegin) ||
+      preservesRegistrationImageStorage(MirrorBegin, MirrorEnd))
+    return nullptr;
+  // These ranges belong to live original-image storage, not a private copy of
+  // the file's initial bytes, even when the direct access misses their slots.
+  for (const RuntimeCallablePointerSlot &Slot :
+       Img->RuntimeCallablePointerSlots)
+    if (Slot.SlotVA >= MirrorBegin && Slot.SlotVA < MirrorEnd)
+      return nullptr;
+  if (TargetArch == Arch::X86 && TargetFormat == BinaryFormat::COFF)
+    for (const auto &EH : Img->ExceptionMetadata.Functions)
+      if (EH.Registration && EH.Registration->ScopeTableVA >= MirrorBegin &&
+          EH.Registration->ScopeTableVA < MirrorEnd)
+        return nullptr;
+
+  uint64_t Begin = Seg->VA, End = Seg->VA + Seg->Data.size();
+  // Use the maximal interval between relocation fields, rather than one
+  // allocation per load width, so overlapping direct loads/stores stay aliased.
+  // Include the preceding slot: a load can start inside its last few bytes.
+  auto restrictToGap = [&](const auto &Slots, unsigned Width) {
+    auto address = [](const auto &Entry) -> uint64_t {
+      if constexpr (requires { Entry.first; })
+        return Entry.first;
+      else
+        return Entry;
+    };
+    auto Next = Slots.upper_bound(Addr);
+    if (Next != Slots.end())
+      End = std::min(End, address(*Next));
+    if (Next != Slots.begin()) {
+      const uint64_t Previous = address(*std::prev(Next));
+      if (Addr - Previous < Width)
+        return false;
+      Begin = std::max(Begin, Previous + Width);
+    }
+    return Size <= End - Addr;
+  };
+  const unsigned PtrSize = Img->getPointerSize();
+  if (!PtrSize || !restrictToGap(Img->CodePtrRelocSlots, PtrSize) ||
+      !restrictToGap(Img->DataPtrRelocSlots, PtrSize) ||
+      !restrictToGap(EffectiveImportStorageSlots, PtrSize) ||
+      !restrictToGap(ConflictingImportStorageSlots, PtrSize) ||
+      !restrictToGap(ExternalFunctionPointerSlots, PtrSize) ||
+      !restrictToGap(DataSymbolBindings, PtrSize) ||
+      !restrictToGap(Img->RelCodeRelocSlots, 4) ||
+      End - Begin > limits::kMaxSingleGlobalEmbedLen)
+    return nullptr;
+
+  auto *&GV = DirectDataByteGlobals[Begin];
+  if (!GV) {
+    const bool IsConstant = !Seg->isWritable() || isReadOnlyAfterReloc(Seg);
+    const auto Bytes = llvm::ArrayRef<uint8_t>(
+        Seg->Data.data() + (Begin - Seg->VA), End - Begin);
+    auto *Init = llvm::ConstantDataArray::get(*Ctx, Bytes);
+    GV = new llvm::GlobalVariable(
+        *Mod, Init->getType(), IsConstant, dataLinkage(), Init,
+        (kNdCodePtrPrefix + llvm::utohexstr(Begin)).str() + ".bytes");
+    GV->setAlignment(
+        llvm::Align(uint64_t{1} << llvm::countr_zero(
+                        Begin | limits::kMaxEmbeddedDataAlignment)));
+  }
+  return llvm::ConstantExpr::getGetElementPtr(
+      llvm::Type::getInt8Ty(*Ctx), GV,
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx), Addr - Begin));
+}
+
+void MedLLVMEmitter::rebindDirectDataBytes(llvm::Constant *Mirror,
+                                           uint64_t Begin, uint64_t End) {
+  auto It = DirectDataByteGlobals.lower_bound(Begin);
+  while (It != DirectDataByteGlobals.end() && It->first < End) {
+    auto *GV = It->second;
+    auto *Address = llvm::ConstantExpr::getGetElementPtr(
+        llvm::Type::getInt8Ty(*Ctx), Mirror,
+        llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx),
+                               It->first - Begin));
+    GV->replaceAllUsesWith(Address);
+    GV->eraseFromParent();
+    It = DirectDataByteGlobals.erase(It);
+  }
 }
 
 bool MedLLVMEmitter::isReadOnlyAfterReloc(const Segment *S) const {

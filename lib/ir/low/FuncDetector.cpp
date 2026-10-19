@@ -234,12 +234,15 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
       coff_loader::getCheckedX86RegistrationPointerRoles(Img);
   std::set<va_t> IndependentEntries = Entries;
   IndependentEntries.insert(ExceptionEntries.begin(), ExceptionEntries.end());
+  // A fragment that continues another function (Img.ContinuationCodeStarts)
+  // begins none, though a symbol names it (`foo.cold`).
   for (const auto &Sym : Img.Symbols)
-    if (Sym.IsFunc && Sym.Origin != NameOrigin::Synthesized)
+    if (Sym.IsFunc && Sym.Origin != NameOrigin::Synthesized &&
+        !Img.ContinuationCodeStarts.count(Sym.Addr))
       IndependentEntries.insert(Sym.Addr);
 
   for (const auto &Sym : Img.Symbols) {
-    if (!Sym.IsFunc)
+    if (!Sym.IsFunc || Img.ContinuationCodeStarts.count(Sym.Addr))
       continue;
     if (Sym.Addr == 0) {
       if (!Img.hasExecutableCodeOwnerAt(0))

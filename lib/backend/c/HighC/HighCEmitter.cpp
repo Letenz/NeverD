@@ -1650,10 +1650,13 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   if (!MemoryTypes.empty())
     Headers.insert("string.h");
   // The objects a C library header declares, which the unit reaches as it
-  // declares them.
+  // declares them, or as bytes at their addresses.
   for (const auto &[Addr, Obj] : ImageObjects)
     if (!Obj.Header.empty() && !imageBackingAddress(Addr))
       Headers.insert(Obj.Header);
+  for (const ImageBacking &Backing : ImageBackings)
+    if (Backing.Header)
+      Headers.insert(ImageObjects.at(Backing.Base).Header);
 
   std::set<std::string> CallTargets;
   // An analysis-only function prints as ordinary C too, so its callees need
@@ -3544,6 +3547,15 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     }
     if (Backing.Words.empty())
       Backing.Pad = GroupBase % Backing.Align;
+    // A C library header's object alone is the header's: its bytes are its
+    // address's, as aligned as the header declares it.
+    if (GroupCount == 1 && First != ImageObjects.end() &&
+        !First->second.Header.empty() && Backing.Words.empty()) {
+      Backing.Name = "((unsigned char *)&" + First->second.Name + ")";
+      Backing.Header = true;
+      Backing.Align = 1;
+      Backing.Pad = 0;
+    }
     ImageBackings.push_back(std::move(Backing));
   };
   for (const auto &[Addr, Obj] : ImageObjects) {
@@ -3589,13 +3601,16 @@ void HighCWriter::noteFunctionAddress(va_t Addr,
       return;
     }
   // A function the image names; this output declares it.
-  for (const Symbol &Sym : Opts.Image->Symbols)
-    if (Sym.Addr == Addr && Sym.IsFunc && !Sym.Name.empty()) {
-      FunctionAddressNames.emplace(
-          Addr, functionIdentifier(llvm::StringRef(Sym.Name)));
-      AddressTakenFunctions.insert(Sym.Name);
-      return;
-    }
+  if (!SharedFunctionSymbols && !OwnFunctionSymbols)
+    OwnFunctionSymbols = collectImageFunctionSymbols(*Opts.Image);
+  const HighCImageFunctionSymbols &Symbols =
+      SharedFunctionSymbols ? *SharedFunctionSymbols : *OwnFunctionSymbols;
+  if (const auto Found = Symbols.find(Addr); Found != Symbols.end()) {
+    const Symbol &Sym = *Found->second;
+    FunctionAddressNames.emplace(Addr,
+                                 functionIdentifier(llvm::StringRef(Sym.Name)));
+    AddressTakenFunctions.insert(Sym.Name);
+  }
 }
 
 void HighCWriter::writeImageObjects() {
@@ -3618,7 +3633,7 @@ void HighCWriter::writeImageObjects() {
   if (ImageObjects.empty())
     return;
   for (const ImageBacking &Backing : ImageBackings) {
-    if (!Backing.Words.empty())
+    if (!Backing.Words.empty() || Backing.Header)
       continue;
     if (Opts.EmitComments)
       OS << "/* neverd.image: 0x" << llvm::utohexstr(Backing.Base) << " .. 0x"
@@ -4264,10 +4279,20 @@ HighCImageDataObjects collectImageDataObjects(const BinaryImage &Image) {
   return Objects;
 }
 
+HighCImageFunctionSymbols
+collectImageFunctionSymbols(const BinaryImage &Image) {
+  HighCImageFunctionSymbols Symbols;
+  for (const Symbol &Sym : Image.Symbols)
+    if (Sym.IsFunc && !Sym.Name.empty())
+      Symbols.try_emplace(Sym.Addr, &Sym);
+  return Symbols;
+}
+
 void HighCEmitter::prepareImageFunctionNames(const BinaryImage &Image) {
   PreparedImage = nullptr;
   PreparedImageFunctionNames = collectImageFunctionNameViews(Image);
   PreparedDataObjects = collectImageDataObjects(Image);
+  PreparedFunctionSymbols = collectImageFunctionSymbols(Image);
   PreparedImage = &Image;
 }
 
@@ -4317,7 +4342,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
     const bool Prepared = Opts.Image && Opts.Image == PreparedImage;
     HighCWriter W(OS, Opts, Dbg, true,
                   Prepared ? &PreparedImageFunctionNames : nullptr, Recorder,
-                  Prepared ? &PreparedDataObjects : nullptr);
+                  Prepared ? &PreparedDataObjects : nullptr,
+                  Prepared ? &PreparedFunctionSymbols : nullptr);
     W.ExtraRecords = Extra;
     W.WantedRecords = Wanted;
     W.prepareFunctionReturns(Working);

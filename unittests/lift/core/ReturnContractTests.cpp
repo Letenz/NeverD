@@ -239,6 +239,21 @@ TEST(ReturnContracts, AResultAMergeHandsBackIsReadByACallerThatReturnsAValue) {
             (std::vector<bool>{false, false}));
 }
 
+TEST(ReturnContracts, AReturnOfACopiedArgumentIsAValue) {
+  // `mov %rdi, %rax; ret`: copy propagation left the RETURN reading RDI,
+  // the argument, where the register holds it.
+  MedVar Rdi = rax(0);
+  Rdi.Id = 7;
+  Rdi.RegOff = x86reg::RDI;
+  MedFunc Func =
+      function(CalleeEntry,
+               {block({operation(NdOp::COPY, Rdi, {Rdi}), returning(Rdi)})});
+  MedVar Argument = Rdi;
+  Argument.Kind = MedVar::Param;
+  Func.Params.push_back(Argument);
+  EXPECT_EQ(settle({std::move(Func)}), std::vector<bool>{false});
+}
+
 /// RAX written by intrinsic \p Id with \p Inputs after it.
 MedOp intrinsic(Intrinsic Id, std::vector<MedVar> Inputs = {}) {
   Inputs.insert(Inputs.begin(),

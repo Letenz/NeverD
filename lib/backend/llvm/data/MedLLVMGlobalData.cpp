@@ -217,6 +217,9 @@ MedLLVMEmitter::tryResolveDirectGlobalDataAddress(const MedVar &Address,
     const unsigned AddressBits = Address.Size > 0 ? Address.Size * 8 : 64;
     if (isFrameRelativeDisplacement(OwnedAddress, AddressBits))
       return nullptr;
+    if (llvm::Constant *Bytes =
+            tryResolveDirectDataBytes(OwnedAddress, DataSizeHint, OwnerVA))
+      return Bytes;
     return tryResolveOwnedGlobalData(OwnedAddress, OwnerVA, DataSizeHint);
   }
 
@@ -250,6 +253,9 @@ MedLLVMEmitter::tryResolveDirectGlobalDataAddress(const MedVar &Address,
   const unsigned AddressBits = Address.Size > 0 ? Address.Size * 8 : 64;
   if (isFrameRelativeDisplacement(*NumericAddress, AddressBits))
     return nullptr;
+  if (llvm::Constant *Bytes =
+          tryResolveDirectDataBytes(*NumericAddress, DataSizeHint))
+    return Bytes;
   return tryResolveGlobalData(*NumericAddress, DataSizeHint);
 }
 

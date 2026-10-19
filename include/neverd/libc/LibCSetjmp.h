@@ -11,11 +11,9 @@ namespace neverd::libc {
 /// ISO C setjmp.h — non-local jumps
 inline constexpr std::string_view kSetjmpHeader = "setjmp.h";
 
+/// The GNU C Library's sigsetjmp macro calls __sigsetjmp.
 inline constexpr std::array kSetjmpFunctions = {
-    "longjmp",
-    "setjmp",
-    "siglongjmp",
-    "sigsetjmp",
+    "longjmp", "setjmp", "siglongjmp", "sigsetjmp", "__sigsetjmp",
 };
 
 /// The setjmp.h functions whose arguments are the same in every C library.
@@ -26,6 +24,7 @@ inline constexpr auto kSetjmpArity = std::to_array<LibCArityEntry>({
     {"longjmp", {2, 0}},
     {"siglongjmp", {2, 0}},
     {"sigsetjmp", {2, 0}},
+    {"__sigsetjmp", {2, 0}},
 });
 
 } // namespace neverd::libc
