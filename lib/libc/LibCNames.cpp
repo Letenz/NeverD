@@ -383,11 +383,20 @@ std::optional<bool> libcReturnsValue(std::string_view Name,
 
 const char *headerOfDataObject(std::string_view Name) {
   static const std::unordered_map<std::string_view, const char *> Headers = {
-#define NEVERD_LIBC_DATA_OBJECT(NAME, HEADER) {NAME, HEADER},
+#define NEVERD_LIBC_DATA_OBJECT(NAME, HEADER, TYPE) {NAME, HEADER},
 #include "neverd/libc/LibCDataObjects.def"
   };
   const auto It = Headers.find(Name);
   return It == Headers.end() ? nullptr : It->second;
+}
+
+const char *typeOfDataObject(std::string_view Name) {
+  static const std::unordered_map<std::string_view, const char *> Types = {
+#define NEVERD_LIBC_DATA_OBJECT(NAME, HEADER, TYPE) {NAME, TYPE},
+#include "neverd/libc/LibCDataObjects.def"
+  };
+  const auto It = Types.find(Name);
+  return It == Types.end() ? nullptr : It->second;
 }
 
 bool returnsDoubleWord(std::string_view Name) {

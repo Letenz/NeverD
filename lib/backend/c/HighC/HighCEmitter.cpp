@@ -1640,6 +1640,11 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     Headers.insert("stdbool.h");
   if (!MemoryTypes.empty())
     Headers.insert("string.h");
+  // The objects a C library header declares, which the unit reaches as it
+  // declares them.
+  for (const auto &[Addr, Obj] : ImageObjects)
+    if (!Obj.Header.empty() && !imageBackingAddress(Addr))
+      Headers.insert(Obj.Header);
 
   std::set<std::string> CallTargets;
   // An analysis-only function prints as ordinary C too, so its callees need
@@ -3170,7 +3175,8 @@ void HighCWriter::writeImageObjects() {
   // of everything it can name.
   std::vector<va_t> Deferred;
   for (auto &[Addr, Obj] : ImageObjects) {
-    if (imageBackingAddress(Addr))
+    // An object a C library header declares is the header's.
+    if (imageBackingAddress(Addr) || !Obj.Header.empty())
       continue;
     if (!Obj.String && !Obj.PointsTo && relocatedSlotInitializer(Addr, Obj)) {
       Deferred.push_back(Addr);
