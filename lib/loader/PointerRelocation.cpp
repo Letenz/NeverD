@@ -356,12 +356,14 @@ neverd::recordDataPointerTargets(BinaryImage &Img,
     if (Code.claims(Target) || !InData(Target))
       continue;
     // The relocation as it would have been recorded had the target's section
-    // kept data only.
+    // kept data only.  The slot stays the data it was recorded as, though
+    // its own section may hold code: a kernel keeps tables of pointers to
+    // its literals among its code in PAGE (recordRelocatedPointerRunsInCode).
     Effects.push_back(decideAbsolutePointerRelocation(
         Img, Slot, Target, InvalidVA, [&](va_t Addr) {
           PointerRelocationAddressClass Class =
               classifyPointerRelocationAddress(Img, Addr);
-          if (Addr == Target)
+          if (Addr == Target || Addr == Slot)
             Class.Executable = false;
           return Class;
         }));

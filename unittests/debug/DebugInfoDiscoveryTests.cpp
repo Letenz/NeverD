@@ -21,6 +21,7 @@
 #include "neverd/debug/MapFile.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/COFFLoaderUtils.h"
 #include "neverd/loader/Loader.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/support/BinaryLoading.h"
@@ -1058,6 +1059,50 @@ TEST(ApplyDebugSymbolsTest, PointerToALiteralWhereAGuessWasPointsToData) {
   EXPECT_EQ(findFunc(Img, Literal), nullptr);
   EXPECT_FALSE(Img.CodePtrRelocSlots.count(0x3000));
   EXPECT_TRUE(Img.DataPtrRelocSlots.count(0x3000));
+}
+
+// A kernel also keeps tables of pointers to its literals among its code.  The
+// loader reads a run of them as data holding pointers to code; the literal
+// the debug information names leaves no such slot, so the function detector
+// takes no pointer to code from the table (ntoskrnl's `L"Select"`).
+TEST(ApplyDebugSymbolsTest, PointerTableAmongCodeToALiteralPointsToData) {
+  BinaryImage Img;
+  Img.Format = BinaryFormat::COFF;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  const SegmentFlags Code = SegmentFlags::Readable | SegmentFlags::Executable;
+  Segment Seg;
+  Seg.VA = 0x1000;
+  Seg.Size = Seg.FileSz = 0x100;
+  Seg.Flags = Code;
+  Seg.Data.assign(0x100, 0);
+  Section Sec;
+  Sec.Name = "PAGE";
+  Sec.VA = 0x1000;
+  Sec.Size = Sec.FileSz = 0x100;
+  Sec.Flags = Code;
+  Sec.Data.assign(0x100, 0);
+  Img.Sections.push_back(std::move(Sec));
+  // The table at 0x1080 points to the literal and to bytes nothing names.
+  const std::vector<AbsolutePointerRelocation> Table = {
+      {0x1080, 0x1040, InvalidVA}, {0x1088, 0x1060, InvalidVA}};
+  for (const AbsolutePointerRelocation &Pointer : Table) {
+    const uint64_t Value = Pointer.TargetVA;
+    std::memcpy(Seg.Data.data() + (Pointer.SlotVA - Seg.VA), &Value,
+                sizeof(Value));
+  }
+  Img.Segments.push_back(std::move(Seg));
+  recordAbsolutePointerRelocations(Img, Table);
+  coff_loader::recordRelocatedPointerRunsInCode(Img);
+  ASSERT_EQ(Img.CodePtrRelocSlots, (std::set<va_t>{0x1080, 0x1088}));
+
+  FakeDebugContext Dbg(
+      {}, {{"??_C@_1O@PMDCHDHI@?$AAS?$AAe?$AAl?$AAe?$AAc?$AAt?$AA?$AA@", 0x1040,
+            0, false}});
+  EXPECT_EQ(applyDebugSymbols(Img, Dbg), 0u);
+  EXPECT_EQ(Img.CodePtrRelocSlots, (std::set<va_t>{0x1088}));
+  EXPECT_EQ(Img.DataPtrRelocSlots, (std::set<va_t>{0x1080}));
+  EXPECT_FALSE(Img.DataAddressRelocOperands.count(0x1080));
 }
 
 // A kernel keeps tables among its code, where the debug information names
