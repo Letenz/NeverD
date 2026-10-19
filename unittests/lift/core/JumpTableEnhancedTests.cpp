@@ -3909,6 +3909,54 @@ TEST_F(JTE_X86_64, RBPLoadedWithATableAddressIsNoFrameBase) {
   }
 }
 
+static fs::path frameTailJumpX64Obj() {
+  return fs::path(TEST_OBJ_DIR) / "test_jumptable_frame_tail_jump.o";
+}
+
+// A register jump that runs once its block has released the frame every path
+// into it allocated leaves the function, as a tail call does, so it does not
+// withdraw the function's relative table; one that runs inside the frame
+// still does.
+TEST_F(JTE_X86_64, JumpsAfterReleasingTheFrameKeepTheRelativeTable) {
+  auto ImageOrErr = neverd::loadBinary(frameTailJumpX64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  const neverd::Section *Rodata = nullptr;
+  for (const neverd::Section &Section : Image.Sections)
+    if (Section.Name == ".rodata")
+      Rodata = &Section;
+  ASSERT_NE(Rodata, nullptr);
+  const auto TableAt = [&](neverd::va_t Base) {
+    std::vector<neverd::va_t> Targets;
+    for (size_t Case = 0; Case < 4; ++Case) {
+      const uint8_t *Bytes = Image.readVA(Base + Case * 4, 4);
+      EXPECT_NE(Bytes, nullptr);
+      int32_t Entry = 0;
+      if (Bytes)
+        std::memcpy(&Entry, Bytes, sizeof(Entry));
+      Targets.push_back(Base + static_cast<int64_t>(Entry));
+    }
+    return Targets;
+  };
+  const auto Build = [&](const char *Name) {
+    const neverd::Symbol *Function = Image.findSymbol(Name);
+    EXPECT_NE(Function, nullptr);
+    neverd::Decoder Decoder;
+    EXPECT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+    neverd::CFGBuilder Builder;
+    return Builder.build(Image, Decoder, Function ? Function->Addr : 0, Name);
+  };
+
+  const neverd::LowFunc Tail = Build("tail_dispatch");
+  ASSERT_EQ(Tail.JumpTables.size(), 1u);
+  EXPECT_EQ(Tail.JumpTables.front().BaseAddr, Rodata->VA);
+  EXPECT_EQ(Tail.JumpTables.front().Targets, TableAt(Rodata->VA));
+
+  const neverd::LowFunc Framed = Build("framed_dispatch");
+  EXPECT_TRUE(Framed.JumpTables.empty());
+}
+
 static fs::path tailStubX64Obj() {
   return fs::path(TEST_OBJ_DIR) / "test_jumptable_tail_stub.o";
 }
