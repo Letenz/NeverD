@@ -5430,6 +5430,31 @@ HighCWriter::certifiedFrameStorageDisplacement(const HighExpr &E) const {
   return std::nullopt;
 }
 
+bool HighCWriter::frameStorageAlignmentHolds(const HighExpr &Call) {
+  if (!CurrentFunc || Call.IntrinsicId != Intrinsic::RequireAligned ||
+      Call.Operands.size() != 2 || !Call.Operands[0] || !Call.Operands[1] ||
+      Call.Operands[1]->Kind != ExprKind::Const ||
+      Call.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const uint64_t Bytes = Call.Operands[1]->ConstVal;
+  if (Bytes == 0 || (Bytes & (Bytes - 1)) != 0 ||
+      Bytes > kSyntheticStackAlignment)
+    return false;
+  // A certified frame address prints as an address in the storage, not as a
+  // local of the slot's own type, once the function keeps its frame there.
+  if (!FrameStorageActive || !ProjectFrameAliasesIntoStorage)
+    return false;
+  const auto Disp = certifiedFrameStorageDisplacement(*Call.Operands[0]);
+  if (!Disp)
+    return false;
+  // The storage is aligned to the synthetic stack alignment, and the entry
+  // stack pointer sits at its residue above an aligned lower part.
+  const int64_t Residue = static_cast<int64_t>(syntheticEntryStackResidue(
+      Opts.TheArch, Opts.Format, CurrentFunc->EntryKind));
+  const int64_t Alignment = static_cast<int64_t>(Bytes);
+  return ((*Disp + Residue) % Alignment + Alignment) % Alignment == 0;
+}
+
 bool HighCWriter::reachesFrameThroughIndex(const HighExpr &E) const {
   if (E.Kind != ExprKind::BinOp)
     return false;

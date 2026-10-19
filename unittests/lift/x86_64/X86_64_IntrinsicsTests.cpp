@@ -982,6 +982,65 @@ cas16:
   EXPECT_EQ(Compiled.exitCode, 0) << Compiled.err << "\n" << C;
 }
 
+// A function enters at 8 mod 16, so `movaps` to a slot 24 bytes below the
+// entry is aligned: the C frame storage gives the slot that alignment, and
+// its check, which would always pass, is not printed.  A slot 16 bytes below
+// the entry is misaligned, and its check stays.
+TEST_F(X86_64_Intrinsics, Decompile_AnAlignedFrameSlotNeedsNoCheck) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "assembling x86-64 requires Clang";
+  const auto Source = tmpFile("spill16.s");
+  const auto Object = tmpFile("spill16.o");
+  std::ofstream(Source) << R"S(
+.text
+.globl spill16
+.type spill16,@function
+spill16:
+  subq $24, %rsp
+  movd %edi, %xmm0
+  pshufd $0, %xmm0, %xmm0
+  movaps %xmm0, (%rsp)
+  movl 4(%rsp), %eax
+  addl (%rsp), %eax
+  addq $24, %rsp
+  ret
+.size spill16,.-spill16
+.globl spill8
+.type spill8,@function
+spill8:
+  subq $16, %rsp
+  movd %edi, %xmm0
+  pshufd $0, %xmm0, %xmm0
+  movaps %xmm0, (%rsp)
+  movl 4(%rsp), %eax
+  addl (%rsp), %eax
+  addq $16, %rsp
+  ret
+.size spill8,.-spill8
+)S";
+  const auto Assembled =
+      exec(NEVERD_TEST_CLANG, {"-target", "x86_64-linux-gnu", "-c",
+                               Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Assembled.exitCode, 0) << Assembled.err;
+  auto r = decompileToHighC(Object);
+  ASSERT_EQ(r.exitCode, 0) << "Decompile failed: " << r.err;
+  const std::string C = readDecompiledFile("decompiled_high.c");
+  const size_t Aligned = C.find("spill16(int32_t arg0) {");
+  const size_t Misaligned = C.find("spill8(int32_t arg0) {");
+  ASSERT_NE(Aligned, std::string::npos) << C;
+  ASSERT_NE(Misaligned, std::string::npos) << C;
+  const auto Body = [&](size_t Begin) {
+    return C.substr(Begin, C.find("\n}\n", Begin) - Begin);
+  };
+  EXPECT_EQ(Body(Aligned).find("& 15) != 0"), std::string::npos) << C;
+  EXPECT_NE(Body(Misaligned).find("& 15) != 0"), std::string::npos) << C;
+  const auto CFile = tmpFile("spill16_high.c");
+  std::ofstream(CFile) << C;
+  const auto Compiled = checkHighCClangCompile(
+      CFile, {"-target", "x86_64-linux-gnu", "-ffreestanding", "-std=gnu11"});
+  EXPECT_EQ(Compiled.exitCode, 0) << Compiled.err << "\n" << C;
+}
+
 // The magnitude mask of an fabs is a double constant that `vmovddup` loads
 // from memory and broadcasts, which HighC folds to its eight bytes: the
 // intrinsic reads only those, and they widen to its vector operand.
