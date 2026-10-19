@@ -203,6 +203,42 @@ TEST(ReturnContracts, ACallerThatReadsTheResultKeepsAValue) {
             (std::vector<bool>{false, false}));
 }
 
+/// A caller that calls the callee on one path only and merges RAX at the
+/// join, then returns what \p Join returns.
+MedFunc conditionalCaller(MedVar Untaken, MedOp Return) {
+  PhiNode Merge;
+  Merge.Output = rax(2);
+  Merge.Args = {{0, std::move(Untaken)}, {1, rax(1)}};
+  MedBlock Join = block({std::move(Return)}, {0, 1});
+  Join.Phis.push_back(std::move(Merge));
+  return function(CallerEntry,
+                  {block({seed(), operation(NdOp::COND_BR, {}, {temporary(9)})},
+                         {}, {1, 2}),
+                   block({callTo(CalleeEntry, 1)}, {0}, {2}), std::move(Join)});
+}
+
+TEST(ReturnContracts, AResultOnlyADeadMergeReadsIsNoValue) {
+  // init_multithreading: RAX merges where nothing reads it, and the caller
+  // returns a constant.
+  MedFunc Callee = branching(
+      CalleeEntry, operation(NdOp::INDIR_CALL, rax(1), {temporary(5)}));
+  MedFunc Caller =
+      conditionalCaller(rax(0), returning(MedVar::makeConst(0, 8)));
+  EXPECT_EQ(settle({std::move(Callee), std::move(Caller)}),
+            (std::vector<bool>{true, false}));
+}
+
+TEST(ReturnContracts, AResultAMergeHandsBackIsReadByACallerThatReturnsAValue) {
+  // The caller returns 5 on the other path, so what it hands back from the
+  // callee is a value too.
+  MedFunc Callee = branching(
+      CalleeEntry, operation(NdOp::INDIR_CALL, rax(1), {temporary(5)}));
+  MedFunc Caller =
+      conditionalCaller(MedVar::makeConst(5, 8), returning(rax(2)));
+  EXPECT_EQ(settle({std::move(Callee), std::move(Caller)}),
+            (std::vector<bool>{false, false}));
+}
+
 /// RAX written by intrinsic \p Id with \p Inputs after it.
 MedOp intrinsic(Intrinsic Id, std::vector<MedVar> Inputs = {}) {
   Inputs.insert(Inputs.begin(),
