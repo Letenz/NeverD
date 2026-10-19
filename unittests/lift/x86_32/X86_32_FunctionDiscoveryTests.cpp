@@ -894,6 +894,58 @@ TEST(X86_32_FunctionDiscovery, SwitchTableAmongCodeBelongsToItsFunction) {
             (std::set<va_t>{0x401012, 0x401019, 0x401020}));
 }
 
+TEST(X86_32_FunctionDiscovery, SwitchCasesStayLabelsPastAnEntryBeforeTheTable) {
+  // MSVC's seven-byte cases set a result and jump to a shared tail.  The
+  // table follows an aligned prologue match in dead code past that tail.
+  // The cases still belong to the dispatcher reading the table, so they are
+  // its labels, though that entry lies between them and the table's slots.
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  std::vector<uint8_t> Text;
+  auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Text.insert(Text.end(), Bytes);
+  };
+  Emit({0x55, 0x8B, 0xEC});                         // push ebp; mov ebp, esp
+  Emit({0x8B, 0x45, 0x08});                         // mov eax, [ebp+8]
+  Emit({0x83, 0xF8, 0x02, 0x77, 0x1C});             // cmp eax, 2; ja 0x401027
+  Emit({0xFF, 0x24, 0x85, 0x3C, 0x10, 0x40, 0x00}); // jmp [eax*4+0x40103C]
+  Emit({0xB8, 0x0A, 0x00, 0x00, 0x00, 0xEB, 0x10}); // 0x401012: case 0
+  Emit({0xB8, 0x14, 0x00, 0x00, 0x00, 0xEB, 0x09}); // 0x401019: case 1
+  Emit({0xB8, 0x1E, 0x00, 0x00, 0x00, 0xEB, 0x02}); // 0x401020: case 2
+  Emit({0x33, 0xC0});                               // 0x401027: default
+  Emit({0x5D, 0xC3});                               // 0x401029: the tail
+  Emit({0xCC, 0xCC, 0xCC, 0xCC, 0xCC});             //
+  Emit({0x56, 0x57, 0x8B, 0x44, 0x24, 0x0C});       // 0x401030: dead code
+  Emit({0x5F, 0x5E, 0xC3, 0xCC, 0xCC, 0xCC});       //
+  Emit({0x12, 0x10, 0x40, 0x00, 0x19, 0x10});       // 0x40103C: the table
+  Emit({0x40, 0x00, 0x20, 0x10, 0x40, 0x00});       //
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+  recordAbsolutePointerRelocations(Img, {{0x40100E, 0x40103C, InvalidVA},
+                                         {0x40103C, 0x401012, InvalidVA},
+                                         {0x401040, 0x401019, InvalidVA},
+                                         {0x401044, 0x401020, InvalidVA}});
+  coff_loader::recordRelocatedPointerRunsInCode(Img);
+  ASSERT_TRUE(Img.DataInCode.count(0x40103C));
+  ASSERT_TRUE(Img.DataAddressRelocOperands.count(0x40100E));
+
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X86));
+  FuncDetector Detector;
+  const auto Functions = Detector.detect(Img, Dec);
+  EXPECT_TRUE(hasEntry(Functions, 0x401000));
+  ASSERT_TRUE(hasEntry(Functions, 0x401030))
+      << "the entry between the cases and the table";
+  for (va_t Case : {0x401012u, 0x401019u, 0x401020u})
+    EXPECT_FALSE(hasEntry(Functions, Case))
+        << "0x" << std::hex << Case << " is a case of the dispatcher";
+}
+
 TEST(X86_32_FunctionDiscovery, SwitchTableAmongCodeLiftsPastTheMirrorLimit) {
   // The table follows its dispatcher in a .text larger than the LLVM emitter
   // mirrors as one global.  The recovered switch dispatches on its selector

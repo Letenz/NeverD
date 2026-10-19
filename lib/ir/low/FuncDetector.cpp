@@ -36,6 +36,7 @@
 #include <iterator>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <thread>
 #include <vector>
@@ -337,6 +338,48 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
       Entries.insert(Target);
       RelocationCodeTargets.insert(Target);
     }
+
+  // A table among the code names its dispatcher's cases.  What names them is
+  // the instruction reading the table, whose operand the loader records as
+  // naming data, rather than the table's own slots: an entry between the
+  // cases and the table (a prologue match in dead code before it) does not
+  // bound the dispatcher.  A table no instruction is known to read keeps its
+  // slots as the namers.
+  if (IsX86LinkedCOFF && PointerSize != 0 && !CodeNamedByCode.empty()) {
+    auto runOf = [&](va_t Addr) -> std::optional<va_t> {
+      auto It = Img.DataInCode.upper_bound(Addr);
+      if (It == Img.DataInCode.begin())
+        return std::nullopt;
+      const va_t Start = *std::prev(It);
+      va_t End = Start;
+      while (End <= Addr && (Img.CodePtrRelocSlots.count(End) ||
+                             Img.DataPtrRelocSlots.count(End)))
+        End += PointerSize;
+      if (Addr >= End)
+        return std::nullopt;
+      return Start;
+    };
+    std::map<va_t, std::vector<va_t>> Readers;
+    for (const auto &[Field, Named] : Img.DataAddressRelocOperands)
+      if (Img.hasExecutableCodeOwnerAt(Field))
+        if (const auto Run = runOf(Named.TargetVA))
+          Readers[*Run].push_back(Field);
+    if (!Readers.empty()) {
+      std::vector<std::pair<va_t, va_t>> ByReader;
+      ByReader.reserve(CodeNamedByCode.size());
+      for (const auto &[Slot, Target] : CodeNamedByCode) {
+        const auto Run = runOf(Slot);
+        const auto It = Run ? Readers.find(*Run) : Readers.end();
+        if (It == Readers.end()) {
+          ByReader.emplace_back(Slot, Target);
+          continue;
+        }
+        for (va_t Reader : It->second)
+          ByReader.emplace_back(Reader, Target);
+      }
+      CodeNamedByCode = std::move(ByReader);
+    }
+  }
 
   std::set<va_t> DirectCallTargets;
   // Functions a binary file's code takes the address of, whose prologue
