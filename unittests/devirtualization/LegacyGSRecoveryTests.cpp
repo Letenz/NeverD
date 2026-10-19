@@ -470,7 +470,10 @@ TEST(LegacyGSRecovery, NativeEncodingHasSeparateCompleteAndOpaqueReceipts) {
   LowInstructionPreservedState Preserved;
   D.liftToLow(I, Ops, {}, {}, &Effects, &Preserved);
   ASSERT_EQ(Ops.size(), 1U);
-  EXPECT_EQ(Ops.front().Inputs[0], swapgs().Inputs[0]);
+  ASSERT_EQ(Ops.front().Opcode, NdOp::INTRINSIC);
+  ASSERT_EQ(Ops.front().NumInputs, 1U);
+  EXPECT_EQ(Ops.front().Inputs[0], NdVar::cst(uint64_t(Intrinsic::Swapgs), 2));
+  EXPECT_TRUE(supportsRuntimeControlOperation(Ops.front(), options()));
   EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Complete);
   EXPECT_TRUE(Effects.Effects.empty());
   EXPECT_EQ(Effects.OperationDigest, lowUndefinedOperationDigest(Ops));
