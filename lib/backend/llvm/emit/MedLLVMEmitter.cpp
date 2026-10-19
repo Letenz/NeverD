@@ -957,6 +957,8 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   SharedBudgetFrameSlotCache.clear();
   BoundFrameSlotCacheFor = nullptr;
   BoundFrameSlotCache.clear();
+  AffineFrameKeysFor = nullptr;
+  AffineFrameKeys.clear();
   AddressFragmentTaintFor = nullptr;
   AddressFragmentTaint.clear();
   SymbolizedWritableSegsFor = nullptr;

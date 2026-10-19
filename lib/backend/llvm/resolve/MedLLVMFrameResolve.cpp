@@ -680,6 +680,12 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
     return Proof;
   };
   auto Result = rec(V, 0);
+  // The walk closes a stack-pointer cycle only back to the value it resolves:
+  // an inner loop's merge on an outer loop's back edge is a cycle that avoids
+  // it.  The function's affine frame keys close every cycle at once, so an
+  // unbound walk that failed without running out takes its answer from them.
+  if (!Result && !RanOut && !Bindings)
+    Result = affineFrameKey(V, RequireEntryStackPointer);
   // Every step charges a node first and fails without one, and every failing
   // step fails its query.
   assert((!RanOut || !Result) && "a frame-slot walk that ran out succeeded");
@@ -700,6 +706,263 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
   if (BoundKey && BoundFrameSlotCacheFor == CurMedFunc && Published)
     BoundFrameSlotCache.emplace(std::move(*BoundKey), Result);
   return Result;
+}
+
+std::optional<med_llvm::SlotKey>
+MedLLVMEmitter::affineFrameKey(const MedVar &V,
+                               bool RequireEntryStackPointer) const {
+  // The fixed point reads edge feasibility, which a rebuild may still change.
+  if (!CurMedFunc || V.isConst() ||
+      FeasibleEdgeState == FeasibleEdgeCacheState::Building)
+    return std::nullopt;
+  if (AffineFrameKeysFor != CurMedFunc ||
+      AffineFrameKeysGeneration != FrameReloadCacheGeneration) {
+    AffineFrameKeysFor = CurMedFunc;
+    AffineFrameKeysGeneration = FrameReloadCacheGeneration;
+    AffineFrameKeys.clear();
+
+    const TargetRegInfo &TRI = getTargetRegInfo(TargetArch);
+    const uint64_t SpOff = TRI.StackPointer;
+    const uint64_t FpOff = TRI.FramePointer;
+    const unsigned PointerSize = TRI.PointerSize;
+    // Unknown is optimistic: a value no root has reached yet.  Each value only
+    // moves from Unknown to one key, or to NotAffine, so the iteration ends.
+    enum class Solution : uint8_t { Unknown, Known, NotAffine };
+    struct Value {
+      Solution State = Solution::Unknown;
+      AffineFrameKey Frame;
+    };
+    std::unordered_map<AddressProvenanceVarKey, Value, AffineFrameKeyHash>
+        Values;
+    // Each value's readers among the operations and PHIs that can carry it.
+    struct Reader {
+      const MedOp *Op = nullptr;
+      const PhiNode *Phi = nullptr;
+    };
+    std::unordered_map<AddressProvenanceVarKey, std::vector<Reader>,
+                       AffineFrameKeyHash>
+        Readers;
+    std::vector<Reader> Work;
+
+    auto carries = [](NdOp Opcode) {
+      return Opcode == NdOp::COPY || Opcode == NdOp::INT_ZEXT ||
+             Opcode == NdOp::INT_SEXT || Opcode == NdOp::SUBBYTES ||
+             Opcode == NdOp::INT_ADD || Opcode == NdOp::INT_SUB;
+    };
+    // The roots canonicalFrameSlotKey's walk starts its keys at.
+    auto rootOf = [&](const MedVar &Cur) -> std::optional<AffineFrameKey> {
+      if (Cur.isConst() || Cur.Size < PointerSize)
+        return std::nullopt;
+      const MedOp *Def = lookupDef(Cur);
+      const med_llvm::SlotKey Key{{Cur.Id, Cur.SSAVer}, 0};
+      if (Def && Def->RegistrationRoot != MedOp::RegistrationRootKind::None)
+        return AffineFrameKey{Key, /*EntryStackPointer=*/false};
+      const bool IsSelfCopy =
+          Def && Def->Opcode == NdOp::COPY && Def->NumInputs >= 1 &&
+          !Def->Inputs[0].isConst() && Def->Inputs[0].Kind == Cur.Kind &&
+          Def->Inputs[0].Id == Cur.Id && Def->Inputs[0].SSAVer == Cur.SSAVer;
+      if (Cur.Kind != MedVar::Reg || lookupPhi(Cur) || (Def && !IsSelfCopy))
+        return std::nullopt;
+      if (SpOff != 0 && Cur.RegOff == SpOff)
+        return AffineFrameKey{Key, /*EntryStackPointer=*/true};
+      if (FpOff != 0 && Cur.RegOff == FpOff)
+        return AffineFrameKey{Key, /*EntryStackPointer=*/false};
+      return std::nullopt;
+    };
+    auto delta = [](const MedVar &C,
+                    uint16_t ResultSize) -> std::optional<int64_t> {
+      const unsigned Bytes = ResultSize != 0 ? ResultSize : C.Size;
+      if (!C.isConst() || Bytes == 0 || Bytes > sizeof(uint64_t))
+        return std::nullopt;
+      const unsigned Bits = Bytes * 8;
+      uint64_t Raw = C.ConstVal;
+      if (Bits < 64) {
+        const uint64_t Mask = (uint64_t{1} << Bits) - 1;
+        Raw &= Mask;
+        if (Raw & (uint64_t{1} << (Bits - 1)))
+          Raw |= ~Mask;
+      }
+      return static_cast<int64_t>(Raw);
+    };
+    auto state = [&](const MedVar &Var) -> Value & {
+      return Values[addressProvenanceVarKey(Var)];
+    };
+    auto settle = [&](const MedVar &Out, const Value &Next) {
+      Value &Cur = state(Out);
+      if (Cur.State == Solution::NotAffine)
+        return;
+      Value Merged = Next;
+      if (Cur.State == Solution::Known && Next.State == Solution::Known &&
+          (Cur.Frame.Key != Next.Frame.Key ||
+           Cur.Frame.EntryStackPointer != Next.Frame.EntryStackPointer))
+        Merged.State = Solution::NotAffine;
+      if (Merged.State == Solution::Unknown ||
+          (Cur.State == Merged.State &&
+           (Cur.State != Solution::Known || Cur.Frame.Key == Merged.Frame.Key)))
+        return;
+      Cur = Merged;
+      if (auto It = Readers.find(addressProvenanceVarKey(Out));
+          It != Readers.end())
+        Work.insert(Work.end(), It->second.begin(), It->second.end());
+    };
+    // One operation or PHI from its current inputs.
+    auto evaluate = [&](const Reader &R) -> Value {
+      Value NotAffine;
+      NotAffine.State = Solution::NotAffine;
+      if (R.Phi) {
+        const PhiNode &Phi = *R.Phi;
+        if (Phi.Output.Size < PointerSize)
+          return NotAffine;
+        Value Common;
+        for (const auto &[PredId, Arg] : Phi.Args) {
+          const PhiEdgeFeasibility Edge = classifyPhiIncomingEdge(Phi, PredId);
+          if (Edge == PhiEdgeFeasibility::Infeasible)
+            continue;
+          if (Edge != PhiEdgeFeasibility::ProvenFeasible || Arg.isConst())
+            return NotAffine;
+          const Value &Arm = state(Arg);
+          if (Arm.State == Solution::NotAffine)
+            return NotAffine;
+          if (Arm.State == Solution::Unknown)
+            continue;
+          if (Common.State == Solution::Known &&
+              (Common.Frame.Key != Arm.Frame.Key ||
+               Common.Frame.EntryStackPointer != Arm.Frame.EntryStackPointer))
+            return NotAffine;
+          Common = Arm;
+        }
+        return Common;
+      }
+      const MedOp &Op = *R.Op;
+      if (Op.Output.Size < PointerSize || Op.NumInputs < 1)
+        return NotAffine;
+      auto offset = [&](const MedVar &Base, int64_t By) -> Value {
+        const Value &In = state(Base);
+        if (In.State != Solution::Known)
+          return In;
+        Value Out = In;
+        if (llvm::AddOverflow(In.Frame.Key.second, By, Out.Frame.Key.second))
+          return NotAffine;
+        return Out;
+      };
+      switch (Op.Opcode) {
+      case NdOp::COPY:
+      case NdOp::INT_ZEXT:
+      case NdOp::INT_SEXT:
+        if (Op.Inputs[0].isConst() || Op.Inputs[0].Size < PointerSize)
+          return NotAffine;
+        return state(Op.Inputs[0]);
+      case NdOp::SUBBYTES:
+        if (Op.NumInputs < 2 || !Op.Inputs[1].isConst() ||
+            Op.Inputs[1].ConstVal != 0 || Op.Inputs[0].isConst() ||
+            Op.Inputs[0].Size < PointerSize)
+          return NotAffine;
+        return state(Op.Inputs[0]);
+      case NdOp::INT_ADD:
+        if (Op.NumInputs < 2)
+          return NotAffine;
+        if (auto By = delta(Op.Inputs[1], Op.Output.Size);
+            By && !Op.Inputs[0].isConst())
+          return offset(Op.Inputs[0], *By);
+        if (auto By = delta(Op.Inputs[0], Op.Output.Size);
+            By && !Op.Inputs[1].isConst())
+          return offset(Op.Inputs[1], *By);
+        return NotAffine;
+      case NdOp::INT_SUB: {
+        int64_t Negated = 0;
+        auto By = Op.NumInputs >= 2 ? delta(Op.Inputs[1], Op.Output.Size)
+                                    : std::nullopt;
+        if (!By || Op.Inputs[0].isConst() ||
+            llvm::SubOverflow(int64_t{0}, *By, Negated))
+          return NotAffine;
+        return offset(Op.Inputs[0], Negated);
+      }
+      default:
+        return NotAffine;
+      }
+    };
+
+    for (const MedBlock &Block : CurMedFunc->Blocks) {
+      for (const PhiNode &Phi : Block.Phis)
+        for (const auto &Arg : Phi.Args)
+          if (!Arg.second.isConst())
+            Readers[addressProvenanceVarKey(Arg.second)].push_back(
+                {nullptr, &Phi});
+      for (const MedOp &Op : Block.Ops) {
+        if (Op.Dead || !carries(Op.Opcode) || Op.Output.isConst())
+          continue;
+        for (uint8_t I = 0; I < Op.NumInputs; ++I)
+          if (!Op.Inputs[I].isConst())
+            Readers[addressProvenanceVarKey(Op.Inputs[I])].push_back({&Op});
+      }
+    }
+    // Seed every root a carrying operation or PHI reads, as the walk would
+    // reach it from the value it resolves.
+    for (const MedBlock &Block : CurMedFunc->Blocks) {
+      auto seed = [&](const MedVar &Var) {
+        if (Var.isConst())
+          return;
+        Value &Cur = state(Var);
+        if (Cur.State != Solution::Unknown)
+          return;
+        if (auto Root = rootOf(Var)) {
+          Cur.State = Solution::Known;
+          Cur.Frame = *Root;
+          if (auto It = Readers.find(addressProvenanceVarKey(Var));
+              It != Readers.end())
+            Work.insert(Work.end(), It->second.begin(), It->second.end());
+        }
+      };
+      for (const PhiNode &Phi : Block.Phis)
+        for (const auto &Arg : Phi.Args)
+          seed(Arg.second);
+      for (const MedOp &Op : Block.Ops)
+        if (!Op.Dead && carries(Op.Opcode))
+          for (uint8_t I = 0; I < Op.NumInputs; ++I)
+            seed(Op.Inputs[I]);
+    }
+    auto run = [&] {
+      while (!Work.empty()) {
+        const Reader R = Work.back();
+        Work.pop_back();
+        settle(R.Phi ? R.Phi->Output : R.Op->Output, evaluate(R));
+      }
+    };
+    run();
+    // A PHI that settled while an arm stayed Unknown took that arm on trust,
+    // but nothing reaches the arm from a root: no key holds for the PHI.
+    bool Changed = true;
+    while (Changed) {
+      Changed = false;
+      for (const MedBlock &Block : CurMedFunc->Blocks)
+        for (const PhiNode &Phi : Block.Phis) {
+          if (state(Phi.Output).State != Solution::Known)
+            continue;
+          bool TookUnknownArm = false;
+          for (const auto &[PredId, Arg] : Phi.Args)
+            TookUnknownArm |= classifyPhiIncomingEdge(Phi, PredId) !=
+                                  PhiEdgeFeasibility::Infeasible &&
+                              state(Arg).State != Solution::Known;
+          if (!TookUnknownArm)
+            continue;
+          // state() may rehash, so take the PHI's entry after the arms'.
+          state(Phi.Output).State = Solution::NotAffine;
+          if (auto It = Readers.find(addressProvenanceVarKey(Phi.Output));
+              It != Readers.end())
+            Work.insert(Work.end(), It->second.begin(), It->second.end());
+          Changed = true;
+        }
+      run();
+    }
+    for (const auto &[Key, Solved] : Values)
+      if (Solved.State == Solution::Known)
+        AffineFrameKeys.emplace(Key, Solved.Frame);
+  }
+  const auto It = AffineFrameKeys.find(addressProvenanceVarKey(V));
+  if (It == AffineFrameKeys.end() ||
+      (RequireEntryStackPointer && !It->second.EntryStackPointer))
+    return std::nullopt;
+  return It->second.Key;
 }
 
 bool MedLLVMEmitter::varIsReloadedStackPtr(const MedVar &V, int Depth) const {

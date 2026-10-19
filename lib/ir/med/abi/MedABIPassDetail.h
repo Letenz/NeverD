@@ -290,6 +290,17 @@ const PhiNode *selectAuthoritativeArgPhi(const MedFunc &Func,
                                          const TargetRegInfo &TRI, int ArgIdx,
                                          const IntegerArgumentLayout &Layout);
 
+/// The authoritative PHI for integer argument slot \p ArgIdx in \p Block
+/// (selectAuthoritativeArgPhi), where it still holds the register at the op
+/// \p CallIdx: no op before it in the block writes the register, and none is
+/// a call that may change it (callClobbersRegister under \p Format), whose
+/// leftover the register holds instead.
+const PhiNode *argPhiReachingCall(const MedFunc &Func, const MedBlock &Block,
+                                  int CallIdx, const TargetRegInfo &TRI,
+                                  int ArgIdx,
+                                  const IntegerArgumentLayout &Layout,
+                                  BinaryFormat Format);
+
 /// Value reaching argument register \p ArgIdx at the call in block \p BlockId,
 /// found by walking the CFG backwards into predecessor blocks (nearest write,
 /// then a block PHI, then -- when \p AllowUnknownLiveIn -- an incoming

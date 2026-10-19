@@ -315,6 +315,7 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   }
   if (FatalDataPointerResolution)
     return nullptr;
+  collectSuppressedTableAddressOps(Func);
 
   auto *LLVMFunc = declareFunc(Func);
   if (Img)
