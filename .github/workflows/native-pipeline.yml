@@ -117,7 +117,8 @@ jobs:
             neverd neverd-worker NeverDAllocatorTests \
             NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests \
             NeverDHighControlFlowTests NeverDAccelerationTests \
-            NeverDStringScanTests NeverDTextEncodingTests
+            NeverDStringScanTests NeverDTextEncodingTests \
+            NeverDPythonRuntimeTests NeverDPythonPluginTests
       - name: Require every focused C++ case to execute and pass
         run: |
           python - <<'PY'
@@ -138,7 +139,9 @@ jobs:
                                   ('NeverDHighControlFlowTests', 420),
                                   ('NeverDAccelerationTests', 14),
                                   ('NeverDStringScanTests', 17),
-                                  ('NeverDTextEncodingTests', 3)):
+                                  ('NeverDTextEncodingTests', 3),
+                                  ('NeverDPythonRuntimeTests', 7),
+                                  ('NeverDPythonPluginTests', 3)):
               binary = Path('build-abi/bin') / (owner + suffix)
               listed = subprocess.check_output([str(binary), '--gtest_list_tests'], text=True)
               (output / (owner + '.inventory.txt')).write_text(listed)
@@ -209,7 +212,8 @@ jobs:
             neverd neverd-worker NeverDAllocatorTests \
             NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests \
             NeverDHighControlFlowTests NeverDAccelerationTests \
-            NeverDStringScanTests NeverDTextEncodingTests
+            NeverDStringScanTests NeverDTextEncodingTests \
+            NeverDPythonRuntimeTests NeverDPythonPluginTests
           python - <<'PY'
           import json, os, subprocess
           from pathlib import Path
