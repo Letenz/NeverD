@@ -1369,6 +1369,18 @@
         <source>Cannot write %1</source>
         <translation>Impossibile scrivere %1</translation>
     </message>
+    <message>
+        <source>Cannot create the recovery marker directory.</source>
+        <translation>Impossibile creare la directory dei marcatori di ripristino.</translation>
+    </message>
+    <message>
+        <source>Cannot remove %1: %2</source>
+        <translation>Impossibile rimuovere %1: %2</translation>
+    </message>
+    <message>
+        <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
+        <translation>Il database è cambiato mentre sono presenti modifiche recuperate in sospeso. Conservare la copia di lavoro prima di riaprirlo.</translation>
+    </message>
 </context>
 <context>
     <name>Representations</name>
@@ -1585,6 +1597,10 @@ Fai doppio clic per andare alla dichiarazione.</translation>
     <message>
         <source>Transformation failed: %1</source>
         <translation>Trasformazione non riuscita: %1</translation>
+    </message>
+    <message>
+        <source>Saved variable types need review: the analysis or local types changed</source>
+        <translation>I tipi di variabile salvati devono essere verificati: l’analisi o i tipi locali sono cambiati</translation>
     </message>
 </context>
 <context>
@@ -2453,6 +2469,26 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
     <message>
         <source>Type Libraries</source>
         <translation>Librerie di tipi</translation>
+    </message>
+    <message>
+        <source>Cannot open more disassembly views.</source>
+        <translation>Impossibile aprire altre viste di disassemblaggio.</translation>
+    </message>
+    <message>
+        <source>Could not export source: %1</source>
+        <translation>Impossibile esportare il codice sorgente: %1</translation>
+    </message>
+    <message>
+        <source>NeverD View-%1</source>
+        <translation>Vista NeverD-%1</translation>
+    </message>
+    <message>
+        <source>Showing %1 matches; use Next to continue the search.</source>
+        <translation>Visualizzate %1 corrispondenze; usare Avanti per continuare la ricerca.</translation>
+    </message>
+    <message>
+        <source>The engine cannot identify this source variable unambiguously</source>
+        <translation>Il motore non può identificare questa variabile sorgente senza ambiguità</translation>
     </message>
 </context>
 <context>
@@ -4344,6 +4380,14 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>Usa il tipo dell&apos;&amp;analisi</translation>
+    </message>
+    <message>
+        <source>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</source>
+        <translation>%1 è una variabile sorgente di %2 byte. Inserire un tipo scalare o puntatore tra i tipi locali.</translation>
+    </message>
+    <message>
+        <source>Remove this source type assertion and use the analysis type</source>
+        <translation>Rimuovere questa asserzione di tipo sorgente e usare il tipo ottenuto dall’analisi</translation>
     </message>
 </context>
 <context>

@@ -1369,6 +1369,18 @@
         <source>Cannot write %1</source>
         <translation>Не удалось записать %1</translation>
     </message>
+    <message>
+        <source>Cannot create the recovery marker directory.</source>
+        <translation>Не удалось создать каталог маркеров восстановления.</translation>
+    </message>
+    <message>
+        <source>Cannot remove %1: %2</source>
+        <translation>Не удалось удалить %1: %2</translation>
+    </message>
+    <message>
+        <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
+        <translation>База данных изменилась, пока восстановленные правки ожидают обработки. Сохраните рабочую копию перед повторным открытием.</translation>
+    </message>
 </context>
 <context>
     <name>Representations</name>
@@ -1590,6 +1602,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Transformation failed: %1</source>
         <translation>Не удалось выполнить преобразование: %1</translation>
+    </message>
+    <message>
+        <source>Saved variable types need review: the analysis or local types changed</source>
+        <translation>Сохранённые типы переменных требуют проверки: анализ или локальные типы изменились</translation>
     </message>
 </context>
 <context>
@@ -2459,6 +2475,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Type Libraries</source>
         <translation>Библиотеки типов</translation>
+    </message>
+    <message>
+        <source>Cannot open more disassembly views.</source>
+        <translation>Невозможно открыть дополнительные представления дизассемблера.</translation>
+    </message>
+    <message>
+        <source>Could not export source: %1</source>
+        <translation>Не удалось экспортировать исходный код: %1</translation>
+    </message>
+    <message>
+        <source>NeverD View-%1</source>
+        <translation>Представление NeverD-%1</translation>
+    </message>
+    <message>
+        <source>Showing %1 matches; use Next to continue the search.</source>
+        <translation>Показано совпадений: %1; нажмите «Далее», чтобы продолжить поиск.</translation>
+    </message>
+    <message>
+        <source>The engine cannot identify this source variable unambiguously</source>
+        <translation>Движок не может однозначно определить эту переменную исходного кода</translation>
     </message>
 </context>
 <context>
@@ -4371,6 +4407,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>Использовать тип &amp;анализа</translation>
+    </message>
+    <message>
+        <source>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</source>
+        <translation>%1 — переменная исходного кода размером %2 байт. Введите скалярный тип или тип указателя из локальных типов.</translation>
+    </message>
+    <message>
+        <source>Remove this source type assertion and use the analysis type</source>
+        <translation>Удалить это утверждение о типе исходного кода и использовать тип, полученный при анализе</translation>
     </message>
 </context>
 <context>

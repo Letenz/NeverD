@@ -1369,6 +1369,18 @@
         <source>Cannot write %1</source>
         <translation>%1에 쓸 수 없습니다</translation>
     </message>
+    <message>
+        <source>Cannot create the recovery marker directory.</source>
+        <translation>복구 표시 디렉터리를 만들 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Cannot remove %1: %2</source>
+        <translation>%1을(를) 제거할 수 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
+        <translation>복구된 편집 내용이 보류 중인 동안 데이터베이스가 변경되었습니다. 다시 열기 전에 작업 사본을 보존하세요.</translation>
+    </message>
 </context>
 <context>
     <name>Representations</name>
@@ -1580,6 +1592,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Transformation failed: %1</source>
         <translation>변환 실패: %1</translation>
+    </message>
+    <message>
+        <source>Saved variable types need review: the analysis or local types changed</source>
+        <translation>저장된 변수 유형을 검토해야 합니다: 분석 결과 또는 로컬 유형이 변경되었습니다</translation>
     </message>
 </context>
 <context>
@@ -2447,6 +2463,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Type Libraries</source>
         <translation>형식 라이브러리</translation>
+    </message>
+    <message>
+        <source>Cannot open more disassembly views.</source>
+        <translation>디스어셈블리 보기를 더 열 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Could not export source: %1</source>
+        <translation>소스를 내보낼 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>NeverD View-%1</source>
+        <translation>NeverD 보기-%1</translation>
+    </message>
+    <message>
+        <source>Showing %1 matches; use Next to continue the search.</source>
+        <translation>일치 항목 %1개를 표시합니다. 다음을 눌러 검색을 계속하세요.</translation>
+    </message>
+    <message>
+        <source>The engine cannot identify this source variable unambiguously</source>
+        <translation>엔진이 이 소스 변수를 명확하게 식별할 수 없습니다</translation>
     </message>
 </context>
 <context>
@@ -4317,6 +4353,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>분석 형식 사용(&amp;A)</translation>
+    </message>
+    <message>
+        <source>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</source>
+        <translation>%1은(는) %2바이트 소스 변수입니다. 로컬 유형에서 스칼라 또는 포인터 유형을 입력하세요.</translation>
+    </message>
+    <message>
+        <source>Remove this source type assertion and use the analysis type</source>
+        <translation>이 소스 유형 지정을 제거하고 분석에서 얻은 유형 사용</translation>
     </message>
 </context>
 <context>

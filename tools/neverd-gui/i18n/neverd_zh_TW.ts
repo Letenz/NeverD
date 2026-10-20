@@ -1369,6 +1369,18 @@
         <source>Cannot write %1</source>
         <translation>無法寫入 %1</translation>
     </message>
+    <message>
+        <source>Cannot create the recovery marker directory.</source>
+        <translation>無法建立復原標記目錄。</translation>
+    </message>
+    <message>
+        <source>Cannot remove %1: %2</source>
+        <translation>無法移除 %1：%2</translation>
+    </message>
+    <message>
+        <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
+        <translation>復原的編輯尚未處理時，資料庫已發生變更。重新開啟前請保留工作副本。</translation>
+    </message>
 </context>
 <context>
     <name>Representations</name>
@@ -1580,6 +1592,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Transformation failed: %1</source>
         <translation>轉換失敗：%1</translation>
+    </message>
+    <message>
+        <source>Saved variable types need review: the analysis or local types changed</source>
+        <translation>已儲存的變數類型需要複核：分析結果或本機類型已變更</translation>
     </message>
 </context>
 <context>
@@ -2447,6 +2463,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Type Libraries</source>
         <translation>型別庫</translation>
+    </message>
+    <message>
+        <source>Cannot open more disassembly views.</source>
+        <translation>無法開啟更多反組譯檢視。</translation>
+    </message>
+    <message>
+        <source>Could not export source: %1</source>
+        <translation>無法匯出原始碼：%1</translation>
+    </message>
+    <message>
+        <source>NeverD View-%1</source>
+        <translation>NeverD 檢視-%1</translation>
+    </message>
+    <message>
+        <source>Showing %1 matches; use Next to continue the search.</source>
+        <translation>已顯示 %1 個相符項目；使用「下一個」繼續搜尋。</translation>
+    </message>
+    <message>
+        <source>The engine cannot identify this source variable unambiguously</source>
+        <translation>引擎無法唯一確定此原始碼變數</translation>
     </message>
 </context>
 <context>
@@ -4317,6 +4353,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>使用分析得出的型別(&amp;A)</translation>
+    </message>
+    <message>
+        <source>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</source>
+        <translation>%1 是一個 %2 位元組的原始碼變數。請輸入本機類型中的純量或指標類型。</translation>
+    </message>
+    <message>
+        <source>Remove this source type assertion and use the analysis type</source>
+        <translation>移除此原始碼類型斷言並使用分析得到的類型</translation>
     </message>
 </context>
 <context>

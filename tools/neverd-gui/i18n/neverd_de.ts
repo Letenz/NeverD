@@ -1369,6 +1369,18 @@
         <source>Cannot write %1</source>
         <translation>%1 kann nicht geschrieben werden</translation>
     </message>
+    <message>
+        <source>Cannot create the recovery marker directory.</source>
+        <translation>Das Verzeichnis für Wiederherstellungsmarkierungen kann nicht erstellt werden.</translation>
+    </message>
+    <message>
+        <source>Cannot remove %1: %2</source>
+        <translation>%1 kann nicht entfernt werden: %2</translation>
+    </message>
+    <message>
+        <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
+        <translation>Die Datenbank wurde geändert, während wiederhergestellte Änderungen ausstehen. Sichern Sie die Arbeitskopie vor dem erneuten Öffnen.</translation>
+    </message>
 </context>
 <context>
     <name>Representations</name>
@@ -1585,6 +1597,10 @@ Doppelklicken, um zur Deklaration zu springen.</translation>
     <message>
         <source>Transformation failed: %1</source>
         <translation>Transformation fehlgeschlagen: %1</translation>
+    </message>
+    <message>
+        <source>Saved variable types need review: the analysis or local types changed</source>
+        <translation>Gespeicherte Variablentypen müssen überprüft werden: Die Analyse oder die lokalen Typen haben sich geändert</translation>
     </message>
 </context>
 <context>
@@ -2453,6 +2469,26 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
     <message>
         <source>Type Libraries</source>
         <translation>Typbibliotheken</translation>
+    </message>
+    <message>
+        <source>Cannot open more disassembly views.</source>
+        <translation>Es können keine weiteren Disassemblierungsansichten geöffnet werden.</translation>
+    </message>
+    <message>
+        <source>Could not export source: %1</source>
+        <translation>Quelltext konnte nicht exportiert werden: %1</translation>
+    </message>
+    <message>
+        <source>NeverD View-%1</source>
+        <translation>NeverD-Ansicht-%1</translation>
+    </message>
+    <message>
+        <source>Showing %1 matches; use Next to continue the search.</source>
+        <translation>%1 Treffer werden angezeigt; setzen Sie die Suche mit Weiter fort.</translation>
+    </message>
+    <message>
+        <source>The engine cannot identify this source variable unambiguously</source>
+        <translation>Die Engine kann diese Quelltextvariable nicht eindeutig identifizieren</translation>
     </message>
 </context>
 <context>
@@ -4344,6 +4380,14 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>Typ der &amp;Analyse verwenden</translation>
+    </message>
+    <message>
+        <source>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</source>
+        <translation>%1 ist eine Quelltextvariable mit %2 Byte. Geben Sie einen Skalar- oder Zeigertyp aus den lokalen Typen ein.</translation>
+    </message>
+    <message>
+        <source>Remove this source type assertion and use the analysis type</source>
+        <translation>Diese Quelltexttyp-Zuweisung entfernen und den ermittelten Typ verwenden</translation>
     </message>
 </context>
 <context>

@@ -1369,6 +1369,18 @@
         <source>Cannot write %1</source>
         <translation>%1 に書き込めません</translation>
     </message>
+    <message>
+        <source>Cannot create the recovery marker directory.</source>
+        <translation>復元マーカーのディレクトリを作成できません。</translation>
+    </message>
+    <message>
+        <source>Cannot remove %1: %2</source>
+        <translation>%1 を削除できません: %2</translation>
+    </message>
+    <message>
+        <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
+        <translation>復元した編集が保留中にデータベースが変更されました。再度開く前に作業コピーを保存してください。</translation>
+    </message>
 </context>
 <context>
     <name>Representations</name>
@@ -1580,6 +1592,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Transformation failed: %1</source>
         <translation>変換に失敗しました：%1</translation>
+    </message>
+    <message>
+        <source>Saved variable types need review: the analysis or local types changed</source>
+        <translation>保存した変数の型を確認してください: 解析結果またはローカル型が変更されました</translation>
     </message>
 </context>
 <context>
@@ -2447,6 +2463,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Type Libraries</source>
         <translation>型ライブラリ</translation>
+    </message>
+    <message>
+        <source>Cannot open more disassembly views.</source>
+        <translation>これ以上逆アセンブリビューを開けません。</translation>
+    </message>
+    <message>
+        <source>Could not export source: %1</source>
+        <translation>ソースをエクスポートできませんでした: %1</translation>
+    </message>
+    <message>
+        <source>NeverD View-%1</source>
+        <translation>NeverD ビュー-%1</translation>
+    </message>
+    <message>
+        <source>Showing %1 matches; use Next to continue the search.</source>
+        <translation>%1 件の一致を表示しています。「次へ」で検索を続行してください。</translation>
+    </message>
+    <message>
+        <source>The engine cannot identify this source variable unambiguously</source>
+        <translation>エンジンはこのソース変数を一意に識別できません</translation>
     </message>
 </context>
 <context>
@@ -4317,6 +4353,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>解析の型を使用(&amp;A)</translation>
+    </message>
+    <message>
+        <source>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</source>
+        <translation>%1 は %2 バイトのソース変数です。ローカル型からスカラー型またはポインター型を入力してください。</translation>
+    </message>
+    <message>
+        <source>Remove this source type assertion and use the analysis type</source>
+        <translation>このソース型の指定を削除し、解析で得られた型を使用する</translation>
     </message>
 </context>
 <context>

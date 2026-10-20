@@ -1369,6 +1369,18 @@
         <source>Cannot write %1</source>
         <translation>Cannot write %1</translation>
     </message>
+    <message>
+        <source>Cannot create the recovery marker directory.</source>
+        <translation>Cannot create the recovery marker directory.</translation>
+    </message>
+    <message>
+        <source>Cannot remove %1: %2</source>
+        <translation>Cannot remove %1: %2</translation>
+    </message>
+    <message>
+        <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
+        <translation>The database changed while recovered edits are pending. Preserve the working copy before reopening.</translation>
+    </message>
 </context>
 <context>
     <name>Representations</name>
@@ -1585,6 +1597,10 @@ Double-click to go to the declaration.</translation>
     <message>
         <source>Transformation failed: %1</source>
         <translation>Transformation failed: %1</translation>
+    </message>
+    <message>
+        <source>Saved variable types need review: the analysis or local types changed</source>
+        <translation>Saved variable types need review: the analysis or local types changed</translation>
     </message>
 </context>
 <context>
@@ -2453,6 +2469,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
     <message>
         <source>Type Libraries</source>
         <translation>Type Libraries</translation>
+    </message>
+    <message>
+        <source>Cannot open more disassembly views.</source>
+        <translation>Cannot open more disassembly views.</translation>
+    </message>
+    <message>
+        <source>Could not export source: %1</source>
+        <translation>Could not export source: %1</translation>
+    </message>
+    <message>
+        <source>NeverD View-%1</source>
+        <translation>NeverD View-%1</translation>
+    </message>
+    <message>
+        <source>Showing %1 matches; use Next to continue the search.</source>
+        <translation>Showing %1 matches; use Next to continue the search.</translation>
+    </message>
+    <message>
+        <source>The engine cannot identify this source variable unambiguously</source>
+        <translation>The engine cannot identify this source variable unambiguously</translation>
     </message>
 </context>
 <context>
@@ -4344,6 +4380,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>Use the &amp;analysis&apos; type</translation>
+    </message>
+    <message>
+        <source>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</source>
+        <translation>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</translation>
+    </message>
+    <message>
+        <source>Remove this source type assertion and use the analysis type</source>
+        <translation>Remove this source type assertion and use the analysis type</translation>
     </message>
 </context>
 <context>

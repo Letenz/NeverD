@@ -1369,6 +1369,18 @@
         <source>Cannot write %1</source>
         <translation>Impossible d&apos;écrire %1</translation>
     </message>
+    <message>
+        <source>Cannot create the recovery marker directory.</source>
+        <translation>Impossible de créer le répertoire des marqueurs de récupération.</translation>
+    </message>
+    <message>
+        <source>Cannot remove %1: %2</source>
+        <translation>Impossible de supprimer %1 : %2</translation>
+    </message>
+    <message>
+        <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
+        <translation>La base de données a changé alors que des modifications récupérées sont en attente. Conservez la copie de travail avant de la rouvrir.</translation>
+    </message>
 </context>
 <context>
     <name>Representations</name>
@@ -1585,6 +1597,10 @@ Double-cliquez pour aller à la déclaration.</translation>
     <message>
         <source>Transformation failed: %1</source>
         <translation>Échec de la transformation : %1</translation>
+    </message>
+    <message>
+        <source>Saved variable types need review: the analysis or local types changed</source>
+        <translation>Les types de variables enregistrés doivent être vérifiés : l’analyse ou les types locaux ont changé</translation>
     </message>
 </context>
 <context>
@@ -2453,6 +2469,26 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
     <message>
         <source>Type Libraries</source>
         <translation>Bibliothèques de types</translation>
+    </message>
+    <message>
+        <source>Cannot open more disassembly views.</source>
+        <translation>Impossible d’ouvrir davantage de vues de désassemblage.</translation>
+    </message>
+    <message>
+        <source>Could not export source: %1</source>
+        <translation>Impossible d’exporter le code source : %1</translation>
+    </message>
+    <message>
+        <source>NeverD View-%1</source>
+        <translation>Vue NeverD-%1</translation>
+    </message>
+    <message>
+        <source>Showing %1 matches; use Next to continue the search.</source>
+        <translation>%1 correspondances affichées ; utilisez Suivant pour poursuivre la recherche.</translation>
+    </message>
+    <message>
+        <source>The engine cannot identify this source variable unambiguously</source>
+        <translation>Le moteur ne peut pas identifier cette variable source sans ambiguïté</translation>
     </message>
 </context>
 <context>
@@ -4344,6 +4380,14 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>Utiliser le type de l&apos;&amp;analyse</translation>
+    </message>
+    <message>
+        <source>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</source>
+        <translation>%1 est une variable source de %2 octets. Saisissez un type scalaire ou pointeur parmi les types locaux.</translation>
+    </message>
+    <message>
+        <source>Remove this source type assertion and use the analysis type</source>
+        <translation>Supprimer cette assertion de type source et utiliser le type issu de l’analyse</translation>
     </message>
 </context>
 <context>
