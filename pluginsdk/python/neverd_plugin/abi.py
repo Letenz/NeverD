@@ -1896,6 +1896,18 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_stack_frame_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_enum_value_json",
+    "const char *",
+    ["neverd_session_t", "const char *", "const char *", "unsigned", "int"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_sections_json",
     "const char *",
     ["neverd_session_t"],

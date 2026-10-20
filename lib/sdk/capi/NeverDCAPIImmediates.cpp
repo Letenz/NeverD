@@ -143,10 +143,11 @@ llvm::json::Object neverd::sdk::searchNativeImmediates(Session &S,
           llvm::json::Object{{"operand", O.Operand},
                              {"value", "0x" + llvm::utohexstr(O.Value)},
                              {"bits", O.Bits}});
-    Items.push_back(llvm::json::Object{
-        {"addr", vaHex(H.first)},
-        {"context", std::string("Immediate ") + (Signed ? "-" : "") + Pattern.str()},
-        {"operands", std::move(Operands)}});
+    Items.push_back(
+        llvm::json::Object{{"addr", vaHex(H.first)},
+                           {"context", std::string("Immediate ") +
+                                           (Signed ? "-" : "") + Pattern.str()},
+                           {"operands", std::move(Operands)}});
   };
   bool More = false;
   const auto &Hits = Index.Matches;

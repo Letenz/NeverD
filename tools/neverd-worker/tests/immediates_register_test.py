@@ -5,6 +5,7 @@ import argparse
 import json
 from pathlib import Path
 import subprocess
+import struct
 import tempfile
 from transport_test import Client
 from source_synthesis_test import elf, ENTRY
@@ -82,8 +83,25 @@ def run(worker, executable=None):
         large = root / "large.elf"
         large.write_bytes(elf(bytes.fromhex("90")*10000 + bytes.fromhex("b82a000000c3")))
         ok(client, "open", {"path": str(large), "analysis": False})
+        assert page(client, "42", backward=True, **{"from": "0x1"})["items"] == []
         result = page(client, "42", backward=True)
         assert int(result["items"][0]["address"],16) == ENTRY+10000, result
+        # Decode/search and reaching definitions share the architecture owner,
+        # including when the frontend host is Windows x64.
+        a64 = root / "aarch64.elf"
+        image = bytearray(elf(bytes.fromhex("40058052e103002ac0035fd6")))
+        struct.pack_into("<H", image, 18, 183)
+        a64.write_bytes(image)
+        ok(client, "open", {"path": str(a64), "analysis": False})
+        assert int(page(client, "42")["items"][0]["address"],16) == ENTRY
+        result = query(4, "w0", "definitions")
+        assert [int(site["address"],16) for site in result["items"]] == [ENTRY], result
+        from data_presentation_test import fixture as data_fixture
+        data = root / "data-only.elf"
+        image, entry = data_fixture()
+        data.write_bytes(image)
+        ok(client, "open", {"path": str(data), "analysis": False})
+        assert page(client, "42", **{"from": hex(entry-1)})["items"] == []
         print("decoded immediates, register flow, undefined/call boundaries and CLI parity passed")
 
 
