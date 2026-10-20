@@ -2604,7 +2604,8 @@ TEST(RegistrationTryLevel, CxxSharedEntryOwnsItsProvenReturningFallthrough) {
 }
 
 BinaryImage makeCxxEntryAlignedImage(unsigned Alignment, uint32_t Allocation,
-                                     bool Wide) {
+                                     bool Wide, unsigned Saves = 7,
+                                     int32_t NodeAdjustment = 0) {
   auto Image = makeCxxEAXStateImage(false, 0);
   auto &Text = Image.Segments.front().Data;
   std::fill(Text.begin() + 0x20, Text.begin() + 0x100, 0xcc);
@@ -2622,14 +2623,21 @@ BinaryImage makeCxxEntryAlignedImage(unsigned Alignment, uint32_t Allocation,
     emit32(Code, Allocation);
   else
     Code.push_back(uint8_t(Allocation));
-  Code.insert(Code.end(), {0x53, 0x56, 0x57, 0xa1});
+  unsigned SavedWords = 0;
+  const uint8_t Registers[] = {0x53, 0x56, 0x57};
+  for (unsigned I = 0; I != 3; ++I)
+    if (Saves & (1u << I)) {
+      Code.push_back(Registers[I]);
+      ++SavedWords;
+    }
+  Code.push_back(0xa1);
   emit32(Code, kRData + 0xf0);
   Code.insert(Code.end(),
               {0x33, 0xc4, 0x50, 0x8d, uint8_t(Wide ? 0x84 : 0x44), 0x24});
   if (Wide)
-    emit32(Code, Allocation + 16);
+    emit32(Code, Allocation + 4 * (SavedWords + 1) + NodeAdjustment);
   else
-    Code.push_back(uint8_t(Allocation + 16));
+    Code.push_back(uint8_t(Allocation + 4 * (SavedWords + 1) + NodeAdjustment));
   Code.insert(Code.end(), {0x64, 0xa3, 0, 0, 0, 0, 0x8b, 0x08, 0x64, 0x89, 0x0d,
                            0, 0, 0, 0, 0x8b, 0xe5, 0x5d, 0xc3});
   std::copy(Code.begin(), Code.end(), Text.begin() + 0x20);
@@ -2667,6 +2675,57 @@ TEST(RegistrationTryLevel, CxxEntryAlignmentDoesNotBorrowAPrecedingGuess) {
         EXPECT_FALSE(EH->Registration->RealignedFrame);
         EXPECT_FALSE(Image.VerifiedFunctionEntries.count(kText + 0x20));
       }
+}
+
+TEST(RegistrationTryLevel, CxxEntryAlignmentCountsTheActualSavedWords) {
+  for (bool Wide : {false, true})
+    for (unsigned Saves = 0; Saves != 8; ++Saves)
+      for (uint32_t Allocation : {0, 20, 48}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Wide << ' ' << Saves << ' ' << Allocation);
+        for (int32_t Adjustment : {0, -4, 4}) {
+          SCOPED_TRACE(Adjustment);
+          const auto Image =
+              makeCxxEntryAlignedImage(8, Allocation, Wide, Saves, Adjustment);
+          const auto *EH = Image.ExceptionMetadata.findFunction(kText + 0x20);
+          if (Adjustment) {
+            EXPECT_TRUE(!EH || EH->CodeRange.Begin != kText + 0x20);
+            continue;
+          }
+          ASSERT_TRUE(EH);
+          EXPECT_EQ(EH->CodeRange.Begin, kText + 0x20);
+          ASSERT_TRUE(EH->Registration);
+          EXPECT_FALSE(EH->Registration->RegistrationOffset);
+          EXPECT_FALSE(EH->Registration->TryLevelOffset);
+          EXPECT_FALSE(EH->Registration->RealignedFrame);
+          EXPECT_FALSE(Image.VerifiedFunctionEntries.count(kText + 0x20));
+        }
+      }
+}
+
+TEST(RegistrationTryLevel, CxxEntryAlignmentSeparatesAdjacentRegistrations) {
+  auto Image = makeCxxEntryAlignedImage(8, 20, false, 6);
+  auto &Text = Image.Segments.front().Data;
+  // There is no independently discovered symbol at the second entry. Its
+  // complete registration prefix must delimit the first parent's metadata.
+  std::copy_n(Text.begin() + 0x20, 0x40, Text.begin() + 0x80);
+  writeLE<uint32_t>(Text.data() + 0x89, kText + 0x220);
+  std::copy_n(Text.begin() + 0x200, 11, Text.begin() + 0x220);
+  for (auto &Symbol : Image.Symbols)
+    if (Symbol.Addr == kText + 0xa0)
+      Symbol.Addr = kText + 0x100;
+  Image.ExceptionMetadata = {};
+  coff_loader::parseX86RegistrationExceptions(Image);
+  const auto *First = Image.ExceptionMetadata.findFunction(kText + 0x20);
+  const auto *Second = Image.ExceptionMetadata.findFunction(kText + 0x80);
+  ASSERT_TRUE(First);
+  ASSERT_TRUE(Second);
+  EXPECT_EQ(First->CodeRange.Begin, kText + 0x20);
+  EXPECT_EQ(First->CodeRange.End, kText + 0x80);
+  EXPECT_EQ(First->PersonalityVA, kText + 0x200);
+  EXPECT_EQ(Second->CodeRange.Begin, kText + 0x80);
+  EXPECT_EQ(Second->PersonalityVA, kText + 0x220);
+  EXPECT_NE(First, Second);
 }
 
 TEST(RegistrationTryLevel, CxxEntryAlignmentRequiresTheCompleteCurrentPrefix) {

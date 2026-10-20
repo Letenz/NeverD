@@ -6004,8 +6004,10 @@ shared-frame native reconstruction gate remains closed.
 `RegistrationTryLevel.CxxSharedEntry*` checks guessed padding and untyped data
 words inside instructions, with stated, exported, relocated, unreachable and
 explicit-control-entry counterexamples. `CxxEntryAlignment*` checks twenty
-alignment/allocation/immediate-width cases and fifteen incomplete or changed-prefix
-cases without granting fixed EBP slots or a verified native entry.
+alignment/allocation/immediate-width cases, all eight saved-register subsets
+with matching and mismatched node displacements, adjacent independently
+installed records, and fifteen incomplete or changed-prefix cases without
+granting fixed EBP slots or a verified native entry.
 `FunctionDiscoveryAlignment.RawDataPointerCandidatesRemainGuesses` checks
 COFF, ELF and Mach-O across x86, x64, ARM32 and ARM64, including existing
 symbols, relocation-slot order and later confirmation. Run these with

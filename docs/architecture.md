@@ -1895,9 +1895,11 @@ an operand while retaining stated, exported, relocated and conflicting direct
 entries. Data-pointer discovery marks an unrelocated address-valued word as
 the same weak candidate used for padding; a later relocated slot can confirm
 it independently of scan order. A complete stack-aligned C++ prefix establishes
-the installing function's start only: it supplies no fixed EBP coordinates or
-native frame receipt. Cleanup-only C++ bodies can end at their closed return
-graph without absorbing the following function.
+the installing function's start only. Its node displacement must account for
+the allocation, cookie and each actual EBX/ESI/EDI push; duplicated saves and a
+displacement for a different save count cannot establish an entry. This supplies
+no fixed EBP coordinates or native frame receipt. Cleanup-only C++ bodies can
+end at their closed return graph without absorbing the following function.
 The exact checked shared entry helper supplies its returning fallthrough to
 that ownership graph. Other calls, including later calls to the same target,
 retain the conservative control boundary; a function name alone proves no

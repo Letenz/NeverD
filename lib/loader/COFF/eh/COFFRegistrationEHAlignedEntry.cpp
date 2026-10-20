@@ -8,8 +8,6 @@
 
 #include "neverd/loader/ReadOnlyBytes.h"
 
-#include <algorithm>
-
 namespace neverd::coff_loader::registration_detail {
 namespace {
 
@@ -48,27 +46,39 @@ bool matchesEntry(const BinaryImage &Image, const InstallSite &Site, va_t Entry,
     Cursor += 3;
   if (Allocation < 0 || Allocation > limits::kMaxSourceCallBorrowedBytes)
     return false;
-  Code = Image.readVA(Entry, Cursor + 15);
-  const uint8_t Saves[] = {0x53, 0x56, 0x57, 0xa1};
-  if (!Code || !std::equal(std::begin(Saves), std::end(Saves), Code + Cursor) ||
-      readLE<uint32_t>(Code + Cursor + 4) !=
+  unsigned Saved = 0, SavedWords = 0;
+  while (
+      (Code = Image.readVA(Entry, Cursor + 1)) &&
+      (Code[Cursor] == 0x53 || Code[Cursor] == 0x56 || Code[Cursor] == 0x57)) {
+    const unsigned Bit = 1u << (Code[Cursor] - 0x50);
+    if (Saved & Bit)
+      return false;
+    Saved |= Bit;
+    ++SavedWords;
+    ++Cursor;
+  }
+  Code = Image.readVA(Entry, Cursor + 12);
+  if (!Code || Code[Cursor] != 0xa1 ||
+      readLE<uint32_t>(Code + Cursor + 1) !=
           Image.Base + Image.DynInfo.SecurityCookieRVA ||
-      Code[Cursor + 8] != 0x33 || Code[Cursor + 9] != 0xc4 ||
-      Code[Cursor + 10] != 0x50 || Code[Cursor + 11] != 0x8d ||
-      (Code[Cursor + 12] != 0x44 && Code[Cursor + 12] != 0x84) ||
-      Code[Cursor + 13] != 0x24)
+      Code[Cursor + 5] != 0x33 || Code[Cursor + 6] != 0xc4 ||
+      Code[Cursor + 7] != 0x50 || Code[Cursor + 8] != 0x8d ||
+      (Code[Cursor + 9] != 0x44 && Code[Cursor + 9] != 0x84) ||
+      Code[Cursor + 10] != 0x24)
     return false;
-  const va_t CookieOperand = Entry + Cursor + 4;
-  int64_t NodeOffset = int8_t(Code[Cursor + 14]);
-  if (Code[Cursor + 12] == 0x84) {
-    Code = Image.readVA(Entry, Cursor + 18);
+  const va_t CookieOperand = Entry + Cursor + 1;
+  int64_t NodeOffset = int8_t(Code[Cursor + 11]);
+  if (Code[Cursor + 9] == 0x84) {
+    Code = Image.readVA(Entry, Cursor + 15);
     if (!Code)
       return false;
-    NodeOffset = readLE<int32_t>(Code + Cursor + 14);
-    Cursor += 18;
-  } else
+    NodeOffset = readLE<int32_t>(Code + Cursor + 11);
     Cursor += 15;
-  if (NodeOffset != Allocation + 16)
+  } else
+    Cursor += 12;
+  // From the published ESP, only the guard and the registers actually pushed
+  // lie between the local allocation and the previous-chain word.
+  if (NodeOffset != Allocation + 4 * (SavedWords + 1))
     return false;
   Code = Image.readVA(Entry, Cursor + 6);
   return Code && Code[Cursor] == 0x64 && Code[Cursor + 1] == 0xa3 &&
