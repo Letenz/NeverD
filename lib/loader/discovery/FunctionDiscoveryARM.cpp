@@ -15,6 +15,7 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/ELF/ELFLoaderUtils.h"
 #include "neverd/loader/FunctionDiscovery.h"
+#include "neverd/support/ARMTrap.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
 
@@ -1089,8 +1090,7 @@ InstructionFacts ARMModeDiscovery::State::decodeFacts(va_t Cur,
         F.Flags |= InstructionFacts::SwitchesMode;
       break;
     }
-  if (Insn->id == ARM_INS_UDF || Insn->id == ARM_INS_BKPT ||
-      Insn->id == ARM_INS_TRAP)
+  if (isARMResumableTrapInstruction(Insn->id))
     F.Flags |= InstructionFacts::Trap;
   if (Insn->id == ARM_INS_SVC && Insn->detail->arm.op_count == 1 &&
       Insn->detail->arm.operands[0].type == ARM_OP_IMM &&

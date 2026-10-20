@@ -8,12 +8,15 @@
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/decode/Decoder.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -160,6 +163,212 @@ TEST(ResumableTrapIdentity, ArmBreakpointKeepsItsImmediate) {
             EXPECT_NE(Source.find("return 7;"), std::string::npos) << Source;
           }
     }
+}
+
+TEST(ResumableTrapIdentity, ArmUndefinedAliasesKeepTheirCodeAndLiveReturn) {
+  for (InstructionMode Mode : {InstructionMode::ARM, InstructionMode::Thumb})
+    for (uint32_t Code :
+         {0u, 1u, 0xf9u, 0xfeu, 0xffu, 0x1234u, 0xdefeu, 0xfdeeu, 0xffffu}) {
+      std::vector<uint8_t> Bytes;
+      if (Mode == InstructionMode::Thumb && Code <= 0xff)
+        Bytes = {static_cast<uint8_t>(Code), 0xde};
+      else if (Mode == InstructionMode::Thumb) {
+        const uint16_t First = 0xf7f0 | (Code >> 12);
+        const uint16_t Second = 0xa000 | (Code & 0xfff);
+        Bytes = {static_cast<uint8_t>(First), static_cast<uint8_t>(First >> 8),
+                 static_cast<uint8_t>(Second),
+                 static_cast<uint8_t>(Second >> 8)};
+      } else {
+        const uint32_t Word =
+            0xe7f000f0 | ((Code & 0xfff0) << 4) | (Code & 0xf);
+        for (unsigned Shift = 0; Shift < 32; Shift += 8)
+          Bytes.push_back(Word >> Shift);
+      }
+      auto Repeated = Bytes;
+      Repeated.insert(Repeated.end(), Bytes.begin(), Bytes.end());
+      for (BinaryFormat Format :
+           {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+        for (bool LLVMRoute : {false, true})
+          for (bool NoOpt : {false, true}) {
+            SCOPED_TRACE(::testing::Message()
+                         << int(Mode) << "/" << Code << "/" << int(Format)
+                         << "/" << LLVMRoute << "/" << NoOpt);
+            const auto Source = emitTraps(Repeated, "trap_identity", Arch::ARM,
+                                          Format, LLVMRoute, NoOpt, Mode);
+            EXPECT_EQ(occurrences(Source, "bkpt"), 0u) << Source;
+            const std::string Mnemonic = Code > 0xff ? "udf.w" : "udf";
+            EXPECT_EQ(occurrences(Source, "__asm__ volatile(\"" + Mnemonic +
+                                              " #0x" + llvm::utohexstr(Code) +
+                                              "\""),
+                      2u)
+                << Source;
+            EXPECT_NE(Source.find("return 7;"), std::string::npos) << Source;
+          }
+    }
+}
+
+TEST(ResumableTrapIdentity, EveryNarrowThumbTrapKeepsItsCodeAndVoidEffect) {
+  constexpr va_t Entry = 0x1000;
+  for (const uint8_t Opcode : {0xbe, 0xde})
+    for (unsigned Code = 0; Code < 256; ++Code) {
+      SCOPED_TRACE(::testing::Message() << unsigned(Opcode) << "/" << Code);
+      const uint8_t Bytes[] = {static_cast<uint8_t>(Code), Opcode};
+      const Intrinsic Expected =
+          Opcode == 0xbe ? Intrinsic::ArmBkpt : Intrinsic::ArmUdf;
+      for (bool Detail : {false, true}) {
+        Decoder Dec;
+        ASSERT_TRUE(Dec.init(Arch::ARM, InstructionMode::Thumb));
+        Dec.setDetail(Detail);
+        DecodedInsn Insn;
+        ASSERT_EQ(Dec.decodeOneLight(Bytes, sizeof(Bytes), Entry, Insn), 2);
+        EXPECT_TRUE(Dec.isResumableTrap(Insn));
+        // ARM terminator classification also reads predicates; the decoder's
+        // detail-free contract exposes only the opcode and encoded size.
+        if (Detail)
+          EXPECT_TRUE(Dec.isFunctionTerminator(Insn));
+      }
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Arch::ARM, InstructionMode::Thumb));
+      DecodedInsn Insn;
+      ASSERT_EQ(Dec.decodeOne(Bytes, sizeof(Bytes), Entry, Insn), 2);
+      std::vector<LowOp> Ops;
+      Dec.liftToLow(Insn, Ops);
+      unsigned Count = 0;
+      for (const auto &Op : Ops)
+        if (Op.Opcode == NdOp::INTRINSIC) {
+          ++Count;
+          EXPECT_EQ(Op.Output.Size, 0u);
+          ASSERT_EQ(Op.NumInputs, 2u);
+          EXPECT_EQ(Op.Inputs[0].Offset, static_cast<uint64_t>(Expected));
+          EXPECT_TRUE(Op.Inputs[1].isConst());
+          EXPECT_EQ(Op.Inputs[1].Offset, Code);
+        }
+      EXPECT_EQ(Count, 1u);
+    }
+}
+
+TEST(ResumableTrapIdentity, EveryWideUndefinedEncodingKeepsItsCode) {
+  for (InstructionMode Mode : {InstructionMode::ARM, InstructionMode::Thumb}) {
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::ARM, Mode));
+    for (uint32_t Code = 0; Code <= 0xffff; ++Code) {
+      SCOPED_TRACE(::testing::Message() << int(Mode) << "/" << Code);
+      uint32_t Word = 0xe7f000f0 | ((Code & 0xfff0) << 4) | (Code & 0xf);
+      if (Mode == InstructionMode::Thumb)
+        Word = 0xf7f0 | (Code >> 12) | ((0xa000 | (Code & 0xfff)) << 16);
+      const uint8_t Bytes[] = {
+          static_cast<uint8_t>(Word), static_cast<uint8_t>(Word >> 8),
+          static_cast<uint8_t>(Word >> 16), static_cast<uint8_t>(Word >> 24)};
+      DecodedInsn Insn;
+      ASSERT_EQ(Dec.decodeOne(Bytes, sizeof(Bytes), 0x1000, Insn), 4);
+      EXPECT_TRUE(Dec.isResumableTrap(Insn));
+      EXPECT_TRUE(Dec.isFunctionTerminator(Insn));
+      std::vector<LowOp> Ops;
+      Dec.liftToLow(Insn, Ops);
+      unsigned Count = 0;
+      for (const auto &Op : Ops)
+        if (Op.Opcode == NdOp::INTRINSIC) {
+          ++Count;
+          EXPECT_EQ(Op.Output.Size, 0u);
+          ASSERT_EQ(Op.NumInputs, 2u);
+          EXPECT_EQ(Op.Inputs[0].Offset,
+                    static_cast<uint64_t>(Intrinsic::ArmUdf));
+          EXPECT_TRUE(Op.Inputs[1].isConst());
+          EXPECT_EQ(Op.Inputs[1].Offset, Code);
+        }
+      EXPECT_EQ(Count, 1u);
+    }
+  }
+}
+
+TEST(ResumableTrapIdentity, ArmSourcesRecompileWithTheirUndefinedCodes) {
+#ifdef NEVERD_TEST_CLANG
+  const std::string Compiler = NEVERD_TEST_CLANG;
+#else
+  const auto Program = llvm::sys::findProgramByName("clang");
+  ASSERT_TRUE(bool(Program)) << "clang is required for trap recompilation";
+  const std::string Compiler = *Program;
+#endif
+  llvm::SmallString<128> SourcePath, ObjectPath, ErrorPath;
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-arm-trap", "c", SourcePath));
+  llvm::FileRemover RemoveSource(SourcePath);
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-arm-trap", "o", ObjectPath));
+  llvm::FileRemover RemoveObject(ObjectPath);
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-arm-trap", "err", ErrorPath));
+  llvm::FileRemover RemoveError(ErrorPath);
+  const std::optional<llvm::StringRef> Redirects[] = {
+      std::nullopt, std::nullopt, ErrorPath.str()};
+  for (InstructionMode Mode : {InstructionMode::ARM, InstructionMode::Thumb}) {
+    std::string Source;
+    std::vector<std::string> Encodings;
+    unsigned Index = 0;
+    for (uint32_t Code : {0xf9u, 0xfeu, 0xffu, 0x100u, 0x1234u, 0xffffu}) {
+      std::vector<uint8_t> Bytes;
+      if (Mode == InstructionMode::Thumb && Code <= 0xff)
+        Bytes = {static_cast<uint8_t>(Code), 0xde};
+      else {
+        const uint32_t Word =
+            Mode == InstructionMode::Thumb
+                ? 0xf7f0 | (Code >> 12) | ((0xa000 | (Code & 0xfff)) << 16)
+                : 0xe7f000f0 | ((Code & 0xfff0) << 4) | (Code & 0xf);
+        for (unsigned Shift = 0; Shift < 32; Shift += 8)
+          Bytes.push_back(Word >> Shift);
+      }
+      Encodings.emplace_back(Bytes.begin(), Bytes.end());
+      auto Repeated = Bytes;
+      Repeated.insert(Repeated.end(), Bytes.begin(), Bytes.end());
+      for (bool LLVMRoute : {false, true})
+        for (bool NoOpt : {false, true})
+          Source +=
+              emitTraps(Repeated, "trap_" + std::to_string(Index++), Arch::ARM,
+                        BinaryFormat::ELF, LLVMRoute, NoOpt, Mode);
+    }
+    std::error_code EC;
+    {
+      llvm::raw_fd_ostream Out(SourcePath, EC);
+      ASSERT_FALSE(EC);
+      Out << Source;
+    }
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      SCOPED_TRACE(::testing::Message() << int(Mode) << "/" << Optimization);
+      const llvm::StringRef Arguments[] = {
+          Compiler,
+          "--target=armv7-none-eabi",
+          Mode == InstructionMode::Thumb ? "-mthumb" : "-marm",
+          "-mfpu=neon",
+          "-mfloat-abi=softfp",
+          "-ffreestanding",
+          Optimization,
+          "-c",
+          SourcePath,
+          "-o",
+          ObjectPath};
+      std::string Error;
+      const int Result = llvm::sys::ExecuteAndWait(
+          Compiler, Arguments, std::nullopt, Redirects, 60, 0, &Error);
+      const auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
+      ASSERT_EQ(Result, 0) << Error
+                           << (Errors ? (*Errors)->getBuffer().str() : "");
+      auto Object = llvm::object::ObjectFile::createObjectFile(ObjectPath);
+      ASSERT_TRUE(bool(Object)) << llvm::toString(Object.takeError());
+      std::vector<size_t> Counts(Encodings.size(), 0);
+      for (const auto &Section : Object->getBinary()->sections()) {
+        if (!Section.isText())
+          continue;
+        auto Contents = Section.getContents();
+        ASSERT_TRUE(bool(Contents)) << llvm::toString(Contents.takeError());
+        for (size_t I = 0; I < Encodings.size(); ++I)
+          Counts[I] += occurrences(*Contents, Encodings[I]);
+      }
+      // Two instructions per function, across both routes and pipeline
+      // optimization settings. Check object bytes, not a comment in the C.
+      for (size_t Count : Counts)
+        EXPECT_EQ(Count, 8u);
+    }
+  }
 }
 
 TEST(ResumableTrapIdentity,

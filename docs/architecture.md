@@ -3315,6 +3315,16 @@ HighC uses the target toolchain's byte directive instead of an unsupported
 INT1 mnemonic. Both forms remain resumable and preserve the live return value.
 ARM/Thumb BKPT also remains assembly with its actual immediate; a debugtrap
 builtin would replace that code with the compiler's default breakpoint code.
+`support/ARMTrap.h` identifies UDF and its compiler aliases (`trap` and
+`__brkdiv0`) and their codes for lifting, discovery and exception-wrapper
+recognition. Thumb `__brkdiv0` remains UDF #249 with a void effect and the same
+owned-continuation rules as other UDF encodings; it cannot become BKPT or
+define R0.
+UDF codes above 255 use the unified-assembly `.w` suffix, which is required
+to assemble their wide Thumb form and is also accepted in ARM mode.
+Windows GS-wrapper recovery follows code after ARM UDF #254 and AArch64
+BRK #0xF000 instead of accepting those debugger breaks as terminal exits.
+A conflicting resumed path prevents inferring the wrapper's personality.
 `IntrinsicTermination.h` distinguishes the compiler's AArch64 `brk #0xF000`
 debugtrap from fatal BRK codes. Decode, LowIR/MedIR no-return propagation,
 HighIR effect classification and both C routes consume that code-sensitive

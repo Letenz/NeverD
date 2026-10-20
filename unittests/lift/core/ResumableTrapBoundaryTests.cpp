@@ -323,6 +323,12 @@ std::vector<TrapCase> siblingTraps() {
                    {0xfe, 0xde},
                    {42, 0x20, 0x70, 0x47},
                    true});
+  Cases.push_back({"thumb udf division alias",
+                   Arch::ARM,
+                   InstructionMode::Thumb,
+                   {0xf9, 0xde},
+                   {42, 0x20, 0x70, 0x47},
+                   true});
   Cases.push_back({"arm bkpt",
                    Arch::ARM,
                    InstructionMode::ARM,
@@ -1332,7 +1338,7 @@ TEST(ResumableTrapBoundary,
               : std::string(Case.Name).find("bkpt") != std::string::npos
                   ? "bkpt #"
               : std::string(Case.Name).find("udf") != std::string::npos
-                  ? "udf #"
+                  ? "__asm__ volatile(\"udf"
               : Case.Architecture == Arch::X86 || Case.Architecture == Arch::X64
                   ? "__debugbreak()"
                   : "__builtin_debugtrap()";

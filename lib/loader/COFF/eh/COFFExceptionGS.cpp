@@ -6,7 +6,9 @@
 
 #include "COFFExceptionDetail.h"
 
+#include "neverd/ir/intrinsics/IntrinsicTermination.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/support/ARMTrap.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include <capstone/capstone.h>
@@ -157,9 +159,18 @@ bool isTerminalTrap(Arch A, const cs_insn &Insn) {
     return Insn.id == X86_INS_UD0 || Insn.id == X86_INS_UD1 ||
            Insn.id == X86_INS_UD2;
   case Arch::AArch64:
-    return Insn.id == AARCH64_INS_BRK || Insn.id == AARCH64_INS_UDF;
-  case Arch::ARM:
-    return Insn.id == ARM_INS_UDF;
+    return Insn.id == AARCH64_INS_UDF ||
+           (Insn.id == AARCH64_INS_BRK && Insn.size == 4 &&
+            !isAArch64DebugBreakCode((readLE<uint32_t>(Insn.bytes) >> 5) &
+                                     0xFFFF));
+  case Arch::ARM: {
+    if (!isARMUndefinedInstruction(Insn.id) || !Insn.detail)
+      return false;
+    const auto Code = armExceptionCode(Insn, Insn.detail->arm);
+    // Windows ARM __debugbreak uses UDF #254. Neither its narrow alias nor
+    // its wide encoding proves the remaining wrapper path unreachable.
+    return Code && *Code != 0xFE;
+  }
   default:
     return false;
   }

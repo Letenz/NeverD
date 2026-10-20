@@ -106,7 +106,9 @@ TEST(MachineInstructionText, ARMKeepsTrapCodesAndBarrierOptions) {
   expectLifted(Arch::ARM, InstructionMode::Thumb, {0xfe, 0xde},
                Intrinsic::ArmUdf, 0xFE, "udf #0xFE");
   expectLifted(Arch::ARM, InstructionMode::ARM, {0xfe, 0xde, 0xff, 0xe7},
-               Intrinsic::ArmUdf, 0xFDEE, "udf #0xFDEE");
+               Intrinsic::ArmUdf, 0xFDEE, "udf.w #0xFDEE");
+  expectLifted(Arch::ARM, InstructionMode::Thumb, {0xf1, 0xf7, 0x34, 0xa2},
+               Intrinsic::ArmUdf, 0x1234, "udf.w #0x1234");
   expectLifted(Arch::ARM, InstructionMode::Thumb, {0x01, 0xbe},
                Intrinsic::ArmBkpt, 0x1, "bkpt #0x1");
   expectLifted(Arch::ARM, InstructionMode::ARM, {0x5b, 0xf0, 0x7f, 0xf5},
