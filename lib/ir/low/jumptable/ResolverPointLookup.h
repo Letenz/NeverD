@@ -26,14 +26,19 @@ class ResolverPointLookup {
   using Point = std::pair<va_t, int>;
   using Location = std::pair<int, int>;
   struct Entry {
-    Point Key{};
-    Location Value{};
+    va_t Address = 0;
+    int Sequence = 0;
     bool Valid = false;
     bool Present = false;
+    Location Value{};
   };
-  static constexpr size_t Capacity = 256;
-  using Table = std::array<Entry, Capacity>;
-  static_assert(sizeof(Table) <= 8 * 1024);
+  static constexpr size_t Ways = 4;
+  static constexpr size_t BucketCount = 128;
+  struct Table {
+    std::array<Entry, BucketCount * Ways> Values{};
+    std::array<uint8_t, BucketCount> NextVictim{};
+  };
+  static_assert(sizeof(Table) <= 13 * 1024);
   const void *Owner = nullptr;
   std::unique_ptr<Table> Entries;
   unsigned UncachedLookups = 0;
@@ -63,15 +68,29 @@ public:
     }
     const uint64_t Address = Key.first;
     const uint64_t Sequence = static_cast<uint32_t>(Key.second);
-    const size_t Slot = (Address ^ (Address >> 4) ^ (Address >> 16) ^
-                         (Address >> 32) ^ (Sequence * 2654435761U)) %
-                        Capacity;
-    auto &Saved = (*Entries)[Slot];
-    if (Saved.Valid && Saved.Key == Key)
-      return Saved.Present ? std::optional<Location>(Saved.Value)
-                           : std::nullopt;
+    const size_t Bucket = (Address ^ (Address >> 4) ^ (Address >> 16) ^
+                           (Address >> 32) ^ (Sequence * 2654435761U)) %
+                          BucketCount;
+    Entry *Saved = nullptr;
+    for (size_t I = 0; I < Ways; ++I) {
+      auto &Candidate = Entries->Values[Bucket * Ways + I];
+      // Buckets fill in order, and eviction never creates an empty slot.
+      if (!Candidate.Valid) {
+        Saved = &Candidate;
+        break;
+      }
+      if (Candidate.Address == Key.first && Candidate.Sequence == Key.second)
+        return Candidate.Present ? std::optional<Location>(Candidate.Value)
+                                 : std::nullopt;
+    }
     const auto Found = lookup();
-    Saved = {Key, Found.value_or(Location{}), true, Found.has_value()};
+    if (!Saved) {
+      auto &Next = Entries->NextVictim[Bucket];
+      Saved = &Entries->Values[Bucket * Ways + Next];
+      Next = static_cast<uint8_t>((Next + 1) % Ways);
+    }
+    *Saved = {Key.first, Key.second, true, Found.has_value(),
+              Found.value_or(Location{})};
     return Found;
   }
 };

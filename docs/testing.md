@@ -3020,6 +3020,8 @@ back and temporary override payloads cannot leave borrowed pointers behind.
 Resource failure and value-analysis incompleteness remain distinct.
 `ResolverPointLookup.*` checks exact instruction coordinates across cache
 collisions, missing points, high address bits and distinct operation sequences.
+A small colliding working set, including an absent point, must stop repeating
+ordered searches after warming the cache.
 Switching or moving immutable indexes must preserve their own coordinates, and
 later queries cannot change an already returned location. The graph/cache
 regressions retain the existing proof and evidence-budget checks.

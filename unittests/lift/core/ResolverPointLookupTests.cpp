@@ -8,6 +8,7 @@
 #include "jumptable/ResolverPointLookup.h"
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <map>
 #include <vector>
@@ -69,6 +70,47 @@ TEST(ResolverPointLookup, DifferentIndexesCannotShareCoordinates) {
        {&First, static_cast<const Index *>(&Other), &First})
     for (const auto &[Key, Value] : *Points)
       EXPECT_EQ(Lookup.find(*Points, Key), Value);
+}
+
+TEST(ResolverPointLookup, RepeatedQueriesKeepCollidingCoordinatesAndAbsence) {
+  struct CountingIndex {
+    Index Values = makeIndex(128);
+    mutable unsigned Searches = 0;
+    size_t size() const { return Values.size(); }
+    auto end() const { return Values.end(); }
+    auto find(Point Key) const {
+      ++Searches;
+      return Values.find(Key);
+    }
+  } Points;
+  const std::array<Point, 4> Queries = {
+      Point{0x1000, 0}, Point{0x10000001000, 0}, Point{0x20000001000, 0},
+      Point{0x30000001000, std::numeric_limits<int>::min()}};
+  for (unsigned I = 0; I < 3; ++I)
+    Points.Values.emplace(
+        Queries[I], Location{static_cast<int>(I + 1), static_cast<int>(I * 7)});
+
+  detail::ResolverPointLookup Lookup;
+  for (unsigned I = 0; I < 256; ++I)
+    ASSERT_EQ(Lookup.find(Points, Queries.front()),
+              Points.Values.at(Queries.front()));
+  auto Check = [&](Point Key) {
+    const auto Expected = Points.Values.find(Key);
+    const auto Actual = Lookup.find(Points, Key);
+    if (Expected == Points.Values.end())
+      EXPECT_FALSE(Actual);
+    else
+      EXPECT_EQ(Actual, Expected->second);
+  };
+  for (Point Key : Queries)
+    Check(Key);
+  const unsigned Before = Points.Searches;
+  // A small repeatedly used working set, including a missing point, should
+  // not keep evicting itself merely because its address bits collide.
+  for (unsigned Pass = 0; Pass < 128; ++Pass)
+    for (Point Key : Queries)
+      Check(Key);
+  EXPECT_EQ(Points.Searches, Before);
 }
 
 TEST(ResolverPointLookup, MovingTheGraphPreservesReturnedCoordinates) {
