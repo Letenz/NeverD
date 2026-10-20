@@ -99,6 +99,9 @@ struct OmittedCalleeMemo {
   const Conversion &keep(Callee &Holder, Conversion Converted);
   /// What the kept bodies count against MaxBytes.
   size_t bytes() const { return Bytes; }
+  /// The entries callee lifts know: the image's function symbols that are
+  /// not boundary guesses, read when the memo adopts the image.
+  const std::set<va_t> &functionEntries() const { return FunctionEntries; }
 
   std::map<va_t, Callee> Callees;
 
@@ -107,6 +110,7 @@ private:
   const Symbol *SymbolData = nullptr;
   size_t SymbolCount = 0;
   std::map<va_t, va_t> CallArgumentSources;
+  std::set<va_t> FunctionEntries;
   size_t Bytes = 0;
   uint64_t Clock = 0;
 };
