@@ -275,6 +275,49 @@ SymRef SymContext::mkOr(llvm::ArrayRef<SymRef> Ops) {
   std::sort(Rest.begin(), Rest.end());
   Rest.erase(std::unique(Rest.begin(), Rest.end()), Rest.end());
 
+  // The XOR of values contained in X cannot set any bit outside X. This
+  // includes X ^ (X & Y), without reasoning about the arithmetic inside X.
+  unsigned SubsetWork = 256;
+  const auto CoveredXor = [&](SymRef Value) {
+    if (op(Value) != SymOp::Xor)
+      return false;
+    for (SymRef Cover : Rest) {
+      if (!SubsetWork)
+        return false;
+      --SubsetWork;
+      if (Cover == Value)
+        continue;
+      bool Covered = true;
+      for (SymRef Term : operands(Value)) {
+        if (!SubsetWork)
+          return false;
+        --SubsetWork;
+        if (Term == Cover)
+          continue;
+        if (op(Term) != SymOp::And) {
+          Covered = false;
+          break;
+        }
+        bool Found = false;
+        for (SymRef Factor : operands(Term)) {
+          if (!SubsetWork)
+            return false;
+          --SubsetWork;
+          if (Factor == Cover) {
+            Found = true;
+            break;
+          }
+        }
+        if (!Found) {
+          Covered = false;
+          break;
+        }
+      }
+      if (Covered)
+        return true;
+    }
+    return false;
+  };
   // Dual absorption: x | (x & y) == x, including compound x.
   llvm::SmallVector<SymRef, 8> Unabsorbed;
   for (SymRef R : Rest) {
@@ -282,6 +325,7 @@ SymRef SymContext::mkOr(llvm::ArrayRef<SymRef> Ops) {
         op(R) == SymOp::And && llvm::any_of(operands(R), [&](SymRef C) {
           return std::binary_search(Rest.begin(), Rest.end(), C);
         });
+    Absorbed |= CoveredXor(R);
     if (!Absorbed)
       Unabsorbed.push_back(R);
   }
