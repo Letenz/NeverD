@@ -1339,7 +1339,8 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
               !Occurrence.PCRelativeFromInstructionEnd ||
               Occurrence.TargetVA == InvalidVA ||
               Occurrence.TargetOwnerVA == InvalidVA ||
-              !Img.hasExecutableCodeOwnerAt(Occurrence.TargetVA) ||
+              !Img.hasExecutableCodeOwnerAt(Occurrence.TargetVA,
+                                            ExecutableCodeOwners) ||
               !Img.relocatedTargetBelongsToOwner(Occurrence.TargetVA,
                                                  Occurrence.TargetOwnerVA) ||
               Rec == Insns.end() || Rec->second.IsInstructionGuard ||
@@ -1601,8 +1602,8 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
         const va_t Last = Address + Memory.AccessSize - 1;
         if (!Img.hasObjectDataProvenance(Address) ||
             !Img.hasObjectDataProvenance(Last) ||
-            Img.hasExecutableCodeOwnerAt(Address) ||
-            Img.hasExecutableCodeOwnerAt(Last) ||
+            Img.hasExecutableCodeOwnerAt(Address, ExecutableCodeOwners) ||
+            Img.hasExecutableCodeOwnerAt(Last, ExecutableCodeOwners) ||
             isRuntimeWritableAddress(Img, Address) ||
             isRuntimeWritableAddress(Img, Last) ||
             !Img.relocatedTargetBelongsToOwner(Address,
@@ -2011,7 +2012,7 @@ bool CFGBuilder::prepareCandidateFiniteProofScratch(
   const uint32_t Alignment = getInsnAlignment();
   for (va_t Target : PhysicalTargets) {
     if (Target == InvalidVA || (Alignment > 1 && Target % Alignment != 0) ||
-        !Img.hasExecutableCodeOwnerAt(Target) ||
+        !Img.hasExecutableCodeOwnerAt(Target, ExecutableCodeOwners) ||
         !Img.hasExecutableCodeOwnerRange(Target, Alignment) ||
         !Img.readVA(Target, 1))
       return false;
@@ -2230,7 +2231,7 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
       ExploredAddrs.insert(Cur);
 
       const auto *Seg = Img.getSegmentFor(Cur);
-      if (!Seg || !Img.hasExecutableCodeOwnerAt(Cur)) {
+      if (!Seg || !Img.hasExecutableCodeOwnerAt(Cur, ExecutableCodeOwners)) {
         TruncatedPathAddresses.insert(Cur);
         break;
       }
@@ -2345,7 +2346,7 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
       // loader saw no relocation).  Record the target so the emitter symbolizes
       // the folded constant to `ptrtoint @func` rather than the stale VA.
       if (va_t Ref = Dec.pcRelCodeRefTarget(DI); Ref != InvalidVA) {
-        if (Img.hasExecutableCodeOwnerAt(Ref)) {
+        if (Img.hasExecutableCodeOwnerAt(Ref, ExecutableCodeOwners)) {
           DiscoveredCodeRefs.insert(Ref);
           DiscoveredCodeRefSources[Ref].insert(Cur);
 
@@ -4140,7 +4141,8 @@ void CFGBuilder::completeExactARMRelativeLiteralAddresses(
         Occurrence.TargetVA = Candidate.TargetVA;
         Occurrence.TargetOwnerVA = Candidate.TargetOwnerVA;
         Occurrence.Width = 4;
-        Occurrence.Provenance = Img.hasExecutableCodeOwnerAt(Candidate.TargetVA)
+        Occurrence.Provenance = Img.hasExecutableCodeOwnerAt(
+                                    Candidate.TargetVA, ExecutableCodeOwners)
                                     ? ConstantAddressProvenance::CodeAddress
                                     : ConstantAddressProvenance::DataAddress;
         Occurrence.DefinesOutput = true;
