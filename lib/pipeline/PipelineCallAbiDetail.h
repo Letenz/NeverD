@@ -17,6 +17,7 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/DataSymbolBinding.h"
+#include "neverd/loader/ExecutableCodeOwnerIndex.h"
 
 #include "llvm/ADT/ArrayRef.h"
 
@@ -182,6 +183,11 @@ struct OmittedCalleeMemo {
   const std::map<va_t, PointerVariableCallee> &pointerCallees() const {
     return PointerCallees;
   }
+  /// The code owners of the image the memo adopted, indexed for the lifts of
+  /// the callees read of it, where they first need them.  Like the analysis
+  /// cache's, the index serves until the memo adopts another image or the
+  /// cache is reset.
+  const ExecutableCodeOwnerIndex &codeOwners();
 
   std::map<va_t, Callee> Callees;
 
@@ -192,6 +198,7 @@ private:
   std::map<va_t, va_t> CallArgumentSources;
   std::set<va_t> FunctionEntries;
   std::map<va_t, PointerVariableCallee> PointerCallees;
+  std::optional<ExecutableCodeOwnerIndex> CodeOwners;
   size_t Bytes = 0;
   uint64_t Clock = 0;
 };

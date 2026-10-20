@@ -63,6 +63,8 @@ class Evaluator {
   Values Memo;
   size_t &Budget;
   bool Complete = false;
+  /// The work building the evaluator charged.
+  size_t Built = 0;
 
   /// The block \p Id names, where the function has one.  Blocks are numbered
   /// from zero; DenseMap reserves the largest and smallest ints.
@@ -106,9 +108,30 @@ class Evaluator {
 public:
   Evaluator(const MedFunc &F, const BinaryImage &I, size_t &Remaining)
       : Func(F), Image(I), Budget(Remaining) {
+    const size_t Before = Budget;
+    build();
+    Built = Before - Budget;
+  }
+
+  /// Charges the work of building the evaluator over the unchanged function
+  /// again and forgets what it evaluated: it then answers, and charges, as a
+  /// new evaluator would.  Where that work does not fit, none is left and the
+  /// evaluator is incomplete, as a new one would be.
+  void renew() {
+    Memo.clear();
+    if (Built > Budget) {
+      Budget = 0;
+      Complete = false;
+      return;
+    }
+    Budget -= Built;
+  }
+
+private:
+  void build() {
     std::map<int, std::set<int>> Incoming;
     llvm::DenseSet<Key> Outputs;
-    for (const auto &B : F.Blocks) {
+    for (const auto &B : Func.Blocks) {
       if (!spend(1 + B.Phis.size() + B.Ops.size()) || B.Id < 0 ||
           B.Id == std::numeric_limits<int>::max() ||
           !Blocks.try_emplace(B.Id, &B).second)
@@ -138,7 +161,7 @@ public:
     for (const auto &[Id, Preds] : Incoming)
       if (!block(Id))
         return;
-    for (const auto &B : F.Blocks)
+    for (const auto &B : Func.Blocks)
       for (const auto &P : B.Phis) {
         if (!spend(B.Preds.size() + P.Args.size()))
           return;
@@ -148,6 +171,7 @@ public:
     Complete = true;
   }
 
+public:
   bool exhausted() const { return !Budget; }
   bool complete() const { return Complete; }
   bool hasCompletePhi(const PhiNode &P) const {
@@ -403,8 +427,10 @@ public:
   }
 };
 
+/// Folds the scan loop \p Block where it can prove its exit; \p Shared is an
+/// evaluator over \p Func as it is, which a scan that folds nothing leaves.
 bool foldScan(MedFunc &Func, MedBlock &Block, const BinaryImage &Image,
-              size_t &Budget) {
+              size_t &Budget, std::optional<Evaluator> &Shared) {
   if (Block.Id == 0 || Block.Preds.size() != 2 || Block.Succs.size() != 2 ||
       Block.Phis.empty() || Block.Ops.empty() ||
       !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty() ||
@@ -431,7 +457,11 @@ bool foldScan(MedFunc &Func, MedBlock &Block, const BinaryImage &Image,
       return false;
     Local.insert(key(Op.Output));
   }
-  Evaluator Eval(Func, Image, Budget);
+  if (Shared)
+    Shared->renew();
+  else
+    Shared.emplace(Func, Image, Budget);
+  Evaluator &Eval = *Shared;
   if (!Eval.complete())
     return false;
   Values State;
@@ -565,10 +595,15 @@ bool foldImmutableTableScans(MedFunc &Func, const BinaryImage &Image) {
         Op.Inputs[0] = *Value;
         Progress = true;
       }
+    // An evaluator over the function as the scans tried so far left it.
+    std::optional<Evaluator> Shared;
     for (auto &Block : Func.Blocks) {
       if (!Budget)
         break;
-      Progress |= foldScan(Func, Block, Image, Budget);
+      if (foldScan(Func, Block, Image, Budget, Shared)) {
+        Progress = true;
+        Shared.reset();
+      }
     }
     Changed |= Progress;
     if (!Progress)

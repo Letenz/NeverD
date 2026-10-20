@@ -29,6 +29,7 @@
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include <algorithm>
@@ -115,8 +116,15 @@ void OmittedCalleeMemo::adopt(const BinaryImage &Img,
   CallArgumentSources = Result.CallArgumentSources;
   FunctionEntries = calleeLiftEntries(Img);
   PointerCallees = collectPointerVariableCallees(Img);
+  CodeOwners.reset();
   Callees.clear();
   Bytes = 0;
+}
+
+const ExecutableCodeOwnerIndex &OmittedCalleeMemo::codeOwners() {
+  if (!CodeOwners)
+    CodeOwners.emplace(*Image);
+  return *CodeOwners;
 }
 
 OmittedCalleeMemo::Conversion *
@@ -280,9 +288,17 @@ public:
   }
   /// Lifts \p Target into \p Low, once.
   const LowFunc &lift(va_t Target, std::optional<LowFunc> &Low) {
-    if (!Low)
+    if (!Low) {
+      // The lifts look the image's code owners up in one index: the memo's,
+      // or one built for the first lift of this read.
+      if (!OwnersLent) {
+        Builder.setExecutableCodeOwnerIndex(Memo ? &Memo->codeOwners()
+                                                 : &Owners.emplace(Img));
+        OwnersLent = true;
+      }
       Low.emplace(
           Builder.build(Img, Dec, Target, Img.getFunctionNameAt(Target)));
+    }
     return *Low;
   }
   /// Reads \p Target's lift into \p Read: the operations of its blocks.
@@ -359,6 +375,8 @@ private:
   std::set<va_t> OwnEntries;
   const std::set<va_t> *Entries = nullptr;
   Decoder Dec;
+  std::optional<ExecutableCodeOwnerIndex> Owners;
+  bool OwnersLent = false;
   CFGBuilder Builder;
 };
 
