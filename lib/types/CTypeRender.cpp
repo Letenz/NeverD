@@ -1400,6 +1400,14 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
   // spelling of the unit defines.
   for (const LocalType *Type : Theirs)
     Result.Types.push_back(Type->Name);
+  // A function the system's headers declare by the name of a record they
+  // define is an ordinary identifier the text declares (<sys/sysinfo.h>'s
+  // sysinfo beside struct sysinfo, sigaction, flock): a unit spells the
+  // record by its tag, which a typedef of its name would contradict.
+  for (const LocalType *Type : Theirs)
+    if ((Type->Kind == TypeKind::Struct || Type->Kind == TypeKind::Union) &&
+        System && System->findPrototype(Type->Name))
+      Result.Identifiers.push_back(Names.type(Type->Name));
   Result.Text = "// " + std::to_string(Order.size()) +
                 " types, from the program's local types.\n";
   if (!TheirHeaders.empty()) {
