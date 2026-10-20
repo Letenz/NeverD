@@ -80,6 +80,8 @@ std::string_view isoAliasTarget(std::string_view Name) {
 
 unsigned varArgFixedCount(std::string_view Name, LibCVariant Variant) {
   Name = routineOfSymbol(Name, Variant);
+  if (const std::string_view Routine = largeFileRoutine(Name); !Routine.empty())
+    Name = Routine;
   if (const std::string_view Standard = isoAliasTarget(Name); Standard != Name)
     return varArgFixedCount(Standard, Variant);
   if (Variant != LibCVariant::GNU)
@@ -252,7 +254,10 @@ bool isCStringParameter(std::string_view Name, unsigned Index) {
   };
   // A row names the routine as its header declares it (`__fwriting`); the
   // lookup ignores leading underscores on both sides, as the variant rows'.
-  const std::string_view Bare = stripLeadingUnderscores(Name);
+  // A large-file routine takes its strings where its routine does.
+  std::string_view Bare = stripLeadingUnderscores(Name);
+  if (const std::string_view Routine = largeFileRoutine(Bare); !Routine.empty())
+    Bare = Routine;
   for (const StringParam &Param : StringParams)
     if (Param.Index == Index &&
         std::string_view(stripLeadingUnderscores(Param.Name)) == Bare)
@@ -273,6 +278,8 @@ std::optional<std::string_view> functionPointerParameter(std::string_view Name,
 #include "neverd/libc/LibCFunctionPointerParams.inc"
 #undef LIBC_FUNCTION_POINTER_PARAM
   };
+  // A large-file routine has rows of its own: its function's type names the
+  // large-file records (scandir64's comparison takes struct dirent64).
   const std::string_view Bare =
       stripLeadingUnderscores(routineOfSymbol(Name, Variant));
   if (Variant != LibCVariant::GNU)
@@ -303,8 +310,10 @@ bool isObjectPointerParameter(std::string_view Name, unsigned Index,
   }();
   if (Index >= 64)
     return false;
-  const std::string_view Bare =
+  std::string_view Bare =
       stripLeadingUnderscores(routineOfSymbol(Name, Variant));
+  if (const std::string_view Routine = largeFileRoutine(Bare); !Routine.empty())
+    Bare = Routine;
   if (Variant != LibCVariant::GNU)
     if (const auto Pointers = variant_rows::pointers(Bare, Variant))
       return Pointers->ObjectPointers >> Index & 1;

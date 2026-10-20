@@ -1246,6 +1246,37 @@ TEST(TypeRender, UnitsSpellHeaderTypedefRecordsByTheirNames) {
   EXPECT_TRUE(llvm::is_contained(Embedded.HeaderTypedefs, "fd_set"));
 }
 
+TEST(TypeRender, UnitsSpellHeaderTypedefEnumerationsByTheirNames) {
+  // glibc's <search.h> names twalk's VISIT by a typedef alone (`typedef
+  // enum {...} VISIT;`), which leaves it no tag: a unit spells it by that
+  // name in its checks and records, and lists it, so that it declares no
+  // `typedef enum VISIT VISIT;` of its own, which would contradict the
+  // header's.
+  TypeLibrary Library(DataModel::LP64);
+  const TypeLibrary *Glibc = headerLibrary(HeaderLibrary::LinuxX64);
+  ASSERT_NE(Glibc, nullptr);
+  const LocalType *Theirs = Glibc->find("VISIT");
+  ASSERT_NE(Theirs, nullptr);
+  ASSERT_EQ(Theirs->Kind, TypeKind::Enum);
+  ASSERT_TRUE(Theirs->TypedefNamed);
+  mergeHeaderTypes(Library, *Glibc);
+  ASSERT_TRUE(
+      parseCTypes("struct walker { VISIT order; int depth; };\n", Library)
+          .ok());
+  RenderOptions Options = in(Language::C);
+  Options.SystemLibrary = HeaderLibrary::LinuxX64;
+  Options.Asserts = true;
+  const EmbeddedC Embedded =
+      renderEmbeddedC(Library, {Library.find("walker")}, Options);
+  EXPECT_TRUE(contains(Embedded.Text, "#include <" + Theirs->Header + ">\n"))
+      << Embedded.Text;
+  EXPECT_TRUE(contains(Embedded.Text, "static_assert(sizeof(VISIT) == 4"))
+      << Embedded.Text;
+  EXPECT_TRUE(contains(Embedded.Text, "VISIT order;")) << Embedded.Text;
+  EXPECT_FALSE(contains(Embedded.Text, "enum VISIT")) << Embedded.Text;
+  EXPECT_TRUE(llvm::is_contained(Embedded.HeaderTypedefs, "VISIT"));
+}
+
 TEST(TypeRender, UnitsTakeTheSystemsOwnTypesFromItsHeaders) {
   // A decompiled unit includes the C library's headers, which define what a
   // program's record holds, struct stat: defined again, it would not

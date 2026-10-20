@@ -228,6 +228,10 @@ std::optional<LibCArity> libcArityForSymbol(std::string_view Name,
 bool isKnownFunction(std::string_view Name);
 
 /// Returns e.g. "stdlib.h", or nullptr if not a known libc function.
+/// The routine the GNU C Library's large-file routine \p Name is the
+/// 64-bit-offset variant of (`open64` of `open`), which takes and returns
+/// alike (LibCLargeFile.def); empty for any other name.
+std::string_view largeFileRoutine(std::string_view Name);
 const char *headerFor(std::string_view Name);
 
 /// If Name is a known variadic C function (printf, fprintf, etc.) of C

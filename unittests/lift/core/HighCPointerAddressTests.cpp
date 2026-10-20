@@ -47234,6 +47234,41 @@ TEST(HighCPointerAddresses, RecordsHeadersNameByTypedefsTakeTheirTypedefs) {
   expectCSyntax("#include <pthread.h>\n" + Source);
 }
 
+TEST(HighCPointerAddresses,
+     EnumerationsHeadersNameByTypedefsTakeTheirTypedefs) {
+  // glibc's <search.h> names VISIT by a typedef alone, which leaves it no
+  // tag: the unit declares no `typedef enum VISIT VISIT;` of its own, which
+  // would contradict the header's.  An enumeration the unit's own types
+  // define keeps its typedef.
+  HighFunc Func;
+  Func.Name = "probe_walk";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(4);
+  Func.Params = {{"walk", NdType::makePtr(NdType::makeNamedRecord("walker"))}};
+  returnValue(Func, HighExpr::makeConst(0, 4));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text = "#include <search.h>\n"
+                       "enum order { first, last };\n"
+                       "struct walker { VISIT visit; enum order order; };\n";
+    Definitions.Records = {{"walker", false}};
+    Definitions.Tags = {{"walker", false}};
+    Definitions.Enumerations = {"VISIT", "order"};
+    Definitions.HeaderTypedefs = {"VISIT"};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_EQ(Source.find("typedef enum VISIT"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("typedef enum order order;"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, HeaderRoutinesReturnTheirDeclaredPointers) {
   // <semaphore.h> declares sem_open variadic, so no prototype here gives
   // its result: its declaration returns a sem_t *, which an integer local
@@ -47376,6 +47411,72 @@ TEST(HighCPointerAddresses, RecordsNamedLikeLibraryRoutinesAreSpelledByTags) {
   EXPECT_EQ(Source.find("typedef struct stat stat;"), std::string::npos)
       << Source;
   EXPECT_NE(Source.find("struct stat* buffer"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses,
+     TypedefParametersOfDefinedFunctionsTakeTheirTypedefs) {
+  // hardlink passes its walker, a machine integer, to nftw's PLT stub,
+  // which the unit defines and declares with the header's __nftw_func_t:
+  // the argument converts to that typedef.  Converted to the function type
+  // the type library gives, whose pointers the unit spells void *, it would
+  // match no parameter C declares.
+  const auto Compare = NdType::makePtr(NdType::makeFunc(
+      NdType::makeInt(4), {NdType::makePtr(NdType::makeVoid()),
+                           NdType::makePtr(NdType::makeVoid())}));
+  auto Named = std::make_shared<NdType>(*Compare);
+  Named->TypedefName = "cmp_fn";
+  class StubDbg : public NullDebugContext {
+  public:
+    explicit StubDbg(TypeRef Named) : Named(std::move(Named)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x140002000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "sort_with";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeVoid();
+      FS.Params = {{"compare", Named}};
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Named;
+  } Dbg(Named);
+  HighFunc Stub;
+  Stub.Name = "sort_with";
+  Stub.Entry = 0x140002000;
+  Stub.ReturnType = NdType::makeVoid();
+  Stub.Params = {{"compare", Named}};
+  returnValue(Stub, nullptr);
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "sort_all";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  Func.Params = {{"walker", Word}};
+  Func.Body = {callStmt("sort_with", 0x140002000, {parameter(0, Word)})};
+  returnValue(Func, nullptr);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text =
+        "typedef int32_t (*cmp_fn)(const void *, const void *);\n";
+    Definitions.Types = {"cmp_fn"};
+    Definitions.Identifiers = {"cmp_fn"};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Stub, Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("sort_with(cmp_fn compare)"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("sort_with((cmp_fn)"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(int32_t (*)(void*, void*))"), std::string::npos)
+      << Source;
   expectCSyntax(Source);
 }
 
@@ -47766,6 +47867,127 @@ TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
   OS.flush();
   EXPECT_NE(Source.find("(int (*)(const void *, const void *))"),
             std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, SocketAddressesPassAsVoidPointers) {
+  // Under _GNU_SOURCE glibc declares bind's address a transparent union of
+  // the sockaddr pointers, which the type library gives as the union: an
+  // address the machine holds as an integer passes as void *, which the
+  // union takes, as it takes no integer and no pointer to another record.
+  const auto Union = NdType::makeNamedRecord("__CONST_SOCKADDR_ARG", 8);
+  class SocketDbg : public NullDebugContext {
+  public:
+    explicit SocketDbg(TypeRef Union) : Union(std::move(Union)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x140002000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "bind";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeInt(4);
+      FS.Params = {{"fd", NdType::makeInt(4)},
+                   {"addr", Union},
+                   {"len", NdType::makeInt(4, false)}};
+      FS.PrototypeFromCLibrary = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Union;
+  } Dbg(Union);
+  const auto Int = NdType::makeInt(4);
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "bind_to";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = Int;
+  Func.Params = {{"fd", Int}, {"address", Word}};
+  auto Bound = HighExpr::makeCall(
+      "bind", 0x140002000,
+      {parameter(0, Int), parameter(1, Word), HighExpr::makeConst(16, 4)});
+  Bound->Type = Int;
+  returnValue(Func, std::move(Bound));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <sys/socket.h>"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("(void*)(uintptr_t)"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, LargeFileComparatorsTakeTheirOwnRecords) {
+  // A program built for large files calls scandir64, whose comparison the
+  // header types with struct dirent64 where scandir's takes struct dirent:
+  // the argument converts to scandir64's own type, which C accepts.
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Select =
+      NdType::makePtr(NdType::makeFunc(NdType::makeInt(4), {Pointer}));
+  const auto Compare =
+      NdType::makePtr(NdType::makeFunc(NdType::makeInt(4), {Pointer, Pointer}));
+  class ScanDbg : public NullDebugContext {
+  public:
+    ScanDbg(TypeRef Pointer, TypeRef Select, TypeRef Compare)
+        : Pointer(std::move(Pointer)), Select(std::move(Select)),
+          Compare(std::move(Compare)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x140002000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "scandir64";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeInt(4);
+      FS.Params = {{"dir", NdType::makePtr(NdType::makeInt(1))},
+                   {"namelist", Pointer},
+                   {"selector", Select},
+                   {"cmp", Compare}};
+      FS.PrototypeFromCLibrary = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Pointer, Select, Compare;
+  } Dbg(Pointer, Select, Compare);
+  HighFunc Order;
+  Order.Name = "compare_entries";
+  Order.Entry = 0x140003000;
+  Order.ReturnType = NdType::makeInt(4);
+  Order.Params = {{"a", Pointer}, {"b", Pointer}};
+  returnValue(Order, HighExpr::makeConst(0, 4));
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "list_directory";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  Func.Params = {{"dir", NdType::makePtr(NdType::makeInt(1))},
+                 {"list", Pointer}};
+  Func.Body = {
+      callStmt("scandir64", 0x140002000,
+               {parameter(0, NdType::makePtr(NdType::makeInt(1))),
+                parameter(1, Pointer), HighExpr::makeConst(0, 8),
+                HighExpr::makeConst(0x140003000, 8,
+                                    ConstantAddressProvenance::Address)})};
+  returnValue(Func, nullptr);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Order, Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <dirent.h>"), std::string::npos) << Source;
+  EXPECT_NE(
+      Source.find(
+          "(int (*)(const struct dirent64 **, const struct dirent64 **))"),
+      std::string::npos)
       << Source;
   expectCSyntax(Source);
 }
