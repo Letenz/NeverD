@@ -1246,6 +1246,31 @@ TEST(TypeRender, UnitsSpellHeaderTypedefRecordsByTheirNames) {
   EXPECT_TRUE(llvm::is_contained(Embedded.HeaderTypedefs, "fd_set"));
 }
 
+TEST(TypeRender, HeaderRecordsNamedLikeTheirFunctionsKeepTheirTags) {
+  // glibc's <sys/sysinfo.h> declares struct sysinfo and the function that
+  // fills it, sysinfo: the name is an ordinary identifier of the text, so a
+  // unit that takes the record from the header declares no typedef of it,
+  // which would make the header's function a redefinition.
+  TypeLibrary Library(DataModel::LP64);
+  const TypeLibrary *Glibc = headerLibrary(HeaderLibrary::LinuxX64);
+  ASSERT_NE(Glibc, nullptr);
+  ASSERT_NE(Glibc->find("sysinfo"), nullptr);
+  ASSERT_NE(Glibc->findPrototype("sysinfo"), nullptr);
+  mergeHeaderTypes(Library, *Glibc);
+  ASSERT_TRUE(parseCTypes("struct probe { struct sysinfo info; int ready; };\n",
+                          Library)
+                  .ok());
+  RenderOptions Options = in(Language::C);
+  Options.SystemLibrary = HeaderLibrary::LinuxX64;
+  Options.Asserts = true;
+  const EmbeddedC Embedded =
+      renderEmbeddedC(Library, {Library.find("probe")}, Options);
+  EXPECT_TRUE(contains(Embedded.Text, "#include <sys/sysinfo.h>\n"))
+      << Embedded.Text;
+  EXPECT_TRUE(llvm::is_contained(Embedded.Identifiers, "sysinfo"));
+  EXPECT_TRUE(contains(Embedded.Text, "struct sysinfo info;")) << Embedded.Text;
+}
+
 TEST(TypeRender, UnitsSpellHeaderTypedefEnumerationsByTheirNames) {
   // glibc's <search.h> names twalk's VISIT by a typedef alone (`typedef
   // enum {...} VISIT;`), which leaves it no tag: a unit spells it by that

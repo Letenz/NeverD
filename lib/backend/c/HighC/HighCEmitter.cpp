@@ -338,6 +338,15 @@ bool HighCWriter::takesMainSignature(const HighFunc &Func) const {
 void HighCWriter::prepareFunctionIdentifiers(
     const std::vector<HighFunc> &Funcs) {
   GlobalIdentifierAllocator = CProjectionIdentifierAllocator{};
+  // The ordinary identifiers the record definitions declare are the
+  // program's names (prepareRecordDefinitions): its typedefs, enumerators,
+  // and a header's function named like its record (<sys/sysinfo.h>'s
+  // sysinfo), which the unit's own names step around and no typedef of the
+  // unit's declares again.
+  for (const std::string &Name : RecordDefinitions.Identifiers)
+    GlobalIdentifierAllocator.allocateVerbatim(Name);
+  for (const std::string &Name : RecordDefinitions.Enumerations)
+    GlobalIdentifierAllocator.allocateVerbatim(Name);
   FunctionIdentifiers.clear();
   FunctionSymbolNames.clear();
   FunctionIdentifiersBySourceName.clear();

@@ -48146,6 +48146,41 @@ TEST(HighCPointerAddresses, AlignedAccessesInRelocatedWordsKeepTheirResidue) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses, HeaderRecordsNamedLikeTheirFunctionsKeepTags) {
+  // sort fills a struct sysinfo through sysinfo(), which <sys/sysinfo.h>
+  // declares beside it: the definitions list the name among their ordinary
+  // identifiers, so the unit spells the record by its tag and declares no
+  // `typedef struct sysinfo sysinfo;`, which made the header's function a
+  // redefinition.
+  HighFunc Func;
+  Func.Name = "probe_memory";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(4);
+  Func.Params = {{"info", NdType::makePtr(NdType::makeNamedRecord("sysinfo"))}};
+  returnValue(Func, HighExpr::makeConst(0, 4));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text = "#include <sys/sysinfo.h>\n";
+    Definitions.Tags = {{"sysinfo", false}};
+    Definitions.Types = {"sysinfo"};
+    Definitions.Identifiers = {"sysinfo"};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_EQ(Source.find("typedef struct sysinfo sysinfo;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("probe_memory(struct sysinfo* info)"),
+            std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, AlignedReadsOfAStringAlignItsArray) {
   // make and patch read a string constant with an aligned access, whose
   // guard masked the literal: `("$(-*-eval-flags-" & 15)` is no C, and a

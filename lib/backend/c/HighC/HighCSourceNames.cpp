@@ -103,12 +103,6 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
     for (const TypeRef &Record : Records)
       Dbg->completeType(Record);
   RecordDefinitions = Opts.RecordDefinitions(Records);
-  // The typedefs and enumerators they declare are the program's names: the
-  // unit's own step around them.
-  for (const std::string &Name : RecordDefinitions.Identifiers)
-    GlobalIdentifierAllocator.allocateVerbatim(Name);
-  for (const std::string &Name : RecordDefinitions.Enumerations)
-    GlobalIdentifierAllocator.allocateVerbatim(Name);
 }
 
 std::string HighCWriter::declaredAs(const TypeRef &Type,
