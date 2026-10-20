@@ -2814,7 +2814,12 @@ prove it within the bound.
 
 Proof graph indexes use a private arena that outlives their containers.
 Ordered insertion hints preserve duplicate
-and out-of-order point handling. A fixed-size register lane cache checks the
+and out-of-order point handling. After construction and pruning, a frozen graph
+may retain point lookups in a lazily allocated 8 KiB table. Hits check the full
+instruction address and operation sequence; collisions fall back to the ordered
+index. Returned block/operation coordinates are owned values, so later queries
+cannot overwrite a caller's result. Graph replacement retires the table.
+A fixed-size register lane cache checks the
 complete offset/width key and uses the query's immutable target metadata.
 These storage and lookup optimizations retain the original evidence charges;
 they do not reuse CFG or value proofs across changed snapshots. A builder may

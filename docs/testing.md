@@ -3009,6 +3009,11 @@ and remaining budgets at every small-fixture budget boundary. Equal-size
 instruction, edge, root and ownership changes must replace the graph; rolled
 back and temporary override payloads cannot leave borrowed pointers behind.
 Resource failure and value-analysis incompleteness remain distinct.
+`ResolverPointLookup.*` checks exact instruction coordinates across cache
+collisions, missing points, high address bits and distinct operation sequences.
+Switching or moving immutable indexes must preserve their own coordinates, and
+later queries cannot change an already returned location. The graph/cache
+regressions retain the existing proof and evidence-budget checks.
 `ResolverLoadAddress.*` checks that one opaque load retains its identity when
 its unused address exceeds the proof depth. Across four architectures and
 three formats, stores, calls, ordered reads and incompatible widths prevent

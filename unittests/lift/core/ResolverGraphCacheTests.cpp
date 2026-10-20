@@ -698,6 +698,10 @@ struct ResolverGraphCacheTestAccess {
     B.Insns.at(0x100).Ops.front().Inputs[0] = NdVar::cst(8, 8);
   }
 
+  static void changeUseSequence(CFGBuilder &B, va_t Address, int Sequence) {
+    B.Insns.at(Address).Ops.front().Seq = Sequence;
+  }
+
   static void malformedScalar(CFGBuilder &B, unsigned Variant) {
     auto &Op = B.Insns.at(0x100).Ops.front();
     if (Variant == 0) {
@@ -2271,6 +2275,43 @@ TEST(ResolverGraphCache, EqualCountsDoNotHideBackedgesRootsOrChangedOps) {
     const auto After = Access::query(B);
     EXPECT_NE(Access::token(B), Before);
     expectColdAnswer(B, After);
+  }
+}
+
+TEST(ResolverGraphCache, RepeatedPointQueriesRetireChangedSequences) {
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+    auto Image = image();
+    Image.Bits = Bitness::Bits64;
+    Image.Format = Format;
+    constexpr unsigned Length = 80;
+    constexpr size_t Budget = 1000000;
+    CFGBuilder Warm;
+    const auto Q = Access::seedPredecessorLane(Warm, Image, Length);
+    std::vector<Access::Query> Queries;
+    for (unsigned I = 0; I < 144; ++I) {
+      auto Current = Q;
+      Current.UseSeq = I < 128 ? 0 : 1;
+      Current.Alternatives.front().Value = NdVar::cst(I % 5 ? 7 : 8, 8);
+      Queries.push_back(Current);
+    }
+    for (int Sequence : {0, 1}) {
+      Access::changeUseSequence(Warm, Q.UseAddr, Sequence);
+      const auto Full = Access::batch(Warm, Queries, Budget, 128);
+      ASSERT_TRUE(Full.Complete);
+      ASSERT_EQ(Full.Values.size(), Queries.size());
+      for (size_t I = 0; I < Queries.size(); ++I)
+        EXPECT_EQ(Full.Values[I], Queries[I].UseSeq == Sequence && I % 5 != 0);
+      const size_t Work = Budget - Full.Remaining;
+      ASSERT_GT(Work, 0u);
+      for (size_t Limit : {size_t{0}, Work - 1, Work, Work + 1, Budget}) {
+        CFGBuilder Cold;
+        Access::seedPredecessorLane(Cold, Image, Length);
+        Access::changeUseSequence(Cold, Q.UseAddr, Sequence);
+        EXPECT_EQ(Access::batch(Warm, Queries, Limit, 128),
+                  Access::batch(Cold, Queries, Limit, 128));
+      }
+    }
   }
 }
 
