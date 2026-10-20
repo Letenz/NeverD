@@ -1191,6 +1191,7 @@ add_neverd_unittest(NeverDJumpTableTests
   core/ResolverDefinitionCacheTests.cpp
   core/ResolverPendingWalksTests.cpp
   core/ResolverLaneViewTests.cpp
+  core/ResolverPointLookupTests.cpp
   core/JumpTableCountLaneTests.cpp
   core/IndirectTailFrameTests.cpp
   core/JumpTableEnhancedTests.cpp

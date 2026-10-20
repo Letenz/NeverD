@@ -22,6 +22,7 @@
 #include "ResolverDefinitionCache.h"
 #include "ResolverLaneView.h"
 #include "ResolverPendingWalks.h"
+#include "ResolverPointLookup.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -380,6 +381,12 @@ struct ResolverFlowGraph {
   /// than graph indegree or PersistentCFGRoots alone.
   std::vector<int> RootBlocks;
   mutable detail::ResolverDefinitionCache Definitions;
+  mutable detail::ResolverPointLookup Points;
+
+  std::optional<detail::JumpTableProofLocation>
+  findPoint(detail::JumpTableProofPoint Point) const {
+    return Points.find(PointToOp, Point);
+  }
 
   ResolverFlowGraph() = default;
   ResolverFlowGraph(ResolverFlowGraph &&) = default;
@@ -5400,9 +5407,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
               !consumeEvidence(2))
             return false;
           const auto Point =
-              Graph.PointToOp.find({Alternative.Addr, Alternative.Seq});
-          if (Point != Graph.PointToOp.end()) {
-            const auto [Block, Op] = Point->second;
+              Graph.findPoint({Alternative.Addr, Alternative.Seq});
+          if (Point) {
+            const auto [Block, Op] = *Point;
             const NdVar &Output = Graph.Blocks[Block].Ops[Op].Output;
             // A guard may observe AL after an EAX producer. Name the actual
             // complete definition once; resolveValue still slices its exact
@@ -6840,11 +6847,11 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     if (!ActiveValueQuery ||
         !consumeEvidence(orderedSetLookupWork(Graph.PointToOp.size())))
       return std::nullopt;
-    const auto Use = Graph.PointToOp.find(
-        {ActiveValueQuery->UseAddr, ActiveValueQuery->UseSeq});
-    if (Use == Graph.PointToOp.end())
+    const auto Use =
+        Graph.findPoint({ActiveValueQuery->UseAddr, ActiveValueQuery->UseSeq});
+    if (!Use)
       return false;
-    const int UseBlock = Use->second.first;
+    const int UseBlock = Use->first;
     if (UseBlock < 0 || UseBlock >= static_cast<int>(Graph.Blocks.size()) ||
         !consumeEvidence(Graph.Blocks.size()))
       return false;
@@ -8318,14 +8325,12 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                 break;
               }
               const LowOp &Branch = *Edges->Condition;
-              const auto Point =
-                  Graph.PointToOp.find({Branch.Addr, Branch.Seq});
-              if (Point != Graph.PointToOp.end() &&
-                  Point->second.first == Pred) {
-                if (!predicateCannotFilter(Pred, Point->second.second,
+              const auto Point = Graph.findPoint({Branch.Addr, Branch.Seq});
+              if (Point && Point->first == Pred) {
+                if (!predicateCannotFilter(Pred, Point->second,
                                            Branch.Inputs[1])) {
                   ResolverResult Condition = resolvePredicate(
-                      Pred, Point->second.second, Branch.Inputs[1], Depth + 1);
+                      Pred, Point->second, Branch.Inputs[1], Depth + 1);
                   IncomingValue = constrainOnCondition(
                       std::move(IncomingValue), std::move(Condition), IsTaken);
                 }
@@ -9645,18 +9650,17 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         markIncomplete(QueryIndex);
         continue;
       }
-      auto CandidatePoint = Graph.PointToOp.find({Query.UseAddr, Query.UseSeq});
-      auto AlternativePoint = Graph.PointToOp.find(
+      auto CandidatePoint = Graph.findPoint({Query.UseAddr, Query.UseSeq});
+      auto AlternativePoint = Graph.findPoint(
           {Query.Alternatives.front().Addr, Query.Alternatives.front().Seq});
-      if (CandidatePoint == Graph.PointToOp.end() ||
-          AlternativePoint == Graph.PointToOp.end())
+      if (!CandidatePoint || !AlternativePoint)
         continue;
       uint64_t CandidateBase = InvalidVA;
       uint64_t AlternativeBase = InvalidVA;
       int64_t CandidateOffset = 0;
       int64_t AlternativeOffset = 0;
-      const auto [CandidateBlock, CandidateOp] = CandidatePoint->second;
-      const auto [AlternativeBlock, AlternativeOp] = AlternativePoint->second;
+      const auto [CandidateBlock, CandidateOp] = *CandidatePoint;
+      const auto [AlternativeBlock, AlternativeOp] = *AlternativePoint;
       const bool CandidateFrame = canonicalFrameSlotKey(
           CandidateBlock, CandidateOp - 1, Query.Candidate, CandidateBase,
           CandidateOffset);
@@ -9693,10 +9697,10 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         markIncomplete(QueryIndex);
         continue;
       }
-      auto CandidatePoint = Graph.PointToOp.find({Query.UseAddr, Query.UseSeq});
-      if (CandidatePoint == Graph.PointToOp.end())
+      auto CandidatePoint = Graph.findPoint({Query.UseAddr, Query.UseSeq});
+      if (!CandidatePoint)
         continue;
-      const auto [CandidateBlock, CandidateOp] = CandidatePoint->second;
+      const auto [CandidateBlock, CandidateOp] = *CandidatePoint;
       auto AddressPoint = CandidatePoint;
       if (Query.FrameAddressUseAddr != InvalidVA &&
           Query.FrameAddressUseSeq >= 0) {
@@ -9704,12 +9708,12 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
           markIncomplete(QueryIndex);
           continue;
         }
-        AddressPoint = Graph.PointToOp.find(
+        AddressPoint = Graph.findPoint(
             {Query.FrameAddressUseAddr, Query.FrameAddressUseSeq});
-        if (AddressPoint == Graph.PointToOp.end())
+        if (!AddressPoint)
           continue;
       }
-      const auto [AddressBlock, AddressOp] = AddressPoint->second;
+      const auto [AddressBlock, AddressOp] = *AddressPoint;
       uint64_t SlotBase = InvalidVA;
       int64_t SlotOffset = 0;
       if (!canonicalFrameSlotKey(AddressBlock, AddressOp - 1, Query.Candidate,
@@ -9749,7 +9753,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
           markIncomplete(QueryIndex);
           continue;
         }
-        if (!Graph.PointToOp.count({Query.UseAddr, Query.UseSeq}))
+        if (!Graph.findPoint({Query.UseAddr, Query.UseSeq}))
           continue;
       }
       CandidateValue = constantValue(Query.Candidate);
@@ -9758,10 +9762,10 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         markIncomplete(QueryIndex);
         continue;
       }
-      auto CandidatePoint = Graph.PointToOp.find({Query.UseAddr, Query.UseSeq});
-      if (CandidatePoint == Graph.PointToOp.end())
+      auto CandidatePoint = Graph.findPoint({Query.UseAddr, Query.UseSeq});
+      if (!CandidatePoint)
         continue;
-      auto [CandidateBlock, CandidateBefore] = CandidatePoint->second;
+      auto [CandidateBlock, CandidateBefore] = *CandidatePoint;
       if (Query.Relation == JumpTableValueRelation::MustEqual) {
         CandidateRetryBlock = CandidateBlock;
         CandidateRetryBefore = CandidateBefore;
@@ -9918,16 +9922,16 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
           markIncomplete(QueryIndex);
           break;
         }
-        auto IndexPoint = Graph.PointToOp.find({Anchor.Addr, Anchor.Seq});
+        auto IndexPoint = Graph.findPoint({Anchor.Addr, Anchor.Seq});
         // Alternatives are a union of authenticated producers.  A producer
         // pruned from this candidate's proof graph cannot reach the queried
         // use and is therefore irrelevant; it must not poison every other
         // reachable alternative.  The candidate itself is still a must-value
         // over every feasible predecessor below, so dropping an unreachable
         // anchor cannot turn an ambiguous path into a match.
-        if (IndexPoint == Graph.PointToOp.end())
+        if (!IndexPoint)
           continue;
-        auto [IndexBlock, IndexBefore] = IndexPoint->second;
+        auto [IndexBlock, IndexBefore] = *IndexPoint;
         if (Anchor.DefinedAtPoint)
           ++IndexBefore;
         IndexValue = resolveValue(IndexBlock, IndexBefore, Anchor.Value,
@@ -11034,7 +11038,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
       return false;
     auto IsReachable = [&](const JumpTableValueOccurrence &Occurrence) {
       return Occurrence.Addr != InvalidVA && Occurrence.Seq >= 0 &&
-             Graph.PointToOp.count({Occurrence.Addr, Occurrence.Seq});
+             Graph.findPoint({Occurrence.Addr, Occurrence.Seq}).has_value();
     };
 
     std::vector<JumpTableLoadRole> ReachableRoles;
