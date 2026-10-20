@@ -225,10 +225,10 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
   // entry survives unconditionally — the function is defined by it.
   std::vector<va_t> Starts;
   Starts.reserve(BlockStarts.size());
+  // Filtering the ordered BlockStarts set preserves address order.
   for (va_t Start : BlockStarts)
     if (Start == Func.Entry || Insns.count(Start))
       Starts.push_back(Start);
-  std::sort(Starts.begin(), Starts.end());
 
   // Owner reachability needs instruction membership and ordinary edges.
   // Only the last boundary of each provisional block is needed to link its
@@ -247,14 +247,16 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
     for (auto It = Insns.lower_bound(Starts[I]); It != Insns.end(); ++It) {
       if (It->first >= End)
         break;
-      InsnToBlock[It->second.Addr] = Blk.Id;
+      // The hint accelerates ordered records; assignment still preserves the
+      // last block for repeated or out-of-order record addresses.
+      InsnToBlock.insert_or_assign(InsnToBlock.end(), It->second.Addr, Blk.Id);
       Last = &It->second;
       Blk.EndAddr = It->first + It->second.Size;
     }
     if (Last)
       Blk.InstructionBoundaries.push_back(makeInstructionBoundary(*Last, 0));
 
-    AddrToBlock[Starts[I]] = Blk.Id;
+    AddrToBlock.emplace_hint(AddrToBlock.end(), Starts[I], Blk.Id);
     Func.Blocks.push_back(std::move(Blk));
   }
 
@@ -288,7 +290,8 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
     for (const auto &[InsnAddr, BlockId] : InsnToBlock)
       if (BlockId >= 0 && BlockId < static_cast<int>(Reachable.size()) &&
           Reachable[BlockId])
-        CurrentReachableInsns.insert(InsnAddr);
+        CurrentReachableInsns.emplace_hint(CurrentReachableInsns.end(),
+                                           InsnAddr);
   };
   // Resolve conditional code roots and inline-table ownership together.  A
   // purely additive closure is order-dependent: adding a code root can make a
@@ -636,8 +639,6 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
       continue;
     EffectiveStarts.push_back(Start);
   }
-  std::sort(EffectiveStarts.begin(), EffectiveStarts.end());
-
   Func.Blocks.clear();
   std::map<va_t, int> EffectiveAddrToBlock;
   for (size_t I = 0; I < EffectiveStarts.size(); ++I) {
@@ -659,7 +660,8 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
           makeInstructionBoundary(It->second, FirstOp));
       Block.EndAddr = It->first + It->second.Size;
     }
-    EffectiveAddrToBlock[Block.StartAddr] = Block.Id;
+    EffectiveAddrToBlock.emplace_hint(EffectiveAddrToBlock.end(),
+                                      Block.StartAddr, Block.Id);
     Func.Blocks.push_back(std::move(Block));
   }
   linkSuccessors(Func, EffectiveAddrToBlock);
