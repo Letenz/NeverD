@@ -16,6 +16,7 @@
 #include "neverd/Common.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedIR.h"
+#include "neverd/loader/DataSymbolBinding.h"
 
 #include "llvm/ADT/ArrayRef.h"
 
@@ -51,6 +52,48 @@ struct OmittedCalleeMemo {
     bool operator==(const SummaryRead &) const = default;
   };
   static SummaryRead readAt(const PipelineResult &Result, va_t Key);
+  /// Every callee summary, user prototype and name a run of the module
+  /// recovery holds under one key, as a forwarder probe reads them
+  /// (propagateForwardedCallArities).
+  struct ProbeRead {
+    va_t Key = 0;
+    std::optional<std::string> Name;
+    std::optional<int> RegArity;
+    std::optional<int> TotalArity;
+    std::optional<int> FPArity;
+    std::optional<uint16_t> FPReturnSize;
+    std::optional<std::vector<uint64_t>> FPRegs;
+    std::optional<bool> HasSret;
+    std::optional<bool> IsVariadic;
+    std::optional<bool> ConsumesVaList;
+    std::optional<std::vector<uint64_t>> IntRegs;
+    bool VectorArguments = false;
+    bool UserPrototype = false;
+    bool operator==(const ProbeRead &) const = default;
+  };
+  /// What a forwarder probe of a body gives its callers: the recovered
+  /// parameters as they count them, and the summaries the recovery leaves
+  /// at the body's entry.
+  struct ProbeSignature {
+    int RegisterArity = 0;
+    int MaxArgumentIndex = -1;
+    int RecoveryTotalArity = 0;
+    bool IsVariadic = false;
+    std::vector<uint64_t> FPRegs;
+    std::vector<uint64_t> IntegerArgumentRegisters;
+    std::optional<int> EntryRegArity;
+    std::optional<int> EntryTotalArity;
+    std::optional<bool> EntryIsVariadic;
+  };
+  /// A forwarder probe of a conversion's body: what it read under each key
+  /// it read (recoverCallAbi's SummaryKeysRead), the body's entry first,
+  /// and what it gave.  A probe that would read the same gives the same.
+  struct Probe {
+    std::vector<ProbeRead> Reads;
+    ProbeSignature Gives;
+    /// What the probe counts against the memo's bound.
+    size_t Bytes = 0;
+  };
   /// A conversion of a callee's lift.
   struct Conversion {
     /// The typed body, or null where the conversion fails or the body is too
@@ -59,11 +102,17 @@ struct OmittedCalleeMemo {
     /// The call summaries the conversion read, under each key it read them
     /// under and the callee's own entry.
     std::vector<SummaryRead> Reads;
-    /// What Body counts against the memo's bound.
+    /// What Body and Probes count against the memo's bound.
     size_t Bytes = 0;
+    /// The forwarder probes of Body under different summaries, the one used
+    /// last first; at most MaxProbes.
+    std::vector<Probe> Probes;
     /// Whether \p Result's summaries read as they did for the conversion.
     bool readsHold(const PipelineResult &Result) const;
   };
+  /// The probes kept of each conversion's body.  The selections around a
+  /// forwarder hold different summaries of its callees.
+  static constexpr size_t MaxProbes = 4;
   /// The conversions kept of each callee.  The selections around a callee
   /// call different sets of the imports it calls, whose summaries its
   /// conversion reads.
@@ -90,6 +139,11 @@ struct OmittedCalleeMemo {
   /// Read of \p Img with \p Result's function-pointer variables; starts
   /// again when this was read of another image or with other variables.
   void adopt(const BinaryImage &Img, const PipelineResult &Result);
+  /// The conversion whose body \p Body is, where the memo holds it.
+  Conversion *conversionOf(const MedFunc &Body);
+  /// Keeps \p Kept as \p Holder's probe used last, where its probe used
+  /// longest ago makes room past MaxProbes.
+  void keepProbe(Conversion &Holder, Probe Kept);
   /// The reading of the callee at \p Entry, now the one used last.
   Callee *find(va_t Entry);
   /// Keeps \p Converted as \p Holder's conversion used last, where its
@@ -102,6 +156,11 @@ struct OmittedCalleeMemo {
   /// The entries callee lifts know: the image's function symbols that are
   /// not boundary guesses, read when the memo adopts the image.
   const std::set<va_t> &functionEntries() const { return FunctionEntries; }
+  /// The function-pointer variables of the image the memo adopted
+  /// (collectPointerVariableCallees), read when it adopts the image.
+  const std::map<va_t, PointerVariableCallee> &pointerCallees() const {
+    return PointerCallees;
+  }
 
   std::map<va_t, Callee> Callees;
 
@@ -111,6 +170,7 @@ private:
   size_t SymbolCount = 0;
   std::map<va_t, va_t> CallArgumentSources;
   std::set<va_t> FunctionEntries;
+  std::map<va_t, PointerVariableCallee> PointerCallees;
   size_t Bytes = 0;
   uint64_t Clock = 0;
 };

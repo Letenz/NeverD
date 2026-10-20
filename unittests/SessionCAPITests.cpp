@@ -5889,6 +5889,16 @@ TEST_F(SessionCAPITest, CalleeSignaturesReadOnceServeLaterSelections) {
         SCOPED_TRACE(Entry);
         EXPECT_LE(Callee.Conversions.size(), 1u);
       }
+    // The bodies a selection read keep the probes that found the parameters
+    // they forward, which the later selections took where they read the same.
+    size_t Probed = 0;
+    for (const auto &[Entry, Callee] : Memo->Callees)
+      for (const auto &Conversion : Callee.Conversions) {
+        EXPECT_LE(Conversion.Probes.size(),
+                  neverd::OmittedCalleeMemo::MaxProbes);
+        Probed += !Conversion.Probes.empty();
+      }
+    EXPECT_GT(Probed, 0u);
   }
 }
 
@@ -5973,6 +5983,40 @@ TEST(CalleeSignatureMemo, ACalleeKeepsTheConversionOfEachSummaryItReads) {
   EXPECT_EQ(&Callee.Conversions.front(), Found);
   EXPECT_EQ(Callee.conversionFor(*Three), nullptr);
   EXPECT_EQ(Callee.Conversions.size(), 2u);
+}
+
+TEST(CalleeSignatureMemo, AConversionKeepsTheProbesUsedLast) {
+  // A conversion keeps the forwarder probes of its body under the summaries
+  // of the last runs, the latest first, and the memo counts them against its
+  // bound.  A body the memo holds names its conversion; another, none.
+  using Memo = neverd::OmittedCalleeMemo;
+  Memo Kept;
+  neverd::MedFunc Body;
+  Body.Entry = 0x4000;
+  Memo::Conversion &Held = Kept.find(0x4000)->Conversions.emplace_back();
+  Held.Body = std::make_shared<const neverd::MedFunc>(Body);
+  for (int Arity = 0; Arity <= static_cast<int>(Memo::MaxProbes); ++Arity) {
+    Memo::Probe Probe;
+    Probe.Reads.emplace_back().Key = 0x4000;
+    Probe.Reads.front().RegArity = Arity;
+    Probe.Reads.emplace_back().Key = 0x5000;
+    Probe.Reads.back().Name = "callee";
+    Probe.Gives.RegisterArity = Arity;
+    Kept.keepProbe(Held, std::move(Probe));
+  }
+  ASSERT_EQ(Held.Probes.size(), Memo::MaxProbes);
+  EXPECT_EQ(Held.Probes.front().Gives.RegisterArity,
+            static_cast<int>(Memo::MaxProbes));
+  EXPECT_EQ(Held.Probes.back().Gives.RegisterArity, 1);
+  size_t Bytes = 0;
+  for (const Memo::Probe &Probe : Held.Probes) {
+    EXPECT_GT(Probe.Bytes, 0u);
+    Bytes += Probe.Bytes;
+  }
+  EXPECT_EQ(Held.Bytes, Bytes);
+  EXPECT_EQ(Kept.bytes(), Bytes);
+  EXPECT_EQ(Kept.conversionOf(*Held.Body), &Held);
+  EXPECT_EQ(Kept.conversionOf(Body), nullptr);
 }
 
 TEST_F(SessionCAPITest, AProgramsOwnDeclarationOfAnImportDecides) {
