@@ -48157,6 +48157,50 @@ TEST(HighCPointerAddresses, SmallHeaderRecordsPassAsTheirRegisterBits) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses, ForwardedVaListsPassToPointerParameters) {
+  // chcpu's va_start forwarder passes its va_list on to the PLT stub of
+  // __isoc23_vfscanf, which the unit defines from the type library's
+  // prototype, whose va_list parameter is `char *`: the pointer System V
+  // x86-64's va_list decays to, which the machine passes, converts to it.
+  const auto Char = NdType::makeInt(1);
+  Char->SourceName = "char";
+  const auto Text = NdType::makePtr(Char);
+  const auto Int = NdType::makeInt(4);
+  HighFunc Stub;
+  Stub.Name = "vscan_stub";
+  Stub.Entry = 0x2000;
+  Stub.ReturnType = Int;
+  Stub.Params = {{"format", Text}, {"arg", Text}};
+  returnValue(Stub, HighExpr::makeConst(0, 4));
+  HighFunc Forwarder;
+  Forwarder.Name = "scan_all";
+  Forwarder.Entry = 0x1000;
+  Forwarder.ReturnType = Int;
+  Forwarder.Params = {{"format", Text}};
+  HighFunc::VaStartForwarder Va;
+  Va.NamedParams = 1;
+  Va.Passes = {{0x1010, 1}};
+  Forwarder.VaStart = Va;
+  auto Scanned = HighExpr::makeCall(
+      "vscan_stub", 0x2000, {parameter(0, Text), HighExpr::makeConst(0, 8)});
+  Scanned->Type = Int;
+  Scanned->CallSiteAddr = 0x1010;
+  returnValue(Forwarder, std::move(Scanned));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Stub, Forwarder}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("va_start(arguments, format);"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("vscan_stub(format, (char*)arguments)"),
+            std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
   // sed passes a comparator of its own to qsort, whose prototype the header
   // library gives: its comparison's type keeps no const there, where the

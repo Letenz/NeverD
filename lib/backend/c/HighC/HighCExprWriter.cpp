@@ -2174,9 +2174,19 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
           Defined && (!VaCallee || I < VaCallee->NamedParams)
               ? emittedParamTypeAt(*Defined, I)
               : nullptr;
+      // System V x86-64's va_list is an array of its one record, whose
+      // decayed pointer the machine passes: a parameter the unit declares
+      // an object pointer of another type takes it converted.  The type
+      // library renders a va_list parameter `char *` (the PLT stub of
+      // __isoc23_vfscanf takes one), which a va_list type there would spare.
+      const bool OtherPointer = Expected && Expected->Kind == NdTypeKind::Ptr &&
+                                Expected->Pointee &&
+                                Expected->Pointee->Kind != NdTypeKind::Void &&
+                                Expected->Pointee->Kind != NdTypeKind::Func;
       S += Expected && Expected->Kind == NdTypeKind::Int
                ? "(" + typeToC(Expected) + ")(uintptr_t)arguments"
-               : std::string("arguments");
+           : OtherPointer ? "(" + declaredAs(Expected, "") + ")arguments"
+                          : std::string("arguments");
       continue;
     }
     if (VaCallee && I >= VaCallee->NamedParams &&
