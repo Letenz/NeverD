@@ -3176,8 +3176,9 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     const auto limit = sizeField(p, "limit", 256, 4096);
     if (pattern.empty() || !limit)
       throw Error("invalid_request", "A search pattern and limit are required");
-    if (kind != "text" && kind != "bytes")
-      throw Error("invalid_request", "Search kind must be bytes or text");
+    if (kind != "text" && kind != "bytes" && kind != "immediate")
+      throw Error("invalid_request",
+                  "Search kind must be bytes, text or immediate");
     using SearchPage = const char *(*)(neverd_session_t, const char *);
     const auto search = engineSymbol<SearchPage>("neverd_search_page");
     if (!search)
@@ -3204,6 +3205,21 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       item.erase("addr");
     }
     return page(items, p, {"text"});
+  }
+  if (operation == "register_flow") {
+    using Query = const char *(*)(neverd_session_t, neverd_va_t, neverd_va_t,
+                                  const char *);
+    const auto query = engineSymbol<Query>("neverd_register_flow_json");
+    if (!query)
+      throw Error("unsupported", "This engine cannot query register flow");
+    const auto entry = parseAddress(stringField(p, "address"));
+    const auto pc = parseAddress(stringField(p, "instruction"));
+    Json options{{"kind", stringField(p, "kind", "registers", 32)},
+                 {"register", stringField(p, "register", {}, 32)}};
+    const auto *raw = query(session_, entry, pc, options.dump().c_str());
+    if (!raw)
+      throw Error("register_flow_failed", error());
+    return backendJson(raw);
   }
   if (operation == "stack_frame") {
     const auto address = parseAddress(stringField(p, "address"));

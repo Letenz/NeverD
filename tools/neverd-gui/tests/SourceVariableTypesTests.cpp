@@ -19,6 +19,7 @@
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
@@ -70,6 +71,70 @@ private slots:
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        Settings.path());
     configureDocking();
+  }
+  void immediateAndRegisterNavigation_data() {
+    QTest::addColumn<QString>("Kind");
+    QTest::newRow("immediate") << "immediate";
+    QTest::newRow("definition") << "definition";
+    QTest::newRow("value") << "value";
+  }
+  void immediateAndRegisterNavigation() {
+    QFETCH(QString, Kind);
+    QTemporaryDir Directory;
+    const auto Path =
+        fixture(Directory, QByteArray::fromHex("b82a00000089c183c007c3"));
+    Session Session(QString::fromLocal8Bit(TEST_REAL_WORKER));
+    McpConnectionManager Mcp;
+    GuiSessionBroker Broker;
+    MainWindow Window(Session, Mcp, Broker);
+    Window.setAsksForDebugInfo(false);
+    Window.setLayoutPath(Directory.filePath("layout.json"));
+    Window.resize(1400, 900);
+    Window.initializeLayout();
+    Window.show();
+    Session.open(Path);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.loaded(), 30000);
+    bool Created = false;
+    connect(&Session, &Session::message, this, [&](const QString &Text, int) {
+      if (Text.startsWith("Created a function"))
+        Created = true;
+    });
+    Session.createFunction(0x400078);
+    QTRY_VERIFY_WITH_TIMEOUT(Created, 30000);
+    Window.disassembly()->navigate(0x40007D);
+    QTRY_COMPARE_WITH_TIMEOUT(Window.disassembly()->currentItem(),
+                              std::optional<Address>(0x40007D), 30000);
+    Window.disassembly()->listing()->setFocus();
+    auto *Action = Window.actions().action(
+        Kind == "immediate"    ? ActionId::SearchImmediate
+        : Kind == "definition" ? ActionId::FindRegisterDefinition
+                               : ActionId::FindRegisterValue);
+    QTRY_VERIFY(Action->isEnabled());
+    bool Input = false, Value = false;
+    QTimer Timer;
+    connect(&Timer, &QTimer::timeout, this, [&] {
+      if (auto *Dialog =
+              qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {
+        Input = true;
+        Dialog->setTextValue(Kind == "immediate" ? "42" : "eax");
+        Dialog->accept();
+      } else if (auto *Message = qobject_cast<QMessageBox *>(
+                     QApplication::activeModalWidget())) {
+        Value = Message->text().contains("0x2A") &&
+                Message->text().contains("before instruction");
+        Message->accept();
+      }
+    });
+    Timer.start(10);
+    Action->trigger();
+    if (Kind == "value")
+      QTRY_VERIFY_WITH_TIMEOUT(Value, 30000);
+    else
+      QTRY_COMPARE_WITH_TIMEOUT(Window.disassembly()->currentAddress(),
+                                std::optional<Address>(0x400078), 30000);
+    if (Kind == "immediate")
+      QVERIFY(Input);
+    Timer.stop();
   }
   void dataPresentationDialogs_data() {
     QTest::addColumn<QString>("Kind");

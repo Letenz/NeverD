@@ -368,6 +368,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.FunctionEdits.clear();
   S.FunctionAttributeEdits.clear();
   S.DataItems.clear();
+  S.ImmediateIndex = {};
   S.OperandFormats.clear();
   S.TypeDeclarations.clear();
   S.TypeLibraryChoice = {};
