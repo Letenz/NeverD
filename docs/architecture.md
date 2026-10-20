@@ -4754,6 +4754,17 @@ Runtime-derived pointers keep unknown provenance. The retained read preserves
 the original instruction's observable ordering; source and native proof
 consumers continue to reject this unaudited runtime contract.
 
+Canonical x64 `RDMSR` additionally requires the explicit
+`KernelX64NoFaultV1` profile. The x64 owner authenticates its complete six-operation
+bundle and ECX selector before connecting one fresh unconstrained 64-bit sample
+to the original result temporary. The retained operations split it into EDX:EAX
+and clear both upper halves; other registers, flags and memory remain unchanged.
+The declared nonfaulting supervisor domain supplies neither an MSR value nor a
+relationship between reads, and unimplemented result bits remain unconstrained.
+The original instruction remains observable. This adds no MSR-accessibility
+proof, pointer provenance, exception handling or source/native proof contract;
+write instructions and incomplete or mismatched bundles still refuse.
+
 Finite-value enumeration may observe feasible tuples without changing the proof query. An observer refusal returns an incomplete result with no tuples. The cache retains only mathematical domain proofs; immutable-read certificates remain local until enumeration completes.
 
 `NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.
