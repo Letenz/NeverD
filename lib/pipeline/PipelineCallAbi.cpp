@@ -651,20 +651,36 @@ void propagateForwardedCallArities(
     Read.UserPrototype = UserPrototypeCallees.count(Key) != 0;
     return Read;
   };
+  // Whether the run holds what \p Read read under its key: readAt(Key) ==
+  // Read, without copying what the run holds.
+  auto holds = [&](const OmittedCalleeMemo::ProbeRead &Read) {
+    const va_t Key = Read.Key;
+    auto same = [Key](const auto &Map, const auto &Value) {
+      const auto Found = Map.find(Key);
+      return Found == Map.end() ? !Value : Value && *Value == Found->second;
+    };
+    return same(CalleeRegArity, Read.RegArity) &&
+           same(CalleeTotalArity, Read.TotalArity) &&
+           same(CalleeIsVariadic, Read.IsVariadic) &&
+           same(CalleeFPArity, Read.FPArity) &&
+           same(CalleeFPReturnSize, Read.FPReturnSize) &&
+           same(CalleeHasSret, Read.HasSret) &&
+           same(CalleeConsumesVaList, Read.ConsumesVaList) &&
+           same(CalleeFPRegs, Read.FPRegs) &&
+           same(CalleeIntRegs, Read.IntRegs) &&
+           (VectorArgumentCallees.count(Key) != 0) == Read.VectorArguments &&
+           (UserPrototypeCallees.count(Key) != 0) == Read.UserPrototype &&
+           same(FuncNames, Read.Name);
+  };
   // What recovering a copy of Funcs[I] under the summaries gives, and the
   // summaries the recovery leaves at its entry, or a kept probe's where
   // they read the same.
   auto probe = [&](size_t I) {
     const MedFunc &Body = *Funcs[I];
     OmittedCalleeMemo::Conversion *Holder = I < Kept.size() ? Kept[I] : nullptr;
-    const OmittedCalleeMemo::ProbeRead EntryRead = readAt(Body.Entry);
     if (Holder)
       for (auto It = Holder->Probes.begin(); It != Holder->Probes.end(); ++It) {
-        if (It->Reads.front() != EntryRead ||
-            !std::all_of(std::next(It->Reads.begin()), It->Reads.end(),
-                         [&](const OmittedCalleeMemo::ProbeRead &Read) {
-                           return readAt(Read.Key) == Read;
-                         }))
+        if (!std::all_of(It->Reads.begin(), It->Reads.end(), holds))
           continue;
         std::rotate(Holder->Probes.begin(), It, std::next(It));
         const OmittedCalleeMemo::ProbeSignature &Gives =
@@ -677,6 +693,8 @@ void propagateForwardedCallArities(
           CalleeIsVariadic[Body.Entry] = *Gives.EntryIsVariadic;
         return Gives;
       }
+    // The recovery writes summaries at the entry: read them before it runs.
+    const OmittedCalleeMemo::ProbeRead EntryRead = readAt(Body.Entry);
     MedFunc Probe = Body;
     std::vector<va_t> Keys;
     recoverCallAbi(Probe, TheArch, FuncNames, &Img, &CalleeRegArity,
