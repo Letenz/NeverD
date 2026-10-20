@@ -5502,8 +5502,14 @@ preserve their results under relocation, including integer wraparound. Distinct
 frame roots, partial stores, ambiguous joins and ordered comparisons retain
 their conservative provenance. `LowScalarConstant` compares constant multiply
 and shift facts with concrete LowIR execution at 1/2/4/8-byte widths, including
-overflow, zero shifts and saturating counts. Unknown operands and malformed
-widths supply no fact. The native MSVC input owner also checks chain
+overflow, zero shifts and saturating counts. Bitwise absorber tests compare
+unknown-input `AND 0` and `OR all-ones` results with every replicated byte
+pattern at those widths, in both operand orders. Partial masks, other unknown
+operands and malformed widths supply no fact. `RegistrationTryLevel.CxxBitwiseStates*`
+checks immediate/displacement widths, joined old states, direct and shared
+prologues, and exact post-instruction state boundaries. Changed ownership,
+memory spaces, atomic ordering, frame registers and unknown or invalid state
+values refuse. The native MSVC input owner also checks chain
 observations in `nonlocal_finally_reenter` across `/Od`/`/O2`, `/GS-`/`/GS` and
 raw/optimized projection. The focused Windows EH job runs the complete native
 input owner with its verified MSVC images. Its exact source state does not discharge the separate
@@ -5964,13 +5970,15 @@ allocation retains partial overlap. Run
 --runtime-libs <native-msvc-library-directory> --output <directory>` for 24
 assembled PE32 source cases. Add `--wine <wine-command> --wine-prefix <directory>`
 to check live stack bytes, all GPRs, defined arithmetic flags, return-PC movement
-and FS chain state at preferred and rebased addresses. Wrong-seed controls must
-return one; intact cases return zero (96 runtime observations). Set
+and FS chain state at preferred and rebased addresses. Wrong-seed and
+wrong-state controls must return one; intact cases return zero (144 runtime
+observations). Set
 `NEVERD_REGISTRATION_PROLOGUE_INPUT_PE32` to one generated `original.exe` when
 running the complete registration EH suite. Each image also contains an
 independent cleanup-only parent whose LowIR transfer must prove the helper
-call, state writes and node removal. Machine execution verifies that parent's
-returned ESP and FS:[0]. Synthetic instruction-boundary and input-value
+call, state writes and node removal. Machine execution verifies the bitwise
+state updates' ZF/SF results, returned ESP and FS:[0]. Synthetic
+instruction-boundary and input-value
 mutations must refuse the transfer, as must stale current-image bytes.
 The distinct source call receipt does not yet grant native EH lowering.
 `check_windows_registration_realigned_rewrite.py` separately emits aligned

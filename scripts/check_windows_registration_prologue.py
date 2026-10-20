@@ -66,6 +66,8 @@ _mainCRTStartup:
   mov eax, dword ptr fs:[0]
   mov dword ptr [old_chain], eax
   call _prologue_state_parent
+  test eax, eax
+  jne state_failed
   cmp esp, dword ptr [main_stack]
   jne state_failed
   mov eax, dword ptr fs:[0]
@@ -92,13 +94,17 @@ _prologue_state_parent:
   {push}
   mov eax, offset _prologue_handler
   call _prologue_helper
-  mov dword ptr [ebp-4], 0
-  mov dword ptr [ebp-4], -1
+  and dword ptr [ebp-4], 0
+  setnz al
+  movzx eax, al
+  or dword ptr [ebp-4], -1
+  setns cl
+  movzx ecx, cl
+  or eax, ecx
   mov ecx, dword ptr [ebp-12]
   mov dword ptr fs:[0], ecx
   mov esp, ebp
   pop ebp
-  xor eax, eax
   ret
 .p2align 4, 0x90
 .globl _prologue_parent
@@ -273,8 +279,17 @@ def main() -> int:
                         changed = bytearray(pe.data)
                         struct.pack_into("<I", changed, pe.raw(pe.entry(b"prologue_seed")), 0)
                         wrong.write_bytes(changed)
+                        wrong_state = case / "wrong-state.exe"
+                        changed = bytearray(pe.data)
+                        update = pe.raw(pe.entry(b"prologue_state_parent") +
+                                        (15 if wide else 12))
+                        if changed[update:update + 4] != b"\x83\x65\xfc\x00":
+                            raise ValueError("independent AND-state control has changed")
+                        changed[update + 3] = 1
+                        wrong_state.write_bytes(changed)
                         record["runtime"] = []
-                        for original, expected in ((image, 0), (wrong, 1)):
+                        for original, expected in ((image, 0), (wrong, 1),
+                                                   (wrong_state, 1)):
                             rebased = original.with_stem(original.stem + "-rebased")
                             rebased.write_bytes(PE32(original.read_bytes()).rebase(0x500000))
                             for executable in (original, rebased):

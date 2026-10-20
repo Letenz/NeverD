@@ -1457,6 +1457,15 @@ operation identity, width, literal and reaching-state transitions. Finally
 execution partitions frame outcomes by the resulting try level; local unwind
 reloads that level before selecting another cleanup. Joining frames first or
 recomputing narrow-write semantics downstream would lose that correlation.
+C++ state writes can also use complete reaching register values or a
+four-byte `AND`/`OR` update of the checked state slot. CFG cutting and state
+transfer share `stateStoreCandidate`; the latter still proves the actual
+address and resulting level on every path. The original load, store and
+arithmetic flags remain intact. `LowScalarConstant` owns width-correct
+`AND 0` and `OR all-ones` results even when a join loses the old scalar value.
+Supplied instruction operation slices use the same ownership check as LowIR
+structural validation, before an invalid operation address can erase temporary
+frame provenance.
 The implementation lives under `lib/ir/low/X86`: frame transfer, callee ABI,
 state initialization, ordinary transfers, C++ calls/objects, exceptional roots,
 cookies and result publication have separate translation units. The private

@@ -15,11 +15,12 @@ struct RegistrationChainInfo;
 
 namespace registration_state {
 
-/// An instruction-local register write to the declared state coordinate.
+/// An instruction-local register or bitwise write to the state coordinate.
 /// This only identifies a possible CFG cut. The state solver must prove the
-/// actual frame address and reaching register value on every incoming path.
-const LowOp *registerStateStoreCandidate(const RegistrationChainInfo &Chain,
-                                         llvm::ArrayRef<LowOp> Instruction);
+/// actual frame address and stored value on every incoming path. A bitwise
+/// update retains its memory read, write and flag effects.
+const LowOp *stateStoreCandidate(const RegistrationChainInfo &Chain,
+                                 llvm::ArrayRef<LowOp> Instruction);
 
 } // namespace registration_state
 } // namespace neverd

@@ -91,8 +91,7 @@ void CFGBuilder::splitBlocks() {
         }))
       BlockStarts.insert(Addr + Rec.Size);
     if (Registration && EH->Cxx &&
-        registration_state::registerStateStoreCandidate(*EH->Registration,
-                                                        Rec.Ops))
+        registration_state::stateStoreCandidate(*EH->Registration, Rec.Ops))
       BlockStarts.insert(Addr + Rec.Size);
     if (Registration && !EH->Cxx &&
         (EH->Encoding == ExceptionEncoding::X86ScopeTableEH3 ||
