@@ -155,6 +155,7 @@
           "neverd_sbf_set_strict",
           "neverd_sbf_set_version",
           "neverd_search_bytes",
+          "neverd_search_page",
           "neverd_search_string",
           "neverd_sections_json",
           "neverd_segments_json",
