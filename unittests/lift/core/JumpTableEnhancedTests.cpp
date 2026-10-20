@@ -4325,7 +4325,10 @@ TEST_F(JTE_X86_64, CompactPDataCountsAllKnownEntriesForEvidenceWork) {
   Builder.setKnownFuncEntries(&FunctionEntries);
   (void)Builder.build(Image, Decoder, FunctionVA,
                       "coff_image_relative_rva_switch");
-  EXPECT_TRUE(Builder.isKnownFunctionEntry(ImageBase + 0x4000));
+  EXPECT_TRUE(Builder.isKnownFunctionEntry(FunctionVA));
+  // Unmapped metadata still contributes to the inventory's work bound, but
+  // cannot establish a callable entry without executable ownership.
+  EXPECT_FALSE(Builder.isKnownFunctionEntry(ImageBase + 0x4000));
   EXPECT_EQ(Builder.knownFunctionEntryCount(), Image.COFFPDataRecords.size());
 }
 
