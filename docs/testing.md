@@ -147,6 +147,14 @@ The Z3 gate covers odd weights through 64 bits and even weights through 16 bits.
 Dense 32/64-bit even cases exceeding its five-second allowance remain in a
 separate complete-certificate test with an 8,192-unit budget, every one/two-bit
 input, all-ones input and deterministic full-word samples.
+The same target includes `SymMBABitwiseView`: independently flipped partitions,
+nested literal AND/OR/XOR/NOT views, negative and even coefficients, opaque
+arithmetic carriers and grouped remainders through 257 bits. Its separate
+pointwise-grammar verifier rejects high-bit errors, different carriers and
+nonlinear expressions that agree only at zero/all-ones. Exhaustive byte
+oracles, deterministic mixed-view tests, finite work/storage limits and Z3
+partition checks complement the production derivation. The 64-bit sixteen-part
+case must complete within 16,384 work units and support exact rewrite reuse.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
 signed/unsigned overflow admission against all byte pairs, including unsafe
 neighboring masks. `NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains`
@@ -168,6 +176,17 @@ over XOR, sums, products and nested carriers, including compiler-style grouped
 subtractions and enclosing scales. Warm results from both builds pass an
 independent modular evaluator on boundary and random full-word
 inputs before timing; this sampling is a benchmark check, not rewrite authority.
+Use `--family bitwise --count 24` for independently flipped partitions,
+compensated flips, nested forced-bit views and high-bit near misses over the
+same four opaque carriers. Retain the previous engine and its matching SDK to
+measure each new change independently of earlier improvements.
+
+`tools/neverd-worker/tests/source_synthesis_test.py WORKER --cli CLI` checks the
+real source-option request used by the GUI and both CLI source emitters, for
+single-function and whole-program requests. The raw machine-code bitwise fixture
+retains sixteen separately flipped masks; enhanced output must recombine them.
+With Clang available, each generated C output executes at O0/O2 against an
+independent arithmetic oracle on boundary and deterministic random inputs.
 
 `NeverDSymLoadOriginBindingTests` checks transactional history rebinding,
 sorted conflict unions, independent forks and invalid batches. Historical

@@ -1019,6 +1019,14 @@ rewrite; the full-width verifier must accept it before the normal type,
 effect and profitability checks can publish it. Exhaustion preserves the
 expression. GUI menu requests, CLI single-function options and whole-program
 source sessions all reach these same policies.
+The shared exact MBA layer also recombines weighted literal AND/OR/XOR/NOT
+views of one opaque word. It constructs per-bit coefficients and a constant,
+then independently checks the pointwise grammar, constant difference and every
+shifted bit contribution modulo the full word width. Arithmetic inside the
+word remains opaque; unrelated residual words must cancel exactly. Finite
+work, storage and literal-chain depth limits preserve the original region on
+refusal. This derivation uses the existing symbolic switch in both source
+emitters without an additional GUI or CLI option.
 The source policy also enables modular quadratic oracle fitting: it can propose
 squares and pairwise products as well as affine terms. This is one shared core
 option, so the CLI flag and GUI menu cannot select different fitting engines.
