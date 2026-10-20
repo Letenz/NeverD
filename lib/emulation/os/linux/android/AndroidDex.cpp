@@ -95,25 +95,32 @@ llvm::Error Bionic::initializeDex() {
 }
 BionicResult Bionic::executeDex(const mobile::dalvik::Method *Method,
                                 llvm::ArrayRef<uint64_t> Arguments,
-                                llvm::StringRef Class) {
-  return runDex([&](const auto &Admit, uint64_t Stack) {
-    return Method
-               ? JNI.DexRuntime->execute(*Method,
-                                         {Arguments.data(), Arguments.size()},
-                                         Admit, Stack)
-               : JNI.DexRuntime->initialize(Class.str(), Admit, Stack);
-  });
+                                llvm::StringRef Class, DexCompletion Complete) {
+  return runDex(
+      [&](const auto &Admit, uint64_t Stack) {
+        return Method ? JNI.DexRuntime->execute(
+                            *Method, {Arguments.data(), Arguments.size()},
+                            Admit, Stack, threadID())
+                      : JNI.DexRuntime->initialize(Class.str(), Admit, Stack,
+                                                   threadID());
+      },
+      std::move(Complete));
 }
-BionicResult Bionic::allocateDex(llvm::StringRef Class, bool Initialized) {
-  return runDex([&](const auto &Admit, uint64_t Stack) {
-    return JNI.DexRuntime->allocate(Class.str(), Initialized, Admit, Stack);
-  });
+BionicResult Bionic::allocateDex(llvm::StringRef Class, bool Initialized,
+                                 DexCompletion Complete) {
+  return runDex(
+      [&](const auto &Admit, uint64_t Stack) {
+        return JNI.DexRuntime->allocate(Class.str(), Initialized, Admit, Stack,
+                                        threadID());
+      },
+      std::move(Complete));
 }
 BionicResult
 Bionic::runDex(const std::function<mobile::dalvik::ExecutionResult(
-                   const mobile::dalvik::AdmitInstruction &, uint64_t)> &Body) {
+                   const mobile::dalvik::AdmitInstruction &, uint64_t)> &Body,
+               DexCompletion Complete) {
   using mobile::dalvik::ExecutionStop;
-  auto Admit = [&] {
+  auto Admit = [this] {
     if (!Budget.remainingMicroseconds())
       return ExecutionStop::Timeout;
     return Budget.consumeInstructions() ? ExecutionStop::Returned
@@ -121,8 +128,49 @@ Bionic::runDex(const std::function<mobile::dalvik::ExecutionResult(
   };
   auto Executed = Body(
       Admit, std::min<uint64_t>(Options.StackSize, Options.MemoryLimit / 256));
+  return finishDex(std::move(Executed), std::move(Complete));
+}
+BionicResult Bionic::resumeDex(std::shared_ptr<DexContinuation> Continuation,
+                               mobile::dalvik::ExecutionResult Result) {
+  if (Continuation->Thread != threadID())
+    return failure("Java continuation thread mismatch");
+  return finishDex(
+      JNI.DexRuntime->resume(Continuation->ID, threadID(), std::move(Result)),
+      std::move(Continuation->Complete));
+}
+BionicResult Bionic::dexReference(uint64_t Identity) {
+  auto Ref = jniReference(JNI.Heap->get(Identity));
+  if (!Ref)
+    return Ref.takeError();
+  return value(*Ref);
+}
+BionicResult Bionic::finishDex(mobile::dalvik::ExecutionResult Executed,
+                               DexCompletion Complete) {
+  using mobile::dalvik::ExecutionStop;
+  while (Executed.stop == ExecutionStop::Suspended) {
+    if (!Executed.external || !Executed.continuation)
+      return failure("missing Java continuation request");
+    auto Continuation = std::make_shared<DexContinuation>(DexContinuation{
+        Executed.continuation, threadID(), std::move(Complete)});
+    if (Executed.external->kind == mobile::dalvik::ExternalCall::LoadLibrary) {
+      auto Load = loadJavaLibrary(*Executed.external, Continuation);
+      if (!Load)
+        return Load.takeError();
+      if (auto Callback = std::get_if<GuestCallback>(&*Load))
+        return std::optional<BionicValue>(std::move(*Callback));
+      Executed = JNI.DexRuntime->resume(
+          Continuation->ID, threadID(),
+          std::move(std::get<mobile::dalvik::ExecutionResult>(*Load)));
+      Complete = std::move(Continuation->Complete);
+      continue;
+    }
+    if (!Executed.external->method)
+      return failure("missing Java native method");
+    return callNativeJNI(*Executed.external->method,
+                         Executed.external->arguments, std::move(Continuation));
+  }
   if (Executed.stop == ExecutionStop::Returned)
-    return value(Executed.value);
+    return Complete ? Complete(Executed.value) : value(Executed.value);
   if (Executed.stop == ExecutionStop::Thrown) {
     if (Executed.throwable)
       JNI.Threads.at(threadID()).Exception = JNI.Heap->get(Executed.throwable);

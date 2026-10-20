@@ -8477,9 +8477,8 @@ through JNI method calls. It owns the JNI-to-AArch64 argument/reference mapping
 and implicit local-frame lifetime; the existing guest callback scheduler owns
 execution, waits and original-call resumption. Runtime retains class
 initialization and the shared heap. Binding lookup occurs at invocation, not
-method-ID resolution. DEX-to-native suspension, Java library loading, floating
-and stack-passed native arguments and synchronized native methods remain
-unsupported. See [the native call contract](android-application-runtime.md#calling-registered-native-methods-through-jni).
+method-ID resolution. DEX native calls enter this same transport through Runtime continuations.
+Floating and stack-passed native arguments and synchronized methods remain unsupported. See [the native call contract](android-application-runtime.md#calling-registered-native-methods-through-jni).
 `AndroidJNIMethods` owns JNI method identities and descriptor/argument binding;
 all JNI call forms and explicit DEX methods reuse it and Bionic's GP argument reader.
 The finite intrinsic catalogue and value semantics live in `dalvik::Library`;
@@ -8558,8 +8557,8 @@ from disposable local references and thread attachments. Initialization and
 static field instructions have one semantic owner in Runtime, including recursive
 initialization, persistent erroneous classes and terminal non-Java stops.
 Program's convenience execute creates a fresh Runtime; repeated calls must use
-the workload instance. Execution is synchronous, without Java preemption or a
-concurrent Java memory-model claim. The supported class contract excludes
+the workload instance. Execution yields only at explicit external-call requests,
+without Java preemption or a concurrent Java memory-model claim. The supported class contract excludes
 floating/volatile fields, synchronization and default interface bodies.
 `Program` owns superclass/interface assignability and member resolution;
 Runtime selects virtual, super and direct targets, allocates inherited fields,
@@ -8746,3 +8745,23 @@ boundary. `ExecutionRun` owns persistent stage, resource pause and finite call
 control over one `ExecutionSession`. Transport adapters delegate to these owners.
 The registered raw-buffer factory requires CPU emulation only. See
 [runtime modules](runtime-modules.md) for contracts, bounds and C/CLI entry points.
+
+### Resumable Java activations
+
+`dalvik::Runtime` owns retained interpreter activations, original PCs/registers,
+exception handlers, construction and class-initialization state. Private C++20
+coroutines transfer between those activations; only explicit external requests
+yield to the native owner. Resume tokens authenticate one occurrence and owner,
+and same-owner nested entries consume the parent's remaining stack allowance.
+Class initialization records its owner: another thread cannot observe partial
+static state as initialized. Existing synchronous callers use the same executor
+and refuse an external request rather than replaying effects.
+
+`AndroidDex` transports requests and applies retained JNI operation completions.
+`AndroidJNINativeCalls` alone owns native ABI/reference transport. The image loader
+resolves the original `JNI_OnLoad` export for an explicitly named current ELF;
+`AndroidJavaLibrary` owns its single-namespace load state and on-load callback
+lifetime. The callback scheduler remains the owner of guest execution and waits.
+Immediate completed loads are resumed in a loop, without growing the host call
+stack. No Java frontend or private input adapter supplies method bodies or
+loader success. See the [execution boundary](android-application-runtime.md#java-library-loading-and-dexnative-continuation).

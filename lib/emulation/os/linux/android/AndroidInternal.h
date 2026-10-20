@@ -71,6 +71,7 @@ struct LinkedImage {
   PropertyTable Properties;
   std::vector<uint8_t> JNIImage;
   uint64_t JNIThunkBegin = 0, JNIThunkEnd = 0;
+  std::optional<uint64_t> JNIOnLoad;
 };
 llvm::Error validateAuxiliaryVector(const AndroidNativeOptions &Options);
 llvm::Error validateCalendar(const AndroidNativeOptions &Options);
@@ -100,16 +101,23 @@ struct PropertyCallback {
   uint64_t Entry, Cookie;
 };
 struct PropertyReadCallback {};
+struct DexContinuation;
 struct JNINativeCallback {
   const mobile::dalvik::Method *Method;
   uint64_t Thread, Frame;
   size_t FrameDepth;
+  std::shared_ptr<DexContinuation> Dex;
+};
+struct JNIOnLoadCallback {
+  uint64_t Thread, Frame;
+  size_t FrameDepth;
+  std::shared_ptr<DexContinuation> Dex;
 };
 struct GuestCallback {
   uint64_t Entry;
   std::vector<uint64_t> Arguments;
   std::variant<OnceCallback, FinalizeCallback, PropertyCallback,
-               PropertyReadCallback, JNINativeCallback>
+               PropertyReadCallback, JNINativeCallback, JNIOnLoadCallback>
       Continuation;
 };
 struct GuestThreadWait {};
@@ -120,6 +128,11 @@ struct GuestThreadExit {
 using BionicValue =
     std::variant<uint64_t, GuestCallback, GuestThreadWait, GuestThreadExit>;
 using BionicResult = llvm::Expected<std::optional<BionicValue>>;
+using DexCompletion = std::function<BionicResult(uint64_t)>;
+struct DexContinuation {
+  uint64_t ID, Thread;
+  DexCompletion Complete;
+};
 class Bionic;
 /// A libc operation may suspend more than once before its original import
 /// completes. Its byte/element accounting belongs to libc, not the scheduler.
@@ -186,6 +199,9 @@ private:
   };
   std::vector<ExitCallback> ExitCallbacks;
   JNIState JNI;
+  enum class JavaLibraryStatus { Unloaded, Loading, Loaded, Failed };
+  JavaLibraryStatus JavaLibraryState = JavaLibraryStatus::Unloaded;
+  uint64_t JavaLibraryThread = 0;
   BionicResult jniCall(const NativeCallEvent &Call);
   BionicResult jniVM(const NativeCallEvent &Call);
   BionicResult jniObjects(unsigned Slot, const NativeCallEvent &Call);
@@ -195,17 +211,30 @@ private:
   bool jniAssignable(llvm::StringRef Source, llvm::StringRef Destination) const;
   BionicResult jniMethods(unsigned Slot, const NativeCallEvent &Call);
   BionicResult callNativeJNI(const mobile::dalvik::Method &Method,
-                             llvm::ArrayRef<uint64_t> Arguments);
+                             llvm::ArrayRef<uint64_t> Arguments,
+                             std::shared_ptr<DexContinuation> Continuation);
   BionicResult finishNativeJNI(const JNINativeCallback &Continuation);
+  BionicResult finishJavaLibrary(const JNIOnLoadCallback &Continuation);
+  llvm::Expected<std::variant<mobile::dalvik::ExecutionResult, GuestCallback>>
+  loadJavaLibrary(const mobile::dalvik::ExternalCall &Call,
+                  std::shared_ptr<DexContinuation> Continuation);
+  BionicResult resumeDex(std::shared_ptr<DexContinuation> Continuation,
+                         mobile::dalvik::ExecutionResult Result);
+  BionicResult finishDex(mobile::dalvik::ExecutionResult Executed,
+                         DexCompletion Complete = {});
+  BionicResult dexReference(uint64_t Identity);
   BionicResult jniFields(unsigned Slot, const NativeCallEvent &Call);
   BionicResult
   runDex(const std::function<mobile::dalvik::ExecutionResult(
-             const mobile::dalvik::AdmitInstruction &, uint64_t)> &Body);
-  BionicResult allocateDex(llvm::StringRef Class, bool Initialized);
+             const mobile::dalvik::AdmitInstruction &, uint64_t)> &Body,
+         DexCompletion Complete = {});
+  BionicResult allocateDex(llvm::StringRef Class, bool Initialized,
+                           DexCompletion Complete = {});
   // Null Method requests class initialization without a method invocation.
   BionicResult executeDex(const mobile::dalvik::Method *Method,
                           llvm::ArrayRef<uint64_t> Arguments,
-                          llvm::StringRef Class = {});
+                          llvm::StringRef Class = {},
+                          DexCompletion Complete = {});
   llvm::Error jniIdentity(uint64_t Address, uint64_t Expected);
   llvm::Expected<JNIState::Thread *> jniThread(uint64_t Environment);
   llvm::Expected<std::shared_ptr<JNIObject>> jniObject(uint64_t Reference);

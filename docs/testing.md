@@ -9194,3 +9194,22 @@ state serialization. These checks do not establish execution of ART startup.
 `ProcessReport.AndroidLoaderMayBeEstablishedBeforeApplication` cover independent
 loader setup, unchanged null Application, exact lookup outcomes, retained loader
 identity after detach and contradictory/unknown lifecycle inputs.
+
+## Java library loading and retained DEX/native calls
+
+`DalvikResume.*` checks single-use owner-bound continuations, nested stack order,
+register/field effects without replay, initialization reentry and failure,
+original DEX catch handlers, resource exhaustion and synchronous refusal.
+`AndroidJNI.JavaLibraryLoadResumesInitializersAndNestedNativeCalls` runs authored
+DEX and original AArch64 ELF bodies through `System.loadLibrary`, `JNI_OnLoad`,
+registration and nested DEX/native calls. Cases cover method/field lookup and
+allocation during initialization, recursion and repetition, constructor and
+object returns, implicit frame cleanup, exception/class-error propagation,
+accepted/rejected versions, guest sleep and missing/wrong ELF bindings.
+The same fixture covers O0/O2 and ordinary/APS2/RELR relocations on available
+CPU transports. `ProcessReport.JavaLibraryBindingRequiresInitializedJNIGuestImage`
+checks typed explicit input and invalid names/lifecycle combinations.
+
+Run these with all Dalvik and Android JNI tests, existing callback/thread/
+property/finalizer tests and ProcessReport after changing this shared boundary.
+Unsupported CPU transports are platform skips, not successful qualification.
