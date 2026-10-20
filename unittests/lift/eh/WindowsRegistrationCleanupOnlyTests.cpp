@@ -17,6 +17,7 @@
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/ir/med/X86RegistrationCallback.h"
 #include "neverd/loader/COFF/COFFLoader.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -29,10 +30,7 @@ using namespace neverd;
 
 namespace {
 #ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
-TEST(WindowsRegistrationCleanupOnly, InputPE32PreservesEveryUnwindAction) {
-  const auto *Path = std::getenv("NEVERD_REGISTRATION_CLEANUP_ONLY_PE32");
-  if (!Path)
-    GTEST_SKIP() << "requires the registration_cleanup_only.cpp PE32 fixture";
+void checkCleanupOnlyInput(const char *Path, bool RegisterStateWrite) {
   auto Image = COFFLoader().load(Path);
   ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
   const auto Export = llvm::find_if(Image->Exports, [](const auto &Entry) {
@@ -41,6 +39,52 @@ TEST(WindowsRegistrationCleanupOnly, InputPE32PreservesEveryUnwindAction) {
   ASSERT_NE(Export, Image->Exports.end());
   const auto *Source = Image->ExceptionMetadata.findFunction(Export->Addr);
   ASSERT_TRUE(Source && Source->Cxx && Source->Registration);
+  if (RegisterStateWrite) {
+    const auto &Chain = *Source->Registration;
+    const auto Store = llvm::find_if(Chain.TryLevelStores, [](const auto &S) {
+      return S.Level == 0 || S.Level == 1;
+    });
+    ASSERT_NE(Store, Chain.TryLevelStores.end());
+    const va_t Address = Store->StoreVA;
+    const auto *Bytes = Image->readVA(Address, 12);
+    ASSERT_TRUE(Bytes);
+    ASSERT_EQ(Store->EndVA - Address, 7u);
+    ASSERT_EQ(Bytes[0], 0xc7);
+    ASSERT_EQ(Bytes[1], 0x45);
+    ASSERT_EQ(int8_t(Bytes[2]), Chain.TryLevelOffset);
+    ASSERT_EQ(readLE<uint32_t>(Bytes + 3), uint32_t(Store->Level));
+    // EAX is scratch immediately before the fixture's no-argument throw.
+    ASSERT_EQ(Bytes[7], 0xe8);
+    const auto Throw = llvm::find_if(Image->Exports, [](const auto &Entry) {
+      return Entry.Name == "cleanup_only_throw";
+    });
+    ASSERT_NE(Throw, Image->Exports.end());
+    ASSERT_EQ(Address + 12 + int32_t(readLE<uint32_t>(Bytes + 8)), Throw->Addr);
+    const std::vector<uint8_t> Replacement = {
+        0x31,     0xc0, uint8_t(Store->Level ? 0x40 : 0x90), 0x89, 0x45,
+        Bytes[2], 0x90};
+    bool Patched = false;
+    for (auto &Segment : Image->Segments)
+      if (Address >= Segment.VA && Address - Segment.VA < Segment.Data.size() &&
+          Replacement.size() <= Segment.Data.size() - (Address - Segment.VA)) {
+        std::copy(Replacement.begin(), Replacement.end(),
+                  Segment.Data.begin() + (Address - Segment.VA));
+        Patched = true;
+        break;
+      }
+    ASSERT_TRUE(Patched);
+    // Reparse the actual bytes. Neither XOR/NOP/MOV nor XOR/INC/MOV supplies
+    // a loader observation; the LowIR value transfer must prove the state.
+    Image->ExceptionMetadata = {};
+    coff_loader::parseX86RegistrationExceptions(*Image);
+    Source = Image->ExceptionMetadata.findFunction(Export->Addr);
+    ASSERT_TRUE(Source && Source->Cxx && Source->Registration);
+    EXPECT_TRUE(
+        llvm::none_of(Source->Registration->TryLevelStores, [&](const auto &S) {
+          return S.StoreVA >= Address &&
+                 S.StoreVA < Address + Replacement.size();
+        }));
+  }
   ASSERT_TRUE(Source->Cxx->TryBlocks.empty());
   const auto Actions =
       llvm::count_if(Source->Cxx->UnwindMap,
@@ -236,6 +280,16 @@ TEST(WindowsRegistrationCleanupOnly, InputPE32PreservesEveryUnwindAction) {
   // tables even though PE installation remains a separate unsupported step.
   auto Compiled = Codegen().compile(*Module, Arch::X86, BinaryFormat::COFF);
   ASSERT_TRUE(Compiled.Success);
+}
+
+TEST(WindowsRegistrationCleanupOnly, InputPE32PreservesEveryUnwindAction) {
+  const auto *Path = std::getenv("NEVERD_REGISTRATION_CLEANUP_ONLY_PE32");
+  if (!Path)
+    GTEST_SKIP() << "requires the registration_cleanup_only.cpp PE32 fixture";
+  for (bool RegisterStateWrite : {false, true}) {
+    SCOPED_TRACE(RegisterStateWrite);
+    ASSERT_NO_FATAL_FAILURE(checkCleanupOnlyInput(Path, RegisterStateWrite));
+  }
 }
 #endif
 } // namespace

@@ -34,6 +34,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/Endian.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -1203,6 +1204,143 @@ BinaryImage makeCxxContinuationImage(va_t Target = kText + 0xc0,
   Img.ExceptionMetadata.Functions.push_back(std::move(EH));
   Img.CodePtrRelocSlots.insert(kRData + 0x6c);
   return Img;
+}
+
+std::pair<BinaryImage, va_t> makeCxxRegisterStateImage(uint8_t Register,
+                                                       bool WideDisplacement,
+                                                       int32_t Level,
+                                                       unsigned Mutation = 0) {
+  auto Image = makeCxxContinuationImage();
+  auto &Chain = *Image.ExceptionMetadata.Functions.front().Registration;
+  const va_t Begin = Chain.TryLevelStores.front().StoreVA;
+  std::vector<uint8_t> Body;
+  Body.push_back(uint8_t(0xb8 | Register));
+  emit32(Body, Mutation == 2 ? 7 : uint32_t(Level));
+  if (Mutation == 1)
+    std::fill(Body.begin(), Body.end(), 0x90);
+  Body.push_back(0x90); // the value need not be adjacent to the state write
+  if (Mutation == 3) {
+    const uint8_t Condition = Register == 1 ? 2 : 1;
+    Body.insert(Body.end(), {0x85, uint8_t(0xc0 | (Condition << 3) | Condition),
+                             0x74, 0x01, uint8_t(0x40 | Register)});
+  }
+  const va_t Store = Begin + Body.size();
+  Body.insert(Body.end(), {0x89, uint8_t((WideDisplacement ? 0x85 : 0x45) |
+                                         (Register << 3))});
+  if (WideDisplacement)
+    emit32(Body, uint32_t(-4));
+  else
+    Body.push_back(0xfc);
+  Body.push_back(0x90);
+  const va_t Leave = Begin + Body.size();
+  emitFrameStore(Body, -4, -1);
+  Body.push_back(0xe9);
+  emit32(Body, uint32_t(kText + 0x80 - (Begin + Body.size() + 4)));
+  auto &Text = Image.Segments.front().Data;
+  std::copy(Body.begin(), Body.end(), Text.begin() + (Begin - kText));
+  Chain.TryLevelStores.erase(Chain.TryLevelStores.begin(),
+                             Chain.TryLevelStores.begin() + 2);
+  Chain.TryLevelStores.insert(Chain.TryLevelStores.begin(),
+                              {Leave, Leave + 7, -1});
+  return {std::move(Image), Store};
+}
+
+TEST(RegistrationTryLevel, CxxRegisterStatesUseTheCompleteReachingValue) {
+  for (uint8_t Register : {0, 1, 2, 3, 6, 7})
+    for (bool Wide : {false, true})
+      for (int32_t Level : {-1, 0, 1}) {
+        SCOPED_TRACE(::testing::Message()
+                     << unsigned(Register) << " " << Wide << " " << Level);
+        auto [Image, Store] = makeCxxRegisterStateImage(Register, Wide, Level);
+        const auto Function = liftEntry(Image, kText);
+        ASSERT_TRUE(Function.hasCompleteLiftCoverage());
+        ASSERT_TRUE(Function.RegistrationStates);
+        const auto &States = *Function.RegistrationStates;
+        EXPECT_TRUE(States.Complete);
+        EXPECT_TRUE(States.RegistrationLifetimeComplete);
+        const va_t End = Store + (Wide ? 6 : 3);
+        const auto State =
+            std::find_if(States.Blocks.begin(), States.Blocks.end(),
+                         [&](const auto &S) { return S.Range.Begin == End; });
+        ASSERT_NE(State, States.Blocks.end());
+        EXPECT_FALSE(State->Unknown);
+        EXPECT_EQ(State->Levels, (std::vector<int32_t>{Level}));
+      }
+}
+
+TEST(RegistrationTryLevel, CxxRegisterStatesRejectUnknownAndConflictingValues) {
+  for (unsigned Mutation : {1, 2, 3}) {
+    SCOPED_TRACE(Mutation);
+    auto [Image, Store] = makeCxxRegisterStateImage(3, false, 0, Mutation);
+    const auto Function = liftEntry(Image, kText);
+    ASSERT_TRUE(Function.hasCompleteLiftCoverage());
+    ASSERT_TRUE(Function.RegistrationStates);
+    EXPECT_FALSE(Function.RegistrationStates->Complete);
+    EXPECT_FALSE(Function.RegistrationStates->RegistrationLifetimeComplete);
+  }
+}
+
+TEST(RegistrationTryLevel, CxxRegisterStatesDoNotRequireByteObservations) {
+  auto [Image, Store] = makeCxxRegisterStateImage(3, false, 0);
+  auto &Chain = *Image.ExceptionMetadata.Functions.front().Registration;
+  auto &Text = Image.Segments.front().Data;
+  // Every exit stores -1 through EAX: xor eax,eax; dec eax; mov [ebp-4],eax.
+  // There is neither an immediate store nor an adjacent zero-clear hint.
+  const std::vector<uint8_t> Leave = {0x31, 0xc0, 0x48, 0x89, 0x45, 0xfc, 0x90};
+  for (const auto &Observation : Chain.TryLevelStores) {
+    ASSERT_EQ(Observation.Level, -1);
+    ASSERT_EQ(Observation.EndVA - Observation.StoreVA, Leave.size());
+    std::copy(Leave.begin(), Leave.end(),
+              Text.begin() + (Observation.StoreVA - kText));
+  }
+  Chain.TryLevelStores.clear();
+  const auto Function = liftEntry(Image, kText);
+  ASSERT_TRUE(Function.hasCompleteLiftCoverage());
+  ASSERT_TRUE(Function.RegistrationStates);
+  EXPECT_TRUE(Function.RegistrationStates->Complete);
+  EXPECT_TRUE(Function.RegistrationStates->RegistrationLifetimeComplete);
+  const auto &States = Function.RegistrationStates->Blocks;
+  const auto State =
+      std::find_if(States.begin(), States.end(),
+                   [&](const auto &S) { return S.Range.Begin == Store + 3; });
+  ASSERT_NE(State, States.end());
+  EXPECT_FALSE(State->Unknown);
+  EXPECT_EQ(State->Levels, (std::vector<int32_t>{0}));
+}
+
+TEST(RegistrationTryLevel, CxxRegisterStatesRequireTheirDecodedInstruction) {
+  auto [Image, Store] = makeCxxRegisterStateImage(3, false, 0);
+  const auto Original = liftEntry(Image, kText);
+  ASSERT_TRUE(Original.RegistrationStates);
+  ASSERT_TRUE(Original.RegistrationStates->Complete);
+  for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Function = Original;
+    for (auto &Block : Function.Blocks)
+      for (auto &Boundary : Block.InstructionBoundaries)
+        if (Boundary.Address == Store) {
+          if (Mutation == 0)
+            --Boundary.Size;
+          if (Mutation == 1)
+            ++Boundary.FirstOp;
+          if (Mutation == 2)
+            Boundary.OpCount = 0;
+          if (Mutation == 3)
+            Boundary.Control = LowInstructionControl::Call;
+          if (Mutation == 4)
+            Boundary.ControlFlags |=
+                LowInstructionControlFlag::InstructionGuard;
+          if (Mutation == 5)
+            ++Block.EndAddr;
+          if (Mutation == 6)
+            Boundary.Mode = InstructionMode::Thumb;
+          if (Mutation == 7)
+            Boundary.TargetMode = LowInstructionTargetMode::Thumb;
+          if (Mutation == 8)
+            Boundary.Immediate = kText;
+        }
+    EXPECT_FALSE(analyzeRegistrationStates(Function).Complete);
+  }
 }
 
 TEST(RegistrationTryLevel, DirectCxxStackGuardPreservesTheRegistrationNode) {

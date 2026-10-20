@@ -16,6 +16,7 @@
 
 #include "X86/RegistrationJumpRuntime.h"
 #include "X86/RegistrationSEHControl.h"
+#include "X86/RegistrationTryLevel.h"
 
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -88,6 +89,10 @@ void CFGBuilder::splitBlocks() {
           return Op.Opcode == NdOp::STORE &&
                  Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS;
         }))
+      BlockStarts.insert(Addr + Rec.Size);
+    if (Registration && EH->Cxx &&
+        registration_state::registerStateStoreCandidate(*EH->Registration,
+                                                        Rec.Ops))
       BlockStarts.insert(Addr + Rec.Size);
     if (Registration && !EH->Cxx &&
         (EH->Encoding == ExceptionEncoding::X86ScopeTableEH3 ||
