@@ -1867,6 +1867,14 @@ or poisoned operations. It shares the frame proof's bounded work budget.
 ESI-based relays bind their base and saved entry EBP to each parent after cache
 lookup, again during caller ABI replay and during LLVM emission. LowIR owns
 the saved frame lifetime and object borrow proof.
+`getCheckedX86CxxPrologueCall` shares the loader's exact EAX-handler helper
+decoder with entry discovery. It authenticates the current caller, allocation,
+helper, FuncInfo dispatch and any SafeSEH membership, then describes ordered
+live stack writes relative to the helper's established EBP. The description
+retains overlapping saves, the moved return PC's final ESP, cookie encoding and
+the returned register/flag effects. It is a physical call description; source
+state transfer must still bind the actual stack word, EAX and decoded occurrence.
+It does not publish frame coordinates or admit native output by itself.
 `RegistrationCleanupABI` authenticates immutable MSVC tail-jump relays and
 Clang relays that save EBP, adjust the source frame and call one or more checked
 leaves before restoring EBP. The ordered call list retains every ECX object

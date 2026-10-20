@@ -170,6 +170,50 @@ std::optional<X86CxxHandlerABI>
 getCheckedX86CxxHandlerABI(const BinaryImage &Img,
                            const ExceptionFunction &Function);
 
+/// A live stack word written by the shared EAX-handler C++ prologue. Offsets
+/// use its established EBP, which is four bytes below caller entry ESP.
+struct X86CxxPrologueWrite {
+  enum class Value {
+    PreviousEBP,
+    Handler,
+    PreviousChain,
+    EBX,
+    ESI,
+    EDI,
+    EncodedCookie,
+    StackPointer,
+    InitialState
+  };
+  int32_t FrameOffset = 0;
+  Value Source = Value::PreviousEBP;
+  bool operator==(const X86CxxPrologueWrite &) const = default;
+};
+
+/// Exact immutable caller/helper instructions, including the moved return PC.
+/// Writes retain machine order, including any overlap. On return EBP is the
+/// frame origin, EAX is frame-12, ESP is PostCallStackOffset, and the other
+/// five GPRs are unchanged. Arithmetic flags come from cookie XOR EBP, not from
+/// the incoming flags. The transient return-PC word below final ESP is not
+/// live.
+///
+/// This describes a physical call, not an ordinary returning callee ABI.
+/// Applying it still requires the current caller's stack word, EAX, instruction
+/// boundary and entry-frame identities. It does not authorize native EH,
+/// cookie-check elision, callback entry, or a frame coordinate by itself.
+struct X86CxxPrologueCall {
+  ExceptionAddressRange Caller;
+  ExceptionAddressRange Helper;
+  va_t CallVA = 0;
+  va_t HandlerVA = 0;
+  va_t SecurityCookieVA = 0;
+  uint32_t AllocationBytes = 0;
+  int32_t PostCallStackOffset = 0;
+  std::vector<X86CxxPrologueWrite> Writes;
+};
+std::optional<X86CxxPrologueCall>
+getCheckedX86CxxPrologueCall(const BinaryImage &Img,
+                             const ExceptionFunction &Function);
+
 /// Authenticate a retained FH3 handler entry directly from its thunk, FuncInfo
 /// and CRT import. This supplies a code-address identity after the original
 /// parent's prologue has been replaced, not ownership of its former callbacks

@@ -4,10 +4,11 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Attribute EAX-handler prologue calls without granting a native frame ABI.
+/// Authenticate EAX-handler prologue calls without granting a native frame ABI.
 
 #include "COFFRegistrationEHDetail.h"
 
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
 #include <algorithm>
@@ -15,11 +16,19 @@
 #include <map>
 #include <set>
 
-namespace neverd::coff_loader::registration_detail {
+namespace neverd::coff_loader {
 namespace {
 
-bool isCxxEAXPrologue(const BinaryImage &Img, va_t Entry,
-                      std::map<va_t, bool> &Checked) {
+enum class ExtraFrameStore { None, StackPointer, EncodedCookie };
+struct HelperProtocol {
+  ExceptionAddressRange Code;
+  va_t SecurityCookieVA;
+  ExtraFrameStore Extra;
+};
+using HelperCache = std::map<va_t, std::optional<HelperProtocol>>;
+
+std::optional<HelperProtocol>
+readCxxEAXPrologue(const BinaryImage &Img, va_t Entry, HelperCache &Checked) {
   const auto Existing = Checked.find(Entry);
   if (Existing != Checked.end())
     return Existing->second;
@@ -33,57 +42,132 @@ bool isCxxEAXPrologue(const BinaryImage &Img, va_t Entry,
                                      0xa3, 0,    0,    0,    0,    0xc3};
   const auto *Bytes = Img.readVA(Entry, 51);
   if (!Bytes || !std::equal(std::begin(Prefix), std::end(Prefix), Bytes))
-    return false;
+    return std::nullopt;
   // Cache only actual helper-shaped candidates, not arbitrary call targets.
-  auto [Result, New] = Checked.emplace(Entry, false);
+  auto [Result, New] = Checked.emplace(Entry, std::nullopt);
   (void)New;
   if (Img.Base > UINT32_MAX || !Img.DynInfo.SecurityCookieRVA ||
       Img.DynInfo.SecurityCookieRVA > UINT32_MAX - Img.Base)
-    return false;
+    return std::nullopt;
   const va_t Cookie = Img.Base + Img.DynInfo.SecurityCookieRVA;
   if (Cookie > UINT32_MAX - 3 || readLE<uint32_t>(Bytes + 24) != Cookie ||
       !Img.readVA(Cookie, 4) || Bytes[28] != 0x33 || Bytes[29] != 0xc5 ||
       Bytes[30] != 0x50)
-    return false;
+    return std::nullopt;
   size_t Suffix = 31;
+  ExtraFrameStore Extra = ExtraFrameStore::None;
   // The compiler variants additionally save ESP or the encoded GS cookie.
   if (Bytes[Suffix] == 0x89 &&
       (Bytes[Suffix + 1] == 0x65 || Bytes[Suffix + 1] == 0x45) &&
-      Bytes[Suffix + 2] == 0xf0)
+      Bytes[Suffix + 2] == 0xf0) {
+    Extra = Bytes[Suffix + 1] == 0x65 ? ExtraFrameStore::StackPointer
+                                      : ExtraFrameStore::EncodedCookie;
     Suffix += 3;
+  }
   Bytes = Img.readVA(Entry, Suffix + sizeof(Tail));
-  if (!Bytes || !std::equal(std::begin(Tail), std::end(Tail), Bytes + Suffix))
-    return false;
-  Result->second = readImmutablePE32CodeBytes(Img, Entry, Suffix + sizeof(Tail),
-                                              {Entry + 24})
-                       .has_value();
+  if (!Bytes || !std::equal(std::begin(Tail), std::end(Tail), Bytes + Suffix) ||
+      Entry > UINT32_MAX - (Suffix + sizeof(Tail) - 1) ||
+      !readImmutablePE32CodeBytes(Img, Entry, Suffix + sizeof(Tail),
+                                  {Entry + 24}))
+    return std::nullopt;
+  Result->second =
+      HelperProtocol{{Entry, Entry + Suffix + sizeof(Tail)}, Cookie, Extra};
   return Result->second;
+}
+
+std::optional<X86CxxPrologueCall> readCxxEAXPrologueCall(const BinaryImage &Img,
+                                                         va_t Entry,
+                                                         HelperCache &Checked) {
+  if (Img.Arch != Arch::X86 || Img.Bits != Bitness::Bits32 ||
+      Img.Format != BinaryFormat::COFF || Entry > UINT32_MAX - 14)
+    return std::nullopt;
+  const auto *Bytes = Img.readVA(Entry, 12);
+  if (!Bytes || (Bytes[0] != 0x6a && Bytes[0] != 0x68))
+    return std::nullopt;
+  const uint32_t PushSize = Bytes[0] == 0x6a ? 2 : 5;
+  const uint32_t Size = PushSize + 10;
+  Bytes = Img.readVA(Entry, Size);
+  if (!Bytes || Bytes[PushSize] != 0xb8 || Bytes[PushSize + 5] != 0xe8)
+    return std::nullopt;
+  const int32_t Allocation =
+      PushSize == 2 ? int8_t(Bytes[1]) : readLE<int32_t>(Bytes + 1);
+  if (Allocation < 0 || Allocation > limits::kMaxSourceCallBorrowedBytes ||
+      !readImmutablePE32CodeBytes(Img, Entry, Size, {Entry + PushSize + 1}))
+    return std::nullopt;
+  const va_t Call = Entry + PushSize + 5;
+  const auto Target = registration_detail::addSignedOffset(
+      Call + 5, readLE<int32_t>(Bytes + PushSize + 6));
+  const auto Helper =
+      Target ? readCxxEAXPrologue(Img, *Target, Checked) : std::nullopt;
+  if (!Helper)
+    return std::nullopt;
+  X86CxxPrologueCall Result;
+  Result.Caller = {Entry, Entry + Size};
+  Result.Helper = Helper->Code;
+  Result.CallVA = Call;
+  Result.HandlerVA = readLE<uint32_t>(Bytes + PushSize + 1);
+  Result.SecurityCookieVA = Helper->SecurityCookieVA;
+  Result.AllocationBytes = Allocation;
+  Result.PostCallStackOffset = -28 - Allocation;
+  using Value = X86CxxPrologueWrite::Value;
+  Result.Writes = {{-8, Value::Handler},
+                   {-12, Value::PreviousChain},
+                   {-16 - Allocation, Value::EBX},
+                   {-20 - Allocation, Value::ESI},
+                   {-24 - Allocation, Value::EDI},
+                   {0, Value::PreviousEBP},
+                   {Result.PostCallStackOffset, Value::EncodedCookie}};
+  if (Helper->Extra != ExtraFrameStore::None)
+    Result.Writes.push_back({-16, Helper->Extra == ExtraFrameStore::StackPointer
+                                      ? Value::StackPointer
+                                      : Value::EncodedCookie});
+  Result.Writes.push_back({-4, Value::InitialState});
+  return Result;
 }
 
 std::optional<va_t> eaxCallerEntry(const Segment &Seg, size_t CallOffset) {
   if (CallOffset < 7 || Seg.Data[CallOffset - 5] != 0xb8)
     return std::nullopt;
   size_t Begin = CallOffset - 7;
-  int64_t Allocation;
-  if (Seg.Data[Begin] == 0x6a)
-    Allocation = int8_t(Seg.Data[Begin + 1]);
-  else if (CallOffset >= 10 && Seg.Data[CallOffset - 10] == 0x68) {
+  if (Seg.Data[Begin] != 0x6a) {
+    if (CallOffset < 10 || Seg.Data[CallOffset - 10] != 0x68)
+      return std::nullopt;
     Begin = CallOffset - 10;
-    Allocation = readLE<int32_t>(Seg.Data.data() + Begin + 1);
-  } else
-    return std::nullopt;
-  if (Allocation < 0 || Allocation > limits::kMaxSourceCallBorrowedBytes)
-    return std::nullopt;
+  }
   return Seg.VA + Begin;
 }
 } // namespace
 
+std::optional<X86CxxPrologueCall>
+getCheckedX86CxxPrologueCall(const BinaryImage &Img,
+                             const ExceptionFunction &Function) {
+  if (Function.ParseStatus != ExceptionParseStatus::Complete ||
+      Function.Encoding != ExceptionEncoding::X86CxxFuncInfo ||
+      !Function.Registration || !Function.CodeRange.isValid())
+    return std::nullopt;
+  HelperCache Checked;
+  auto Call = readCxxEAXPrologueCall(Img, Function.CodeRange.Begin, Checked);
+  if (!Call || Call->Caller.End > Function.CodeRange.End ||
+      Function.CodeRange.overlaps(Call->Helper) ||
+      Call->HandlerVA != Function.PersonalityVA ||
+      Call->CallVA != Function.Registration->ChainInstallVA ||
+      !getCheckedX86CxxHandlerABI(Img, Function))
+    return std::nullopt;
+  const registration_detail::SafeSEHTable SafeSEH(Img);
+  if (SafeSEH.isMalformed() ||
+      (SafeSEH.isPresent() &&
+       !isCheckedX86SafeSEHHandlerReference(Img, Call->HandlerVA)))
+    return std::nullopt;
+  return Call;
+}
+
+namespace registration_detail {
 std::vector<InstallSite>
 findCxxEAXPrologueCallers(const BinaryImage &Img,
                           const FunctionRangeMap &Functions,
                           const SafeSEHTable &SafeSEH) {
   std::vector<InstallSite> Sites;
-  std::map<va_t, bool> Helpers;
+  HelperCache Helpers;
   std::set<va_t> Entries;
   size_t BoundaryWork = 0;
   for (const auto &Seg : Img.Segments) {
@@ -99,11 +183,10 @@ findCxxEAXPrologueCallers(const BinaryImage &Img,
       if (!Entry)
         continue;
       const va_t CallVA = Seg.VA + I;
-      const auto Target =
-          addSignedOffset(CallVA + 5, readLE<int32_t>(Call + 1));
-      if (!Target || !isCxxEAXPrologue(Img, *Target, Helpers))
+      const auto Protocol = readCxxEAXPrologueCall(Img, *Entry, Helpers);
+      if (!Protocol || Protocol->CallVA != CallVA)
         continue;
-      const va_t Handler = readLE<uint32_t>(Call - 4);
+      const va_t Handler = Protocol->HandlerVA;
       if (!isExecutableAddress(Img, Handler) ||
           (SafeSEH.isPresent() && !SafeSEH.contains(Handler)))
         continue;
@@ -111,13 +194,11 @@ findCxxEAXPrologueCallers(const BinaryImage &Img,
       if (!decodeCxxHandlerThunk(Img, Handler, Identity) ||
           !Identity.CxxFuncInfoVA ||
           (Identity.Personality != ExceptionPersonality::CxxFrameHandler3 &&
-           Identity.Personality != ExceptionPersonality::CxxFrameHandlerX86) ||
-          !readImmutablePE32CodeBytes(Img, *Entry, CallVA + 5 - *Entry,
-                                      {CallVA - 4}))
+           Identity.Personality != ExceptionPersonality::CxxFrameHandlerX86))
         continue;
       auto Range = Functions.find(Img, CallVA);
       if (!Range || !Range->contains(*Entry) || !Range->contains(CallVA + 4) ||
-          Range->contains(*Target))
+          Range->overlaps(Protocol->Helper))
         continue;
       const auto Next = Entries.upper_bound(CallVA);
       if (Next != Entries.begin())
@@ -146,4 +227,5 @@ findCxxEAXPrologueCallers(const BinaryImage &Img,
         std::min(Sites[I - 1].Range.End, Sites[I].Range.Begin);
   return Sites;
 }
-} // namespace neverd::coff_loader::registration_detail
+} // namespace registration_detail
+} // namespace neverd::coff_loader

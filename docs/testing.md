@@ -5956,6 +5956,19 @@ Self/forward edges, a 129-action chain and record-budget overflow refuse.
 Independent generated-state tests bind both a dense 4,096-state table and a
 two-state table projected from 4,096 source states, rejecting omitted actions
 and changed outer edges.
+`RegistrationTryLevel.CxxEAXHelper*` separately checks shared C++ prologue
+descriptions, including every instruction byte, parent identity, storage and
+fixups. Allocation zero retains the overwritten EBX save, and unaligned
+allocation retains partial overlap. Run
+`check_windows_registration_prologue.py --test-binary <NeverDRegistrationEHTests>
+--runtime-libs <native-msvc-library-directory> --output <directory>` for 24
+assembled PE32 source cases. Add `--wine <wine-command> --wine-prefix <directory>`
+to check live stack bytes, all GPRs, defined arithmetic flags, return-PC movement
+and FS chain state at preferred and rebased addresses. Wrong-seed controls must
+return one; intact cases return zero (96 runtime observations). Set
+`NEVERD_REGISTRATION_PROLOGUE_INPUT_PE32` to one generated `original.exe` when
+running the complete registration EH suite. These source/runtime descriptions
+do not yet grant a LowIR transfer or native EH lowering.
 `check_windows_registration_realigned_rewrite.py` separately emits aligned
 value/reference, unbound value/reference and catch-all parents. Independent
 assembly fixtures use the canonical direct MSVC EBP frame for the unbound forms.

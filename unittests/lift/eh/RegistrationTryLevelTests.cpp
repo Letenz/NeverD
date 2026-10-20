@@ -26,6 +26,7 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/loader/COFF/COFFException.h"
+#include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExceptionInfo.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -35,6 +36,7 @@
 #include "llvm/Support/Endian.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -1461,6 +1463,184 @@ TEST(RegistrationTryLevel, CxxEAXHelperRequiresExactSourceProtocol) {
         EXPECT_EQ(chainAt(Image, kText + 0x20), nullptr);
         EXPECT_EQ(chainAt(Image, kText + 0x50), nullptr);
       }
+}
+
+TEST(RegistrationTryLevel, CxxEAXHelperReportsOrderedPhysicalEffects) {
+  using Value = coff_loader::X86CxxPrologueWrite::Value;
+  for (bool Wide : {false, true})
+    for (unsigned Variant : {0, 1, 2})
+      for (uint32_t Allocation :
+           {0u, 1u, 4u, 32u, 127u, limits::kMaxSourceCallBorrowedBytes}) {
+        if (!Wide && Allocation > 127)
+          continue;
+        SCOPED_TRACE(::testing::Message()
+                     << Wide << " " << Variant << " " << Allocation);
+        auto Image = makeCxxEAXHelperImage(Wide, Variant);
+        const auto *EH = Image.ExceptionMetadata.findFunction(kText + 0x20);
+        ASSERT_TRUE(EH);
+        if (Wide)
+          writeLE<uint32_t>(Image.Segments.front().Data.data() + 0x21,
+                            Allocation);
+        else
+          Image.Segments.front().Data[0x21] = Allocation;
+        const auto Call = coff_loader::getCheckedX86CxxPrologueCall(Image, *EH);
+        ASSERT_TRUE(Call);
+        EXPECT_EQ(Call->Caller.Begin, kText + 0x20);
+        EXPECT_EQ(Call->Caller.End, kText + (Wide ? 0x2f : 0x2c));
+        EXPECT_EQ(Call->CallVA, Call->Caller.End - 5);
+        EXPECT_EQ(Call->Helper.Begin, kText + 0x100);
+        EXPECT_EQ(Call->Helper.End, kText + 0x100 + (Variant ? 54 : 51));
+        EXPECT_EQ(Call->HandlerVA, kText + 0x200);
+        EXPECT_EQ(Call->SecurityCookieVA, kRData + 0xf0);
+        EXPECT_EQ(Call->AllocationBytes, Allocation);
+        // At helper entry the allocation word is above the return PC. The
+        // two node pushes, allocation, three GPR saves and cookie put ESP
+        // this far below the new EBP when that return PC is popped.
+        const int32_t Bytes = Allocation;
+        EXPECT_EQ(Call->PostCallStackOffset, -28 - Bytes);
+        std::vector<coff_loader::X86CxxPrologueWrite> Expected{
+            {-8, Value::Handler},
+            {-12, Value::PreviousChain},
+            {-16 - Bytes, Value::EBX},
+            {-20 - Bytes, Value::ESI},
+            {-24 - Bytes, Value::EDI},
+            {0, Value::PreviousEBP},
+            {-28 - Bytes, Value::EncodedCookie}};
+        if (Variant)
+          Expected.push_back(
+              {-16, Variant == 1 ? Value::StackPointer : Value::EncodedCookie});
+        Expected.push_back({-4, Value::InitialState});
+        EXPECT_EQ(Call->Writes, Expected);
+        // In particular allocation zero retains the extra store's overwrite
+        // of the EBX save; it cannot grant restored-register authority.
+        EXPECT_FALSE(EH->Registration->RegistrationOffset);
+        EXPECT_FALSE(EH->Registration->TryLevelOffset);
+      }
+}
+
+TEST(RegistrationTryLevel, CxxEAXHelperRechecksEveryProtocolInstruction) {
+  for (bool Wide : {false, true})
+    for (unsigned Variant : {0, 1, 2}) {
+      const auto Original = makeCxxEAXHelperImage(Wide, Variant);
+      const auto &EH = *Original.ExceptionMetadata.findFunction(kText + 0x20);
+      ASSERT_TRUE(coff_loader::getCheckedX86CxxPrologueCall(Original, EH));
+      const uint32_t PushSize = Wide ? 5 : 2;
+      for (const auto &[Begin, End] :
+           std::vector<std::pair<uint32_t, uint32_t>>{
+               {0x20, 0x20 + PushSize + 10},
+               {0x100, 0x100 + (Variant ? 54 : 51)}})
+        for (uint32_t Byte = Begin; Byte != End; ++Byte) {
+          if (Byte > 0x20 && Byte < 0x20 + PushSize)
+            continue; // The current allocation is independently decoded.
+          SCOPED_TRACE(::testing::Message()
+                       << Wide << " " << Variant << " " << Byte);
+          auto Changed = Original;
+          Changed.Segments.front().Data[Byte] ^= 1;
+          EXPECT_FALSE(coff_loader::getCheckedX86CxxPrologueCall(Changed, EH));
+        }
+    }
+}
+
+TEST(RegistrationTryLevel, CxxEAXHelperRechecksItsCurrentParentAndStorage) {
+  const auto Original = makeCxxEAXHelperImage(false, 1);
+  const auto &Parent = *Original.ExceptionMetadata.findFunction(kText + 0x20);
+  ASSERT_TRUE(coff_loader::getCheckedX86CxxPrologueCall(Original, Parent));
+  for (unsigned Mutation = 0; Mutation != 19; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = Original;
+    auto EH = Parent;
+    switch (Mutation) {
+    case 0:
+      EH.ParseStatus = ExceptionParseStatus::Partial;
+      break;
+    case 1:
+      EH.Encoding = ExceptionEncoding::X86ScopeTableEH3;
+      break;
+    case 2:
+      EH.Registration.reset();
+      break;
+    case 3:
+      EH.Cxx.reset();
+      break;
+    case 4:
+      ++EH.PersonalityVA;
+      break;
+    case 5:
+      ++EH.Registration->ChainInstallVA;
+      break;
+    case 6:
+      ++EH.CodeRange.Begin;
+      break;
+    case 7:
+      EH.CodeRange.End = kText + 0x2b;
+      break;
+    case 8:
+      EH.CodeRange.End = kText + 0x101;
+      break;
+    case 9:
+      ++EH.Cxx->MaxState;
+      break;
+    case 10:
+      Image.Arch = Arch::X64;
+      break;
+    case 11:
+      Image.Bits = Bitness::Bits64;
+      break;
+    case 12:
+      Image.Format = BinaryFormat::ELF;
+      break;
+    case 13:
+      Image.Segments.front().Flags =
+          Image.Segments.front().Flags | SegmentFlags::Writable;
+      break;
+    case 14:
+      Image.Segments.push_back(Image.Segments.front());
+      break;
+    case 15:
+      Image.BaseRelocations.push_back({kText + 0x28, 3});
+      break;
+    case 16:
+      Image.BaseRelocations.push_back({kText + 0x119, 3});
+      break;
+    case 17:
+      Image.DynInfo.SecurityCookieRVA = 0;
+      break;
+    case 18:
+      Image.IsRelocatable = true;
+      break;
+    }
+    EXPECT_FALSE(coff_loader::getCheckedX86CxxPrologueCall(Image, EH));
+  }
+}
+
+TEST(RegistrationTryLevel, CxxEAXHelperInputPE32HasTheCheckedPhysicalCall) {
+  const char *Path = std::getenv("NEVERD_REGISTRATION_PROLOGUE_INPUT_PE32");
+  if (!Path)
+    GTEST_SKIP() << "set NEVERD_REGISTRATION_PROLOGUE_INPUT_PE32";
+  auto Image = COFFLoader().load(Path);
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  auto Export = [&](llvm::StringRef Name) {
+    const auto Found = llvm::find_if(
+        Image->Exports, [&](const auto &Entry) { return Entry.Name == Name; });
+    return Found == Image->Exports.end() ? InvalidVA : Found->Addr;
+  };
+  const auto *EH =
+      Image->ExceptionMetadata.findFunction(Export("prologue_parent"));
+  ASSERT_TRUE(EH);
+  const auto Call = coff_loader::getCheckedX86CxxPrologueCall(*Image, *EH);
+  ASSERT_TRUE(Call);
+  auto Word = [&](llvm::StringRef Name) {
+    const auto *Bytes = Image->readVA(Export(Name), 4);
+    return Bytes ? readLE<uint32_t>(Bytes) : UINT32_MAX;
+  };
+  EXPECT_EQ(Call->AllocationBytes, Word("prologue_allocation"));
+  EXPECT_EQ(Call->Helper.Begin, Export("prologue_helper"));
+  EXPECT_EQ(Call->HandlerVA, Export("prologue_handler"));
+  EXPECT_EQ(Call->Caller.size(), Word("prologue_wide") ? 15u : 12u);
+  EXPECT_EQ(Call->Helper.size(), Word("prologue_variant") ? 54u : 51u);
+  EXPECT_EQ(Call->Writes.size(), Word("prologue_variant") ? 9u : 8u);
+  EXPECT_FALSE(EH->Registration->RegistrationOffset);
+  EXPECT_FALSE(EH->Registration->TryLevelOffset);
 }
 
 TEST(RegistrationTryLevel, CxxEAXHelperRequiresClosedPrecedingBody) {
