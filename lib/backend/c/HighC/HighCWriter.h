@@ -33,6 +33,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdint>
@@ -424,7 +425,11 @@ public:
   /// imageStringLiteral asks of a symbol.
   bool objectOutgrowsLiteral(va_t Addr, llvm::StringRef Literal) const;
   std::string renderUnaryOp(const HighExpr &E, int ParentPrec);
+  /// The name a call's target goes by, resolved once for each call address,
+  /// indirection and stated target, all it reads of a call: the image and
+  /// the debug information do not change while a unit is written.
   std::string resolvedCallTarget(const HighExpr &E) const;
+  std::string resolveCallTarget(const HighExpr &E) const;
   /// The name the image lists the function at \p Addr under
   /// (BinaryImage::getFunctionNameAt), looked up once per address: the image
   /// does not change while a unit is written, and each lookup scans every
@@ -1396,6 +1401,14 @@ public:
   mutable bool AssignedValuesIndexed = false;
   /// imageFunctionNameAt's answers.
   mutable std::unordered_map<va_t, std::string> ListedFunctionNames;
+  /// resolvedCallTarget's answers, by call address.
+  struct ResolvedCallTarget {
+    bool Indirect;
+    std::string Target;
+    std::string Name;
+  };
+  mutable std::unordered_map<va_t, llvm::SmallVector<ResolvedCallTarget, 1>>
+      ResolvedCallTargets;
   /// Multi-use MSVC ctor dests print as the this operand (`&var`), not `v21`.
   std::map<std::string, const HighExpr *> CtorThisForward;
   /// Assigned call results that stay as temps take a Get* stem (`FontColor`).

@@ -117,7 +117,9 @@ void OmittedCalleeMemo::adopt(const BinaryImage &Img,
   FunctionEntries = calleeLiftEntries(Img);
   PointerCallees = collectPointerVariableCallees(Img);
   CodeOwners.reset();
+  AbsoluteRelocationRoots.reset();
   RuntimeRoutineCalls.reset();
+  CodePointerTargets.reset();
   Callees.clear();
   Bytes = 0;
 }
@@ -128,10 +130,24 @@ const ExecutableCodeOwnerIndex &OmittedCalleeMemo::codeOwners() {
   return *CodeOwners;
 }
 
+const detail::AbsoluteRelocationRootIndex &
+OmittedCalleeMemo::absoluteRelocationRoots() {
+  if (!AbsoluteRelocationRoots)
+    AbsoluteRelocationRoots =
+        std::make_shared<const detail::AbsoluteRelocationRootIndex>(*Image);
+  return *AbsoluteRelocationRoots;
+}
+
 const std::map<va_t, Intrinsic> &OmittedCalleeMemo::runtimeRoutineCalls() {
   if (!RuntimeRoutineCalls)
     RuntimeRoutineCalls = runtimeRoutineCallsOf(*Image, Image->Arch);
   return *RuntimeRoutineCalls;
+}
+
+const std::vector<va_t> &OmittedCalleeMemo::codePointerTargets() {
+  if (!CodePointerTargets)
+    CodePointerTargets = codePointerTargetsOf(*Image);
+  return *CodePointerTargets;
 }
 
 OmittedCalleeMemo::Conversion *
@@ -312,11 +328,15 @@ public:
   /// Lifts \p Target into \p Low, once.
   const LowFunc &lift(va_t Target, std::optional<LowFunc> &Low) {
     if (!Low) {
-      // The lifts look the image's code owners up in one index: the memo's,
-      // or one built for the first lift of this read.
+      // The lifts look the image's code owners and absolute relocations up
+      // in one index each: the memo's, or ones built for the first lift of
+      // this read.
       if (!OwnersLent) {
         Builder.setExecutableCodeOwnerIndex(Memo ? &Memo->codeOwners()
                                                  : &Owners.emplace(Img));
+        Builder.setAbsoluteRelocationRootIndex(
+            Memo ? &Memo->absoluteRelocationRoots()
+                 : &RelocationRoots.emplace(Img));
         OwnersLent = true;
       }
       Low.emplace(
@@ -364,6 +384,7 @@ public:
           &omittedCalleeArgumentCounts(Result));
       Converter.setCallSummaryKeysRead(&Keys);
       Converter.setRuntimeRoutineCalls(&runtimeRoutineCalls());
+      Converter.setCodePointerTargets(&codePointerTargets());
       MedFunc Med = Converter.convert(Lifted, Img.Arch, Img.abiFormat());
       size_t MedOperations = 0;
       for (const auto &Block : Med.Blocks)
@@ -406,6 +427,14 @@ private:
       OwnRuntimeRoutineCalls = runtimeRoutineCallsOf(Img, Img.Arch);
     return *OwnRuntimeRoutineCalls;
   }
+  /// The code pointer targets every conversion reads, likewise.
+  const std::vector<va_t> &codePointerTargets() {
+    if (Memo)
+      return Memo->codePointerTargets();
+    if (!OwnCodePointerTargets)
+      OwnCodePointerTargets = codePointerTargetsOf(Img);
+    return *OwnCodePointerTargets;
+  }
 
   const BinaryImage &Img;
   const PipelineResult &Result;
@@ -414,8 +443,10 @@ private:
   const std::set<va_t> *Entries = nullptr;
   Decoder Dec;
   std::optional<ExecutableCodeOwnerIndex> Owners;
+  std::optional<detail::AbsoluteRelocationRootIndex> RelocationRoots;
   bool OwnersLent = false;
   std::optional<std::map<va_t, Intrinsic>> OwnRuntimeRoutineCalls;
+  std::optional<std::vector<va_t>> OwnCodePointerTargets;
   CFGBuilder Builder;
 };
 
@@ -884,9 +915,9 @@ AnalysisCacheWarmup warmOmittedCallees(const BinaryImage &Img,
   CalleeReader Reader(Img, Summaries);
   if (!Reader.init())
     return Warmup;
-  // Warming fills a quarter of the memo, and leaves the rest to the callees
+  // Warming fills half of the memo, and leaves the other half to the callees
   // selections read: bodies past it would only push those out.
-  constexpr size_t WarmedBytes = OmittedCalleeMemo::MaxBytes / 4;
+  constexpr size_t WarmedBytes = OmittedCalleeMemo::MaxBytes / 2;
   // A small body is the signature of a routine many functions call; a large
   // one is read where a selection first reads it.
   constexpr size_t MaxWarmedOperations = 512;

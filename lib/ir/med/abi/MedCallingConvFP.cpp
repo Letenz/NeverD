@@ -33,6 +33,26 @@ void detectFPParams(
   // observed as live-in self-copies.
   if (TRI.VecRegCount == 0)
     return;
+  // Only a leading entry self-copy of a floating argument register can become
+  // a parameter (the loop at the end); without one, nothing is recovered.
+  auto isFPArgSelfCopy = [&](const MedOp &Op) {
+    return Op.Output.Kind == MedVar::Reg && Op.NumInputs >= 1 &&
+           Op.Inputs[0].Id == Op.Output.Id &&
+           TRI.isFPArgReg(Op.Output.RegOff, TargetFormat);
+  };
+  {
+    bool AnyCandidate = false;
+    for (const auto &Op : Entry.Ops) {
+      if (Op.Opcode != NdOp::COPY)
+        break;
+      if (isFPArgSelfCopy(Op)) {
+        AnyCandidate = true;
+        break;
+      }
+    }
+    if (!AnyCandidate)
+      return;
+  }
 
   // An entry self-copy alone does not prove a parameter: the lifter emits one
   // for every vector register the body touches, including those used purely as
@@ -650,14 +670,10 @@ void detectFPParams(
   for (const auto &Op : Entry.Ops) {
     if (Op.Opcode != NdOp::COPY)
       break;
-    if (Op.Output.Kind != MedVar::Reg)
-      continue;
-    if (Op.NumInputs < 1 || Op.Inputs[0].Id != Op.Output.Id)
+    if (!isFPArgSelfCopy(Op))
       continue;
 
     uint64_t ROff = Op.Output.RegOff;
-    if (!TRI.isFPArgReg(ROff, TargetFormat))
-      continue;
     // A positional convention (Win64) finds its floating arguments among
     // the argument slots; each still carries a scalar or a vector.
     if (AlreadyParam.count(ROff)) {

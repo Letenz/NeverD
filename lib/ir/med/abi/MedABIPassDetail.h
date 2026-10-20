@@ -29,6 +29,7 @@
 #include "neverd/ir/med/MedIR.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 
@@ -227,7 +228,7 @@ public:
 
 private:
   const MedFunc &Func;
-  std::map<std::tuple<int, int, int, uint64_t>, MedDefSite> Sites;
+  llvm::DenseMap<std::tuple<int, int, int, uint64_t>, MedDefSite> Sites;
   bool Built = false;
 };
 

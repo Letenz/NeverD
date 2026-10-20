@@ -26,6 +26,7 @@
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/ExceptionInfo.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -899,8 +900,8 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   }
 
   // Step 5: SSA renaming (assign version numbers)
-  std::map<int, int> VarCounter;
-  std::map<int, std::vector<int>> VarStack;
+  llvm::DenseMap<int, int> VarCounter;
+  llvm::DenseMap<int, std::vector<int>> VarStack;
   // Version 0 is the value a variable holds when a root is entered.  A root
   // other than the entry reads it after the entry's subtree has been
   // renamed, so its definitions start at 1 instead of taking version 0 and
@@ -939,10 +940,33 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   struct Frame {
     int B;
     size_t ChildIdx;
-    std::map<int, int> SavedSizes;
+    /// The variables this block pushed a version of, once per push.
+    std::vector<int> Pushed;
   };
   std::vector<Frame> Stk;
   Stk.reserve(N);
+
+  // The arguments each block's PHIs take on an edge from each predecessor:
+  // (predecessor, PHI, argument) in PHI and argument order.  Renaming does
+  // not change a PHI's arguments' predecessors.
+  struct PhiEdgeArg {
+    int Pred;
+    uint32_t Phi;
+    uint32_t Arg;
+  };
+  std::vector<std::vector<PhiEdgeArg>> PhiEdgeArgs(N);
+  for (int B = 0; B < N; ++B) {
+    const auto &Phis = Func.Blocks[B].Phis;
+    for (size_t P = 0; P < Phis.size(); ++P)
+      for (size_t A = 0; A < Phis[P].Args.size(); ++A)
+        PhiEdgeArgs[B].push_back({Phis[P].Args[A].first,
+                                  static_cast<uint32_t>(P),
+                                  static_cast<uint32_t>(A)});
+    std::stable_sort(PhiEdgeArgs[B].begin(), PhiEdgeArgs[B].end(),
+                     [](const PhiEdgeArg &L, const PhiEdgeArg &R) {
+                       return L.Pred < R.Pred;
+                     });
+  }
 
   auto ProcessBlock = [&](Frame &F) {
     if (F.B == VirtualRoot)
@@ -952,7 +976,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     auto &Blk = Func.Blocks[F.B];
     for (auto &Phi : Blk.Phis) {
       Phi.Output.SSAVer = NewVersion(Phi.Output.Id);
-      F.SavedSizes[Phi.Output.Id]++;
+      F.Pushed.push_back(Phi.Output.Id);
     }
     if (SEHProtectedBlocks.count(F.B))
       for (int Id : SEHTrackedIds)
@@ -971,7 +995,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       }
       if (Op.Output.Id >= 0 && Op.Output.Size > 0) {
         Op.Output.SSAVer = NewVersion(Op.Output.Id);
-        F.SavedSizes[Op.Output.Id]++;
+        F.Pushed.push_back(Op.Output.Id);
         if (Func.HasUnresolvedSEHFrame && Op.Addr == InvalidVA &&
             SEHProtectedBlocks.count(F.B) && SEHTrackedIds.count(Op.Output.Id))
           SEHEntryVersions[F.B][Op.Output.Id] = Op.Output.SSAVer;
@@ -980,7 +1004,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         if (Aux.Id < 0 || Aux.Size == 0)
           continue;
         Aux.SSAVer = NewVersion(Aux.Id);
-        F.SavedSizes[Aux.Id]++;
+        F.Pushed.push_back(Aux.Id);
       }
       for (int Id : CallClobberedIds(Op)) {
         auto It = RegVarOfId.find(Id);
@@ -998,7 +1022,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           }
         }
         int Version = NewVersion(Id);
-        F.SavedSizes[Id]++;
+        F.Pushed.push_back(Id);
         if (It != RegVarOfId.end()) {
           MedVar Clobber = It->second;
           Clobber.SSAVer = Version;
@@ -1010,19 +1034,20 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     for (int S : FlowSuccs[F.B]) {
       if (S < 0 || S >= N)
         continue;
-      for (auto &Phi : Func.Blocks[S].Phis) {
-        for (auto &[Pred, Arg] : Phi.Args) {
-          if (Pred != F.B)
-            continue;
-          // A PHI can be placed for a register that no instruction reads on
-          // this edge. With no reaching definition, version zero may name a
-          // sibling's first write; publishing it would let propagation borrow
-          // that sibling's constant for this path.
-          if (VarStack[Arg.Id].empty())
-            Arg = MedVar::makeUnspecified(Arg.Size, TargetArch);
-          else
-            Arg.SSAVer = GetVersion(Arg.Id);
-        }
+      const auto &EdgeArgs = PhiEdgeArgs[S];
+      auto First = std::lower_bound(
+          EdgeArgs.begin(), EdgeArgs.end(), F.B,
+          [](const PhiEdgeArg &E, int Pred) { return E.Pred < Pred; });
+      for (auto It = First; It != EdgeArgs.end() && It->Pred == F.B; ++It) {
+        MedVar &Arg = Func.Blocks[S].Phis[It->Phi].Args[It->Arg].second;
+        // A PHI can be placed for a register that no instruction reads on
+        // this edge. With no reaching definition, version zero may name a
+        // sibling's first write; publishing it would let propagation borrow
+        // that sibling's constant for this path.
+        if (VarStack[Arg.Id].empty())
+          Arg = MedVar::makeUnspecified(Arg.Size, TargetArch);
+        else
+          Arg.SSAVer = GetVersion(Arg.Id);
       }
     }
   };
@@ -1037,10 +1062,8 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       Stk.push_back({C, 0, {}});
       ProcessBlock(Stk.back());
     } else {
-      for (auto &[VId, Cnt] : F.SavedSizes) {
-        for (int I = 0; I < Cnt; ++I)
-          VarStack[VId].pop_back();
-      }
+      for (int VId : F.Pushed)
+        VarStack[VId].pop_back();
       Stk.pop_back();
     }
   }

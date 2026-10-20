@@ -1152,6 +1152,18 @@ private:
   // charge, so no metered query reads them.
   mutable std::shared_ptr<const ResolverGraphCache>
       CachedUnmeteredResolverGraph;
+  // The image's R_ARM_REL32 relocations as (field address, position in
+  // Relocations), sorted, which the resolver's relocated-literal reads look
+  // up.  Built on the first read, and again once the image or its relocation
+  // list is another.
+  struct ARMRel32Index {
+    const BinaryImage *Image = nullptr;
+    const RelocationEntry *Data = nullptr;
+    size_t Size = 0;
+    std::vector<std::pair<va_t, size_t>> Fields;
+  };
+  mutable ARMRel32Index ARMRel32Relocations;
+  const std::vector<std::pair<va_t, size_t>> &armRel32Relocations() const;
   std::array<size_t, 3>
   resolverValueQueryCacheStatsForTesting(bool Unmetered = false) const;
 

@@ -1774,6 +1774,16 @@ const std::string &HighCWriter::imageFunctionNameAt(va_t Addr) const {
 }
 
 std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
+  auto &Resolved = ResolvedCallTargets[E.CallAddr];
+  for (const ResolvedCallTarget &Each : Resolved)
+    if (Each.Indirect == E.IsIndirectCall && Each.Target == E.CallTarget)
+      return Each.Name;
+  std::string Name = resolveCallTarget(E);
+  Resolved.push_back({E.IsIndirectCall, E.CallTarget, Name});
+  return Name;
+}
+
+std::string HighCWriter::resolveCallTarget(const HighExpr &E) const {
   std::string Name = E.CallTarget;
   if (Name.empty() && E.CallAddr)
     Name = (kAutoFuncPrefix + llvm::utohexstr(E.CallAddr)).str();

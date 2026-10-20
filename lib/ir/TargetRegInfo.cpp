@@ -143,6 +143,15 @@ void visitNarrowView(const TargetRegInfo &TRI, uint64_t Off, uint16_t Size,
 
 } // namespace
 
+void forEachSubRegOfNarrowView(
+    const TargetRegInfo &TRI, uint64_t NarrowOff, uint16_t NarrowSize,
+    llvm::function_ref<void(const SubRegEntry &)> Visit) {
+  visitNarrowView(TRI, NarrowOff, NarrowSize, [&](const SubRegEntry &E) {
+    Visit(E);
+    return true;
+  });
+}
+
 bool TargetRegInfo::isSubRegOf(uint64_t NarrowOff, uint16_t NarrowSz,
                                uint64_t WideOff, uint16_t WideSz) const {
   if (NarrowOff == WideOff && NarrowSz < WideSz)

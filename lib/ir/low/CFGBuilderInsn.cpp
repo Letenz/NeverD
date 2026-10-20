@@ -89,12 +89,21 @@ void CFGBuilder::convertIndirectTailCalls(LowFunc &Func) {
   const bool NeedsFrameGuard = CurrentImg->Arch == Arch::AArch64;
   // Coverage is published on LowFunc later in build(), so consult the current
   // decode/lift account before granting a reaching-state condition here.
-  const auto RestoredFrames =
+  const bool FrameProofAdmitted =
       NeedsFrameGuard && DecodeFailureAddresses.empty() &&
-              UnsupportedInstructionAddresses.empty() &&
-              TruncatedPathAddresses.empty()
-          ? restoredAArch64IndirectTailFrames(Func, CurrentImg->abiFormat())
-          : std::set<va_t>{};
+      UnsupportedInstructionAddresses.empty() && TruncatedPathAddresses.empty();
+  // The proof reads Func, which the loop leaves as it is until the blocks are
+  // rebuilt after it, so it runs once a candidate first asks.  Most functions
+  // have no candidate.
+  std::optional<std::set<va_t>> RestoredFrames;
+  auto Restored = [&](va_t Addr) {
+    if (!RestoredFrames)
+      RestoredFrames =
+          FrameProofAdmitted
+              ? restoredAArch64IndirectTailFrames(Func, CurrentImg->abiFormat())
+              : std::set<va_t>{};
+    return RestoredFrames->count(Addr) != 0;
+  };
   bool Changed = false;
   for (auto &[Addr, Rec] : Insns) {
     // A lack of jump-table targets alone cannot establish a tail call. An
@@ -103,7 +112,7 @@ void CFGBuilder::convertIndirectTailCalls(LowFunc &Func) {
     // dispatch classification; this frame condition supplies no callee ABI.
     if (!Rec.IsBranch || !Rec.IsIndirect || Rec.IsCall || Rec.IsRet ||
         Rec.IsCond || !Rec.JumpTableTargets.empty() ||
-        (NeedsFrameGuard && !RestoredFrames.count(Addr)) ||
+        (NeedsFrameGuard && !Restored(Addr)) ||
         EverPublishedJumpTableBranches.count(Addr) ||
         LostValidatedJumpTableBranches.count(Addr) ||
         StackTableEvidenceIncompleteBranches.count(Addr) ||
