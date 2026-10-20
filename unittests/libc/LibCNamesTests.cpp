@@ -192,6 +192,18 @@ TEST(VarArgFixedCount, AllVaListVariantsReturnZero) {
   EXPECT_EQ(varArgFixedCount("vsnwprintf", LibCVariant::GNU), 0u);
 }
 
+TEST(VaListParameter, FollowsTheVariadicRoutinesFixedParameters) {
+  EXPECT_EQ(vaListParameter("vfprintf"), 2u);
+  EXPECT_EQ(vaListParameter("vwarn"), 1u);
+  EXPECT_EQ(vaListParameter("__vsnprintf_chk"), 5u);
+  EXPECT_EQ(vaListParameter("__isoc23_vfscanf"), 2u);
+  // strerror_r's buffer, and a variadic routine's own parameters, are no
+  // va_list.
+  EXPECT_FALSE(vaListParameter("strerror_r").has_value());
+  EXPECT_FALSE(vaListParameter("fprintf").has_value());
+  EXPECT_FALSE(vaListParameter("").has_value());
+}
+
 TEST(VarArgFixedCount, EmptyAndGarbage) {
   EXPECT_EQ(varArgFixedCount("", LibCVariant::GNU), 0u);
   EXPECT_EQ(varArgFixedCount("x", LibCVariant::GNU), 0u);

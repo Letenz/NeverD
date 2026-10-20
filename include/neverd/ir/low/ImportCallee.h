@@ -54,19 +54,24 @@ inline std::string importCalleeName(const BinaryImage &Img, va_t Addr) {
   return {};
 }
 
+/// The C name of the import a call to \p Addr reaches, through its stub or
+/// its slot, or empty.
+inline std::string importCalleeCName(const BinaryImage &Img, va_t Addr) {
+  std::string Name = importCalleeName(Img, Addr);
+  if (Name.empty())
+    if (const Import *Imp = Img.findImportStubAt(Addr))
+      Name = Imp->Name;
+  return Name.empty() ? Name : cNameOfSymbol(Name, Img.Format, Img.Arch).str();
+}
+
 /// Whether the import a call to \p Addr reaches, through its stub or its
 /// slot, is a compiler runtime routine that returns a double word on a target
 /// of \p WordBytes registers (libc::returnsDoubleWord): `__udivti3` returns
 /// RDX:RAX on x86-64.
 inline bool importReturnsDoubleWord(const BinaryImage &Img, va_t Addr,
                                     unsigned WordBytes) {
-  std::string Name = importCalleeName(Img, Addr);
-  if (Name.empty())
-    if (const Import *Imp = Img.findImportStubAt(Addr))
-      Name = Imp->Name;
-  return !Name.empty() &&
-         libc::returnsDoubleWord(cNameOfSymbol(Name, Img.Format, Img.Arch),
-                                 WordBytes);
+  const std::string Name = importCalleeCName(Img, Addr);
+  return !Name.empty() && libc::returnsDoubleWord(Name, WordBytes);
 }
 
 /// Every address a call reaches an import through: its executable stubs

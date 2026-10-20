@@ -19,10 +19,13 @@
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedTypePass.h"
+#include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/SymbolDecoration.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/Parallel.h"
 
@@ -144,6 +147,27 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
   // mode; without the remodel the RETURN finds the trailing registers only
   // before the call, which may change them.
   remodelStructReturnForwarderCalls(Img, Result);
+  // A va_start forwarder passes C's own va_list only to a parameter that
+  // takes one: an import's or a function's named as a routine's va_list form,
+  // or one of a function in this image the analysis follows.
+  if (llvm::any_of(Result.MedFuncs, [](const MedFunc &MF) {
+        return MF.VaListDisplacement.has_value();
+      })) {
+    const libc::LibCVariant Variant = libc::libcVariantOf(Img);
+    markVaListCalls(
+        Result.MedFuncs, Img.Arch, Img.abiFormat(), [&](va_t Target) {
+          std::string Name = importCalleeCName(Img, Target);
+          if (const auto It = AllFuncNames.find(Target);
+              Name.empty() && It != AllFuncNames.end() &&
+              !isSynthesizedFuncName(It->second))
+            Name = cNameOfSymbol(It->second, Img.Format, Img.Arch).str();
+          NamedCallee Callee;
+          if (const auto Arity = libc::libcArityForSymbol(Name, Variant))
+            Callee.IntegerParams = static_cast<unsigned>(Arity->IntArgs);
+          Callee.VaList = libc::vaListParameter(Name);
+          return Callee;
+        });
+  }
 }
 
 void Pipeline::buildHighIR(const BinaryImage &Img, const PipelineOptions &Opts,

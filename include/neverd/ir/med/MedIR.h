@@ -554,6 +554,11 @@ struct MedFunc {
   std::optional<int64_t> VaListDisplacement;
   std::optional<int64_t> VaRegisterSaveArea;
   int VaNamedIntegerRegisters = -1;
+  /// The calls that pass that va_list's address, by call site: true where
+  /// they pass the va_list, false where they may pass another object in its
+  /// slot, such as a buffer the compiler placed there after va_end
+  /// (markVaListCalls).
+  std::map<va_t, bool> VaListCalls;
 
   /// Whether this variadic function's register save area holds the vector
   /// argument registers (System V x86-64): it then takes every integer and

@@ -604,6 +604,59 @@ TEST_F(X86_64_CallAbi, AVariadicForwarderPassesItsVaListOn) {
   EXPECT_NE(Caller.find("dsum(2, 1.5, "), std::string::npos) << C;
 }
 
+// `ap` and `buf` live at different times, so Clang gives them one stack
+// slot: report passes its address to vsum, which takes a va_list, and then
+// to fill, which writes 200 bytes there.
+static const char *const VaListSlotReuse = R"C(
+#include <stdarg.h>
+static int vsum(int n, va_list ap) __attribute__((noinline));
+static int vsum(int n, va_list ap) {
+  int s = 0;
+  for (int i = 0; i < n; i++)
+    s += va_arg(ap, int) * (i + 1);
+  return s;
+}
+static int fill(int n, char *buf, unsigned size) __attribute__((noinline));
+static int fill(int n, char *buf, unsigned size) {
+  for (unsigned i = 0; i < size; i++)
+    buf[i] = (char)(n + i);
+  int s = 0;
+  for (unsigned i = 0; i < size; i += 7)
+    s += buf[i] * (int)(i + 1);
+  return s;
+}
+static int report(int n, ...) __attribute__((noinline));
+static int report(int n, ...) {
+  int r;
+  {
+    va_list ap;
+    va_start(ap, n);
+    r = vsum(n, ap);
+    va_end(ap);
+  }
+  if (n) {
+    char buf[200];
+    r += fill(n, buf, sizeof buf);
+  }
+  return r;
+}
+int entry(int x) { return report(2, x, 3) + report(0) + report(3, x, x, x); }
+)C";
+
+// C's va_list holds the 24 bytes of one, which fill would write past: the
+// slot is no va_list there, and C passes report's va_list to no call.
+TEST_F(X86_64_CallAbi, ABufferInTheVaListsSlotTakesNoVaList) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, VaListSlotReuse,
+                            "entry", {"entry", "report", "vsum", "fill"},
+                            {0, 1, -1, 7, 1000});
+  if (HasFatalFailure() || IsSkipped())
+    return;
+  std::ifstream Input(tmpFile("decompiled_high.c"));
+  const std::string C((std::istreambuf_iterator<char>(Input)),
+                      std::istreambuf_iterator<char>());
+  EXPECT_EQ(C.find("arguments"), std::string::npos) << C;
+}
+
 // GCC sets a call's integer arguments before it converts its floating ones
 // (`mov edi, 2; cvtsi2sd xmm1, ebp; call dsum`), whose MXCSR state ends no
 // argument setup, emits the static functions first, the first of them at
