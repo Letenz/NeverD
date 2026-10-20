@@ -16,6 +16,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/LibCResult.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/SymbolDecoration.h"
 
@@ -72,6 +73,19 @@ inline bool importReturnsDoubleWord(const BinaryImage &Img, va_t Addr,
                                     unsigned WordBytes) {
   const std::string Name = importCalleeCName(Img, Addr);
   return !Name.empty() && libc::returnsDoubleWord(Name, WordBytes);
+}
+
+/// Whether the import a call to \p Addr reaches returns no record of
+/// registers, as its C declaration says: nothing, or a pointer.  Neither the
+/// call nor a stub that jumps to the import returns more, whatever its
+/// callers read after it.
+inline bool importDeclaresNoRecord(const BinaryImage &Img, va_t Addr) {
+  const std::string Name = importCalleeCName(Img, Addr);
+  if (Name.empty())
+    return false;
+  const std::optional<libc::LibCResult> Result =
+      libc::libcResult(Name, libc::libcVariantOf(Img));
+  return Result && *Result != libc::LibCResult::Value;
 }
 
 /// Every address a call reaches an import through: its executable stubs
