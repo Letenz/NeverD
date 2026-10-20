@@ -518,6 +518,30 @@ bool hasRepeatedCoefficients(const SymContext &Ctx, SymRef E) {
 
 } // namespace
 
+bool proveArithmeticIdentity(SymContext &Ctx, SymRef Before, SymRef After,
+                             WorkBudget &Budget, size_t MaxBytes) {
+  if (!Before.isValid() || !After.isValid() ||
+      Ctx.width(Before) != Ctx.width(After))
+    return false;
+  ArithmeticResources Resources(Budget, MaxBytes);
+  ArithmeticNormalizer Normalizer(Ctx, Resources, Ctx.width(Before));
+  auto Left = Normalizer.normalize(Before);
+  if (!Left)
+    return false;
+  auto Right = Normalizer.normalize(After);
+  if (!Right || Left->size() != Right->size())
+    return false;
+  const size_t Words = (size_t(Ctx.width(Before)) + 63) / 64;
+  auto R = Right->begin();
+  for (const auto &[Key, Coefficient] : *Left) {
+    if (!Resources.charge(1 + Key.size() + Words) || Key != R->first ||
+        Coefficient != R->second)
+      return false;
+    ++R;
+  }
+  return true;
+}
+
 SymRef solveArithmetic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                        WorkBudget &Budget, SolveReport &Rep) {
   return mayImproveArithmetic(Ctx, E)

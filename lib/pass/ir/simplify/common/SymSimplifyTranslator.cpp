@@ -32,6 +32,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/KnownBits.h"
 
 #include <cstdint>
 #include <optional>
@@ -169,6 +170,50 @@ bool safeMaskedAdd(const llvm::Instruction &I) {
   return true;
 }
 
+// Infer only literal-mask, OR and wrapping-add facts. In particular, neither
+// the disjoint flag being justified nor overflow flags, metadata or assumptions
+// contribute evidence. The translator separately checks every hidden child
+// for poison. Bounded failure supplies unknown bits, never a premise.
+llvm::KnownBits maskedOrBits(const llvm::Value *V, unsigned Depth,
+                             unsigned &Remaining) {
+  const unsigned Width = V->getType()->getIntegerBitWidth();
+  llvm::KnownBits Unknown(Width);
+  if (!Remaining || !Depth)
+    return Unknown;
+  --Remaining;
+  if (const auto *C = llvm::dyn_cast<llvm::ConstantInt>(V))
+    return llvm::KnownBits::makeConstant(C->getValue());
+  const auto *I = llvm::dyn_cast<llvm::BinaryOperator>(V);
+  if (!I)
+    return Unknown;
+  if (I->getOpcode() == llvm::Instruction::And) {
+    for (const llvm::Value *Operand : I->operands())
+      if (const auto *Mask = llvm::dyn_cast<llvm::ConstantInt>(Operand)) {
+        Unknown.Zero = ~Mask->getValue();
+        return Unknown;
+      }
+  }
+  if (I->getOpcode() != llvm::Instruction::Add &&
+      I->getOpcode() != llvm::Instruction::Or)
+    return Unknown;
+  auto Left = maskedOrBits(I->getOperand(0), Depth - 1, Remaining);
+  auto Right = maskedOrBits(I->getOperand(1), Depth - 1, Remaining);
+  return I->getOpcode() == llvm::Instruction::Or
+             ? Left | Right
+             : llvm::KnownBits::computeForAddSub(
+                   /*Add=*/true, /*NSW=*/false, /*NUW=*/false, Left, Right);
+}
+
+bool safeMaskedOr(const llvm::Instruction &I) {
+  if (I.getOpcode() != llvm::Instruction::Or || !I.getType()->isIntegerTy() ||
+      I.getType()->getIntegerBitWidth() > 512)
+    return false;
+  unsigned Remaining = 64;
+  auto Left = maskedOrBits(I.getOperand(0), 8, Remaining);
+  auto Right = maskedOrBits(I.getOperand(1), 8, Remaining);
+  return (Left.Zero | Right.Zero).isAllOnes();
+}
+
 /// Whether \p I has the same domain in LLVM IR and in the engine's total
 /// bitvector algebra.
 ///
@@ -183,8 +228,9 @@ bool hasCompatibleSemantics(const llvm::Instruction &I) {
   // written.  The per-opcode checks below remain deliberate documentation of
   // the exact language subset accepted today.
   const bool SafeAdd = safeMaskedAdd(I);
-  if ((I.hasPoisonGeneratingFlags() && !SafeAdd && !splitWordAssembly(I) &&
-       !safeWidenedShift(I)) ||
+  const bool SafeOr = safeMaskedOr(I);
+  if ((I.hasPoisonGeneratingFlags() && !SafeAdd && !SafeOr &&
+       !splitWordAssembly(I) && !safeWidenedShift(I)) ||
       I.hasPoisonGeneratingAttributes() || I.hasPoisonGeneratingMetadata())
     return false;
 
@@ -207,7 +253,7 @@ bool hasCompatibleSemantics(const llvm::Instruction &I) {
   case OpTag::Xor:
     return true;
   case OpTag::Or:
-    return !llvm::cast<llvm::PossiblyDisjointInst>(I).isDisjoint() ||
+    return !llvm::cast<llvm::PossiblyDisjointInst>(I).isDisjoint() || SafeOr ||
            splitWordAssembly(I).has_value();
   case OpTag::Shl:
     return (!HasNoWrap() || safeWidenedShift(I)) && HasInRangeConstantShift();
@@ -376,6 +422,11 @@ sym::SymRef Translator::build(const llvm::Instruction &I) {
       if (High.isValid() && Low.isValid())
         return Ctx.mkConcat(High, Low);
     }
+    // Compiler-created masked ORs can join different arithmetic words.
+    // A proved disjoint OR is also their sum, exposing enclosing coefficients
+    // to the shared MBA engine without assuming a flag's precondition.
+    if (safeMaskedOr(I))
+      return Ctx.mkAdd(M(A), M(B));
     return Ctx.mkOr(M(A), M(B));
   case OpTag::Xor:
     // `x ^ -1` is complement, a generator of the bitwise algebra the solver
