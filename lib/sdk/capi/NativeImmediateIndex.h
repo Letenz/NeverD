@@ -35,6 +35,7 @@ struct NativeImmediateIndex {
   bool Initialized = false, Complete = false;
   size_t Segment = 0, Offset = 0;
   uint64_t Bytes = 0;
+  uint64_t FunctionRevision = 0;
   std::vector<size_t> Segments;
   std::vector<va_t> Seeds;
   std::vector<Item> Items;

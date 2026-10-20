@@ -84,6 +84,12 @@ def run(worker, executable=None):
         large.write_bytes(elf(bytes.fromhex("90")*10000 + bytes.fromhex("b82a000000c3")))
         ok(client, "open", {"path": str(large), "analysis": False})
         assert page(client, "42", backward=True, **{"from": "0x1"})["items"] == []
+        ok(client, "function_create", {"address": hex(ENTRY)})
+        partial = ok(client, "search", {"kind": "immediate", "pattern": "42", "backward": True})
+        assert partial["building"]
+        ok(client, "rename", {"address": hex(ENTRY), "name": "renamed_entry"})
+        progress = ok(client, "search", {"kind": "immediate", "pattern": "42", "backward": True})
+        assert progress["decoded_bytes"] > partial["decoded_bytes"], (partial, progress)
         result = page(client, "42", backward=True)
         assert int(result["items"][0]["address"],16) == ENTRY+10000, result
         # Decode/search and reaching definitions share the architecture owner,
@@ -96,6 +102,30 @@ def run(worker, executable=None):
         assert int(page(client, "42")["items"][0]["address"],16) == ENTRY
         result = query(4, "w0", "definitions")
         assert [int(site["address"],16) for site in result["items"]] == [ENTRY], result
+        # A search may finish before navigation discovers an entry beyond an
+        # undecodable gap. The next search must use that new boundary too.
+        discovered = root / "discovered.elf"
+        discovered.write_bytes(elf(
+            bytes.fromhex("e80b000000c3") + b"\x06" * 10 +
+            bytes.fromhex("b82a000000c3")))
+        ok(client, "open", {"path": str(discovered), "analysis": False})
+        assert page(client, "42")["items"] == []
+        source(client, "low", ENTRY + 16)
+        resumed = page(client, "42")
+        assert [int(h["address"], 16) for h in resumed["items"]] == [ENTRY + 16], resumed
+        assert int(page(client, "42", backward=True)["items"][0]["address"], 16) == ENTRY + 16
+        # Decimal input keeps its meaning with leading zeros, including 8/9;
+        # explicit hexadecimal keeps its existing logical-width matching.
+        decimal = root / "decimal.elf"
+        decimal.write_bytes(elf(bytes.fromhex("b80a000000b908000000baf6ffffffc3")))
+        ok(client, "open", {"path": str(decimal), "analysis": False})
+        assert int(page(client, "010")["items"][0]["address"], 16) == ENTRY
+        assert int(page(client, "008")["items"][0]["address"], 16) == ENTRY + 5
+        assert int(page(client, "0x0a")["items"][0]["address"], 16) == ENTRY
+        assert int(page(client, "-010")["items"][0]["address"], 16) == ENTRY + 10
+        if executable:
+            result = cli(executable, "search", str(decimal), "--immediate", "010")
+            assert [int(row["addr"], 16) for row in result["items"]] == [ENTRY], result
         from data_presentation_test import fixture as data_fixture
         data = root / "data-only.elf"
         image, entry = data_fixture()
