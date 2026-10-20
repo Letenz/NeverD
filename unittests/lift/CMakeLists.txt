@@ -188,6 +188,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_CFGEntryTests.cpp
   x86_64/X86_64_ColdFragmentTests.cpp
   x86_64/X86_64_NoReturnCallTests.cpp
+  x86_64/X86_64_PltStubTests.cpp
   x86_64/X86_64_ComputedGotoTests.cpp
   x86_64/X86_64_ControlFlowTests.cpp
   x86_64/X86_64_ControlSemanticsTests.cpp
@@ -3802,6 +3803,28 @@ if(LLD_EXEC)
     COMMENT "Linking x86-64 no-return call fixture")
   list(APPEND ELF_EXECUTABLES ${noreturn_calls_x64_obj}
                               ${noreturn_calls_x64_stripped})
+
+  # A byte write of RDX after an int call through a PLT entry.
+  set(plt_byte_write_x64_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_plt_byte_write_x64.s")
+  set(plt_byte_write_x64_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_plt_byte_write_x64.o")
+  set(plt_byte_write_x64_so
+      "${CMAKE_CURRENT_BINARY_DIR}/test_plt_byte_write_x64.so")
+  add_custom_command(
+    OUTPUT ${plt_byte_write_x64_obj}
+    COMMAND ${CLANG_EXEC} -target x86_64-linux-gnu -c ${plt_byte_write_x64_src}
+            -o ${plt_byte_write_x64_obj}
+    DEPENDS ${plt_byte_write_x64_src}
+    COMMENT "Compiling x86-64 PLT byte-write fixture")
+  add_custom_command(
+    OUTPUT ${plt_byte_write_x64_so}
+    COMMAND ${LLD_EXEC} -shared --eh-frame-hdr -o ${plt_byte_write_x64_so}
+            ${plt_byte_write_x64_obj}
+    DEPENDS ${plt_byte_write_x64_obj}
+    COMMENT "Linking x86-64 PLT byte-write fixture")
+  list(APPEND ELF_EXECUTABLES ${plt_byte_write_x64_obj}
+                              ${plt_byte_write_x64_so})
 
   # Switch tables of an i386 shared library, relative to its GOT address.
   set(pic_switch_i386_src
