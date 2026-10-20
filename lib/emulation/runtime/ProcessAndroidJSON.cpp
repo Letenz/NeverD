@@ -691,8 +691,8 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
   }
   if (!Result.NativeThreads.empty()) {
     llvm::json::Array Threads, Spans;
-    for (const auto &T : Result.NativeThreads)
-      Threads.push_back(llvm::json::Object{
+    for (const auto &T : Result.NativeThreads) {
+      llvm::json::Object Thread{
           {field::ThreadID, T.ID},
           {field::Handle, bits(T.Handle)},
           {field::TLS, bits(T.TLS)},
@@ -704,7 +704,11 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
           {field::Retired, T.Retired},
           {field::Waiting, T.Waiting},
           {field::ReturnValue,
-           T.ReturnValue ? llvm::json::Value(bits(*T.ReturnValue)) : nullptr}});
+           T.ReturnValue ? llvm::json::Value(bits(*T.ReturnValue)) : nullptr}};
+      if (T.TerminationSignal)
+        Thread[field::TerminationSignal] = *T.TerminationSignal;
+      Threads.push_back(std::move(Thread));
+    }
     for (const auto &Span : Result.TraceThreads)
       Spans.push_back(llvm::json::Object{{field::TraceIndex, Span.Index},
                                          {field::ThreadID, Span.ID}});

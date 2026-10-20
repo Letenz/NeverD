@@ -199,6 +199,10 @@ void GuestThreads::report() {
   for (const auto &T : Threads) {
     auto Snapshot = T.Report;
     Snapshot.Waiting = T.Waiting.has_value();
+    if (Result.Stop == ProcessStopReason::Signaled && !Snapshot.Finished) {
+      Snapshot.TerminationSignal = Result.TerminationSignal;
+      Snapshot.Waiting = false;
+    }
     Result.NativeThreads.push_back(Snapshot);
   }
 }

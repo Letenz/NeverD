@@ -176,6 +176,8 @@ struct NativeThreadSnapshot {
   uint64_t ID, Handle, TLS, StackBase, StackSize, GuardSize;
   bool Finished = false, Detached = false, Retired = false, Waiting = false;
   std::optional<uint64_t> ReturnValue;
+  /// Process-wide termination of a still-live thread; no return or cleanup.
+  std::optional<uint32_t> TerminationSignal;
 };
 /// Retained RegisterNatives binding, independent of JNI reference lifetime.
 struct NativeJNIRegistration {

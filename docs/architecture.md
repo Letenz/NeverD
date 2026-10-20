@@ -5582,8 +5582,12 @@ native import event without inventing another executed service instruction.
 and Bionic's `AndroidSignals` adapter use the same query/replacement operation;
 the Android adapter owns LP64 field order, reserved-mask filtering and errno.
 The kernel owner installs a new action before copying the old action out, so a
-copy fault does not undo the installation. No CPU backend or SDK interprets a
-handler address, queues a signal or delivers one.
+copy fault does not undo the installation. The same owner handles `kill` for
+self existence probes and uncatchable SIGKILL termination. It returns a typed
+`signaled` outcome without resuming the pending service; Android stops all live
+guest threads and records their termination separately from completed returns.
+No CPU backend or SDK interprets a handler address or sends a host signal.
+Other targets and signal delivery remain explicit unsupported boundaries.
 `AndroidAuxv` owns admission and lookup of the native workload's explicit,
 complete auxiliary vector. Bionic alone applies `getauxval`'s full-width
 lookup and thread-local errno behavior; constructors and dynamic imports use

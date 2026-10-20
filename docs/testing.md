@@ -4,6 +4,16 @@
 
 # Testing NeverD
 
+`AndroidSignals.Kill*` executes independently authored direct, dynamically
+resolved, variadic and raw callers at O0/O2 across relocation formats and
+available ARM64 backends. It checks full-buffer effects, argument narrowing,
+errno, unknown process/group and handler boundaries, provider lifetime and
+whole-process termination initiated by either thread, including a completed
+join. `LinuxProcess.Kill*` exercises the x64 and AArch64 raw ABIs.
+`ProcessReport.SignalTermination*` checks the additive signal result and retained
+entry/thread history. Run the Linux, Android and execution-session suites after
+changing the shared signal service. These tests never signal a host process.
+
 `AndroidJNI.RegisteredNativeCalls*` executes independently authored guest native
 targets through late-bound JNI method IDs at O0/O2 across ordinary, APS2 and
 RELR images and available ARM64 backends. It checks all three JNI argument

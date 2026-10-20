@@ -86,7 +86,7 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 | `linux_network` | Absent | Explicit offline TCP attempts and byte streams; requires `linux_files`; see [contracts](linux-network-contracts.md) |
 | `linux_time` | Absent | Explicit clock observations and optional idle advancement for Linux ELF64 and Android native workloads |
 | `linux_files` | Absent | Explicit guest file catalogue, bounded write grants and optional live FD links |
-| `linux_signals` | Absent | Explicit initial signal dispositions; no signal delivery or host handlers |
+| `linux_signals` | Absent | Explicit initial signal dispositions; guest handlers remain unsupported |
 | `linux_priority` | Absent | Explicit per-task nice values and caller authority for raw Linux priority services |
 | `linux_kernel` | Absent | Explicit released GKI branch, fixed guest task catalogue or observed absent guest kernel interfaces |
 
@@ -245,6 +245,18 @@ These ordered effects follow the [Linux signal implementation](https://android.g
 There are no queued signals, asynchronous delivery, handler invocation, signal
 frames, `sigreturn`, alternate stacks or per-thread signal-mask operations in
 this contract. CPU faults retain their existing explicit stop behavior.
+
+`kill` shares signed 32-bit PID/signal decoding across x64 and AArch64 raw
+syscalls, Android imports and Bionic `syscall`. Invalid signal numbers return
+EINVAL before target lookup. `kill(getpid(), 0)` succeeds without a disposition
+snapshot; `kill(getpid(), SIGKILL)` terminates the whole guest workload with
+`stop_reason: "signaled"` and `termination_signal: 9`. `exit_status` remains null
+and the terminating call has no result. Bionic alone converts raw errno to
+`-1`/thread-local errno; successful queries preserve errno. No host process is
+looked up or signaled. Other PIDs, process-group selectors and other valid
+signals stop as unsupported, including explicitly ignored signals whose
+pending state would require a per-thread mask model. Unknown targets are not
+reported as ESRCH. See the [Linux kill contract](https://man7.org/linux/man-pages/man2/kill.2.html).
 
 `mincore` supports ordered validation, zero-length queries and a first queried
 page that is unmapped. Alignment errors return EINVAL before address-range
