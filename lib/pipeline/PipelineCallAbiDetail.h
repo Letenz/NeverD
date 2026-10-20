@@ -160,8 +160,9 @@ struct OmittedCalleeMemo {
   };
   /// The bodies the memo holds at most, counted by their blocks and
   /// operations (keep): bodies of a large image's every callee would hold
-  /// most of its MedIR.
-  static constexpr size_t MaxBytes = size_t{256} << 20;
+  /// most of its MedIR.  A mid-sized image's signature bodies, an Android
+  /// server's 6000, fit in three quarters of it.
+  static constexpr size_t MaxBytes = size_t{512} << 20;
   /// Read of \p Img with \p Result's function-pointer variables; starts
   /// again when this was read of another image or with other variables.
   void adopt(const BinaryImage &Img, const PipelineResult &Result);
@@ -237,8 +238,8 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
 /// Read the signature bodies of \p Functions into
 /// \p Summaries.CalleeSignatureMemo as a restricted run under \p Summaries'
 /// call summaries reads them as omitted callees (recoverModuleCallAbi):
-/// every lift, and the conversions of the small ones.  Stops, full, where
-/// the memo holds three quarters of its bound.
+/// every lift, and the conversions of the bodies a signature can keep.
+/// Stops, full, where the memo holds three quarters of its bound.
 AnalysisCacheWarmup warmOmittedCallees(const BinaryImage &Img,
                                        const PipelineResult &Summaries,
                                        llvm::ArrayRef<va_t> Functions);
