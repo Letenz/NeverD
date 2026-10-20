@@ -2999,6 +2999,11 @@ collisions, missing points, high address bits and distinct operation sequences.
 Switching or moving immutable indexes must preserve their own coordinates, and
 later queries cannot change an already returned location. The graph/cache
 regressions retain the existing proof and evidence-budget checks.
+`ResolverMemoryDefinitionCache.*` checks every cold/warm scan-budget boundary,
+potential writers with malformed operands, collisions and graph replacement.
+`ResolverGraphCache.MemoryScansKeepExactWritersBarriersAndBudgets` covers long
+memory scans across four architectures and three formats: a claimed memcpy at
+a pure operation remains invalid, and adding a call invalidates a cached scan.
 `ResolverLoadAddress.*` checks that one opaque load retains its identity when
 its unused address exceeds the proof depth. Across four architectures and
 three formats, stores, calls, ordered reads and incompatible widths prevent

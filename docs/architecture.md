@@ -2754,6 +2754,13 @@ never retained. Hits debit every operation the original scan would visit,
 including the returned candidate, so reuse preserves evidence-budget outcomes.
 Short prefixes keep their ordinary scan. Graph replacement retires the table.
 
+Frame-memory proofs may similarly retain the next possible writer by exact
+block and use position. Stores, atomics, calls and all intrinsics remain
+candidates for the ordinary effect and alias checks. This bounded table stores
+only completed scans and charges every skipped operation on reuse. Queries
+with authenticated memcpy occurrences keep the full scan, including rejection
+of a claimed writer at a non-call operation and each inventory lookup charge.
+
 Frame-memory reaching values include an unknown entry arm at every active proof
 root, including roots with loop predecessors. A future back-edge STORE cannot
 certify first-iteration contents or an authenticated writer. Definite writers

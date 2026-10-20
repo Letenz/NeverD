@@ -798,6 +798,33 @@ struct ResolverGraphCacheTestAccess {
     return {Memory, Writer, Numeric};
   }
 
+  static std::vector<Query> seedLongMemoryScan(CFGBuilder &B,
+                                               const BinaryImage &Image) {
+    auto Queries = seedEntryMemory(B, Image, true, false);
+    auto &Ops = B.Insns.at(0x100).Ops;
+    LowOp Copy;
+    Copy.Addr = 0x100;
+    Copy.Opcode = NdOp::COPY;
+    Copy.Output = NdVar::tmp(0xb000, 4);
+    Copy.addInput(NdVar::scalar(11, 4));
+    Ops.insert(Ops.begin() + 2, 64, Copy);
+    for (size_t I = 0; I < Ops.size(); ++I)
+      Ops[I].Seq = static_cast<int>(I);
+    for (auto &Q : Queries)
+      Q.UseSeq += 64;
+    Queries.resize(2);
+    return Queries;
+  }
+
+  static void insertMemoryScanCall(CFGBuilder &B) {
+    auto &Op = B.Insns.at(0x100).Ops[34];
+    Op = {};
+    Op.Addr = 0x100;
+    Op.Seq = 34;
+    Op.Opcode = NdOp::CALL;
+    Op.addInput(NdVar::address(0x400, B.CurrentImg->getPointerSize()));
+  }
+
   static void addBackedge(CFGBuilder &B) {
     auto &R = B.Insns.at(0x103);
     R.IsRet = false;
@@ -2313,6 +2340,48 @@ TEST(ResolverGraphCache, RepeatedPointQueriesRetireChangedSequences) {
       }
     }
   }
+}
+
+TEST(ResolverGraphCache, MemoryScansKeepExactWritersBarriersAndBudgets) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      auto Image = image();
+      Image.Arch = Target;
+      Image.Bits = Target == Arch::X86 || Target == Arch::ARM ? Bitness::Bits32
+                                                              : Bitness::Bits64;
+      Image.Format = Format;
+      SCOPED_TRACE(::testing::Message() << static_cast<unsigned>(Target) << ':'
+                                        << static_cast<unsigned>(Format));
+      constexpr size_t Budget = 1000000;
+      CFGBuilder Warm;
+      auto Queries = Access::seedLongMemoryScan(Warm, Image);
+      const auto First = Access::batch(Warm, Queries, Budget, 128);
+      ASSERT_TRUE(First.Complete);
+      ASSERT_EQ(First.Values, (std::vector<bool>{true, true}));
+      // A claimed memcpy at a pure COPY is malformed. It must still be
+      // visited after the ordinary memory scan has already been cached.
+      Queries[1].AuthenticatedFrameMemcpyWriters = {
+          {NdVar::scalar(11, 4), 0x100, 34, false}};
+      const auto Malformed = Access::batch(Warm, Queries, Budget, 128);
+      ASSERT_TRUE(Malformed.Complete);
+      ASSERT_EQ(Malformed.Values, (std::vector<bool>{true, false}));
+      const size_t Work = Budget - Malformed.Remaining;
+      ASSERT_GT(Work, 0u);
+      for (size_t Limit : {size_t{0}, Work - 1, Work, Work + 1, Budget}) {
+        CFGBuilder Cold;
+        Access::seedLongMemoryScan(Cold, Image);
+        EXPECT_EQ(Access::batch(Warm, Queries, Limit, 128),
+                  Access::batch(Cold, Queries, Limit, 128));
+      }
+      Queries[1].AuthenticatedFrameMemcpyWriters.clear();
+      Access::insertMemoryScanCall(Warm);
+      const auto Changed = Access::batch(Warm, Queries, Budget, 128);
+      ASSERT_TRUE(Changed.Complete);
+      EXPECT_EQ(Changed.Values, (std::vector<bool>{false, false}));
+      Access::clear(Warm);
+      EXPECT_EQ(Access::batch(Warm, Queries, Budget, 128), Changed);
+    }
 }
 
 TEST(ResolverGraphCache, StorageOwnershipAndCallbackChargesRemainCurrent) {

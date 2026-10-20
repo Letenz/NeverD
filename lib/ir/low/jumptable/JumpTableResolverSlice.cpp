@@ -21,6 +21,7 @@
 #include "JumpTableResolverDetail.h"
 #include "ResolverDefinitionCache.h"
 #include "ResolverLaneView.h"
+#include "ResolverMemoryDefinitionCache.h"
 #include "ResolverPendingWalks.h"
 #include "ResolverPointLookup.h"
 
@@ -381,6 +382,7 @@ struct ResolverFlowGraph {
   /// than graph indegree or PersistentCFGRoots alone.
   std::vector<int> RootBlocks;
   mutable detail::ResolverDefinitionCache Definitions;
+  mutable detail::ResolverMemoryDefinitionCache MemoryDefinitions;
   mutable detail::ResolverPointLookup Points;
 
   std::optional<detail::JumpTableProofLocation>
@@ -7083,9 +7085,22 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     const ResolverFlowBlock &B = Graph.Blocks[Block];
     ResolverResult Result = resolverInvalid();
     bool Found = false;
+    const bool ScanEveryOperation =
+        ActiveFrameMemoryQuery &&
+        !ActiveFrameMemoryQuery->AuthenticatedFrameMemcpyWriters.empty();
     for (int I = std::min(Before, static_cast<int>(B.Ops.size())) - 1; I >= 0;
          --I) {
-      if (!consumeEvidence()) {
+      if (!ScanEveryOperation) {
+        const auto Previous = Graph.MemoryDefinitions.previous(
+            Block, B.Ops, I + 1, consumeEvidence);
+        if (!Previous) {
+          Found = true;
+          break;
+        }
+        I = *Previous;
+        if (I < 0)
+          break;
+      } else if (!consumeEvidence()) {
         Found = true;
         break;
       }
@@ -7138,6 +7153,17 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
             budgetedResolverRoot(Size, Root.view(), consumeEvidence));
         break;
       }
+      const auto Kind = detail::resolverMemoryCandidate(Op.Opcode);
+      using MemoryCandidate = detail::ResolverMemoryCandidate;
+      const bool IsCall = Kind == MemoryCandidate::Call;
+      const bool IsStore = Kind == MemoryCandidate::Store && Op.NumInputs >= 2;
+      const bool IsAtomic =
+          Kind == MemoryCandidate::Atomic && Op.NumInputs >= 1;
+      const bool ClobberingIntrinsic = intrinsicMayClobberFrameMemory(Op);
+      // The exact writer check above also rejects malformed authenticated
+      // occurrences. Once it has run, pure operations need no call handling.
+      if (!IsCall && !IsStore && !IsAtomic && !ClobberingIntrinsic)
+        continue;
       // A known memset is not an opaque whole-frame clobber when its exact
       // destination and byte count prove a disjoint frame interval at this
       // CALL point.  This is needed for clang's five-entry local computed-goto
@@ -7197,8 +7223,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       if (ExactDisjointMemset)
         continue;
       bool PrivateFrameCall = false;
-      if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
-          ActiveValueQuery &&
+      if (IsCall && ActiveValueQuery &&
           ActiveValueQuery->AllowPrivateFrameMemoryAcrossCalls) {
         const std::optional<bool> Private =
             currentFrameAddressesRemainPrivate(SlotBase, SlotOffset, Size);
@@ -7210,19 +7235,11 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       }
       if (PrivateFrameCall)
         continue;
-      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
-          intrinsicMayClobberFrameMemory(Op)) {
+      if (IsCall || ClobberingIntrinsic) {
         Found = true;
         Result = resolverInvalid();
         break;
       }
-      const bool IsStore = Op.Opcode == NdOp::STORE && Op.NumInputs >= 2;
-      const bool IsAtomic =
-          (Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD ||
-           Op.Opcode == NdOp::ATOMIC_CMPXCHG) &&
-          Op.NumInputs >= 1;
-      if (!IsStore && !IsAtomic)
-        continue;
       const NdVar &Address =
           IsAtomic ? Op.Inputs[0]
                    : (Op.NumInputs >= 3 ? Op.Inputs[1] : Op.Inputs[0]);
