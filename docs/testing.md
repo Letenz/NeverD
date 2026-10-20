@@ -4,13 +4,23 @@
 
 # Testing NeverD
 
+`AndroidSignals.Descriptor*` and `Receive*` check caught/ignored/blocked and
+terminating signals during original poll/epoll/pselect6 and TCP/UDP receive
+calls. Independent O0/O2 fixtures run across relocation packing and available
+backends, checking raw versus libc errno, full output guards, remaining timeout
+and fault ordering, one-shot preservation, short reads, SA_RESTART, captured
+SO_RCVTIMEO, FD reuse, mutable context, deferred handlers and nested receives.
+Re-executed traps have separate attempts; abandoned attempts must not acquire
+a fabricated result. Run these with all Android signal/poll/readiness/receive,
+Linux process and execution-session regressions. All peers are offline inputs.
+
 `AndroidSignals.Sleep*`, `IgnoredAndBlockedSignalsDoNotShortenSleep` and
 `TerminationAndUnsupportedWaitsDoNotFabricateCompletion` execute independent
 relative-sleep callers at O0/O2 across relocation packing and available
 backends. They check remaining-time copy ordering and aliasing, raw versus
 libc errno timing, SA_RESTART, bad/partial output, nested interrupted handlers,
 mutable x0/PC, blocked/ignored signals, default termination and explicit
-refusal for other wait families. Run with the full signal, sleep, Android
+refusal for unmodeled synchronization waits. Run with the full signal, sleep, Android
 native, Linux process and execution-session suites after changes to wait
 ownership. The clock and signal delivery are guest-only.
 
@@ -3734,6 +3744,17 @@ registers, flags, memory and segment bases. Timestamp regressions exercise the
 same architecture dispatch. `BinaryLowIRRefinement.CPUQueryCompletesOnlyRawRecovery`
 checks raw completion while retaining native-proof and both source-layout
 refusals. These checks establish no CPU-feature profile or backend execution.
+
+`InterpreterSpecialization.SavedFrameAddress*` checks indexed and conditional
+writes against an independent complete-byte-memory oracle, modular addresses,
+partial overlap, later overwrite, disjoint saved cells with a writable gap,
+projection and exact/short work and query budgets.
+`BinaryLowIRRefinement.SavedFrameAddressRetainsIndexedProofBoundary` checks
+strictly decoded native bytes. Unrestricted symbolic indexing still refuses a
+native certificate; separately bound selector controls prove complete frame
+writes and reject a corrupted byte store. Run the full specialization, original
+binary independence, PE fixed-image, LowIR independence and LowIR refinement
+owners after changing this shared preservation boundary.
 
 `InterpreterSpecialization.SupervisorRead*` checks ECX selectors with nonzero
 upper RCX bits, full-width results, zero upper destination halves, independent

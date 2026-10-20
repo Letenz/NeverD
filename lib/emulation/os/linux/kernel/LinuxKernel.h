@@ -50,6 +50,13 @@ public:
   virtual std::optional<uint64_t> nextWake() const = 0;
   virtual llvm::Expected<std::optional<uint64_t>>
   resume(ProcessResult &Result) = 0;
+  /// A zero-progress operation may request re-entry at the original trap.
+  /// The old wait is released before the handler; re-entry imports the restored
+  /// registers and looks up descriptors again, rather than resuming stale
+  /// state.
+  virtual bool restartOnSignal(const LinuxSignalAction &) const {
+    return false;
+  }
   /// Only the operation owner can decide whether/how a caught signal ends a
   /// wait. Unsupported restart/copy-out contracts must not become EINTR.
   virtual llvm::Expected<std::optional<uint64_t>>

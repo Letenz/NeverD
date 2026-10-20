@@ -96,6 +96,12 @@ public:
     return std::optional<uint64_t>(Return);
   }
   llvm::Expected<std::optional<uint64_t>>
+  interrupt(ProcessResult &Result) override {
+    // core_sys_select skips fd-set copy-out when interrupted without ready
+    // bits, but pselect6 still updates its remaining timeout.
+    return finish(uint64_t(0) - InterruptedCall, Result);
+  }
+  llvm::Expected<std::optional<uint64_t>>
   resume(ProcessResult &Result) override {
     const auto O = observe();
     if (O.Unknown)
@@ -231,9 +237,6 @@ LinuxFiles::select(const ProcessServiceEvent &Event, ProcessResult &Result,
   }
   if (Pending->ready())
     return Pending->resume(Result);
-  if (!Clock || !Clock->advancesOnIdle() || !Pending->nextWake())
-    return unsupported(Result,
-                       "blocking select waits require a readiness schedule");
   if (Thread) {
     assert(!Thread->Pending && !Thread->Exit);
     Thread->Pending = std::move(Pending);
@@ -241,6 +244,9 @@ LinuxFiles::select(const ProcessServiceEvent &Event, ProcessResult &Result,
   }
   // A single-thread workload is already idle. Threaded workloads let the
   // shared scheduler run every other runnable owner before advancing time.
+  if (!Clock || !Clock->advancesOnIdle() || !Pending->nextWake())
+    return unsupported(Result,
+                       "blocking select waits require a readiness schedule");
   if (!Clock->advanceTo(*Pending->nextWake(), Result))
     return Reply();
   return Pending->resume(Result);

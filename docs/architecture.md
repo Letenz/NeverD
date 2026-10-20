@@ -5734,8 +5734,12 @@ Relative sleeps retain copied deadlines and remaining-time output addresses in
 `LinuxSleep`; no second sleep state lives in the Android scheduler. Scheduling
 considers eligible process-pending signals before advancing idle time. The
 shared signal owner discards ignored signals and classifies default termination
-before a waiter can report EINTR. Other wait owners refuse interruption until
-their own restart and copy-out semantics exist. For modeled native wrappers,
+before a waiter can report EINTR. Poll, select and epoll owners perform their
+distinct interrupted copy-out rules. The receive owner alone decides whether
+its captured timeout and zero-progress state permit SA_RESTART. The scheduler
+then releases that wait and restores its trap PC, without installing a result;
+normal execution re-imports the mutable registers and descriptor identity.
+Other wait owners refuse interruption until their own contracts exist. For modeled native wrappers,
 the scheduler records a per-thread continuation at the import's post-trap PC
 and current signal-frame depth. After `rt_sigreturn`, Bionic converts the
 restored raw result, including guest edits, to errno/-1. A guest PC redirect
@@ -8446,6 +8450,8 @@ Interpreter specialization retains full-width guest addresses. At publication, i
 
 `ProveStoreReturnSlotSeparation` also proves preservation of individual live native return cells across ordinary non-frame stores with 64-bit addresses. Each complete eight-byte cell must be disjoint under the current path. Only existing bytes in the accepted range union survive; gaps, unproved cells and other banks keep normal alias invalidation. Proof and preservation share the existing budgets and add no stack-ownership assumption.
 
+Current saved frame-address cells reuse this per-write separation proof. Successful proofs retain their materialized bytes and affine relations across ordinary or conditional writes. Later overlapping writes still invalidate those relations. Each cell is checked independently; no interval between accepted cells becomes protected, and no observation supplies a new alias premise.
+
 `MaxFrameOffsetNormalizationWorkPerProof` defaults to zero. When enabled, an incomplete cold frame-offset query may use the existing exact MBA derivation to prove a 64-bit offset against the identical root, retaining the original operations. Alone, this supplies no reachability or memory-ownership fact and cannot populate the finite-domain cache. Each attempt charges one unit per uncached readability-prefix node, operand edge and 64-bit constant limb, plus reported MBA measurement work, to both this limit and `MaxOperations`. Failed attempts remain charged. Internal traversals, rebuilding and sample defect checks are not separately metered; the final `MaxSymbolicNodes` check gates publication, not peak allocation. If exact normalization changes the expression without exposing a structural offset, the ordinary frame prover retries once with a fresh encoding, the same predicate, root and solver settings, and the existing cumulative query and node limits. The retry disables normalization. Completed enumeration or proved excess cardinality can populate the original query cache through the exact expression equality, retaining its constant-bias translation. Algebraic offsets alone and incomplete retries cannot populate finite domains.
 
 If the same cache already holds a completed empty-projection proof for the identical predicate at limit one, `FrameOffsets` can combine it with the exact algebraic offset and cache the original query, preserving modular bias translation. Feasible predicates yield a singleton; proved infeasibility stays empty. Missing, incomplete or unrelated proofs cannot enable this reuse. No additional solver query or memory premise is introduced.
@@ -8913,8 +8919,8 @@ cursors as transfers; it does not consume input or create a parallel socket
 registry. `LinuxSocketReadiness` projects declared arrivals and quiet intervals
 onto those same cursors. `SelectWait` retains copied arguments and description
 identities, rechecks live readiness and output access, and computes remaining
-time from `LinuxClock`. `KernelWait` exposes only readiness, the next wake and
-completion to `GuestThreads`; it introduces no second scheduler or socket
+time from `LinuxClock`. `KernelWait` exposes readiness, the next wake,
+completion and operation-owned signal policy to `GuestThreads`; it introduces no second scheduler or socket
 registry. Runnable threads precede idle advancement; sleep and I/O deadlines
 compete in one ordering. Resume completes the original service event, and Bionic
 alone converts errors using the resumed thread's errno. Unknown observations

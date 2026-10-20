@@ -14,8 +14,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "JumpTableResolverDetail.h"
 #include "../../AffineFrameState.h"
+#include "JumpTableResolverDetail.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -929,7 +929,8 @@ va_t CFGBuilder::resolveStackMaterializedTableSource(
             Occurrence.OutputMayDepend ||
             Occurrence.TargetOwnerVA == InvalidVA ||
             !Img.relocatedTargetBelongsToOwner(Occurrence.TargetVA,
-                                               Occurrence.TargetOwnerVA) ||
+                                               Occurrence.TargetOwnerVA,
+                                               ExecutableCodeOwners) ||
             !exactImmutableDataSpanOwner(Img, StaticAddress, AccessSize,
                                          Occurrence.TargetOwnerVA))
           continue;

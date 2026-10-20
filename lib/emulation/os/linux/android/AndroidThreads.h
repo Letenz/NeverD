@@ -137,7 +137,7 @@ private:
   BionicResult resumeOnce(const Once &Pending);
   BionicResult resumeWait(Bionic &LibC);
   llvm::Error completeWait(uint64_t Value);
-  llvm::Expected<bool> interruptWait();
+  llvm::Expected<bool> interruptWait(const LinuxSignalAction &Action);
   static std::optional<BionicValue> value(uint64_t Value) {
     return BionicValue(Value);
   }

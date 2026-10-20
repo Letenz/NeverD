@@ -117,6 +117,7 @@ void OmittedCalleeMemo::adopt(const BinaryImage &Img,
   FunctionEntries = calleeLiftEntries(Img);
   PointerCallees = collectPointerVariableCallees(Img);
   CodeOwners.reset();
+  RuntimeRoutineCalls.reset();
   Callees.clear();
   Bytes = 0;
 }
@@ -125,6 +126,12 @@ const ExecutableCodeOwnerIndex &OmittedCalleeMemo::codeOwners() {
   if (!CodeOwners)
     CodeOwners.emplace(*Image);
   return *CodeOwners;
+}
+
+const std::map<va_t, Intrinsic> &OmittedCalleeMemo::runtimeRoutineCalls() {
+  if (!RuntimeRoutineCalls)
+    RuntimeRoutineCalls = runtimeRoutineCallsOf(*Image, Image->Arch);
+  return *RuntimeRoutineCalls;
 }
 
 OmittedCalleeMemo::Conversion *
@@ -251,6 +258,22 @@ std::vector<va_t> directCallTargets(const MedFunc &F) {
   return Targets;
 }
 
+/// Releases the spare capacity of \p Med's containers, which grew by
+/// doubling while it was built.  Its contents do not change.
+void shrinkToFit(MedFunc &Med) {
+  for (MedBlock &Block : Med.Blocks) {
+    for (MedOp &Op : Block.Ops)
+      Op.IntrinsicOutputs.shrink_to_fit();
+    for (PhiNode &Phi : Block.Phis)
+      Phi.Args.shrink_to_fit();
+    Block.Ops.shrink_to_fit();
+    Block.Phis.shrink_to_fit();
+    Block.Succs.shrink_to_fit();
+    Block.Preds.shrink_to_fit();
+  }
+  Med.Blocks.shrink_to_fit();
+}
+
 /// A selected function still calls the image's other native functions. Use
 /// the normal parameter detector for their bodies instead of assigning the
 /// default register order merely because the user omitted their output.
@@ -340,6 +363,7 @@ public:
       Converter.setCallEntryArgumentCounts(
           &omittedCalleeArgumentCounts(Result));
       Converter.setCallSummaryKeysRead(&Keys);
+      Converter.setRuntimeRoutineCalls(&runtimeRoutineCalls());
       MedFunc Med = Converter.convert(Lifted, Img.Arch, Img.abiFormat());
       size_t MedOperations = 0;
       for (const auto &Block : Med.Blocks)
@@ -347,6 +371,10 @@ public:
       if (Med.Blocks.size() <= limits::kMaxStructurableMedBlocks &&
           MedOperations <= static_cast<size_t>(limits::kMaxSSANodes)) {
         inferMedTypes(Med, Img.Arch);
+        // The memo keeps the body: drop the spare capacity its vectors grew
+        // by while it was built.
+        if (Memo && Kept)
+          shrinkToFit(Med);
         Body = std::make_shared<const MedFunc>(std::move(Med));
       }
     } catch (const LowToMedConversionError &) {
@@ -369,6 +397,16 @@ public:
   }
 
 private:
+  /// The runtime routines every conversion reads: the memo's, or the
+  /// reader's own, read once.
+  const std::map<va_t, Intrinsic> &runtimeRoutineCalls() {
+    if (Memo)
+      return Memo->runtimeRoutineCalls();
+    if (!OwnRuntimeRoutineCalls)
+      OwnRuntimeRoutineCalls = runtimeRoutineCallsOf(Img, Img.Arch);
+    return *OwnRuntimeRoutineCalls;
+  }
+
   const BinaryImage &Img;
   const PipelineResult &Result;
   OmittedCalleeMemo *Memo;
@@ -377,6 +415,7 @@ private:
   Decoder Dec;
   std::optional<ExecutableCodeOwnerIndex> Owners;
   bool OwnersLent = false;
+  std::optional<std::map<va_t, Intrinsic>> OwnRuntimeRoutineCalls;
   CFGBuilder Builder;
 };
 

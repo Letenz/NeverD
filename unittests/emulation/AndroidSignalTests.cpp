@@ -124,15 +124,260 @@ protected:
     Options.LinuxTime.emplace();
     Options.LinuxTime->AdvanceOnIdle = true;
     Options.LinuxTime->Clocks[1] = {0, 0};
-    if (Mode == 15)
-      Options.LinuxFiles.emplace();
     return run("signal_sleep", {Op, Mode, Buffer});
+  }
+  ProcessResult descriptors(uint64_t Op, uint64_t Mode, uint64_t Type = 1) {
+    input().assign(8192, 0);
+    Options.LinuxSignals->InitialMask = 0;
+    Options.LinuxSignals->AlternateStackDisabled = true;
+    Options.Android->ThreadLimit = 2;
+    Options.Android->TraceLimit = 50000;
+    Options.Limits.Instructions = 50000;
+    Options.LinuxTime.emplace().AdvanceOnIdle = true;
+    Options.LinuxTime->Clocks[1] = {0, 0};
+    Options.LinuxFiles.emplace();
+    LinuxStreamConnection S;
+    S.Peer = {2, 0, 0x23, 0x29, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0};
+    S.ReceiveEvents = {{{0x5a}, 0, 0, 5000000}, {{0x6b}, 0, 0, 7000000}};
+    Options.LinuxNetwork.emplace().Connections = {S, S};
+    Options.LinuxNetwork->Connections[1].ReceiveEvents = {{{0xb6}, 0, 0, 0}};
+    LinuxDatagramConnection D;
+    D.Peer = S.Peer;
+    D.ReceiveEvents = S.ReceiveEvents;
+    Options.LinuxNetwork->DatagramConnections = {D};
+    return run("signal_descriptors", {Op, Mode, Type, Buffer});
+  }
+  static bool rawDescriptor(uint64_t Op) {
+    return Op == 2 || Op == 6 || Op == 7 || Op == 9 || Op == 12;
+  }
+  static void descriptorReturned(const ProcessResult &R) {
+    ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+    ASSERT_EQ(R.ReturnValue, 0u);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_FALSE(R.TraceTruncated);
+    EXPECT_EQ(word(R, 11), 1u);
+    EXPECT_EQ(word(R, 21), 77u);
+    // Guarded bytes outside every fixture output must stay untouched.
+    const auto &B = R.MemorySnapshots[0].Bytes;
+    for (auto [Begin, End] : {std::pair{232, 1024},
+                              {1048, 1056},
+                              {1072, 1152},
+                              {1160, 1184},
+                              {1200, 1208},
+                              {1216, 1280},
+                              {1288, 1360},
+                              {1368, 4096},
+                              {4128, 6144},
+                              {6160, 8192}}) {
+      SCOPED_TRACE(Begin);
+      EXPECT_TRUE(std::all_of(B.begin() + Begin, B.begin() + End,
+                              [](uint8_t V) { return !V; }));
+    }
   }
   static uint64_t word(const ProcessResult &R, unsigned Index) {
     return llvm::support::endian::read64le(
         R.MemorySnapshots.at(0).Bytes.data() + Index * 8);
   }
 };
+
+TEST_P(AndroidSignals, DescriptorInterruptionKeepsOperationSpecificCopyOut) {
+  for (uint64_t Op = 0; Op != 8; ++Op) {
+    for (uint64_t Mode : {0, 1}) {
+      SCOPED_TRACE(testing::Message() << Op << "/" << Mode);
+      const auto R = descriptors(Op, Mode);
+      ASSERT_NO_FATAL_FAILURE(descriptorReturned(R));
+      EXPECT_EQ(word(R, 0), 1u);
+      EXPECT_EQ(word(R, 1), 73u); // errno conversion follows the handler.
+      EXPECT_EQ(word(R, 2), uint64_t(-4));
+      EXPECT_EQ(word(R, 8), rawDescriptor(Op) ? uint64_t(-4) : UINT64_MAX);
+      EXPECT_EQ(word(R, 9), rawDescriptor(Op) ? 55u : 4u);
+      EXPECT_EQ(word(R, 7), 1000u);
+      EXPECT_EQ(word(R, 10), 1000u);
+      const bool RawTimeout = Op == 2 || Op == 3 || Op == 7;
+      EXPECT_EQ(word(R, 5), 0u);
+      EXPECT_EQ(word(R, 6), RawTimeout ? 19999000u : 20000000u);
+      if (Op < 4) {
+        EXPECT_EQ(word(R, 4), 0u);
+        EXPECT_EQ(word(R, 128), 0x0000000100000003u);
+        EXPECT_EQ(word(R, 129), 0x00000001ffffffffu);
+      } else if (Op == 7) {
+        EXPECT_EQ(word(R, 4), 8u); // pselect6 does not clear the input set.
+        EXPECT_EQ(word(R, 130), 8u);
+      }
+      EXPECT_EQ(word(R, 26), 0xa5a5a5a5u); // epoll output was not touched.
+      EXPECT_EQ(word(R, 27), 0xa5a5a5a5a5a5a5a5u);
+      EXPECT_EQ(word(R, 12), 1u); // Arrival/one-shot not consumed by EINTR.
+      EXPECT_EQ(word(R, 13), Op >= 4 && Op <= 6 ? 0x1234567887654321u : 0x5au);
+      if (Op >= 4 && Op <= 6) {
+        EXPECT_EQ(word(R, 16), 0u); // First real delivery disables one-shot.
+        EXPECT_EQ(word(R, 132), 0xa5a5a5a500000001u); // Preserve ARM padding.
+        EXPECT_EQ(word(R, 133), 0x1234567887654321u);
+      }
+    }
+  }
+}
+
+TEST_P(AndroidSignals, DescriptorInterruptionOrdersFaultsAndTimeoutCopyOut) {
+  for (uint64_t Op = 0; Op != 8; ++Op) {
+    for (uint64_t Mode : {12, 13}) {
+      SCOPED_TRACE(testing::Message() << Op << "/" << Mode);
+      const auto R = descriptors(Op, Mode);
+      ASSERT_NO_FATAL_FAILURE(descriptorReturned(R));
+      const auto Error = Op < 4 && Mode == 12 ? 14u : 4u;
+      EXPECT_EQ(word(R, 2), uint64_t(0) - Error);
+      EXPECT_EQ(word(R, 8),
+                rawDescriptor(Op) ? uint64_t(0) - Error : UINT64_MAX);
+      EXPECT_EQ(word(R, 9), rawDescriptor(Op) ? 55u : Error);
+      EXPECT_EQ(word(R, 6), 20000000u); // Unwritable timeout is ignored.
+      EXPECT_EQ(word(R, 130), 8u);
+      EXPECT_EQ(word(R, 4), Op == 7                 ? 8u
+                            : Mode == 12 || Op >= 4 ? 0xa5a5u
+                                                    : 0u);
+      EXPECT_EQ(word(R, 26), 0xa5a5a5a5u);
+      EXPECT_EQ(word(R, 27), 0xa5a5a5a5a5a5a5a5u);
+    }
+  }
+  const auto R = descriptors(0, 18);
+  ASSERT_NO_FATAL_FAILURE(descriptorReturned(
+      R)); // Infinite poll needs no clock/readiness deadline.
+  EXPECT_EQ(word(R, 8), UINT64_MAX);
+  EXPECT_EQ(word(R, 9), 4u);
+}
+
+TEST_P(AndroidSignals, ReceiveInterruptionPreservesDataAndCapturedTimeout) {
+  for (uint64_t Op = 8; Op != 14; ++Op) {
+    for (uint64_t Mode : {0, 2, 16}) {
+      for (uint64_t Type : {1, 2}) {
+        if (Op == 13 && Type == 1)
+          continue; // Explicit TCP peer output is outside the contract.
+        SCOPED_TRACE(testing::Message() << Op << "/" << Mode << "/" << Type);
+        const auto R = descriptors(Op, Mode, Type);
+        ASSERT_NO_FATAL_FAILURE(descriptorReturned(R));
+        EXPECT_EQ(word(R, 0), 1u);
+        EXPECT_EQ(word(R, 1), 73u);
+        EXPECT_EQ(word(R, 2), uint64_t(-4));
+        EXPECT_EQ(word(R, 8), rawDescriptor(Op) ? uint64_t(-4) : UINT64_MAX);
+        EXPECT_EQ(word(R, 9), rawDescriptor(Op) ? 55u : 4u);
+        EXPECT_EQ(word(R, 10), 1000u);
+        EXPECT_EQ(word(R, 15), 0xa5a5a5a5a5a5a5a5u);
+        EXPECT_EQ(word(R, 14), 0xa5a5a5a5a5a5a5a5u);
+        EXPECT_EQ(word(R, 148), 0xa5a5a5a5a5a5a5a5u);
+        EXPECT_EQ(word(R, 149), 0xa5a5a5a5a5a5a5a5u);
+        EXPECT_EQ(word(R, 151), 16u);
+        EXPECT_EQ(word(R, 12), 1u);
+        EXPECT_EQ(word(R, 13), 0x5au); // First byte is still queued.
+      }
+    }
+  }
+}
+
+TEST_P(AndroidSignals, ReceiveRestartReentersOriginalTrapAfterHandlers) {
+  for (uint64_t Op = 8; Op != 14; ++Op) {
+    for (uint64_t Mode : {1, 10, 11, 15, 19, 22}) {
+      SCOPED_TRACE(testing::Message() << Op << "/" << Mode);
+      const auto R = descriptors(Op, Mode, Op == 13 ? 2 : 1);
+      ASSERT_NO_FATAL_FAILURE(descriptorReturned(R));
+      EXPECT_EQ(word(R, 0), Mode == 11 || Mode == 22 ? 2u : 1u);
+      EXPECT_EQ(word(R, 1), Mode == 11 || Mode == 22 ? 55u : 73u);
+      EXPECT_EQ(word(R, 2), Op == 10 ? 207u : 3u);
+      EXPECT_EQ(word(R, 8), 1u);
+      EXPECT_EQ(word(R, 9), 55u);
+      EXPECT_EQ(word(R, 10), Mode == 19   ? 7000000u
+                             : Mode == 10 ? 6001000u
+                                          : 5000000u);
+      EXPECT_EQ(word(R, 15), 0xa5a5a5a5a5a5a5a5u);
+      EXPECT_EQ(word(R, 14),
+                Mode == 19 ? 0xa5a5a5a5a5a5a56bu : 0xa5a5a5a5a5a5a55au);
+      if (Mode == 19) {
+        EXPECT_EQ(word(R, 17), 1u);
+        EXPECT_EQ(word(R, 160), 0x5au);
+      }
+      unsigned Attempts = 0, Completed = 0;
+      const char *Name = Op == 8    ? "recv"
+                         : Op == 10 ? "syscall"
+                         : Op == 11 ? "read"
+                                    : "recvfrom";
+      auto Check = [&](const auto &Call) {
+        if (Call.ThreadID != 1001 || Call.PC != word(R, 3))
+          return;
+        ++Attempts;
+        if (Call.Result) {
+          ++Completed;
+          EXPECT_EQ(*Call.Result, 1u);
+        }
+      };
+      if (rawDescriptor(Op)) {
+        for (const auto &Call : R.Services)
+          Check(Call);
+      } else {
+        for (const auto &Call : R.NativeCalls)
+          if (Call.Name == Name)
+            Check(Call);
+      }
+      // A restarted trap executes again. Its first attempt is not a completed
+      // EINTR; a nested handler recv has a separate return/caller lifetime.
+      const bool SharedImport = Op == 8 && Mode == 19;
+      EXPECT_EQ(Attempts, SharedImport || Mode == 22 ? 3u : 2u);
+      EXPECT_EQ(Completed, SharedImport ? 2u : 1u);
+    }
+  }
+}
+
+TEST_P(AndroidSignals, ReceiveRestartImportsChangedDescriptorsAndContext) {
+  for (uint64_t Op : {8, 9, 10, 11, 12}) {
+    for (uint64_t Mode : {3, 4, 8, 20, 21}) {
+      if ((Mode == 8 || Mode == 20) && Op == 10)
+        continue; // syscall's modeled import arguments include its number.
+      SCOPED_TRACE(testing::Message() << Op << "/" << Mode);
+      const auto R = descriptors(Op, Mode);
+      ASSERT_NO_FATAL_FAILURE(descriptorReturned(R));
+      const bool BadFD = Mode == 3 || Mode == 8;
+      EXPECT_EQ(word(R, 8),
+                BadFD        ? (rawDescriptor(Op) ? uint64_t(-9) : UINT64_MAX)
+                : Mode == 21 ? 88u
+                             : 1u);
+      EXPECT_EQ(word(R, 9), BadFD && !rawDescriptor(Op) ? 9u : 55u);
+      EXPECT_EQ(word(R, 10), Mode == 20 ? 5000000u : 1000u);
+      EXPECT_EQ(word(R, 14),
+                Mode == 4 ? 0xa5a5a5a5a5a5a5b6u : 0xa5a5a5a5a5a5a5a5u);
+      if (Mode == 20)
+        EXPECT_EQ(word(R, 160), 0x5au);
+      if (Mode == 4) {
+        EXPECT_EQ(word(R, 17), 0u);
+        EXPECT_EQ(word(R, 18), 3u);
+        EXPECT_EQ(word(R, 19), 0u);
+      }
+    }
+  }
+  const auto R = descriptors(8, 9);
+  ASSERT_NO_FATAL_FAILURE(descriptorReturned(R));
+  EXPECT_EQ(word(R, 8), 88u);
+  EXPECT_EQ(word(R, 9), 55u);
+  EXPECT_EQ(word(R, 14), 0xa5a5a5a5a5a5a5a5u);
+}
+
+TEST_P(AndroidSignals, DescriptorSignalsRespectDispositionAndReadyData) {
+  for (uint64_t Op : {0, 2, 4, 6, 7, 8, 9}) {
+    for (uint64_t Mode : {5, 6, 7, 14}) {
+      Options.InstructionQuantum = Mode == 14 ? 2048 : 7;
+      SCOPED_TRACE(testing::Message() << Op << "/" << Mode);
+      const auto R = descriptors(Op, Mode);
+      if (Mode == 7) {
+        EXPECT_EQ(R.Stop, ProcessStopReason::Signaled) << R.Diagnostic;
+        EXPECT_EQ(R.TerminationSignal, 15u);
+        EXPECT_EQ(word(R, 0), 0u);
+        EXPECT_EQ(word(R, 11), 0u);
+        EXPECT_EQ(word(R, 144), 0xa5a5a5a5a5a5a5a5u);
+        continue;
+      }
+      ASSERT_NO_FATAL_FAILURE(descriptorReturned(R));
+      EXPECT_EQ(word(R, 0), Mode == 6 ? 0u : 1u);
+      EXPECT_EQ(word(R, 8), 1u); // Partial receive returns the available byte.
+      EXPECT_EQ(word(R, 9), Mode == 14 ? 55u : 73u);
+      EXPECT_EQ(word(R, 10), 5000000u);
+    }
+  }
+}
 
 TEST_P(AndroidSignals,
        SleepInterruptionWritesRemainderBeforeHandlerAndErrnoAfter) {
@@ -240,7 +485,7 @@ TEST_P(AndroidSignals, IgnoredAndBlockedSignalsDoNotShortenSleep) {
 }
 
 TEST_P(AndroidSignals, TerminationAndUnsupportedWaitsDoNotFabricateCompletion) {
-  for (uint64_t Mode : {4, 9, 10, 15}) {
+  for (uint64_t Mode : {4, 9, 10}) {
     SCOPED_TRACE(Mode);
     const auto R = sleep(0, Mode);
     ASSERT_EQ(R.Stop, Mode == 9 ? ProcessStopReason::Signaled
