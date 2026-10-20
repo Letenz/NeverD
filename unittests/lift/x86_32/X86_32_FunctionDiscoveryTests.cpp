@@ -1279,6 +1279,151 @@ TEST(X86_32_FunctionDiscovery, ARuntimeIndexedReadOnlyTableResolves) {
   EXPECT_NE(Text2.find("getelementptr i8"), std::string::npos) << Text2;
 }
 
+TEST(X86_32_FunctionDiscovery, ARuntimeOrStaticPointerReadsThroughTheMirror) {
+  // `p = arg ? arg : &empty; return *p`, the default a static object in a
+  // .data that also holds a relocated code pointer, so the emitter mirrors
+  // it.  The static arm is the mirror's own pointer and the runtime arm the
+  // caller's, so the read needs no table proof and keeps no image address.
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  std::vector<uint8_t> Text;
+  auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Text.insert(Text.end(), Bytes);
+  };
+  Emit({0x8B, 0x44, 0x24, 0x04});       // 401000 mov eax, [esp+4]
+  Emit({0x85, 0xC0, 0x75, 0x05});       // 401004 test eax, eax; jne 40100D
+  Emit({0xB8, 0x04, 0x30, 0x40, 0x00}); // 401008 mov eax, offset empty
+  Emit({0x0F, 0xB7, 0x00, 0xC3});       // 40100D movzx eax, word [eax]; ret
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+  addPeSection(Img, ".data", 0x403000,
+               {0x00, 0x10, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00},
+               SegmentFlags::Readable | SegmentFlags::Writable);
+  recordAbsolutePointerRelocations(
+      Img, {{0x401009, 0x403004, InvalidVA}, {0x403000, 0x401000, InvalidVA}});
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.LiftMode = true;
+  Opts.OnlyFunctionEntries = {0x401000};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_NE(Result.LlvmModule, nullptr);
+  EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+  std::string IR;
+  llvm::raw_string_ostream OS(IR);
+  Result.LlvmModule->print(OS, nullptr);
+  EXPECT_EQ(IR.find("4206596"), std::string::npos) << IR; // 0x403004
+}
+
+TEST(X86_32_FunctionDiscovery, AMergeOfMirroredAndReadOnlyStaticsResolvesEach) {
+  // The same merge also chooses a string in a .rdata that holds no pointer
+  // (`p = a ? &empty : b ? "x" : arg`).  The string's relocated operand
+  // proves it an address, which its own route rebuilds, so the read keeps
+  // neither static's image address.
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  std::vector<uint8_t> Text;
+  auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Text.insert(Text.end(), Bytes);
+  };
+  Emit({0x8B, 0x44, 0x24, 0x04});       // 401000 mov eax, [esp+4]
+  Emit({0x8B, 0x4C, 0x24, 0x08});       // 401004 mov ecx, [esp+8]
+  Emit({0x85, 0xC9, 0x74, 0x0E});       // 401008 test ecx, ecx; je 40101A
+  Emit({0x83, 0xF9, 0x01, 0x75, 0x0E}); // 40100C cmp ecx, 1; jne 40101F
+  Emit({0xB8, 0x00, 0x20, 0x40, 0x00}); // 401011 mov eax, offset string
+  Emit({0xEB, 0x07, 0x90, 0x90});       // 401016 jmp 40101F
+  Emit({0xB8, 0x04, 0x30, 0x40, 0x00}); // 40101A mov eax, offset empty
+  Emit({0x0F, 0xB7, 0x00, 0xC3});       // 40101F movzx eax, word [eax]; ret
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+  addPeSection(Img, ".rdata", 0x402000, {'x', 0x00, 0x00, 0x00},
+               SegmentFlags::Readable);
+  addPeSection(Img, ".data", 0x403000,
+               {0x00, 0x10, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00},
+               SegmentFlags::Readable | SegmentFlags::Writable);
+  recordAbsolutePointerRelocations(Img, {{0x401012, 0x402000, InvalidVA},
+                                         {0x40101B, 0x403004, InvalidVA},
+                                         {0x403000, 0x401000, InvalidVA}});
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.LiftMode = true;
+  Opts.OnlyFunctionEntries = {0x401000};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_NE(Result.LlvmModule, nullptr);
+  EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+  std::string IR;
+  llvm::raw_string_ostream OS(IR);
+  Result.LlvmModule->print(OS, nullptr);
+  EXPECT_EQ(IR.find("4202496"), std::string::npos) << IR; // 0x402000
+  EXPECT_EQ(IR.find("4206596"), std::string::npos) << IR; // 0x403004
+}
+
+TEST(X86_32_FunctionDiscovery, AMergeWithAnUnprovedImageAddressKeepsItsProof) {
+  // As above, but no relocation proves the string's operand an address: it
+  // is a number that lands in the image, where it would stand as an
+  // original address.  The merge alone then proves nothing, and the read
+  // never keeps that address.
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  std::vector<uint8_t> Text;
+  auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+    Text.insert(Text.end(), Bytes);
+  };
+  Emit({0x8B, 0x44, 0x24, 0x04});       // 401000 mov eax, [esp+4]
+  Emit({0x8B, 0x4C, 0x24, 0x08});       // 401004 mov ecx, [esp+8]
+  Emit({0x85, 0xC9, 0x74, 0x0E});       // 401008 test ecx, ecx; je 40101A
+  Emit({0x83, 0xF9, 0x01, 0x75, 0x0E}); // 40100C cmp ecx, 1; jne 40101F
+  Emit({0xB8, 0x00, 0x20, 0x40, 0x00}); // 401011 mov eax, offset string
+  Emit({0xEB, 0x07, 0x90, 0x90});       // 401016 jmp 40101F
+  Emit({0xB8, 0x04, 0x30, 0x40, 0x00}); // 40101A mov eax, offset empty
+  Emit({0x0F, 0xB7, 0x00, 0xC3});       // 40101F movzx eax, word [eax]; ret
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+  addPeSection(Img, ".rdata", 0x402000, {'x', 0x00, 0x00, 0x00},
+               SegmentFlags::Readable);
+  addPeSection(Img, ".data", 0x403000,
+               {0x00, 0x10, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00},
+               SegmentFlags::Readable | SegmentFlags::Writable);
+  recordAbsolutePointerRelocations(
+      Img, {{0x40101B, 0x403004, InvalidVA}, {0x403000, 0x401000, InvalidVA}});
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.LiftMode = true;
+  Opts.OnlyFunctionEntries = {0x401000};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  if (!Result.Success)
+    return;
+  ASSERT_NE(Result.LlvmModule, nullptr);
+  EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+  std::string IR;
+  llvm::raw_string_ostream OS(IR);
+  Result.LlvmModule->print(OS, nullptr);
+  EXPECT_EQ(IR.find("4202496"), std::string::npos) << IR; // 0x402000
+  EXPECT_EQ(IR.find("4206596"), std::string::npos) << IR; // 0x403004
+}
+
 TEST(X86_32_FunctionDiscovery, APointerSpilledAcrossALoopsCallsKeepsItsTable) {
   // A loop walks an array of integers in .rdata with a pointer it keeps in a
   // frame slot across the call in its body: `add dword ptr [ebp-4], 4`.  The
