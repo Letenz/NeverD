@@ -227,6 +227,14 @@ NEVERD_API const char *neverd_search_bytes(neverd_session_t Sess,
 NEVERD_API const char *neverd_search_string(neverd_session_t Sess,
                                             const char *Pattern,
                                             int CaseSensitive, int MaxResults);
+/// Bounded search in address order. Options: kind (bytes/text), pattern,
+/// limit (1..4096), optional exclusive from address, backward and
+/// case_sensitive booleans. Returns owned JSON {items,complete,next_address};
+/// a non-null next_address resumes after the last item in the same direction.
+/// Matches stay within one segment's initialized bytes. Invalid options fail
+/// with null and a session error. Legacy search uses the same matcher.
+NEVERD_API const char *neverd_search_page(neverd_session_t Sess,
+                                          const char *OptionsJSON);
 
 // ===--------------------------------------------------------------------===//
 // Binary diff (function-level comparison between two sessions)

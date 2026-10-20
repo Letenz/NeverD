@@ -422,6 +422,25 @@ prebuilt-LLVM guidance.
 
 ## GUI function lists and navigation
 
+`NeverDWorkerFunctionalRegressions` checks cached function sorting in both
+directions, exclusive navigation cursors beyond the first 512 functions, string
+sorting across pages, and search continuation in both directions. Length sorting also exercises multi-megabyte literals with bounded UTF-8 previews and filtering on text beyond the preview. On Windows it
+holds a reader handle without delete sharing: a short hold must let Save finish,
+while a persistent hold must preserve the old file and recovery journal with a
+path and Win32 error in the failure. Reopening then recovers the pending edit.
+`SearchCAPITest.SearchPagesContinuePast4096AndReverseWithoutRepeating` checks
+the real search matcher beyond its page budget, address zero, exact-limit
+completion, reverse cursors, text case folding and invalid options.
+
+GUI controller cases `sourceExportWaitsForItsOwnCompleteDocument`,
+`searchResultsClearOnFailureCloseAndProjectSwitch`,
+`newDisassemblyWindowKeepsIndependentCursorAndHistory` and
+`recoveredDatabaseStaysDirtyAcrossReopenUntilSaved` exercise the actual views
+and actions with the fixture worker. `databaseRecoverySurvivesConsumedJournalAndRejectsConflictingPack`
+checks working-copy preservation and explicit discard when the packed state
+changes. Run these with the native Windows Qt platform when checking Windows
+file dialogs and view shortcuts.
+
 `SessionCAPITest.SourceOptions*` checks opt-in HighC variants, complete paging,
 restoration of ordinary output, reuse of prepared IR, navigation invalidation
 and strict option validation. `SourceLLVMProfiles*` checks separate source and

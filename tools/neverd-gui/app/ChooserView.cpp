@@ -151,8 +151,12 @@ void ChooserModel::addressSpaceChanged() {
 }
 
 void ChooserModel::reload() {
-  if (localRows_)
+  if (localRows_) {
+    // Local query results belong to one open project, just like worker pages.
+    if (!session_.loaded())
+      setLocalRows({});
     return;
+  }
   ++serial_;
   // Old filters, sorts and revisions no longer need their queued pages.
   session_.queries().unsubscribeOwner(this);
@@ -184,6 +188,10 @@ void ChooserModel::requestPage(int page) const {
   QJsonObject payload = request_;
   payload["offset"] = page * PageSize;
   payload["limit"] = PageSize;
+  // Length order can start with multi-megabyte literals. The table needs a
+  // preview; filtering and sorting still use the complete text in the worker.
+  if (kind_ == ChooserKind::Strings)
+    payload["text_limit"] = 400;
   if (!filter_.isEmpty())
     payload["filter"] = filter_;
   if (!sortField_.isEmpty()) {

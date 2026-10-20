@@ -196,6 +196,12 @@ if(TARGET neverd_shared)
     SessionCAPITests.cpp
     LINK_LIBS neverd_shared
   )
+  add_neverd_unittest(NeverDSearchCAPITests
+    SearchCAPITests.cpp
+    LINK_LIBS neverd_shared LLVMSupport
+  )
+  target_include_directories(NeverDSearchCAPITests PRIVATE
+    "${CMAKE_SOURCE_DIR}/include" ${LLVM_INCLUDE_DIRS})
   add_neverd_unittest(NeverDSessionFunctionDiscoveryTests
     SessionFunctionDiscoveryTests.cpp
     LINK_LIBS neverd_shared LLVMSupport

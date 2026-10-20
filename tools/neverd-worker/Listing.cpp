@@ -4027,9 +4027,28 @@ Json Listing::strings(const Json &payload) {
   if (!limit)
     throw Error("invalid_request", "limit must be at least 1");
   const auto filter = foldText(stringField(payload, "filter"));
+  const auto textLimit = payload.contains("text_limit")
+                             ? sizeField(payload, "text_limit", 400, 1024)
+                             : std::numeric_limits<std::size_t>::max();
+  if (!textLimit)
+    throw Error("invalid_request",
+                "String previews require a positive text_limit");
+  const auto sort = stringField(payload, "sort", {}, 64);
+  const bool descending = payload.value("descending", false);
+  if (!sort.empty() && sort != "address" && sort != "length" &&
+      sort != "type" && sort != "text")
+    throw Error("invalid_request", "Unknown string sort field");
   Json items = Json::array();
-  std::size_t total = 0;
-  for (const auto &string : d.strings) {
+  std::vector<std::size_t> order;
+  const auto typeOf = [&](const auto &string) {
+    const auto known = d.stringEncodings.find(string.encoding);
+    const auto spelling = known == d.stringEncodings.end()
+                              ? string.encoding
+                              : known->second.spelling;
+    return spelling.empty() ? std::string("C") : spelling;
+  };
+  for (std::size_t i = 0; i < d.strings.size(); ++i) {
+    const auto &string = d.strings[i];
     // The classic type column: C for plain ASCII, else the encoding.
     const auto known = d.stringEncodings.find(string.encoding);
     const std::string spelling = known == d.stringEncodings.end()
@@ -4042,13 +4061,53 @@ Json Listing::strings(const Json &payload) {
         foldText(address).find(filter) == std::string::npos &&
         foldText(type).find(filter) == std::string::npos)
       continue;
-    if (total >= offset && items.size() < limit)
-      items.push_back({{"address", address},
-                       {"length", string.length},
-                       {"type", type},
-                       {"text", string.value},
-                       {"encoding", string.encoding}});
-    ++total;
+    order.push_back(i);
+  }
+  if (!sort.empty()) {
+    // Sort the complete filtered index, never just the returned page.
+    const auto key =
+        [&](std::size_t i) -> std::pair<std::uint64_t, std::string> {
+      const auto &string = d.strings[i];
+      if (sort == "address")
+        return {string.address, {}};
+      if (sort == "length")
+        return {string.length, {}};
+      return {0, foldText(sort == "type" ? typeOf(string) : string.value)};
+    };
+    std::vector<std::pair<std::pair<std::uint64_t, std::string>, std::size_t>>
+        keyed;
+    keyed.reserve(order.size());
+    for (const auto i : order)
+      keyed.emplace_back(key(i), i);
+    std::stable_sort(
+        keyed.begin(), keyed.end(), [&](const auto &a, const auto &b) {
+          return descending ? a.first > b.first : a.first < b.first;
+        });
+    order.clear();
+    for (const auto &entry : keyed)
+      order.push_back(entry.second);
+  }
+  const auto total = order.size();
+  for (auto i = std::min(offset, total); i < total && items.size() < limit;
+       ++i) {
+    const auto &string = d.strings[order[i]];
+    auto end = std::min(string.value.size(), textLimit);
+    const bool truncated = end < string.value.size();
+    if (truncated) {
+      // Never split a UTF-8 code point at the byte bound.
+      while (end &&
+             (static_cast<unsigned char>(string.value[end]) & 0xC0) == 0x80)
+        --end;
+    }
+    std::string text = string.value.substr(0, end);
+    if (truncated)
+      text += "\xe2\x80\xa6";
+    items.push_back({{"address", hexAddress(string.address)},
+                     {"length", string.length},
+                     {"type", typeOf(string)},
+                     {"text", std::move(text)},
+                     {"text_truncated", truncated},
+                     {"encoding", string.encoding}});
   }
   const bool complete = offset >= total || items.size() >= total - offset;
   return {{"items", std::move(items)},

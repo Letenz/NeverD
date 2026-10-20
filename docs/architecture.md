@@ -8,6 +8,22 @@ This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
 
+## GUI project and search ownership
+
+The GUI owns the relationship between a packed `.nddb` and its unpacked working
+copy; the worker owns edit journals and their replay. Before a database opens a
+working copy with a pending journal, `ProjectDatabase` writes a local recovery
+marker bound to that database's canonical path and packed sidecar fingerprint.
+The marker survives consumption of the worker journal, so subsequent opens keep
+recovered edits and the GUI continues to require Save or Discard. Saving back to
+that database or explicitly discarding retires the marker. An externally changed
+pack must not overwrite a pending recovered working copy.
+
+Binary search matching and cursor semantics are owned by the SDK's shared
+matcher (`neverd_search_page`, also used by the legacy search entry points).
+The worker adapts those pages to the transport. The GUI owns wraparound and
+retires results and callbacks on a new search or session change.
+
 ## Checked alignment recovery
 
 `arch/x86_64` owns checked `RequireAligned` transitions for 64-bit addresses in the default address space. The common recovery engine charges the scalar proof operations and proves the rejection predicate is zero before retaining the original guard. Explicit nonfaulting execution does not supply that proof. Alignment does not require MXCSR state; segmented addresses and optional guards remain unsupported by this recovery adapter.

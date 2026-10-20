@@ -391,7 +391,8 @@ private:
   void openPending();
   void sendOpen(const QString &requested, const QString &path,
                 const QString &database,
-                const QHash<QString, QByteArray> &state, LoadOptions options);
+                const QHash<QString, QByteArray> &state, LoadOptions options,
+                bool recoveredEdits);
   /// Pack the project into the database \p path.
   void writeDatabase(const QString &path);
   /// Keep the debug files chosen for the input with the project, beside it.

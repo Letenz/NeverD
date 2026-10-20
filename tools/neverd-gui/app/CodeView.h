@@ -103,6 +103,9 @@ public:
                             const LocalReference &reference);
   /// Changes when a load, cancellation or clear retires this source document.
   quint64 documentVersion() const { return serial_; }
+  /// All pages of this document arrived successfully. Error text and a
+  /// cancelled or partially loaded document are not exportable source.
+  bool complete() const { return complete_ && !loading_ && !interrupted_; }
   /// The original source row under the cursor, independent of folding.
   std::optional<QJsonObject> commentTarget() const;
   /// The integer literal under the cursor in source code the worker edits,
@@ -302,6 +305,7 @@ private:
   QJsonObject sourceOptions_, renderedOptions_;
   quint64 serial_ = 0;
   bool inComment_ = false, loading_ = false, foldAfterLoad_ = false;
+  bool complete_ = false;
   bool interrupted_ = false;
   bool foldPreludeAfterLoad_ = true;
   QSet<QString> blocksAfterLoad_;

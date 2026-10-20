@@ -436,6 +436,7 @@ struct PreparedOpen {
   QString input, database, error;
   QStringList notes, warnings;
   QHash<QString, QByteArray> state;
+  bool recoveredEdits = false;
 };
 
 /// Runs off the GUI thread: unpack a database, or bring back a binary's
@@ -446,7 +447,7 @@ PreparedOpen unpackOrRestore(const QString &requested) {
     prepared.database = requested;
     prepared.input = ProjectDatabase::unpack(
         requested, ProjectDatabase::workingDirectory(requested),
-        &prepared.error);
+        &prepared.error, &prepared.recoveredEdits);
     if (prepared.error.isEmpty())
       if (const auto contents =
               ProjectDatabase::read(requested, &prepared.error))
@@ -558,7 +559,7 @@ void Session::openPending() {
               return;
             }
             sendOpen(requested, prepared.input, prepared.database,
-                     prepared.state, options);
+                     prepared.state, options, prepared.recoveredEdits);
           });
   watcher->setFuture(
       QtConcurrent::run([requested] { return prepareOpen(requested); }));
@@ -567,7 +568,7 @@ void Session::openPending() {
 void Session::sendOpen(const QString &requested, const QString &path,
                        const QString &database,
                        const QHash<QString, QByteArray> &state,
-                       LoadOptions options) {
+                       LoadOptions options, bool recoveredEdits) {
   if (options.pdb.isEmpty())
     options.pdb =
         QJsonDocument::fromJson(state.value(QLatin1String(PdbInputState)))
@@ -610,8 +611,8 @@ void Session::sendOpen(const QString &requested, const QString &path,
   }
   command(
       QStringLiteral("open"), payload,
-      [this, requested, path, database, state,
-       options](const QJsonObject &payload) {
+      [this, requested, path, database, state, options,
+       recoveredEdits](const QJsonObject &payload) {
         opening_ = false;
         resetState();
         loadOptions_ = options;
@@ -625,6 +626,7 @@ void Session::sendOpen(const QString &requested, const QString &path,
         databaseState_ = state;
         loaded_ = true;
         openedFromDatabase_ = ProjectDatabase::isDatabase(requested);
+        databaseDirty_ = openedFromDatabase_ && recoveredEdits;
         recordDebugChoices(false);
         // A project made for another build of the input, as after a pull
         // brought a new binary but not its project, may not match it.
@@ -822,6 +824,13 @@ void Session::resolveTransition(const QString &choice) {
   }
   // Discard: staged annotations disappear with the session, and a database
   // the user opened keeps what it held.
+  if (openedFromDatabase_) {
+    if (const auto error = ProjectDatabase::finishRecovery(filePath_);
+        !error.isEmpty()) {
+      setError(error);
+      return;
+    }
+  }
   dirty_ = false;
   databaseDirty_ = false;
   transitionReady_ = true;

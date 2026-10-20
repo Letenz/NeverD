@@ -30,6 +30,38 @@ constexpr qint64 ChunkBytes = 8 * 1024 * 1024;
 constexpr int CompressionLevel = 6;
 constexpr char InputBlob[] = "input";
 constexpr char DatabasesDirectory[] = "databases";
+QString recoveryMarker(const QString &binary) {
+  return ProjectDatabase::projectFolder(binary) +
+         QStringLiteral("/local/database-recovery.json");
+}
+QByteArray sidecarIdentity(const ProjectDatabase::Contents &contents) {
+  QCryptographicHash hash(QCryptographicHash::Sha256);
+  hash.addData(contents.inputSha256.toUtf8());
+  auto keys = contents.sidecars.keys();
+  std::sort(keys.begin(), keys.end());
+  for (const auto &key : keys) {
+    const auto &bytes = contents.sidecars[key];
+    hash.addData(key.toUtf8());
+    hash.addData(QByteArray::number(bytes.size()) + ':');
+    hash.addData(bytes);
+  }
+  return hash.result().toHex();
+}
+bool sidecarsMatch(const QString &binary,
+                   const ProjectDatabase::Contents &contents) {
+  for (const auto &suffix : contents.packedSuffixes) {
+    if (!ProjectDatabase::sidecarSuffixes().contains(suffix))
+      continue;
+    QFile file(ProjectDatabase::projectFilePath(binary, suffix));
+    if (contents.sidecars.contains(suffix)) {
+      if (!file.open(QIODevice::ReadOnly) ||
+          file.readAll() != contents.sidecars[suffix])
+        return false;
+    } else if (file.exists())
+      return false;
+  }
+  return true;
+}
 // A SQLite header starts with this string and its terminating NUL, and holds
 // the big-endian application id at ApplicationIdOffset.
 constexpr char SqliteMagic[] = "SQLite format 3";
@@ -546,6 +578,23 @@ QString ProjectDatabase::save(const QString &database, const QString &binary,
       return QCoreApplication::translate("ProjectDatabase", "Cannot create %1")
           .arg(database);
   }
+  QFile marker(recoveryMarker(binary));
+  if (marker.open(QIODevice::ReadOnly)) {
+    const auto recovery = QJsonDocument::fromJson(marker.read(4096)).object();
+    marker.close();
+    if (recovery.value("database").toString() ==
+        QFileInfo(database).canonicalFilePath())
+      return finishRecovery(binary);
+  }
+  return {};
+}
+
+QString ProjectDatabase::finishRecovery(const QString &binary) {
+  QFile marker(recoveryMarker(binary));
+  if (marker.exists() && !marker.remove())
+    return QCoreApplication::translate("ProjectDatabase",
+                                       "Cannot remove %1: %2")
+        .arg(marker.fileName(), marker.errorString());
   return {};
 }
 
@@ -632,7 +681,10 @@ ProjectDatabase::read(const QString &database, QString *error) {
 }
 
 QString ProjectDatabase::unpack(const QString &database,
-                                const QString &directory, QString *error) {
+                                const QString &directory, QString *error,
+                                bool *recoveredEdits) {
+  if (recoveredEdits)
+    *recoveredEdits = false;
   const auto failed = [&](const QString &message) {
     if (error)
       *error = message;
@@ -647,6 +699,30 @@ QString ProjectDatabase::unpack(const QString &database,
         QCoreApplication::translate("ProjectDatabase", "Cannot create %1")
             .arg(directory));
   const QString input = QDir(directory).filePath(contents->inputName);
+  bool preserveRecovery = false;
+  QFile marker(recoveryMarker(input));
+  if (marker.exists()) {
+    if (!marker.open(QIODevice::ReadOnly))
+      return failed(marker.errorString());
+    const auto saved = QJsonDocument::fromJson(marker.read(4096)).object();
+    marker.close();
+    preserveRecovery = saved.value("database").toString() ==
+                           QFileInfo(database).canonicalFilePath() &&
+                       saved.value("sidecars").toString().toLatin1() ==
+                           sidecarIdentity(*contents);
+    if (!preserveRecovery) {
+      // A crash after a successful pack may leave only marker cleanup.
+      // Other conflicts must not replace the only recovered copy.
+      if (!sidecarsMatch(input, *contents))
+        return failed(QCoreApplication::translate(
+            "ProjectDatabase",
+            "The database changed while recovered edits are pending. Preserve "
+            "the working copy before reopening."));
+      const auto cleanup = finishRecovery(input);
+      if (!cleanup.isEmpty())
+        return failed(cleanup);
+    }
+  }
   QString digestError;
   if (!QFileInfo::exists(input) ||
       sha256(input, digestError) != contents->inputSha256) {
@@ -702,8 +778,28 @@ QString ProjectDatabase::unpack(const QString &database,
   }
   // A pending journal means the worker will recover newer edits itself.
   migrate(input);
-  if (!QFileInfo::exists(
-          projectFilePath(input, QStringLiteral(".neverd-journal.json"))))
+  if (QFileInfo::exists(
+          projectFilePath(input, QStringLiteral(".neverd-journal.json")))) {
+    // The worker removes its journal after recovery. Preserve the database
+    // relationship independently until the recovered content is packed.
+    if (!QDir().mkpath(QFileInfo(recoveryMarker(input)).absolutePath()))
+      return failed(QCoreApplication::translate(
+          "ProjectDatabase", "Cannot create the recovery marker directory."));
+    QSaveFile pending(recoveryMarker(input));
+    const auto bytes =
+        QJsonDocument(
+            QJsonObject{
+                {"database", QFileInfo(database).canonicalFilePath()},
+                {"sidecars", QString::fromLatin1(sidecarIdentity(*contents))}})
+            .toJson();
+    if (!pending.open(QIODevice::WriteOnly) ||
+        pending.write(bytes) != bytes.size() || !pending.commit())
+      return failed(pending.errorString());
+    preserveRecovery = true;
+  }
+  if (recoveredEdits)
+    *recoveredEdits = preserveRecovery;
+  if (!preserveRecovery)
     for (const auto &suffix : sidecarSuffixes()) {
       const QString path = projectFilePath(input, suffix);
       const auto stored = contents->sidecars.constFind(suffix);
