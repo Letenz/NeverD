@@ -3440,6 +3440,38 @@ TEST(BinaryLowIRRefinement, CPUQueryCompletesOnlyRawRecovery) {
   EXPECT_FALSE(P.recover().complete());
 }
 
+TEST(BinaryLowIRRefinement, SupervisorReadCompletesOnlyRawRecovery) {
+  const auto Profile = InterpreterMachineStateProfile::KernelX64NoFaultV1;
+  Program Control({0xc3});
+  Control.Options.X64FlagsProfile = Control.Contract.X64FlagsProfile = Profile;
+  const auto ControlResult = Control.recover();
+  ASSERT_TRUE(ControlResult.complete()) << ControlResult.Diagnostic;
+  ASSERT_TRUE(Control.check(ControlResult.Residual).proved());
+
+  Program P({0x0f, 0x32, 0xc3}); // RDMSR; RET.
+  P.Options.X64FlagsProfile = P.Contract.X64FlagsProfile = Profile;
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  unsigned Reads = 0;
+  for (const auto &B : R.Residual.Blocks)
+    for (const auto &O : B.Ops)
+      Reads += O.Opcode == NdOp::INTRINSIC && O.NumInputs &&
+               O.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Rdmsr);
+  EXPECT_EQ(Reads, 1u);
+  const auto Checked = P.check(R.Residual);
+  EXPECT_FALSE(Checked.proved());
+  EXPECT_FALSE(Checked.Certificate);
+  for (auto Layout : {InterpreterMachineStateLayout::InlineReturns,
+                      InterpreterMachineStateLayout::SharedGPRExit}) {
+    auto Source = wrapInterpreterMachineStateX64(R.Residual, BinaryFormat::ELF,
+                                                 Profile, {}, Layout);
+    ASSERT_FALSE(bool(Source));
+    llvm::consumeError(Source.takeError());
+  }
+  P.Options.X64FlagsProfile = InterpreterMachineStateProfile::UserX64NoFaultV1;
+  EXPECT_FALSE(P.recover().complete());
+}
+
 TEST(BinaryLowIRRefinement, HighAddressDecodedCallRetainsPhysicalReturnWord) {
   for (va_t Base : {va_t{0xffff800000001000}, InvalidVA - 32}) {
     // CALL callee; RET; callee: MOV RAX,[RSP]; RET.

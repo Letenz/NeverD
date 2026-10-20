@@ -225,13 +225,9 @@ bool runtimeFlagsIntrinsic(
 
 namespace {
 
-std::optional<std::vector<NdVar>>
-runtimeReadOutputs(const SpecializationInstruction &I, NdVar Sample,
-                   uint8_t Encoding, Intrinsic Id,
-                   llvm::ArrayRef<uint64_t> Registers,
-                   llvm::ArrayRef<NdVar> Selectors) {
+bool runtimeReadBundle(const SpecializationInstruction &I, NdVar Sample,
+                       uint8_t Encoding, size_t Count) {
   const auto &B = I.Origin;
-  const size_t Count = 1 + 2 * Registers.size();
   if (I.NativeBytes.size() != 2 || I.NativeBytes[0] != 0x0f ||
       I.NativeBytes[1] != Encoding || B.Size != 2 ||
       B.Mode != InstructionMode::Default || B.FirstOp != 0 ||
@@ -251,12 +247,22 @@ runtimeReadOutputs(const SpecializationInstruction &I, NdVar Sample,
           lowUndefinedOperationDigest(I.Ops) ||
       !Sample.isTemp() || (Sample.Size != 8 && Sample.Size != 16) ||
       Sample.Offset > InvalidVA - (Sample.Size - 1))
-    return std::nullopt;
+    return false;
   for (size_t N = 0; N < I.Ops.size(); ++N)
     if (I.Ops[N].Addr != B.Address || I.Ops[N].Seq != static_cast<int>(N) ||
         I.Ops[N].MemoryOrdering != NdMemoryOrdering::None ||
         I.Ops[N].MemoryAddressSpace != NdMemoryAddressSpace::Default)
-      return std::nullopt;
+      return false;
+  return true;
+}
+
+std::optional<std::vector<NdVar>>
+runtimeReadOutputs(const SpecializationInstruction &I, NdVar Sample,
+                   uint8_t Encoding, Intrinsic Id,
+                   llvm::ArrayRef<uint64_t> Registers,
+                   llvm::ArrayRef<NdVar> Selectors) {
+  if (!runtimeReadBundle(I, Sample, Encoding, 1 + 2 * Registers.size()))
+    return std::nullopt;
   const auto &Read = I.Ops[0];
   if (Read.Opcode != NdOp::INTRINSIC ||
       Read.NumInputs != 1 + Selectors.size() || !Read.Inputs[0].isConst() ||
@@ -290,6 +296,68 @@ runtimeReadOutputs(const SpecializationInstruction &I, NdVar Sample,
   return Outputs;
 }
 
+std::optional<RuntimeRegisterRead>
+lowerRuntimeMsrRead(const SpecializationInstruction &I, NdVar Sample,
+                    std::optional<InterpreterMachineStateProfile> Profile) {
+  if (Profile != InterpreterMachineStateProfile::KernelX64NoFaultV1 ||
+      !runtimeReadBundle(I, Sample, 0x32, 6))
+    return std::nullopt;
+  const NdVar Value = I.Ops[0].Output;
+  const NdVar Low = I.Ops[1].Output;
+  const NdVar Shifted = I.Ops[2].Output;
+  const NdVar High = I.Ops[3].Output;
+  const auto Match = [&](unsigned Index, NdOp Opcode, NdVar Output,
+                         llvm::ArrayRef<NdVar> Inputs) {
+    const auto &Op = I.Ops[Index];
+    return Op.Opcode == Opcode && Op.Output == Output &&
+           Op.NumInputs == Inputs.size() &&
+           std::equal(Inputs.begin(), Inputs.end(), Op.Inputs,
+                      [](const NdVar &Expected, const NdVar &Actual) {
+                        if (Expected.isConst())
+                          return Actual.isConst() &&
+                                 Actual.Size == Expected.Size &&
+                                 Actual.Offset == Expected.Offset;
+                        return Actual == Expected;
+                      });
+  };
+  if (!Match(0, NdOp::INTRINSIC, Value,
+             {NdVar::scalar(static_cast<uint64_t>(Intrinsic::Rdmsr), 2),
+              NdVar::reg(x86reg::RCX, 4)}) ||
+      !Match(1, NdOp::SUBBYTES, Low, {Value, NdVar::scalar(0, 4)}) ||
+      !Match(2, NdOp::INT_RIGHT, Shifted, {Value, NdVar::scalar(32, 8)}) ||
+      !Match(3, NdOp::SUBBYTES, High, {Shifted, NdVar::scalar(0, 4)}) ||
+      !Match(4, NdOp::INT_ZEXT, NdVar::reg(x86reg::RAX, 8), {Low}) ||
+      !Match(5, NdOp::INT_ZEXT, NdVar::reg(x86reg::RDX, 8), {High}))
+    return std::nullopt;
+  const NdVar Temporaries[]{Value, Low, Shifted, High};
+  const uint16_t Widths[]{8, 4, 8, 4};
+  const auto Overlap = [](NdVar A, NdVar B) {
+    return A.Offset <= B.Offset ? B.Offset - A.Offset < A.Size
+                                : A.Offset - B.Offset < B.Size;
+  };
+  for (unsigned Index = 0; Index != 4; ++Index) {
+    const auto &T = Temporaries[Index];
+    if (!T.isTemp() || T.Size != Widths[Index] ||
+        T.Offset > InvalidVA - (T.Size - 1) || Overlap(T, Sample))
+      return std::nullopt;
+    for (unsigned Previous = 0; Previous != Index; ++Previous)
+      if (Overlap(T, Temporaries[Previous]))
+        return std::nullopt;
+  }
+
+  // Intel SDM Vol.2B, RDMSR: ECX selects a 64-bit result, split into EDX:EAX
+  // with zero upper halves and unchanged flags. The declared supervisor,
+  // nonfaulting domain excludes privilege and inaccessible-MSR faults; it
+  // supplies no particular MSR value or repeated-read relation. Unimplemented
+  // result bits remain unconstrained too. Keep the original read observable.
+  LowOp Copy;
+  Copy.Addr = I.Origin.Address;
+  Copy.Opcode = NdOp::COPY;
+  Copy.Output = Value;
+  Copy.addInput(NdVar::tmp(Sample.Offset, 8));
+  return RuntimeRegisterRead{8, {Copy}, {Value}};
+}
+
 } // namespace
 
 // Intel SDM Vol.2B, RDTSC: the low/high words go to EAX/EDX and both
@@ -320,8 +388,9 @@ lowerRuntimeTimestampRead(const SpecializationInstruction &I, NdVar Sample) {
   return Result;
 }
 
-std::optional<RuntimeRegisterRead>
-lowerRuntimeRegisterRead(const SpecializationInstruction &I, NdVar Sample) {
+std::optional<RuntimeRegisterRead> lowerRuntimeRegisterRead(
+    const SpecializationInstruction &I, NdVar Sample,
+    std::optional<InterpreterMachineStateProfile> Profile) {
   if (!Sample.isTemp() || Sample.Size != 16 || Sample.Offset > InvalidVA - 15)
     return std::nullopt;
   if (const auto Timestamp =
@@ -342,7 +411,7 @@ lowerRuntimeRegisterRead(const SpecializationInstruction &I, NdVar Sample) {
   const auto Outputs = runtimeReadOutputs(I, Sample, 0xa2, Intrinsic::Cpuid,
                                           Registers, Selectors);
   if (!Outputs)
-    return std::nullopt;
+    return lowerRuntimeMsrRead(I, Sample, Profile);
   RuntimeRegisterRead Result;
   Result.SampleBytes = 16;
   Result.PlaceholderOutputs = *Outputs;

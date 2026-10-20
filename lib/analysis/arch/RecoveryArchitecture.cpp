@@ -98,7 +98,8 @@ lowerRuntimeRegisterRead(const SpecializationInstruction &Instruction,
       !Options.NormalNonfaultingExecution ||
       Options.ByteOrder != llvm::endianness::little)
     return std::nullopt;
-  return x64::lowerRuntimeRegisterRead(Instruction, Sample);
+  return x64::lowerRuntimeRegisterRead(Instruction, Sample,
+                                       Options.X64FlagsProfile);
 }
 
 llvm::Expected<const RecoveryArchitecture *> recoveryArchitecture(Arch Target) {
