@@ -548,6 +548,22 @@ TEST(HeaderFor, LargeFileRoutinesAreTheirRoutines) {
       "int (*)(const struct dirent *)");
 }
 
+TEST(HeaderFor, PasswordAndGroupDatabases) {
+  // A program that reads a user's entry calls getpwnam, which <pwd.h>
+  // declares with a const parameter: the unit takes that declaration, where
+  // one of its own from the type library, which keeps no const, contradicts
+  // it once a record definition includes the header.
+  EXPECT_STREQ(headerFor("getpwnam"), "pwd.h");
+  EXPECT_STREQ(headerFor("getgrgid_r"), "grp.h");
+  EXPECT_STREQ(headerFor("getspnam"), "shadow.h");
+  EXPECT_EQ(libcArity("getpwnam_r", LibCVariant::GNU)->IntArgs, 5);
+  EXPECT_EQ(libcArity("endgrent", LibCVariant::GNU)->IntArgs, 0);
+  EXPECT_TRUE(isObjectPointerParameter("getpwnam", 0, LibCVariant::GNU));
+  EXPECT_EQ(libcResult("getpwuid", LibCVariant::GNU), LibCResult::Pointer);
+  // Darwin's <unistd.h> declares initgroups, which glibc's <grp.h> does.
+  EXPECT_EQ(headerFor("initgroups"), nullptr);
+}
+
 TEST(HeaderFor, StdioFunctions) {
   EXPECT_STREQ(headerFor("printf"), "stdio.h");
   EXPECT_STREQ(headerFor("fprintf"), "stdio.h");
