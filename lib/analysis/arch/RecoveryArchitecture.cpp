@@ -91,6 +91,16 @@ lowerRuntimeControlOperation(const LowOp &Op, symbolic::SymState &State,
                                            Temporary);
 }
 
+std::optional<RuntimeRegisterRead>
+lowerRuntimeRegisterRead(const SpecializationInstruction &Instruction,
+                         const SpecializationOptions &Options, NdVar Sample) {
+  if (Options.Architecture != Arch::X64 || !Options.ExplicitMachineState ||
+      !Options.NormalNonfaultingExecution ||
+      Options.ByteOrder != llvm::endianness::little)
+    return std::nullopt;
+  return x64::lowerRuntimeRegisterRead(Instruction, Sample);
+}
+
 llvm::Expected<const RecoveryArchitecture *> recoveryArchitecture(Arch Target) {
   switch (Target) {
   case Arch::X64:

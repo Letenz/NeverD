@@ -180,6 +180,9 @@ NEVERD_LINUX_SERVICE(Connect, 42, 203, 3)
 NEVERD_LINUX_SERVICE(SendTo, 44, 206, 6)
 NEVERD_LINUX_SERVICE(ReceiveFrom, 45, 207, 6)
 NEVERD_LINUX_SERVICE(SignalAction, 13, 134, 4)
+NEVERD_LINUX_SERVICE(SignalMask, 14, 135, 4)
+NEVERD_LINUX_SERVICE(SignalPending, 127, 136, 2)
+NEVERD_LINUX_SERVICE(SignalReturn, 15, 139, 0)
 NEVERD_LINUX_SERVICE(Kill, 62, 129, 2)
 NEVERD_LINUX_SERVICE(Mincore, 27, 232, 3)
 // Linux UAPI: x86-64 and asm-generic numbers, followed by fixed arity.
@@ -278,6 +281,16 @@ NEVERD_LINUX_DIAGNOSTIC(SignalPartialOutput,
                         "unmodeled partial Linux signal action output")
 NEVERD_LINUX_DIAGNOSTIC(SignalFlagsUnsupported,
                         "unmodeled Linux signal action flags")
+NEVERD_LINUX_DIAGNOSTIC(SignalMaskMissing,
+                        "Linux signal delivery requires a known thread mask")
+NEVERD_LINUX_DIAGNOSTIC(SignalWaitUnsupported,
+                        "Linux signal interruption of a waiting thread is unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(SignalFrameUnsupported,
+                        "unsupported Linux signal frame or handler context")
+NEVERD_LINUX_DIAGNOSTIC(SignalFrameFault,
+                        "Linux signal frame memory is inaccessible")
+NEVERD_LINUX_DIAGNOSTIC(SignalReturnUnsupported,
+                        "unsupported Linux signal return frame")
 NEVERD_LINUX_DIAGNOSTIC(
     FileOptionsLimit, "linux_files exceeds its catalogue or descriptor limits")
 NEVERD_LINUX_DIAGNOSTIC(

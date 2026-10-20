@@ -3415,6 +3415,31 @@ TEST(BinaryLowIRRefinement, TimestampCompletesOnlyRawRecovery) {
   EXPECT_FALSE(P.recover().complete());
 }
 
+TEST(BinaryLowIRRefinement, CPUQueryCompletesOnlyRawRecovery) {
+  Program P({0x0f, 0xa2, 0xc3}); // CPUID; RET.
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  unsigned Reads = 0;
+  for (const auto &B : R.Residual.Blocks)
+    for (const auto &O : B.Ops)
+      Reads += O.Opcode == NdOp::INTRINSIC && O.NumInputs &&
+               O.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Cpuid);
+  EXPECT_EQ(Reads, 1u);
+  const auto Checked = P.check(R.Residual);
+  EXPECT_FALSE(Checked.proved());
+  EXPECT_FALSE(Checked.Certificate);
+  for (auto Layout : {InterpreterMachineStateLayout::InlineReturns,
+                      InterpreterMachineStateLayout::SharedGPRExit}) {
+    auto Source = wrapInterpreterMachineStateX64(
+        R.Residual, BinaryFormat::ELF,
+        InterpreterMachineStateProfile::UserX64NoFaultV1, {}, Layout);
+    ASSERT_FALSE(bool(Source));
+    llvm::consumeError(Source.takeError());
+  }
+  P.Options.ExplicitMachineState = false;
+  EXPECT_FALSE(P.recover().complete());
+}
+
 TEST(BinaryLowIRRefinement, HighAddressDecodedCallRetainsPhysicalReturnWord) {
   for (va_t Base : {va_t{0xffff800000001000}, InvalidVA - 32}) {
     // CALL callee; RET; callee: MOV RAX,[RSP]; RET.

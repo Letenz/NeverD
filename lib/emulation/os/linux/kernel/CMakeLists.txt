@@ -7,6 +7,7 @@ add_neverd_component_library(NeverDEmulationLinuxKernel
   LinuxCPUClock.cpp
   LinuxSleep.cpp
   LinuxSignals.cpp
+  LinuxSignalFrame.cpp
   LinuxPriority.cpp
   LinuxKernelAvailability.cpp
   LinuxUserMemory.cpp

@@ -25,6 +25,7 @@
 #include "neverd/sbf/image/SBFVersion.h"
 #include "neverd/sbf/runtime/SBFRuntimeProfile.h"
 #include "neverd/sdk/NeverDCAPI.h"
+#include "neverd/support/NumericInput.h"
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
@@ -33,6 +34,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <type_traits>
 
 namespace neverd::cli {
 
@@ -92,6 +94,34 @@ public:
 using OptionalStringList =
     llvm::cl::list<std::string, bool, OptionalStringParser>;
 using ConcolicStringList = OptionalStringList;
+
+/// Numeric presentation fields match the GUI: decimal unless 0x is explicit.
+template <typename T> class NumericInputParser : public llvm::cl::parser<T> {
+public:
+  explicit NumericInputParser(llvm::cl::Option &Option)
+      : llvm::cl::parser<T>(Option) {}
+
+  bool parse(llvm::cl::Option &Option, llvm::StringRef,
+             llvm::StringRef Argument, T &Value) {
+    const std::string_view Text(Argument.data(), Argument.size());
+    const auto Parsed = [&] {
+      if constexpr (std::is_signed_v<T>)
+        return parseSignedDecimalOrHex(Text);
+      else
+        return parseUnsignedDecimalOrHex(Text);
+    }();
+    if (!Parsed || *Parsed < std::numeric_limits<T>::min() ||
+        *Parsed > std::numeric_limits<T>::max())
+      return Option.error("expected an in-range decimal integer or 0x hex");
+    Value = static_cast<T>(*Parsed);
+    return false;
+  }
+};
+
+using UnsignedNumericOption =
+    llvm::cl::opt<unsigned, false, NumericInputParser<unsigned>>;
+using SignedNumericOption =
+    llvm::cl::opt<long long, false, NumericInputParser<long long>>;
 
 #define NEVERD_CLI_LITERAL(OPTION, SPELLING)                                   \
   inline constexpr llvm::StringLiteral OPTION##RequiredValue = SPELLING;
@@ -485,11 +515,11 @@ extern llvm::cl::opt<std::string> ItemUndefine;
 extern llvm::cl::opt<std::string> ItemClear;
 extern llvm::cl::opt<std::string> ItemArray;
 extern llvm::cl::opt<std::string> ItemAlignment;
-extern llvm::cl::opt<unsigned> ItemCount;
+extern UnsignedNumericOption ItemCount;
 extern llvm::cl::opt<std::string> ItemType;
-extern llvm::cl::opt<unsigned> ItemBoundary;
-extern llvm::cl::opt<unsigned> ItemSize;
-extern llvm::cl::opt<unsigned> ItemElementSize;
+extern UnsignedNumericOption ItemBoundary;
+extern UnsignedNumericOption ItemSize;
+extern UnsignedNumericOption ItemElementSize;
 extern llvm::cl::opt<std::string> ItemEncoding;
 extern llvm::cl::opt<std::string> OperandAddr;
 extern llvm::cl::opt<std::string> LoadLoader;
@@ -499,7 +529,7 @@ extern llvm::cl::opt<std::string> LoadBase;
 extern llvm::cl::opt<std::string> LoadOffset;
 extern llvm::cl::opt<std::string> LoadSize;
 extern llvm::cl::opt<std::string> LoadEntry;
-extern llvm::cl::opt<unsigned> OperandIndex;
+extern UnsignedNumericOption OperandIndex;
 extern llvm::cl::opt<std::string> OperandBase;
 extern llvm::cl::opt<bool> OperandNegate;
 extern llvm::cl::opt<bool> OperandInvert;
@@ -507,7 +537,7 @@ extern llvm::cl::opt<bool> OperandClear;
 extern llvm::cl::opt<std::string> OperandStruct;
 extern llvm::cl::opt<std::string> OperandEnum;
 extern llvm::cl::opt<bool> OperandFlags;
-extern llvm::cl::opt<long long> OperandDelta;
+extern SignedNumericOption OperandDelta;
 
 // Search.
 extern llvm::cl::opt<std::string> SearchText;

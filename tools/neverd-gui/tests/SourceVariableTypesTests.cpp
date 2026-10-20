@@ -228,7 +228,18 @@ private slots:
     Session.closeFile();
     Window.close();
   }
+  void stackFrameDialogs_data() {
+    QTest::addColumn<QString>("Offset");
+    QTest::addColumn<QString>("Width");
+    QTest::addColumn<QString>("After");
+    QTest::newRow("decimal") << "-16" << "8" << "-40";
+    QTest::newRow("leading-zero-decimal") << "-016" << "08" << "-040";
+    QTest::newRow("explicit-hex") << "-0x10" << "0x8" << "-0x28";
+  }
   void stackFrameDialogs() {
+    QFETCH(QString, Offset);
+    QFETCH(QString, Width);
+    QFETCH(QString, After);
     QTemporaryDir Directory;
     const auto Path = fixture(
         Directory, QByteArray::fromHex(
@@ -264,6 +275,8 @@ private slots:
       }
       for (int Row = 0; Row < Table->rowCount(); ++Row)
         if (Table->item(Row, 0)->text() == "-16") {
+          Table->item(Row, 0)->setText(Offset);
+          Table->item(Row, 1)->setText(Width);
           Table->item(Row, 2)->setText("gui_saved_context");
           Table->item(Row, 3)->setText("uint64_t");
           Opened = true;
@@ -277,19 +290,68 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(Opened, 30000);
     Editor.stop();
     bool Saved = false;
-    QTRY_VERIFY_WITH_TIMEOUT(([&] {
-                               Session.read("stack_frame",
-                                            {{"address", "0x400078"}}, &Window,
-                                            [&](const QJsonObject &Reply) {
-                                              Saved = Reply.value("policy")
-                                                          .toObject()
-                                                          .value("variables")
-                                                          .toArray()
-                                                          .size() == 1;
-                                            });
-                               return Saved;
-                             })(),
-                             30000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        ([&] {
+          Session.read(
+              "stack_frame", {{"address", "0x400078"}}, &Window,
+              [&](const QJsonObject &Reply) {
+                const auto Variables = Reply.value("policy")
+                                           .toObject()
+                                           .value("variables")
+                                           .toArray();
+                Saved = Variables.size() == 1 &&
+                        Variables[0].toObject().value("offset").toInteger() ==
+                            -16 &&
+                        Variables[0].toObject().value("bytes").toInt() == 8;
+              });
+          return Saved;
+        })(),
+        30000);
+    // The SP editor uses the same numeric grammar as stack slots. All three
+    // spellings retain the actual sub rsp, 40 transition and the named slot.
+    Window.disassembly()->navigate(0x400078);
+    QTRY_COMPARE_WITH_TIMEOUT(Window.disassembly()->currentItem(),
+                              std::optional<Address>(0x400078), 30000);
+    Window.disassembly()->listing()->setFocus();
+    Action = Window.actions().action(ActionId::EditStackPointer);
+    QTRY_VERIFY(Action->isEnabled());
+    bool PointerOpened = false;
+    QTimer PointerEditor;
+    connect(&PointerEditor, &QTimer::timeout, this, [&] {
+      auto *Dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (!Dialog || Dialog->objectName() != "stackFrameDialog")
+        return;
+      auto *Input = Dialog->findChild<QLineEdit *>("stackPointerAfter");
+      if (!Input) {
+        Dialog->reject();
+        return;
+      }
+      Input->setText(After);
+      PointerOpened = true;
+      PointerEditor.stop();
+      Dialog->findChild<QDialogButtonBox *>()
+          ->button(QDialogButtonBox::Apply)
+          ->click();
+    });
+    PointerEditor.start(20);
+    Action->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(PointerOpened, 30000);
+    Saved = false;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        ([&] {
+          Session.read("stack_frame", {{"address", "0x400078"}}, &Window,
+                       [&](const QJsonObject &Reply) {
+                         const auto Policy = Reply.value("policy").toObject();
+                         const auto Points = Policy.value("points").toArray();
+                         Saved =
+                             Points.size() == 1 &&
+                             Points[0].toObject().value("after").toInteger() ==
+                                 -40 &&
+                             Policy.value("variables").toArray().size() == 1;
+                       });
+          return Saved;
+        })(),
+        30000);
     Session.closeFile();
     Window.close();
   }

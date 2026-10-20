@@ -661,7 +661,8 @@ TEST(AndroidThreadMemory, CapacityRefusalKeepsInputsAndGenericMappingFailures) {
     linux_model::LinuxServices Kernel(CPU, Layout, Buffer + 2 * Page, Options,
                                       Result);
     android_model::GuestThreads Threads(CPU, *Calls, Options, Result,
-                                        Kernel.clock(), Kernel.priority());
+                                        Kernel.clock(), Kernel.priority(),
+                                        Kernel.signals());
     ASSERT_EQ(llvm::toString(Threads.initialize(Buffer + Page)), "");
 
     std::vector<std::shared_ptr<MemoryRegion>> Owners;

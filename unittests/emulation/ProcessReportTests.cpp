@@ -4010,6 +4010,33 @@ TEST(ProcessReport, MalformedSignalActionsFailBeforeExecution) {
   }
 }
 
+TEST(ProcessReport, SignalDeliveryStateIsExplicitAndStrict) {
+  auto O = processOptionsFromJSON(R"({"linux_signals":{
+    "actions":[],"initial_mask":"9223372036854775808",
+    "alternate_stack_disabled":true}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->LinuxSignals->InitialMask);
+  EXPECT_EQ(*O->LinuxSignals->InitialMask, 1ULL << 63);
+  EXPECT_TRUE(O->LinuxSignals->AlternateStackDisabled);
+  auto Missing = processOptionsFromJSON(R"({"linux_signals":{"actions":[]}})");
+  ASSERT_TRUE(bool(Missing));
+  EXPECT_FALSE(Missing->LinuxSignals->InitialMask);
+  EXPECT_FALSE(Missing->LinuxSignals->AlternateStackDisabled);
+  for (const char *Bad :
+       {R"({"actions":[],"initial_mask":null})",
+        R"({"actions":[],"initial_mask":-1})",
+        R"({"actions":[],"initial_mask":1.5})",
+        R"({"actions":[],"initial_mask":256})",
+        R"({"actions":[],"initial_mask":262144})",
+        R"({"actions":[],"alternate_stack_disabled":1})",
+        R"({"actions":[],"alternate_stack_disabled":null})"}) {
+    auto R =
+        processOptionsFromJSON(std::string("{\"linux_signals\":") + Bad + "}");
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+}
+
 TEST(ProcessReport, MemoryFileBytesAreExplicitAndRestrictedToLinuxProfiles) {
   auto O = processOptionsFromJSON(R"({"linux_files":{"files":[
     {"path":"/fixture/data","bytes_hex":"00ff410a805A"},

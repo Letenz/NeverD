@@ -70,6 +70,14 @@ std::optional<RuntimeTimestampRead>
 lowerRuntimeTimestampRead(const SpecializationInstruction &Instruction,
                           NdVar Sample);
 
+/// Authenticate the complete canonical RDTSC or CPUID bundle. CPUID retains
+/// its actual EAX/ECX selector operands and four independent 32-bit answers.
+/// No host CPU value, repeated-query correlation or hardware capability is
+/// inferred. Sample reserves sixteen bytes; the result states the used width.
+std::optional<RuntimeRegisterRead>
+lowerRuntimeRegisterRead(const SpecializationInstruction &Instruction,
+                         NdVar Sample);
+
 bool isRetainedNativeTrap(const SpecializationInstruction &Insn);
 bool isCetDisabledProjection(const SpecializationInstruction &Insn);
 
