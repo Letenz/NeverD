@@ -90,7 +90,12 @@ def run(worker, cli, engine):
         invoke("types", "--declare", str(header), "--json")
         assert not (cli_project / "types.json").exists()
         invoke("types", "--declare", str(header), "--save", "--json")
-        invoke("types", "--declare", str(header), "--save-declarations", "--json")
+        alias_binary = root / "aliases.elf"
+        alias_binary.write_bytes(image)
+        invoke("types", "--declare", str(header), "--save-declarations",
+               "--json", path=alias_binary)
+        assert (Path(str(alias_binary) + ".neverd") / "types.json").read_bytes() == (
+            cli_project / "types.json").read_bytes()
         invoke("items", "--array", hex(DATA), "--size", "4", "--count", "16")
         invoke("items", "--array", hex(DATA + 64), "--element-size", "12",
                "--count", "4", "--type", "QA_ROW")
@@ -110,6 +115,7 @@ def run(worker, cli, engine):
         # for the same operations on another copy of the input.
         with Client(worker) as client:
             ok(client, "open", {"path": str(binary), "analysis": False})
+            ok(client, "function_create", {"address": hex(entry)})
             native = {r: source(client, r, entry)["text"]
                       for r in ("low", "med", "llvm")}
             assert "[15]" in str(listing(client))

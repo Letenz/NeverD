@@ -838,6 +838,12 @@ malformed SDK array fields. Run it with
 `NeverDWorkerDataPresentation` and `NeverDWorkerFormat` when changing these
 presentation operations.
 
+`NeverDWorkerImmediatesRegister` checks decoded immediate search and register
+queries through the real SDK/worker and, when available, CLI. It covers search
+cache refresh after navigation discovers a function beyond an undecodable gap
+and decimal patterns with leading zeros. Standalone GUI builds run the worker
+checks without requiring a CLI target.
+
 `NeverDGuiSourceVariableTypes` uses the real worker for type editing and
 variable associations. It is registered only with
 `NEVERD_WORKER_REAL_ENGINE_TESTS=ON`; fixture SDK builds keep it disabled.
