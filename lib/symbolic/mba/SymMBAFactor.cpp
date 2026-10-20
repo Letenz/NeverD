@@ -237,39 +237,114 @@ SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
           !ChargeOperands(SymOp::Add, Originals, MaxTerms) ||
           !ChargeOperands(SymOp::Mul, Common, MaxEdges))
         break;
-      SymRef Quotient = Ctx.mkAdd(Quotients);
+      const SymRef WeightedQuotient = Ctx.mkAdd(Quotients);
+      SymRef Quotient = WeightedQuotient;
       SolveReport Local;
       SymRef Reduced = Quotient;
-      if (!Charge(1, 2))
-        break;
-      if (auto It = QuotientCache.find(Quotient.index());
-          It != QuotientCache.end()) {
-        Reduced = It->second.first;
-        Local.NumAtoms = It->second.second;
-        Local.Evidence = MBAEvidence::Derivation;
-      } else {
-        MBAOptions Inner = Opts;
-        Inner.MaxTableBytes = Storage;
-        Reduced = solveOneRegion(Ctx, Quotient, Inner, Budget, Local);
-        Rep.BudgetExhausted |= Local.BudgetExhausted;
-        if (Reduced != Quotient && Local.Evidence == MBAEvidence::Derivation)
-          QuotientCache.try_emplace(Quotient.index(), Reduced, Local.NumAtoms);
+      auto Solve = [&] {
+        Local = {};
+        Reduced = Quotient;
+        if (!Charge(1, 2))
+          return false;
+        if (auto It = QuotientCache.find(Quotient.index());
+            It != QuotientCache.end()) {
+          Reduced = It->second.first;
+          Local.NumAtoms = It->second.second;
+          Local.Evidence = MBAEvidence::Derivation;
+        } else {
+          MBAOptions Inner = Opts;
+          Inner.MaxTableBytes = Storage;
+          Reduced = solveOneRegion(Ctx, Quotient, Inner, Budget, Local);
+          Rep.BudgetExhausted |= Local.BudgetExhausted;
+          if (Reduced != Quotient && Local.Evidence == MBAEvidence::Derivation)
+            QuotientCache.try_emplace(Quotient.index(), Reduced,
+                                      Local.NumAtoms);
+        }
+        return Reduced != Quotient && Local.Evidence == MBAEvidence::Derivation;
+      };
+      llvm::SmallVector<PolyTerm, 4> Residuals;
+      llvm::SmallVector<SymRef, 4> ResidualExprs;
+      if (!SameScale) {
+        // A changed coefficient need not hide the common identity. Write
+        // sum(c_i*q_i) = k*sum(q_i) + sum((c_i-k)*q_i), retaining every
+        // difference modulo the word width. No coefficient is divided.
+        // Prefer a scale repeated elsewhere at this degree, so successive
+        // groups can expose the same product even across a sparse disturbance.
+        if (!Charge(Indices.size() * Terms.size() * (WordBytes / 8),
+                    Indices.size() * (Key.size() + Omitted + 4)))
+          break;
+        unsigned ScaleIndex = *First, Frequency = 0;
+        for (unsigned T : Indices) {
+          if (Used[T])
+            continue;
+          unsigned Count = llvm::count_if(Terms, [&](const PolyTerm &Term) {
+            return Term.Factors.size() == Terms[T].Factors.size() &&
+                   Term.Coeff == Terms[T].Coeff;
+          });
+          if (Count > Frequency) {
+            Frequency = Count;
+            ScaleIndex = T;
+          }
+        }
+        const auto &CommonScale = Terms[ScaleIndex].Coeff;
+        Common.push_back(Ctx.mkConst(CommonScale));
+        Quotients.clear();
+        for (unsigned T : Indices) {
+          if (Used[T])
+            continue;
+          const auto &Term = Terms[T];
+          llvm::SmallVector<SymRef, 8> Remaining;
+          size_t K = 0;
+          for (SymRef Factor : Term.Factors)
+            if (K != Key.size() && Factor.index() == Key[K])
+              ++K;
+            else
+              Remaining.push_back(Factor);
+          Quotients.push_back(Ctx.mkMul(Remaining));
+          auto Difference = Term.Coeff - CommonScale;
+          if (!Difference.isZero()) {
+            Residuals.push_back({std::move(Difference), Term.Factors});
+            ResidualExprs.push_back(Write(Residuals.back()));
+          }
+        }
+        if (!ChargeOperands(SymOp::Add, Quotients, MaxTerms) ||
+            !ChargeOperands(SymOp::Mul, Common, MaxEdges))
+          break;
+        Quotient = Ctx.mkAdd(Quotients);
       }
-      if (Reduced == Quotient || Local.Evidence != MBAEvidence::Derivation)
+      auto Accept = [&] {
+        SymRef Original = Ctx.mkAdd(Originals);
+        SymRef Cofactor = Ctx.mkMul(Common);
+        if (!ChargeOperands(SymOp::Mul, {Cofactor, Reduced}, MaxEdges) ||
+            !ChargeOperands(SymOp::Mul, {Cofactor, Quotient}, MaxEdges))
+          return false;
+        SymRef Candidate = Ctx.mkMul(Cofactor, Reduced);
+        llvm::SmallVector<SymRef, 4> Trial(ResidualExprs);
+        Trial.push_back(Candidate);
+        if (!ChargeOperands(SymOp::Add, Trial, MaxTerms) ||
+            readingScore(Ctx, Ctx.mkAdd(Trial)) >= readingScore(Ctx, Original))
+          return false;
+        Next.push_back(Read(Candidate));
+        Next.append(Residuals.begin(), Residuals.end());
+        Distribution.push_back(Ctx.mkMul(Cofactor, Quotient));
+        Distribution.append(ResidualExprs.begin(), ResidualExprs.end());
+        for (unsigned T : Indices)
+          Used[T] = true;
+        Rep.NumAtoms = std::max(Rep.NumAtoms, Local.NumAtoms);
+        return true;
+      };
+      if (Solve() && Accept())
         continue;
-      SymRef Original = Ctx.mkAdd(Originals);
-      SymRef Cofactor = Ctx.mkMul(Common);
-      if (!ChargeOperands(SymOp::Mul, {Cofactor, Reduced}, MaxEdges) ||
-          !ChargeOperands(SymOp::Mul, {Cofactor, Quotient}, MaxEdges))
-        break;
-      SymRef Candidate = Ctx.mkMul(Cofactor, Reduced);
-      if (readingScore(Ctx, Candidate) >= readingScore(Ctx, Original))
-        continue;
-      Next.push_back(Read(Candidate));
-      Distribution.push_back(Ctx.mkMul(Cofactor, Quotient));
-      for (unsigned T : Indices)
-        Used[T] = true;
-      Rep.NumAtoms = std::max(Rep.NumAtoms, Local.NumAtoms);
+      if (!SameScale && !Budget.exhausted()) {
+        // If the unit-coefficient identity does not shorten this group,
+        // preserve the original weighted quotient's independent opportunity.
+        Common.pop_back();
+        Residuals.clear();
+        ResidualExprs.clear();
+        Quotient = WeightedQuotient;
+        if (Solve())
+          Accept();
+      }
     }
     if (Next.empty()) {
       if (Omitted++ == 1 && !Rep.BudgetExhausted)

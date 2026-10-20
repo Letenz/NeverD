@@ -488,9 +488,11 @@ bool mayImproveArithmetic(const SymContext &Ctx, SymRef Root) {
 }
 
 SymRef normalizeArithmetic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
-                           WorkBudget &Budget, SolveReport &Rep) {
+                           WorkBudget &Budget, SolveReport &Rep,
+                           bool ExpandComplements = true) {
   ArithmeticResources Resources(Budget, Opts.MaxTableBytes);
-  ArithmeticNormalizer Normalizer(Ctx, Resources, Ctx.width(E));
+  ArithmeticNormalizer Normalizer(Ctx, Resources, Ctx.width(E),
+                                  ExpandComplements);
   auto Stop = [&]() {
     if (Resources.stopped() || Budget.exhausted()) {
       Rep.BudgetExhausted = true;
@@ -582,9 +584,10 @@ bool proveArithmeticIdentity(SymContext &Ctx, SymRef Before, SymRef After,
 }
 
 SymRef solveArithmetic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
-                       WorkBudget &Budget, SolveReport &Rep) {
+                       WorkBudget &Budget, SolveReport &Rep,
+                       bool ExpandComplements) {
   return mayImproveArithmetic(Ctx, E)
-             ? normalizeArithmetic(Ctx, E, Opts, Budget, Rep)
+             ? normalizeArithmetic(Ctx, E, Opts, Budget, Rep, ExpandComplements)
              : E;
 }
 

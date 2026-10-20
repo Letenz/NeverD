@@ -510,10 +510,12 @@ struct SolveReport {
 SymRef solveWeightedMasks(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                           WorkBudget &Budget, SolveReport &Rep);
 
-/// Normalize and factor Add/Mul regions over fixed-width words. Other
-/// operations remain opaque atoms; resource refusal leaves the region intact.
+/// Normalize and factor Add/Mul regions over fixed-width words. Complements
+/// may expand as -1-x or remain opaque alongside other operations. Resource
+/// refusal leaves the region intact; both modes independently check the result.
 SymRef solveArithmetic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
-                       WorkBudget &Budget, SolveReport &Rep);
+                       WorkBudget &Budget, SolveReport &Rep,
+                       bool ExpandComplements = true);
 
 /// A final coefficient reading, kept outside the repeated region walk.
 SymRef solveCoefficientFactors(SymContext &Ctx, SymRef E,

@@ -1090,6 +1090,14 @@ exact identity, not on expanding them as `-1-x`. Equal scales and repeated
 factors remain exact, and identical proved quotients share a charged local
 cache. A bounded frontier and cumulative work/storage admission preserve the
 best completed root on refusal.
+Different coefficients can expose the same quotient after splitting off exact
+modular differences. The search prefers a coefficient repeated at the same degree
+as its common scale; every difference stays attached to its original factors. The quotient
+proof and complete distribution proof must both succeed, including for even
+scales and coefficients that wrap to zero. A failed or larger candidate retains
+the original weighted-quotient opportunity. Recovered products also get an
+independently checked arithmetic factoring alternative with complements opaque,
+so repeated complemented factors need not expand into duplicate summands.
 Already factored higher components remain intact while other degrees improve.
 Unaffordable optional expansions leave work for the rest of the expression;
 an unrecovered degree is retained verbatim, never dropped. Exact opposing

@@ -253,6 +253,12 @@ bits, with an explicit skip when unavailable. Wider checks use independent
 word arithmetic. Independently enumerated modular products validate the
 necessary coefficient bounds, and unchanged sixteen-factor residuals must
 cancel before minterm expansion in the difference proof.
+Sparse coefficient differences additionally cover four through sixteen factors
+at 8–257 bits within 65,536 work units. Negative/even scales, vanished
+coefficients, high-bit differences and two independently disturbed terms use
+independent word arithmetic. Exhaustive three-bit assignments check partial
+proof budgets; separate Z3 checks cover the complete four/eight-factor rewrites
+at 2/3 bits. Wider checks are algebraic and arithmetic coverage, not SMT claims.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
 signed/unsigned overflow admission against all byte pairs, including unsafe
 neighboring masks. `NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains`
@@ -296,6 +302,10 @@ Use `--family higher --count 64` for fourth, fifth, sixth and eighth degrees:
 independent partitions up to 64 products, products of quadratic identities,
 mixed degrees, same-degree residuals and deliberately changed coefficients.
 The previous six families remain controls.
+Use `--family perturbed --count 64` for fourth, sixth, eighth and twelfth degrees
+with one or two coefficient disturbances, modular zeros, high-bit differences,
+up to 32 distributed products and mixed-degree residuals. Retain all seven
+earlier families as controls and report any remaining budget refusals.
 
 `tools/neverd-worker/tests/source_synthesis_test.py WORKER --cli CLI` checks the
 real source-option request used by the GUI and both CLI source emitters, for
@@ -311,6 +321,8 @@ MBA and an observable high-bit remainder. Both exercise the same existing
 symbolic option through worker requests and single/whole-program CLI output.
 The fourth- and sixth-degree fixtures multiply additional factors in original
 x64 machine code, so a fixture compiler cannot simplify the input first.
+Their coefficient-disturbed variants multiply one original product by three;
+the resulting difference must survive every enhanced CLI and worker output.
 With Clang available, each generated C output executes at O0/O2 against an
 independent arithmetic oracle on boundary and deterministic random inputs.
 

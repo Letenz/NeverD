@@ -318,6 +318,49 @@ def higher_corpus(width, count):
     return rows
 
 
+def perturbed_corpus(width, count):
+    """Sparse coefficient differences in fourth through twelfth degree sums."""
+    rng = random.Random(0x4D424138 + width)
+    words = ("(x^y)", "(y|z)", "(x|z)", "(x&y)", "(x^z)", "(y^z)",
+             "(x|y)", "~(x&z)")
+    axes = ("z", "x", "y", "w", "v")
+    rows = []
+    for index in range(count):
+        degree = (4, 6, 8, 12)[(index // 16) % 4]
+        kind = index % 16
+        scale = (1, 37, -11, 182, 1 << (width - 2), -7)[kind % 6]
+        delta = (2 * scale, -scale, 1 << (width - 1), 13)[kind % 4]
+        if kind < 8:
+            pairs = (("(x&y)", "(x|y)"), ("(x&~y)", "(~x&y)"))
+            other = (("(z&w)", "(z|w)"), ("(z&~w)", "(~z&w)"))
+            tail = tuple(words[i % len(words)] for i in range(4, degree))
+            factors = [a + b + tail for a in pairs for b in other]
+        else:
+            pieces = 3 + (kind % 3)
+            whole = tuple(words[i % len(words)] for i in range(degree))
+            choices = [
+                (f"({word}&{axes[i]})", f"({word}&~{axes[i]})")
+                if i < pieces else (word,)
+                for i, word in enumerate(whole)
+            ]
+            factors = list(itertools.product(*choices))
+        # Some coefficients wrap to zero or change sign. Additional independent
+        # differences ensure that recovering a nearby identity is insufficient.
+        changed = {0: delta}
+        if kind % 4 == 3:
+            changed[len(factors) - 1] = -3 * delta
+        terms = [f"({scale + changed.get(i, 0)}*{'*'.join(fs)})"
+                 for i, fs in enumerate(factors)]
+        rng.shuffle(terms)
+        expression = "+".join(terms) + "+(x^y)+2*(x&y)"
+        if kind % 3 == 2:
+            expression += "+19*x*y*z+(x&" + str(1 << (width - 1)) + ")"
+        if kind % 4 == 3:
+            expression += "+23*" + "*".join(("x", "y") * (degree // 2))
+        rows.append(expression)
+    return rows
+
+
 def check_semantics(expressions, results, width):
     """Independent modular evaluator; never execute parsed source as Python."""
     mask = (1 << width) - 1
@@ -411,7 +454,7 @@ def main():
     parser.add_argument(
         "--family",
         choices=("complement", "weighted", "bitwise", "interleaved", "quadratic",
-                 "cubic", "higher"),
+                 "cubic", "higher", "perturbed"),
         default="complement",
     )
     args = parser.parse_args()
@@ -435,6 +478,7 @@ def main():
                 "quadratic": quadratic_corpus,
                 "cubic": cubic_corpus,
                 "higher": higher_corpus,
+                "perturbed": perturbed_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")

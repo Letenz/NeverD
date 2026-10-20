@@ -1043,17 +1043,33 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   // the normal walk still simplifies their children and any remaining terms.
   SolveReport WholeRep;
   SymRef WalkRoot = solveWeightedMasks(Ctx, E, Opts, Budget, WholeRep);
-  if (WalkRoot == E)
+  bool ProductCofactors = false;
+  if (WalkRoot == E) {
     WalkRoot = solveProductCofactors(Ctx, E, Opts, Budget, WholeRep);
+    ProductCofactors = WalkRoot != E;
+  }
   if (WalkRoot == E)
     WalkRoot = solveExpandedProducts(Ctx, E, Opts, Budget, WholeRep);
   SymRef WholeAlternative = WalkRoot;
   if (WalkRoot != E && !Budget.exhausted()) {
-    // Preserve enclosing common scales before child readings can hide them
-    // inside unrelated Boolean expressions.
+    // Preserve enclosing common factors before child readings can hide them.
+    // Cofactor recovery can leave distinct coefficient differences; retaining
+    // complements as exact atoms avoids expanding their shared product tails.
     SolveReport Factored;
+    unsigned HigherProducts = 0;
+    if (ProductCofactors && Ctx.op(WalkRoot) == SymOp::Add)
+      for (SymRef Term : Ctx.operands(WalkRoot))
+        if (Ctx.op(Term) == SymOp::Mul &&
+            Ctx.numOperands(Term) -
+                    unsigned(Ctx.isConst(Ctx.operand(Term, 0))) >=
+                4 &&
+            ++HigherProducts == 2)
+          break;
     WholeAlternative =
-        solveCoefficientFactors(Ctx, WalkRoot, Opts, Budget, Factored);
+        HigherProducts >= 2
+            ? solveArithmetic(Ctx, WalkRoot, Opts, Budget, Factored,
+                              /*ExpandComplements=*/false)
+            : solveCoefficientFactors(Ctx, WalkRoot, Opts, Budget, Factored);
     WholeRep.BudgetExhausted |= Factored.BudgetExhausted;
   }
 
