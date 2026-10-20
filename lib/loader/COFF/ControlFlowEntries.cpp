@@ -44,8 +44,14 @@ readPEControlFlowEntries(const BinaryImage &Image) {
       Count * Stride > UINT32_MAX - RVA || Image.Base > InvalidVA - RVA)
     return Invalid(
         "PE CFG function table has an invalid or unsupported extent");
-  auto Bytes = readImmutableImageBytes(Image, Image.Base + RVA,
-                                       static_cast<uint32_t>(Count * Stride));
+  const va_t Table = Image.Base + RVA;
+  const auto Size = static_cast<uint32_t>(Count * Stride);
+  // Linked images may merge metadata into RX storage. The code-byte reader
+  // proves immutability and fixups without interpreting the bytes; the complete
+  // GFIDS structure below supplies their metadata role.
+  auto Bytes = Image.isCodeAddress(Table)
+                   ? readImmutableCodeBytes(Image, Table, Size)
+                   : readImmutableImageBytes(Image, Table, Size);
   if (!Bytes)
     return Invalid("PE CFG function table lacks unique immutable file storage");
   uint32_t Previous = 0;

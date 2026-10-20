@@ -342,4 +342,15 @@ TEST(RelocatedFunctionEntries,
   }
 }
 
+TEST(RelocatedFunctionEntries, CFGTableMayShareImmutableExecutableStorage) {
+  auto Img = guardedImage(Arch::X64);
+  const auto RX = SegmentFlags::Readable | SegmentFlags::Executable;
+  Img.Segments.back().Flags = RX;
+  Img.Sections.back().Flags = RX;
+  auto Entries = readPEControlFlowEntries(Img);
+  ASSERT_TRUE(bool(Entries));
+  EXPECT_EQ(*Entries, (std::vector<va_t>{0x1000, 0x1040}));
+  EXPECT_TRUE(RelocatedFunctionEntryVerifier(Img).accepts(0x1040));
+}
+
 } // namespace
