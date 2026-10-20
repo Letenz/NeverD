@@ -119,7 +119,7 @@ namespace {
 /// the normal parameter detector for their bodies instead of assigning the
 /// default register order merely because the user omitted their output.
 /// These bounded support bodies never become emitted definitions.
-std::vector<MedFunc>
+std::vector<std::shared_ptr<const MedFunc>>
 omittedDirectCalleeSignatures(const BinaryImage &Img,
                               const PipelineResult &Result) {
   const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
@@ -165,7 +165,7 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
   };
   for (const MedFunc &F : Result.MedFuncs)
     enqueueCallees(F);
-  std::vector<MedFunc> Signatures;
+  std::vector<std::shared_ptr<const MedFunc>> Signatures;
   if (Pending.empty())
     return Signatures;
   // Each callee is read as an earlier run of the image read it, where the
@@ -266,7 +266,7 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
     if (!Conversion->Body)
       continue;
     enqueueCallees(*Conversion->Body);
-    Signatures.push_back(*Conversion->Body);
+    Signatures.push_back(Conversion->Body);
   }
   return Signatures;
 }
@@ -324,7 +324,7 @@ int countEntryLiveInFPArgs(const MedFunc &MF, const TargetRegInfo &TRI,
 /// ops.  The worklist revisits only direct callers of a function whose
 /// signature grew.
 void propagateForwardedCallArities(
-    const std::vector<MedFunc *> &Funcs, Arch TheArch,
+    const std::vector<const MedFunc *> &Funcs, Arch TheArch,
     const std::map<va_t, std::string> &FuncNames, const BinaryImage &Img,
     std::map<va_t, int> &CalleeRegArity, std::map<va_t, int> &CalleeTotalArity,
     std::map<va_t, int> &CalleeFPArity,
@@ -477,17 +477,19 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
     Result.OmittedCallees =
         std::make_shared<const OmittedCalleeBodies>(OmittedCalleeBodies{
             Functions, omittedDirectCalleeSignatures(Img, Result)});
-  std::vector<MedFunc> OmittedCallees = Result.OmittedCallees->Bodies;
+  // The passes before recovery read the kept bodies in place.
+  const std::vector<std::shared_ptr<const MedFunc>> &OmittedCallees =
+      Result.OmittedCallees->Bodies;
   // What a call through each function-pointer variable passes on.
   const std::map<va_t, PointerVariableCallee> PointerCallees =
       collectPointerVariableCallees(Img);
   // The relocation that names each call's callee, where one does.
   const RelocationSymbolIndex RelocationSymbols(Img);
-  std::vector<MedFunc *> SignatureBodies;
-  for (MedFunc &F : Result.MedFuncs)
+  std::vector<const MedFunc *> SignatureBodies;
+  for (const MedFunc &F : Result.MedFuncs)
     SignatureBodies.push_back(&F);
-  for (MedFunc &F : OmittedCallees)
-    SignatureBodies.push_back(&F);
+  for (const auto &F : OmittedCallees)
+    SignatureBodies.push_back(F.get());
   {
     const auto &TRI = getTargetRegInfo(Img.Arch);
     const auto FPParamRegs = TRI.floatingParamRegs(Img.abiFormat());
@@ -769,11 +771,22 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
       for (const MedCallInfo &CI : F.CallInfos)
         if (!CI.IsIndirect)
           Called.insert(CI.TargetAddr);
-    while (Recovered && !Called.count(OmittedCallees[Recovered - 1].Entry))
+    while (Recovered && !Called.count(OmittedCallees[Recovered - 1]->Entry))
       --Recovered;
   }
-  for (size_t I = 0; I < Recovered; ++I)
-    recover(OmittedCallees[I]);
+  // Recovery changes the bodies it recovers: copies of the kept ones.
+  std::vector<MedFunc> RecoveredCallees;
+  RecoveredCallees.reserve(Recovered);
+  for (size_t I = 0; I < Recovered; ++I) {
+    RecoveredCallees.push_back(*OmittedCallees[I]);
+    recover(RecoveredCallees.back());
+  }
+  // The bodies as recovery left them.
+  std::vector<MedFunc *> RecoveredBodies;
+  for (MedFunc &F : Result.MedFuncs)
+    RecoveredBodies.push_back(&F);
+  for (MedFunc &F : RecoveredCallees)
+    RecoveredBodies.push_back(&F);
 
   // Regparm two-pass call recovery (i386): the first pass promotes forwarder
   // register params (PromoteParams).  Recompute CalleeRegArity from the
@@ -786,7 +799,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
     // Omitted support bodies retain the same contract in both passes.
     auto CRA2 = CalleeRegArity, CTA2 = CalleeTotalArity;
     auto CalleeIntRegs2 = CalleeIntRegs;
-    for (const MedFunc *Body : SignatureBodies) {
+    for (const MedFunc *Body : RecoveredBodies) {
       const MedFunc &MF = *Body;
       int MaxRI = -1, MaxI = -1;
       const IntegerArgumentLayout Layout = integerArgumentLayoutOf(MF, TRI2);
@@ -804,7 +817,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
       if (!MF.IntegerArgumentRegisters.empty())
         CalleeIntRegs2[MF.Entry] = MF.IntegerArgumentRegisters;
     }
-    for (MedFunc *Body : SignatureBodies) {
+    for (MedFunc *Body : RecoveredBodies) {
       MedFunc &MF = *Body;
       recoverCallAbi(MF, Img.Arch, AllFuncNames, &Img, &CRA2, &CTA2,
                      &CalleeFPArity, &CalleeFPReturnSize, &CalleeFPRegs,
@@ -819,9 +832,11 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
   // forwarder promotion, so incidental live registers do not become extra
   // arguments merely because output was restricted to its caller.
   std::map<va_t, const MedFunc *> OmittedByEntry;
-  for (const MedFunc &F : OmittedCallees)
+  for (size_t I = 0; I < OmittedCallees.size(); ++I) {
+    const MedFunc &F = I < Recovered ? RecoveredCallees[I] : *OmittedCallees[I];
     if (!F.IsVariadic && !F.SourceParametersBound)
       OmittedByEntry.emplace(F.Entry, &F);
+  }
   for (MedFunc &F : Result.MedFuncs)
     for (MedCallInfo &CI : F.CallInfos) {
       auto It = CI.IsIndirect ? OmittedByEntry.end()

@@ -366,7 +366,7 @@ TEST(AAPCS64CallContract,
   ASSERT_TRUE(Result.OmittedCallees);
   std::set<va_t> Summarized;
   for (const auto &F : Result.OmittedCallees->Bodies)
-    Summarized.insert(F.Entry);
+    Summarized.insert(F->Entry);
   EXPECT_TRUE(Summarized.contains(Zero));
   EXPECT_TRUE(Summarized.contains(One));
   EXPECT_LE(Summarized.size(), limits::kMaxCallEffectExtraLifts);

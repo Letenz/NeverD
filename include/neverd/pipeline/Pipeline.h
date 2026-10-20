@@ -251,7 +251,7 @@ struct PipelineFunctionAudit {
 struct OmittedCalleeBodies {
   /// The entries of the functions they were lifted around, in order.
   std::vector<va_t> Functions;
-  std::vector<MedFunc> Bodies;
+  std::vector<std::shared_ptr<const MedFunc>> Bodies;
 };
 
 struct PipelineResult {
