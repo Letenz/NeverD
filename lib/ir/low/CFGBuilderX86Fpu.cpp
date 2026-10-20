@@ -273,6 +273,7 @@ struct X87CallGraphStep {
   uint8_t Writes = 0;
   std::optional<va_t> Callee;
   bool Unknown = false;
+  bool ChangesControl = false;
 };
 struct X87CallGraphBlock {
   std::vector<X87CallGraphStep> Steps;
@@ -1006,6 +1007,12 @@ bool CFGBuilder::waitForX87CallGraphWaitersForTesting(size_t Count) const {
 /// The index lives for one CFG build of an unchanged image. Its cached local
 /// graphs contain machine facts, not answers obtained under a caller's budget.
 /// Each query pays for its complete call closure and every dataflow transfer.
+struct X87CallContract {
+  int Delta = 0;
+  bool ConsumesInput = false;
+  unsigned ScratchSlots = 0;
+};
+
 class X87CallEffectIndex {
   friend class CFGBuilder;
   using Step = X87CallGraphStep;
@@ -1014,7 +1021,7 @@ class X87CallEffectIndex {
   struct Query {
     size_t Remaining = limits::kMaxX87CallProofWork;
     std::set<va_t> Charged, Active;
-    std::map<std::pair<va_t, unsigned>, std::optional<int>> Results;
+    std::map<std::pair<va_t, unsigned>, std::optional<X87CallContract>> Results;
     bool pay(size_t Cost) {
       if (Cost > Remaining) {
         Remaining = 0;
@@ -1027,7 +1034,7 @@ class X87CallEffectIndex {
   const CFGBuilder &Settings;
   const BinaryImage &Image;
   std::map<va_t, std::shared_ptr<const Graph>> Graphs;
-  std::map<va_t, std::optional<int>> Answers;
+  std::map<va_t, std::optional<X87CallContract>> Answers;
   /// Set when this index read an incomplete lift whose no-return answers
   /// went unrecorded, so nothing derived from it can name what it depends on.
   bool UnrecordedLift = false;
@@ -1283,11 +1290,17 @@ class X87CallEffectIndex {
         for (size_t O = Boundary.FirstOp;
              O < Boundary.FirstOp + Boundary.OpCount; ++O) {
           const LowOp &Op = Source.Ops[O];
+          S.ChangesControl |=
+              Op.Output.isReg() && Op.Output.Offset == x86reg::FPU_CW;
           if (Op.Opcode == NdOp::INTRINSIC) {
             G.UsesContext |= Op.NumInputs && Op.Inputs[0].isConst() &&
                              isX87ContextIntrinsic(
                                  static_cast<Intrinsic>(Op.Inputs[0].Offset));
             S.Unknown |= !modeledIntrinsic(Op);
+            S.ChangesControl |=
+                Op.NumInputs && Op.Inputs[0].isConst() &&
+                Op.Inputs[0].Offset ==
+                    static_cast<uint64_t>(Intrinsic::X87WriteControl);
             B.Stops |= isArchitecturalNoReturn(Op);
           }
           for (unsigned K = 0; K < Op.NumInputs; ++K)
@@ -1324,7 +1337,8 @@ class X87CallEffectIndex {
           }
           B.Returns |= Op.Opcode == NdOp::RETURN;
         }
-        if (S.Delta || S.Reads || S.Writes || S.Callee || S.Unknown)
+        if (S.Delta || S.Reads || S.Writes || S.Callee || S.Unknown ||
+            S.ChangesControl)
           B.Steps.push_back(S);
       }
       if (B.Successors.empty() && !B.Returns && !B.Stops)
@@ -1337,7 +1351,7 @@ class X87CallEffectIndex {
     return *It->second;
   }
 
-  std::optional<int> prove(va_t Entry, unsigned Depth, Query &Q) {
+  std::optional<X87CallContract> prove(va_t Entry, unsigned Depth, Query &Q) {
     if (!Q.pay(1) || Depth >= limits::kMaxX87CallProofDepth)
       return std::nullopt;
     const auto Key = std::make_pair(Entry, Depth);
@@ -1345,23 +1359,26 @@ class X87CallEffectIndex {
       return It->second;
     if (!Q.Active.insert(Entry).second)
       return std::nullopt;
-    auto Compute = [&]() -> std::optional<int> {
+    auto Compute = [&]() -> std::optional<X87CallContract> {
       if (Q.Charged.insert(Entry).second &&
           Q.Charged.size() > limits::kMaxX87CallProofFunctions)
         return std::nullopt;
-      if (const auto Name = importCalleeName(Image, Entry); !Name.empty())
-        return importEffect(Name);
+      if (const auto Name = importCalleeName(Image, Entry); !Name.empty()) {
+        if (const auto Effect = importEffect(Name))
+          return X87CallContract{*Effect, false, unsigned(*Effect == -1)};
+        return std::nullopt;
+      }
       const Graph &G = graph(Entry);
       if (!G.Complete || !Q.pay(G.Cost))
         return std::nullopt;
-      std::map<va_t, int> Callees;
+      std::map<va_t, X87CallContract> Callees;
       for (const Block &B : G.Blocks)
         for (const Step &S : B.Steps) {
           if (S.Unknown)
             return std::nullopt;
           if (S.Callee && !Callees.count(*S.Callee)) {
             const auto Effect = prove(*S.Callee, Depth + 1, Q);
-            if (!Effect || (*Effect != 0 && *Effect != -1))
+            if (!Effect)
               return std::nullopt;
             Callees.emplace(*S.Callee, *Effect);
           }
@@ -1369,7 +1386,11 @@ class X87CallEffectIndex {
       struct State {
         int Top = 0;
         uint8_t Defined = 0;
+        bool InputAlive = true;
       };
+      bool NeedsInput = false, TouchesBelowInput = false;
+      bool OpaqueStackCall = false, ChangesControl = false;
+      int MinimumTop = 0;
       std::vector<std::optional<State>> Entries(G.Blocks.size()),
           Exits(G.Blocks.size());
       std::queue<int> Work;
@@ -1382,25 +1403,63 @@ class X87CallEffectIndex {
         if (!Q.pay(1 + B.Steps.size() + B.Successors.size()))
           return std::nullopt;
         State Value = *Entries[Id];
+        auto read = [&](int Position) {
+          TouchesBelowInput |= Position > 0;
+          if (Value.Defined & (1u << (Position & 7)))
+            return true;
+          if (Image.Arch == Arch::X86 && Position == 0 && Value.InputAlive) {
+            NeedsInput = true;
+            return true;
+          }
+          return false;
+        };
+        auto discard = [&](int Position) {
+          Value.Defined &= uint8_t(~(1u << (Position & 7)));
+          if ((Position & 7) == 0)
+            Value.InputAlive = false;
+        };
         for (const Step &S : B.Steps) {
+          ChangesControl |= S.ChangesControl;
           for (int K = 0; K != 8; ++K)
-            if ((S.Reads & (1u << K)) &&
-                !(Value.Defined & (1u << ((Value.Top + K) & 7))))
+            if ((S.Reads & (1u << K)) && !read(Value.Top + K))
               return std::nullopt;
-          const int Delta = S.Delta + (S.Callee ? Callees.at(*S.Callee) : 0);
+          const X87CallContract *Call =
+              S.Callee ? &Callees.at(*S.Callee) : nullptr;
+          if (Call) {
+            if (Call->ConsumesInput && !read(Value.Top))
+              return std::nullopt;
+            // Ordinary calls still clobber ST values in typed SSA. They
+            // cannot acquire preservation merely from this TOP summary;
+            // only checked consumers transport the incoming argument.
+            OpaqueStackCall |= !Call->ConsumesInput;
+            MinimumTop =
+                std::min(MinimumTop, Value.Top - int(Call->ScratchSlots));
+          }
+          const int Delta = S.Delta + (Call ? Call->Delta : 0);
+          MinimumTop = std::min(MinimumTop, Value.Top + std::min(Delta, 0));
           // Pushes discard stale slots before their new definitions; pops
           // discard them after the instruction's reads and writes.
           for (int K = Delta; K < 0; ++K)
-            Value.Defined &= uint8_t(~(1u << ((Value.Top + K) & 7)));
+            discard(Value.Top + K);
           for (int K = 0; K != 8; ++K)
-            if (S.Writes & (1u << K))
+            if (S.Writes & (1u << K)) {
+              // A push's new destination is below its incoming TOP, even
+              // though the decoder records its modulo-eight physical slot.
+              const int Position =
+                  Value.Top + (S.Delta < 0 && K >= 8 + S.Delta ? K - 8 : K);
+              TouchesBelowInput |= Position > 0;
+              if ((Position & 7) == 0)
+                Value.InputAlive = false;
               Value.Defined |= uint8_t(1u << ((Value.Top + K) & 7));
-          for (int K = 0; K < Delta; ++K)
-            Value.Defined &= uint8_t(~(1u << ((Value.Top + K) & 7)));
+            }
+          for (int K = 0; K < Delta; ++K) {
+            TouchesBelowInput |= Value.Top + K > 0;
+            discard(Value.Top + K);
+          }
           Value.Top += Delta;
           if (Value.Top < -8 || Value.Top > 8)
             return std::nullopt;
-          if (S.Callee && Callees.at(*S.Callee) == -1)
+          if (Call && Call->Delta == -1)
             Value.Defined |= uint8_t(1u << (Value.Top & 7));
         }
         Exits[Id] = Value;
@@ -1412,8 +1471,11 @@ class X87CallEffectIndex {
             if (Entries[S]->Top != Value.Top)
               return std::nullopt;
             const uint8_t Meet = Entries[S]->Defined & Value.Defined;
-            if (Meet != Entries[S]->Defined) {
+            const bool InputAlive = Entries[S]->InputAlive && Value.InputAlive;
+            if (Meet != Entries[S]->Defined ||
+                InputAlive != Entries[S]->InputAlive) {
               Entries[S]->Defined = Meet;
+              Entries[S]->InputAlive = InputAlive;
               Work.push(S);
             }
           }
@@ -1424,12 +1486,17 @@ class X87CallEffectIndex {
         if (!Exits[I] || !G.Blocks[I].Returns)
           continue;
         const State &Out = *Exits[I];
-        if ((Result && *Result != Out.Top) || (Out.Top != 0 && Out.Top != -1) ||
+        if ((Result && *Result != Out.Top) ||
+            (Out.Top != 0 && Out.Top != -1 && Out.Top != 1) ||
             (Out.Top == -1 && !(Out.Defined & (1u << 7))))
           return std::nullopt;
         Result = Out.Top;
       }
-      return Result;
+      if (!Result || (*Result == 1) != NeedsInput ||
+          (NeedsInput && (TouchesBelowInput || OpaqueStackCall ||
+                          ChangesControl || MinimumTop < -7)))
+        return std::nullopt;
+      return X87CallContract{*Result, NeedsInput, unsigned(-MinimumTop)};
     };
     const auto Result = Compute();
     Q.Active.erase(Entry);
@@ -1538,7 +1605,7 @@ public:
       }
     if (Targets.size() < 2 || Bytes < 4096)
       return;
-    std::vector<std::optional<int>> Values(Targets.size());
+    std::vector<std::optional<X87CallContract>> Values(Targets.size());
     std::vector<std::exception_ptr> Failures(Targets.size());
     parallelForEachWeighted(
         Weights,
@@ -1549,7 +1616,7 @@ public:
               if (ContextOwnership)
                 Worker.usesContext(Targets[I]);
               else
-                Values[I] = Worker.effect(Targets[I]);
+                Values[I] = Worker.contract(Targets[I]);
             } catch (...) {
               Failures[I] = std::current_exception();
             }
@@ -1565,13 +1632,18 @@ public:
         Answers.emplace(Targets[I], Values[I]);
     }
   }
-  std::optional<int> effect(va_t Entry) {
+  std::optional<X87CallContract> contract(va_t Entry) {
     if (auto It = Answers.find(Entry); It != Answers.end())
       return It->second;
     Query Q;
     const auto Result = prove(Entry, 0, Q);
     Answers.emplace(Entry, Result);
     return Result;
+  }
+  std::optional<int> effect(va_t Entry) {
+    const auto Result = contract(Entry);
+    return Result && !Result->ConsumesInput ? std::optional<int>(Result->Delta)
+                                            : std::nullopt;
   }
 };
 
@@ -1770,7 +1842,8 @@ std::optional<int> CFGBuilder::x87CallEffectForTesting(const BinaryImage &Image,
   Q.Remaining = Remaining;
   const auto Result = Index.prove(Entry, Depth, Q);
   Remaining = Q.Remaining;
-  return Result;
+  return Result && !Result->ConsumesInput ? std::optional<int>(Result->Delta)
+                                          : std::nullopt;
 }
 
 bool CFGBuilder::buildNoReturnProof(const BinaryImage &Img, Decoder &Dec,
@@ -2113,6 +2186,8 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
   }
 
   const size_t N = Func.Blocks.size();
+  const auto PriorUnsupported = UnsupportedInstructionAddresses;
+  std::set<va_t> PriorConsumerRefusals;
   std::vector<int> LiftedIn(N, 0), LiftedOut(N, 0), BlockDelta(N, 0);
   std::vector<bool> HasReset(N, false), HasFpu(N, false);
   std::vector<std::map<va_t, uint8_t>> PoppedSlots(N);
@@ -2169,7 +2244,24 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
           continue;
         if (!X87CallEffects)
           X87CallEffects = std::make_shared<X87CallEffectIndex>(*this);
-        if (X87CallEffects->effect(*Target) != std::optional<int>(-1))
+        const auto Contract = X87CallEffects->contract(*Target);
+        if (Contract && Contract->ConsumesInput) {
+          HasTagOperations = true;
+          if (PriorUnsupported.count(Op.Addr))
+            PriorConsumerRefusals.insert(Op.Addr);
+          UnsupportedInstructionAddresses.insert(Op.Addr);
+          if (Op.NumInputs != 1)
+            continue;
+          const unsigned Top = (Rec.FpuTopIn + CallShift) & 7;
+          Op.ConsumesX87Argument = true;
+          Op.X87ScratchSlots = uint8_t(Contract->ScratchSlots);
+          Op.addInput(NdVar::reg(x86reg::stReg(Top), x86reg::FPURegSize));
+          PoppedSlots[I][Boundary.Address] |= uint8_t(1u << Top);
+          ++CallShift;
+          ++BlockDelta[I];
+          continue;
+        }
+        if (!Contract || Contract->ConsumesInput || Contract->Delta != -1)
           continue;
         // The callee's complete returning paths push exactly one initialized
         // value. Publish the definition before SSA and advance TOP before
@@ -2206,8 +2298,10 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
     return;
   if (!X87CallEffects)
     X87CallEffects = std::make_shared<X87CallEffectIndex>(*this);
-  const bool ReturnsX87 =
-      X87CallEffects->effect(Func.Entry) == std::optional<int>(-1);
+  const auto EntryContract = X87CallEffects->contract(Func.Entry);
+  Func.ConsumesX87Argument = EntryContract && EntryContract->ConsumesInput;
+  const bool ReturnsX87 = EntryContract && !EntryContract->ConsumesInput &&
+                          EntryContract->Delta == -1;
   auto bindReturn = [&](LowBlock &Block, int Top) {
     if (!ReturnsX87)
       return;
@@ -2315,6 +2409,23 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
              O < Boundary.FirstOp + Boundary.OpCount; ++O) {
           const LowOp &Op = Block.Ops[O];
           const bool SignOperation = isX87SignOperation(Op);
+          if (Op.ConsumesX87Argument && Op.NumInputs == 2 &&
+              isStReg(Op.Inputs[1])) {
+            const unsigned Slot = x86reg::stRegIndex(Op.Inputs[1].Offset);
+            uint8_t Scratch = 0;
+            for (unsigned K = 1; K <= Op.X87ScratchSlots; ++K)
+              Scratch |= uint8_t(1u << ((Slot + 8 - K) & 7));
+            if (Publish && ((State.Full & State.Payload) & (1u << Slot)) &&
+                (State.Empty & Scratch) == Scratch)
+              ProvenTags[{Id, O}] = false;
+            // The callee can overwrite its argument before consuming it.
+            // Its scratch slots are empty again but their retained payloads
+            // also differ; an empty-tag FXAM cannot reuse pre-call bits.
+            const uint8_t Clobbered = Scratch | uint8_t(1u << Slot);
+            State.Full &= uint8_t(~Clobbered);
+            State.Payload &= uint8_t(~Clobbered);
+            State.Empty |= Clobbered;
+          }
           if (isX87IntegerLoad(Op) && Publish) {
             const unsigned Bit = 1u << x86reg::stRegIndex(Op.Output.Offset);
             if (State.Empty & Bit)
@@ -2331,7 +2442,8 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
           // "pops" with FINCSTP would break that), and those it found full
           // are its arguments or clobbers, so unknown. A proven return
           // definition below fills one slot.
-          if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+          if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+              !Op.ConsumesX87Argument)
             State = Tags{0, State.Empty, 0};
           if (Op.Opcode == NdOp::INTRINSIC) {
             if (!Op.NumInputs || !Op.Inputs[0].isConst()) {
@@ -2394,10 +2506,10 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
         return It != Roots.end() &&
                (*It == Block.StartAddr || *It < Block.EndAddr);
       };
-      // A call boundary empties the register stack: the platform contract
-      // X87CallEffects already applies to every callee. The entry's payload
-      // stays undefined, so this proves only a push's empty destination;
-      // FXAM and sign changes still need the function's own definitions.
+      // An ordinary call boundary has empty tags but no defined payloads.
+      // A checked consumer additionally owns its incoming ST0 parameter;
+      // its graph forbids accesses below it and callers prove scratch space.
+      // FXAM and sign changes still need a defined payload.
       // Other roots, including exception landings, keep an unknown state.
       const bool CallBoundary =
           Block.StartAddr == Func.Entry && Block.ExceptionalPreds.empty();
@@ -2405,7 +2517,9 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
           !Block.ExceptionalPreds.empty() ||
           rootWithin(Func.ModuleAnalysisRoots) ||
           rootWithin(CurrentImg->CodeRefTargets))
-        seed(Block.Id, CallBoundary ? Tags{0, 0xff, 0} : Tags{});
+        seed(Block.Id, !CallBoundary              ? Tags{}
+                       : Func.ConsumesX87Argument ? Tags{1, 0xfe, 1}
+                                                  : Tags{0, 0xff, 0});
     }
     auto solve = [&]() {
       while (!Work.empty() && Budget) {
@@ -2450,6 +2564,14 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
       for (size_t O = 0; O < B.Ops.size(); ++O) {
         NewOffsets[O] = Rewritten.size();
         const LowOp &Op = B.Ops[O];
+        if (Op.ConsumesX87Argument) {
+          if (ProvenTags.count({B.Id, O}))
+            Expanded.insert(Op.Addr);
+          else {
+            Pending.insert(Op.Addr);
+            UnsupportedInstructionAddresses.insert(Op.Addr);
+          }
+        }
         const bool SignOperation = isX87SignOperation(Op);
         const bool IntegerLoad = isX87IntegerLoad(Op);
         if (SignOperation || IntegerLoad ||
@@ -2483,7 +2605,7 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
       B.Ops = std::move(Rewritten);
     }
     for (va_t Address : Expanded)
-      if (!Pending.count(Address))
+      if (!Pending.count(Address) && !PriorConsumerRefusals.count(Address))
         UnsupportedInstructionAddresses.erase(Address);
   };
 

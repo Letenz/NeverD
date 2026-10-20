@@ -636,6 +636,21 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       Args.push_back(Value ? Value : getVar(Arg, Builder));
     }
   }
+  // This is a typed binary80 argument even when the caller stores its bits
+  // as i80, or emits a declaration because the callee body was not selected.
+  if (Op.X87ArgumentInput) {
+    if (Args.empty() || (!Args.back()->getType()->isIntegerTy(80) &&
+                         !Args.back()->getType()->isX86_FP80Ty())) {
+      syncError() << "med_llvm_emitter: checked x87 call has no binary80 "
+                     "argument in "
+                  << (CurMedFunc ? CurMedFunc->Name : "<unknown>") << "\n";
+      FatalCodePointerResolution = true;
+      return;
+    }
+    if (Args.back()->getType()->isIntegerTy(80))
+      Args.back() =
+          Builder.CreateBitCast(Args.back(), llvm::Type::getX86_FP80Ty(*Ctx));
+  }
 
   auto *RetTy = llvm::Type::getInt64Ty(*Ctx);
   auto *I8Ty = llvm::Type::getInt8Ty(*Ctx);
@@ -702,6 +717,10 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       getTargetRegInfo(TargetArch).isX87StackReg(Op.Output.RegOff);
   if (X87Result)
     DefaultRetTy = llvm::Type::getX86_FP80Ty(*Ctx);
+  else if (Op.X87ArgumentInput && !AggregateRetTy &&
+           Op.Output.Kind == MedVar::Reg && Op.Output.Size &&
+           Op.Output.RegOff == getTargetRegInfo(TargetArch).IntReturnReg)
+    DefaultRetTy = llvm::Type::getIntNTy(*Ctx, Op.Output.Size * 8);
 
   llvm::GlobalValue *KnownTarget =
       Target

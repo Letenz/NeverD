@@ -253,6 +253,13 @@ struct MedOp {
   /// after the register arguments as Inputs[1 + CalleeRegisterArgs..]; -1
   /// when the convention publishes none.
   int8_t CalleeVectorArgs = -1;
+  /// Operand carrying a checked callee's incoming x87 ST0, or zero when
+  /// there is no such argument. It follows the recovered ordinary arguments
+  /// in the callable signature, independently of the integer return value.
+  uint8_t X87ArgumentInput = 0;
+  /// Physical slots whose retained payload the checked consumer may change:
+  /// its argument and its temporary stack space. Other ST values survive.
+  uint8_t X87ClobberedSlots = 0;
   /// The vector register count the call's own setup loads for a variadic
   /// callee (CallArgumentConvention::VariadicVectorCountRegister), or -1
   /// where it loads no constant one.
@@ -498,6 +505,9 @@ struct MedFunc {
   /// The operand remains the result after SSA propagation changes its carrier
   /// to a temporary or constant; this is independent of heuristic typing.
   bool ExplicitX87ReturnValue = false;
+  /// The final parameter is the checked incoming logical ST0 consumed by
+  /// every returning path. Its complete binary80 payload is transported.
+  bool ConsumesX87Argument = false;
   /// Bytes of the result every return path defines when that is fewer than
   /// the return register holds (a `bool` left in AL over an undefined RAX);
   /// 0 otherwise.  The bytes above belong to no result.

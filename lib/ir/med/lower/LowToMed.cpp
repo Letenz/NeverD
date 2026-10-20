@@ -720,6 +720,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   Func.ExceptionMetadata = Low.ExceptionMetadata;
   Func.RegistrationStates = Low.RegistrationStates;
   Func.CalleePopBytes = Low.CalleePopBytes;
+  Func.ConsumesX87Argument = Low.ConsumesX87Argument;
   bool HasReturn = false, AllX87Returns = true;
   for (const LowBlock &Block : Low.Blocks)
     for (const LowOp &Op : Block.Ops)
@@ -1034,8 +1035,19 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
                 LB.Ops, LowOpIndex, *Convention->VariadicVectorCountRegister);
             Count && *Count <= ConventionRegs.floatingParamRegs(Fmt).size())
           MOp.VariadicVectorCount = static_cast<int8_t>(*Count);
+      // Bind ordinary register arguments first. The checked stack argument
+      // is a separate binary80 operand, not an integer register argument.
+      if (LOp.ConsumesX87Argument && LOp.NumInputs == 2)
+        MOp.NumInputs = 1;
       if (!bindFormattedCall(MB, MOp, LOp))
         applyCallRegisterEffect(MOp, LOp);
+      if (LOp.ConsumesX87Argument && LOp.NumInputs == 2) {
+        MOp.X87ArgumentInput = MOp.NumInputs;
+        MOp.addInput(ndVarToMedVar(LOp.Inputs[1]));
+        const unsigned Slot = x86reg::stRegIndex(LOp.Inputs[1].Offset);
+        for (unsigned K = 0; K <= LOp.X87ScratchSlots; ++K)
+          MOp.X87ClobberedSlots |= uint8_t(1u << ((Slot + 8 - K) & 7));
+      }
       if (TheArch == Arch::X86 && Low.RegistrationStates &&
           Low.RegistrationStates->SecurityCookiesComplete &&
           Low.RegistrationStates->cookieCheck(LOp.Addr, LOp.Seq)) {

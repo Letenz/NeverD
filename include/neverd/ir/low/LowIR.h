@@ -219,6 +219,11 @@ struct LowOp {
   uint8_t NumInputs = 0;
   va_t Addr = 0;
   int Seq = 0;
+  /// A checked i386 callee consumes Inputs[1], its incoming logical ST0,
+  /// and preserves the remaining register stack. Scratch slots above that
+  /// argument must be empty at this call, as proved before admission.
+  bool ConsumesX87Argument = false;
+  uint8_t X87ScratchSlots = 0;
 
   void addInput(NdVar V) {
     if (NumInputs < 6)
@@ -1217,6 +1222,9 @@ struct LowFunc {
   uint32_t SourceLine = 0;
   std::vector<LowBlock> Blocks;
   std::vector<JumpTable> JumpTables;
+  /// Every returning path consumes one incoming x87 value, with no access
+  /// to the caller's lower stack entries. This value is a typed parameter.
+  bool ConsumesX87Argument = false;
   /// Explicit byte ranges of function-local temporaries, sorted by offset
   /// and nonoverlapping. These values start unbound and require a reaching
   /// definition on every executed path. They may cross instruction/block

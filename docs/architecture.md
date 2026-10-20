@@ -4363,6 +4363,27 @@ transport, not complete x87 control-word or exception semantics. Shared import
 target tracing also rejects partial pointer writes, opaque call barriers and
 instruction temporaries borrowed from another instruction.
 
+An internal i386 helper may instead consume one incoming logical ST0 and
+return an integer. The same machine graph proves that every return consumes
+that value, that no path reads or changes the caller's lower stack entries,
+and how many empty scratch slots it needs above its argument. Unknown calls,
+ordinary ABI callees, divergent returns, control-word changes, environment
+resets and recursive closures cannot establish this contract. A caller must
+prove both the argument's payload/tag and the empty scratch slots before
+admission.
+LowIR binds the binary80 argument before SSA and advances TOP. MedIR transports
+it as a separate final parameter while retaining the integer return. Calls
+preserve lower ST values and the control word, invalidate the consumed and
+scratch payloads, and cannot infer a floating return from a later read of a
+retained ST value. Final signature matching removes surplus ordinary arguments
+before the separate binary80 argument, after forwarder promotion has settled.
+Missing ordinary values keep their positions and refuse native output.
+Definitions and declarations of omitted consumers retain the same binary80
+argument type; transport through integer temporaries uses bit casts.
+This is a typed internal-call contract. Patch output, exported or address-taken
+consumers, and consumers at the image's native entry still require a native
+x87 argument adapter and are refused until one is available.
+
 FH3 catch-return evidence binds the source funclet, return instruction and
 owning continuation after module discovery converges. Shared SSA verifies the
 parent's unwind, decoded prologue and converted stack effects before restoring

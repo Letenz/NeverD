@@ -221,6 +221,70 @@ BinaryImage x87CallLoopImage(Arch Architecture, BinaryFormat Format,
   return Image;
 }
 
+BinaryImage x87ConsumingCallImage(
+    BinaryFormat Format,
+    const std::vector<uint8_t> &Callee = {0x83, 0xec, 4, 0xdb, 0x1c, 0x24, 0x58,
+                                          0xc3},
+    bool Extended = false, bool IntegerArgs = false) {
+  auto Image = x87CallLoopImage(Arch::X86, Format);
+  auto &Text = Image.Segments[0];
+  std::fill(Text.Data.begin(), Text.Data.end(), 0xcc);
+  std::vector<uint8_t> Caller{0x83, 0xec, 0x10,                // sub esp,16
+                              0xc7, 0x04, 0x24, 3, 0, 0, 0,    // remaining = 3
+                              0xc7, 0x44, 0x24, 4, 0, 0, 0, 0, // sum = 0
+                              0xc7, 0x44, 0x24, 8, 7, 0, 0, 0, // retained = 7
+                              0xdb, 0x44, 0x24, 8};            // fild retained
+  const size_t Loop = Caller.size();
+  Caller.insert(Caller.end(), {0x8b, 0x04, 0x24,       // eax = remaining
+                               0x89, 0x44, 0x24, 12,   // local = eax
+                               0xdb, 0x44, 0x24, 12}); // fild local
+  if (IntegerArgs)
+    Caller.insert(Caller.end(),
+                  {0x89, 0x04, 0x24, // explicit outgoing stack argument
+                   0xb9, 11, 0, 0, 0, 0xba, 23, 0, 0, 0}); // ecx, edx
+  const uint32_t Disp = 0x1100 - (0x1000 + Caller.size() + 5);
+  Caller.push_back(0xe8);
+  for (unsigned I = 0; I < 4; ++I)
+    Caller.push_back(uint8_t(Disp >> (8 * I)));
+  Caller.insert(Caller.end(), {0x01, 0x44, 0x24, 4, // sum += eax
+                               0x83, 0x2c, 0x24, 1});
+  const int Back = int(Loop) - int(Caller.size() + 2);
+  Caller.insert(Caller.end(),
+                {0x75, uint8_t(Back), 0xdb, 0x5c, 0x24, 8, // fistp retained
+                 0x8b, 0x44, 0x24, 4,                      // eax = sum
+                 0x03, 0x44, 0x24, 8,                      // eax += retained
+                 0x83, 0xc4, 0x10, 0xc3});
+  if (Extended)
+    Caller = {0x83, 0xec, 0x10, 0xc7, 0x04, 0x24, 8,    0,    0,    0,
+              0xc7, 0x44, 0x24, 4,    0,    0,    0,    0x80, 0x66, 0xc7,
+              0x44, 0x24, 8,    0xff, 0x3f, 0xdb, 0x2c, 0x24, // fldt 1 + 2^-60
+              0xe8, 0xdf, 0,    0,    0,    0x83, 0xc4, 0x10, 0xc3};
+  std::copy(Caller.begin(), Caller.end(), Text.Data.begin());
+  std::copy(Callee.begin(), Callee.end(), Text.Data.begin() + 0x100);
+  Image.Symbols.resize(2);
+  Image.Symbols[0].Size = Caller.size();
+  Image.Symbols[1].Size = Callee.size();
+  Image.KnownCodeRanges = {{0x1000, 0x1000 + Caller.size()},
+                           {0x1100, 0x1100 + Callee.size()}};
+  return Image;
+}
+
+void wrapX87Consumer(BinaryImage &Image, bool Tail) {
+  auto &Bytes = Image.Segments[0].Data;
+  const size_t Size = Image.Symbols[1].Size;
+  std::copy_n(Bytes.begin() + 0x100, Size, Bytes.begin() + 0x200);
+  std::fill(Bytes.begin() + 0x100, Bytes.begin() + 0x200, 0xcc);
+  const std::array<uint8_t, 6> Wrapper{
+      uint8_t(Tail ? 0xe9 : 0xe8), 0xfb, 0, 0, 0, 0xc3};
+  std::copy(Wrapper.begin(), Wrapper.end(), Bytes.begin() + 0x100);
+  Image.Symbols[1].Size = Tail ? 5 : 6;
+  Image.KnownCodeRanges[1].second = 0x1100 + Image.Symbols[1].Size;
+  auto Symbol = neverd::Symbol::makeFunc(0x1200, Size);
+  Symbol.Name = "x87_consumer_leaf";
+  Image.Symbols.push_back(Symbol);
+  Image.KnownCodeRanges.emplace_back(0x1200, 0x1200 + Size);
+}
+
 bool hasX87CallDefinition(const LowFunc &Function) {
   for (const auto &B : Function.Blocks)
     for (const auto &Op : B.Ops)
@@ -606,6 +670,281 @@ TEST(X87CallStack, IncompleteCallClosureCannotAcquireAnEffect) {
     EXPECT_EQ(hasX87CallDefinition(Low),
               Count == limits::kMaxX87CallProofDepth);
   }
+}
+
+TEST(X87CallStack, AConsumingHelperCarriesItsIncomingPayloadAcrossALoop) {
+  for (BinaryFormat Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+    SCOPED_TRACE(static_cast<int>(Format));
+    auto Image = x87ConsumingCallImage(Format);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Image));
+    CFGBuilder Builder;
+    const std::set<va_t> Entries{0x1000, 0x1100};
+    Builder.setKnownFuncEntries(&Entries);
+    const auto Low = Builder.build(Image, Dec, 0x1000);
+    EXPECT_TRUE(Low.hasCompleteInstructionLift());
+    std::set<va_t> Starts;
+    bool Found = false;
+    for (const auto &Block : Low.Blocks) {
+      EXPECT_TRUE(Starts.insert(Block.StartAddr).second);
+      for (const auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::CALL) {
+          Found = true;
+          ASSERT_EQ(Op.NumInputs, 2u);
+          EXPECT_EQ(Op.Inputs[1].Size, 10u);
+          EXPECT_TRUE(Op.Inputs[1].isReg());
+          EXPECT_TRUE(
+              getTargetRegInfo(Arch::X86).isX87StackReg(Op.Inputs[1].Offset));
+          EXPECT_EQ(Op.Output.Offset, x86reg::RAX);
+        }
+    }
+    EXPECT_TRUE(Found);
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.NoOpt = true;
+    Options.LiftMode = true;
+    Options.OnlyFunctionEntries = Entries;
+    auto Result = Pipeline().run(Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    ASSERT_TRUE(Result.LlvmModule);
+    EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+    const auto Helper = llvm::find_if(
+        Result.MedFuncs, [](const MedFunc &F) { return F.Entry == 0x1100; });
+    ASSERT_NE(Helper, Result.MedFuncs.end());
+    ASSERT_EQ(Helper->Params.size(), 1u);
+    EXPECT_EQ(Helper->Params[0].RegOff, x86reg::ST0);
+    EXPECT_EQ(Helper->Params[0].Size, 10u);
+    ASSERT_EQ(Helper->TypedParams.size(), 1u);
+    EXPECT_EQ(Helper->TypedParams[0].Type->Kind, NdTypeKind::Float);
+    const auto Caller = llvm::find_if(
+        Result.MedFuncs, [](const MedFunc &F) { return F.Entry == 0x1000; });
+    ASSERT_NE(Caller, Result.MedFuncs.end());
+    ASSERT_EQ(Caller->CallInfos.size(), 1u);
+    ASSERT_EQ(Caller->CallInfos[0].Args.size(), 1u);
+    EXPECT_EQ(Caller->CallInfos[0].Args[0].Size, 10u);
+    EXPECT_FALSE(Caller->FPReturnViaX87);
+    Options.LiftMode = false;
+    Options.PatchMode = true;
+    auto Patch = Pipeline().run(Image, Context, Options);
+    EXPECT_FALSE(Patch.Success);
+    EXPECT_FALSE(Patch.LlvmModule);
+    EXPECT_NE(Patch.Error.find("native x87 argument adapter"),
+              std::string::npos);
+    Options.LiftMode = true;
+    Options.PatchMode = false;
+    Image.CodeRefTargets.insert(0x1100);
+    auto AddressTaken = Pipeline().run(Image, Context, Options);
+    EXPECT_FALSE(AddressTaken.Success);
+    EXPECT_FALSE(AddressTaken.LlvmModule);
+    EXPECT_NE(AddressTaken.Error.find("x87 argument adapter"),
+              std::string::npos);
+  }
+}
+
+TEST(X87CallStack, ConsumersRequireCompleteConsistentStackAndPayloadProofs) {
+  const std::vector<uint8_t> Pop{0x83, 0xec, 4, 0xdb, 0x1c, 0x24, 0x58, 0xc3};
+  const std::vector<std::vector<uint8_t>> Prefixes{
+      {},                             // consumes only ST0
+      {0xd9, 0xc0, 0xde, 0xc1},       // one temporary, faddp consumes it again
+      {0xdd, 0xd1},                   // writes caller's ST1
+      {0xd8, 0xc1},                   // reads caller's ST1
+      {0xdb, 0xe3},                   // resets the environment
+      {0xe8, 0xfb, 0xff, 0xff, 0xff}, // recursive call
+      {0xe8, 0xfb, 0, 0, 0},          // incomplete callee at 0x1200
+      {0x85, 0xc0, 0x75, 1, 0xc3},    // one return leaves ST0 unconsumed
+      {0xdd, 0xd8}, // pops the incoming value before reading it
+      {0xe8, 0xfb, 0, 0,
+       0},                // complete ordinary call has no ST preservation ABI
+      {0xd9, 0x2c, 0x24}, // fldcw changes the caller's control state
+  };
+  for (unsigned I = 0; I < Prefixes.size(); ++I) {
+    SCOPED_TRACE(I);
+    auto Body = Prefixes[I];
+    Body.insert(Body.end(), Pop.begin(), Pop.end());
+    auto Image = x87ConsumingCallImage(BinaryFormat::ELF, Body);
+    if (I == 9) {
+      Image.Segments[0].Data[0x200] = 0xc3;
+      Image.Symbols.push_back(Symbol::makeFunc(0x1200, 1));
+      Image.KnownCodeRanges.emplace_back(0x1200, 0x1201);
+    }
+    auto Cache = createX87CallGraphCache();
+    const std::set<va_t> Entries{0x1000, 0x1100, 0x1200};
+    for (unsigned Repeat = 0; Repeat < 2; ++Repeat) {
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Image));
+      CFGBuilder Builder;
+      Builder.setKnownFuncEntries(&Entries);
+      Builder.setX87CallGraphCache(Cache);
+      const auto Helper = Builder.build(Image, Dec, 0x1100);
+      EXPECT_EQ(Helper.ConsumesX87Argument, I < 2);
+      const auto Caller = Builder.build(Image, Dec, 0x1000);
+      for (const auto &Block : Caller.Blocks)
+        for (const auto &Op : Block.Ops)
+          if (Op.Opcode == NdOp::CALL) {
+            EXPECT_EQ(Op.ConsumesX87Argument, I < 2);
+            if (I < 2)
+              EXPECT_EQ(Op.X87ScratchSlots, I);
+          }
+    }
+  }
+}
+
+TEST(X87CallStack, ConsumerCallsNeedAnArgumentAndEmptyScratchSlots) {
+  const std::vector<uint8_t> Helper{0xd9, 0xc0, 0xde, 0xc1, // one scratch slot
+                                    0x83, 0xec, 4,    0xdb,
+                                    0x1c, 0x24, 0x58, 0xc3};
+  for (bool ExhaustScratch : {false, true}) {
+    auto Image = x87ConsumingCallImage(BinaryFormat::ELF, Helper);
+    auto &Bytes = Image.Segments[0].Data;
+    if (ExhaustScratch) {
+      // Keep six more entries below the argument: all eight slots are full.
+      Bytes.insert(Bytes.begin(), {0xd9, 0xe8, 0xd9, 0xe8, 0xd9, 0xe8, 0xd9,
+                                   0xe8, 0xd9, 0xe8, 0xd9, 0xe8});
+      Bytes.resize(Image.Segments[0].Size);
+      // Keep the helper at its original entry, and adjust the direct call.
+      std::fill(Bytes.begin() + 0x100, Bytes.begin() + 0x140, 0xcc);
+      std::copy(Helper.begin(), Helper.end(), Bytes.begin() + 0x100);
+      Image.Symbols[0].Size += 12;
+      Image.KnownCodeRanges[0].second += 12;
+      // FLD1 also contains E8, so find the call after the complete prefix.
+      const auto Actual =
+          std::find(Bytes.begin() + 42, Bytes.begin() + 0x100, 0xe8);
+      ASSERT_NE(Actual, Bytes.begin() + 0x100);
+      const uint32_t Disp = 0x1100 - (0x1000 + (Actual - Bytes.begin()) + 5);
+      for (unsigned K = 0; K < 4; ++K)
+        Actual[K + 1] = uint8_t(Disp >> (8 * K));
+    } else {
+      const std::array<uint8_t, 4> Load{0xdb, 0x44, 0x24, 12};
+      const auto It =
+          std::search(Bytes.begin(), Bytes.end(), Load.begin(), Load.end());
+      ASSERT_NE(It, Bytes.end());
+      std::fill(It, It + Load.size(), 0x90);
+    }
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Image));
+    CFGBuilder Builder;
+    const std::set<va_t> Entries{0x1000, 0x1100};
+    Builder.setKnownFuncEntries(&Entries);
+    const auto Low = Builder.build(Image, Dec, 0x1000);
+    EXPECT_FALSE(Low.hasCompleteInstructionLift());
+    bool RejectedCall = false;
+    for (const auto &Block : Low.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.ConsumesX87Argument)
+          RejectedCall |=
+              llvm::is_contained(Low.UnsupportedInstructionAddresses, Op.Addr);
+    EXPECT_TRUE(RejectedCall);
+  }
+}
+
+TEST(X87CallStack, ConsumerContractsCrossDirectAndTailWrappers) {
+  for (bool Tail : {false, true}) {
+    auto Image = x87ConsumingCallImage(BinaryFormat::ELF);
+    wrapX87Consumer(Image, Tail);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Image));
+    CFGBuilder Builder;
+    const std::set<va_t> Entries{0x1000, 0x1100, 0x1200};
+    Builder.setKnownFuncEntries(&Entries);
+    for (va_t Entry : {0x1000, 0x1100, 0x1200}) {
+      const auto Low = Builder.build(Image, Dec, Entry);
+      EXPECT_TRUE(Low.hasCompleteInstructionLift());
+      EXPECT_EQ(Low.ConsumesX87Argument, Entry != 0x1000);
+    }
+  }
+}
+
+TEST(X87CallStack, AConsumerDoesNotPromiseTheRetainedEmptySlotPayload) {
+  auto Image = x87ConsumingCallImage(
+      BinaryFormat::ELF, {0xb8, 23, 0, 0, 0, 0xd9, 0xe1, 0xdd, 0xd8, 0xc3});
+  // The helper takes fabs before popping, so an FXAM of its emptied slot
+  // cannot reuse the caller's old negative payload sign.
+  const std::vector<uint8_t> Caller{
+      0x6a, 0xff, 0xdb, 0x04, 0x24, // push -1; fild [esp]
+      0xe8, 0xf6, 0,    0,    0,    // call helper
+      0xd9, 0xf7, 0xd9, 0xf7, 0xd9, 0xf7, 0xd9, 0xf7,
+      0xd9, 0xf7, 0xd9, 0xf7, 0xd9, 0xf7, // seven fincstp reach the old ST0
+      0xd9, 0xe5,                         // fxam
+      0xdf, 0xe0, 0x59, 0xc3};            // fnstsw ax; pop ecx; ret
+  auto &Bytes = Image.Segments[0].Data;
+  std::fill(Bytes.begin(), Bytes.begin() + 0x100, 0xcc);
+  std::copy(Caller.begin(), Caller.end(), Bytes.begin());
+  Image.Symbols[0].Size = Caller.size();
+  Image.KnownCodeRanges[0].second = 0x1000 + Caller.size();
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Image));
+  CFGBuilder Builder;
+  const std::set<va_t> Entries{0x1000, 0x1100};
+  Builder.setKnownFuncEntries(&Entries);
+  const auto Low = Builder.build(Image, Dec, 0x1000);
+  EXPECT_TRUE(
+      llvm::is_contained(Low.UnsupportedInstructionAddresses, va_t(0x1018)));
+}
+
+TEST(X87CallStack, MissingOrdinaryArgumentsCannotDisplaceTheX87Argument) {
+  auto Image =
+      x87ConsumingCallImage(BinaryFormat::ELF,
+                            {0x83, 0xec, 4, 0xdb, 0x1c, 0x24, 0x58, 0x01, 0xc8,
+                             0x01, 0xd0, 0x03, 0x44, 0x24, 4, 0xc3},
+                            false, true);
+  auto &Bytes = Image.Segments[0].Data;
+  const std::array<uint8_t, 4> OutgoingStore{0x89, 0x04, 0x24, 0xb9};
+  const auto It = std::search(Bytes.begin(), Bytes.end(), OutgoingStore.begin(),
+                              OutgoingStore.end());
+  ASSERT_NE(It, Bytes.end());
+  // This loop-carried slot has no recovered argument value. Its absence
+  // must remain explicit; the binary80 value still occupies the final slot.
+  std::fill(It, It + 3, 0x90);
+  for (bool NoOpt : {false, true}) {
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.NoOpt = NoOpt;
+    Options.LiftMode = true;
+    Options.OnlyFunctionEntries = {0x1000, 0x1100};
+    auto Lift = Pipeline().run(Image, Context, Options);
+    EXPECT_FALSE(Lift.Success);
+    EXPECT_NE(Lift.Error.find("missing an ordinary argument"),
+              std::string::npos)
+        << Lift.Error;
+    Options.LiftMode = false;
+    auto Source = Pipeline().run(Image, Context, Options);
+    ASSERT_TRUE(Source.Success) << Source.Error;
+    const auto Caller = llvm::find_if(
+        Source.MedFuncs, [](const MedFunc &F) { return F.Entry == 0x1000; });
+    ASSERT_NE(Caller, Source.MedFuncs.end());
+    ASSERT_EQ(Caller->CallInfos.size(), 1u);
+    const auto &Args = Caller->CallInfos[0].Args;
+    ASSERT_EQ(Args.size(), 4u);
+    EXPECT_EQ(Args[2].Kind, MedVar::Unspecified);
+    EXPECT_EQ(Args[3].Size, 10u);
+    EXPECT_NE(Args[3].Kind, MedVar::Unspecified);
+  }
+}
+
+TEST(X87CallStack, SelectedCallerKeepsTheConsumerDeclarationBinary80) {
+  for (BinaryFormat Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (bool NoOpt : {false, true}) {
+      auto Image = x87ConsumingCallImage(Format);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.NoOpt = NoOpt;
+      Options.LiftMode = true;
+      Options.OnlyFunctionEntries = {0x1000};
+      auto Result = Pipeline().run(Image, Context, Options);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      ASSERT_TRUE(Result.LlvmModule);
+      const auto *Callee = Result.LlvmModule->getFunction("sub_1100");
+      ASSERT_TRUE(Callee);
+      ASSERT_TRUE(Callee->isDeclaration());
+      ASSERT_EQ(Callee->arg_size(), 1u);
+      EXPECT_TRUE(Callee->getReturnType()->isIntegerTy(32));
+      EXPECT_TRUE(Callee->getArg(0)->getType()->isX86_FP80Ty());
+    }
 }
 
 TEST(X87CallGraphCache, IndependentBuildersRetainTheSameCallAndReturnIR) {
@@ -1240,6 +1579,136 @@ void expectSameFunctionFacts(const LowFunc &Cold, const LowFunc &Warm) {
             Cold.CxxContinuationEntries.size());
   EXPECT_EQ(Warm.SEHLocalUnwindContinuations.size(),
             Cold.SEHLocalUnwindContinuations.size());
+}
+TEST_F(X86_32_X87FPU,
+       NativeAndLiftedConsumersPreserveTheRemainingStackAndBinary80) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "requires a Linux x86-64 host with native i386 execution";
+#else
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "requires Clang's i386 target";
+  const std::vector<std::vector<uint8_t>> Helpers{
+      {0x83, 0xec, 4, 0xdb, 0x1c, 0x24, 0x58, 0xc3},
+      {0xd9, 0xc0, 0xde, 0xc1, 0x83, 0xec, 4, 0xdb, 0x1c, 0x24, 0x58, 0xc3},
+      {0x83, 0xec, 0x10, 0xd9, 0xe8, 0xde, 0xe9, // subtract one exactly
+       0xdb, 0x3c, 0x24, 0x0f, 0xb7, 0x44, 0x24, 8, 0x83, 0xc4, 0x10, 0xc3},
+      {0xb8, 23, 0, 0, 0, 0xd9, 0xe1, 0xdd, 0xd8, 0xc3},
+      {0x83, 0xec, 4, 0xdb, 0x1c, 0x24, 0x58,               // fistp; pop eax
+       0x01, 0xc8, 0x01, 0xd0, 0x03, 0x44, 0x24, 4, 0xc3}}; // ecx+edx+stack
+  const std::array<unsigned, 8> Expected{13, 19, 0x3fc3, 13, 13, 76, 121, 121};
+  const std::array<unsigned, 8> HelperForCase{0, 1, 2, 0, 0, 3, 4, 4};
+  for (unsigned Case = 0; Case < Expected.size(); ++Case)
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(Case);
+      SCOPED_TRACE(NoOpt);
+      auto Image =
+          x87ConsumingCallImage(BinaryFormat::ELF, Helpers[HelperForCase[Case]],
+                                Case == 2, Case >= 6);
+      const bool Wrapper = Case == 3 || Case == 4 || Case == 7;
+      if (Wrapper)
+        wrapX87Consumer(Image, Case != 3);
+      // Selected modules use the original entry's automatic name for an
+      // omitted callee. Give the separately emitted definition that name.
+      Image.Symbols[1].Name = "sub_1100";
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.LiftMode = true;
+      Options.NoOpt = NoOpt;
+      Options.OnlyFunctionEntries = {0x1000, 0x1100};
+      if (Wrapper)
+        Options.OnlyFunctionEntries.insert(0x1200);
+      auto Lift = Pipeline().run(Image, Context, Options);
+      if (!Lift.Success)
+        Pipeline::dumpMedIR(Lift.MedFuncs, llvm::errs());
+      ASSERT_TRUE(Lift.Success) << Lift.Error;
+      ASSERT_TRUE(Lift.LlvmModule);
+      ASSERT_FALSE(llvm::verifyModule(*Lift.LlvmModule, &llvm::errs()));
+      for (const MedFunc &Function : Lift.MedFuncs)
+        if (Function.ConsumesX87Argument) {
+          const auto *Emitted = Lift.LlvmModule->getFunction(Function.Name);
+          ASSERT_TRUE(Emitted);
+          ASSERT_FALSE(Emitted->arg_empty());
+          EXPECT_TRUE(Emitted->getArg(Emitted->arg_size() - 1)
+                          ->getType()
+                          ->isX86_FP80Ty());
+        }
+      const auto LLVMFile = tmpFile("consumer.ll");
+      std::string IR;
+      llvm::raw_string_ostream OS(IR);
+      neverd::test::printHostCompilerFixture(*Lift.LlvmModule, OS);
+      std::ofstream(LLVMFile) << IR;
+      const auto CallerFile = tmpFile("consumer-caller.ll");
+      const auto CalleeFile = tmpFile("consumer-callee.ll");
+      for (bool CallerOnly : {true, false}) {
+        auto SplitOptions = Options;
+        if (CallerOnly)
+          SplitOptions.OnlyFunctionEntries = {0x1000};
+        else
+          SplitOptions.OnlyFunctionEntries.erase(0x1000);
+        auto Part = Pipeline().run(Image, Context, SplitOptions);
+        ASSERT_TRUE(Part.Success) << Part.Error;
+        ASSERT_TRUE(Part.LlvmModule);
+        ASSERT_FALSE(llvm::verifyModule(*Part.LlvmModule, &llvm::errs()));
+        std::string PartIR;
+        llvm::raw_string_ostream PartOS(PartIR);
+        neverd::test::printHostCompilerFixture(*Part.LlvmModule, PartOS);
+        std::ofstream(CallerOnly ? CallerFile : CalleeFile) << PartIR;
+      }
+      Options.LiftMode = false;
+      auto High = Pipeline().run(Image, Context, Options);
+      ASSERT_TRUE(High.Success) << High.Error;
+      const auto CFile = tmpFile("consumer.c");
+      std::string C = "#include <stdint.h>\n#include <stddef.h>\n";
+      llvm::raw_string_ostream COS(C);
+      CEmitterOptions Emit;
+      Emit.TheArch = Arch::X86;
+      Emit.Format = BinaryFormat::ELF;
+      Emit.Image = &Image;
+      Emit.EmitIncludes = false;
+      ASSERT_TRUE(HighCEmitter().emit(High.HighFuncs, COS, Emit));
+      std::ofstream(CFile) << C;
+      const auto NativeFile = tmpFile("consumer.s");
+      std::ofstream Native(NativeFile);
+      Native << ".text\n.globl x87_call_loop\nx87_call_loop:\n.byte ";
+      const auto &Bytes = Image.Segments[0].Data;
+      for (size_t I = 0; I < Bytes.size(); ++I)
+        Native << (I ? "," : "") << unsigned(Bytes[I]);
+      Native << "\n.section .note.GNU-stack,\"\",@progbits\n";
+      Native.close();
+      const auto HarnessFile = tmpFile("consumer-start.s");
+      std::ofstream(HarnessFile)
+          << ".text\n.globl _start\n_start:\nfninit\ncall x87_call_loop\ncmpl $"
+          << Expected[Case]
+          << ",%eax\nsetne %bl\nmovzbl %bl,%ebx\nmovl $1,%eax\nint $0x80\n"
+             ".section .note.GNU-stack,\"\",@progbits\n";
+      for (const std::string Opt : {"-O0", "-O2"})
+        for (const auto &Sources : std::vector<std::vector<std::string>>{
+                 {NativeFile.string()},
+                 {LLVMFile.string()},
+                 {CFile.string()},
+                 {CallerFile.string(), CalleeFile.string()}}) {
+          SCOPED_TRACE(Opt);
+          SCOPED_TRACE(Sources.front());
+          const auto Binary = tmpFile("consumer-execution");
+          std::vector<std::string> BuildArgs{"--target=i386-linux-gnu",
+                                             Opt,
+                                             "-ffreestanding",
+                                             "-fno-strict-aliasing",
+                                             "-fuse-ld=lld",
+                                             "-nostdlib",
+                                             "-static",
+                                             "-no-pie"};
+          BuildArgs.insert(BuildArgs.end(), Sources.begin(), Sources.end());
+          BuildArgs.insert(BuildArgs.end(),
+                           {HarnessFile.string(), "-o", Binary.string()});
+          const auto Build = exec(NEVERD_TEST_CLANG, BuildArgs);
+          ASSERT_TRUE(Build.ok()) << Build.err << IR << C;
+          const auto Run = exec(Binary.string(), {});
+          ASSERT_TRUE(Run.ok()) << Run.err << IR << C;
+        }
+    }
+#endif
 }
 } // namespace
 

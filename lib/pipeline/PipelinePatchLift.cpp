@@ -122,6 +122,30 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     }
     return false;
   }
+  if (Opts.PatchMode)
+    for (const MedFunc &Function : Result.MedFuncs) {
+      bool NeedsAdapter = Function.ConsumesX87Argument;
+      for (const MedBlock &Block : Function.Blocks)
+        for (const MedOp &Op : Block.Ops)
+          NeedsAdapter |= Op.X87ArgumentInput != 0;
+      if (NeedsAdapter) {
+        Result.Error =
+            "patch output requires a native x87 argument adapter for "
+            "function 0x" +
+            llvm::utohexstr(Function.Entry);
+        return false;
+      }
+    }
+  for (const MedFunc &Function : Result.MedFuncs)
+    if (Function.ConsumesX87Argument &&
+        (Img.CodeRefTargets.count(Function.Entry) ||
+         Img.findExportAt(Function.Entry) || Img.Entry == Function.Entry)) {
+      Result.Error =
+          "native entry/address use requires an x87 argument adapter for "
+          "function 0x" +
+          llvm::utohexstr(Function.Entry);
+      return false;
+    }
 
   auto AllFuncNames = buildFuncNameMap(Img, Result);
 
@@ -209,6 +233,26 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   // interprocedural facts before either serial or sharded LLVM emission.
   propagateInternalNoReturn(Result.MedFuncs, Img.Arch, Img.UserNoReturn,
                             importCallAddresses(Img));
+
+  for (const MedFunc &Function : Result.MedFuncs)
+    for (const MedBlock &Block : Function.Blocks)
+      for (size_t I = 0; I < Block.Ops.size(); ++I) {
+        if (!Block.Ops[I].X87ArgumentInput)
+          continue;
+        const auto Call =
+            llvm::find_if(Function.CallInfos, [&](const MedCallInfo &CI) {
+              return CI.BlockId == Block.Id && CI.OpIdx == I;
+            });
+        if (Call == Function.CallInfos.end() || Call->Args.empty() ||
+            llvm::any_of(Call->Args, [](const MedVar &Arg) {
+              return Arg.Kind == MedVar::Unspecified;
+            })) {
+          Result.Error = "checked x87 call is missing an ordinary argument in "
+                         "function 0x" +
+                         llvm::utohexstr(Function.Entry);
+          return false;
+        }
+      }
 
   if (!recordMedIRVerification(Result, "pipeline-backend-input")) {
     Result.Error = "MedIR verification failed before backend emission";

@@ -1419,6 +1419,22 @@ depth exhaustion, uninitialized/popped slots, resets, tag invalidation and
 opaque state restoration. Builder reuse after an image edit invalidates old
 proofs. `ImportCalleeTrace` additionally checks partial pointer writes and
 instruction-local temporary identity on x86, x64 and AArch64.
+The consuming-helper cases require a separately transported binary80 argument,
+balanced caller loops, preserved lower ST entries and control words, and empty
+callee scratch slots. Counterexamples cover lower-slot reads/writes, missing
+arguments, exhausted scratch space, control-word changes, incomplete/recursive
+callees and unequal returns; direct and tail wrappers must retain the contract
+through cached graphs.
+`X86_32_X87FPU.NativeAndLiftedConsumersPreserveTheRemainingStackAndBinary80`
+compares independent i386 machine bodies, whole and separately emitted LLVM
+modules, and HighC at default and NoOpt pipelines with O0/O2 compilation.
+Mixed register, stack and x87 parameters retain their order through direct and
+tail wrappers. Missing ordinary arguments cannot displace the x87 argument.
+A value of `1 + 2^-60` detects accidental double narrowing. Native-address and
+patch cases retain an explicit adapter refusal. The sign suite distinguishes
+unconsumed entry reads from consumers requiring a native entry adapter.
+Run `NeverDX87CallGraphTests` and the x87 integer-load, sign,
+conversion, parameter and function-admission suites when changing this boundary.
 `PipelineOutcome.SelectedX87WrappersPreserveReturnsAcrossParallelBuilds`
 compares serial and parallel LowIR analysis of 32 selected wrappers on x86 and
 x64. Each wrapper has no local x87 instruction and calls the same forwarding
