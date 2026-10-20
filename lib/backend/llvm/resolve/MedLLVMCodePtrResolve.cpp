@@ -40,6 +40,58 @@
 
 namespace neverd {
 
+namespace {
+
+// Values consumed by emitter records, outside ordinary operation operands.
+// Both table-load omission and address-operation omission must see these uses.
+bool visitMedAuxiliaryUses(const MedFunc &Func,
+                           llvm::function_ref<void(const MedVar &)> Visit,
+                           llvm::function_ref<bool(uint64_t)> Consume) {
+  auto use = [&](const MedVar &Value) {
+    if (!Consume(1))
+      return false;
+    Visit(Value);
+    return true;
+  };
+  for (const MedCallInfo &Call : Func.CallInfos) {
+    if (!Consume(1))
+      return false;
+    for (const MedVar &Arg : Call.Args)
+      if (!use(Arg))
+        return false;
+  }
+  for (const auto &[Key, Plan] : Func.SwitchSelectorPlans) {
+    (void)Key;
+    if (!Consume(1) || !use(Plan.Selector) || !use(Plan.Condition))
+      return false;
+    for (const auto &[Edge, Selector] : Plan.EdgeSelectors) {
+      (void)Edge;
+      if (!use(Selector))
+        return false;
+    }
+  }
+  for (const MedScalarAddressModel &Model : Func.ScalarAddressModels)
+    if (!use(Model.Value))
+      return false;
+  for (const MedI386GetPcModel &Model : Func.I386GetPcModels)
+    if (!use(Model.Output) || !use(Model.Value))
+      return false;
+  for (const MedStructReturnCandidate &Candidate :
+       Func.StructReturnCandidates) {
+    if (!Consume(1))
+      return false;
+    for (const MedVar &Field : Candidate.Fields)
+      if (!use(Field))
+        return false;
+  }
+  for (const MedCallClobber &Clobber : Func.CallClobbers)
+    if (!use(Clobber.PreservedInput))
+      return false;
+  return true;
+}
+
+} // namespace
+
 bool MedLLVMEmitter::preservesRegistrationImageStorage(uint64_t Begin,
                                                        uint64_t End) const {
   return Begin < End && llvm::any_of(
@@ -323,7 +375,62 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(
       Seg->Data.size() > limits::kMaxSingleGlobalEmbedLen && PtrSz != 0) {
     const uint64_t SegEnd = Seg->VA + Seg->Data.size();
     const uint64_t Target = *InCodeObjectAddr;
-    auto It = Img->DataInCode.upper_bound(Target);
+    // A recovered PE32 compact switch can retain its index value outside the
+    // dispatch. Its byte table must then remain readable. Extend the adjacent
+    // relocated-pointer object by precisely the resolver-owned index bytes,
+    // never by an arbitrary suffix of the executable segment. Collect every
+    // module range before choosing the object so address order cannot change
+    // its extent or split aliases across two globals.
+    std::vector<std::pair<uint64_t, uint64_t>> IndexRuns;
+    if (Img->isCOFF() && Img->Arch == Arch::X86 && !Img->IsRelocatable &&
+        Seg->isReadable() && !Seg->isWritable())
+      for (const JumpTableStorageRange &Range : ModuleJumpTableStorageRanges) {
+        const auto End = Range.storageEnd();
+        if ((Range.EntrySize != 1 && Range.EntrySize != 2) ||
+            Range.EntryStride != Range.EntrySize || !End ||
+            Range.BaseAddr < Seg->VA || *End > SegEnd ||
+            *End - Range.BaseAddr > limits::kMaxSingleGlobalEmbedLen)
+          continue;
+        // Include a pointer that starts just before the index range: partial
+        // pointer storage is not raw index data either.
+        const uint64_t Begin =
+            Range.BaseAddr - std::min<uint64_t>(Range.BaseAddr, PtrSz - 1);
+        auto overlapsSlots = [&](const std::set<va_t> &Slots) {
+          auto Slot = Slots.lower_bound(Begin);
+          return Slot != Slots.end() && *Slot < *End;
+        };
+        auto overlapsBindings = [&](const auto &Bindings) {
+          auto Slot = Bindings.lower_bound(Begin);
+          return Slot != Bindings.end() && Slot->first < *End;
+        };
+        if (overlapsSlots(Img->CodePtrRelocSlots) ||
+            overlapsSlots(Img->DataPtrRelocSlots) ||
+            overlapsSlots(ConflictingImportStorageSlots) ||
+            overlapsBindings(EffectiveImportStorageSlots) ||
+            overlapsBindings(ExternalFunctionPointerSlots) ||
+            llvm::any_of(Img->RuntimeCallablePointerSlots,
+                         [&](const auto &Slot) {
+                           return Slot.SlotVA >= Begin && Slot.SlotVA < *End;
+                         }))
+          continue;
+        IndexRuns.emplace_back(Range.BaseAddr, *End);
+      }
+    llvm::sort(IndexRuns);
+    size_t Count = 0;
+    for (const auto &Range : IndexRuns)
+      if (Count && Range.first <= IndexRuns[Count - 1].second)
+        IndexRuns[Count - 1].second =
+            std::max(IndexRuns[Count - 1].second, Range.second);
+      else
+        IndexRuns[Count++] = Range;
+    IndexRuns.resize(Count);
+    uint64_t PointerTarget = Target;
+    for (const auto &[Begin, End] : IndexRuns)
+      if (Begin != 0 && Begin <= Target && Target < End) {
+        PointerTarget = Begin - 1;
+        break;
+      }
+    auto It = Img->DataInCode.upper_bound(PointerTarget);
     if (It != Img->DataInCode.begin()) {
       const uint64_t Start = *std::prev(It);
       auto isSlot = [&](uint64_t A) {
@@ -333,6 +440,9 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(
       uint64_t End = Start;
       while (End + PtrSz <= SegEnd && isSlot(End))
         End += PtrSz;
+      for (const auto &[IndexBegin, IndexEnd] : IndexRuns)
+        if (IndexBegin == End)
+          End = IndexEnd;
       if (Start >= Seg->VA && Start <= Target && Target < End &&
           End - Start <= limits::kMaxSingleGlobalEmbedLen)
         InCodeRun = {Start, End};
@@ -988,7 +1098,8 @@ MedLLVMEmitter::authenticatedJumpTableForLoad(const MedOp &Load) const {
 
 const JumpTable *
 MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
-                                 bool RequireTerminalExclusive) const {
+                                 bool RequireTerminalExclusive,
+                                 uint64_t *SharedEvidence) const {
   if (!CurMedFunc || !Img || Load.Opcode != NdOp::LOAD || Load.NumInputs < 1 ||
       Load.Output.isConst() || Load.Output.Size == 0 ||
       Load.MemoryOrdering != NdMemoryOrdering::None ||
@@ -999,9 +1110,10 @@ MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
   // One call may inspect several input-controlled table records claiming the
   // same LOAD occurrence.  Share the terminal-use account across that entire
   // candidate batch so duplicate certificates cannot multiply the ceiling.
-  uint64_t TerminalUseEvidenceRemaining =
-      TerminalUseEvidenceBudgetForTesting.value_or(
-          limits::kMaxJumpTableTerminalUseEvidenceWork);
+  uint64_t LocalEvidence = TerminalUseEvidenceBudgetForTesting.value_or(
+      limits::kMaxJumpTableTerminalUseEvidenceWork);
+  uint64_t &TerminalUseEvidenceRemaining =
+      SharedEvidence ? *SharedEvidence : LocalEvidence;
 
   for (const JumpTable &JT : CurMedFunc->JumpTables) {
     // Module arbitration leaves a table's slots suppressible from the pointer
@@ -1011,8 +1123,12 @@ MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
     // never needs its slots suppressed.
     const bool AmongCode =
         JT.HasBaseAddr && Img->DataInCode.count(JT.BaseAddr) != 0;
-    if (JT.EntrySize != Load.Output.Size || JT.Targets.empty() ||
-        JT.MutatedUnsafe ||
+    const bool CompactIndex =
+        RequireTerminalExclusive && JT.TwoLevelIndex &&
+        (Load.Output.Size == 1 || Load.Output.Size == 2) &&
+        Load.Output.Size < JT.EntrySize;
+    if ((!CompactIndex && JT.EntrySize != Load.Output.Size) ||
+        JT.Targets.empty() || JT.MutatedUnsafe ||
         (JT.SuppressibleRelocationSlots.empty() && !AmongCode))
       continue;
 
@@ -1162,15 +1278,26 @@ MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
           if (Def->Opcode == NdOp::INT_ADD && Def->NumInputs == 2)
             for (int Side = 0; Side < 2 && !Decomposed; ++Side) {
               const MedVar &Constant = Def->Inputs[Side];
+              if (!Constant.isConst())
+                continue;
               const uint64_t Mask =
                   Constant.Size == 0 || Constant.Size >= 8
                       ? ~uint64_t(0)
                       : (uint64_t(1) << (8 * Constant.Size)) - 1;
-              if (Constant.isConst() &&
-                  (Constant.ConstVal & Mask) == JT.BaseAddr &&
-                  !Def->Inputs[1 - Side].isConst()) {
+              const uint64_t CandidateBase = Constant.ConstVal & Mask;
+              const bool MatchesBase =
+                  CompactIndex
+                      ? std::any_of(
+                            JT.StorageRanges.begin(), JT.StorageRanges.end(),
+                            [&](const JumpTableStorageRange &Range) {
+                              return Range.EntrySize == Load.Output.Size &&
+                                     Range.PhysicalSlotCount != 0 &&
+                                     Range.BaseAddr == CandidateBase;
+                            })
+                      : CandidateBase == JT.BaseAddr;
+              if (MatchesBase && !Def->Inputs[1 - Side].isConst()) {
                 IndexTerms.push_back(Def->Inputs[1 - Side]);
-                Base = JT.BaseAddr;
+                Base = CandidateBase;
                 HaveBase = Decomposed = true;
               }
             }
@@ -1256,6 +1383,15 @@ MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
       TerminalUseEvidenceRemaining -= Amount;
       return true;
     };
+    std::set<AddressProvenanceVarKey> AuxiliaryUses;
+    if (!visitMedAuxiliaryUses(
+            *CurMedFunc,
+            [&](const MedVar &Value) {
+              if (!Value.isConst() && Value.Size != 0)
+                AuxiliaryUses.insert(addressProvenanceVarKey(Value));
+            },
+            consumeEvidence))
+      continue;
     auto enqueue = [&](const MedVar &Value, bool MayReachTerminal) {
       // Prepay retained closure state as well as the later traversal so an
       // adversarial fan-out cannot grow Work past the finite proof account.
@@ -1274,6 +1410,10 @@ MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
           addressProvenanceVarKey(Current);
       if (!Seen.insert({CurrentKey, Item.MayReachTerminal}).second)
         continue;
+      if (AuxiliaryUses.count(CurrentKey)) {
+        EscapesSwitch = true;
+        break;
+      }
 
       for (const MedBlock &Block : CurMedFunc->Blocks) {
         if (!consumeEvidence(1))
@@ -1308,7 +1448,7 @@ MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
             continue;
 
           if (Op.Opcode == NdOp::INDIR_BR && Op.Addr == JT.InsnAddr) {
-            if (Item.MayReachTerminal) {
+            if (Item.MayReachTerminal && !CompactIndex) {
               ReachesTerminalBranch = true;
               continue;
             }
@@ -1369,6 +1509,22 @@ MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
             enqueue(Op.Output, Item.MayReachTerminal);
             break;
           }
+          case NdOp::LOAD:
+            // A compact index is consumed by the exact authenticated inner
+            // table read, whose own value must be exclusive to this switch.
+            // Its scalar result may flow through address arithmetic, but a
+            // different load or any observable use still vetoes omission.
+            // Width strictly increases on this one nested query, so it cannot
+            // recurse back to the outer read. Both closures share one budget.
+            if (CompactIndex && Op.NumInputs == 1 &&
+                Op.Output.Size == JT.EntrySize &&
+                addressProvenanceVarKey(Op.Inputs[0]) == CurrentKey &&
+                jumpTableForLoad(Op, true, &TerminalUseEvidenceRemaining) ==
+                    &JT)
+              ReachesTerminalBranch = true;
+            else
+              EscapesSwitch = true;
+            break;
           case NdOp::STORE: {
             // A register-pressure spill carries the target to the reloads of
             // its frame slot (`mov [esp+8], eax` ... `jmp [esp+8]`).  Those
@@ -1494,26 +1650,7 @@ void MedLLVMEmitter::collectSuppressedTableAddressOps(const MedFunc &Func) {
                                                   &Op};
     }
   }
-  for (const MedCallInfo &Call : Func.CallInfos)
-    for (const MedVar &Arg : Call.Args)
-      use(Arg);
-  for (const auto &Entry : Func.SwitchSelectorPlans) {
-    use(Entry.second.Selector);
-    use(Entry.second.Condition);
-    for (const auto &Edge : Entry.second.EdgeSelectors)
-      use(Edge.second);
-  }
-  for (const MedScalarAddressModel &Model : Func.ScalarAddressModels)
-    use(Model.Value);
-  for (const MedI386GetPcModel &Model : Func.I386GetPcModels) {
-    use(Model.Output);
-    use(Model.Value);
-  }
-  for (const MedStructReturnCandidate &Candidate : Func.StructReturnCandidates)
-    for (const MedVar &Field : Candidate.Fields)
-      use(Field);
-  for (const MedCallClobber &Clobber : Func.CallClobbers)
-    use(Clobber.PreservedInput);
+  visitMedAuxiliaryUses(Func, use, [](uint64_t) { return true; });
 
   for (const MedBlock &Block : Func.Blocks)
     for (const MedOp &Load : Block.Ops) {

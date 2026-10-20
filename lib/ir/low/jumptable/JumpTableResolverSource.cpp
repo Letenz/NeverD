@@ -136,21 +136,8 @@ bool CFGBuilder::detectUnscaledRelocTableLoad(
     // defining INT_ADD.  The i386 lifter zero-extends a complete 32-bit guest
     // address to the host address width immediately before LOAD; that is an
     // address-container conversion, not a different provenance root.
-    auto isAddressTransport = [&](const LowOp &Op) {
-      if (Op.NumInputs < 1 || (!Op.Inputs[0].isReg() && !Op.Inputs[0].isTemp()))
-        return false;
-      if (Op.Opcode == NdOp::COPY)
-        return true;
-      return Op.Opcode == NdOp::INT_ZEXT &&
-             Op.Inputs[0].Size == Img.getPointerSize() &&
-             Op.Output.Size > Op.Inputs[0].Size;
-    };
-    int AddIdx = reachingDefIdx(Ops, I - 1, AddrV);
-    for (int G = 0; AddIdx >= 0 && isAddressTransport(Ops[AddIdx]) &&
-                    G < limits::kMaxQuasiCopyDepth;
-         ++G) {
-      AddIdx = reachingDefIdx(Ops, AddIdx - 1, Ops[AddIdx].Inputs[0]);
-    }
+    const int AddIdx =
+        jumpTableAddressDef(Ops, I - 1, AddrV, Img.getPointerSize());
     if (AddIdx < 0 || Ops[AddIdx].Opcode != NdOp::INT_ADD ||
         Ops[AddIdx].NumInputs < 2)
       continue;
@@ -167,14 +154,8 @@ bool CFGBuilder::detectUnscaledRelocTableLoad(
         continue;
       DispSide = Which;
       LocalDisp = Ops[AddIdx].Inputs[Which].Offset;
-      int Inner =
-          reachingDefIdx(Ops, AddIdx - 1, Ops[AddIdx].Inputs[1 - Which]);
-      for (int G = 0; Inner >= 0 && isAddressTransport(Ops[Inner]) &&
-                      G < limits::kMaxQuasiCopyDepth;
-           ++G) {
-        Inner = reachingDefIdx(Ops, Inner - 1, Ops[Inner].Inputs[0]);
-      }
-      InnerIdx = Inner;
+      InnerIdx = jumpTableAddressDef(
+          Ops, AddIdx - 1, Ops[AddIdx].Inputs[1 - Which], Img.getPointerSize());
       break;
     }
     if (InnerIdx < 0 || Ops[InnerIdx].Opcode != NdOp::INT_ADD ||

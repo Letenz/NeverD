@@ -3496,6 +3496,25 @@ int reachingDefIdx(const std::vector<LowOp> &Ops, int FromIdx, const NdVar &V) {
   return -1;
 }
 
+int jumpTableAddressDef(const std::vector<LowOp> &Ops, int FromIdx,
+                        const NdVar &Address, uint16_t PointerSize) {
+  int Def = reachingDefIdx(Ops, FromIdx, Address);
+  for (int Depth = 0; Def >= 0 && Depth < limits::kMaxQuasiCopyDepth; ++Depth) {
+    const LowOp &Transport = Ops[Def];
+    if (Transport.NumInputs < 1 ||
+        (!Transport.Inputs[0].isReg() && !Transport.Inputs[0].isTemp()))
+      break;
+    const bool GuestAddressWiden = Transport.Opcode == NdOp::INT_ZEXT &&
+                                   PointerSize != 0 &&
+                                   Transport.Inputs[0].Size == PointerSize &&
+                                   Transport.Output.Size >= PointerSize;
+    if (Transport.Opcode != NdOp::COPY && !GuestAddressWiden)
+      break;
+    Def = reachingDefIdx(Ops, Def - 1, Transport.Inputs[0]);
+  }
+  return Def;
+}
+
 /// Trace a nd-var backward through COPY chains to a plain register.
 uint64_t traceToRegister(const std::vector<LowOp> &Ops, int FromIdx, NdVar V) {
   for (int Depth = 0; Depth < limits::kMaxQuasiCopyDepth; ++Depth) {
@@ -4801,32 +4820,12 @@ bool CFGBuilder::analyzeTableLoadAddr(
     JumpTableValueOccurrence *AddressOccurrence,
     JumpTableFrameAddressUse *FrameRuntimeBase) const {
   Disp = 0;
-  int AddIdx = reachingDefIdx(Ops, FromIdx, AddrV);
   // The effective address may be materialised in a register and copied to the
   // load operand (`lea base(,idx,8),%rN; mov %rN,%rM; jmp *(%rM)` — the
   // threaded/interleaved dispatch shape); follow the COPY chain (through both
   // temps and registers) to the defining INT_ADD.
-  for (int Guard = 0; AddIdx >= 0 && Guard < limits::kMaxQuasiCopyDepth;
-       ++Guard) {
-    const LowOp &Transport = Ops[AddIdx];
-    const bool PlainCopy =
-        Transport.Opcode == NdOp::COPY && Transport.NumInputs >= 1;
-    // i386 effective addresses are computed modulo the 32-bit guest pointer
-    // width and then widened to NeverD's internal 64-bit VA container.  That
-    // widening preserves the complete address coordinate; a narrower source
-    // (or an arbitrary ZEXT in a 64-bit guest) does not.  Keep this exception
-    // local to the LOAD-address owner rather than teaching legacy frame-slot
-    // or value-provenance walkers that every extension is address preserving.
-    const bool CanonicalGuestAddressWiden =
-        Transport.Opcode == NdOp::INT_ZEXT && Transport.NumInputs >= 1 &&
-        CurrentImg &&
-        Transport.Inputs[0].Size == CurrentImg->getPointerSize() &&
-        Transport.Output.Size >= Transport.Inputs[0].Size;
-    if ((!PlainCopy && !CanonicalGuestAddressWiden) ||
-        (!Transport.Inputs[0].isReg() && !Transport.Inputs[0].isTemp()))
-      break;
-    AddIdx = reachingDefIdx(Ops, AddIdx - 1, Transport.Inputs[0]);
-  }
+  const int AddIdx = jumpTableAddressDef(
+      Ops, FromIdx, AddrV, CurrentImg ? CurrentImg->getPointerSize() : 0);
   if (AddIdx < 0 || Ops[AddIdx].Opcode != NdOp::INT_ADD ||
       Ops[AddIdx].NumInputs < 2)
     return false;

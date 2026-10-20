@@ -655,6 +655,20 @@ yet a load narrower than a pointer cannot read a code pointer: such a base is
 data among the code, an index table, not a code address
 (`instructionRelocations`, `addFixedImageDisplacement`). The pointer-wide
 jump table beside it stays a code address.
+The jump-table resolver shares complete guest-address COPY/ZEXT tracing across
+ordinary, unscaled and two-level loads. Linked PE32 compact switches may name
+both bases by absolute displacements. Their immutable index bytes still need
+a bounded selector, a complete relocated target run and disjoint decoded code.
+LLVM may omit the exact authenticated index read only when all its value uses
+end at the same switch's authenticated target read and that target has no other
+observable use. Both use closures spend one finite evidence budget; extra
+reads, stores, calls, returns or selector uses keep the original read mandatory.
+When an index remains observable, the executable-data mirror includes the
+adjacent resolver-owned index span after its relocated target run. It derives
+one extent from the complete module inventory before materialization, retaining
+shared suffix aliases. Only contiguous immutable bytes without even a partial
+code/data/import/runtime pointer slot qualify; gaps and unproved extents cannot
+extend the object.
 MSVC places an i386 switch's jump table in `.text` after its function, where
 the base relocations record its slots as instruction operands. No instruction
 holds more pointer-wide relocated fields back to back than

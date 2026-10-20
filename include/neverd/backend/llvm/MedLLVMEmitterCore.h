@@ -1240,6 +1240,8 @@ private:
   /// proof binds Addr+OriginSeq+width, target storage, and every observable
   /// use; callers may therefore omit the raw target LOAD when its relocation
   /// slots were intentionally suppressed from the independent pointer mirror.
+  /// A compact index LOAD qualifies only through the exact authenticated
+  /// target LOAD, with no other observable consumer of either value.
   const JumpTable *recoveredJumpTableForLoad(const MedOp &Load) const;
 
   /// Return the recovered table that authenticates this exact LOAD address and
@@ -1248,10 +1250,11 @@ private:
   /// permission to replace the LOAD with zero or suppress its slots.
   const JumpTable *authenticatedJumpTableForLoad(const MedOp &Load) const;
   const JumpTable *jumpTableForLoad(const MedOp &Load,
-                                    bool RequireTerminalExclusive) const;
+                                    bool RequireTerminalExclusive,
+                                    uint64_t *SharedEvidence = nullptr) const;
 
   /// Collect, for \p Func, the operations that only form the address of a
-  /// target LOAD recoveredJumpTableForLoad omits: the address's forwarding
+  /// table LOAD recoveredJumpTableForLoad omits: the address's forwarding
   /// copies and extensions, back to the addition of the table's base.  Each
   /// one's value is used nowhere else, so emitOp skips it, and the base is
   /// never materialized: a table placed among the code of a segment too large

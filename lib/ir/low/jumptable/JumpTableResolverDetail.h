@@ -137,6 +137,12 @@ inline bool targetRoleProofContextMatches(const TargetRoleProofContextKey &Key,
 /// Reaching-definition index of \p V searching backward from \p FromIdx, or -1.
 int reachingDefIdx(const std::vector<LowOp> &Ops, int FromIdx, const NdVar &V);
 
+/// Find the definition of a LOAD address through copies and widening of a
+/// complete guest pointer into the internal VA container. Narrow offsets and
+/// signed extensions do not preserve that coordinate.
+int jumpTableAddressDef(const std::vector<LowOp> &Ops, int FromIdx,
+                        const NdVar &Address, uint16_t PointerSize);
+
 /// Trace a nd-var backward through COPY chains to a plain register (InvalidVA
 /// if it does not resolve to one).
 uint64_t traceToRegister(const std::vector<LowOp> &Ops, int FromIdx, NdVar V);

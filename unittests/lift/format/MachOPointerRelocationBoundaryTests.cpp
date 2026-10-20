@@ -543,6 +543,77 @@ struct AuthenticatedTargetLoadFixture {
 
   MedOp &load() { return Func.Blocks.front().Ops.front(); }
 
+  void makeCompactIndex() {
+    constexpr va_t IndexVA = 0x2010;
+    Image.Arch = Arch::X86;
+    Image.Format = BinaryFormat::COFF;
+    Image.Bits = Bitness::Bits32;
+    Image.Segments.resize(1);
+    Segment &Text = Image.Segments.front();
+    Text.Size = Text.FileSz = 0x110000;
+    Text.Data.resize(Text.Size);
+    Image.DataInCode = {0x2000, IndexVA};
+    Image.CodePtrRelocSlots = {0x2000, 0x2004};
+    for (auto &Param : Func.Params) {
+      Param.TheArch = Arch::X86;
+      Param.Size = 4;
+    }
+
+    auto temp = [](int Id, uint16_t Size) {
+      MedVar Value;
+      Value.Kind = MedVar::Temp;
+      Value.TheArch = Arch::X86;
+      Value.Id = Id;
+      Value.SSAVer = 1;
+      Value.Size = Size;
+      return Value;
+    };
+    auto op = [&](NdOp Opcode, int Id, uint16_t Size,
+                  std::initializer_list<MedVar> Inputs) {
+      MedOp Op;
+      Op.Opcode = Opcode;
+      Op.Output = temp(Id, Size);
+      for (const MedVar &Input : Inputs)
+        Op.addInput(Input);
+      return Op;
+    };
+    // Preserve the guest-address widening and the intermediate byte LOAD as
+    // they appear after SSA in a larger PE32 function.
+    MedOp IndexAddress =
+        op(NdOp::INT_ADD, 2, 4,
+           {Func.Params.front(), MedVar::makeConst(IndexVA, 4)});
+    MedOp WideIndexAddress = op(NdOp::INT_ZEXT, 3, 8, {IndexAddress.Output});
+    MedOp Index = op(NdOp::LOAD, 4, 1, {WideIndexAddress.Output});
+    Index.Addr = 0xF0;
+    Index.OriginSeq = 2;
+    MedOp WideIndex = op(NdOp::INT_ZEXT, 5, 4, {Index.Output});
+    MedOp ScaledIndex =
+        op(NdOp::INT_MULT, 6, 4, {WideIndex.Output, MedVar::makeConst(4, 4)});
+    MedOp TargetAddress =
+        op(NdOp::INT_ADD, 7, 4,
+           {ScaledIndex.Output, MedVar::makeConst(0x2000, 4)});
+    MedOp WideTargetAddress = op(NdOp::INT_ZEXT, 8, 8, {TargetAddress.Output});
+    MedOp Target = load();
+    Target.Output = temp(1, 4);
+    Target.Inputs[0] = WideTargetAddress.Output;
+    MedOp Branch = Func.Blocks.front().Ops.back();
+    Branch.Inputs[0] = Target.Output;
+    Func.Blocks.front().Ops = {
+        IndexAddress,  WideIndexAddress,  Index,  WideIndex, ScaledIndex,
+        TargetAddress, WideTargetAddress, Target, Branch};
+
+    JumpTable &JT = Func.JumpTables.front();
+    JT.EntrySize = JT.EntryStride = 4;
+    JT.TwoLevelIndex = true;
+    JT.StorageRanges = {{0x2000, 4, 4, 2}, {IndexVA, 1, 1, 2}};
+    JT.SuppressibleRelocationSlots = {0x2000, 0x2004};
+    JT.AuthenticatedTableLoads = {{Index.Addr, Index.OriginSeq, 1},
+                                  {Target.Addr, Target.OriginSeq, 4}};
+    MedSwitchSelectorPlan &Plan = Func.SwitchSelectorPlans.at({JT.InsnAddr, 0});
+    Plan.Selector = Func.Params.front();
+    Plan.ResultSize = 4;
+  }
+
   MedOp &makeSparse() {
     JumpTable &JT = Func.JumpTables.front();
     JT.SlotIndices = {2, 3};
@@ -686,6 +757,104 @@ TEST(MedLLVMFrameReloadInitialization, NarrowStoresCoverAPointerWidthReload) {
                   Emitter, Func, Image, Load),
               Stored == 4)
         << Stored << " of 4 bytes stored";
+  }
+}
+
+TEST(MedLLVMRecoveredTargetLoadBoundary,
+     CompactIndexRequiresBothExactLoadsAndExclusiveConsumers) {
+  const char *Cases[] = {
+      "complete",          "wrong index occurrence", "wrong target occurrence",
+      "unowned index",     "different index base",   "different target base",
+      "index side store",  "target side store",      "unrelated read",
+      "live selector use", "budget exhausted",       "dead arithmetic",
+      "call argument"};
+  for (unsigned Case = 0; Case < std::size(Cases); ++Case) {
+    SCOPED_TRACE(Cases[Case]);
+    AuthenticatedTargetLoadFixture Fixture;
+    Fixture.makeCompactIndex();
+    auto &Ops = Fixture.Func.Blocks.front().Ops;
+    JumpTable &JT = Fixture.Func.JumpTables.front();
+    MedLLVMEmitter Emitter;
+    switch (Case) {
+    case 0:
+      break;
+    case 1:
+      ++JT.AuthenticatedTableLoads[0].Seq;
+      break;
+    case 2:
+      ++JT.AuthenticatedTableLoads[1].Seq;
+      break;
+    case 3:
+      JT.StorageRanges.pop_back();
+      break;
+    case 4:
+      Ops[0].Inputs[1] = MedVar::makeConst(0x2020, 4);
+      break;
+    case 5:
+      Ops[5].Inputs[1] = MedVar::makeConst(0x2020, 4);
+      break;
+    case 6:
+    case 7: {
+      MedOp Store;
+      Store.Opcode = NdOp::STORE;
+      Store.addInput(MedVar::makeConst(0x300000, 8));
+      Store.addInput(Ops[Case == 6 ? 2 : 7].Output);
+      Ops.insert(std::prev(Ops.end()), Store);
+      break;
+    }
+    case 8: {
+      MedOp Unrelated = Ops[7];
+      ++Unrelated.OriginSeq;
+      Unrelated.Output.Id = 20;
+      Ops.insert(std::prev(Ops.end()), Unrelated);
+      break;
+    }
+    case 9:
+      Fixture.Func.SwitchSelectorPlans.at({JT.InsnAddr, 0}).Selector =
+          Ops[3].Output;
+      break;
+    case 10:
+      MedLLVMProvenanceTestPeer::setTerminalUseEvidenceBudget(Emitter, 1);
+      break;
+    case 11: {
+      MedOp Dead;
+      Dead.Opcode = NdOp::INT_XOR;
+      Dead.Output = Ops[3].Output;
+      Dead.Output.Id = 20;
+      Dead.addInput(Ops[3].Output);
+      Dead.addInput(MedVar::makeConst(1, 4));
+      Ops.insert(std::prev(Ops.end()), Dead);
+      break;
+    }
+    case 12: {
+      MedCallInfo Call;
+      Call.Args = {Ops[3].Output};
+      Fixture.Func.CallInfos.push_back(std::move(Call));
+      break;
+    }
+    }
+    EXPECT_EQ(MedLLVMProvenanceTestPeer::recoveredTargetLoadIsFullyConsumed(
+                  Emitter, Fixture.Func, Fixture.Image, Ops[2]),
+              Case == 0 || Case == 11);
+  }
+}
+
+TEST(MedLLVMRecoveredTargetLoadBoundary,
+     AuxiliaryRecordsKeepTheOriginalTargetValue) {
+  for (bool IsCallArgument : {false, true}) {
+    SCOPED_TRACE(IsCallArgument);
+    AuthenticatedTargetLoadFixture Fixture;
+    if (IsCallArgument) {
+      MedCallInfo Call;
+      Call.Args = {Fixture.load().Output};
+      Fixture.Func.CallInfos.push_back(std::move(Call));
+    } else {
+      auto &Plan = Fixture.Func.SwitchSelectorPlans.begin()->second;
+      Plan.Selector = Fixture.load().Output;
+    }
+    MedLLVMEmitter Emitter;
+    EXPECT_FALSE(MedLLVMProvenanceTestPeer::recoveredTargetLoadIsFullyConsumed(
+        Emitter, Fixture.Func, Fixture.Image, Fixture.load()));
   }
 }
 

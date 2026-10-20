@@ -2867,6 +2867,20 @@ silently omitted by the ordinary graph because its model is missing.
 Exact/one-short work checks require no stale completeness output on exhaustion.
 These controls exercise the shared graph gate, not a new table admission route.
 
+`JumpTableTwoLevelI386.*` in `NeverDJumpTableTests` covers independent PE32
+machine bytes for compact byte-index switches, with both tables in a code
+segment too large to embed or with the index in read-only data. It checks the
+complete six-selector mapping, full LLVM emission, missing guards, writable
+indices and out-of-range entries. An observable returned index retains its
+byte LOAD and an exact 18-byte mirror containing three relocated targets and
+six index bytes. Missing/strided/overflowing storage and pointer overlap refuse;
+reversed inventories and shared suffixes keep one valid object.
+The compact-index cases in
+`MedLLVMRecoveredTargetLoadBoundary.*` additionally require both exact LOAD
+occurrences and storage bases. Index/target side stores, an unrelated read,
+live selector/call-argument use and exhausted evidence must prevent omission;
+dead pure arithmetic does not.
+
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
 fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer

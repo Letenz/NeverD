@@ -115,14 +115,8 @@ bool CFGBuilder::decomposeIndexTableLoadAddr(
   }
   const LowOp &L = Ops[LoadIdx];
   const NdVar &AddrV = (L.NumInputs >= 2) ? L.Inputs[1] : L.Inputs[0];
-  int AddIdx = reachingDefIdx(Ops, LoadIdx - 1, AddrV);
-  for (int G = 0;
-       AddIdx >= 0 && Ops[AddIdx].Opcode == NdOp::COPY &&
-       Ops[AddIdx].NumInputs >= 1 &&
-       (Ops[AddIdx].Inputs[0].isReg() || Ops[AddIdx].Inputs[0].isTemp()) &&
-       G < limits::kMaxQuasiCopyDepth;
-       ++G)
-    AddIdx = reachingDefIdx(Ops, AddIdx - 1, Ops[AddIdx].Inputs[0]);
+  int AddIdx =
+      jumpTableAddressDef(Ops, LoadIdx - 1, AddrV, Img.getPointerSize());
   if (AddIdx < 0 || Ops[AddIdx].Opcode != NdOp::INT_ADD ||
       Ops[AddIdx].NumInputs < 2)
     return false;
@@ -1049,6 +1043,7 @@ bool CFGBuilder::tryTwoLevelIndexTable(const BinaryImage &Img,
   //    load feeding the branch, `jmptab + entryIdx*W2`.
   uint64_t JmpBaseReg = InvalidVA, EntryIdxReg = InvalidVA;
   uint64_t JmpDisp = 0;
+  std::optional<va_t> AbsoluteJmpBase;
   JumpTableValueOccurrence JmpCompleteAddress;
   JumpTableFrameAddressUse JmpRuntimeBase;
   uint16_t W2 = 0;
@@ -1092,6 +1087,26 @@ bool CFGBuilder::tryTwoLevelIndexTable(const BinaryImage &Img,
         JmpLoadIdx = I;
         JmpDisp = Disp;
         break;
+      }
+      // PE32 also encodes the entire table base as a displacement, with no
+      // base register to fold. Use the same base/index decomposition as the
+      // outer load; the complete relocation run and both LOAD roles are
+      // authenticated below before this becomes a switch.
+      if (Img.isCOFF() && !Img.IsRelocatable && Img.Arch == Arch::X86) {
+        va_t Base = 0;
+        uint64_t Index = InvalidVA;
+        uint32_t Scale = 0;
+        if (decomposeIndexTableLoadAddr(
+                Img, Rec, Ops, I, W, Base, Index, Scale, nullptr, nullptr,
+                nullptr,
+                [&](size_t Amount) { return consumeEvidence(Amount); }) &&
+            Scale == W) {
+          AbsoluteJmpBase = Base;
+          EntryIdxReg = Index;
+          W2 = W;
+          JmpLoadIdx = I;
+          break;
+        }
       }
     }
   }
@@ -1185,7 +1200,9 @@ bool CFGBuilder::tryTwoLevelIndexTable(const BinaryImage &Img,
   // 4) Fold the address-table base and confirm it is distinct from idxtab.
   va_t JmpTab = 0;
   va_t JmpBase = 0;
-  {
+  if (AbsoluteJmpBase) {
+    JmpTab = JmpBase = *AbsoluteJmpBase;
+  } else {
     va_t FoldAt = Ops[JmpLoadIdx].Addr;
     auto Folded = foldRegConstant(
         Img, Rec, JmpBaseReg, FoldAt,
@@ -1302,9 +1319,13 @@ bool CFGBuilder::tryTwoLevelIndexTable(const BinaryImage &Img,
   if (!JmpOwnerEnd || !IdxOwnerEnd || *JmpOwnerEnd <= JmpTab ||
       *IdxOwnerEnd <= IdxTab)
     return false;
-  // The index table lives in read-only data; a writable/executable "idxtab"
-  // would not be a compiler-emitted constant index table.
-  if (IdxSeg->isWritable() || (Img.isCodeAddress(IdxTab) && !PEImageRVA))
+  // MSVC PE32 puts the compact index bytes beside its relocated absolute
+  // target table in .text. The selector guard, relocation run and code-overlap
+  // checks still have to prove both objects below; executable permissions
+  // alone neither authenticate nor disqualify this encoding.
+  const bool PEAbsoluteIndex = AbsoluteJmpBase && W2 == Img.getPointerSize();
+  const bool InlineIndex = PEImageRVA || PEAbsoluteIndex;
+  if (IdxSeg->isWritable() || (Img.isCodeAddress(IdxTab) && !InlineIndex))
     return false;
   // 5) The address table's signature: a run of loader-applied code-pointer
   //    relocations (absolute) or PC-relative-to-code relocations (relative).
@@ -2290,8 +2311,8 @@ bool CFGBuilder::tryTwoLevelIndexTable(const BinaryImage &Img,
 
   if (Targets.size() != Scan)
     return false;
-  if (PEImageRVA && (overlapsDecodedCode(IdxTab, uint64_t(Scan) * W1) ||
-                     overlapsDecodedCode(JmpTab, uint64_t(M) * W2)))
+  if (InlineIndex && (overlapsDecodedCode(IdxTab, uint64_t(Scan) * W1) ||
+                      overlapsDecodedCode(JmpTab, uint64_t(M) * W2)))
     return false;
 
   const size_t StorageUpper = InnerSlotUpper + 1;
