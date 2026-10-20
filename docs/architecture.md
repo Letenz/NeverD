@@ -4687,7 +4687,14 @@ remain separate; whole memory accesses and existing alias checks are retained.
 Raw completeness grants neither an undefined-output audit nor a wider source or
 native-proof contract.
 
-Raw specialization also accepts exact 8+8-byte `CONCAT` into a writable 16-byte scalar. The first input supplies the high 64 bits and the second supplies the low 64 bits, independently of storage byte order. Both inputs must be complete scalar locations or constants. The existing explicit, nonfaulting, default-space and unordered-operation restrictions remain; `SymExec` owns evaluation, and aliasing outputs read both original inputs before writing. This adds no source layout or native-proof contract.
+Raw specialization also accepts exact whole-byte `CONCAT` up to 16 bytes,
+including intermediate widths used by packed integer lowering. The first input
+supplies the high bits and the second supplies the low bits, independently of
+storage byte order. Complete scalar locations or constants must have nonzero
+widths, nonwrapping extents and an exact combined width. The existing explicit,
+nonfaulting, default-space and unordered-operation restrictions remain;
+`SymExec` owns evaluation, and aliasing outputs read both original inputs before
+writing. This adds no source layout or native-proof contract.
 
 For explicit, nonfaulting, little-endian raw recovery, the x64 owner recognizes the complete canonical `RDTSC` instruction and its five-operation multi-output bundle. Each occurrence gets one fresh 64-bit sample; three charged scalar operations evaluated by `SymExec` bind the complete primary result and the two instruction-local placeholders. The original runtime read, copies and zero extensions remain in the residual. Clock values and relations are unconstrained, timestamp-derived addresses keep unknown provenance, and native/source proof contracts remain unchanged.
 
@@ -6702,7 +6709,11 @@ current memory contents, accessibility, or disjointness.
 
 Interpreter specialization also owns context keys for exact entry-frame-relative
 pointers. Full-width proven displacements stay distinct from numeric constants;
-no sampled root address enters a key. When an unsupported operation is reached,
+no sampled root address enters a key. An unresolved stack address at an ordinary
+return or native CALL/RET nominates memory dependencies through the same bounded
+discovery used for stores. A fresh complete retry must still prove the required
+stack displacement; nomination supplies no pointer value or separation premise.
+When an unsupported operation is reached,
 bounded reverse traversal can nominate fields from the nearest undecided
 predecessor guards for control-state refinement. This is a candidate heuristic,
 not an unreachability proof: a fresh complete specialization must still prove
