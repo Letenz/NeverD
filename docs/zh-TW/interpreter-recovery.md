@@ -137,6 +137,8 @@ JSON 報告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscove
 
 `EntryFrameBounds` 明確宣告相對於 `FrameBaseRegister` 入口值不回繞的 `[Begin, End)` 範圍，不授予記憶體存取或非別名事實。未設定時仍使用模運算根域。原生證明要求呼叫者的框架邊界相符，並將其綁定至憑據；LLVM 證明保留該框架既有的輸入域。恢復本身不是等價性證書。
 
+`EntryFrameBounds::ExcludedAddressRanges` 也可明確宣告整個入口框架必須避開的絕對、不回繞位址區間。這些是呼叫者前置條件，不能從一次觀測位址或指標來源推斷。`ProveStoreFrameSeparation` 只有證明寫入的完整範圍與宣告框架不相交後，才保留目前框架位元組及已儲存的仿射指標；未證明分離的寫入仍依一般別名規則使資訊失效，證明未知或預算耗盡時拒絕。檢查涵蓋 CMPXCHG 的完整寫入階段。原生證明要求框架契約中的排除清單完全一致；原始結果憑據綁定清單與證明策略，殘留程式碼的使用者必須保留這些輸入前提。
+
 <!-- i18n-section: execution-contract -->
 
 ## 執行契約

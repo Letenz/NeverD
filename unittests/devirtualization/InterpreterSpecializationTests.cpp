@@ -4186,6 +4186,62 @@ TEST(InterpreterSpecialization,
   }
 }
 
+TEST(InterpreterSpecialization, ProvedFrameSeparationRetainsAtomicEffects) {
+  Provider P;
+  P.add(0x100, {op(NdOp::INT_SUB, reg(48), {reg(32), constant(16)}),
+                op(NdOp::STORE, {}, {reg(48), reg(32)})});
+  P.add(0x101, {op(NdOp::CALL, reg(0), {constant(0x200)})});
+  P.Code.at(0x101).NativeStackControl = SpecializationNativeStackControl::Call;
+  P.add(0x102, {op(NdOp::LOAD, reg(32), {reg(48)}),
+                op(NdOp::LOAD, reg(0), {constant(0x8080)})});
+  P.add(0x103, {ret()});
+  P.Code.at(0x103).NativeStackControl =
+      SpecializationNativeStackControl::Return;
+  P.add(0x200, {atomicCmpxchg(reg(64), constant(0x8080), reg(8), reg(16))});
+  P.add(0x201, {ret()});
+  P.Code.at(0x201).NativeStackControl =
+      SpecializationNativeStackControl::Return;
+  auto O = separatedStoreOptions();
+  O.EntryFrameBounds = SpecializationEntryFrameBounds{-32, 8};
+  O.EntryFrameBounds->ExcludedAddressRanges = {{0x8000, 0x8100}};
+  EXPECT_FALSE(specializeInterpreter(P, {0x100}, O).complete());
+  O.ProveStoreFrameSeparation = true;
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    O.ByteOrder = Order;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    EXPECT_EQ(count(R.Residual, NdOp::ATOMIC_CMPXCHG), 1u);
+    for (uint64_t Stack : {0x7ff8u, 0x8128u})
+      for (bool Match : {false, true}) {
+        WideByteOracle Actual(Order);
+        Actual.word(reg(32), Stack);
+        Actual.word(reg(8), Match ? 7 : 9);
+        Actual.word(reg(16), 17);
+        for (unsigned I = 0; I != 8; ++I) {
+          const unsigned Shift =
+              8 * (Order == llvm::endianness::little ? I : 7 - I);
+          Actual.Memory[0x8080 + I] = uint8_t(uint64_t{7} >> Shift);
+          Actual.Memory[Stack + I] = 0xa0 + I;
+        }
+        auto Expected = Actual.Memory;
+        for (unsigned I = 0; I != 8; ++I) {
+          const unsigned Shift =
+              8 * (Order == llvm::endianness::little ? I : 7 - I);
+          Expected[Stack - 16 + I] = uint8_t(Stack >> Shift);
+          Expected[Stack - 8 + I] = uint8_t(uint64_t{0x102} >> Shift);
+          Expected[0x8080 + I] = uint8_t(uint64_t{Match ? 17u : 7u} >> Shift);
+        }
+        ASSERT_TRUE(Actual.run(R.Residual)) << Actual.Diagnostic;
+        EXPECT_EQ(Actual.number(reg(0)), Match ? 17u : 7u);
+        EXPECT_EQ(Actual.number(reg(32)), Stack);
+        EXPECT_EQ(Actual.number(reg(64)), 7u);
+        EXPECT_EQ(Actual.Memory, Expected);
+        EXPECT_EQ(nativeAtomicAddresses(R, Actual.AtomicAddresses),
+                  std::vector<va_t>{0x200});
+      }
+  }
+}
+
 TEST(InterpreterSpecialization, AtomicCmpxchgBudgetsNeverPublishPartialCFG) {
   auto P = atomicNativeProvider();
   const auto Baseline =

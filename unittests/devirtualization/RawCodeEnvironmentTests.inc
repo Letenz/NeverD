@@ -517,6 +517,43 @@ TEST_F(PEFixedImageTest,
   }
 }
 
+TEST_F(PEFixedImageTest, RawCodeReceiptBindsFrameExclusions) {
+  auto Loaded = load(returningImportFixture());
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  Options = returningRawOptions(0x400000);
+  Options.EntryFrameBounds = SpecializationEntryFrameBounds{-128, 8};
+  Options.EntryFrameBounds->ExcludedAddressRanges = {{0x8000, 0x8100}};
+  Options.ProveStoreFrameSeparation = true;
+  const auto Good =
+      specializeBinaryInterpreter(*Loaded, Base + 0x1000, Options);
+  ASSERT_TRUE(Good.complete()) << Good.Diagnostic;
+  for (unsigned Case = 0; Case != 5; ++Case) {
+    SCOPED_TRACE(Case);
+    auto O = Options;
+    auto &Ranges = O.EntryFrameBounds->ExcludedAddressRanges;
+    switch (Case) {
+    case 0:
+      O.ProveStoreFrameSeparation = false;
+      break;
+    case 1:
+      ++Ranges[0].Begin;
+      break;
+    case 2:
+      ++Ranges[0].End;
+      break;
+    case 3:
+      Ranges.clear();
+      break;
+    case 4:
+      Ranges.push_back({0x9000, 0x9100});
+      break;
+    }
+    auto Error = validateSpecializationRawEnvironment(Good, O);
+    EXPECT_TRUE(bool(Error));
+    llvm::consumeError(std::move(Error));
+  }
+}
+
 TEST_F(PEFixedImageTest, RawCodeReceiptRejectsEveryMissingOrChangedSurface) {
   auto Loaded = load(returningImportFixture());
   ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());

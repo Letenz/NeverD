@@ -155,6 +155,8 @@ Bleibt ein Ziel ungelöst, nachdem Produzenten-, Bedingungs-, Register- und Fram
 
 `EntryFrameBounds` deklariert ausdrücklich einen nicht überlaufenden Bereich `[Begin, End)` relativ zum Eintrittswert von `FrameBaseRegister`. Daraus folgen weder Speicherzugriffsrechte noch Aliasfreiheit. Ohne Angabe bleibt der Wurzelbereich modular. Der native Beweis verlangt dieselben Frame-Grenzen im Aufrufervertrag und bindet sie in seinen Nachweis ein; der LLVM-Beweis behält den bestehenden Frame-Bereich. Wiederherstellung allein ist kein Äquivalenzzertifikat.
 
+`EntryFrameBounds::ExcludedAddressRanges` kann zusätzlich absolute, nicht leere und nicht überlaufende Intervalle deklarieren, die den gesamten Eintrittsframe ausschließen. Dies sind ausdrückliche Aufrufervoraussetzungen; sie werden niemals aus beobachteten Adressen oder der Herkunft eines Zeigers abgeleitet. `ProveStoreFrameSeparation` bewahrt aktuelle Frame-Bytes und gespeicherte affine Zeiger erst nach dem Beweis, dass der vollständige Schreibbereich den Frame nicht berührt. Unbewiesene Schreibzugriffe behalten die normale Alias-Invalidierung; unbekannte Beweise oder erschöpfte Budgets werden abgelehnt. Auch die vollständige CMPXCHG-Schreibphase wird geprüft. Der native Beweis verlangt dieselbe Ausschlussliste im Frame-Vertrag. Rohe Nachweise binden Liste und Beweisstrategie; Verbraucher des Restcodes müssen die Eingabevoraussetzungen beibehalten.
+
 <!-- i18n-section: execution-contract -->
 
 ## Ausführungsvertrag

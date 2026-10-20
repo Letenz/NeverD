@@ -258,7 +258,9 @@ If a target remains unresolved after producer, guard, register and frame refinem
 
 `MaxChainedTransfers` is an opt-in C++ limit (default `0`) for consecutive control transfers whose target or Boolean outcome is proved unique. It preserves full symbolic state, native origins and cumulative budgets; multiple outcomes use ordinary CFG edges. Backward discovery replays committed instruction occurrences. Chaining may duplicate loop origins and limit automatic cutpoint inference.
 
-`EntryFrameBounds` explicitly declares a nonwrapping `[Begin, End)` range around the entry value of `FrameBaseRegister`. It grants no memory-access or nonalias facts. Without it, roots remain modular. Native proof requires matching caller frame bounds and binds them into its receipt; LLVM proof retains that frame's existing domain. Recovery alone is not an equivalence certificate.
+`EntryFrameBounds` explicitly declares a nonwrapping `[Begin, End)` range around the entry value of `FrameBaseRegister`. The bounds alone grant no memory-access or nonalias facts. Without it, roots remain modular. Native proof requires matching caller frame bounds and binds them into its receipt; LLVM proof retains that frame's existing domain. Recovery alone is not an equivalence certificate.
+
+`EntryFrameBounds::ExcludedAddressRanges` can additionally declare absolute, nonwrapping intervals that the whole entry frame must miss. These are explicit caller preconditions, never inferred from an observed address or pointer provenance. `ProveStoreFrameSeparation` preserves current frame bytes and affine pointer spills only after proving that a complete write misses the declared frame; unproved writes retain ordinary alias invalidation, and unknown proofs or exhausted budgets refuse. This includes the complete CMPXCHG write phase. Native proof requires the identical exclusion list in its frame contract. Raw receipts bind both the exclusions and the proof strategy; residual consumers must retain the declared input domain.
 
 <!-- i18n-section: execution-contract -->
 

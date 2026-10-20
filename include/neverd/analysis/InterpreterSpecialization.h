@@ -161,12 +161,22 @@ struct SpecializationFrameSlot {
   uint16_t Bytes = 0;
 };
 
+struct SpecializationFrameExclusion {
+  /// Absolute, nonempty, nonwrapping half-open range [Begin, End).
+  uint64_t Begin = 0;
+  uint64_t End = 0;
+};
+
 struct SpecializationEntryFrameBounds {
   /// Caller-declared, nonempty, nonwrapping entry-relative range [Begin, End).
-  /// This constrains only the physical entry root; it grants no accessibility,
-  /// initialization or nonalias evidence for memory operations.
+  /// This constrains the physical entry root; it grants no accessibility or
+  /// initialization evidence for memory operations.
   int64_t Begin = 0;
   int64_t End = 0;
+  /// Explicit environment preconditions: the whole frame misses each absolute
+  /// range. Never inferred from observations, address provenance or file bytes.
+  /// Duplicate and overlapping exclusions are valid redundant constraints.
+  std::vector<SpecializationFrameExclusion> ExcludedAddressRanges;
 };
 
 struct SpecializationOptions {
@@ -299,6 +309,12 @@ struct SpecializationOptions {
   /// Includes the complete CMPXCHG write phase, even when comparison fails.
   /// Disabled by default so existing strategies keep their costs.
   bool ProveStoreReturnSlotSeparation = false;
+  /// Prove each complete non-frame write disjoint from EntryFrameBounds under
+  /// the current path and explicit frame domain before preserving its bytes.
+  /// Requires a frame root and bounds. This grants no external provenance or
+  /// unchecked store exemption. Unknown proofs fail closed; unproved writes
+  /// retain normal alias invalidation. Applies to the complete CMPXCHG phase.
+  bool ProveStoreFrameSeparation = false;
   /// Explicit source-ABI precondition: every external-origin store target
   /// range, including computed external addresses, is disjoint from the entry
   /// control slot. Frame-derived or unknown-origin addresses are never

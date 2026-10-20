@@ -137,6 +137,8 @@ JSON 报告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscove
 
 `EntryFrameBounds` 显式声明相对 `FrameBaseRegister` 入口值不回绕的 `[Begin, End)` 区间，不授予内存访问或非别名事实。缺省时仍使用模运算根域。原生证明要求调用者的帧边界匹配，并将其绑定到凭据；LLVM 证明保留该帧已有的输入域。恢复本身不是等价性证书。
 
+`EntryFrameBounds::ExcludedAddressRanges` 还可显式声明整个入口帧必须避开的绝对、不回绕地址区间。这些是调用者前置条件，不能从一次观测地址或指针来源推断。`ProveStoreFrameSeparation` 只有证明写入的完整范围与声明帧不相交后，才保留当前帧字节和已保存的仿射指针；未证明分离的写入仍按普通别名规则使知识失效，证明未知或预算耗尽时拒绝。检查覆盖 CMPXCHG 的完整写入阶段。原生证明要求帧契约中的排除列表完全一致；原始结果凭据绑定排除列表及证明策略，残留代码的消费者必须保留这些输入前提。
+
 <!-- i18n-section: execution-contract -->
 
 ## 执行契约

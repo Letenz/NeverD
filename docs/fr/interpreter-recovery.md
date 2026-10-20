@@ -154,6 +154,8 @@ Si une cible reste non résolue après épuisement des candidats de raffinement 
 
 `EntryFrameBounds` déclare explicitement une plage `[Begin, End)` sans rebouclage autour de la valeur d’entrée de `FrameBaseRegister`. Elle ne garantit ni accès mémoire ni absence d’alias. Sans cette option, les racines restent modulaires. La preuve native exige les mêmes bornes dans le contrat appelant et les lie à son justificatif ; la preuve LLVM conserve le domaine existant de cette pile. La récupération seule ne certifie pas l’équivalence.
 
+`EntryFrameBounds::ExcludedAddressRanges` peut aussi déclarer des intervalles absolus non vides et sans rebouclage, disjoints de tout le cadre initial. Ce sont des préconditions explicites de l’appelant, jamais déduites d’une adresse observée ou de la provenance d’un pointeur. `ProveStoreFrameSeparation` ne conserve les octets courants du cadre et les pointeurs affines sauvegardés qu’après preuve de séparation de toute l’écriture. Sinon, l’invalidation ordinaire reste applicable ; une preuve inconnue ou un budget épuisé entraîne un refus. Toute la phase d’écriture CMPXCHG est incluse. La preuve native exige la même liste d’exclusions dans son contrat de cadre. Les justificatifs bruts lient cette liste et la stratégie de preuve ; les consommateurs du code résiduel doivent conserver ces préconditions.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contrat d’exécution
