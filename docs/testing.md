@@ -3097,6 +3097,17 @@ silently omitted by the ordinary graph because its model is missing.
 Exact/one-short work checks require no stale completeness output on exhaustion.
 These controls exercise the shared graph gate, not a new table admission route.
 
+`COFFTableBase.*` in `NeverDJumpTableTests` checks image-base definitions across
+0, 32 and 160 unrelated lexical blocks, mapped decoy definitions, single- and
+two-level RVA tables, conflicting predecessors, scalar provenance, calls and
+full/partial clobbers. A serial dispatch discovers new blocks and a second
+switch before the SEH source-frame gate is checked. Tiny aggregate budgets
+cannot publish partial tables; a non-image-base relative table remains valid.
+`ResolverPEImageBase.*` checks exact/one-short query budgets, incomplete graphs
+and freshness after definition/provenance/root changes. `COFFTableBaseCLI.*`
+writes a minimal linked PE, verifies its decoded targets and invokes HighC and
+LLVM-to-C through the CLI, without depending on a platform linker.
+
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
 fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer

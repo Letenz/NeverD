@@ -633,14 +633,15 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
     ProofScratch.I386GOTOFFProposalEvidenceRemaining = ModelAllowance;
     JumpTableInfo Probe;
     const bool Shape = ProofScratch.tryCrossInstrRelativeTable(
-        Img, ProofScratch.Insns.at(Branch), Probe);
+        Img, ProofScratch.Insns.at(Branch), Probe, EvidenceBudget);
     const size_t ModelUsed =
         ModelAllowance - ProofScratch.I386GOTOFFProposalEvidenceRemaining;
     if (!Charge(ModelUsed))
       return false;
     if (ProofScratch.I386GOTOFFProposalEvidenceIncomplete ||
         ProofScratch.I386GOTModelEvidenceIncomplete ||
-        ProofScratch.StackTableEvidenceIncompleteBranches.count(Branch))
+        ProofScratch.StackTableEvidenceIncompleteBranches.count(Branch) ||
+        Probe.IncompleteGuardDomain)
       return Incomplete();
     if (!Shape || !ProofScratch.I386GOTOFFProposalShapeClaimed ||
         !Probe.HasBaseAddr || Probe.BaseAddr != Base || Probe.EntrySize != 4 ||
@@ -2037,6 +2038,8 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
     Recovered = tryTwoLevelIndexTable(Img, Rec, Info, &CandidateEvidenceBudget);
     CandidateEvidenceShapeClaimed |= Info.CompositeShapeClaimed;
     CandidateEvidenceAnalysisIncomplete |= Info.IncompleteGuardDomain;
+    if (Info.IncompleteGuardDomain)
+      return {};
     if (Info.CompositeShapeClaimed &&
         (!Recovered || !HasOccurrenceMetadata(Info))) {
       return {};
@@ -2062,7 +2065,12 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   // per-record slice above cannot see the base, so fold it across
   // instructions by emulating the dominating prefix.
   if (!Recovered)
-    Recovered = tryCrossInstrRelativeTable(Img, Rec, Info);
+    Recovered =
+        tryCrossInstrRelativeTable(Img, Rec, Info, &CandidateEvidenceBudget);
+  if (Info.IncompleteGuardDomain) {
+    CandidateEvidenceAnalysisIncomplete = true;
+    return {};
+  }
   if (StackTableEvidenceIncompleteBranches.count(Rec.Addr)) {
     CandidateEvidenceAnalysisIncomplete = true;
     return {};
