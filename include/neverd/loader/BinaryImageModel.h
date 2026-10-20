@@ -1598,19 +1598,26 @@ struct BinaryImage {
   /// `call` to `_CxxThrowException`'s `jmp [rip+IAT]` still has to name
   /// the import.
   const Import *decodeImportThunkAt(va_t Addr) const;
+  /// Whether decodeImportThunkAt reads veneers of this architecture.
+  bool decodesImportThunks() const {
+    return Arch == neverd::Arch::X64 || Arch == neverd::Arch::X86;
+  }
 
   /// Find the import owned by an exact executable veneer registration.  This
   /// deliberately excludes coarse stub ranges and legacy IAT spellings: code
   /// that needs a symbolic callable identity must not splice those independent
   /// forms of evidence together.
   const Import *findImportStubAt(va_t Addr) const {
-    if (!isFunctionEntryCandidateAt(Addr))
+    const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
+    const auto It = ImportStubIndices.find(Normalized);
+    const bool Registered =
+        It != ImportStubIndices.end() && It->second < Imports.size();
+    // Where the architecture decodes no veneer, only a registered one can
+    // answer; the costlier entry question waits until one may.
+    if ((!Registered && !decodesImportThunks()) ||
+        !isFunctionEntryCandidateAt(Addr))
       return nullptr;
-    Addr = normalizeCodeAddress(Addr, Arch, Mode);
-    auto It = ImportStubIndices.find(Addr);
-    if (It != ImportStubIndices.end() && It->second < Imports.size())
-      return &Imports[It->second];
-    return decodeImportThunkAt(Addr);
+    return Registered ? &Imports[It->second] : decodeImportThunkAt(Normalized);
   }
 
   /// Find an import by its format-native IAT address or an exact executable
