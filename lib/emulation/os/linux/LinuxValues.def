@@ -269,7 +269,7 @@ NEVERD_LINUX_DIAGNOSTIC(SignalOptions, "invalid Linux signal disposition input")
 NEVERD_LINUX_DIAGNOSTIC(SignalTargetUnsupported,
                         "Linux kill target {0} requires process/group state")
 NEVERD_LINUX_DIAGNOSTIC(SignalDeliveryUnsupported,
-                        "Linux signal {0} delivery requires masks, pending state and handlers")
+                        "unsupported Linux signal {0} delivery")
 NEVERD_LINUX_DIAGNOSTIC(SignalInputMissing,
                         "signal actions require explicit linux_signals input")
 NEVERD_LINUX_DIAGNOSTIC(SignalActionMissing,
