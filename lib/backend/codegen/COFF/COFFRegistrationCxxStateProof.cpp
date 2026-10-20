@@ -7,6 +7,7 @@
 
 #include "COFFRegistrationIRProof.h"
 
+#include "neverd/Limits.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
 
 #include "llvm/Support/Endian.h"
@@ -19,7 +20,8 @@ llvm::Error validateCxxGeneratedStates(
     const std::vector<CxxGeneratedTry> &Tries, va_t Unwind, uint32_t MaxState,
     const std::map<uint32_t, const CompiledWinEHSemanticRecord *> &Cleanups,
     COFFRegistrationCxxTableReceipt &Receipt) {
-  if (Tries.size() != Source.TryBlocks.size() || !MaxState || MaxState > 128)
+  if (Tries.size() != Source.TryBlocks.size() || !MaxState ||
+      MaxState > limits::kMaxRegistrationEHRecords)
     return rejectIR("C++ generated try states have no complete source set");
   auto Word = [&](va_t VA) {
     return llvm::support::endian::read32le(Compiled.Bytes.data() + VA -

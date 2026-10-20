@@ -1961,6 +1961,12 @@ records. They retain a literal zero try count and pointer with no overlapping
 fixup; no empty table is allocated. The shared state-map proof checks every
 ordered cleanup and outer edge. Handler, SafeSEH, relocation and final PE graph
 validation apply equally to these parents.
+Their source unwind projection visits each descending edge once, retaining up
+to the shared 4,096-record limit while separately bounding nested cleanup
+funclets to 128. Empty transitions reuse the prior target and do not add
+funclet depth. Mixed try/catch graphs retain their smaller search bound.
+Generated state-map validation uses the shared record limit and still binds
+every native state and outer edge to the source projection.
 The emitter fixes original image storage identity before materializing any
 function or shard, including masked native C++ sources. Preserved callee
 footprints and ordinary helper bodies therefore share the same canonical image

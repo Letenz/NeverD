@@ -14,10 +14,11 @@
 namespace neverd {
 std::optional<std::vector<X86RegistrationCxxUnwindTarget>>
 projectX86RegistrationCxxUnwind(const CxxExceptionInfo &Cxx) {
-  if (Cxx.UnwindMap.size() > 128 || Cxx.TryBlocks.size() > 64 ||
-      !Cxx.hasValidStateGraph())
-    return std::nullopt;
   const bool CleanupOnly = Cxx.TryBlocks.empty();
+  if (Cxx.UnwindMap.size() >
+          (CleanupOnly ? limits::kMaxRegistrationEHRecords : 128) ||
+      Cxx.TryBlocks.size() > 64 || !Cxx.hasValidStateGraph())
+    return std::nullopt;
   if (CleanupOnly &&
       std::none_of(Cxx.UnwindMap.begin(), Cxx.UnwindMap.end(),
                    [](const auto &Action) { return Action.ActionVA != 0; }))
@@ -55,6 +56,7 @@ projectX86RegistrationCxxUnwind(const CxxExceptionInfo &Cxx) {
     }
   }
   std::vector<Target> Result(Cxx.UnwindMap.size());
+  std::vector<uint32_t> CleanupDepth(CleanupOnly ? Result.size() : 0);
   for (uint32_t State = 0; State < Cxx.UnwindMap.size(); ++State) {
     const auto &Action = Cxx.UnwindMap[State];
     if (Action.ToState < -1 || Action.ToState >= int32_t(State))
@@ -65,7 +67,21 @@ projectX86RegistrationCxxUnwind(const CxxExceptionInfo &Cxx) {
       Result[State] = {Target::Kind::Cleanup, State};
     else if (Action.ToState >= 0)
       Result[State] = Result[Action.ToState];
+    if (CleanupOnly) {
+      // Every edge descends, so its complete action depth is already known.
+      // Keep native funclet recursion bounded independently of the number of
+      // disjoint lifetimes. Empty states do not consume a native funclet.
+      CleanupDepth[State] =
+          unsigned(Action.ActionVA != 0) +
+          (Action.ToState < 0 ? 0 : CleanupDepth[Action.ToState]);
+      if (CleanupDepth[State] > 128)
+        return std::nullopt;
+    }
   }
+  // With no local search regions, the checked descending action graph is the
+  // whole projection. Rewalking each suffix would make a wide graph quadratic.
+  if (CleanupOnly)
+    return Result;
   // Every dispatch chain must search exactly the containing source tries,
   // innermost first. A state edge may not skip an outer language region.
   for (uint32_t State = 0; State < Result.size(); ++State) {
@@ -83,10 +99,7 @@ projectX86RegistrationCxxUnwind(const CxxExceptionInfo &Cxx) {
         Actual.push_back(Next.Index);
         Walk = Cxx.UnwindMap[Cxx.TryBlocks[Next.Index].TryLow].ToState;
       } else {
-        // A cleanup-only function has no local search region: the descending
-        // action graph unwinds its live objects and then reaches the caller.
-        // Mixed try/catch graphs still require the enclosing search proof.
-        if (Expected.empty() && !CleanupOnly)
+        if (Expected.empty())
           return std::nullopt;
         Walk = Cxx.UnwindMap[Next.Index].ToState;
       }

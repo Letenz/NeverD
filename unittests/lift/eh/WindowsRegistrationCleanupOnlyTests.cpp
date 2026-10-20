@@ -4,8 +4,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/backend/codegen/COFF/COFFRegistrationCxxStateProof.h"
 #include "gtest/gtest.h"
 
+#include "neverd/Limits.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
@@ -38,6 +40,59 @@ using namespace neverd;
 
 namespace {
 #ifdef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+TEST(WindowsRegistrationCxxStateMap, LargeGeneratedStateMapsKeepExactEdges) {
+  for (bool Sparse : {false, true}) {
+    SCOPED_TRACE(Sparse);
+    CxxExceptionInfo Source;
+    Source.MaxState = limits::kMaxRegistrationEHRecords;
+    CompiledImage Native;
+    Native.BaseVA = 0x600000;
+    const uint32_t Count = Sparse ? 2 : Source.MaxState;
+    Native.Bytes.resize(Count * 8);
+    std::vector<CompiledWinEHSemanticRecord> Rows(Count);
+    std::map<uint32_t, const CompiledWinEHSemanticRecord *> BySource;
+    for (uint32_t State = 0; State != Source.MaxState; ++State) {
+      const bool Action = !Sparse || State == 0 || State + 1 == Source.MaxState;
+      const int32_t Outer = State && (Sparse || State % 128) ? State - 1 : -1;
+      Source.UnwindMap.push_back(
+          {Outer, Action ? va_t(0x401000 + State * 16) : 0});
+      if (!Action)
+        continue;
+      const uint32_t Generated = Sparse ? unsigned(State != 0) : State;
+      Rows[Generated].GeneratedState = Generated;
+      BySource.emplace(State, &Rows[Generated]);
+      writeLE<uint32_t>(Native.Bytes.data() + Generated * 8,
+                        Sparse && State ? 0 : uint32_t(Outer));
+    }
+    COFFRegistrationCxxTableReceipt Receipt;
+    auto Checked = coff_registration::validateCxxGeneratedStates(
+        Source, Native, {}, Native.BaseVA, Count, BySource, Receipt);
+    ASSERT_FALSE(bool(Checked)) << llvm::toString(std::move(Checked));
+    ASSERT_EQ(Receipt.SourceToGeneratedStates.size(), Source.MaxState + 1);
+    for (uint32_t State = 0; State != Source.MaxState; ++State)
+      EXPECT_EQ(Receipt.SourceToGeneratedStates.at(State),
+                Sparse ? int32_t(State + 1 == Source.MaxState)
+                       : int32_t(State));
+    for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto Changed = Native;
+      auto Mapped = BySource;
+      uint32_t States = Count;
+      if (Mutation == 0)
+        writeLE<uint32_t>(Changed.Bytes.data() + 8, uint32_t(-1));
+      if (Mutation == 1)
+        Mapped.erase(std::prev(Mapped.end()));
+      if (Mutation == 2)
+        ++States;
+      COFFRegistrationCxxTableReceipt Failed;
+      auto Rejected = coff_registration::validateCxxGeneratedStates(
+          Source, Changed, {}, Changed.BaseVA, States, Mapped, Failed);
+      EXPECT_TRUE(bool(Rejected));
+      llvm::consumeError(std::move(Rejected));
+    }
+  }
+}
+
 void checkCleanupOnlyInput(const char *Path, bool RegisterStateWrite) {
   auto Image = COFFLoader().load(Path);
   ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());

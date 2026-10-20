@@ -5950,6 +5950,12 @@ parents must return zero after the caller catches the thrown value and observes
 destructors in order; a changed initial trace must return one at both bases.
 `--wine-prefix PATH` selects an isolated prefix instead of the output directory's
 default prefix. These runtime checks execute only the generated test fixtures.
+Large cleanup graph tests cover 129 through 4,096 source states, independent
+lifetimes, a 128-action depth boundary and long empty transition chains.
+Self/forward edges, a 129-action chain and record-budget overflow refuse.
+Independent generated-state tests bind both a dense 4,096-state table and a
+two-state table projected from 4,096 source states, rejecting omitted actions
+and changed outer edges.
 `check_windows_registration_realigned_rewrite.py` separately emits aligned
 value/reference, unbound value/reference and catch-all parents. Independent
 assembly fixtures use the canonical direct MSVC EBP frame for the unbound forms.
