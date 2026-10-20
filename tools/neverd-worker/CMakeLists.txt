@@ -163,6 +163,9 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
       add_test(NAME NeverDWorkerDataPresentation
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_presentation_test.py" $<TARGET_FILE:neverd-worker>)
         set_tests_properties(NeverDWorkerDataPresentation PROPERTIES TIMEOUT 90)
+        add_test(NAME NeverDWorkerDataPresentationCLI
+          COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_presentation_cli_test.py" $<TARGET_FILE:neverd-worker> $<TARGET_FILE:neverd>)
+        set_tests_properties(NeverDWorkerDataPresentationCLI PROPERTIES TIMEOUT 120)
         add_test(NAME NeverDWorkerImmediatesRegister
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/immediates_register_test.py" $<TARGET_FILE:neverd-worker> --cli $<TARGET_FILE:neverd>)
         set_tests_properties(NeverDWorkerImmediatesRegister PROPERTIES TIMEOUT 120)

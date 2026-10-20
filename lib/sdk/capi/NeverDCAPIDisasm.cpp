@@ -14,6 +14,7 @@
 #include "SessionImpl.h"
 
 #include "neverd/Limits.h"
+#include "neverd/decode/NativeOperands.h"
 #include "neverd/evm/analysis/EVMAnalyzer.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
@@ -37,6 +38,65 @@ using namespace neverd;
 using namespace neverd::sdk;
 
 namespace {
+// Keep raw decoder operands available to clients such as the GUI's listing.
+// Only the display field/text consumes the shared enum formatter.
+std::string displayOperands(Session &S, const Decoder &D,
+                            const DecodedInsn &I) {
+  const std::string Raw = I.Raw ? I.Raw->op_str : "";
+  const auto At = S.OperandFormats.find(I.Addr);
+  if (At == S.OperandFormats.end() ||
+      (S.Img.Arch != Arch::X64 && S.Img.Arch != Arch::X86))
+    return Raw;
+  std::vector<std::string> Parts;
+  size_t Start = 0;
+  int Depth = 0;
+  for (size_t N = 0; N <= Raw.size(); ++N) {
+    if (N < Raw.size() && Raw[N] == '[')
+      ++Depth;
+    if (N < Raw.size() && Raw[N] == ']')
+      --Depth;
+    if (N == Raw.size() || (Raw[N] == ',' && Depth == 0)) {
+      Parts.push_back(llvm::StringRef(Raw).slice(Start, N).trim().str());
+      Start = N + 1;
+    }
+  }
+  const auto Facts = describeNativeOperands(D, I, S.Img.Arch, false);
+  bool Changed = false;
+  for (const auto &O : Facts.Immediates) {
+    const auto Format = At->second.find(O.Operand);
+    if (Format == At->second.end() || Format->second.Base != "enum" ||
+        O.Operand >= Parts.size())
+      continue;
+    const auto Previous = S.LastError;
+    const auto Value = "0x" + llvm::utohexstr(O.Value);
+    const char *Text =
+        neverd_enum_value_json(&S, Format->second.Type.c_str(), Value.c_str(),
+                               O.Bits, Format->second.Delta != 0);
+    S.LastError = Previous;
+    if (!Text)
+      continue;
+    auto Parsed = llvm::json::parse(Text);
+    neverd_free_string(Text);
+    if (!Parsed) {
+      llvm::consumeError(Parsed.takeError());
+      continue;
+    }
+    const auto *Object = Parsed->getAsObject();
+    if (const auto Name = Object ? Object->getString("text") : std::nullopt) {
+      Parts[O.Operand] = Name->str();
+      Changed = true;
+    }
+  }
+  if (!Changed)
+    return Raw;
+  std::string Result;
+  for (const auto &Part : Parts) {
+    if (!Result.empty())
+      Result += ", ";
+    Result += Part;
+  }
+  return Result;
+}
 
 inline constexpr size_t kShortInstructionByteColumnWidth = 18;
 
@@ -181,6 +241,9 @@ const char *neverd_disasm_json_ex(neverd_session_t Sess, neverd_va_t Addr,
         Obj["size"] = Sz;
         Obj["mnemonic"] = std::string(DI.Raw ? DI.Raw->mnemonic : "");
         Obj["op_str"] = std::string(DI.Raw ? DI.Raw->op_str : "");
+        const auto Display = displayOperands(*S, S->Dec, DI);
+        if (DI.Raw && Display != DI.Raw->op_str)
+          Obj["display_op_str"] = Display;
         Obj["bytes"] = BytesHex;
         if (Options & (NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK)) {
           const InstructionFlow Flow = summarizeInstructionFlow(
@@ -518,7 +581,7 @@ const char *neverd_disasm_text(neverd_session_t Sess,
       OS << "   ";
     OS << " " << (Insn.Raw ? Insn.Raw->mnemonic : "");
     if (Insn.Raw && Insn.Raw->op_str[0])
-      OS << "\t" << Insn.Raw->op_str;
+      OS << "\t" << displayOperands(*S, S->Dec, Insn);
 
     if (Annotate && Insn.Raw && Insn.Raw->op_str[0]) {
       std::string OpStr(Insn.Raw->op_str);

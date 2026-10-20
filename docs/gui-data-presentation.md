@@ -42,3 +42,29 @@ data segment and covers pagination, records, enum aliases/signed values/unknown
 bits, layout changes, code overlap, atomic refusals, undo/redo, reopen, replicas
 and ordinary IR isolation. `NeverDWorkerFormat` covers logical-width plumbing
 and folded operands. The Qt source/workbench test includes all three dialogs.
+
+## CLI and saved project parity
+
+These definitions use the same SDK validators and sidecars in the CLI:
+
+```console
+neverd items app.exe --array 140020000 --element-size 4 --count 16 --json
+neverd items app.exe --array 140020000 --element-size 12 --count 4 --type MY_ROW --json
+neverd items app.exe --alignment 140020043 --boundary 16 --json
+neverd operands app.exe --addr 140001000 --operand 1 --enum MY_FLAGS --flags --json
+```
+
+`--type` names a previously declared local type; `neverd types app.exe
+--declare types.h` imports it. Its current layout must match `--element-size`.
+The SDK refuses invalid sizes, unavailable types, overlaps, uninitialized spans
+and non-immediate enum operands before saving. Alignment padding ends at the
+next boundary; an already aligned address defines one full boundary unit.
+`--array`, `--alignment`, `--data`, `--string`, `--undefine` and `--clear` are
+mutually exclusive. `--flags` composes single-bit enum names and keeps residual
+numeric bits; omitting it chooses an exact member or the numeric value.
+
+Reopening that binary in the GUI reads the same arrays, alignment extents,
+local types and enum presentation. The native SDK/CLI disassembly keeps raw
+`op_str` and adds `display_op_str` when an enum changes its display; text
+output uses that same spelling. Unknown/deleted enum types fall back to the
+original number. None of these display settings supplies analysis semantics.
