@@ -2918,10 +2918,11 @@ TEST_F(SessionCAPITest, WarmingScansTheDataAccessWidthsTheFirstViewReads) {
 }
 
 TEST_F(SessionCAPITest, WarmingPreparesTheFirstViewsOfAnAArch64Image) {
-  // Warming an AArch64 image builds no analysis bodies, but prepares what
-  // the first C views read, as on x64: the function list, the widths of
-  // the image's data accesses and the C emitter.  The views are those a
-  // cold session prints.
+  // Warming an AArch64 image reads its functions' signature bodies as the
+  // selections that call them do, and prepares what the first C views
+  // read, as on x64: the function list, the widths of the image's data
+  // accesses and the C emitter.  The views are those a cold session prints,
+  // and every selection takes the bodies warming read.
   std::ifstream Input(std::filesystem::path(__FILE__).parent_path() / "types" /
                           "fixtures" / "linux_libc_calls_arm64",
                       std::ios::binary);
@@ -2948,13 +2949,23 @@ TEST_F(SessionCAPITest, WarmingPreparesTheFirstViewsOfAnAArch64Image) {
       takeString(neverd_warm_functions_json(Session, 0, 4096)));
   ASSERT_TRUE(bool(Page)) << llvm::toString(Page.takeError());
   ASSERT_NE(Page->getAsObject(), nullptr);
-  EXPECT_EQ(Page->getAsObject()->getBoolean("available"), false);
+  EXPECT_EQ(Page->getAsObject()->getBoolean("available"), true);
+  EXPECT_GT(Page->getAsObject()->getInteger("prepared").value_or(0), 0);
   EXPECT_TRUE(State.AccessWidths);
   EXPECT_TRUE(State.functionListCurrent());
   EXPECT_EQ(State.CEmitterSymbols, State.Img.Symbols.data());
+  const neverd::OmittedCalleeMemo *Memo =
+      neverd::PipelineTestPeer::calleeSignatures(State.AnalysisCache);
+  ASSERT_NE(Memo, nullptr);
+  EXPECT_FALSE(Memo->Callees.empty());
   for (size_t I = 0; I < Entries.size(); ++I) {
     SCOPED_TRACE(Entries[I]);
     EXPECT_EQ(takeString(neverd_decompile(Session, Entries[I])), Cold[I]);
+  }
+  // No selection converted a callee warming read again.
+  for (const auto &[Entry, Callee] : Memo->Callees) {
+    SCOPED_TRACE(Entry);
+    EXPECT_LE(Callee.Conversions.size(), 1u);
   }
 }
 
@@ -5870,6 +5881,14 @@ TEST_F(SessionCAPITest, CalleeSignaturesReadOnceServeLaterSelections) {
             neverd::sdk::toSession(Kept)->AnalysisCache);
     ASSERT_NE(Memo, nullptr);
     EXPECT_FALSE(Memo->Callees.empty());
+    // Where only the counts of prototyped imports vary between selections
+    // (AArch64 and ARM), a callee reads those of every import, so one
+    // conversion serves every selection.
+    if (llvm::StringRef(Fixture) != "linux_libc_calls_x86")
+      for (const auto &[Entry, Callee] : Memo->Callees) {
+        SCOPED_TRACE(Entry);
+        EXPECT_LE(Callee.Conversions.size(), 1u);
+      }
   }
 }
 

@@ -63,6 +63,7 @@ struct AnalysisCacheWarmup {
 };
 
 struct OmittedCalleeMemo;
+struct ImageImportCounts;
 
 /// Optional facts for consecutive restricted x64 and AArch64 analyses of an
 /// unchanged image. Owns the indexes borrowed by bounded machine-graph/body
@@ -87,7 +88,11 @@ public:
     SelectionFacts.reset();
     Inventory.reset();
     CalleeSignatures.reset();
+    ImportCounts.reset();
   }
+  /// Drops what reads the program's declarations, which change without the
+  /// image or its debug information changing.
+  void forgetDeclarations() { ImportCounts.reset(); }
 
 private:
   friend class Pipeline;
@@ -101,6 +106,9 @@ private:
   /// The callees' signature bodies of restricted runs on any architecture
   /// (PipelineResult::CalleeSignatureMemo).
   std::shared_ptr<OmittedCalleeMemo> CalleeSignatures;
+  /// The prototype counts of every import of the image
+  /// (PipelineResult::OmittedCalleeArgumentCounts).
+  std::shared_ptr<const ImageImportCounts> ImportCounts;
 };
 
 struct PipelineOptions {
@@ -308,6 +316,11 @@ struct PipelineResult {
   /// (Windows on ARM64): a call to one passes that many and no other
   /// register.
   std::map<va_t, int> CallEntryArgumentCounts;
+  /// CallEntryArgumentCounts for every import of the image, which the
+  /// conversions of omitted callees read: their own calls reach imports the
+  /// selected functions need not call.  Null where the convention counts
+  /// none.
+  std::shared_ptr<const std::map<va_t, int>> OmittedCalleeArgumentCounts;
   /// The imports, by the stub or slot a call names each by, whose prototype
   /// the user declares and whose summary above it gives (userPrototype): a
   /// call to one passes what it declares, however many arguments the arity

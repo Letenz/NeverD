@@ -88,6 +88,29 @@ private:
       FH4ContinuationCandidates;
 };
 
+/// The prototype counts of every import of an image, as
+/// importPrototypeArguments gives them with the debug context it read.
+struct ImageImportCounts {
+  const BinaryImage *Image = nullptr;
+  const DebugContext *Debug = nullptr;
+  const Import *ImportData = nullptr;
+  size_t ImportCount = 0;
+  const RelocationEntry *RelocationData = nullptr;
+  size_t RelocationCount = 0;
+  const Export *ExportData = nullptr;
+  size_t ExportCount = 0;
+  std::map<va_t, int> Counts;
+  /// Whether these were read from \p Img as it is, with \p Dbg.
+  bool readFrom(const BinaryImage &Img, const DebugContext *Dbg) const {
+    return Image == &Img && Debug == Dbg && ImportData == Img.Imports.data() &&
+           ImportCount == Img.Imports.size() &&
+           RelocationData == Img.Relocations.data() &&
+           RelocationCount == Img.Relocations.size() &&
+           ExportData == Img.Exports.data() &&
+           ExportCount == Img.Exports.size();
+  }
+};
+
 /// The analysis cache a run of \p Img under \p Opts shares with other runs:
 /// a restricted x64 or AArch64 run's.  Other runs keep what they read to
 /// themselves.
