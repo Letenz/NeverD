@@ -349,6 +349,10 @@ each a step of undo history: the history holds the file as a table whose rows
 lie at their places in the order made (`NEVERD_USER_STATE_ORDERED` in the
 worker's `UserStateTables.def`), and undo takes the last back off the file and
 the program's types.
+The CLI keeps `types --declare` local to its invocation by default. With a
+binary and `--save`, it persists the complete successfully parsed declaration
+batch through `neverd_type_declarations_save`, using the same sidecar and
+writer lock that the workbench uses.
 
 Header libraries (`HeaderLibraries.def`, `HeaderLibrary.h`) give a program
 the system's types and prototypes that its debug information lacks: the
@@ -569,6 +573,13 @@ operand, and `neverd_local_type_member_json` names one landing.  A
 structure offset is an operand format (`OperandFormats.def`) that names a
 local type and a delta; the worker spells it from the type's current
 layout, so an edited type renames its operands.
+Enum operand admission and rendering share the decoder's logical operand
+width. `neverd_disasm_json_ex` supplies `operand_bits` when
+`NEVERD_DISASM_OPERANDS` is requested; the worker carries those widths through
+classic operand folding with their original indices. It never infers an enum
+immediate's width from a different operand's register. Missing decoded widths
+leave numeric spelling, while `neverd_enum_value_json` owns enum aliases,
+signed extension and residual flag bits.
 
 `neverd_types_convert` and `neverd types --data-model` read and render
 declarations without a program, which is how the generator builds the

@@ -137,6 +137,9 @@ struct OperandFacts {
   std::optional<std::int64_t> stackDepth;
   /// The user's formats of the operands' numbers, by operand index.
   const std::vector<NumberFormat> *numberFormats = nullptr;
+  /// Decoder-provided logical widths in the displayed operand order. Enum
+  /// rendering requires these rather than borrowing another operand's width.
+  const std::vector<unsigned> *operandBits = nullptr;
   /// Names structure offsets, when the engine has local types.
   const StructNamer *structs = nullptr;
   using EnumNamer = std::function<std::optional<std::string>(
