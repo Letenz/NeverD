@@ -6572,7 +6572,9 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
     const TypeRef Result = callResultType(Value);
     return Result && Result->Kind == NdTypeKind::Ptr;
   };
-  if (Inner && PointerCall(*Inner))
+  // So does an object the unit declares a pointer (`return
+  // variable_buffer;`), whose integer the machine returns.
+  if (Inner && (PointerCall(*Inner) || printedPointerType(*Inner)))
     return "(" + typeToC(FuncReturnType) + ")(uintptr_t)" +
            castOperand(exprStr(*Inner));
   if (Inner && Inner != &Expr) {

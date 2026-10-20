@@ -47979,3 +47979,47 @@ TEST(HighCPointerAddresses, MainKeepsItsNameOnlyWithCsSignature) {
   const std::string View = Emit(Main(false), false);
   EXPECT_NE(View.find(" main("), std::string::npos) << View;
 }
+
+TEST(HighCPointerAddresses, PointerObjectsReturnAsTheirIntegers) {
+  // make returns its variable_buffer, which the code reads as a char
+  // pointer elsewhere, from a function the machine types as returning an
+  // integer: C converts the pointer to the integer by no return.
+  constexpr va_t Buffer = 0x6000;
+  BinaryImage Img =
+      makeImageObjectFixture(Buffer, std::vector<uint8_t>(8), true);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  Symbol Data;
+  Data.Name = "variable_buffer";
+  Data.Addr = Buffer;
+  Data.Size = 8;
+  Img.Symbols.push_back(Data);
+  const auto Text = NdType::makePtr(NdType::makeInt(1));
+  HighFunc First;
+  First.Name = "first_char";
+  First.Entry = 0x1100;
+  First.ReturnType = NdType::makeInt(1);
+  returnValue(First,
+              HighExpr::makeLoad(
+                  HighExpr::makeLoad(HighExpr::makeConst(Buffer, 8), Text),
+                  NdType::makeInt(1)));
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "initialize_variable_output";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  returnValue(Func, HighExpr::makeLoad(HighExpr::makeConst(Buffer, 8), Word));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({First, Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("int8_t* variable_buffer"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("return variable_buffer;"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
