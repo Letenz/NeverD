@@ -184,6 +184,93 @@ const RegistrationChainInfo *chainAt(const BinaryImage &Img, va_t Entry) {
   return nullptr;
 }
 
+BinaryImage makeHelperCallerImage(bool Wide, bool SeparateBodies = true,
+                                  unsigned Mutation = 0) {
+  ImageBuilder B;
+  B.addScope(-1, kText + 0xa0, kText + 0xb0);
+  B.endScopes();
+  const va_t SecondTable = B.rdataVA();
+  B.addScope(-1, kText + 0xa0, kText + 0xb0);
+  B.endScopes();
+  constexpr va_t Helper = kText + 0xc0;
+  B.Text.push_back(Mutation == 1 ? 0xb8 : 0xc3);
+  // A matching prefix inside MOV's immediate cannot create a new entry.
+  const size_t First = Mutation == 1 ? 1 : 0x20;
+  B.Text.resize(First, 0xcc);
+  auto Caller = [&](va_t Table, bool Returns) {
+    B.Text.push_back(Wide ? 0x68 : 0x6a);
+    if (Wide)
+      emit32(B.Text, Mutation == 2 ? uint32_t(-1) : 0x20);
+    else
+      B.Text.push_back(Mutation == 2 ? 0xff : 0x20);
+    B.Text.push_back(0x68);
+    emit32(B.Text, Table);
+    B.Text.push_back(0xe8);
+    emit32(B.Text, uint32_t(Helper - (B.textVA() + 4)));
+    emitFrameStore(B.Text, -4, 0);
+    if (Returns)
+      B.Text.push_back(0xc3);
+  };
+  Caller(kRData, SeparateBodies);
+  B.Text.resize(0x40, SeparateBodies ? 0xcc : 0x90);
+  Caller(SecondTable, true);
+  B.Text.resize(0xa0, 0xcc);
+  B.addStub();
+  B.Text.resize(0xb0, 0xcc);
+  B.addStub();
+  B.Text.resize(0xc0, 0xcc);
+  B.Text.insert(B.Text.end(), {0x6a, 0xff, 0x68});
+  emit32(B.Text, kPersonality);
+  B.Text.insert(B.Text.end(), {0x64, 0xa1, 0, 0, 0, 0, 0x50, 0x64, 0x89, 0x25,
+                               0, 0, 0, 0, 0xc3});
+  return B.build({{"preceding", kText},
+                  {"filter", kText + 0xa0},
+                  {"handler", kText + 0xb0},
+                  {"helper", Helper}});
+}
+
+TEST(RegistrationTryLevel, SharedHelperCallersOwnTheirSeparateEntries) {
+  for (bool Wide : {false, true}) {
+    SCOPED_TRACE(Wide);
+    const auto Image = makeHelperCallerImage(Wide);
+    EXPECT_EQ(chainAt(Image, kText), nullptr);
+    EXPECT_EQ(chainAt(Image, kText + 0xc0), nullptr);
+    const auto *First = chainAt(Image, kText + 0x20);
+    const auto *Second = chainAt(Image, kText + 0x40);
+    ASSERT_NE(First, nullptr);
+    ASSERT_NE(Second, nullptr);
+    EXPECT_EQ(First->ScopeTableVA, kRData);
+    EXPECT_EQ(Second->ScopeTableVA, kRData + 24);
+    const auto *FirstFunction =
+        Image.ExceptionMetadata.findFunction(kText + 0x20);
+    ASSERT_NE(FirstFunction, nullptr);
+    EXPECT_EQ(FirstFunction->CodeRange.End, kText + 0x40);
+    // Entry attribution supplies neither a helper ABI nor a frame-state proof.
+    EXPECT_FALSE(First->RegistrationOffset);
+    EXPECT_FALSE(Second->RegistrationOffset);
+  }
+}
+
+TEST(RegistrationTryLevel, SharedHelperPrefixDoesNotSplitOrdinaryFlow) {
+  for (bool Wide : {false, true}) {
+    SCOPED_TRACE(Wide);
+    const auto Image = makeHelperCallerImage(Wide, false);
+    ASSERT_NE(chainAt(Image, kText + 0x20), nullptr);
+    EXPECT_EQ(chainAt(Image, kText + 0x40), nullptr);
+    EXPECT_EQ(chainAt(Image, kText), nullptr);
+  }
+}
+
+TEST(RegistrationTryLevel,
+     SharedHelperEntryRejectsInteriorAndNegativePrefixes) {
+  for (bool Wide : {false, true})
+    for (unsigned Mutation : {1, 2}) {
+      SCOPED_TRACE(::testing::Message() << Wide << " " << Mutation);
+      const auto Image = makeHelperCallerImage(Wide, true, Mutation);
+      EXPECT_EQ(chainAt(Image, kText + (Mutation == 1 ? 1 : 0x20)), nullptr);
+    }
+}
+
 TEST(RegistrationTryLevel, SEH3RequiresAnArgumentPreservingCRTImportVeneer) {
   ImageBuilder B;
   B.Text = {0xff, 0x25};
