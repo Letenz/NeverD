@@ -1352,6 +1352,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   Func.VaListDisplacement = Med.VaListDisplacement;
   Func.VaRegisterSaveArea = Med.VaRegisterSaveArea;
   Func.VaNamedIntegerRegisters = Med.VaNamedIntegerRegisters;
+  Func.VaListCalls = Med.VaListCalls;
   Func.EntryKind = Med.EntryKind;
   Func.ExceptionMetadata = Med.ExceptionMetadata;
   Func.HasUnresolvedSEHFrame = Med.HasUnresolvedSEHFrame;

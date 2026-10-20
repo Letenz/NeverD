@@ -21,6 +21,8 @@
 #include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
+
 #include <functional>
 #include <map>
 #include <optional>
@@ -263,6 +265,29 @@ void fillUnstructuredGotoSkeleton(HighFunc &Func, const MedFunc &Med);
 /// calls take their arguments from callee summaries, which recover no call
 /// arguments for finalizeVariadicCallees to count.
 void sizeVariadicOverflowFromStores(std::vector<MedFunc> &Funcs, Arch TheArch);
+
+/// What its name says of a call target outside \p Funcs, or of one named as
+/// a C library routine (markVaListCalls): how many integer parameters it
+/// has, where its declaration fixes them, and which of them takes a va_list,
+/// where it is the va_list form of a variadic routine
+/// (libc::vaListParameter).
+struct NamedCallee {
+  std::optional<unsigned> IntegerParams;
+  std::optional<unsigned> VaList;
+};
+
+/// System V x86-64: in each function whose prologue builds a va_list
+/// (MedFunc::VaListDisplacement), mark each call that passes the list's
+/// address in an integer argument register by whether it passes the va_list
+/// (MedFunc::VaListCalls).  A call that alone takes the address does, unless
+/// its routine's declaration has no va_list there (\p Named).  Where more
+/// calls take it, each parameter taking it must take a va_list: where its
+/// routine's name says so, or, for a function in \p Funcs, where it reads
+/// and writes only within the list and passes it on only to parameters that
+/// take one.
+void markVaListCalls(std::vector<MedFunc> &Funcs, Arch TheArch,
+                     BinaryFormat Format,
+                     llvm::function_ref<NamedCallee(va_t)> Named);
 
 /// A variadic function whose register save area holds the vector argument
 /// registers (System V): a call passes it every argument register, then
