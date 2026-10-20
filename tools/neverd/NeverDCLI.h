@@ -325,6 +325,8 @@ extern llvm::cl::opt<bool> DumpHigh;
 // Decompile.
 extern llvm::cl::opt<bool> LlvmRoute;
 extern llvm::cl::opt<bool> SourceSymbolic;
+extern llvm::cl::opt<bool> StackFrameInfo;
+extern llvm::cl::opt<std::string> StackFrameFile;
 extern llvm::cl::opt<bool> SourceLLVMControlFlow;
 extern llvm::cl::opt<std::string> SourceLLVMLevel;
 extern llvm::cl::list<std::string> SourceLLVMPasses;

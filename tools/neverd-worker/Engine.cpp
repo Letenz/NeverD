@@ -3373,30 +3373,6 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
             if (!preview)
               throw Error("stack_frame_refused",
                           "This frame cannot be named in both C views");
-            for (const auto &variable : frame.at("variables")) {
-              bool found = false;
-              for (const auto &actual :
-                   preview->value.value("source_variables", Json::array())) {
-                if (actual.value("name", std::string()) ==
-                        variable.at("name").get<std::string>() &&
-                    actual.value("stack_offset", INT64_MAX) !=
-                        variable.at("offset").get<std::int64_t>())
-                  throw Error(
-                      "stack_frame_refused",
-                      "The stack name conflicts with another source variable");
-                found |= actual.value("stack_offset", INT64_MAX) ==
-                             variable.at("offset").get<std::int64_t>() &&
-                         actual.value("name", std::string()) ==
-                             variable.at("name").get<std::string>() &&
-                         !actual.value("ambiguous", true);
-              }
-              if (!found)
-                throw Error(
-                    "stack_frame_refused",
-                    std::string(
-                        "The slot has no independent named storage in ") +
-                        route + "; retain its backing storage");
-            }
           }
         request["stack_frame"] = std::move(frame);
       }

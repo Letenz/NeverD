@@ -16,6 +16,7 @@ struct SourceStackFrame {
     bool operator==(const Variable &) const = default;
   };
   std::string Snapshot;
+  std::string InputSHA256;
   std::map<va_t, int64_t> Points;
   std::vector<Variable> Variables;
   bool operator==(const SourceStackFrame &) const = default;

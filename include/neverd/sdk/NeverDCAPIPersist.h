@@ -166,6 +166,8 @@ NEVERD_API const char *neverd_enum_value_json(neverd_session_t Sess,
 /// the caller. Options: {snapshot, points:[{address,after}],
 /// variables:[{offset,bytes,name,type}]}. Null with neverd_last_error on
 /// refusal; free with neverd_free_string.
+/// An optional input_sha256 binds a policy to its input image. The response
+/// includes a reusable policy object with the current snapshot and digest.
 NEVERD_API const char *neverd_stack_frame_json(neverd_session_t Sess,
                                                neverd_va_t Entry,
                                                const char *OptionsJSON);

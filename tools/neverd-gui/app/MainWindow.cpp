@@ -3604,7 +3604,10 @@ void MainWindow::editStackFrame(int mode) {
             basis->addItem(tr("Net SP change made by this instruction"));
           layout->addWidget(basis);
           after = new QLineEdit(
-              QString::number(instruction.value("after").toInteger()), &dialog);
+              instruction.value("after").isDouble()
+                  ? QString::number(instruction.value("after").toInteger())
+                  : QString(),
+              &dialog);
           after->setObjectName("stackPointerAfter");
           layout->addWidget(after);
         } else {

@@ -759,6 +759,16 @@ cl::opt<bool> SourceSymbolic(
     cl::desc("Symbolically simplify the source: the function --func selects, "
              "or else every function"),
     cl::sub(DecompileCmd));
+cl::opt<bool> StackFrameInfo(
+    "stack-frame-info",
+    cl::desc("Inspect entry-relative stack offsets and emit a reusable JSON "
+             "policy (requires --func)"),
+    cl::sub(DecompileCmd));
+cl::opt<std::string> StackFrameFile(
+    "stack-frame",
+    cl::desc("Apply stack variables and SP corrections from a JSON policy "
+             "(requires --func and C output)"),
+    cl::value_desc("path"), cl::sub(DecompileCmd));
 cl::opt<std::string>
     SourceLLVMLevel("llvm-opt",
                     cl::desc("LLVM C optimization: basic, O0, O1, O2, O3 or "
