@@ -930,8 +930,11 @@ struct BinaryImage {
   /// owner retained by the loader.  Code addresses must lie strictly inside
   /// their owner; data addresses may name the one-past value used by C/C++
   /// address arithmetic.  Numeric adjacency is not ownership: a target equal
-  /// to the next section's base remains one-past the recorded owner.
-  bool relocatedTargetBelongsToOwner(va_t TargetVA, va_t OwnerVA) const {
+  /// to the next section's base remains one-past the recorded owner.  The
+  /// optional index serves the executable-owner queries, with the same rules.
+  bool relocatedTargetBelongsToOwner(
+      va_t TargetVA, va_t OwnerVA,
+      const ExecutableCodeOwnerIndex *Index = nullptr) const {
     if (OwnerVA == InvalidVA)
       return false;
     for (const Section &Sec : Sections) {
@@ -939,20 +942,22 @@ struct BinaryImage {
           Sec.Size > InvalidVA - Sec.VA)
         continue;
       const va_t End = Sec.VA + Sec.Size;
-      const bool OwnerIsCode = hasExecutableCodeOwnerAt(OwnerVA);
+      const bool OwnerIsCode = hasExecutableCodeOwnerAt(OwnerVA, Index);
       return TargetVA >= Sec.VA &&
-             (OwnerIsCode ? TargetVA < End && hasExecutableCodeOwnerAt(TargetVA)
-                          : TargetVA <= End);
+             (OwnerIsCode
+                  ? TargetVA < End && hasExecutableCodeOwnerAt(TargetVA, Index)
+                  : TargetVA <= End);
     }
     for (const Segment &Seg : Segments) {
       if (!Seg.isReadable() || Seg.VA != OwnerVA ||
           Seg.Size > InvalidVA - Seg.VA)
         continue;
       const va_t End = Seg.VA + Seg.Size;
-      const bool OwnerIsCode = hasExecutableCodeOwnerAt(OwnerVA);
+      const bool OwnerIsCode = hasExecutableCodeOwnerAt(OwnerVA, Index);
       return TargetVA >= Seg.VA &&
-             (OwnerIsCode ? TargetVA < End && hasExecutableCodeOwnerAt(TargetVA)
-                          : TargetVA <= End);
+             (OwnerIsCode
+                  ? TargetVA < End && hasExecutableCodeOwnerAt(TargetVA, Index)
+                  : TargetVA <= End);
     }
     return false;
   }

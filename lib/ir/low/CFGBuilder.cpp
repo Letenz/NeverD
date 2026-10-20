@@ -1434,7 +1434,8 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
               !Img.hasExecutableCodeOwnerAt(Occurrence.TargetVA,
                                             ExecutableCodeOwners) ||
               !Img.relocatedTargetBelongsToOwner(Occurrence.TargetVA,
-                                                 Occurrence.TargetOwnerVA) ||
+                                                 Occurrence.TargetOwnerVA,
+                                                 ExecutableCodeOwners) ||
               Rec == Insns.end() || Rec->second.IsInstructionGuard ||
               Rec->second.IsBranch || Rec->second.IsCall || Rec->second.IsRet ||
               Rec->second.IsOpaqueTerminator ||
@@ -1698,8 +1699,8 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
             Img.hasExecutableCodeOwnerAt(Last, ExecutableCodeOwners) ||
             isRuntimeWritableAddress(Img, Address) ||
             isRuntimeWritableAddress(Img, Last) ||
-            !Img.relocatedTargetBelongsToOwner(Address,
-                                               Occurrence.TargetOwnerVA))
+            !Img.relocatedTargetBelongsToOwner(
+                Address, Occurrence.TargetOwnerVA, ExecutableCodeOwners))
           return false;
         const Section *StartSection = Img.getSectionFor(Address);
         const Section *LastSection = Img.getSectionFor(Last);
@@ -2480,7 +2481,8 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
 
           if (!AmbiguousOutput && Output && RelocatedOperands.empty() &&
               PointerSize != 0 && TargetOwnerVA != InvalidVA &&
-              Img.relocatedTargetBelongsToOwner(Ref, TargetOwnerVA)) {
+              Img.relocatedTargetBelongsToOwner(Ref, TargetOwnerVA,
+                                                ExecutableCodeOwners)) {
             RelocatedInstructionAddressOccurrence Occurrence;
             Occurrence.InstructionAddr = Cur;
             Occurrence.OpSeq = Output->Seq;
@@ -3204,7 +3206,7 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
         PageMaterialization->second.TargetOwnerVA != InvalidVA &&
         Img.relocatedTargetBelongsToOwner(
             PageMaterialization->second.TargetVA,
-            PageMaterialization->second.TargetOwnerVA) &&
+            PageMaterialization->second.TargetOwnerVA, ExecutableCodeOwners) &&
         (PageMaterialization->second.TargetVA & ~AArch64PageMask) == PageBase;
     const bool CanAuthenticatePageByDereference =
         Img.hasObjectDataProvenance(PageBase) &&
@@ -3332,9 +3334,9 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
     const auto Materialized = Img.InstructionPageAddressFragments.find(Addr);
     if (Materialized == Img.InstructionPageAddressFragments.end() ||
         Materialized->second.TargetOwnerVA == InvalidVA ||
-        !Img.relocatedTargetBelongsToOwner(
-            Materialized->second.TargetVA,
-            Materialized->second.TargetOwnerVA) ||
+        !Img.relocatedTargetBelongsToOwner(Materialized->second.TargetVA,
+                                           Materialized->second.TargetOwnerVA,
+                                           ExecutableCodeOwners) ||
         Rec.Ops.size() != 1)
       continue;
     const LowOp &Op = Rec.Ops.front();
@@ -3364,9 +3366,9 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
     const auto Materialized = Img.InstructionAddressMaterializations.find(Addr);
     if (Materialized == Img.InstructionAddressMaterializations.end() ||
         Materialized->second.TargetOwnerVA == InvalidVA ||
-        !Img.relocatedTargetBelongsToOwner(
-            Materialized->second.TargetVA,
-            Materialized->second.TargetOwnerVA) ||
+        !Img.relocatedTargetBelongsToOwner(Materialized->second.TargetVA,
+                                           Materialized->second.TargetOwnerVA,
+                                           ExecutableCodeOwners) ||
         Rec.IsInstructionGuard)
       continue;
     const va_t PageBase = Materialized->second.TargetVA & ~AArch64PageMask;
@@ -3661,8 +3663,8 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
         if (!Read || Read->Source != CurrentValue)
           break;
         const auto Owner = uniqueImmutableDataOwner(CurrentAddress, Read->Size);
-        if (!Owner ||
-            !Img.relocatedTargetBelongsToOwner(CurrentAddress, *Owner))
+        if (!Owner || !Img.relocatedTargetBelongsToOwner(CurrentAddress, *Owner,
+                                                         ExecutableCodeOwners))
           break;
         CandidateQueries.push_back({Read->Source,
                                     Call->Addr,
@@ -3785,7 +3787,8 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
                               *NextAddress, LocalDereferenceMemory.AccessSize)
                         : std::nullopt;
         if (!NextAddress || !Owner ||
-            !Img.relocatedTargetBelongsToOwner(*NextAddress, *Owner))
+            !Img.relocatedTargetBelongsToOwner(*NextAddress, *Owner,
+                                               ExecutableCodeOwners))
           break;
 
         CandidateQueries.push_back({LocalArithmetic->Inputs[LocalBaseSide],
@@ -3929,7 +3932,8 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
         break;
       const std::optional<va_t> Owner = uniqueImmutableDataOwner(
           CurrentAddress, DereferenceMemory.AccessSize);
-      if (!Owner || !Img.relocatedTargetBelongsToOwner(CurrentAddress, *Owner))
+      if (!Owner || !Img.relocatedTargetBelongsToOwner(CurrentAddress, *Owner,
+                                                       ExecutableCodeOwners))
         break;
 
       CandidateQueries.push_back({DereferenceAddress,
@@ -4032,8 +4036,8 @@ void CFGBuilder::completeExactARMRelativeLiteralAddresses(
               Bytes && Op.Output.Size == 4) {
             const AppliedARMRelativeLiteral &Field = Applied->second;
             if (readLE<uint32_t>(Bytes) == Field.EncodedValue &&
-                Img.relocatedTargetBelongsToOwner(Field.TargetVA,
-                                                  Field.TargetOwnerVA))
+                Img.relocatedTargetBelongsToOwner(
+                    Field.TargetVA, Field.TargetOwnerVA, ExecutableCodeOwners))
               Literals.push_back(
                   {*Slot,
                    Field.TargetVA,
@@ -4153,7 +4157,8 @@ void CFGBuilder::completeExactARMRelativeLiteralAddresses(
                 const va_t Target = static_cast<uint32_t>(PC + Literal.Encoded);
                 Key = {Target, Literal.Linked ? Img.layoutAddressOwner(Target)
                                               : AnchorOwner};
-                if (!Img.relocatedTargetBelongsToOwner(Key.first, Key.second))
+                if (!Img.relocatedTargetBelongsToOwner(Key.first, Key.second,
+                                                       ExecutableCodeOwners))
                   continue;
               } else if (static_cast<uint32_t>(PC + Literal.Encoded) !=
                          static_cast<uint32_t>(Literal.TargetVA)) {

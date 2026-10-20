@@ -7640,7 +7640,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                 if (!consumeRelocatedOwnerQuery())
                   return nullptr;
                 if (!CurrentImg->relocatedTargetBelongsToOwner(
-                        Occurrence.TargetVA, Occurrence.TargetOwnerVA))
+                        Occurrence.TargetVA, Occurrence.TargetOwnerVA,
+                        ExecutableCodeOwners))
                   continue;
                 if (Exact)
                   return nullptr;
@@ -12000,7 +12001,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
             isRuntimeWritableAddress(*CurrentImg, Last) ||
             !consumeRelocatedOwnerQuery() ||
             !CurrentImg->relocatedTargetBelongsToOwner(
-                Address, Occurrence.TargetOwnerVA))
+                Address, Occurrence.TargetOwnerVA, ExecutableCodeOwners))
           return false;
         if (!consumeProduct(CurrentImg->Segments.size(), 4) ||
             !consumeProduct(CurrentImg->Sections.size(), 6))
@@ -12029,8 +12030,10 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
       return false;
     if (!consumeRelocatedOwnerQuery() || !consumeRelocatedOwnerQuery())
       return false;
-    if (!CurrentImg->relocatedTargetBelongsToOwner(ProducerTargetVA, OwnerVA) ||
-        !CurrentImg->relocatedTargetBelongsToOwner(StaticAddress, OwnerVA))
+    if (!CurrentImg->relocatedTargetBelongsToOwner(ProducerTargetVA, OwnerVA,
+                                                   ExecutableCodeOwners) ||
+        !CurrentImg->relocatedTargetBelongsToOwner(StaticAddress, OwnerVA,
+                                                   ExecutableCodeOwners))
       return false;
     const LowOp *Op = exactOpAt(Producer.Addr, Producer.Seq);
     if (!Op)
@@ -12514,7 +12517,8 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
                                            Source.StaticAddressOwnerVA) ||
               !consumeRelocatedOwnerQuery() ||
               !CurrentImg->relocatedTargetBelongsToOwner(
-                  Source.StaticAddress, Source.StaticAddressOwnerVA))
+                  Source.StaticAddress, Source.StaticAddressOwnerVA,
+                  ExecutableCodeOwners))
             return false;
           const NdVar &SourceAddress =
               SourceLoad->Inputs[SourceLoad->NumInputs >= 2 ? 1 : 0];
