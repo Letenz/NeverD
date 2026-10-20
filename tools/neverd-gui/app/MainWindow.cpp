@@ -75,6 +75,7 @@
 #include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSaveFile>
 #include <QScopedValueRollback>
 #include <QSet>
 #include <QSettings>
@@ -539,6 +540,8 @@ KDDockWidgets::Core::DockWidget *MainWindow::createDock(const QString &name) {
 MainWindow::Dock *MainWindow::dockNamed(const QString &name) {
   if (auto *existing = docks_.value(name))
     return existing;
+  if (name.startsWith(QLatin1String("disassembly-")))
+    return disassemblyDock(name);
   if (name == QLatin1String(PseudocodeDock)) {
     codeView(CodeView::pseudocodeRepresentation());
     return docks_.value(name);
@@ -584,6 +587,7 @@ void MainWindow::openDock(Dock *dock, bool tabbed) {
 
 void MainWindow::buildDocks() {
   disassembly_ = new DisassemblyView(session_, space_);
+  primaryDisassembly_ = disassembly_;
   disassembly_->setSyncName(tr("Hex View-1"));
   actions_.attachViewShortcuts(disassembly_);
   makeDock(DisassemblyDock, QT_TR_NOOP("NeverD View-A"),
@@ -622,49 +626,35 @@ void MainWindow::buildDocks() {
   functions_->table()->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(functions_->table(), &QWidget::customContextMenuRequested, this,
           [this](const QPoint &position) { functionsMenu(position); });
-  connect(disassembly_, &DisassemblyView::locationChanged, this,
-          [this](Address address) { synchronize(address, disassembly_); });
-  connect(disassembly_, &DisassemblyView::navigateRequested, this,
-          [this](Address address) { navigate(address); });
-  connect(disassembly_, &DisassemblyView::contextMenuRequested, this,
-          &MainWindow::contextMenu);
-  connect(disassembly_, &DisassemblyView::historyChanged, this, [this] {
-    if (!codeHistoryNavigation_)
-      ++codeNavigationSerial_;
-    // An explicit navigation supersedes a deferred restored location.
-    initialAddress_.reset();
-    restoreGraph_ = false;
-    updateActions();
-  });
-  connect(disassembly_, &DisassemblyView::graphModeChanged, this,
-          [this](bool graph) {
-            if (graph)
-              showOverview();
-          });
+  connectDisassembly(disassembly_);
   connect(hex_, &HexView::locationChanged, this,
           [this](Address address) { disassembly_->navigate(address, false); });
   connect(output_, &OutputWindow::navigateRequested, this,
           [this](Address address) { jump(address); });
   // The output window and dialogs act on the last analysis view used.
-  connect(qApp, &QApplication::focusChanged, this,
-          [this](QWidget *, QWidget *now) {
-            for (auto it = docks_.cbegin(); it != docks_.cend(); ++it)
-              if (*it && (*it)->isAncestorOf(now)) {
-                // Choosers and auxiliary windows keep the analysis context.
-                if (auto *view = qobject_cast<CodeView *>((*it)->widget())) {
-                  lastCodeView_ = view;
-                  tabCodeView_ = view;
-                } else if (it.key() == QLatin1String(DisassemblyDock) ||
-                           it.key() == QLatin1String(HexDock))
-                  lastCodeView_.clear();
-                if (it.key() != QLatin1String(OutputDock))
-                  hexActive_ = it.key() == QLatin1String(HexDock);
-                // What the commands act on follows the view: a pseudocode
-                // window converts a parameter, the disassembly an operand.
-                updateActions();
-                return;
-              }
-          });
+  connect(
+      qApp, &QApplication::focusChanged, this, [this](QWidget *, QWidget *now) {
+        for (auto it = docks_.cbegin(); it != docks_.cend(); ++it)
+          if (*it && (*it)->isAncestorOf(now)) {
+            // Choosers and auxiliary windows keep the analysis context.
+            if (auto *view = qobject_cast<CodeView *>((*it)->widget())) {
+              lastCodeView_ = view;
+              tabCodeView_ = view;
+            } else if (auto *view =
+                           qobject_cast<DisassemblyView *>((*it)->widget())) {
+              disassembly_ = view;
+              overview_->setGraph(view->graph());
+              lastCodeView_.clear();
+            } else if (it.key() == QLatin1String(HexDock))
+              lastCodeView_.clear();
+            if (it.key() != QLatin1String(OutputDock))
+              hexActive_ = it.key() == QLatin1String(HexDock);
+            // What the commands act on follows the view: a pseudocode
+            // window converts a parameter, the disassembly an operand.
+            updateActions();
+            return;
+          }
+      });
   connect(output_, &OutputWindow::commandRequested, this,
           &MainWindow::runCommand);
   connect(&session_, &Session::message, output_, &OutputWindow::append);
@@ -674,6 +664,87 @@ void MainWindow::buildDocks() {
       &MainWindow::createDock);
   connect(disassembly_->listing(), &ListingView::contentPainted, this,
           &MainWindow::firstContentPainted);
+}
+
+void MainWindow::connectDisassembly(DisassemblyView *view) {
+  connect(view, &DisassemblyView::locationChanged, this,
+          [this, view](Address address) {
+            if (view == disassembly_)
+              synchronize(address, view);
+          });
+  connect(view, &DisassemblyView::navigateRequested, this,
+          [this, view](Address address) {
+            disassembly_ = view;
+            overview_->setGraph(view->graph());
+            navigate(address);
+          });
+  connect(view, &DisassemblyView::contextMenuRequested, this,
+          [this, view](const QPoint &point) {
+            disassembly_ = view;
+            overview_->setGraph(view->graph());
+            contextMenu(point);
+          });
+  connect(view, &DisassemblyView::historyChanged, this, [this, view] {
+    if (view != disassembly_)
+      return;
+    if (!codeHistoryNavigation_)
+      ++codeNavigationSerial_;
+    initialAddress_.reset();
+    restoreGraph_ = false;
+    updateActions();
+  });
+  connect(view, &DisassemblyView::graphModeChanged, this,
+          [this, view](bool graph) {
+            if (graph && view == disassembly_)
+              showOverview();
+          });
+}
+
+MainWindow::Dock *MainWindow::disassemblyDock(const QString &id) {
+  if (auto *dock = docks_.value(id))
+    return dock;
+  bool valid = false;
+  const int number =
+      id.mid(QStringLiteral("disassembly-").size()).toInt(&valid);
+  if (!id.startsWith(QLatin1String("disassembly-")) || !valid || number < 1 ||
+      number > 64)
+    return nullptr;
+  auto *view = new DisassemblyView(session_, space_);
+  view->setSyncName(tr("Hex View-1"));
+  actions_.attachViewShortcuts(view);
+  connectDisassembly(view);
+  auto *dock = makeDock(id, nullptr, QStringLiteral("text_view"), view);
+  connect(dock, &Dock::isOpenChanged, this, [this, view](bool open) {
+    if (!open && disassembly_ == view) {
+      disassembly_ = primaryDisassembly_;
+      overview_->setGraph(disassembly_->graph());
+      updateActions();
+    }
+  });
+  dock->setTitle(tr("NeverD View-%1")
+                     .arg(number < 26 ? QString(QChar('A' + number))
+                                      : QString::number(number + 1)));
+  return dock;
+}
+
+void MainWindow::jumpNewWindow(Address target) {
+  int number = 1;
+  while (docks_.contains(QStringLiteral("disassembly-%1").arg(number)))
+    ++number;
+  auto *dock = disassemblyDock(QStringLiteral("disassembly-%1").arg(number));
+  if (!dock) {
+    output_->append(tr("Cannot open more disassembly views."), 1);
+    return;
+  }
+  auto *view = qobject_cast<DisassemblyView *>(dock->widget());
+  addDockWidget(dock, KDDockWidgets::Location_OnRight,
+                docks_.value(DisassemblyDock));
+  dock->open();
+  dock->raise();
+  disassembly_ = view;
+  overview_->setGraph(view->graph());
+  view->navigate(target);
+  view->focusContent();
 }
 
 MainWindow::Dock *MainWindow::chooserDock(ChooserKind kind) {
@@ -857,6 +928,8 @@ void MainWindow::buildStatusBar() {
 void MainWindow::connectSession() {
   connect(&session_, &Session::opened, this, [this] {
     pseudocodeAfterJump_.reset();
+    disassembly_ = primaryDisassembly_;
+    overview_->setGraph(disassembly_->graph());
     if (auto *dock = docks_.value(PseudocodeDock))
       dock->forceClose();
     if (pseudocode_)
@@ -884,6 +957,10 @@ void MainWindow::connectSession() {
   session_.setStateProvider([this] { return projectState(); });
   connect(&session_, &Session::unloaded, this, [this] {
     pseudocodeAfterJump_.reset();
+    ++searchSerial_;
+    searchSubscription_ = 0;
+    lastTextSearch_.clear();
+    lastByteSearch_.clear();
     showBookmarks({});
     updateTitle();
     updateActions();
@@ -1008,12 +1085,16 @@ void MainWindow::navigate(Address address) {
   ++codeNavigationSerial_;
   if (!session_.loaded())
     return;
-  if (auto *dock = docks_.value(DisassemblyDock)) {
-    dock->open();
-    dock->raise();
-  }
-  disassembly_->navigate(address, true);
-  disassembly_->focusContent();
+  auto *view = disassembly_;
+  for (auto *dock : std::as_const(docks_))
+    if (dock->widget() == view) {
+      dock->open();
+      dock->raise();
+      break;
+    }
+  disassembly_ = view;
+  view->navigate(address, true);
+  view->focusContent();
 }
 
 void MainWindow::jump(Address address) {
@@ -1229,7 +1310,7 @@ void MainWindow::connectActions() {
   });
   on(ActionId::JumpNewWindow, [this] {
     if (const auto target = disassembly_->operandTarget())
-      navigate(*target);
+      jumpNewWindow(*target);
   });
   on(ActionId::EditCreateFunction, [this] {
     if (const auto address = currentAddress())
@@ -1389,6 +1470,8 @@ void MainWindow::connectActions() {
 
   on(ActionId::ViewQuickView, [this] { showCommandPalette(); });
   on(ActionId::ViewDisassembly, [this] {
+    disassembly_ = primaryDisassembly_;
+    overview_->setGraph(disassembly_->graph());
     docks_.value(DisassemblyDock)->open();
     docks_.value(DisassemblyDock)->raise();
   });
@@ -1500,6 +1583,10 @@ void MainWindow::connectActions() {
     for (auto *dock : std::as_const(docks_))
       if (dock->isAncestorOf(QApplication::focusWidget()) &&
           dock != docks_.value(DisassemblyDock)) {
+        if (dock->widget() == disassembly_) {
+          disassembly_ = primaryDisassembly_;
+          overview_->setGraph(disassembly_->graph());
+        }
         dock->forceClose();
         return;
       }
@@ -2524,40 +2611,66 @@ void MainWindow::searchBinary(const QString &kind, bool again) {
     last = text.trimmed();
   }
   const auto from = currentAddress().value_or(0);
-  session_.read(
-      QStringLiteral("search"),
-      {{"kind", kind}, {"pattern", last}, {"limit", 4096}}, this,
-      [this, from, kind](const QJsonObject &payload) {
-        const auto items = payload.value("items").toArray();
-        if (items.isEmpty()) {
-          output_->append(tr("Search failed: %1 not found")
-                              .arg(kind == QLatin1String("text")
-                                       ? lastTextSearch_
-                                       : lastByteSearch_),
-                          1);
-          return;
-        }
-        // Results list, and a jump to the next match in the search direction.
-        auto *dock = chooserDock(ChooserKind::SearchResults);
-        choosers_.value(int(ChooserKind::SearchResults))
-            ->model()
-            .setLocalRows(items);
-        if (!dock->isOpen())
-          addDockWidget(dock, KDDockWidgets::Location_OnBottom,
-                        docks_.value(DisassemblyDock));
-        dock->open();
-        std::optional<Address> next;
-        for (const auto &value : items) {
-          const auto address = addressValue(value.toObject().value("address"));
-          if (!address)
-            continue;
-          if (searchDown_ ? (*address > from && (!next || *address < *next))
-                          : (*address < from && (!next || *address > *next)))
-            next = address;
-        }
-        if (next)
-          navigate(*next);
-      });
+  const auto pattern = last;
+  const bool backward = !searchDown_;
+  const auto serial = ++searchSerial_, epoch = session_.epoch();
+  if (searchSubscription_)
+    session_.queries().unsubscribe(searchSubscription_);
+  if (auto *results = choosers_.value(int(ChooserKind::SearchResults)))
+    results->model().setLocalRows({});
+  auto request = std::make_shared<std::function<void(bool)>>();
+  const std::weak_ptr<std::function<void(bool)>> weak = request;
+  *request = [this, kind, pattern, from, backward, serial, epoch,
+              weak](bool wrapped) {
+    auto keep = weak.lock();
+    if (!keep)
+      return;
+    QJsonObject query{{"kind", kind},
+                      {"pattern", pattern},
+                      {"limit", 4096},
+                      {"backward", backward}};
+    if (!wrapped)
+      query["from"] = hexAddress(from);
+    searchSubscription_ = session_.read(
+        QStringLiteral("search"), query, this,
+        [this, kind, pattern, serial, epoch, backward, wrapped,
+         keep](const QJsonObject &payload) {
+          if (serial != searchSerial_ || epoch != session_.epoch() ||
+              !session_.loaded())
+            return;
+          const auto items = payload.value("items").toArray();
+          if (items.isEmpty() && !wrapped) {
+            (*keep)(true);
+            return;
+          }
+          if (items.isEmpty()) {
+            output_->append(tr("Search failed: %1 not found").arg(pattern), 1);
+            return;
+          }
+          auto *dock = chooserDock(ChooserKind::SearchResults);
+          choosers_.value(int(ChooserKind::SearchResults))
+              ->model()
+              .setLocalRows(items);
+          if (!dock->isOpen())
+            addDockWidget(dock, KDDockWidgets::Location_OnBottom,
+                          docks_.value(DisassemblyDock));
+          dock->open();
+          if (!payload.value("complete").toBool())
+            output_->append(
+                tr("Showing %1 matches; use Next to continue the search.")
+                    .arg(items.size()),
+                0);
+          // The worker already ordered and bounded the page from this cursor.
+          if (const auto address =
+                  addressValue(items.first().toObject().value("address")))
+            navigate(*address);
+        },
+        [this, serial, epoch](const QString &, const QString &message) {
+          if (serial == searchSerial_ && epoch == session_.epoch())
+            output_->append(message, 2);
+        });
+  };
+  (*request)(false);
 }
 
 void MainWindow::searchHighlight(bool forward) {
@@ -2570,6 +2683,9 @@ void MainWindow::stepFunction(bool forward) {
   const auto address = currentAddress();
   if (!address)
     return;
+  const auto serial = ++codeNavigationSerial_;
+  const auto epoch = session_.epoch();
+  auto *view = disassembly_;
   session_.read(
       QStringLiteral("functions"),
       {{"offset", 0},
@@ -2577,7 +2693,12 @@ void MainWindow::stepFunction(bool forward) {
        {"sort", "address"},
        {"descending", !forward},
        {"from", hexAddress(*address)}},
-      this, [this, address, forward](const QJsonObject &payload) {
+      this,
+      [this, view, serial, epoch, address,
+       forward](const QJsonObject &payload) {
+        if (serial != codeNavigationSerial_ || epoch != session_.epoch() ||
+            view != disassembly_)
+          return;
         for (const auto &value : payload.value("items").toArray()) {
           const auto entry = addressValue(value.toObject().value("address"));
           if (entry && (forward ? *entry > *address : *entry < *address)) {
@@ -2920,17 +3041,48 @@ void MainWindow::exportCurrent(bool pseudocode) {
   if (path.isEmpty())
     return;
   if (pseudocode) {
-    auto *view = pseudocodeView;
-    view->showFunction(*function);
-    QTimer::singleShot(0, this, [this, path, view] {
-      QFile file(path);
-      if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        output_->append(tr("Cannot write %1").arg(path), 2);
+    // A private document pins this export to its requested function. The pane
+    // may still hold preceding source, be hidden, or move while pages arrive.
+    auto *document = new CodeText(session_, this);
+    const auto epoch = session_.epoch();
+    const auto revision = session_.revision();
+    const auto finished = std::make_shared<bool>(false);
+    const auto retire = [document, finished] {
+      if (std::exchange(*finished, true))
         return;
-      }
-      QTextStream(&file) << view->text()->allText() << '\n';
-      output_->append(tr("Wrote %1").arg(path), 0);
-    });
+      document->cancel();
+      document->deleteLater();
+    };
+    connect(&session_, &Session::unloaded, document, retire);
+    connect(&session_, &Session::revisionChanged, document, retire);
+    connect(
+        document, &CodeText::statusChanged, document,
+        [this, path, document, function, epoch, revision, finished, retire] {
+          if (*finished || document->loading())
+            return;
+          if (!session_.loaded() || session_.epoch() != epoch ||
+              session_.revision() != revision ||
+              document->function() != function || !document->complete() ||
+              document->allText().isEmpty()) {
+            output_->append(
+                tr("Could not export source: %1").arg(document->status()), 2);
+            retire();
+            return;
+          }
+          QSaveFile file(path);
+          const auto contents =
+              (document->allText() + QLatin1Char('\n')).toUtf8();
+          if (!file.open(QIODevice::WriteOnly) ||
+              file.write(contents) != contents.size() || !file.commit()) {
+            output_->append(tr("Cannot write %1").arg(path), 2);
+          } else
+            output_->append(tr("Wrote %1").arg(path), 0);
+          retire();
+        });
+    const auto options = pseudocodeView->text()->function() == function
+                             ? pseudocodeView->text()->sourceOptions()
+                             : pseudocodeView->text()->defaultSourceOptions();
+    document->load(*function, pseudocodeView->representation(), options);
     return;
   }
   session_.read(

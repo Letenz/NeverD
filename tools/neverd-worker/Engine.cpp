@@ -30,6 +30,7 @@
 #include <set>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <unordered_map>
 #ifdef _WIN32
 // std::min, std::max and numeric_limits<>::max() must not meet the macros.
@@ -551,21 +552,41 @@ void atomicWrite(const fs::path &path, const std::string &body) {
           std::chrono::steady_clock::now().time_since_epoch().count()) +
       "-" + std::to_string(sequence++);
 #ifdef _WIN32
+  const auto fail = [&](const char *operation, DWORD code) {
+    DeleteFileW(temporary.c_str());
+    const auto utf8 = path.generic_u8string();
+    throw Error("save_failed", std::string(operation) + " for " +
+                                   std::string(utf8.begin(), utf8.end()) +
+                                   " (Win32 error " + std::to_string(code) +
+                                   ")");
+  };
   HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr,
                             CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
   if (file == INVALID_HANDLE_VALUE)
-    throw Error("save_failed", "Cannot create sidecar temporary file");
+    fail("Cannot create sidecar temporary file", GetLastError());
   DWORD written = 0;
   const bool success =
       WriteFile(file, body.data(), static_cast<DWORD>(body.size()), &written,
                 nullptr) &&
       written == body.size() && FlushFileBuffers(file);
+  const auto writeError = success ? ERROR_SUCCESS : GetLastError();
   CloseHandle(file);
-  if (!success ||
-      !MoveFileExW(temporary.c_str(), path.c_str(),
-                   MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-    DeleteFileW(temporary.c_str());
-    throw Error("save_failed", "Cannot atomically replace sidecar");
+  if (!success)
+    fail("Cannot write sidecar temporary file",
+         writeError == ERROR_SUCCESS ? ERROR_WRITE_FAULT : writeError);
+  // A snapshot reader or filesystem scanner may briefly deny deletion of the
+  // old file. Retain the flushed temporary and retry only sharing-related
+  // failures, with a bound; never fall back to deleting the committed file.
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  while (!MoveFileExW(temporary.c_str(), path.c_str(),
+                      MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    const auto code = GetLastError();
+    if ((code != ERROR_SHARING_VIOLATION && code != ERROR_LOCK_VIOLATION &&
+         code != ERROR_ACCESS_DENIED) ||
+        std::chrono::steady_clock::now() >= deadline)
+      fail("Cannot atomically replace sidecar", code);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 #else
   int descriptor =
@@ -2587,8 +2608,12 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     if (!limit)
       throw Error("invalid_request", "limit must be at least 1");
     const auto filter = folded(stringField(p, "filter"));
-    const auto sort = stringField(p, "sort", {}, 64);
+    const auto sort =
+        stringField(p, "sort", p.contains("from") ? "address" : "", 64);
     const bool descending = p.value("descending", false);
+    if (p.contains("from") && sort != "address")
+      throw Error("invalid_request",
+                  "Function navigation requires address order");
     auto &listingView = listing();
     const auto &rows = listingView.functionRows();
     if (rows.size() > MaxFunctionRows)
@@ -2597,7 +2622,9 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     std::string key = filter;
     key += '\0';
     key += sort;
-    key += descending ? "\0d\0" : "\0a\0";
+    key += '\0';
+    key += descending ? 'd' : 'a';
+    key += '\0';
     key += std::to_string(listingView.generation());
     if (key != functionOrderKey_) {
       functionOrder_.clear();
@@ -2629,11 +2656,23 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       }
       functionOrderKey_ = std::move(key);
     }
-    const auto total = functionOrder_.size();
+    auto first = functionOrder_.begin();
+    if (p.contains("from")) {
+      const auto from = parseAddress(stringField(p, "from"));
+      first = std::upper_bound(
+          first, functionOrder_.end(), from,
+          [&](std::uint64_t address, std::size_t index) {
+            const auto candidate =
+                parseAddress(rows[index]["address"].get<std::string>());
+            return descending ? address > candidate : address < candidate;
+          });
+    }
+    const auto start = std::size_t(first - functionOrder_.begin());
+    const auto total = functionOrder_.size() - start;
     Json items = Json::array();
     for (auto i = std::min(offset, total); i < total && items.size() < limit;
          ++i) {
-      const auto &row = rows[functionOrder_[i]];
+      const auto &row = rows[functionOrder_[start + i]];
       const auto address = parseAddress(row["address"].get<std::string>());
       // The engine's identity (linkage and demangled names) under the
       // workbench's display name.
@@ -3033,39 +3072,26 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     const auto limit = sizeField(p, "limit", 256, 4096);
     if (pattern.empty() || !limit)
       throw Error("invalid_request", "A search pattern and limit are required");
-    Json hits;
-    if (kind == "bytes") {
-      std::vector<unsigned char> bytes;
-      std::string digits;
-      for (char c : pattern)
-        if (std::isxdigit(static_cast<unsigned char>(c)))
-          digits += c;
-        else if (c != ' ' && c != '\t')
-          throw Error("invalid_request",
-                      "Byte patterns contain hexadecimal pairs");
-      if (digits.empty() || digits.size() % 2)
-        throw Error("invalid_request",
-                    "Byte patterns contain hexadecimal pairs");
-      for (std::size_t i = 0; i < digits.size(); i += 2)
-        bytes.push_back(static_cast<unsigned char>(
-            std::stoul(digits.substr(i, 2), nullptr, 16)));
-      hits = backendJson(neverd_search_bytes(session_, bytes.data(),
-                                             static_cast<int>(bytes.size()),
-                                             static_cast<int>(limit)));
-    } else if (kind == "text") {
-      hits = backendJson(neverd_search_string(
-          session_, pattern.c_str(), p.value("case_sensitive", false) ? 1 : 0,
-          static_cast<int>(limit)));
-    } else {
+    if (kind != "text" && kind != "bytes")
       throw Error("invalid_request", "Search kind must be bytes or text");
-    }
-    Json items = Json::array();
-    for (auto &hit : hits) {
-      hit["address"] = hit.value("addr", std::string("0x0"));
+    using SearchPage = const char *(*)(neverd_session_t, const char *);
+    const auto search = engineSymbol<SearchPage>("neverd_search_page");
+    if (!search)
+      throw Error("unsupported",
+                  "This engine does not support cursor-based search");
+    Json options{{"kind", kind}, {"pattern", pattern}, {"limit", limit}};
+    for (const char *field : {"from", "backward", "case_sensitive"})
+      if (p.contains(field))
+        options[field] = p[field];
+    const auto *reply = search(session_, options.dump().c_str());
+    if (!reply)
+      throw Error("invalid_request", error());
+    auto result = backendJson(reply);
+    for (auto &hit : result["items"]) {
+      hit["address"] = hit.at("addr");
       hit.erase("addr");
-      items.push_back(std::move(hit));
     }
-    return {{"items", std::move(items)}, {"complete", true}};
+    return result;
   }
   if (operation == "annotations") {
     auto items = backendJson(neverd_annotations_json(session_));

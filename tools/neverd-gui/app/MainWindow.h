@@ -77,6 +77,7 @@ public:
   void runAfterOpen(const QStringList &commands) {
     pendingCommands_ = commands;
   }
+  /// The active disassembly view; Alt+Enter can open independent views.
   DisassemblyView *disassembly() const { return disassembly_; }
   ActionRegistry &actions() { return actions_; }
   /// The window's menus, which sit in its title bar when it draws its own
@@ -108,6 +109,9 @@ private:
   void buildMenusAndToolbars();
   void buildStatusBar();
   void buildDocks();
+  void connectDisassembly(DisassemblyView *view);
+  Dock *disassemblyDock(const QString &id);
+  void jumpNewWindow(Address target);
   void applyDefaultLayout();
   /// Give the default side and bottom windows their classic proportions.
   void applyDefaultSizes();
@@ -278,6 +282,7 @@ private:
   TitleBar *titleBar_ = nullptr;
   QMenuBar *menuBar_ = nullptr;
   DisassemblyView *disassembly_ = nullptr;
+  DisassemblyView *primaryDisassembly_ = nullptr;
   HexView *hex_ = nullptr;
   OutputWindow *output_ = nullptr;
   MicrosoftSymbols *microsoftSymbols_ = nullptr;
@@ -308,6 +313,7 @@ private:
   QMenu *windowsMenu_ = nullptr;
   QString layoutPath_;
   QString lastTextSearch_, lastByteSearch_;
+  quint64 searchSerial_ = 0, searchSubscription_ = 0;
   QString lastPaletteCommand_;
   bool searchDown_ = true;
   quint64 codeNavigationSerial_ = 0;

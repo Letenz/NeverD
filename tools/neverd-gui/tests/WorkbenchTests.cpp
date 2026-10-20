@@ -256,6 +256,263 @@ class WorkbenchTests : public QObject {
   Q_OBJECT
   QTemporaryDir settingsDirectory_;
 private slots:
+  void sourceExportWaitsForItsOwnCompleteDocument_data() {
+    QTest::addColumn<QString>("fixture");
+    QTest::addColumn<bool>("failure");
+    QTest::newRow("delayed-new-function") << "source-export.bin" << false;
+    QTest::newRow("preparation-failed") << "source-export-fail.bin" << true;
+    QTest::newRow("all-pages") << "source-cache-budget.bin" << false;
+  }
+
+  void sourceExportWaitsForItsOwnCompleteDocument() {
+    QFETCH(QString, fixture);
+    QFETCH(bool, failure);
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, fixture);
+    const auto destination = directory.filePath(QStringLiteral("export.c"));
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(bench.window->disassembly()->currentFunction(),
+                              std::optional<Address>(Base), OpenTimeoutMs);
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    CodeView *code = nullptr;
+    QTRY_VERIFY((code = bench.codeView(QStringLiteral("source"))));
+    QTRY_VERIFY_WITH_TIMEOUT(code->text()->complete(), NativeOpenTimeoutMs);
+    QVERIFY(code->text()->allText().contains(QStringLiteral("function_0")));
+    bench.action(ActionId::ViewDisassembly)->trigger();
+    auto *origin = bench.window->disassembly();
+    origin->focusContent();
+    origin->navigate(Base + 16);
+    QTRY_COMPARE(origin->currentItem(), std::optional<Address>(Base + 16));
+    // A failed export must preserve the existing destination.
+    if (failure) {
+      QFile existing(destination);
+      QVERIFY(existing.open(QIODevice::WriteOnly));
+      existing.write("previous export");
+    }
+    const bool native =
+        QCoreApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+    QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    const auto restore = qScopeGuard([native] {
+      QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, native);
+    });
+    bool accepted = false;
+    QTimer files;
+    connect(&files, &QTimer::timeout, &files, [&] {
+      if (auto *dialog =
+              qobject_cast<QFileDialog *>(QApplication::activeModalWidget())) {
+        accepted = true;
+        dialog->setOption(QFileDialog::DontConfirmOverwrite);
+        dialog->selectFile(destination);
+        if (auto *name =
+                dialog->findChild<QLineEdit *>(QStringLiteral("fileNameEdit")))
+          name->setText(destination);
+        static_cast<QDialog *>(dialog)->accept();
+      } else if (auto *box = qobject_cast<QMessageBox *>(
+                     QApplication::activeModalWidget()))
+        box->button(QMessageBox::Yes)->click();
+    });
+    files.start(10);
+    bench.action(ActionId::FileExportPseudocode)->trigger();
+    files.stop();
+    QVERIFY(accepted);
+    // Moving the pane while the export runs must not change its target.
+    origin->navigate(Base + 32);
+    if (failure) {
+      QTest::qWait(500);
+      QCOMPARE(readAll(destination), QByteArray("previous export"));
+    } else {
+      QTRY_VERIFY_WITH_TIMEOUT(readAll(destination).contains("function_1"),
+                               NativeOpenTimeoutMs);
+      QVERIFY(!readAll(destination).contains("function_0"));
+      QVERIFY(readAll(destination).contains("return value;"));
+      if (fixture == QLatin1String("source-cache-budget.bin"))
+        QVERIFY(readAll(destination).size() > 4 * 1024 * 1024);
+    }
+  }
+
+  void searchResultsClearOnFailureCloseAndProjectSwitch() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("search-first.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const auto search = [&](const QString &pattern) {
+      QTimer input;
+      connect(&input, &QTimer::timeout, &input, [&] {
+        if (auto *dialog = qobject_cast<QInputDialog *>(
+                QApplication::activeModalWidget())) {
+          dialog->setTextValue(pattern);
+          dialog->accept();
+        }
+      });
+      input.start(5);
+      bench.action(ActionId::SearchText)->trigger();
+    };
+    const auto results = [&]() -> ChooserView * {
+      for (auto *view : bench.window->findChildren<ChooserView *>())
+        if (view->model().kind() == ChooserKind::SearchResults)
+          return view;
+      return nullptr;
+    };
+    search(QStringLiteral("string 42"));
+    QTRY_VERIFY_WITH_TIMEOUT(results() && results()->model().total() > 0,
+                             OpenTimeoutMs);
+    search(QStringLiteral("does-not-exist"));
+    QTRY_COMPARE(results()->model().total(), 0);
+    search(QStringLiteral("string 7"));
+    QTRY_VERIFY(results()->model().total() > 0);
+    bench.session.closeFile();
+    QTRY_VERIFY(!bench.session.loaded());
+    QCOMPARE(results()->model().total(), 0);
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("search-second.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QCOMPARE(results()->model().total(), 0);
+  }
+
+  void sortingLongStringsKeepsTheTableWithinTheTransportBudget() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("strings-preview.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.action(ActionId::ViewStrings)->trigger();
+    ChooserView *strings = nullptr;
+    for (auto *view : bench.window->findChildren<ChooserView *>())
+      if (view->model().kind() == ChooserKind::Strings)
+        strings = view;
+    QVERIFY(strings);
+    strings->model().sort(1, Qt::DescendingOrder);
+    QTRY_COMPARE_WITH_TIMEOUT(strings->model().total(), 4, NativeOpenTimeoutMs);
+    QTRY_VERIFY(strings->model().addressAt(0).has_value());
+    const auto first = strings->model().rowObject(0);
+    QVERIFY(first.value("length").toInt() > 3 * 1024 * 1024);
+    QVERIFY(first.value("text_truncated").toBool());
+    QVERIFY(first.value("text").toString().size() <= 400);
+    QCOMPARE(strings->model().addressAt(0), std::optional<Address>(Base + 3));
+  }
+
+  void newDisassemblyWindowKeepsIndependentCursorAndHistory() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("new-window.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *origin = bench.window->disassembly();
+    origin->navigate(Base + 8);
+    origin->focusContent();
+    QTRY_COMPARE(origin->currentItem(), std::optional<Address>(Base + 8));
+    QTRY_COMPARE(origin->operandTarget(), std::optional<Address>(Base));
+    bench.window->activateWindow();
+    QTest::keyClick(origin->listing(), Qt::Key_Return, Qt::AltModifier);
+    QTRY_COMPARE(bench.window->findChildren<DisassemblyView *>().size(), 2);
+    auto *second = bench.window->disassembly();
+    QVERIFY(second != origin);
+    QTRY_COMPARE(second->currentItem(), std::optional<Address>(Base));
+    QCOMPARE(origin->currentItem(), std::optional<Address>(Base + 8));
+    bench.action(ActionId::JumpNextFunction)->trigger();
+    QTRY_COMPARE(second->currentItem(), std::optional<Address>(Base + 16));
+    QCOMPARE(origin->currentItem(), std::optional<Address>(Base + 8));
+    bench.action(ActionId::JumpBack)->trigger();
+    QTRY_COMPARE(second->currentItem(), std::optional<Address>(Base));
+    QCOMPARE(origin->currentItem(), std::optional<Address>(Base + 8));
+    bench.session.closeFile();
+    QTRY_VERIFY(!bench.session.loaded());
+    QVERIFY(!origin->currentItem());
+    QVERIFY(!second->currentItem());
+  }
+
+  void recoveredDatabaseStaysDirtyAcrossReopenUntilSaved() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("recovery.bin"));
+    const auto database = directory.filePath(QStringLiteral("recovery.nddb"));
+    {
+      Workbench bench;
+      bench.window->openFile(path);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      bench.session.setComment(Base, QStringLiteral("packed"));
+      QTRY_VERIFY(bench.session.dirty());
+      bench.session.save();
+      QTRY_VERIFY(!bench.session.dirty());
+      QSignalSpy saved(&bench.session, &Session::databaseSaved);
+      bench.session.packDatabase(database);
+      QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);
+      QVERIFY(saved.first().first().toBool());
+    }
+    QString error;
+    const auto working = ProjectDatabase::unpack(
+        database, ProjectDatabase::workingDirectory(database), &error);
+    QVERIFY2(!working.isEmpty(), qPrintable(error));
+    const auto historyPath =
+        working + QStringLiteral(".neverd/local/history.json");
+    const auto beforeHistory =
+        QJsonDocument::fromJson(readAll(historyPath)).object();
+    QVERIFY(!beforeHistory.isEmpty());
+    const auto before = beforeHistory.value("state").toObject();
+    auto after = before;
+    const QJsonArray notes{
+        QJsonObject{{"addr", hexAddress(Base)}, {"text", "recovered newest"}}};
+    after["annotations"] = notes;
+    auto afterHistory = beforeHistory;
+    afterHistory["state"] = after;
+    afterHistory["cursor"] = 1;
+    afterHistory["commands"] =
+        QJsonArray{QJsonObject{{"kind", "annotation"},
+                               {"address", hexAddress(Base)},
+                               {"before", "packed"},
+                               {"after", "recovered newest"}}};
+    const QJsonObject journal{
+        {"schema_version", 1},
+        {"source_sha256", beforeHistory.value("source_sha256")},
+        {"before", before},
+        {"after", after},
+        {"before_history", beforeHistory},
+        {"after_history", afterHistory}};
+    QFile pending(working + QStringLiteral(".neverd/local/journal.json"));
+    QVERIFY(pending.open(QIODevice::WriteOnly));
+    pending.write(QJsonDocument(journal).toJson());
+    pending.close();
+    {
+      Workbench bench;
+      bench.window->openFile(database);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+      QCOMPARE(commentAt(bench, Base), QStringLiteral("recovered newest"));
+      QVERIFY(bench.session.databaseOutOfDate());
+      QVERIFY(bench.session.dirty());
+      // Simulate a second interruption after the worker consumed its journal.
+      QVERIFY(!QFileInfo::exists(pending.fileName()));
+    }
+    Workbench bench;
+    bench.window->openFile(database);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QCOMPARE(commentAt(bench, Base), QStringLiteral("recovered newest"));
+    QVERIFY(bench.session.databaseOutOfDate());
+    QString question;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, &answer, [&] {
+      if (auto *box =
+              qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+        question = box->text();
+        box->button(QMessageBox::Cancel)->click();
+      }
+    });
+    answer.start(5);
+    bench.session.closeFile();
+    QTRY_VERIFY(!question.isEmpty());
+    QVERIFY(bench.session.loaded());
+    answer.stop();
+    bench.session.save();
+    QTRY_VERIFY_WITH_TIMEOUT(!bench.session.dirty(), OpenTimeoutMs);
+    bench.session.closeFile();
+    QTRY_VERIFY(!bench.session.loaded());
+    bench.window->openFile(database);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(!bench.session.databaseOutOfDate());
+    QCOMPARE(commentAt(bench, Base), QStringLiteral("recovered newest"));
+  }
+
   void nestedPseudocodeBlocksFoldWithoutMovingAssembly_data() {
     QTest::addColumn<QString>("representation");
     QTest::newRow("pseudocode") << QStringLiteral("source");

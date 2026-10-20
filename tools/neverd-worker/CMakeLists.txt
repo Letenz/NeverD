@@ -123,6 +123,10 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/history_contributions_test.py"
               "$<TARGET_FILE:neverd-worker-test-server>")
     set_tests_properties(NeverDWorkerHistoryContributions PROPERTIES TIMEOUT 40)
+    add_test(NAME NeverDWorkerFunctionalRegressions
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional_regressions_test.py"
+              "$<TARGET_FILE:neverd-worker-test-server>")
+    set_tests_properties(NeverDWorkerFunctionalRegressions PROPERTIES TIMEOUT 60)
     option(NEVERD_WORKER_REAL_ENGINE_TESTS "Run smoke tests against the real engine" ON)
     if(NEVERD_WORKER_REAL_ENGINE_TESTS)
       add_test(NAME NeverDWorkerNativeMakeCode

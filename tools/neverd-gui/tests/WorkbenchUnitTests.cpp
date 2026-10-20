@@ -717,6 +717,60 @@ private slots:
         directory.filePath(QStringLiteral("missing.nddb")), &error));
   }
 
+  void databaseRecoverySurvivesConsumedJournalAndRejectsConflictingPack() {
+    QTemporaryDir directory, working;
+    const auto binary = directory.filePath(QStringLiteral("recover.bin"));
+    const auto write = [](const QString &path, const QByteArray &bytes) {
+      QDir().mkpath(QFileInfo(path).absolutePath());
+      QFile file(path);
+      return file.open(QIODevice::WriteOnly) &&
+             file.write(bytes) == bytes.size();
+    };
+    const auto read = [](const QString &path) {
+      QFile file(path);
+      return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    QVERIFY(write(binary, "fixture"));
+    QVERIFY(write(binary + ".neverd/annotations.json", "packed"));
+    const auto database = ProjectDatabase::pathFor(binary);
+    QCOMPARE(ProjectDatabase::save(database, binary, {}), QString());
+    QString error;
+    bool recovered = true;
+    const auto input =
+        ProjectDatabase::unpack(database, working.path(), &error, &recovered);
+    QVERIFY2(!input.isEmpty(), qPrintable(error));
+    QVERIFY(!recovered);
+    const auto journal = input + ".neverd/local/journal.json";
+    QVERIFY(write(journal, "pending worker transaction"));
+    QVERIFY(write(input + ".neverd/annotations.json", "newest"));
+    QCOMPARE(
+        ProjectDatabase::unpack(database, working.path(), &error, &recovered),
+        input);
+    QVERIFY(recovered);
+    QVERIFY(QFile::remove(journal));
+    QCOMPARE(
+        ProjectDatabase::unpack(database, working.path(), &error, &recovered),
+        input);
+    QVERIFY(recovered);
+    QCOMPARE(read(input + ".neverd/annotations.json"), QByteArray("newest"));
+    // A different writer changes the packed database while the recovery is
+    // pending. Refuse to replace either copy of the edits.
+    QVERIFY(write(binary + ".neverd/annotations.json", "other writer"));
+    QCOMPARE(ProjectDatabase::save(database, binary, {}), QString());
+    QVERIFY(
+        ProjectDatabase::unpack(database, working.path(), &error, &recovered)
+            .isEmpty());
+    QCOMPARE(read(input + ".neverd/annotations.json"), QByteArray("newest"));
+    // Explicit Discard retires the marker and allows the packed state back.
+    QCOMPARE(ProjectDatabase::finishRecovery(input), QString());
+    QCOMPARE(
+        ProjectDatabase::unpack(database, working.path(), &error, &recovered),
+        input);
+    QVERIFY(!recovered);
+    QCOMPARE(read(input + ".neverd/annotations.json"),
+             QByteArray("other writer"));
+  }
+
   void projectFilesPackWithTheProject() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());

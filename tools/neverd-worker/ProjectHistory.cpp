@@ -445,6 +445,26 @@ void ProjectHistory::persist(const Json &state) {
     throw Error(
         "input_changed",
         "Input changed while the Session was open; reopen it before editing");
+  if (!interruptedWrite_.is_null()) {
+    if (!recoveryPending(binary_) ||
+        read(journalPath_, MaxJournalBytes) != interruptedWrite_)
+      throw Error(
+          "recovery_required",
+          "The interrupted transaction changed; reopen to inspect recovery");
+    // Complete only our own failed write. recover() verifies every sidecar
+    // and history against the journal before replacing anything. Newer staged
+    // annotations and commands stay in memory and are saved below afterwards.
+    recover();
+    committedState_ = normalizedState(interruptedWrite_.at("after"));
+    previousDocument_ = interruptedWrite_.at("after_history");
+    interruptedWrite_ = nullptr;
+    if (normalizedState(state) == committedState_ &&
+        document(committedState_) == previousDocument_) {
+      if (committed_)
+        committed_();
+      return;
+    }
+  }
   if (recoveryPending(binary_))
     throw Error("recovery_required",
                 "An interrupted edit must be recovered before another save");
@@ -470,13 +490,17 @@ void ProjectHistory::persist(const Json &state) {
                 "Cannot create the project folder: " + error.message());
   writer_(journalPath_, compactText(journal));
   // From this point any failure leaves a recoverable write-ahead journal.
-  writeSidecars(after);
-  writer_(historyPath_, compactText(nextDocument));
-  std::error_code ec;
-  if (!fs::remove(journalPath_, ec) || ec)
-    throw Error(
-        "recovery_required",
-        "User edits were saved but journal cleanup failed; restart to recover");
+  try {
+    writeSidecars(after);
+    writer_(historyPath_, compactText(nextDocument));
+    std::error_code ec;
+    if (!fs::remove(journalPath_, ec) || ec)
+      throw Error("recovery_required", "User edits were saved but journal "
+                                       "cleanup failed; retry Save to recover");
+  } catch (...) {
+    interruptedWrite_ = journal;
+    throw;
+  }
   committedState_ = after;
   previousDocument_ = nextDocument;
   if (committed_)

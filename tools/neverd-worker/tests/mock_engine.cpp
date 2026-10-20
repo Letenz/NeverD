@@ -131,7 +131,9 @@ struct MockSession {
            path.ends_with("source-cache-sbf.bin");
   }
   bool sourceCacheFixture() const {
-    return path.ends_with("source-cache.bin") ||
+    return path.ends_with("source-export.bin") ||
+           path.ends_with("source-export-fail.bin") ||
+           path.ends_with("source-cache.bin") ||
            path.ends_with("source-cache-budget.bin") ||
            path.ends_with("source-cache-prepare-fail.bin") ||
            path.ends_with("source-cache-ordered.bin") ||
@@ -1665,6 +1667,13 @@ static int prepareMockFunction(neverd_session_t s, neverd_va_t address) {
   if (session(s)->sourceCacheFixture()) {
     ++session(s)->sourcePrepares;
     session(s)->preparedEntry = 0;
+    if (address == Base + 16 &&
+        session(s)->path.ends_with("source-export-fail.bin")) {
+      session(s)->error = "fixture export preparation failed";
+      return 0;
+    }
+    if (address == Base + 16 && session(s)->path.ends_with("source-export.bin"))
+      std::this_thread::sleep_for(std::chrono::milliseconds(250));
     if (session(s)->path.ends_with("source-cache-prepare-fail.bin") &&
         address == Base + 16 && !session(s)->rejectedPreparation) {
       session(s)->rejectedPreparation = true;
@@ -2507,6 +2516,28 @@ const char *neverd_string_encodings_json(void) {
                   .dump());
 }
 const char *neverd_strings_ex_json(neverd_session_t s, const char *options) {
+  if (session(s)->path.ends_with("strings-preview.bin")) {
+    Json rows = Json::array();
+    for (int i = 0; i < 4; ++i) {
+      const auto value = std::string(398, 'a') + "\xe4\xb8\xad\xe6\x96\x87" +
+                         std::string(3 * 1024 * 1024 + i, 'x') +
+                         "needle-at-end";
+      rows.push_back({{"addr", hexAddress(Base + i)},
+                      {"value", value},
+                      {"length", value.size()},
+                      {"encoding", "utf-8"}});
+    }
+    return copy(rows.dump());
+  }
+  if (session(s)->path.ends_with("strings-sort.bin")) {
+    Json rows = Json::array();
+    for (int i = 0; i < 600; ++i)
+      rows.push_back({{"addr", hexAddress(Base + i)},
+                      {"value", "string " + std::to_string(i)},
+                      {"length", (i * 37) % 101 + 4},
+                      {"encoding", i % 2 ? "utf-8" : "ascii"}});
+    return copy(rows.dump());
+  }
   const Json parsed =
       options ? Json::parse(options, nullptr, false) : Json::object();
   const auto wanted = [&](const char *encoding) {
@@ -2591,12 +2622,14 @@ const char *neverd_decode_text_json(const unsigned char *bytes, int size,
   }
   return copy(Json{{"cells", cells}}.dump());
 }
-const char *neverd_strings_json(neverd_session_t, int) {
+const char *neverd_strings_json(neverd_session_t s, int) {
   Json items = Json::array();
   for (int i = 0; i < 600; ++i)
     items.push_back({{"addr", hexAddress(Base + i)},
                      {"value", "string " + std::to_string(i)},
-                     {"length", 10}});
+                     {"length", session(s)->path.ends_with("strings-sort.bin")
+                                    ? (i * 37) % 101 + 1
+                                    : 10}});
   return copy(items.dump());
 }
 const char *neverd_segments_json(neverd_session_t s) {
@@ -2747,6 +2780,62 @@ const char *neverd_search_string(neverd_session_t, const char *pattern,
       hits.push_back({{"addr", hexAddress(Base + i)}, {"value", value}});
   }
   return copy(hits.dump());
+}
+const char *neverd_search_page(neverd_session_t s, const char *options) {
+  const auto p = Json::parse(options);
+  const auto pattern = p.at("pattern").get<std::string>();
+  const bool backward = p.value("backward", false);
+  const auto from = p.contains("from")
+                        ? std::optional<uint64_t>(std::stoull(
+                              p.at("from").get<std::string>(), nullptr, 0))
+                        : std::nullopt;
+  const char *raw = nullptr;
+  if (p.value("kind", "text") == "bytes") {
+    std::vector<unsigned char> bytes;
+    std::string hex;
+    for (const auto c : pattern)
+      if (c != ' ' && c != '\t')
+        hex += c;
+    if (hex.empty() || hex.size() % 2) {
+      session(s)->error = "Byte patterns contain hexadecimal pairs";
+      return nullptr;
+    }
+    for (size_t i = 0; i < hex.size(); i += 2) {
+      if (!std::isxdigit(static_cast<unsigned char>(hex[i])) ||
+          !std::isxdigit(static_cast<unsigned char>(hex[i + 1]))) {
+        session(s)->error = "Byte patterns contain hexadecimal pairs";
+        return nullptr;
+      }
+      bytes.push_back(static_cast<unsigned char>(
+          std::stoul(hex.substr(i, 2), nullptr, 16)));
+    }
+    raw = neverd_search_bytes(s, bytes.data(), int(bytes.size()), 600);
+  } else
+    raw = neverd_search_string(s, pattern.c_str(),
+                               p.value("case_sensitive", false), 600);
+  auto hits = Json::parse(raw);
+  std::free(const_cast<char *>(raw));
+  if (backward)
+    std::reverse(hits.begin(), hits.end());
+  Json items = Json::array();
+  bool complete = true;
+  for (const auto &hit : hits) {
+    const auto address =
+        std::stoull(hit.at("addr").get<std::string>(), nullptr, 0);
+    if (from && (backward ? address >= *from : address <= *from))
+      continue;
+    if (items.size() == p.value("limit", 256u)) {
+      complete = false;
+      break;
+    }
+    items.push_back(hit);
+  }
+  return copy(Json{{"items", items},
+                   {"complete", complete},
+                   {"next_address", complete || items.empty()
+                                        ? Json(nullptr)
+                                        : items.back().at("addr")}}
+                  .dump());
 }
 const char *neverd_xrefs_to_json(neverd_session_t s, neverd_va_t address) {
   session(s)->error.clear();

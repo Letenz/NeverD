@@ -77,7 +77,10 @@ public:
   /// input path.  An existing input with the recorded digest is reused, and
   /// sidecars with a pending crash-recovery journal are left for the worker.
   static QString unpack(const QString &database, const QString &directory,
-                        QString *error = nullptr);
+                        QString *error = nullptr,
+                        bool *recoveredEdits = nullptr);
+  /// Retire the working copy's local recovery marker after Save or Discard.
+  static QString finishRecovery(const QString &binary);
   /// Where a database without its original input is unpacked.
   static QString workingDirectory(const QString &database);
   /// Whether the database, sidecars and lock of \p binary can sit beside

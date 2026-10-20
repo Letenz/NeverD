@@ -555,6 +555,7 @@ void CodeText::cancel() {
 }
 
 void CodeText::clear() {
+  complete_ = false;
   cancel();
   placeAfterLoad_.reset();
   source_.clear();
@@ -598,6 +599,7 @@ void CodeText::clear() {
 
 void CodeText::load(Address function, const QString &representation,
                     std::optional<QJsonObject> options) {
+  complete_ = false;
   const bool same = function_ == function && representation_ == representation;
   const auto nextOptions = options.value_or(
       same ? sourceOptions_ : SourceDefaults::options(representation));
@@ -693,6 +695,7 @@ void CodeText::request(int offset, quint64 serial) {
           return;
         }
         loading_ = false;
+        complete_ = true;
         // Folding needs the whole function: regions span pages.
         library_.reset(source_, sourceRows_,
                        regionsValid_ ? foldRegions() : QJsonArray(),
