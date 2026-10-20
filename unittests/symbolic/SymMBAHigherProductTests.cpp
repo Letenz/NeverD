@@ -221,6 +221,241 @@ TEST(SymMBAHigherProduct, IndependentSmallWordZ3Proofs) {
     }
 }
 
+Expansion disturbedProduct(SymContext &C, unsigned Width, unsigned Degree,
+                           const llvm::APInt &Scale, const llvm::APInt &Delta,
+                           bool Second = false) {
+  auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+  auto Z = C.mkVar("z", Width), W = C.mkVar("w", Width);
+  std::array<SymRef, 4> P{C.mkAnd(X, Y), C.mkOr(X, Y), C.mkAnd(X, C.mkNot(Y)),
+                          C.mkAnd(C.mkNot(X), Y)};
+  std::array<SymRef, 4> Q{C.mkAnd(Z, W), C.mkOr(Z, W), C.mkAnd(Z, C.mkNot(W)),
+                          C.mkAnd(C.mkNot(Z), W)};
+  std::array<SymRef, 4> Tail{C.mkXor(X, Z), C.mkXor(Y, Z), C.mkOr(X, Y),
+                             C.mkNot(C.mkAnd(X, Z))};
+  llvm::SmallVector<SymRef, 4> Terms, Errors;
+  llvm::SmallVector<SymRef, 16> Whole{C.mkConst(Scale), X, Y, Z, W};
+  for (unsigned I = 4; I < Degree; ++I)
+    Whole.push_back(Tail[(I - 4) % Tail.size()]);
+  for (unsigned A = 0; A != 2; ++A)
+    for (unsigned B = 0; B != 2; ++B) {
+      llvm::SmallVector<SymRef, 16> Factors{P[2 * A], P[2 * A + 1], Q[2 * B],
+                                            Q[2 * B + 1]};
+      for (unsigned I = 4; I < Degree; ++I)
+        Factors.push_back(Tail[(I - 4) % Tail.size()]);
+      auto Difference = A == 0 && B == 0 ? Delta
+                                         : (Second && A == 1 && B == 1
+                                                ? -Delta * llvm::APInt(Width, 3)
+                                                : llvm::APInt(Width, 0));
+      auto Product = C.mkMul(Factors);
+      Terms.push_back(C.mkMul(C.mkConst(Scale + Difference), Product));
+      if (!Difference.isZero())
+        Errors.push_back(C.mkMul(C.mkConst(Difference), Product));
+    }
+  Errors.push_back(C.mkMul(Whole));
+  Errors.push_back(X);
+  Errors.push_back(Y);
+  Terms.push_back(C.mkXor(X, Y));
+  Terms.push_back(C.mkMul(C.mkConst(Width, 2), C.mkAnd(X, Y)));
+  return {C.mkAdd(Terms), C.mkAdd(Errors)};
+}
+
+llvm::APInt disturbedOracle(llvm::ArrayRef<llvm::APInt> Values, unsigned Degree,
+                            const llvm::APInt &Scale, const llvm::APInt &Delta,
+                            bool Second = false) {
+  auto X = Values[0], Y = Values[1], Z = Values[2], W = Values[3];
+  auto Product =
+      Scale * X * Y * Z * W + Delta * (X & Y) * (X | Y) * (Z & W) * (Z | W);
+  if (Second)
+    Product -= llvm::APInt(X.getBitWidth(), 3) * Delta * (X & ~Y) * (~X & Y) *
+               (Z & ~W) * (~Z & W);
+  std::array<llvm::APInt, 4> Tail{X ^ Z, Y ^ Z, X | Y, ~(X & Z)};
+  for (unsigned I = 4; I < Degree; ++I)
+    Product *= Tail[(I - 4) % Tail.size()];
+  return Product + X + Y;
+}
+
+TEST(SymMBAHigherProduct, SparseCoefficientDifferencesFinishBelowOriginalCap) {
+  for (unsigned Width : {8u, 16u, 32u, 64u, 128u, 257u})
+    for (unsigned Degree : {4u, 6u, 8u, 12u, 16u}) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Degree);
+      SymContext C;
+      llvm::APInt Scale(Width, 182, false, true),
+          Delta(Width, 364, false, true);
+      auto [Input, Expected] = disturbedProduct(C, Width, Degree, Scale, Delta);
+      MBAOptions Options;
+      Options.MaxWork = 65536;
+      Options.VerifySamples = 0;
+      auto R = simplifyMBADeep(C, Input, Options);
+      EXPECT_EQ(R.Evidence, MBAEvidence::Derivation);
+      EXPECT_LT(R.Work, Options.MaxWork);
+      EXPECT_LE(R.SizeAfter, C.readabilityCost(Expected));
+      std::mt19937_64 Random(0x434f4546);
+      for (unsigned Sample = 0; Sample != 128; ++Sample) {
+        std::array<llvm::APInt, 4> Values;
+        for (auto &Value : Values) {
+          Value = llvm::APInt(Width, 0);
+          for (unsigned Bit = 0; Bit < Width; Bit += 64)
+            Value |= llvm::APInt(Width, Random(), false, true).shl(Bit);
+        }
+        auto Want = disturbedOracle(Values, Degree, Scale, Delta);
+        EXPECT_EQ(C.eval(Input, Values), Want);
+        EXPECT_EQ(C.eval(R.Expr, Values), Want);
+      }
+    }
+}
+
+TEST(SymMBAHigherProduct, CoefficientDifferencesKeepModularZerosAndHighBits) {
+  for (unsigned Width : {3u, 8u, 32u, 64u, 257u})
+    for (auto Scale : {llvm::APInt(Width, 37, false, true),
+                       -llvm::APInt(Width, 11, false, true),
+                       llvm::APInt::getOneBitSet(Width, Width - 2)})
+      for (auto Delta : {-Scale, llvm::APInt::getSignMask(Width)}) {
+        SymContext C;
+        auto [Input, Expected] =
+            disturbedProduct(C, Width, 8, Scale, Delta, true);
+        MBAOptions Options;
+        Options.MaxWork = 65536;
+        Options.VerifySamples = 0;
+        auto R = simplifyMBADeep(C, Input, Options);
+        EXPECT_LE(R.SizeAfter, R.SizeBefore);
+        std::mt19937_64 Random(0x44454c54);
+        for (unsigned Sample = 0; Sample != 128; ++Sample) {
+          std::array<llvm::APInt, 4> Values;
+          for (auto &Value : Values) {
+            Value = llvm::APInt(Width, 0);
+            for (unsigned Bit = 0; Bit < Width; Bit += 64)
+              Value |= llvm::APInt(Width, Random(), false, true).shl(Bit);
+          }
+          auto Want = disturbedOracle(Values, 8, Scale, Delta, true);
+          EXPECT_EQ(C.eval(Input, Values), Want);
+          EXPECT_EQ(C.eval(R.Expr, Values), Want);
+        }
+      }
+}
+
+TEST(SymMBAHigherProduct, SparseDifferencePartialProofsRemainExact) {
+  for (bool Second : {false, true}) {
+    SymContext C;
+    llvm::APInt Scale(3, 6), Delta(3, 4);
+    auto [Input, Expected] = disturbedProduct(C, 3, 4, Scale, Delta, Second);
+    for (size_t Work : {0u, 1u, 128u, 1024u, 4096u, 8192u, 65536u}) {
+      detail::WorkBudget Budget(Work);
+      detail::SolveReport Report;
+      auto R = detail::solveProductCofactors(C, Input, {}, Budget, Report);
+      EXPECT_LE(Budget.used(), Work);
+      EXPECT_LE(C.readabilityCost(R), C.readabilityCost(Input));
+      if (R != Input)
+        EXPECT_EQ(Report.Evidence, MBAEvidence::Derivation);
+      SymEvalPlan Before(C, Input), After(C, R);
+      for (unsigned Bits = 0; Bits != 4096; ++Bits) {
+        std::array<uint64_t, 4> Values{Bits & 7u, (Bits >> 3) & 7u,
+                                       (Bits >> 6) & 7u, (Bits >> 9) & 7u};
+        std::array<llvm::APInt, 4> Words;
+        for (unsigned I = 0; I != 4; ++I)
+          Words[I] = llvm::APInt(3, Values[I]);
+        auto Want =
+            disturbedOracle(Words, 4, Scale, Delta, Second).getZExtValue();
+        EXPECT_EQ(Before.evalU64(Values), Want);
+        EXPECT_EQ(After.evalU64(Values), Want);
+      }
+    }
+  }
+}
+
+TEST(SymMBAHigherProduct, SparseDifferenceHasIndependentSMTProof) {
+  if (!solver::proofBackendAvailable(solver::ProofBackend::Z3))
+    GTEST_SKIP() << "Z3 unavailable";
+  for (unsigned Width : {2u, 3u})
+    for (unsigned Degree : {4u, 8u}) {
+      SymContext C;
+      auto [Input, Expected] = disturbedProduct(
+          C, Width, Degree, llvm::APInt(Width, 1), llvm::APInt(Width, 2));
+      MBAOptions Options;
+      Options.MaxWork = 65536;
+      Options.VerifySamples = 0;
+      auto R = simplifyMBADeep(C, Input, Options);
+      ASSERT_NE(R.Expr, Input);
+      solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 5000);
+      EXPECT_EQ(Verifier(C, Input, R.Expr), SynthVerification::Equivalent);
+    }
+}
+
+TEST(SymMBAHigherProduct, HighCoefficientObservesOnlyProductParity) {
+  for (unsigned Width : {2u, 3u, 8u, 16u, 32u, 64u, 128u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+    auto Z = C.mkVar("z", Width);
+    auto Word = C.mkXor(C.mkAdd(X, Z), C.mkMul(Y, Z));
+    auto Scale = llvm::APInt::getSignMask(Width);
+    auto Input = C.mkMul({C.mkConst(Scale), X, Y, Z, Word, C.mkOr(X, Y)});
+    MBAOptions Options;
+    Options.MaxWork = 16384;
+    Options.VerifySamples = 0;
+    auto R = simplifyMBADeep(C, Input, Options);
+    EXPECT_EQ(R.Evidence, MBAEvidence::Derivation);
+    EXPECT_LT(R.SizeAfter, R.SizeBefore);
+    EXPECT_LT(R.Work, Options.MaxWork);
+    std::mt19937_64 Random(0x50415249);
+    for (unsigned Sample = 0; Sample != 256; ++Sample) {
+      std::array<llvm::APInt, 3> Values;
+      for (auto &Value : Values) {
+        Value = llvm::APInt(Width, 0);
+        for (unsigned Bit = 0; Bit < Width; Bit += 64)
+          Value |= llvm::APInt(Width, Random(), false, true).shl(Bit);
+      }
+      auto A = Values[0], B = Values[1], D = Values[2];
+      auto Want = Scale * A * B * D * ((A + D) ^ (B * D)) * (A | B);
+      EXPECT_EQ(C.eval(Input, Values), Want);
+      EXPECT_EQ(C.eval(R.Expr, Values), Want);
+    }
+  }
+}
+
+TEST(SymMBAHigherProduct, AdjacentCoefficientStillObservesCarries) {
+  for (unsigned Width : {2u, 3u, 8u, 16u, 32u, 64u, 257u}) {
+    SymContext C;
+    auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+    auto Scale = llvm::APInt::getOneBitSet(Width, Width - 2);
+    auto Input = C.mkMul({C.mkConst(Scale), X, Y});
+    MBAOptions Options;
+    Options.MaxWork = 16384;
+    Options.VerifySamples = 0;
+    auto R = simplifyMBADeep(C, Input, Options);
+    for (unsigned A = 0; A != 8; ++A)
+      for (unsigned B = 0; B != 8; ++B) {
+        std::array<llvm::APInt, 2> Values{llvm::APInt(Width, A, false, true),
+                                          llvm::APInt(Width, B, false, true)};
+        EXPECT_EQ(C.eval(R.Expr, Values), Scale * Values[0] * Values[1]);
+      }
+    std::array<llvm::APInt, 2> Counterexample{llvm::APInt(Width, 3),
+                                              llvm::APInt(Width, 3)};
+    EXPECT_NE(C.eval(R.Expr, Counterexample),
+              Scale * (Counterexample[0] & Counterexample[1]));
+  }
+}
+
+TEST(SymMBAHigherProduct, ProductParityHasIndependentFullWidthSMTProof) {
+  if (!solver::proofBackendAvailable(solver::ProofBackend::Z3))
+    GTEST_SKIP() << "Z3 unavailable";
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    SymContext C;
+    auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+    auto Z = C.mkVar("z", Width);
+    auto Word = C.mkXor(C.mkAdd(X, Z), C.mkMul(Y, Z));
+    auto Input = C.mkMul({C.mkConst(llvm::APInt::getSignMask(Width)), X, Y, Z,
+                          Word, C.mkOr(X, Y)});
+    MBAOptions Options;
+    Options.MaxWork = 16384;
+    Options.VerifySamples = 0;
+    auto R = simplifyMBADeep(C, Input, Options);
+    ASSERT_NE(R.Expr, Input);
+    solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 5000);
+    EXPECT_EQ(Verifier(C, Input, R.Expr), SynthVerification::Equivalent);
+  }
+}
+
 TEST(SymMBAHigherProduct, RefusesFlatteningAnOversizedOpaqueQuotient) {
   SymContext C;
   llvm::SmallVector<SymRef, 512> Wide;

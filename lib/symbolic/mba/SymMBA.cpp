@@ -159,6 +159,39 @@ SymRef foldObservedWindow(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                           size_t &Storage) {
   if (Budget.exhausted() || !Budget.canConsume(1) || Storage < 128)
     return Root;
+  if (Ctx.op(Root) == SymOp::Mul && Ctx.numOperands(Root) >= 3 &&
+      Ctx.numOperands(Root) <= 32 && Ctx.isConst(Ctx.operand(Root, 0))) {
+    const SymRef Scale = Ctx.operand(Root, 0);
+    const unsigned Width = Ctx.width(Root);
+    const size_t Words = (size_t(Width) - 1) / 64 + 1;
+    bool ObservesLowBit = false;
+    if (Width <= 64) {
+      ObservesLowBit = Ctx.node(Scale).Aux == (uint64_t(1) << (Width - 1));
+    } else if (Words <= Storage / sizeof(uint64_t) && Budget.consume(Words)) {
+      Storage -= Words * sizeof(uint64_t);
+      ObservesLowBit = Ctx.constValue(Scale).isMinSignedValue();
+    }
+    if (ObservesLowBit) {
+      auto Factors = Ctx.operands(Root).drop_front();
+      size_t Edges = 0;
+      for (SymRef Factor : Factors) {
+        const size_t Count =
+            Ctx.op(Factor) == SymOp::And ? Ctx.numOperands(Factor) : 1;
+        if (Count > 128 - Edges)
+          return Root;
+        Edges += Count;
+      }
+      const size_t Bytes = 128 + 4 * sizeof(SymRef) * (Edges + Factors.size());
+      if (Bytes > Storage || !Budget.consume(1 + Edges + Factors.size()))
+        return Root;
+      Storage -= Bytes;
+      llvm::SmallVector<SymRef, 8> Inputs(Factors);
+      // Multiplication modulo two is Boolean AND. Scaling by 2^(Width-1)
+      // discards every other product bit, for arbitrary word-valued factors.
+      // A smaller power of two observes carries and does not admit this fold.
+      return Ctx.mkMul(Scale, Ctx.mkAnd(Inputs));
+    }
+  }
   if (Ctx.op(Root) == SymOp::Extract)
     return projectBitWindow(Ctx, Ctx.operand(Root, 0), Ctx.node(Root).Aux,
                             Ctx.width(Root), Budget, Storage);
@@ -1043,17 +1076,33 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   // the normal walk still simplifies their children and any remaining terms.
   SolveReport WholeRep;
   SymRef WalkRoot = solveWeightedMasks(Ctx, E, Opts, Budget, WholeRep);
-  if (WalkRoot == E)
+  bool ProductCofactors = false;
+  if (WalkRoot == E) {
     WalkRoot = solveProductCofactors(Ctx, E, Opts, Budget, WholeRep);
+    ProductCofactors = WalkRoot != E;
+  }
   if (WalkRoot == E)
     WalkRoot = solveExpandedProducts(Ctx, E, Opts, Budget, WholeRep);
   SymRef WholeAlternative = WalkRoot;
   if (WalkRoot != E && !Budget.exhausted()) {
-    // Preserve enclosing common scales before child readings can hide them
-    // inside unrelated Boolean expressions.
+    // Preserve enclosing common factors before child readings can hide them.
+    // Cofactor recovery can leave distinct coefficient differences; retaining
+    // complements as exact atoms avoids expanding their shared product tails.
     SolveReport Factored;
+    unsigned HigherProducts = 0;
+    if (ProductCofactors && Ctx.op(WalkRoot) == SymOp::Add)
+      for (SymRef Term : Ctx.operands(WalkRoot))
+        if (Ctx.op(Term) == SymOp::Mul &&
+            Ctx.numOperands(Term) -
+                    unsigned(Ctx.isConst(Ctx.operand(Term, 0))) >=
+                4 &&
+            ++HigherProducts == 2)
+          break;
     WholeAlternative =
-        solveCoefficientFactors(Ctx, WalkRoot, Opts, Budget, Factored);
+        HigherProducts >= 2
+            ? solveArithmetic(Ctx, WalkRoot, Opts, Budget, Factored,
+                              /*ExpandComplements=*/false)
+            : solveCoefficientFactors(Ctx, WalkRoot, Opts, Budget, Factored);
     WholeRep.BudgetExhausted |= Factored.BudgetExhausted;
   }
 
