@@ -746,6 +746,14 @@ void CodeText::request(int offset, quint64 serial) {
           status_ +=
               QStringLiteral(" · ") + tr("Saved variable types need review: "
                                          "the analysis or local types changed");
+        for (const auto &edit :
+             payload.value("variable_edit_results").toArray())
+          if (!edit.toObject().value("applied").toBool()) {
+            status_ += QStringLiteral(" · ") +
+                       tr("Saved variable associations need review: ") +
+                       edit.toObject().value("refusal").toString();
+            break;
+          }
         if (sourceOptions_.value("symbolic").toBool())
           status_ += QStringLiteral(" · ") + tr("Symbolic simplification");
         if (representation_ == QLatin1String("llvmc"))
@@ -1555,6 +1563,7 @@ void CodeText::moveCursor(int line, int column, bool extend) {
       emit locationChanged(*address);
   }
   viewport()->update();
+  emit cursorChanged();
 }
 
 std::optional<Address> CodeText::currentAddress() const {

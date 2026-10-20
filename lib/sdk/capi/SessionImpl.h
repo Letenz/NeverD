@@ -1112,6 +1112,7 @@ struct Session {
       clearPipeline();
     SourceViewOptions NativeOptions = SourceOptions;
     NativeOptions.VariableTypes.clear();
+    NativeOptions.VariableEdits.clear();
     for (auto It = FunctionLlvmModules.begin(); It != FunctionLlvmModules.end();
          ++It)
       if (It->Entry == Entry && It->NoOpt == NoOpt &&

@@ -8,7 +8,7 @@
 #define NEVERD_BACKEND_C_SOURCEVARIABLETYPES_H
 
 #include "neverd/ir/NdTypes.h"
-#include "neverd/ir/med/MedIR.h"
+#include "neverd/ir/SourceVariableIdentity.h"
 
 #include <map>
 #include <optional>
@@ -32,17 +32,6 @@ struct SourceVariable {
   bool Parameter = false;
   bool Ambiguous = false;
 };
-
-/// Stable within one unchanged HighIR inventory; never inferred from a name
-/// or a token's position in the rendered text.
-inline std::string highSourceVariableId(const MedVar &V) {
-  if (V.RenameTag >= 0)
-    return "coalesced:" + std::to_string(V.RenameTag);
-  if (V.Kind == MedVar::Stack)
-    return "stack:" + std::to_string(V.StackOff);
-  return "value:" + std::to_string(static_cast<unsigned>(V.Kind)) + ":" +
-         std::to_string(V.Id) + ":" + std::to_string(V.SSAVer);
-}
 
 /// Checked, source-only assignments. A caller validates the persisted snapshot
 /// before constructing these bindings. A backend still checks the value width

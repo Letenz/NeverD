@@ -13,6 +13,7 @@
 #define NEVERD_BACKEND_C_CEMITTEROPTIONS_H
 
 #include "neverd/Common.h"
+#include "neverd/ir/SourceVariableEdits.h"
 #include "neverd/libc/LibCVariant.h"
 
 #include <functional>
@@ -137,6 +138,8 @@ struct CEmitterOptions {
   /// Analyst declarations for source interpretation only. They supply no
   /// native ABI, memory extent, code ownership or rewriting authority.
   const SourceVariableTypes *VariableTypes = nullptr;
+  const std::vector<SourceVariableEdit> *VariableEdits = nullptr;
+  std::string VariableSnapshot;
 };
 
 } // namespace neverd

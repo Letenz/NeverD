@@ -210,6 +210,7 @@ signals:
   /// The cursor moved to a row mapped to \p address, not by selectAddress or
   /// revealAddress following the disassembly.
   void locationChanged(neverd::gui::Address address);
+  void cursorChanged();
   void addressSelected(neverd::gui::Address address, bool mapped);
   /// A name was double-clicked; the owner resolves and navigates.
   void nameActivated(const QString &name);

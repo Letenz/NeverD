@@ -809,6 +809,10 @@ CodeView *MainWindow::codeView(const QString &representation) {
           [this](Address address) { jump(address); });
   connect(view->text(), &CodeText::contextMenuRequested, this,
           &MainWindow::contextMenu);
+  connect(view->text(), &CodeText::cursorChanged, this,
+          &MainWindow::updateActions);
+  connect(view->text(), &CodeText::statusChanged, this,
+          &MainWindow::updateActions);
   if (c)
     pseudocode_ = view;
   return view;
@@ -1365,6 +1369,11 @@ void MainWindow::connectActions() {
         session_.defineItem(*address, action);
     });
   on(ActionId::EditSetType, [this] { setType(); });
+  on(ActionId::EditSplitVariable, [this] { editVariable("split"); });
+  on(ActionId::EditMapVariable, [this] { editVariable("map"); });
+  on(ActionId::EditUnmapVariable, [this] { editVariable("unmap"); });
+  on(ActionId::EditUnsplitVariable, [this] { editVariable("unsplit"); });
+  on(ActionId::EditResetVariables, [this] { editVariable("clear"); });
   on(ActionId::EditConvertToStruct, [this] { convertToStruct(); });
   on(ActionId::JumpBack, [this] { navigateHistory(false); });
   on(ActionId::JumpForward, [this] { navigateHistory(true); });
@@ -1700,6 +1709,20 @@ void MainWindow::updateActions() {
   actions_.action(ActionId::EditSetType)
       ->setEnabled(declarations && (code ? code->text()->function().has_value()
                                          : currentFunction().has_value()));
+  const bool variableView =
+      code && loaded && !session_.readOnly() && code->text()->function() &&
+      (code->representation() == "source" || code->representation() == "c" ||
+       code->representation() == "llvmc");
+  const auto variableTarget =
+      variableView ? code->text()->renameTarget() : std::nullopt;
+  const bool variable = variableTarget &&
+                        variableTarget->contains("variable_id") &&
+                        !variableTarget->value("object").toBool();
+  for (const auto id :
+       {ActionId::EditSplitVariable, ActionId::EditMapVariable,
+        ActionId::EditUnmapVariable, ActionId::EditUnsplitVariable})
+    actions_.action(id)->setEnabled(variableView && variable);
+  actions_.action(ActionId::EditResetVariables)->setEnabled(variableView);
   actions_.action(ActionId::EditConvertToStruct)
       ->setEnabled(declarations && session_.convertsParameters() && code &&
                    code->text()->function().has_value());
@@ -3189,6 +3212,12 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   // record, after its rename.
   if (auto *type = actions_.action(ActionId::EditSetType); type->isEnabled())
     menu.addAction(type);
+  for (const auto id :
+       {ActionId::EditSplitVariable, ActionId::EditMapVariable,
+        ActionId::EditUnmapVariable, ActionId::EditUnsplitVariable,
+        ActionId::EditResetVariables})
+    if (auto *action = actions_.action(id); action->isEnabled())
+      menu.addAction(action);
   if (auto *convert = actions_.action(ActionId::EditConvertToStruct);
       convert->isEnabled()) {
     const auto target = focusedCodeView()->text()->renameTarget();
@@ -3390,6 +3419,96 @@ void MainWindow::setType() {
       {{"type", dialog.resets() ? QJsonValue(QJsonValue::Null)
                                 : QJsonValue(dialog.declaration())}},
       epoch);
+}
+
+void MainWindow::editVariable(const QString &action) {
+  const QPointer<CodeView> view = focusedCodeView();
+  if (!view || session_.readOnly() || !view->text()->function())
+    return;
+  const auto target = view->text()->renameTarget();
+  if (action != "clear" && (!target || !target->contains("variable_id")))
+    return;
+  const auto epoch = session_.epoch();
+  const auto identity = view->text()->function();
+  const auto options = view->text()->sourceOptions();
+  QJsonObject request{{"address", hexAddress(*identity)},
+                      {"representation", view->representation()},
+                      {"source_options", options},
+                      {"kind", "variables"},
+                      {"action", action}};
+  if (target) {
+    request.insert("variable_id", target->value("variable_id"));
+    if (action != "clear")
+      request.insert("snapshot", target->value("snapshot"));
+  }
+  session_.read(
+      "source_variables", request, this,
+      [this, view, epoch, identity, options, request,
+       action](const QJsonObject &reply) mutable {
+        if (!view || session_.epoch() != epoch ||
+            view->text()->function() != identity ||
+            view->text()->sourceOptions() != options)
+          return;
+        if (request.contains("snapshot") &&
+            request.value("snapshot") != reply.value("snapshot")) {
+          output_->append(
+              tr("The source analysis changed; select the variable again"), 1);
+          return;
+        }
+        request.insert("snapshot", reply.value("snapshot"));
+        if (action == "map") {
+          QStringList labels;
+          QList<QString> ids;
+          for (const auto &entry : reply.value("variables").toArray()) {
+            const auto v = entry.toObject();
+            if (v.value("ambiguous").toBool(true) || v.contains("address") ||
+                v.value("id") == request.value("variable_id"))
+              continue;
+            labels.append(v.value("name").toString() + "  (" +
+                          v.value("type").toString() + ")  [" +
+                          v.value("id").toString() + "]");
+            ids.append(v.value("id").toString());
+          }
+          if (labels.isEmpty()) {
+            output_->append(
+                tr("No other unambiguous local variable is available"), 1);
+            return;
+          }
+          bool accepted = false;
+          const auto selected = QInputDialog::getItem(
+              this, tr("Map variable"),
+              tr("Destination variable (the engine checks copy relationships "
+                 "and live ranges):"),
+              labels, 0, false, &accepted);
+          if (!accepted)
+            return;
+          request.insert("to", ids.at(labels.indexOf(selected)));
+        } else if (action == "unmap" || action == "unsplit") {
+          const auto edits = reply.value("associations").toArray();
+          const auto results = reply.value("results").toArray();
+          const auto kind = action == "unmap" ? "map" : "split";
+          int found = -1;
+          for (int i = 0; i < edits.size() && i < results.size(); ++i)
+            if (edits[i].toObject().value("kind") == kind &&
+                results[i].toObject().value("outputs").toArray().contains(
+                    request.value("variable_id")))
+              found = i;
+          if (found < 0) {
+            output_->append(
+                tr("This variable has no matching association. Use Reset "
+                   "variable associations to remove stale edits."),
+                1);
+            return;
+          }
+          request.insert("association", found);
+        }
+        if (session_.epoch() != epoch || !view ||
+            view->text()->function() != identity ||
+            view->text()->sourceOptions() != options)
+          return;
+        session_.editCode(request, epoch);
+        view->text()->setFocus();
+      });
 }
 
 void MainWindow::convertToStruct() {

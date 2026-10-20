@@ -95,6 +95,19 @@ add_neverd_unittest(NeverDGraphCyclesTests
 target_include_directories(NeverDGraphCyclesTests PRIVATE
   "${CMAKE_SOURCE_DIR}/include")
 
+add_neverd_unittest(NeverDSourceVariableFlowTests
+  SourceVariableFlowTests.cpp
+  LINK_COMPONENTS IR
+)
+add_neverd_unittest(NeverDHighVariableEditsTests
+  HighVariableEditsTests.cpp
+  LINK_COMPONENTS IRHigh
+)
+add_neverd_unittest(NeverDLLVMVariableEditsTests
+  LLVMVariableEditsTests.cpp
+  LINK_COMPONENTS BackendC
+)
+
 add_neverd_unittest(NeverDPipelineOutcomeTests
   PipelineOutcomeTests.cpp
   LINK_COMPONENTS Pipeline BackendC

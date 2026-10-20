@@ -21,5 +21,7 @@ SourceVariableTypes sourceVariableTypes(Session &S, va_t Entry,
                                         std::vector<std::string> *Stale);
 std::string sourceVariableSnapshot(llvm::StringRef IR);
 std::string highVariableSnapshot(const HighFunc &Function, bool Symbolic);
+std::string editedVariableSnapshot(llvm::StringRef Before,
+                                   const SourceVariableEdit &Edit);
 } // namespace neverd::sdk
 #endif

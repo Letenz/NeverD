@@ -304,6 +304,19 @@ void CodeEdits::validateRow(const Json &row) {
     // index on it, while the line reads as its anchor.
     const auto numbers = view.value("numbers", Json::object());
     const auto variableTypes = view.value("variable_types", Json::object());
+    const auto variableEdits = view.value("variable_edits", Json::array());
+    if (!variableEdits.is_array() || variableEdits.size() > 64)
+      throw Error("invalid_request", "Invalid variable association table");
+    for (const auto &edit : variableEdits) {
+      const auto kind = stringField(edit, "kind", {}, 16);
+      if (kind != "map" && kind != "split")
+        throw Error("invalid_request", "Invalid variable association kind");
+      if (stringField(edit, "from", {}, 256).empty() ||
+          stringField(edit, "snapshot", {}, 128).empty() ||
+          (kind == "map" && stringField(edit, "to", {}, 256).empty()))
+        throw Error("invalid_request", "Invalid variable association identity");
+      typeImage(edit);
+    }
     if (!variableTypes.is_object() || variableTypes.size() > 256)
       throw Error("invalid_request", "Invalid source variable type table");
     for (const auto &[id, edit] : variableTypes.items()) {
@@ -411,6 +424,8 @@ Json CodeEdits::change(Json row, const Json &request) {
       numbers.erase(key);
     if (numbers.empty())
       view.erase("numbers");
+  } else if (kind == "variables") {
+    view["variable_edits"] = request.at("variable_edits");
   } else if (kind == "type") {
     const auto id = stringField(request, "variable_id", {}, 256);
     if (!view.contains("variable_types"))

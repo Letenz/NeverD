@@ -8,6 +8,7 @@
 #define NEVERD_BACKEND_C_CSOURCEMAP_H
 
 #include "neverd/backend/c/SourceVariableTypes.h"
+#include "neverd/ir/SourceVariableEdits.h"
 #include "neverd/ir/high/HighSourceMap.h"
 
 #include <optional>
@@ -104,6 +105,7 @@ struct CSourceMap {
   SourceVariableInventory Variables;
   std::string VariableSnapshot;
   std::vector<std::string> StaleVariableTypes;
+  std::vector<SourceVariableEditResult> VariableEditResults;
 };
 
 } // namespace neverd
