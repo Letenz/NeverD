@@ -47871,6 +47871,59 @@ TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses, MixedLibmSignaturesTakeTheirPointers) {
+  // find passes modf the address of a frame slot, which the machine holds
+  // as an integer.  The type library declares modf, whose double and
+  // pointer parameters are no positional signature: the typed arguments
+  // leave the pointer to the call model, which converts it to the header's
+  // double * as it does for a routine the header alone declares.
+  const auto Double = NdType::makeFloat(8);
+  const auto Pointer = NdType::makePtr(Double);
+  class MathDbg : public NullDebugContext {
+  public:
+    MathDbg(TypeRef Double, TypeRef Pointer)
+        : Double(std::move(Double)), Pointer(std::move(Pointer)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x140002000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "modf";
+      FS.Addr = Addr;
+      FS.ReturnType = Double;
+      FS.Params = {{"x", Double}, {"iptr", Pointer}};
+      FS.PrototypeFromCLibrary = true;
+      FS.PlatformConvention = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Double, Pointer;
+  } Dbg(Double, Pointer);
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "split_value";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = Double;
+  Func.Params = {{"value", Double}, {"whole", Word}};
+  // The call collects its integer argument, in RDI, before its double.
+  auto Split = HighExpr::makeCall("modf", 0x140002000,
+                                  {parameter(1, Word), parameter(0, Double)});
+  Split->Type = Double;
+  returnValue(Func, std::move(Split));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <math.h>"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("(void *)(uintptr_t)whole"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, SocketAddressesPassAsVoidPointers) {
   // Under _GNU_SOURCE glibc declares bind's address a transparent union of
   // the sockaddr pointers, which the type library gives as the union: an
