@@ -52,7 +52,7 @@ uint32_t CFGBuilder::getInsnAlignment() const {
 bool CFGBuilder::isValidTarget(const BinaryImage &Img, va_t Target,
                                va_t FuncEntry) const {
   const auto *Seg = Img.getSegmentFor(Target);
-  if (!Seg || !Img.hasExecutableCodeOwnerAt(Target))
+  if (!Seg || !Img.hasExecutableCodeOwnerAt(Target, ExecutableCodeOwners))
     return false;
 
   // Distance is only a heuristic for ownership; a chained/cold fragment that
@@ -136,7 +136,8 @@ bool CFGBuilder::sanityCheckTargets(const BinaryImage &Img,
     }
 
     const auto *TSeg = Img.getSegmentFor(Targets[I]);
-    if (!TSeg || !Img.hasExecutableCodeOwnerAt(Targets[I])) {
+    if (!TSeg ||
+        !Img.hasExecutableCodeOwnerAt(Targets[I], ExecutableCodeOwners)) {
       TruncAt = I;
       break;
     }

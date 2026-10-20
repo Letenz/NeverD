@@ -204,7 +204,7 @@ bool CFGBuilder::resolveConstantIndirectBranch(const BinaryImage &Img,
       const va_t Target = clearThumbBit(TaggedTarget);
       const InstructionMode TargetMode =
           (TaggedTarget & 1u) ? InstructionMode::Thumb : InstructionMode::ARM;
-      if (Img.hasExecutableCodeOwnerAt(Target) &&
+      if (Img.hasExecutableCodeOwnerAt(Target, ExecutableCodeOwners) &&
           Img.instructionModeAt(Target, TargetMode) == TargetMode) {
         for (LowOp &Op : Rec.Ops) {
           if (Op.Opcode != NdOp::INDIR_BR || Op.NumInputs < 1)
@@ -238,7 +238,7 @@ bool CFGBuilder::resolveConstantIndirectBranch(const BinaryImage &Img,
     auto Target = foldRegConstant(Img, Rec, Op.Inputs[0].Offset);
     if (!Target)
       return false;
-    if (!Img.hasExecutableCodeOwnerAt(*Target) ||
+    if (!Img.hasExecutableCodeOwnerAt(*Target, ExecutableCodeOwners) ||
         (*Target % getInsnAlignment()) != 0)
       return false;
 
@@ -396,7 +396,8 @@ bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
   // is where a compiler that knew the callee never returns left its trace;
   // a call followed by more code still deserves the proof when the callee
   // holds nothing that returns.
-  return NoReturnCallees && CurrentImg->hasExecutableCodeOwnerAt(Target) &&
+  return NoReturnCallees &&
+         CurrentImg->hasExecutableCodeOwnerAt(Target, ExecutableCodeOwners) &&
          (callIsFollowedByPadding(Rec) ||
           NoReturnCallees->mayNeverReturn(Target)) &&
          NoReturnCallees->neverReturns(Target, NoReturnCalleeDepth);
