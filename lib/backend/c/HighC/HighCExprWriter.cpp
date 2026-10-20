@@ -1136,6 +1136,15 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
     if (Literal)
       LiteralAddressOperands.erase(Only);
   });
+  // So does `~` an operand that prints as a pointer, an object the unit
+  // declares one: C complements no pointer (IntegerViewOperands).
+  const bool IntegerView =
+      Only && (E.Op == NdOp::INT_NOT || E.Op == NdOp::INT_NEGATE) &&
+      IntegerViewOperands.insert(Only).second;
+  const auto UnmarkView = llvm::make_scope_exit([&] {
+    if (IntegerView)
+      IntegerViewOperands.erase(Only);
+  });
 
   switch (E.Op) {
   case NdOp::INT_NOT:
@@ -3985,12 +3994,14 @@ std::string HighCWriter::assignedText(const TypeRef &Declared,
       (Value.Type->Kind == NdTypeKind::Struct && Value.Type->IsEnum);
   if (!Declared || !Scalar)
     return Text;
-  // Through the address's integer, which the text may print already.
+  // Through the address's integer, which the text may print already; a
+  // cast takes the whole text as its operand (`(uintptr_t)p | bits`).
   auto Converted = [&] {
+    const std::string Operand = castOperand(Text);
     return "(" + typeToC(Declared) + ")" +
-           (llvm::StringRef(Text).starts_with("(uintptr_t)")
-                ? Text
-                : "(uintptr_t)" + castOperand(Text));
+           (llvm::StringRef(Operand).starts_with("(uintptr_t)")
+                ? Operand
+                : "(uintptr_t)" + Operand);
   };
   if (Declared->Kind == NdTypeKind::Ptr) {
     if (printsAsInteger(Value, Text))

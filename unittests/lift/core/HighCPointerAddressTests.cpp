@@ -48031,6 +48031,73 @@ TEST(HighCPointerAddresses, PasswordRoutinesTakeTheirHeadersDeclarations) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses, PointerObjectsComputeAsTheirIntegers) {
+  // telnet keeps option flags in a word another use stores a char pointer
+  // to, so the unit declares it `char*`; its code complements the word and
+  // ors bits into it, which C does on no pointer: the word is the integer
+  // it holds there.
+  constexpr va_t Flags = 0x6000;
+  BinaryImage Img =
+      makeImageObjectFixture(Flags, std::vector<uint8_t>(8), true);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  const auto Char = NdType::makeInt(1);
+  Char->SourceName = "char";
+  const auto Text = NdType::makePtr(Char);
+  const auto Word = NdType::makeInt(8);
+  auto Address = [] { return HighExpr::makeConst(Flags, 8); };
+  HighFunc Name;
+  Name.Name = "set_name";
+  Name.Entry = 0x1000;
+  Name.ReturnType = NdType::makeVoid();
+  Name.Params = {{"name", Text}};
+  HighStmt Keep;
+  Keep.Kind = StmtKind::Store;
+  Keep.StoreAddr = Address();
+  Keep.StoreVal = parameter(0, Text);
+  Name.Body = {Keep};
+  returnValue(Name, nullptr);
+  HighFunc Set;
+  Set.Name = "set_flags";
+  Set.Entry = 0x1100;
+  Set.ReturnType = NdType::makeVoid();
+  Set.Params = {{"bits", Word}};
+  auto Ored = HighExpr::makeBinop(
+      NdOp::INT_OR, HighExpr::makeLoad(Address(), Word), parameter(0, Word));
+  Ored->Type = Word;
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr = Address();
+  Store.StoreVal = std::move(Ored);
+  Set.Body = {Store};
+  returnValue(Set, nullptr);
+  HighFunc Clear;
+  Clear.Name = "cleared_flags";
+  Clear.Entry = 0x1200;
+  Clear.ReturnType = Word;
+  Clear.Params = {{"mask", Word}};
+  auto Complement =
+      HighExpr::makeUnary(NdOp::INT_NOT, HighExpr::makeLoad(Address(), Word));
+  Complement->Type = Word;
+  auto Masked = HighExpr::makeBinop(NdOp::INT_AND, std::move(Complement),
+                                    parameter(0, Word));
+  Masked->Type = Word;
+  returnValue(Clear, std::move(Masked));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Name, Set, Clear}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("~(uintptr_t)qword_6000"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("(char*)(uintptr_t)((uintptr_t)qword_6000 | bits)"),
+            std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
   // sed passes a comparator of its own to qsort, whose prototype the header
   // library gives: its comparison's type keeps no const there, where the
