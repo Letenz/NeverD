@@ -10,6 +10,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -34,10 +35,10 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     return true;
   Domain After = Before;
   std::optional<Domain> CallException;
-  FrameTransfer Transfer(After.Frame, *Chain.RegistrationOffset,
-                         EH4 || CxxCookies ? SecurityCookieVA : 0,
-                         Chain.RealignedFrame ? &*Chain.RealignedFrame
-                                              : nullptr);
+  FrameTransfer Transfer(
+      After.Frame, *Chain.RegistrationOffset,
+      EH4 || CxxCookies || CxxPrologue ? SecurityCookieVA : 0,
+      Chain.RealignedFrame ? &*Chain.RealignedFrame : nullptr);
   FrameTransfer RuntimeTransfer(After.RuntimeObject, *Chain.RegistrationOffset);
   std::set<va_t> ProvenStores;
   std::optional<RegistrationCxxContinuation> CatchReturn;
@@ -75,6 +76,25 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       RegisterBytes += Op.Inputs[Input].Size;
     if (!charge(1 + RegisterBytes + MemoryWork))
       break;
+    if (CxxPrologue && Op.Addr == CxxPrologue->CallVA) {
+      if (!transferCxxPrologue(I, After, Op, Facts)) {
+        Invalidate();
+        CompleteCalls = CompleteChainOperations = CompleteCookies = false;
+      } else {
+        const auto Value = FrameValue::frame(CxxPrologue->RegistrationOffset);
+        LowOp Returned;
+        Returned.Opcode = NdOp::COPY;
+        Returned.Output = Op.Output;
+        Transfer.write(Returned, Value);
+        if (CheckRuntimeObjects)
+          RuntimeTransfer.write(Returned, {});
+        auto [It, New] =
+            FrameValues.emplace(std::make_pair(Op.Addr, Op.Seq), Value);
+        if (!New)
+          It->second = registration_state::join(It->second, Value);
+      }
+      continue;
+    }
     FrameValue Value = Transfer.evaluate(Op, After.Installed);
     if (Conditional) {
       // The caller's physical registration address changes during native

@@ -213,7 +213,8 @@ public:
       ConditionalFrame *Conditional = nullptr,
       const BoundCalleeProver *BoundCallees = nullptr,
       const SEHJumpRuntime *JumpRuntime = nullptr,
-      const coff_loader::X86CxxHandlerABI *CxxHandler = nullptr);
+      const coff_loader::X86CxxHandlerABI *CxxHandler = nullptr,
+      const coff_loader::X86CxxPrologueCall *CxxPrologue = nullptr);
   RegistrationStateAnalysis run();
   size_t workUsed() const { return WorkUsed; }
 
@@ -225,6 +226,9 @@ private:
   bool realignedMemoryIsDisjoint(const FrameValue &Address,
                                  uint16_t Width) const;
   bool registrationInstallationReady(const FrameState &Frame) const;
+  bool validateCxxPrologue() const;
+  bool transferCxxPrologue(size_t I, Domain &State, const LowOp &Op,
+                           BlockFacts &Facts);
   bool validateSEHParentChainUse(const Domain &State, const LowOp &Op,
                                  const FrameTransfer &Transfer) const;
   bool canReconnectSEHParentChain(const Domain &State) const;
@@ -421,6 +425,7 @@ private:
   va_t SecurityCookieVA;
   va_t CookieCheckVA;
   const coff_loader::X86CxxHandlerABI *CxxHandler;
+  const coff_loader::X86CxxPrologueCall *CxxPrologue;
   const std::vector<RegistrationCalleeFrameContract> *Callees;
   const std::vector<RegistrationCleanupFrameContract> *Cleanups;
   const std::vector<RegistrationCalleeStackContract> *Stacks;
@@ -462,6 +467,7 @@ private:
   size_t WorkUsed = 0;
   bool Exhausted = false;
   bool ProvenInstallation = false;
+  std::optional<RegistrationCxxPrologueEffect> CxxPrologueEffect;
   bool CompleteChainOperations = true;
   std::map<std::pair<va_t, int>, RegistrationChainAccess> ChainAccesses;
   std::map<va_t, std::pair<int, LowInstructionBoundary>> Boundaries;

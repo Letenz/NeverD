@@ -5967,8 +5967,12 @@ to check live stack bytes, all GPRs, defined arithmetic flags, return-PC movemen
 and FS chain state at preferred and rebased addresses. Wrong-seed controls must
 return one; intact cases return zero (96 runtime observations). Set
 `NEVERD_REGISTRATION_PROLOGUE_INPUT_PE32` to one generated `original.exe` when
-running the complete registration EH suite. These source/runtime descriptions
-do not yet grant a LowIR transfer or native EH lowering.
+running the complete registration EH suite. Each image also contains an
+independent cleanup-only parent whose LowIR transfer must prove the helper
+call, state writes and node removal. Machine execution verifies that parent's
+returned ESP and FS:[0]. Synthetic instruction-boundary and input-value
+mutations must refuse the transfer, as must stale current-image bytes.
+The distinct source call receipt does not yet grant native EH lowering.
 `check_windows_registration_realigned_rewrite.py` separately emits aligned
 value/reference, unbound value/reference and catch-all parents. Independent
 assembly fixtures use the canonical direct MSVC EBP frame for the unbound forms.

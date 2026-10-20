@@ -22,6 +22,7 @@
 namespace neverd {
 namespace coff_loader {
 struct X86CxxHandlerABI;
+struct X86CxxPrologueCall;
 }
 
 struct LowFunc;
@@ -332,6 +333,18 @@ struct RegistrationSEHStateStore {
   bool operator==(const RegistrationSEHStateStore &) const = default;
 };
 
+/// A checked physical shared-prologue invocation. This is separate from an
+/// ordinary callee ABI: it establishes EBP, allocates the node, preserves five
+/// GPRs and publishes FS:[0]. Native reconstruction requires its own transfer.
+struct RegistrationCxxPrologueEffect {
+  va_t Address = InvalidVA;
+  va_t EndAddress = InvalidVA;
+  va_t HelperVA = InvalidVA;
+  int OpSeq = -1;
+  int32_t StackOffset = 0;
+  bool operator==(const RegistrationCxxPrologueEffect &) const = default;
+};
+
 struct RegistrationStateAnalysis {
   std::vector<RegistrationBlockState> Blocks;
   bool Complete = false;
@@ -369,6 +382,7 @@ struct RegistrationStateAnalysis {
   /// lifetime and callback state proof. This is not a native output receipt.
   bool ChainOperationsComplete = false;
   std::vector<RegistrationChainAccess> ChainAccesses;
+  std::optional<RegistrationCxxPrologueEffect> CxxPrologue;
   std::vector<RegistrationFrameValue> FrameValues;
   bool IncomingFrameAccessesComplete = true;
   std::vector<RegistrationIncomingFrameAccess> IncomingFrameAccesses;
@@ -458,8 +472,9 @@ struct RegistrationStateAnalysis {
 /// Solve ordinary and runtime-dispatch state transfers together. Stores take
 /// effect only after their exact decoded instruction retires. A union at a
 /// join is retained; address order never selects a predecessor's state.
-/// CxxHandler, when supplied, must be the loader's checked description for this
-/// source function and image; its conditions alone do not prove the parent.
+/// CxxHandler and CxxPrologue, when supplied, must be the loader's checked
+/// descriptions for this source function and image; their conditions alone
+/// do not prove the parent.
 RegistrationStateAnalysis analyzeRegistrationStates(
     const LowFunc &Function, va_t SecurityCookieVA = 0, va_t CookieCheckVA = 0,
     const std::vector<RegistrationCalleeFrameContract> *Callees = nullptr,
@@ -467,7 +482,8 @@ RegistrationStateAnalysis analyzeRegistrationStates(
     const std::vector<RegistrationCalleeStackContract> *Stacks = nullptr,
     const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds = nullptr,
     const std::vector<RegistrationSEHControlContract> *SEHControls = nullptr,
-    const coff_loader::X86CxxHandlerABI *CxxHandler = nullptr);
+    const coff_loader::X86CxxHandlerABI *CxxHandler = nullptr,
+    const coff_loader::X86CxxPrologueCall *CxxPrologue = nullptr);
 
 /// Return exact address intervals only if every reaching state agrees about
 /// membership. An ambiguous join cannot be flattened into a lexical try range.

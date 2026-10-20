@@ -201,6 +201,8 @@ struct X86CxxPrologueWrite {
 /// boundary and entry-frame identities. It does not authorize native EH,
 /// cookie-check elision, callback entry, or a frame coordinate by itself.
 struct X86CxxPrologueCall {
+  static constexpr int32_t RegistrationOffset = -12;
+  static constexpr int32_t TryLevelOffset = -4;
   ExceptionAddressRange Caller;
   ExceptionAddressRange Helper;
   va_t CallVA = 0;

@@ -107,6 +107,10 @@ realignedRegistrationFrameCoordinate(const ExceptionFunction &EH,
 std::optional<RegistrationFrameCoordinate>
 cxxRegistrationFrameCoordinate(const ExceptionFunction &EH,
                                const RegistrationStateAnalysis *State) {
+  // The source call proof does not yet reconstruct its saved registers,
+  // allocated stack and cookie in generated code.
+  if (State && State->CxxPrologue)
+    return std::nullopt;
   if (!EH.Registration || !EH.Registration->cxxRuntimeFrameOffset() ||
       EH.ParseStatus != ExceptionParseStatus::Complete ||
       EH.Encoding != ExceptionEncoding::X86CxxFuncInfo || !EH.Cxx ||

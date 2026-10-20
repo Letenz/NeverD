@@ -1872,9 +1872,14 @@ decoder with entry discovery. It authenticates the current caller, allocation,
 helper, FuncInfo dispatch and any SafeSEH membership, then describes ordered
 live stack writes relative to the helper's established EBP. The description
 retains overlapping saves, the moved return PC's final ESP, cookie encoding and
-the returned register/flag effects. It is a physical call description; source
-state transfer must still bind the actual stack word, EAX and decoded occurrence.
-It does not publish frame coordinates or admit native output by itself.
+the returned register/flag effects. The loader uses its exact node and state
+offsets to collect source-store observations. `RegistrationStatePrologue`
+binds the actual stack word, EAX,
+incoming register identities and decoded occurrence at an unambiguous parent
+entry. Its cleanup-only transfer preserves ordered overlapping writes and
+publishes a distinct physical-call receipt, not an ordinary callee stack-pop
+contract. Catch entries and native reconstruction still require separate
+physical transfers; source-slot metadata alone grants neither.
 `RegistrationCleanupABI` authenticates immutable MSVC tail-jump relays and
 Clang relays that save EBP, adjust the source frame and call one or more checked
 leaves before restoring EBP. The ordered call list retains every ECX object

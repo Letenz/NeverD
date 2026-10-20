@@ -319,7 +319,7 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
       diagnose(F, ExceptionParseStatus::Partial,
                "x86 registration handler identity is not proven");
 
-    RegistrationChainInfo Chain;
+    RegistrationChainInfo &Chain = F.Registration.emplace();
     Chain.HandlerVA = Site.HandlerVA;
     Chain.ChainInstallVA = Site.InstallVA;
     Chain.ScopeTableVA = Site.TableVA;
@@ -374,6 +374,13 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
     }
 
     proveDirectRegistrationLayout(Img, Site, Chain);
+    // The checked helper describes physical source storage. The caller still
+    // needs an all-path LowIR call transfer before these slots can own states;
+    // they do not describe a generated native frame.
+    if (getCheckedX86CxxPrologueCall(Img, F)) {
+      Chain.RegistrationOffset = X86CxxPrologueCall::RegistrationOffset;
+      Chain.TryLevelOffset = X86CxxPrologueCall::TryLevelOffset;
+    }
     registration_detail::recoverRegistrationCallbackRanges(F, Img, Functions,
                                                            Chain);
     if (Chain.SeededTryLevel)
@@ -386,7 +393,6 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
                               F.Cxx ? F.Cxx->MaxState : Chain.Scopes.size(),
                               Chain);
 
-    F.Registration = std::move(Chain);
     // Registration personalities and language tables were resolved together
     // above. The generic table-driven resolver must not reinterpret this
     // absolute-pointer FuncInfo as a trailing x64 language-data record.

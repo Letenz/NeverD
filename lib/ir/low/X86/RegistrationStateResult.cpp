@@ -202,6 +202,8 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
   if (Result.ChainOperationsComplete)
     for (const auto &[Identity, Access] : ChainAccesses)
       Result.ChainAccesses.push_back(Access);
+  if (Result.ChainOperationsComplete)
+    Result.CxxPrologue = CxxPrologueEffect;
   Result.IncomingFrameAccessesComplete = ConsistentIncomingAccesses;
   Result.CallFrameEffectsComplete = CompleteCalls && Result.Complete &&
                                     Result.CallbackStatesComplete &&
@@ -292,6 +294,7 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
       Result.CookieChecks.clear();
       Result.CxxCookieConditions.clear();
       Result.ChainAccesses.clear();
+      Result.CxxPrologue.reset();
       Result.Diagnostics.push_back(
           "registration-frame output budget exhausted");
       return std::move(Result);

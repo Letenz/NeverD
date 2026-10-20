@@ -66,8 +66,9 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   if (!Runtime || Mod->getModuleFlag("eh-asynch"))
     return false;
   const auto &States = *Func.RegistrationStates;
-  if (!States.Complete || !States.CallbackStatesComplete ||
-      !States.RegistrationLifetimeComplete || !States.ChainOperationsComplete ||
+  if (States.CxxPrologue || !States.Complete ||
+      !States.CallbackStatesComplete || !States.RegistrationLifetimeComplete ||
+      !States.ChainOperationsComplete ||
       !States.IncomingFrameAccessesComplete ||
       !States.CallFrameEffectsComplete || !States.CleanupFrameEffectsComplete ||
       !States.CxxContinuationsComplete || !States.CxxCatchObjectsComplete ||

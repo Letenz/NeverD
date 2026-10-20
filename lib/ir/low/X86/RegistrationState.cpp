@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/RegistrationScopeGraph.h"
 
 #include <algorithm>
@@ -24,13 +25,15 @@ RegistrationStateSolver::RegistrationStateSolver(
     const std::vector<RegistrationSEHControlContract> *SEHControls,
     ConditionalFrame *Conditional, const BoundCalleeProver *BoundCallees,
     const SEHJumpRuntime *JumpRuntime,
-    const coff_loader::X86CxxHandlerABI *CxxHandler)
+    const coff_loader::X86CxxHandlerABI *CxxHandler,
+    const coff_loader::X86CxxPrologueCall *CxxPrologue)
     : Function(Function), EH(*Function.ExceptionMetadata),
       Chain(*EH.Registration), SecurityCookieVA(SecurityCookieVA),
-      CookieCheckVA(CookieCheckVA), CxxHandler(CxxHandler), Callees(Callees),
-      Cleanups(Cleanups), Stacks(Stacks), LocalUnwinds(LocalUnwinds),
-      SEHControls(SEHControls), Conditional(Conditional),
-      BoundCallees(BoundCallees), JumpRuntime(JumpRuntime),
+      CookieCheckVA(CookieCheckVA), CxxHandler(CxxHandler),
+      CxxPrologue(CxxPrologue), Callees(Callees), Cleanups(Cleanups),
+      Stacks(Stacks), LocalUnwinds(LocalUnwinds), SEHControls(SEHControls),
+      Conditional(Conditional), BoundCallees(BoundCallees),
+      JumpRuntime(JumpRuntime),
       KnownCxx(EH.Encoding == ExceptionEncoding::X86CxxFuncInfo &&
                (EH.Personality == ExceptionPersonality::CxxFrameHandlerX86 ||
                 EH.Personality == ExceptionPersonality::CxxFrameHandler3)),
@@ -98,6 +101,11 @@ bool RegistrationStateSolver::initialize() {
   }
   if (EH.ParseStatus != ExceptionParseStatus::Complete) {
     Result.Diagnostics.push_back("registration metadata is incomplete");
+    return false;
+  }
+  if (CxxPrologue && !validateCxxPrologue()) {
+    Result.Diagnostics.push_back(
+        "shared C++ prologue has no exact parent entry and call boundary");
     return false;
   }
   if (Chain.RealignedFrame && !validateRealignedLayout()) {
@@ -206,7 +214,8 @@ bool RegistrationStateSolver::initialize() {
       HasInstallBoundary |=
           Instruction.Address == Chain.ChainInstallVA &&
           Instruction.Size != 0 &&
-          Instruction.Control == LowInstructionControl::None &&
+          Instruction.Control == (CxxPrologue ? LowInstructionControl::Call
+                                              : LowInstructionControl::None) &&
           Instruction.Address <= InvalidVA - Instruction.Size &&
           Instruction.Address + Instruction.Size == Block.EndAddr;
   if (!HasInstallBoundary) {
@@ -250,13 +259,14 @@ RegistrationStateAnalysis analyzeRegistrationStates(
     const std::vector<RegistrationCalleeStackContract> *Stacks,
     const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
     const std::vector<RegistrationSEHControlContract> *SEHControls,
-    const coff_loader::X86CxxHandlerABI *CxxHandler) {
+    const coff_loader::X86CxxHandlerABI *CxxHandler,
+    const coff_loader::X86CxxPrologueCall *CxxPrologue) {
   if (!Function.ExceptionMetadata || !Function.ExceptionMetadata->Registration)
     return {};
   return registration_state::RegistrationStateSolver(
              Function, SecurityCookieVA, CookieCheckVA, Callees, Cleanups,
              Stacks, LocalUnwinds, SEHControls, nullptr, nullptr, nullptr,
-             CxxHandler)
+             CxxHandler, CxxPrologue)
       .run();
 }
 } // namespace neverd

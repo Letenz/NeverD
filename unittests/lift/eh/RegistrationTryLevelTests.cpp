@@ -25,6 +25,8 @@
 #include "neverd/ir/low/FuncDetector.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
+#include "neverd/ir/med/X86RegistrationFrame.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/loader/COFF/COFFException.h"
 #include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
@@ -1418,7 +1420,7 @@ BinaryImage makeCxxEAXHelperImage(bool Wide, unsigned Variant,
   return Image;
 }
 
-TEST(RegistrationTryLevel, CxxEAXHelperCallersHaveSourceMetadataOnly) {
+TEST(RegistrationTryLevel, CxxEAXHelperCallersHaveCheckedSourceSlots) {
   for (bool Wide : {false, true})
     for (unsigned Variant : {0, 1, 2}) {
       SCOPED_TRACE(::testing::Message() << Wide << " " << Variant);
@@ -1439,9 +1441,9 @@ TEST(RegistrationTryLevel, CxxEAXHelperCallersHaveSourceMetadataOnly) {
         EXPECT_EQ(Chain.HandlerVA, kText + 0x200);
         EXPECT_EQ(Chain.ScopeTableVA, kRData);
         EXPECT_EQ(Chain.SeededTryLevel, -1);
-        EXPECT_FALSE(Chain.RegistrationOffset);
-        EXPECT_FALSE(Chain.TryLevelOffset);
-        EXPECT_FALSE(Chain.cxxRuntimeFrameOffset());
+        EXPECT_EQ(Chain.RegistrationOffset, -12);
+        EXPECT_EQ(Chain.TryLevelOffset, -4);
+        EXPECT_EQ(Chain.cxxRuntimeFrameOffset(), 0);
         EXPECT_TRUE(Chain.TryLevelStores.empty());
         EXPECT_FALSE(Image.VerifiedFunctionEntries.count(Entry));
         EXPECT_FALSE(coff_loader::getX86RegistrationChainStoreSize(
@@ -1463,6 +1465,268 @@ TEST(RegistrationTryLevel, CxxEAXHelperRequiresExactSourceProtocol) {
         EXPECT_EQ(chainAt(Image, kText + 0x20), nullptr);
         EXPECT_EQ(chainAt(Image, kText + 0x50), nullptr);
       }
+}
+
+BinaryImage makeCxxEAXStateImage(bool Wide, unsigned Variant,
+                                 uint32_t Allocation = 32) {
+  auto Image = makeCxxEAXHelperImage(Wide, Variant);
+  auto &Text = Image.Segments.front().Data;
+  const size_t Begin = 0x20;
+  if (Wide)
+    writeLE<uint32_t>(Text.data() + Begin + 1, Allocation);
+  else
+    Text[Begin + 1] = uint8_t(Allocation);
+  std::vector<uint8_t> Body;
+  emitFrameStore(Body, -4, 0);
+  emitFrameStore(Body, -4, -1);
+  Body.insert(Body.end(),
+              {0x8b, 0x4d, 0xf4, 0x64, 0x89, 0x0d, 0, 0, 0, 0, 0x8d, 0x64, 0x24,
+               uint8_t(Allocation + 28), 0x5d, 0x31, 0xc0, 0xc3});
+  std::copy(Body.begin(), Body.end(), Text.begin() + Begin + (Wide ? 15 : 12));
+  // A cleanup-only graph exercises the parent's state slot without claiming
+  // the separate physical catch-entry protocol.
+  for (auto &Segment : Image.Segments)
+    if (Segment.VA == kRData) {
+      writeLE<uint32_t>(Segment.Data.data() + 12, 0);
+      writeLE<uint32_t>(Segment.Data.data() + 16, 0);
+    }
+  Image.ExceptionMetadata = {};
+  coff_loader::parseX86RegistrationExceptions(Image);
+  return Image;
+}
+
+TEST(RegistrationTryLevel, CxxEAXHelperOwnsItsDecodedStateTransitions) {
+  for (bool Wide : {false, true})
+    for (unsigned Variant : {0, 1, 2})
+      for (uint32_t Allocation : {0, 1, 4, 32}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Wide << " " << Variant << " " << Allocation);
+        auto Image = makeCxxEAXStateImage(Wide, Variant, Allocation);
+        const auto *EH = Image.ExceptionMetadata.findFunction(kText + 0x20);
+        ASSERT_NE(EH, nullptr);
+        ASSERT_TRUE(EH->Registration);
+        EXPECT_EQ(EH->Registration->RegistrationOffset, -12);
+        EXPECT_EQ(EH->Registration->TryLevelOffset, -4);
+        ASSERT_EQ(EH->Registration->TryLevelStores.size(), 2u);
+        const auto Function = liftEntry(Image, kText + 0x20);
+        ASSERT_TRUE(Function.RegistrationStates);
+        const auto &States = *Function.RegistrationStates;
+        EXPECT_TRUE(States.Complete);
+        EXPECT_TRUE(States.RegistrationLifetimeComplete);
+        EXPECT_TRUE(States.ChainOperationsComplete);
+        EXPECT_TRUE(States.CallFrameEffectsComplete);
+        ASSERT_TRUE(States.CxxPrologue);
+        EXPECT_EQ(States.CxxPrologue->Address,
+                  EH->Registration->ChainInstallVA);
+        EXPECT_EQ(States.CxxPrologue->HelperVA, kText + 0x100);
+        EXPECT_EQ(States.CxxPrologue->StackOffset, -28 - int32_t(Allocation));
+        EXPECT_EQ(States.callFrameEffect(States.CxxPrologue->Address,
+                                         States.CxxPrologue->OpSeq),
+                  nullptr);
+        EXPECT_FALSE(cxxRegistrationFrameCoordinate(*EH, &States));
+        EXPECT_TRUE(
+            std::any_of(States.FrameValues.begin(), States.FrameValues.end(),
+                        [&](const auto &Value) {
+                          return Value.Address == States.CxxPrologue->Address &&
+                                 Value.OpSeq == States.CxxPrologue->OpSeq &&
+                                 Value.EstablishedFrameOffset == -12;
+                        }));
+        const va_t Body = kText + 0x20 + (Wide ? 15 : 12);
+        // Restore ESP from its post-helper value, independently of EBP.
+        // The exact source LEA must reach the saved incoming EBP at offset 0.
+        EXPECT_TRUE(std::any_of(States.FrameValues.begin(),
+                                States.FrameValues.end(),
+                                [&](const auto &Value) {
+                                  return Value.Address == Body + 24 &&
+                                         Value.EstablishedFrameOffset == 0;
+                                }));
+        unsigned Matched = 0;
+        for (const auto &State : States.Blocks) {
+          if (State.Range.Begin == Body) {
+            ++Matched;
+            EXPECT_EQ(State.Levels, (std::vector<int32_t>{-1}));
+          }
+          if (State.Range.Begin == Body + 7) {
+            ++Matched;
+            EXPECT_EQ(State.Levels, (std::vector<int32_t>{0}));
+          }
+          if (State.Range.Begin == Body + 14) {
+            ++Matched;
+            EXPECT_EQ(State.Levels, (std::vector<int32_t>{-1}));
+          }
+        }
+        EXPECT_EQ(Matched, 3u);
+      }
+}
+
+TEST(RegistrationTryLevel, CxxEAXHelperRequiresItsExactLowIRInvocation) {
+  auto Image = makeCxxEAXStateImage(false, 1);
+  const auto Original = liftEntry(Image, kText + 0x20);
+  ASSERT_TRUE(Original.RegistrationStates);
+  ASSERT_TRUE(Original.RegistrationStates->Complete);
+  const auto &EH = *Original.ExceptionMetadata;
+  const auto Call = coff_loader::getCheckedX86CxxPrologueCall(Image, EH);
+  const auto Handler = coff_loader::getCheckedX86CxxHandlerABI(Image, EH);
+  ASSERT_TRUE(Call);
+  ASSERT_TRUE(Handler);
+  const std::vector<RegistrationCalleeFrameContract> Callees;
+  const std::vector<RegistrationCleanupFrameContract> Cleanups;
+  for (unsigned Mutation = 0; Mutation != 33; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Function = Original;
+    auto &Block = Function.Blocks.front();
+    ASSERT_EQ(Block.InstructionBoundaries.size(), 3u);
+    auto &Boundary = Block.InstructionBoundaries.back();
+    auto &Op = Block.Ops[Boundary.FirstOp];
+    ASSERT_EQ(Op.Opcode, NdOp::CALL);
+    switch (Mutation) {
+    case 0:
+      Boundary.Size = 4;
+      break;
+    case 1:
+      ++Boundary.FirstOp;
+      break;
+    case 2:
+      Boundary.OpCount = 0;
+      break;
+    case 3:
+      Boundary.OpCount = 2;
+      break;
+    case 4:
+      Boundary.Control = LowInstructionControl::None;
+      break;
+    case 5:
+      Boundary.ControlFlags |= LowInstructionControlFlag::Conditional;
+      break;
+    case 6:
+      Boundary.ControlFlags |= LowInstructionControlFlag::NoReturn;
+      break;
+    case 7:
+      Boundary.ControlFlags |= LowInstructionControlFlag::Indirect;
+      break;
+    case 8:
+      Boundary.Mode = InstructionMode::Thumb;
+      break;
+    case 9:
+      Boundary.TargetMode = LowInstructionTargetMode::Thumb;
+      break;
+    case 10:
+      ++*Boundary.Immediate;
+      break;
+    case 11:
+      Boundary.Immediate.reset();
+      break;
+    case 12:
+      ++Boundary.Address;
+      break;
+    case 13:
+      Op.Seq = -1;
+      break;
+    case 14:
+      Op.Output = NdVar::reg(x86reg::RSI, 4);
+      break;
+    case 15:
+      Op.NumInputs = 2;
+      break;
+    case 16:
+      Op.Inputs[0].Size = 8;
+      break;
+    case 17:
+      ++Op.Inputs[0].Offset;
+      break;
+    case 18:
+      Op.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 19:
+      Op.Opcode = NdOp::INDIR_CALL;
+      break;
+    case 20:
+      Op.Output.Size = 2;
+      break;
+    case 21:
+      Block.Preds.push_back(Block.Id);
+      break;
+    case 22:
+      ++Function.Entry;
+      break;
+    case 23:
+      Function.ExceptionMetadata->Registration->TryLevelOffset = -8;
+      break;
+    case 24:
+      Function.ExceptionMetadata->Registration->SeededTryLevel = 0;
+      break;
+    case 25:
+      // The allocation word reaches the helper through an actual source
+      // store; a descriptor cannot replace a different lifted input.
+      for (auto &Input : Block.Ops)
+        if (Input.Addr == Function.Entry && Input.Opcode == NdOp::STORE)
+          ++Input.Inputs[1].Offset;
+      break;
+    case 26:
+      for (auto &Input : Block.Ops)
+        if (Input.Opcode == NdOp::COPY && Input.Output.isReg() &&
+            Input.Output.Offset == x86reg::RAX)
+          ++Input.Inputs[0].Offset;
+      break;
+    case 27:
+      for (auto &Input : Block.Ops)
+        if (Input.Addr == Function.Entry && Input.Opcode == NdOp::INT_SUB)
+          Input.Opcode = NdOp::INT_ADD;
+      break;
+    case 28:
+      Function.OrdinaryModuleAnalysisRoots.insert(Call->Caller.End);
+      break;
+    case 29:
+      Function.ExceptionMetadata->Cxx->TryBlocks.emplace_back();
+      break;
+    case 30:
+      break; // An absent current-image description cannot use metadata.
+    case 31:
+      Op.MemoryOrdering = NdMemoryOrdering::Relaxed;
+      break;
+    case 32:
+      Function.OrdinaryModuleAnalysisRoots.insert(Call->CallVA);
+      break;
+    }
+    const auto States = analyzeRegistrationStates(
+        Function, Call->SecurityCookieVA, 0, &Callees, &Cleanups, nullptr,
+        nullptr, nullptr, &*Handler, Mutation == 30 ? nullptr : &*Call);
+    EXPECT_FALSE(States.Complete);
+    EXPECT_FALSE(States.CxxPrologue);
+  }
+}
+
+TEST(RegistrationTryLevel, CxxEAXHelperRechecksBytesBeforeStateAnalysis) {
+  const auto Original = makeCxxEAXStateImage(false, 1);
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = Original;
+    switch (Mutation) {
+    case 0:
+      Image.Segments.front().Data[0x100 + 20] ^= 1;
+      break;
+    case 1:
+      Image.Segments.front().Data[0x20 + 2] = 0xb9;
+      break;
+    case 2:
+      Image.Segments.front().Data[0x200] = 0xb9;
+      break;
+    case 3:
+      Image.DynInfo.SecurityCookieRVA += 4;
+      break;
+    case 4:
+      Image.Segments.front().Flags =
+          Image.Segments.front().Flags | SegmentFlags::Writable;
+      break;
+    case 5:
+      Image.BaseRelocations.push_back({kText + 0x101, 3});
+      break;
+    }
+    const auto Function = liftEntry(Image, kText + 0x20);
+    ASSERT_TRUE(Function.RegistrationStates);
+    EXPECT_FALSE(Function.RegistrationStates->Complete);
+    EXPECT_FALSE(Function.RegistrationStates->CxxPrologue);
+  }
 }
 
 TEST(RegistrationTryLevel, CxxEAXHelperReportsOrderedPhysicalEffects) {
@@ -1513,8 +1777,8 @@ TEST(RegistrationTryLevel, CxxEAXHelperReportsOrderedPhysicalEffects) {
         EXPECT_EQ(Call->Writes, Expected);
         // In particular allocation zero retains the extra store's overwrite
         // of the EBX save; it cannot grant restored-register authority.
-        EXPECT_FALSE(EH->Registration->RegistrationOffset);
-        EXPECT_FALSE(EH->Registration->TryLevelOffset);
+        EXPECT_EQ(EH->Registration->RegistrationOffset, -12);
+        EXPECT_EQ(EH->Registration->TryLevelOffset, -4);
       }
 }
 
@@ -1639,8 +1903,23 @@ TEST(RegistrationTryLevel, CxxEAXHelperInputPE32HasTheCheckedPhysicalCall) {
   EXPECT_EQ(Call->Caller.size(), Word("prologue_wide") ? 15u : 12u);
   EXPECT_EQ(Call->Helper.size(), Word("prologue_variant") ? 54u : 51u);
   EXPECT_EQ(Call->Writes.size(), Word("prologue_variant") ? 9u : 8u);
-  EXPECT_FALSE(EH->Registration->RegistrationOffset);
-  EXPECT_FALSE(EH->Registration->TryLevelOffset);
+  EXPECT_EQ(EH->Registration->RegistrationOffset, -12);
+  EXPECT_EQ(EH->Registration->TryLevelOffset, -4);
+  const va_t StateParent = Export("prologue_state_parent");
+  ASSERT_NE(StateParent, 0u);
+  const auto Function = liftEntry(*Image, StateParent);
+  ASSERT_TRUE(Function.RegistrationStates);
+  const auto &States = *Function.RegistrationStates;
+  EXPECT_TRUE(States.Complete);
+  EXPECT_TRUE(States.RegistrationLifetimeComplete);
+  EXPECT_TRUE(States.ChainOperationsComplete);
+  EXPECT_TRUE(States.CallFrameEffectsComplete);
+  ASSERT_TRUE(States.CxxPrologue);
+  EXPECT_EQ(States.CxxPrologue->HelperVA, Export("prologue_helper"));
+  EXPECT_EQ(States.CxxPrologue->StackOffset,
+            -28 - int32_t(Word("prologue_allocation")));
+  EXPECT_FALSE(
+      cxxRegistrationFrameCoordinate(*Function.ExceptionMetadata, &States));
 }
 
 TEST(RegistrationTryLevel, CxxEAXHelperRequiresClosedPrecedingBody) {

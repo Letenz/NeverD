@@ -110,18 +110,20 @@ std::optional<X86CxxPrologueCall> readCxxEAXPrologueCall(const BinaryImage &Img,
   Result.AllocationBytes = Allocation;
   Result.PostCallStackOffset = -28 - Allocation;
   using Value = X86CxxPrologueWrite::Value;
-  Result.Writes = {{-8, Value::Handler},
-                   {-12, Value::PreviousChain},
-                   {-16 - Allocation, Value::EBX},
-                   {-20 - Allocation, Value::ESI},
-                   {-24 - Allocation, Value::EDI},
-                   {0, Value::PreviousEBP},
-                   {Result.PostCallStackOffset, Value::EncodedCookie}};
+  Result.Writes = {
+      {X86CxxPrologueCall::RegistrationOffset + 4, Value::Handler},
+      {X86CxxPrologueCall::RegistrationOffset, Value::PreviousChain},
+      {-16 - Allocation, Value::EBX},
+      {-20 - Allocation, Value::ESI},
+      {-24 - Allocation, Value::EDI},
+      {0, Value::PreviousEBP},
+      {Result.PostCallStackOffset, Value::EncodedCookie}};
   if (Helper->Extra != ExtraFrameStore::None)
     Result.Writes.push_back({-16, Helper->Extra == ExtraFrameStore::StackPointer
                                       ? Value::StackPointer
                                       : Value::EncodedCookie});
-  Result.Writes.push_back({-4, Value::InitialState});
+  Result.Writes.push_back(
+      {X86CxxPrologueCall::TryLevelOffset, Value::InitialState});
   return Result;
 }
 

@@ -65,6 +65,12 @@ _mainCRTStartup:
   mov dword ptr [main_stack], esp
   mov eax, dword ptr fs:[0]
   mov dword ptr [old_chain], eax
+  call _prologue_state_parent
+  cmp esp, dword ptr [main_stack]
+  jne state_failed
+  mov eax, dword ptr fs:[0]
+  cmp eax, dword ptr [old_chain]
+  jne state_failed
   mov ebp, 0x12345678
   mov ebx, 0x23456789
   mov esi, 0x3456789a
@@ -76,6 +82,24 @@ parent_return:
   push eax
   call dword ptr ["__imp__ExitProcess@4"]
   int3
+state_failed:
+  push 1
+  call dword ptr ["__imp__ExitProcess@4"]
+  int3
+.p2align 4, 0x90
+.globl _prologue_state_parent
+_prologue_state_parent:
+  {push}
+  mov eax, offset _prologue_handler
+  call _prologue_helper
+  mov dword ptr [ebp-4], 0
+  mov dword ptr [ebp-4], -1
+  mov ecx, dword ptr [ebp-12]
+  mov dword ptr fs:[0], ecx
+  mov esp, ebp
+  pop ebp
+  xor eax, eax
+  ret
 .p2align 4, 0x90
 .globl _prologue_parent
 _prologue_parent:
@@ -230,8 +254,8 @@ def main() -> int:
                     run([args.compiler, "--target=i686-pc-windows-msvc",
                          "-c", source, "-o", obj])
                     exports = ["prologue_" + name for name in
-                               ("parent", "helper", "handler", "allocation",
-                                "variant", "wide", "seed")]
+                               ("parent", "state_parent", "helper", "handler",
+                                "allocation", "variant", "wide", "seed")]
                     run([args.linker, "/entry:mainCRTStartup", "/nodefaultlib",
                          "/machine:x86", "/subsystem:console", "/fixed:no",
                          "/dynamicbase:no", "/out:" + str(image), obj,

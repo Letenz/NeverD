@@ -1244,6 +1244,9 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
       if (Chain.RegistrationOffset && Chain.ChainInstallVA != 0 &&
           InstallSize && Chain.ChainInstallVA <= InvalidVA - *InstallSize)
         AddBoundary(Chain.ChainInstallVA + *InstallSize);
+      if (const auto Prologue =
+              coff_loader::getCheckedX86CxxPrologueCall(Img, *Exception))
+        AddBoundary(Prologue->Caller.End);
       for (const RegistrationScopeRecord &Scope :
            Exception->Registration->Scopes) {
         AddExceptionalRoot(Scope.FilterVA);
