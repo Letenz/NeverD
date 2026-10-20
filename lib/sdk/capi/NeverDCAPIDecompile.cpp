@@ -28,6 +28,7 @@
 #include "neverd/evm/emit/EVMCEmitter.h"
 #include "neverd/evm/emit/EVMSolidityEmitter.h"
 #include "neverd/ir/NdOps.h"
+#include "neverd/ir/high/HighVariableEdits.h"
 #include "neverd/loader/ARMModeCLIStrings.h"
 #include "neverd/loader/COFF/COFFException.h"
 #include "neverd/loader/LanguageRuntime.h"
@@ -551,10 +552,43 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
   llvm::raw_string_ostream OS(Out);
 
   CEmitterOptions Opts;
-  const std::string VariableSnapshot =
-      SourceMap || !S->SourceOptions.VariableTypes.empty()
+  std::string VariableSnapshot =
+      SourceMap || !S->SourceOptions.VariableTypes.empty() ||
+              !S->SourceOptions.VariableEdits.empty()
           ? highVariableSnapshot(*Attached, S->SourceOptions.Symbolic)
           : std::string();
+  HighSourceMap EditedSources = S->PipeResult.HighSources;
+  bool EditFailed = false;
+  for (const auto &Edit : S->SourceOptions.VariableEdits) {
+    SourceVariableEditResult Status;
+    if (EditFailed || VariableSnapshot.empty() ||
+        Edit.Snapshot != VariableSnapshot) {
+      Status.Refusal = "The source analysis or an earlier association changed; "
+                       "reset or reapply the association";
+    } else {
+      auto Current =
+          std::find_if(Single.begin(), Single.end(),
+                       [&](const HighFunc &F) { return F.Entry == FuncEntry; });
+      auto Changed = editHighVariable(
+          *Current, EditedSources,
+          {Edit.Kind == "map" ? HighVariableEdit::Map : HighVariableEdit::Split,
+           Edit.From, Edit.To});
+      Status.Refusal = Changed.Refusal;
+      if (Changed) {
+        *Current = std::move(Changed.Function);
+        for (const auto &Observation : EditedSources)
+          if (Observation.Function != FuncEntry)
+            Changed.Sources.push_back(Observation);
+        EditedSources = std::move(Changed.Sources);
+        Status.Applied = true;
+        Status.Outputs = std::move(Changed.Outputs);
+        VariableSnapshot = editedVariableSnapshot(VariableSnapshot, Edit);
+      }
+    }
+    EditFailed |= !Status.Applied;
+    if (SourceMap)
+      SourceMap->VariableEditResults.push_back(std::move(Status));
+  }
   if (SourceMap)
     SourceMap->VariableSnapshot = VariableSnapshot;
   const SourceVariableTypes VariableTypes =
@@ -569,7 +603,7 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
   Opts.AccessWidths = S->dataAccessWidths();
   if (SourceMap) {
     SourceMap->Recognitions = &S->PipeResult.LibraryRecognitions;
-    SourceMap->HighSources = &S->PipeResult.HighSources;
+    SourceMap->HighSources = &EditedSources;
     Opts.SourceMap = SourceMap;
   }
   DebugContext *Debug = S->decompileDebug();
@@ -589,6 +623,8 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     };
   try {
     S->cEmitter().emit(Single, OS, Opts, Debug);
+    if (SourceMap)
+      SourceMap->HighSources = nullptr;
     if (SourceMap)
       noteUnboundVariableTypes(*SourceMap, VariableTypes, FuncEntry);
   } catch (const std::exception &Error) {
@@ -643,7 +679,8 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
   std::string VariableIR;
   llvm::raw_string_ostream VariableOS(VariableIR);
   std::string VariableSnapshot;
-  if (SourceMap || !S->SourceOptions.VariableTypes.empty()) {
+  if (SourceMap || !S->SourceOptions.VariableTypes.empty() ||
+      !S->SourceOptions.VariableEdits.empty()) {
     LF->print(VariableOS);
     VariableOS << FuncEntry << ':' << S->SourceOptions.Symbolic << ':'
                << static_cast<unsigned>(S->SourceOptions.LLVM) << ':'
@@ -651,8 +688,16 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
                << S->SourceOptions.RecoverControlFlow;
     VariableSnapshot = sourceVariableSnapshot(VariableIR);
   }
+  Opts.VariableSnapshot = VariableSnapshot;
+  std::vector<SourceVariableEdit> VariableEdits =
+      S->SourceOptions.VariableEdits;
+  for (auto &Edit : VariableEdits) {
+    Edit.AfterSnapshot = editedVariableSnapshot(VariableSnapshot, Edit);
+    VariableSnapshot = Edit.AfterSnapshot;
+  }
+  Opts.VariableEdits = &VariableEdits;
   if (SourceMap)
-    SourceMap->VariableSnapshot = VariableSnapshot;
+    SourceMap->VariableSnapshot = Opts.VariableSnapshot;
   const SourceVariableTypes VariableTypes =
       sourceVariableTypes(*S, FuncEntry, VariableSnapshot,
                           SourceMap ? &SourceMap->StaleVariableTypes : nullptr);
@@ -1068,6 +1113,18 @@ void writeSourcePage(llvm::raw_ostream &OS, neverd_session_t Sess, va_t Entry,
       J.attribute("dialect", sourceDialectKey(*Dialect));
     J.attribute("function_identity", std::move(Identity));
     J.attribute("variable_snapshot", Map.VariableSnapshot);
+    J.attributeArray("variable_edit_results", [&] {
+      for (const auto &Result : Map.VariableEditResults) {
+        J.object([&] {
+          J.attribute("applied", Result.Applied);
+          J.attribute("refusal", Result.Refusal);
+          J.attributeArray("outputs", [&] {
+            for (const auto &Id : Result.Outputs)
+              J.value(Id);
+          });
+        });
+      }
+    });
     J.attributeArray("source_variables", [&] {
       for (const auto &[Key, Variable] : Map.Variables) {
         if (Variable.Function != Entry)
@@ -1209,11 +1266,34 @@ SourceViewOptions readSourceOptions(llvm::StringRef Text,
     const llvm::StringRef Key = Field.first;
     if (Key != "symbolic" && Key != "llvm_optimization" &&
         Key != "llvm_passes" && Key != "llvm_control_flow" &&
-        Key != "variable_types")
+        Key != "variable_types" && Key != "variable_edits")
       throw std::invalid_argument("unknown source option: " + Key.str());
-    if (Key != "symbolic" && Key != "variable_types" && Stage != "llvmc")
+    if (Key != "symbolic" && Key != "variable_types" &&
+        Key != "variable_edits" && Stage != "llvmc")
       throw std::invalid_argument("LLVM options require llvmc");
   }
+  if (const auto *Edits = Object->getArray("variable_edits")) {
+    if (Edits->size() > 64)
+      throw std::invalid_argument(
+          "at most 64 variable associations are supported");
+    for (const auto &Value : *Edits) {
+      const auto *Item = Value.getAsObject();
+      if (!Item)
+        throw std::invalid_argument("a variable association must be an object");
+      SourceVariableEdit Edit;
+      Edit.Kind = Item->getString("kind").value_or("").str();
+      Edit.From = Item->getString("from").value_or("").str();
+      Edit.To = Item->getString("to").value_or("").str();
+      Edit.Snapshot = Item->getString("snapshot").value_or("").str();
+      if ((Edit.Kind != "map" && Edit.Kind != "split") || Edit.From.empty() ||
+          Edit.From.size() > 256 || Edit.To.size() > 256 ||
+          (Edit.Kind == "map" && Edit.To.empty()) || Edit.Snapshot.empty() ||
+          Edit.Snapshot.size() > 128)
+        throw std::invalid_argument("invalid variable association identity");
+      Options.VariableEdits.push_back(std::move(Edit));
+    }
+  } else if (Object->get("variable_edits"))
+    throw std::invalid_argument("variable_edits must be an array");
   if (const auto *Types = Object->getArray("variable_types")) {
     if (Types->size() > 256)
       throw std::invalid_argument(

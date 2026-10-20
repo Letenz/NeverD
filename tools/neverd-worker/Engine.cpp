@@ -867,7 +867,7 @@ void Engine::forgetEncodedPages() {
 
 std::shared_ptr<const Engine::NamedView>
 Engine::namedView(std::uint64_t address, const std::string &representation,
-                  const Json &options) {
+                  const Json &options, const Json *variableEdits) {
   const auto view = irViewFunction();
   const auto extended = irViewExFunction();
   if (!options.is_object() || options.dump().size() > 4096)
@@ -897,6 +897,18 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
         row.is_object()
             ? row.value("views", Json::object()).value(route, Json::object())
             : Json::object();
+    const auto associations =
+        variableEdits ? *variableEdits
+                      : edits.value("variable_edits", Json::array());
+    bool Foreign = false;
+    for (const auto &Association : associations)
+      Foreign |= !currentTypeImage(Association);
+    if (Foreign)
+      staleVariableTypes.push_back(
+          "Saved variable associations belong to a different input image; "
+          "reset or reapply them");
+    else if (!associations.empty())
+      engineOptions["variable_edits"] = associations;
     Json types = Json::array();
     const Json variableTypes = edits.value("variable_types", Json::object());
     for (const auto &[id, type] : variableTypes.items()) {
@@ -3151,6 +3163,31 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     }
     return page(items, p, {"text"});
   }
+  if (operation == "source_variables") {
+    const auto address = parseAddress(stringField(p, "address"));
+    const auto representation = stringField(p, "representation");
+    if (representation != "c" && representation != "source" &&
+        representation != "llvmc")
+      throw Error("unsupported",
+                  "Variable associations require Pseudocode or LLVM C");
+    const auto document = namedView(address, representation,
+                                    p.value("source_options", Json::object()));
+    if (!document)
+      throw Error("unsupported", "The engine does not expose source variables");
+    Json result{
+        {"variables", document->value.value("source_variables", Json::array())},
+        {"snapshot", document->value.value("variable_snapshot", std::string())},
+        {"results",
+         document->value.value("variable_edit_results", Json::array())}};
+    const auto row = codeEditRow(address);
+    const auto route = representation == "source" ? "c" : representation;
+    result["associations"] = row.is_object()
+                                 ? row.value("views", Json::object())
+                                       .value(route, Json::object())
+                                       .value("variable_edits", Json::array())
+                                 : Json::array();
+    return result;
+  }
   if (operation == "source_type") {
     const auto address = parseAddress(stringField(p, "address"));
     const auto representation = stringField(p, "representation");
@@ -3216,10 +3253,81 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     if (!document)
       throw Error("unsupported",
                   "The engine does not expose editable source targets");
-    CodeEdits::validateChange(document->value, p);
+    const bool associations = p.value("kind", std::string()) == "variables";
+    if (!associations)
+      CodeEdits::validateChange(document->value, p);
     // The names keep while the code keeps its locals (code_shape).
     Json request = p;
     std::uint64_t owner = address;
+    if (associations) {
+      const auto representation = stringField(p, "representation");
+      if (representation != "c" && representation != "source" &&
+          representation != "llvmc")
+        throw Error("unsupported",
+                    "Variable associations require Pseudocode or LLVM C");
+      if (stringField(p, "snapshot", {}, 128) !=
+          document->value.value("variable_snapshot", std::string()))
+        throw Error("stale_target",
+                    "The source analysis changed; select the variable again");
+      const auto route = representation == "source" ? "c" : representation;
+      Json edits = before.is_object()
+                       ? before.value("views", Json::object())
+                             .value(route, Json::object())
+                             .value("variable_edits", Json::array())
+                       : Json::array();
+      const auto action = stringField(p, "action", {}, 16);
+      if (action == "clear")
+        edits = Json::array();
+      else if (action == "unmap" || action == "unsplit") {
+        const auto index = sizeField(p, "association", edits.size(), 63);
+        if (index >= edits.size() ||
+            edits[index].at("kind") != (action == "unmap" ? "map" : "split"))
+          throw Error("stale_target",
+                      "This variable association no longer exists");
+        edits.erase(index);
+      } else if (action == "map" || action == "split") {
+        if (edits.size() >= 64)
+          throw Error("edit_budget",
+                      "Reset an association before adding more than 64 edits");
+        const auto from = stringField(p, "variable_id", {}, 256);
+        const auto to =
+            action == "map" ? stringField(p, "to", {}, 256) : std::string();
+        auto available = [&](const std::string &id) {
+          for (const auto &v :
+               document->value.value("source_variables", Json::array()))
+            if (v.value("id", std::string()) == id &&
+                !v.value("ambiguous", true) && !v.contains("address"))
+              return true;
+          return false;
+        };
+        if (!available(from) || (action == "map" && !available(to)))
+          throw Error(
+              "stale_target",
+              "Select an unambiguous local variable in the current source");
+        edits.push_back({{"kind", action},
+                         {"from", from},
+                         {"to", to},
+                         {"snapshot", p.at("snapshot")},
+                         {"input_sha256", inputHash()}});
+        const auto preview =
+            namedView(address, representation,
+                      p.value("source_options", Json::object()), &edits);
+        const auto results =
+            preview
+                ? preview->value.value("variable_edit_results", Json::array())
+                : Json::array();
+        if (results.size() != edits.size() ||
+            !results.back().value("applied", false))
+          throw Error("variable_edit_refused",
+                      results.empty()
+                          ? "The engine cannot prove this variable association"
+                          : results.back().value(
+                                "refusal", "Variable association was refused"));
+      } else
+        throw Error("invalid_request", "Unknown variable association action");
+      request["representation"] = route;
+      request["variable_edits"] = std::move(edits);
+    }
     if (p.value("kind", std::string()) == "type") {
       const auto checked = execute("source_type", p);
       request["bytes"] = checked.at("bytes");

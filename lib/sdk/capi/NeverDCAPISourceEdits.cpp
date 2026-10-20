@@ -32,6 +32,15 @@ std::string neverd::sdk::sourceVariableSnapshot(llvm::StringRef IR) {
   return "source-variable-v1:" + llvm::toHex(Hash, true);
 }
 
+std::string
+neverd::sdk::editedVariableSnapshot(llvm::StringRef Before,
+                                    const SourceVariableEdit &Edit) {
+  std::string Key = Before.str();
+  for (const std::string *Part : {&Edit.Kind, &Edit.From, &Edit.To})
+    Key += ":" + std::to_string(Part->size()) + ":" + *Part;
+  return sourceVariableSnapshot(Key);
+}
+
 std::string neverd::sdk::highVariableSnapshot(const HighFunc &Function,
                                               bool Symbolic) {
   // Serialize the unedited value graph, once per node. Printed HighIR can

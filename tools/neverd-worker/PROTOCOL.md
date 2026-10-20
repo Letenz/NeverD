@@ -472,6 +472,24 @@ boundaries. A module association is an unverified `container_assertion`,
 not runtime/producer authentication. The worker forwards the backend's profile,
 fidelity, storage and redaction fields without reinterpreting them.
 
+## Variable associations
+
+`source_variables` takes `{address,representation,source_options?}` for `c`,
+`source` or `llvmc` and returns `{variables,snapshot,associations,results}`.
+The inventory and fingerprint are engine-owned and route-specific. Associations
+are ordered `map`/`split` policies; each result reports `{applied,refusal,outputs}`.
+
+`code_edit` with `kind:"variables"` takes the same view arguments and its current
+`snapshot`. `action:"split"` needs `variable_id`; `action:"map"` also needs the
+destination `to` identity. The worker previews and proves the complete proposed
+chain before committing. Failure returns `variable_edit_refused` without state,
+revision or history changes. `unmap`/`unsplit` remove the matching zero-based
+`association` index; `clear` removes every association for that function/route.
+The existing code history, replicas and database sidecar transport own this state.
+Reopening checks the image hash and every input fingerprint; stale dependent
+policies remain diagnosable instead of rebinding by display names. Read-only
+replicas can inspect and replay policies but cannot commit them.
+
 ## IR and C source mapping
 
 Source pages with edit metadata carry `code_names`, half-open UTF-8 spans in

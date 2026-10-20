@@ -23,9 +23,13 @@
 using namespace neverd::gui;
 
 namespace {
-QString fixture(const QTemporaryDir &Directory) {
+QString fixture(const QTemporaryDir &Directory,
+                const QByteArray &Override = {}) {
   const QByteArray Code =
-      QByteArray::fromHex("53e80f0000004889c38b43040343085bc3909090904889f8c3");
+      Override.isEmpty()
+          ? QByteArray::fromHex(
+                "53e80f0000004889c38b43040343085bc3909090904889f8c3")
+          : Override;
   QByteArray Bytes;
   QDataStream Out(&Bytes, QIODevice::WriteOnly);
   Out.setByteOrder(QDataStream::LittleEndian);
@@ -160,6 +164,55 @@ private slots:
     Session.redo();
     QTRY_VERIFY_WITH_TIMEOUT(Code->allText().contains("->Length"), 30000);
     QVERIFY2(Session.lastError().isEmpty(), qPrintable(Session.lastError()));
+  }
+  void variableAssociations() {
+    QTemporaryDir Directory;
+    const auto Path = fixture(
+        Directory,
+        QByteArray::fromHex("4883ec2848897c2418e87aff0f00488b7c24184883c701e86c"
+                            "ff0f004889442418e862ff0f00488b4424184883c428c3"));
+    Session Session(QString::fromLocal8Bit(TEST_REAL_WORKER));
+    McpConnectionManager Mcp;
+    GuiSessionBroker Broker;
+    MainWindow Window(Session, Mcp, Broker);
+    Window.setAsksForDebugInfo(false);
+    Window.setLayoutPath(Directory.filePath("layout.json"));
+    Window.resize(1400, 900);
+    Window.initializeLayout();
+    Window.show();
+    Session.open(Path);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.loaded(), 30000);
+    Window.disassembly()->navigate(0x400078);
+    QTRY_COMPARE_WITH_TIMEOUT(Window.disassembly()->currentFunction(),
+                              std::optional<Address>(0x400078), 30000);
+    Window.actions().action(ActionId::ViewPseudocode)->trigger();
+    CodeView *View = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        ([&] {
+          for (auto *Candidate : Window.findChildren<CodeView *>())
+            if (Candidate->representation() == "source")
+              View = Candidate;
+          return View && !View->text()->loading() &&
+                 View->text()->allText().contains("var_m10");
+        })(),
+        30000);
+    QVERIFY(View->text()->findText("var_m10", true));
+    View->text()->setFocus();
+    QTRY_VERIFY(View->text()->renameTarget() &&
+                View->text()->renameTarget()->contains("variable_id"));
+    QTRY_VERIFY(
+        Window.actions().action(ActionId::EditSplitVariable)->isEnabled());
+    Window.actions().action(ActionId::EditSplitVariable)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(!View->text()->loading() &&
+                                 !View->text()->allText().contains("var_m10"),
+                             30000);
+    QVERIFY2(Session.lastError().isEmpty(), qPrintable(Session.lastError()));
+    Window.actions().action(ActionId::EditResetVariables)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(View->text()->allText().contains("var_m10"),
+                             30000);
+    Session.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(!View->text()->allText().contains("var_m10"),
+                             30000);
   }
 };
 QTEST_MAIN(SourceVariableTypesTests)

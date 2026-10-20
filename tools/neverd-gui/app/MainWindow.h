@@ -197,6 +197,7 @@ private:
   /// IDA's Y: the type of the parameter under a pseudocode cursor, else the
   /// declaration of the current function.
   void setType();
+  void editVariable(const QString &action);
   /// Hex-Rays' Convert to struct *: the parameter under the pseudocode
   /// cursor made a pointer to the local type its accesses fit.
   void convertToStruct();

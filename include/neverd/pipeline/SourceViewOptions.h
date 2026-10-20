@@ -11,6 +11,8 @@
 #ifndef NEVERD_PIPELINE_SOURCEVIEWOPTIONS_H
 #define NEVERD_PIPELINE_SOURCEVIEWOPTIONS_H
 
+#include "neverd/ir/SourceVariableEdits.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -47,6 +49,7 @@ struct SourceViewOptions {
   /// Analyst assertions belong only to this source projection. They never
   /// enter the image, machine IR or native ABI recovery.
   std::vector<VariableType> VariableTypes;
+  std::vector<SourceVariableEdit> VariableEdits;
   bool operator==(const SourceViewOptions &) const = default;
 };
 

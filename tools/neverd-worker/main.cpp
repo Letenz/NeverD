@@ -201,6 +201,7 @@ Json hello() {
                 "rename",
                 "code_edit",
                 "source_type",
+                "source_variables",
                 "save",
                 "reload",
                 "segments",

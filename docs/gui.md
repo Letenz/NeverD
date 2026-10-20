@@ -1152,6 +1152,27 @@ line does the same (`neverd function-edits <input> --declaration <entry>`,
 `--edit <entry> --set 'type=<declaration>'`, `neverd types <input> --fit
 --func <function> --param 0`).
 
+The Pseudocode and LLVM C context menus offer **Split variable**, **Map to
+variable…**, **Unmap variable**, **Unsplit variable**, and **Reset variable
+associations**. Splitting separates independent used reaching-definition
+lifetimes; definitions that meet at one use remain together. Mapping needs a
+whole-value copy relationship, compatible scalar widths and noninterfering live
+ranges. An entry parameter can be the mapping destination, never the source.
+Pseudocode supports scalar locals and exact negative frame slots, including
+single-definition frame aliases in the straight-line entry prefix. LLVM C
+supports complete scalar local storage and constant frame intervals; its SSA
+values already have one definition and are refused as storage edits. Escaping
+addresses, partial/overlapping accesses, dynamic indexes, exception entries and
+incomplete or over-budget proofs report a reason without committing the edit.
+
+Associations use image hashes, route-specific engine identities and an ordered
+source-profile fingerprint, independently of displayed names. They persist in
+the project and participate in undo/redo. Removing an association regenerates
+the source from the original analysis; dependent later edits with obsolete
+fingerprints stay unapplied with a diagnostic. Reset removes the whole chain.
+The original machine IR, image, native ABI facts and rewrite authority are not
+changed. Local type assertions tied to an older association profile need review.
+
 Ordinary locals and global pointer/scalar objects accept a type from the local
 library with the same byte width and floating-point class as the original value.
 For example, setting a local to `struct DEVICE_CONTEXT *` makes accesses at known

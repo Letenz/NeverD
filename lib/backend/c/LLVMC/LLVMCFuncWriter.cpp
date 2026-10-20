@@ -16,6 +16,7 @@
 #include "../X86GetPcThunk.h"
 #include "LLVMCStackAllocation.h"
 #include "LLVMCStorage.h"
+#include "LLVMCVariableEdits.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Limits.h"
@@ -2125,6 +2126,10 @@ bool LLVMCWriter::isUnknownCopyInst(const llvm::Instruction &Inst) const {
 }
 
 bool LLVMCWriter::allocaAddressTaken(const llvm::AllocaInst *AI) const {
+  // Keep an explicitly associated storage lifetime materialized. Reusing the
+  // conservative address-observed path avoids folding the user's local away.
+  if (AI && AI->getMetadata("neverd.source.association"))
+    return true;
   if (!AI)
     return false;
   if (auto It = AllocaAddressTakenCache.find(AI);
@@ -2402,7 +2407,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
     for (const auto &Block : Fn)
       for (const auto &Instruction : Block)
         SourceValueIds[&Instruction] =
-            "instruction:" + std::to_string(SourceValueIndex++);
+            llvmc::sourceValueId(Instruction, SourceValueIndex++);
   }
   SyntheticFrame = nullptr;
   FrameBaseOffset = 0;

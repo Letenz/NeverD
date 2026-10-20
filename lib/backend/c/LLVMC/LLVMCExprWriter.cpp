@@ -12,6 +12,7 @@
 
 #include "LLVMCFrameLayout.h"
 #include "LLVMCStorage.h"
+#include "LLVMCVariableEdits.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/ArchSupport.h"
@@ -1847,6 +1848,17 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
   if (!Owner || Owner->Name.empty())
     return std::nullopt;
   const std::string OwnerText = slotText(*Owner);
+  if (Opts.SourceMap && FunctionEntry && !FrameRecord && Rel == 0 &&
+      Owner->Type && SourceVariableTypes::compatible(Owner->Type, AccessSize)) {
+    SourceVariable Variable;
+    Variable.Function = *FunctionEntry;
+    Variable.Id = llvmc::sourceStorageId(Ptr, AccessSize);
+    Variable.Name = Owner->Name;
+    Variable.Bytes = AccessSize;
+    Variable.Type = Owner->Type;
+    if (!Variable.Id.empty())
+      recordSourceVariable(Opts.SourceMap->Variables, std::move(Variable));
+  }
   // A frame record member names only its own bytes, as the type it was laid
   // out with: the whole member, its address, or a narrower view of its start.
   if (FrameRecord) {
