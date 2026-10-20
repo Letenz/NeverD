@@ -27,6 +27,7 @@
 #include "neverd/support/Diagnostic.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
@@ -154,7 +155,7 @@ private:
   bool Indexed = false;
   /// The copies, extensions, low-part extractions and PHIs that carry each
   /// value on, with the width each passes.
-  std::map<ValueKey, std::vector<ValueEdge>> Edges;
+  llvm::DenseMap<ValueKey, std::vector<ValueEdge>> Edges;
 };
 
 void FirstUseSizes::index() {
@@ -793,14 +794,14 @@ void detectStackParams(MedFunc &Func, Arch TargetArch, BinaryFormat Fmt,
   }
 
   using ValueKey = med_calling_conv_detail::ValueKey;
-  std::map<ValueKey, const MedOp *> UniqueDefs;
-  std::set<ValueKey> AmbiguousDefs;
+  llvm::DenseMap<ValueKey, const MedOp *> UniqueDefs;
+  llvm::DenseSet<ValueKey> AmbiguousDefs;
   for (const auto &Block : Func.Blocks)
     for (const auto &Op : Block.Ops) {
       if (Op.Output.isConst())
         continue;
       const ValueKey Key = med_calling_conv_detail::valueKey(Op.Output);
-      auto [It, Inserted] = UniqueDefs.emplace(Key, &Op);
+      auto [It, Inserted] = UniqueDefs.try_emplace(Key, &Op);
       if (!Inserted && It->second != &Op)
         AmbiguousDefs.insert(Key);
     }
@@ -812,12 +813,12 @@ void detectStackParams(MedFunc &Func, Arch TargetArch, BinaryFormat Fmt,
     auto It = UniqueDefs.find(Key);
     return It == UniqueDefs.end() ? nullptr : It->second;
   };
-  std::map<ValueKey, const PhiNode *> UniquePhis;
-  std::set<ValueKey> AmbiguousPhis;
+  llvm::DenseMap<ValueKey, const PhiNode *> UniquePhis;
+  llvm::DenseSet<ValueKey> AmbiguousPhis;
   for (const auto &Block : Func.Blocks)
     for (const auto &Phi : Block.Phis) {
       const ValueKey Key = med_calling_conv_detail::valueKey(Phi.Output);
-      auto [It, Inserted] = UniquePhis.emplace(Key, &Phi);
+      auto [It, Inserted] = UniquePhis.try_emplace(Key, &Phi);
       if (!Inserted && It->second != &Phi)
         AmbiguousPhis.insert(Key);
     }
@@ -825,7 +826,7 @@ void detectStackParams(MedFunc &Func, Arch TargetArch, BinaryFormat Fmt,
   // Offset of \p V relative to the entry stack pointer (folding the COPY /
   // zext / subpiece / push-sub chain detectCc sees before copy propagation),
   // or nullopt when V is not entry-SP-derived.
-  std::set<ValueKey> ActiveTrace;
+  llvm::DenseSet<ValueKey> ActiveTrace;
   std::function<std::optional<int64_t>(const MedVar &, int)> traceOff =
       [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
     if (Depth > 64)
@@ -834,7 +835,7 @@ void detectStackParams(MedFunc &Func, Arch TargetArch, BinaryFormat Fmt,
     if (!ActiveTrace.insert(Key).second)
       return std::nullopt;
     struct PopActive {
-      std::set<ValueKey> &Set;
+      llvm::DenseSet<ValueKey> &Set;
       ValueKey Key;
       ~PopActive() { Set.erase(Key); }
     } Guard{ActiveTrace, Key};
