@@ -53,6 +53,9 @@ private:
   AtomicWriter writer_;
   std::function<void()> committed_;
   Json commands_ = Json::array(), committedState_, previousDocument_;
+  /// A journal this live history published before a failed sidecar write.
+  /// Only that exact transaction can be completed by a same-session retry.
+  Json interruptedWrite_;
   std::size_t cursor_ = 0;
   Json diskState() const;
   /// Refuses \p state when one of its files would pass the size a later read

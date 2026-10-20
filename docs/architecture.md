@@ -19,6 +19,12 @@ recovered edits and the GUI continues to require Save or Discard. Saving back to
 that database or explicitly discarding retires the marker. An externally changed
 pack must not overwrite a pending recovered working copy.
 
+A live worker may retry a failed Save only for the exact journal that its own
+history object published. The existing recovery checks validate every current
+sidecar and history against that transaction before completing it. Newer staged
+edits stay in memory and are committed afterwards. Unknown or changed journals
+continue to require reopening and foreign sidecars continue to be refused.
+
 Binary search matching and cursor semantics are owned by the SDK's shared
 matcher (`neverd_search_page`, also used by the legacy search entry points).
 The worker adapts those pages to the transport. The GUI owns wraparound and

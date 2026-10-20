@@ -427,7 +427,9 @@ directions, exclusive navigation cursors beyond the first 512 functions, string
 sorting across pages, and search continuation in both directions. Length sorting also exercises multi-megabyte literals with bounded UTF-8 previews and filtering on text beyond the preview. On Windows it
 holds a reader handle without delete sharing: a short hold must let Save finish,
 while a persistent hold must preserve the old file and recovery journal with a
-path and Win32 error in the failure. Reopening then recovers the pending edit.
+path and Win32 error in the failure. A same-session retry completes only its own
+unchanged journal, preserves newer staged edits and undo/redo, and refuses foreign
+sidecars. Reopening also recovers the pending edit.
 `SearchCAPITest.SearchPagesContinuePast4096AndReverseWithoutRepeating` checks
 the real search matcher beyond its page budget, address zero, exact-limit
 completion, reverse cursors, text case folding and invalid options.

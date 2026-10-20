@@ -125,6 +125,31 @@ def windows_saves(executable, folder):
             assert annotations.read_bytes() == original and journal.exists()
         finally:
             kernel.CloseHandle(handle)
+        # No restart is needed for a transaction published by this worker.
+        # A newer staged annotation and its history survive completion of the
+        # interrupted write, rather than being replaced by its older snapshot.
+        ok(client, "annotation_set", {"address": BASE, "text": "newer retry"})
+        ok(client, "save")
+        assert b"newer retry" in annotations.read_bytes() and not journal.exists()
+        ok(client, "undo")
+        ok(client, "save")
+        assert b"recoverable" in annotations.read_bytes()
+        ok(client, "redo")
+        ok(client, "save")
+        assert b"newer retry" in annotations.read_bytes()
+
+        original = annotations.read_bytes()
+        ok(client, "annotation_set", {"address": BASE, "text": "recoverable"})
+        handle = reader()
+        try:
+            assert client.call("save")["error"]["code"] == "save_failed"
+        finally:
+            kernel.CloseHandle(handle)
+        foreign = json.dumps([dict(addr=BASE, text="foreign edit")]).encode()
+        annotations.write_bytes(foreign)
+        assert client.call("save")["error"]["code"] == "foreign_edits"
+        assert annotations.read_bytes() == foreign and journal.exists()
+        annotations.write_bytes(original)
     with Client(executable) as recovered:
         ok(recovered, "open", {"path": str(binary)})
         assert b"recoverable" in annotations.read_bytes(), annotations.read_bytes()
