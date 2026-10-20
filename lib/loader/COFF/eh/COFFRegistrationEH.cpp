@@ -9,6 +9,7 @@
 #include "COFFRegistrationEHDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -208,12 +209,25 @@ std::optional<size_t> directCxxCookiePublication(const BinaryImage &Img,
 /// sequence. A chain-head read alone does not establish a registration, and
 /// locals containing -1/0 are not evidence of the runtime's state field.
 void proveDirectRegistrationLayout(const BinaryImage &Img,
-                                   const InstallSite &Site,
+                                   const InstallSite &Source,
                                    RegistrationChainInfo &Chain) {
+  if (Source.Identity.CxxFuncInfoVA &&
+      proveRealignedCxxRegistrationLayout(Img, Source, Chain))
+    return;
+  auto Site = Source;
+  // MSVC's two-byte hotpatch entry preserves every register and flag. Keep
+  // the function entry and its LowIR instruction intact; only the position
+  // at which the following fixed frame is authenticated moves past it.
+  if (const auto *Prefix = Img.readVA(Site.Range.Begin, 2);
+      Prefix && Prefix[0] == 0x8b && Prefix[1] == 0xff) {
+    if (Site.Range.size() <= 2 ||
+        !readImmutablePE32CodeBytes(Img, Site.Range.Begin, 2, {}))
+      return;
+    Site.Range.Begin += 2;
+  }
   const bool IsCxx = Site.Identity.CxxFuncInfoVA != 0;
   if (IsCxx &&
-      (proveRealignedCxxRegistrationLayout(Img, Site, Chain) ||
-       registration_detail::proveFixedCxxRegistrationLayout(Img, Site, Chain)))
+      registration_detail::proveFixedCxxRegistrationLayout(Img, Site, Chain))
     return;
   const size_t Size = IsCxx ? 24 : 29;
   const uint8_t *P = Img.readVA(Site.Range.Begin, Size);

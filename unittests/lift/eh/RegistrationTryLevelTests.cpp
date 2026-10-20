@@ -665,13 +665,16 @@ struct DirectEH4Fixture {
 
 /// Independent instruction encodings for both stack-cookie forms. Wide locals
 /// force disp32 cookie stores, while PUSH places the cookie below saved GPRs.
-DirectEH4Fixture makeDirectEH4Fixture(bool Wide, bool Add, bool Push, bool GS) {
+DirectEH4Fixture makeDirectEH4Fixture(bool Wide, bool Add, bool Push, bool GS,
+                                      bool Hotpatch = false) {
   DirectEH4Fixture F;
   auto &B = F.Builder;
   B.HandlerName = "_except_handler4";
   B.SecurityCookieRVA = kRData + 0x80 - kBase;
+  if (Hotpatch)
+    B.Text = {0x8b, 0xff};
   emitInstall(B.Text, -2, kRData);
-  B.Text.resize(22);
+  B.Text.resize(22 + (Hotpatch ? 2 : 0));
   const int32_t Allocation = Wide ? 200 : 20;
   B.Text.push_back(Wide ? 0x81 : 0x83);
   B.Text.push_back(Add ? 0xc4 : 0xec);
@@ -744,6 +747,60 @@ TEST(RegistrationTryLevel, EH4PublicationFollowsAllocatedCookieStorage) {
           EXPECT_TRUE(State.RegistrationLifetimeComplete);
           EXPECT_TRUE(State.SecurityCookiesComplete);
         }
+}
+
+TEST(RegistrationTryLevel, HotpatchEntryKeepsEH4FrameCoordinates) {
+  for (bool Wide : {false, true})
+    for (bool Add : {false, true})
+      for (bool Push : {false, true})
+        for (bool GS : {false, true}) {
+          SCOPED_TRACE(::testing::Message() << Wide << Add << Push << GS);
+          auto F = makeDirectEH4Fixture(Wide, Add, Push, GS, true);
+          auto Image = F.Builder.build({{"hotpatch", kText}});
+          const auto *Chain = chainAt(Image, kText);
+          ASSERT_NE(Chain, nullptr);
+          EXPECT_EQ(Chain->RegistrationOffset, -16);
+          EXPECT_EQ(Chain->TryLevelOffset, -4);
+          EXPECT_EQ(Chain->ChainInstallVA, kText + F.Publication);
+          const auto Low = liftEntry(Image, kText);
+          ASSERT_EQ(Low.Entry, kText);
+          ASSERT_TRUE(Low.hasCompleteLiftCoverage());
+          ASSERT_FALSE(Low.Blocks.empty());
+          ASSERT_FALSE(Low.Blocks.front().InstructionBoundaries.empty());
+          EXPECT_EQ(Low.Blocks.front().InstructionBoundaries.front().Address,
+                    kText);
+          EXPECT_EQ(Low.Blocks.front().InstructionBoundaries.front().Size, 2);
+          const auto State = analyzeRegistrationStates(Low, kRData + 0x80);
+          EXPECT_TRUE(State.Complete);
+          EXPECT_TRUE(State.CallbackStatesComplete);
+          EXPECT_TRUE(State.RegistrationLifetimeComplete);
+          EXPECT_TRUE(State.SecurityCookiesComplete);
+        }
+}
+
+TEST(RegistrationTryLevel, HotpatchEntryRequiresExactImmutableBytes) {
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = makeDirectEH4Fixture(false, false, true, false, true);
+    if (Mutation == 0)
+      F.Builder.Text[1] = 0xfe; // changes EDI
+    if (Mutation == 1)
+      F.Builder.Text[0] = 0x66; // not a complete two-byte instruction
+    if (Mutation == 2)
+      F.Builder.Text[0] = 0xeb; // a control transfer
+    auto Image = F.Builder.build({{"hotpatch", kText}});
+    if (Mutation == 3)
+      Image.BaseRelocations.push_back({kText, 3});
+    if (Mutation == 4) {
+      auto &Text = Image.Segments.front();
+      Text.Flags = Text.Flags | SegmentFlags::Writable;
+      Image.Sections.front().Flags = Text.Flags;
+    }
+    Image.ExceptionMetadata = {};
+    coff_loader::parseX86RegistrationExceptions(Image);
+    const auto *Chain = chainAt(Image, kText);
+    EXPECT_TRUE(!Chain || !Chain->RegistrationOffset);
+  }
 }
 
 TEST(RegistrationTryLevel, EH4PublicationRejectsChangedInitialization) {
@@ -1530,11 +1587,14 @@ TEST(RegistrationTryLevel, CxxRegisterStatesRequireTheirDecodedInstruction) {
 
 TEST(RegistrationTryLevel, DirectCxxStackGuardPreservesTheRegistrationNode) {
   auto makeImage = [&](unsigned Allocation, unsigned Saves, bool AlternateXor,
-                       bool AlternateStore, unsigned Mutation) {
+                       bool AlternateStore, unsigned Mutation,
+                       bool Hotpatch = false) {
     auto Img = makeCxxContinuationImage();
     constexpr uint32_t Cookie = kRData + 0xf0;
     Img.DynInfo.SecurityCookieRVA = Cookie - kBase;
     std::vector<uint8_t> Prefix = {0x55, 0x8b, 0xec, 0x6a, 0xff, 0x68};
+    if (Hotpatch)
+      Prefix.insert(Prefix.begin(), {0x8b, 0xff});
     emit32(Prefix, kPersonality);
     Prefix.insert(Prefix.end(), {0x64, 0xa1, 0, 0, 0, 0, 0x50});
     if (Allocation || Mutation == 10 || Mutation == 11) {
@@ -1644,6 +1704,16 @@ TEST(RegistrationTryLevel, DirectCxxStackGuardPreservesTheRegistrationNode) {
       EXPECT_FALSE(EH && EH->Registration &&
                    EH->Registration->cxxRuntimeFrameOffset());
     }
+  for (bool Store : {false, true}) {
+    const auto [Img, Publication] = makeImage(16, 7, true, Store, 0, true);
+    const auto *EH = Img.ExceptionMetadata.findFunction(kText);
+    ASSERT_NE(EH, nullptr);
+    EXPECT_EQ(EH->CodeRange.Begin, kText);
+    ASSERT_TRUE(EH->Registration);
+    EXPECT_EQ(EH->Registration->RegistrationOffset, -12);
+    EXPECT_EQ(EH->Registration->TryLevelOffset, -4);
+    EXPECT_EQ(EH->Registration->ChainInstallVA, Publication);
+  }
 }
 
 TEST(RegistrationTryLevel, CxxFuncInfoPointersKeepTheirRuntimeEntryRole) {
