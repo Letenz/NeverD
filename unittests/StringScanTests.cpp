@@ -133,6 +133,69 @@ TEST(StringScan, FindsWideTextAfterACharacterOfOtherData) {
   EXPECT_TRUE(scanAll(Mixed, Options).empty());
 }
 
+TEST(StringScan, FindsIdeographicWideTextAfterNarrowString) {
+  for (const auto &[Unit, BigEndian, Kind] :
+       {std::tuple{2u, false, Encoding::UTF16LE},
+        std::tuple{2u, true, Encoding::UTF16BE},
+        std::tuple{4u, false, Encoding::UTF32LE},
+        std::tuple{4u, true, Encoding::UTF32BE}}) {
+    for (bool IncludeASCII : {false, true}) {
+      SCOPED_TRACE(::testing::Message()
+                   << encodingName(Kind).str() << " ASCII=" << IncludeASCII);
+      auto Data = bytes("NeverD QA: navigation, clipboard, local variables");
+      // The wide string is aligned, but the preceding whole unit is nonzero.
+      while ((Data.size() + 1) % Unit)
+        Data.push_back('!');
+      Data.push_back(0);
+      const size_t Offset = Data.size();
+      const auto Text = wide(U"\u6d4b\u8bd5\u6587\u672c", Unit, BigEndian);
+      Data.insert(Data.end(), Text.begin(), Text.end());
+      ScanOptions Options;
+      Options.Encodings = encodingBit(Kind);
+      if (IncludeASCII)
+        Options.Encodings |= encodingBit(Encoding::ASCII);
+      const auto Found = scanAll(Data, Options);
+      ASSERT_EQ(Found.size(), IncludeASCII ? 2u : 1u);
+      EXPECT_EQ(Found.back().Offset, Offset);
+      EXPECT_EQ(Found.back().Kind, Kind);
+      EXPECT_EQ(Found.back().Text,
+                "\xe6\xb5\x8b\xe8\xaf\x95\xe6\x96\x87\xe6\x9c\xac");
+    }
+  }
+}
+
+TEST(StringScan, NarrowBoundaryDoesNotRelaxWideTextValidation) {
+  ScanOptions Options;
+  Options.Encodings = encodingBit(Encoding::UTF16LE);
+  for (const auto Text :
+       {U"\u4e02\u4e04\u4e05\u4e06", U"\ucccc\ucccc\ucccc\ucccc",
+        U"\u5700\u6900\u6400\u6500"}) {
+    auto Data = bytes("boundary text\0");
+    const auto Tail = wide(Text, 2, false);
+    Data.insert(Data.end(), Tail.begin(), Tail.end());
+    EXPECT_TRUE(scanAll(Data, Options).empty());
+  }
+  auto Data = bytes("boundary text\0");
+  const auto Tail = wide(U"\u6d4b\u8bd5\u6587\u672c", 2, false);
+  Data.insert(Data.end(), Tail.begin(), Tail.end() - 2);
+  EXPECT_TRUE(scanAll(Data, Options).empty());
+  Data = bytes("boundary text\0!"); // one byte off the UTF-16 alignment
+  Data.insert(Data.end(), Tail.begin(), Tail.end());
+  EXPECT_TRUE(scanAll(Data, Options).empty());
+}
+
+TEST(StringScan, NarrowByteCoincidenceDoesNotSplitValidWideText) {
+  ScanOptions Options;
+  Options.Encodings = encodingBit(Encoding::UTF16LE);
+  // The bytes of L"你好 " are `60 4F 7D 59 20 00`, which also look like
+  // a terminated ASCII run. A valid wide string keeps its earlier boundary.
+  const auto Data = wide(U"\u4f60\u597d \u4e2d\u6587\u5b57\u7b26", 2, false);
+  const auto Found = scanAll(Data, Options);
+  ASSERT_EQ(Found.size(), 1u);
+  EXPECT_EQ(Found[0].Offset, 0u);
+  EXPECT_EQ(Found[0].Chars, 7u);
+}
+
 TEST(StringScan, AsksIdeographicWideTextForMoreEvidence) {
   ScanOptions Options;
   Options.Encodings = encodingBit(Encoding::UTF16LE);
