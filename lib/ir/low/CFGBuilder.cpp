@@ -999,6 +999,7 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
   RelativeRelocationRootSourceCache.clear();
   RelativeRelocationRootSourceCacheLookupCountForTesting = 0;
   CachedResolverGraph.reset();
+  CachedUnmeteredResolverGraph.reset();
   Insns.clear();
   BlockStarts.clear();
   ExploredAddrs.clear();

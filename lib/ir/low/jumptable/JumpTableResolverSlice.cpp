@@ -3147,11 +3147,14 @@ struct CFGBuilder::ResolverGraphCache {
                        bool &Complete) {
     Lease Result;
     Complete = false;
-    if (Budget && B.CachedResolverGraph &&
-        B.CachedResolverGraph->matches(B, Snapshot, ProofRoots)) {
-      Complete = consumeResolverGraphWork(Budget, B.CachedResolverGraph->Work);
+    // An unmetered query keeps its own graph, whose charge it never records:
+    // a metered query reuses only a graph that pays its cold charge.
+    std::shared_ptr<const ResolverGraphCache> &Retained =
+        Budget ? B.CachedResolverGraph : B.CachedUnmeteredResolverGraph;
+    if (Retained && Retained->matches(B, Snapshot, ProofRoots)) {
+      Complete = consumeResolverGraphWork(Budget, Retained->Work);
       if (Complete)
-        Result.Cached = B.CachedResolverGraph;
+        Result.Cached = Retained;
       return Result;
     }
     const size_t Before = Budget ? *Budget : 0;
@@ -3162,11 +3165,11 @@ struct CFGBuilder::ResolverGraphCache {
                                                        Budget);
         },
         Budget, &Complete));
-    if (Complete && Budget && canRetain(B, Snapshot, ProofRoots)) {
+    if (Complete && canRetain(B, Snapshot, ProofRoots)) {
       Result.Cached = std::make_shared<ResolverGraphCache>(
-          B, std::move(Snapshot), ProofRoots, Before - *Budget,
+          B, std::move(Snapshot), ProofRoots, Budget ? Before - *Budget : 0,
           std::move(*Result.Fresh));
-      B.CachedResolverGraph = Result.Cached;
+      Retained = Result.Cached;
     }
     return Result;
   }
@@ -3246,12 +3249,12 @@ struct CFGBuilder::ResolverQueryState {
 };
 
 std::array<size_t, 3>
-CFGBuilder::resolverValueQueryCacheStatsForTesting() const {
-  if (!CachedResolverGraph)
+CFGBuilder::resolverValueQueryCacheStatsForTesting(bool Unmetered) const {
+  const auto &Graph =
+      Unmetered ? CachedUnmeteredResolverGraph : CachedResolverGraph;
+  if (!Graph)
     return {};
-  return {CachedResolverGraph->ValueHits,
-          CachedResolverGraph->ValueBatches.size(),
-          CachedResolverGraph->ValueBytes};
+  return {Graph->ValueHits, Graph->ValueBatches.size(), Graph->ValueBytes};
 }
 
 //===----------------------------------------------------------------------===//
@@ -5109,7 +5112,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                                              GraphWorkBudget, GraphComplete);
     if (ReadOnlyScope) {
       ReadOnlyScope->State.reset();
-      if (GraphComplete && Lease.Cached &&
+      // A scope replays its graph's charge: an unmetered graph has none.
+      if (GraphComplete && Lease.Cached && GraphWorkBudget &&
           ResolverQueryState::canRetain(CandidateTargetsOverride,
                                         CandidateBranchesSharingTargets,
                                         CertifiedEdgeOverrides))
@@ -5145,12 +5149,17 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                                           : DefaultMatchEvidenceLimit)
           : limits::kMaxJumpTableEntries;
   const size_t ValueWorkBefore = GraphWorkBudget ? *GraphWorkBudget : 0;
-  if (ReusedGraph && GraphWorkBudget)
+  // A metered query's graph holds metered batches only, and an unmetered
+  // query's graph unmetered ones, which charge nothing.
+  if (ReusedGraph)
     if (const auto *Batch = ReusedGraph->findValueBatch(
             *this, Queries, MaxResolverDepth, InitialMatchBudget,
             QueryAnalysisComplete != nullptr,
-            QueryUnsignedFeasibleMasks != nullptr, *GraphWorkBudget)) {
-      *GraphWorkBudget -= Batch->Work;
+            QueryUnsignedFeasibleMasks != nullptr,
+            GraphWorkBudget ? *GraphWorkBudget
+                            : std::numeric_limits<size_t>::max())) {
+      if (GraphWorkBudget)
+        *GraphWorkBudget -= Batch->Work;
       Results = Batch->Results;
       if (QueryAnalysisComplete)
         *QueryAnalysisComplete = Batch->Completions;
@@ -10024,12 +10033,11 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   const bool RepeatableRefusal =
       HasRepeatableRefusal && !NonRepeatableAnalysisIncomplete;
   if ((Complete || RepeatableRefusal) && !EvidenceBudgetExhausted &&
-      !SymbolBudgetExhausted && !UsedPointerSymbol && ReusedGraph &&
-      GraphWorkBudget)
+      !SymbolBudgetExhausted && !UsedPointerSymbol && ReusedGraph)
     ReusedGraph->rememberValueBatch(
         *this, Queries, MaxResolverDepth, InitialMatchBudget, Complete, Results,
         QueryAnalysisComplete, QueryUnsignedFeasibleMasks,
-        ValueWorkBefore - *GraphWorkBudget);
+        GraphWorkBudget ? ValueWorkBefore - *GraphWorkBudget : 0);
   return Results;
 }
 
