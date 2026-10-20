@@ -2174,9 +2174,19 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
           Defined && (!VaCallee || I < VaCallee->NamedParams)
               ? emittedParamTypeAt(*Defined, I)
               : nullptr;
+      // System V x86-64's va_list is an array of its one record, whose
+      // decayed pointer the machine passes: a parameter the unit declares
+      // an object pointer of another type takes it converted.  The type
+      // library renders a va_list parameter `char *` (the PLT stub of
+      // __isoc23_vfscanf takes one), which a va_list type there would spare.
+      const bool OtherPointer = Expected && Expected->Kind == NdTypeKind::Ptr &&
+                                Expected->Pointee &&
+                                Expected->Pointee->Kind != NdTypeKind::Void &&
+                                Expected->Pointee->Kind != NdTypeKind::Func;
       S += Expected && Expected->Kind == NdTypeKind::Int
                ? "(" + typeToC(Expected) + ")(uintptr_t)arguments"
-               : std::string("arguments");
+           : OtherPointer ? "(" + declaredAs(Expected, "") + ")arguments"
+                          : std::string("arguments");
       continue;
     }
     if (VaCallee && I >= VaCallee->NamedParams &&
@@ -2242,6 +2252,34 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                                          Opts.libcVariant());
       if (PointerUnion)
         Expected = NdType::makePtr();
+      // Any other record the header passes by value, which the machine
+      // carries in the integer register its bytes fill (<arpa/inet.h>'s
+      // inet_ntoa takes a struct in_addr), takes that integer's bits.  The
+      // record is spelled as the unit declares it: by its typedef, or by its
+      // tag where the definitions say whether it is a union.
+      if (Declared && Declared->Kind == NdTypeKind::Struct &&
+          !Declared->IsEnum && !PointerUnion && Callee->PrototypeFromCLibrary &&
+          Name == Callee->Name && headerTypeOfCallee(E, Declared) &&
+          llvm::is_contained(std::initializer_list<uint64_t>{1, 2, 4, 8},
+                             Declared->Size) &&
+          Declared->Size <= pointerBytes(Opts.TheArch) && Op->Type &&
+          Op->Type->Kind == NdTypeKind::Int &&
+          Op->Type->Size >= Declared->Size) {
+        const std::string Record = cNamedTypeSpelling(Declared->SourceName);
+        const auto Tag = RecordDefinitions.Tags.find(Record);
+        const std::string Spelled =
+            RecordTypedefs.count(Record) ? Record
+            : Tag != RecordDefinitions.Tags.end()
+                ? std::string(Tag->second ? "union " : "struct ") + Record
+                : std::string();
+        if (!Spelled.empty()) {
+          S += "__builtin_bit_cast(" + Spelled + ", (" +
+               typeToC(NdType::makeInt(static_cast<uint16_t>(Declared->Size),
+                                       false)) +
+               ")(" + exprStr(*Op) + "))";
+          continue;
+        }
+      }
       if (Expected) {
         // The pointer to a typedef, or the array a parameter declares
         // (jmp_buf), converts explicitly, as no pointer of the unit's own
