@@ -17,6 +17,11 @@ WEIGHTED_MASKS = (0x7A6D35C1, 0xB53C678A, 0x4EF0A903, 0xD2195A6C)
 WEIGHTED_UNION = 0
 for _mask in WEIGHTED_MASKS:
     WEIGHTED_UNION |= _mask
+VIEW_MASKS = tuple(0x10001 << bit for bit in range(16))
+VIEW_KEYS = tuple((0x13579BDF * (bit + 1)) & 0xFFFFFFFF for bit in range(16))
+VIEW_KEY = 0
+for _mask, _key in zip(VIEW_MASKS, VIEW_KEYS):
+    VIEW_KEY |= _mask & _key
 
 
 def affine_elf():
@@ -70,6 +75,18 @@ def weighted_elf():
                 mask &= value
         code += bytes.fromhex("4189c8 4181e0") + struct.pack("<I", mask)
         code += bytes.fromhex("4401c0" if subset.bit_count() % 2 else "4429c0")
+    code += bytes.fromhex("6bc025 01d0 c3")
+    return elf(code)
+
+
+def bitwise_elf():
+    # Independently flipped, disjoint pieces of x^y recombine into one XOR.
+    # Encode every piece directly so a fixture compiler cannot simplify it.
+    code = bytearray.fromhex("89f9 31f1 31c0")
+    for mask, key in zip(VIEW_MASKS, VIEW_KEYS):
+        code += bytes.fromhex("4189c8 4181f0") + struct.pack("<I", key)
+        code += bytes.fromhex("4181e0") + struct.pack("<I", mask)
+        code += bytes.fromhex("4401c0")
     code += bytes.fromhex("6bc025 01d0 c3")
     return elf(code)
 
@@ -154,6 +171,8 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             assert all(op not in text for op in ("|", "^", "&")), text
         elif kind == "weighted":
             assert text.count("&") <= 1 and text.count("^") <= 1, text
+        elif kind == "bitwise":
+            assert "&" not in text and text.count("^") <= 2, text
         else:
             assert ">>" not in text, text
 
@@ -174,7 +193,7 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                         assert ordinary.count("^") >= 3, ordinary
                     elif kind == "frame":
                         assert "|" in ordinary, ordinary
-                    elif kind == "weighted":
+                    elif kind in ("weighted", "bitwise"):
                         assert ordinary.count("&") >= 7, ordinary
                     else:
                         assert ">>" in ordinary, ordinary
@@ -223,6 +242,7 @@ if __name__ == "__main__":
             ("masked", masked_elf(), "(37U*((x ^ ~0x39U)&(y ^ 0x6dU))|0x55U)+z"),
             ("frame", frame_elf(), "2U*z-x"),
             ("weighted", weighted_elf(), f"37U*((x^y)&{WEIGHTED_UNION}U)+z"),
+            ("bitwise", bitwise_elf(), f"37U*(x^y^{VIEW_KEY}U)+z"),
         ):
             run_fixture(options.worker, options.cli, options.compiler, kind,
                         image, expected)
