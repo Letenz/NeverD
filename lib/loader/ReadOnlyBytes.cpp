@@ -32,6 +32,9 @@ bool overlaps(va_t Address, uint64_t Extent, va_t Base, uint64_t Width) {
 
 const uint8_t *mappedBytes(const BinaryImage &Image, va_t Address,
                            uint64_t Extent, bool Immutable, bool Code = false) {
+  // A raw instruction-storage extent needs execution permission. The byte
+  // readers additionally require readable storage for their stronger proof.
+  const bool RequireReadable = !Code || Immutable;
   if (!Address || Address > InvalidVA - Extent)
     return nullptr;
   if (Code) {
@@ -43,10 +46,18 @@ const uint8_t *mappedBytes(const BinaryImage &Image, va_t Address,
       return nullptr;
   }
   const auto *Section = Image.getSectionFor(Address);
+  // getSectionFor deliberately exposes only readable section metadata. A
+  // raw execute-only instruction extent still needs its precise section.
+  if (!Section && Code && !RequireReadable)
+    for (const auto &Candidate : Image.Sections)
+      if (Candidate.isExecutable() && Candidate.contains(Address)) {
+        Section = &Candidate;
+        break;
+      }
   const auto *Segment = Image.getSegmentFor(Address);
   if (!Section && Code && Image.Format == BinaryFormat::ELF &&
       Image.Arch == Arch::ARM && Image.ARMReachabilityConstrained && Segment &&
-      Segment->isReadable() && Segment->isExecutable() &&
+      (!RequireReadable || Segment->isReadable()) && Segment->isExecutable() &&
       Image.instructionModeAt(Address) &&
       (!Immutable || Segment->ReadOnlyAfterRelocations ||
        !Segment->isWritable()) &&
@@ -57,8 +68,9 @@ const uint8_t *mappedBytes(const BinaryImage &Image, va_t Address,
         return nullptr;
     return Image.readVA(Address, Extent);
   }
-  if (!Section || !Segment || !Section->isReadable() ||
-      !Segment->isReadable() || Image.isCodeAddress(Address) != Code ||
+  if (!Section || !Segment ||
+      (RequireReadable && (!Section->isReadable() || !Segment->isReadable())) ||
+      Image.isCodeAddress(Address) != Code ||
       (Code && (!Section->isExecutable() || !Segment->isExecutable())) ||
       (Immutable && !Segment->ReadOnlyAfterRelocations &&
        (Section->isWritable() || Segment->isWritable())) ||
@@ -186,6 +198,12 @@ readImmutableCodeBytes(const BinaryImage &Image, va_t Address, uint32_t Size) {
   if (!Bytes || hasConflictingFixups(Image, Address, Size, false))
     return std::nullopt;
   return std::vector<uint8_t>(Bytes, Bytes + Size);
+}
+
+bool isFileBackedCodeImageRange(const BinaryImage &Image, va_t Address,
+                                uint32_t Size) {
+  return supportsImmutableImageReads(Image) && Size && Size <= 1024 * 1024 &&
+         mappedBytes(Image, Address, Size, false, true);
 }
 
 std::optional<std::vector<uint8_t>>

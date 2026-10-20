@@ -52,6 +52,10 @@ public:
   /// PC writes require capstone detail to be enabled.
   static bool isFunctionTerminator(const cs_insn *I);
 
+  /// A debugger breakpoint or undefined-instruction exception can resume.
+  /// Predication is checked separately when deciding whether decode stops.
+  static bool isResumableTrap(const cs_insn *I);
+
   /// Whether \p I returns to a caller (`bx lr`, a `pop` or `ldm` into PC, an
   /// exception return), conditionally or not.  Requires capstone detail.
   static bool isReturn(const cs_insn *I);

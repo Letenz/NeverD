@@ -131,6 +131,8 @@ static const LibraryMethod Methods[] = {
      ClassLoaderOf},
     {"java/lang/ClassLoader", "getParent", "()Ljava/lang/ClassLoader;",
      LoaderParent},
+    {"java/lang/System", "loadLibrary", "(Ljava/lang/String;)V",
+     LoadNativeLibrary, true},
     {"java/lang/ClassLoader", "getSystemClassLoader",
      "()Ljava/lang/ClassLoader;", SystemClassLoader, true},
     {"java/lang/ClassLoader", "loadClass",
@@ -229,6 +231,32 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
             (!o->Initialized || !assignable(objectDescriptor(*o), Types[i])))
           return failure("Java library reference parameter type mismatch");
       }
+    if (M.Op == LoadNativeLibrary) {
+      auto name = object(Values[0]);
+      if (!name)
+        return Throw("java/lang/NullPointerException");
+      if (name->Bytes.size() > 2048)
+        return {ExecutionStop::Unsupported,
+                0,
+                {},
+                "Java library name exceeds its budget"};
+      std::string text;
+      for (size_t i = 0; i < name->Bytes.size(); i += 2) {
+        tick();
+        if (name->Bytes[i + 1] || !name->Bytes[i] || name->Bytes[i] > 127)
+          return {
+              ExecutionStop::Unsupported, 0, {}, "non-ASCII Java library name"};
+        text += char(name->Bytes[i]);
+      }
+      if (text.find('/') != text.npos)
+        return Throw("java/lang/UnsatisfiedLinkError");
+      ExecutionResult result;
+      result.stop = ExecutionStop::Suspended;
+      result.external = ExternalCall{};
+      result.external->kind = ExternalCall::LoadLibrary;
+      result.external->library = std::move(text);
+      return result;
+    }
     if (M.Op >= CurrentActivityThread && M.Op <= ThreadInstrumentation) {
       if (!program || !framework)
         return {ExecutionStop::Unsupported,

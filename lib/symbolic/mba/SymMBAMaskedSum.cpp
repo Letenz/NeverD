@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Normalize and independently certify weighted literal masks of one word.
+/// Normalize and independently certify weighted bitwise views of one word.
 
 #include "SymMBADetail.h"
 
@@ -51,10 +51,120 @@ struct CoefficientLess {
   }
 };
 
+bool isLiteralView(const SymContext &Ctx, SymRef R) {
+  if (Ctx.op(R) == SymOp::Not)
+    return true;
+  return (Ctx.op(R) == SymOp::And || Ctx.op(R) == SymOp::Or ||
+          Ctx.op(R) == SymOp::Xor) &&
+         Ctx.numOperands(R) >= 2 && Ctx.isConst(Ctx.operand(R, 0));
+}
+
+struct BitwiseView {
+  SymRef Carrier;
+  llvm::APInt Zero, One;
+};
+
+// Compose unary literal maps from the outside in. The two words describe
+// each output bit when the corresponding carrier bit is zero or one.
+// Arithmetic inside the remaining carrier is opaque.
+std::optional<BitwiseView> collectView(SymContext &Ctx, SymRef R,
+                                       MaskResources &Resources) {
+  const unsigned Width = Ctx.width(R);
+  const size_t Words = (size_t(Width) + 63) / 64;
+  BitwiseView View{R, llvm::APInt(Width, 0), llvm::APInt::getAllOnes(Width)};
+  for (unsigned Depth = 0; isLiteralView(Ctx, View.Carrier); ++Depth) {
+    if (Depth == 64 || !Resources.charge(1 + Words, 64 + 2 * Words * 8))
+      return std::nullopt;
+    const auto Op = Ctx.op(View.Carrier);
+    if (Op == SymOp::Not) {
+      std::swap(View.Zero, View.One);
+      View.Carrier = Ctx.operand(View.Carrier, 0);
+      continue;
+    }
+    const auto Ops = Ctx.operands(View.Carrier);
+    if (!Resources.array(Ops.size(), 2 * sizeof(SymRef)))
+      return std::nullopt;
+    auto Literal = Ctx.constValue(Ops[0]);
+    llvm::SmallVector<SymRef, 8> Inputs(Ops.begin() + 1, Ops.end());
+    if (Op == SymOp::And) {
+      View.One = (View.One & Literal) | (View.Zero & ~Literal);
+      View.Carrier = Ctx.mkAnd(Inputs);
+    } else if (Op == SymOp::Or) {
+      View.Zero = (View.One & Literal) | (View.Zero & ~Literal);
+      View.Carrier = Ctx.mkOr(Inputs);
+    } else {
+      auto Zero = (View.Zero & ~Literal) | (View.One & Literal);
+      View.One = (View.One & ~Literal) | (View.Zero & Literal);
+      View.Zero = std::move(Zero);
+      View.Carrier = Ctx.mkXor(Inputs);
+    }
+  }
+  return View;
+}
+
+// This checker does not use collectView or the candidate's coefficient table.
+// Establish the pointwise grammar recursively, then evaluate its two Boolean
+// assignments using full-width bitwise operations. Checking arbitrary
+// arithmetic at zero/ones would not establish that grammar.
+std::optional<std::pair<llvm::APInt, llvm::APInt>>
+checkBitwiseView(const SymContext &Ctx, SymRef R, SymRef Carrier,
+                 MaskResources &Resources, unsigned Depth = 0) {
+  const unsigned Width = Ctx.width(Carrier);
+  const size_t Words = (size_t(Width) + 63) / 64;
+  if (Depth == 64 || Ctx.width(R) != Width ||
+      !Resources.charge(1 + Words, 64 + 2 * Words * 8))
+    return std::nullopt;
+  if (R == Carrier)
+    return std::pair(llvm::APInt(Width, 0), llvm::APInt::getAllOnes(Width));
+  if (Ctx.isConst(R))
+    return std::pair(Ctx.constValue(R), Ctx.constValue(R));
+  const auto Op = Ctx.op(R);
+  if (Op == SymOp::Not) {
+    auto Child =
+        checkBitwiseView(Ctx, Ctx.operand(R, 0), Carrier, Resources, Depth + 1);
+    if (!Child)
+      return std::nullopt;
+    return std::pair(~Child->first, ~Child->second);
+  }
+  if (Op != SymOp::And && Op != SymOp::Or && Op != SymOp::Xor)
+    return std::nullopt;
+  auto Ops = Ctx.operands(R);
+  if (!Resources.charge(Ops.size()))
+    return std::nullopt;
+  // Canonical n-ary construction flattens literal XOR/AND/OR around a carrier.
+  if (Ctx.op(Carrier) == Op && Ctx.isConst(Ops[0]) &&
+      Ops.drop_front() == Ctx.operands(Carrier)) {
+    const auto &K = Ctx.constValue(Ops[0]);
+    if (Op == SymOp::And)
+      return std::pair(llvm::APInt(Width, 0), K);
+    if (Op == SymOp::Or)
+      return std::pair(K, llvm::APInt::getAllOnes(Width));
+    return std::pair(K, ~K);
+  }
+  auto Zero =
+      Op == SymOp::And ? llvm::APInt::getAllOnes(Width) : llvm::APInt(Width, 0);
+  auto One = Zero;
+  for (SymRef Child : Ops) {
+    auto Value = checkBitwiseView(Ctx, Child, Carrier, Resources, Depth + 1);
+    if (!Value)
+      return std::nullopt;
+    if (Op == SymOp::And) {
+      Zero &= Value->first;
+      One &= Value->second;
+    } else if (Op == SymOp::Or) {
+      Zero |= Value->first;
+      One |= Value->second;
+    } else {
+      Zero ^= Value->first;
+      One ^= Value->second;
+    }
+  }
+  return std::pair(std::move(Zero), std::move(One));
+}
+
 // Read a proposed equality independently of the coefficient-group builder.
-// Only sums, constant scaling and literal masking of this exact carrier are
-// linear in its individual bits. Other words must cancel by exact identity;
-// nothing inside the carrier or those residual words is reinterpreted.
+// Sums, constant scaling and pointwise bitwise views of this exact carrier are
+// affine in its individual bits. Other words must cancel by exact identity.
 bool proveMaskIdentity(const SymContext &Ctx, SymRef Before, SymRef After,
                        SymRef Carrier, MaskResources &Resources) {
   const unsigned Width = Ctx.width(Carrier);
@@ -83,6 +193,18 @@ bool proveMaskIdentity(const SymContext &Ctx, SymRef Before, SymRef After,
     auto [It, Added] = Residuals.try_emplace(R.index(), Width, 0);
     It->second += Scale;
     return true;
+  };
+  auto bitwise = [&](SymRef R, const llvm::APInt &Scale) {
+    auto Value = checkBitwiseView(Ctx, R, Carrier, Resources);
+    if (!Value)
+      return residual(R, Scale);
+    if (!Resources.product(Words, Words))
+      return false;
+    const auto &[Zero, One] = *Value;
+    Constant += Scale * Zero;
+    auto Positive = One & ~Zero, Negative = Zero & ~One;
+    return (Positive.isZero() || append(Scale, Positive)) &&
+           (Negative.isZero() || append(-Scale, Negative));
   };
   while (!Work.empty()) {
     Item Current = std::move(Work.back());
@@ -137,7 +259,11 @@ bool proveMaskIdentity(const SymContext &Ctx, SymRef Before, SymRef After,
           (Inputs.size() == 1 && Inputs[0] == Carrier) ||
           (Ctx.op(Carrier) == SymOp::And && Inputs == Ctx.operands(Carrier));
       if (!(SameCarrier ? append(Current.Scale, Ctx.constValue(Ops[0]))
-                        : residual(R, Current.Scale)))
+                        : bitwise(R, Current.Scale)))
+        return false;
+    } else if (Ctx.op(R) == SymOp::Not || Ctx.op(R) == SymOp::Or ||
+               Ctx.op(R) == SymOp::Xor) {
+      if (!bitwise(R, Current.Scale))
         return false;
     } else if (!residual(R, Current.Scale)) {
       return false;
@@ -184,7 +310,7 @@ SymRef solveWeightedMasks(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   const auto Summands = Ctx.operands(E);
   if (!Budget.canConsume(Summands.size()))
     return E;
-  // A repeated first nonliteral operand is necessary for a shared carrier.
+  // A repeated underlying nonliteral operand suggests a shared carrier.
   // This allocation-free hint can have collisions; only the exact grouping
   // and proof below authorize a rewrite. Ordinary arithmetic pays no table
   // construction or coefficient work for an inapplicable reading.
@@ -200,10 +326,14 @@ SymRef solveWeightedMasks(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
         break;
       }
     }
-    if (Ctx.op(Term) != SymOp::And || Ctx.numOperands(Term) < 2 ||
-        !Ctx.isConst(Ctx.operand(Term, 0)))
+    if (!isLiteralView(Ctx, Term))
       continue;
-    const uint64_t Bit = uint64_t(1) << (Ctx.operand(Term, 1).index() % 64);
+    for (unsigned Depth = 0; isLiteralView(Ctx, Term) && Depth != 64; ++Depth) {
+      if (!Budget.consume())
+        return E;
+      Term = Ctx.operand(Term, Ctx.op(Term) == SymOp::Not ? 0 : 1);
+    }
+    const uint64_t Bit = uint64_t(1) << (Term.index() % 64);
     if (Seen & Bit) {
       Plausible = true;
       break;
@@ -229,7 +359,11 @@ SymRef solveWeightedMasks(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   for (SymRef Term : OwnedSummands)
     Pending.push_back({Term, llvm::APInt(Width, 1)});
   bool Expanded = false;
-  std::map<uint32_t, std::vector<MaskTerm>> Groups;
+  struct ViewTerm {
+    SymRef Original;
+    llvm::APInt Coefficient, Zero, One;
+  };
+  std::map<uint32_t, std::vector<ViewTerm>> Groups;
   llvm::SmallVector<SymRef, 8> Kept;
   while (!Pending.empty()) {
     auto [Body, Scale] = std::move(Pending.back());
@@ -253,20 +387,18 @@ SymRef solveWeightedMasks(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
           {Ctx.operand(Body, 1), Scale * Ctx.constValue(Ctx.operand(Body, 0))});
       continue;
     }
-    const auto Ops = Ctx.operands(Body);
-    if (Ctx.op(Body) != SymOp::And || Ops.size() < 2 || !Ctx.isConst(Ops[0])) {
+    if (!isLiteralView(Ctx, Body)) {
       Kept.push_back(Scale.isOne() ? Body
                                    : Ctx.mkMul(Ctx.mkConst(Scale), Body));
       continue;
     }
-    if (!Resources.array(Ops.size(), 2 * sizeof(SymRef)))
+    auto View = collectView(Ctx, Body, Resources);
+    if (!View)
       return E;
-    auto Mask = Ctx.constValue(Ops[0]);
-    llvm::SmallVector<SymRef, 8> Inputs(Ops.begin() + 1, Ops.end());
-    SymRef Carrier = Ctx.mkAnd(Inputs);
     SymRef Original =
         Scale.isOne() ? Body : Ctx.mkMul(Ctx.mkConst(Scale), Body);
-    Groups[Carrier.index()].push_back({Original, Scale, Mask});
+    Groups[View->Carrier.index()].push_back(
+        {Original, Scale, View->Zero, View->One});
   }
   // Expanded groups need a proof against the actual input, including every
   // enclosing scale. The independent checker certifies one masked word and
@@ -290,12 +422,18 @@ SymRef solveWeightedMasks(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     if (!Resources.array(Width, 256 + 8 * Words * sizeof(uint64_t)))
       return E;
     std::vector<llvm::APInt> Coefficients(Width, llvm::APInt(Width, 0));
+    llvm::APInt Constant(Width, 0);
     for (const auto &Term : Terms) {
+      if (!Resources.product(Words, Words))
+        return E;
+      Constant += Term.Coefficient * Term.Zero;
       for (unsigned Bit = 0; Bit != Width; ++Bit) {
         if (!Resources.charge(1 + Words))
           return E;
-        if (Term.Mask[Bit])
+        if (Term.One[Bit] && !Term.Zero[Bit])
           Coefficients[Bit] += Term.Coefficient;
+        else if (Term.Zero[Bit] && !Term.One[Bit])
+          Coefficients[Bit] -= Term.Coefficient;
       }
     }
     std::map<llvm::APInt, llvm::APInt, CoefficientLess> Buckets;
@@ -310,14 +448,41 @@ SymRef solveWeightedMasks(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     }
     SymRef Carrier(Index);
     llvm::SmallVector<SymRef, 8> Parts, Originals;
-    for (const auto &[K, Mask] : Buckets) {
+    while (!Buckets.empty()) {
+      auto K = Buckets.begin()->first;
+      auto Mask = Buckets.begin()->second;
+      Buckets.erase(Buckets.begin());
+      llvm::APInt Flip(Width, 0);
+      // Opposite coefficients are one masked XOR plus a constant correction.
+      // Erasing the first bucket also handles the self-opposite top-bit scale.
+      if (auto Opposite = Buckets.find(-K); Opposite != Buckets.end()) {
+        Flip = Opposite->second;
+        Buckets.erase(Opposite);
+        if (!Resources.product(Words, 2 * Words))
+          return E;
+        auto Forward = Constant - K * Flip;
+        auto Reverse = Constant + K * Mask;
+        // Both XOR orientations are exact. Prefer the one that removes the
+        // constant, including negative weights and narrow modular weights.
+        if (Reverse.isZero() && !Forward.isZero()) {
+          K = -K;
+          std::swap(Mask, Flip);
+          Constant = std::move(Reverse);
+        } else {
+          Constant = std::move(Forward);
+        }
+        Mask |= Flip;
+      }
       // An even coefficient cannot observe its highest input bits. Restoring
       // those bits can eliminate a mask altogether without modular division.
       auto ExpandedMask =
           Mask | llvm::APInt::getHighBitsSet(Width, K.countr_zero());
       Parts.push_back(Ctx.mkMul(Ctx.mkConst(K),
-                                Ctx.mkAnd(Carrier, Ctx.mkConst(ExpandedMask))));
+                                Ctx.mkAnd(Ctx.mkXor(Carrier, Ctx.mkConst(Flip)),
+                                          Ctx.mkConst(ExpandedMask))));
     }
+    if (!Constant.isZero())
+      Parts.push_back(Ctx.mkConst(Constant));
     for (const auto &Term : Terms)
       Originals.push_back(Term.Original);
     SymRef Before = Ctx.mkAdd(Originals);

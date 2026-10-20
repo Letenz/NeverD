@@ -49,6 +49,14 @@ def run(executable, compiler=None):
             mapped = source(client)
             assert all(r["applied"] for r in mapped["variable_edit_results"]), mapped
             assert mapped["text"] != after["text"]
+            # Associations retain navigation for the unchanged return statement.
+            returns = [row["addresses"] for row in before["rows"]
+                       if "return" in row.get("code_anchor", "")]
+            assert len(returns) == 1 and returns[0], before
+            for view in (after, mapped):
+                assert view["mapping_status"] == "instruction_anchors", view
+                assert [row["addresses"] for row in view["rows"]
+                        if "return" in row.get("code_anchor", "")] == returns, view
             if compiler:
                 harness = "\nstatic int calls; int64_t sub_500000() { return ++calls; }\nint main(void) { return start(17) != 2 || calls != 3; }\n"
                 for index, view in enumerate((before, after, mapped)):

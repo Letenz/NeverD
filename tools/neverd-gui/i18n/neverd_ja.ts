@@ -919,6 +919,46 @@
         <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
         <translation>プログラムの型に結合される型ライブラリを表示し、追加または除外します</translation>
     </message>
+    <message>
+        <source>Split variable</source>
+        <translation>変数を分割</translation>
+    </message>
+    <message>
+        <source>Separate independent local variable lifetimes</source>
+        <translation>ローカル変数の独立した生存期間を分離する</translation>
+    </message>
+    <message>
+        <source>Map to variable...</source>
+        <translation>変数にマッピング...</translation>
+    </message>
+    <message>
+        <source>Associate copy-related variables with compatible live ranges</source>
+        <translation>コピー関係にあり生存区間が互換の変数を関連付ける</translation>
+    </message>
+    <message>
+        <source>Unmap variable</source>
+        <translation>変数のマッピングを解除</translation>
+    </message>
+    <message>
+        <source>Remove a variable mapping</source>
+        <translation>変数のマッピングを削除する</translation>
+    </message>
+    <message>
+        <source>Unsplit variable</source>
+        <translation>変数の分割を解除</translation>
+    </message>
+    <message>
+        <source>Restore the original variable lifetime grouping</source>
+        <translation>元の変数の生存期間のグループを復元する</translation>
+    </message>
+    <message>
+        <source>Reset variable associations</source>
+        <translation>変数の関連付けをリセット</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without variable associations</source>
+        <translation>変数の関連付けを適用せずにこの関数を再生成する</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1369,6 +1409,18 @@
         <source>Cannot write %1</source>
         <translation>%1 に書き込めません</translation>
     </message>
+    <message>
+        <source>Cannot create the recovery marker directory.</source>
+        <translation>復元マーカーのディレクトリを作成できません。</translation>
+    </message>
+    <message>
+        <source>Cannot remove %1: %2</source>
+        <translation>%1 を削除できません: %2</translation>
+    </message>
+    <message>
+        <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
+        <translation>復元した編集が保留中にデータベースが変更されました。再度開く前に作業コピーを保存してください。</translation>
+    </message>
 </context>
 <context>
     <name>Representations</name>
@@ -1580,6 +1632,14 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Transformation failed: %1</source>
         <translation>変換に失敗しました：%1</translation>
+    </message>
+    <message>
+        <source>Saved variable types need review: the analysis or local types changed</source>
+        <translation>保存した変数の型を確認してください: 解析結果またはローカル型が変更されました</translation>
+    </message>
+    <message>
+        <source>Saved variable associations need review: </source>
+        <translation>保存した変数の関連付けを確認してください: </translation>
     </message>
 </context>
 <context>
@@ -2447,6 +2507,46 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Type Libraries</source>
         <translation>型ライブラリ</translation>
+    </message>
+    <message>
+        <source>Cannot open more disassembly views.</source>
+        <translation>これ以上逆アセンブリビューを開けません。</translation>
+    </message>
+    <message>
+        <source>Could not export source: %1</source>
+        <translation>ソースをエクスポートできませんでした: %1</translation>
+    </message>
+    <message>
+        <source>NeverD View-%1</source>
+        <translation>NeverD ビュー-%1</translation>
+    </message>
+    <message>
+        <source>Showing %1 matches; use Next to continue the search.</source>
+        <translation>%1 件の一致を表示しています。「次へ」で検索を続行してください。</translation>
+    </message>
+    <message>
+        <source>The engine cannot identify this source variable unambiguously</source>
+        <translation>エンジンはこのソース変数を一意に識別できません</translation>
+    </message>
+    <message>
+        <source>Map variable</source>
+        <translation>変数をマッピング</translation>
+    </message>
+    <message>
+        <source>Destination variable (the engine checks copy relationships and live ranges):</source>
+        <translation>マッピング先の変数（エンジンがコピー関係と生存区間を検証します）:</translation>
+    </message>
+    <message>
+        <source>No other unambiguous local variable is available</source>
+        <translation>他に一意に識別できるローカル変数がありません</translation>
+    </message>
+    <message>
+        <source>The source analysis changed; select the variable again</source>
+        <translation>ソース解析が変更されました。変数を再選択してください</translation>
+    </message>
+    <message>
+        <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
+        <translation>この変数に一致する関連付けはありません。「変数の関連付けをリセット」で古い編集を削除してください。</translation>
     </message>
 </context>
 <context>
@@ -4317,6 +4417,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>解析の型を使用(&amp;A)</translation>
+    </message>
+    <message>
+        <source>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</source>
+        <translation>%1 は %2 バイトのソース変数です。ローカル型からスカラー型またはポインター型を入力してください。</translation>
+    </message>
+    <message>
+        <source>Remove this source type assertion and use the analysis type</source>
+        <translation>このソース型の指定を削除し、解析で得られた型を使用する</translation>
     </message>
 </context>
 <context>

@@ -1521,6 +1521,32 @@ std::string renderX86MsvcSegmentedLoad(Arch TheArch, unsigned SizeBytes,
   return std::string(Name) + "(" + Addr.str() + ")";
 }
 
+std::optional<X86WidenedIntrinsic> x86WidenedIntrinsic(Intrinsic Id,
+                                                       uint16_t Bytes) {
+  const char *CName = intrinsicCName(Id);
+  if (!CName || (Bytes != 32 && Bytes != 64))
+    return std::nullopt;
+  const llvm::StringRef Name(CName);
+  if (!Name.starts_with("_mm_"))
+    return std::nullopt;
+#define NEVERD_X86_WIDENED_INTRINSIC(ID, BYTES, NAME, FEATURES)                \
+  if (Id == Intrinsic::ID && Bytes == (BYTES))                                 \
+    return X86WidenedIntrinsic{NAME, FEATURES};
+#include "neverd/backend/c/render/HighC/X86WidenedIntrinsics.def"
+  // Any other takes the wider prefix, and the extensions Clang's headers
+  // declare that width's forms with: AVX for 256-bit floating-point ones and
+  // AVX2 for integer ones; AVX-512F for 512-bit ones, with DQ for some
+  // floating-point and BW for byte and word integer ones.
+  const bool Floating = Name.ends_with("_ps") || Name.ends_with("_pd");
+  std::string Wide =
+      (Bytes == 32 ? "_mm256_" : "_mm512_") + Name.drop_front(4).str();
+  if (Bytes == 32)
+    return X86WidenedIntrinsic{std::move(Wide), Floating ? "avx" : "avx2"};
+  return X86WidenedIntrinsic{std::move(Wide),
+                             Floating ? "avx512f,avx512dq"
+                                      : "avx512f,avx512bw,avx512dq"};
+}
+
 namespace {
 /// The C vector type an `_mm` intrinsic takes and returns in a register of
 /// \p Bytes, by the element kind its name gives: integers (`_epi8`,
@@ -1613,9 +1639,8 @@ renderX86VectorIntrinsic(Arch TheArch, const HighExpr &Call,
   // A VEX/EVEX-widened form shares the SSE intrinsic ID; spell the
   // intrinsic for the register width.
   std::string Spelled = CName;
-  if (Width != 16 && Callee.starts_with("_mm_"))
-    Spelled =
-        (Width == 32 ? "_mm256_" : "_mm512_") + Callee.drop_front(4).str();
+  if (const auto Widened = x86WidenedIntrinsic(Call.IntrinsicId, Width))
+    Spelled = Widened->Name;
   // The lifted operand each argument of the C intrinsic is.
   std::vector<size_t> Order(Call.Operands.size());
   for (size_t I = 0; I < Order.size(); ++I)

@@ -1069,6 +1069,9 @@ struct Session {
       Recovery.CallUserPrototypes = PipeResult.CallUserPrototypes;
       Recovery.CallArgumentSources = PipeResult.CallArgumentSources;
       Recovery.OmittedCallees = PipeResult.OmittedCallees;
+      // The pipeline's callee memo keeps the forwarder probes of those
+      // callees, which serve where this recovery reads the same.
+      Recovery.CalleeSignatureMemo = PipeResult.CalleeSignatureMemo;
       recoverModuleCallAbi(Img, Recovery, FuncNames);
       NativeMedFuncs = std::move(Recovery.MedFuncs);
     }

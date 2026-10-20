@@ -586,10 +586,16 @@ void LLVMCWriter::writeRecordDefinitions(std::string &Text) {
          << Name << " " << Name << ";\n";
   if (!Definitions.Text.empty())
     OS << "\n" << Definitions.Text << "\n";
-  // An enumeration's type is complete only where it is defined.
+  // An enumeration's type is complete only where it is defined.  One a header
+  // names by a typedef alone has no tag, and the header's typedef is the
+  // unit's (<search.h>'s VISIT).
+  bool EnumerationTypedefs = false;
   for (const std::string &Name : Enumerations)
-    OS << "typedef enum " << Name << " " << Name << ";\n";
-  if (!Enumerations.empty())
+    if (!llvm::is_contained(Definitions.HeaderTypedefs, Name)) {
+      OS << "typedef enum " << Name << " " << Name << ";\n";
+      EnumerationTypedefs = true;
+    }
+  if (EnumerationTypedefs)
     OS << "\n";
 }
 
@@ -1446,7 +1452,8 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
         for (uint64_t I = 0; I < Array->getNumElements(); ++I) {
           if (I)
             Elements += ", ";
-          Elements += constStr(Init->getAggregateElement(unsigned(I)));
+          Elements += constStr(Init->getAggregateElement(unsigned(I)),
+                               /*AllowImageAddress=*/false);
         }
       OS << wrapInitializer(std::move(Elements)) << "};\n";
       continue;
@@ -1458,7 +1465,8 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
       OS << "const ";
     OS << typeToCLLVM(GV.getValueType()) << " " << Name;
     if (!llvm::isa<llvm::ConstantAggregateZero>(Init))
-      OS << " = " << wrapInitializer(constStr(Init));
+      OS << " = "
+         << wrapInitializer(constStr(Init, /*AllowImageAddress=*/false));
     OS << ";\n";
   }
 }

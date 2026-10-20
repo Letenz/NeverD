@@ -919,6 +919,46 @@
         <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
         <translation>프로그램의 형식에 결합되는 형식 라이브러리를 표시하고, 하나를 추가하거나 제외합니다</translation>
     </message>
+    <message>
+        <source>Split variable</source>
+        <translation>변수 분할</translation>
+    </message>
+    <message>
+        <source>Separate independent local variable lifetimes</source>
+        <translation>로컬 변수의 독립적인 수명 분리</translation>
+    </message>
+    <message>
+        <source>Map to variable...</source>
+        <translation>변수에 매핑...</translation>
+    </message>
+    <message>
+        <source>Associate copy-related variables with compatible live ranges</source>
+        <translation>복사 관계가 있고 활성 구간이 호환되는 변수 연결</translation>
+    </message>
+    <message>
+        <source>Unmap variable</source>
+        <translation>변수 매핑 해제</translation>
+    </message>
+    <message>
+        <source>Remove a variable mapping</source>
+        <translation>변수 매핑 제거</translation>
+    </message>
+    <message>
+        <source>Unsplit variable</source>
+        <translation>변수 분할 취소</translation>
+    </message>
+    <message>
+        <source>Restore the original variable lifetime grouping</source>
+        <translation>원래 변수 수명 그룹 복원</translation>
+    </message>
+    <message>
+        <source>Reset variable associations</source>
+        <translation>변수 연결 재설정</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without variable associations</source>
+        <translation>변수 연결을 적용하지 않고 이 함수 다시 생성</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1369,6 +1409,18 @@
         <source>Cannot write %1</source>
         <translation>%1에 쓸 수 없습니다</translation>
     </message>
+    <message>
+        <source>Cannot create the recovery marker directory.</source>
+        <translation>복구 표시 디렉터리를 만들 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Cannot remove %1: %2</source>
+        <translation>%1을(를) 제거할 수 없습니다: %2</translation>
+    </message>
+    <message>
+        <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
+        <translation>복구된 편집 내용이 보류 중인 동안 데이터베이스가 변경되었습니다. 다시 열기 전에 작업 사본을 보존하세요.</translation>
+    </message>
 </context>
 <context>
     <name>Representations</name>
@@ -1580,6 +1632,14 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Transformation failed: %1</source>
         <translation>변환 실패: %1</translation>
+    </message>
+    <message>
+        <source>Saved variable types need review: the analysis or local types changed</source>
+        <translation>저장된 변수 유형을 검토해야 합니다: 분석 결과 또는 로컬 유형이 변경되었습니다</translation>
+    </message>
+    <message>
+        <source>Saved variable associations need review: </source>
+        <translation>저장된 변수 연결을 검토해야 합니다: </translation>
     </message>
 </context>
 <context>
@@ -2447,6 +2507,46 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Type Libraries</source>
         <translation>형식 라이브러리</translation>
+    </message>
+    <message>
+        <source>Cannot open more disassembly views.</source>
+        <translation>디스어셈블리 보기를 더 열 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Could not export source: %1</source>
+        <translation>소스를 내보낼 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>NeverD View-%1</source>
+        <translation>NeverD 보기-%1</translation>
+    </message>
+    <message>
+        <source>Showing %1 matches; use Next to continue the search.</source>
+        <translation>일치 항목 %1개를 표시합니다. 다음을 눌러 검색을 계속하세요.</translation>
+    </message>
+    <message>
+        <source>The engine cannot identify this source variable unambiguously</source>
+        <translation>엔진이 이 소스 변수를 명확하게 식별할 수 없습니다</translation>
+    </message>
+    <message>
+        <source>Map variable</source>
+        <translation>변수 매핑</translation>
+    </message>
+    <message>
+        <source>Destination variable (the engine checks copy relationships and live ranges):</source>
+        <translation>대상 변수(엔진이 복사 관계와 활성 구간을 확인합니다):</translation>
+    </message>
+    <message>
+        <source>No other unambiguous local variable is available</source>
+        <translation>명확하게 식별할 수 있는 다른 로컬 변수가 없습니다</translation>
+    </message>
+    <message>
+        <source>The source analysis changed; select the variable again</source>
+        <translation>소스 분석이 변경되었습니다. 변수를 다시 선택하세요</translation>
+    </message>
+    <message>
+        <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
+        <translation>이 변수에 일치하는 연결이 없습니다. 오래된 편집 내용을 제거하려면 변수 연결 재설정을 사용하세요.</translation>
     </message>
 </context>
 <context>
@@ -4317,6 +4417,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>분석 형식 사용(&amp;A)</translation>
+    </message>
+    <message>
+        <source>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</source>
+        <translation>%1은(는) %2바이트 소스 변수입니다. 로컬 유형에서 스칼라 또는 포인터 유형을 입력하세요.</translation>
+    </message>
+    <message>
+        <source>Remove this source type assertion and use the analysis type</source>
+        <translation>이 소스 유형 지정을 제거하고 분석에서 얻은 유형 사용</translation>
     </message>
 </context>
 <context>

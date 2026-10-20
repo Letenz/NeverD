@@ -122,6 +122,7 @@ bool platformClass(std::string_view name) {
   constexpr std::string_view names[] = {
       "java/lang/Object",
       "java/lang/Class",
+      "java/lang/System",
       "java/lang/String",
       "java/lang/Cloneable",
       "java/io/Serializable",
@@ -142,6 +143,7 @@ bool platformClass(std::string_view name) {
       "java/lang/LinkageError",
       "java/lang/ExceptionInInitializerError",
       "java/lang/NoClassDefFoundError",
+      "java/lang/UnsatisfiedLinkError",
       "java/lang/NoSuchMethodError",
       "java/lang/IncompatibleClassChangeError",
       "java/lang/ClassNotFoundException",
@@ -175,6 +177,7 @@ std::string_view javaParent(std::string_view name) {
   if (name == "java/lang/NoSuchMethodError")
     return "java/lang/IncompatibleClassChangeError";
   if (name == "java/lang/ExceptionInInitializerError" ||
+      name == "java/lang/UnsatisfiedLinkError" ||
       name == "java/lang/NoClassDefFoundError" ||
       name == "java/lang/IncompatibleClassChangeError")
     return "java/lang/LinkageError";

@@ -9,8 +9,12 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
+
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -23,9 +27,11 @@ constexpr unsigned MaxEvaluationDepth = 64;
 constexpr unsigned MaxScanIterations = 4096;
 constexpr unsigned MaxFoldRounds = 4;
 
+// A value's identity.  No variable is as wide as the sizes DenseMap reserves
+// for its empty and erased keys.
 using Key = std::tuple<MedVar::VarKind, int, int, uint16_t>;
 Key key(const MedVar &V) { return {V.Kind, V.Id, V.SSAVer, V.Size}; }
-using Values = std::map<Key, MedVar>;
+using Values = llvm::DenseMap<Key, MedVar>;
 uint64_t mask(unsigned Size) {
   return Size >= 8 ? ~uint64_t{0} : (uint64_t{1} << (Size * 8)) - 1;
 }
@@ -49,14 +55,23 @@ bool independentEntry(const MedFunc &Func, const MedBlock &Block,
 class Evaluator {
   const MedFunc &Func;
   const BinaryImage &Image;
-  std::map<Key, const MedOp *> Defs;
-  std::map<Key, std::pair<const MedBlock *, const PhiNode *>> Phis;
-  std::map<int, const MedBlock *> Blocks;
-  std::set<Key> CompletePhis;
-  std::set<Key> Active;
+  llvm::DenseMap<Key, const MedOp *> Defs;
+  llvm::DenseMap<Key, std::pair<const MedBlock *, const PhiNode *>> Phis;
+  llvm::DenseMap<int, const MedBlock *> Blocks;
+  llvm::DenseSet<Key> CompletePhis;
+  llvm::DenseSet<Key> Active;
   Values Memo;
   size_t &Budget;
   bool Complete = false;
+
+  /// The block \p Id names, where the function has one.  Blocks are numbered
+  /// from zero; DenseMap reserves the largest and smallest ints.
+  const MedBlock *block(int Id) const {
+    if (Id < 0 || Id == std::numeric_limits<int>::max())
+      return nullptr;
+    const auto Found = Blocks.find(Id);
+    return Found == Blocks.end() ? nullptr : Found->second;
+  }
 
   bool spend(size_t Work = 1) {
     if (Work > Budget) {
@@ -92,10 +107,11 @@ public:
   Evaluator(const MedFunc &F, const BinaryImage &I, size_t &Remaining)
       : Func(F), Image(I), Budget(Remaining) {
     std::map<int, std::set<int>> Incoming;
-    std::set<Key> Outputs;
+    llvm::DenseSet<Key> Outputs;
     for (const auto &B : F.Blocks) {
       if (!spend(1 + B.Phis.size() + B.Ops.size()) || B.Id < 0 ||
-          !Blocks.emplace(B.Id, &B).second)
+          B.Id == std::numeric_limits<int>::max() ||
+          !Blocks.try_emplace(B.Id, &B).second)
         return;
       for (int S : B.Succs) {
         if (!spend() || !Incoming[S].insert(B.Id).second)
@@ -104,7 +120,7 @@ public:
       for (const auto &P : B.Phis) {
         if (!spend(P.Args.size()) || !Outputs.insert(key(P.Output)).second)
           return;
-        Phis.emplace(key(P.Output), std::pair{&B, &P});
+        Phis.try_emplace(key(P.Output), std::pair{&B, &P});
       }
       for (const auto &Op : B.Ops) {
         // Source-call certificates authenticate this value graph and frame,
@@ -115,12 +131,12 @@ public:
         if (Op.Output.Size && !Op.Output.isConst()) {
           if (!Outputs.insert(key(Op.Output)).second)
             return;
-          Defs.emplace(key(Op.Output), &Op);
+          Defs.try_emplace(key(Op.Output), &Op);
         }
       }
     }
     for (const auto &[Id, Preds] : Incoming)
-      if (!Blocks.count(Id))
+      if (!block(Id))
         return;
     for (const auto &B : F.Blocks)
       for (const auto &P : B.Phis) {
@@ -171,15 +187,13 @@ public:
           !independentEntry(Func, *Block, Image)) {
         bool AllValues = true;
         for (const auto &[Pred, Arg] : Phi->Args) {
-          const auto Found = Blocks.find(Pred);
-          if (Found == Blocks.end() ||
-              std::find(Found->second->Succs.begin(),
-                        Found->second->Succs.end(),
-                        Block->Id) == Found->second->Succs.end()) {
+          const MedBlock *Found = block(Pred);
+          if (!Found || std::find(Found->Succs.begin(), Found->Succs.end(),
+                                  Block->Id) == Found->Succs.end()) {
             AllValues = false;
             break;
           }
-          if (auto Chosen = successor(*Found->second, Bindings, Depth + 1);
+          if (auto Chosen = successor(*Found, Bindings, Depth + 1);
               Chosen && *Chosen != Block->Id)
             continue;
           auto A = value(Arg, Bindings, Depth + 1);
@@ -206,7 +220,7 @@ public:
     }
     Active.erase(key(V));
     if (Result && !Bindings)
-      Memo.emplace(key(V), *Result);
+      Memo.try_emplace(key(V), *Result);
     return Result;
   }
 
@@ -225,9 +239,8 @@ public:
     if (!Cond || !scalar(*Cond))
       return std::nullopt;
     for (int S : B.Succs) {
-      const auto It = Blocks.find(S);
-      if (It != Blocks.end() &&
-          It->second->StartAddr == Branch.Inputs[0].ConstVal)
+      const MedBlock *Target = block(S);
+      if (Target && Target->StartAddr == Branch.Inputs[0].ConstVal)
         return Cond->ConstVal ? S : (B.Succs[0] == S ? B.Succs[1] : B.Succs[0]);
     }
     return std::nullopt;
@@ -407,7 +420,7 @@ bool foldScan(MedFunc &Func, MedBlock &Block, const BinaryImage &Image,
       Block.Ops.size() > Budget - Block.Phis.size())
     return false;
   Budget -= Block.Phis.size() + Block.Ops.size();
-  std::set<Key> Local;
+  llvm::DenseSet<Key> Local;
   for (const auto &P : Block.Phis)
     Local.insert(key(P.Output));
   for (size_t I = 0; I + 1 < Block.Ops.size(); ++I) {
@@ -435,8 +448,8 @@ bool foldScan(MedFunc &Func, MedBlock &Block, const BinaryImage &Image,
         // A lowered register PHI can carry a dead incoming ABI value that the
         // first iteration overwrites. Keep it explicitly unknown while
         // simulating; it may neither decide control nor survive the exit.
-        State.emplace(key(P.Output), V.value_or(MedVar::makeUnspecified(
-                                         P.Output.Size, Image.Arch)));
+        State.try_emplace(key(P.Output), V.value_or(MedVar::makeUnspecified(
+                                             P.Output.Size, Image.Arch)));
         Found = true;
       }
     if (!Found)
@@ -500,7 +513,7 @@ bool foldScan(MedFunc &Func, MedBlock &Block, const BinaryImage &Image,
           auto V = Eval.value(Arg, &Current);
           if (!V)
             return false;
-          NextState.emplace(key(P.Output), *V);
+          NextState.try_emplace(key(P.Output), *V);
           Found = true;
         }
       if (!Found)

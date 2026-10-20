@@ -81,6 +81,12 @@ std::set<va_t> findFrameLocalLeafCallees(const std::vector<MedFunc> &Funcs,
 // prototype the user declares (PipelineResult::CallUserPrototypes): a call
 // to one passes what its summary counts, which the prototype gives, however
 // many arguments the arity tables give a routine of its name.
+// \p SummaryKeysRead, where given, gains every key at which the recovery
+// reads a callee summary, a user prototype or a name: \p Func's entry, the
+// only key at which it writes summaries, first.  A recovery of the same body
+// of the same image, with the same function-pointer variables and frame-local
+// leaf callees, whose summaries, user prototypes and names read the same at
+// those keys, recovers the same.
 // LowToMed runs before whole-program return types are known.  It can
 // therefore leave a scalar-FP call modeled as defining the integer return
 // register: when the result is read only by the next call's implicit XMM0/V0
@@ -126,7 +132,8 @@ void recoverCallAbi(
     const std::set<va_t> *VectorArgumentCallees = nullptr,
     const std::map<va_t, PointerVariableCallee> *PointerCallees = nullptr,
     const std::set<va_t> *UserPrototypeCallees = nullptr,
-    const RelocationSymbolIndex *RelocationSymbols = nullptr);
+    const RelocationSymbolIndex *RelocationSymbols = nullptr,
+    std::vector<va_t> *SummaryKeysRead = nullptr);
 
 /// The integer argument layout \p Func takes its register arguments in: its
 /// own register order (MedFunc::IntegerArgumentRegisters) where it has one,

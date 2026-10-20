@@ -1119,10 +1119,10 @@ namespace {
 /// \p System gives it (LocalType::Header) and lays it out as the program
 /// does: a type of the same kind and size whose named members are where the
 /// program's are.  Null for a type the program defines its own way, or
-/// where the system gives none.  A record the header names by a typedef
-/// alone (`typedef struct {...} pthread_mutex_t;`) has no tag: a unit spells
-/// it by that name and declares no typedef of its own (EmbeddedC's
-/// HeaderTypedefs).
+/// where the system gives none.  A record or enumeration the header names
+/// by a typedef alone (`typedef struct {...} pthread_mutex_t;`, <search.h>'s
+/// `typedef enum {...} VISIT;`) has no tag: a unit spells it by that name and
+/// declares no typedef of its own (EmbeddedC's HeaderTypedefs).
 const LocalType *systemsOwn(const TypeLibrary &Library, const LocalType &Type,
                             const TypeLibrary *System) {
   const LocalType *Their = System ? System->find(Type.Name) : nullptr;
@@ -1323,14 +1323,15 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
   });
   CWriter Writer(Library, Options, /*Embedded=*/true, /*Prelude=*/false,
                  Spelled);
-  // A record a header names by a typedef alone comes from it by that name:
-  // one the unit holds, which the header lays out as the program does, and
-  // one its definitions only point to, whose members the header's agree
-  // with.
+  // A record or enumeration a header names by a typedef alone comes from it
+  // by that name: one the unit holds, which the header lays out as the
+  // program does, and one its definitions only point to, whose members the
+  // header's agree with.
   auto TakeTheirs = [&](const LocalType &Type) {
     if (const LocalType *Their = systemsOwn(Library, Type, System);
         Their && Their->TypedefNamed &&
-        (Type.Kind == TypeKind::Struct || Type.Kind == TypeKind::Union) &&
+        (Type.Kind == TypeKind::Struct || Type.Kind == TypeKind::Union ||
+         Type.Kind == TypeKind::Enum) &&
         !Writer.fromHeaders(Type.Name)) {
       Writer.takeFromHeaders(Type.Name);
       Result.HeaderTypedefs.push_back(Writer.names().type(Type.Name));
@@ -1399,6 +1400,14 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
   // spelling of the unit defines.
   for (const LocalType *Type : Theirs)
     Result.Types.push_back(Type->Name);
+  // A function the system's headers declare by the name of a record they
+  // define is an ordinary identifier the text declares (<sys/sysinfo.h>'s
+  // sysinfo beside struct sysinfo, sigaction, flock): a unit spells the
+  // record by its tag, which a typedef of its name would contradict.
+  for (const LocalType *Type : Theirs)
+    if ((Type->Kind == TypeKind::Struct || Type->Kind == TypeKind::Union) &&
+        System && System->findPrototype(Type->Name))
+      Result.Identifiers.push_back(Names.type(Type->Name));
   Result.Text = "// " + std::to_string(Order.size()) +
                 " types, from the program's local types.\n";
   if (!TheirHeaders.empty()) {

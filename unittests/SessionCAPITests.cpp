@@ -5844,8 +5844,8 @@ TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
 TEST_F(SessionCAPITest, CalleeSignaturesReadOnceServeLaterSelections) {
   // Where a call takes its arguments from its caller's setup, a selection
   // reads its callees' bodies for their signatures.  Later selections of the
-  // image take the callees they share as read, and every function decompiles
-  // as in a session that reads them afresh.
+  // image take the callees they share as read, and every function decompiles,
+  // directly and through LLVM, as in a session that reads them afresh.
   for (const char *Fixture : {"linux_libc_calls_arm64", "linux_libc_calls_arm",
                               "linux_libc_calls_x86"}) {
     SCOPED_TRACE(Fixture);
@@ -5868,6 +5868,8 @@ TEST_F(SessionCAPITest, CalleeSignaturesReadOnceServeLaterSelections) {
     for (const neverd_va_t Entry : Entries) {
       SCOPED_TRACE(Entry);
       const std::string Source = takeString(neverd_decompile(Kept, Entry));
+      // The LLVM route recovers the calls again, with the same memo.
+      const std::string Llvm = takeString(neverd_decompile_llvm(Kept, Entry));
       neverd_session_t Fresh = neverd_session_create();
       ASSERT_NE(Fresh, nullptr);
       auto CloseFresh =
@@ -5875,6 +5877,7 @@ TEST_F(SessionCAPITest, CalleeSignaturesReadOnceServeLaterSelections) {
       ASSERT_EQ(neverd_session_load(Fresh, Path.c_str()), 1);
       ASSERT_GE(neverd_session_discover_functions(Fresh), 0);
       EXPECT_EQ(takeString(neverd_decompile(Fresh, Entry)), Source);
+      EXPECT_EQ(takeString(neverd_decompile_llvm(Fresh, Entry)), Llvm);
     }
     const neverd::OmittedCalleeMemo *Memo =
         neverd::PipelineTestPeer::calleeSignatures(
@@ -5889,6 +5892,16 @@ TEST_F(SessionCAPITest, CalleeSignaturesReadOnceServeLaterSelections) {
         SCOPED_TRACE(Entry);
         EXPECT_LE(Callee.Conversions.size(), 1u);
       }
+    // The bodies a selection read keep the probes that found the parameters
+    // they forward, which the later selections took where they read the same.
+    size_t Probed = 0;
+    for (const auto &[Entry, Callee] : Memo->Callees)
+      for (const auto &Conversion : Callee.Conversions) {
+        EXPECT_LE(Conversion.Probes.size(),
+                  neverd::OmittedCalleeMemo::MaxProbes);
+        Probed += !Conversion.Probes.empty();
+      }
+    EXPECT_GT(Probed, 0u);
   }
 }
 
@@ -5973,6 +5986,40 @@ TEST(CalleeSignatureMemo, ACalleeKeepsTheConversionOfEachSummaryItReads) {
   EXPECT_EQ(&Callee.Conversions.front(), Found);
   EXPECT_EQ(Callee.conversionFor(*Three), nullptr);
   EXPECT_EQ(Callee.Conversions.size(), 2u);
+}
+
+TEST(CalleeSignatureMemo, AConversionKeepsTheProbesUsedLast) {
+  // A conversion keeps the forwarder probes of its body under the summaries
+  // of the last runs, the latest first, and the memo counts them against its
+  // bound.  A body the memo holds names its conversion; another, none.
+  using Memo = neverd::OmittedCalleeMemo;
+  Memo Kept;
+  neverd::MedFunc Body;
+  Body.Entry = 0x4000;
+  Memo::Conversion &Held = Kept.find(0x4000)->Conversions.emplace_back();
+  Held.Body = std::make_shared<const neverd::MedFunc>(Body);
+  for (int Arity = 0; Arity <= static_cast<int>(Memo::MaxProbes); ++Arity) {
+    Memo::Probe Probe;
+    Probe.Reads.emplace_back().Key = 0x4000;
+    Probe.Reads.front().RegArity = Arity;
+    Probe.Reads.emplace_back().Key = 0x5000;
+    Probe.Reads.back().Name = "callee";
+    Probe.Gives.RegisterArity = Arity;
+    Kept.keepProbe(Held, std::move(Probe));
+  }
+  ASSERT_EQ(Held.Probes.size(), Memo::MaxProbes);
+  EXPECT_EQ(Held.Probes.front().Gives.RegisterArity,
+            static_cast<int>(Memo::MaxProbes));
+  EXPECT_EQ(Held.Probes.back().Gives.RegisterArity, 1);
+  size_t Bytes = 0;
+  for (const Memo::Probe &Probe : Held.Probes) {
+    EXPECT_GT(Probe.Bytes, 0u);
+    Bytes += Probe.Bytes;
+  }
+  EXPECT_EQ(Held.Bytes, Bytes);
+  EXPECT_EQ(Kept.bytes(), Bytes);
+  EXPECT_EQ(Kept.conversionOf(*Held.Body), &Held);
+  EXPECT_EQ(Kept.conversionOf(Body), nullptr);
 }
 
 TEST_F(SessionCAPITest, AProgramsOwnDeclarationOfAnImportDecides) {

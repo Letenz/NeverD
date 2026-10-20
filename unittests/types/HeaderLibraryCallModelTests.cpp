@@ -79,6 +79,15 @@ Shape shapeOf(const TypeLibrary &Library, const TypeExpr &Expr) {
       return {};
     if (Named->Kind == TypeKind::Enum)
       return {Kind::Integer, Size};
+    // A union of object pointers alone passes as the pointer it holds:
+    // glibc's __CONST_SOCKADDR_ARG, a transparent union that takes a
+    // sockaddr pointer of any family.
+    if (Named->Kind == TypeKind::Union && Named->Record &&
+        !Named->Record->Members.empty() &&
+        llvm::all_of(Named->Record->Members, [&](const Member &M) {
+          return M.Type && shapeOf(Library, *M.Type).K == Kind::Pointer;
+        }))
+      return {Kind::Pointer, Size};
     if (Named->Kind == TypeKind::Struct || Named->Kind == TypeKind::Union)
       return {Kind::Record, Size};
     return {};

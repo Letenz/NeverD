@@ -175,7 +175,7 @@ public:
   bool textEnabled() const { return Text; }
 
   /// True when \p Insn is a trap execution can continue past, so the bytes
-  /// after it may still belong to the same function.  Only x86 `int3` is.
+  /// after it may still belong to the same function (x86 or ARM32 breakpoints).
   bool isResumableTrap(const DecodedInsn &Insn) const;
 
   /// Lift a single decoded instruction to LowIR ops. When supplied, \p Relocs

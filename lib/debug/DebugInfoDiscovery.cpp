@@ -68,10 +68,10 @@ void dropDebugDataBoundaryGuesses(BinaryImage &Img, const DebugContext &Dbg,
   // What else says a function begins there, which the data does not refute.
   std::set<va_t> Confirmed;
   for (const Symbol &Sym : Img.Symbols)
-    if (Sym.IsFunc && !IsGuess(Sym))
+    if (Sym.IsFunc && !IsGuess(Sym) && !Img.isFunctionContinuationAt(Sym.Addr))
       Confirmed.insert(Sym.Addr);
   for (const auto &[Start, End] : Img.KnownCodeRanges)
-    if (!Img.ContinuationCodeStarts.count(Start))
+    if (Img.hasKnownFunctionEntryAt(Start))
       Confirmed.insert(Start);
   std::set<va_t> Refuted;
   for (const Symbol &Sym : Img.Symbols)

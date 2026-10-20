@@ -303,6 +303,8 @@ CFGBuilder::makeInstructionBoundary(const InsnRecord &Rec,
 //===----------------------------------------------------------------------===//
 
 bool CFGBuilder::hasFunctionSymbolAtIndexed(const BinaryImage &Img, va_t Addr) {
+  if (!Img.isFunctionEntryCandidateAt(Addr))
+    return false;
   if (FunctionSymbolIndexImage != &Img ||
       FunctionSymbolIndexData != Img.Symbols.data() ||
       FunctionSymbolIndexCount != Img.Symbols.size()) {
@@ -323,6 +325,8 @@ bool CFGBuilder::hasFunctionSymbolAtIndexed(const BinaryImage &Img, va_t Addr) {
 
 bool CFGBuilder::isTailCallTarget(va_t Target) const {
   if (Target == InvalidVA || Target == CurrentFuncEntry)
+    return false;
+  if (CurrentImg && !CurrentImg->isFunctionEntryCandidateAt(Target))
     return false;
   // A selected-function run may omit other function symbols from its work
   // set. An explicit transfer to such a symbol still names a tail callee.
@@ -362,7 +366,7 @@ bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
   // A compiler places nothing after a call that cannot return where it is
   // made, such as error(3) with a constant nonzero status: a call that ends
   // its function's own code range does not return, whatever the callee.
-  if (callEndsItsCodeRange(Rec))
+  if (instructionEndsItsCodeRange(Rec))
     return true;
   va_t Target = InvalidVA;
   for (const auto &Op : Rec.Ops) {
@@ -428,7 +432,7 @@ bool CFGBuilder::callIsFollowedByPadding(const InsnRecord &Rec) const {
          (Skipped != 0 && isKnownFunctionEntry(Next + Skipped));
 }
 
-bool CFGBuilder::callEndsItsCodeRange(const InsnRecord &Rec) const {
+bool CFGBuilder::instructionEndsItsCodeRange(const InsnRecord &Rec) const {
   const va_t Next = Rec.Addr + Rec.Size;
   // Another fragment of this function may continue right where one ends.
   if (isCurrentOwnedFragment(Next))
@@ -519,8 +523,7 @@ void CFGBuilder::rewriteOwnInteriorCall(const BinaryImage &Img, InsnRecord &Rec,
       !exceptionEncodingBoundsOneFunction(Own->Encoding) ||
       Own->CodeRange.Begin != CurrentFuncEntry ||
       !Own->CodeRange.contains(Rec.Addr) || !Own->CodeRange.contains(Target) ||
-      Target == Own->CodeRange.Begin ||
-      (KnownFuncEntries && KnownFuncEntries->count(Target)) ||
+      Target == Own->CodeRange.Begin || isKnownFunctionEntry(Target) ||
       KeptOwnInteriorCallTargets.count(Target))
     return;
   const uint16_t PtrSize = TRI.PointerSize;

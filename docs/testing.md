@@ -147,6 +147,14 @@ The Z3 gate covers odd weights through 64 bits and even weights through 16 bits.
 Dense 32/64-bit even cases exceeding its five-second allowance remain in a
 separate complete-certificate test with an 8,192-unit budget, every one/two-bit
 input, all-ones input and deterministic full-word samples.
+The same target includes `SymMBABitwiseView`: independently flipped partitions,
+nested literal AND/OR/XOR/NOT views, negative and even coefficients, opaque
+arithmetic carriers and grouped remainders through 257 bits. Its separate
+pointwise-grammar verifier rejects high-bit errors, different carriers and
+nonlinear expressions that agree only at zero/all-ones. Exhaustive byte
+oracles, deterministic mixed-view tests, finite work/storage limits and Z3
+partition checks complement the production derivation. The 64-bit sixteen-part
+case must complete within 16,384 work units and support exact rewrite reuse.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
 signed/unsigned overflow admission against all byte pairs, including unsafe
 neighboring masks. `NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains`
@@ -168,6 +176,17 @@ over XOR, sums, products and nested carriers, including compiler-style grouped
 subtractions and enclosing scales. Warm results from both builds pass an
 independent modular evaluator on boundary and random full-word
 inputs before timing; this sampling is a benchmark check, not rewrite authority.
+Use `--family bitwise --count 24` for independently flipped partitions,
+compensated flips, nested forced-bit views and high-bit near misses over the
+same four opaque carriers. Retain the previous engine and its matching SDK to
+measure each new change independently of earlier improvements.
+
+`tools/neverd-worker/tests/source_synthesis_test.py WORKER --cli CLI` checks the
+real source-option request used by the GUI and both CLI source emitters, for
+single-function and whole-program requests. The raw machine-code bitwise fixture
+retains sixteen separately flipped masks; enhanced output must recombine them.
+With Clang available, each generated C output executes at O0/O2 against an
+independent arithmetic oracle on boundary and deterministic random inputs.
 
 `NeverDSymLoadOriginBindingTests` checks transactional history rebinding,
 sorted conflict unions, independent forks and invalid batches. Historical
@@ -752,6 +771,16 @@ to a disposable project, edit the real output through native widgets, and
 verify persistence. `NEVERD_CODE_NAV_CAPTURE_DIR` saves window captures.
 Run `neverd-gui-tests` directly with the native Qt platform to exercise native
 widgets; CTest sets the controller's platform to `offscreen`.
+
+`NeverDGuiSourceVariableTypes` uses the real worker for type editing and
+variable associations. It is registered only with
+`NEVERD_WORKER_REAL_ENGINE_TESTS=ON`; fixture SDK builds keep it disabled.
+`NeverDWorkerSourceVariableTypes` and `NeverDWorkerSourceVariableEdits` also
+compile and execute their generated C using the configured C compiler.
+Run these with `NeverDSourceVariableFlowTests`, `NeverDHighVariableEditsTests`
+and `NeverDLLVMVariableEditsTests`. The HighIR tests preserve instruction
+anchors for unchanged statements and refuse old store anchors when a split
+replaces a stack store with a scalar assignment.
 
 ## Source dialects and DWARF ingestion
 
@@ -1674,6 +1703,21 @@ fifth Win64 or ninth SysV floating argument. Native execution requires an x64
 host with OS-enabled FMA3. FMA4, EVEX/SAE and unavailable features are excluded.
 
 ## x86 invalid encodings and instruction boundaries
+
+`NeverDResumableTrapBoundaryTests` checks that an x86/x64 debugger trap at a
+known function end or before another function's entry does not acquire a
+synthetic tail call. Sized symbols, code ranges and unwind records supply
+independent boundary evidence. Interior debug breaks, adjacent owned fragments,
+ordinary fallthrough and explicit tail jumps remain controls. The PE source cases
+check HighC and LLVM-to-C with and without optimization, preserving the preceding
+returning call and the breakpoint.
+Sibling fixtures exercise short, long and prefixed x86 breakpoints, `int1`,
+`ud0`/`ud1`/`ud2`, fast-fail, ARM/Thumb `bkpt`/`udf`, and AArch64 traps. They
+check detailed and lightweight decode, range-only and entry-only metadata,
+interior continuations, conditional ARM paths and Thumb IT state. Ordinary
+interrupts remain a negative control. The target also runs AArch64 fast-classifier
+parity, including all UDF immediates; its optional real-binary walk needs
+`NEVERD_PARITY_BIN` and otherwise skips.
 
 `NeverDX86EncodingAccuracyTests` requires raw illegal LOCK forms (including
 memory-source arithmetic and multi-byte NOP) and MOV-to-CS to fail in every
@@ -3047,6 +3091,11 @@ that same slot, in either operand order.
 strings, generic builtins compiled for a different source ISA, and dead image
 address calculations. The latter must retain volatile/atomic loads and
 observable calls while leaving the input LLVM module unchanged.
+Integer-initializer regressions give scalars, arrays and records values that
+match known image string addresses, then compile and execute their generated C
+at O0/O2 with x64 and AArch64 writer options. Symbolic global references retain
+their pointer relocations. The MinGW whole-module regression separately checks
+that the runtime's integer switch tables produce compilable LLVM C.
 Return-only join tests compare 6144 full-status cases at each O0/O2 level against
 independently compiled LLVM, checking call counts and volatile output effects.
 They also require direct returns in the C and unchanged input IR. Effectful
@@ -8044,6 +8093,18 @@ identifies a code address, while its absence still refuses that address.
 `RelocationsDoNotAuthenticateContinuationStarts` and
 `CFGMetadataDoesNotAuthenticateContinuationStarts` reject independent function
 identity for continuation code through both the verifier and LLVM emission.
+The `FunctionEntryAdmission` cases exercise runtime, verified, symbol, unwind,
+known-range and import evidence against the same data, continuation and
+alignment rejections. They also check Thumb mode aliases, primary entries
+preceding their unwind frames, index rebuilds and next-entry bounds. A named continuation jump
+must retain its parent CFG and return; LLVM must keep interior frame addresses
+relative to the primary function. CFG targets reject virtual tails, incomplete
+instruction units and overlapping owners while admitting writable and
+execute-only code. On-demand x86 import-thunk decoding cannot join code bytes
+with adjacent data. Run `NeverDFunctionAdmissionTests`,
+`NeverDNativePointerRelocationBoundaryTests`,
+`NeverDMachOPointerRelocationBoundaryTests` and `NeverDSourcePatchLayoutTests`
+when changing this shared entry boundary.
 
 `PointerRelocationBatch.PointerRunsAmongCodeAreData` records an i386 jump
 table's three relocated slots in `.text` as data slots and the displacement
@@ -8082,6 +8143,11 @@ the read is a GEP into a read-only global and the table VA survives nowhere.
 lays among its code as data, in a `.text` over the 1 MiB single-global limit;
 the read resolves through the table run's own mirror rather than refusing that
 the code segment cannot mirror.
+`ANarrowLoadBaseAmongCodeIsData` decodes a two-level switch's `movzx r,
+byte [sel + table]` and its pointer-wide jump-table load; the byte table's
+base in `.text` names data, the jump table's names code. Without the
+narrow-load rule the byte-table base is a code address with no lifted
+identity.
 `SwitchCasesStayLabelsPastAnEntryBeforeTheTable` puts an aligned prologue
 match in dead code between a switch's seven-byte `mov eax, N; jmp tail` cases
 and its table among the code; the cases stay labels only because the
@@ -9145,3 +9211,22 @@ state serialization. These checks do not establish execution of ART startup.
 `ProcessReport.AndroidLoaderMayBeEstablishedBeforeApplication` cover independent
 loader setup, unchanged null Application, exact lookup outcomes, retained loader
 identity after detach and contradictory/unknown lifecycle inputs.
+
+## Java library loading and retained DEX/native calls
+
+`DalvikResume.*` checks single-use owner-bound continuations, nested stack order,
+register/field effects without replay, initialization reentry and failure,
+original DEX catch handlers, resource exhaustion and synchronous refusal.
+`AndroidJNI.JavaLibraryLoadResumesInitializersAndNestedNativeCalls` runs authored
+DEX and original AArch64 ELF bodies through `System.loadLibrary`, `JNI_OnLoad`,
+registration and nested DEX/native calls. Cases cover method/field lookup and
+allocation during initialization, recursion and repetition, constructor and
+object returns, implicit frame cleanup, exception/class-error propagation,
+accepted/rejected versions, guest sleep and missing/wrong ELF bindings.
+The same fixture covers O0/O2 and ordinary/APS2/RELR relocations on available
+CPU transports. `ProcessReport.JavaLibraryBindingRequiresInitializedJNIGuestImage`
+checks typed explicit input and invalid names/lifecycle combinations.
+
+Run these with all Dalvik and Android JNI tests, existing callback/thread/
+property/finalizer tests and ProcessReport after changing this shared boundary.
+Unsupported CPU transports are platform skips, not successful qualification.

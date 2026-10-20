@@ -109,21 +109,21 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
     for (const TypeRef &Record : Records)
       Dbg->completeType(Record);
   RecordDefinitions = Opts.RecordDefinitions(Records);
-  // The typedefs and enumerators they declare are the program's names: the
-  // unit's own step around them.
-  for (const std::string &Name : RecordDefinitions.Identifiers)
-    GlobalIdentifierAllocator.allocateVerbatim(Name);
-  for (const std::string &Name : RecordDefinitions.Enumerations)
-    GlobalIdentifierAllocator.allocateVerbatim(Name);
 }
 
 std::string HighCWriter::declaredAs(const TypeRef &Type,
                                     llvm::StringRef Declarator) const {
+  if (const std::optional<std::string> Typedef = declaredTypedef(Type))
+    return *Typedef + (Declarator.empty() ? "" : " " + Declarator.str());
+  return declarationToC(Type, Declarator);
+}
+
+std::optional<std::string>
+HighCWriter::declaredTypedef(const TypeRef &Type) const {
   if (Type && !Type->TypedefName.empty() &&
       llvm::is_contained(RecordDefinitions.Types, Type->TypedefName))
-    return cNamedTypeSpelling(Type->TypedefName) +
-           (Declarator.empty() ? "" : " " + Declarator.str());
-  return declarationToC(Type, Declarator);
+    return cNamedTypeSpelling(Type->TypedefName);
+  return std::nullopt;
 }
 
 bool HighCWriter::memberOfDefinedRecord(const HighExpr &Addr) const {

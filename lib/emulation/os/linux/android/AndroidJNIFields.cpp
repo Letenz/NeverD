@@ -26,23 +26,27 @@ BionicResult Bionic::jniFields(unsigned Slot, const NativeCallEvent &Call) {
     if (!Signature)
       return Signature.takeError();
     const auto Owner = "L" + (*Receiver)->ClassName + ";";
-    auto Initialized = executeDex(nullptr, {}, Owner);
-    if (!Initialized || !*Initialized || JNI.Threads.at(threadID()).Exception)
-      return Initialized;
-    const auto *Field = JNI.Dex->findField({Owner, *Name, *Signature}, Static);
-    if (!Field) {
-      auto Stopped = unsupportedImport(Call);
-      Result.Diagnostic += " (field declaration not supplied)";
-      return Stopped;
-    }
-    for (auto [ID, Existing] : JNI.DexFields)
-      if (Existing == Field)
-        return value(ID);
-    if (JNI.DexFields.size() >= jni_abi::ReferenceLimit)
-      return failure("JNI DEX field identity budget exhausted");
-    const uint64_t ID = jni_abi::Base + 0x1200000 + JNI.DexFields.size() * 8;
-    JNI.DexFields.emplace(ID, Field);
-    return value(ID);
+    return executeDex(
+        nullptr, {}, Owner,
+        [this, Owner, Static, Name = *Name,
+         Signature = *Signature](uint64_t) -> BionicResult {
+          const auto *Field =
+              JNI.Dex->findField({Owner, Name, Signature}, Static);
+          if (!Field) {
+            Result.Stop = ProcessStopReason::UnsupportedService;
+            Result.Diagnostic = "JNI field declaration not supplied";
+            return std::nullopt;
+          }
+          for (auto [ID, Existing] : JNI.DexFields)
+            if (Existing == Field)
+              return value(ID);
+          if (JNI.DexFields.size() >= jni_abi::ReferenceLimit)
+            return failure("JNI DEX field identity budget exhausted");
+          const uint64_t ID =
+              jni_abi::Base + 0x1200000 + JNI.DexFields.size() * 8;
+          JNI.DexFields.emplace(ID, Field);
+          return value(ID);
+        });
   }
   auto It = JNI.DexFields.find(A[2]);
   if (It == JNI.DexFields.end())
@@ -68,21 +72,17 @@ BionicResult Bionic::jniFields(unsigned Slot, const NativeCallEvent &Call) {
     Bits = *Object ? (*Object)->Identity : 0;
   } else if (Write && Kind == 'Z')
     Bits = uint8_t(Bits);
-  auto Executed = runDex([&](const auto &Admit, uint64_t Stack) {
-    return JNI.DexRuntime->field(
-        Field, Static ? 0 : (*Receiver)->Identity,
-        Write ? std::optional<uint64_t>(Bits) : std::nullopt, Admit, Stack);
-  });
-  if (!Executed || !*Executed || JNI.Threads.at(threadID()).Exception)
-    return Executed;
-  if (Write)
-    return value(0);
-  if (Kind == 'L') {
-    auto Ref = jniReference(JNI.Heap->get(std::get<uint64_t>(**Executed)));
-    if (!Ref)
-      return Ref.takeError();
-    return value(*Ref);
-  }
-  return Executed;
+  return runDex(
+      [&](const auto &Admit, uint64_t Stack) {
+        return JNI.DexRuntime->field(Field, Static ? 0 : (*Receiver)->Identity,
+                                     Write ? std::optional<uint64_t>(Bits)
+                                           : std::nullopt,
+                                     Admit, Stack, threadID());
+      },
+      [this, Write, Kind](uint64_t Bits) -> BionicResult {
+        if (Write)
+          return value(0);
+        return Kind == 'L' ? dexReference(Bits) : value(Bits);
+      });
 }
 } // namespace neverd::emulation::android_model

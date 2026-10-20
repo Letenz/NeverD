@@ -1692,6 +1692,27 @@ TEST(ProcessReport, AndroidApplicationSnapshotIsExplicitAndStrict) {
   }
 }
 
+TEST(ProcessReport, JavaLibraryBindingRequiresInitializedJNIGuestImage) {
+  auto Parsed = processOptionsFromJSON(
+      R"({"android":{"jni":true,"java_library":"synthetic-1.0"}})");
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  ASSERT_TRUE(Parsed->Android->JavaLibrary);
+  EXPECT_EQ(*Parsed->Android->JavaLibrary, "synthetic-1.0");
+  for (auto Input :
+       {R"({"java_library":"sample"})",
+        R"({"jni":true,"initialize":false,"java_library":"sample"})",
+        R"({"jni":true,"java_library":false})",
+        R"({"jni":true,"java_library":null})",
+        R"({"jni":true,"java_library":""})",
+        R"({"jni":true,"java_library":"/tmp/sample"})",
+        R"({"jni":true,"java_library":"a\u0000b"})"}) {
+    auto Bad =
+        processOptionsFromJSON(std::string("{\"android\":") + Input + "}");
+    EXPECT_FALSE(bool(Bad));
+    if (!Bad)
+      llvm::consumeError(Bad.takeError());
+  }
+}
 TEST(ProcessReport, JavaStateObservationIsOptInStrictAndRetainsUnknownValues) {
   for (bool Enabled : {false, true}) {
     auto Parsed = processOptionsFromJSON(

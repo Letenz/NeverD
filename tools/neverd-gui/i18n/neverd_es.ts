@@ -919,6 +919,46 @@
         <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
         <translation>Mostrar las bibliotecas de tipos que se unen a los tipos del programa, y añadir o quitar una</translation>
     </message>
+    <message>
+        <source>Split variable</source>
+        <translation>Dividir variable</translation>
+    </message>
+    <message>
+        <source>Separate independent local variable lifetimes</source>
+        <translation>Separar los tiempos de vida independientes de las variables locales</translation>
+    </message>
+    <message>
+        <source>Map to variable...</source>
+        <translation>Asignar a variable...</translation>
+    </message>
+    <message>
+        <source>Associate copy-related variables with compatible live ranges</source>
+        <translation>Asociar variables relacionadas por copia con intervalos de vida compatibles</translation>
+    </message>
+    <message>
+        <source>Unmap variable</source>
+        <translation>Desasociar variable</translation>
+    </message>
+    <message>
+        <source>Remove a variable mapping</source>
+        <translation>Eliminar una asociación de variables</translation>
+    </message>
+    <message>
+        <source>Unsplit variable</source>
+        <translation>Deshacer división de variable</translation>
+    </message>
+    <message>
+        <source>Restore the original variable lifetime grouping</source>
+        <translation>Restaurar la agrupación original de los tiempos de vida</translation>
+    </message>
+    <message>
+        <source>Reset variable associations</source>
+        <translation>Restablecer asociaciones de variables</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without variable associations</source>
+        <translation>Regenerar esta función sin asociaciones de variables</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1369,6 +1409,18 @@
         <source>Cannot write %1</source>
         <translation>No se puede escribir %1</translation>
     </message>
+    <message>
+        <source>Cannot create the recovery marker directory.</source>
+        <translation>No se puede crear el directorio de marcadores de recuperación.</translation>
+    </message>
+    <message>
+        <source>Cannot remove %1: %2</source>
+        <translation>No se puede eliminar %1: %2</translation>
+    </message>
+    <message>
+        <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
+        <translation>La base de datos cambió mientras hay ediciones recuperadas pendientes. Conserve la copia de trabajo antes de volver a abrirla.</translation>
+    </message>
 </context>
 <context>
     <name>Representations</name>
@@ -1585,6 +1637,14 @@ Haga doble clic para ir a la declaración.</translation>
     <message>
         <source>Transformation failed: %1</source>
         <translation>La transformación falló: %1</translation>
+    </message>
+    <message>
+        <source>Saved variable types need review: the analysis or local types changed</source>
+        <translation>Los tipos de variables guardados necesitan revisión: el análisis o los tipos locales han cambiado</translation>
+    </message>
+    <message>
+        <source>Saved variable associations need review: </source>
+        <translation>Las asociaciones de variables guardadas necesitan revisión: </translation>
     </message>
 </context>
 <context>
@@ -2453,6 +2513,46 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Type Libraries</source>
         <translation>Bibliotecas de tipos</translation>
+    </message>
+    <message>
+        <source>Cannot open more disassembly views.</source>
+        <translation>No se pueden abrir más vistas de desensamblado.</translation>
+    </message>
+    <message>
+        <source>Could not export source: %1</source>
+        <translation>No se pudo exportar el código fuente: %1</translation>
+    </message>
+    <message>
+        <source>NeverD View-%1</source>
+        <translation>Vista NeverD-%1</translation>
+    </message>
+    <message>
+        <source>Showing %1 matches; use Next to continue the search.</source>
+        <translation>Se muestran %1 coincidencias; use Siguiente para continuar la búsqueda.</translation>
+    </message>
+    <message>
+        <source>The engine cannot identify this source variable unambiguously</source>
+        <translation>El motor no puede identificar esta variable del código fuente sin ambigüedad</translation>
+    </message>
+    <message>
+        <source>Map variable</source>
+        <translation>Asociar variable</translation>
+    </message>
+    <message>
+        <source>Destination variable (the engine checks copy relationships and live ranges):</source>
+        <translation>Variable de destino (el motor comprueba las relaciones de copia y los intervalos de vida):</translation>
+    </message>
+    <message>
+        <source>No other unambiguous local variable is available</source>
+        <translation>No hay otra variable local identificable sin ambigüedad</translation>
+    </message>
+    <message>
+        <source>The source analysis changed; select the variable again</source>
+        <translation>El análisis del código fuente cambió; seleccione la variable de nuevo</translation>
+    </message>
+    <message>
+        <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
+        <translation>Esta variable no tiene una asociación coincidente. Use Restablecer asociaciones de variables para eliminar las ediciones obsoletas.</translation>
     </message>
 </context>
 <context>
@@ -4344,6 +4444,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>Usar el tipo del &amp;análisis</translation>
+    </message>
+    <message>
+        <source>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</source>
+        <translation>%1 es una variable del código fuente de %2 bytes. Introduzca un tipo escalar o puntero de los tipos locales.</translation>
+    </message>
+    <message>
+        <source>Remove this source type assertion and use the analysis type</source>
+        <translation>Eliminar esta aserción de tipo del código fuente y usar el tipo obtenido del análisis</translation>
     </message>
 </context>
 <context>

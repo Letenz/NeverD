@@ -3,6 +3,12 @@ add_neverd_unittest(NeverDDirectTailCallMetadataTests
   LINK_COMPONENTS IRLow Lift
 )
 
+add_neverd_unittest(NeverDResumableTrapBoundaryTests
+  core/ResumableTrapBoundaryTests.cpp
+  aarch64/AArch64_FastClassifyParityTests.cpp
+  LINK_COMPONENTS Pipeline BackendC
+)
+
 add_neverd_unittest(NeverDSEHRuntimeMemoryTests
   core/LowScalarConstantTests.cpp
   eh/SEHRuntimeMemoryTests.cpp

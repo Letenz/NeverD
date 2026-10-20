@@ -1294,12 +1294,15 @@ void fixupVexCompareId(cs_insn *I) {
 void X86Lifter::fixupDecodedInsn(cs_insn *I) { fixupVexCompareId(I); }
 
 bool X86Lifter::isFunctionTerminator(const cs_insn *I) {
+  if (isResumableTrap(I))
+    return true;
   switch (I->id) {
   case X86_INS_RET:
   case X86_INS_RETF:
   case X86_INS_JMP:
   case X86_INS_JMPABS:
-  case X86_INS_INT3:
+  case X86_INS_UD0:
+  case X86_INS_UD1:
   case X86_INS_UD2:
   case X86_INS_IRET:
   case X86_INS_IRETD:
@@ -1332,7 +1335,13 @@ bool X86Lifter::isReturn(const cs_insn *I) {
 }
 
 bool X86Lifter::isResumableTrap(const cs_insn *I) {
-  return I->id == X86_INS_INT3;
+  if (I->id == X86_INS_INT3 || I->id == X86_INS_INT1)
+    return true;
+  // The long spelling `int 3` lifts to the same debugger breakpoint as CC.
+  // Read its encoded vector so classification also works without detail.
+  return I->id == X86_INS_INT && I->size >= x86::kIntImm8Len &&
+         I->bytes[I->size - x86::kIntImm8Len] == x86::kIntImm8 &&
+         I->bytes[I->size - 1] == 3;
 }
 
 va_t X86Lifter::directCallTarget(const cs_insn *I) {

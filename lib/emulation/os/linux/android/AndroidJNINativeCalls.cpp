@@ -31,14 +31,18 @@ uint64_t narrow(uint64_t Value, std::string_view Type) {
 }
 } // namespace
 
-BionicResult Bionic::callNativeJNI(const mobile::dalvik::Method &Method,
-                                   llvm::ArrayRef<uint64_t> Arguments) {
+BionicResult
+Bionic::callNativeJNI(const mobile::dalvik::Method &Method,
+                      llvm::ArrayRef<uint64_t> Arguments,
+                      std::shared_ptr<DexContinuation> Continuation) {
   using namespace mobile::dalvik;
   auto Unsupported = [&](llvm::StringRef Reason) -> BionicResult {
-    Result.Stop = ProcessStopReason::UnsupportedService;
-    Result.Diagnostic = "JNI native invocation " + Method.reference.identity() +
-                        ": " + Reason.str();
-    return std::nullopt;
+    return resumeDex(Continuation,
+                     {ExecutionStop::Unsupported,
+                      0,
+                      {},
+                      "JNI native invocation " + Method.reference.identity() +
+                          ": " + Reason.str()});
   };
   if (has(Method.access, "synchronized") ||
       has(Method.access, "declared-synchronized"))
@@ -65,6 +69,7 @@ BionicResult Bionic::callNativeJNI(const mobile::dalvik::Method &Method,
     return std::move(E);
   auto &Thread = JNI.Threads.at(threadID());
   if (Thread.Frames.size() == jni_abi::ReferenceLimit ||
+      JNI.NextFrame == UINT64_MAX ||
       Thread.NativeFrames.size() >= jni_abi::NativeFrameLimit ||
       JNI.References.size() + Ref.parameters.size() + 1 >
           jni_abi::ReferenceLimit)
@@ -85,10 +90,6 @@ BionicResult Bionic::callNativeJNI(const mobile::dalvik::Method &Method,
         (Type == "Z" && uint8_t(Arg) > 1))
       return failure("JNI native argument type or initialization mismatch");
   }
-  // Active use is still owned by Runtime; registration cannot skip <clinit>.
-  auto Initialized = executeDex(nullptr, {}, Ref.owner);
-  if (!Initialized || !*Initialized || Thread.Exception)
-    return Initialized;
   std::shared_ptr<JNIObject> Receiver;
   if (Static) {
     auto Class = jniClass(llvm::StringRef(Ref.owner).drop_front().drop_back());
@@ -118,7 +119,8 @@ BionicResult Bionic::callNativeJNI(const mobile::dalvik::Method &Method,
   }
   return std::optional<BionicValue>(
       GuestCallback{Target, std::move(Values),
-                    JNINativeCallback{&Method, threadID(), Frame, Depth}});
+                    JNINativeCallback{&Method, threadID(), Frame, Depth,
+                                      std::move(Continuation)}});
 }
 
 BionicResult Bionic::finishNativeJNI(const JNINativeCallback &Continuation) {
@@ -160,12 +162,17 @@ BionicResult Bionic::finishNativeJNI(const JNINativeCallback &Continuation) {
   });
   Thread.Frames.resize(Continuation.FrameDepth);
   Thread.NativeFrames.pop_back();
-  if (!Thread.Exception && mobile::dalvik::referenceType(Type)) {
-    auto Reference = jniReference(std::move(Object));
-    if (!Reference)
-      return Reference.takeError();
-    Returned = *Reference;
-  }
-  return value(Returned);
+  mobile::dalvik::ExecutionResult Completion;
+  if (Thread.Exception) {
+    Completion.stop = mobile::dalvik::ExecutionStop::Thrown;
+    Completion.throwable = Thread.Exception->Identity;
+    Completion.exception = Thread.Exception->ClassName;
+    Completion.diagnostic = "exception returned from guest JNI native";
+    Thread.Exception.reset();
+  } else
+    Completion.value = mobile::dalvik::referenceType(Type)
+                           ? (Object ? Object->Identity : 0)
+                           : Returned;
+  return resumeDex(Continuation.Dex, std::move(Completion));
 }
 } // namespace neverd::emulation::android_model

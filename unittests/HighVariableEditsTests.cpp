@@ -39,6 +39,17 @@ HighFunc function(std::vector<HighStmt> Body) {
 }
 ExprPtr constant(unsigned I) { return HighExpr::makeConst(I, 8); }
 std::string id(int I) { return highSourceVariableId(local(I)); }
+HighSourceMap statementSources(const HighFunc &F) {
+  HighSourceMap Sources;
+  for (const auto &S : F.Body)
+    Sources.push_back({F.Entry,
+                       {S.Addr, 0},
+                       {},
+                       S.Kind == StmtKind::Store ? HighSourceKind::Store
+                                                 : HighSourceKind::Statement,
+                       S.Kind});
+  return Sources;
+}
 TEST(HighVariableEdits, MapsCopiesOnAPrivateGraphAndKeepsSourceObservations) {
   auto F =
       function({assign(1, constant(7)), assign(2, value(1)), use(value(2))});
@@ -70,6 +81,24 @@ TEST(HighVariableEdits, SplitsOnlyIndependentUsedLifetimes) {
                            assign(1, constant(9)), use(value(2))});
   EXPECT_FALSE(
       editHighVariable(Overlap, {}, {HighVariableEdit::Map, id(1), id(2)}));
+}
+TEST(HighVariableEdits, PreservesStatementAnchorsAcrossLocalAssociations) {
+  const auto F = function({assign(1, constant(7)), use(value(1)),
+                           assign(1, constant(9)), use(value(1))});
+  auto Sources = statementSources(F);
+  auto Foreign = Sources.front();
+  Foreign.Function = 0x2000;
+  Sources.push_back(Foreign);
+  const auto R =
+      editHighVariable(F, Sources, {HighVariableEdit::Split, id(1), {}});
+  ASSERT_TRUE(R) << R.Refusal;
+  ASSERT_EQ(R.Sources.size(), F.Body.size());
+  for (size_t I = 0; I < R.Sources.size(); ++I) {
+    EXPECT_EQ(R.Sources[I].Function, F.Entry);
+    EXPECT_EQ(R.Sources[I].Occurrence, Sources[I].Occurrence);
+    EXPECT_EQ(R.Sources[I].Kind, Sources[I].Kind);
+    EXPECT_EQ(R.Sources[I].StatementKind, Sources[I].StatementKind);
+  }
 }
 ExprPtr address(int Offset) {
   MedVar SP;
@@ -122,5 +151,21 @@ TEST(HighVariableEdits, RefusesOverlappingStorageAndExceptionEntries) {
   F.StructuredExceptionRegions = 1;
   EXPECT_FALSE(
       editHighVariable(F, {}, {HighVariableEdit::Split, "stack:-8", {}}));
+}
+TEST(HighVariableEdits, DropsOnlyStoreAnchorsChangedByScalarization) {
+  auto F = function({store(8, constant(1)), use(load(8)), store(8, constant(2)),
+                     use(load(8))});
+  F.FrameSize = 64;
+  const auto Sources = statementSources(F);
+  const auto R =
+      editHighVariable(F, Sources, {HighVariableEdit::Split, "stack:-8", {}});
+  ASSERT_TRUE(R) << R.Refusal;
+  ASSERT_EQ(R.Sources.size(), 2u);
+  EXPECT_EQ(R.Sources[0].Occurrence, Sources[1].Occurrence);
+  EXPECT_EQ(R.Sources[1].Occurrence, Sources[3].Occurrence);
+  for (const auto &Source : R.Sources) {
+    EXPECT_EQ(Source.Kind, HighSourceKind::Store);
+    EXPECT_EQ(Source.StatementKind, StmtKind::Store);
+  }
 }
 } // namespace

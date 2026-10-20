@@ -459,8 +459,16 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                     const std::set<va_t> *VectorArgumentCallees,
                     const std::map<va_t, PointerVariableCallee> *PointerCallees,
                     const std::set<va_t> *UserPrototypeCallees,
-                    const RelocationSymbolIndex *RelocationSymbols) {
+                    const RelocationSymbolIndex *RelocationSymbols,
+                    std::vector<va_t> *SummaryKeysRead) {
   Func.CallInfos.clear();
+  // Every callee summary, user prototype and name the recovery reads is at a
+  // key it notes first.  It writes summaries only at the function's entry.
+  auto noteRead = [SummaryKeysRead](va_t Key) {
+    if (SummaryKeysRead)
+      SummaryKeysRead->push_back(Key);
+  };
+  noteRead(Func.Entry);
 
   const auto &TRI = getTargetRegInfo(TheArch);
   const AbiSpillContext SpillContext{Func, TRI, FrameLocalLeafCallees};
@@ -682,6 +690,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           if (Hint.CallKind == SourceCallTypeHint::Kind::Analyst)
             CI.VarArgFixedCount = Hint.AnalystFixedCount;
           CI.TargetAddr = Hint.TargetAddress;
+          noteRead(CI.TargetAddr);
           auto Name = FuncNames.find(CI.TargetAddr);
           CI.TargetName =
               !Hint.TargetName.empty() ? Hint.TargetName
@@ -695,6 +704,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         }
       }
 
+      noteRead(CI.TargetAddr);
       auto FnIt = FuncNames.find(CI.TargetAddr);
       CI.TargetName =
           FnIt != FuncNames.end()
@@ -785,6 +795,11 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           CI.TargetAddr = *CallSlot;
           IsIndirectImport = true;
         }
+      // The call's target is final: the summaries below read it, and the
+      // slot.
+      noteRead(CI.TargetAddr);
+      if (CallSlot)
+        noteRead(*CallSlot);
       // The routine the function-pointer variable an indirect call goes
       // through starts at: the call passes its arguments, but takes neither
       // its name nor its contract (PointerVariableCallee).  An import's slot
@@ -868,6 +883,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // A variable this image's routine starts at passes that routine's.
       const va_t VariableEntry =
           VariableCallee ? VariableCallee->LocalEntry : InvalidVA;
+      if (VariableEntry != InvalidVA)
+        noteRead(VariableEntry);
       if (VariableEntry != InvalidVA && CalleeRegArity)
         if (auto AIt = CalleeRegArity->find(VariableEntry);
             AIt != CalleeRegArity->end())
@@ -1011,6 +1028,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
         va_t Resolved = resolveIndirectTargetAddr(
             Blk, static_cast<int>(OI), Op.Inputs[0], 0, &SpillContext);
         if (Resolved) {
+          noteRead(Resolved);
           auto VIt = CalleeIsVariadic->find(Resolved);
           auto AIt = CalleeRegArity->find(Resolved);
           if (VIt != CalleeIsVariadic->end() && VIt->second &&

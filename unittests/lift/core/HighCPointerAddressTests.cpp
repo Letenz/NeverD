@@ -47234,6 +47234,41 @@ TEST(HighCPointerAddresses, RecordsHeadersNameByTypedefsTakeTheirTypedefs) {
   expectCSyntax("#include <pthread.h>\n" + Source);
 }
 
+TEST(HighCPointerAddresses,
+     EnumerationsHeadersNameByTypedefsTakeTheirTypedefs) {
+  // glibc's <search.h> names VISIT by a typedef alone, which leaves it no
+  // tag: the unit declares no `typedef enum VISIT VISIT;` of its own, which
+  // would contradict the header's.  An enumeration the unit's own types
+  // define keeps its typedef.
+  HighFunc Func;
+  Func.Name = "probe_walk";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(4);
+  Func.Params = {{"walk", NdType::makePtr(NdType::makeNamedRecord("walker"))}};
+  returnValue(Func, HighExpr::makeConst(0, 4));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text = "#include <search.h>\n"
+                       "enum order { first, last };\n"
+                       "struct walker { VISIT visit; enum order order; };\n";
+    Definitions.Records = {{"walker", false}};
+    Definitions.Tags = {{"walker", false}};
+    Definitions.Enumerations = {"VISIT", "order"};
+    Definitions.HeaderTypedefs = {"VISIT"};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_EQ(Source.find("typedef enum VISIT"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("typedef enum order order;"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, HeaderRoutinesReturnTheirDeclaredPointers) {
   // <semaphore.h> declares sem_open variadic, so no prototype here gives
   // its result: its declaration returns a sem_t *, which an integer local
@@ -47376,6 +47411,72 @@ TEST(HighCPointerAddresses, RecordsNamedLikeLibraryRoutinesAreSpelledByTags) {
   EXPECT_EQ(Source.find("typedef struct stat stat;"), std::string::npos)
       << Source;
   EXPECT_NE(Source.find("struct stat* buffer"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses,
+     TypedefParametersOfDefinedFunctionsTakeTheirTypedefs) {
+  // hardlink passes its walker, a machine integer, to nftw's PLT stub,
+  // which the unit defines and declares with the header's __nftw_func_t:
+  // the argument converts to that typedef.  Converted to the function type
+  // the type library gives, whose pointers the unit spells void *, it would
+  // match no parameter C declares.
+  const auto Compare = NdType::makePtr(NdType::makeFunc(
+      NdType::makeInt(4), {NdType::makePtr(NdType::makeVoid()),
+                           NdType::makePtr(NdType::makeVoid())}));
+  auto Named = std::make_shared<NdType>(*Compare);
+  Named->TypedefName = "cmp_fn";
+  class StubDbg : public NullDebugContext {
+  public:
+    explicit StubDbg(TypeRef Named) : Named(std::move(Named)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x140002000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "sort_with";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeVoid();
+      FS.Params = {{"compare", Named}};
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Named;
+  } Dbg(Named);
+  HighFunc Stub;
+  Stub.Name = "sort_with";
+  Stub.Entry = 0x140002000;
+  Stub.ReturnType = NdType::makeVoid();
+  Stub.Params = {{"compare", Named}};
+  returnValue(Stub, nullptr);
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "sort_all";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  Func.Params = {{"walker", Word}};
+  Func.Body = {callStmt("sort_with", 0x140002000, {parameter(0, Word)})};
+  returnValue(Func, nullptr);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text =
+        "typedef int32_t (*cmp_fn)(const void *, const void *);\n";
+    Definitions.Types = {"cmp_fn"};
+    Definitions.Identifiers = {"cmp_fn"};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Stub, Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("sort_with(cmp_fn compare)"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("sort_with((cmp_fn)"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(int32_t (*)(void*, void*))"), std::string::npos)
+      << Source;
   expectCSyntax(Source);
 }
 
@@ -47707,6 +47808,171 @@ TEST(HighCPointerAddresses, HeaderObjectsReadAsBytesStayTheHeaders) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses, HeaderRecordObjectsAreReachedThroughTheirBytes) {
+  // BIND's delv passes the address of its copy of in6addr_loopback, which
+  // <netinet/in.h> declares a const struct in6_addr: the unit declared it
+  // `unsigned char in6addr_loopback[16];`, a redefinition beside the
+  // header, and subscripted the record.  The object is the header's,
+  // reached through its bytes.
+  constexpr va_t Loopback = 0x6000;
+  BinaryImage Img =
+      makeImageObjectFixture(Loopback, std::vector<uint8_t>(16), true);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  Symbol Data;
+  Data.Name = "in6addr_loopback";
+  Data.Addr = Loopback;
+  Data.Size = 16;
+  Img.Symbols.push_back(Data);
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "bind_loopback";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  Func.Body = {callStmt(
+      "isc_sockaddr_fromin6", 0x2000,
+      {HighExpr::makeConst(Loopback, 8, ConstantAddressProvenance::Address)})};
+  returnValue(Func,
+              HighExpr::makeLoad(HighExpr::makeConst(Loopback + 8, 8), Word));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <netinet/in.h>"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("in6addr_loopback["), std::string::npos) << Source;
+  EXPECT_NE(Source.find("((unsigned char *)&in6addr_loopback)"),
+            std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, NarrowStringParametersTakeNarrowLiterals) {
+  // addr2line opens a file with mode "r", whose terminator and the zeros
+  // after it read as the UTF-16 string L"r" too: fopen's mode is a narrow
+  // string, so its argument is "r", whether the type library declares fopen
+  // or its header alone does.
+  constexpr va_t Mode = 0x6000;
+  std::vector<uint8_t> Bytes(16, 0);
+  Bytes[0] = 'r';
+  BinaryImage Img = makeImageObjectFixture(Mode, Bytes, false);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  const auto Char = NdType::makeInt(1);
+  Char->SourceName = "char";
+  const auto Text = NdType::makePtr(Char);
+  class FileDbg : public NullDebugContext {
+  public:
+    explicit FileDbg(TypeRef Text) : Text(std::move(Text)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x2000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "fopen";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makePtr(NdType::makeNamedRecord("_IO_FILE"));
+      FS.Params = {{"filename", Text}, {"modes", Text}};
+      FS.PrototypeFromCLibrary = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Text;
+  } Dbg(Text);
+  for (DebugContext *Context : {static_cast<DebugContext *>(&Dbg),
+                                static_cast<DebugContext *>(nullptr)}) {
+    const auto Word = NdType::makeInt(8);
+    HighFunc Func;
+    Func.Name = "open_input";
+    Func.Entry = 0x1000;
+    Func.ReturnType = Word;
+    Func.Params = {{"path", Word}};
+    auto Opened = HighExpr::makeCall(
+        "fopen", 0x2000,
+        {parameter(0, Word),
+         HighExpr::makeConst(Mode, 8, ConstantAddressProvenance::Address)});
+    Opened->Type = Word;
+    returnValue(Func, std::move(Opened));
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::ELF;
+    Options.Image = &Img;
+    ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, Context));
+    OS.flush();
+    EXPECT_EQ(Source.find("L\"r\""), std::string::npos) << Source;
+    EXPECT_NE(Source.find(", \"r\")"), std::string::npos) << Source;
+    expectCSyntax(Source);
+  }
+}
+
+TEST(HighCPointerAddresses, CallResultLocalsConvertAsTheyAreDeclared) {
+  // gpg-mail-tube keeps gpgrt_getcwd's result, which no prototype types, in
+  // a local the unit names `cwd` after the call and declares an integer,
+  // and passes it to strlen, whose prototype takes a const char *: the
+  // argument converts as the integer C declares, which it did under the
+  // local's own name only.
+  const auto Char = NdType::makeInt(1);
+  Char->SourceName = "char";
+  const auto Text = NdType::makePtr(Char);
+  const auto Word = NdType::makeInt(8, false);
+  class StringDbg : public NullDebugContext {
+  public:
+    StringDbg(TypeRef Text, TypeRef Word)
+        : Text(std::move(Text)), Word(std::move(Word)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x2000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "strlen";
+      FS.Addr = Addr;
+      FS.ReturnType = Word;
+      FS.Params = {{"s", Text}};
+      FS.PrototypeFromCLibrary = true;
+      FS.PlatformConvention = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Text, Word;
+  } Dbg(Text, Word);
+  HighFunc Func;
+  Func.Name = "measure_cwd";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  MedVar Cwd = temporary(7);
+  auto Got = HighExpr::makeCall("gpgrt_getcwd", 0x3000, {});
+  Got->Type = Word;
+  HighStmt Keep = assignTo(Cwd, Got);
+  Keep.Dst->Type = Word;
+  MedVar Length = temporary(8);
+  auto Measured =
+      HighExpr::makeCall("strlen", 0x2000, {HighExpr::makeVar(Cwd, Word)});
+  Measured->Type = Word;
+  HighStmt Measure = assignTo(Length, Measured);
+  Measure.Dst->Type = Word;
+  Func.Body = {Keep, Measure,
+               callStmt("gcry_free", 0x4000, {HighExpr::makeVar(Cwd, Word)})};
+  returnValue(Func, HighExpr::makeVar(Length, Word));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("cwd"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("strlen(cwd)"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
   // sed passes a comparator of its own to qsort, whose prototype the header
   // library gives: its comparison's type keeps no const there, where the
@@ -47770,6 +48036,180 @@ TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses, MixedLibmSignaturesTakeTheirPointers) {
+  // find passes modf the address of a frame slot, which the machine holds
+  // as an integer.  The type library declares modf, whose double and
+  // pointer parameters are no positional signature: the typed arguments
+  // leave the pointer to the call model, which converts it to the header's
+  // double * as it does for a routine the header alone declares.
+  const auto Double = NdType::makeFloat(8);
+  const auto Pointer = NdType::makePtr(Double);
+  class MathDbg : public NullDebugContext {
+  public:
+    MathDbg(TypeRef Double, TypeRef Pointer)
+        : Double(std::move(Double)), Pointer(std::move(Pointer)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x140002000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "modf";
+      FS.Addr = Addr;
+      FS.ReturnType = Double;
+      FS.Params = {{"x", Double}, {"iptr", Pointer}};
+      FS.PrototypeFromCLibrary = true;
+      FS.PlatformConvention = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Double, Pointer;
+  } Dbg(Double, Pointer);
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "split_value";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = Double;
+  Func.Params = {{"value", Double}, {"whole", Word}};
+  // The call collects its integer argument, in RDI, before its double.
+  auto Split = HighExpr::makeCall("modf", 0x140002000,
+                                  {parameter(1, Word), parameter(0, Double)});
+  Split->Type = Double;
+  returnValue(Func, std::move(Split));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <math.h>"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("(void *)(uintptr_t)whole"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, SocketAddressesPassAsVoidPointers) {
+  // Under _GNU_SOURCE glibc declares bind's address a transparent union of
+  // the sockaddr pointers, which the type library gives as the union: an
+  // address the machine holds as an integer passes as void *, which the
+  // union takes, as it takes no integer and no pointer to another record.
+  const auto Union = NdType::makeNamedRecord("__CONST_SOCKADDR_ARG", 8);
+  class SocketDbg : public NullDebugContext {
+  public:
+    explicit SocketDbg(TypeRef Union) : Union(std::move(Union)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x140002000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "bind";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeInt(4);
+      FS.Params = {{"fd", NdType::makeInt(4)},
+                   {"addr", Union},
+                   {"len", NdType::makeInt(4, false)}};
+      FS.PrototypeFromCLibrary = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Union;
+  } Dbg(Union);
+  const auto Int = NdType::makeInt(4);
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "bind_to";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = Int;
+  Func.Params = {{"fd", Int}, {"address", Word}};
+  auto Bound = HighExpr::makeCall(
+      "bind", 0x140002000,
+      {parameter(0, Int), parameter(1, Word), HighExpr::makeConst(16, 4)});
+  Bound->Type = Int;
+  returnValue(Func, std::move(Bound));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <sys/socket.h>"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("(void*)(uintptr_t)"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, LargeFileComparatorsTakeTheirOwnRecords) {
+  // A program built for large files calls scandir64, whose comparison the
+  // header types with struct dirent64 where scandir's takes struct dirent:
+  // the argument converts to scandir64's own type, which C accepts.
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Select =
+      NdType::makePtr(NdType::makeFunc(NdType::makeInt(4), {Pointer}));
+  const auto Compare =
+      NdType::makePtr(NdType::makeFunc(NdType::makeInt(4), {Pointer, Pointer}));
+  class ScanDbg : public NullDebugContext {
+  public:
+    ScanDbg(TypeRef Pointer, TypeRef Select, TypeRef Compare)
+        : Pointer(std::move(Pointer)), Select(std::move(Select)),
+          Compare(std::move(Compare)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x140002000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "scandir64";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeInt(4);
+      FS.Params = {{"dir", NdType::makePtr(NdType::makeInt(1))},
+                   {"namelist", Pointer},
+                   {"selector", Select},
+                   {"cmp", Compare}};
+      FS.PrototypeFromCLibrary = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Pointer, Select, Compare;
+  } Dbg(Pointer, Select, Compare);
+  HighFunc Order;
+  Order.Name = "compare_entries";
+  Order.Entry = 0x140003000;
+  Order.ReturnType = NdType::makeInt(4);
+  Order.Params = {{"a", Pointer}, {"b", Pointer}};
+  returnValue(Order, HighExpr::makeConst(0, 4));
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "list_directory";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  Func.Params = {{"dir", NdType::makePtr(NdType::makeInt(1))},
+                 {"list", Pointer}};
+  Func.Body = {
+      callStmt("scandir64", 0x140002000,
+               {parameter(0, NdType::makePtr(NdType::makeInt(1))),
+                parameter(1, Pointer), HighExpr::makeConst(0, 8),
+                HighExpr::makeConst(0x140003000, 8,
+                                    ConstantAddressProvenance::Address)})};
+  returnValue(Func, nullptr);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Order, Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <dirent.h>"), std::string::npos) << Source;
+  EXPECT_NE(
+      Source.find(
+          "(int (*)(const struct dirent64 **, const struct dirent64 **))"),
+      std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, NarrowObjectsPassedAsPointersStayIntegers) {
   // make reads its 4-byte output_sync and passes the value, widened, where
   // a callee's prototype takes a pointer.  The object holds the 4-byte
@@ -47823,6 +48263,86 @@ TEST(HighCPointerAddresses, NarrowObjectsPassedAsPointersStayIntegers) {
   OS.flush();
   EXPECT_EQ(Source.find("handle* dword_6000"), std::string::npos) << Source;
   EXPECT_NE(Source.find("int32_t dword_6000"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, AlignedAccessesInRelocatedWordsKeepTheirResidue) {
+  // sort reads a table that holds a relocated pointer with a 16-byte access
+  // 8 bytes into it, which the image aligns: the table starts 8 bytes past
+  // a 16-byte boundary, and C laid its words out from one, so no unit was
+  // written at all.  A word before the table keeps every address's residue
+  // modulo 16 as in the image, and each slot word-aligned.
+  constexpr va_t Data = 0x140003000;
+  constexpr va_t Table = Data + 8;
+  constexpr va_t Target = Data + 0x100;
+  std::vector<uint8_t> Bytes(0x200, 0);
+  for (unsigned I = 0; I < 8; ++I)
+    Bytes[(Table - Data) + I] = static_cast<uint8_t>(Target >> (8 * I));
+  BinaryImage Img = makeImageObjectFixture(Data, Bytes, true);
+  Img.DataPtrRelocSlots.insert(Table);
+  const auto Wide = NdType::makeInt(16, false);
+  HighFunc Func;
+  Func.Name = "compare_keys";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = Wide;
+  HighStmt Guard = callStmt(
+      "require_aligned", 0,
+      {HighExpr::makeConst(Table + 8, 8, ConstantAddressProvenance::Address),
+       HighExpr::makeConst(16, 8)});
+  Guard.CallExpr->IntrinsicId = Intrinsic::RequireAligned;
+  Func.Body = {Guard};
+  // Two 16-byte reads that overlap: one group of the table's bytes.
+  auto Keys = HighExpr::makeBinop(
+      NdOp::INT_XOR, HighExpr::makeLoad(HighExpr::makeConst(Table, 8), Wide),
+      HighExpr::makeLoad(HighExpr::makeConst(Table + 8, 8), Wide));
+  Keys->Type = Wide;
+  returnValue(Func, std::move(Keys));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("_Alignas(16) uintptr_t w["), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find(".b[16]"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, HeaderRecordsNamedLikeTheirFunctionsKeepTags) {
+  // sort fills a struct sysinfo through sysinfo(), which <sys/sysinfo.h>
+  // declares beside it: the definitions list the name among their ordinary
+  // identifiers, so the unit spells the record by its tag and declares no
+  // `typedef struct sysinfo sysinfo;`, which made the header's function a
+  // redefinition.
+  HighFunc Func;
+  Func.Name = "probe_memory";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(4);
+  Func.Params = {{"info", NdType::makePtr(NdType::makeNamedRecord("sysinfo"))}};
+  returnValue(Func, HighExpr::makeConst(0, 4));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text = "#include <sys/sysinfo.h>\n";
+    Definitions.Tags = {{"sysinfo", false}};
+    Definitions.Types = {"sysinfo"};
+    Definitions.Identifiers = {"sysinfo"};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_EQ(Source.find("typedef struct sysinfo sysinfo;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("probe_memory(struct sysinfo* info)"),
+            std::string::npos)
+      << Source;
   expectCSyntax(Source);
 }
 

@@ -2067,6 +2067,40 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     return I < ArityFloats ? ArityIntegers + I : I - ArityFloats;
   };
   const llvm::StringRef HeaderCallee = headerDeclaredCallee(E);
+  // Whether the argument at \p I passes to an object pointer of the routine
+  // the header declares: one the unit declares no other way (HeaderCallee),
+  // or a C library routine the type library declares, called by its own
+  // name where the unit includes its header, at a parameter it makes a
+  // pointer too.  Its typed arguments above leave a signature that mixes
+  // integer and floating parameters to this one, as no positional one
+  // (positionalDebugSignature): modf's double *.
+  auto ObjectPointerAt = [&](size_t I) {
+    const unsigned Index = static_cast<unsigned>(I);
+    if (!HeaderCallee.empty())
+      return libc::isObjectPointerParameter(HeaderCallee, Index,
+                                            Opts.libcVariant());
+    return Callee && Callee->PrototypeFromCLibrary && Name == Callee->Name &&
+           includesHeaderOf(Name) && I < Callee->Params.size() &&
+           Callee->Params[I].second &&
+           Callee->Params[I].second->Kind == NdTypeKind::Ptr &&
+           libc::isObjectPointerParameter(Name, Index, Opts.libcVariant());
+  };
+  // Whether the argument at \p I passes to a narrow string: a parameter of
+  // plain char pointers of a C library routine's prototype, called by its
+  // own name, or one the call model reads as such of a routine its header
+  // alone declares.
+  auto NarrowStringAt = [&](size_t I) {
+    if (!HeaderCallee.empty())
+      return libc::isCStringParameter(HeaderCallee.str(),
+                                      static_cast<unsigned>(I));
+    if (!Callee || !Callee->PrototypeFromCLibrary || Name != Callee->Name ||
+        I >= Callee->Params.size())
+      return false;
+    const TypeRef &Param = Callee->Params[I].second;
+    return Param && Param->Kind == NdTypeKind::Ptr && Param->Pointee &&
+           Param->Pointee->Kind == NdTypeKind::Int &&
+           Param->Pointee->Size == 1 && Param->Pointee->SourceName == "char";
+  };
   const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format);
   // A call through a typed member that points to a function passes the
   // parameters its type declares (debugCallArgLimit), as their types.
@@ -2108,6 +2142,16 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       Op = Missing.get();
     }
     Note = stringArgumentNote(*Op);
+    // A string its parameter reads narrow prints as a narrow literal.
+    const HighExpr *NarrowLiteral = nullptr;
+    if (const HighExpr *Value = unwrapIntegerView(Op);
+        Value && Value->Kind == ExprKind::Const && NarrowStringAt(I) &&
+        NarrowStringOperands.insert(Value).second)
+      NarrowLiteral = Value;
+    const auto Unmark = llvm::make_scope_exit([&] {
+      if (NarrowLiteral)
+        NarrowStringOperands.erase(NarrowLiteral);
+    });
     // A va_start forwarder passing its own va_list on passes C's.
     if (const HighFunc::VaStartForwarder *Va = currentVaStart();
         Va && E.CallSiteAddr &&
@@ -2171,6 +2215,19 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       // An array parameter is the pointer to its element that C passes.
       if (!Expected && Array)
         Expected = NdType::makePtr(Declared->ElemType);
+      // A record the header passes by value which the call model says takes
+      // an object pointer is a transparent union of pointers (glibc's
+      // __CONST_SOCKADDR_ARG under _GNU_SOURCE): it takes one as void *, as
+      // it takes no integer and no pointer to another record.  An import the
+      // unit declares under another identifier takes its own declaration's.
+      const bool PointerUnion =
+          Declared && Declared->Kind == NdTypeKind::Struct &&
+          !Declared->IsEnum && Callee->PrototypeFromCLibrary &&
+          Name == Callee->Name && headerTypeOfCallee(E, Declared) &&
+          libc::isObjectPointerParameter(Callee->Name, static_cast<unsigned>(I),
+                                         Opts.libcVariant());
+      if (PointerUnion)
+        Expected = NdType::makePtr();
       if (Expected) {
         // The pointer to a typedef, or the array a parameter declares
         // (jmp_buf), converts explicitly, as no pointer of the unit's own
@@ -2186,8 +2243,16 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                          ? NdType::makePtr()
                          : nullptr;
         if (Expected) {
-          std::string Text = exprStrAsTypedArg(*Op, Expected);
-          if (Header && Typedef && Text != "0" &&
+          // A function this unit defines declares the parameter by the
+          // typedef the local types define (nftw's __nftw_func_t), which an
+          // argument converts to as well: its type's structure, whose
+          // pointers the unit spells void *, would not match.
+          std::string Text =
+              exprStrAsTypedArg(*Op, Expected,
+                                Defined && Expected->Kind != NdTypeKind::Array
+                                    ? declaredTypedef(Expected)
+                                    : std::nullopt);
+          if (((Header && Typedef) || PointerUnion) && Text != "0" &&
               !llvm::StringRef(Text).starts_with("(void*)"))
             Text =
                 "(void*)" +
@@ -2366,9 +2431,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       }
     // Its object pointer parameter takes a machine integer converted to a
     // pointer, which C does not do itself; any object pointer converts on.
-    if (!HeaderCallee.empty() && !PointerArgument &&
-        libc::isObjectPointerParameter(HeaderCallee, static_cast<unsigned>(I),
-                                       Opts.libcVariant()) &&
+    if (!PointerArgument && ObjectPointerAt(I) &&
         printsAsInteger(Imm ? *Imm : *Op, Arg))
       Arg = llvm::StringRef(Arg).starts_with("(uintptr_t)")
                 ? "(void *)" + castOperand(Arg)
@@ -3699,13 +3762,16 @@ HighCWriter::floatArgumentText(const HighExpr &Arg, const TypeRef &Expected) {
          integerView(Arg, NdType::makeInt(Expected->Size, false), 0) + ")";
 }
 
-std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
-                                           const TypeRef &Expected) {
-  std::string Text = typedArgumentText(E, Expected);
+std::string
+HighCWriter::exprStrAsTypedArg(const HighExpr &E, const TypeRef &Expected,
+                               const std::optional<std::string> &Spelled) {
+  std::string Text = typedArgumentText(E, Expected, Spelled);
+  // The type a conversion names, as the declaration spells the parameter.
+  auto Parameter = [&] { return Spelled ? *Spelled : typeToC(Expected); };
   // A pointer converts to an integer parameter, which C does not do itself.
   if (Expected && Expected->Kind == NdTypeKind::Int && !Expected->IsEnum &&
       printsAsPointer(Text))
-    return "(" + typeToC(Expected) + ")(uintptr_t)" + castOperand(Text);
+    return "(" + Parameter() + ")(uintptr_t)" + castOperand(Text);
   // So does a function pointer of another type to a function-pointer
   // parameter: a stub's prototype spells qsort's comparator
   // `int32_t (*)(void*, void*)` where its caller's parameter keeps the
@@ -3718,13 +3784,15 @@ std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
     if (const HighExpr *Value = unwrapIntegerView(&E);
         Value && (Value->Kind == ExprKind::Var || Value->Kind == ExprKind::Phi))
       if (const TypeRef Held = declaredParamType(Value->Var);
-          FunctionPointer(Held) && declaredAs(Held, "") != typeToC(Expected))
-        return "(" + typeToC(Expected) + ")" + castOperand(Text);
+          FunctionPointer(Held) && declaredAs(Held, "") != Parameter())
+        return "(" + Parameter() + ")" + castOperand(Text);
   return Text;
 }
 
-std::string HighCWriter::typedArgumentText(const HighExpr &E,
-                                           const TypeRef &Expected) {
+std::string
+HighCWriter::typedArgumentText(const HighExpr &E, const TypeRef &Expected,
+                               const std::optional<std::string> &Spelled) {
+  auto Parameter = [&] { return Spelled ? *Spelled : typeToC(Expected); };
   if (const auto Float = floatArgumentText(E, Expected))
     return *Float;
   // A floating expression retains its conversion or reinterpretation; the
@@ -3783,7 +3851,7 @@ std::string HighCWriter::typedArgumentText(const HighExpr &E,
     Inner = &E;
   if (Inner->Kind == ExprKind::Undef && Expected &&
       Expected->Kind == NdTypeKind::Ptr)
-    return "(" + typeToC(Expected) + ")(uintptr_t)(" + exprStr(*Inner) + ")";
+    return "(" + Parameter() + ")(uintptr_t)(" + exprStr(*Inner) + ")";
   if (Expected && Expected->Kind == NdTypeKind::Ptr) {
     unsigned PeelZero = 0;
     while (Inner && PeelZero++ < limits::kMaxIntegerViewUnwrapDepth &&
@@ -3803,30 +3871,29 @@ std::string HighCWriter::typedArgumentText(const HighExpr &E,
         const auto Held = Disp ? FrameSlots.find(*Disp) : FrameSlots.end();
         if (Held != FrameSlots.end() && Held->second.Type &&
             Held->second.Type->Kind == NdTypeKind::Int)
-          return "(" + typeToC(Expected) + ")(uintptr_t)" +
-                 copyForwardName(*Slot);
+          return "(" + Parameter() + ")(uintptr_t)" + copyForwardName(*Slot);
         return copyForwardName(*Slot);
       }
     }
     if (auto Slot = namedFrameSlot(*Inner))
       return "&" + *Slot;
     if (const auto Disp = certifiedFrameStorageDisplacement(*Inner))
-      return "(" + typeToC(Expected) + ")" + frameRecordPointer(*Disp);
+      return "(" + Parameter() + ")" + frameRecordPointer(*Disp);
     // An integer, such as a variable C declares as one or the integer
     // expression it forwards, converts to the pointer the parameter takes;
     // a pointer passes as it is.
     auto AsPointer = [&](const HighExpr &Printed, std::string Text) {
       if (!printsAsInteger(Printed, Text))
         return Text;
-      return "(" + typeToC(Expected) + ")(uintptr_t)" + castOperand(Text);
+      return "(" + Parameter() + ")(uintptr_t)" + castOperand(Text);
     };
     if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) {
       const std::string Name = copyForwardName(varName(Inner->Var));
       const HighExpr *From = nullptr;
       std::string Text = printedForwardedVar(Name, 16, &From);
-      if (Text == Name)
-        return AsPointer(*Inner, std::move(Text));
-      return From ? AsPointer(*From, std::move(Text)) : Text;
+      // A local its call's result names (CallResultNames: gpgrt_getcwd's
+      // `cwd`) is the variable under that name, of the type C declares.
+      return AsPointer(From ? *From : *Inner, std::move(Text));
     }
     if (Inner->Kind == ExprKind::Addr)
       return exprStr(*Inner);
@@ -6027,10 +6094,18 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     const auto Aligned = ImageObjects.find(E.ConstVal);
     if (auto Lit = stringLiteral(E.ConstVal);
         Lit && !objectOutgrowsLiteral(E.ConstVal, *Lit) &&
-        (Aligned == ImageObjects.end() || Aligned->second.AlignedBytes <= 1))
+        (Aligned == ImageObjects.end() || Aligned->second.AlignedBytes <= 1)) {
+      // A narrow string parameter takes the bytes as a narrow string.
+      if (NarrowStringOperands.count(&E) &&
+          !llvm::StringRef(*Lit).starts_with("\""))
+        if (auto Narrow = imageStringLiteral(Opts.Image, E.ConstVal,
+                                             /*AllowEmpty=*/false,
+                                             /*Narrow=*/true))
+          Lit = std::move(Narrow);
       return LiteralAddressOperands.count(&E)
                  ? PointerInteger("(uintptr_t)" + *Lit)
                  : *Lit;
+    }
     // Preserve the existing exact-object spelling, but do not turn an
     // unrelated numeric immediate that happens to lie inside a backing range
     // into an address.
@@ -7133,12 +7208,12 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
     // The image's copy of an object a C library header declares is the
     // header's, by its name: the copy relocation gives the program one.
     if (!Named.Raw.empty() && Obj.Name == Named.Raw)
-      if (const char *Header = libc::headerOfDataObject(Named.Raw))
-        if (TypeRef Declared = headerDataObjectType(
-                libc::typeOfDataObject(Named.Raw), Opts.TheArch, Opts.Format)) {
-          Obj.Header = Header;
-          Obj.HeaderType = std::move(Declared);
-        }
+      if (const char *Header = libc::headerOfDataObject(Named.Raw)) {
+        Obj.Header = Header;
+        Obj.HeaderType = headerDataObjectType(libc::typeOfDataObject(Named.Raw),
+                                              Opts.TheArch, Opts.Format);
+        Obj.HeaderBytes = !Obj.HeaderType;
+      }
     // An identifier spelled from the name, or numbered after another object
     // took it, has the name in its comment.
     Obj.Readable = !Named.Readable.empty() || Named.Raw.empty()

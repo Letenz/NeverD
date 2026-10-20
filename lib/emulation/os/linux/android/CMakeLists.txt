@@ -18,6 +18,7 @@ add_neverd_component_library(NeverDEmulationAndroid
   AndroidJNIObjects.cpp
   AndroidJNIRegistration.cpp
   AndroidJNINativeCalls.cpp
+  AndroidJavaLibrary.cpp
   AndroidJNIStrings.cpp
   AndroidJNIArrays.cpp
   AndroidJNIMethods.cpp
