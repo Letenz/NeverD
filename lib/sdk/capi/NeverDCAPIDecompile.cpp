@@ -15,6 +15,7 @@
 #include "LLVMFunctionView.h"
 #include "LibraryPresentation.h"
 #include "SessionImpl.h"
+#include "SourceEdits.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/c/CEmitterOptions.h"
@@ -22,6 +23,7 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/dialect/SourceDialect.h"
+#include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/evm/analysis/EVMAnalyzer.h"
 #include "neverd/evm/emit/EVMCEmitter.h"
 #include "neverd/evm/emit/EVMSolidityEmitter.h"
@@ -549,6 +551,16 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
   llvm::raw_string_ostream OS(Out);
 
   CEmitterOptions Opts;
+  const std::string VariableSnapshot =
+      SourceMap || !S->SourceOptions.VariableTypes.empty()
+          ? highVariableSnapshot(*Attached, S->SourceOptions.Symbolic)
+          : std::string();
+  if (SourceMap)
+    SourceMap->VariableSnapshot = VariableSnapshot;
+  const SourceVariableTypes VariableTypes =
+      sourceVariableTypes(*S, FuncEntry, VariableSnapshot,
+                          SourceMap ? &SourceMap->StaleVariableTypes : nullptr);
+  Opts.VariableTypes = &VariableTypes;
   Opts.StructuredExceptionSyntax = !PlainC;
   Opts.TheArch = S->Img.Arch;
   Opts.Format = S->Img.abiFormat();
@@ -577,6 +589,8 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     };
   try {
     S->cEmitter().emit(Single, OS, Opts, Debug);
+    if (SourceMap)
+      noteUnboundVariableTypes(*SourceMap, VariableTypes, FuncEntry);
   } catch (const std::exception &Error) {
     S->setError(emissionFailure(Error));
     return dupStr(std::string());
@@ -626,6 +640,23 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
   std::string Out;
   llvm::raw_string_ostream OS(Out);
   CEmitterOptions Opts;
+  std::string VariableIR;
+  llvm::raw_string_ostream VariableOS(VariableIR);
+  std::string VariableSnapshot;
+  if (SourceMap || !S->SourceOptions.VariableTypes.empty()) {
+    LF->print(VariableOS);
+    VariableOS << FuncEntry << ':' << S->SourceOptions.Symbolic << ':'
+               << static_cast<unsigned>(S->SourceOptions.LLVM) << ':'
+               << S->SourceOptions.Passes << ':'
+               << S->SourceOptions.RecoverControlFlow;
+    VariableSnapshot = sourceVariableSnapshot(VariableIR);
+  }
+  if (SourceMap)
+    SourceMap->VariableSnapshot = VariableSnapshot;
+  const SourceVariableTypes VariableTypes =
+      sourceVariableTypes(*S, FuncEntry, VariableSnapshot,
+                          SourceMap ? &SourceMap->StaleVariableTypes : nullptr);
+  Opts.VariableTypes = &VariableTypes;
   Opts.TheArch = S->Img.Arch;
   Opts.Format = S->Img.abiFormat();
   Opts.UserNames = &S->Renames;
@@ -639,12 +670,19 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
   // The program's records, as its local types define them.
   if (const LocalTypesDebugContext *Local = S->LocalTypesDbg.get();
       Local && Debug == Local && holdsLocalTypes(*Local))
-    Opts.RecordDefinitions = [Local](const std::vector<TypeRef> &Records) {
-      return Local->definitions(Records);
+    Opts.RecordDefinitions = [Local,
+                              SourceMap](const std::vector<TypeRef> &Records) {
+      CRecordDefinitions Definitions = Local->definitions(Records);
+      if (SourceMap && !Definitions.Text.empty())
+        SourceMap->LocalTypes = CSourceLocalTypes{
+            Definitions.Text, Definitions.Types, Definitions.DeclaredTypes};
+      return Definitions;
     };
   try {
     LLVMCEmitter Emitter;
     Emitter.emit(*Native->Module, OS, Opts, Debug, &S->Img, LF);
+    if (SourceMap)
+      noteUnboundVariableTypes(*SourceMap, VariableTypes, FuncEntry);
   } catch (const std::exception &Error) {
     S->setError(emissionFailure(Error));
     return dupStr(std::string());
@@ -1029,6 +1067,33 @@ void writeSourcePage(llvm::raw_ostream &OS, neverd_session_t Sess, va_t Entry,
     if (Dialect)
       J.attribute("dialect", sourceDialectKey(*Dialect));
     J.attribute("function_identity", std::move(Identity));
+    J.attribute("variable_snapshot", Map.VariableSnapshot);
+    J.attributeArray("source_variables", [&] {
+      for (const auto &[Key, Variable] : Map.Variables) {
+        if (Variable.Function != Entry)
+          continue;
+        J.object([&] {
+          J.attribute("id", Variable.Id);
+          J.attribute("name", Variable.Name);
+          J.attribute("bytes", Variable.Bytes);
+          if (SourceVariableTypes::compatible(Variable.Type, Variable.Bytes))
+            J.attribute("type", declarationToC(Variable.Type, ""));
+          J.attribute("parameter", Variable.Parameter);
+          J.attribute("ambiguous", Variable.Ambiguous ||
+                                       (Variable.Type &&
+                                        !SourceVariableTypes::compatible(
+                                            Variable.Type, Variable.Bytes)));
+          J.attribute("floating", Variable.Type &&
+                                      Variable.Type->Kind == NdTypeKind::Float);
+          if (Variable.Address)
+            J.attribute("address", vaHex(Variable.Address));
+        });
+      }
+    });
+    J.attributeArray("stale_variable_types", [&] {
+      for (const auto &Reason : Map.StaleVariableTypes)
+        J.value(Reason);
+    });
     J.attribute("identifier_symbols", std::move(Renamed));
     J.attribute("library_regions", std::move(Regions));
     J.attribute("mapping_status",
@@ -1129,8 +1194,8 @@ namespace {
 
 SourceViewOptions readSourceOptions(llvm::StringRef Text,
                                     llvm::StringRef Stage) {
-  if (Text.size() > 4096)
-    throw std::invalid_argument("source options exceed 4096 bytes");
+  if (Text.size() > 256 * 1024)
+    throw std::invalid_argument("source options exceed 256 KiB");
   auto Parsed = llvm::json::parse(Text);
   if (!Parsed) {
     llvm::consumeError(Parsed.takeError());
@@ -1143,10 +1208,50 @@ SourceViewOptions readSourceOptions(llvm::StringRef Text,
   for (const auto &Field : *Object) {
     const llvm::StringRef Key = Field.first;
     if (Key != "symbolic" && Key != "llvm_optimization" &&
-        Key != "llvm_passes" && Key != "llvm_control_flow")
+        Key != "llvm_passes" && Key != "llvm_control_flow" &&
+        Key != "variable_types")
       throw std::invalid_argument("unknown source option: " + Key.str());
-    if (Key != "symbolic" && Stage != "llvmc")
+    if (Key != "symbolic" && Key != "variable_types" && Stage != "llvmc")
       throw std::invalid_argument("LLVM options require llvmc");
+  }
+  if (const auto *Types = Object->getArray("variable_types")) {
+    if (Types->size() > 256)
+      throw std::invalid_argument(
+          "at most 256 source variable types are supported per view");
+    for (const auto &Value : *Types) {
+      const auto *Type = Value.getAsObject();
+      if (!Type)
+        throw std::invalid_argument("a source variable type must be an object");
+      SourceViewOptions::VariableType Edit;
+      auto ReadAddress = [&](llvm::StringRef Key) -> uint64_t {
+        const auto Text = Type->getString(Key);
+        uint64_t Address = 0;
+        if (!Text || Text->getAsInteger(0, Address))
+          throw std::invalid_argument(
+              "a source variable type has an invalid owner address");
+        return Address;
+      };
+      Edit.Function = ReadAddress("function");
+      const auto Bytes = Type->getInteger("bytes");
+      const auto Floating = Type->getBoolean("floating");
+      if (!Bytes || *Bytes < 1 || *Bytes > 16 || !Floating)
+        throw std::invalid_argument("a source variable type needs its original "
+                                    "byte width and scalar class");
+      Edit.Bytes = *Bytes;
+      Edit.Floating = *Floating;
+      if (Type->get("address"))
+        Edit.Address = ReadAddress("address");
+      Edit.Id = Type->getString("id").value_or("").str();
+      Edit.Snapshot = Type->getString("snapshot").value_or("").str();
+      Edit.Type = Type->getString("type").value_or("").str();
+      if (Edit.Id.empty() || Edit.Id.size() > 256 ||
+          Edit.Snapshot.size() > 128 || Edit.Type.empty() ||
+          Edit.Type.size() > 4096)
+        throw std::invalid_argument("invalid source variable type binding");
+      Options.VariableTypes.push_back(std::move(Edit));
+    }
+  } else if (Object->get("variable_types")) {
+    throw std::invalid_argument("variable_types must be an array");
   }
   if (Object->get("symbolic")) {
     auto Enabled = Object->getBoolean("symbolic");

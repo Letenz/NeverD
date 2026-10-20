@@ -200,6 +200,7 @@ Json hello() {
                 "annotation_set",
                 "rename",
                 "code_edit",
+                "source_type",
                 "save",
                 "reload",
                 "segments",

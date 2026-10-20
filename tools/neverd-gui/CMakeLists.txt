@@ -161,6 +161,14 @@ if(BUILD_TESTING)
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
   qt_add_executable(neverd-gui-unit-tests tests/WorkbenchUnitTests.cpp)
+  qt_add_executable(neverd-gui-source-types-tests tests/SourceVariableTypesTests.cpp)
+  target_link_libraries(neverd-gui-source-types-tests PRIVATE neverd_gui_app Qt6::Test)
+  target_compile_definitions(neverd-gui-source-types-tests PRIVATE TEST_REAL_WORKER="$<TARGET_FILE:neverd-worker>")
+  add_dependencies(neverd-gui-source-types-tests neverd-worker)
+  set_target_properties(neverd-gui-source-types-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+  add_test(NAME NeverDGuiSourceVariableTypes COMMAND neverd-gui-source-types-tests)
+  set_tests_properties(NeverDGuiSourceVariableTypes PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 180)
   target_link_libraries(neverd-gui-unit-tests PRIVATE neverd_gui_app Qt6::Test)
   # A console program on Windows too, so CTest records what failed.
   set_target_properties(neverd-gui-unit-tests PROPERTIES WIN32_EXECUTABLE FALSE)

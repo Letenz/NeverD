@@ -7,8 +7,9 @@
 #include <unordered_map>
 
 namespace neverd::worker {
-/// Analyst presentation edits, scoped to a function and source representation.
-/// These never change the engine's variables, instructions or inferred types.
+/// Durable source edits. Names/comments are presentation; variable types are
+/// checked engine assertions passed into the source emitter, never text
+/// substitutions or authority for machine analysis and native rewriting.
 class CodeEdits {
 public:
   static void validateRow(const Json &row);

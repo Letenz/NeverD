@@ -177,7 +177,50 @@ TypeRef HighCWriter::debugTypeForDisplacement(va_t Entry, int64_t Disp) const {
   return Display;
 }
 
+TypeRef HighCWriter::statedVariableType(const MedVar &V) const {
+  if (!Opts.VariableTypes || Opts.VariableTypes->Locals.empty() ||
+      !CurrentFunc || V.Kind == MedVar::Param)
+    return nullptr;
+  const auto Id = highSourceVariableId(V);
+  const TypeRef Type =
+      Opts.VariableTypes->local(CurrentFunc->Entry, Id, V.Size);
+  if (Type)
+    if (const auto Class = SourceLocalClasses.find({CurrentFunc->Entry, Id});
+        Class != SourceLocalClasses.end())
+      if (Class->second != (Type->Kind == NdTypeKind::Float ? 1u : 2u))
+        throw std::runtime_error(
+            "source variable type changes floating-point bit interpretation");
+  return Type;
+}
+
+TypeRef HighCWriter::statedVariableTypeNamed(const std::string &Name) const {
+  const auto It = StatedLocalTypes.find(Name);
+  return It == StatedLocalTypes.end() ? nullptr : It->second;
+}
+
 std::string HighCWriter::varName(const MedVar &V) const {
+  const std::string Name = rawVarName(V);
+  if (CurrentFunc && !Name.empty() && V.Kind != MedVar::Const &&
+      V.Kind != MedVar::Unspecified && V.Size) {
+    const TypeRef Stated = statedVariableType(V);
+    if (Stated)
+      StatedLocalTypes[Name] = Stated;
+    if (Opts.SourceMap) {
+      SourceVariable Variable;
+      Variable.Function = CurrentFunc->Entry;
+      Variable.Id = highSourceVariableId(V);
+      Variable.Name = Name;
+      Variable.Bytes = V.Size;
+      Variable.Parameter = V.Kind == MedVar::Param;
+      if (V.Kind == MedVar::Stack)
+        Variable.StackOffset = V.StackOff;
+      recordSourceVariable(Opts.SourceMap->Variables, std::move(Variable));
+    }
+  }
+  return Name;
+}
+
+std::string HighCWriter::rawVarName(const MedVar &V) const {
   if (CurrentFunc &&
       isSyntheticEntryStackPointer(V, *CurrentFunc, Opts.TheArch))
     return "frame_base";
@@ -3137,6 +3180,9 @@ HighCWriter::declaredPointerName(const HighExpr &E,
 TypeRef HighCWriter::declaredTypeOf(const HighExpr &E,
                                     llvm::StringRef Name) const {
   if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi)
+    if (TypeRef Stated = statedVariableType(E.Var))
+      return Stated;
+  if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi)
     if (TypeRef Param = declaredParamType(E.Var))
       return Param;
   if (auto It = DeclaredCTypes.find(Name.str()); It != DeclaredCTypes.end())
@@ -3927,6 +3973,9 @@ TypeRef HighCWriter::declaredTypeNamed(llvm::StringRef Text) const {
     return nullptr;
   if (auto It = DeclaredCTypes.find(Text.str()); It != DeclaredCTypes.end())
     return It->second;
+  for (const auto &[Address, Object] : ImageObjects)
+    if (Object.Name == Text && Object.Type)
+      return Object.Type;
   if (CurrentFunc)
     for (size_t PI = 0; PI < CurrentFunc->Params.size(); ++PI) {
       MedVar Param;
@@ -4187,6 +4236,16 @@ TypeRef HighCWriter::declaredRecordPointee(const HighExpr &Base) const {
   const bool IsParam =
       (Base.Kind == ExprKind::Var || Base.Kind == ExprKind::Phi) &&
       Base.Var.Kind == MedVar::Param && Base.Var.RenameTag < 0;
+  if (Opts.VariableTypes && Base.Kind == ExprKind::Load && Base.Type &&
+      Base.Operands.size() == 1 && Base.Operands[0])
+    if (const HighExpr *Address = peelIntegerViewOps(Base.Operands[0].get());
+        Address && Address->Kind == ExprKind::Const)
+      if (TypeRef Stated = RecordFrom(
+              Opts.VariableTypes->global(Address->ConstVal, Base.Type->Size)))
+        return Stated;
+  if (Base.Kind == ExprKind::Var || Base.Kind == ExprKind::Phi)
+    if (TypeRef Stated = RecordFrom(statedVariableType(Base.Var)))
+      return Stated;
   if (IsParam) {
     if (TypeRef Best =
             RicherRecord(Base.Type, RicherRecord(declaredParamType(Base.Var),
@@ -4201,6 +4260,9 @@ TypeRef HighCWriter::declaredRecordPointee(const HighExpr &Base) const {
   if (Base.Kind != ExprKind::Var && Base.Kind != ExprKind::Phi)
     return nullptr;
   const std::string FwdName = varName(Base.Var);
+  if (auto It = FieldForward.find(FwdName); It != FieldForward.end())
+    if (TypeRef Stated = RecordFrom(declaredTypeNamed(It->second)))
+      return Stated;
   if (auto It = FieldForwardTypes.find(FwdName); It != FieldForwardTypes.end())
     if (TypeRef FromFwd = RecordFrom(It->second))
       return FromFwd;
@@ -4269,6 +4331,8 @@ HighCWriter::typedPointerOffset(const HighExpr &Addr) const {
     if (!Cur)
       return std::nullopt;
     if (Cur->Kind == ExprKind::Var || Cur->Kind == ExprKind::Phi) {
+      if (statedVariableType(Cur->Var))
+        break;
       const std::string Name = varName(Cur->Var);
       if (auto It = ValueForward.find(Name);
           It != ValueForward.end() && It->second && It->second != Cur) {
@@ -4890,10 +4954,17 @@ HighCWriter::typedMemberAccess(const HighExpr &Addr, uint16_t AccessSize,
     }
   } else if (Base->Kind == ExprKind::Load && !Base->Operands.empty() &&
              Base->Operands[0]) {
-    auto Inner = typedMemberAccess(*Base->Operands[0]);
-    if (!Inner)
-      return std::nullopt;
-    BaseName = *Inner;
+    if (Opts.VariableTypes && Base->Type)
+      if (const auto Address = constAddress(*Base->Operands[0]);
+          Address && Opts.VariableTypes->global(*Address, Base->Type->Size))
+        if (auto Object = imageObjectName(*Address))
+          BaseName = *Object;
+    if (BaseName.empty()) {
+      auto Inner = typedMemberAccess(*Base->Operands[0]);
+      if (!Inner)
+        return std::nullopt;
+      BaseName = *Inner;
+    }
   } else
     return std::nullopt;
   if (BaseName.empty())
@@ -7105,6 +7176,27 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
     Obj.WeakType = false;
   }
   Obj.Written |= Written;
+  if (Opts.SourceMap && CurrentFunc) {
+    SourceVariable Variable;
+    Variable.Function = CurrentFunc->Entry;
+    Variable.Address = Addr;
+    Variable.Id = "global:" + std::to_string(Addr);
+    Variable.Name = Obj.Name;
+    Variable.Bytes = Obj.Type->Size;
+    Variable.Type = Obj.Type;
+    recordSourceVariable(Opts.SourceMap->Variables, std::move(Variable));
+  }
+  if (Opts.VariableTypes)
+    if (TypeRef Stated = Opts.VariableTypes->global(Addr, Obj.Type->Size)) {
+      if ((Stated->Kind == NdTypeKind::Float) !=
+          (Obj.Type->Kind == NdTypeKind::Float))
+        throw std::runtime_error(
+            "source object type changes floating-point bit interpretation");
+      Obj.Type = Stated;
+      Obj.WeakType = false;
+      Obj.Header.clear();
+      Obj.HeaderType.reset();
+    }
 }
 
 void HighCWriter::noteImageAddress(va_t Addr) {

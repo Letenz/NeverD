@@ -12,10 +12,22 @@
 #define NEVERD_PIPELINE_SOURCEVIEWOPTIONS_H
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace neverd {
 
 struct SourceViewOptions {
+  struct VariableType {
+    uint64_t Function = 0;
+    uint64_t Address = 0;
+    uint16_t Bytes = 0;
+    bool Floating = false;
+    std::string Id;
+    std::string Snapshot;
+    std::string Type;
+    bool operator==(const VariableType &) const = default;
+  };
   enum class LLVMOptimization { Basic, O0, O1, O2, O3, Custom };
   enum Pass : uint32_t {
     InstCombine = 1,
@@ -32,6 +44,9 @@ struct SourceViewOptions {
   bool RecoverControlFlow = true;
   LLVMOptimization LLVM = LLVMOptimization::O2;
   uint32_t Passes = BasicPasses;
+  /// Analyst assertions belong only to this source projection. They never
+  /// enter the image, machine IR or native ABI recovery.
+  std::vector<VariableType> VariableTypes;
   bool operator==(const SourceViewOptions &) const = default;
 };
 

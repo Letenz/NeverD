@@ -474,6 +474,11 @@ public:
   const HighFunc *sourceCallDefinition(const SourceCallTypeHint &Hint,
                                        llvm::StringRef Name) const;
   std::string varName(const MedVar &V) const;
+  std::string rawVarName(const MedVar &V) const;
+  TypeRef statedVariableType(const MedVar &V) const;
+  TypeRef statedVariableTypeNamed(const std::string &Name) const;
+  mutable std::map<std::string, TypeRef> StatedLocalTypes;
+  std::map<std::pair<va_t, std::string>, unsigned> SourceLocalClasses;
   std::string debugNameForDisplacement(va_t Entry, int64_t Disp) const;
   TypeRef debugTypeForDisplacement(va_t Entry, int64_t Disp) const;
   TypeRef declaredParamType(const MedVar &V) const;

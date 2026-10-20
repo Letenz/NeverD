@@ -700,6 +700,26 @@ void LLVMCWriter::recordSourceNames(const llvm::Module &Mod) {
       Name.Address.reset();
   }
   std::vector<CSourceName> Names;
+  for (const auto &[Address, Use] : ImageDataUses) {
+    if (Use.CallSlot || Use.AccessBytes.size() != 1)
+      continue;
+    const std::string Name = namedImageObject(Address);
+    CSourceName Object;
+    Object.TheKind = CSourceName::Kind::Object;
+    Object.Identifier = Name;
+    Object.Address = Address;
+    ByIdentifier.emplace(Name, std::move(Object));
+    if (Opts.SourceMap && FunctionEntry) {
+      SourceVariable Variable;
+      Variable.Function = *FunctionEntry;
+      Variable.Address = Address;
+      Variable.Id = "global:" + std::to_string(Address);
+      Variable.Name = Name;
+      Variable.Bytes = *Use.AccessBytes.begin();
+      Variable.Type = NdType::makeInt(Variable.Bytes);
+      recordSourceVariable(Opts.SourceMap->Variables, std::move(Variable));
+    }
+  }
   Names.reserve(ByIdentifier.size());
   for (auto &[Identifier, Name] : ByIdentifier)
     Names.push_back(std::move(Name));
@@ -2336,6 +2356,8 @@ static void promoteCallResultHomes(llvm::Function &Function) {
 bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
                         const CEmitterOptions &Opts, DebugContext *Dbg,
                         const BinaryImage *Img, const llvm::Function *Only) {
+  if (Opts.SourceMap)
+    Opts.SourceMap->Variables.clear();
   if (Only && referencesVectorGlobal(*Only))
     throw std::runtime_error(
         "C projection references unsupported vector global storage");

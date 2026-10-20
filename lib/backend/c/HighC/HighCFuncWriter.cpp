@@ -805,6 +805,11 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     auto ExplicitTy = ExplicitDeclarations.find(Name);
     if (ExplicitTy == ExplicitDeclarations.end())
       ExplicitTy = ExplicitDeclarations.find(Local.Name);
+    if (TypeRef Stated = statedVariableTypeNamed(Name)) {
+      Ty = Stated;
+      ExplicitTy = ExplicitDeclarations.end();
+      DeclaredCTypes[Name] = Stated;
+    }
     OS << (ExplicitTy == ExplicitDeclarations.end()
                ? declarationToC(cDisplayType(Ty), Name)
                : ExplicitTy->second)
@@ -847,6 +852,10 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
         (ProjectFrameAliasesIntoStorage && FrameAliases.count(Name) &&
          !VisibleAssigned.count(Name)))
       continue;
+    if (TypeRef Stated = statedVariableTypeNamed(Name)) {
+      Ty = Stated;
+      ExplicitDeclarations.erase(Name);
+    }
     if (CopyForward.count(Name) && !VisibleAssigned.count(Name)) {
       auto ExplicitTy = ExplicitDeclarations.find(Name);
       DeferredDecls.emplace(
@@ -1310,6 +1319,32 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
   for (auto &[Disp, Slot] : FrameSlots)
     if (!Slot.Type)
       Slot.Type = NdType::makeInt(4);
+  for (auto &[Disp, Slot] : FrameSlots) {
+    const std::string Id = "stack:" + std::to_string(Disp);
+    if (Opts.SourceMap) {
+      SourceVariable Variable;
+      Variable.Function = Func.Entry;
+      Variable.Id = Id;
+      Variable.Name = Slot.Name;
+      Variable.Bytes = Slot.Type->Size;
+      Variable.Type = Slot.Type;
+      Variable.StackOffset = Disp;
+      recordSourceVariable(Opts.SourceMap->Variables, std::move(Variable));
+    }
+    if (Opts.VariableTypes)
+      if (TypeRef Stated =
+              Opts.VariableTypes->local(Func.Entry, Id, Slot.Type->Size)) {
+        if (!SourceVariableTypes::compatible(Slot.Type, Slot.Type->Size))
+          throw std::runtime_error(
+              "source slot typing requires a scalar or pointer value");
+        if ((Stated->Kind == NdTypeKind::Float) !=
+            (Slot.Type->Kind == NdTypeKind::Float))
+          throw std::runtime_error(
+              "source slot type changes floating-point bit interpretation");
+        Slot.Type = Stated;
+        StatedLocalTypes[Slot.Name] = Stated;
+      }
+  }
   // A choice that picks a whole slot for an access of its width leaves the
   // slot a named local; another access through it reaches bytes no single
   // local holds.
@@ -5520,6 +5555,8 @@ void HighCWriter::simulateCatchReaching(const HighFunc &Func) {
 
 void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   CurrentFunc = &Func;
+  StatedLocalTypes.clear();
+  SourceLocalClasses.clear();
   FrameStorageActive = false;
   ProjectFrameAliasesIntoStorage = false;
   FrameStorageSlots.clear();
@@ -5577,8 +5614,21 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   std::function<void(const ExprPtr &)> ReserveNames = [&](const ExprPtr &E) {
     if (!E || !MemorySeen.insert(E.get()).second)
       return;
-    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi)
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
+      if (E->Type && Opts.VariableTypes && !Opts.VariableTypes->Locals.empty())
+        SourceLocalClasses[{Func.Entry, highSourceVariableId(E->Var)}] |=
+            !SourceVariableTypes::compatible(E->Type, E->Var.Size) ? 4u
+            : E->Type->Kind == NdTypeKind::Float                   ? 1u
+                                                                   : 2u;
       MemoryIdentifiers.allocate(varName(E->Var));
+      if (Opts.SourceMap) {
+        const auto Key =
+            std::make_pair(Func.Entry, highSourceVariableId(E->Var));
+        if (auto It = Opts.SourceMap->Variables.find(Key);
+            It != Opts.SourceMap->Variables.end())
+          It->second.Type = E->Type;
+      }
+    }
     if (E->Kind == ExprKind::Addr && E->Operands.size() == 1 &&
         E->Operands[0] &&
         (E->Operands[0]->Kind == ExprKind::Var ||

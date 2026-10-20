@@ -1110,10 +1110,12 @@ struct Session {
   const FunctionLlvmModule *ensureFunctionLlvmModule(va_t Entry, bool NoOpt) {
     if (PipeRan && PipelineFeatureGeneration != SigDB.featureGeneration())
       clearPipeline();
+    SourceViewOptions NativeOptions = SourceOptions;
+    NativeOptions.VariableTypes.clear();
     for (auto It = FunctionLlvmModules.begin(); It != FunctionLlvmModules.end();
          ++It)
       if (It->Entry == Entry && It->NoOpt == NoOpt &&
-          It->Options == SourceOptions) {
+          It->Options == NativeOptions) {
         FunctionLlvmModules.splice(FunctionLlvmModules.begin(),
                                    FunctionLlvmModules, It);
         return &FunctionLlvmModules.front();
@@ -1134,7 +1136,7 @@ struct Session {
     FunctionLlvmModule Built;
     Built.Entry = Entry;
     Built.NoOpt = NoOpt;
-    Built.Options = SourceOptions;
+    Built.Options = std::move(NativeOptions);
     Built.Module = emitNativeLlvm(NoOpt, &Mask, Built.Sources);
     if (!Built.Module)
       return nullptr;

@@ -156,6 +156,12 @@ NEVERD_API const char *neverd_func_attributes_json(neverd_session_t Sess,
 NEVERD_API const char *neverd_func_type_json(neverd_session_t Sess,
                                              neverd_va_t Entry,
                                              const char *OptionsJson);
+/// Check a source-only scalar/pointer type against the local library and
+/// exact machine width. Request: {"type":string,"bytes":1..16,"floating":bool}.
+/// Does not change the image, machine IR, ABI or rewriting authority.
+/// Null with neverd_last_error on refusal; free with neverd_free_string.
+NEVERD_API const char *neverd_source_type_json(neverd_session_t Sess,
+                                               const char *RequestJson);
 /// The user's function edits, [{"addr","state"?,attributes...}] in address
 /// order, where "state" is "created" or "deleted" and the attributes are
 /// neverd_func_edit's.  Free with neverd_free_string.

@@ -93,6 +93,12 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
       }
   }
   // Those an earlier rendering's code read members of through others.
+  if (Opts.VariableTypes) {
+    for (const auto &[Key, Type] : Opts.VariableTypes->Locals)
+      Visit(Type);
+    for (const auto &[Address, Type] : Opts.VariableTypes->Globals)
+      Visit(Type);
+  }
   for (const TypeRef &Record : ExtraRecords)
     Visit(Record);
   if (Records.empty())
@@ -177,6 +183,12 @@ void HighCWriter::writeSourceRecordDeclarations(
     for (const auto &[Name, Type] : Function.Params)
       Visit(Type);
   };
+  if (Opts.VariableTypes) {
+    for (const auto &[Key, Type] : Opts.VariableTypes->Locals)
+      Visit(Type);
+    for (const auto &[Address, Type] : Opts.VariableTypes->Globals)
+      Visit(Type);
+  }
   for (const HighFunc &Function : Funcs) {
     Visit(Function.ReturnType);
     for (const HighParam &Param : Function.Params)
@@ -264,8 +276,21 @@ void HighCWriter::recordSourceNames(const std::vector<HighFunc> &Funcs) {
   for (const auto &[Identifier, Source] : ReferencedFunctionSymbols)
     if (!ByIdentifier.count(Identifier))
       Add(CSourceName::Kind::Function, Identifier, Source, std::nullopt);
-  for (const auto &[Address, Object] : ImageObjects)
+  for (const auto &[Address, Object] : ImageObjects) {
     Add(CSourceName::Kind::Object, Object.Name, Object.Symbol, Address);
+    if (Opts.SourceMap && Object.Type)
+      for (const auto &Function : Funcs) {
+        SourceVariable Variable;
+        Variable.Function = Function.Entry;
+        Variable.Address = Address;
+        Variable.Id = "global:" + std::to_string(Address);
+        Variable.Name = Object.Name;
+        Variable.Bytes = Object.Type->Size;
+        Variable.Type = Object.Type;
+        Variable.Ambiguous = !dataNameWidth(Address, Object).has_value();
+        recordSourceVariable(Opts.SourceMap->Variables, std::move(Variable));
+      }
+  }
   // Keep source type identity beside the C projection. A tag shared by two
   // template instantiations is deliberately left in C, as for colliding
   // function names; replacing either by the other would invent a layout.

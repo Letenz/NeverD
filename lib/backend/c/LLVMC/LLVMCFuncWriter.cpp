@@ -488,7 +488,8 @@ void LLVMCWriter::markInlinable(llvm::Function &Fn) {
   planExpressionMaterialization(Fn);
   for (auto &BB : Fn) {
     for (auto &Inst : BB) {
-      if (Inst.getType()->isVoidTy() || MaterializedExpressions.count(&Inst))
+      if (Inst.getType()->isVoidTy() || MaterializedExpressions.count(&Inst) ||
+          statedVariableType(&Inst))
         continue;
       // Freeze materializes one stable, defined choice before any folding.
       if (llvm::isa<llvm::FreezeInst>(&Inst))
@@ -2391,6 +2392,18 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   ArgDebugNames.clear();
   DebugArgsBound = false;
   FunctionEntry.reset();
+  SourceValueIds.clear();
+  unsigned SourceValueIndex = 0;
+  if (Opts.SourceMap ||
+      (Opts.VariableTypes && !Opts.VariableTypes->Locals.empty())) {
+    for (const auto &Argument : Fn.args())
+      SourceValueIds[&Argument] =
+          "argument:" + std::to_string(Argument.getArgNo());
+    for (const auto &Block : Fn)
+      for (const auto &Instruction : Block)
+        SourceValueIds[&Instruction] =
+            "instruction:" + std::to_string(SourceValueIndex++);
+  }
   SyntheticFrame = nullptr;
   FrameBaseOffset = 0;
   SpLocalOwner.clear();
@@ -8635,7 +8648,7 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
       // name never appears in the body, and keep a printed unused assign.
       CallDeclNames.push_back(DeclName);
       emitIndent(1);
-      OS << typeToCLLVM(Inst.getType()) << " " << DeclName << ";\n";
+      OS << sourceVariableDeclaration(Inst, DeclName) << "\n";
     }
   }
 
@@ -9949,7 +9962,7 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
         }
       } else {
         Declaration =
-            "    " + typeToCLLVM(Inst.getType()) + " " + It->second + ";\n";
+            "    " + sourceVariableDeclaration(Inst, It->second) + "\n";
       }
       MissingDecls.emplace_back(*FirstUse, std::move(Declaration));
       DeclaredNames.insert(It->second);
