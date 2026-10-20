@@ -162,10 +162,7 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
       set_tests_properties(NeverDWorkerSourceVariableEdits PROPERTIES TIMEOUT 120)
       add_test(NAME NeverDWorkerDataPresentation
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_presentation_test.py" $<TARGET_FILE:neverd-worker>)
-        set_tests_properties(NeverDWorkerDataPresentation PROPERTIES TIMEOUT 90)
-        add_test(NAME NeverDWorkerImmediatesRegister
-          COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/immediates_register_test.py" $<TARGET_FILE:neverd-worker> --cli $<TARGET_FILE:neverd>)
-        set_tests_properties(NeverDWorkerImmediatesRegister PROPERTIES TIMEOUT 120)
+      set_tests_properties(NeverDWorkerDataPresentation PROPERTIES TIMEOUT 90)
       add_test(NAME NeverDWorkerStackFrame
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/stack_frame_test.py" $<TARGET_FILE:neverd-worker> --cc "${CMAKE_C_COMPILER}")
       set_tests_properties(NeverDWorkerStackFrame PROPERTIES TIMEOUT 120)
@@ -230,13 +227,17 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
       elseif(EXISTS "${NEVERD_WORKER_CLI_EXECUTABLE}")
         set(_neverd_worker_test_cli "${NEVERD_WORKER_CLI_EXECUTABLE}")
       endif()
-      set(_neverd_source_synthesis_args)
+      set(_neverd_worker_test_cli_args)
       if(_neverd_worker_test_cli)
-        list(APPEND _neverd_source_synthesis_args --cli "${_neverd_worker_test_cli}")
+        list(APPEND _neverd_worker_test_cli_args --cli "${_neverd_worker_test_cli}")
       endif()
+      add_test(NAME NeverDWorkerImmediatesRegister
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/immediates_register_test.py"
+                "$<TARGET_FILE:neverd-worker>" ${_neverd_worker_test_cli_args})
+      set_tests_properties(NeverDWorkerImmediatesRegister PROPERTIES TIMEOUT 120)
       add_test(NAME NeverDWorkerSourceSynthesis
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/source_synthesis_test.py"
-                "$<TARGET_FILE:neverd-worker>" ${_neverd_source_synthesis_args})
+                "$<TARGET_FILE:neverd-worker>" ${_neverd_worker_test_cli_args})
       set_tests_properties(NeverDWorkerSourceSynthesis PROPERTIES TIMEOUT 180)
       if(_neverd_worker_test_cli)
         add_test(NAME NeverDWorkerCLIDataPresentation
