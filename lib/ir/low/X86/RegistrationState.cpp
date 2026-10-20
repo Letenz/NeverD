@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/loader/COFF/COFFCxxEpilogue.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/RegistrationScopeGraph.h"
 
@@ -26,14 +27,15 @@ RegistrationStateSolver::RegistrationStateSolver(
     ConditionalFrame *Conditional, const BoundCalleeProver *BoundCallees,
     const SEHJumpRuntime *JumpRuntime,
     const coff_loader::X86CxxHandlerABI *CxxHandler,
-    const coff_loader::X86CxxPrologueCall *CxxPrologue)
+    const coff_loader::X86CxxPrologueCall *CxxPrologue,
+    const std::vector<coff_loader::X86CxxEpilogueCall> *CxxEpilogues)
     : Function(Function), EH(*Function.ExceptionMetadata),
       Chain(*EH.Registration), SecurityCookieVA(SecurityCookieVA),
       CookieCheckVA(CookieCheckVA), CxxHandler(CxxHandler),
-      CxxPrologue(CxxPrologue), Callees(Callees), Cleanups(Cleanups),
-      Stacks(Stacks), LocalUnwinds(LocalUnwinds), SEHControls(SEHControls),
-      Conditional(Conditional), BoundCallees(BoundCallees),
-      JumpRuntime(JumpRuntime),
+      CxxPrologue(CxxPrologue), CxxEpilogues(CxxEpilogues), Callees(Callees),
+      Cleanups(Cleanups), Stacks(Stacks), LocalUnwinds(LocalUnwinds),
+      SEHControls(SEHControls), Conditional(Conditional),
+      BoundCallees(BoundCallees), JumpRuntime(JumpRuntime),
       KnownCxx(EH.Encoding == ExceptionEncoding::X86CxxFuncInfo &&
                (EH.Personality == ExceptionPersonality::CxxFrameHandlerX86 ||
                 EH.Personality == ExceptionPersonality::CxxFrameHandler3)),
@@ -108,6 +110,19 @@ bool RegistrationStateSolver::initialize() {
         "shared C++ prologue has no exact parent entry and call boundary");
     return false;
   }
+  if (CxxEpilogues)
+    for (const auto &Call : *CxxEpilogues)
+      if (!charge(1) || !CxxPrologue || !Call.Caller.isValid() ||
+          Call.Caller.End - Call.Caller.Begin != 5 ||
+          Call.Caller.Begin < CxxPrologue->Caller.End ||
+          Call.Caller.End > EH.CodeRange.End || !Call.Helper.isValid() ||
+          Call.Helper.End - Call.Helper.Begin != 20 ||
+          EH.CodeRange.overlaps(Call.Helper) ||
+          !CxxEpilogueIndex.emplace(Call.Caller.Begin, &Call).second) {
+        Result.Diagnostics.push_back(
+            "shared C++ epilogue has no unique physical call description");
+        return false;
+      }
   if (Chain.RealignedFrame && !validateRealignedLayout()) {
     Result.Diagnostics.push_back("realigned registration frame requires a "
                                  "separate coordinate transfer proof");

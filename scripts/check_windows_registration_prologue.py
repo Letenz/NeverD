@@ -73,6 +73,44 @@ _mainCRTStartup:
   mov eax, dword ptr fs:[0]
   cmp eax, dword ptr [old_chain]
   jne state_failed
+  call _epilogue_state_parent
+  cmp eax, 0x11223344
+  jne state_failed
+  cmp esp, dword ptr [main_stack]
+  jne state_failed
+  mov eax, dword ptr fs:[0]
+  cmp eax, dword ptr [old_chain]
+  jne state_failed
+  mov ebp, 0x12345678
+  mov ebx, 0x23456789
+  mov esi, 0x3456789a
+  mov edi, 0x456789ab
+  call _epilogue_parent
+  pushfd
+  pop dword ptr [actual_flags]
+  cmp eax, 0x11223344
+  jne state_failed
+  cmp edx, 0x22334455
+  jne state_failed
+  cmp ecx, offset epilogue_return
+  jne state_failed
+  cmp ebp, 0x12345678
+  jne state_failed
+  cmp ebx, dword ptr [epilogue_ebx]
+  jne state_failed
+  cmp esi, dword ptr [epilogue_esi]
+  jne state_failed
+  cmp edi, dword ptr [epilogue_edi]
+  jne state_failed
+  cmp esp, dword ptr [main_stack]
+  jne state_failed
+  mov eax, dword ptr fs:[0]
+  cmp eax, dword ptr [old_chain]
+  jne state_failed
+  mov eax, dword ptr [actual_flags]
+  xor eax, dword ptr [epilogue_flags]
+  test eax, 0x8d5
+  jne state_failed
   mov ebp, 0x12345678
   mov ebx, 0x23456789
   mov esi, 0x3456789a
@@ -105,6 +143,43 @@ _prologue_state_parent:
   mov dword ptr fs:[0], ecx
   mov esp, ebp
   pop ebp
+  ret
+.p2align 4, 0x90
+.globl _epilogue_state_parent
+_epilogue_state_parent:
+  {push}
+  mov eax, offset _prologue_handler
+  call _prologue_helper
+  and dword ptr [ebp-4], 0
+  or dword ptr [ebp-4], -1
+  xor ebx, ebx
+  xor esi, esi
+  xor edi, edi
+  mov eax, 0x11223344
+  call _epilogue_helper
+  ret
+.p2align 4, 0x90
+.globl _epilogue_parent
+_epilogue_parent:
+  {push}
+  mov eax, offset _prologue_handler
+  call _prologue_helper
+  mov eax, dword ptr [esp+12]
+  mov dword ptr [epilogue_ebx], eax
+  mov eax, dword ptr [esp+8]
+  mov dword ptr [epilogue_esi], eax
+  mov eax, dword ptr [esp+4]
+  mov dword ptr [epilogue_edi], eax
+  xor ebx, ebx
+  xor esi, esi
+  xor edi, edi
+  mov eax, 0x11223344
+  mov edx, 0x22334455
+  cmp edx, eax
+  pushfd
+  pop dword ptr [epilogue_flags]
+  call _epilogue_helper
+epilogue_return:
   ret
 .p2align 4, 0x90
 .globl _prologue_parent
@@ -178,6 +253,20 @@ _prologue_helper:
   mov dword ptr fs:[0], eax
   ret
 .p2align 4, 0x90
+.globl _epilogue_helper
+_epilogue_helper:
+  mov ecx, dword ptr [ebp-12]
+  mov dword ptr fs:[0], ecx
+  pop ecx
+  pop edi
+  pop edi
+  pop esi
+  pop ebx
+  .byte 0x8b, 0xe5
+  pop ebp
+  push ecx
+  ret
+.p2align 4, 0x90
 .globl _prologue_handler
 _prologue_handler:
   mov eax, offset func_info
@@ -204,6 +293,10 @@ ___security_cookie: .long 0xbb40e64e
 main_stack: .long 0
 old_chain: .long 0
 actual_flags: .long 0
+epilogue_flags: .long 0
+epilogue_ebx: .long 0
+epilogue_esi: .long 0
+epilogue_edi: .long 0
 .globl _prologue_allocation, _prologue_variant, _prologue_wide, _prologue_seed
 _prologue_allocation: .long {allocation}
 _prologue_variant: .long {variant}
@@ -262,6 +355,8 @@ def main() -> int:
                     exports = ["prologue_" + name for name in
                                ("parent", "state_parent", "helper", "handler",
                                 "allocation", "variant", "wide", "seed")]
+                    exports += ["epilogue_parent", "epilogue_state_parent",
+                                "epilogue_helper"]
                     run([args.linker, "/entry:mainCRTStartup", "/nodefaultlib",
                          "/machine:x86", "/subsystem:console", "/fixed:no",
                          "/dynamicbase:no", "/out:" + str(image), obj,
@@ -287,9 +382,16 @@ def main() -> int:
                             raise ValueError("independent AND-state control has changed")
                         changed[update + 3] = 1
                         wrong_state.write_bytes(changed)
+                        wrong_exit = case / "wrong-epilogue.exe"
+                        changed = bytearray(pe.data)
+                        restore = pe.raw(pe.entry(b"epilogue_helper")) + 13
+                        if changed[restore] != 0x5e:
+                            raise ValueError("independent epilogue restore has changed")
+                        changed[restore] = 0x5f
+                        wrong_exit.write_bytes(changed)
                         record["runtime"] = []
                         for original, expected in ((image, 0), (wrong, 1),
-                                                   (wrong_state, 1)):
+                                                   (wrong_state, 1), (wrong_exit, 1)):
                             rebased = original.with_stem(original.stem + "-rebased")
                             rebased.write_bytes(PE32(original.read_bytes()).rebase(0x500000))
                             for executable in (original, rebased):

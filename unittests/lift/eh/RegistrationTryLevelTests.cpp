@@ -23,10 +23,12 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/FuncDetector.h"
+#include "neverd/ir/low/RegistrationCxxState.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/X86RegistrationFrame.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/loader/COFF/COFFCxxEpilogue.h"
 #include "neverd/loader/COFF/COFFException.h"
 #include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
@@ -1920,6 +1922,34 @@ TEST(RegistrationTryLevel, CxxEAXHelperInputPE32HasTheCheckedPhysicalCall) {
             -28 - int32_t(Word("prologue_allocation")));
   EXPECT_FALSE(
       cxxRegistrationFrameCoordinate(*Function.ExceptionMetadata, &States));
+  const va_t ExitParent = Export("epilogue_state_parent");
+  ASSERT_NE(ExitParent, InvalidVA);
+  const auto ExitFunction = liftEntry(*Image, ExitParent);
+  ASSERT_TRUE(ExitFunction.ExceptionMetadata);
+  ASSERT_TRUE(ExitFunction.RegistrationStates);
+  bool FoundExit = false;
+  for (const auto &Block : ExitFunction.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
+          Op.Inputs[0].isConst() &&
+          Op.Inputs[0].Offset == Export("epilogue_helper")) {
+        const auto Exit = coff_loader::getCheckedX86CxxEpilogueCall(
+            *Image, *ExitFunction.ExceptionMetadata, Op.Addr);
+        ASSERT_TRUE(Exit);
+        EXPECT_EQ(Exit->Caller.size(), 5u);
+        EXPECT_EQ(Exit->Helper.size(), 20u);
+        FoundExit = true;
+      }
+  EXPECT_TRUE(FoundExit);
+  const bool IntactSaves =
+      Word("prologue_variant") == 0 || Word("prologue_allocation") >= 4;
+  const auto &ExitStates = *ExitFunction.RegistrationStates;
+  EXPECT_EQ(ExitStates.RegistrationLifetimeComplete, IntactSaves);
+  EXPECT_EQ(ExitStates.ChainOperationsComplete, IntactSaves);
+  EXPECT_EQ(ExitStates.CallFrameEffectsComplete, IntactSaves);
+  EXPECT_EQ(bool(ExitStates.CxxPrologue), IntactSaves);
+  EXPECT_FALSE(cxxRegistrationFrameCoordinate(*ExitFunction.ExceptionMetadata,
+                                              &ExitStates));
 }
 
 TEST(RegistrationTryLevel, CxxEAXHelperRequiresClosedPrecedingBody) {
@@ -2331,6 +2361,221 @@ TEST(RegistrationTryLevel, CxxBitwiseStatesRequireTheirExactMemoryOperation) {
     }
     ASSERT_TRUE(Changed);
     EXPECT_FALSE(analyzeRegistrationStates(Function).Complete);
+  }
+}
+
+std::pair<BinaryImage, va_t>
+makeCxxSharedEpilogueImage(bool Wide, unsigned Variant, uint32_t Allocation,
+                           bool PopArguments = false) {
+  auto Image = makeCxxEAXStateImage(Wide, Variant, Allocation);
+  constexpr va_t Epilogue = kText + 0x180;
+  auto &Text = Image.Segments.front().Data;
+  const size_t Begin = 0x20 + (Wide ? 15 : 12);
+  // Exercise actual restores: the body destroys all three saved GPRs and
+  // leaves a distinct scalar in EAX before calling the shared epilogue.
+  std::vector<uint8_t> Body = {0x83, 0x65, 0xfc, 0,    0x83, 0x4d, 0xfc, 0xff,
+                               0x31, 0xdb, 0x31, 0xf6, 0x31, 0xff, 0xb8};
+  emit32(Body, 0x11223344);
+  const va_t Call = kText + Begin + Body.size();
+  Body.push_back(0xe8);
+  emit32(Body, uint32_t(Epilogue - Call - 5));
+  if (PopArguments)
+    Body.insert(Body.end(), {0xc2, 8, 0});
+  else
+    Body.push_back(0xc3);
+  std::fill(Text.begin() + Begin, Text.begin() + 0x50, 0xcc);
+  std::copy(Body.begin(), Body.end(), Text.begin() + Begin);
+  const uint8_t Helper[] = {0x8b, 0x4d, 0xf4, 0x64, 0x89, 0x0d, 0,
+                            0,    0,    0,    0x59, 0x5f, 0x5f, 0x5e,
+                            0x5b, 0x8b, 0xe5, 0x5d, 0x51, 0xc3};
+  std::copy(std::begin(Helper), std::end(Helper), Text.begin() + 0x180);
+  Image.ExceptionMetadata = {};
+  coff_loader::parseX86RegistrationExceptions(Image);
+  return {std::move(Image), Call};
+}
+
+TEST(RegistrationTryLevel, CxxSharedEpilogueRestoresTheProvedParentFrame) {
+  for (bool Wide : {false, true})
+    for (unsigned Variant : {0, 1, 2})
+      for (uint32_t Allocation : {0, 1, 4, 32})
+        for (bool PopArguments : {false, true}) {
+          if (Variant && Allocation < 4)
+            continue;
+          SCOPED_TRACE(::testing::Message()
+                       << Wide << ' ' << Variant << ' ' << Allocation << ' '
+                       << PopArguments);
+          auto [Image, Call] = makeCxxSharedEpilogueImage(
+              Wide, Variant, Allocation, PopArguments);
+          const auto Function = liftEntry(Image, kText + 0x20);
+          ASSERT_TRUE(Function.hasCompleteLiftCoverage());
+          ASSERT_TRUE(Function.RegistrationStates);
+          const auto &States = *Function.RegistrationStates;
+          EXPECT_TRUE(States.Complete);
+          EXPECT_TRUE(States.RegistrationLifetimeComplete);
+          EXPECT_TRUE(States.ChainOperationsComplete);
+          EXPECT_TRUE(States.CallFrameEffectsComplete);
+          EXPECT_TRUE(States.CxxPrologue);
+          EXPECT_TRUE(States.CallFrameEffects.empty());
+          EXPECT_FALSE(cxxRegistrationFrameCoordinate(
+              *Function.ExceptionMetadata, &States));
+          const auto Exit = std::find_if(
+              States.Blocks.begin(), States.Blocks.end(),
+              [&](const auto &S) { return S.Range.Begin == Call + 5; });
+          ASSERT_NE(Exit, States.Blocks.end());
+          EXPECT_TRUE(Exit->Reached);
+          EXPECT_FALSE(Exit->Unknown);
+          EXPECT_TRUE(Exit->Levels.empty());
+          EXPECT_TRUE(
+              std::any_of(States.ChainAccesses.begin(),
+                          States.ChainAccesses.end(), [&](const auto &Access) {
+                            return Access.Address == Call &&
+                                   Access.EndAddress == Call + 5 &&
+                                   Access.AccessKind ==
+                                       RegistrationChainAccess::Kind::Remove;
+                          }));
+        }
+}
+
+TEST(RegistrationTryLevel, CxxSharedEpilogueCannotRestoreOverwrittenSaves) {
+  for (bool Wide : {false, true})
+    for (unsigned Variant : {1, 2})
+      for (uint32_t Allocation : {0, 1}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Wide << ' ' << Variant << ' ' << Allocation);
+        auto [Image, Call] =
+            makeCxxSharedEpilogueImage(Wide, Variant, Allocation);
+        const auto Function = liftEntry(Image, kText + 0x20);
+        ASSERT_TRUE(Function.hasCompleteLiftCoverage());
+        ASSERT_TRUE(Function.RegistrationStates);
+        EXPECT_FALSE(Function.RegistrationStates->RegistrationLifetimeComplete);
+        EXPECT_FALSE(Function.RegistrationStates->ChainOperationsComplete);
+      }
+}
+
+TEST(RegistrationTryLevel, CxxSharedEpilogueRequiresCurrentImmutableBytes) {
+  auto [OriginalImage, Call] = makeCxxSharedEpilogueImage(false, 1, 32);
+  const auto Original = liftEntry(OriginalImage, kText + 0x20);
+  ASSERT_TRUE(Original.ExceptionMetadata);
+  ASSERT_TRUE(Original.RegistrationStates);
+  ASSERT_TRUE(Original.RegistrationStates->RegistrationLifetimeComplete);
+  for (unsigned Mutation = 0; Mutation != 26; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = OriginalImage;
+    if (Mutation < 20)
+      Image.Segments.front().Data[0x180 + Mutation] ^= 1;
+    if (Mutation == 20)
+      Image.BaseRelocations.push_back({kText + 0x181, 3});
+    if (Mutation == 21)
+      Image.BaseRelocations.push_back({Call + 1, 3});
+    if (Mutation == 22)
+      Image.Segments.front().Flags =
+          Image.Segments.front().Flags | SegmentFlags::Writable;
+    if (Mutation == 23)
+      Image.Segments.push_back(Image.Segments.front());
+    if (Mutation == 24)
+      Image.Segments.front().Data[0x201] ^= 1;
+    if (Mutation == 25)
+      Image.Segments.front().Data[Call - kText + 1] ^= 1;
+    EXPECT_FALSE(coff_loader::getCheckedX86CxxEpilogueCall(
+        Image, *Original.ExceptionMetadata, Call));
+    const auto States = analyzeCheckedX86CxxStates(Image, Original);
+    EXPECT_FALSE(States.RegistrationLifetimeComplete);
+    EXPECT_FALSE(States.ChainOperationsComplete);
+  }
+}
+
+TEST(RegistrationTryLevel, CxxSharedEpilogueRequiresTheLiveCallAndSaves) {
+  auto [Image, Call] = makeCxxSharedEpilogueImage(false, 1, 32);
+  const auto Original = liftEntry(Image, kText + 0x20);
+  ASSERT_TRUE(Original.RegistrationStates);
+  ASSERT_TRUE(Original.RegistrationStates->RegistrationLifetimeComplete);
+  for (unsigned Mutation = 0; Mutation != 18; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Function = Original;
+    bool Changed = false;
+    if (Mutation == 17) {
+      Function.OrdinaryModuleAnalysisRoots.insert(Call + 1);
+      Changed = true;
+    }
+    for (auto &Block : Function.Blocks) {
+      for (auto &Boundary : Block.InstructionBoundaries)
+        if (Boundary.Address == Call && Mutation < 6) {
+          Changed = true;
+          switch (Mutation) {
+          case 0:
+            --Boundary.Size;
+            break;
+          case 1:
+            Boundary.Control = LowInstructionControl::Branch;
+            break;
+          case 2:
+            Boundary.ControlFlags |=
+                LowInstructionControlFlag::InstructionGuard;
+            break;
+          case 3:
+            ++*Boundary.Immediate;
+            break;
+          case 4:
+            Boundary.OpCount = 0;
+            break;
+          case 5:
+            ++Block.EndAddr;
+            break;
+          }
+        }
+      for (auto &Op : Block.Ops) {
+        if (Op.Addr == Call) {
+          switch (Mutation) {
+          case 6:
+            Op.Output.Size = 8;
+            Changed = true;
+            break;
+          case 7:
+            Op.NumInputs = 2;
+            Changed = true;
+            break;
+          case 8:
+            ++Op.Inputs[0].Offset;
+            Changed = true;
+            break;
+          case 9:
+            Op.Seq = -1;
+            Changed = true;
+            break;
+          case 10:
+            Op.MemoryOrdering = NdMemoryOrdering::Relaxed;
+            Changed = true;
+            break;
+          }
+        }
+        if ((Mutation == 11 || Mutation == 12) && Op.Addr == Call - 5 &&
+            Op.Opcode == NdOp::COPY &&
+            Op.Output == NdVar::reg(x86reg::RAX, 4)) {
+          Op.Output = NdVar::reg(Mutation == 11 ? x86reg::RSP : x86reg::RBP, 4);
+          Changed = true;
+        }
+        if (Mutation == 13 && Op.Opcode == NdOp::INT_OR &&
+            Op.Output.Size == 4 && Op.Addr == Call - 15) {
+          Op.Inputs[1] = NdVar::cst(0, 4);
+          Changed = true;
+        }
+        if (Mutation >= 14 && Mutation <= 16 && Op.Addr == Call - 19 &&
+            Op.Opcode == NdOp::INT_ADD && Op.NumInputs == 2 &&
+            Op.Inputs[1].isConst() &&
+            uint32_t(Op.Inputs[1].Offset) == uint32_t(-4)) {
+          // Destroy the caller PC, a saved EBX word, or the previous chain.
+          const int32_t Offset = Mutation == 14   ? 4
+                                 : Mutation == 15 ? -48
+                                                  : -12;
+          Op.Inputs[1] = NdVar::cst(uint32_t(Offset), 4);
+          Changed = true;
+        }
+      }
+    }
+    ASSERT_TRUE(Changed);
+    const auto States = analyzeCheckedX86CxxStates(Image, Function);
+    EXPECT_FALSE(States.RegistrationLifetimeComplete);
+    EXPECT_FALSE(States.ChainOperationsComplete);
   }
 }
 

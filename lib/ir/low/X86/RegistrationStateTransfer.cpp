@@ -95,6 +95,29 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       }
       continue;
     }
+    if (const auto Exit = CxxEpilogueIndex.find(Op.Addr);
+        Exit != CxxEpilogueIndex.end()) {
+      if (!transferCxxEpilogue(I, After, Op, Facts, *Exit->second)) {
+        Invalidate();
+        CompleteCalls = CompleteChainOperations = CompleteCookies = false;
+      } else {
+        const auto Value =
+            After.Frame.Registers[x86reg::RAX / x86reg::GeneralRegStride];
+        LowOp Returned;
+        Returned.Opcode = NdOp::COPY;
+        Returned.Output = Op.Output;
+        Transfer.write(Returned, Value);
+        if (CheckRuntimeObjects)
+          RuntimeTransfer.write(
+              Returned, After.RuntimeObject
+                            .Registers[x86reg::RAX / x86reg::GeneralRegStride]);
+        auto [It, New] =
+            FrameValues.emplace(std::make_pair(Op.Addr, Op.Seq), Value);
+        if (!New)
+          It->second = registration_state::join(It->second, Value);
+      }
+      continue;
+    }
     FrameValue Value = Transfer.evaluate(Op, After.Installed);
     if (Conditional) {
       // The caller's physical registration address changes during native

@@ -19,6 +19,7 @@
 #include "X86/RegistrationTryLevel.h"
 
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/loader/COFF/COFFCxxEpilogue.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/Support/ErrorHandling.h"
@@ -92,6 +93,9 @@ void CFGBuilder::splitBlocks() {
       BlockStarts.insert(Addr + Rec.Size);
     if (Registration && EH->Cxx &&
         registration_state::stateStoreCandidate(*EH->Registration, Rec.Ops))
+      BlockStarts.insert(Addr + Rec.Size);
+    if (Registration && EH->Cxx && Rec.IsCall && !Rec.IsIndirect &&
+        coff_loader::getCheckedX86CxxEpilogueCall(*CurrentImg, *EH, Addr))
       BlockStarts.insert(Addr + Rec.Size);
     if (Registration && !EH->Cxx &&
         (EH->Encoding == ExceptionEncoding::X86ScopeTableEH3 ||

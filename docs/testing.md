@@ -5970,8 +5970,8 @@ allocation retains partial overlap. Run
 --runtime-libs <native-msvc-library-directory> --output <directory>` for 24
 assembled PE32 source cases. Add `--wine <wine-command> --wine-prefix <directory>`
 to check live stack bytes, all GPRs, defined arithmetic flags, return-PC movement
-and FS chain state at preferred and rebased addresses. Wrong-seed and
-wrong-state controls must return one; intact cases return zero (144 runtime
+and FS chain state at preferred and rebased addresses. Wrong-seed,
+wrong-state and wrong-epilogue controls must return one; intact cases return zero (192 runtime
 observations). Set
 `NEVERD_REGISTRATION_PROLOGUE_INPUT_PE32` to one generated `original.exe` when
 running the complete registration EH suite. Each image also contains an
@@ -5981,6 +5981,14 @@ state updates' ZF/SF results, returned ESP and FS:[0]. Synthetic
 instruction-boundary and input-value
 mutations must refuse the transfer, as must stale current-image bytes.
 The distinct source call receipt does not yet grant native EH lowering.
+`RegistrationTryLevel.CxxSharedEpilogue*` checks 32 combinations of push width,
+allocation, helper form and parent return-pop, eight overwritten-save cases,
+26 current-image mutations and 18 call/frame mutations. The assembled images
+also contain a shared-exit parent whose source proof must reject overlapped
+saves. A separate machine oracle records the live save words, destroys the
+body's registers and checks EAX/EDX/flags preservation, restored registers,
+helper return PC, ESP and FS:[0]. This covers the unguarded shared epilogue;
+the separate GS-checking wrapper is not admitted.
 `check_windows_registration_realigned_rewrite.py` separately emits aligned
 value/reference, unbound value/reference and catch-all parents. Independent
 assembly fixtures use the canonical direct MSVC EBP frame for the unbound forms.

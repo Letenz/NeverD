@@ -19,6 +19,10 @@
 #include <set>
 #include <tuple>
 
+namespace neverd::coff_loader {
+struct X86CxxEpilogueCall;
+}
+
 namespace neverd::registration_state {
 
 struct CxxCatchContext {
@@ -214,7 +218,9 @@ public:
       const BoundCalleeProver *BoundCallees = nullptr,
       const SEHJumpRuntime *JumpRuntime = nullptr,
       const coff_loader::X86CxxHandlerABI *CxxHandler = nullptr,
-      const coff_loader::X86CxxPrologueCall *CxxPrologue = nullptr);
+      const coff_loader::X86CxxPrologueCall *CxxPrologue = nullptr,
+      const std::vector<coff_loader::X86CxxEpilogueCall> *CxxEpilogues =
+          nullptr);
   RegistrationStateAnalysis run();
   size_t workUsed() const { return WorkUsed; }
 
@@ -229,6 +235,9 @@ private:
   bool validateCxxPrologue() const;
   bool transferCxxPrologue(size_t I, Domain &State, const LowOp &Op,
                            BlockFacts &Facts);
+  bool transferCxxEpilogue(size_t I, Domain &State, const LowOp &Op,
+                           BlockFacts &Facts,
+                           const coff_loader::X86CxxEpilogueCall &Call);
   bool validateSEHParentChainUse(const Domain &State, const LowOp &Op,
                                  const FrameTransfer &Transfer) const;
   bool canReconnectSEHParentChain(const Domain &State) const;
@@ -426,6 +435,8 @@ private:
   va_t CookieCheckVA;
   const coff_loader::X86CxxHandlerABI *CxxHandler;
   const coff_loader::X86CxxPrologueCall *CxxPrologue;
+  const std::vector<coff_loader::X86CxxEpilogueCall> *CxxEpilogues;
+  std::map<va_t, const coff_loader::X86CxxEpilogueCall *> CxxEpilogueIndex;
   const std::vector<RegistrationCalleeFrameContract> *Callees;
   const std::vector<RegistrationCleanupFrameContract> *Cleanups;
   const std::vector<RegistrationCalleeStackContract> *Stacks;

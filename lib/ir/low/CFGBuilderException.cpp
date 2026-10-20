@@ -12,6 +12,7 @@
 
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
+#include "neverd/ir/low/RegistrationCxxState.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #include "llvm/ADT/SmallVector.h"
@@ -42,8 +43,6 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     std::optional<std::vector<RegistrationCalleeStackContract>> Stacks;
     std::optional<std::vector<RegistrationLocalUnwindContract>> LocalUnwinds;
     std::optional<std::vector<RegistrationSEHControlContract>> SEHControls;
-    std::optional<coff_loader::X86CxxHandlerABI> CxxHandler;
-    std::optional<coff_loader::X86CxxPrologueCall> CxxPrologue;
     const bool CheckCalls = CurrentImg && Metadata.Cxx.has_value();
     RegistrationCallCalleeIndex *CalleeIndex = nullptr;
     if (CurrentImg) {
@@ -63,10 +62,6 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     if (CheckCalls) {
       Callees = CalleeIndex->contracts(Func);
       Cleanups = CalleeIndex->cleanupContracts(Func);
-      CxxHandler =
-          coff_loader::getCheckedX86CxxHandlerABI(*CurrentImg, Metadata);
-      CxxPrologue =
-          coff_loader::getCheckedX86CxxPrologueCall(*CurrentImg, Metadata);
     }
     if (CurrentImg && !Metadata.Cxx &&
         (Metadata.Personality == ExceptionPersonality::ExceptHandler3 ||
@@ -75,6 +70,12 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
           *CurrentImg, Func, Stacks ? &*Stacks : nullptr,
           LocalUnwinds ? &*LocalUnwinds : nullptr,
           SEHControls ? &*SEHControls : nullptr, CalleeIndex);
+    else if (CheckCalls)
+      Func.RegistrationStates = analyzeCheckedX86CxxStates(
+          *CurrentImg, Func, Callees ? &*Callees : nullptr,
+          Cleanups ? &*Cleanups : nullptr, Stacks ? &*Stacks : nullptr,
+          LocalUnwinds ? &*LocalUnwinds : nullptr,
+          SEHControls ? &*SEHControls : nullptr);
     else
       Func.RegistrationStates = analyzeRegistrationStates(
           Func,
@@ -84,9 +85,7 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
           0, CheckCalls && Callees ? &*Callees : nullptr,
           CheckCalls && Cleanups ? &*Cleanups : nullptr,
           Stacks ? &*Stacks : nullptr, LocalUnwinds ? &*LocalUnwinds : nullptr,
-          SEHControls ? &*SEHControls : nullptr,
-          CxxHandler ? &*CxxHandler : nullptr,
-          CxxPrologue ? &*CxxPrologue : nullptr);
+          SEHControls ? &*SEHControls : nullptr);
     if (CurrentImg && !SEHControls) {
       Func.RegistrationStates->Complete = false;
       Func.RegistrationStates->SEHStateStoresComplete = false;
