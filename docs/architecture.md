@@ -1081,7 +1081,23 @@ one anchor then distinguish the selected or omitted factor. The candidate's
 entire expansion must match, including missing coefficients and modular zeros,
 before the independent polynomial difference proof can authorize it. This
 direct reading requires a scale with additive order at least four; other cubic
-products and higher degrees retain the bounded factor search.
+products retain the bounded factor search.
+Higher-degree roots first group terms sharing all but one or two factors.
+The existing semantic solver proves each small quotient, and an independent
+arithmetic proof checks the complete distribution before substituting those
+quotients. That proof leaves complements opaque: distribution depends on their
+exact identity, not on expanding them as `-1-x`. Equal scales and repeated
+factors remain exact, and identical proved quotients share a charged local
+cache. A bounded frontier and cumulative work/storage admission preserve the
+best completed root on refusal.
+Already factored higher components remain intact while other degrees improve.
+Unaffordable optional expansions leave work for the rest of the expression;
+an unrecovered degree is retained verbatim, never dropped. Exact opposing
+products cancel before the independent difference proof expands minterms.
+The remaining higher-degree search preflights complete candidate lists and
+uses anchored scale/multinomial bounds to reject impossible products early.
+These bounds only reject candidates; complete expansion and proof still
+authorize any recovered product.
 Each degree is expanded over only the variables in its factors, so unrelated
 linear inputs do not inflate a cubic table. Linear and nonlinear parts are
 recombined before the full original-expression proof.
@@ -2794,14 +2810,18 @@ exact instruction facts, LowOps, effective edges, block starts, proof roots,
 conditional roots and storage-owner inputs. Hits pay the complete original
 graph-construction charge. The graph may also retain up to 64 query outcomes
 under a separate 8 MiB retained-payload allowance. Within one read-only target
-role, load-address role or mask-domain invocation, a local scope can reuse its
-validated graph without recopying the instruction snapshot. It is bound to its
-builder and cannot cross instruction, block or storage-owner mutations.
+role, load-address role, address-discovery or mask-domain invocation, a local
+scope can reuse its validated graph without recopying the instruction snapshot.
+It is bound to its builder and cannot cross instruction, block or storage-owner
+mutations.
 Each query still compares roots and owned effective edge overrides, including
 temporary and empty overrides, and pays the original snapshot and graph work.
 One scope retains one bounded graph and at most 64 KiB of override keys;
 oversized keys keep the ordinary validation path. Nested queries own separate
 leases, and a new invocation validates its graph in full.
+Address discovery shares this scope across base candidates, relative anchors
+and both levels of a composite table. Its recognizers are const; each new
+recognizer invocation starts a fresh scope before any proposal is published.
 Exact ordered query fields, proof limits, output shape, function context and
 both relocation occurrence inventories bind each retained value result.
 Hits pay the complete cold value
@@ -4851,6 +4871,8 @@ Control and guard refinement precedes optional frame-partition retries; necessar
 Shared `SymContext::constantWindow` reports a bitwise window only when every result bit is proved constant. It follows existing extracts, a window contained in one concatenation operand, zero extension, and bitwise operations; unknown XOR inputs and arithmetic carries remain opaque. Results are limited to 64 bits, recursion to 32 levels, and work to 256 units. Every visited node, depth rejection and inspected concatenation operand is charged; copying a constant also costs its complete 64-bit word count. An incomplete proof yields no constant. `SymState` uses this read-only query to export constant register and temporary bytes; stored expressions and whole-word reconstruction keep their original identities. Memory-region export retains literal byte facts: eagerly adding derived partial-memory facts can fragment later input provenance and increase control-discovery work.
 
 `SymState` owns per-STORE preservation of already materialized bytes under an explicit separation contract. The actual STORE still executes; other memory regions, invalidation epochs and unknown defaults retain their post-store state. No missing byte is loaded or initialized. `SymExec` applies the contract to one ordinary STORE or one supported atomic write phase. Recovery separately retains bounded affine spills and origin facts; joins remain conservative.
+
+`SymState::materializedRegionRanges` exports only the current extents of one exact symbolic region, charging its lookup and bytes before allocation. It reads no missing memory and constructs no expressions. Recovery splits those extents into bounded cells and uses the existing complete-write overlap proof before preserving each cell. Adjacent proved intervals may coalesce; a gap or possibly overlapping cell remains unprotected. Later writes and projection retain their normal invalidation rules. This precision strategy supplies no external-pointer identity or new alias premise; the binary adapter's ordinary ABI return-slot condition remains a separate documented domain.
 
 `SymStorePreservation::AdditionalRegions` extends that single-store contract to independently based current regions. `AdditionalRanges` remains relative to the primary base. Each declared exact symbolic base and half-open modular interval requires a caller-established separation proof for the complete actual write; no fixed relation among bases is inferred. References belong to the state context by caller contract: index, validity and width checks cannot authenticate an in-range reference from another context. A declaration naming the actual store's canonical base is rejected; ordinary same-region byte overlap already owns that region. Repeated or overlapping declarations form a union and are validated and scanned separately under the same budget. Complete validation and capture/restore accounting precede the one ordinary STORE. Only saved current byte views are restored afterward, without importing historical facts, materializing missing bytes or resetting the store's unknown epochs. Empty `AdditionalRegions` retains existing work accounting. Invalid or insufficient-budget `SymState::store` requests do not mutate state; `SymExec` retains its existing fail-closed behavior on refusal.
 

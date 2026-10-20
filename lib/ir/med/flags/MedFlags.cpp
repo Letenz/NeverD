@@ -26,9 +26,10 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
 
+#include "llvm/ADT/StringMap.h"
+
 #include <algorithm>
 #include <map>
-#include <set>
 #include <string>
 
 namespace neverd {
@@ -74,6 +75,25 @@ bool areBothFlags(const MedOp &Op) {
 }
 
 namespace {
+
+/// The blocks that read a value version: the first one, and whether any
+/// other block reads it too.
+struct UseBlockSet {
+  int First = -1;
+  bool Others = false;
+
+  void insert(int Block) {
+    if (First < 0)
+      First = Block;
+    else if (Block != First)
+      Others = true;
+  }
+  /// Whether a block other than \p Block reads the value.
+  bool readOutside(int Block) const { return Others || First != Block; }
+};
+
+/// Use blocks by value display name.
+using UseBlockMap = llvm::StringMap<UseBlockSet>;
 
 //===----------------------------------------------------------------------===//
 // Architecture dispatch for compound flag patterns
@@ -196,7 +216,7 @@ MedOp buildCmpOp(CondCode CC, const MedVar &A, const MedVar &B,
 
 void markFlagChainDead(std::vector<MedOp> &Ops, int Start,
                        const MedVar &CondVar, int CurBlock,
-                       const std::map<std::string, std::set<int>> &UseBlocks) {
+                       const UseBlockMap &UseBlocks) {
   // A single flag-producing instruction may feed more than one consumer.
   //  * Same block: on ARM a `cmp` sets the carry read by *both* a predicated
   //    `cmphs` (a COND_BR we rewrite) *and* a predicated `mov rd,rm,lsl #n`
@@ -210,10 +230,8 @@ void markFlagChainDead(std::vector<MedOp> &Ops, int Start,
   // loop-carried/live-in flag.  Keep any flag with a surviving use.
   auto hasSurvivingUse = [&](const MedVar &Out, int DefIdx) -> bool {
     auto It = UseBlocks.find(Out.display());
-    if (It != UseBlocks.end())
-      for (int B : It->second)
-        if (B != CurBlock)
-          return true; // consumed by another basic block
+    if (It != UseBlocks.end() && It->second.readOutside(CurBlock))
+      return true; // consumed by another basic block
     for (int U = 0; U < static_cast<int>(Ops.size()); ++U) {
       if (U == DefIdx)
         continue;
@@ -518,7 +536,7 @@ void LowToMedConverter::eliminateFlags(MedFunc &Func) {
   // from the predicated instruction it guards, so a flag must not be killed
   // locally while a successor block still consumes it.  Computed once up front
   // (conservative: never removes a use, so it can only keep extra defs alive).
-  std::map<std::string, std::set<int>> UseBlocks;
+  UseBlockMap UseBlocks;
   for (int B = 0; B < static_cast<int>(Func.Blocks.size()); ++B) {
     for (auto &Op : Func.Blocks[B].Ops)
       for (uint8_t K = 0; K < Op.NumInputs; ++K)

@@ -34,7 +34,7 @@ namespace neverd {
 
 bool CFGBuilder::tryARMTableBranch(const BinaryImage &Img,
                                    const InsnRecord &Rec, JumpTableInfo &Info,
-                                   size_t *CandidateEvidenceBudget) {
+                                   size_t *CandidateEvidenceBudget) const {
   if (Img.Arch != Arch::ARM)
     return false;
 
@@ -153,6 +153,7 @@ bool CFGBuilder::tryARMTableBranch(const BinaryImage &Img,
     int UseSeq = -1;
     std::optional<va_t> Folded;
   } Candidate[2];
+  ResolverQueryScope AddressScope(*this);
   for (int Side = 0; Side < 2; ++Side) {
     const NdVar &V = Ops[AddrAddIdx].Inputs[Side];
     Candidate[Side].Reg = traceToRegister(Ops, AddrAddIdx - 1, V);
@@ -175,7 +176,7 @@ bool CFGBuilder::tryARMTableBranch(const BinaryImage &Img,
               ? std::optional<va_t>(ArchitecturalPC)
               : queryConstantAddressAtUse(
                     Img, {V, Ops[AddrAddIdx].Addr, Ops[AddrAddIdx].Seq, false},
-                    CandidateEvidenceBudget, Complete);
+                    CandidateEvidenceBudget, Complete, &AddressScope);
       if (!Complete) {
         Info.IncompleteGuardDomain = true;
         return false;
@@ -243,7 +244,7 @@ bool CFGBuilder::tryARMTableBranch(const BinaryImage &Img,
 bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
                                         const InsnRecord &Rec,
                                         JumpTableInfo &Info,
-                                        size_t *CandidateEvidenceBudget) {
+                                        size_t *CandidateEvidenceBudget) const {
   if (!CurrentImg || CurrentImg->Arch != Arch::AArch64)
     return false;
 
@@ -468,6 +469,7 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
       Candidate.Reg = Candidate.Value.Offset;
   };
   std::optional<uint64_t> TableBase;
+  ResolverQueryScope AddressScope(*this);
   // Fold the base where the entry is loaded: GCC reuses its register for the
   // anchor before the branch (`ldrb w0, [x1, w0, uxtw]; adr x1, anchor`).
   const va_t LoadAddr =
@@ -480,7 +482,8 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
     bool Complete = false;
     auto V = foldTableAddressAtUse(
         Img, Rec, {Candidate.Value, Candidate.UseAddr, Candidate.UseSeq, false},
-        BaseCand, LoadAddr, CandidateEvidenceBudget, Complete);
+        BaseCand, LoadAddr, CandidateEvidenceBudget, Complete,
+        /*AllowUnmappedCOFFImageBase=*/false, &AddressScope);
     if (!Complete) {
       Info.IncompleteGuardDomain = true;
       return false;
@@ -547,7 +550,8 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
   auto Anchor = foldTableAddressAtUse(
       Img, Rec, {AnchorValue, Ops[AddIdx].Addr, Ops[AddIdx].Seq, false},
       AnchorValue.isReg() ? AnchorValue.Offset : InvalidVA, Ops[AddIdx].Addr,
-      CandidateEvidenceBudget, AnchorComplete);
+      CandidateEvidenceBudget, AnchorComplete,
+      /*AllowUnmappedCOFFImageBase=*/false, &AddressScope);
   if (!AnchorComplete) {
     Info.IncompleteGuardDomain = true;
     return false;

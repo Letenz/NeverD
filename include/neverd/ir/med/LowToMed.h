@@ -45,7 +45,14 @@ public:
   /// freezing arithmetic between addresses that will be rebuilt as distinct
   /// symbols. Optional for standalone IR clients; null preserves the generic
   /// image-independent folding policy.
-  void setBinaryImage(const BinaryImage *I) { Image = I; }
+  void setBinaryImage(const BinaryImage *I) {
+    // What the converter read from another image does not describe this one.
+    if (I != Image) {
+      RuntimeRoutineCalls.reset();
+      CodePointerTargets.reset();
+    }
+    Image = I;
+  }
 
   /// Register DCE with an explicit architecture. Used by tests that build
   /// MedIR directly; the pipeline path sets TargetArch in convert().
@@ -174,6 +181,12 @@ public:
   /// Without them a converter reads its own from its image.
   void setRuntimeRoutineCalls(const std::map<va_t, Intrinsic> *Calls) {
     SharedRuntimeRoutineCalls = Calls;
+  }
+  /// The code addresses the image's relocated code pointers hold
+  /// (codePointerTargetsOf), read once for every converter of a run.
+  /// Without them a converter reads its own from its image.
+  void setCodePointerTargets(const std::vector<va_t> *Targets) {
+    SharedCodePointerTargets = Targets;
   }
 
   /// Provide the set of direct-call targets proven to return a 64-bit integer
@@ -428,6 +441,12 @@ private:
   const std::map<va_t, Intrinsic> *SharedRuntimeRoutineCalls = nullptr;
   std::optional<std::map<va_t, Intrinsic>> RuntimeRoutineCalls;
 
+  /// The code addresses the image's relocated code pointers hold: those the
+  /// run gave (setCodePointerTargets), else built from Image on first use.
+  /// See simplifyCfg.
+  const std::vector<va_t> *SharedCodePointerTargets = nullptr;
+  std::optional<std::vector<va_t>> CodePointerTargets;
+
   /// Direct-call targets proven to return i64 in the register pair; see
   /// setI64Callees.  Null until the pipeline re-converts an i64-accumulator
   /// caller with whole-program return-type knowledge.
@@ -483,6 +502,10 @@ inline bool debugVerifyMedFunc(const MedFunc &Func, const char *PassName) {
 /// itself at any address (an object's first function starts at 0).
 std::map<va_t, Intrinsic> runtimeRoutineCallsOf(const BinaryImage &Img,
                                                 Arch TargetArch);
+
+/// The code addresses the relocated code pointers of \p Img hold, as
+/// normalizeCodeAddress gives them, sorted and unique.
+std::vector<va_t> codePointerTargetsOf(const BinaryImage &Img);
 
 } // namespace neverd
 

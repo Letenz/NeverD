@@ -159,6 +159,12 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
                   Imp->Name, libc::libcVariantOf(*Image));
               Signature && libc::floatReturnBytes(*Signature))
             continue;
+      // Nor does an import whose C declaration returns nothing or a pointer.
+      // After `call setlocale`, GCC pads the next call's stack arguments with
+      // `push %rdx`: a read of what setlocale left in RDX, no second field.
+      if (Image && Op.Opcode == NdOp::CALL && Op.Inputs[0].isConst() &&
+          importDeclaresNoRecord(*Image, Op.Inputs[0].ConstVal))
+        continue;
 
       // Which candidate return registers does the caller read straight-line
       // after the call (a genuine input) before that register is redefined?

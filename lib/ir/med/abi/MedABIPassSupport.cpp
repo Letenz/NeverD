@@ -826,8 +826,10 @@ static std::optional<StackAddressStep> parseStackAddressStep(const MedOp &Op) {
 // stackPtrDelta's answers within one query, by value identity and depth. The
 // depth cap makes an answer depend on the depth it was asked at; within that,
 // a PHI DAG shares each answer instead of re-walking it once per path.
+// Most queries hold a few answers, so the first ones stay inline.
 using StackDeltaMemo =
-    std::map<std::tuple<int, int, int, uint64_t, int>, std::optional<int64_t>>;
+    llvm::SmallDenseMap<std::tuple<int, int, int, uint64_t, int>,
+                        std::optional<int64_t>, 8>;
 
 static std::optional<int64_t>
 stackPtrDeltaAt(const MedFunc &Func, const TargetRegInfo &TRI, const MedVar &V,
@@ -911,7 +913,7 @@ stackPtrDeltaAt(const MedFunc &Func, const TargetRegInfo &TRI, const MedVar &V,
   if (const auto It = Memo.find(Key); It != Memo.end())
     return It->second;
   const auto Delta = stackPtrDeltaUncached(Func, TRI, V, Depth, Defs, Memo);
-  Memo.emplace(Key, Delta);
+  Memo.try_emplace(Key, Delta);
   return Delta;
 }
 

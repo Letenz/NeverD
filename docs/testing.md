@@ -243,6 +243,16 @@ Heap-backed 128/257-bit cube coefficients use a 131,072-unit allowance to
 include their limb costs. Independent Z3 gates cover complete cubic rewrites
 at 2/3 bits; exhaustive four-bit and randomized wide arithmetic checks also
 preserve multiple cubic products and high-bit remainders.
+`SymMBAHigherProduct` runs in the same two targets. It covers four through
+twelve factors at 8–257 bits, 64 separately expanded products, nonlinear
+quotients, repeated factors, even scales and changed coefficients. Exhaustive
+three-bit assignments check partial-budget results against an independent
+formula; zero/one-short work and storage refusals protect the distribution
+proof. Independent Z3 checks cover complete four/six-factor rewrites at 2/3
+bits, with an explicit skip when unavailable. Wider checks use independent
+word arithmetic. Independently enumerated modular products validate the
+necessary coefficient bounds, and unchanged sixteen-factor residuals must
+cancel before minterm expansion in the difference proof.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
 signed/unsigned overflow admission against all byte pairs, including unsafe
 neighboring masks. `NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains`
@@ -282,6 +292,10 @@ high-bit near misses and mixed-degree remainders.
 Use `--family cubic --count 24` for three independently partitioned Boolean
 factors over three to five inputs, even/negative scales, mixed quadratic
 remainders and high-bit perturbations. Run all earlier families as controls.
+Use `--family higher --count 64` for fourth, fifth, sixth and eighth degrees:
+independent partitions up to 64 products, products of quadratic identities,
+mixed degrees, same-degree residuals and deliberately changed coefficients.
+The previous six families remain controls.
 
 `tools/neverd-worker/tests/source_synthesis_test.py WORKER --cli CLI` checks the
 real source-option request used by the GUI and both CLI source emitters, for
@@ -295,6 +309,8 @@ The mixed-degree fixture retains a scaled cubic residual beside the expanded
 quadratic. The cubic fixture executes eight products before adding a linear
 MBA and an observable high-bit remainder. Both exercise the same existing
 symbolic option through worker requests and single/whole-program CLI output.
+The fourth- and sixth-degree fixtures multiply additional factors in original
+x64 machine code, so a fixture compiler cannot simplify the input first.
 With Clang available, each generated C output executes at O0/O2 against an
 independent arithmetic oracle on boundary and deterministic random inputs.
 
@@ -3122,6 +3138,10 @@ LLVM-to-C through the CLI, without depending on a platform linker.
 and three formats, equal and conflicting predecessor values, scalar/fragment
 collisions, uninitialized arms, loop backedges, cache output identity, every
 small-fixture budget boundary, changed roots and shared failure clearing.
+Scoped address discovery and its legacy-fold wrapper must preserve every
+budget boundary, completion state and address across all four architectures
+and three formats. New scopes revalidate changed instructions; roots are
+checked on each query. The PE image-base helper has the same budget checks.
 `Native/JumpTableAddress.*` assembles
 x86, x64, AArch64 and Thumb ELF objects and x64/AArch64 Mach-O objects. It checks
 0/32/160 unrelated blocks, mapped decoys, agreeing joins, clobbers, calls and
@@ -3751,6 +3771,8 @@ native certificate; separately bound selector controls prove complete frame
 writes and reject a corrupted byte store. Run the full specialization, original
 binary independence, PE fixed-image, LowIR independence and LowIR refinement
 owners after changing this shared preservation boundary.
+
+`SymMaterializedRanges.*` in `NeverDSymMemoryKnowledgeTests` checks bounded extent projection without new nodes or bytes, exact and short budgets, modular wrap, holes, adjacent partial writes, invalid/noncanonical bases and post-havoc history. `InterpreterSpecialization.SavedScalar*` checks arbitrary narrow/full-width spills, indexed and conditional writes against complete byte-memory oracles, partial overlap, later overwrite, constant projection and exact work/query limits. Its external-store case must still refuse without a separate return-slot alias contract. These tests supplement the saved-address and writable-gap checks above.
 
 `InterpreterSpecialization.SupervisorRead*` checks ECX selectors with nonzero
 upper RCX bits, full-width results, zero upper destination halves, independent

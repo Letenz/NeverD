@@ -14,6 +14,8 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 #include <algorithm>
 #include <map>
 #include <optional>
@@ -21,12 +23,26 @@
 
 namespace neverd {
 
+std::vector<va_t> codePointerTargetsOf(const BinaryImage &Img) {
+  std::vector<va_t> Targets;
+  const unsigned PointerSize = Img.getPointerSize();
+  if (PointerSize != 0)
+    for (va_t Slot : Img.CodePtrRelocSlots)
+      if (const uint8_t *Bytes = Img.readVA(Slot, PointerSize))
+        Targets.push_back(normalizeCodeAddress(
+            static_cast<va_t>(readPtr(Bytes, Img.is64Bit())), Img.Arch,
+            Img.Mode));
+  llvm::sort(Targets);
+  Targets.erase(std::unique(Targets.begin(), Targets.end()), Targets.end());
+  return Targets;
+}
+
 void LowToMedConverter::simplifyCfg(MedFunc &Func) {
   // Whether code the image takes the address of starts at \p Address: a
   // published code reference, or the value of a relocated code pointer.  An
   // image holds tens of thousands of each, and most functions have no
-  // jump-only block to ask about, so each is read only once one asks.
-  std::optional<std::set<va_t>> PointerTargets;
+  // jump-only block to ask about, so the pointers are read only once one
+  // asks, once for the converter or once for the run that shares them.
   auto AddressTaken = [&](va_t Address) {
     if (!Image)
       return false;
@@ -37,17 +53,13 @@ void LowToMedConverter::simplifyCfg(MedFunc &Func) {
          ++Target)
       if (normalizeCodeAddress(*Target, Image->Arch, Image->Mode) == Address)
         return true;
-    if (!PointerTargets) {
-      PointerTargets.emplace();
-      const unsigned PointerSize = Image->getPointerSize();
-      if (PointerSize != 0)
-        for (va_t Slot : Image->CodePtrRelocSlots)
-          if (const uint8_t *Bytes = Image->readVA(Slot, PointerSize))
-            PointerTargets->insert(normalizeCodeAddress(
-                static_cast<va_t>(readPtr(Bytes, Image->is64Bit())),
-                Image->Arch, Image->Mode));
-    }
-    return PointerTargets->count(Address) != 0;
+    if (!SharedCodePointerTargets && !CodePointerTargets)
+      CodePointerTargets = codePointerTargetsOf(*Image);
+    const std::vector<va_t> &PointerTargets = SharedCodePointerTargets
+                                                  ? *SharedCodePointerTargets
+                                                  : *CodePointerTargets;
+    return std::binary_search(PointerTargets.begin(), PointerTargets.end(),
+                              Address);
   };
 
   // Native registration reconstruction replays exact source intervals and

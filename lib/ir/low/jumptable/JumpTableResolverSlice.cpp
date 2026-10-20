@@ -4963,10 +4963,27 @@ bool CFGBuilder::tableIndexMatchesValueAtUse(const NdVar &Candidate,
   return !Results.empty() && Results.front();
 }
 
-std::optional<bool>
-CFGBuilder::queryPEImageBaseAtUse(const BinaryImage &Img,
-                                  const JumpTableValueOccurrence &Use,
-                                  size_t *CandidateEvidenceBudget) const {
+const std::vector<std::pair<va_t, size_t>> &
+CFGBuilder::armRel32Relocations() const {
+  ARMRel32Index &Index = ARMRel32Relocations;
+  const std::vector<RelocationEntry> &Relocations = CurrentImg->Relocations;
+  if (Index.Image != CurrentImg || Index.Data != Relocations.data() ||
+      Index.Size != Relocations.size()) {
+    Index.Image = CurrentImg;
+    Index.Data = Relocations.data();
+    Index.Size = Relocations.size();
+    Index.Fields.clear();
+    for (size_t I = 0; I < Relocations.size(); ++I)
+      if (Relocations[I].Type == llvm::ELF::R_ARM_REL32)
+        Index.Fields.emplace_back(Relocations[I].Address, I);
+    llvm::sort(Index.Fields);
+  }
+  return Index.Fields;
+}
+
+std::optional<bool> CFGBuilder::queryPEImageBaseAtUse(
+    const BinaryImage &Img, const JumpTableValueOccurrence &Use,
+    size_t *CandidateEvidenceBudget, ResolverQueryScope *ReadOnlyScope) const {
   if (Img.IsRelocatable || !Img.isCOFF() || Img.Arch != Arch::X64 ||
       Img.getPointerSize() != 8)
     return false;
@@ -4989,7 +5006,7 @@ CFGBuilder::queryPEImageBaseAtUse(const BinaryImage &Img,
   const std::vector<bool> Matches = tableValuesMatchAtUses(
       {Query}, &Complete, nullptr, InvalidVA, nullptr, CandidateEvidenceBudget,
       limits::kMaxJumpTableRoleMatchEvidenceWork, nullptr, nullptr,
-      limits::kMaxJumpTableExpandedResolverDepth);
+      limits::kMaxJumpTableExpandedResolverDepth, nullptr, true, ReadOnlyScope);
   if (!Complete || Matches.size() != 1)
     return std::nullopt;
   return Matches.front();
@@ -4997,7 +5014,8 @@ CFGBuilder::queryPEImageBaseAtUse(const BinaryImage &Img,
 
 std::optional<va_t> CFGBuilder::queryConstantAddressAtUse(
     const BinaryImage &Img, const JumpTableValueOccurrence &Use,
-    size_t *CandidateEvidenceBudget, bool &AnalysisComplete) const {
+    size_t *CandidateEvidenceBudget, bool &AnalysisComplete,
+    ResolverQueryScope *ReadOnlyScope) const {
   AnalysisComplete = false;
   if (!CandidateEvidenceBudget || CurrentImg != &Img ||
       !consumeResolverGraphWork(CandidateEvidenceBudget, 48))
@@ -5018,7 +5036,7 @@ std::optional<va_t> CFGBuilder::queryConstantAddressAtUse(
       {Query}, &AnalysisComplete, nullptr, InvalidVA, nullptr,
       CandidateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
       nullptr, nullptr, limits::kMaxJumpTableExpandedResolverDepth, nullptr,
-      true, nullptr, &Addresses);
+      true, ReadOnlyScope, &Addresses);
   if (Results.size() != 1 || Addresses.size() != 1)
     AnalysisComplete = false;
   if (!AnalysisComplete || !Results.front())
@@ -5030,9 +5048,9 @@ std::optional<va_t> CFGBuilder::foldTableAddressAtUse(
     const BinaryImage &Img, const InsnRecord &Rec,
     const JumpTableValueOccurrence &Use, uint64_t LegacyReg, va_t LegacyCutoff,
     size_t *CandidateEvidenceBudget, bool &AnalysisComplete,
-    bool AllowUnmappedCOFFImageBase) const {
+    bool AllowUnmappedCOFFImageBase, ResolverQueryScope *ReadOnlyScope) const {
   auto Address = queryConstantAddressAtUse(Img, Use, CandidateEvidenceBudget,
-                                           AnalysisComplete);
+                                           AnalysisComplete, ReadOnlyScope);
   if (Address || !AnalysisComplete)
     return Address;
   if (LegacyReg == InvalidVA)
@@ -5935,17 +5953,23 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     const Segment *SlotSegment = CurrentImg->getSegmentFor(Slot);
     if (!SlotSegment || !SlotSegment->isReadable() || SlotSegment->isWritable())
       return {};
-    const RelocationEntry *Relocation = nullptr;
-    for (const RelocationEntry &Candidate : CurrentImg->Relocations) {
-      if (!consumeEvidence())
-        return {};
-      if (Candidate.Address == Slot &&
-          Candidate.Type == llvm::ELF::R_ARM_REL32) {
-        if (Relocation)
-          return {};
-        Relocation = &Candidate;
-      }
-    }
+    // The relocation list is read in order, one unit of evidence for each
+    // entry, up to a second R_ARM_REL32 at Slot, which makes the literal
+    // ambiguous.  The index finds the entries at Slot, and the charge is
+    // what that read takes.
+    const auto &Fields = armRel32Relocations();
+    const auto [First, Last] = std::equal_range(
+        Fields.begin(), Fields.end(), std::make_pair(Slot, size_t{0}),
+        [](const std::pair<va_t, size_t> &L, const std::pair<va_t, size_t> &R) {
+          return L.first < R.first;
+        });
+    const bool Ambiguous = Last - First > 1;
+    if (!consumeEvidence(Ambiguous ? std::next(First)->second + 1
+                                   : CurrentImg->Relocations.size()) ||
+        Ambiguous)
+      return {};
+    const RelocationEntry *Relocation =
+        First != Last ? &CurrentImg->Relocations[First->second] : nullptr;
     if (!Relocation || Relocation->SymbolName.empty())
       return {};
     if (!consumeSymbolNameLookup(Relocation->SymbolName))
