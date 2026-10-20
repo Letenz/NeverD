@@ -1098,6 +1098,11 @@ scales and coefficients that wrap to zero. A failed or larger candidate retains
 the original weighted-quotient opportunity. Recovered products also get an
 independently checked arithmetic factoring alternative with complements opaque,
 so repeated complemented factors need not expand into duplicate summands.
+When a product is multiplied by `2^(width-1)`, only its lowest bit is observable.
+That product can therefore become a bitwise AND of its arbitrary word-valued
+factors. Smaller powers of two retain the multiplication because carries remain
+observable. This transfer shares the deep walk's work/storage limits and bounds
+the flattened operand frontier before constructing the AND.
 Already factored higher components remain intact while other degrees improve.
 Unaffordable optional expansions leave work for the rest of the expression;
 an unrecovered degree is retained verbatim, never dropped. Exact opposing

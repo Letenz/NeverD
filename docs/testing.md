@@ -259,6 +259,9 @@ coefficients, high-bit differences and two independently disturbed terms use
 independent word arithmetic. Exhaustive three-bit assignments check partial
 proof budgets; separate Z3 checks cover the complete four/eight-factor rewrites
 at 2/3 bits. Wider checks are algebraic and arithmetic coverage, not SMT claims.
+The highest-bit coefficient additionally checks arbitrary arithmetic factors at
+2–257 bits, neighboring coefficients that still observe carries, and separate
+full-width Z3 proofs at 8/16/32/64 bits for the product-parity transfer.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
 signed/unsigned overflow admission against all byte pairs, including unsafe
 neighboring masks. `NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains`
