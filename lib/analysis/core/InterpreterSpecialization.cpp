@@ -2816,9 +2816,13 @@ bool Specializer::evaluate(int Id) {
                 ++It;
             }
             if (Memory.AccessSize == 8 && !CompareExchange) {
-              if (const auto Value = frameOffset(
-                      Ctx, Exec.pathPredicate(),
-                      Exec.operandValue(*Memory.StoredValue), FrameRoot)) {
+              // A complete saved root may later restore stack or control
+              // state. Prove its displacement before projection even when its
+              // expression has no alignment-shaped mask.
+              if (const auto Value =
+                      frameOffset(Ctx, Exec.pathPredicate(),
+                                  Exec.operandValue(*Memory.StoredValue),
+                                  FrameRoot, FrameOffsetProof::Demanded)) {
                 Frame.AffineValues[*Displacement] = *Value;
                 State.write(SymSpace::Temporary, FrameValueTemp,
                             Ctx.mkAdd(FrameRoot, Ctx.mkConst(64, *Value)));

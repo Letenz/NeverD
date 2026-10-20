@@ -4186,6 +4186,69 @@ TEST(InterpreterSpecialization,
   }
 }
 
+TEST(InterpreterSpecialization, NonAlignmentSpillsRetainProvedFrameRoots) {
+  for (bool Clobber : {false, true}) {
+    Provider P;
+    std::vector<LowOp> Body{op(NdOp::INT_XOR, reg(40), {reg(32), constant(32)}),
+                            op(NdOp::INT_SUB, reg(48), {reg(32), constant(64)}),
+                            op(NdOp::STORE, {}, {reg(48), reg(40)})};
+    if (Clobber)
+      Body.push_back(op(NdOp::STORE, {}, {reg(48), reg(8, 1)}));
+    Body.push_back(jump(0x110));
+    P.add(0x100, std::move(Body));
+    P.add(0x110, {op(NdOp::LOAD, reg(40), {reg(48)}),
+                  op(NdOp::INT_ADD, reg(32), {reg(40), constant(32)}),
+                  op(NdOp::COPY, reg(0), {reg(8)})});
+    P.add(0x111, {ret()});
+    P.Code.at(0x111).NativeStackControl =
+        SpecializationNativeStackControl::Return;
+    auto O = separatedStoreOptions();
+    O.EntryFrameAlignment = InterpreterEntryAlignment{64, 32};
+    for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+      O.ByteOrder = Order;
+      const auto R = specializeInterpreter(P, {0x100}, O);
+      if (Clobber) {
+        EXPECT_FALSE(R.complete());
+        EXPECT_TRUE(R.Residual.Blocks.empty());
+        continue;
+      }
+      ASSERT_TRUE(R.complete()) << R.Diagnostic;
+      for (uint64_t Stack :
+           {uint64_t{32}, uint64_t{0x120}, uint64_t{0xffff900000001020}})
+        for (uint64_t Input : {uint64_t{0}, uint64_t{37}, UINT64_MAX}) {
+          WideByteOracle Actual(Order);
+          Actual.word(reg(32), Stack);
+          Actual.word(reg(8), Input);
+          for (int64_t Offset = -80; Offset < 16; ++Offset)
+            Actual.Memory[Stack + uint64_t(Offset)] = uint8_t(Offset ^ 0x5a);
+          auto Expected = Actual.Memory;
+          for (unsigned I = 0; I != 8; ++I) {
+            const unsigned Shift =
+                8 * (Order == llvm::endianness::little ? I : 7 - I);
+            Expected[Stack - 64 + I] = uint8_t((Stack ^ 32) >> Shift);
+          }
+          ASSERT_TRUE(Actual.run(R.Residual)) << Actual.Diagnostic;
+          EXPECT_EQ(Actual.number(reg(0)), Input);
+          EXPECT_EQ(Actual.number(reg(32)), Stack);
+          EXPECT_EQ(Actual.number(reg(40)), Stack ^ 32);
+          EXPECT_EQ(Actual.number(reg(48)), Stack - 64);
+          EXPECT_EQ(Actual.Memory, Expected);
+        }
+      auto WrongDomain = O;
+      WrongDomain.EntryFrameAlignment->Residue = 0;
+      EXPECT_FALSE(specializeInterpreter(P, {0x100}, WrongDomain).complete());
+      ASSERT_GT(R.SolverQueries, 0u);
+      auto Exact = O;
+      Exact.MaxSolverQueries = R.SolverQueries;
+      EXPECT_TRUE(specializeInterpreter(P, {0x100}, Exact).complete());
+      --Exact.MaxSolverQueries;
+      const auto Short = specializeInterpreter(P, {0x100}, Exact);
+      EXPECT_FALSE(Short.complete());
+      EXPECT_TRUE(Short.Residual.Blocks.empty());
+    }
+  }
+}
+
 TEST(InterpreterSpecialization, ProvedFrameSeparationRetainsAtomicEffects) {
   Provider P;
   P.add(0x100, {op(NdOp::INT_SUB, reg(48), {reg(32), constant(16)}),
