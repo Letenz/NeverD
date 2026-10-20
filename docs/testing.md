@@ -3118,6 +3118,18 @@ and freshness after definition/provenance/root changes. `COFFTableBaseCLI.*`
 writes a minimal linked PE, verifies its decoded targets and invokes HighC and
 LLVM-to-C through the CLI, without depending on a platform linker.
 
+`ResolverConstantAddress.*` checks address discovery across four architectures
+and three formats, equal and conflicting predecessor values, scalar/fragment
+collisions, uninitialized arms, loop backedges, cache output identity, every
+small-fixture budget boundary, changed roots and shared failure clearing.
+`Native/JumpTableAddress.*` assembles
+x86, x64, AArch64 and Thumb ELF objects and x64/AArch64 Mach-O objects. It checks
+0/32/160 unrelated blocks, mapped decoys, agreeing joins, clobbers, calls and
+tiny budgets against independent case-label offsets. It also covers absolute
+tables on x64/AArch64 and a two-level x64 ELF table. With LLD it checks
+the linked ELF and Mach-O images. These are loader/LowIR checks on the host;
+they do not claim native execution on each target operating system.
+
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
 fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer

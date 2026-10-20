@@ -1183,6 +1183,7 @@ add_neverd_unittest(NeverDHighSymSimplifyTests
   LINK_COMPONENTS BackendC Solver)
 
 add_neverd_unittest(NeverDJumpTableTests
+  core/JumpTableAddressTests.cpp
   core/JumpTableCOFFBaseTests.cpp
   core/GuardExpressionTests.cpp
   core/AffineFrameStateTests.cpp
