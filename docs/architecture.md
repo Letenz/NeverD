@@ -4732,6 +4732,21 @@ writing. This adds no source layout or native-proof contract.
 
 For explicit, nonfaulting, little-endian raw recovery, the x64 owner recognizes the complete canonical `RDTSC` instruction and its five-operation multi-output bundle. Each occurrence gets one fresh 64-bit sample; three charged scalar operations evaluated by `SymExec` bind the complete primary result and the two instruction-local placeholders. The original runtime read, copies and zero extensions remain in the residual. Clock values and relations are unconstrained, timestamp-derived addresses keep unknown provenance, and native/source proof contracts remain unchanged.
 
+`RuntimeRegisterRead` is dispatched through the architecture adapter. Core owns
+fresh samples, operation/node accounting and conservative output provenance;
+the architecture owner authenticates the complete native instruction and its
+multi-output bundle. No register or opcode recognition is added to core.
+
+Under the same explicit, nonfaulting, little-endian raw domain, canonical x64
+`CPUID` retains its original EAX/ECX selectors and runtime intrinsic. Each
+occurrence gets four independent unconstrained 32-bit answers. Charged scalar
+operations connect those answers to the original placeholders, while the
+original zero extensions clear the four destination registers' upper halves.
+This permits neither host-CPU assumptions nor repeated-query correlation.
+Runtime-derived pointers keep unknown provenance. The retained read preserves
+the original instruction's observable ordering; source and native proof
+consumers continue to reject this unaudited runtime contract.
+
 Finite-value enumeration may observe feasible tuples without changing the proof query. An observer refusal returns an incomplete result with no tuples. The cache retains only mathematical domain proofs; immutable-read certificates remain local until enumeration completes.
 
 `NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.

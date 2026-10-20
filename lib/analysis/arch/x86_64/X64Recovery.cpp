@@ -223,16 +223,19 @@ bool runtimeFlagsIntrinsic(
   return Profile && detail::x64InterruptFlagValue(Op, *Profile).has_value();
 }
 
-// Intel SDM Vol.2B, RDTSC: the low/high words go to EAX/EDX and both
-// upper halves clear. The existing multi-output bundle keeps the runtime read;
-// these scalar operations only connect its placeholders during raw analysis.
-std::optional<RuntimeTimestampRead>
-lowerRuntimeTimestampRead(const SpecializationInstruction &I, NdVar Sample) {
+namespace {
+
+std::optional<std::vector<NdVar>>
+runtimeReadOutputs(const SpecializationInstruction &I, NdVar Sample,
+                   uint8_t Encoding, Intrinsic Id,
+                   llvm::ArrayRef<uint64_t> Registers,
+                   llvm::ArrayRef<NdVar> Selectors) {
   const auto &B = I.Origin;
+  const size_t Count = 1 + 2 * Registers.size();
   if (I.NativeBytes.size() != 2 || I.NativeBytes[0] != 0x0f ||
-      I.NativeBytes[1] != 0x31 || B.Size != 2 ||
-      B.Mode != InstructionMode::Default || B.FirstOp != 0 || B.OpCount != 5 ||
-      B.Control != LowInstructionControl::None ||
+      I.NativeBytes[1] != Encoding || B.Size != 2 ||
+      B.Mode != InstructionMode::Default || B.FirstOp != 0 ||
+      B.OpCount != Count || B.Control != LowInstructionControl::None ||
       B.ControlFlags != LowInstructionControlFlag::None || B.Immediate ||
       B.TargetMode != LowInstructionTargetMode::Preserve ||
       B.Address > InvalidVA - 2 ||
@@ -240,12 +243,14 @@ lowerRuntimeTimestampRead(const SpecializationInstruction &I, NdVar Sample) {
       I.IsNativeCall || I.TerminalImport ||
       I.NativeStackControl != SpecializationNativeStackControl::None ||
       I.ProfileProjection != InterpreterProfileProjection::None ||
-      I.Ops.size() != 5 ||
+      I.Ops.size() != Count ||
       I.UndefinedEffects.Coverage != LowUndefinedCoverage::Missing ||
-      I.UndefinedEffects.OpCount != 5 || !I.UndefinedEffects.Effects.empty() ||
+      I.UndefinedEffects.OpCount != Count ||
+      !I.UndefinedEffects.Effects.empty() ||
       I.UndefinedEffects.OperationDigest !=
           lowUndefinedOperationDigest(I.Ops) ||
-      !Sample.isTemp() || Sample.Size != 8 || Sample.Offset > InvalidVA - 7)
+      !Sample.isTemp() || (Sample.Size != 8 && Sample.Size != 16) ||
+      Sample.Offset > InvalidVA - (Sample.Size - 1))
     return std::nullopt;
   for (size_t N = 0; N < I.Ops.size(); ++N)
     if (I.Ops[N].Addr != B.Address || I.Ops[N].Seq != static_cast<int>(N) ||
@@ -253,43 +258,111 @@ lowerRuntimeTimestampRead(const SpecializationInstruction &I, NdVar Sample) {
         I.Ops[N].MemoryAddressSpace != NdMemoryAddressSpace::Default)
       return std::nullopt;
   const auto &Read = I.Ops[0];
-  if (Read.Opcode != NdOp::INTRINSIC || Read.NumInputs != 1 ||
-      !Read.Inputs[0].isConst() || Read.Inputs[0].Size != 2 ||
-      Read.Inputs[0].Offset != static_cast<uint64_t>(Intrinsic::Rdtsc) ||
+  if (Read.Opcode != NdOp::INTRINSIC ||
+      Read.NumInputs != 1 + Selectors.size() || !Read.Inputs[0].isConst() ||
+      Read.Inputs[0].Size != 2 ||
+      Read.Inputs[0].Offset != static_cast<uint64_t>(Id) ||
       Read.Output != NdVar::reg(x86reg::RAX, 8))
     return std::nullopt;
+  for (size_t N = 0; N < Selectors.size(); ++N)
+    if (Read.Inputs[N + 1] != Selectors[N])
+      return std::nullopt;
   const auto Overlap = [](NdVar A, NdVar C) {
     return A.Offset <= C.Offset ? C.Offset - A.Offset < A.Size
                                 : A.Offset - C.Offset < C.Size;
   };
-  const std::array<NdVar, 2> Outputs{I.Ops[1].Inputs[0], I.Ops[2].Inputs[0]};
-  for (unsigned N = 0; N != 2; ++N) {
-    const auto Register = N ? x86reg::RDX : x86reg::RAX;
+  std::vector<NdVar> Outputs;
+  for (size_t N = 0; N < Registers.size(); ++N) {
     const auto &Copy = I.Ops[1 + N];
-    const auto &Clear = I.Ops[3 + N];
-    const auto Value = Outputs[N];
+    const auto &Clear = I.Ops[1 + Registers.size() + N];
+    const auto Value = Copy.Inputs[0];
     if (Copy.Opcode != NdOp::COPY || Copy.NumInputs != 1 ||
-        Copy.Output != NdVar::reg(Register, 4) || !Value.isTemp() ||
+        Copy.Output != NdVar::reg(Registers[N], 4) || !Value.isTemp() ||
         Value.Size != 4 || Value.Offset > InvalidVA - 3 ||
         Overlap(Value, Sample) || Clear.Opcode != NdOp::INT_ZEXT ||
-        Clear.NumInputs != 1 || Clear.Output != NdVar::reg(Register, 8) ||
-        Clear.Inputs[0] != NdVar::reg(Register, 4))
+        Clear.NumInputs != 1 || Clear.Output != NdVar::reg(Registers[N], 8) ||
+        Clear.Inputs[0] != NdVar::reg(Registers[N], 4) ||
+        llvm::any_of(Outputs,
+                     [&](NdVar Other) { return Overlap(Value, Other); }))
       return std::nullopt;
+    Outputs.push_back(Value);
   }
-  if (Overlap(Outputs[0], Outputs[1]))
+  return Outputs;
+}
+
+} // namespace
+
+// Intel SDM Vol.2B, RDTSC: the low/high words go to EAX/EDX and both
+// upper halves clear. The existing multi-output bundle keeps the runtime read;
+// these scalar operations only connect its placeholders during raw analysis.
+std::optional<RuntimeTimestampRead>
+lowerRuntimeTimestampRead(const SpecializationInstruction &I, NdVar Sample) {
+  if (Sample.Size != 8)
+    return std::nullopt;
+  const uint64_t Registers[]{x86reg::RAX, x86reg::RDX};
+  const auto Outputs =
+      runtimeReadOutputs(I, Sample, 0x31, Intrinsic::Rdtsc, Registers, {});
+  if (!Outputs)
     return std::nullopt;
   RuntimeTimestampRead Result;
-  Result.PlaceholderOutputs = Outputs;
+  std::copy(Outputs->begin(), Outputs->end(),
+            Result.PlaceholderOutputs.begin());
   for (unsigned N = 0; N != Result.Ops.size(); ++N) {
     auto &Op = Result.Ops[N];
-    Op.Addr = B.Address;
+    Op.Addr = I.Origin.Address;
     Op.Seq = N;
     Op.Opcode = N ? NdOp::SUBBYTES : NdOp::COPY;
-    Op.Output = N ? Outputs[N - 1] : Read.Output;
+    Op.Output = N ? (*Outputs)[N - 1] : I.Ops[0].Output;
     Op.addInput(Sample);
     if (N)
       Op.addInput(NdVar::scalar(4 * (N - 1), 8));
   }
+  return Result;
+}
+
+std::optional<RuntimeRegisterRead>
+lowerRuntimeRegisterRead(const SpecializationInstruction &I, NdVar Sample) {
+  if (!Sample.isTemp() || Sample.Size != 16 || Sample.Offset > InvalidVA - 15)
+    return std::nullopt;
+  if (const auto Timestamp =
+          lowerRuntimeTimestampRead(I, NdVar::tmp(Sample.Offset, 8)))
+    return RuntimeRegisterRead{8,
+                               {Timestamp->Ops.begin(), Timestamp->Ops.end()},
+                               {Timestamp->PlaceholderOutputs.begin(),
+                                Timestamp->PlaceholderOutputs.end()}};
+
+  // CPUID consumes EAX/ECX and writes EAX/EBX/ECX/EDX, clearing their upper
+  // halves. The original read remains, including both selectors and its
+  // serialization effect. Independent answers overapproximate every CPU;
+  // their values cannot authorize host-feature or repeated-query assumptions.
+  const uint64_t Registers[]{x86reg::RAX, x86reg::RBX, x86reg::RCX,
+                             x86reg::RDX};
+  const NdVar Selectors[]{NdVar::reg(x86reg::RAX, 4),
+                          NdVar::reg(x86reg::RCX, 4)};
+  const auto Outputs = runtimeReadOutputs(I, Sample, 0xa2, Intrinsic::Cpuid,
+                                          Registers, Selectors);
+  if (!Outputs)
+    return std::nullopt;
+  RuntimeRegisterRead Result;
+  Result.SampleBytes = 16;
+  Result.PlaceholderOutputs = *Outputs;
+  for (unsigned N = 0; N != 4; ++N) {
+    LowOp Extract;
+    Extract.Addr = I.Origin.Address;
+    Extract.Seq = Result.Ops.size();
+    Extract.Opcode = NdOp::SUBBYTES;
+    Extract.Output = (*Outputs)[N];
+    Extract.addInput(Sample);
+    Extract.addInput(NdVar::scalar(4 * N, 8));
+    Result.Ops.push_back(Extract);
+  }
+  LowOp Primary;
+  Primary.Addr = I.Origin.Address;
+  Primary.Seq = Result.Ops.size();
+  Primary.Opcode = NdOp::INT_ZEXT;
+  Primary.Output = I.Ops[0].Output;
+  Primary.addInput(Outputs->front());
+  Result.Ops.push_back(Primary);
   return Result;
 }
 
