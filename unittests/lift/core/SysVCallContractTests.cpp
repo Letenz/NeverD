@@ -1570,6 +1570,73 @@ TEST(SysVCallContract, AColdFragmentCallingAbortThroughItsStubNeverReturns) {
   EXPECT_TRUE(SawJump);
 }
 
+TEST(SysVCallContract, AByteSetAfterACallReadsNoSecondResult) {
+  // g calls f, which clobbers EDX, then compares two flags it sets in DL and
+  // AL.  `setne dl` keeps what f left in the rest of RDX, but nothing reads
+  // those bytes, so f returns one register and no record of two.
+  constexpr va_t G = Text, F = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> GCode = {0x53,             // push rbx
+                                0x48, 0x89, 0xFB, // mov rbx, rdi
+                                0xE8};            // call f
+  for (uint8_t B : rel32(G + GCode.size() + 4, F))
+    GCode.push_back(B);
+  for (uint8_t B : {0x80, 0x3B, 0x00, // cmp byte [rbx], 0
+                    0x0F, 0x95, 0xC2, // setne dl
+                    0x83, 0xF8, 0x07, // cmp eax, 7
+                    0x0F, 0x94, 0xC0, // sete al
+                    0x38, 0xD0,       // cmp al, dl
+                    0x0F, 0x94, 0xC0, // sete al
+                    0x0F, 0xB6, 0xC0, // movzx eax, al
+                    0x5B,             // pop rbx
+                    0xC3})            // ret
+    GCode.push_back(B);
+  put(Code, G, GCode);
+  put(Code, F,
+      {0x89, 0xFA,       // mov edx, edi
+       0x8D, 0x04, 0x52, // lea eax, [rdx + rdx*2]
+       0xC3});           // ret
+  const BinaryImage Img = makeImportImage(Code, {{G, "g"}, {F, "f"}}, {});
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {G, F};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  const auto Callee = std::find_if(
+      Result.MedFuncs.begin(), Result.MedFuncs.end(),
+      [&](const MedFunc &Function) { return Function.Entry == F; });
+  ASSERT_NE(Callee, Result.MedFuncs.end());
+  EXPECT_TRUE(Callee->MultiReturn.empty());
+}
+
+TEST(SysVCallContract, AStringCompareLeavesNoSecondResultInRDX) {
+  // same(a, b) returns `a && strcmp(a, b) != 0` the way GCC returns a bool:
+  // EDX is zero, or `setne dl` over what strcmp left in RDX, and EDX moves
+  // whole into EAX.  strcmp declares an int, so RDX holds no second field of
+  // its result and its stub returns one register; same returns the one byte
+  // both paths define, which no byte strcmp left in RDX reaches.
+  constexpr va_t Same = Text, StrcmpStub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> SameCode = {0x31, 0xD2,       // xor edx, edx
+                                   0x48, 0x85, 0xFF, // test rdi, rdi
+                                   0x74, 0x0A,       // je done
+                                   0xE8};            // call strcmp
+  for (uint8_t B : rel32(Same + 12, StrcmpStub))
+    SameCode.push_back(B);
+  for (uint8_t B : {0x85, 0xC0,       // test eax, eax
+                    0x0F, 0x95, 0xC2, // setne dl
+                    0x89, 0xD0,       // done: mov eax, edx
+                    0xC3})            // ret
+    SameCode.push_back(B);
+  put(Code, Same, SameCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{Same, "same"}}, {{StrcmpStub, "strcmp"}});
+  const std::string Source = liftEntries(Img, {Same, StrcmpStub});
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("int8_t same("), std::string::npos) << Source;
+}
+
 TEST(SysVCallContract, ATailCallLeavesNoRegisterOfTheCallersOwn) {
   // g adds RDX to what f returns in RAX, so f returns the pair.  f sets
   // EDX to 11 and tail-jumps to an import no declaration describes: RDX
