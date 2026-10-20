@@ -77,12 +77,8 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
             return failure("JNI cannot explicitly invoke a DEX initializer");
         }
         if (const auto *Body = JNI.Dex->findMethod(Ref, Slot == 113)) {
-          if (auto Reason = JNI.Dex->unsupported(*Body);
-              Reason && !mobile::dalvik::has(Body->access, "abstract")) {
-            auto Stopped = unsupportedImport(Call);
-            Result.Diagnostic += " (" + *Reason + ")";
-            return Stopped;
-          }
+          // Resolution supplies a method identity, not permission to execute
+          // its body. In particular native bindings can be installed later.
           for (auto [ID, Existing] : JNI.DexMethods)
             if (Existing == Body)
               return value(ID);
@@ -183,6 +179,10 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
       return failure("JNI nonvirtual method ID does not match class lookup");
   }
   const auto Types = parameters(Signature);
+  if (Return == 'F' || Return == 'D' ||
+      std::find(Types.begin(), Types.end(), 'F') != Types.end() ||
+      std::find(Types.begin(), Types.end(), 'D') != Types.end())
+    return unsupportedImport(Call);
   std::vector<uint64_t> Values;
   uint64_t Remaining = 4096;
   ArgumentReader Arguments(*this, Call, First, Remaining);
@@ -238,6 +238,8 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
       if (!DexMethod)
         return failure("JNI virtual method has no supplied body");
     }
+    if (mobile::dalvik::has(DexMethod->access, "native"))
+      return callNativeJNI(*DexMethod, Values);
     auto Executed = executeDex(DexMethod, Values);
     if (!Executed || !*Executed || JNI.Threads.at(threadID()).Exception)
       return Executed;
@@ -257,6 +259,8 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
     if (auto Body = JNI.Dex->virtualMethod(
             Ref, mobile::dalvik::objectDescriptor(**Receiver))) {
       Values.insert(Values.begin(), (*Receiver)->Identity);
+      if (mobile::dalvik::has(Body->access, "native"))
+        return callNativeJNI(*Body, Values);
       auto Executed = executeDex(Body, Values);
       if (!Executed || !*Executed || JNI.Threads.at(threadID()).Exception)
         return Executed;

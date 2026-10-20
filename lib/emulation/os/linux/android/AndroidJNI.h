@@ -36,6 +36,7 @@ inline constexpr uint64_t Environments = Base + 4096, ArenaSize = 8192;
 inline constexpr uint64_t ReferenceBase = Base + 65536;
 inline constexpr unsigned EnvSlots = 233, AttachmentLimit = 512;
 inline constexpr unsigned ReferenceLimit = 4096, ObjectLimit = 4096;
+inline constexpr unsigned NativeFrameLimit = 64;
 inline constexpr uint32_t Version = 0x00010006;
 } // namespace jni_abi
 
@@ -44,6 +45,8 @@ struct JNIState {
   struct Thread {
     uint64_t Environment = 0;
     std::vector<uint64_t> Frames{0};
+    // Implicit native frames cannot be popped by PopLocalFrame or detached.
+    std::vector<uint64_t> NativeFrames;
     std::shared_ptr<JNIObject> Exception;
   };
   struct Reference {

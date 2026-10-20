@@ -482,6 +482,75 @@ TEST_P(AndroidJNI, ModifiedUTF8UTF16AndRangeException) {
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
   EXPECT_EQ(R.ReturnValue, 0u);
 }
+TEST_P(AndroidJNI,
+       RegisteredNativeCallsExecuteGuestBodiesAndRetireOnlyTheirLocals) {
+#ifndef NEVERD_ANDROID_DEX_FIXTURE_DIR
+  GTEST_SKIP() << "Python DEX fixture generator unavailable";
+#else
+  auto File = llvm::MemoryBuffer::getFile(
+      (std::filesystem::path(NEVERD_ANDROID_DEX_FIXTURE_DIR) /
+       "native-calls.dex")
+          .string());
+  ASSERT_TRUE(bool(File));
+  auto Bytes = (*File)->getBuffer();
+  Options.Android->DexImages.emplace_back(Bytes.begin(), Bytes.end());
+  Options.Android->ObserveJavaState = true;
+  Options.LinuxTime.emplace().AdvanceOnIdle = true;
+  Options.LinuxTime->Clocks = {{1, {0, 0}}};
+  for (unsigned Mode : {0u, 18u, 21u, 22u, 23u, 24u}) {
+    SCOPED_TRACE(Mode);
+    Options.Android->Arguments = {Mode};
+    auto R = run("jni_native_calls");
+    ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+    EXPECT_EQ(R.ReturnValue, 0u);
+    ASSERT_TRUE(R.JavaState);
+    for (const auto &C : R.JavaState->classes)
+      if (C.descriptor == "Lnativecall/Base;")
+        EXPECT_EQ(C.initialization,
+                  mobile::dalvik::JavaClassState::Initialization::Initialized);
+      else if (C.descriptor == "Lnativecall/Bad;")
+        EXPECT_EQ(
+            C.initialization,
+            Mode == 18
+                ? mobile::dalvik::JavaClassState::Initialization::Erroneous
+                : mobile::dalvik::JavaClassState::Initialization::NotStarted);
+    EXPECT_FALSE(R.JavaState->terminal);
+  }
+#endif
+}
+TEST_P(AndroidJNI, RegisteredNativeCallsRejectUnknownBindingsAndInvalidABIs) {
+#ifndef NEVERD_ANDROID_DEX_FIXTURE_DIR
+  GTEST_SKIP() << "Python DEX fixture generator unavailable";
+#else
+  auto File = llvm::MemoryBuffer::getFile(
+      (std::filesystem::path(NEVERD_ANDROID_DEX_FIXTURE_DIR) /
+       "native-calls.dex")
+          .string());
+  ASSERT_TRUE(bool(File));
+  auto Bytes = (*File)->getBuffer();
+  Options.Android->DexImages.emplace_back(Bytes.begin(), Bytes.end());
+  for (unsigned Mode = 1; Mode <= 17; ++Mode) {
+    SCOPED_TRACE(Mode);
+    Options.Android->Arguments = {Mode};
+    Options.Limits.Instructions = Mode == 16 ? 4096 : 200000;
+    auto R = run("jni_native_calls");
+    auto Expected =
+        Mode == 1 || Mode == 2 || (Mode >= 10 && Mode <= 12) || Mode == 15
+            ? ProcessStopReason::UnsupportedService
+        : Mode == 16 ? ProcessStopReason::InstructionLimit
+                     : ProcessStopReason::RuntimeFailure;
+    EXPECT_EQ(R.Stop, Expected) << R.Diagnostic;
+    EXPECT_FALSE(R.ReturnValue);
+    EXPECT_FALSE(R.Diagnostic.empty());
+    if (Mode == 16)
+      EXPECT_EQ(R.Instructions, 4096u);
+    if (Mode == 1 || Mode == 2 || Mode == 15) {
+      ASSERT_FALSE(R.NativeCalls.empty());
+      EXPECT_EQ(R.NativeCalls.back().Name, "JNIEnv.129");
+    }
+  }
+#endif
+}
 TEST_P(AndroidJNI, ARTStringEdgesPreserveSupplementaryCharactersAndNulls) {
   auto R = run("jni_art_string_edges");
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;

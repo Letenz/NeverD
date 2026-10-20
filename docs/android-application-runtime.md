@@ -95,8 +95,9 @@ classpath are not supplied by these observations.
 The lifecycle phase is fixed per workload; modeled mutable fields retain guest writes. It does not execute
 `bindApplication`, custom Application constructors, framework class initializers,
 split/delegate-last/custom class loaders, security-manager policies, framework
-callbacks, a Java scheduler, `Class.forName` or native Java method bodies.
-RegisterNatives metadata remains separate from Java-to-native execution. The
+callbacks, a Java scheduler or `Class.forName`. DEX invoke instructions cannot
+yet suspend into native methods. JNI calls to registered native declarations
+use the bounded guest-call contract below; registration alone executes nothing. The
 model does not give unmodeled framework fields or methods inferred values.
 Native evidence obtained under a snapshot remains conditional on that input.
 
@@ -186,6 +187,46 @@ not the actual definer of an unavailable APK. The system loader is distinct
 from the application loader; both have the boot parent in this projection.
 Reading this directory does not turn a declared Application snapshot into
 execution of `LoadedApk.makeApplication`, a custom constructor or `onCreate`.
+
+## Calling registered native methods through JNI
+
+`GetMethodID` and `GetStaticMethodID` resolve supplied declarations independently
+of body support and current native registration. Their active class
+initialization still runs through Runtime; a missing library-load operation or
+throwing initializer cannot be skipped by registration.
+
+The JNI `Call<Type>Method`, `CallNonvirtual<Type>Method` and
+`CallStatic<Type>Method` families, including their `A` and `V` forms, can invoke
+registered ordinary native methods. Virtual dispatch selects the supplied
+receiver override; nonvirtual dispatch keeps the selected declaring method.
+The registration is read at invocation, so rebinding affects existing method
+IDs and unregistering removes their target. Unknown native symbol lookup stops
+explicitly rather than guessing a library or throwing an inferred link error.
+
+Android's existing guest callback scheduler executes the registered AArch64
+address on the calling thread, with its JNIEnv and a fresh local reference to
+the receiver or declaring class. Up to six integral/reference Java arguments
+fit the admitted register ABI. The shared Java heap validates object types and
+retains mutations. Native callbacks can make nested JNI calls and wait in
+modeled Bionic services; other threads retain their own frames and environments.
+The existing workload instruction/deadline limits include original native work.
+
+Each native invocation has an implicit local frame. A returned object is
+validated before the callee's local frames retire, then gets a caller-local
+reference to the same heap object. Globals and caller locals survive. Pending
+Java exceptions survive retirement and supersede an unspecified native return
+carrier. `PopLocalFrame` cannot pop the implicit frame, and detach during a
+native Java invocation returns JNI_ERR without destroying the attachment.
+Terminal guest faults or unsupported operations remain terminal; they are not
+reported as a successful Java return.
+
+Floating arguments/results, stack-passed native arguments, synchronized native
+methods, dynamic JNI symbol resolution and DEX-to-native continuations remain
+unsupported. The DEX reader rejects unsupported ABI-changing annotations.
+This is not a host JVM, `System.loadLibrary` implementation, automatic
+`JNI_OnLoad` call or execution of the Android application bootstrap.
+Contracts follow the [JNI function specification](https://docs.oracle.com/en/java/javase/17/docs/specs/jni/functions.html)
+and [invocation API](https://docs.oracle.com/en/java/javase/17/docs/specs/jni/invocation.html).
 
 ## Guest working directory
 

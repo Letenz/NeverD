@@ -8408,8 +8408,15 @@ admission fail explicitly rather than borrowing a host VM or driver.
 reports a sorted snapshot; the shared Program resolves declarations through the
 class/superclass chain without initializing them. The JSON adapter supplies
 explicit negative loader outcomes only; unknown inputs never imply absence.
-Neither FindClass nor registration executes a class initializer. Native method
-execution remains a separate unsupported contract.
+Neither FindClass nor registration executes a class initializer.
+`AndroidJNINativeCalls` admits ordinary registered native declarations reached
+through JNI method calls. It owns the JNI-to-AArch64 argument/reference mapping
+and implicit local-frame lifetime; the existing guest callback scheduler owns
+execution, waits and original-call resumption. Runtime retains class
+initialization and the shared heap. Binding lookup occurs at invocation, not
+method-ID resolution. DEX-to-native suspension, Java library loading, floating
+and stack-passed native arguments and synchronized native methods remain
+unsupported. See [the native call contract](android-application-runtime.md#calling-registered-native-methods-through-jni).
 `AndroidJNIMethods` owns JNI method identities and descriptor/argument binding;
 all JNI call forms and explicit DEX methods reuse it and Bionic's GP argument reader.
 The finite intrinsic catalogue and value semantics live in `dalvik::Library`;

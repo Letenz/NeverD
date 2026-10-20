@@ -9,6 +9,7 @@ extern int JNI_GetCreatedJavaVMs(Handle *, int, int *);
 extern int pthread_create(U64 *, const void *, void *(*)(void *), void *);
 extern int pthread_join(U64, void **);
 extern int __system_property_get(const char *, char *);
+extern int usleep(unsigned);
 #define C(E, R, S, ...) (((R (*)(Handle, ...))(*E)[S])(E, ##__VA_ARGS__))
 #define CHECK(X)                                                               \
   do {                                                                         \
@@ -1479,4 +1480,279 @@ int jni_native_registration(unsigned mode) {
   CHECK(e && !C(e, int, 228));
   CHECK(!C(vm, int, 5));
   return 0;
+}
+
+/* Original guest functions. Registration must dispatch to these instructions,
+ * including nested JNI calls, instead of inventing a return value. */
+static unsigned native_mode, native_calls;
+static Ref native_leaked, native_global, native_base;
+static Handle native_env;
+static int native_number(Handle e, Ref type, int input) {
+  if (native_mode != 22)
+    ++native_calls;
+  if ((native_mode != 22 && e != native_env) ||
+      !C(e, int, 24, type, native_base))
+    return -7000;
+  if (native_mode == 22 &&
+      (C(vm, int, 5) != -1 || usleep(100) || C(e, unsigned, 4) != 0x10006))
+    return -7001;
+  if (native_mode == 16)
+    for (;;)
+      __asm__ volatile("" ::: "memory");
+  if (native_mode == 17) {
+    Ref id = C(e, Ref, 113, type, "number", "(I)I");
+    return C(e, int, 129, type, id, input);
+  }
+  return input + 0x1234;
+}
+static int native_rebound(Handle e, Ref type, int input) {
+  return native_number(e, type, input) + 7;
+}
+static U64 native_wide(Handle e, Ref object, U64 input) {
+  return C(e, int, 32, object, native_base) ? input ^ 0x8000000000000001ULL : 0;
+}
+static U64 native_wide_child(Handle e, Ref object, U64 input) {
+  return native_wide(e, object, input) + 5;
+}
+static Ref native_self(Handle e, Ref object) { return C(e, Ref, 25, object); }
+static U64 native_mixed(Handle e, Ref type, U8 z, signed char b, U16 c, short s,
+                        int i, U64 j) {
+  return e == native_env && C(e, int, 24, type, native_base) && z == 1 &&
+                 b == -127 && c == 0xff01 && s == -32765 && i == -1234567
+             ? j ^ 0x123456789abcdef0ULL
+             : 0;
+}
+static Ref native_echo(Handle e, Ref type, Ref input) {
+  ++native_calls;
+  if (native_mode == 24) {
+    signed char bytes[] = {-128, 127};
+    C(e, void, 208, input, 2, 2, bytes);
+    return input;
+  }
+  if (native_mode == 9)
+    return C(e, Ref, 20, input);
+  if (native_mode == 6)
+    return type;
+  if (native_mode == 7)
+    return 0x1234;
+  if (native_mode == 21) {
+    Ref ex = C(e, Ref, 6, "java/lang/IllegalArgumentException");
+    C(e, int, 14, ex, (const char *)0);
+    return 0xdeadbeef; /* Pending exception makes this carrier unspecified. */
+  }
+  if (e != native_env || !C(e, int, 24, type, native_base) ||
+      C(vm, int, 5) != -1)
+    return 0;
+  Ref id = C(e, Ref, 113, type, "number", "(I)I");
+  if (C(e, int, 129, type, id, 7) != 0x123b)
+    return 0;
+  if (C(e, int, 19, 8))
+    return 0;
+  if (native_mode == 23)
+    input = C(e, Ref, 167, "from native");
+  native_leaked = C(e, Ref, 25, input);
+  native_global = C(e, Ref, 21, input);
+  /* The implicit return boundary must clean up this still-open local frame. */
+  return native_leaked;
+}
+static void native_visit(Handle e, Ref type) {
+  native_calls += C(e, int, 24, type, native_base) ? 11 : 999;
+}
+static U64 native_bits(Handle e, Ref type) {
+  (void)e;
+  (void)type;
+  return native_mode == 14 ? 2 : 0xfedcba987654ff81ULL;
+}
+static int native_number_v(Handle e, Ref type, Ref id, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, id);
+  int result = C(e, int, 130, type, id, ap);
+  __builtin_va_end(ap);
+  return result;
+}
+static void *native_call_thread(void *unused) {
+  (void)unused;
+  Handle local_vm = 0, e = 0;
+  int count = 0;
+  if (JNI_GetCreatedJavaVMs(&local_vm, 1, &count) || count != 1 ||
+      C(local_vm, int, 4, &e, (void *)0))
+    return (void *)1;
+  Ref id = C(e, Ref, 113, native_base, "number", "(I)I");
+  int answer = C(e, int, 129, native_base, id, 17);
+  if (C(local_vm, int, 5))
+    return (void *)2;
+  return (void *)(U64)(unsigned)answer;
+}
+int jni_native_calls(unsigned mode) {
+  native_mode = mode;
+  Handle e = attach();
+  CHECK(e);
+  native_env = e;
+  Ref base = C(e, Ref, 6, "nativecall/Base");
+  Ref child = C(e, Ref, 6, "nativecall/Child");
+  native_base = C(e, Ref, 21, base);
+  /* Resolve before registration. IDs are independent of current bindings. */
+  Ref number = C(e, Ref, 113, child, "number", "(I)I");
+  CHECK(number && !native_calls);
+  struct NativeBinding bindings[] = {
+      {"number", "(I)I", (U64)native_number},
+      {"echo", "(Ljava/lang/Object;)Ljava/lang/Object;", (U64)native_echo},
+      {"self", "()Ljava/lang/Object;", (U64)native_self},
+      {"wide", "(J)J", (U64)native_wide},
+      {"mixed", "(ZBCSIJ)J", (U64)native_mixed},
+      {"visit", "()V", (U64)native_visit},
+      {"text", "(Ljava/lang/String;)Ljava/lang/String;", (U64)native_echo},
+      {"booleanValue", "()Z", (U64)native_bits},
+      {"byteValue", "()B", (U64)native_bits},
+      {"shortValue", "()S", (U64)native_bits},
+      {"charValue", "()C", (U64)native_bits},
+      {"locked", "()V", (U64)native_visit},
+      {"overflow", "(IIIIIII)I", (U64)native_number},
+      {"floating", "(F)F", (U64)native_number}};
+  if (mode == 3)
+    bindings[0].target += 1;
+  if (mode == 4)
+    bindings[0].target = 0x12340000;
+  if (mode != 1)
+    CHECK(!C(e, int, 215, base, bindings,
+             (int)(sizeof(bindings) / sizeof(bindings[0]))));
+  if (mode == 2)
+    CHECK(!C(e, int, 216, base));
+  if (mode == 24) {
+    signed char before[] = {1, 2, 3, 4, 5, 6};
+    signed char after[6] = {0};
+    Ref array = C(e, Ref, 176, 6);
+    C(e, void, 208, array, 0, 6, before);
+    Ref id =
+        C(e, Ref, 113, base, "echo", "(Ljava/lang/Object;)Ljava/lang/Object;");
+    Ref returned = C(e, Ref, 114, base, id, array);
+    CHECK(C(e, int, 24, returned, array));
+    C(e, void, 200, returned, 0, 6, after);
+    for (int i = 0; i < 6; ++i)
+      CHECK(after[i] == (i == 2 ? -128 : i == 3 ? 127 : before[i]));
+    CHECK(native_calls == 1);
+    return C(vm, int, 5);
+  }
+  if (mode == 22) {
+    U64 thread;
+    CHECK(!pthread_create(&thread, (void *)0, native_call_thread, (void *)0));
+    CHECK(C(e, int, 129, base, number, 3) == 0x1237);
+    void *answer = 0;
+    CHECK(!pthread_join(thread, &answer) && (U64)answer == 0x1245);
+    C(e, void, 22, native_base);
+    return C(vm, int, 5);
+  }
+  if (mode == 18) {
+    Ref bad = C(e, Ref, 6, "nativecall/Bad");
+    struct NativeBinding after = {"after", "()V", (U64)native_visit};
+    CHECK(!C(e, int, 215, bad, &after, 1));
+    CHECK(!C(e, Ref, 113, bad, "after", "()V"));
+    CHECK(C(e, int, 228) && !native_calls);
+    Ref thrown = C(e, Ref, 15);
+    C(e, void, 17);
+    Ref ex = C(e, Ref, 6, "java/lang/ExceptionInInitializerError");
+    CHECK(C(e, int, 32, thrown, ex));
+    return C(vm, int, 5);
+  }
+  if (mode == 10 || mode == 11 || mode == 12 || mode == 15) {
+    const char *name = mode == 10   ? "locked"
+                       : mode == 11 ? "overflow"
+                       : mode == 12 ? "floating"
+                                    : "missing";
+    const char *sig = mode == 10   ? "()V"
+                      : mode == 11 ? "(IIIIIII)I"
+                      : mode == 12 ? "(F)F"
+                                   : "()I";
+    Ref id = C(e, Ref, 113, base, name, sig);
+    CHECK(id);
+    if (mode == 10)
+      C(e, void, 141, base, id);
+    if (mode == 11)
+      C(e, int, 129, base, id, 1, 2, 3, 4, 5, 6, 7);
+    if (mode == 12) {
+      U64 arg = 0;
+      C(e, float, 137, base, id, &arg);
+    }
+    if (mode == 15)
+      C(e, int, 129, base, id);
+    return 999;
+  }
+  CHECK(C(e, int, 129, child, number, -7) == 0x122d);
+  CHECK(native_number_v(e, child, number, 11) == 0x123f);
+  U64 argument = 0xffffffff0000000dULL;
+  CHECK(C(e, int, 131, child, number, &argument) == 0x1241);
+  if (mode == 13 || mode == 14) {
+    if (mode == 13) {
+      Ref id = C(e, Ref, 113, base, "mixed", "(ZBCSIJ)J");
+      C(e, U64, 132, base, id, 2, -127, 0xff01, -32765, -1234567, (U64)1);
+    } else {
+      Ref id = C(e, Ref, 113, base, "booleanValue", "()Z");
+      C(e, U8, 117, base, id);
+    }
+    return 999;
+  }
+  Ref text = C(e, Ref, 167, "native argument");
+  Ref echo =
+      C(e, Ref, 113, base, "text", "(Ljava/lang/String;)Ljava/lang/String;");
+  Ref result = C(e, Ref, 114, base, echo, mode == 5 ? base : text);
+  if (mode == 21) {
+    CHECK(!result && C(e, int, 228));
+    Ref thrown = C(e, Ref, 15);
+    C(e, void, 17);
+    Ref ex = C(e, Ref, 6, "java/lang/IllegalArgumentException");
+    CHECK(C(e, int, 32, thrown, ex));
+    CHECK(C(e, int, 129, base, number, 0) == 0x1234);
+    return C(vm, int, 5);
+  }
+  if (mode == 8) {
+    C(e, int, 232, native_leaked);
+    return 999;
+  }
+  CHECK(result && result != native_leaked);
+  if (mode == 23) {
+    CHECK(!C(e, int, 24, result, text));
+    const char *bytes = C(e, const char *, 169, result, (void *)0);
+    const char expected[] = "from native";
+    for (unsigned i = 0; i < sizeof(expected); ++i)
+      CHECK(bytes[i] == expected[i]);
+    C(e, void, 170, result, bytes);
+  } else
+    CHECK(C(e, int, 24, result, text));
+  CHECK(C(e, int, 24, native_global, result));
+  CHECK(C(e, int, 232, result) == 1 && C(e, int, 232, native_global) == 2);
+  C(e, void, 22, native_global);
+  Ref mixed = C(e, Ref, 113, base, "mixed", "(ZBCSIJ)J");
+  U64 args[] = {
+      0x101, 0x81, 0xff01, 0x8003, (unsigned)-1234567, 0xfedcba9876543210ULL};
+  CHECK(C(e, U64, 134, base, mixed, args) == 0xece8ece0ece8ece0ULL);
+  Ref obj = C(e, Ref, 27, child);
+  Ref wide = C(e, Ref, 33, base, "wide", "(J)J");
+  struct NativeBinding override = {"wide", "(J)J", (U64)native_wide_child};
+  CHECK(!C(e, int, 215, child, &override, 1));
+  CHECK(C(e, U64, 52, obj, wide, (U64)7) == 0x800000000000000bULL);
+  CHECK(C(e, U64, 82, obj, base, wide, (U64)7) == 0x8000000000000006ULL);
+  Ref self = C(e, Ref, 33, base, "self", "()Ljava/lang/Object;");
+  Ref same = C(e, Ref, 34, obj, self);
+  CHECK(C(e, int, 24, same, obj));
+  Ref b = C(e, Ref, 113, base, "byteValue", "()B");
+  Ref s = C(e, Ref, 113, base, "shortValue", "()S");
+  Ref c = C(e, Ref, 113, base, "charValue", "()C");
+  CHECK(C(e, signed char, 120, base, b) == -127);
+  CHECK(C(e, short, 126, base, s) == -127);
+  CHECK(C(e, U16, 123, base, c) == 0xff81);
+  unsigned before = native_calls;
+  Ref visit = C(e, Ref, 113, base, "visit", "()V");
+  C(e, void, 141, base, visit);
+  CHECK(native_calls == before + 11);
+  struct NativeBinding rebound = {"number", "(I)I", (U64)native_rebound};
+  CHECK(!C(e, int, 215, base, &rebound, 1));
+  CHECK(C(e, int, 129, child, number, 0) == 0x123b);
+  CHECK(!C(vm, int, 5));
+  e = attach();
+  CHECK(e);
+  native_env = e;
+  base = C(e, Ref, 6, "nativecall/Base");
+  CHECK(C(e, int, 129, base, number, 1) == 0x123c);
+  C(e, void, 22, native_base);
+  return C(vm, int, 5);
 }
