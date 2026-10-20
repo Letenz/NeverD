@@ -65,19 +65,19 @@ struct AnalysisCacheWarmup {
 struct OmittedCalleeMemo;
 struct ImageImportCounts;
 
-/// Optional facts for consecutive restricted x64 and AArch64 analyses of an
-/// unchanged image. Owns the indexes borrowed by bounded machine-graph/body
-/// caches, not output IR or caller-dependent summaries. The image and debug
-/// context must outlive the cache; reset it before changing either, including
-/// symbols, exception metadata, bytes or analysis policy. Function selection
-/// may vary. Pipeline checks the exact function-entry and verified-entry
-/// inventories. It keeps the facts of the symbol inventory, which every symbol
-/// start and warming share, apart from those of a selection that adds its own
-/// entry, so passing through such a selection leaves them in place.  It reads
-/// that inventory from the image's symbols once for the cache. Additive
-/// CodeRefTargets publication is allowed, as for the raw graph cache. Use from
-/// one pipeline invocation at a time; its internal workers join before run()
-/// returns. Other architectures and whole-image runs stay local.
+/// Optional facts for consecutive restricted x64, AArch64 and ARM analyses
+/// of an unchanged image. Owns the indexes borrowed by bounded
+/// machine-graph/body caches, not output IR or caller-dependent summaries. The
+/// image and debug context must outlive the cache; reset it before changing
+/// either, including symbols, exception metadata, bytes or analysis policy.
+/// Function selection may vary. Pipeline checks the exact function-entry and
+/// verified-entry inventories. It keeps the facts of the symbol inventory,
+/// which every symbol start and warming share, apart from those of a selection
+/// that adds its own entry, so passing through such a selection leaves them in
+/// place.  It reads that inventory from the image's symbols once for the cache.
+/// Additive CodeRefTargets publication is allowed, as for the raw graph cache.
+/// Use from one pipeline invocation at a time; its internal workers join before
+/// run() returns. Other architectures and whole-image runs stay local.
 class PipelineAnalysisCache {
 public:
   PipelineAnalysisCache() = default;
