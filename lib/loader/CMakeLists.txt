@@ -46,6 +46,7 @@ add_neverd_component_library(NeverDLoader
   COFF/eh/COFFRegistrationScalarLeaf.cpp
   COFF/eh/COFFRegistrationEHPersonality.cpp
   COFF/eh/COFFRegistrationEHScan.cpp
+  COFF/eh/COFFRegistrationEHCxxHelper.cpp
   COFF/eh/COFFRegistrationEHScopeTable.cpp
   COFF/eh/COFFRegistrationEHThrowInfo.cpp
   COFF/unwind/COFFUnwind.cpp

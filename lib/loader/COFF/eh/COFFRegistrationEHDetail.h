@@ -298,6 +298,12 @@ std::vector<InstallSite> findInstallSites(const BinaryImage &Img,
 void expandPrologueHelpers(const BinaryImage &Img,
                            const FunctionRangeMap &Functions,
                            std::vector<InstallSite> &Sites);
+/// Shared C++ prologues receive the per-function handler in EAX. These source
+/// observations do not establish frame coordinates or physical call effects.
+std::vector<InstallSite>
+findCxxEAXPrologueCallers(const BinaryImage &Img,
+                          const FunctionRangeMap &Functions,
+                          const SafeSEHTable &SafeSEH);
 
 uint32_t decodeScopeRecords(const BinaryImage &Img, va_t ArrayVA, va_t Limit,
                             bool IsEH4,

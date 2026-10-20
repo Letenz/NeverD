@@ -1206,6 +1206,191 @@ BinaryImage makeCxxContinuationImage(va_t Target = kText + 0xc0,
   return Img;
 }
 
+BinaryImage makeCxxEAXHelperImage(bool Wide, unsigned Variant,
+                                  unsigned Mutation = 0) {
+  auto Image = makeCxxContinuationImage();
+  constexpr va_t Helper = kText + 0x100;
+  constexpr va_t Handler = kText + 0x200;
+  constexpr va_t Cookie = kRData + 0xf0;
+  auto &Text = Image.Segments.front();
+  Text.Data.assign(0x280, 0xcc);
+  Text.Size = Text.FileSz = Text.Data.size();
+  Image.Sections.front().Size = Image.Sections.front().FileSz = Text.Size;
+  Image.DynInfo.SecurityCookieRVA = Cookie - kBase;
+  Text.Data[0] = Mutation == 1 ? 0xb8 : 0xc3;
+  if (Mutation == 2)
+    std::fill(Text.Data.begin(), Text.Data.begin() + 0x20, 0x90);
+  auto Caller = [&](size_t At, bool Returns) {
+    std::vector<uint8_t> Bytes{uint8_t(Wide ? 0x68 : 0x6a)};
+    const uint32_t Allocation = Mutation == 3 ? uint32_t(-1)
+                                : Mutation == 4
+                                    ? limits::kMaxSourceCallBorrowedBytes + 1
+                                    : 0x20;
+    if (Wide)
+      emit32(Bytes, Allocation);
+    else
+      Bytes.push_back(Mutation == 4 ? 0x80 : uint8_t(Allocation));
+    Bytes.push_back(Mutation == 5 ? 0xb9 : 0xb8);
+    emit32(Bytes, Mutation == 14 ? kRData : Handler);
+    Bytes.push_back(0xe8);
+    emit32(Bytes,
+           Helper + (Mutation == 13 ? 1 : 0) - (kText + At + Bytes.size() + 4));
+    Bytes.push_back(Returns ? 0xc3 : 0x90);
+    std::copy(Bytes.begin(), Bytes.end(), Text.Data.begin() + At);
+  };
+  Caller(Mutation == 1 ? 1 : 0x20, Mutation != 16);
+  if (Mutation == 16)
+    std::fill(Text.Data.begin() + 0x20 + (Wide ? 15 : 12),
+              Text.Data.begin() + 0x50, 0x90);
+  Caller(0x50, true);
+  Text.Data[0xa0] = 0xc3;
+
+  // Independent machine bytes for the helper's stack protocol. The caller
+  // provides the allocation word and EAX handler; the helper saves the old
+  // EBP, moves its return PC, initializes state -1, and publishes EBP-12.
+  std::vector<uint8_t> Body = {0x50, 0x64, 0xff, 0x35, 0,    0,    0,    0,
+                               0x8d, 0x44, 0x24, 0x0c, 0x2b, 0x64, 0x24, 0x0c,
+                               0x53, 0x56, 0x57, 0x89, 0x28, 0x8b, 0xe8, 0xa1};
+  emit32(Body, Mutation == 6 ? Cookie + 4 : Cookie);
+  Body.insert(Body.end(), {0x33, 0xc5, 0x50});
+  if (Variant != 0)
+    Body.insert(Body.end(), {0x89, uint8_t(Variant == 1 ? 0x65 : 0x45), 0xf0});
+  const size_t Tail = Body.size();
+  Body.insert(Body.end(),
+              {0xff, 0x75, 0xfc, 0xc7, 0x45, 0xfc, 0xff, 0xff, 0xff, 0xff,
+               0x8d, 0x45, 0xf4, 0x64, 0xa3, 0,    0,    0,    0,    0xc3});
+  if (Mutation == 8)
+    Body[Tail + 15] = 4; // a different FS slot
+  if (Mutation == 9)
+    Body[Tail + 6] = 0; // a different initial C++ state
+  if (Mutation == 10)
+    Body[20] = 0x30; // save ESI instead of EBP
+  if (Mutation == 11)
+    Body.back() = 0xc2; // a different return-stack effect
+  if (Mutation == 15)
+    Body[Tail + 2] = 0xf8; // move the handler instead of the return PC
+  std::copy(Body.begin(), Body.end(), Text.Data.begin() + 0x100);
+  Text.Data[0x200] = 0xb8;
+  writeLE<uint32_t>(Text.Data.data() + 0x201, kRData);
+  Text.Data[0x205] = 0xff;
+  Text.Data[0x206] = 0x25;
+  writeLE<uint32_t>(Text.Data.data() + 0x207, kRData + 0x90);
+  Image.Imports.push_back(
+      {"vcruntime140.dll", "__CxxFrameHandler3", 0, kRData + 0x90});
+  Image.Symbols.clear();
+  for (const auto &[Name, Address] : std::vector<std::pair<std::string, va_t>>{
+           {"preceding", kText}, {"helper", Helper}, {"handler", Handler}}) {
+    Symbol S;
+    S.Name = Name;
+    S.Addr = Address;
+    S.IsFunc = true;
+    Image.Symbols.push_back(std::move(S));
+  }
+  if (Mutation == 7)
+    Image.DynInfo.SecurityCookieRVA = 0;
+  if (Mutation == 12) {
+    Text.Flags = Text.Flags | SegmentFlags::Writable;
+    Image.Sections.front().Flags = Text.Flags;
+  }
+  Image.ExceptionMetadata = {};
+  coff_loader::parseX86RegistrationExceptions(Image);
+  return Image;
+}
+
+TEST(RegistrationTryLevel, CxxEAXHelperCallersHaveSourceMetadataOnly) {
+  for (bool Wide : {false, true})
+    for (unsigned Variant : {0, 1, 2}) {
+      SCOPED_TRACE(::testing::Message() << Wide << " " << Variant);
+      const auto Image = makeCxxEAXHelperImage(Wide, Variant);
+      EXPECT_EQ(chainAt(Image, kText), nullptr);
+      EXPECT_EQ(chainAt(Image, kText + 0x100), nullptr);
+      for (va_t Entry : {kText + 0x20, kText + 0x50}) {
+        const auto *EH = Image.ExceptionMetadata.findFunction(Entry);
+        ASSERT_NE(EH, nullptr);
+        EXPECT_EQ(EH->CodeRange.Begin, Entry);
+        EXPECT_EQ(EH->Personality, ExceptionPersonality::CxxFrameHandler3);
+        EXPECT_EQ(EH->ParseStatus, ExceptionParseStatus::Complete);
+        ASSERT_TRUE(EH->Cxx);
+        EXPECT_EQ(EH->Cxx->MaxState, 2);
+        EXPECT_EQ(EH->Cxx->TryBlocks.size(), 1u);
+        ASSERT_TRUE(EH->Registration);
+        const auto &Chain = *EH->Registration;
+        EXPECT_EQ(Chain.HandlerVA, kText + 0x200);
+        EXPECT_EQ(Chain.ScopeTableVA, kRData);
+        EXPECT_EQ(Chain.SeededTryLevel, -1);
+        EXPECT_FALSE(Chain.RegistrationOffset);
+        EXPECT_FALSE(Chain.TryLevelOffset);
+        EXPECT_FALSE(Chain.cxxRuntimeFrameOffset());
+        EXPECT_TRUE(Chain.TryLevelStores.empty());
+        EXPECT_FALSE(Image.VerifiedFunctionEntries.count(Entry));
+        EXPECT_FALSE(coff_loader::getX86RegistrationChainStoreSize(
+            Image, Chain.ChainInstallVA));
+      }
+      EXPECT_EQ(
+          Image.ExceptionMetadata.findFunction(kText + 0x20)->CodeRange.End,
+          kText + 0x50);
+    }
+}
+
+TEST(RegistrationTryLevel, CxxEAXHelperRequiresExactSourceProtocol) {
+  for (bool Wide : {false, true})
+    for (unsigned Variant : {0, 1, 2})
+      for (unsigned Mutation = 3; Mutation != 16; ++Mutation) {
+        SCOPED_TRACE(::testing::Message()
+                     << Wide << " " << Variant << " " << Mutation);
+        const auto Image = makeCxxEAXHelperImage(Wide, Variant, Mutation);
+        EXPECT_EQ(chainAt(Image, kText + 0x20), nullptr);
+        EXPECT_EQ(chainAt(Image, kText + 0x50), nullptr);
+      }
+}
+
+TEST(RegistrationTryLevel, CxxEAXHelperRequiresClosedPrecedingBody) {
+  for (bool Wide : {false, true}) {
+    for (unsigned Mutation : {1, 2}) {
+      SCOPED_TRACE(::testing::Message() << Wide << " " << Mutation);
+      const auto Image = makeCxxEAXHelperImage(Wide, 0, Mutation);
+      EXPECT_EQ(chainAt(Image, kText), nullptr);
+      EXPECT_EQ(chainAt(Image, kText + (Mutation == 1 ? 1 : 0x20)), nullptr);
+    }
+    const auto Image = makeCxxEAXHelperImage(Wide, 0, 16);
+    EXPECT_NE(chainAt(Image, kText + 0x20), nullptr);
+    EXPECT_EQ(chainAt(Image, kText + 0x50), nullptr);
+  }
+}
+
+TEST(RegistrationTryLevel, CxxEAXHelperChecksFixupsAndSafeSEH) {
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = makeCxxEAXHelperImage(false, 1);
+    Image.BaseRelocations = {
+        {kText + 0x23, 3}, {kText + 0x53, 3}, {kText + 0x118, 3}};
+    if (Mutation == 1)
+      Image.BaseRelocations.back().Type = 10;
+    if (Mutation == 2)
+      --Image.BaseRelocations.back().Address;
+    if (Mutation == 3)
+      Image.BaseRelocations.push_back(Image.BaseRelocations.back());
+    if (Mutation == 4)
+      Image.BaseRelocations.push_back({kText + 0x28, 3});
+    auto &Data = Image.Segments[1];
+    Data.Data.resize(0x14c, 0);
+    Data.Size = Data.FileSz = Data.Data.size();
+    Image.Sections[1].Size = Image.Sections[1].FileSz = Data.Size;
+    writeLE<uint32_t>(Data.Data.data() + 0x100, 0x48);
+    writeLE<uint32_t>(Data.Data.data() + 0x140, kRData + 0x148);
+    writeLE<uint32_t>(Data.Data.data() + 0x144, 1);
+    writeLE<uint32_t>(Data.Data.data() + 0x148,
+                      kText + (Mutation == 5 ? 0x100 : 0x200) - kBase);
+    Image.DynInfo.LoadConfigRVA = kRData + 0x100 - kBase;
+    Image.DynInfo.LoadConfigSize = 0x48;
+    Image.ExceptionMetadata = {};
+    coff_loader::parseX86RegistrationExceptions(Image);
+    EXPECT_EQ(chainAt(Image, kText + 0x20) != nullptr, Mutation == 0);
+    EXPECT_EQ(chainAt(Image, kText + 0x50) != nullptr,
+              Mutation == 0 || Mutation == 4);
+  }
+}
+
 std::pair<BinaryImage, va_t> makeCxxRegisterStateImage(uint8_t Register,
                                                        bool WideDisplacement,
                                                        int32_t Level,

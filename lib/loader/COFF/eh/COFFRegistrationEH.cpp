@@ -266,6 +266,12 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
   }
   std::vector<InstallSite> Sites = findInstallSites(Img, Functions, SafeSEH);
   expandPrologueHelpers(Img, Functions, Sites);
+  for (auto &Caller :
+       registration_detail::findCxxEAXPrologueCallers(Img, Functions, SafeSEH))
+    if (llvm::none_of(Sites, [&](const auto &Site) {
+          return Site.Range.Begin == Caller.Range.Begin;
+        }))
+      Sites.push_back(std::move(Caller));
   if (Sites.empty())
     return;
 
