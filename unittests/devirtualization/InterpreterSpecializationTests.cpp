@@ -17,6 +17,7 @@
 #include "neverd/symbolic/SymExec.h"
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <map>
 #include <optional>
@@ -133,6 +134,12 @@ size_t count(const LowFunc &Function, NdOp Opcode) {
   return Count;
 }
 
+struct CPUQueryObservation {
+  uint32_t Leaf;
+  uint32_t Subleaf;
+  std::array<uint32_t, 4> Outputs;
+};
+
 /// Independent concrete oracle for the small integer corpus. It intentionally
 /// does not use SymExec: it executes residual operands, branches and byte
 /// lanes.
@@ -144,12 +151,14 @@ execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
         llvm::ArrayRef<uint64_t> Timestamps = {},
         std::map<uint64_t, uint8_t> *FinalMemory = nullptr,
         std::optional<uint32_t> MXCSR = std::nullopt,
-        uint32_t WritableMask = 0xffbf, uint32_t *FinalMXCSR = nullptr) {
+        uint32_t WritableMask = 0xffbf, uint32_t *FinalMXCSR = nullptr,
+        llvm::ArrayRef<CPUQueryObservation> CPUQueries = {}) {
   using Location = std::pair<VnodeSpace, uint64_t>;
   std::map<Location, uint8_t> Bytes;
   bool Defined = true;
   size_t TimestampIndex = 0;
-  std::vector<uint32_t> TimestampOutputs;
+  size_t CPUQueryIndex = 0;
+  std::vector<uint32_t> RuntimeOutputs;
   const auto write = [&](NdVar Destination, uint64_t Value) {
     for (unsigned I = 0; I < Destination.Size; ++I)
       Bytes[{Destination.Space, Destination.Offset + I}] =
@@ -189,11 +198,11 @@ execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
       const auto B = [&] { return read(Op.Inputs[1]); };
       switch (Op.Opcode) {
       case NdOp::COPY:
-        // The retained x64 multi-output convention binds the next two
-        // placeholder copies to the low and high words of this one read.
-        if (!TimestampOutputs.empty() && Op.Inputs[0].isTemp()) {
-          write(Op.Inputs[0], TimestampOutputs.front());
-          TimestampOutputs.erase(TimestampOutputs.begin());
+        // The retained multi-output convention binds instruction-local
+        // placeholder copies to the ordered answers from this one read.
+        if (!RuntimeOutputs.empty() && Op.Inputs[0].isTemp()) {
+          write(Op.Inputs[0], RuntimeOutputs.front());
+          RuntimeOutputs.erase(RuntimeOutputs.begin());
         }
         [[fallthrough]];
       case NdOp::INT_ZEXT:
@@ -301,7 +310,7 @@ execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
       case NdOp::RETURN: {
         const auto Value = read(reg(0));
         if (!Defined || TimestampIndex != Timestamps.size() ||
-            !TimestampOutputs.empty())
+            CPUQueryIndex != CPUQueries.size() || !RuntimeOutputs.empty())
           return std::nullopt;
         if (FinalMemory)
           *FinalMemory = std::move(Memory);
@@ -371,11 +380,22 @@ execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
           MXCSR = static_cast<uint32_t>(Word);
         } else if (Op.Inputs[0].Offset ==
                    static_cast<uint64_t>(Intrinsic::Rdtsc)) {
-          if (TimestampIndex == Timestamps.size() || !TimestampOutputs.empty())
+          if (TimestampIndex == Timestamps.size() || !RuntimeOutputs.empty())
             return std::nullopt;
           const uint64_t Value = Timestamps[TimestampIndex++];
           write(Op.Output, Value);
-          TimestampOutputs = {uint32_t(Value), uint32_t(Value >> 32)};
+          RuntimeOutputs = {uint32_t(Value), uint32_t(Value >> 32)};
+        } else if (Op.Inputs[0].Offset ==
+                   static_cast<uint64_t>(Intrinsic::Cpuid)) {
+          if (CPUQueryIndex == CPUQueries.size() || !RuntimeOutputs.empty() ||
+              Op.NumInputs != 3)
+            return std::nullopt;
+          const auto &Query = CPUQueries[CPUQueryIndex++];
+          if (read(Op.Inputs[1]) != Query.Leaf ||
+              read(Op.Inputs[2]) != Query.Subleaf)
+            return std::nullopt;
+          write(Op.Output, Query.Outputs[0]);
+          RuntimeOutputs.assign(Query.Outputs.begin(), Query.Outputs.end());
         } else {
           ADD_FAILURE() << "oracle received an unsupported intrinsic";
           return std::nullopt;
@@ -5092,6 +5112,7 @@ TEST(InterpreterSpecialization, TimestampTransitionMatchesCompleteStateOracle) {
 }
 
 #include "AlignmentRecoveryTests.inc"
+#include "CPUQueryRecoveryTests.inc"
 #include "MXCSRRecoveryTests.inc"
 #include "SegmentedStoreTests.inc"
 
