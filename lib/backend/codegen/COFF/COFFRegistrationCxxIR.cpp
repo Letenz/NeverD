@@ -345,10 +345,7 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
     if (State.Levels.size() > 1)
       return rejectIR("C++ source call has ambiguous dispatch states");
     const int32_t Level = State.Levels.empty() ? -1 : State.Levels[0];
-    const bool HasTry =
-        llvm::any_of(State.CxxSearches,
-                     [&](const auto &Search) { return Search.Level == Level; });
-    const auto *Unwind = HasTry ? UnwindAt(Level) : nullptr;
+    const auto *Unwind = State.CanDispatch ? UnwindAt(Level) : nullptr;
     const auto &Contract = States.CalleeContracts[Effect.CalleeIndex];
     if (Unwind) {
       ++Protected;

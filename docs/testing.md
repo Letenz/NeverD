@@ -5726,6 +5726,15 @@ the capture records that library provenance alongside the generated object.
 Use these native libraries for CRT RTTI definitions: a Wine-only import stub
 can admit exports that the native CRT does not provide.
 This is generated-frame analysis/runtime evidence, not source reconstruction.
+`check_windows_registration_cleanup_only.py --test-binary
+build-release/bin/NeverDWindowsRegistrationNativeTests --runtime-libs PATH
+--output PATH` statically checks a compiled PE32 parent with two destructors
+and no local catch. O0 uses two unwind actions; O1 combines their ordered calls.
+The test decodes the original source, verifies native LLVM cleanup/invoke edges,
+replays independent control and frame proofs, rejects eight verifier-valid IR
+mutations, and compiles the result to COFF. The script verifies captured MSVC
+library hashes and does not execute either image. Cleanup-only PE installation
+remains explicitly unavailable until its table layout has a complete receipt.
 `check_windows_registration_realigned_rewrite.py` separately emits aligned
 value/reference, unbound value/reference and catch-all parents. Independent
 assembly fixtures use the canonical direct MSVC EBP frame for the unbound forms.

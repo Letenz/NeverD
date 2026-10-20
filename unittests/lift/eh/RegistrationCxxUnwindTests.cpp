@@ -114,6 +114,51 @@ TEST(RegistrationCxxUnwind, NestedCleanupRetainsItsImmediateSearch) {
   EXPECT_EQ((*Result)[3].Index, 1u);
 }
 
+TEST(RegistrationCxxUnwind, CleanupOnlyStatesPreserveTheirOrderedLifetime) {
+  CxxExceptionInfo Cxx;
+  Cxx.MaxState = 6;
+  Cxx.UnwindMap = {{-1, 0x401000}, {0, 0},  {1, 0x401010},
+                   {2, 0},         {-1, 0}, {4, 0x401020}};
+  const auto Result = projectX86RegistrationCxxUnwind(Cxx);
+  ASSERT_TRUE(Result);
+  ASSERT_EQ(Result->size(), 6u);
+  for (unsigned State : {0u, 1u, 2u, 3u, 5u}) {
+    EXPECT_EQ((*Result)[State].TargetKind, Kind::Cleanup);
+    EXPECT_EQ((*Result)[State].Index, State < 2 ? 0u : State < 4 ? 2u : 5u);
+  }
+  EXPECT_EQ((*Result)[4].TargetKind, Kind::Caller);
+  // State 2 cleans its object, follows the empty state 1, then cleans state 0.
+  EXPECT_EQ((*Result)[Cxx.UnwindMap[2].ToState].Index, 0u);
+  EXPECT_EQ(Cxx.UnwindMap[0].ToState, -1);
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Cxx;
+    switch (Mutation) {
+    case 0:
+      Changed.UnwindMap[0].ToState = 0;
+      break;
+    case 1:
+      Changed.UnwindMap[2].ToState = 3;
+      break;
+    case 2:
+      Changed.UnwindMap[2].ToState = -2;
+      break;
+    case 3:
+      Changed.MaxState = 5;
+      break;
+    case 4:
+      for (auto &Action : Changed.UnwindMap)
+        Action.ActionVA = 0;
+      break;
+    case 5:
+      Changed.UnwindMap.clear();
+      Changed.MaxState = 0;
+      break;
+    }
+    EXPECT_FALSE(projectX86RegistrationCxxUnwind(Changed));
+  }
+}
+
 TEST(RegistrationCxxUnwind, ThreeLevelsFollowInnerToOuterOrder) {
   auto Cxx = nestedTries();
   Cxx.MaxState = 6;

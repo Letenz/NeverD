@@ -324,7 +324,8 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
         break;
     }
   }
-  if (Resumes.empty() || Resumes.size() != States.CxxContinuations.size() ||
+  if ((!Catches.empty() && Resumes.empty()) ||
+      Resumes.size() != States.CxxContinuations.size() ||
       Calls.size() != States.CallFrameEffects.size())
     return false;
   const auto CopyOwners = registrationCxxPHICopyOwners(
@@ -390,7 +391,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   if (!CleanupParents)
     return false;
   for (const auto &Plan : Calls) {
-    if (Plan.State->Levels.empty())
+    if (!Plan.State->CanDispatch || Plan.State->Levels.empty())
       continue;
     const auto Level = Plan.State->Levels[0];
     int32_t Walk = Level;
@@ -607,14 +608,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     OuterUnwinds.push_back(UnwindAt(Cxx.UnwindMap[Try.TryLow].ToState));
   emitRegistrationCxxCatches(EH, Catches, Dispatches, OuterUnwinds,
                              *CatchParents, *FrameAlloca, Parent);
-  auto ProtectedCall = [&](const RegistrationBlockState &State) {
-    if (State.Levels.empty())
-      return false;
-    const int32_t Level = State.Levels.front();
-    return llvm::any_of(State.CxxSearches, [&](const auto &Search) {
-      return Search.Level == Level;
-    });
-  };
+  size_t Protected = 0;
   for (const auto &Plan : Calls) {
     auto *Old = Plan.Call;
     for (auto *Unused : Plan.DiscardedResult) {
@@ -659,12 +653,13 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
         Args.push_back(Old->getArgOperand(I));
     const int32_t Level =
         Plan.State->Levels.empty() ? -1 : Plan.State->Levels.front();
-    auto *Unwind = ProtectedCall(*Plan.State) ? UnwindAt(Level) : nullptr;
+    auto *Unwind = Plan.State->CanDispatch ? UnwindAt(Level) : nullptr;
     llvm::SmallVector<llvm::OperandBundleDef, 1> Bundles;
     if (Plan.State->CallbackOnly)
       Bundles.emplace_back("funclet", Catches.at(Plan.CatchIdentity).Pad);
     llvm::CallBase *Call = nullptr;
     if (Unwind) {
+      ++Protected;
       auto *Block = Old->getParent();
       auto *Continue = Block->splitBasicBlock(Old->getNextNode(),
                                               "registration.cxx.call.cont");
@@ -781,8 +776,6 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       llvm::MDNode::get(
           *Ctx, {med_llvm_eh::mdUInt(*Ctx, 1, 1),
                  llvm::MDString::get(*Ctx, "cxx-x86-registration-native")}));
-  const auto Protected = llvm::count_if(
-      Calls, [&](const CallPlan &Plan) { return ProtectedCall(*Plan.State); });
   exception_rewrite::setContract(
       Parent, exception_rewrite::SourceState::Complete,
       exception_rewrite::LoweringState::Complete, Protected, Protected, 0);

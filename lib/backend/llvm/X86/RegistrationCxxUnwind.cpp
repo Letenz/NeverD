@@ -7,14 +7,20 @@
 #include "neverd/backend/llvm/X86RegistrationCxxUnwind.h"
 #include "neverd/loader/ExceptionInfo.h"
 
+#include <algorithm>
 #include <map>
 #include <set>
 
 namespace neverd {
 std::optional<std::vector<X86RegistrationCxxUnwindTarget>>
 projectX86RegistrationCxxUnwind(const CxxExceptionInfo &Cxx) {
-  if (Cxx.UnwindMap.size() > 128 || Cxx.TryBlocks.empty() ||
-      Cxx.TryBlocks.size() > 64 || !Cxx.hasValidStateGraph())
+  if (Cxx.UnwindMap.size() > 128 || Cxx.TryBlocks.size() > 64 ||
+      !Cxx.hasValidStateGraph())
+    return std::nullopt;
+  const bool CleanupOnly = Cxx.TryBlocks.empty();
+  if (CleanupOnly &&
+      std::none_of(Cxx.UnwindMap.begin(), Cxx.UnwindMap.end(),
+                   [](const auto &Action) { return Action.ActionVA != 0; }))
     return std::nullopt;
   using Target = X86RegistrationCxxUnwindTarget;
   std::map<int32_t, uint32_t> Tries;
@@ -77,7 +83,10 @@ projectX86RegistrationCxxUnwind(const CxxExceptionInfo &Cxx) {
         Actual.push_back(Next.Index);
         Walk = Cxx.UnwindMap[Cxx.TryBlocks[Next.Index].TryLow].ToState;
       } else {
-        if (Expected.empty())
+        // A cleanup-only function has no local search region: the descending
+        // action graph unwinds its live objects and then reaches the caller.
+        // Mixed try/catch graphs still require the enclosing search proof.
+        if (Expected.empty() && !CleanupOnly)
           return std::nullopt;
         Walk = Cxx.UnwindMap[Next.Index].ToState;
       }

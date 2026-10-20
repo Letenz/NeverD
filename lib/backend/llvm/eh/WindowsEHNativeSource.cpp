@@ -168,7 +168,10 @@ WindowsEHNativeSourceReason validateCxxFH3(const ExceptionFunction &EH,
     return WindowsEHNativeSourceReason::UnsupportedCxxVersion;
   if (!Cxx.hasValidStateGraph())
     return WindowsEHNativeSourceReason::InvalidCxxStateGraph;
-  if (Cxx.TryBlocks.empty())
+  if (Cxx.TryBlocks.empty() &&
+      (!Registration || llvm::none_of(Cxx.UnwindMap, [](const auto &Action) {
+        return Action.ActionVA != 0;
+      })))
     return WindowsEHNativeSourceReason::EmptyCxxTryMap;
   if (!Registration && Cxx.IPMap.empty())
     return WindowsEHNativeSourceReason::EmptyCxxIPMap;
@@ -658,7 +661,11 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
 #if defined(LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS) &&                            \
     defined(LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS) &&                          \
     defined(LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS)
-    return {Model, WindowsEHNativeSourceReason::Eligible, Capability};
+    // The current PE writer obtains the physical table layout from a catch
+    // receipt. Cleanup-only IR has no such row; do not advertise installation
+    // until reconstruction can independently bind its complete table layout.
+    if (!EH.Cxx->TryBlocks.empty())
+      return {Model, WindowsEHNativeSourceReason::Eligible, Capability};
 #endif
     return reject(Model,
                   WindowsEHNativeSourceReason::OutputReconstructionUnavailable,

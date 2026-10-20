@@ -1553,6 +1553,7 @@ add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
 
 add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/WindowsRegistrationNativeTests.cpp
+  eh/WindowsRegistrationCleanupOnlyTests.cpp
   eh/RegistrationLocalUnwindBridgeTests.cpp
   eh/RegistrationLocalUnwindNativeTests.cpp
   eh/RegistrationSEHReturnTests.cpp

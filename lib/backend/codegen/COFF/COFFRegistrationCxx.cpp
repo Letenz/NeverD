@@ -72,6 +72,9 @@ getCheckedCOFFRegistrationCxxTableReceipt(const llvm::Function &Function,
           Compiled.FunctionRanges, Compiled.FunctionOwnerAddrs))
     return rejectCxx("source or compiler contract is incomplete");
   const auto &Cxx = *Source.Cxx;
+  if (Cxx.TryBlocks.empty())
+    return rejectCxx(
+        "cleanup-only output has no complete table layout receipt");
   auto Root = coff_registration::ownerVA(Function, Compiled);
   if (!Root)
     return Root.takeError();
