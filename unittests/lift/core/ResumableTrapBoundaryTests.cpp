@@ -369,6 +369,164 @@ BinaryImage trapImage(const TrapCase &Case) {
   return Image;
 }
 
+TEST(ResumableTrapBoundary, SiblingNopPaddingDoesNotCreateATailCall) {
+  for (const auto &Case : siblingTraps()) {
+    if (!Case.Resumable)
+      continue;
+    std::vector<std::vector<uint8_t>> Nops;
+    if (Case.Architecture == Arch::AArch64)
+      Nops = {{0x1f, 0x20, 3, 0xd5}};
+    else if (Case.Architecture == Arch::ARM)
+      Nops = Case.Mode == InstructionMode::Thumb
+                 ? std::vector<std::vector<uint8_t>>{{0, 0xbf},
+                                                     {0xc0, 0x46},
+                                                     {0xaf, 0xf3, 0, 0x80}}
+                 : std::vector<std::vector<uint8_t>>{{0, 0, 0xa0, 0xe1},
+                                                     {0, 0xf0, 0x20, 0xe3}};
+    else
+      Nops = {{0x90}, {0x66, 0x90}};
+    for (const auto &Nop : Nops)
+      for (BinaryFormat Format :
+           {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+        for (unsigned Ownership = 0; Ownership != 3; ++Ownership) {
+          SCOPED_TRACE(::testing::Message()
+                       << Case.Name << "/" << Nop.size() << "/"
+                       << static_cast<int>(Format) << "/" << Ownership);
+          auto Image = trapImage(Case);
+          Image.Format = Format;
+          auto &Text = Image.Segments.front();
+          Text.Data.insert(Text.Data.begin() + Case.Trap.size(), Nop.begin(),
+                           Nop.end());
+          Text.Size = Text.Data.size();
+          const va_t AfterNop = Entry + Case.Trap.size() + Nop.size();
+          std::set<va_t> Entries;
+          if (Ownership == 0)
+            Entries.insert(AfterNop);
+          else if (Ownership == 1)
+            Image.KnownCodeRanges = {{Entry, Entry + Text.Size}};
+          const auto Function = build(Image, Entries);
+          ASSERT_TRUE(Function.hasCompleteLiftCoverage());
+          ASSERT_EQ(Function.Blocks.size(), 1u);
+          if (Ownership == 0) {
+            EXPECT_EQ(Function.Blocks.front().EndAddr,
+                      Entry + Case.Trap.size());
+            EXPECT_EQ(Function.DecodedInstructionCount, 1u);
+            for (const auto &Op : Function.Blocks.front().Ops)
+              EXPECT_NE(Op.Opcode, NdOp::CALL);
+          } else {
+            EXPECT_EQ(Function.Blocks.front().EndAddr, Entry + Text.Size);
+            EXPECT_EQ(Function.DecodedInstructionCount, 4u);
+          }
+        }
+  }
+}
+
+TEST(ResumableTrapBoundary, OwnedInvalidContinuationRetainsFailure) {
+  for (Arch Architecture : {Arch::X86, Arch::X64})
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+      for (unsigned Ownership = 0; Ownership != 4; ++Ownership)
+        for (unsigned Failure = 0; Failure != 4; ++Failure) {
+          SCOPED_TRACE(::testing::Message()
+                       << static_cast<int>(Architecture) << "/"
+                       << static_cast<int>(Format) << "/" << Ownership << "/"
+                       << Failure);
+          auto Image = image(Architecture, Format);
+          auto &Text = Image.Segments.front();
+          Text.Data.resize(6);
+          if (Failure == 0)
+            Text.Data.push_back(0x0f); // Truncated instruction.
+          if (Failure == 1)
+            Text.Data.insert(Text.Data.end(), {0xb8, 42, 0, 0, 0, 0xc3});
+          // Failure 1 has enough physical bytes, but only the first opcode
+          // byte belongs to this function. 2/3 have missing mapped/unmapped
+          // continuation bytes respectively.
+          Text.Size = Failure == 2 ? 7 : Text.Data.size();
+          if (Ownership == 1)
+            Image.KnownCodeRanges = {{Entry, Next + 1}};
+          else if (Ownership == 2)
+            addSymbol(Image, Entry, 7, "trap_owner");
+          else if (Ownership == 3) {
+            ExceptionFunction Owner;
+            Owner.CodeRange = {Entry, Next - 1};
+            Owner.Kind = RuntimeFunctionKind::Primary;
+            Owner.Encoding = ExceptionEncoding::X64UnwindV1;
+            Owner.ParseStatus = ExceptionParseStatus::Complete;
+            Owner.FragmentRanges = {{Next - 1, Next + 1}};
+            Image.ExceptionMetadata.Functions.push_back(Owner);
+            Image.ExceptionMetadata.rebuildIndex();
+          }
+          const auto Function = build(Image);
+          if (Ownership == 0) {
+            // Without ownership, undecodable bytes still bound the heuristic
+            // walk; a complete, decodable continuation remains valid.
+            EXPECT_TRUE(Function.hasCompleteLiftCoverage());
+          } else {
+            EXPECT_FALSE(Function.hasCompleteLiftCoverage());
+            if (Failure < 2)
+              EXPECT_EQ(Function.DecodeFailureAddresses,
+                        std::vector<va_t>{Next});
+            else
+              EXPECT_EQ(Function.TruncatedPathAddresses,
+                        std::vector<va_t>{Next});
+          }
+        }
+}
+
+TEST(ResumableTrapBoundary, FragmentOnlyEndStopsTrapsAndCalls) {
+  for (bool Call : {false, true})
+    for (bool Continues : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << Call << "/" << Continues);
+      auto Image = image();
+      auto &Text = Image.Segments.front();
+      Text.Data = {0xe9, 11, 0, 0, 0}; // jmp to the cold fragment.
+      Text.Data.resize(16, 0xcc);
+      Text.Data.insert(Text.Data.end(), {0xb8, 7, 0, 0, 0});
+      if (Call)
+        Text.Data.insert(Text.Data.end(), {0xe8, 0, 0x20, 0, 0});
+      else
+        Text.Data.push_back(0xcc);
+      const va_t FragmentEnd = Entry + Text.Data.size();
+      Text.Data.insert(Text.Data.end(), {0xb8, 42, 0, 0, 0, 0xc3});
+      Text.Size = Text.Data.size();
+      ExceptionFunction Owner;
+      Owner.CodeRange = {Entry, Entry + 5};
+      Owner.Kind = RuntimeFunctionKind::Primary;
+      Owner.Encoding = ExceptionEncoding::X64UnwindV1;
+      Owner.ParseStatus = ExceptionParseStatus::Complete;
+      Owner.FragmentRanges = {{Entry + 16, FragmentEnd}};
+      if (Continues)
+        Owner.FragmentRanges.push_back({FragmentEnd, Entry + Text.Size});
+      Image.ExceptionMetadata.Functions.push_back(Owner);
+      Image.ExceptionMetadata.rebuildIndex();
+      const auto Function = build(Image);
+      EXPECT_TRUE(Function.hasCompleteLiftCoverage());
+      EXPECT_EQ(Function.DecodedInstructionCount, Continues ? 5u : 3u);
+      for (const auto &Block : Function.Blocks)
+        EXPECT_LE(Block.EndAddr, Continues ? Entry + Text.Size : FragmentEnd);
+    }
+}
+
+TEST(ResumableTrapBoundary, FragmentEndInsideCallDoesNotProveNoReturn) {
+  auto Image = image();
+  auto &Text = Image.Segments.front();
+  Text.Data = {0xe9, 11, 0, 0, 0};
+  Text.Data.resize(16, 0xcc);
+  Text.Data.insert(Text.Data.end(), {0xe8, 0, 0x20, 0, 0, 0xc3});
+  Text.Size = Text.Data.size();
+  ExceptionFunction Owner;
+  Owner.CodeRange = {Entry, Entry + 5};
+  Owner.Kind = RuntimeFunctionKind::Primary;
+  Owner.Encoding = ExceptionEncoding::X64UnwindV1;
+  Owner.ParseStatus = ExceptionParseStatus::Complete;
+  // An inconsistent fragment end in the call's displacement cannot establish
+  // the non-returning contract of a call ending exactly at an owned boundary.
+  Owner.FragmentRanges = {{Entry + 16, Entry + 20}};
+  Image.ExceptionMetadata.Functions.push_back(Owner);
+  Image.ExceptionMetadata.rebuildIndex();
+  EXPECT_FALSE(lowFunctionNeverReturns(build(Image), Arch::X64));
+}
+
 TEST(ResumableTrapBoundary, SiblingTrapClassificationsAgreeWithLightDecode) {
   for (const auto &Case : siblingTraps())
     for (bool Detail : {false, true}) {

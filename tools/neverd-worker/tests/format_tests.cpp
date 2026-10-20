@@ -292,5 +292,32 @@ int main() {
         "A stack pointer access was taken for a frame access");
   check(x86SizeKeyword(16) == "xmmword" && x86SizeKeyword(3).empty(),
         "Size keywords do not follow the size table");
+  {
+    OperandFacts facts;
+    facts.dialect = OperandDialect::X86;
+    facts.mnemonic = "mov";
+    facts.wide = true;
+    std::vector<NumberFormat> formats(2);
+    formats[1] = {NumberBase::Enum, false, false, "FLAGS", 1};
+    facts.numberFormats = &formats;
+    bool called = false;
+    OperandFacts::EnumNamer enums =
+        [&](std::string_view type, std::uint64_t value, unsigned bits,
+            bool flags) -> std::optional<std::string> {
+      called = type == "FLAGS" && value == 11 && bits == 32 && flags;
+      return "FLAG_A | FLAG_B | 0x8";
+    };
+    facts.enums = &enums;
+    auto result = formatOperands("eax, 0xb", facts,
+                                 [](std::uint64_t, NameUse, std::string_view) {
+                                   return LocationName{};
+                                 });
+    check(called && result.text() == "eax, FLAG_A | FLAG_B | 0x8",
+          "Enum operands lost logical width or residual bits");
+    const auto folded =
+        classicInstruction(OperandDialect::X86, "imul", "eax, eax, 0xb", "");
+    check(folded.operandIndices == std::vector<std::size_t>{0, 2},
+          "Classic folding lost original immediate identity");
+  }
   return 0;
 }

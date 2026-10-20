@@ -597,6 +597,17 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
       sourceVariableTypes(*S, FuncEntry, VariableSnapshot,
                           SourceMap ? &SourceMap->StaleVariableTypes : nullptr);
   Opts.VariableTypes = &VariableTypes;
+  std::map<int64_t, CEmitterOptions::FrameVariable> FrameVariables;
+  for (const auto &V : S->SourceOptions.StackFrame.Variables) {
+    std::string Error;
+    auto Type = V.Type.empty()
+                    ? NdType::makeInt(V.Bytes)
+                    : parseSourceVariableType(*S, V.Type, V.Bytes, Error);
+    if (!Type)
+      throw std::invalid_argument(Error);
+    FrameVariables[V.Offset] = {V.Name, Type};
+  }
+  Opts.FrameVariables = &FrameVariables;
   Opts.StructuredExceptionSyntax = !PlainC;
   Opts.TheArch = S->Img.Arch;
   Opts.Format = S->Img.abiFormat();
@@ -625,6 +636,9 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     };
   try {
     S->cEmitter().emit(Single, OS, Opts, Debug);
+    if (SourceMap)
+      validateSourceStackBindings(S->SourceOptions.StackFrame, *SourceMap,
+                                  FuncEntry, "HighC");
     if (SourceMap)
       SourceMap->HighSources = nullptr;
     if (SourceMap)
@@ -707,6 +721,17 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
       sourceVariableTypes(*S, FuncEntry, VariableSnapshot,
                           SourceMap ? &SourceMap->StaleVariableTypes : nullptr);
   Opts.VariableTypes = &VariableTypes;
+  std::map<int64_t, CEmitterOptions::FrameVariable> FrameVariables;
+  for (const auto &V : S->SourceOptions.StackFrame.Variables) {
+    std::string Error;
+    auto Type = V.Type.empty()
+                    ? NdType::makeInt(V.Bytes)
+                    : parseSourceVariableType(*S, V.Type, V.Bytes, Error);
+    if (!Type)
+      throw std::invalid_argument(Error);
+    FrameVariables[V.Offset] = {V.Name, Type};
+  }
+  Opts.FrameVariables = &FrameVariables;
   Opts.TheArch = S->Img.Arch;
   Opts.Format = S->Img.abiFormat();
   Opts.UserNames = &S->Renames;
@@ -731,6 +756,9 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
   try {
     LLVMCEmitter Emitter;
     Emitter.emit(*Native->Module, OS, Opts, Debug, &S->Img, LF);
+    if (SourceMap)
+      validateSourceStackBindings(S->SourceOptions.StackFrame, *SourceMap,
+                                  FuncEntry, "LLVM C");
     if (SourceMap)
       noteUnboundVariableTypes(*SourceMap, VariableTypes, FuncEntry);
   } catch (const std::exception &Error) {
@@ -1168,6 +1196,8 @@ void writeSourcePage(llvm::raw_ostream &OS, neverd_session_t Sess, va_t Entry,
           J.attribute("bytes", Variable.Bytes);
           if (SourceVariableTypes::compatible(Variable.Type, Variable.Bytes))
             J.attribute("type", declarationToC(Variable.Type, ""));
+          if (Variable.StackOffset)
+            J.attribute("stack_offset", *Variable.StackOffset);
           J.attribute("parameter", Variable.Parameter);
           J.attribute("ambiguous", Variable.Ambiguous ||
                                        (Variable.Type &&
@@ -1300,12 +1330,17 @@ SourceViewOptions readSourceOptions(llvm::StringRef Text,
     if (Key != "symbolic" && Key != "llvm_optimization" &&
         Key != "llvm_passes" && Key != "llvm_control_flow" &&
         Key != "variable_types" && Key != "variable_edits" &&
-        Key != "call_types")
+        Key != "call_types" && Key != "stack_frame")
       throw std::invalid_argument("unknown source option: " + Key.str());
     if (Key != "symbolic" && Key != "variable_types" &&
-        Key != "variable_edits" && Key != "call_types" && Stage != "llvmc")
+        Key != "variable_edits" && Key != "call_types" &&
+        Key != "stack_frame" && Stage != "llvmc")
       throw std::invalid_argument("LLVM options require llvmc");
   }
+  if (const auto *Frame = Object->getObject("stack_frame"))
+    Options.StackFrame = readSourceStackFrame(*Frame);
+  else if (Object->get("stack_frame"))
+    throw std::invalid_argument("stack_frame must be an object");
   if (const auto *Calls = Object->getArray("call_types")) {
     if (Calls->size() > 32)
       throw std::invalid_argument(
@@ -1473,7 +1508,7 @@ struct ScopedSourceView {
   ScopedSourceView(Session &S, va_t Entry, const SourceViewOptions &Options,
                    bool High)
       : S(S), Previous(S.SourceOptions) {
-    if (!Options.CallTypes.empty()) {
+    if (!Options.CallTypes.empty() || !Options.StackFrame.empty()) {
       prepareSourceCallVariant(S, Entry, Options);
       PreviousCallResults = std::move(S.CurrentCallResults);
       S.CurrentCallResults = S.CallVariant->Results;

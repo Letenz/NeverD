@@ -420,8 +420,11 @@ bool CFGBuilder::callIsFollowedByPadding(const InsnRecord &Rec) const {
   // entry or at the end of the code counts.
   size_t Skipped = 0;
   while (Skipped < Window && !isTrapPaddingByte(A, Bytes[Skipped])) {
+    const auto Mode = CurrentImg->instructionModeAt(Next + Skipped, Rec.Mode);
+    if (!Mode)
+      break;
     const size_t Length =
-        alignmentNopLength(A, Bytes + Skipped, Window - Skipped);
+        alignmentNopLength(A, Bytes + Skipped, Window - Skipped, *Mode);
     if (Length == 0)
       break;
     Skipped += Length;
@@ -439,6 +442,14 @@ bool CFGBuilder::instructionEndsItsCodeRange(const InsnRecord &Rec) const {
   // Another fragment of this function may continue right where one ends.
   if (isCurrentOwnedFragment(Next))
     return false;
+  // A primary may list a cold fragment without a separate unwind record for
+  // that fragment. Its end is still an ownership boundary.
+  if (isCurrentOwnedFragment(Rec.Addr) && Next > Rec.Addr &&
+      isCurrentOwnedFragment(Next - 1) &&
+      !(AuthoritativeCurrentFuncRange &&
+        Next >= AuthoritativeCurrentFuncRange->first &&
+        Next < AuthoritativeCurrentFuncRange->second))
+    return true;
   if (const ExceptionFunction *Owner =
           CurrentImg->ExceptionMetadata.findFunction(Rec.Addr);
       Owner && exceptionEncodingBoundsOneFunction(Owner->Encoding) &&

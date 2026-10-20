@@ -156,6 +156,21 @@ NEVERD_API const char *neverd_func_attributes_json(neverd_session_t Sess,
 NEVERD_API const char *neverd_func_type_json(neverd_session_t Sess,
                                              neverd_va_t Entry,
                                              const char *OptionsJson);
+/// Format exact enum/flag bits using the current local type library.
+/// Value is a hexadecimal/decimal string; Bits is the logical operand width.
+NEVERD_API const char *neverd_enum_value_json(neverd_session_t Sess,
+                                              const char *Type,
+                                              const char *Value, unsigned Bits,
+                                              int Flags);
+/// Inspect/validate a bounded analyst stack frame; returned JSON is owned by
+/// the caller. Options: {snapshot, points:[{address,after}],
+/// variables:[{offset,bytes,name,type}]}. Null with neverd_last_error on
+/// refusal; free with neverd_free_string.
+/// An optional input_sha256 binds a policy to its input image. The response
+/// includes a reusable policy object with the current snapshot and digest.
+NEVERD_API const char *neverd_stack_frame_json(neverd_session_t Sess,
+                                               neverd_va_t Entry,
+                                               const char *OptionsJSON);
 /// Check a source-only scalar/pointer type against the local library and
 /// exact machine width. Request: {"type":string,"bytes":1..16,"floating":bool}.
 /// Does not change the image, machine IR, ABI or rewriting authority.

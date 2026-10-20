@@ -160,6 +160,12 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
       add_test(NAME NeverDWorkerSourceVariableEdits
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/source_variable_edits_test.py" $<TARGET_FILE:neverd-worker> --cc "${CMAKE_C_COMPILER}")
       set_tests_properties(NeverDWorkerSourceVariableEdits PROPERTIES TIMEOUT 120)
+      add_test(NAME NeverDWorkerDataPresentation
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_presentation_test.py" $<TARGET_FILE:neverd-worker>)
+      set_tests_properties(NeverDWorkerDataPresentation PROPERTIES TIMEOUT 90)
+      add_test(NAME NeverDWorkerStackFrame
+          COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/stack_frame_test.py" $<TARGET_FILE:neverd-worker> --cc "${CMAKE_C_COMPILER}")
+      set_tests_properties(NeverDWorkerStackFrame PROPERTIES TIMEOUT 120)
       add_test(NAME NeverDWorkerCallSiteTypes
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/call_site_types_test.py" $<TARGET_FILE:neverd-worker> --cc "${CMAKE_C_COMPILER}")
       set_tests_properties(NeverDWorkerCallSiteTypes PROPERTIES TIMEOUT 180)
@@ -230,6 +236,10 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
                 "$<TARGET_FILE:neverd-worker>" ${_neverd_source_synthesis_args})
       set_tests_properties(NeverDWorkerSourceSynthesis PROPERTIES TIMEOUT 180)
       if(_neverd_worker_test_cli)
+        add_test(NAME NeverDWorkerCLIStackFrame
+          COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/stack_frame_cli_test.py"
+                  "$<TARGET_FILE:neverd-worker>" "${_neverd_worker_test_cli}" --cc "${CMAKE_C_COMPILER}")
+        set_tests_properties(NeverDWorkerCLIStackFrame PROPERTIES TIMEOUT 180)
         add_test(NAME NeverDWorkerCLIWriterLock
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_writer_lock_test.py"
                   "$<TARGET_FILE:neverd-worker>" "${_neverd_worker_test_cli}")

@@ -995,6 +995,19 @@ parseOperandFormat(const llvm::json::Object &Object, std::string &Error) {
     }
   const llvm::json::Value *Type = Object.get("type");
   const llvm::json::Value *Delta = Object.get("delta");
+  if (Format.Base == "enum") {
+    const auto Name = Object.getString("type");
+    const auto Flags = Object.getBoolean("flags");
+    if (!Name || Name->empty() || Name->size() > MaxOperandTypeName ||
+        Format.Negate || Format.Invert || Delta ||
+        (Object.get("flags") && !Flags)) {
+      Error = "An enum operand requires a type and optional flags mode";
+      return {};
+    }
+    Format.Type = Name->str();
+    Format.Delta = Flags.value_or(false) ? 1 : 0;
+    return Format;
+  }
   if (Format.Base != kStructBase) {
     if (Type || Delta) {
       Error = "only a structure offset names a type and a delta";
@@ -1027,6 +1040,10 @@ llvm::json::Array operandFormatRows(const Session *S) {
                                {"base", Format.Base},
                                {"negate", Format.Negate},
                                {"invert", Format.Invert}};
+      if (Format.Base == "enum") {
+        Entry["type"] = jsonSafeText(Format.Type);
+        Entry["flags"] = Format.Delta != 0;
+      }
       if (Format.Base == kStructBase) {
         Entry["type"] = jsonSafeText(Format.Type);
         Entry["delta"] = Format.Delta;
@@ -1059,6 +1076,37 @@ std::optional<Session::DataItem> parseDataItem(const Session &S, va_t Addr,
       return std::nullopt;
     }
     Item.Size = Bytes;
+  } else if (*Kind == "array") {
+    const auto Width = Row.getInteger("element_size");
+    const auto Count = Row.getInteger("count");
+    if (!Width || !Count || *Width < 1 || *Width > 65536 || *Count < 1 ||
+        *Count > 1048576 ||
+        uint64_t(*Width) * uint64_t(*Count) > 64 * 1024 * 1024) {
+      Error =
+          "An array needs a bounded element width and count (at most 64 MiB)";
+      return {};
+    }
+    Item.ElementSize = *Width;
+    Item.Count = *Count;
+    Item.Size = Item.ElementSize * Item.Count;
+    Item.Type = Row.getString("type").value_or("").str();
+    if ((Size && uint64_t(*Size) != Item.Size) || Item.Type.size() > 512 ||
+        (Item.Type.empty() && Item.ElementSize != 1 && Item.ElementSize != 2 &&
+         Item.ElementSize != 4 && Item.ElementSize != 8)) {
+      Error = "Array extent must match its element layout and count";
+      return {};
+    }
+  } else if (*Kind == "alignment") {
+    const auto Align = Row.getInteger("alignment");
+    if (!Align || *Align < 2 || *Align > 1048576 || (*Align & (*Align - 1)) ||
+        !Size || *Size < 1 || *Size > *Align ||
+        Addr > UINT64_MAX - uint64_t(*Size) || (Addr + *Size) % *Align) {
+      Error = "Alignment needs a bounded power of two and a span ending on its "
+              "boundary";
+      return {};
+    }
+    Item.Size = *Size;
+    Item.Alignment = *Align;
   } else if (*Kind == StringItemKind) {
     const auto Name = Row.getString("encoding");
     Encoding = Name ? strings::encodingNamed(*Name) : std::nullopt;
@@ -1122,6 +1170,12 @@ std::optional<Session::DataItem> parseDataItem(const Session &S, va_t Addr,
             " is not in one segment";
     return std::nullopt;
   }
+  if ((Item.Kind == "array" || Item.Kind == "alignment") &&
+      (Addr - Seg->VA > Seg->Data.size() ||
+       Item.Size > Seg->Data.size() - (Addr - Seg->VA))) {
+    Error = "The complete definition needs initialized file-backed bytes";
+    return {};
+  }
   if (Encoding) {
     // The string's last code unit is its terminator.
     const unsigned Unit = strings::encodingUnitBytes(*Encoding);
@@ -1160,6 +1214,14 @@ llvm::json::Array dataItemRows(const Session *S) {
                            {"size", static_cast<int64_t>(Item.Size)}};
     if (!Item.Encoding.empty())
       Row["encoding"] = Item.Encoding;
+    if (Item.Kind == "array") {
+      Row["element_size"] = Item.ElementSize;
+      Row["count"] = Item.Count;
+      if (!Item.Type.empty())
+        Row["type"] = Item.Type;
+    }
+    if (Item.Kind == "alignment")
+      Row["alignment"] = Item.Alignment;
     Rows.push_back(std::move(Row));
   }
   return Rows;
@@ -1192,6 +1254,29 @@ int neverd_item_set(neverd_session_t Sess, neverd_va_t Addr,
   if (!Item) {
     S->setError(Error);
     return -1;
+  }
+  if (Item->Kind == "array" || Item->Kind == "alignment") {
+    if (!S->synchronizeFunctions())
+      return -1;
+    for (const auto &F : S->Functions)
+      if ((F.Entry >= Addr && F.Entry - Addr < Item->Size) ||
+          (Addr > F.Entry && Addr - F.Entry < F.Size)) {
+        S->setError("The data definition overlaps a function; remove its code "
+                    "ownership first");
+        return -1;
+      }
+    if (!Item->Type.empty()) {
+      const auto *Library = S->readLocalTypes();
+      const auto *Type = Library ? Library->find(Item->Type) : nullptr;
+      const auto Width =
+          Type ? Library->sizeOf(*types::makeNamed(Type->Name, Type->Kind))
+               : std::nullopt;
+      if (!Width || *Width != Item->ElementSize) {
+        S->setError("The array element width differs from its current local "
+                    "type layout");
+        return -1;
+      }
+    }
   }
   // An item replaces the one at its address. Bytes the user undefined give
   // way to it and stay undefined around it; it shares no byte with any other
@@ -1277,6 +1362,33 @@ int neverd_operand_format_set(neverd_session_t Sess, neverd_va_t Addr,
     if (!Format) {
       S->setError(Error);
       return -1;
+    }
+    if (Format->Base == "enum") {
+      const auto *Seg = S->Img.getSegmentFor(Addr);
+      Decoder Dec;
+      DecodedInsn Insn{};
+      if (!Seg || (S->Img.Arch != Arch::X64 && S->Img.Arch != Arch::X86) ||
+          Addr - Seg->VA >= Seg->Data.size() || !Dec.init(S->Img) ||
+          !Dec.selectMode(S->Img, Addr) ||
+          !Dec.decodeOne(
+              Seg->Data.data() + (Addr - Seg->VA),
+              std::min<size_t>(16, Seg->Data.size() - (Addr - Seg->VA)), Addr,
+              Insn) ||
+          !Insn.Raw || !Insn.Raw->detail ||
+          Operand >= Insn.Raw->detail->x86.op_count ||
+          Insn.Raw->detail->x86.operands[Operand].type != X86_OP_IMM) {
+        S->setError("Select an actual decoded x86 immediate operand");
+        return -1;
+      }
+      const auto &OperandInfo = Insn.Raw->detail->x86.operands[Operand];
+      const auto Value =
+          "0x" + llvm::utohexstr(static_cast<uint64_t>(OperandInfo.imm));
+      const auto *Checked =
+          neverd_enum_value_json(Sess, Format->Type.c_str(), Value.c_str(),
+                                 OperandInfo.size * 8, Format->Delta != 0);
+      if (!Checked)
+        return -1;
+      neverd_free_string(Checked);
     }
     // A structure offset names a structure or union of the program's local
     // types, which a sidecar read later may no longer have; the listing then

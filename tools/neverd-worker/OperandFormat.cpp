@@ -421,7 +421,8 @@ bool appendStructOffset(StyledText &out, const NumberFormat &format,
 bool appendFormattedNumber(StyledText &out, std::uint64_t value, unsigned bits,
                            const NumberFormat &format,
                            const LocationNamer &namer,
-                           const StructNamer *structs) {
+                           const StructNamer *structs,
+                           const OperandFacts::EnumNamer *enums) {
   const std::uint64_t mask =
       bits >= 64 ? ~std::uint64_t(0) : (std::uint64_t(1) << bits) - 1;
   std::uint64_t shown = value & mask;
@@ -472,6 +473,15 @@ bool appendFormattedNumber(StyledText &out, std::uint64_t value, unsigned bits,
       return false;
     out.append("offset ", ListingRole::Keyword);
     out.append(name.text, name.role, name.address);
+    return true;
+  }
+  case NumberBase::Enum: {
+    if (!sign.empty() || !enums)
+      return false;
+    const auto symbolic = (*enums)(format.type, shown, bits, format.delta != 0);
+    if (!symbolic)
+      return false;
+    out.append(*symbolic, ListingRole::Keyword);
     return true;
   }
   case NumberBase::Struct: {
@@ -693,8 +703,8 @@ void formatX86Operand(StyledText &out, const OperandTokens &tokens,
     const std::uint64_t mask =
         bits >= 64 ? ~std::uint64_t(0) : (std::uint64_t(1) << bits) - 1;
     if (const auto value = plainNumber(tokens, mask);
-        value &&
-        appendFormattedNumber(out, *value, bits, *format, namer, facts.structs))
+        value && appendFormattedNumber(out, *value, bits, *format, namer,
+                                       facts.structs, facts.enums))
       return;
   }
   // A negative immediate is the unsigned value of the operation's width,
@@ -1105,11 +1115,14 @@ ClassicInstruction classicInstruction(OperandDialect dialect,
   };
   const unsigned forms = x86OperandForms(base);
   if ((forms & FoldRepeatedSource) && pieces.size() == 3 &&
-      text(pieces[0]) == text(pieces[1]))
+      text(pieces[0]) == text(pieces[1])) {
     result.operands = text(pieces[0]) + ", " + text(pieces[2]);
-  else if ((forms & SwapRegisters) && pieces.size() == 2 &&
-           isLoneRegister(pieces[0]) && isLoneRegister(pieces[1]))
+    result.operandIndices = {0, 2};
+  } else if ((forms & SwapRegisters) && pieces.size() == 2 &&
+             isLoneRegister(pieces[0]) && isLoneRegister(pieces[1])) {
     result.operands = text(pieces[1]) + ", " + text(pieces[0]);
+    result.operandIndices = {1, 0};
+  }
   return result;
 }
 

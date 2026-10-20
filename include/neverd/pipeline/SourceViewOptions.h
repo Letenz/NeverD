@@ -12,6 +12,7 @@
 #define NEVERD_PIPELINE_SOURCEVIEWOPTIONS_H
 
 #include "neverd/ir/SourceCallEdits.h"
+#include "neverd/ir/SourceStackFrame.h"
 #include "neverd/ir/SourceVariableEdits.h"
 
 #include <cstdint>
@@ -52,6 +53,7 @@ struct SourceViewOptions {
   std::vector<VariableType> VariableTypes;
   std::vector<SourceVariableEdit> VariableEdits;
   std::vector<SourceCallEdit> CallTypes;
+  SourceStackFrame StackFrame;
   bool operator==(const SourceViewOptions &) const = default;
 };
 

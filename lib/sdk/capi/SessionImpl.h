@@ -72,6 +72,7 @@
 
 namespace neverd {
 namespace sdk {
+void preserveAnalystStackObjects(llvm::Module &);
 
 struct LLVMFunctionView;
 
@@ -255,6 +256,7 @@ struct Session {
     std::string Snapshot;
     bool Symbolic = false;
     std::vector<SourceCallEdit> Edits;
+    SourceStackFrame Frame;
     std::vector<SourceCallEditResult> Results;
     std::unique_ptr<PipelineResult> Result;
     std::optional<std::vector<MedFunc>> Native;
@@ -646,6 +648,8 @@ struct Session {
     uint64_t Size = 0;
     /// A string's encoding, as strings::encodingName spells it.
     std::string Encoding;
+    uint64_t ElementSize = 0, Count = 0, Alignment = 0;
+    std::string Type;
     bool operator==(const DataItem &) const = default;
   };
   std::map<va_t, DataItem> DataItems;
@@ -1105,6 +1109,9 @@ struct Session {
       setError("native LLVM verification failed: " + VerifyError);
       return nullptr;
     }
+    if (UsingAnalystCallContracts &&
+        !SourceOptions.StackFrame.Variables.empty())
+      preserveAnalystStackObjects(*Candidate);
     if (NoOpt) {
       Pipeline::promoteScaffoldingAllocas(*Candidate);
       if (Sources)

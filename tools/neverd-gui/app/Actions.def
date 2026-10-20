@@ -499,6 +499,12 @@ NEVERD_ACTION(
     QT_TRANSLATE_NOOP("Actions",
                       "Restart the analysis process and reopen the binary"))
 
+NEVERD_ACTION(EditStackFrame, QT_TRANSLATE_NOOP("Actions", "Stack variables..."), "Ctrl+K", "functions", QT_TRANSLATE_NOOP("Actions", "Inspect and correct local stack variables"))
+NEVERD_ACTION(EditStackPointer, QT_TRANSLATE_NOOP("Actions", "Change stack pointer..."), "Alt+K", "functions", QT_TRANSLATE_NOOP("Actions", "Correct the entry-relative SP after this instruction"))
+NEVERD_ACTION(EditStackOperand, QT_TRANSLATE_NOOP("Actions", "Stack variable operand..."), "K", "functions", QT_TRANSLATE_NOOP("Actions", "Name a proven stack operand without changing its address"))
+NEVERD_ACTION(EditMakeArray, QT_TRANSLATE_NOOP("Actions", "Make array..."), "*", "data", QT_TRANSLATE_NOOP("Actions", "Define a bounded array of typed elements"))
+NEVERD_ACTION(EditMakeAlignment, QT_TRANSLATE_NOOP("Actions", "Make alignment..."), "L", "data", QT_TRANSLATE_NOOP("Actions", "Mark padding ending on an alignment boundary"))
+NEVERD_VIEW_ACTION(EditOperandEnum, QT_TRANSLATE_NOOP("Actions", "Enum operand..."), "M", "operand_struct", QT_TRANSLATE_NOOP("Actions", "Show an immediate as enumeration members or flags"))
 // Windows.
 NEVERD_ACTION(WindowsSaveDesktop, QT_TRANSLATE_NOOP("Actions", "&Save desktop"),
               "", "save",

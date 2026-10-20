@@ -436,10 +436,18 @@ bool supportedWideOperation(const LowOp &Op,
   case NdOp::INT_ZEXT:
   case NdOp::INT_SEXT:
     return Output && Op.NumInputs == 1 && validValue(Op.Inputs[0]);
-  case NdOp::CONCAT:
-    return Output && Op.NumInputs == 2 && Op.Inputs[0].Size == 8 &&
-           Op.Inputs[1].Size == 8 && validValue(Op.Inputs[0]) &&
-           validValue(Op.Inputs[1]);
+  case NdOp::CONCAT: {
+    // Packed lanes are assembled incrementally, so intermediate pieces need
+    // not have a power-of-two width. Keep the complete value bounded to 128
+    // bits and require exact concatenation without truncation or padding.
+    const auto Piece = [](const NdVar &V) {
+      return V.Size && V.Size <= 16 && (scalarLocation(V) || V.isConst()) &&
+             (V.isConst() || V.Offset <= InvalidVA - (V.Size - 1));
+    };
+    return scalarLocation(Op.Output) && Piece(Op.Output) && Op.NumInputs == 2 &&
+           Piece(Op.Inputs[0]) && Piece(Op.Inputs[1]) &&
+           Op.Output.Size == Op.Inputs[0].Size + Op.Inputs[1].Size;
+  }
   case NdOp::INT_AND:
   case NdOp::INT_OR:
   case NdOp::INT_XOR:
@@ -1953,12 +1961,17 @@ bool Specializer::emitTargets(Node &Draft,
                   "machine region has no implicit ordinary RETURN boundary");
     if (Options.RequireRestoredFrameAtReturn) {
       const auto &Base = *Options.FrameBaseRegister;
+      const auto StackValue =
+          State.read(SymSpace::Register, Base.Offset, Base.Bytes);
       const auto Displacement =
-          frameOffset(Ctx, Exec.pathPredicate(),
-                      State.read(SymSpace::Register, Base.Offset, Base.Bytes),
-                      FrameRoot, FrameOffsetProof::Required);
+          frameOffset(Ctx, Exec.pathPredicate(), StackValue, FrameRoot,
+                      FrameOffsetProof::Required);
       if (Failed)
         return false;
+      if (!Displacement) {
+        discover(State, StackValue, FrameRoot, ControlDemand::Memory);
+        Refinement.PrecisionFailure = true;
+      }
       if (!Displacement || *Displacement != 0)
         return fail(SpecializationStatus::Unsupported,
                     "RETURN requires the restored entry frame; RET dispatch is "
@@ -2405,10 +2418,11 @@ bool Specializer::evaluate(int Id) {
                     "a verified entry stack root");
       const auto &Base = *Options.FrameBaseRegister;
       const NdVar Stack = NdVar::reg(Base.Offset, Base.Bytes);
+      const auto StackValue =
+          State.read(SymSpace::Register, Base.Offset, Base.Bytes);
       const auto Displacement =
-          frameOffset(Ctx, Exec.pathPredicate(),
-                      State.read(SymSpace::Register, Base.Offset, Base.Bytes),
-                      FrameRoot, FrameOffsetProof::Required);
+          frameOffset(Ctx, Exec.pathPredicate(), StackValue, FrameRoot,
+                      FrameOffsetProof::Required);
       if (Failed)
         return false;
       // A raw region has explicit outgoing transfers rather than an ordinary
@@ -2416,10 +2430,16 @@ bool Specializer::evaluate(int Id) {
       // returns can use an arbitrary current stack. Only proved root-relative
       // cells may enter the frame projection or its preservation inventory.
       const bool RawRegion = RawDomain && !Options.RequireRestoredFrameAtReturn;
-      if (!Displacement && !RawRegion)
+      if (!Displacement && !RawRegion) {
+        // A joined address carrier may have lost the saved stack's relation.
+        // Nominate its dependencies just as for an unresolved memory address;
+        // only a fresh complete proof can establish the required offset.
+        discover(State, StackValue, FrameRoot, ControlDemand::Memory);
+        Refinement.PrecisionFailure = true;
         return fail(SpecializationStatus::Unsupported,
                     "native stack control has no exact entry-relative stack "
                     "pointer");
+      }
       const bool IsReturn = Instruction.NativeStackControl ==
                             SpecializationNativeStackControl::Return;
       const NdVar Scratch =

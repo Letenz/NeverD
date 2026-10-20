@@ -272,6 +272,17 @@ void CodeEdits::validateRow(const Json &row) {
     if (!sizeField(type, "bytes", 0, 16) || !type.at("floating").is_boolean())
       throw Error("invalid_request", "Invalid global object type");
   }
+  if (row.contains("stack_frame")) {
+    const auto &Frame = row.at("stack_frame");
+    typeImage(Frame);
+    if (!Frame.is_object() || Frame.dump().size() > 128 * 1024 ||
+        stringField(Frame, "snapshot", {}, 128).empty() ||
+        !Frame.value("points", Json::array()).is_array() ||
+        Frame.value("points", Json::array()).size() > 256 ||
+        !Frame.value("variables", Json::array()).is_array() ||
+        Frame.value("variables", Json::array()).size() > 256)
+      throw Error("invalid_request", "Invalid stack frame table");
+  }
   const auto calls = row.value("call_types", Json::object());
   if (!calls.is_object() || calls.size() > 32 ||
       calls.dump().size() > 64 * 1024)
@@ -380,7 +391,12 @@ Json CodeEdits::change(Json row, const Json &request) {
   if (view.is_null())
     view = {{"names", Json::object()}, {"comments", Json::object()}};
   const auto kind = stringField(request, "kind", {}, 16);
-  if (kind == "global_type") {
+  if (kind == "stack_frame") {
+    if (request.value("reset", false))
+      row.erase("stack_frame");
+    else
+      row["stack_frame"] = request.at("stack_frame");
+  } else if (kind == "global_type") {
     if (request.value("reset", false))
       row.erase("object_type");
     else

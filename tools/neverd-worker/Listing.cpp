@@ -265,6 +265,7 @@ struct UnwindMark {
   std::string personality;
 };
 struct DecodedFunction {
+  std::map<std::int64_t, std::string> manualNames;
   std::vector<Instruction> instructions;
   std::set<std::uint64_t> labels;
   std::uint64_t end = 0;
@@ -545,9 +546,15 @@ struct Listing::Impl {
   /// or undefined bytes, over what analysis reads in them.
   struct UserItem {
     std::uint64_t size = 1;
-    std::string kind, encoding;
+    std::string kind, encoding, type;
+    std::uint64_t elementSize = 0, count = 0, alignment = 0;
   };
   std::map<std::uint64_t, UserItem> userItems;
+  std::map<std::string, Json> dataElementTypes;
+  std::map<std::tuple<std::string, std::uint64_t, unsigned, bool>,
+           std::optional<std::string>>
+      enumValues;
+  std::map<std::uint64_t, Json> stackFrames;
   std::map<std::uint64_t, Instruction> userInstructions;
   StringRefsFunction stringRefs = nullptr;
   SwitchesFunction switchesQuery = nullptr;
@@ -1485,6 +1492,7 @@ struct Listing::Impl {
   /// Read how the user shows instruction operands' numbers.
   void loadNumberFormats() {
     numberFormats.clear();
+    enumValues.clear();
     landings.clear();
     if (!operandFormatsQuery)
       return;
@@ -1503,7 +1511,9 @@ struct Listing::Impl {
         formats[index] = {*base, entry.value("negate", false),
                           entry.value("invert", false),
                           entry.value("type", std::string()),
-                          entry.value("delta", std::int64_t(0))};
+                          entry.value("base", std::string()) == "enum"
+                              ? (entry.value("flags", false) ? 1 : 0)
+                              : entry.value("delta", std::int64_t(0))};
       }
     }
   }
@@ -1512,6 +1522,7 @@ struct Listing::Impl {
   /// what the scan read in their bytes.
   void loadUserItems() {
     userItems.clear();
+    dataElementTypes.clear();
     userInstructions.clear();
     if (!itemsQuery)
       return;
@@ -1522,6 +1533,10 @@ struct Listing::Impl {
         item.size = jsonCount(row.value("size", Json()));
         item.kind = row.value("kind", std::string());
         item.encoding = row.value("encoding", std::string());
+        item.type = row.value("type", std::string());
+        item.elementSize = row.value("element_size", std::uint64_t(0));
+        item.count = row.value("count", std::uint64_t(0));
+        item.alignment = row.value("alignment", std::uint64_t(0));
         if (address && item.size)
           userItems.emplace(address, std::move(item));
       }
@@ -1930,6 +1945,9 @@ struct Listing::Impl {
 
   std::string frameName(const DecodedFunction &body,
                         std::int64_t offset) const {
+    if (const auto It = body.manualNames.find(offset);
+        It != body.manualNames.end())
+      return It->second;
     return offset < 0 ? std::string(LocalPrefix) + upperHex(-offset)
                       : std::string(ArgumentPrefix) +
                             upperHex(offset - argumentBase(body));
@@ -2012,6 +2030,38 @@ struct Listing::Impl {
     // set up: its stack operands stay as they are.
     if (dialect == OperandDialect::X86 && !function.chunkOf)
       buildFrame(body);
+    if (const auto Frame = stackFrames.find(function.entry);
+        Frame != stackFrames.end()) {
+      using Inspect =
+          const char *(*)(neverd_session_t, neverd_va_t, const char *);
+      if (const auto inspect =
+              engineSymbol<Inspect>("neverd_stack_frame_json")) {
+        if (const auto *raw = inspect(session, function.entry,
+                                      Frame->second.dump().c_str())) {
+          const auto flow = takeJson(raw);
+          std::map<std::uint64_t, std::optional<std::int64_t>> offsets;
+          for (const auto &row : flow.at("instructions"))
+            offsets[parseAddress(row.at("address").get<std::string>())] =
+                row.at("before").is_number_integer()
+                    ? std::optional(row.at("before").get<std::int64_t>())
+                    : std::nullopt;
+          for (auto &insn : body.instructions)
+            insn.stackDelta = offsets[insn.address];
+          body.frame.clear();
+          for (const auto &access : flow.at("accesses")) {
+            const auto offset =
+                access.at("offset").get<std::int64_t>() - body.frameBase;
+            auto &bytes = body.frame[offset];
+            bytes = std::max(bytes, access.at("bytes").get<unsigned>());
+          }
+          for (const auto &variable :
+               Frame->second.value("variables", Json::array()))
+            body.manualNames[variable.at("offset").get<std::int64_t>() -
+                             body.frameBase] =
+                variable.at("name").get<std::string>();
+        }
+      }
+    }
     body.unwind = unwindAt(function.entry);
     // Only real instruction boundaries can carry labels.
     for (auto it = body.labels.begin(); it != body.labels.end();) {
@@ -2153,10 +2203,18 @@ struct Listing::Impl {
         item.start = start;
         item.size = row.size;
         item.index = static_cast<std::size_t>(string - strings.data());
-      } else {
-        item.kind = ItemKind::Data;
+      } else if (row.kind == "alignment") {
+        item.kind = ItemKind::Align;
         item.start = start;
         item.size = row.size;
+        item.alignment = row.alignment;
+      } else {
+        item.kind = ItemKind::Data;
+        item.start =
+            row.kind == "array"
+                ? start + (address - start) / row.elementSize * row.elementSize
+                : start;
+        item.size = row.kind == "array" ? row.elementSize : row.size;
       }
       return item;
     }
@@ -2739,6 +2797,37 @@ struct Listing::Impl {
     if (const auto formats = numberFormats.find(instruction.address);
         formats != numberFormats.end())
       facts.numberFormats = &formats->second;
+    std::vector<NumberFormat> mappedFormats;
+    if (facts.numberFormats && !classic.operandIndices.empty()) {
+      for (auto index : classic.operandIndices)
+        mappedFormats.push_back(index < facts.numberFormats->size()
+                                    ? (*facts.numberFormats)[index]
+                                    : NumberFormat{});
+      facts.numberFormats = &mappedFormats;
+    }
+    OperandFacts::EnumNamer enums =
+        [this](std::string_view type, std::uint64_t value, unsigned bits,
+               bool flags) -> std::optional<std::string> {
+      using FormatEnum = const char *(*)(neverd_session_t, const char *,
+                                         const char *, unsigned, int);
+      const auto key = std::make_tuple(std::string(type), value, bits, flags);
+      if (const auto found = enumValues.find(key); found != enumValues.end())
+        return found->second;
+      const auto format = engineSymbol<FormatEnum>("neverd_enum_value_json");
+      if (!format)
+        return {};
+      const auto reply =
+          takeJson(format(session, std::string(type).c_str(),
+                          hexAddress(value).c_str(), bits, flags));
+      const auto text = reply.is_object()
+                            ? std::optional(reply.value("text", std::string()))
+                            : std::nullopt;
+      if (enumValues.size() >= 4096)
+        enumValues.clear();
+      enumValues.emplace(key, text);
+      return text;
+    };
+    facts.enums = &enums;
     if (structNamer)
       facts.structs = &structNamer;
     FrameNamer frame;
@@ -3125,7 +3214,51 @@ struct Listing::Impl {
       break;
     }
     case ItemKind::Data: {
-      named(ListingRole::Plain);
+      const auto *array = userItemOverlapping(item.start, 1);
+      if (array && array->second.kind == "array") {
+        const auto index =
+            (item.start - array->first) / array->second.elementSize;
+        const auto root = nameOf(array->first, NameUse::Data, {});
+        head.append((root.text.empty() ? "array_" + upperHex(array->first)
+                                       : root.text) +
+                        "[" + std::to_string(index) + "]",
+                    ListingRole::DataName, item.start);
+        comment = "array element " + std::to_string(index) + " of " +
+                  std::to_string(array->second.count);
+        if (!array->second.type.empty()) {
+          using TypeQuery =
+              const char *(*)(neverd_session_t, const char *, const char *);
+          const auto query = engineSymbol<TypeQuery>("neverd_local_type_json");
+          auto [typeIt, fresh] =
+              dataElementTypes.try_emplace(array->second.type);
+          if (fresh && query)
+            typeIt->second =
+                takeJson(query(session, array->second.type.c_str(), nullptr));
+          const auto &type = typeIt->second;
+          const bool current =
+              type.is_object() && jsonCount(type.value("size", Json())) ==
+                                      array->second.elementSize;
+          comment += current ? "; " + array->second.type
+                             : "; stale element type: " + array->second.type;
+          if (item.size > 8 || (item.size != 1 && item.size != 2 &&
+                                item.size != 4 && item.size != 8)) {
+            head.padTo(base);
+            head.append(current ? array->second.type : "db",
+                        ListingRole::Keyword);
+            head.append(" <", ListingRole::Punctuation);
+            unsigned char preview[8]{};
+            const int shown =
+                static_cast<int>(std::min<std::uint64_t>(item.size, 8));
+            if (neverd_read_bytes(session, item.start, preview, shown) == shown)
+              for (int i = 0; i < shown; ++i)
+                head.append(x86Number(preview[i]) + " ", ListingRole::Number);
+            head.append("...>", ListingRole::Punctuation);
+            comment += "; " + std::to_string(item.size) + " bytes";
+            break;
+          }
+        }
+      } else
+        named(ListingRole::Plain);
       head.padTo(base);
       head.append(dataDirective(static_cast<unsigned>(item.size)),
                   ListingRole::Directive);
@@ -3625,6 +3758,15 @@ Listing::Listing(neverd_session_t session)
     : impl_(std::make_unique<Impl>(session)) {}
 Listing::~Listing() = default;
 
+void Listing::setStackFrames(const Json &rows, const std::string &imageHash) {
+  impl_->stackFrames.clear();
+  for (const auto &row : rows)
+    if (row.contains("stack_frame") &&
+        row.at("stack_frame").value("input_sha256", std::string()) == imageHash)
+      impl_->stackFrames[parseAddress(row.at("addr").get<std::string>())] =
+          row.at("stack_frame");
+}
+
 void Listing::invalidate() {
   impl_->built = false;
   ++impl_->generation;
@@ -3636,6 +3778,7 @@ void Listing::namesChanged() {
 }
 
 void Listing::reloadNumberFormats() {
+  impl_->dataElementTypes.clear();
   // A listing that is not built yet reads them as it builds.
   if (impl_->built)
     impl_->loadNumberFormats();
@@ -4234,9 +4377,11 @@ Json Listing::item(std::uint64_t address) {
   Json result{{"start", hexAddress(item->start)},
               {"size", item->size},
               {"kind", itemKindName(item->kind)}};
-  if (const auto user = impl_->userItems.find(item->start);
-      user != impl_->userItems.end())
+  if (const auto *user = impl_->userItemOverlapping(item->start, 1)) {
     result["user"] = user->second.kind;
+    result["definition_start"] = hexAddress(user->first);
+    result["definition_size"] = user->second.size;
+  }
   return result;
 }
 

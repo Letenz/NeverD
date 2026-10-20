@@ -166,8 +166,21 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
                                                  Opts.SourceCallSiteHints.end()
                                          ? &Sites->second
                                          : nullptr);
+        const auto Frame =
+            Opts.SourceStackFrames.find(Result.LowFuncs[I].Entry);
+        std::optional<LowFunc> Projected;
+        if (!Opts.PatchMode && !Opts.LiftMode &&
+            Frame != Opts.SourceStackFrames.end()) {
+          std::string Error;
+          Projected = projectSourceStackFrame(Result.LowFuncs[I], Img.Arch,
+                                              Frame->second, Error);
+          if (!Projected)
+            throw std::runtime_error(Error);
+        }
         Result.MedFuncs[I] =
-            Local.convert(Result.LowFuncs[I], Img.Arch, Img.abiFormat());
+            Local.convert(Projected ? *Projected : Result.LowFuncs[I], Img.Arch,
+                          Img.abiFormat());
+        Result.MedFuncs[I].AnalystStackFrame = Projected.has_value();
         auto &MF = Result.MedFuncs[I];
         auto &LF = Result.LowFuncs[I];
         trimFuncStorage(MF);
@@ -249,7 +262,8 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
     const BinaryImage &Img, const PipelineOptions &Opts,
     const PipelineResult &Original, DebugContext *Dbg) {
   PipelineResult Result;
-  if (Opts.PatchMode || Opts.LiftMode || Opts.SourceCallSiteHints.empty()) {
+  if (Opts.PatchMode || Opts.LiftMode ||
+      (Opts.SourceCallSiteHints.empty() && Opts.SourceStackFrames.empty())) {
     Result.Error =
         "Call-site declarations require an explicit private source variant";
     return Result;

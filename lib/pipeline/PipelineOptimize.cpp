@@ -70,6 +70,7 @@
 
 #define DEBUG_TYPE "neverd-pipeline"
 
+#include "PipelineLLVMFrame.h"
 namespace neverd {
 
 namespace {
@@ -234,7 +235,7 @@ static bool returnDependsOnProvenLoad(
 /// Restoring that pointer provenance lets LLVM's ordinary SROA and mem2reg
 /// recover the scalar values before semantic MBA simplification. Escaping,
 /// dynamic, ordered, and out-of-frame accesses keep their original pointers.
-static bool canonicalizePrivateFrameAccesses(llvm::Module &Mod) {
+bool canonicalizePrivateFrameAccesses(llvm::Module &Mod) {
   bool Changed = false;
   const llvm::DataLayout &DL = Mod.getDataLayout();
   // Native 32-bit stack arithmetic commonly carries the synthetic pointer

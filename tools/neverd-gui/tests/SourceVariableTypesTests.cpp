@@ -2,6 +2,7 @@
 #include "CodeView.h"
 #include "DisassemblyView.h"
 #include "Docking.h"
+#include "ListingView.h"
 #include "MainWindow.h"
 #include "Session.h"
 #include "SetTypeDialog.h"
@@ -10,14 +11,19 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QDataStream>
+#include <QDialogButtonBox>
 #include <QFile>
 #include <QInputDialog>
+#include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QSpinBox>
+#include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -64,6 +70,209 @@ private slots:
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        Settings.path());
     configureDocking();
+  }
+  void dataPresentationDialogs_data() {
+    QTest::addColumn<QString>("Kind");
+    QTest::newRow("enum") << "enum";
+    QTest::newRow("array") << "array";
+    QTest::newRow("alignment") << "alignment";
+  }
+  void dataPresentationDialogs() {
+    QFETCH(QString, Kind);
+    QTemporaryDir Directory;
+    const auto Path =
+        fixture(Directory, QByteArray::fromHex("554889e5b80b0000005dc3") +
+                               QByteArray(96, '\0'));
+    Session Session(QString::fromLocal8Bit(TEST_REAL_WORKER));
+    McpConnectionManager Mcp;
+    GuiSessionBroker Broker;
+    MainWindow Window(Session, Mcp, Broker);
+    Window.setAsksForDebugInfo(false);
+    Window.setLayoutPath(Directory.filePath("layout.json"));
+    Window.resize(1400, 900);
+    Window.initializeLayout();
+    Window.show();
+    Session.open(Path);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.loaded(), 30000);
+    // The minimal ELF fixture has no symbol table. Publish the function as
+    // user state so every analysis replica has the same code ownership.
+    bool Created = false;
+    connect(&Session, &Session::message, this, [&](const QString &Text, int) {
+      if (Text.startsWith("Created a function"))
+        Created = true;
+    });
+    Session.createFunction(0x400078);
+    QTRY_VERIFY_WITH_TIMEOUT(Created, 30000);
+    bool Declared = false;
+    Session.declareTypes("c", "enum GUI_FLAGS { GUI_READ = 1, GUI_WRITE = 2 };",
+                         [&](const QJsonObject &) { Declared = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(Declared, 30000);
+    const Address Address = 0x400078 + (Kind == "enum"    ? 4
+                                        : Kind == "array" ? 11
+                                                          : 40);
+    Window.disassembly()->navigate(Address);
+    QTRY_COMPARE_WITH_TIMEOUT(Window.disassembly()->currentAddress(),
+                              std::optional<neverd::gui::Address>(Address),
+                              30000);
+    QTRY_COMPARE_WITH_TIMEOUT(Window.disassembly()->currentItem(),
+                              std::optional<neverd::gui::Address>(Address),
+                              30000);
+    Window.disassembly()->listing()->setFocus();
+    auto *Action = Window.actions().action(
+        Kind == "enum"    ? ActionId::EditOperandEnum
+        : Kind == "array" ? ActionId::EditMakeArray
+                          : ActionId::EditMakeAlignment);
+    QTRY_VERIFY(Action->isEnabled());
+    bool Opened = false, Saved = false;
+    QTimer Editor;
+    connect(&Editor, &QTimer::timeout, this, [&] {
+      auto *Dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (!Dialog || Dialog->objectName() != "dataPresentationDialog")
+        return;
+      if (Kind == "enum") {
+        Dialog->findChild<QLineEdit *>("dataPresentationType")
+            ->setText("GUI_FLAGS");
+        Dialog->findChild<QCheckBox *>("enumFlags")->setChecked(true);
+      } else if (Kind == "array") {
+        Dialog->findChild<QSpinBox *>("arrayElementSize")->setValue(4);
+        Dialog->findChild<QSpinBox *>("arrayCount")->setValue(4);
+      }
+      Opened = true;
+      Dialog->accept();
+    });
+    Editor.start(20);
+    Action->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(Opened, 30000);
+    Editor.stop();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        ([&] {
+          Session.read(
+              "listing",
+              {{"address", hexAddress(Address)}, {"before", 0}, {"after", 40}},
+              &Window, [&](const QJsonObject &Reply) {
+                const auto Text =
+                    QString::fromUtf8(QJsonDocument(Reply).toJson());
+                Saved =
+                    Text.contains(Kind == "enum" ? "GUI_READ | GUI_WRITE | 0x8"
+                                  : Kind == "array" ? "array element"
+                                                    : "align");
+              });
+          return Saved;
+        })(),
+        30000);
+    Session.closeFile();
+    Window.close();
+  }
+  void stackFrameDialogs() {
+    QTemporaryDir Directory;
+    const auto Path = fixture(
+        Directory, QByteArray::fromHex(
+                       "4883ec2848897c2418e8c3ff0f00488b4424184883c428c3"));
+    QVERIFY(!Path.isEmpty());
+    Session Session(QString::fromLocal8Bit(TEST_REAL_WORKER));
+    McpConnectionManager Mcp;
+    GuiSessionBroker Broker;
+    MainWindow Window(Session, Mcp, Broker);
+    Window.setAsksForDebugInfo(false);
+    Window.setLayoutPath(Directory.filePath("layout.json"));
+    Window.resize(1400, 900);
+    Window.initializeLayout();
+    Window.show();
+    Session.open(Path);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.loaded(), 30000);
+    Window.disassembly()->navigate(0x40007C);
+    QTRY_COMPARE_WITH_TIMEOUT(Window.disassembly()->currentFunction(),
+                              std::optional<Address>(0x400078), 30000);
+    Window.disassembly()->listing()->setFocus();
+    auto *Action = Window.actions().action(ActionId::EditStackFrame);
+    QTRY_VERIFY(Action->isEnabled());
+    bool Opened = false;
+    QTimer Editor;
+    connect(&Editor, &QTimer::timeout, this, [&] {
+      auto *Dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (!Dialog || Dialog->objectName() != "stackFrameDialog")
+        return;
+      auto *Table = Dialog->findChild<QTableWidget *>("stackVariablesTable");
+      if (!Table) {
+        Dialog->reject();
+        return;
+      }
+      for (int Row = 0; Row < Table->rowCount(); ++Row)
+        if (Table->item(Row, 0)->text() == "-16") {
+          Table->item(Row, 2)->setText("gui_saved_context");
+          Table->item(Row, 3)->setText("uint64_t");
+          Opened = true;
+        }
+      Dialog->findChild<QDialogButtonBox *>()
+          ->button(QDialogButtonBox::Apply)
+          ->click();
+    });
+    Editor.start(20);
+    Action->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(Opened, 30000);
+    Editor.stop();
+    bool Saved = false;
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+                               Session.read("stack_frame",
+                                            {{"address", "0x400078"}}, &Window,
+                                            [&](const QJsonObject &Reply) {
+                                              Saved = Reply.value("policy")
+                                                          .toObject()
+                                                          .value("variables")
+                                                          .toArray()
+                                                          .size() == 1;
+                                            });
+                               return Saved;
+                             })(),
+                             30000);
+    Session.closeFile();
+    Window.close();
+  }
+  void unknownStackPointerRequiresAnExplicitValue() {
+    QTemporaryDir Directory;
+    const auto Path =
+        fixture(Directory, QByteArray::fromHex("4883e4f0488b0424c3"));
+    QVERIFY(!Path.isEmpty());
+    Session Session(QString::fromLocal8Bit(TEST_REAL_WORKER));
+    McpConnectionManager Mcp;
+    GuiSessionBroker Broker;
+    MainWindow Window(Session, Mcp, Broker);
+    Window.setAsksForDebugInfo(false);
+    Window.setLayoutPath(Directory.filePath("layout.json"));
+    Window.resize(1400, 900);
+    Window.initializeLayout();
+    Window.show();
+    Session.open(Path);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.loaded(), 30000);
+    Window.disassembly()->navigate(0x400078);
+    QTRY_COMPARE_WITH_TIMEOUT(Window.disassembly()->currentFunction(),
+                              std::optional<Address>(0x400078), 30000);
+    Window.disassembly()->listing()->setFocus();
+    auto *Action = Window.actions().action(ActionId::EditStackPointer);
+    QTRY_VERIFY(Action->isEnabled());
+    bool Opened = false, Empty = false;
+    QTimer Editor;
+    connect(&Editor, &QTimer::timeout, this, [&] {
+      auto *Dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (!Dialog || Dialog->objectName() != "stackFrameDialog")
+        return;
+      auto *After = Dialog->findChild<QLineEdit *>("stackPointerAfter");
+      Opened = After != nullptr;
+      Empty = After && After->text().isEmpty();
+      Editor.stop();
+      Dialog->reject();
+    });
+    Editor.start(20);
+    QTimer::singleShot(30000, &Window, [] {
+      if (auto *Dialog =
+              qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+        Dialog->reject();
+    });
+    Action->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(Opened, 30000);
+    QVERIFY2(Empty, "An unknown SP must not offer zero as a correction");
+    Session.closeFile();
+    Window.close();
   }
   void localType_data() {
     QTest::addColumn<QString>("Representation");
