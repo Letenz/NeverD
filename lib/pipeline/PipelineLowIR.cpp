@@ -4257,12 +4257,10 @@ std::vector<va_t> exportStarts(const BinaryImage &Img) {
 PipelineAnalysisCache::SymbolInventory::SymbolInventory(const BinaryImage &Img)
     : BoundaryGuesses(Img.boundaryGuessFunctionStarts()),
       Starts(symbolFunctionStarts(Img, BoundaryGuesses)),
-      ExportStarts(exportStarts(Img)),
-      KnownCodeRangesSorted(std::is_sorted(Img.KnownCodeRanges.begin(),
-                                           Img.KnownCodeRanges.end())),
-      Image(&Img), SymbolData(Img.Symbols.data()),
-      SymbolCount(Img.Symbols.size()), ExportData(Img.Exports.data()),
-      ExportCount(Img.Exports.size()), RangeData(Img.KnownCodeRanges.data()),
+      ExportStarts(exportStarts(Img)), Image(&Img),
+      SymbolData(Img.Symbols.data()), SymbolCount(Img.Symbols.size()),
+      ExportData(Img.Exports.data()), ExportCount(Img.Exports.size()),
+      RangeData(Img.KnownCodeRanges.data()),
       RangeCount(Img.KnownCodeRanges.size()),
       ContinuationCount(Img.ContinuationCodeStarts.size()) {}
 

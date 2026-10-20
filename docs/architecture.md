@@ -6963,6 +6963,12 @@ files.
 
 ## Strict lifting contract
 
+Function admission requires decoded instruction and control-flow evidence.
+Missing unwind metadata does not disprove a callable entry, even in an image
+with other unwind records. A padding guess is absorbed only when another
+function's decoded CFG owns it. Code admission grants no exception-rewrite
+authority; the format backend still checks that contract separately.
+
 The pinned Capstone x86 decoder owns LOCK/MOV-to-CS encoding validity and UD1
 instruction extent and operand details. NeverD's detailed, lightweight and
 lifting decode routes consume that result, including REX2 forms. Illegal
