@@ -382,6 +382,17 @@ std::optional<QuadraticProduct>
 recoverQuadraticProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
                         uint32_t Width, WorkBudget &Budget, size_t MaxBytes);
 
+struct CubicProduct {
+  llvm::APInt Coefficient;
+  llvm::SmallVector<TruthTable, 3> Factors;
+};
+
+/// Recover a cubic product with a common minterm and a scale of additive
+/// order at least four. Other products remain eligible for bounded search.
+std::optional<CubicProduct>
+recoverCubicProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
+                    uint32_t Width, WorkBudget &Budget, size_t MaxBytes);
+
 std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
                                            llvm::ArrayRef<PolyTerm> Terms,
                                            llvm::ArrayRef<uint32_t> AtomIds,
@@ -531,10 +542,10 @@ SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
 SymRef solveOneRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                       WorkBudget &Budget, SolveReport &Rep);
 
-/// Recover an expanded quadratic root before local rewrites obscure its
+/// Recover an expanded quadratic/cubic root before local rewrites obscure its
 /// independently partitioned factors. Uses the same polynomial verifier.
-SymRef solveExpandedQuadratic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
-                              WorkBudget &Budget, SolveReport &Rep);
+SymRef solveExpandedProducts(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                             WorkBudget &Budget, SolveReport &Rep);
 
 } // namespace neverd::symbolic::detail
 

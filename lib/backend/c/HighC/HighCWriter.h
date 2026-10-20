@@ -31,6 +31,7 @@
 #include "neverd/loader/DataSymbolBinding.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -478,6 +479,12 @@ public:
   TypeRef statedVariableType(const MedVar &V) const;
   TypeRef statedVariableTypeNamed(const std::string &Name) const;
   mutable std::map<std::string, TypeRef> StatedLocalTypes;
+  /// The inventory entry varName recorded each value under, by the function
+  /// and the value's identity fields (highSourceVariableId).  An emit clears
+  /// the inventory before its writers run and erases none of its entries.
+  mutable llvm::DenseMap<std::tuple<va_t, int, int, int64_t, int, int>,
+                         SourceVariable *>
+      RecordedSourceVariables;
   std::map<std::pair<va_t, std::string>, unsigned> SourceLocalClasses;
   std::string debugNameForDisplacement(va_t Entry, int64_t Disp) const;
   TypeRef debugTypeForDisplacement(va_t Entry, int64_t Disp) const;

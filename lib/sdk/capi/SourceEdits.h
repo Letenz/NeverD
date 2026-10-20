@@ -6,6 +6,8 @@
 #include "neverd/ir/SourceCallEdits.h"
 
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/SHA256.h"
+#include "llvm/Support/raw_ostream.h"
 
 namespace neverd {
 struct HighFunc;
@@ -23,6 +25,23 @@ SourceVariableTypes sourceVariableTypes(Session &S, va_t Entry,
                                         llvm::StringRef Snapshot,
                                         std::vector<std::string> *Stale);
 std::string sourceVariableSnapshot(llvm::StringRef IR);
+/// A stream that hashes what is written to it as it arrives.  snapshot()
+/// equals sourceVariableSnapshot of the text written, which the stream
+/// does not keep; tell() counts that text.
+class SnapshotStream : public llvm::raw_ostream {
+public:
+  ~SnapshotStream() override { flush(); }
+  std::string snapshot();
+
+private:
+  void write_impl(const char *Ptr, size_t Size) override {
+    Hash.update(llvm::StringRef(Ptr, Size));
+    Written += Size;
+  }
+  uint64_t current_pos() const override { return Written; }
+  llvm::SHA256 Hash;
+  uint64_t Written = 0;
+};
 std::string highVariableSnapshot(const HighFunc &Function, bool Symbolic);
 std::string editedVariableSnapshot(llvm::StringRef Before,
                                    const SourceVariableEdit &Edit);

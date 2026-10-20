@@ -593,6 +593,18 @@ struct ResolverGraphCacheTestAccess {
     return B.resolverValueQueryCacheStatsForTesting();
   }
 
+  static std::shared_ptr<const void> unmeteredToken(const CFGBuilder &B) {
+    return B.CachedUnmeteredResolverGraph;
+  }
+
+  static void clearUnmetered(CFGBuilder &B) {
+    B.CachedUnmeteredResolverGraph.reset();
+  }
+
+  static std::array<size_t, 3> unmeteredStats(const CFGBuilder &B) {
+    return B.resolverValueQueryCacheStatsForTesting(/*Unmetered=*/true);
+  }
+
   static Query valueQuery(unsigned Length = 3) {
     Query Q;
     Q.Candidate = NdVar::tmp((Length - 1) * 8, 8);
@@ -613,6 +625,15 @@ struct ResolverGraphCacheTestAccess {
         WantQueryComplete ? &A.QueryComplete : nullptr, InvalidVA, nullptr,
         &A.Remaining, MatchLimit, nullptr, WantMasks ? &A.Masks : nullptr,
         Depth);
+    return A;
+  }
+
+  static Answer unmeteredBatch(CFGBuilder &B,
+                               const std::vector<Query> &Queries) {
+    Answer A;
+    A.Values = B.tableValuesMatchAtUses(Queries, &A.Complete, &A.QueryComplete,
+                                        InvalidVA, nullptr, nullptr, 0, nullptr,
+                                        &A.Masks);
     return A;
   }
 
@@ -2394,6 +2415,79 @@ TEST(ResolverValueQueryCache, GraphIdentityDoesNotReplaceProofContextIdentity) {
   EXPECT_EQ(Access::stats(B)[0], Hits);
   Access::clear(B);
   EXPECT_EQ(Access::batch(B, {Q}), Changed);
+}
+
+TEST(ResolverValueQueryCache, UnmeteredQueriesKeepTheirOwnGraphAndBatches) {
+  const auto Image = image();
+  auto True = Access::valueQuery();
+  auto False = True;
+  False.Alternatives.front().Value = NdVar::cst(8, 8);
+  const std::vector<Access::Query> Queries{True, False};
+  CFGBuilder B;
+  Access::seed(B, Image);
+  const auto First = Access::unmeteredBatch(B, Queries);
+  ASSERT_TRUE(First.Complete);
+  ASSERT_EQ(First.Values, (std::vector<bool>{true, false}));
+  EXPECT_FALSE(Access::token(B));
+  const auto Graph = Access::unmeteredToken(B);
+  ASSERT_TRUE(Graph);
+  ASSERT_GT(Access::unmeteredStats(B)[1], 0u);
+  const size_t Hits = Access::unmeteredStats(B)[0];
+  EXPECT_EQ(Access::unmeteredBatch(B, Queries), First);
+  EXPECT_EQ(Access::unmeteredToken(B), Graph);
+  EXPECT_EQ(Access::unmeteredStats(B)[0], Hits + 1);
+  EXPECT_FALSE(Access::token(B));
+
+  // A metered query keeps its own graph beside the unmetered one, and the
+  // unmetered query keeps answering from its own.
+  ASSERT_TRUE(Access::batch(B, Queries).Complete);
+  const auto Metered = Access::token(B);
+  ASSERT_TRUE(Metered);
+  EXPECT_NE(Metered, Graph);
+  EXPECT_EQ(Access::unmeteredBatch(B, Queries), First);
+  EXPECT_EQ(Access::token(B), Metered);
+  EXPECT_EQ(Access::unmeteredToken(B), Graph);
+  EXPECT_EQ(Access::unmeteredStats(B)[0], Hits + 2);
+
+  // After unmetered queries, a metered one still pays its whole cold charge
+  // at every budget boundary.
+  CFGBuilder Probe;
+  Access::seed(Probe, Image);
+  const size_t Work = 1000000 - Access::batch(Probe, Queries).Remaining;
+  ASSERT_LT(Work, 50000u);
+  for (size_t Budget = 0; Budget <= Work + 1; ++Budget) {
+    SCOPED_TRACE(Budget);
+    CFGBuilder Warm, Cold;
+    Access::seed(Warm, Image);
+    Access::seed(Cold, Image);
+    ASSERT_EQ(Access::unmeteredBatch(Warm, Queries), First);
+    ASSERT_EQ(Access::unmeteredBatch(Warm, Queries), First);
+    EXPECT_EQ(Access::batch(Warm, Queries, Budget),
+              Access::batch(Cold, Queries, Budget));
+  }
+}
+
+TEST(ResolverValueQueryCache, UnmeteredReuseFollowsContextAndGraphChanges) {
+  const auto Image = image();
+  const auto Q = Access::valueQuery();
+  for (auto Mutate :
+       {Access::changeAddressOccurrence, Access::changeNestedAddressOccurrence,
+        Access::changeScalarOccurrence, Access::changeEntry,
+        Access::changeConsumerAudit, Access::changeSymbolBudget,
+        Access::changeValue, Access::addBackedge, Access::changeRoot,
+        Access::changeConditionalRoot}) {
+    CFGBuilder B;
+    Access::seed(B, Image);
+    Access::seedOccurrences(B);
+    const auto First = Access::unmeteredBatch(B, {Q});
+    ASSERT_TRUE(First.Complete);
+    ASSERT_EQ(Access::unmeteredBatch(B, {Q}), First);
+    ASSERT_GT(Access::unmeteredStats(B)[0], 0u);
+    Mutate(B);
+    const auto Changed = Access::unmeteredBatch(B, {Q});
+    Access::clearUnmetered(B);
+    EXPECT_EQ(Access::unmeteredBatch(B, {Q}), Changed);
+  }
 }
 
 TEST(ResolverValueQueryCache, DepthRefusalRemainsIncompleteAndRetriesNewLimit) {

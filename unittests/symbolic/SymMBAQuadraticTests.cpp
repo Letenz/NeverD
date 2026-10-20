@@ -289,13 +289,13 @@ TEST(SymMBAQuadratic, RootRecoveryRequiresTheCompleteIndependentProof) {
   ASSERT_TRUE(Input.ok());
   detail::WorkBudget Full(65536);
   detail::SolveReport Complete;
-  ASSERT_NE(detail::solveExpandedQuadratic(C, Input.Root, {}, Full, Complete),
+  ASSERT_NE(detail::solveExpandedProducts(C, Input.Root, {}, Full, Complete),
             Input.Root);
   EXPECT_EQ(Complete.Evidence, MBAEvidence::Derivation);
   for (size_t Work : {size_t(0), size_t(1), Full.used() - 1}) {
     detail::WorkBudget Budget(Work);
     detail::SolveReport Report;
-    EXPECT_EQ(detail::solveExpandedQuadratic(C, Input.Root, {}, Budget, Report),
+    EXPECT_EQ(detail::solveExpandedProducts(C, Input.Root, {}, Budget, Report),
               Input.Root);
     EXPECT_NE(Report.Evidence, MBAEvidence::Derivation);
   }
@@ -303,7 +303,7 @@ TEST(SymMBAQuadratic, RootRecoveryRequiresTheCompleteIndependentProof) {
   Tiny.MaxTableBytes = 0;
   detail::WorkBudget Budget(65536);
   detail::SolveReport Report;
-  EXPECT_EQ(detail::solveExpandedQuadratic(C, Input.Root, Tiny, Budget, Report),
+  EXPECT_EQ(detail::solveExpandedProducts(C, Input.Root, Tiny, Budget, Report),
             Input.Root);
 }
 

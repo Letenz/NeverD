@@ -1148,7 +1148,12 @@ private:
   // One immutable, size-bounded graph. The incomplete type keeps proof-graph
   // implementation and arena ownership inside the resolver translation unit.
   mutable std::shared_ptr<const ResolverGraphCache> CachedResolverGraph;
-  std::array<size_t, 3> resolverValueQueryCacheStatsForTesting() const;
+  // The same for unmetered queries. Their graphs and batches record no work
+  // charge, so no metered query reads them.
+  mutable std::shared_ptr<const ResolverGraphCache>
+      CachedUnmeteredResolverGraph;
+  std::array<size_t, 3>
+  resolverValueQueryCacheStatsForTesting(bool Unmetered = false) const;
 
   struct ResolverQueryState;
   // Local to a read-only resolver invocation. The owner, instruction map,
