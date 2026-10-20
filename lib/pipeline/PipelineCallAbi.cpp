@@ -118,6 +118,7 @@ void OmittedCalleeMemo::adopt(const BinaryImage &Img,
   PointerCallees = collectPointerVariableCallees(Img);
   CodeOwners.reset();
   RuntimeRoutineCalls.reset();
+  CodePointerTargets.reset();
   Callees.clear();
   Bytes = 0;
 }
@@ -132,6 +133,12 @@ const std::map<va_t, Intrinsic> &OmittedCalleeMemo::runtimeRoutineCalls() {
   if (!RuntimeRoutineCalls)
     RuntimeRoutineCalls = runtimeRoutineCallsOf(*Image, Image->Arch);
   return *RuntimeRoutineCalls;
+}
+
+const std::vector<va_t> &OmittedCalleeMemo::codePointerTargets() {
+  if (!CodePointerTargets)
+    CodePointerTargets = codePointerTargetsOf(*Image);
+  return *CodePointerTargets;
 }
 
 OmittedCalleeMemo::Conversion *
@@ -364,6 +371,7 @@ public:
           &omittedCalleeArgumentCounts(Result));
       Converter.setCallSummaryKeysRead(&Keys);
       Converter.setRuntimeRoutineCalls(&runtimeRoutineCalls());
+      Converter.setCodePointerTargets(&codePointerTargets());
       MedFunc Med = Converter.convert(Lifted, Img.Arch, Img.abiFormat());
       size_t MedOperations = 0;
       for (const auto &Block : Med.Blocks)
@@ -406,6 +414,14 @@ private:
       OwnRuntimeRoutineCalls = runtimeRoutineCallsOf(Img, Img.Arch);
     return *OwnRuntimeRoutineCalls;
   }
+  /// The code pointer targets every conversion reads, likewise.
+  const std::vector<va_t> &codePointerTargets() {
+    if (Memo)
+      return Memo->codePointerTargets();
+    if (!OwnCodePointerTargets)
+      OwnCodePointerTargets = codePointerTargetsOf(Img);
+    return *OwnCodePointerTargets;
+  }
 
   const BinaryImage &Img;
   const PipelineResult &Result;
@@ -416,6 +432,7 @@ private:
   std::optional<ExecutableCodeOwnerIndex> Owners;
   bool OwnersLent = false;
   std::optional<std::map<va_t, Intrinsic>> OwnRuntimeRoutineCalls;
+  std::optional<std::vector<va_t>> OwnCodePointerTargets;
   CFGBuilder Builder;
 };
 

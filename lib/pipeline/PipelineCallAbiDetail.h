@@ -194,6 +194,9 @@ struct OmittedCalleeMemo {
   /// conversions of the callees read of it where they first need them, and
   /// kept until the memo adopts another image or the cache is reset.
   const std::map<va_t, Intrinsic> &runtimeRoutineCalls();
+  /// The code addresses the relocated code pointers of the image the memo
+  /// adopted hold (codePointerTargetsOf), kept like runtimeRoutineCalls.
+  const std::vector<va_t> &codePointerTargets();
 
   std::map<va_t, Callee> Callees;
 
@@ -206,6 +209,7 @@ private:
   std::map<va_t, PointerVariableCallee> PointerCallees;
   std::optional<ExecutableCodeOwnerIndex> CodeOwners;
   std::optional<std::map<va_t, Intrinsic>> RuntimeRoutineCalls;
+  std::optional<std::vector<va_t>> CodePointerTargets;
   size_t Bytes = 0;
   uint64_t Clock = 0;
 };
