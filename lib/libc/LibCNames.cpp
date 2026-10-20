@@ -170,6 +170,14 @@ struct Registry {
     registerFunctions(All, ToHeader, kSysUioFunctions, kSysUioHeader);
     registerFunctions(All, ToHeader, kSysUtsnameFunctions, kSysUtsnameHeader);
     registerFunctions(All, ToHeader, kSysWaitFunctions, kSysWaitHeader);
+    // A large-file routine is its routine's header's (LibCLargeFile.def).
+#define NEVERD_LIBC_LARGE_FILE(NAME, ROUTINE)                                  \
+  if (const auto Base = ToHeader.find(ROUTINE); Base != ToHeader.end()) {      \
+    std::string Header = Base->second;                                         \
+    All.insert(NAME);                                                          \
+    ToHeader.emplace(NAME, std::move(Header));                                 \
+  }
+#include "neverd/libc/LibCLargeFile.def"
   }
 };
 
@@ -308,6 +316,16 @@ const PrototypeRegistry &getPrototypeRegistry() {
 
 } // anonymous namespace
 
+std::string_view largeFileRoutine(std::string_view Name) {
+  static const std::unordered_map<std::string_view, std::string_view> Routines =
+      {
+#define NEVERD_LIBC_LARGE_FILE(NAME, ROUTINE) {NAME, ROUTINE},
+#include "neverd/libc/LibCLargeFile.def"
+      };
+  const auto It = Routines.find(Name);
+  return It == Routines.end() ? std::string_view() : It->second;
+}
+
 bool isKnownFunction(std::string_view Name) {
   return getRegistry().All.count(std::string(Name)) > 0;
 }
@@ -350,6 +368,9 @@ const LibCPrototype *libcPrototype(std::string_view Name, BinaryFormat Format) {
 
 std::optional<LibCResult> libcResult(std::string_view Name,
                                      LibCVariant Variant) {
+  // A large-file routine returns what its routine does.
+  if (const std::string_view Routine = largeFileRoutine(Name); !Routine.empty())
+    return libcResult(Routine, Variant);
   Name = routineOfSymbol(Name, Variant);
   // A Windows C runtime's own prototypes are COFF's (LibCPrototype::Format).
   const BinaryFormat Format = Variant == LibCVariant::Windows

@@ -524,6 +524,30 @@ TEST(HeaderFor, UnderscoredRoutinesTakeTheirObjectPointers) {
   EXPECT_FALSE(isObjectPointerParameter("__assert_fail", 2, LibCVariant::GNU));
 }
 
+TEST(HeaderFor, LargeFileRoutinesAreTheirRoutines) {
+  // The GNU C Library's large-file names, which 197 Debian programs import
+  // as open64 and 185 as fopen64, are declared by their routines' headers
+  // and take and return what the routines do.  Their arity is their own: an
+  // off64_t takes two slots of a 32-bit target's stack.
+  EXPECT_STREQ(headerFor("open64"), "fcntl.h");
+  EXPECT_STREQ(headerFor("fopen64"), "stdio.h");
+  EXPECT_TRUE(isKnownFunction("stat64"));
+  EXPECT_EQ(largeFileRoutine("readdir64"), "readdir");
+  EXPECT_EQ(largeFileRoutine("read"), "");
+  EXPECT_TRUE(isObjectPointerParameter("fopen64", 0, LibCVariant::GNU));
+  EXPECT_TRUE(isCStringParameter("open64", 0));
+  EXPECT_EQ(varArgFixedCount("open64", LibCVariant::GNU), 2u);
+  EXPECT_EQ(libcResult("fopen64", LibCVariant::GNU), LibCResult::Pointer);
+  EXPECT_FALSE(libcArity("pread64", LibCVariant::GNU).has_value());
+  // A function it takes names the large-file record, not the routine's.
+  EXPECT_EQ(
+      functionPointerParameter("scandir64", 2, LibCVariant::GNU).value_or(""),
+      "int (*)(const struct dirent64 *)");
+  EXPECT_EQ(
+      functionPointerParameter("scandir", 2, LibCVariant::GNU).value_or(""),
+      "int (*)(const struct dirent *)");
+}
+
 TEST(HeaderFor, StdioFunctions) {
   EXPECT_STREQ(headerFor("printf"), "stdio.h");
   EXPECT_STREQ(headerFor("fprintf"), "stdio.h");

@@ -47770,6 +47770,75 @@ TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses, LargeFileComparatorsTakeTheirOwnRecords) {
+  // A program built for large files calls scandir64, whose comparison the
+  // header types with struct dirent64 where scandir's takes struct dirent:
+  // the argument converts to scandir64's own type, which C accepts.
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Select =
+      NdType::makePtr(NdType::makeFunc(NdType::makeInt(4), {Pointer}));
+  const auto Compare =
+      NdType::makePtr(NdType::makeFunc(NdType::makeInt(4), {Pointer, Pointer}));
+  class ScanDbg : public NullDebugContext {
+  public:
+    ScanDbg(TypeRef Pointer, TypeRef Select, TypeRef Compare)
+        : Pointer(std::move(Pointer)), Select(std::move(Select)),
+          Compare(std::move(Compare)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x140002000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "scandir64";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeInt(4);
+      FS.Params = {{"dir", NdType::makePtr(NdType::makeInt(1))},
+                   {"namelist", Pointer},
+                   {"selector", Select},
+                   {"cmp", Compare}};
+      FS.PrototypeFromCLibrary = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Pointer, Select, Compare;
+  } Dbg(Pointer, Select, Compare);
+  HighFunc Order;
+  Order.Name = "compare_entries";
+  Order.Entry = 0x140003000;
+  Order.ReturnType = NdType::makeInt(4);
+  Order.Params = {{"a", Pointer}, {"b", Pointer}};
+  returnValue(Order, HighExpr::makeConst(0, 4));
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "list_directory";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  Func.Params = {{"dir", NdType::makePtr(NdType::makeInt(1))},
+                 {"list", Pointer}};
+  Func.Body = {
+      callStmt("scandir64", 0x140002000,
+               {parameter(0, NdType::makePtr(NdType::makeInt(1))),
+                parameter(1, Pointer), HighExpr::makeConst(0, 8),
+                HighExpr::makeConst(0x140003000, 8,
+                                    ConstantAddressProvenance::Address)})};
+  returnValue(Func, nullptr);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Order, Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <dirent.h>"), std::string::npos) << Source;
+  EXPECT_NE(
+      Source.find(
+          "(int (*)(const struct dirent64 **, const struct dirent64 **))"),
+      std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, NarrowObjectsPassedAsPointersStayIntegers) {
   // make reads its 4-byte output_sync and passes the value, widened, where
   // a callee's prototype takes a pointer.  The object holds the 4-byte
