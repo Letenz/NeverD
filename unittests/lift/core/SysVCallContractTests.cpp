@@ -1691,6 +1691,44 @@ TEST(SysVCallContract, AByteSetAfterAFloatCallLeavesNoUnknownBytes) {
   EXPECT_NE(Source.find("int8_t later("), std::string::npos) << Source;
 }
 
+TEST(SysVCallContract, ABoolCallersTestIsNoFloatALeftoverReturns) {
+  // f(s) parses s with strtod and returns whether the value is positive,
+  // like find's get_relative_timestamp: EAX is 1 or 0 at the shared
+  // epilogue, where XMM0 still holds the value or its square.  g tests AL
+  // after the call, so f returns that integer and no double.
+  constexpr va_t F = Text, G = Text + 0x30, StrtodStub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> FCode = {0x53,  // push rbx
+                                0xE8}; // call strtod
+  for (uint8_t B : rel32(F + 6, StrtodStub))
+    FCode.push_back(B);
+  for (uint8_t B : {0x66, 0x0F, 0xEF, 0xC9,       // pxor xmm1, xmm1
+                    0x66, 0x0F, 0x2F, 0xC1,       // comisd xmm0, xmm1
+                    0x76, 0x0B,                   // jbe false
+                    0xF2, 0x0F, 0x59, 0xC0,       // mulsd xmm0, xmm0
+                    0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
+                    0xEB, 0x02,                   // jmp done
+                    0x31, 0xC0,                   // false: xor eax, eax
+                    0x5B,                         // done: pop rbx
+                    0xC3})                        // ret
+    FCode.push_back(B);
+  put(Code, F, FCode);
+  std::vector<uint8_t> GCode = {0xE8}; // call f
+  for (uint8_t B : rel32(G + 5, F))
+    GCode.push_back(B);
+  for (uint8_t B : {0x84, 0xC0,       // test al, al
+                    0x0F, 0x94, 0xC0, // sete al
+                    0x0F, 0xB6, 0xC0, // movzx eax, al
+                    0xC3})            // ret
+    GCode.push_back(B);
+  put(Code, G, GCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{F, "f"}, {G, "g"}}, {{StrtodStub, "strtod"}});
+  const std::string Source = liftEntries(Img, {F, G, StrtodStub});
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("double f("), std::string::npos) << Source;
+}
+
 TEST(SysVCallContract, AnAlignmentPushIsNoStackArgument) {
   // die() calls the variadic panic("out of memory") and never returns, so
   // it aligns the stack for the call with a push of RAX (Clang) or a push,
