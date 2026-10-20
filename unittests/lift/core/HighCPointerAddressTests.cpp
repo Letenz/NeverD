@@ -48098,6 +48098,65 @@ TEST(HighCPointerAddresses, PointerObjectsComputeAsTheirIntegers) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses, SmallHeaderRecordsPassAsTheirRegisterBits) {
+  // ldapwhoami prints an address with inet_ntoa, which takes its struct
+  // in_addr by value in the integer register the machine loads it into:
+  // the argument is that integer's bits, which C does not convert to the
+  // record itself.
+  const auto Address = NdType::makeNamedRecord("in_addr", 4);
+  class InetDbg : public NullDebugContext {
+  public:
+    explicit InetDbg(TypeRef Address) : Address(std::move(Address)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x2000)
+        return std::nullopt;
+      const auto Char = NdType::makeInt(1);
+      Char->SourceName = "char";
+      FunctionSym FS;
+      FS.Name = "inet_ntoa";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makePtr(Char);
+      FS.Params = {{"in", Address}};
+      FS.PrototypeFromCLibrary = true;
+      FS.PlatformConvention = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Address;
+  } Dbg(Address);
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "show_peer";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  // A parameter of the record, which asks for its definitions.
+  Func.Params = {{"peer", NdType::makeInt(4)},
+                 {"spare", NdType::makePtr(Address)}};
+  auto Shown = HighExpr::makeCall("inet_ntoa", 0x2000,
+                                  {parameter(0, NdType::makeInt(4))});
+  Shown->Type = Word;
+  returnValue(Func, std::move(Shown));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text = "#include <netinet/in.h>\n";
+    Definitions.Tags = {{"in_addr", false}};
+    Definitions.Types = {"in_addr"};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("inet_ntoa(__builtin_bit_cast("), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
   // sed passes a comparator of its own to qsort, whose prototype the header
   // library gives: its comparison's type keeps no const there, where the
