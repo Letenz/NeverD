@@ -208,7 +208,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   linux_model::LinuxServices Kernel(CPU, Layout, Linked->InitialBreak, Options,
                                     Result);
   GuestThreads Threads(CPU, *Calls, Options, Result, Kernel.clock(),
-                       Kernel.priority());
+                       Kernel.priority(), Kernel.signals());
   if (auto E = Threads.initialize(StackBase))
     return std::move(E);
   if (auto E = Kernel.initializeProc())
@@ -303,6 +303,13 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     if (!QuantumRemaining || (!Threads.enabled() && !ResumeObservation))
       QuantumRemaining = Options.InstructionQuantum;
     ResumeObservation = false;
+    auto Delivery = Kernel.deliverSignals(Threads.id());
+    if (!Delivery) {
+      RuntimeFailure(Delivery.takeError());
+      break;
+    }
+    if (!*Delivery)
+      break;
     if (auto E = Kernel.synchronizeDevices()) {
       RuntimeFailure(std::move(E));
       break;
@@ -503,6 +510,8 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
           Result.Stop = ProcessStopReason::Timeout;
         break;
       }
+      if (Kernel.takeSignalRestore())
+        continue;
       if (!*Value && Threads.kernel() && Threads.kernel()->Exit) {
         if (!FinishThread(0, *Threads.kernel()->Exit))
           break;
@@ -572,6 +581,8 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         RuntimeFailure(Value.takeError());
         break;
       }
+      if (Kernel.takeSignalRestore())
+        continue;
       if (!*Value && Threads.kernel() && Threads.kernel()->Exit) {
         if (!FinishThread(0, *Threads.kernel()->Exit))
           break;

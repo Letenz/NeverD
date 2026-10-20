@@ -270,6 +270,44 @@ TEST_P(LinuxProcess, KillSharesProcessTerminationAndUnknownDeliveryBoundaries) {
   }
 }
 
+TEST_P(LinuxProcess, SignalDeliverySharesMasksPendingAndAArch64Frames) {
+  for (const char *Opt : {"O0", "O2"}) {
+    const auto SignalPath = Path.parent_path() /
+                            (Path.stem().string() + "-signals-" + Opt + ".elf");
+    Options.LinuxSignals.emplace();
+    Options.LinuxSignals->InitialMask = 0;
+    Options.LinuxSignals->AlternateStackDisabled = true;
+    for (const char *Mode : {"v", "d", "s"}) {
+      SCOPED_TRACE(Opt);
+      SCOPED_TRACE(Mode);
+      Options.Arguments = {"signals", Mode};
+      const auto R = llvm::cantFail(
+          emulateProcess(SignalPath, ProcessProfile::LinuxELF64, Options));
+      if (*Mode == 'd') {
+        EXPECT_EQ(R.Stop, ProcessStopReason::Signaled) << R.Diagnostic;
+        EXPECT_EQ(R.TerminationSignal, 15u);
+        EXPECT_FALSE(R.ExitStatus);
+      } else if (*Mode == 's' && GetParam().ISA == GuestArchitecture::X64) {
+        EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+        EXPECT_NE(R.Diagnostic.find("signal frame"), std::string::npos);
+      } else {
+        ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+        EXPECT_EQ(R.ExitStatus, 0u);
+        uint64_t Expected[8] = {};
+        Expected[0] = *Mode == 's' ? 10 : 0;
+        Expected[1] = 512;
+        Expected[2] = *Mode == 's' ? 0 : 512;
+        Expected[4] = *Mode == 's' ? 0 : 4096;
+        std::string Bytes;
+        for (uint64_t Word : Expected)
+          for (unsigned Byte = 0; Byte < 8; ++Byte)
+            Bytes.push_back(char(Word >> (8 * Byte)));
+        EXPECT_EQ(R.StandardOutput, Bytes);
+      }
+    }
+  }
+}
+
 TEST_P(LinuxProcess, MemoryFilesPreserveBinaryBytesCursorsAndFaultPrefixes) {
   // O0 link checks fill a complete page one guest instruction at a time.
   // Allow contended runners while retaining instruction/event limits.

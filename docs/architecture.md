@@ -5636,8 +5636,17 @@ copy fault does not undo the installation. The same owner handles `kill` for
 self existence probes and uncatchable SIGKILL termination. It returns a typed
 `signaled` outcome without resuming the pending service; Android stops all live
 guest threads and records their termination separately from completed returns.
-No CPU backend or SDK interprets a handler address or sends a host signal.
-Other targets and signal delivery remain explicit unsupported boundaries.
+`LinuxSignals` also owns per-thread masks, process-pending standard signals and
+live AArch64 signal-frame records. Thread creation inherits the creator's mask;
+retirement drops that thread's records. Both runners call the shared delivery
+owner before guest execution. `LinuxSignalFrame` materializes the Linux wire
+ABI using ordinary guest memory and backend register access; `LinuxMemory`
+owns allocation of the real guest return trampoline. `rt_sigreturn` restores
+the mutable guest frame and marks a control transfer, so runners do not overwrite
+the restored PC or x0 with an ordinary service return. CPU backends do not own
+signal policy or synthesize handlers. Unknown initial masks/alternate stacks,
+unsupported waiting recipients and context extensions remain explicit stops.
+No SDK or host signal mechanism participates.
 `AndroidAuxv` owns admission and lookup of the native workload's explicit,
 complete auxiliary vector. Bionic alone applies `getauxval`'s full-width
 lookup and thread-local errno behavior; constructors and dynamic imports use

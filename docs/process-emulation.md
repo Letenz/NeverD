@@ -12,7 +12,7 @@ It loads real ELF segments, constructs
 the initial stack, resumes instruction quanta and handles explicit Linux
 system-call requests. It is a freestanding process model, not a full Linux
 distribution or a promise to run arbitrary libc binaries. Dynamic linking,
-signal delivery, Linux process threads, general file systems and unsupported services fail
+unsupported signal delivery, Linux process threads, general file systems and unsupported services fail
 explicitly. The [Android native profile](android-native-emulation.md),
 `android-aarch64-api28-v1`, separately supports bounded API 28 ARM64 shared-library
 function calls and Bionic models. The Windows PE64 process profile is described
@@ -86,7 +86,7 @@ invalid types, embedded NULs in strings and nonpositive limits are rejected.
 | `linux_network` | Absent | Explicit offline TCP attempts and byte streams; requires `linux_files`; see [contracts](linux-network-contracts.md) |
 | `linux_time` | Absent | Explicit clock observations and optional idle advancement for Linux ELF64 and Android native workloads |
 | `linux_files` | Absent | Explicit guest file catalogue, bounded write grants and optional live FD links |
-| `linux_signals` | Absent | Explicit initial signal dispositions; guest handlers remain unsupported |
+| `linux_signals` | Absent | Explicit dispositions, initial thread mask and disabled alternate-stack state; bounded AArch64 handlers |
 | `linux_priority` | Absent | Explicit per-task nice values and caller authority for raw Linux priority services |
 | `linux_kernel` | Absent | Explicit released GKI branch, fixed guest task catalogue or observed absent guest kernel interfaces |
 
@@ -242,9 +242,6 @@ including Bionic's sign-extended 32-bit flags; unknown flag extensions stop.
 An invalid old-output pointer returns EFAULT after a successful installation.
 Mixed-access kernel copies stop before unmodeled partial bytes are written.
 These ordered effects follow the [Linux signal implementation](https://android.googlesource.com/kernel/common/+/16a2d602244f/kernel/signal.c).
-There are no queued signals, asynchronous delivery, handler invocation, signal
-frames, `sigreturn`, alternate stacks or per-thread signal-mask operations in
-this contract. CPU faults retain their existing explicit stop behavior.
 
 `kill` shares signed 32-bit PID/signal decoding across x64 and AArch64 raw
 syscalls, Android imports and Bionic `syscall`. Invalid signal numbers return
@@ -253,10 +250,49 @@ snapshot; `kill(getpid(), SIGKILL)` terminates the whole guest workload with
 `stop_reason: "signaled"` and `termination_signal: 9`. `exit_status` remains null
 and the terminating call has no result. Bionic alone converts raw errno to
 `-1`/thread-local errno; successful queries preserve errno. No host process is
-looked up or signaled. Other PIDs, process-group selectors and other valid
-signals stop as unsupported, including explicitly ignored signals whose
-pending state would require a per-thread mask model. Unknown targets are not
-reported as ESRCH. See the [Linux kill contract](https://man7.org/linux/man-pages/man2/kill.2.html).
+looked up or signaled. Other PIDs and process-group selectors stop as unsupported.
+Unknown targets are not reported as ESRCH. See the
+[Linux kill contract](https://man7.org/linux/man-pages/man2/kill.2.html).
+
+Standard self-process signals use one coalesced pending set and per-thread
+blocked sets. Supply `initial_mask` explicitly (an unsigned 64-bit integer or
+decimal string); an omitted mask remains unknown. New Android threads inherit
+their creator's mask. Runnable threads receive eligible signals at guest
+execution boundaries, with lower signal numbers selected first. `rt_sigprocmask`
+uses an eight-byte set, captures input before output, filters SIGKILL/SIGSTOP,
+and commits a valid mask change before a failed old-mask copy. `rt_sigpending`
+copies the blocked pending subset, accepting output lengths from zero to eight.
+Installing SIG_IGN, or SIG_DFL for SIGCHLD/SIGURG/SIGWINCH, discards pending
+instances. Default terminating actions produce the same typed `signaled`
+outcome as SIGKILL; core-dumping actions remain unsupported.
+
+AArch64 handlers additionally require `alternate_stack_disabled: true`, meaning
+the alternate stack is explicitly cleared and disabled. They execute original
+guest instructions with a Linux `rt_sigframe` containing mutable `siginfo`,
+`ucontext`, integer registers, NZCV and FPSIMD state. SA_SIGINFO, SA_NODEFER,
+SA_RESETHAND and a supplied SA_RESTORER are supported. Otherwise a workload-local
+RX mapping executes the real `rt_sigreturn` syscall. Return restores guest
+frame bytes, including supported handler changes to PC, registers and mask;
+there is no host callback that bypasses the handler. Frame padding is preserved.
+Malformed frames and unsupported context extensions stop explicitly.
+Nesting is bounded to 32 live frames.
+
+Android API 28 adapters include `sigprocmask[64]`, `sigpending[64]`, `signal`,
+and `sigemptyset`, `sigfillset`, `sigaddset`, `sigdelset`, `sigismember` (also their
+64 variants). They share the Linux state while preserving Bionic's reserved
+signals, wrapper copy ordering and errno. `signal` installs SA_RESTART; this
+flag does not imply that interrupted waits are implemented.
+
+Real-time queues, thread-directed sends, alternate stacks, job control,
+synchronous fault delivery, core dumps, x64 handler frames and wait
+interruption/restart remain unsupported. Sending to a process whose only
+eligible receivers are waiting stops explicitly. No host signals, devices or
+network services participate. ABI references:
+[Linux signal semantics](https://man7.org/linux/man-pages/man7/signal.7.html),
+[AArch64 signal frames](https://github.com/torvalds/linux/blob/v6.1/arch/arm64/kernel/signal.c),
+[AArch64 context layout](https://github.com/torvalds/linux/blob/v6.1/arch/arm64/include/uapi/asm/sigcontext.h),
+[Bionic masks](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/bionic/sigprocmask.cpp)
+and [Bionic signal helpers](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/bionic/signal.cpp).
 
 `mincore` supports ordered validation, zero-length queries and a first queried
 page that is unmapped. Alignment errors return EINVAL before address-range
