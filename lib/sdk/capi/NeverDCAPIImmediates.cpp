@@ -10,6 +10,7 @@
 #include "SessionImpl.h"
 
 #include "neverd/decode/NativeOperands.h"
+#include "neverd/support/NumericInput.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -26,16 +27,14 @@ llvm::json::Object neverd::sdk::searchNativeImmediates(Session &S,
     throw std::invalid_argument(
         "Immediate search requires a native x86 or ARM image");
   bool Signed = Pattern.starts_with("-");
-  uint64_t Wanted = 0;
   if (Signed)
     Pattern = Pattern.drop_front();
-  auto Digits = Pattern;
-  const unsigned Radix =
-      Digits.consume_front("0x") || Digits.consume_front("0X") ? 16 : 10;
-  if (Digits.empty() || Digits.getAsInteger(Radix, Wanted) ||
-      (Signed && Wanted > (uint64_t(1) << 63)))
+  const auto Magnitude = parseUnsignedDecimalOrHex(
+      std::string_view(Pattern.data(), Pattern.size()));
+  if (!Magnitude || (Signed && *Magnitude > (uint64_t(1) << 63)))
     throw std::invalid_argument(
         "Enter a signed decimal or hexadecimal integer within 64 bits");
+  const uint64_t Wanted = *Magnitude;
   Signed = Signed && Wanted != 0;
   auto &Index = S.ImmediateIndex;
   if (!S.synchronizeFunctions())

@@ -40,6 +40,8 @@
 #include "mcp/McpConnectionManager.h"
 #include "web/PackageReviewDialog.h"
 
+#include "neverd/support/NumericInput.h"
+
 #include <QAbstractTableModel>
 #include <QAction>
 #include <QActionGroup>
@@ -3804,12 +3806,13 @@ void MainWindow::editStackFrame(int mode) {
             session_.revision() != revision || currentFunction() != function)
           return;
         if (!reset && after) {
-          bool valid = false;
-          qint64 value = after->text().toLongLong(&valid, 0);
-          if (!valid || value < -(1 << 20) || value > (1 << 20)) {
+          const auto parsed =
+              parseSignedDecimalOrHex(after->text().trimmed().toStdString());
+          if (!parsed || *parsed < -(1 << 20) || *parsed > (1 << 20)) {
             output_->append(tr("Enter a signed SP offset within one MiB"), 1);
             return;
           }
+          qint64 value = *parsed;
           if (basis->currentIndex() == 1)
             value += instruction.value("before").toInteger();
           QJsonArray points;
@@ -3825,16 +3828,17 @@ void MainWindow::editStackFrame(int mode) {
           for (int row = 0; row < table->rowCount(); ++row) {
             if (table->item(row, 2)->text().trimmed().isEmpty())
               continue;
-            bool atOK = false, bytesOK = false;
-            const auto at = table->item(row, 0)->text().toLongLong(&atOK, 0);
-            const auto bytes = table->item(row, 1)->text().toInt(&bytesOK, 0);
-            if (!atOK || !bytesOK) {
+            const auto at = parseSignedDecimalOrHex(
+                table->item(row, 0)->text().trimmed().toStdString());
+            const auto bytes = parseSignedDecimalOrHex(
+                table->item(row, 1)->text().trimmed().toStdString());
+            if (!at || !bytes) {
               output_->append(tr("Invalid stack slot offset or width"), 1);
               return;
             }
             variables.append(
-                QJsonObject{{"offset", at},
-                            {"bytes", bytes},
+                QJsonObject{{"offset", qint64(*at)},
+                            {"bytes", qint64(*bytes)},
                             {"name", table->item(row, 2)->text().trimmed()},
                             {"type", table->item(row, 3)->text().trimmed()}});
           }

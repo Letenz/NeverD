@@ -834,7 +834,9 @@ widgets; CTest sets the controller's platform to `offscreen`.
 `NeverDWorkerCLIDataPresentation` checks CLI/GUI array, alignment and enum
 parity against a real engine: identical sidecars, listing display, native IR
 isolation, saved type declarations, writer exclusion, resets, failed edits and
-malformed SDK array fields. Run it with
+malformed SDK item/operand fields, and decimal/explicit-hex CLI and enum values.
+Numeric cases include leading zeros, signed/unsigned bounds and overflow. Invalid
+replacements retain the previous item or operand format. Run it with
 `NeverDWorkerDataPresentation` and `NeverDWorkerFormat` when changing these
 presentation operations.
 
@@ -845,7 +847,8 @@ and decimal patterns with leading zeros. Standalone GUI builds run the worker
 checks without requiring a CLI target.
 
 `NeverDGuiSourceVariableTypes` uses the real worker for type editing and
-variable associations. It is registered only with
+variable associations, plus decimal, leading-zero decimal and explicit-hex
+stack slot/SP edits. It is registered only with
 `NEVERD_WORKER_REAL_ENGINE_TESTS=ON`; fixture SDK builds keep it disabled.
 `NeverDWorkerSourceVariableTypes` and `NeverDWorkerSourceVariableEdits` also
 compile and execute their generated C using the configured C compiler.

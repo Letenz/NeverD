@@ -1,5 +1,7 @@
 #include "SessionImpl.h"
 
+#include "neverd/support/NumericInput.h"
+
 #include "llvm/ADT/StringExtras.h"
 using namespace neverd;
 using namespace neverd::sdk;
@@ -12,12 +14,14 @@ const char *neverd_enum_value_json(neverd_session_t Sess, const char *Name,
     return nullptr;
   S->clearError();
   try {
-    uint64_t Number = 0;
-    if (!S->Loaded || !Name || std::strlen(Name) > 512 || !Value ||
-        std::strlen(Value) > 32 ||
-        llvm::StringRef(Value).getAsInteger(0, Number) || !Bits || Bits > 64)
+    const auto Parsed = Value && std::strlen(Value) <= 32
+                            ? parseUnsignedDecimalOrHex(Value)
+                            : std::nullopt;
+    if (!S->Loaded || !Name || std::strlen(Name) > 512 || !Parsed || !Bits ||
+        Bits > 64)
       throw std::invalid_argument(
           "An enum value requires a type and 1..64 logical bits");
+    uint64_t Number = *Parsed;
     const auto *Library = S->readLocalTypes();
     const auto *Type = Library ? Library->resolve(Name) : nullptr;
     if (!Type || !Type->Enum || Type->Enum->Values.size() > 4096)
