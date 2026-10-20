@@ -1570,6 +1570,35 @@ TEST(SysVCallContract, AColdFragmentCallingAbortThroughItsStubNeverReturns) {
   EXPECT_TRUE(SawJump);
 }
 
+TEST(SysVCallContract, ATailCallLeavesNoRegisterOfTheCallersOwn) {
+  // g adds RDX to what f returns in RAX, so f returns the pair.  f sets
+  // EDX to 11 and tail-jumps to an import no declaration describes: RDX
+  // then holds what the import leaves there, not 11.  Nothing forwards the
+  // pair such an import returns yet, so f refuses to return one.
+  constexpr va_t F = Text, G = Text + 0x20, Stub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> FCode = {0xBA, 0x0B, 0x00, 0x00, 0x00, // mov edx, 11
+                                0xE9};                        // jmp stub
+  for (uint8_t B : rel32(F + 10, Stub))
+    FCode.push_back(B);
+  put(Code, F, FCode);
+  std::vector<uint8_t> GCode = {0xE8}; // call f
+  for (uint8_t B : rel32(G + 5, F))
+    GCode.push_back(B);
+  for (uint8_t B : {0x48, 0x01, 0xD0, // add rax, rdx
+                    0xC3})            // ret
+    GCode.push_back(B);
+  put(Code, G, GCode);
+  const BinaryImage Img = makeImportImage(Code, {{F, "f"}, {G, "g"}},
+                                          {{Stub, "neverd_pair_source"}});
+  const std::string Source = liftEntries(Img, {F, G, Stub});
+  EXPECT_EQ(Source.find("(11)) << 64"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("int64_t f(void) {\n    __builtin_trap(); /* unknown "
+                        "return value */"),
+            std::string::npos)
+      << Source;
+}
+
 TEST(SysVCallContract, AnAlignmentPushIsNoStackArgument) {
   // die() calls the variadic panic("out of memory") and never returns, so
   // it aligns the stack for the call with a push of RAX (Clang) or a push,

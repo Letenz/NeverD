@@ -15,6 +15,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedReturnArguments.h"
 #include "neverd/ir/med/MedReturnValue.h"
 #include "neverd/loader/BinaryImage.h"
@@ -254,6 +255,17 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
       UsesFPReturnReg ? TRI.FPReturnReg : TRI.IntReturnReg;
   const bool ExplicitABI =
       Med.SourceTypeHint && Med.SourceTypeHint->HasExplicitABI;
+  // Whether op \p Op leaves the \p Size bytes at \p RegOff as they were: it
+  // is no call, or a call whose callee provably keeps them.  After any other
+  // call they hold what its callee left there.
+  auto callKeepsRegister = [&](const MedOp &Op, uint64_t RegOff,
+                               uint16_t Size) {
+    if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
+      return true;
+    return Op.PreservesCallerSaved ||
+           callPreservesRegisterBytes(TargetArch, Op.CallPreservedGPRs, RegOff,
+                                      Size);
+  };
   auto ValueFromDefinition = [&](const MedOp &Definition) -> ExprPtr {
     ExprPtr Value;
     if (Definition.Opcode == NdOp::CALL ||
@@ -275,25 +287,31 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
       Func.ReturnType->Kind == NdTypeKind::Struct &&
       Med.MultiReturn.size() >= 2 &&
       Func.ReturnType->Fields.size() == Med.MultiReturn.size()) {
-    auto Reaching = [&](uint64_t RegOff) -> ExprPtr {
-      auto WrittenIn = [&](const MedBlock &Block) -> ExprPtr {
-        for (auto RIt = Block.Ops.rbegin(); RIt != Block.Ops.rend(); ++RIt)
+    auto Reaching = [&](uint64_t RegOff, uint16_t Size) -> ExprPtr {
+      // What the register holds at the end of \p Block: its last write
+      // there, or none where a call after that write may change it.  None
+      // when the block neither writes nor clobbers it.
+      auto WrittenIn = [&](const MedBlock &Block) -> std::optional<ExprPtr> {
+        for (auto RIt = Block.Ops.rbegin(); RIt != Block.Ops.rend(); ++RIt) {
           if (RIt->Opcode != NdOp::RETURN && RIt->Output.Kind == MedVar::Reg &&
               RIt->Output.Size > 0 && RIt->Output.RegOff == RegOff &&
               !isRegisterLowView(*RIt))
             return ValueFromDefinition(*RIt);
+          if (!callKeepsRegister(*RIt, RegOff, Size))
+            return ExprPtr();
+        }
         if (const PhiNode *Phi = detail::registerPhi(
                 Med, Block, RegOff, getTargetRegInfo(TargetArch)))
           return HighExpr::makeVar(Phi->Output);
-        return nullptr;
+        return std::nullopt;
       };
-      if (ExprPtr Value = WrittenIn(CurBlock))
-        return Value;
+      if (std::optional<ExprPtr> Value = WrittenIn(CurBlock))
+        return *Value;
       std::set<const MedBlock *> Seen{&CurBlock};
       for (const MedBlock *Pred = onlyPredecessor(Med, CurBlock);
            Pred && Seen.insert(Pred).second; Pred = onlyPredecessor(Med, *Pred))
-        if (ExprPtr Value = WrittenIn(*Pred))
-          return Value;
+        if (std::optional<ExprPtr> Value = WrittenIn(*Pred))
+          return *Value;
       MedVar Entry;
       if (reachingRegAtBlockEntry(CurBlock, RegOff, Entry) && Entry.Size > 0 &&
           !isEntryIdentity(Med, Entry))
@@ -355,7 +373,7 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
       const MedReturnReg &Field = Med.MultiReturn[I];
       ExprPtr Value = OverEntryPadding(Field);
       if (!Value)
-        Value = Reaching(Field.RegOff);
+        Value = Reaching(Field.RegOff, Field.Size);
       // A field the function never writes returns the argument its caller
       // passed in the register, which recoverCallAbi made a parameter.
       if (!Value &&
@@ -537,7 +555,10 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
         Med.MultiReturn[1].RegOff == TRI.IntReturnReg2)) &&
       TRI.IntReturnReg2 != 0 && RetVal && RetVal->Type &&
       RetVal->Type->Size == TRI.PointerSize) {
+    // A call after the high register's last write leaves what its callee
+    // put there, which this function computed none of.
     ExprPtr High;
+    bool Clobbered = false;
     for (auto RIt = CurBlock.Ops.rbegin(); RIt != CurBlock.Ops.rend(); ++RIt) {
       if (RIt->Opcode == NdOp::RETURN)
         continue;
@@ -546,19 +567,25 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
         High = ValueFromDefinition(*RIt);
         break;
       }
+      if ((Clobbered =
+               !callKeepsRegister(*RIt, TRI.IntReturnReg2, TRI.PointerSize)))
+        break;
     }
-    if (!High)
+    if (!High && !Clobbered)
       if (const PhiNode *Phi =
               detail::registerPhi(Med, CurBlock, TRI.IntReturnReg2, TRI))
         High = HighExpr::makeVar(Phi->Output);
-    if (!High) {
+    if (!High && !Clobbered) {
       if (const MedBlock *Pred = onlyPredecessor(Med, CurBlock)) {
         for (auto RIt = Pred->Ops.rbegin(); RIt != Pred->Ops.rend(); ++RIt) {
-          if (RIt->Output.Kind != MedVar::Reg || RIt->Output.Size == 0 ||
-              RIt->Output.RegOff != TRI.IntReturnReg2)
-            continue;
-          High = ValueFromDefinition(*RIt);
-          break;
+          if (RIt->Output.Kind == MedVar::Reg && RIt->Output.Size > 0 &&
+              RIt->Output.RegOff == TRI.IntReturnReg2) {
+            High = ValueFromDefinition(*RIt);
+            break;
+          }
+          if ((Clobbered = !callKeepsRegister(*RIt, TRI.IntReturnReg2,
+                                              TRI.PointerSize)))
+            break;
         }
       }
     }
@@ -566,7 +593,7 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
     // register needs no PHI: its value is the one reaching the block.  The
     // incoming value at entry, named by an identity copy, is none the
     // function computed.
-    if (!High) {
+    if (!High && !Clobbered) {
       MedVar Reaching;
       if (reachingRegAtBlockEntry(CurBlock, TRI.IntReturnReg2, Reaching) &&
           Reaching.Size > 0 && !isEntryIdentity(Med, Reaching))
