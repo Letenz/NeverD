@@ -17,6 +17,10 @@ WEIGHTED_MASKS = (0x7A6D35C1, 0xB53C678A, 0x4EF0A903, 0xD2195A6C)
 WEIGHTED_UNION = 0
 for _mask in WEIGHTED_MASKS:
     WEIGHTED_UNION |= _mask
+PRODUCT_MASKS = (0x91A2C45E, 0x6F3C92A1, 0xD8743BC6, 0x25E9A70D)
+PRODUCT_UNION = 0
+for _mask in PRODUCT_MASKS:
+    PRODUCT_UNION |= _mask
 VIEW_MASKS = tuple(0x10001 << bit for bit in range(16))
 VIEW_KEYS = tuple((0x13579BDF * (bit + 1)) & 0xFFFFFFFF for bit in range(16))
 VIEW_KEY = 0
@@ -88,6 +92,24 @@ def bitwise_elf():
         code += bytes.fromhex("4181e0") + struct.pack("<I", mask)
         code += bytes.fromhex("4401c0")
     code += bytes.fromhex("6bc025 01d0 c3")
+    return elf(code)
+
+
+def interleaved_elf():
+    # Interleave two fifteen-term inclusion-exclusion sums over x^y and x*y.
+    # Both words share the positive/negative accumulators and enclosing scale.
+    code = bytearray.fromhex("89f9 31f1 0faffe 31c0 4531d2")
+    for subset in range(1, 16):
+        masks = [0xFFFFFFFF, 0xFFFFFFFF]
+        for group, values in enumerate((WEIGHTED_MASKS, PRODUCT_MASKS)):
+            for bit, value in enumerate(values):
+                if subset & (1 << bit):
+                    masks[group] &= value
+        code += bytes.fromhex("4189c8 4181e0") + struct.pack("<I", masks[0])
+        code += bytes.fromhex("4189f9 4181e1") + struct.pack("<I", masks[1])
+        code += bytes.fromhex("4501c8")
+        code += bytes.fromhex("4401c0" if subset.bit_count() % 2 else "4501c2")
+    code += bytes.fromhex("4429d0 6bc007 01d0 c3")
     return elf(code)
 
 
@@ -173,6 +195,8 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             assert text.count("&") <= 1 and text.count("^") <= 1, text
         elif kind == "bitwise":
             assert "&" not in text and text.count("^") <= 2, text
+        elif kind == "interleaved":
+            assert text.count("&") <= 2 and text.count("^") <= 1, text
         else:
             assert ">>" not in text, text
 
@@ -193,7 +217,7 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                         assert ordinary.count("^") >= 3, ordinary
                     elif kind == "frame":
                         assert "|" in ordinary, ordinary
-                    elif kind in ("weighted", "bitwise"):
+                    elif kind in ("weighted", "bitwise", "interleaved"):
                         assert ordinary.count("&") >= 7, ordinary
                     else:
                         assert ">>" in ordinary, ordinary
@@ -243,6 +267,8 @@ if __name__ == "__main__":
             ("frame", frame_elf(), "2U*z-x"),
             ("weighted", weighted_elf(), f"37U*((x^y)&{WEIGHTED_UNION}U)+z"),
             ("bitwise", bitwise_elf(), f"37U*(x^y^{VIEW_KEY}U)+z"),
+            ("interleaved", interleaved_elf(),
+             f"7U*(((x^y)&{WEIGHTED_UNION}U)+((x*y)&{PRODUCT_UNION}U))+z"),
         ):
             run_fixture(options.worker, options.cli, options.compiler, kind,
                         image, expected)

@@ -139,6 +139,53 @@ def bitwise_corpus(width, count):
     return rows
 
 
+def interleaved_corpus(width, count):
+    """Several opaque words mixed inside shared scales and subtractions."""
+    rng = random.Random(0x4D424134 + width)
+    full = (1 << width) - 1
+    families = (
+        ("(x^y)", "(x*y)"),
+        ("(x+y)", "(x*y)"),
+        ("(x&y)", "(x^y)", "(x*y)"),
+        ("(x+y)", "(x*y)", "((x+y)^(x*y))", "(x|y)"),
+    )
+    rows = []
+    for index in range(count):
+        carriers = families[(index // 6) % len(families)]
+        pieces = (4, 8, 16)[(index % 6) // 2]
+        if index % 2 == 0:
+            groups = []
+            for carrier in carriers:
+                masks = [0] * pieces
+                for bit in range(width):
+                    masks[rng.randrange(pieces)] |= 1 << bit
+                groups.append([
+                    f"(({carrier}^{rng.getrandbits(width)})&{mask})"
+                    for mask in masks
+                ])
+            rows.append("+".join(
+                f"(37*({'+'.join(group[part] for group in groups)}))"
+                for part in range(pieces)
+            ))
+        else:
+            positive, negative = [], []
+            for group, carrier in enumerate(carriers):
+                masks = [rng.getrandbits(width) for _ in range(4)]
+                for subset in range(1, 16):
+                    mask = full
+                    for bit in range(4):
+                        if subset & (1 << bit):
+                            mask &= masks[bit]
+                    if index % 6 == 5 and group == 0 and subset == 1:
+                        mask ^= 1 << (width - 1)
+                    destination = positive if subset.bit_count() % 2 else negative
+                    destination.append(f"({carrier}&{mask})")
+            rows.append(
+                f"(7*(({'+'.join(positive)})-({'+'.join(negative)})))+(x|y)"
+            )
+    return rows
+
+
 def check_semantics(expressions, results, width):
     """Independent modular evaluator; never execute parsed source as Python."""
     mask = (1 << width) - 1
@@ -217,7 +264,8 @@ def main():
     parser.add_argument("--rounds", type=int, default=7)
     parser.add_argument("--count", type=int, default=32)
     parser.add_argument(
-        "--family", choices=("complement", "weighted", "bitwise"), default="complement"
+        "--family", choices=("complement", "weighted", "bitwise", "interleaved"),
+        default="complement",
     )
     args = parser.parse_args()
     if args.rounds < 1 or args.count < 1:
@@ -236,7 +284,7 @@ def main():
         for width in (8, 16, 32, 64):
             generate = {
                 "complement": corpus, "weighted": weighted_corpus,
-                "bitwise": bitwise_corpus,
+                "bitwise": bitwise_corpus, "interleaved": interleaved_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")

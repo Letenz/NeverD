@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Normalize and independently certify weighted bitwise views of one word.
+/// Normalize and independently certify weighted bitwise views of opaque words.
 
 #include "SymMBADetail.h"
 
@@ -20,6 +20,8 @@ class MaskResources {
 
 public:
   MaskResources(WorkBudget &Work, size_t Bytes) : Work(Work), Bytes(Bytes) {}
+
+  size_t remainingBytes() const { return Bytes; }
 
   bool charge(size_t Units, size_t Storage = 0) {
     if (Storage > Bytes || !Work.canConsume(Units))
@@ -400,12 +402,24 @@ SymRef solveWeightedMasks(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     Groups[View->Carrier.index()].push_back(
         {Original, Scale, View->Zero, View->One});
   }
-  // Expanded groups need a proof against the actual input, including every
-  // enclosing scale. The independent checker certifies one masked word and
-  // cancels unchanged residual words; multiple changed words remain bounded
-  // alternatives for the normal deep walk.
-  if (Expanded && Groups.size() != 1)
-    return E;
+  // Several words may share enclosing scales and subtractions. Preserve the
+  // distributed input before changing any group: a separate arithmetic proof
+  // will check it against E, including every scale and opaque residual.
+  // Per-word bitwise proofs then compose by congruence over this exact sum.
+  const bool Composed = Expanded && Groups.size() > 1;
+  SymRef Distributed;
+  if (Composed) {
+    if (!Resources.array(Kept.size(), 64))
+      return E;
+    llvm::SmallVector<SymRef, 8> Originals(Kept);
+    for (const auto &[Index, Terms] : Groups) {
+      if (!Resources.array(Terms.size(), 64))
+        return E;
+      for (const auto &Term : Terms)
+        Originals.push_back(Term.Original);
+    }
+    Distributed = Ctx.mkAdd(Originals);
+  }
 
   bool Changed = false;
   for (const auto &[Index, Terms] : Groups) {
@@ -488,7 +502,7 @@ SymRef solveWeightedMasks(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     SymRef Before = Ctx.mkAdd(Originals);
     SymRef Candidate = Parts.empty() ? Ctx.mkZero(Width) : Ctx.mkAdd(Parts);
     if (readingScore(Ctx, Candidate) >= readingScore(Ctx, Before) ||
-        (!Expanded &&
+        ((!Expanded || Composed) &&
          !proveMaskIdentity(Ctx, Before, Candidate, Carrier, Resources))) {
       retain();
       continue;
@@ -500,9 +514,14 @@ SymRef solveWeightedMasks(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     return E;
   SymRef Answer = Ctx.mkAdd(Kept);
   if (readingScore(Ctx, Answer) >= readingScore(Ctx, E) ||
-      (Expanded &&
+      (Expanded && !Composed &&
        !proveMaskIdentity(Ctx, E, Answer, SymRef(Groups.begin()->first),
                           Resources)))
+    return E;
+  // No fresh allowance: distribution must fit what all group construction and
+  // proofs left. Failure cannot publish even a partially proved composition.
+  if (Composed && !proveArithmeticIdentity(Ctx, E, Distributed, Budget,
+                                           Resources.remainingBytes()))
     return E;
   Rep.Outcome = MBAOutcome::Rewritten;
   Rep.Evidence = MBAEvidence::Derivation;

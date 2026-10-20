@@ -155,10 +155,27 @@ nonlinear expressions that agree only at zero/all-ones. Exhaustive byte
 oracles, deterministic mixed-view tests, finite work/storage limits and Z3
 partition checks complement the production derivation. The 64-bit sixteen-part
 case must complete within 16,384 work units and support exact rewrite reuse.
+`SymMBAMultiCarrier` interleaves two to four different words inside shared
+scales and subtractions. It checks distribution separately from each word's
+bitwise proof, including flattened products, repeated residuals, constants,
+negative/even weights and 257-bit words. Exhaustive byte arithmetic, high-bit
+near misses, independent Z3 checks and exact/one-short work limits protect
+proof composition. The two-word 64-bit case must finish within 32,768 units.
+The independent dense multiword Z3 gate covers 8/16 bits. Its 32/64-bit cases
+exceed the five-second allowance; the wide certificate test instead requires
+complete derivation and checks every one/two-bit assignment across both words,
+zero and all-ones through 257 bits against independent arithmetic.
+The factored-result regression keeps a proved enclosing scale when subsequent
+child rewrites would increase the final expression's cost.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
 signed/unsigned overflow admission against all byte pairs, including unsafe
 neighboring masks. `NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains`
 checks nested additions through 257 bits and rejects masked hidden poison.
+`MaskedDisjointOrMatchesExhaustiveByteDomains` and `NestedOrAdmission*` check
+OR-to-addition admission independently of compiler flags, including exhaustive
+byte domains, wrapping carries, nested ORs, hidden poison, and width/depth
+refusal. Supported masks through 512 bits are checked alongside a 513-bit
+refusal; unsafe neighboring masks must remain ineligible.
 `HighSymSimplify` covers signedness-preserving definition conversion, disjoint
 frame locals, overlapping views, address escape and transitive store kills.
 `HighFrameStoreForwarding.EmptyDeadStoreAnchorsPreservePrivateFacts` checks
@@ -180,11 +197,16 @@ Use `--family bitwise --count 24` for independently flipped partitions,
 compensated flips, nested forced-bit views and high-bit near misses over the
 same four opaque carriers. Retain the previous engine and its matching SDK to
 measure each new change independently of earlier improvements.
+Use `--family interleaved --count 24` for two-to-four-word partitions and
+overlapping inclusion-exclusion sums mixed inside common scales, including
+nearby high-bit errors. Run the earlier families as controls.
 
 `tools/neverd-worker/tests/source_synthesis_test.py WORKER --cli CLI` checks the
 real source-option request used by the GUI and both CLI source emitters, for
 single-function and whole-program requests. The raw machine-code bitwise fixture
 retains sixteen separately flipped masks; enhanced output must recombine them.
+The interleaved fixture combines thirty masked terms from XOR and product
+carriers in shared positive/negative accumulators before scaling the result.
 With Clang available, each generated C output executes at O0/O2 against an
 independent arithmetic oracle on boundary and deterministic random inputs.
 

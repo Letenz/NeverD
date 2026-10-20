@@ -629,6 +629,124 @@ TEST(SymSimplifyGuard, NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains) {
   }
 }
 
+TEST(SymSimplifyGuard, MaskedDisjointOrMatchesExhaustiveByteDomains) {
+  llvm::LLVMContext C;
+  llvm::Module M("masked_or_domains", C);
+  auto *Ty = llvm::Type::getInt8Ty(C);
+  for (unsigned A : {0u, 1u, 0x35u, 0x80u, 0xffu}) {
+    for (unsigned B : {0u, 1u, 0x4au, 0x80u, 0xffu}) {
+      for (bool Flagged : {false, true}) {
+        SCOPED_TRACE(::testing::Message() << A << "," << B << "," << Flagged);
+        auto *F =
+            llvm::Function::Create(llvm::FunctionType::get(Ty, {Ty, Ty}, false),
+                                   llvm::Function::ExternalLinkage, "f", &M);
+        llvm::IRBuilder<> IR(llvm::BasicBlock::Create(C, "entry", F));
+        auto *L = IR.CreateAnd(F->getArg(0), IR.getInt8(A));
+        auto *R = IR.CreateAnd(F->getArg(1), IR.getInt8(B));
+        auto *Combined =
+            Flagged ? IR.CreateDisjointOr(L, R) : IR.CreateOr(L, R);
+        auto *Root = IR.CreateSub(Combined, IR.CreateAdd(L, R));
+        IR.CreateRet(Root);
+        bool DefinedAndEqual = true;
+        for (unsigned X = 0; X != 256; ++X)
+          for (unsigned Y = 0; Y != 256; ++Y) {
+            const unsigned Left = X & A, Right = Y & B;
+            DefinedAndEqual &= (Left | Right) == ((Left + Right) & 255);
+          }
+        auto Result = SymSimplifyPass::constantValueOf(Root);
+        EXPECT_EQ(Result.has_value(), DefinedAndEqual) << printFunction(*F);
+        if (Result)
+          EXPECT_TRUE(Result->isZero());
+      }
+    }
+  }
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, NestedOrAdmissionPreservesPoisonAndBounds) {
+  for (unsigned Width : {8u, 16u, 32u, 64u, 128u, 257u, 512u, 513u}) {
+    for (unsigned Mode : {0u, 1u, 2u, 3u}) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Mode);
+      llvm::LLVMContext C;
+      llvm::Module M("nested_or_bounds", C);
+      auto *Ty = llvm::IntegerType::get(C, Width);
+      auto *F =
+          llvm::Function::Create(llvm::FunctionType::get(Ty, {Ty, Ty}, false),
+                                 llvm::Function::ExternalLinkage, "f", &M);
+      llvm::IRBuilder<> IR(llvm::BasicBlock::Create(C, "entry", F));
+      auto make = [&] {
+        llvm::Value *X = F->getArg(0);
+        if (Mode == 1)
+          X = IR.CreateNSWAdd(X, llvm::ConstantInt::get(Ty, 1));
+        auto mask = [&](llvm::Value *V, unsigned Mask) {
+          return IR.CreateAnd(V, llvm::ConstantInt::get(Ty, Mask));
+        };
+        llvm::Value *Low =
+            IR.CreateAdd(mask(X, 0x35), mask(F->getArg(1), 0x46));
+        if (Mode == 2)
+          for (unsigned I = 0; I != 32; ++I)
+            Low = IR.CreateAdd(Low, mask(X, 1));
+        auto *High =
+            IR.CreateAnd(X, llvm::ConstantInt::get(C, llvm::APInt::getOneBitSet(
+                                                          Width, Width - 1)));
+        if (Mode == 3)
+          Low = IR.CreateOr(Low, High);
+        return IR.CreateDisjointOr(Low, High);
+      };
+      auto *Root = IR.CreateXor(make(), make());
+      IR.CreateRet(Root);
+      auto Result = SymSimplifyPass::constantValueOf(Root);
+      EXPECT_EQ(Result.has_value(), Mode == 0 && Width <= 512)
+          << printFunction(*F);
+      if (Result)
+        EXPECT_TRUE(Result->isZero());
+      EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    }
+  }
+}
+
+TEST(SymSimplifyGuard, NestedOrAdmissionDoesNotIgnoreArithmeticCarries) {
+  llvm::LLVMContext C;
+  llvm::Module M("or_carries", C);
+  auto *Ty = llvm::Type::getInt8Ty(C);
+  for (unsigned Mask : {0x08u, 0x10u, 0x20u, 0x40u, 0x80u}) {
+    auto *F =
+        llvm::Function::Create(llvm::FunctionType::get(Ty, {Ty, Ty}, false),
+                               llvm::Function::ExternalLinkage, "f", &M);
+    llvm::IRBuilder<> IR(llvm::BasicBlock::Create(C, "entry", F));
+    auto make = [&] {
+      auto *Low =
+          IR.CreateDisjointOr(IR.CreateAnd(F->getArg(0), IR.getInt8(0x10)),
+                              IR.CreateAnd(F->getArg(1), IR.getInt8(0x20)));
+      auto *Sum =
+          IR.CreateAdd(Low, IR.CreateAnd(F->getArg(1), IR.getInt8(0x20)));
+      return IR.CreateDisjointOr(Sum,
+                                 IR.CreateAnd(F->getArg(0), IR.getInt8(Mask)));
+    };
+    auto *Root = IR.CreateXor(make(), make());
+    IR.CreateRet(Root);
+    bool Defined = true;
+    for (unsigned X = 0; X != 256; ++X)
+      for (unsigned Y = 0; Y != 256; ++Y) {
+        const unsigned Sum = ((X & 0x10) | (Y & 0x20)) + (Y & 0x20);
+        Defined &= !(Sum & (X & Mask));
+      }
+    auto Result = SymSimplifyPass::constantValueOf(Root);
+    // Independent operands may prove fewer facts than their correlations.
+    // Every admitted case must nevertheless be defined over every byte pair.
+    if (Result) {
+      EXPECT_TRUE(Defined);
+      EXPECT_TRUE(Result->isZero());
+    }
+    if (Mask == 0x08 || Mask == 0x80)
+      EXPECT_TRUE(Result.has_value()) << printFunction(*F);
+    if (Mask == 0x10 || Mask == 0x40)
+      EXPECT_FALSE(Result.has_value()) << printFunction(*F);
+  }
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
 // A same-sign comparison is poison when its operands do not have the same
 // sign.  Comparisons are opaque to the ordinary expression rewrite, so this
 // also pins the hidden-leaf path: standing one symbolic input in front of the

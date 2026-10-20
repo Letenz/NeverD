@@ -1049,6 +1049,18 @@ word remains opaque; unrelated residual words must cancel exactly. Finite
 work, storage and literal-chain depth limits preserve the original region on
 refusal. This derivation uses the existing symbolic switch in both source
 emitters without an additional GUI or CLI option.
+When enclosing arithmetic interleaves several such words, the same layer
+certifies each changed group and independently proves distribution against
+the original region using modular arithmetic normalization. This composition
+preserves opaque residuals and their multiplicities without treating different
+words as interchangeable. All group and distribution proofs share the attempt's
+work and cumulative storage limits.
+The deep walk retains the factored whole-root proof as an alternative, so
+later local rewrites cannot discard a shorter result already established.
+The LLVM bridge admits compiler-created `or disjoint` only after independent
+literal-mask/OR/wrapping-add facts establish nonoverlap, then exposes that sum
+to the shared engine. The bounded check uses no flags or metadata as premises;
+hidden poison, width/depth limits and ordinary eligibility checks still apply.
 The source policy also enables modular quadratic oracle fitting: it can propose
 squares and pairwise products as well as affine terms. This is one shared core
 option, so the CLI flag and GUI menu cannot select different fitting engines.

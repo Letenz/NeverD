@@ -440,6 +440,12 @@ bool provePolynomialIdentity(SymContext &Ctx, SymRef Before, SymRef After,
                              unsigned MaxAtoms, WorkBudget &Budget,
                              size_t MaxBytes = MBAOptions{}.MaxTableBytes);
 
+/// Certify modular arithmetic distribution with nonarithmetic words opaque.
+/// Normalize both sides independently; incomplete normalization is refusal.
+bool proveArithmeticIdentity(SymContext &Ctx, SymRef Before, SymRef After,
+                             WorkBudget &Budget,
+                             size_t MaxBytes = MBAOptions{}.MaxTableBytes);
+
 /// Certify an affine equality over bitwise views of every bit of one opaque
 /// word, including literal AND/OR/XOR and NOT chains.
 /// Opaque residual words must cancel exactly. Reject incomplete proofs;
