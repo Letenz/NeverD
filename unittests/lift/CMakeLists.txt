@@ -5,6 +5,7 @@ add_neverd_unittest(NeverDDirectTailCallMetadataTests
 
 add_neverd_unittest(NeverDResumableTrapBoundaryTests
   core/ResumableTrapBoundaryTests.cpp
+  core/ResumableTrapIdentityTests.cpp
   aarch64/AArch64_FastClassifyParityTests.cpp
   LINK_COMPONENTS Pipeline BackendC
 )

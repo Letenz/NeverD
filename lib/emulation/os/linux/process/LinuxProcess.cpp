@@ -118,6 +118,13 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
     Result.Diagnostic = llvm::toString(std::move(E));
   };
   while (true) {
+    auto Delivery = Kernel.deliverSignals();
+    if (!Delivery) {
+      RuntimeFailure(Delivery.takeError());
+      break;
+    }
+    if (!*Delivery)
+      break;
     if (auto E = Kernel.synchronizeDevices()) {
       RuntimeFailure(std::move(E));
       break;
@@ -182,6 +189,8 @@ llvm::Expected<ProcessResult> runProcess(const std::filesystem::path &Path,
       RuntimeFailure(Returned.takeError());
       break;
     }
+    if (Kernel.takeSignalRestore())
+      continue;
     auto Value = *Returned;
     if (!Value)
       break;

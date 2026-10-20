@@ -3319,6 +3319,13 @@ instruction boundary, even inside a basic block.
 Debugger breaks define no return register: long x86 `int 3` has the short
 encoding's void, zero-argument intrinsic contract, and ARM `bkpt` and AArch64
 `brk` leave R0/X0 intact. Service interrupts keep their own result contracts.
+INT1/ICEBP retains its debug exception (#DB, vector 1) through LLVM and both
+C routes. It cannot use `llvm.debugtrap`, which emits INT3's breakpoint
+exception (#BP, vector 3) on x86. The shared assembly mapping emits byte F1;
+HighC uses the target toolchain's byte directive instead of an unsupported
+INT1 mnemonic. Both forms remain resumable and preserve the live return value.
+ARM/Thumb BKPT also remains assembly with its actual immediate; a debugtrap
+builtin would replace that code with the compiler's default breakpoint code.
 `IntrinsicTermination.h` distinguishes the compiler's AArch64 `brk #0xF000`
 debugtrap from fatal BRK codes. Decode, LowIR/MedIR no-return propagation,
 HighIR effect classification and both C routes consume that code-sensitive
@@ -4743,6 +4750,21 @@ writing. This adds no source layout or native-proof contract.
 
 For explicit, nonfaulting, little-endian raw recovery, the x64 owner recognizes the complete canonical `RDTSC` instruction and its five-operation multi-output bundle. Each occurrence gets one fresh 64-bit sample; three charged scalar operations evaluated by `SymExec` bind the complete primary result and the two instruction-local placeholders. The original runtime read, copies and zero extensions remain in the residual. Clock values and relations are unconstrained, timestamp-derived addresses keep unknown provenance, and native/source proof contracts remain unchanged.
 
+`RuntimeRegisterRead` is dispatched through the architecture adapter. Core owns
+fresh samples, operation/node accounting and conservative output provenance;
+the architecture owner authenticates the complete native instruction and its
+multi-output bundle. No register or opcode recognition is added to core.
+
+Under the same explicit, nonfaulting, little-endian raw domain, canonical x64
+`CPUID` retains its original EAX/ECX selectors and runtime intrinsic. Each
+occurrence gets four independent unconstrained 32-bit answers. Charged scalar
+operations connect those answers to the original placeholders, while the
+original zero extensions clear the four destination registers' upper halves.
+This permits neither host-CPU assumptions nor repeated-query correlation.
+Runtime-derived pointers keep unknown provenance. The retained read preserves
+the original instruction's observable ordering; source and native proof
+consumers continue to reject this unaudited runtime contract.
+
 Finite-value enumeration may observe feasible tuples without changing the proof query. An observer refusal returns an incomplete result with no tuples. The cache retains only mathematical domain proofs; immutable-read certificates remain local until enumeration completes.
 
 `NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.
@@ -5647,8 +5669,17 @@ copy fault does not undo the installation. The same owner handles `kill` for
 self existence probes and uncatchable SIGKILL termination. It returns a typed
 `signaled` outcome without resuming the pending service; Android stops all live
 guest threads and records their termination separately from completed returns.
-No CPU backend or SDK interprets a handler address or sends a host signal.
-Other targets and signal delivery remain explicit unsupported boundaries.
+`LinuxSignals` also owns per-thread masks, process-pending standard signals and
+live AArch64 signal-frame records. Thread creation inherits the creator's mask;
+retirement drops that thread's records. Both runners call the shared delivery
+owner before guest execution. `LinuxSignalFrame` materializes the Linux wire
+ABI using ordinary guest memory and backend register access; `LinuxMemory`
+owns allocation of the real guest return trampoline. `rt_sigreturn` restores
+the mutable guest frame and marks a control transfer, so runners do not overwrite
+the restored PC or x0 with an ordinary service return. CPU backends do not own
+signal policy or synthesize handlers. Unknown initial masks/alternate stacks,
+unsupported waiting recipients and context extensions remain explicit stops.
+No SDK or host signal mechanism participates.
 `AndroidAuxv` owns admission and lookup of the native workload's explicit,
 complete auxiliary vector. Bionic alone applies `getauxval`'s full-width
 lookup and thread-local errno behavior; constructors and dynamic imports use

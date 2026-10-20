@@ -67,6 +67,21 @@ lowerRuntimeControlOperation(const LowOp &Op, symbolic::SymState &State,
                              const SpecializationOptions &Options,
                              llvm::function_ref<NdVar(uint16_t)> Temporary);
 
+/// An architecture-authenticated read with instruction-local output carriers.
+/// Each occurrence receives an independent, unconstrained sample. The original
+/// read and its inputs remain observable in LowIR; these scalar operations only
+/// connect the complete instruction's outputs for conservative raw analysis.
+/// No memory, flag, accessibility, source or native-proof contract is added.
+struct RuntimeRegisterRead {
+  uint16_t SampleBytes = 0;
+  std::vector<LowOp> Ops;
+  std::vector<NdVar> PlaceholderOutputs;
+};
+
+std::optional<RuntimeRegisterRead>
+lowerRuntimeRegisterRead(const SpecializationInstruction &Instruction,
+                         const SpecializationOptions &Options, NdVar Sample);
+
 struct RawEnvironmentPreparation {
   uint64_t Bytes = 0;
   uint64_t Records = 0;

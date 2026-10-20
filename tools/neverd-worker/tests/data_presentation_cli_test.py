@@ -15,7 +15,7 @@ from transport_test import Client
 
 def check_sdk(engine, binary):
     # Exercise the public JSON boundary, including types CLI string options
-    # cannot express. A rejected replacement must retain the existing array.
+    # cannot express. A rejected replacement must retain the existing item.
     dll_directory = (os.add_dll_directory(str(Path(engine).parent))
                      if os.name == "nt" else None)
     try:
@@ -27,6 +27,14 @@ def check_sdk(engine, binary):
             "neverd_session_load": (ctypes.c_int, [ptr, text]),
             "neverd_item_set": (ctypes.c_int, [ptr, ctypes.c_uint64, text]),
             "neverd_items_json": (ptr, [ptr]),
+            "neverd_items_load": (ctypes.c_int, [ptr]),
+            "neverd_local_types_declare": (ptr, [ptr, text, text]),
+            "neverd_enum_value_json": (
+                ptr, [ptr, text, text, ctypes.c_uint, ctypes.c_int]),
+            "neverd_operand_format_set": (
+                ctypes.c_int, [ptr, ctypes.c_uint64, ctypes.c_int, text]),
+            "neverd_operand_formats_json": (ptr, [ptr]),
+            "neverd_operand_formats_load": (ctypes.c_int, [ptr]),
             "neverd_free_string": (None, [ptr]),
         }
         for name, (result, arguments) in signatures.items():
@@ -37,13 +45,15 @@ def check_sdk(engine, binary):
         try:
             assert lib.neverd_session_load(session, str(binary).encode()) == 1
 
-            def items():
-                value = lib.neverd_items_json(session)
+            def consume(value):
                 assert value
                 try:
                     return json.loads(ctypes.string_at(value))
                 finally:
                     lib.neverd_free_string(value)
+
+            def items():
+                return consume(lib.neverd_items_json(session))
 
             valid = {"kind": "array", "element_size": 4, "count": 16}
             assert lib.neverd_item_set(
@@ -55,6 +65,72 @@ def check_sdk(engine, binary):
                 assert lib.neverd_item_set(
                     session, DATA, json.dumps(invalid).encode()) != 0, invalid
                 assert items() == before
+            _, entry = fixture()
+            for kind, address, size in (("byte", DATA, 1), ("word", DATA, 2),
+                                       ("dword", DATA, 4), ("qword", DATA, 8),
+                                       ("code", entry, 5)):
+                valid = {"kind": kind}
+                assert lib.neverd_item_set(
+                    session, address, json.dumps(valid).encode()) == 0
+                before = items()
+                assert lib.neverd_item_set(
+                    session, address,
+                    json.dumps({**valid, "size": size}).encode()) == 0
+                assert items() == before
+                for bad_size in (str(size), None, True, size + 1, -1):
+                    invalid = {**valid, "size": bad_size}
+                    assert lib.neverd_item_set(
+                        session, address, json.dumps(invalid).encode()) != 0, invalid
+                    assert items() == before
+            project = Path(str(binary) + ".neverd")
+            project.mkdir(exist_ok=True)
+            sidecar = project / "items.json"
+            sidecar.write_text(json.dumps([{**row, "size": None} for row in before]))
+            try:
+                assert lib.neverd_items_load(session) != 0
+                assert items() == before
+            finally:
+                sidecar.unlink()
+
+            declared = consume(lib.neverd_local_types_declare(
+                session, b"enum QA_NUMBER { QA_EIGHT = 8, QA_TEN = 10 };"
+                         b"struct QA_RECORD { int field; };", None))
+            assert declared["problems"] == [], declared
+            for value, expected in ((b"10", "QA_TEN"), (b"010", "QA_TEN"),
+                                    (b"008", "QA_EIGHT"), (b"0xA", "QA_TEN"),
+                                    (b"0XA", "QA_TEN")):
+                result = consume(lib.neverd_enum_value_json(
+                    session, b"QA_NUMBER", value, 32, 0))
+                assert result["text"] == expected, (value, result)
+            for value in (b"18446744073709551615", b"0xffffffffffffffff"):
+                result = consume(lib.neverd_enum_value_json(
+                    session, b"QA_NUMBER", value, 64, 0))
+                assert int(result["value"], 16) == 2**64 - 1, result
+            for value in (b"0x", b"0b10", b"10oops", b"-1",
+                          b"18446744073709551616"):
+                assert not lib.neverd_enum_value_json(
+                    session, b"QA_NUMBER", value, 32, 0), value
+            assert lib.neverd_operand_format_set(
+                session, entry, 1, b'{"base":"enum","type":"QA_NUMBER"}') == 0
+            before = consume(lib.neverd_operand_formats_json(session))
+            for base in ("number", "hex", "decimal", "binary", "char", "offset",
+                         "struct"):
+                for flags in (False, True, None, "true"):
+                    invalid = {"base": base, "flags": flags}
+                    if base == "struct":
+                        invalid["type"] = "QA_RECORD"
+                    assert lib.neverd_operand_format_set(
+                        session, entry, 1, json.dumps(invalid).encode()) != 0, invalid
+                    assert consume(lib.neverd_operand_formats_json(session)) == before
+            sidecar = project / "operands.json"
+            sidecar.write_text(json.dumps([{
+                "addr": hex(entry),
+                "operands": [{"operand": 1, "base": "hex", "flags": True}]}]))
+            try:
+                assert lib.neverd_operand_formats_load(session) != 0
+                assert consume(lib.neverd_operand_formats_json(session)) == before
+            finally:
+                sidecar.unlink()
         finally:
             lib.neverd_session_destroy(session)
     finally:
@@ -90,13 +166,30 @@ def run(worker, cli, engine):
         invoke("types", "--declare", str(header), "--json")
         assert not (cli_project / "types.json").exists()
         invoke("types", "--declare", str(header), "--save", "--json")
-        invoke("types", "--declare", str(header), "--save-declarations", "--json")
-        invoke("items", "--array", hex(DATA), "--size", "4", "--count", "16")
-        invoke("items", "--array", hex(DATA + 64), "--element-size", "12",
-               "--count", "4", "--type", "QA_ROW")
-        invoke("items", "--alignment", hex(DATA + 117), "--boundary", "16")
-        invoke("items", "--alignment", hex(DATA + 128), "--boundary", "16")
-        invoke("operands", "--addr", hex(entry), "--operand", "1",
+        alias_binary = root / "aliases.elf"
+        alias_binary.write_bytes(image)
+        invoke("types", "--declare", str(header), "--save-declarations",
+               "--json", path=alias_binary)
+        assert (Path(str(alias_binary) + ".neverd") / "types.json").read_bytes() == (
+            cli_project / "types.json").read_bytes()
+        numeric = json.loads(invoke(
+            "items", "--array", hex(DATA), "--size", "08", "--count", "008",
+            "--json", path=alias_binary))
+        assert (numeric[0]["element_size"], numeric[0]["count"]) == (8, 8), numeric
+        for delta, expected in (("010", 10), ("-010", -10), ("0x10", 16),
+                                ("-9223372036854775808", -(2**63)),
+                                ("9223372036854775807", 2**63 - 1)):
+            formatted = json.loads(invoke(
+                "operands", "--addr", hex(entry), "--operand", "01",
+                "--struct", "QA_ROW", "--delta", delta, "--json",
+                path=alias_binary))
+            assert formatted[0]["operands"][0]["delta"] == expected, formatted
+        invoke("items", "--array", hex(DATA), "--size", "04", "--count", "016")
+        invoke("items", "--array", hex(DATA + 64), "--element-size", "012",
+               "--count", "0x4", "--type", "QA_ROW")
+        invoke("items", "--alignment", hex(DATA + 117), "--boundary", "016")
+        invoke("items", "--alignment", hex(DATA + 128), "--boundary", "0x10")
+        invoke("operands", "--addr", hex(entry), "--operand", "01",
                "--enum", "QA_FLAGS", "--flags")
         rows = json.loads(invoke("items", "--json"))
         assert [r["size"] for r in rows] == [64, 48, 11, 16], rows
@@ -110,6 +203,7 @@ def run(worker, cli, engine):
         # for the same operations on another copy of the input.
         with Client(worker) as client:
             ok(client, "open", {"path": str(binary), "analysis": False})
+            ok(client, "function_create", {"address": hex(entry)})
             native = {r: source(client, r, entry)["text"]
                       for r in ("low", "med", "llvm")}
             assert "[15]" in str(listing(client))
@@ -188,6 +282,16 @@ def run(worker, cli, engine):
                          "--delta=0", "--base=hex"):
             failures.append(("operands", [
                 "--addr", hex(entry), "--operand", "1", "--enum", "QA_FLAGS", conflict]))
+        for value in ("0b10", "10oops", "-1", "4294967296"):
+            for option in ("--count", "--size", "--element-size"):
+                arguments = ["--array", hex(DATA), option, value]
+                if option != "--count":
+                    arguments.extend(["--count", "1"])
+                failures.append(("items", arguments))
+        for value in ("9223372036854775808", "-9223372036854775809"):
+            failures.append(("operands", [
+                "--addr", hex(entry), "--operand", "1", "--struct", "QA_ROW",
+                "--delta", value]))
         broken = root / "broken.h"
         broken.write_text("struct {", encoding="utf-8")
         failures.append(("types", [

@@ -4,6 +4,18 @@
 
 # Testing NeverD
 
+`AndroidSignals.Delivery*` executes independent O0/O2 AArch64 callers across
+relocation packing and available backends. It checks complete output buffers,
+blocked coalescing, nested handlers, NODEFER/RESETHAND, mutable ucontext,
+integer/vector/FP control restoration, inherited thread masks, shared pending
+state, raw versus Bionic copy ordering and malformed-frame refusal.
+`LinuxProcess.SignalDelivery*` covers both raw LP64 ABIs and explicitly rejects
+x64 handler frames. `ProcessReport.SignalDelivery*` checks unknown and strict
+input state. Run these with all signal, Linux process, Android native and
+execution-session tests after changing shared delivery ownership. Unavailable
+CPU backends are skips, not qualified execution; all fixtures are authored
+locally and never signal a host process.
+
 `AndroidSignals.Kill*` executes independently authored direct, dynamically
 resolved, variadic and raw callers at O0/O2 across relocation formats and
 available ARM64 backends. It checks full-buffer effects, argument narrowing,
@@ -853,12 +865,21 @@ widgets; CTest sets the controller's platform to `offscreen`.
 `NeverDWorkerCLIDataPresentation` checks CLI/GUI array, alignment and enum
 parity against a real engine: identical sidecars, listing display, native IR
 isolation, saved type declarations, writer exclusion, resets, failed edits and
-malformed SDK array fields. Run it with
+malformed SDK item/operand fields, and decimal/explicit-hex CLI and enum values.
+Numeric cases include leading zeros, signed/unsigned bounds and overflow. Invalid
+replacements retain the previous item or operand format. Run it with
 `NeverDWorkerDataPresentation` and `NeverDWorkerFormat` when changing these
 presentation operations.
 
+`NeverDWorkerImmediatesRegister` checks decoded immediate search and register
+queries through the real SDK/worker and, when available, CLI. It covers search
+cache refresh after navigation discovers a function beyond an undecodable gap
+and decimal patterns with leading zeros. Standalone GUI builds run the worker
+checks without requiring a CLI target.
+
 `NeverDGuiSourceVariableTypes` uses the real worker for type editing and
-variable associations. It is registered only with
+variable associations, plus decimal, leading-zero decimal and explicit-hex
+stack slot/SP edits. It is registered only with
 `NEVERD_WORKER_REAL_ENGINE_TESTS=ON`; fixture SDK builds keep it disabled.
 `NeverDWorkerSourceVariableTypes` and `NeverDWorkerSourceVariableEdits` also
 compile and execute their generated C using the configured C compiler.
@@ -1820,6 +1841,13 @@ RAX/R0/X0 definition cannot hide behind a later overwrite. Both C routes run
 with and without optimization, retaining each repeated break and the returned
 constant. AArch64 `brk #0xF000` participates in the detailed/light decode,
 function-boundary and source tests; fatal BRK codes remain negative controls.
+`ResumableTrapIdentity` distinguishes INT1 from INT3 across both C routes,
+x86/x64 and normalized COFF/ELF/Mach-O images. On Linux x64, emitted C at O0/O2
+runs against independent raw bytes, checking return values, exception vectors,
+signal codes and event order for single, repeated and mixed breaks. The native
+check explicitly skips on other hosts; source and LLVM verification still run.
+The same identity suite checks repeated ARM/Thumb BKPT with zero, nonzero and
+maximum immediates, preserving the actual instruction in both C routes.
 Live and indexed symbol queries distinguish padding guesses from confirmed
 names, independent aliases, code ranges and discovered call targets. Full and
 selected pipeline runs absorb a guessed entry actually reached after repeated
@@ -3647,6 +3675,15 @@ binary completion while retaining native-proof and both source-layout refusals.
 `InterpreterSpecialization.WideIntegerConcat*` checks both byte orders, high/low words, constant inputs, overlapping output, high-word control, malformed shapes, exact/short budgets and retained unknown-memory provenance. Strictly decoded `PSHUFD` covers all 256 selectors with aliased and distinct destinations against independent dword indexing. `BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` retains native-proof and both source-layout refusals.
 
 `InterpreterSpecialization.Timestamp*` checks complete samples, zero upper halves, independent and repeated reads, preserved registers/flags/memory/segment bases, exact and insufficient budgets, malformed bundles and unknown address origins with independent value/state oracles. `BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery` checks raw completion and continued native-proof/source-layout refusals. Existing `X86_64_Intrinsics` timestamp cases check source emission and single-read full-bit results; `DriverTimestamp` separately checks the shared Unicorn/KVM/WHP clock policy, state preservation, budgets and overflow. Platform skips do not establish backend execution.
+
+`InterpreterSpecialization.CPUQuery*` checks original selectors, all four
+outputs and upper-half clearing, independent repeated queries, exact/short
+budgets, malformed bundles and unknown-address stores. Independent value and
+complete-state oracles cover the recovered operations and preserve unrelated
+registers, flags, memory and segment bases. Timestamp regressions exercise the
+same architecture dispatch. `BinaryLowIRRefinement.CPUQueryCompletesOnlyRawRecovery`
+checks raw completion while retaining native-proof and both source-layout
+refusals. These checks establish no CPU-feature profile or backend execution.
 
 The following behavior uses the default strict audit contract. `NeverDOriginalBinaryUndefinedIndependenceTests` uses independent fixed-map x64 bytes to test physical native CALL/RET, modified return targets, exhaustive finite indirect targets and immutable loads. The same target checks complete direct-branch collection, exact byte/effect/mapping/read-witness binding, outer-return preservation of entry RSP and its return slot, and image-disjoint frame feasibility. Missing or overlapping instructions, unaudited arms outside the exact trap and explicit profile-projection rules, nonterminating or over-budget loops, incomplete target enumeration, profile/contract mismatches and exhausted budgets must refuse without a certificate or residual code. Success requires every feasible native path to finish. This opt-in gate does not certify loop invariants, exception dispatch, CET-enabled execution or native-to-C equivalence; ordinary recovery remains separate. The target also checks strictly lifted `INT3`/`UD2` terminal boundaries and binding of their complete bytes and operation digests. A `Missing` undefined-output sidecar must remain `Missing`; only symbolically unreachable traps may appear in a certificate, while any feasible trap path must return `ContractViolation` without a certificate or residual code. Trap fallthrough and exception recovery are not modeled, `codeFollowsTrap` is not used, and static LowIR API support remains unchanged.
 

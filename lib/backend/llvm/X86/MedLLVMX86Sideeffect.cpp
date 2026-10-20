@@ -41,13 +41,17 @@ bool MedLLVMEmitter::emitX86DebugTrap(const MedOp &Op, Intrinsic IC,
                                       llvm::IRBuilder<> &Builder) {
   using I = Intrinsic;
   switch (IC) {
-  case I::Int3:
-  case I::Int1: {
+  case I::Int3: {
     auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
         Mod, llvm::Intrinsic::debugtrap);
     Builder.CreateCall(Fn, {});
     return true;
   }
+  case I::Int1:
+    // ICEBP raises #DB, whereas llvm.debugtrap lowers to INT3 (#BP).
+    // Emit its byte because the LLVM assembler does not accept either alias.
+    emitVoidInlineAsm(intrinsicAsmMnemonic(IC), Op, Builder);
+    return true;
   case I::IntN: {
     // An interrupt with a register result is value-producing; the value
     // emitter binds that result.

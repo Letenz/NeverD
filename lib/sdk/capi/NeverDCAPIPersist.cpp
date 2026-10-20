@@ -981,8 +981,8 @@ parseOperandFormat(const llvm::json::Object &Object, std::string &Error) {
   Session::OperandFormat Format;
   const auto Base = Object.getString("base");
   if (!Base || !isOperandBase(*Base)) {
-    Error = "an operand's base is number, hex, decimal, binary, char, offset "
-            "or struct";
+    Error = "an operand's base is number, hex, decimal, binary, char, offset, "
+            "struct or enum";
     return std::nullopt;
   }
   Format.Base = Base->str();
@@ -1010,6 +1010,10 @@ parseOperandFormat(const llvm::json::Object &Object, std::string &Error) {
     Format.Type = Name->str();
     Format.Delta = Flags.value_or(false) ? 1 : 0;
     return Format;
+  }
+  if (Object.get("flags")) {
+    Error = "only an enum operand has a flags mode";
+    return std::nullopt;
   }
   if (Format.Base != kStructBase) {
     if (Type || Delta) {
@@ -1072,6 +1076,10 @@ std::optional<Session::DataItem> parseDataItem(const Session &S, va_t Addr,
   }
   Item.Kind = Kind->str();
   const auto Size = Row.getInteger("size");
+  if (Row.get("size") && !Size) {
+    Error = "a data item's size must be an integer";
+    return std::nullopt;
+  }
   std::optional<strings::Encoding> Encoding;
   if (const uint64_t Bytes = sizedItemBytes(*Kind)) {
     if (Size && static_cast<uint64_t>(*Size) != Bytes) {
@@ -1093,8 +1101,7 @@ std::optional<Session::DataItem> parseDataItem(const Session &S, va_t Addr,
     Item.Count = *Count;
     Item.Size = Item.ElementSize * Item.Count;
     Item.Type = Row.getString("type").value_or("").str();
-    if ((Row.get("size") && !Size) ||
-        (Row.get("type") && !Row.getString("type")) ||
+    if ((Row.get("type") && !Row.getString("type")) ||
         (Size && uint64_t(*Size) != Item.Size) || Item.Type.size() > 512 ||
         (Item.Type.empty() && Item.ElementSize != 1 && Item.ElementSize != 2 &&
          Item.ElementSize != 4 && Item.ElementSize != 8)) {

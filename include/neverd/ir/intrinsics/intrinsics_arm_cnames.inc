@@ -41,7 +41,7 @@ C(Intrinsic::ArmVuzp,          "vuzpq");
 C(Intrinsic::ArmVzip,          "vzipq");
 
 // Trap / debug
-C(Intrinsic::ArmBkpt,          "__builtin_debugtrap");
+// BKPT keeps its encoded immediate in assembly; debugtrap chooses a new code.
 C(Intrinsic::ArmHlt,           "__builtin_trap");
 C(Intrinsic::ArmClrex,         "__clrex");
 

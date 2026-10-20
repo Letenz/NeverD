@@ -4,7 +4,7 @@
 // Software interrupts / faults.
 Int3 = 1000, // int3  -> @llvm.debugtrap
     Ud2,     // ud2   -> @llvm.trap
-    Int1,    // icebp / int1 -> debugtrap
+    Int1,    // icebp / int1 -> resumable #DB, not INT3's #BP
     IntN,    // int imm8 (non-3) — extern stub
 
     // Identification / timing.

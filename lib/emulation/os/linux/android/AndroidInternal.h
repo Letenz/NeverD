@@ -263,6 +263,10 @@ private:
   }
   BionicResult unsupportedLinking(llvm::StringRef Detail);
   BionicResult signalAction(const NativeCallEvent &Call);
+  BionicResult signalMask(const NativeCallEvent &Call);
+  BionicResult signalPending(const NativeCallEvent &Call);
+  BionicResult signalHandler(const NativeCallEvent &Call);
+  BionicResult signalSet(const NativeCallEvent &Call);
   llvm::Expected<std::optional<uint64_t>>
   kernelService(linux_model::ServiceKind Kind,
                 const ProcessServiceEvent &Event);

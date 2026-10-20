@@ -4,7 +4,8 @@
 A(Intrinsic::Syscall, "syscall");
 A(Intrinsic::X64Syscall, "syscall");
 A(Intrinsic::X64WindowsSyscall, "syscall");
-A(Intrinsic::Int1, "int1");
+// Keep #DB distinct from INT3's #BP without relying on an assembler alias.
+A(Intrinsic::Int1, ".byte 0xf1");
 A(Intrinsic::IntN, "int");
 A(Intrinsic::Into, "into");
 A(Intrinsic::Rdmsr, "rdmsr");

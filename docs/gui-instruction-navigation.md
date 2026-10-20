@@ -2,7 +2,8 @@
 
 The Search menu offers decoded immediate search (`Alt+I`, repeat `Ctrl+I`).
 Enter a decimal integer or a `0x` hexadecimal integer; negatives match signed
-logical operand values. A sign-extended `-1` in a 32-bit operand matches `-1`
+logical operand values. Leading zeros keep decimal meaning (`010` is ten).
+A sign-extended `-1` in a 32-bit operand matches `-1`
 or `0xffffffff`, not `0xffffffffffffffff`. Instruction matches retain every
 matching operand index and occupy one pagination row. The direction follows
 the existing Search direction setting; wraparound is a frontend operation.
@@ -12,6 +13,8 @@ including for reverse results. It does not assert reachability. Failed decoding
 or unknown instruction modes leave explicit gaps and resume only at known
 function or image entries. The UI reports partial coverage. This is not a byte
 pattern search, and memory displacements are not immediate operands.
+Newly discovered or removed function entries rebuild the search index; name
+and extent changes alone preserve cached decoding and matching progress.
 
 In disassembly, select an instruction and a register token. `Shift+Alt+Up`
 lists reaching definitions before that instruction; `Shift+Alt+Down` lists

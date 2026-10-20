@@ -10,6 +10,7 @@
 #include "SessionImpl.h"
 
 #include "neverd/decode/NativeOperands.h"
+#include "neverd/support/NumericInput.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -26,22 +27,35 @@ llvm::json::Object neverd::sdk::searchNativeImmediates(Session &S,
     throw std::invalid_argument(
         "Immediate search requires a native x86 or ARM image");
   bool Signed = Pattern.starts_with("-");
-  uint64_t Wanted = 0;
   if (Signed)
     Pattern = Pattern.drop_front();
-  if (Pattern.empty() || Pattern.getAsInteger(0, Wanted) ||
-      (Signed && Wanted > (uint64_t(1) << 63)))
+  const auto Magnitude = parseUnsignedDecimalOrHex(
+      std::string_view(Pattern.data(), Pattern.size()));
+  if (!Magnitude || (Signed && *Magnitude > (uint64_t(1) << 63)))
     throw std::invalid_argument(
         "Enter a signed decimal or hexadecimal integer within 64 bits");
+  const uint64_t Wanted = *Magnitude;
   Signed = Signed && Wanted != 0;
   auto &Index = S.ImmediateIndex;
-  if (!Index.Initialized) {
-    S.synchronizeFunctions();
+  if (!S.synchronizeFunctions())
+    throw std::invalid_argument("Cannot synchronize native function entries");
+  if (!Index.Initialized || Index.FunctionRevision != S.FunctionListRevision) {
+    std::vector<va_t> Seeds;
     if (S.Img.Entry)
-      Index.Seeds.push_back(S.Img.Entry);
+      Seeds.push_back(S.Img.Entry);
     for (const auto &F : S.Functions)
-      Index.Seeds.push_back(F.Entry);
-    std::sort(Index.Seeds.begin(), Index.Seeds.end());
+      Seeds.push_back(F.Entry);
+    std::sort(Seeds.begin(), Seeds.end());
+    Seeds.erase(std::unique(Seeds.begin(), Seeds.end()), Seeds.end());
+    // Analysis and navigation can publish entries after an earlier search
+    // skipped an undecodable range. Names and extents alone do not change
+    // decode boundaries, so they keep the warm index and match progress.
+    if (Index.Initialized && Seeds != Index.Seeds)
+      Index = {};
+    Index.Seeds = std::move(Seeds);
+    Index.FunctionRevision = S.FunctionListRevision;
+  }
+  if (!Index.Initialized) {
     for (size_t N = 0; N < S.Img.Segments.size(); ++N)
       if (S.Img.Segments[N].isExecutable() && !S.Img.Segments[N].Data.empty())
         Index.Segments.push_back(N);

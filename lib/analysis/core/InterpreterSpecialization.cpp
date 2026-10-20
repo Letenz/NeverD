@@ -2347,12 +2347,9 @@ bool Specializer::evaluate(int Id) {
                       UsesReservedTemporary))
         return fail(SpecializationStatus::InvalidInput,
                     "native temporary overlaps the reserved dispatch range");
-    const NdVar TimestampSample = NdVar::tmp(FrameValueTemp, 8);
-    const auto Timestamp =
-        Options.ExplicitMachineState && Options.NormalNonfaultingExecution &&
-                Options.ByteOrder == llvm::endianness::little
-            ? x64::lowerRuntimeTimestampRead(Instruction, TimestampSample)
-            : std::nullopt;
+    const NdVar ReadSample = NdVar::tmp(DispatchTargetTemp + 8, 16);
+    const auto RuntimeRead =
+        lowerRuntimeRegisterRead(Instruction, Options, ReadSample);
     std::vector<LowOp> Operations = Instruction.Ops;
     std::optional<SpecializationExternalExit> ExternalExit;
     for (const auto &Declaration : Options.X64MachineExits) {
@@ -2531,8 +2528,8 @@ bool Specializer::evaluate(int Id) {
         return fail(SpecializationStatus::BudgetExceeded,
                     "specialization symbolic-node budget exhausted");
       LowOp Original = Operations[I];
-      const bool TimestampOperation = Timestamp && I == 0;
-      if (!TimestampOperation && !supported(Original, Options))
+      const bool RuntimeReadOperation = RuntimeRead && I == 0;
+      if (!RuntimeReadOperation && !supported(Original, Options))
         return fail(SpecializationStatus::Unsupported,
                     std::string("unsupported specialization operation: ") +
                         ndOpName(Original.Opcode));
@@ -3073,23 +3070,30 @@ bool Specializer::evaluate(int Id) {
       // Do not seed certified reads by pretending a guest STORE happened:
       // that would clobber retained frame facts under the correct alias rules.
       StepResult Flow = StepResult::Continue;
-      if (TimestampOperation) {
-        State.write(SymSpace::Temporary, TimestampSample.Offset,
-                    State.freshInput("x64_rdtsc", 64));
-        for (const auto &Scalar : Timestamp->Ops) {
+      if (RuntimeReadOperation) {
+        if (!RuntimeRead->SampleBytes ||
+            RuntimeRead->SampleBytes > ReadSample.Size)
+          return fail(SpecializationStatus::InvalidInput,
+                      "invalid runtime read sample width");
+        State.write(
+            SymSpace::Temporary, ReadSample.Offset,
+            State.freshInput("runtime_read", RuntimeRead->SampleBytes * 8));
+        for (const auto &Scalar : RuntimeRead->Ops) {
           if (++Result.EvaluatedOperations > Options.MaxOperations)
             return fail(SpecializationStatus::BudgetExceeded,
-                        "timestamp transition operation budget exhausted");
-          if (Exec.step(Scalar) != StepResult::Continue)
+                        "runtime read transition operation budget exhausted");
+          if (lowMemoryOperands(Scalar).Complete ||
+              Exec.step(Scalar) != StepResult::Continue)
             return fail(SpecializationStatus::Unsupported,
-                        "symbolic timestamp transition was not exact");
+                        "symbolic runtime read transition was not exact");
           if (Ctx.numNodes() > Options.MaxSymbolicNodes)
-            return fail(SpecializationStatus::BudgetExceeded,
-                        "timestamp transition symbolic-node budget exhausted");
+            return fail(
+                SpecializationStatus::BudgetExceeded,
+                "runtime read transition symbolic-node budget exhausted");
         }
-        // Only these two outputs are defined by this native occurrence. Their
-        // clock-derived bits grant no external-pointer or frame-alias fact.
-        for (const NdVar &Output : Timestamp->PlaceholderOutputs) {
+        // Only these outputs are defined by this native occurrence. Runtime
+        // answers grant no external-pointer or frame-alias fact.
+        for (const NdVar &Output : RuntimeRead->PlaceholderOutputs) {
           setUnsafeOrigin(Output, true, Origins);
           for (uint16_t B = 0; B < Output.Size; ++B)
             DefinedTemporaries.insert(Output.Offset + B);

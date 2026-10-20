@@ -1327,7 +1327,10 @@ TEST(ResumableTrapBoundary,
           EXPECT_EQ(Source.find("__debugbreak(3)"), std::string::npos)
               << Source;
           const std::string Trap =
-              !LLVMRoute && std::string(Case.Name) == "int1" ? "int1"
+              std::string(Case.Name) == "int1"
+                  ? (LLVMRoute ? ".byte 0xf1" : "_emit 0xf1")
+              : std::string(Case.Name).find("bkpt") != std::string::npos
+                  ? "bkpt #"
               : std::string(Case.Name).find("udf") != std::string::npos
                   ? "udf #"
               : Case.Architecture == Arch::X86 || Case.Architecture == Arch::X64

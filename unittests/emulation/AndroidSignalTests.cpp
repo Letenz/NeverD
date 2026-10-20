@@ -13,6 +13,7 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/JSON.h"
 
+#include <algorithm>
 #include <tuple>
 
 namespace neverd::emulation {
@@ -20,6 +21,34 @@ namespace {
 constexpr uint64_t Buffer = 0x20000000;
 constexpr LinuxSignalAction Initial{0x123456789abcdef0, 0x10000004,
                                     0xfedcba9876543210, 0x8000000000000001};
+
+TEST(AndroidSignalState, UnknownMasksAndWaitingRecipientsRemainExplicit) {
+  LinuxSignalOptions Options;
+  linux_model::LinuxSignals Signals{Options};
+  ProcessResult R;
+  EXPECT_FALSE(Signals.send(1000, 10, 1000, R));
+  EXPECT_NE(R.Diagnostic.find("known thread mask"), std::string::npos);
+  EXPECT_FALSE(Signals.mask(1000, 2, 512, true, R));
+  ASSERT_TRUE(Signals.mask(1000, 2, 512, false, R));
+  Signals.inherit(1000, 1001);
+  EXPECT_EQ(Signals.mask(1001, 0, std::nullopt, true, R)->Previous, 512u);
+  ASSERT_TRUE(Signals.mask(1001, 2, 0, false, R));
+  char ChildState = 'S';
+  Signals.setTaskProvider([&] {
+    return std::vector<linux_model::ProcTask>{{1000, 'R'}, {1001, ChildState}};
+  });
+  EXPECT_FALSE(Signals.send(1000, 10, 1000, R));
+  EXPECT_NE(R.Diagnostic.find("waiting thread"), std::string::npos);
+  EXPECT_EQ(Signals.pending(1000, R), 0u);
+  ChildState = 'R';
+  ASSERT_EQ(Signals.send(1000, 10, 1000, R), 0u);
+  ASSERT_EQ(Signals.send(1000, 10, 1000, R), 0u);
+  EXPECT_EQ(Signals.pending(1000, R), 512u);
+  EXPECT_EQ(Signals.pending(1001, R), 0u);
+  Signals.retire(1001);
+  EXPECT_FALSE(Signals.mask(1001, 0, std::nullopt, true, R));
+}
+
 class AndroidSignals : public testing::TestWithParam<
                            std::tuple<const char *, ExecutionBackendKind>> {
 protected:
@@ -252,6 +281,215 @@ TEST_P(AndroidSignals, KillQueryAndInvalidSignalsPreserveWidthErrnoAndMemory) {
     EXPECT_EQ(InvalidTarget.Stop, ProcessStopReason::Returned);
     EXPECT_EQ(InvalidTarget.ReturnValue, Op == 2 ? uint64_t(-22) : UINT64_MAX);
     EXPECT_FALSE(InvalidTarget.TerminationSignal);
+  }
+}
+
+TEST_P(AndroidSignals, DeliveryExecutesHandlersAndRestoresGuestContexts) {
+  Options.LinuxSignals->InitialMask = 0;
+  Options.LinuxSignals->AlternateStackDisabled = true;
+  Options.Android->Libraries["libsignals-model.so"] = {"kill"};
+  input().assign(8192, 0);
+  for (uint64_t Mode : {0, 1, 2, 3, 5, 6, 7, 11}) {
+    for (uint64_t Op : {0, 1, 2, 3}) {
+      SCOPED_TRACE(Mode);
+      SCOPED_TRACE(Op);
+      const auto R = run("signal_delivery", {Op, Mode, Buffer});
+      ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+      EXPECT_EQ(R.ReturnValue, 0u);
+      auto Expected = input();
+      if (Mode != 6) {
+        put(Expected, 0, Mode == 2 ? 3 : Mode == 3 ? 2 : 1);
+        put(Expected, 8, 10);
+        put(Expected, 16, Mode == 2 ? 2048 : 2560);
+        put(Expected, 48, Mode == 2 ? 2048 : 0);
+        put(Expected, 56, (uint64_t(1000) << 32) | 1000);
+        put(Expected, 72, Mode == 2 ? 3 : 1);
+        put(Expected, 96, 1);
+        put(Expected, 120, 1000);
+        EXPECT_TRUE(std::any_of(
+            R.Services.begin(), R.Services.end(),
+            [](const auto &S) { return S.Number == 139 && !S.Result; }));
+      }
+      if (Mode == 1 || Mode == 6)
+        put(Expected, 80, 512);
+      if (Mode == 3)
+        put(Expected, 104, 512);
+      if (Mode == 5) {
+        put(Expected, 40, 4096);
+        put(Expected, 64, 0x1234);
+      }
+      put(Expected, 112, 0x55);
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+    }
+  }
+}
+
+TEST_P(AndroidSignals, DeliveryResetAndDefaultActionsRetainTermination) {
+  input().assign(8192, 0);
+  Options.LinuxSignals->InitialMask = 0;
+  Options.LinuxSignals->AlternateStackDisabled = true;
+  auto R = run("signal_delivery", {0, 4, Buffer});
+  ASSERT_EQ(R.Stop, ProcessStopReason::Signaled) << R.Diagnostic;
+  EXPECT_EQ(R.TerminationSignal, 10u);
+  EXPECT_FALSE(R.ReturnValue);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(llvm::support::endian::read64le(R.MemorySnapshots[0].Bytes.data()),
+            1u);
+  EXPECT_EQ(
+      llvm::support::endian::read64le(R.MemorySnapshots[0].Bytes.data() + 112),
+      0u);
+  Options.LinuxSignals->Actions[15] = {};
+  R = run("signal_send", {2, 1000, 15, Buffer});
+  EXPECT_EQ(R.Stop, ProcessStopReason::Signaled);
+  EXPECT_EQ(R.TerminationSignal, 15u);
+  for (int Signal : {17, 23, 28}) {
+    Options.LinuxSignals->Actions[Signal] = {};
+    R = run("signal_send", {2, 1000, uint64_t(Signal), Buffer});
+    EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+    EXPECT_EQ(R.ReturnValue, 0u);
+  }
+}
+
+TEST_P(AndroidSignals, DeliveryRejectsUnknownStackAndMalformedReturnFrames) {
+  input().assign(8192, 0);
+  Options.LinuxSignals->InitialMask = 0;
+  auto R = run("signal_delivery", {0, 0, Buffer});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("signal frame"), std::string::npos);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, input());
+  Options.LinuxSignals->AlternateStackDisabled = true;
+  for (uint64_t Mode : {8, 9, 10}) {
+    R = run("signal_delivery", {0, Mode, Buffer});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(R.Diagnostic.find("signal return frame"), std::string::npos);
+    EXPECT_FALSE(R.ReturnValue);
+    ASSERT_FALSE(R.Services.empty());
+    EXPECT_EQ(R.Services.back().Number, 139u);
+    EXPECT_FALSE(R.Services.back().Result);
+  }
+}
+
+TEST_P(AndroidSignals, DeliveryThreadMasksInheritButPendingRemainsProcessWide) {
+  input().assign(8192, 0);
+  Options.LinuxSignals->InitialMask = 0;
+  Options.LinuxSignals->AlternateStackDisabled = true;
+  Options.Android->ThreadLimit = 2;
+  const auto R = run("signal_thread_masks", {Buffer});
+  ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+  auto Expected = input();
+  for (auto [Index, Value] : {std::pair<unsigned, uint64_t>{0, 1},
+                              {1, 10},
+                              {2, 2560},
+                              {7, (uint64_t(1000) << 32) | 1000},
+                              {9, 1},
+                              {12, 1},
+                              {15, 1001},
+                              {16, 512},
+                              {17, 77},
+                              {18, 512},
+                              {20, 1}})
+    put(Expected, Index * 8, Value);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+  ASSERT_EQ(R.NativeThreads.size(), 2u);
+  EXPECT_TRUE(R.NativeThreads[1].Finished);
+  EXPECT_EQ(R.NativeThreads[1].ReturnValue, 77u);
+}
+
+TEST_P(AndroidSignals, DeliveryMaskABIsPreserveCopyOrderingAndReservedSignals) {
+  Options.LinuxSignals->InitialMask = 1ULL << 12;
+  for (uint64_t Op : {0, 1, 2, 3}) {
+    input().assign(8192, 0);
+    const auto Sequence = run("signal_mask_sequence", {Op, Buffer});
+    ASSERT_EQ(Sequence.Stop, ProcessStopReason::Returned)
+        << Sequence.Diagnostic;
+    EXPECT_EQ(Sequence.ReturnValue, 0u);
+    auto MaskBytes = input();
+    const uint64_t Allowed = UINT64_MAX & ~((1ULL << 8) | (1ULL << 18));
+    put(MaskBytes, 0, 4096);
+    put(MaskBytes, 8, Op < 2 ? Allowed & ~(0xfULL << 31) : Allowed);
+    put(MaskBytes, 16, Allowed & ~(0xfULL << 31) & ~(1ULL << 9));
+    put(MaskBytes, 24, 73);
+    ASSERT_EQ(Sequence.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(Sequence.MemorySnapshots[0].Bytes, MaskBytes);
+    input().assign(8192, 0xa5);
+    put(input(), 0, UINT64_MAX);
+    auto R =
+        run("signal_mask_call", {Op, 2, Buffer, Buffer + 8, 8, Buffer + 512});
+    ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+    EXPECT_EQ(R.ReturnValue, 0u);
+    auto Expected = input();
+    put(Expected, 8, 1ULL << 12);
+    llvm::support::endian::write32le(Expected.data() + 512, 73);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+    R = run("signal_mask_call", {Op, 99, 0, Buffer + 8, 8, Buffer + 512});
+    EXPECT_EQ(R.Stop, ProcessStopReason::Returned);
+    EXPECT_EQ(R.ReturnValue, 0u); // how is irrelevant without an input set.
+    R = run("signal_mask_call", {Op, 99, Buffer, 0, 8, Buffer + 512});
+    EXPECT_EQ(R.Stop, ProcessStopReason::Returned);
+    EXPECT_EQ(R.ReturnValue, Op == 2 ? uint64_t(-22) : UINT64_MAX);
+    R = run("signal_mask_call", {Op, 2, Buffer, 1, 8, Buffer + 512});
+    if (Op == 0)
+      EXPECT_EQ(R.Stop, ProcessStopReason::RuntimeFailure);
+    else {
+      EXPECT_EQ(R.Stop, ProcessStopReason::Returned);
+      EXPECT_EQ(R.ReturnValue, Op == 2 ? uint64_t(-14) : UINT64_MAX);
+    }
+  }
+}
+
+TEST_P(AndroidSignals, DeliveryConvenienceFunctionsUseTheSameActionTable) {
+  input().assign(8192, 0);
+  Options.LinuxSignals->InitialMask = 0;
+  Options.LinuxSignals->AlternateStackDisabled = true;
+  Options.LinuxSignals->Actions[10] = {};
+  const auto R = run("signal_convenience", {Buffer});
+  ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+  auto Expected = input();
+  for (auto [Index, Value] : {std::pair<unsigned, uint64_t>{0, 10},
+                              {4, 1ULL << 63},
+                              {5, 1},
+                              {9, UINT64_MAX},
+                              {10, UINT64_MAX},
+                              {11, 22},
+                              {12, UINT64_MAX},
+                              {13, 22}})
+    put(Expected, Index * 8, Value);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+}
+
+TEST_P(AndroidSignals, DeliveryPreservesIntegerVectorAndFPControlState) {
+  input().assign(8192, 0);
+  Options.LinuxSignals->InitialMask = 0;
+  Options.LinuxSignals->AlternateStackDisabled = true;
+  for (uint64_t Mode : {0, 14}) {
+    const auto R = run("signal_registers", {Mode, Buffer});
+    ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+    EXPECT_EQ(R.ReturnValue, 0u);
+    auto Expected = input();
+    for (auto [Index, Value] : {std::pair<unsigned, uint64_t>{0, 1},
+                                {1, 10},
+                                {2, 2560},
+                                {7, (uint64_t(1000) << 32) | 1000},
+                                {9, 1},
+                                {12, 1},
+                                {15, 1000},
+                                {32, Mode == 14 ? 0x987u : 0x988u},
+                                {33, 0x654},
+                                {34, 0x3c3c3c3c3c3c3c3cULL},
+                                {35, 0x3c3c3c3c3c3c3c3cULL},
+                                {36, 0x400000},
+                                {37, 0x8000000},
+                                {38, 0xa0000000}})
+      put(Expected, Index * 8, Value);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
   }
 }
 

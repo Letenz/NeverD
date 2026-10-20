@@ -59,6 +59,11 @@ is optional. Alignment computes its span through the next boundary; at an
 already aligned address it marks a complete unit. `--boundary` defaults to 16
 and cannot combine with `--size`.
 
+Numeric presentation options (`--size`, `--element-size`, `--count`,
+`--boundary`, `--operand` and structure `--delta`) use decimal by default,
+including leading zeros. Use `0x` or `0X` for hexadecimal. For example,
+`--count 010` means ten elements, matching the GUI.
+
 `types --declare --save` (also spelled `--save-declarations`) keeps successfully parsed declarations in the binary's
 project for subsequent commands and GUI sessions. Without `--save`, declarations
 remain local to the current `types` invocation. Saving requires a binary and

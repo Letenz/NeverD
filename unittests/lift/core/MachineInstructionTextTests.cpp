@@ -585,7 +585,8 @@ TEST(MachineInstructionText, HighCPrintsTheInstruction) {
             std::string::npos)
       << C;
   C = highC(Arch::ARM, Intrinsic::ArmBkpt, 0x1, 2);
-  EXPECT_NE(C.find("__builtin_debugtrap(); /* bkpt #0x1 */"), std::string::npos)
+  EXPECT_NE(C.find("__asm__ volatile(\"bkpt #0x1\" ::: \"memory\")"),
+            std::string::npos)
       << C;
   // A barrier's ACLE intrinsic takes the option.
   C = highC(Arch::AArch64, Intrinsic::Dmb, 0x9, 1);

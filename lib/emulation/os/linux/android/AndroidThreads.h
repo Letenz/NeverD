@@ -32,9 +32,10 @@ public:
   GuestThreads(ExecutionBackend &CPU, const IntegerABI &Calls,
                const ProcessOptions &Options, ProcessResult &Result,
                linux_model::LinuxClock &Clock,
-               linux_model::LinuxPriority &PriorityState)
+               linux_model::LinuxPriority &PriorityState,
+               linux_model::LinuxSignals &Signals)
       : CPU(CPU), Calls(Calls), Options(Options), Result(Result), Clock(Clock),
-        PriorityState(PriorityState) {}
+        PriorityState(PriorityState), Signals(Signals) {}
   llvm::Error initialize(uint64_t StackBase);
   llvm::Error validateTLS();
   bool enabled() const { return Options.Android->ThreadLimit > 1; }
@@ -113,6 +114,7 @@ private:
   ProcessResult &Result;
   linux_model::LinuxClock &Clock;
   linux_model::LinuxPriority &PriorityState;
+  linux_model::LinuxSignals &Signals;
   std::deque<Thread> Threads;
   size_t Current = 0;
   uint32_t LastExitStatus = 0;
