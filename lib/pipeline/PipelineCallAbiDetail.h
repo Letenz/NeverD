@@ -14,6 +14,7 @@
 #define NEVERD_LIB_PIPELINE_PIPELINECALLABIDETAIL_H
 
 #include "neverd/Common.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/DataSymbolBinding.h"
@@ -188,6 +189,11 @@ struct OmittedCalleeMemo {
   /// cache's, the index serves until the memo adopts another image or the
   /// cache is reset.
   const ExecutableCodeOwnerIndex &codeOwners();
+  /// The addresses that name a runtime routine one intrinsic models in the
+  /// image the memo adopted (runtimeRoutineCallsOf), read for the
+  /// conversions of the callees read of it where they first need them, and
+  /// kept until the memo adopts another image or the cache is reset.
+  const std::map<va_t, Intrinsic> &runtimeRoutineCalls();
 
   std::map<va_t, Callee> Callees;
 
@@ -199,6 +205,7 @@ private:
   std::set<va_t> FunctionEntries;
   std::map<va_t, PointerVariableCallee> PointerCallees;
   std::optional<ExecutableCodeOwnerIndex> CodeOwners;
+  std::optional<std::map<va_t, Intrinsic>> RuntimeRoutineCalls;
   size_t Bytes = 0;
   uint64_t Clock = 0;
 };

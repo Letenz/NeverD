@@ -117,6 +117,7 @@ void OmittedCalleeMemo::adopt(const BinaryImage &Img,
   FunctionEntries = calleeLiftEntries(Img);
   PointerCallees = collectPointerVariableCallees(Img);
   CodeOwners.reset();
+  RuntimeRoutineCalls.reset();
   Callees.clear();
   Bytes = 0;
 }
@@ -125,6 +126,12 @@ const ExecutableCodeOwnerIndex &OmittedCalleeMemo::codeOwners() {
   if (!CodeOwners)
     CodeOwners.emplace(*Image);
   return *CodeOwners;
+}
+
+const std::map<va_t, Intrinsic> &OmittedCalleeMemo::runtimeRoutineCalls() {
+  if (!RuntimeRoutineCalls)
+    RuntimeRoutineCalls = runtimeRoutineCallsOf(*Image, Image->Arch);
+  return *RuntimeRoutineCalls;
 }
 
 OmittedCalleeMemo::Conversion *
@@ -340,6 +347,7 @@ public:
       Converter.setCallEntryArgumentCounts(
           &omittedCalleeArgumentCounts(Result));
       Converter.setCallSummaryKeysRead(&Keys);
+      Converter.setRuntimeRoutineCalls(&runtimeRoutineCalls());
       MedFunc Med = Converter.convert(Lifted, Img.Arch, Img.abiFormat());
       size_t MedOperations = 0;
       for (const auto &Block : Med.Blocks)
@@ -369,6 +377,16 @@ public:
   }
 
 private:
+  /// The runtime routines every conversion reads: the memo's, or the
+  /// reader's own, read once.
+  const std::map<va_t, Intrinsic> &runtimeRoutineCalls() {
+    if (Memo)
+      return Memo->runtimeRoutineCalls();
+    if (!OwnRuntimeRoutineCalls)
+      OwnRuntimeRoutineCalls = runtimeRoutineCallsOf(Img, Img.Arch);
+    return *OwnRuntimeRoutineCalls;
+  }
+
   const BinaryImage &Img;
   const PipelineResult &Result;
   OmittedCalleeMemo *Memo;
@@ -377,6 +395,7 @@ private:
   Decoder Dec;
   std::optional<ExecutableCodeOwnerIndex> Owners;
   bool OwnersLent = false;
+  std::optional<std::map<va_t, Intrinsic>> OwnRuntimeRoutineCalls;
   CFGBuilder Builder;
 };
 
