@@ -207,6 +207,15 @@ conditional memory, invocation lifetime and both C routes remain open.
 
 ## Closed control-flow regressions
 
+- Cross-architecture trap padding uses mode-aware ARM/Thumb/AArch64 NOP
+  recognition. Malformed or missing owned continuation bytes retain explicit
+  failure accounting, and cold-fragment ends bound calls/traps even without a
+  separate unwind record. Adjacent owned fragments and real continuations remain
+  controls across the shared metadata paths.
+- Boolean-result normalization consumes the current void BRK shape and the
+  shared code-sensitive termination rule. Actual lifted fatal BRKs qualify;
+  debugger BRKs, missing codes, stale outputs and mismatched immutable bytes
+  do not. This closes the stale consumer left by the earlier return-register fix.
 - Consecutive debugger breaks preserve owned continuations. Bounded lookahead
   distinguishes unsized continuations from trap/NOP padding before independent
   entries. Padding guesses alone do not stop fallthrough, and full/selected

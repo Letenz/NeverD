@@ -1754,6 +1754,14 @@ breaks; a reached cold block can continue beyond its primary range.
 `NeverDNoReturnTests` checks that only fatal BRK codes propagate no-return to
 callers. `NeverDMachineInstructionTextTests` preserves raw UDF/HLT inline
 assembly without replacing its continuation with a non-returning C builtin.
+The boundary suite also covers ARM/Thumb/AArch64 NOP padding, owned versus
+unowned continuations, malformed/truncated/missing owned bytes, instructions
+straddling metadata ends, and cold-fragment ends without separate unwind
+records. Calls and traps share the fragment-end controls; adjacent fragments
+still continue. `NativeBooleanResultProof` feeds the actual lifted fatal BRK
+into normalization and rejects debugger, missing-code and stale-output variants.
+`SwiftBooleanProjection` requires the LowIR code to match immutable machine
+bytes and rejects a debugger BRK even when it has no CFG successor.
 
 `NeverDX86EncodingAccuracyTests` requires raw illegal LOCK forms (including
 memory-source arithmetic and multi-byte NOP) and MOV-to-CS to fail in every

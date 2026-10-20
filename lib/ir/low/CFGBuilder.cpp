@@ -512,7 +512,7 @@ std::set<va_t> frameReleasingIndirectJumps(const BinaryImage &Img,
 // CFGBuilder
 //===----------------------------------------------------------------------===//
 
-bool CFGBuilder::codeFollowsTrap(const Decoder &Dec, va_t Next) const {
+bool CFGBuilder::codeFollowsTrap(const Decoder &Dec, va_t Next) {
   const BinaryImage &Img = *CurrentImg;
   // Keep this decoder separate: a peek must not consume Thumb IT state.
   Decoder PeekDecoder;
@@ -522,6 +522,12 @@ bool CFGBuilder::codeFollowsTrap(const Decoder &Dec, va_t Next) const {
                                 Next < CurrentFuncRange->second
                             ? CurrentFuncRange->second
                             : InvalidVA;
+  const auto Owns = [&](va_t Address) {
+    return (AuthoritativeCurrentFuncRange &&
+            Address >= AuthoritativeCurrentFuncRange->first &&
+            Address < AuthoritativeCurrentFuncRange->second) ||
+           isCurrentOwnedFragment(Address);
+  };
   size_t Scanned = 0;
   while (Scanned <= limits::kMaxAlignmentPaddingBytes) {
     if (isTailCallTarget(Next, /*IncludeBoundaryGuesses=*/false))
@@ -529,35 +535,55 @@ bool CFGBuilder::codeFollowsTrap(const Decoder &Dec, va_t Next) const {
     const bool OwnedFragment = isCurrentOwnedFragment(Next);
     if (Next >= RangeEnd && !OwnedFragment)
       return false;
+    const bool Owned = Owns(Next);
+    const auto Fail = [&](bool Truncated) {
+      // Size evidence makes this a real continuation. A failed peek cannot
+      // turn malformed or missing owned code into a complete function.
+      if (!Owned)
+        return false;
+      (Truncated ? TruncatedPathAddresses : DecodeFailureAddresses)
+          .insert(Next);
+      // Retain the attempted fallthrough in final reachability accounting.
+      // Do not retry with the unbounded decoder and read past its owner.
+      ExploredAddrs.insert(Next);
+      return true;
+    };
     const Segment *Seg = Img.getSegmentFor(Next);
     if (!Seg || Next < Seg->VA || !Img.hasExecutableCodeOwnerAt(Next))
-      return false;
+      return Fail(/*Truncated=*/true);
     const size_t Offset = static_cast<size_t>(Next - Seg->VA);
     if (Offset >= Seg->Data.size())
-      return false;
+      return Fail(/*Truncated=*/true);
     size_t Available = Seg->Data.size() - Offset;
     if (Next < RangeEnd)
       Available = std::min<uint64_t>(Available, RangeEnd - Next);
     if (!PeekDecoder.selectMode(Img, Next, Dec.currentMode()))
-      return false;
+      return Fail(/*Truncated=*/false);
     PeekDecoder.setDetail(false);
     DecodedInsn Peek;
     const int Size = PeekDecoder.decodeOneLight(Seg->Data.data() + Offset,
                                                 Available, Next, Peek);
-    if (Size <= 0 || static_cast<uint64_t>(Size) > InvalidVA - Next ||
-        !Img.hasExecutableCodeOwnerRange(Next, static_cast<uint64_t>(Size)))
-      return false;
+    if (Size <= 0 || static_cast<uint64_t>(Size) > InvalidVA - Next)
+      return Fail(/*Truncated=*/false);
+    if (!Img.hasExecutableCodeOwnerRange(Next, static_cast<uint64_t>(Size)))
+      return Fail(/*Truncated=*/true);
     const va_t End = Next + Size;
+    if (Img.Arch == Arch::ARM &&
+        Img.instructionModeAt(End - 1, PeekDecoder.currentMode()) !=
+            PeekDecoder.currentMode())
+      return Fail(/*Truncated=*/false);
     // Sized ownership admits each breakpoint, even a long consecutive run.
     // A next-entry bound alone cannot distinguish a body from linker padding.
-    if ((AuthoritativeCurrentFuncRange &&
-         Next >= AuthoritativeCurrentFuncRange->first &&
-         End <= AuthoritativeCurrentFuncRange->second) ||
-        (OwnedFragment && isCurrentOwnedFragment(End - 1)))
+    if (Owned) {
+      for (va_t Address = Next; Address != End; ++Address)
+        if (!Owns(Address))
+          return Fail(/*Truncated=*/false);
       return true;
+    }
     const bool Padding = PeekDecoder.isResumableTrap(Peek) ||
                          alignmentNopLength(Img.Arch, Seg->Data.data() + Offset,
-                                            Size) == static_cast<size_t>(Size);
+                                            Size, PeekDecoder.currentMode()) ==
+                             static_cast<size_t>(Size);
     if (!Padding)
       return true;
     // With no size evidence, look through a bounded run for real code before

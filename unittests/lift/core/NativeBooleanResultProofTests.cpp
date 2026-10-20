@@ -1,6 +1,7 @@
 #include "../../../lib/ir/low/SourceBooleanResultProof.h"
 #include "gtest/gtest.h"
 
+#include "neverd/decode/Decoder.h"
 #include "neverd/lift/AArch64Regs.h"
 
 using namespace neverd;
@@ -662,19 +663,25 @@ TEST(NativeBooleanResultProof, EveryPhysicalJoinAndLoopPathMustBeSafe) {
 
 TEST(NativeBooleanResultProof, TerminalBrkPathHasNoBooleanObservation) {
   Fixture F;
-  const auto Brk =
-      operation(NdOp::INTRINSIC, NdVar::reg(a64reg::X0, 8),
-                {NdVar::cst(static_cast<uint64_t>(Intrinsic::Brk), 2)});
-  F.Low.Blocks = {block(0, 0x1000,
-                        {call(), operation(NdOp::COND_BR, {},
-                                           {NdVar::cst(0x1010, 8),
-                                            NdVar::reg(a64reg::X2, 1)})},
-                        {}, {1, 2}),
-                  block(1, 0x1008,
-                        {mask(a64reg::X0, a64reg::X0),
-                         operation(NdOp::BRANCH, {}, {NdVar::cst(0x1018, 8)})},
-                        {0}, {3}),
-                  block(2, 0x1010, {Brk}, {0}), block(3, 0x1018, {ret()}, {1})};
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::AArch64));
+  const uint8_t Bytes[] = {0x20, 0, 0x20, 0xd4}; // BRK #1.
+  DecodedInsn Insn;
+  ASSERT_EQ(Dec.decodeOneForLift(Bytes, sizeof(Bytes), 0x1010, Insn), 4);
+  std::vector<LowOp> Ops;
+  Dec.liftToLow(Insn, Ops);
+  ASSERT_EQ(Ops.size(), 1u);
+  F.Low.Blocks = {
+      block(0, 0x1000,
+            {call(),
+             operation(NdOp::COND_BR, {},
+                       {NdVar::cst(0x1010, 8), NdVar::reg(a64reg::X2, 1)})},
+            {}, {1, 2}),
+      block(1, 0x1008,
+            {mask(a64reg::X0, a64reg::X0),
+             operation(NdOp::BRANCH, {}, {NdVar::cst(0x1018, 8)})},
+            {0}, {3}),
+      block(2, 0x1010, std::move(Ops), {0}), block(3, 0x1018, {ret()}, {1})};
   F.bindCalls();
   ASSERT_TRUE(source_boolean_result_detail::terminalBrk(F.Low.Blocks[2]));
   EXPECT_TRUE(F.prove());
@@ -682,6 +689,16 @@ TEST(NativeBooleanResultProof, TerminalBrkPathHasNoBooleanObservation) {
   Trap.Ops[0].Inputs[0].Offset = static_cast<uint64_t>(Intrinsic::Hlt_A64);
   EXPECT_FALSE(F.prove());
   Trap.Ops[0].Inputs[0].Offset = static_cast<uint64_t>(Intrinsic::Brk);
+  Trap.Ops[0].Inputs[1].Offset = 0xf000; // A debugger can resume here.
+  EXPECT_FALSE(F.prove());
+  Trap.Ops[0].Inputs[1].Offset = 1;
+  Trap.Ops[0].NumInputs = 1; // Missing code cannot prove a fatal BRK.
+  EXPECT_FALSE(F.prove());
+  Trap.Ops[0].NumInputs = 2;
+  Trap.Ops[0].Output = NdVar::reg(a64reg::X0, 8);
+  EXPECT_FALSE(F.prove());
+  Trap.Ops[0].Output = {};
+  EXPECT_TRUE(F.prove());
   Trap.Succs.push_back(3);
   EXPECT_FALSE(F.prove());
 }

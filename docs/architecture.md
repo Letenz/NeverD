@@ -3260,7 +3260,13 @@ Consecutive debugger breaks remain code inside an authoritative function range
 or an explicitly owned fragment. Without that ownership, a bounded look through
 trap/NOP alignment must find code before another function entry; reaching that
 entry or exhausting the lookahead keeps the original stop. Peeks cannot consume
-the caller's decoder state. The shared symbol inventory distinguishes confirmed
+the caller's decoder state. Alignment recognition includes ARM, Thumb (narrow
+and wide) and AArch64 NOPs in the active instruction mode. A failed decode or
+missing byte inside an authoritative continuation remains a coverage failure;
+it cannot silently turn into a complete trap-terminated function. Explicit
+cold-fragment ends also bound calls and traps when no separate unwind record
+describes the fragment. An adjacent owned fragment still continues.
+The shared symbol inventory distinguishes confirmed
 entries from padding guesses in both live and indexed queries. A guess alone
 does not stop resumable fallthrough; explicit transfers still retain potential
 callee boundaries. A decoded continuation absorbs a guessed function at its
@@ -3273,6 +3279,9 @@ debugtrap from fatal BRK codes. Decode, LowIR/MedIR no-return propagation,
 HighIR effect classification and both C routes consume that code-sensitive
 policy. LLVM uses `debugtrap` for the resumable code and `trap` for fatal codes;
 the source projection retains the instruction code beside the builtin.
+Boolean-result normalization accepts only a void fatal BRK with its code
+present. Its image-backed proof matches that code against the current immutable
+instruction, so an absent successor or stale IR cannot make a debugger BRK fatal.
 LLVM-to-C preserves raw ARM UDF/HLT assembly and its continuation; a mnemonic
 alone cannot grant the non-returning contract of an explicit `llvm.trap`.
 

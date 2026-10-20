@@ -1277,8 +1277,9 @@ private:
   /// resumable traps have no ordinary continuation in it.
   bool instructionEndsItsCodeRange(const InsnRecord &Rec) const;
   /// Whether a trap can resume in owned code, or a bounded look through
-  /// unowned trap/NOP padding finds code before the next function.
-  bool codeFollowsTrap(const Decoder &Dec, va_t Next) const;
+  /// unowned trap/NOP padding finds code before the next function. Invalid
+  /// owned continuations retain their decode/coverage failure.
+  bool codeFollowsTrap(const Decoder &Dec, va_t Next);
 
   /// Rewrite an unconditional-branch instruction record into an explicit
   /// CALL + RETURN pair (tail call to another function).
