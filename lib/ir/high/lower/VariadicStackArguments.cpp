@@ -11,6 +11,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedCallLeftovers.h"
 
 #include <algorithm>
@@ -82,6 +83,16 @@ const PhiNode *registerPhi(const MedFunc &Func, const MedBlock &Block,
 }
 
 namespace {
+
+/// The register the op at \p Index of \p Block writes, as a value: the
+/// whole write a synthetic low-register sync mirrors stands for the sync
+/// (wholeArgRegWriteInBlock), since the register still holds all of it.
+MedVar registerWrittenAt(const MedBlock &Block, size_t Index,
+                         const TargetRegInfo &TRI, BinaryFormat Format) {
+  const int Whole = wholeArgRegWriteInBlock(Block, static_cast<int>(Index), TRI,
+                                            TRI.integerArgumentLayout(Format));
+  return Block.Ops[Whole >= 0 ? static_cast<size_t>(Whole) : Index].Output;
+}
 
 /// The register at \p RegOff as it enters \p Block, which
 /// reachingRegisterAtBlockEntry describes.  Under the convention \p *Calls,
@@ -173,7 +184,8 @@ bool registerEntering(const MedFunc &Func, const MedBlock &Block,
     for (auto It = Blk.Ops.rbegin(); It != Blk.Ops.rend(); ++It) {
       if (It->Output.Kind == MedVar::Reg && It->Output.RegOff == RegOff &&
           It->Output.Size > 0) {
-        R = It->Output;
+        R = registerWrittenAt(Blk, static_cast<size_t>(Blk.Ops.rend() - It - 1),
+                              TRI, Calls ? *Calls : BinaryFormat::Unknown);
         return true;
       }
       if (!Calls)
@@ -215,7 +227,7 @@ bool reachingRegisterAtCall(const MedFunc &Func, const MedBlock &Block,
     const MedOp &Op = Block.Ops[J];
     if (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == RegOff &&
         Op.Output.Size > 0) {
-      Out = Op.Output;
+      Out = registerWrittenAt(Block, J, TRI, Format);
       return true;
     }
     for (const MedVar &Aux : Op.IntrinsicOutputs)

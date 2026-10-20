@@ -1097,12 +1097,13 @@ static MedVar argRegSourceValue(const MedOp &Op) {
 // earlier instruction's (`lea rdi, [rip + s]` before `mov ebx, edi`).
 // Multiple sibling aliases may intervene, but a real partial write or a call
 // ends the proof. Source identity includes constant provenance and owner as
-// well as the exact register/temporary SSA occurrence.
-MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
-                                const TargetRegInfo &TRI,
-                                const IntegerArgumentLayout &Layout) {
+// well as the exact register/temporary SSA occurrence; a temporary the block
+// copies a value into stands for that value (`lea` computes the address into
+// one, copies it to the register and syncs the low bytes from it).
+int wholeArgRegWriteInBlock(const MedBlock &Blk, int J,
+                            const TargetRegInfo &TRI,
+                            const IntegerArgumentLayout &Layout) {
   const MedOp &Op = Blk.Ops[J];
-  MedVar Base = argRegSourceValue(Op);
   // Only a sub-register sync whose source is not the register itself needs the
   // sibling lookup; everything else (a plain copy, or `subpiece(Xn, 0)`) is
   // already resolved by argRegSourceValue.
@@ -1111,17 +1112,32 @@ MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
       Op.Output.Kind != MedVar::Reg ||
       (Op.Inputs[0].Kind == MedVar::Reg &&
        Op.Inputs[0].RegOff == Op.Output.RegOff))
-    return Base;
+    return -1;
   const MedVar &Src = Op.Inputs[0];
-  auto sameSource = [&](const MedVar &Candidate) {
-    return sameAddressValue(Candidate, Src) &&
-           (!Src.isConst() || (Candidate.ConstVal == Src.ConstVal &&
-                               Candidate.Provenance == Src.Provenance &&
-                               Candidate.AddressOwnerVA == Src.AddressOwnerVA));
-  };
   const int ArgIdx = Layout.registerIndex(Op.Output.RegOff);
   if (Op.OriginSeq >= 0 || Src.Size <= Op.Output.Size || ArgIdx < 0)
-    return Base;
+    return -1;
+  auto matches = [](const MedVar &Candidate, const MedVar &Value) {
+    return sameAddressValue(Candidate, Value) &&
+           (!Value.isConst() ||
+            (Candidate.ConstVal == Value.ConstVal &&
+             Candidate.Provenance == Value.Provenance &&
+             Candidate.AddressOwnerVA == Value.AddressOwnerVA));
+  };
+  // The value \p V holds where the block copied one into it before the sync.
+  auto valueOf = [&](const MedVar &V) -> const MedVar & {
+    if (!V.isConst())
+      for (int K = J - 1; K >= 0; --K) {
+        const MedOp &D = Blk.Ops[K];
+        if (D.Opcode == NdOp::COPY && D.NumInputs == 1 &&
+            sameAddressValue(D.Output, V))
+          return D.Inputs[0];
+      }
+    return V;
+  };
+  auto sameSource = [&](const MedVar &Candidate) {
+    return matches(Candidate, Src) || matches(valueOf(Candidate), valueOf(Src));
+  };
   const uint64_t Register = Layout.Registers[ArgIdx];
   for (int K = J - 1; K >= 0; --K) {
     const MedOp &W = Blk.Ops[K];
@@ -1143,10 +1159,18 @@ MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
     if (W.Opcode == NdOp::COPY && W.Output.RegOff == Register &&
         W.Output.Size == Src.Size && W.NumInputs == 1 &&
         sameSource(W.Inputs[0]))
-      return Src;
+      return K;
     break;
   }
-  return Base;
+  return -1;
+}
+
+MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
+                                const TargetRegInfo &TRI,
+                                const IntegerArgumentLayout &Layout) {
+  if (wholeArgRegWriteInBlock(Blk, J, TRI, Layout) >= 0)
+    return Blk.Ops[J].Inputs[0];
+  return argRegSourceValue(Blk.Ops[J]);
 }
 
 const PhiNode *selectAuthoritativeArgPhi(const MedFunc &Func,
