@@ -81,11 +81,13 @@ TEST(InterpreterSpecialization, SavedFrameAddressSurvivesConditionalWrite) {
         Expected[Root - 160 + Byte] = Byte == 0 ? 23 : 0;
       }
       Expected[Root - 64 + Input] = Old == 0x11 ? 0x5a : Old;
-      std::map<uint64_t, uint8_t> Actual;
-      EXPECT_EQ(execute(R.Residual, {{8, Input}, {32, Root}}, Initial, 0, {},
-                        std::nullopt, {}, &Actual),
-                23u);
-      EXPECT_EQ(Actual, Expected);
+      WideByteOracle Actual(llvm::endianness::little);
+      Actual.word(reg(8), Input);
+      Actual.word(reg(32), Root);
+      Actual.Memory = Initial;
+      ASSERT_TRUE(Actual.run(R.Residual)) << Actual.Diagnostic;
+      EXPECT_EQ(Actual.number(reg(0)), 23u);
+      EXPECT_EQ(Actual.Memory, Expected);
     }
 }
 
