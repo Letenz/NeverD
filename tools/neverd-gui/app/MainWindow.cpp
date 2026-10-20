@@ -632,29 +632,29 @@ void MainWindow::buildDocks() {
   connect(output_, &OutputWindow::navigateRequested, this,
           [this](Address address) { jump(address); });
   // The output window and dialogs act on the last analysis view used.
-  connect(qApp, &QApplication::focusChanged, this,
-          [this](QWidget *, QWidget *now) {
-            for (auto it = docks_.cbegin(); it != docks_.cend(); ++it)
-              if (*it && (*it)->isAncestorOf(now)) {
-                // Choosers and auxiliary windows keep the analysis context.
-                if (auto *view = qobject_cast<CodeView *>((*it)->widget())) {
-                  lastCodeView_ = view;
-                  tabCodeView_ = view;
-                } else if (auto *view = qobject_cast<DisassemblyView *>(
-                               (*it)->widget())) {
-                  disassembly_ = view;
-                  overview_->setGraph(view->graph());
-                  lastCodeView_.clear();
-                } else if (it.key() == QLatin1String(HexDock))
-                  lastCodeView_.clear();
-                if (it.key() != QLatin1String(OutputDock))
-                  hexActive_ = it.key() == QLatin1String(HexDock);
-                // What the commands act on follows the view: a pseudocode
-                // window converts a parameter, the disassembly an operand.
-                updateActions();
-                return;
-              }
-          });
+  connect(
+      qApp, &QApplication::focusChanged, this, [this](QWidget *, QWidget *now) {
+        for (auto it = docks_.cbegin(); it != docks_.cend(); ++it)
+          if (*it && (*it)->isAncestorOf(now)) {
+            // Choosers and auxiliary windows keep the analysis context.
+            if (auto *view = qobject_cast<CodeView *>((*it)->widget())) {
+              lastCodeView_ = view;
+              tabCodeView_ = view;
+            } else if (auto *view =
+                           qobject_cast<DisassemblyView *>((*it)->widget())) {
+              disassembly_ = view;
+              overview_->setGraph(view->graph());
+              lastCodeView_.clear();
+            } else if (it.key() == QLatin1String(HexDock))
+              lastCodeView_.clear();
+            if (it.key() != QLatin1String(OutputDock))
+              hexActive_ = it.key() == QLatin1String(HexDock);
+            // What the commands act on follows the view: a pseudocode
+            // window converts a parameter, the disassembly an operand.
+            updateActions();
+            return;
+          }
+      });
   connect(output_, &OutputWindow::commandRequested, this,
           &MainWindow::runCommand);
   connect(&session_, &Session::message, output_, &OutputWindow::append);
