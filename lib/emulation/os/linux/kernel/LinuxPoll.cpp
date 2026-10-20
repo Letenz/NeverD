@@ -96,13 +96,25 @@ public:
     if (!O.Count && !Immediate &&
         (!Deadline || Files.Clock->elapsed() < *Deadline))
       return std::optional<uint64_t>(); // Another consumer won; rearm.
+    return copyResults(O.Events, O.Count, Result);
+  }
+  llvm::Expected<std::optional<uint64_t>>
+  interrupt(ProcessResult &Result) override {
+    // do_sys_poll copies zero revents even on EINTR, before ppoll's remaining
+    // timeout. Neither poll nor ppoll restarts after a caught handler.
+    return copyResults(std::vector<uint16_t>(Input.size()),
+                       uint64_t(0) - InterruptedCall, Result);
+  }
+  llvm::Expected<std::optional<uint64_t>>
+  copyResults(llvm::ArrayRef<uint16_t> Events, uint64_t Return,
+              ProcessResult &Result) {
     const uint64_t Size = Input.size() * PollDescriptorSize;
     if (Output > Files.Layout.UserLimit ||
         Size > Files.Layout.UserLimit - Output)
       return finish(uint64_t(0) - BadAddress, Result);
     for (size_t I = 0; I < Input.size(); ++I) {
       uint8_t Bytes[2];
-      llvm::support::endian::write16le(Bytes, O.Events[I]);
+      llvm::support::endian::write16le(Bytes, Events[I]);
       auto Stored = writeUserMemory(
           Files.CPU, Files.Layout,
           Output + I * PollDescriptorSize + PollReventsOffset, Bytes);
@@ -113,7 +125,7 @@ public:
       if (*Stored == UserWriteResult::BadAddress)
         return finish(uint64_t(0) - BadAddress, Result);
     }
-    return finish(O.Count, Result);
+    return finish(Return, Result);
   }
 };
 
@@ -122,14 +134,14 @@ LinuxFiles::awaitDescriptors(std::unique_ptr<KernelWait> Pending,
                              ProcessResult &Result, ThreadContext *Thread) {
   if (Pending->ready())
     return Pending->resume(Result);
-  if (!Clock || !Clock->advancesOnIdle() || !Pending->nextWake())
-    return unsupported(Result,
-                       "descriptor wait requires a virtual readiness schedule");
   if (Thread) {
     assert(!Thread->Pending && !Thread->Exit);
     Thread->Pending = std::move(Pending);
     return std::optional<uint64_t>();
   }
+  if (!Clock || !Clock->advancesOnIdle() || !Pending->nextWake())
+    return unsupported(Result,
+                       "descriptor wait requires a virtual readiness schedule");
   if (!Clock->advanceTo(*Pending->nextWake(), Result))
     return std::optional<uint64_t>();
   return Pending->resume(Result);
