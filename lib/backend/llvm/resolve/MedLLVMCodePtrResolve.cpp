@@ -3411,9 +3411,21 @@ MedLLVMEmitter::tryResolveIndirectCallTarget(const MedVar &V,
   // computed-goto/jump-table ownership; using that broader result here would
   // emit an invalid call to an interior basic-block label.
   if (!V.isConst()) {
+    // Discover storage even for a partial LOAD so width rejection cannot
+    // turn a known relocation fragment into an unconstrained runtime target.
     const PointerTableLoadRoleSummary SlotRoles =
-        classifyPointerTableLoadRoles(V);
+        classifyPointerTableLoadRoles(V, /*RequirePointerWidth=*/false);
     if (SlotRoles.Recognized) {
+      if (SlotRoles.Load &&
+          SlotRoles.Load->Output.Size != Img->getPointerSize()) {
+        if (!FatalCodePointerResolution && !FatalDataPointerResolution)
+          syncError() << "med_llvm_emitter: indirect-call table load in "
+                      << CurMedFunc->Name
+                      << " does not preserve the whole pointer; refusing "
+                         "code-identity fallback\n";
+        FatalCodePointerResolution = true;
+        return nullptr;
+      }
       // A code-bearing mixed run may still have adjacent unknown/data slots.
       // Preserve only an unadjusted value loaded through an architectural
       // register address; getVar retains its relocation-safe runtime value.
@@ -3433,31 +3445,38 @@ MedLLVMEmitter::tryResolveIndirectCallTarget(const MedVar &V,
           return Target;
 
       // A mutable, initially-null field has no static pointer payload to
-      // relocate. After a non-null guard the loaded SSA value is a runtime
-      // callback, just like a dynamic loader's return value. Keep the exact
-      // mirrored load; neighbouring relocation roles confer no authority.
-      const auto IsNullableRuntimeField = [&]() {
+      // relocate. A bounded record lane can select several such fields and
+      // authenticated callable slots. Audit each unknown field separately and
+      // require every call to test the same loaded SSA value for non-null;
+      // neither an adjacent code slot nor the guard alone supplies its role.
+      const auto IsNullableRuntimeDomain = [&]() {
         const unsigned Width = Img->getPointerSize();
         if (!SlotRoles.Complete || SlotRoles.ValueAdjustment != 0 ||
-            SlotRoles.Slots.size() != 1 || !SlotRoles.SawUnknown ||
-            SlotRoles.SawCode || SlotRoles.SawData || SlotRoles.SawImport ||
-            SlotRoles.SawRuntimeCallable || SlotRoles.SawConflict ||
-            Width == 0 || Width > 8 || !SlotRoles.Load ||
-            SlotRoles.Load->Output.Size != Width)
+            SlotRoles.Slots.empty() || !SlotRoles.SawUnknown ||
+            SlotRoles.SawData || SlotRoles.SawConflict || Width == 0 ||
+            Width > 8 || !SlotRoles.Load ||
+            SlotRoles.Load->Output.Size != Width ||
+            !valueHasNonNullIndirectCallGuards(V))
           return false;
-        const uint64_t Slot = *SlotRoles.Slots.begin();
-        const Segment *Seg = Img->getSegmentFor(Slot);
-        const Section *Sec = Img->getSectionFor(Slot);
-        if (!Seg || !Seg->isWritable() || Seg->isExecutable() ||
-            (Sec && (!Sec->isWritable() || Sec->isExecutable())))
-          return false;
-        const uint8_t *Bytes = Img->readVA(Slot, Width);
-        return Bytes &&
-               std::all_of(Bytes, Bytes + Width,
-                           [](uint8_t B) { return B == 0; }) &&
-               valueHasNonNullIndirectCallGuards(V);
+        for (uint64_t Slot : SlotRoles.Slots) {
+          if (Img->CodePtrRelocSlots.count(Slot) ||
+              EffectiveImportStorageSlots.count(Slot) ||
+              ExternalFunctionPointerSlots.count(Slot) ||
+              Img->hasRuntimeCallablePointerSlotAt(Slot))
+            continue;
+          const Segment *Seg = Img->getSegmentFor(Slot);
+          const Section *Sec = Img->getSectionFor(Slot);
+          if (!Seg || !Seg->isWritable() || Seg->isExecutable() ||
+              (Sec && (!Sec->isWritable() || Sec->isExecutable())))
+            return false;
+          const uint8_t *Bytes = Img->readVA(Slot, Width);
+          if (!Bytes || !std::all_of(Bytes, Bytes + Width,
+                                     [](uint8_t B) { return B == 0; }))
+            return false;
+        }
+        return true;
       };
-      if (IsNullableRuntimeField())
+      if (IsNullableRuntimeDomain())
         return getVar(V, Builder);
 
       if (!FatalCodePointerResolution && !FatalDataPointerResolution) {

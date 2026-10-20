@@ -22340,6 +22340,179 @@ TEST(LLVMCodePointerInvariantBoundary,
 }
 
 TEST(LLVMCodePointerInvariantBoundary,
+     NullableRecordCallsAuditEverySelectedSlotAndEveryCallGuard) {
+  enum class Case {
+    Valid,
+    AllNull,
+    NonzeroUnknown,
+    DataSlot,
+    Conflict,
+    ReadOnly,
+    Narrow,
+    OtherSSA,
+    Unguarded,
+    Reversed,
+    SecondCall,
+    Bypass,
+    Unbounded,
+    Adjusted
+  };
+  for (Arch A : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+      for (Case C :
+           {Case::Valid, Case::AllNull, Case::NonzeroUnknown, Case::DataSlot,
+            Case::Conflict, Case::ReadOnly, Case::Narrow, Case::OtherSSA,
+            Case::Unguarded, Case::Reversed, Case::SecondCall, Case::Bypass,
+            Case::Unbounded, Case::Adjusted}) {
+        SCOPED_TRACE(std::to_string(static_cast<int>(A)) + "/" +
+                     formatTraceName(Format) + "/" +
+                     std::to_string(static_cast<int>(C)));
+        const unsigned Width = getTargetRegInfo(A).PointerSize;
+        const uint64_t Stride = Width * 2;
+        constexpr uint64_t TableVA = 0x4000, TargetVA = 0x2000;
+        BinaryImage Image;
+        Image.Arch = A;
+        Image.Format = Format;
+        Image.Bits = Width == 8 ? Bitness::Bits64 : Bitness::Bits32;
+        Segment Text;
+        Text.VA = 0x100;
+        Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+        Text.Data.resize(0x2000);
+        Text.Size = Text.FileSz = Text.Data.size();
+        Image.Segments.push_back(Text);
+        Segment Data;
+        Data.VA = TableVA;
+        Data.Name = C == Case::ReadOnly ? ".rodata" : ".data";
+        Data.Flags = SegmentFlags::Readable;
+        if (C != Case::ReadOnly)
+          Data.Flags = Data.Flags | SegmentFlags::Writable;
+        Data.Data.resize(5 * Stride, 0);
+        Data.Size = Data.FileSz = Data.Data.size();
+        auto codeSlot = [&](uint64_t Offset) {
+          std::memcpy(Data.Data.data() + Offset, &TargetVA, Width);
+          Image.CodePtrRelocSlots.insert(TableVA + Offset);
+        };
+        codeSlot(Width); // An unselected neighbour also covers AllNull.
+        if (C != Case::AllNull) {
+          codeSlot(0);
+          codeSlot(2 * Stride);
+        }
+        if (C == Case::NonzeroUnknown)
+          Data.Data[3 * Stride] = 1;
+        if (C == Case::DataSlot || C == Case::Conflict) {
+          const uint64_t Offset = C == Case::Conflict ? 0 : 3 * Stride;
+          Image.DataPtrRelocSlots.insert(TableVA + Offset);
+          Image.DataPtrRelocTargetOwners[TableVA + Offset] = TableVA;
+          std::memcpy(Data.Data.data() + Offset, &TableVA, Width);
+        }
+        Data.Data[4 * Stride] = 1; // An unbounded index must include this.
+        Image.Segments.push_back(Data);
+        Image.RelocDataAddrs.insert(TableVA);
+        Image.CodeRefTargets.insert(TargetVA);
+        Section S;
+        S.VA = TableVA;
+        S.Name = Data.Name;
+        S.Size = S.FileSz = Data.Size;
+        S.Flags = Data.Flags;
+        Image.Sections.push_back(S);
+        auto v = [&](int Id, unsigned Size = 0) {
+          MedVar V;
+          V.Kind = MedVar::Temp;
+          V.Id = Id;
+          V.SSAVer = 1;
+          V.TheArch = A;
+          V.Size = Size ? Size : Width;
+          return V;
+        };
+        auto n = [&](uint64_t N, unsigned Size = 0) {
+          return MedVar::makeConst(N, Size ? Size : Width,
+                                   ConstantAddressProvenance::Scalar);
+        };
+        MedFunc F;
+        F.Name = "nullable_records";
+        F.Entry = 0x100;
+        F.ReturnType = NdType::makeVoid();
+        MedVar Index = v(0);
+        Index.Kind = MedVar::Param;
+        F.Params = {Index};
+        F.Blocks.resize(3);
+        for (unsigned I = 0; I < 3; ++I) {
+          F.Blocks[I].Id = I;
+          F.Blocks[I].StartAddr = 0x100 + I * 0x40;
+          F.Blocks[I].EndAddr = 0x140 + I * 0x40;
+        }
+        auto op = [&](int B, NdOp Code, MedVar Out,
+                      std::initializer_list<MedVar> Inputs) {
+          MedOp O;
+          O.Opcode = Code;
+          O.Output = Out;
+          O.Addr = F.Blocks[B].StartAddr + F.Blocks[B].Ops.size();
+          for (const auto &V : Inputs)
+            O.addInput(V);
+          F.Blocks[B].Ops.push_back(O);
+        };
+        op(0, NdOp::INT_AND, v(1), {Index, n(3)});
+        op(0, NdOp::INT_MULT, v(2),
+           {C == Case::Unbounded ? Index : v(1), n(Stride)});
+        op(0, NdOp::INT_ADD, v(3),
+           {MedVar::makeConst(TableVA, Width,
+                              ConstantAddressProvenance::DataAddress),
+            v(2)});
+        MedVar Loaded = v(4, C == Case::Narrow ? Width / 2 : Width);
+        op(0, NdOp::LOAD, Loaded, {v(3)});
+        MedVar Called = Loaded;
+        if (C == Case::Adjusted) {
+          op(0, NdOp::INT_ADD, v(6), {Loaded, n(1)});
+          Called = v(6);
+        }
+        op(0, NdOp::INT_NOTEQUAL, v(5, 1),
+           {C == Case::OtherSSA ? Index : Called, n(0, Called.Size)});
+        if (C == Case::Unguarded) {
+          op(0, NdOp::BRANCH, {}, {n(0x140)});
+          F.Blocks[0].Succs = {1};
+        } else {
+          op(0, NdOp::COND_BR, {},
+             {n(C == Case::Reversed ? 0x180 : 0x140), v(5, 1)});
+          F.Blocks[0].Succs = {1, 2};
+        }
+        F.Blocks[1].Preds = {0};
+        F.Blocks[2].Preds = {0};
+        op(1, NdOp::INDIR_CALL, {}, {Called});
+        op(1, NdOp::RETURN, {}, {});
+        if (C == Case::SecondCall)
+          op(2, NdOp::INDIR_CALL, {}, {Called});
+        if (C == Case::Bypass) {
+          F.Blocks[2].Succs = {1};
+          F.Blocks[1].Preds.push_back(2);
+          op(2, NdOp::BRANCH, {}, {n(0x140)});
+        } else {
+          op(2, NdOp::RETURN, {}, {});
+        }
+        llvm::LLVMContext Context;
+        testing::internal::CaptureStderr();
+        auto M = MedLLVMEmitter().emit(
+            {F, makeReturnFunction("record_callback", TargetVA)}, Context,
+            "nullable-records", A, {}, &Image, Format);
+        const auto Diagnostic = testing::internal::GetCapturedStderr();
+        const bool Expected = C == Case::Valid || C == Case::AllNull;
+        EXPECT_EQ(M != nullptr, Expected) << Diagnostic;
+        if (M) {
+          expectValidModule(*M);
+          auto Calls = callsIn(*M->getFunction(F.Name));
+          ASSERT_EQ(Calls.size(), 1u);
+          EXPECT_EQ(Calls.front()->getCalledFunction(), nullptr);
+          llvm::GlobalVariable *Mirror = M->getNamedGlobal(
+              (kNdCodePtrPrefix + llvm::utohexstr(TableVA)).str());
+          ASSERT_NE(Mirror, nullptr);
+          std::set<const llvm::Value *> Seen;
+          EXPECT_TRUE(valueReferencesSpecificGlobal(
+              Calls.front()->getCalledOperand(), Mirror, Seen));
+        }
+      }
+}
+
+TEST(LLVMCodePointerInvariantBoundary,
      RejectsMixedExactCodeAddressAtObservableValueSinkAcrossFormats) {
   for (BinaryFormat Format :
        {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF}) {
