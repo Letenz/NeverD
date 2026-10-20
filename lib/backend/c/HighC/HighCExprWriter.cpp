@@ -206,15 +206,26 @@ std::string HighCWriter::varName(const MedVar &V) const {
     if (Stated)
       StatedLocalTypes[Name] = Stated;
     if (Opts.SourceMap) {
-      SourceVariable Variable;
-      Variable.Function = CurrentFunc->Entry;
-      Variable.Id = highSourceVariableId(V);
-      Variable.Name = Name;
-      Variable.Bytes = V.Size;
-      Variable.Parameter = V.Kind == MedVar::Param;
-      if (V.Kind == MedVar::Stack)
-        Variable.StackOffset = V.StackOff;
-      recordSourceVariable(Opts.SourceMap->Variables, std::move(Variable));
+      // Recording the value again under the name its entry holds changes
+      // nothing, unless the width differs from the entry's and the entry is
+      // not yet ambiguous.
+      SourceVariable *&Recorded = RecordedSourceVariables[{
+          CurrentFunc->Entry, V.RenameTag, static_cast<int>(V.Kind),
+          V.Kind == MedVar::Stack ? V.StackOff : 0, V.Id, V.SSAVer}];
+      if (!Recorded || Recorded->Name != Name ||
+          (!Recorded->Ambiguous && Recorded->Bytes != V.Size)) {
+        SourceVariable Variable;
+        Variable.Function = CurrentFunc->Entry;
+        Variable.Id = highSourceVariableId(V);
+        Variable.Name = Name;
+        Variable.Bytes = V.Size;
+        Variable.Parameter = V.Kind == MedVar::Param;
+        if (V.Kind == MedVar::Stack)
+          Variable.StackOffset = V.StackOff;
+        auto Key = std::make_pair(Variable.Function, Variable.Id);
+        recordSourceVariable(Opts.SourceMap->Variables, std::move(Variable));
+        Recorded = &Opts.SourceMap->Variables.find(Key)->second;
+      }
     }
   }
   return Name;
