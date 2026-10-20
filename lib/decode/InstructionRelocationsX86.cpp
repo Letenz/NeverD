@@ -58,10 +58,16 @@ void addFixedImageDisplacement(const BinaryImage &Img, const DecodedInsn &DI,
       return;
   uint64_t Encoded = 0;
   std::memcpy(&Encoded, DI.Raw->bytes + Offset, Width);
+  // A memory operand narrower than a pointer cannot read a code pointer, so
+  // its base in an executable segment is data among the code (a two-level
+  // switch's byte index table), not a code address.
+  const bool NarrowerThanPointer =
+      Memory->size != 0 && Memory->size < Img.getPointerSize();
   Result.Addresses.push_back(RelocatedAddressOperand{
       FieldVA, Encoded, Target, Width,
-      Seg->isExecutable() ? ConstantAddressProvenance::CodeAddress
-                          : ConstantAddressProvenance::DataAddress,
+      Seg->isExecutable() && !NarrowerThanPointer
+          ? ConstantAddressProvenance::CodeAddress
+          : ConstantAddressProvenance::DataAddress,
       InvalidVA, /*PCRelativeFromInstructionEnd=*/false});
 }
 
