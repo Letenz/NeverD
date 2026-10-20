@@ -1011,7 +1011,7 @@ jobs:
                   ("JTE_ARM32.InlineStateDomainKeepsConditionalResetAndExitPredicates",
                    "NeverDLiftTests", "NeverDJumpTableTests"),
                   ("HighSymSimplify.AddressConstantsRetainTheirOriginAcrossNumericRewrites",
-                   "NeverDLiftTests"),
+                   "NeverDHighSymSimplifyTests", "NeverDLiftTests"),
                   ("RuntimeMetadata.DyldBackwardULEBDeltasKeepFollowingBindingsAndBounds",
                    "NeverDLiftTests"),
                   ("ObjCSourceProjection.RepeatedStableGuardProvesConditionalDefinition",
