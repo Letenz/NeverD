@@ -207,6 +207,13 @@ conditional memory, invocation lifetime and both C routes remain open.
 
 ## Closed control-flow regressions
 
+- INT1/ICEBP now retains #DB through LLVM and both C routes instead of becoming
+  INT3's #BP. GNU/LLVM byte assembly and the MSVC `_emit` spelling also avoid
+  unsupported assembler aliases. Native Linux x64 tests compare exception
+  vectors, signal codes, event order and live returns at O0/O2; the source
+  matrix covers x86/x64 and COFF/ELF/Mach-O. Other hosts skip native execution.
+  ARM/Thumb BKPT retains its actual immediate in assembly through both C
+  routes, instead of replacing it with the compiler's default debugtrap code.
 - Owned NOP suffixes no longer manufacture a tail call after a debugger trap,
   including long runs and decoded x86 prefix/MPX-disabled NOP forms. Real
   continuations, register-changing lookalikes and independently reached suffixes

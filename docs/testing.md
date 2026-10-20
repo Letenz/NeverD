@@ -1801,6 +1801,13 @@ RAX/R0/X0 definition cannot hide behind a later overwrite. Both C routes run
 with and without optimization, retaining each repeated break and the returned
 constant. AArch64 `brk #0xF000` participates in the detailed/light decode,
 function-boundary and source tests; fatal BRK codes remain negative controls.
+`ResumableTrapIdentity` distinguishes INT1 from INT3 across both C routes,
+x86/x64 and normalized COFF/ELF/Mach-O images. On Linux x64, emitted C at O0/O2
+runs against independent raw bytes, checking return values, exception vectors,
+signal codes and event order for single, repeated and mixed breaks. The native
+check explicitly skips on other hosts; source and LLVM verification still run.
+The same identity suite checks repeated ARM/Thumb BKPT with zero, nonzero and
+maximum immediates, preserving the actual instruction in both C routes.
 Live and indexed symbol queries distinguish padding guesses from confirmed
 names, independent aliases, code ranges and discovered call targets. Full and
 selected pipeline runs absorb a guessed entry actually reached after repeated

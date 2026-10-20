@@ -25,9 +25,6 @@ M("wfi",         "__wfi()")
 M("sev",         "__sev()")
 M("sevl",        "__sevl()")
 
-// Trap / debug
-M("bkpt",        "__builtin_debugtrap()")
-
 // Exclusive
 M("clrex",       "__clrex()")
 

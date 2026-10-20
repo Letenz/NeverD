@@ -14,6 +14,7 @@
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/backend/c/render/X86SegmentAsm.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -143,6 +144,11 @@ InlineAsmRender renderX86InlineAsm(Arch TheArch, const std::string &AsmStr,
                                    const std::string &ResultName,
                                    bool ResultLive,
                                    const std::vector<std::string> &Args) {
+  if (AsmStr == intrinsicAsmMnemonic(Intrinsic::Int1)) {
+    if (IsStructReturn || ResultLive || !Args.empty())
+      throw std::runtime_error("unsupported INT1 inline assembly contract");
+    return {"__asm__ volatile(\"" + AsmStr + "\" ::: \"memory\");\n", false};
+  }
   // A value-returning `int $$N`, as MedLLVM emits it with register operands.
   {
     llvm::StringRef Text(AsmStr);

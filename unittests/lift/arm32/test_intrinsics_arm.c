@@ -6,9 +6,7 @@ void test_svc_arm_intrinsic(void) {
     __asm__ volatile ("svc #0");
 }
 
-void test_bkpt_arm_intrinsic(void) {
-    __asm__ volatile ("bkpt #0");
-}
+void test_bkpt_arm_intrinsic(void) { __asm__ volatile("bkpt #0xAB"); }
 
 void test_nop_arm_intrinsic(void) {
     __asm__ volatile ("nop");

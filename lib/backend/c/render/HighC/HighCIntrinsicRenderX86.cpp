@@ -2116,6 +2116,14 @@ std::string renderX86IntrinsicCall(Intrinsic Id,
 
   using I = Intrinsic;
   switch (Id) {
+  case I::Int1:
+    if (!Ops.empty())
+      llvm::report_fatal_error("INT1 does not take operands");
+    // MSVC's byte directive differs from the GNU/LLVM assembly spelling.
+    if (!GnuToolchain)
+      return "__asm { _emit 0xf1 }";
+    return std::string("__asm__ volatile(\"") + intrinsicAsmMnemonic(Id) +
+           "\" ::: \"memory\")";
   case I::X86Invalidate: {
     // Operands: descriptor address, invalidation kind, type register.  The
     // source spells INVPCID as the MSVC intrinsic _invpcid(type, descriptor).

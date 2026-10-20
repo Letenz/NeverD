@@ -3308,6 +3308,13 @@ instruction boundary, even inside a basic block.
 Debugger breaks define no return register: long x86 `int 3` has the short
 encoding's void, zero-argument intrinsic contract, and ARM `bkpt` and AArch64
 `brk` leave R0/X0 intact. Service interrupts keep their own result contracts.
+INT1/ICEBP retains its debug exception (#DB, vector 1) through LLVM and both
+C routes. It cannot use `llvm.debugtrap`, which emits INT3's breakpoint
+exception (#BP, vector 3) on x86. The shared assembly mapping emits byte F1;
+HighC uses the target toolchain's byte directive instead of an unsupported
+INT1 mnemonic. Both forms remain resumable and preserve the live return value.
+ARM/Thumb BKPT also remains assembly with its actual immediate; a debugtrap
+builtin would replace that code with the compiler's default breakpoint code.
 `IntrinsicTermination.h` distinguishes the compiler's AArch64 `brk #0xF000`
 debugtrap from fatal BRK codes. Decode, LowIR/MedIR no-return propagation,
 HighIR effect classification and both C routes consume that code-sensitive
