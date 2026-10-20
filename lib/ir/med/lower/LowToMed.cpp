@@ -384,6 +384,12 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
   const va_t ArgumentsKey = CallArgumentsFrom ? CallArgumentsFrom : Key;
   if (!CallArgumentsFrom && !Keyed)
     return;
+  // The summaries below are read under these two keys alone.
+  if (CallSummaryKeysRead) {
+    CallSummaryKeysRead->insert(ArgumentsKey);
+    if (Keyed)
+      CallSummaryKeysRead->insert(Key);
+  }
   // Publish the register arguments the callee reads as uses, so SSA sees a
   // pass-through argument and the call site knows its arity.  The calling
   // convention says whether and how (MedCallConvention.h); Mach-O

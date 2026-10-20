@@ -32,10 +32,22 @@ struct Symbol;
 
 /// What reading the signature bodies of omitted callees read of each callee
 /// (recoverModuleCallAbi): how its lift's blocks count against the bound on
-/// the operations read, and the typed body its conversion gives.  Both follow
-/// from the image and the call summaries a conversion reads, so restricted
-/// runs whose summaries are the same take them as read.
+/// the operations read, and the typed body its conversion gives.  The lift
+/// follows from the image; the conversion also from the call summaries it
+/// read, so a restricted run takes it as read where those summaries read the
+/// same under the keys the conversion read them under.
 struct OmittedCalleeMemo {
+  /// The call summaries of a run under one key.
+  struct SummaryRead {
+    va_t Key = 0;
+    std::optional<uint32_t> MayWrite;
+    std::optional<GPRReadWidths> EntryReads;
+    std::optional<int> StackArgs;
+    bool StackSlot = false;
+    std::optional<int> ArgumentCount;
+    bool operator==(const SummaryRead &) const = default;
+  };
+  static SummaryRead readAt(const PipelineResult &Result, va_t Key);
   struct Callee {
     /// Whether the callee was lifted: BlockOps is then known.
     bool Lifted = false;
@@ -47,9 +59,14 @@ struct OmittedCalleeMemo {
     /// The typed body, or null where the conversion fails or the body is too
     /// large to be a signature.
     std::shared_ptr<const MedFunc> Body;
+    /// The call summaries the conversion read, under each key it read them
+    /// under and the callee's own entry.
+    std::vector<SummaryRead> Reads;
+    /// Whether \p Result's summaries read as they did for the conversion.
+    bool readsHold(const PipelineResult &Result) const;
   };
-  /// Read under \p Result's call summaries of \p Img; starts again when this
-  /// was read under others.
+  /// Read of \p Img with \p Result's function-pointer variables; starts
+  /// again when this was read of another image or with other variables.
   void adopt(const BinaryImage &Img, const PipelineResult &Result);
   /// The callees read, unless the memo is full: the callee is then read for
   /// the run alone.
@@ -63,12 +80,7 @@ private:
   const BinaryImage *Image = nullptr;
   const Symbol *SymbolData = nullptr;
   size_t SymbolCount = 0;
-  std::map<va_t, uint32_t> CallMayWriteGPRs;
-  std::map<va_t, GPRReadWidths> CallEntryReadGPRs;
   std::map<va_t, va_t> CallArgumentSources;
-  std::map<va_t, int> CallEntryStackArgs;
-  std::set<va_t> CallEntryStackSlots;
-  std::map<va_t, int> CallEntryArgumentCounts;
   size_t Bytes = 0;
   bool Full = false;
 };

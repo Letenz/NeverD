@@ -5832,6 +5832,53 @@ TEST_F(SessionCAPITest, CalleeSignaturesReadOnceServeLaterSelections) {
   }
 }
 
+TEST(CalleeSignatureMemo, AKeptBodyServesWhileTheSummariesItReadHold) {
+  // A callee body kept from one run serves another whose call summaries read
+  // the same under every key the conversion read them under; summaries under
+  // other keys do not bear on it.
+  auto State = [](neverd::PipelineResult &R) {
+    R.CallMayWriteGPRs[0x1000] = 0x3;
+    R.CallEntryReadGPRs[0x1000][0] = 8;
+    R.CallEntryStackArgs[0x2000] = 2;
+    R.CallEntryStackSlots.insert(0x2000);
+    R.CallEntryArgumentCounts[0x2000] = 3;
+  };
+  neverd::PipelineResult Read;
+  State(Read);
+  neverd::OmittedCalleeMemo::Callee Callee;
+  for (const neverd::va_t Key : {0x1000, 0x2000})
+    Callee.Reads.push_back(neverd::OmittedCalleeMemo::readAt(Read, Key));
+  EXPECT_TRUE(Callee.readsHold(Read));
+  neverd::PipelineResult Elsewhere;
+  State(Elsewhere);
+  Elsewhere.CallMayWriteGPRs[0x3000] = 0x1;
+  Elsewhere.CallEntryReadGPRs[0x3000][2] = 4;
+  Elsewhere.CallEntryArgumentCounts[0x3000] = 4;
+  EXPECT_TRUE(Callee.readsHold(Elsewhere));
+  // A summary under a key it read that changes, appears or goes away does.
+  void (*const Changes[])(neverd::PipelineResult &) = {
+      [](neverd::PipelineResult &R) { R.CallMayWriteGPRs[0x1000] = 0x7; },
+      [](neverd::PipelineResult &R) { R.CallMayWriteGPRs[0x2000] = 0x1; },
+      [](neverd::PipelineResult &R) { R.CallEntryReadGPRs[0x1000][1] = 4; },
+      [](neverd::PipelineResult &R) { R.CallEntryReadGPRs.erase(0x1000); },
+      [](neverd::PipelineResult &R) { R.CallEntryStackArgs[0x2000] = 1; },
+      [](neverd::PipelineResult &R) { R.CallEntryStackArgs[0x1000] = 1; },
+      [](neverd::PipelineResult &R) { R.CallEntryStackSlots.erase(0x2000); },
+      [](neverd::PipelineResult &R) { R.CallEntryStackSlots.insert(0x1000); },
+      [](neverd::PipelineResult &R) { R.CallEntryArgumentCounts[0x2000] = 2; },
+      [](neverd::PipelineResult &R) {
+        R.CallEntryArgumentCounts.erase(0x2000);
+      },
+  };
+  for (size_t I = 0; I < std::size(Changes); ++I) {
+    SCOPED_TRACE(I);
+    neverd::PipelineResult Changed;
+    State(Changed);
+    Changes[I](Changed);
+    EXPECT_FALSE(Callee.readsHold(Changed));
+  }
+}
+
 TEST_F(SessionCAPITest, AProgramsOwnDeclarationOfAnImportDecides) {
   // The user declares the routine a program imports as read, as a library of
   // its own may export it: every call passes the parameters it declares, in
