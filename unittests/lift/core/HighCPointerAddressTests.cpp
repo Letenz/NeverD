@@ -47414,6 +47414,72 @@ TEST(HighCPointerAddresses, RecordsNamedLikeLibraryRoutinesAreSpelledByTags) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses,
+     TypedefParametersOfDefinedFunctionsTakeTheirTypedefs) {
+  // hardlink passes its walker, a machine integer, to nftw's PLT stub,
+  // which the unit defines and declares with the header's __nftw_func_t:
+  // the argument converts to that typedef.  Converted to the function type
+  // the type library gives, whose pointers the unit spells void *, it would
+  // match no parameter C declares.
+  const auto Compare = NdType::makePtr(NdType::makeFunc(
+      NdType::makeInt(4), {NdType::makePtr(NdType::makeVoid()),
+                           NdType::makePtr(NdType::makeVoid())}));
+  auto Named = std::make_shared<NdType>(*Compare);
+  Named->TypedefName = "cmp_fn";
+  class StubDbg : public NullDebugContext {
+  public:
+    explicit StubDbg(TypeRef Named) : Named(std::move(Named)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x140002000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "sort_with";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeVoid();
+      FS.Params = {{"compare", Named}};
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Named;
+  } Dbg(Named);
+  HighFunc Stub;
+  Stub.Name = "sort_with";
+  Stub.Entry = 0x140002000;
+  Stub.ReturnType = NdType::makeVoid();
+  Stub.Params = {{"compare", Named}};
+  returnValue(Stub, nullptr);
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "sort_all";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  Func.Params = {{"walker", Word}};
+  Func.Body = {callStmt("sort_with", 0x140002000, {parameter(0, Word)})};
+  returnValue(Func, nullptr);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text =
+        "typedef int32_t (*cmp_fn)(const void *, const void *);\n";
+    Definitions.Types = {"cmp_fn"};
+    Definitions.Identifiers = {"cmp_fn"};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Stub, Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("sort_with(cmp_fn compare)"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("sort_with((cmp_fn)"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(int32_t (*)(void*, void*))"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, FunctionPointersOfAnotherSpellingPassCast) {
   // A stub's definition declares its comparator as the header's typedef,
   // whose parameters are const, and passes it to the routine its slot

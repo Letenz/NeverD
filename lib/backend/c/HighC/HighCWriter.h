@@ -555,6 +555,8 @@ public:
   /// (NdType::TypedefName) where the unit defines that typedef, as IDA
   /// prints `PKDEFERRED_ROUTINE DeferredRoutine`; else as C spells it.
   std::string declaredAs(const TypeRef &Type, llvm::StringRef Declarator) const;
+  /// The typedef declaredAs names \p Type by, if any.
+  std::optional<std::string> declaredTypedef(const TypeRef &Type) const;
   /// Frame displacement that is a unique interior field of a named record
   /// slot (`record.p` at wrapper+8). Exact slot addresses stay unnamed here.
   std::optional<std::string>
@@ -752,11 +754,17 @@ public:
                                                const TypeRef &Expected);
   /// \p E as the argument of a parameter of type \p Expected, which a
   /// prototype declares: an integer converts to a pointer parameter, and a
-  /// string or an address to an integer one.
-  std::string exprStrAsTypedArg(const HighExpr &E, const TypeRef &Expected);
-  /// The text \p E passes to a parameter of type \p Expected, before a
-  /// pointer converts to an integer parameter.
-  std::string typedArgumentText(const HighExpr &E, const TypeRef &Expected);
+  /// string or an address to an integer one.  \p Spelled is the type the
+  /// declaration spells the parameter by where that is a typedef (a function
+  /// this unit defines, declaredAs), which a conversion names too.
+  std::string
+  exprStrAsTypedArg(const HighExpr &E, const TypeRef &Expected,
+                    const std::optional<std::string> &Spelled = std::nullopt);
+  /// The text \p E passes to a parameter of type \p Expected, spelled
+  /// \p Spelled, before a pointer converts to an integer parameter.
+  std::string
+  typedArgumentText(const HighExpr &E, const TypeRef &Expected,
+                    const std::optional<std::string> &Spelled = std::nullopt);
   /// \p Text, which \p Value prints, as the value an object C declares as
   /// \p Declared is assigned: C converts no integer to a pointer, no pointer
   /// to an integer and no pointer to one of another type by assignment.

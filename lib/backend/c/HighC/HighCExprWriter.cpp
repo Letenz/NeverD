@@ -2156,7 +2156,15 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                          ? NdType::makePtr()
                          : nullptr;
         if (Expected) {
-          std::string Text = exprStrAsTypedArg(*Op, Expected);
+          // A function this unit defines declares the parameter by the
+          // typedef the local types define (nftw's __nftw_func_t), which an
+          // argument converts to as well: its type's structure, whose
+          // pointers the unit spells void *, would not match.
+          std::string Text =
+              exprStrAsTypedArg(*Op, Expected,
+                                Defined && Expected->Kind != NdTypeKind::Array
+                                    ? declaredTypedef(Expected)
+                                    : std::nullopt);
           if (((Header && Typedef) || PointerUnion) && Text != "0" &&
               !llvm::StringRef(Text).starts_with("(void*)"))
             Text =
@@ -3666,13 +3674,16 @@ HighCWriter::floatArgumentText(const HighExpr &Arg, const TypeRef &Expected) {
          integerView(Arg, NdType::makeInt(Expected->Size, false), 0) + ")";
 }
 
-std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
-                                           const TypeRef &Expected) {
-  std::string Text = typedArgumentText(E, Expected);
+std::string
+HighCWriter::exprStrAsTypedArg(const HighExpr &E, const TypeRef &Expected,
+                               const std::optional<std::string> &Spelled) {
+  std::string Text = typedArgumentText(E, Expected, Spelled);
+  // The type a conversion names, as the declaration spells the parameter.
+  auto Parameter = [&] { return Spelled ? *Spelled : typeToC(Expected); };
   // A pointer converts to an integer parameter, which C does not do itself.
   if (Expected && Expected->Kind == NdTypeKind::Int && !Expected->IsEnum &&
       printsAsPointer(Text))
-    return "(" + typeToC(Expected) + ")(uintptr_t)" + castOperand(Text);
+    return "(" + Parameter() + ")(uintptr_t)" + castOperand(Text);
   // So does a function pointer of another type to a function-pointer
   // parameter: a stub's prototype spells qsort's comparator
   // `int32_t (*)(void*, void*)` where its caller's parameter keeps the
@@ -3685,13 +3696,15 @@ std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
     if (const HighExpr *Value = unwrapIntegerView(&E);
         Value && (Value->Kind == ExprKind::Var || Value->Kind == ExprKind::Phi))
       if (const TypeRef Held = declaredParamType(Value->Var);
-          FunctionPointer(Held) && declaredAs(Held, "") != typeToC(Expected))
-        return "(" + typeToC(Expected) + ")" + castOperand(Text);
+          FunctionPointer(Held) && declaredAs(Held, "") != Parameter())
+        return "(" + Parameter() + ")" + castOperand(Text);
   return Text;
 }
 
-std::string HighCWriter::typedArgumentText(const HighExpr &E,
-                                           const TypeRef &Expected) {
+std::string
+HighCWriter::typedArgumentText(const HighExpr &E, const TypeRef &Expected,
+                               const std::optional<std::string> &Spelled) {
+  auto Parameter = [&] { return Spelled ? *Spelled : typeToC(Expected); };
   if (const auto Float = floatArgumentText(E, Expected))
     return *Float;
   // A floating expression retains its conversion or reinterpretation; the
@@ -3750,7 +3763,7 @@ std::string HighCWriter::typedArgumentText(const HighExpr &E,
     Inner = &E;
   if (Inner->Kind == ExprKind::Undef && Expected &&
       Expected->Kind == NdTypeKind::Ptr)
-    return "(" + typeToC(Expected) + ")(uintptr_t)(" + exprStr(*Inner) + ")";
+    return "(" + Parameter() + ")(uintptr_t)(" + exprStr(*Inner) + ")";
   if (Expected && Expected->Kind == NdTypeKind::Ptr) {
     unsigned PeelZero = 0;
     while (Inner && PeelZero++ < limits::kMaxIntegerViewUnwrapDepth &&
@@ -3770,22 +3783,21 @@ std::string HighCWriter::typedArgumentText(const HighExpr &E,
         const auto Held = Disp ? FrameSlots.find(*Disp) : FrameSlots.end();
         if (Held != FrameSlots.end() && Held->second.Type &&
             Held->second.Type->Kind == NdTypeKind::Int)
-          return "(" + typeToC(Expected) + ")(uintptr_t)" +
-                 copyForwardName(*Slot);
+          return "(" + Parameter() + ")(uintptr_t)" + copyForwardName(*Slot);
         return copyForwardName(*Slot);
       }
     }
     if (auto Slot = namedFrameSlot(*Inner))
       return "&" + *Slot;
     if (const auto Disp = certifiedFrameStorageDisplacement(*Inner))
-      return "(" + typeToC(Expected) + ")" + frameRecordPointer(*Disp);
+      return "(" + Parameter() + ")" + frameRecordPointer(*Disp);
     // An integer, such as a variable C declares as one or the integer
     // expression it forwards, converts to the pointer the parameter takes;
     // a pointer passes as it is.
     auto AsPointer = [&](const HighExpr &Printed, std::string Text) {
       if (!printsAsInteger(Printed, Text))
         return Text;
-      return "(" + typeToC(Expected) + ")(uintptr_t)" + castOperand(Text);
+      return "(" + Parameter() + ")(uintptr_t)" + castOperand(Text);
     };
     if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) {
       const std::string Name = copyForwardName(varName(Inner->Var));
