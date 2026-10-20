@@ -199,6 +199,18 @@ complete partitioned product at 2/4 bits; its 8–64-bit queries exceed the
 five-second allowance and are not counted as SMT coverage. Wider cases use the
 complete coefficient proof, independent word arithmetic and generated-C checks;
 the four-bit case also exhausts all 65,536 assignments of its four variables.
+`SymMBACubic` runs in both the full symbolic suite and
+`NeverDSymMBAQuadraticTests`. Independent multiplication checks every unordered
+triple of two-input Boolean functions with odd/even scales modulo eight.
+Random anchored tables and scales through 257 bits check coefficients outside
+the anchor slice, including multiplicities that wrap to zero. Zero/one-short
+work, storage refusal and malformed coefficients must fail closed.
+The previously capped mixed-degree cases and expanded cubes with unrelated
+linear high-bit masks must finish within 65,536 units at 8/16/32/64 bits.
+Heap-backed 128/257-bit cube coefficients use a 131,072-unit allowance to
+include their limb costs. Independent Z3 gates cover complete cubic rewrites
+at 2/3 bits; exhaustive four-bit and randomized wide arithmetic checks also
+preserve multiple cubic products and high-bit remainders.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
 signed/unsigned overflow admission against all byte pairs, including unsafe
 neighboring masks. `NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains`
@@ -235,6 +247,9 @@ nearby high-bit errors. Run the earlier families as controls.
 Use `--family quadratic --count 24` for expanded products with three to five
 inputs, independent Boolean partitions, odd/even scales, modular zeros,
 high-bit near misses and mixed-degree remainders.
+Use `--family cubic --count 24` for three independently partitioned Boolean
+factors over three to five inputs, even/negative scales, mixed quadratic
+remainders and high-bit perturbations. Run all earlier families as controls.
 
 `tools/neverd-worker/tests/source_synthesis_test.py WORKER --cli CLI` checks the
 real source-option request used by the GUI and both CLI source emitters, for
@@ -244,6 +259,10 @@ The interleaved fixture combines thirty masked terms from XOR and product
 carriers in shared positive/negative accumulators before scaling the result.
 The partitioned-product fixture executes four products of Boolean pieces before
 adding its linear remainder; both enhanced emitters must remove the partitions.
+The mixed-degree fixture retains a scaled cubic residual beside the expanded
+quadratic. The cubic fixture executes eight products before adding a linear
+MBA and an observable high-bit remainder. Both exercise the same existing
+symbolic option through worker requests and single/whole-program CLI output.
 With Clang available, each generated C output executes at O0/O2 against an
 independent arithmetic oracle on boundary and deterministic random inputs.
 

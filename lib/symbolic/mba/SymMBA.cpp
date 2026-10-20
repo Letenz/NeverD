@@ -1044,7 +1044,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   SolveReport WholeRep;
   SymRef WalkRoot = solveWeightedMasks(Ctx, E, Opts, Budget, WholeRep);
   if (WalkRoot == E)
-    WalkRoot = solveExpandedQuadratic(Ctx, E, Opts, Budget, WholeRep);
+    WalkRoot = solveExpandedProducts(Ctx, E, Opts, Budget, WholeRep);
   SymRef WholeAlternative = WalkRoot;
   if (WalkRoot != E && !Budget.exhausted()) {
     // Preserve enclosing common scales before child readings can hide them
