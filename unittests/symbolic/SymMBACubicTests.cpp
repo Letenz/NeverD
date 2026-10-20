@@ -203,7 +203,7 @@ TEST(SymMBACubic, RecoversCubesWithoutExpandingUnrelatedLinearInputs) {
     }
 }
 
-TEST(SymMBACubic, WholeRootRequiresCompleteProofAndIndependentSMTAgreement) {
+TEST(SymMBACubic, WholeRootRequiresCompleteProof) {
   for (unsigned Width : {2u, 3u, 32u, 257u}) {
     SCOPED_TRACE(Width);
     SymContext C;
@@ -227,10 +227,21 @@ TEST(SymMBACubic, WholeRootRequiresCompleteProofAndIndependentSMTAgreement) {
     detail::SolveReport Report;
     EXPECT_EQ(detail::solveExpandedProducts(C, Input, Tiny, Budget, Report),
               Input);
-    if (Width <= 3 && solver::proofBackendAvailable(solver::ProofBackend::Z3)) {
-      solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 5000);
-      EXPECT_EQ(Verifier(C, Input, R), SynthVerification::Equivalent);
-    }
+  }
+}
+
+TEST(SymMBACubic, IndependentSmallWordZ3Proofs) {
+  if (!solver::proofBackendAvailable(solver::ProofBackend::Z3))
+    GTEST_SKIP() << "Z3 unavailable";
+  for (unsigned Width : {2u, 3u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto [Input, Expected] = mixedExpansion(C, Width, 0, true, true, false, 7);
+    auto R = simplifyMBADeep(C, Input);
+    ASSERT_NE(R.Expr, Input);
+    EXPECT_LE(R.SizeAfter, C.readabilityCost(Expected));
+    solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 5000);
+    EXPECT_EQ(Verifier(C, Input, R.Expr), SynthVerification::Equivalent);
   }
 }
 
