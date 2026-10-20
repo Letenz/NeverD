@@ -23913,6 +23913,93 @@ TEST(LLVMDataPointerInvariantBoundary,
 }
 
 TEST(LLVMDataPointerInvariantBoundary,
+     ScalarFrameStoresDoNotReplayFragmentSpillProofs) {
+  for (BinaryFormat Format :
+       {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF})
+    for (Arch TargetArch : {Arch::AArch64, Arch::X64, Arch::X86})
+      for (unsigned StoreCount : {1u, 64u}) {
+        SCOPED_TRACE(formatTraceName(Format));
+        SCOPED_TRACE(unsigned(TargetArch));
+        SCOPED_TRACE(StoreCount);
+        const auto &TRI = getTargetRegInfo(TargetArch);
+        const uint16_t Width = TRI.PointerSize;
+        BinaryImage Image = makeSpilledConstTableImage(TargetArch, Format);
+        Image.Bits = Width == 4 ? Bitness::Bits32 : Bitness::Bits64;
+        auto Var = [&](MedVar::VarKind Kind, int Id) {
+          MedVar V;
+          V.Kind = Kind;
+          V.TheArch = TargetArch;
+          V.Id = Id;
+          V.SSAVer = 1;
+          V.Size = Width;
+          return V;
+        };
+        MedFunc Func;
+        Func.Entry = CallerVA;
+        Func.Name = "scalar_frame_stores";
+        Func.ReturnType = NdType::makeInt(Width);
+        Func.FrameSize = 16;
+        auto &Block = Func.Blocks.emplace_back();
+        Block.Id = 0;
+        Block.StartAddr = CallerVA;
+        Block.EndAddr = CallerVA + 4;
+        MedVar SP = Var(MedVar::Reg, 5000);
+        SP.SSAVer = 0;
+        SP.RegOff = TRI.StackPointer;
+        const MedVar Slot = Var(MedVar::Temp, 5001);
+        const MedVar Loaded = Var(MedVar::Temp, 5002);
+        MedVar ReturnReg = Var(MedVar::Reg, 5003);
+        ReturnReg.RegOff = TRI.IntReturnReg;
+        MedOp Address;
+        Address.Opcode = NdOp::INT_ADD;
+        Address.Output = Slot;
+        Address.addInput(SP);
+        Address.addInput(MedVar::makeConst(uint64_t(-8), Width,
+                                           ConstantAddressProvenance::Scalar));
+        Block.Ops.push_back(Address);
+        for (unsigned I = 0; I < StoreCount; ++I) {
+          MedOp Store;
+          Store.Opcode = NdOp::STORE;
+          Store.addInput(Slot);
+          Store.addInput(MedVar::makeConst(100 + I, Width,
+                                           ConstantAddressProvenance::Scalar));
+          Block.Ops.push_back(Store);
+        }
+        MedOp Load;
+        Load.Opcode = NdOp::LOAD;
+        Load.Output = Loaded;
+        Load.addInput(Slot);
+        Block.Ops.push_back(Load);
+        MedOp Result;
+        Result.Opcode = NdOp::COPY;
+        Result.Output = ReturnReg;
+        Result.addInput(Loaded);
+        Block.Ops.push_back(Result);
+        MedOp Return;
+        Return.Opcode = NdOp::RETURN;
+        Block.Ops.push_back(Return);
+        MedLLVMEmitter Emitter;
+        llvm::LLVMContext Context;
+        auto Module = Emitter.emit({Func}, Context, "scalar-frame-stores",
+                                   TargetArch, {}, &Image, Format);
+        ASSERT_NE(Module, nullptr);
+        expectValidModule(*Module);
+        const auto [Queries, Builds, Hits, IndexBuilds] =
+            MedLLVMProvenanceTestPeer::frameReloadSourceWork(Emitter);
+        // Emitting each store still checks ordinary value transport. The
+        // fragment audit must add no per-store reload replay for these scalar
+        // values, even when a repeated answer would come from the cache.
+        EXPECT_LT(Queries, StoreCount + 16u);
+        size_t Stores = 0;
+        for (const auto &Function : *Module)
+          for (const auto &IRBlock : Function)
+            for (const auto &Instruction : IRBlock)
+              Stores += llvm::isa<llvm::StoreInst>(Instruction);
+        EXPECT_GE(Stores, StoreCount);
+      }
+}
+
+TEST(LLVMDataPointerInvariantBoundary,
      AddressFragmentMaySpillLocallyButReloadStillCarriesTaint) {
   for (BinaryFormat Format :
        {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF})
