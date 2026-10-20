@@ -17,6 +17,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymExploreCLIContractTests.cpp
   SymExploreTests.cpp
   SymExprTests.cpp
+  SymExprCancellationTests.cpp
   SymLowWordProjectionTests.cpp
   SymExprCompareTests.cpp
   SymExprComplementTests.cpp
@@ -32,6 +33,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymMBAComplementArithmeticTests.cpp
   SymMBAMaskRelationTests.cpp
   SymMBAWeightedMaskTests.cpp
+  SymMBABitwiseViewTests.cpp
   SymMBAComplementBoundaryTests.cpp
   SymMBAConstantRegionTests.cpp
   SymMBAMeasureTests.cpp
@@ -88,6 +90,7 @@ add_neverd_unittest(NeverDSymMBAMaskRelationTests
 
 add_neverd_unittest(NeverDSymMBAWeightedMaskTests
   SymMBAWeightedMaskTests.cpp
+  SymMBABitwiseViewTests.cpp
   LINK_COMPONENTS Symbolic Solver
 )
 

@@ -241,15 +241,15 @@ bool isBackwardSharedEpilogue(const BinaryImage &Image, va_t FunctionEntry,
   return false;
 }
 
-/// True when \p Next begins an instruction that belongs to the same function as
-/// the resumable trap in front of it.
+/// True when \p Next begins a non-trap instruction. The caller first checks
+/// function ownership; decodable bytes alone cannot establish a continuation.
 ///
 /// Padding is what this tells apart from a body.  A linker pads between
 /// functions with a run of `int3`, and a compiler plants a trap in front of an
 /// embedded jump table or string; in both cases the bytes after the trap are
 /// either another trap or not an instruction at all.  A `__debugbreak()` in a
 /// live function is followed by the rest of that function.
-bool codeFollowsTrap(const BinaryImage &Img, Decoder &Dec, va_t Next) {
+bool codeFollowsTrap(const BinaryImage &Img, const Decoder &Dec, va_t Next) {
   const Segment *Seg = Img.getSegmentFor(Next);
   if (!Seg || !Img.hasExecutableCodeOwnerAt(Next) || Next < Seg->VA)
     return false;
@@ -257,17 +257,18 @@ bool codeFollowsTrap(const BinaryImage &Img, Decoder &Dec, va_t Next) {
   if (Offset >= Seg->Data.size())
     return false;
 
-  // Classification only: this must not disturb the operand detail or the x87
-  // stack state the surrounding lift walk depends on.
-  const bool PreviousDetail = Dec.detailEnabled();
-  Dec.setDetail(false);
+  // Use a separate decoder: peeking at an ARM IT instruction must not consume
+  // or replace the surrounding walk's predicate state.
+  Decoder PeekDecoder;
+  if (!PeekDecoder.selectMode(Img, Next, Dec.currentMode()))
+    return false;
+  PeekDecoder.setDetail(false);
   DecodedInsn Peek;
-  const int Size = Dec.decodeOneLight(Seg->Data.data() + Offset,
-                                      Seg->Data.size() - Offset, Next, Peek);
+  const int Size = PeekDecoder.decodeOneLight(
+      Seg->Data.data() + Offset, Seg->Data.size() - Offset, Next, Peek);
   const bool HasCodeOwner = Size > 0 && Img.hasExecutableCodeOwnerRange(
                                             Next, static_cast<uint64_t>(Size));
-  const bool IsTrap = HasCodeOwner && Dec.isResumableTrap(Peek);
-  Dec.setDetail(PreviousDetail);
+  const bool IsTrap = HasCodeOwner && PeekDecoder.isResumableTrap(Peek);
   return HasCodeOwner && !IsTrap;
 }
 
@@ -2424,16 +2425,19 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
       // commonly follows them.  Real branches/returns were already classified
       // from their LowIR ops and retain their more precise handling below.
       //
-      // `int3` is the exception: it is resumable, and `__debugbreak()` puts one
-      // in the middle of an ordinary function with the epilogue behind it.
+      // Debugger traps are resumable: `__debugbreak()` can put one in the
+      // middle of an ordinary function with the epilogue behind it.
       // Whether it ends the block is therefore decided by what follows, which
       // separates that case from the run of `int3` a linker pads with and from
-      // the embedded data a trap is often planted in front of.
+      // the embedded data a trap is often planted in front of. A known range
+      // end or another function's entry takes precedence over decodable bytes:
+      // resuming there must not manufacture a tail call to the next function.
       if (!Rec.IsBranch && !Rec.IsRet && Dec.isFunctionTerminator(DI)) {
         Rec.IsOpaqueTerminator = true;
         Rec.IsResumableTerminator = Dec.isResumableTrap(DI);
-        Rec.IsRet =
-            !Rec.IsResumableTerminator || !codeFollowsTrap(Img, Dec, Next);
+        Rec.IsRet = !Rec.IsResumableTerminator ||
+                    instructionEndsItsCodeRange(Rec) ||
+                    isTailCallTarget(Next) || !codeFollowsTrap(Img, Dec, Next);
       }
 
       // operator[]= returns the stored element, so bind to it directly rather

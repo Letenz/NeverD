@@ -623,9 +623,11 @@ std::optional<bool> Decoder::returnsToCaller(const DecodedInsn &Insn) const {
 }
 
 bool Decoder::isResumableTrap(const DecodedInsn &Insn) const {
-  if (!Insn.Raw || !X86)
+  if (!Insn.Raw)
     return false;
-  return X86Lifter::isResumableTrap(Insn.Raw);
+  if (X86)
+    return X86Lifter::isResumableTrap(Insn.Raw);
+  return ARM && ARMLifter::isResumableTrap(Insn.Raw);
 }
 
 va_t Decoder::directCallTarget(const DecodedInsn &Insn) const {

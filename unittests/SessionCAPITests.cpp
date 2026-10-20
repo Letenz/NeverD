@@ -5844,8 +5844,8 @@ TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
 TEST_F(SessionCAPITest, CalleeSignaturesReadOnceServeLaterSelections) {
   // Where a call takes its arguments from its caller's setup, a selection
   // reads its callees' bodies for their signatures.  Later selections of the
-  // image take the callees they share as read, and every function decompiles
-  // as in a session that reads them afresh.
+  // image take the callees they share as read, and every function decompiles,
+  // directly and through LLVM, as in a session that reads them afresh.
   for (const char *Fixture : {"linux_libc_calls_arm64", "linux_libc_calls_arm",
                               "linux_libc_calls_x86"}) {
     SCOPED_TRACE(Fixture);
@@ -5868,6 +5868,8 @@ TEST_F(SessionCAPITest, CalleeSignaturesReadOnceServeLaterSelections) {
     for (const neverd_va_t Entry : Entries) {
       SCOPED_TRACE(Entry);
       const std::string Source = takeString(neverd_decompile(Kept, Entry));
+      // The LLVM route recovers the calls again, with the same memo.
+      const std::string Llvm = takeString(neverd_decompile_llvm(Kept, Entry));
       neverd_session_t Fresh = neverd_session_create();
       ASSERT_NE(Fresh, nullptr);
       auto CloseFresh =
@@ -5875,6 +5877,7 @@ TEST_F(SessionCAPITest, CalleeSignaturesReadOnceServeLaterSelections) {
       ASSERT_EQ(neverd_session_load(Fresh, Path.c_str()), 1);
       ASSERT_GE(neverd_session_discover_functions(Fresh), 0);
       EXPECT_EQ(takeString(neverd_decompile(Fresh, Entry)), Source);
+      EXPECT_EQ(takeString(neverd_decompile_llvm(Fresh, Entry)), Llvm);
     }
     const neverd::OmittedCalleeMemo *Memo =
         neverd::PipelineTestPeer::calleeSignatures(
