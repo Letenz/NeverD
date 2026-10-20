@@ -3277,6 +3277,17 @@ missing byte inside an authoritative continuation remains a coverage failure;
 it cannot silently turn into a complete trap-terminated function. Explicit
 cold-fragment ends also bound calls and traps when no separate unwind record
 describes the fragment. An adjacent owned fragment still continues.
+Owned NOP suffixes also need observable code before the owner ends; a sized
+range containing alignment does not make the next function a continuation.
+Decoded NOP identity handles x86 prefixes and MPX-disabled compatibility forms,
+with mode-aware legacy alignment patterns shared by the decoder. Both peeking
+and ordinary exploration reject an instruction that starts in sized ownership
+but borrows bytes outside the primary and its explicitly owned fragments.
+Contiguous fragments may supply those bytes; an ownership gap may not.
+Coarse unwind spans do not declare a single function's end and cannot split
+an instruction or clip its continuation. These checks use the same endpoint
+policy as call termination.
+Candidate-proof lookahead consumes the same bounded allowance as exploration.
 The shared symbol inventory distinguishes confirmed
 entries from padding guesses in both live and indexed queries. A guess alone
 does not stop resumable fallthrough; explicit transfers still retain potential

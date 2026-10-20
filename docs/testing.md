@@ -1785,7 +1785,25 @@ The boundary suite also covers ARM/Thumb/AArch64 NOP padding, owned versus
 unowned continuations, malformed/truncated/missing owned bytes, instructions
 straddling metadata ends, and cold-fragment ends without separate unwind
 records. Calls and traps share the fragment-end controls; adjacent fragments
-still continue. `NativeBooleanResultProof` feeds the actual lifted fatal BRK
+still continue. Owned NOP suffixes include runs beyond the heuristic lookahead
+limit, sized symbols/ranges and fragment-only ownership, with and without a
+neighbor entry. Prefix and MPX-disabled x86 NOPs share decoder classification;
+REX.B register exchanges, upper-half-clearing copies, PAUSE and 32-bit INC remain
+observable controls. Interior NOP runs still reach real code, and an independent
+branch into a suffix retains its own ordinary fallthrough. Every partial
+multi-byte trap extent, ordinary MOV/CALL extents, and primary/cold-fragment
+ownership must retain an exact decode failure across the normalized formats.
+Fragment-to-primary resumption remains a cycle.
+ARM NOPs cover every ordinary predicate, excluding other hints and the
+unconditional encoding space. Detailed/light/native decoding and text-on/off
+classification must agree.
+Coarse unwind endpoints cannot split instructions or clip NOP continuations;
+contiguous owned extents cover a complete instruction while gaps still fail.
+`NeverDSessionLLVMTests` checks that rejected LLVM function queries retain the
+pipeline's decode-failure address, matching the existing HighIR diagnostic.
+Its private frame-preservation dependency is compiled from the same
+`AnalystStackObjects.cpp` implementation as the SDK.
+`NativeBooleanResultProof` feeds the actual lifted fatal BRK
 into normalization and rejects debugger, missing-code and stale-output variants.
 `SwiftBooleanProjection` requires the LowIR code to match immutable machine
 bytes and rejects a debugger BRK even when it has no CFG successor.

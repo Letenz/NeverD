@@ -605,7 +605,7 @@ TEST(InternalNoReturn, PathAroundAStatedCallStillReturns) {
   auto Image =
       imageWith(Code, {{Base, "caller"}, {0x1010, "b"}, {0x1020, "c"}});
   for (Symbol &Sym : Image.Symbols)
-    Sym.Size = Sym.Name == "b" ? 10 : 1;
+    Sym.Size = Sym.Name == "caller" ? 6 : Sym.Name == "b" ? 10 : 1;
   Image.UserNoReturn[0x1020] = true;
   EXPECT_FALSE(callAtBaseEndsItsBlock(Image));
 }
@@ -633,7 +633,7 @@ TEST(InternalNoReturn, TailJumpIntoAFunctionThatNeverReturnsIsProved) {
     auto Image =
         imageWith(Code, {{Base, "caller"}, {0x1010, "b"}, {0x1020, C.Name}});
     for (Symbol &Sym : Image.Symbols)
-      Sym.Size = Sym.Name == "b" ? 5 : C.Body.size();
+      Sym.Size = Sym.Name == "caller" ? 6 : Sym.Name == "b" ? 5 : C.Body.size();
     const bool Known = std::string_view(C.Name) == "abort" || C.Body.size() > 1;
     EXPECT_EQ(callAtBaseEndsItsBlock(Image), Known);
     Image.UserNoReturn[0x1020] = !Known;

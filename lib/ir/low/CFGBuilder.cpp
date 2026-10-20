@@ -32,7 +32,6 @@
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/BranchEncoding.h"
-#include "neverd/support/ProloguePatterns.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
@@ -65,6 +64,42 @@ bool CFGBuilder::isCurrentOwnedFragment(va_t Addr) const {
   return CurrentImg &&
          isExplicitlyOwnedFunctionFragment(*CurrentImg, CurrentFuncEntry, Addr,
                                            ExecutableCodeOwners);
+}
+
+bool CFGBuilder::isCurrentOwnedCode(va_t Address) const {
+  if (AuthoritativeCurrentFuncRange &&
+      Address >= AuthoritativeCurrentFuncRange->first) {
+    if (Address < AuthoritativeCurrentFuncRange->second)
+      return true;
+    // Interior-query bounds may be shortened by a coarse frame span. That
+    // cannot erase independently declared symbol/code-range size evidence.
+    const va_t MetadataEnd = CurrentImg->getFunctionMetadataEnd(
+        CurrentFuncEntry, ExecutableCodeOwners);
+    if (MetadataEnd != InvalidVA && Address < MetadataEnd)
+      return true;
+  }
+  return isCurrentOwnedFragment(Address);
+}
+
+bool CFGBuilder::instructionFitsCurrentOwnership(va_t Address,
+                                                 uint64_t Size) const {
+  if (!Size || Size > InvalidVA - Address)
+    return false;
+  if (AuthoritativeCurrentFuncRange &&
+      Address >= AuthoritativeCurrentFuncRange->first &&
+      Address < AuthoritativeCurrentFuncRange->second &&
+      Size <= AuthoritativeCurrentFuncRange->second - Address)
+    return true;
+  if (!isCurrentOwnedCode(Address))
+    return true;
+  // Only boundary-crossing instructions and owned fragments need these
+  // queries. Use the same end policy as calls/traps: a coarse unwind range
+  // can support interior ownership without declaring one function's end.
+  // Adjacent owned fragments continue each other; ownership gaps do not.
+  for (uint64_t Offset = 1; Offset != Size; ++Offset)
+    if (codeRangeEndsAt(Address, Address + Offset))
+      return false;
+  return true;
 }
 
 bool CFGBuilder::isFramelessLeafColdPart(const BinaryImage &Img,
@@ -518,24 +553,28 @@ bool CFGBuilder::codeFollowsTrap(const Decoder &Dec, va_t Next) {
   Decoder PeekDecoder;
   // A branch may already have reached a cold block beyond the primary range.
   // Bound a peek that starts inside that range without clipping such a block.
-  const va_t RangeEnd = CurrentFuncRange && Next >= CurrentFuncRange->first &&
-                                Next < CurrentFuncRange->second
-                            ? CurrentFuncRange->second
-                            : InvalidVA;
-  const auto Owns = [&](va_t Address) {
-    return (AuthoritativeCurrentFuncRange &&
-            Address >= AuthoritativeCurrentFuncRange->first &&
-            Address < AuthoritativeCurrentFuncRange->second) ||
-           isCurrentOwnedFragment(Address);
-  };
-  size_t Scanned = 0;
-  while (Scanned <= limits::kMaxAlignmentPaddingBytes) {
+  va_t RangeEnd = InvalidVA;
+  if (CurrentFuncRange && Next >= CurrentFuncRange->first &&
+      Next < CurrentFuncRange->second) {
+    const auto [Begin, End] = *CurrentFuncRange;
+    // Coarse unwind spans support interior queries, but only a real function
+    // end or an independent entry can clip this continuation.
+    if (codeRangeEndsAt(Begin, End) ||
+        isTailCallTarget(End, /*IncludeBoundaryGuesses=*/false))
+      RangeEnd = End;
+  }
+  size_t UnownedScanned = 0;
+  for (;;) {
+    if (!chargeCandidateDecodeAttempt(Img))
+      return false;
     if (isTailCallTarget(Next, /*IncludeBoundaryGuesses=*/false))
       return false;
     const bool OwnedFragment = isCurrentOwnedFragment(Next);
     if (Next >= RangeEnd && !OwnedFragment)
       return false;
-    const bool Owned = Owns(Next);
+    const bool Owned = isCurrentOwnedCode(Next);
+    if (!Owned && UnownedScanned > limits::kMaxAlignmentPaddingBytes)
+      return false;
     const auto Fail = [&](bool Truncated) {
       // Size evidence makes this a real continuation. A failed peek cannot
       // turn malformed or missing owned code into a complete function.
@@ -555,7 +594,7 @@ bool CFGBuilder::codeFollowsTrap(const Decoder &Dec, va_t Next) {
     if (Offset >= Seg->Data.size())
       return Fail(/*Truncated=*/true);
     size_t Available = Seg->Data.size() - Offset;
-    if (Next < RangeEnd)
+    if (!Owned && Next < RangeEnd)
       Available = std::min<uint64_t>(Available, RangeEnd - Next);
     if (!PeekDecoder.selectMode(Img, Next, Dec.currentMode()))
       return Fail(/*Truncated=*/false);
@@ -572,31 +611,26 @@ bool CFGBuilder::codeFollowsTrap(const Decoder &Dec, va_t Next) {
         Img.instructionModeAt(End - 1, PeekDecoder.currentMode()) !=
             PeekDecoder.currentMode())
       return Fail(/*Truncated=*/false);
+    if (!instructionFitsCurrentOwnership(Next, Size))
+      return Fail(/*Truncated=*/false);
+    const bool Nop = PeekDecoder.isAlignmentNop(Peek);
     // Sized ownership admits each breakpoint, even a long consecutive run.
-    // A next-entry bound alone cannot distinguish a body from linker padding.
-    if (Owned) {
-      for (va_t Address = Next; Address != End; ++Address)
-        if (!Owns(Address))
-          return Fail(/*Truncated=*/false);
+    // NOPs have no observable continuation of their own: even an owned run
+    // must lead to code before a function boundary. Its finite ownership,
+    // rather than the heuristic padding budget, bounds this linear scan.
+    if (Owned && !Nop)
       return true;
-    }
-    const bool Padding = PeekDecoder.isResumableTrap(Peek) ||
-                         alignmentNopLength(Img.Arch, Seg->Data.data() + Offset,
-                                            Size, PeekDecoder.currentMode()) ==
-                             static_cast<size_t>(Size);
+    const bool Padding = PeekDecoder.isResumableTrap(Peek) || Nop;
     if (!Padding)
       return true;
     // With no size evidence, look through a bounded run for real code before
     // another function. Do not let trap/NOP alignment manufacture a tail call.
-    InsnRecord Probe;
-    Probe.Addr = Next;
-    Probe.Size = Size;
-    if (instructionEndsItsCodeRange(Probe))
+    if (codeRangeEndsAt(Next, End))
       return false;
-    Scanned += Size;
+    if (!Owned)
+      UnownedScanned += Size;
     Next = End;
   }
-  return false;
 }
 
 CFGBuilder::OwnInteriorCallVerdict
@@ -1990,6 +2024,31 @@ candidateFiniteProofOwnerLookupWork(const BinaryImage &Img,
   return Work;
 }
 
+bool CFGBuilder::chargeCandidateDecodeAttempt(const BinaryImage &Img) {
+  if (!CandidateFiniteProofDecodeOnly)
+    return true;
+  // A disposable proof pays for direct-path decodes and trap lookahead alike.
+  // The base charge includes instruction/LowIR storage and its destruction;
+  // repeated owner and relocation queries also pay for the image inventories.
+  constexpr size_t MaxScratchDecodeAttempts = 1024;
+  const std::optional<size_t> OwnerWork =
+      candidateFiniteProofOwnerLookupWork(Img, knownFunctionEntryCount());
+  size_t ScratchDecodeWork = 8192;
+  if (!OwnerWork ||
+      !detail::addLinearComparisonWork(ScratchDecodeWork, *OwnerWork, 64) ||
+      !CandidateFiniteProofDecodeBudget ||
+      CandidateFiniteProofDecodeAttempts >= MaxScratchDecodeAttempts ||
+      *CandidateFiniteProofDecodeBudget < ScratchDecodeWork) {
+    CandidateFiniteProofDecodeIncomplete = true;
+    if (CandidateFiniteProofDecodeBudget)
+      *CandidateFiniteProofDecodeBudget = 0;
+    return false;
+  }
+  *CandidateFiniteProofDecodeBudget -= ScratchDecodeWork;
+  ++CandidateFiniteProofDecodeAttempts;
+  return true;
+}
+
 bool CFGBuilder::prepareCandidateFiniteProofScratch(
     CFGBuilder &Scratch, const std::vector<va_t> &PhysicalTargets,
     size_t *EvidenceBudget, bool *AnalysisIncomplete) const {
@@ -2254,31 +2313,8 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
         break;
       }
       SourceBranch.reset();
-      if (CandidateFiniteProofDecodeOnly) {
-        // This builder is a disposable proof snapshot.  Charge each attempted
-        // direct-path decode before it can allocate an instruction, its LowIR
-        // operations, relocation occurrences, or worklist successors.  The
-        // base charge includes their eventual destruction. Repeated live
-        // owner and relocation queries also pay for the image inventories;
-        // the hard cap bounds an unexpectedly large direct-path closure.
-        constexpr size_t MaxScratchDecodeAttempts = 1024;
-        const std::optional<size_t> OwnerWork =
-            candidateFiniteProofOwnerLookupWork(Img, knownFunctionEntryCount());
-        size_t ScratchDecodeWork = 8192;
-        if (!OwnerWork ||
-            !detail::addLinearComparisonWork(ScratchDecodeWork, *OwnerWork,
-                                             64) ||
-            !CandidateFiniteProofDecodeBudget ||
-            CandidateFiniteProofDecodeAttempts >= MaxScratchDecodeAttempts ||
-            *CandidateFiniteProofDecodeBudget < ScratchDecodeWork) {
-          CandidateFiniteProofDecodeIncomplete = true;
-          if (CandidateFiniteProofDecodeBudget)
-            *CandidateFiniteProofDecodeBudget = 0;
-          break;
-        }
-        *CandidateFiniteProofDecodeBudget -= ScratchDecodeWork;
-        ++CandidateFiniteProofDecodeAttempts;
-      }
+      if (!chargeCandidateDecodeAttempt(Img))
+        break;
       // An actual graph extension invalidates every generation-local replay
       // and positive ambiguity shadow.  Pending exact query identities remain
       // fail-closed carry, but only a fresh query on this immutable graph may
@@ -2316,6 +2352,10 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
       }
       if (!Img.hasExecutableCodeOwnerRange(Cur, static_cast<uint64_t>(Sz))) {
         TruncatedPathAddresses.insert(Cur);
+        break;
+      }
+      if (!instructionFitsCurrentOwnership(Cur, static_cast<uint64_t>(Sz))) {
+        DecodeFailureAddresses.insert(Cur);
         break;
       }
       if (Img.Arch == Arch::ARM &&
@@ -2496,7 +2536,7 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
         Rec.IsOpaqueTerminator = true;
         Rec.IsResumableTerminator = Dec.isResumableTrap(DI);
         Rec.IsRet = !Rec.IsResumableTerminator ||
-                    instructionEndsItsCodeRange(Rec) ||
+                    codeRangeEndsAt(Rec.Addr, Next) ||
                     !codeFollowsTrap(Dec, Next);
       }
 

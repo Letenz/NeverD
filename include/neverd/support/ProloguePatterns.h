@@ -175,7 +175,12 @@ alignmentNopLength(Arch A, const uint8_t *Data, size_t Size,
     }
     if (Mode == InstructionMode::ARM && Size >= 4) {
       const uint32_t Word = llvm::support::endian::read32le(Data);
-      if (Word == arm::kArmNop || Word == arm::kArmHintNop)
+      // A predicate does not give a NOP any effect. Condition 0xf belongs
+      // to a different encoding space and must not reuse this recognition.
+      constexpr uint32_t BodyMask = 0x0fffffffu;
+      const uint32_t Body = Word & BodyMask;
+      if ((Word >> 28) != 0xf && (Body == (arm::kArmNop & BodyMask) ||
+                                  Body == (arm::kArmHintNop & BodyMask)))
         return 4;
     }
     return 0;

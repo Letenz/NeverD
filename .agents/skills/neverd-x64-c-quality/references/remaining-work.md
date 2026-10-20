@@ -207,6 +207,18 @@ conditional memory, invocation lifetime and both C routes remain open.
 
 ## Closed control-flow regressions
 
+- Owned NOP suffixes no longer manufacture a tail call after a debugger trap,
+  including long runs and decoded x86 prefix/MPX-disabled NOP forms. Real
+  continuations, register-changing lookalikes and independently reached suffixes
+  remain live; disposable proof peeks consume the existing decode allowance.
+  ARM NOP predicates retain this identity without accepting other hints or the
+  separate unconditional encoding space.
+- Instruction extents, trap peeks and call termination share the exact range-end
+  policy. Partial instructions retain decode failures across primary/fragment
+  ownership; contiguous owned extents still work. Coarse unwind spans neither
+  split instructions nor erase independent symbol/code-range size evidence.
+  LLVM source queries now retain the same pipeline rejection reason as HighIR,
+  including the failing instruction address.
 - Cross-architecture trap padding uses mode-aware ARM/Thumb/AArch64 NOP
   recognition. Malformed or missing owned continuation bytes retain explicit
   failure accounting, and cold-fragment ends bound calls/traps even without a
