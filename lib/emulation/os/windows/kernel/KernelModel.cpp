@@ -232,6 +232,7 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
       if (auto E = Memory.protect(Base + profile::KernelModuleCodeRVA,
                                   profile::ThunkSize, Read | Execute))
         return E;
+      Module.Identity.ResidentProvider = true;
       LoadedModules.push_back(std::move(Module.Identity));
     }
     LoadedModules.push_back({Image.Name, Image.Base, Image.Size});

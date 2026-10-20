@@ -5476,6 +5476,15 @@ continuations have separate files; their shared admission preserves timer
 processing and driver/framework ownership checks. Splitting dispatch does not
 transfer ownership of execution, thread or callback state out of the model.
 
+Kernel provider residency belongs to that same model. After creating and
+protecting a provider's RAM, `KernelModel` marks its loaded-module identity as
+a resident provider. Input-driver module metadata does not carry this authority.
+The partial `MmIsAddressValid` query checks the exact provider extent and current
+readable RAM without device callbacks. This admits read-only export metadata
+while preserving opaque thunk/data checks, write protections and recovery
+dependencies. It neither infers ownership from an observed address nor extends
+provider identity to aliases.
+
 `os/linux/process/` and `os/darwin/process/` own image loading, initial stacks and execution continuations. `os/linux/kernel/` and `os/darwin/kernel/` own system-call ABI, services and memory policy, built as `NeverDEmulationLinuxKernel` and `NeverDEmulationDarwinKernel` with only the core memory/CPU boundary and LLVM Support. Their `MemoryLayout` contracts contain address policy, not executable images or startup ABIs. Android depends directly on the Linux kernel model; macOS and iOS retain separate platform profiles. Dependencies run from processes/platforms to kernel services. These kernel directories do not imply Linux/Darwin kernel-image or driver loading support. Shared OS vocabulary remains in the OS-level `.def` files.
 
 The Linux kernel component also owns validation and lookup of explicit

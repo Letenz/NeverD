@@ -60,6 +60,20 @@ KernelModel::isResidentKernelAddress(uint64_t Address) const {
   for (const auto &[Base, Size] : FreedRanges)
     if (Contains(Base, Size))
       return modelError("MmIsAddressValid does not model retired allocations");
+  for (const auto &Module : LoadedModules) {
+    if (!Module.ResidentProvider || !Contains(Module.Base, Module.Size))
+      continue;
+    // Provider headers and export tables are deliberately read-only. Their
+    // model-owned RAM is resident, but the query must not expose opaque code
+    // or data, grant writes, or admit aliases outside the owned mapping.
+    auto Accessible = Memory.canAccess(Address, 1, Read);
+    if (!Accessible)
+      return Accessible.takeError();
+    if (!*Accessible)
+      return modelError("MmIsAddressValid requires resident readable "
+                        "provider RAM");
+    return 1;
+  }
   auto Arena = ArenaAllocations.upper_bound(Address);
   if (Arena != ArenaAllocations.begin())
     --Arena;

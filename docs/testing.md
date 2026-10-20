@@ -502,6 +502,15 @@ python scripts/build.py build-release --target NeverDSymbolicIntegerIntrinsicTes
 ctest --test-dir build-release -L '^NeverDSymbolicIntegerIntrinsicTests$' --output-on-failure
 ```
 
+## Kernel provider residency
+
+`NeverDKernelSnapshotTests` includes `KernelProviderResidentQuery.*` for
+model-created provider residency: read-only headers/export tables, exact
+endpoints, input-image metadata, aliases, changed permissions, missing mappings,
+side-effect-free MMIO refusal, opaque fields and retained recovery dependencies.
+`KernelResidentQuery.*` keeps the existing object, pool, lifetime and IRQL
+boundaries.
+
 ## Concrete entry-memory concolic replay
 
 Build `NeverDSymbolicTests`, `NeverDConcolicTests` and
