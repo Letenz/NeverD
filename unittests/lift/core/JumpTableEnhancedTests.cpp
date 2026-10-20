@@ -4318,6 +4318,19 @@ TEST_F(JTE_X86_64, CompactPDataCountsAllKnownEntriesForEvidenceWork) {
                             {0x3000, 0x3020, 0, 0},
                             {0x4000, 0x4020, 0, 0},
                             {0x5000, 0x5020, 0, 0}};
+  neverd::Segment Other;
+  Other.VA = ImageBase + 0x4000;
+  Other.Size = Other.FileSz = 0x20;
+  Other.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  Other.Data.assign(Other.Size, 0xcc);
+  Other.Data.front() = 0xc3;
+  neverd::Section OtherSection;
+  OtherSection.VA = Other.VA;
+  OtherSection.Size = OtherSection.FileSz = Other.Size;
+  OtherSection.Flags = Other.Flags;
+  Image.Sections.push_back(OtherSection);
+  Image.Segments.push_back(std::move(Other));
   neverd::Decoder Decoder;
   ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
   neverd::CFGBuilder Builder;
@@ -4326,6 +4339,10 @@ TEST_F(JTE_X86_64, CompactPDataCountsAllKnownEntriesForEvidenceWork) {
   (void)Builder.build(Image, Decoder, FunctionVA,
                       "coff_image_relative_rva_switch");
   EXPECT_TRUE(Builder.isKnownFunctionEntry(ImageBase + 0x4000));
+  // Unmapped records still cost evidence work without becoming callable
+  // entries. Restricted loading must not undercharge the directory search.
+  EXPECT_FALSE(Builder.isKnownFunctionEntry(ImageBase + 0x3000));
+  EXPECT_FALSE(Builder.isKnownFunctionEntry(ImageBase + 0x5000));
   EXPECT_EQ(Builder.knownFunctionEntryCount(), Image.COFFPDataRecords.size());
 }
 
