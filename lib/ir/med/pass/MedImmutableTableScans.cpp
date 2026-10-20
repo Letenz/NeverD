@@ -57,15 +57,26 @@ bool independentEntry(const MedFunc &Func, const MedBlock &Block,
 class Evaluator {
   const MedFunc &Func;
   const BinaryImage &Image;
-  llvm::DenseMap<Key, const MedOp *> Defs;
-  llvm::DenseMap<Key, std::pair<const MedBlock *, const PhiNode *>> Phis;
+  /// What the evaluator knows of one value: the operation or the PHI that
+  /// defines it, whether that PHI's inputs are complete, and what the value
+  /// evaluated to, while MemoGeneration is the evaluator's Generation.  One
+  /// lookup answers all of them.
+  struct Node {
+    const MedOp *Def = nullptr;
+    const MedBlock *PhiBlock = nullptr;
+    const PhiNode *Phi = nullptr;
+    bool CompletePhi = false;
+    uint64_t MemoGeneration = 0;
+    MedVar Memo = {};
+  };
+  llvm::DenseMap<Key, Node> Nodes;
+  /// Forgetting what was evaluated starts a new generation.
+  uint64_t Generation = 1;
   llvm::DenseMap<int, const MedBlock *> Blocks;
-  llvm::DenseSet<Key> CompletePhis;
   /// The values being evaluated, innermost last: a value its own evaluation
   /// reaches again has no value.  Evaluation nests at most
   /// MaxEvaluationDepth deep, so finding one is a short scan.
   llvm::SmallVector<Key, 16> Active;
-  Values Memo;
   size_t &Budget;
   bool Complete = false;
   /// The work building the evaluator charged.
@@ -123,7 +134,7 @@ public:
   /// new evaluator would.  Where that work does not fit, none is left and the
   /// evaluator is incomplete, as a new one would be.
   void renew() {
-    Memo.clear();
+    ++Generation;
     if (Built > Budget) {
       Budget = 0;
       Complete = false;
@@ -135,7 +146,6 @@ public:
 private:
   void build() {
     std::map<int, std::set<int>> Incoming;
-    llvm::DenseSet<Key> Outputs;
     for (const auto &B : Func.Blocks) {
       if (!spend(1 + B.Phis.size() + B.Ops.size()) || B.Id < 0 ||
           B.Id == std::numeric_limits<int>::max() ||
@@ -146,9 +156,14 @@ private:
           return;
       }
       for (const auto &P : B.Phis) {
-        if (!spend(P.Args.size()) || !Outputs.insert(key(P.Output)).second)
+        if (!spend(P.Args.size()))
           return;
-        Phis.try_emplace(key(P.Output), std::pair{&B, &P});
+        // Each value has one definition.
+        auto [It, Added] = Nodes.try_emplace(key(P.Output));
+        if (!Added)
+          return;
+        It->second.PhiBlock = &B;
+        It->second.Phi = &P;
       }
       for (const auto &Op : B.Ops) {
         // Source-call certificates authenticate this value graph and frame,
@@ -157,9 +172,10 @@ private:
         if (Op.NumInputs > Op.Inputs.size() || Op.SourceCallHint)
           return;
         if (Op.Output.Size && !Op.Output.isConst()) {
-          if (!Outputs.insert(key(Op.Output)).second)
+          auto [It, Added] = Nodes.try_emplace(key(Op.Output));
+          if (!Added)
             return;
-          Defs.try_emplace(key(Op.Output), &Op);
+          It->second.Def = &Op;
         }
       }
     }
@@ -171,7 +187,7 @@ private:
         if (!spend(B.Preds.size() + P.Args.size()))
           return;
         if (hasCompleteOrdinaryPhiInputs(B, P, Incoming[B.Id]))
-          CompletePhis.insert(key(P.Output));
+          Nodes[key(P.Output)].CompletePhi = true;
       }
     Complete = true;
   }
@@ -180,9 +196,10 @@ public:
   bool exhausted() const { return !Budget; }
   bool complete() const { return Complete; }
   bool hasCompletePhi(const PhiNode &P) const {
-    return CompletePhis.count(key(P.Output));
+    const auto It = Nodes.find(key(P.Output));
+    return It != Nodes.end() && It->second.CompletePhi;
   }
-  void clearMemo() { Memo.clear(); }
+  void clearMemo() { ++Generation; }
 
   std::optional<MedVar> value(const MedVar &V, const Values *Bindings = nullptr,
                               unsigned Depth = 0) {
@@ -203,18 +220,30 @@ public:
     if (Bindings)
       if (auto It = Bindings->find(K); It != Bindings->end())
         return It->second;
-    if (!Bindings)
-      if (auto It = Memo.find(K); It != Memo.end())
-        return It->second;
+    const auto Known = Nodes.find(K);
+    if (!Bindings && Known != Nodes.end() &&
+        Known->second.MemoGeneration == Generation)
+      return Known->second.Memo;
     if (llvm::is_contained(Active, K))
       return std::nullopt;
     Active.push_back(K);
+    // Memoizing an external input below adds its node, which can move the
+    // others: keep what this one says.
+    const MedOp *Def = nullptr;
+    const MedBlock *Block = nullptr;
+    const PhiNode *Phi = nullptr;
+    bool CompletePhi = false;
+    if (Known != Nodes.end()) {
+      Def = Known->second.Def;
+      Block = Known->second.PhiBlock;
+      Phi = Known->second.Phi;
+      CompletePhi = Known->second.CompletePhi;
+    }
     std::optional<MedVar> Result;
-    if (auto It = Phis.find(K); It != Phis.end()) {
-      const auto &[Block, Phi] = It->second;
+    if (Phi) {
       // An independently enterable root has an implicit incoming value that
       // no ordinary PHI arm describes.
-      if (CompletePhis.count(K) && !independentEntry(Func, *Block, Image)) {
+      if (CompletePhi && !independentEntry(Func, *Block, Image)) {
         bool AllValues = true;
         for (const auto &[Pred, Arg] : Phi->Args) {
           const MedBlock *Found = block(Pred);
@@ -236,8 +265,8 @@ public:
         if (!AllValues)
           Result.reset();
       }
-    } else if (auto It = Defs.find(K); It != Defs.end()) {
-      const auto &Op = *It->second;
+    } else if (Def) {
+      const auto &Op = *Def;
       if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
           !Op.Inputs[0].isConst() && key(Op.Inputs[0]) == K)
         Result = V;
@@ -249,8 +278,12 @@ public:
       Result = V;
     }
     Active.pop_back();
-    if (Result && !Bindings)
-      Memo.try_emplace(K, *Result);
+    // Nothing memoized K meanwhile: it was active.
+    if (Result && !Bindings) {
+      Node &Memoized = Nodes[K];
+      Memoized.MemoGeneration = Generation;
+      Memoized.Memo = *Result;
+    }
     return Result;
   }
 
