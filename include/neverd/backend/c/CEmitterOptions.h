@@ -60,6 +60,10 @@ struct CRecordDefinitions {
 
 struct CEmitterOptions {
   bool EmitIncludes = true;
+  /// The unit is a whole program, which a C compiler takes as one: its main
+  /// holds to the result and parameters C gives main.  A single function's
+  /// view keeps the name its listing gives it, as LLVM-C's does.
+  bool WholeProgram = false;
   bool EmitComments = true;
   /// Wrap record declarations in stable preprocessor guards so independently
   /// emitted translation units can be concatenated. A consumer that parses one
