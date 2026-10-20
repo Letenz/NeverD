@@ -21,7 +21,6 @@
 #include "neverd/evm/analysis/EVMAnalyzer.h"
 #include "neverd/evm/bytecode/EVMBytecode.h"
 #include "neverd/evm/emit/EVMLLVMEmitter.h"
-#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedNoReturn.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
@@ -49,24 +48,6 @@
 #define DEBUG_TYPE "neverd-pipeline"
 
 namespace neverd {
-
-namespace {
-/// True when \p LF adjusts the stack pointer or makes a call that returns,
-/// either of which needs x64 unwind data.  Tail calls and returns do not.
-bool movesStackOrCalls(const LowFunc &LF) {
-  const auto &TRI = getTargetRegInfo(Arch::X64);
-  for (const LowBlock &Block : LF.Blocks) {
-    for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries)
-      if (Boundary.Control == LowInstructionControl::Call ||
-          Boundary.Control == LowInstructionControl::ConditionalCall)
-        return true;
-    for (const LowOp &Op : Block.Ops)
-      if (Op.Output.isReg() && TRI.isStackPointer(Op.Output.Offset))
-        return true;
-  }
-  return false;
-}
-} // namespace
 
 namespace {
 
@@ -461,51 +442,17 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
           for (const auto &Block : LF.Blocks)
             if (Block.StartAddr != LF.Entry && Guesses.count(Block.StartAddr))
               Absorbed.insert(Block.StartAddr);
-      // Win64 requires unwind data for every function that moves RSP or calls
-      // (a tail jump needs neither).  In an image with an exception directory,
-      // a guess that does either without a RUNTIME_FUNCTION is not a function:
-      // usually data in a code section or the remnant of a split chunk.
-      // This holds for any start that neither a primary unwind record nor a
-      // real name (PDB, export) vouches for, however it was discovered.
-      std::set<va_t> NonLeaf;
-      if (Img.Arch == Arch::X64 && Img.Format == BinaryFormat::COFF &&
-          !Img.KnownCodeRanges.empty()) {
-        // Whether a primary unwind record starts at Entry: a run lifts a few
-        // functions, and an image holds tens of thousands of records.  They
-        // are sorted once exceptions are parsed; any other order is scanned.
-        const auto &Ranges = Img.KnownCodeRanges;
-        const bool Sorted = Inventory
-                                ? Inventory->KnownCodeRangesSorted
-                                : std::is_sorted(Ranges.begin(), Ranges.end());
-        const auto StartsUnwind = [&](va_t Entry) {
-          if (Img.ContinuationCodeStarts.count(Entry))
-            return false;
-          if (!Sorted)
-            return llvm::any_of(Ranges, [&](const auto &Range) {
-              return Range.first == Entry;
-            });
-          const auto It = std::lower_bound(Ranges.begin(), Ranges.end(),
-                                           std::pair<va_t, va_t>(Entry, 0));
-          return It != Ranges.end() && It->first == Entry;
-        };
-        for (const auto &LF : Result.LowFuncs)
-          if (!Absorbed.count(LF.Entry) && !StartsUnwind(LF.Entry) &&
-              isSynthesizedFuncName(LF.Name) && movesStackOrCalls(LF))
-            NonLeaf.insert(LF.Entry);
-      }
-      if (!Absorbed.empty() || !NonLeaf.empty()) {
+      // Missing unwind metadata is not evidence that decoded code is data.
+      // Only an actual CFG owner can absorb a guessed entry. Instruction
+      // completeness and exception-rewrite admission remain separate checks.
+      if (!Absorbed.empty()) {
         for (auto &Audit : Result.FunctionAudits) {
           if (Absorbed.count(Audit.Entry)) {
             Audit.Disposition =
                 PipelineFunctionDisposition::AbsorbedFunctionChunk;
             Audit.HasLowIR = false;
-          } else if (NonLeaf.count(Audit.Entry)) {
-            Audit.Disposition =
-                PipelineFunctionDisposition::RejectedUnwindlessNonLeaf;
-            Audit.HasLowIR = false;
           }
         }
-        Absorbed.insert(NonLeaf.begin(), NonLeaf.end());
         Result.LowFuncs.erase(std::remove_if(Result.LowFuncs.begin(),
                                              Result.LowFuncs.end(),
                                              [&](const LowFunc &LF) {

@@ -194,6 +194,8 @@ enum class PipelineFunctionDisposition {
   RejectedIncomplete,
   RemovedJumpTableTarget,
   AbsorbedFunctionChunk,
+  /// Legacy audit value, no longer emitted: missing unwind metadata does not
+  /// disprove a function entry. Retained for consumers of earlier audits.
   RejectedUnwindlessNonLeaf,
   MedIRFailed,
   Accepted,
