@@ -1114,6 +1114,11 @@ cl::list<std::string> TypesDeclare(
     cl::desc("Add the types this file declares first: C (.h, .c), C++ (.hpp, "
              ".cpp), Rust (.rs) or Go (.go); repeat for more"),
     cl::value_desc("file"), cl::sub(TypesCmd));
+cl::opt<bool>
+    TypesSave("save",
+              cl::desc("Persist --declare types in the binary's project for "
+                       "later CLI commands and the GUI"),
+              cl::sub(TypesCmd));
 cl::opt<bool> TypesNoOffsets("no-offsets",
                              cl::desc("Leave out the offset comments"),
                              cl::sub(TypesCmd));
@@ -1574,8 +1579,30 @@ cl::opt<std::string>
     ItemClear("clear", cl::desc("Forget the user's item at this address (hex)"),
               cl::init(""), cl::value_desc("address"), cl::sub(ItemsCmd));
 cl::opt<unsigned> ItemSize("size",
-                           cl::desc("Bytes of a value or of undefined bytes"),
+                           cl::desc("Bytes of a value, an array element, or "
+                                    "undefined bytes"),
                            cl::init(1), cl::sub(ItemsCmd));
+cl::opt<std::string>
+    ItemArray("array",
+              cl::desc("Define an array at this address (hex), with --size "
+                       "bytes per element and --count elements"),
+              cl::value_desc("address"), cl::sub(ItemsCmd));
+cl::opt<unsigned> ItemCount("count", cl::desc("Number of array elements"),
+                            cl::init(0), cl::sub(ItemsCmd));
+cl::opt<std::string>
+    ItemType("type",
+             cl::desc("Local type of each array element; its layout must "
+                      "match --size"),
+             cl::value_desc("name"), cl::sub(ItemsCmd));
+cl::opt<std::string>
+    ItemAlignment("alignment",
+                  cl::desc("Mark padding at this address (hex) through the "
+                           "next --boundary"),
+                  cl::value_desc("address"), cl::sub(ItemsCmd));
+cl::opt<unsigned>
+    ItemBoundary("boundary",
+                 cl::desc("Power-of-two alignment boundary, from 2 to 1048576"),
+                 cl::init(16), cl::sub(ItemsCmd));
 cl::opt<std::string> OperandAddr("addr",
                                  cl::desc("Address (hex) of the instruction"),
                                  cl::init(""), cl::value_desc("address"),
@@ -1598,6 +1625,13 @@ cl::opt<std::string> OperandStruct(
     cl::desc("Show the number as a structure offset into this local type, "
              "the member it lands on (IDA's T)"),
     cl::init(""), cl::value_desc("type"), cl::sub(OperandsCmd));
+cl::opt<std::string> OperandEnum(
+    "enum", cl::desc("Show a decoded immediate using this local enumeration"),
+    cl::value_desc("type"), cl::sub(OperandsCmd));
+cl::opt<bool> OperandFlags(
+    "flags",
+    cl::desc("With --enum, combine flag names and retain unknown bits"),
+    cl::sub(OperandsCmd));
 cl::opt<long long> OperandDelta(
     "delta",
     cl::desc("With --struct, how many bytes into the type the register "

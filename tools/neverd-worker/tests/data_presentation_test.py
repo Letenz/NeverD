@@ -7,6 +7,7 @@ import struct
 import tempfile
 from transport_test import Client
 from source_variable_types_test import ok, global_elf, source
+from source_synthesis_test import ENTRY, elf
 
 DATA = 0x401000
 
@@ -104,6 +105,25 @@ def run(executable):
         ok(client, "local_types_declare", {"source": "enum QA_SIGNED { QA_NEGATIVE = -1 };"})
         ok(client, "operand_format", {"address": hex(entry), "operand": 1, "action": "enum", "type": "QA_SIGNED"})
         assert "QA_NEGATIVE" in str(listing(client, entry))
+        # A shift's byte immediate has its own logical width, independently
+        # of its 32-bit destination. Folding must retain decoded indices too.
+        for name, code, operand, declaration, expected in (
+                ("shift", "c1e0ffc3", 1,
+                 "enum QA_BYTE : signed char { QA_BYTE_NEGATIVE = -1 };",
+                 "QA_BYTE_NEGATIVE"),
+                ("imul", "6bc00bc3", 2,
+                 "enum QA_IMUL { QA_FACTOR = 11 };", "QA_FACTOR")):
+            small = Path(directory) / (name + ".elf")
+            small.write_bytes(elf(bytes.fromhex(code)))
+            ok(client, "open", {"path": str(small), "analysis": False})
+            source(client, "low", ENTRY)
+            ok(client, "local_types_declare",
+               {"source": declaration, "language": "cpp"})
+            enum_type = "QA_BYTE" if name == "shift" else "QA_IMUL"
+            ok(client, "operand_format",
+               {"address": hex(ENTRY), "operand": operand,
+                "action": "enum", "type": enum_type})
+            assert expected in str(listing(client, ENTRY))
 
 
 if __name__ == "__main__":

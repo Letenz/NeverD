@@ -794,6 +794,13 @@ verify persistence. `NEVERD_CODE_NAV_CAPTURE_DIR` saves window captures.
 Run `neverd-gui-tests` directly with the native Qt platform to exercise native
 widgets; CTest sets the controller's platform to `offscreen`.
 
+`NeverDWorkerCLIDataPresentation` checks CLI/GUI array, alignment and enum
+parity against a real engine: identical sidecars, listing display, native IR
+isolation, saved type declarations, writer exclusion, resets, failed edits and
+malformed SDK array fields. Run it with
+`NeverDWorkerDataPresentation` and `NeverDWorkerFormat` when changing these
+presentation operations.
+
 `NeverDGuiSourceVariableTypes` uses the real worker for type editing and
 variable associations. It is registered only with
 `NEVERD_WORKER_REAL_ENGINE_TESTS=ON`; fixture SDK builds keep it disabled.

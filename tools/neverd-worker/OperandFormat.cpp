@@ -504,8 +504,8 @@ bool appendFormattedNumber(StyledText &out, std::uint64_t value, unsigned bits,
 
 void formatX86Operand(StyledText &out, const OperandTokens &tokens,
                       const OperandFacts &facts, const LocationNamer &namer,
-                      const X86Context &context,
-                      const NumberFormat *format = nullptr) {
+                      const X86Context &context, const NumberFormat *format,
+                      unsigned operandBits) {
   const auto open =
       std::find_if(tokens.begin(), tokens.end(), [](const Token &t) {
         return t.kind == TokenKind::Punct && t.text == "[";
@@ -699,13 +699,17 @@ void formatX86Operand(StyledText &out, const OperandTokens &tokens,
   // An immediate the user formats: its value, unsigned in the operation's
   // width.
   if (format && !format->isDefault()) {
-    const unsigned bits = context.immediateBits ? context.immediateBits : 64;
-    const std::uint64_t mask =
-        bits >= 64 ? ~std::uint64_t(0) : (std::uint64_t(1) << bits) - 1;
-    if (const auto value = plainNumber(tokens, mask);
-        value && appendFormattedNumber(out, *value, bits, *format, namer,
-                                       facts.structs, facts.enums))
-      return;
+    const unsigned bits = format->base == NumberBase::Enum ? operandBits
+                          : context.immediateBits ? context.immediateBits
+                                                  : 64;
+    if (bits && bits <= 64) {
+      const std::uint64_t mask =
+          bits == 64 ? ~std::uint64_t(0) : (std::uint64_t(1) << bits) - 1;
+      if (const auto value = plainNumber(tokens, mask);
+          value && appendFormattedNumber(out, *value, bits, *format, namer,
+                                         facts.structs, facts.enums))
+        return;
+    }
   }
   // A negative immediate is the unsigned value of the operation's width,
   // unless the instruction keeps a signed byte.
@@ -990,7 +994,10 @@ StyledText formatOperands(std::string_view operands, const OperandFacts &facts,
             ? &(*facts.numberFormats)[index]
             : nullptr;
     if (facts.dialect == OperandDialect::X86)
-      formatX86Operand(out, operand, facts, namer, context, format);
+      formatX86Operand(out, operand, facts, namer, context, format,
+                       facts.operandBits && index < facts.operandBits->size()
+                           ? (*facts.operandBits)[index]
+                           : 0);
     else
       formatGenericOperand(out, operand, facts, namer);
   }

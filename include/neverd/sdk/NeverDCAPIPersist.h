@@ -158,6 +158,7 @@ NEVERD_API const char *neverd_func_type_json(neverd_session_t Sess,
                                              const char *OptionsJson);
 /// Format exact enum/flag bits using the current local type library.
 /// Value is a hexadecimal/decimal string; Bits is the logical operand width.
+/// Null with neverd_last_error on refusal; free with neverd_free_string.
 NEVERD_API const char *neverd_enum_value_json(neverd_session_t Sess,
                                               const char *Type,
                                               const char *Value, unsigned Bits,
