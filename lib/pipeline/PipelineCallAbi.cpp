@@ -884,9 +884,9 @@ AnalysisCacheWarmup warmOmittedCallees(const BinaryImage &Img,
   CalleeReader Reader(Img, Summaries);
   if (!Reader.init())
     return Warmup;
-  // Warming fills a quarter of the memo, and leaves the rest to the callees
+  // Warming fills half of the memo, and leaves the other half to the callees
   // selections read: bodies past it would only push those out.
-  constexpr size_t WarmedBytes = OmittedCalleeMemo::MaxBytes / 4;
+  constexpr size_t WarmedBytes = OmittedCalleeMemo::MaxBytes / 2;
   // A small body is the signature of a routine many functions call; a large
   // one is read where a selection first reads it.
   constexpr size_t MaxWarmedOperations = 512;
