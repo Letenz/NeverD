@@ -250,6 +250,7 @@ struct Instruction {
   std::uint64_t address = 0;
   std::uint32_t size = 0;
   std::string mnemonic, operands, bytes;
+  std::vector<unsigned> operandBits;
   Flow flow = Flow::None;
   std::optional<std::uint64_t> target;
   std::vector<std::pair<std::uint64_t, RefKind>> refs;
@@ -1735,7 +1736,8 @@ struct Listing::Impl {
     const char *raw =
         disasmEx
             ? disasmEx(session, address, static_cast<int>(count),
-                       NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK)
+                       NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK |
+                           NEVERD_DISASM_OPERANDS)
             : neverd_disasm_json(session, address, static_cast<int>(count));
     const auto rows = takeJson(raw);
     std::vector<Instruction> result;
@@ -1750,6 +1752,8 @@ struct Listing::Impl {
       instruction.mnemonic = row.value("mnemonic", std::string());
       instruction.operands = row.value("op_str", std::string());
       instruction.bytes = row.value("bytes", std::string());
+      instruction.operandBits =
+          row.value("operand_bits", std::vector<unsigned>());
       instruction.flow = parseFlow(row.value("flow", std::string()));
       if (row.contains("target"))
         instruction.target = jsonAddress(row["target"]);
@@ -2794,10 +2798,19 @@ struct Listing::Impl {
     facts.flow = flowName(instruction.flow);
     facts.target = instruction.target;
     facts.bytes = instruction.bytes;
+    facts.operandBits = &instruction.operandBits;
     if (const auto formats = numberFormats.find(instruction.address);
         formats != numberFormats.end())
       facts.numberFormats = &formats->second;
     std::vector<NumberFormat> mappedFormats;
+    std::vector<unsigned> mappedBits;
+    if (!classic.operandIndices.empty()) {
+      for (auto index : classic.operandIndices)
+        mappedBits.push_back(index < instruction.operandBits.size()
+                                 ? instruction.operandBits[index]
+                                 : 0);
+      facts.operandBits = &mappedBits;
+    }
     if (facts.numberFormats && !classic.operandIndices.empty()) {
       for (auto index : classic.operandIndices)
         mappedFormats.push_back(index < facts.numberFormats->size()

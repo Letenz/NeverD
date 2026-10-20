@@ -138,7 +138,7 @@ bool CFGBuilder::isOwnedInteriorTarget(const BinaryImage &Img,
       !isCurrentOwnedFragment(Target))
     return false;
   if ((Target % getInsnAlignment()) != 0 ||
-      !Img.hasExecutableCodeOwnerAt(Target) ||
+      !Img.hasExecutableCodeOwnerAt(Target, ExecutableCodeOwners) ||
       !Img.hasExecutableCodeOwnerRange(Target, getInsnAlignment()) ||
       !Img.readVA(Target, 1))
     return false;
@@ -185,8 +185,9 @@ void CFGBuilder::exploreAddressTakenRoots(const BinaryImage &Img,
     // through it, whose jump-table resolver recovers what it names; it roots
     // no function's code.  The range of a function before the dispatcher
     // reaches the dispatcher's cases when its entry is only a guess.
-    std::erase_if(
-        Sources, [&](va_t Slot) { return Img.hasExecutableCodeOwnerAt(Slot); });
+    std::erase_if(Sources, [&](va_t Slot) {
+      return Img.hasExecutableCodeOwnerAt(Slot, ExecutableCodeOwners);
+    });
     if (Exception && Exception->Registration &&
         (Exception->Encoding == ExceptionEncoding::X86ScopeTableEH3 ||
          Exception->Encoding == ExceptionEncoding::X86ScopeTableEH4))

@@ -13,6 +13,10 @@ typed elements require the exact current type layout. Each element has an
 indexed listing row, including when navigating into the middle of a large
 array. Record rows show a bounded byte preview with the complete element size.
 They do not expand a record into an unbounded number of member rows.
+Code-overlap validation discovers functions even in a cold CLI/SDK session.
+Unknown extents in the affected executable segment require bounded function
+preparation; an unproven boundary is refused instead of treating zero size as
+evidence that the bytes are data.
 
 Saved numeric extent and element width remain authoritative for presentation
 when a local type later changes. A missing or differently sized type produces
@@ -37,35 +41,52 @@ does not eagerly bind type-dependent rows against a preceding type generation;
 new edits validate against the current library, and render binding uses the
 current library without changing saved extents.
 
+## Command line
+
+`items` and `operands` edit the same project files as the GUI, through the
+same SDK validation. Declare any named record or enum in Local Types first:
+
+```sh
+neverd types program.exe --declare types.h --save
+neverd items program.exe --array 0x140002000 --size 4 --count 16
+neverd items program.exe --array 0x140002040 --size 12 --count 4 --type QA_ROW
+neverd items program.exe --alignment 0x140002073 --boundary 16
+neverd operands program.exe --addr 0x140001000 --operand 1 --enum QA_FLAGS --flags
+```
+
+For an array, `--size` (or `--element-size`) is the element width and `--count` is required. `--type`
+is optional. Alignment computes its span through the next boundary; at an
+already aligned address it marks a complete unit. `--boundary` defaults to 16
+and cannot combine with `--size`.
+
+`types --declare --save` (also spelled `--save-declarations`) keeps successfully parsed declarations in the binary's
+project for subsequent commands and GUI sessions. Without `--save`, declarations
+remain local to the current `types` invocation. Saving requires a binary and
+only runs after all supplied declaration files parse successfully.
+
+`--enum` selects an exact enum member; `--flags` additionally combines single
+bits and preserves residual bits numerically. `--operand` uses the original
+decoded operand index, starting at zero, so the immediate of `imul r,r,imm` is
+operand 2 even when the GUI folds its text to `imul r,imm`.
+The display uses the same decoded operand width as SDK admission; a byte shift
+count does not take the width of its destination register.
+SDK/CLI disassembly preserves raw `op_str` and adds `display_op_str` when an
+enum changes its spelling. Text output uses the same enum formatting. Missing
+or deleted enum types leave the numeric operand visible.
+
+Run `neverd items program.exe --json` or `neverd operands program.exe --json`
+to read the saved rows. Text output includes array extent, element type,
+alignment boundary and enum flags mode. `items --clear ADDRESS` removes a
+definition; `operands --addr ADDRESS --operand INDEX --clear` restores numeric
+spelling. Reopen the project in the GUI to see CLI edits. The ordinary project
+writer lock prevents concurrent edits by a running GUI session.
+
 Checks: `NeverDWorkerDataPresentation` uses a real ELF with code and a separate
 data segment and covers pagination, records, enum aliases/signed values/unknown
 bits, layout changes, code overlap, atomic refusals, undo/redo, reopen, replicas
 and ordinary IR isolation. `NeverDWorkerFormat` covers logical-width plumbing
 and folded operands. The Qt source/workbench test includes all three dialogs.
-
-## CLI and saved project parity
-
-These definitions use the same SDK validators and sidecars in the CLI:
-
-```console
-neverd items app.exe --array 140020000 --element-size 4 --count 16 --json
-neverd items app.exe --array 140020000 --element-size 12 --count 4 --type MY_ROW --json
-neverd items app.exe --alignment 140020043 --boundary 16 --json
-neverd operands app.exe --addr 140001000 --operand 1 --enum MY_FLAGS --flags --json
-```
-
-`--type` names a previously declared local type; `neverd types app.exe
---declare types.h --save-declarations` imports and persists it. Without
-`--save-declarations`, declarations remain local to that CLI invocation. Its current layout must match `--element-size`.
-The SDK refuses invalid sizes, unavailable types, overlaps, uninitialized spans
-and non-immediate enum operands before saving. Alignment padding ends at the
-next boundary; an already aligned address defines one full boundary unit.
-`--array`, `--alignment`, `--data`, `--string`, `--undefine` and `--clear` are
-mutually exclusive. `--flags` composes single-bit enum names and keeps residual
-numeric bits; omitting it chooses an exact member or the numeric value.
-
-Reopening that binary in the GUI reads the same arrays, alignment extents,
-local types and enum presentation. The native SDK/CLI disassembly keeps raw
-`op_str` and adds `display_op_str` when an enum changes its display; text
-output uses that same spelling. Unknown/deleted enum types fall back to the
-original number. None of these display settings supplies analysis semantics.
+`NeverDWorkerCLIDataPresentation` checks byte-identical CLI/worker sidecars,
+GUI rendering of CLI edits, native IR isolation, resets and atomic refusals.
+It also calls the SDK directly to reject malformed array field types without
+replacing an existing definition.

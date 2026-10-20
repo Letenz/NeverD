@@ -245,6 +245,15 @@ const char *neverd_disasm_json_ex(neverd_session_t Sess, neverd_va_t Addr,
         if (DI.Raw && Display != DI.Raw->op_str)
           Obj["display_op_str"] = Display;
         Obj["bytes"] = BytesHex;
+        if ((Options & NEVERD_DISASM_OPERANDS) &&
+            (S->Img.Arch == Arch::X86 || S->Img.Arch == Arch::X64) && DI.Raw &&
+            DI.Raw->detail) {
+          llvm::json::Array Bits;
+          const auto &Operands = DI.Raw->detail->x86;
+          for (unsigned I = 0; I < Operands.op_count; ++I)
+            Bits.push_back(Operands.operands[I].size * 8);
+          Obj["operand_bits"] = std::move(Bits);
+        }
         if (Options & (NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK)) {
           const InstructionFlow Flow = summarizeInstructionFlow(
               S->Img, S->Dec, DI,

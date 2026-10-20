@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "FunctionAuditReason.h"
 #include "InstructionFlow.h"
 #include "LLVMFunctionView.h"
 #include "LibraryPresentation.h"
@@ -224,39 +225,12 @@ std::optional<std::string> missingARMModeReason(const BinaryImage &Img,
          arm_mode_cli::Thumb;
 }
 
-/// The audit's disposition and the evidence for it: `rejected-incomplete;
-/// decode failure at 0xC`.
-std::string auditReason(const PipelineFunctionAudit &Audit) {
-  std::string Reason = pipelineFunctionDispositionName(Audit.Disposition);
-  auto Name = [&](const char *What, const std::vector<va_t> &Addrs) {
-    if (Addrs.empty())
-      return;
-    Reason += std::string("; ") + What + " at";
-    for (size_t I = 0; I < Addrs.size() && I < 4; ++I)
-      Reason += " 0x" + llvm::utohexstr(Addrs[I]);
-    if (Addrs.size() > 4)
-      Reason += " ...";
-  };
-  std::vector<va_t> Unsupported;
-  for (va_t Addr : Audit.UnsupportedInstructions)
-    if (!llvm::is_contained(Audit.UnprovenReturns, Addr))
-      Unsupported.push_back(Addr);
-  Name("unsupported instruction", Unsupported);
-  Name("return that may pop an address the function pushed",
-       Audit.UnprovenReturns);
-  Name("decode failure", Audit.DecodeFailures);
-  return Reason;
-}
-
 /// Why \p Entry has no HighIR, naming the pipeline's audit disposition when
 /// it recorded one (for example a rejected or absorbed candidate).
 std::string missingHighFunctionReason(const PipelineResult &Result,
                                       neverd_va_t Entry) {
-  for (const PipelineFunctionAudit &Audit : Result.FunctionAudits)
-    if (Audit.Entry == Entry &&
-        Audit.Disposition != PipelineFunctionDisposition::Accepted)
-      return "function not found in HighIR (" + auditReason(Audit) + ")";
-  return "function not found in HighIR";
+  return missingPipelineFunctionReason(Result, Entry,
+                                       "function not found in HighIR");
 }
 
 /// A note for each function the pipeline refused, with why, which a whole
@@ -287,8 +261,8 @@ std::string refusedFunctionNotes(const PipelineResult &Result) {
          At = Name.find("*/", At))
       Name.replace(At, 2, "* /");
     Notes += "/* neverd.not-decompiled: " + Name + " at 0x" +
-             llvm::utohexstr(Audit->Entry) + ": " + auditReason(*Audit) +
-             " */\n";
+             llvm::utohexstr(Audit->Entry) + ": " +
+             functionAuditReason(*Audit) + " */\n";
   }
   return Notes.empty() ? Notes : Notes + "\n";
 }

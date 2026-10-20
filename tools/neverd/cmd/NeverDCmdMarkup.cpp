@@ -36,34 +36,6 @@
 using namespace llvm;
 
 namespace neverd::cli {
-namespace {
-cl::opt<std::string> ItemArray("array",
-                               cl::desc("Define an array at address (hex)"),
-                               cl::init(""), cl::sub(ItemsCmd));
-cl::opt<std::string>
-    ItemAlignment("alignment",
-                  cl::desc("Define alignment padding at address (hex)"),
-                  cl::init(""), cl::sub(ItemsCmd));
-cl::opt<unsigned> ArrayElementSize("element-size",
-                                   cl::desc("Array element size in bytes"),
-                                   cl::init(1), cl::sub(ItemsCmd));
-cl::opt<unsigned> ArrayCount("count", cl::desc("Array element count"),
-                             cl::init(1), cl::sub(ItemsCmd));
-cl::opt<std::string> ArrayType(
-    "type",
-    cl::desc(
-        "Optional local array element type; size must match --element-size"),
-    cl::init(""), cl::sub(ItemsCmd));
-cl::opt<unsigned> AlignmentBoundary("boundary",
-                                    cl::desc("Power-of-two alignment boundary"),
-                                    cl::init(16), cl::sub(ItemsCmd));
-cl::opt<std::string> OperandEnum(
-    "enum", cl::desc("Show an actual immediate using this local enumeration"),
-    cl::init(""), cl::sub(OperandsCmd));
-cl::opt<bool> OperandEnumFlags(
-    "flags", cl::desc("Compose enum flag names and preserve unknown bits"),
-    cl::sub(OperandsCmd));
-} // namespace
 
 int runBookmarks() {
   // The project folder beside the input keeps the bookmarks, as the
@@ -718,20 +690,19 @@ StringRef valueItemKind(unsigned Bytes) {
 /// The row that makes the bytes at \p Addr the item the options ask for, or
 /// an error message.
 Expected<json::Object> itemRow(neverd_session_t Sess, uint64_t Addr) {
-  if (!ItemArray.empty()) {
-    json::Object Row{{"kind", "array"},
-                     {"element_size", ArrayElementSize.getValue()},
-                     {"count", ArrayCount.getValue()}};
-    if (!ArrayType.empty())
-      Row["type"] = ArrayType.getValue();
-    return Row;
-  }
+  if (!ItemArray.empty())
+    return json::Object{{"kind", "array"},
+                        {"element_size", ItemElementSize.getNumOccurrences()
+                                             ? ItemElementSize.getValue()
+                                             : ItemSize.getValue()},
+                        {"count", ItemCount.getValue()},
+                        {"type", ItemType.getValue()}};
   if (!ItemAlignment.empty()) {
-    const auto Boundary = AlignmentBoundary.getValue();
+    const uint64_t Boundary = ItemBoundary;
     if (Boundary < 2 || Boundary > 1048576 || (Boundary & (Boundary - 1)))
-      return createStringError(
-          inconvertibleErrorCode(),
-          "alignment requires a power-of-two boundary in 2..1048576");
+      return createStringError(inconvertibleErrorCode(),
+                               "alignment boundary must be a power of two "
+                               "from 2 to 1048576");
     return json::Object{{"kind", "alignment"},
                         {"alignment", Boundary},
                         {"size", Boundary - Addr % Boundary}};
@@ -778,22 +749,34 @@ Expected<json::Object> itemRow(neverd_session_t Sess, uint64_t Addr) {
 } // namespace
 
 int runItems(neverd_session_t Sess) {
+  if (ItemElementSize.getNumOccurrences() &&
+      (ItemArray.empty() || ItemSize.getNumOccurrences())) {
+    WithColor::error()
+        << "--element-size requires --array; choose --size or --element-size\n";
+    return 1;
+  }
+  if ((ItemArray.getNumOccurrences() && ItemArray.empty()) ||
+      (ItemAlignment.getNumOccurrences() && ItemAlignment.empty())) {
+    WithColor::error() << "--array and --alignment require an address\n";
+    return 1;
+  }
+  if ((ItemArray.empty() &&
+       (ItemCount.getNumOccurrences() || ItemType.getNumOccurrences())) ||
+      (ItemAlignment.empty() && ItemBoundary.getNumOccurrences()) ||
+      (!ItemAlignment.empty() && ItemSize.getNumOccurrences())) {
+    WithColor::error() << "--count and --type require --array; --boundary "
+                          "requires --alignment, which computes its own size\n";
+    return 1;
+  }
   const std::string *Edits[] = {
       &ItemData.getValue(),  &ItemString.getValue(), &ItemUndefine.getValue(),
       &ItemClear.getValue(), &ItemArray.getValue(),  &ItemAlignment.getValue()};
-  if (((ArrayElementSize.getNumOccurrences() ||
-        ArrayCount.getNumOccurrences() || ArrayType.getNumOccurrences()) &&
-       ItemArray.empty()) ||
-      (AlignmentBoundary.getNumOccurrences() && ItemAlignment.empty())) {
-    WithColor::error() << "--element-size, --count and --type require --array; "
-                          "--boundary requires --alignment\n";
-    return 1;
-  }
   const auto Chosen =
       llvm::count_if(Edits, [](const std::string *E) { return !E->empty(); });
   if (Chosen > 1) {
-    WithColor::error() << "--data, --string, --array, --alignment, --undefine "
-                          "and --clear edit one item at a time\n";
+    WithColor::error()
+        << "--data, --string, --array, --alignment, --undefine and --clear "
+           "edit one item at a time\n";
     return 1;
   }
   if (Chosen == 1) {
@@ -838,7 +821,7 @@ int runItems(neverd_session_t Sess) {
   } else {
     outs() << "\nData items:\n";
     outs() << format("  %-18s %-10s %8s  %s\n", "Address", "Kind", "Size",
-                     "Encoding");
+                     "Details");
     outs() << "  " << std::string(50, '-') << "\n";
     size_t Count = 0;
     auto Parsed = json::parse(Json ? Json : "[]");
@@ -849,12 +832,24 @@ int runItems(neverd_session_t Sess) {
         const json::Object *Obj = V.getAsObject();
         if (!Obj)
           continue;
+        std::string Details = Obj->getString("encoding").value_or("").str();
+        if (Obj->getString("kind") == "array") {
+          Details =
+              std::to_string(Obj->getInteger("count").value_or(0)) +
+              " elements x " +
+              std::to_string(Obj->getInteger("element_size").value_or(0)) +
+              " bytes";
+          if (const auto Type = Obj->getString("type"))
+            Details += ", " + Type->str();
+        } else if (Obj->getString("kind") == "alignment")
+          Details = "boundary " +
+                    std::to_string(Obj->getInteger("alignment").value_or(0));
         outs() << format(
             "  %-18s %-10s %8lld  %s\n",
             Obj->getString("addr").value_or("").str().c_str(),
             Obj->getString("kind").value_or("").str().c_str(),
             static_cast<long long>(Obj->getInteger("size").value_or(0)),
-            Obj->getString("encoding").value_or("").str().c_str());
+            Details.c_str());
         ++Count;
       }
     }
@@ -866,14 +861,16 @@ int runItems(neverd_session_t Sess) {
 }
 
 int runOperands(neverd_session_t Sess) {
-  if ((!OperandEnum.empty() &&
-       (!OperandStruct.empty() || OperandBase.getNumOccurrences() ||
+  if ((OperandEnum.getNumOccurrences() && OperandEnum.empty()) ||
+      (OperandFlags.getNumOccurrences() && OperandEnum.empty()) ||
+      (!OperandEnum.empty() &&
+       (OperandAddr.empty() || OperandClear || !OperandStruct.empty() ||
         OperandNegate || OperandInvert || OperandDelta.getNumOccurrences() ||
-        OperandClear)) ||
-      (OperandEnumFlags && OperandEnum.empty()) ||
-      ((!OperandEnum.empty() || OperandEnumFlags) && OperandAddr.empty())) {
-    WithColor::error() << "--enum requires --addr and is exclusive with other "
-                          "formats; --flags requires --enum\n";
+        (OperandBase != "number" && OperandBase != "enum")))) {
+    WithColor::error()
+        << "--enum requires --addr and a type; --flags goes with --enum. "
+           "Do not combine enum formatting with --clear, --struct, --delta, "
+           "--negate, --invert or another --base\n";
     return 1;
   }
   if (!OperandAddr.empty()) {
@@ -899,14 +896,13 @@ int runOperands(neverd_session_t Sess) {
                                        : std::string("struct")},
                           {"negate", OperandNegate.getValue()},
                           {"invert", OperandInvert.getValue()}};
-      if (!OperandStruct.empty()) {
-        Object["type"] = OperandStruct.getValue();
-        Object["delta"] = static_cast<int64_t>(OperandDelta.getValue());
-      }
       if (!OperandEnum.empty()) {
         Object["base"] = "enum";
         Object["type"] = OperandEnum.getValue();
-        Object["flags"] = bool(OperandEnumFlags);
+        Object["flags"] = OperandFlags.getValue();
+      } else if (!OperandStruct.empty()) {
+        Object["type"] = OperandStruct.getValue();
+        Object["delta"] = static_cast<int64_t>(OperandDelta.getValue());
       }
       Format = formatv("{0}", json::Value(std::move(Object))).str();
     }
@@ -956,6 +952,8 @@ int runOperands(neverd_session_t Sess) {
             Changes += "bits ";
           if (std::optional<StringRef> Type = Operand->getString("type")) {
             Changes += Type->str();
+            if (Operand->getBoolean("flags").value_or(false))
+              Changes += ", flags";
             if (const int64_t Delta = Operand->getInteger("delta").value_or(0))
               Changes += ", delta " + std::to_string(Delta);
           }

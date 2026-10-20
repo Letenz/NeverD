@@ -90,6 +90,28 @@ TEST_F(SessionLLVMTest, MissingIdentityNeverFallsBackToSymbolSpelling) {
   EXPECT_NE(State.LastError.find("not found at 0x1000"), std::string::npos);
 }
 
+TEST_F(SessionLLVMTest, MissingFunctionRetainsItsPipelineFailure) {
+  addFunction("unrelated_source", 0x2000);
+  PipelineFunctionAudit Rejected;
+  Rejected.Entry = 0x1000;
+  Rejected.Disposition = PipelineFunctionDisposition::RejectedIncomplete;
+  Rejected.DecodeFailures = {0x1005};
+  State.PipeResult.FunctionAudits.push_back(Rejected);
+  const std::string Expected =
+      "LLVM function not found at 0x1000 "
+      "(rejected-incomplete; decode failure at 0x1005)";
+  EXPECT_EQ(State.findNativeLlvmFunction(0x1000), nullptr);
+  EXPECT_EQ(State.LastError, Expected);
+  for (bool NoOpt : {false, true}) {
+    State.clearError();
+    EXPECT_EQ(State.ensureFunctionLlvmModule(0x1000, NoOpt), nullptr);
+    EXPECT_EQ(State.LastError, Expected);
+  }
+  State.clearError();
+  EXPECT_EQ(State.findNativeLlvmFunction(0x3000), nullptr);
+  EXPECT_EQ(State.LastError, "LLVM function not found at 0x3000");
+}
+
 TEST_F(SessionLLVMTest, DuplicateOriginalAddressIsAmbiguous) {
   addFunction("first_source", 0x1000);
   addFunction("second_source", 0x1000);

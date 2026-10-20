@@ -17,7 +17,8 @@ struct SignalActionResult {
 };
 
 /// Raw syscalls and libc adapters share the same process-wide action table.
-/// There are no pending signals, host handlers, signal frames or delivery.
+/// Self SIGKILL terminates the guest workload. Other delivery, pending signals
+/// and guest handler frames are unsupported.
 class LinuxSignals {
 public:
   explicit LinuxSignals(const std::optional<LinuxSignalOptions> &Options)
@@ -30,6 +31,9 @@ public:
   llvm::Expected<std::optional<uint64_t>>
   handle(ExecutionBackend &CPU, const MemoryLayout &Layout,
          const ProcessServiceEvent &Event, ProcessResult &Result);
+  /// Linux pid_t/int arguments have already been narrowed by the service layer.
+  std::optional<uint64_t> send(int32_t PID, int32_t Signal,
+                               ProcessResult &Result);
 
 private:
   bool Enabled;

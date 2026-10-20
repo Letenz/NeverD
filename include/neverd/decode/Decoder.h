@@ -179,6 +179,11 @@ public:
   /// compiler's AArch64 debugtrap).
   bool isResumableTrap(const DecodedInsn &Insn) const;
 
+  /// A decoded NOP or a mode-correct legacy alignment self-copy. Canonical
+  /// x86 NOP identities include valid prefixes and the compatibility profile's
+  /// MPX-disabled forms; validity and extent remain the decoder's decisions.
+  bool isAlignmentNop(const DecodedInsn &Insn) const;
+
   /// Lift a single decoded instruction to LowIR ops. When supplied, \p Relocs
   /// describes exact loader-authenticated address operands in the encoded
   /// instruction; unsupported architectures/operand encodings ignore them.

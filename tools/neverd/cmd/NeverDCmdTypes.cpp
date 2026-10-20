@@ -29,11 +29,6 @@ using namespace llvm;
 
 namespace neverd::cli {
 namespace {
-cl::opt<bool> SaveDeclarations(
-    "save-declarations",
-    cl::desc(
-        "Save successfully parsed declarations to the binary's types sidecar"),
-    cl::sub(TypesCmd));
 
 /// The languages the engine renders, as --lang names them.
 std::vector<std::string> languageIds() {
@@ -402,6 +397,12 @@ bool declare(neverd_session_t Sess) {
 /// The checks of options both ways of running share; false with an error
 /// printed.
 bool optionsValid() {
+  if ((TypesSave || TypesSaveDeclarations) &&
+      (TypesInput.empty() || TypesDeclare.empty())) {
+    WithColor::error()
+        << "--save/--save-declarations requires a binary and --declare files\n";
+    return false;
+  }
   if (const std::vector<std::string> Languages = languageIds();
       !is_contained(Languages, TypesLanguage.getValue())) {
     WithColor::error() << "--lang must be " << listed(Languages) << "\n";
@@ -537,10 +538,6 @@ int libraries(neverd_session_t Sess, raw_ostream &Out) {
 } // namespace
 
 int runTypesConvert() {
-  if (SaveDeclarations) {
-    WithColor::error() << "--save-declarations requires a binary\n";
-    return 1;
-  }
   if (TypesDataModel.empty()) {
     WithColor::error() << "types: name a binary, or --data-model LLP64, LP64 "
                           "or ILP32 to convert --declare files without one\n";
@@ -703,8 +700,9 @@ int runTypes(neverd_session_t Sess) {
   raw_ostream &Out = File ? *File : outs();
   if (!declare(Sess) || !chooseLibraries(Sess))
     return 1;
-  if (SaveDeclarations && neverd_type_declarations_save(Sess) != 0) {
-    WithColor::error() << "cannot save type declarations: "
+  if ((TypesSave || TypesSaveDeclarations) &&
+      neverd_type_declarations_save(Sess) != 0) {
+    WithColor::error() << "type declarations save failed: "
                        << takeLastError(Sess) << "\n";
     return 1;
   }

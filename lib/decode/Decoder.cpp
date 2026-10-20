@@ -18,6 +18,7 @@
 #include "neverd/lift/ARMLifter.h"
 #include "neverd/lift/X86Lifter.h"
 #include "neverd/support/Diagnostic.h"
+#include "neverd/support/ProloguePatterns.h"
 
 #include "llvm/Support/raw_ostream.h"
 
@@ -608,6 +609,15 @@ bool Decoder::isFunctionTerminator(const DecodedInsn &Insn) const {
   if (ARM)
     return ARMLifter::isFunctionTerminator(Insn.Raw);
   return false;
+}
+
+bool Decoder::isAlignmentNop(const DecodedInsn &Insn) const {
+  if (!Insn.Raw || !Insn.Size)
+    return false;
+  if (X86 && Insn.Id == X86_INS_NOP)
+    return true;
+  return alignmentNopLength(TargetArch, Insn.Raw->bytes, Insn.Size,
+                            currentMode()) == Insn.Size;
 }
 
 std::optional<bool> Decoder::returnsToCaller(const DecodedInsn &Insn) const {

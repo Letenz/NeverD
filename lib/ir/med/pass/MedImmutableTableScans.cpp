@@ -11,6 +11,8 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
 #include <functional>
@@ -59,7 +61,10 @@ class Evaluator {
   llvm::DenseMap<Key, std::pair<const MedBlock *, const PhiNode *>> Phis;
   llvm::DenseMap<int, const MedBlock *> Blocks;
   llvm::DenseSet<Key> CompletePhis;
-  llvm::DenseSet<Key> Active;
+  /// The values being evaluated, innermost last: a value its own evaluation
+  /// reaches again has no value.  Evaluation nests at most
+  /// MaxEvaluationDepth deep, so finding one is a short scan.
+  llvm::SmallVector<Key, 16> Active;
   Values Memo;
   size_t &Budget;
   bool Complete = false;
@@ -194,21 +199,22 @@ public:
         return std::nullopt;
       return V;
     }
+    const Key K = key(V);
     if (Bindings)
-      if (auto It = Bindings->find(key(V)); It != Bindings->end())
+      if (auto It = Bindings->find(K); It != Bindings->end())
         return It->second;
     if (!Bindings)
-      if (auto It = Memo.find(key(V)); It != Memo.end())
+      if (auto It = Memo.find(K); It != Memo.end())
         return It->second;
-    if (!Active.insert(key(V)).second)
+    if (llvm::is_contained(Active, K))
       return std::nullopt;
+    Active.push_back(K);
     std::optional<MedVar> Result;
-    if (auto It = Phis.find(key(V)); It != Phis.end()) {
+    if (auto It = Phis.find(K); It != Phis.end()) {
       const auto &[Block, Phi] = It->second;
       // An independently enterable root has an implicit incoming value that
       // no ordinary PHI arm describes.
-      if (CompletePhis.count(key(V)) &&
-          !independentEntry(Func, *Block, Image)) {
+      if (CompletePhis.count(K) && !independentEntry(Func, *Block, Image)) {
         bool AllValues = true;
         for (const auto &[Pred, Arg] : Phi->Args) {
           const MedBlock *Found = block(Pred);
@@ -230,10 +236,10 @@ public:
         if (!AllValues)
           Result.reset();
       }
-    } else if (auto It = Defs.find(key(V)); It != Defs.end()) {
+    } else if (auto It = Defs.find(K); It != Defs.end()) {
       const auto &Op = *It->second;
       if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
-          !Op.Inputs[0].isConst() && key(Op.Inputs[0]) == key(V))
+          !Op.Inputs[0].isConst() && key(Op.Inputs[0]) == K)
         Result = V;
       else
         Result = operation(Op, Bindings, Depth + 1);
@@ -242,9 +248,9 @@ public:
       // concrete value for it. Only copies and invariant PHIs can carry it.
       Result = V;
     }
-    Active.erase(key(V));
+    Active.pop_back();
     if (Result && !Bindings)
-      Memo.try_emplace(key(V), *Result);
+      Memo.try_emplace(K, *Result);
     return Result;
   }
 

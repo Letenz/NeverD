@@ -89,7 +89,11 @@ enum {
   /// pointer where it was, as the lift models it: the callee pops the return
   /// address, and arguments a callee also pops are not included.  A return
   /// states only what happens before control leaves the function.
-  NEVERD_DISASM_STACK = 2u
+  NEVERD_DISASM_STACK = 2u,
+  /// Add "operand_bits" for decoded x86/x64 operands, indexed before display
+  /// folding. Widths come from the decoder, including the logical width of
+  /// an immediate; they are not inferred from a different operand's register.
+  NEVERD_DISASM_OPERANDS = 4u
 };
 
 /// neverd_disasm_json() with additive row fields selected by \p Options.
