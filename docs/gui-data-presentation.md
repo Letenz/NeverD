@@ -54,12 +54,12 @@ neverd items program.exe --alignment 0x140002073 --boundary 16
 neverd operands program.exe --addr 0x140001000 --operand 1 --enum QA_FLAGS --flags
 ```
 
-For an array, `--size` is the element width and `--count` is required. `--type`
+For an array, `--size` (or `--element-size`) is the element width and `--count` is required. `--type`
 is optional. Alignment computes its span through the next boundary; at an
 already aligned address it marks a complete unit. `--boundary` defaults to 16
 and cannot combine with `--size`.
 
-`types --declare --save` keeps successfully parsed declarations in the binary's
+`types --declare --save` (also spelled `--save-declarations`) keeps successfully parsed declarations in the binary's
 project for subsequent commands and GUI sessions. Without `--save`, declarations
 remain local to the current `types` invocation. Saving requires a binary and
 only runs after all supplied declaration files parse successfully.
@@ -70,6 +70,9 @@ decoded operand index, starting at zero, so the immediate of `imul r,r,imm` is
 operand 2 even when the GUI folds its text to `imul r,imm`.
 The display uses the same decoded operand width as SDK admission; a byte shift
 count does not take the width of its destination register.
+SDK/CLI disassembly preserves raw `op_str` and adds `display_op_str` when an
+enum changes its spelling. Text output uses the same enum formatting. Missing
+or deleted enum types leave the numeric operand visible.
 
 Run `neverd items program.exe --json` or `neverd operands program.exe --json`
 to read the saved rows. Text output includes array extent, element type,
