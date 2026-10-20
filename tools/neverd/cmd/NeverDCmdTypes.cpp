@@ -29,6 +29,11 @@ using namespace llvm;
 
 namespace neverd::cli {
 namespace {
+cl::opt<bool> SaveDeclarations(
+    "save-declarations",
+    cl::desc(
+        "Save successfully parsed declarations to the binary's types sidecar"),
+    cl::sub(TypesCmd));
 
 /// The languages the engine renders, as --lang names them.
 std::vector<std::string> languageIds() {
@@ -532,6 +537,10 @@ int libraries(neverd_session_t Sess, raw_ostream &Out) {
 } // namespace
 
 int runTypesConvert() {
+  if (SaveDeclarations) {
+    WithColor::error() << "--save-declarations requires a binary\n";
+    return 1;
+  }
   if (TypesDataModel.empty()) {
     WithColor::error() << "types: name a binary, or --data-model LLP64, LP64 "
                           "or ILP32 to convert --declare files without one\n";
@@ -694,6 +703,11 @@ int runTypes(neverd_session_t Sess) {
   raw_ostream &Out = File ? *File : outs();
   if (!declare(Sess) || !chooseLibraries(Sess))
     return 1;
+  if (SaveDeclarations && neverd_type_declarations_save(Sess) != 0) {
+    WithColor::error() << "cannot save type declarations: "
+                       << takeLastError(Sess) << "\n";
+    return 1;
+  }
   // A choice of libraries alone shows the libraries as they join now.
   if (TypesLibraries ||
       ((!TypesAddLibrary.empty() || !TypesRemoveLibrary.empty()) &&

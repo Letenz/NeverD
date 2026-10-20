@@ -55,7 +55,8 @@ neverd operands app.exe --addr 140001000 --operand 1 --enum MY_FLAGS --flags --j
 ```
 
 `--type` names a previously declared local type; `neverd types app.exe
---declare types.h` imports it. Its current layout must match `--element-size`.
+--declare types.h --save-declarations` imports and persists it. Without
+`--save-declarations`, declarations remain local to that CLI invocation. Its current layout must match `--element-size`.
 The SDK refuses invalid sizes, unavailable types, overlaps, uninitialized spans
 and non-immediate enum operands before saving. Alignment padding ends at the
 next boundary; an already aligned address defines one full boundary unit.

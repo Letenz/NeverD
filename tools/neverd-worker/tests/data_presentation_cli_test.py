@@ -25,7 +25,7 @@ def run(worker, cli):
 
         header = root / "types.h"
         header.write_text("struct CLI_ROW { unsigned int A, B, C; }; enum CLI_FLAGS { CLI_READ=1, CLI_WRITE=2 };", encoding="utf-8")
-        invoke("types", "--declare", str(header))
+        invoke("types", "--declare", str(header), "--save-declarations")
         rows = invoke("items", "--array", hex(DATA), "--element-size", "12", "--count", "4", "--type", "CLI_ROW")
         row = next(r for r in rows if int(r["addr"],16) == DATA)
         assert row["size"] == 48 and row["count"] == 4 and row["type"] == "CLI_ROW", row
