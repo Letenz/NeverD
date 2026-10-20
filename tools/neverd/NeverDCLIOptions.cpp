@@ -1582,11 +1582,12 @@ cl::opt<std::string>
 cl::opt<std::string>
     ItemClear("clear", cl::desc("Forget the user's item at this address (hex)"),
               cl::init(""), cl::value_desc("address"), cl::sub(ItemsCmd));
-cl::opt<unsigned> ItemSize("size",
-                           cl::desc("Bytes of a value, an array element, or "
-                                    "undefined bytes"),
-                           cl::init(1), cl::sub(ItemsCmd));
-cl::opt<unsigned>
+UnsignedNumericOption
+    ItemSize("size",
+             cl::desc("Bytes of a value, an array element, or "
+                      "undefined bytes"),
+             cl::init(1), cl::sub(ItemsCmd));
+UnsignedNumericOption
     ItemElementSize("element-size",
                     cl::desc("Array element width in bytes (same as --size)"),
                     cl::init(1), cl::sub(ItemsCmd));
@@ -1595,8 +1596,8 @@ cl::opt<std::string>
               cl::desc("Define an array at this address (hex), with --size "
                        "bytes per element and --count elements"),
               cl::value_desc("address"), cl::sub(ItemsCmd));
-cl::opt<unsigned> ItemCount("count", cl::desc("Number of array elements"),
-                            cl::init(0), cl::sub(ItemsCmd));
+UnsignedNumericOption ItemCount("count", cl::desc("Number of array elements"),
+                                cl::init(0), cl::sub(ItemsCmd));
 cl::opt<std::string>
     ItemType("type",
              cl::desc("Local type of each array element; its layout must "
@@ -1607,7 +1608,7 @@ cl::opt<std::string>
                   cl::desc("Mark padding at this address (hex) through the "
                            "next --boundary"),
                   cl::value_desc("address"), cl::sub(ItemsCmd));
-cl::opt<unsigned>
+UnsignedNumericOption
     ItemBoundary("boundary",
                  cl::desc("Power-of-two alignment boundary, from 2 to 1048576"),
                  cl::init(16), cl::sub(ItemsCmd));
@@ -1615,9 +1616,9 @@ cl::opt<std::string> OperandAddr("addr",
                                  cl::desc("Address (hex) of the instruction"),
                                  cl::init(""), cl::value_desc("address"),
                                  cl::sub(OperandsCmd));
-cl::opt<unsigned> OperandIndex("operand",
-                               cl::desc("Operand of the instruction, from 0"),
-                               cl::init(0), cl::sub(OperandsCmd));
+UnsignedNumericOption
+    OperandIndex("operand", cl::desc("Operand of the instruction, from 0"),
+                 cl::init(0), cl::sub(OperandsCmd));
 cl::opt<std::string>
     OperandBase("base",
                 cl::desc("number, hex, decimal, binary, char or offset"),
@@ -1640,7 +1641,7 @@ cl::opt<bool> OperandFlags(
     "flags",
     cl::desc("With --enum, combine flag names and retain unknown bits"),
     cl::sub(OperandsCmd));
-cl::opt<long long> OperandDelta(
+SignedNumericOption OperandDelta(
     "delta",
     cl::desc("With --struct, how many bytes into the type the register "
              "points: the number lands that much further in"),

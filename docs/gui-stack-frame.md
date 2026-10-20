@@ -13,6 +13,10 @@ therefore recover a known SP after a dynamic adjustment; unknown is never zero.
 An unknown value leaves the correction field blank until you enter an offset.
 It does not move any machine instruction or change the loaded bytes.
 
+Stack offsets, widths and SP corrections use decimal by default, including
+leading zeros. A `0x` or `0X` prefix selects hexadecimal: `-016` and `-0x10`
+both mean minus sixteen bytes.
+
 Corrections are analyst interpretations for source analysis. LowIR, ordinary
 MedIR/LLVM views, lifting and patching keep the original machine semantics.
 The private source variant has a marker rejected by ordinary LLVM emission.

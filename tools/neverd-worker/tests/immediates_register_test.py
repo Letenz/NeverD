@@ -126,6 +126,21 @@ def run(worker, executable=None):
         if executable:
             result = cli(executable, "search", str(decimal), "--immediate", "010")
             assert [int(row["addr"], 16) for row in result["items"]] == [ENTRY], result
+        wide = root / "wide-immediates.elf"
+        wide.write_bytes(elf(bytes.fromhex(
+            "48b80000000000000080 48b9ffffffffffffffff c3")))
+        ok(client, "open", {"path": str(wide), "analysis": False})
+        for pattern in ("-9223372036854775808", "9223372036854775808",
+                        "-0x8000000000000000", "0X8000000000000000"):
+            result = page(client, pattern)
+            assert [int(h["address"], 16) for h in result["items"]] == [ENTRY], result
+        for pattern in ("18446744073709551615", "-1", "0xffffffffffffffff"):
+            result = page(client, pattern)
+            assert [int(h["address"], 16) for h in result["items"]] == [ENTRY + 10], result
+        for pattern in ("18446744073709551616", "-9223372036854775809",
+                        "0x", "0b10", "10oops"):
+            reply = client.call("search", {"kind": "immediate", "pattern": pattern})
+            assert reply["status"] == "error", (pattern, reply)
         from data_presentation_test import fixture as data_fixture
         data = root / "data-only.elf"
         image, entry = data_fixture()
