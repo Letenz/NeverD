@@ -754,6 +754,13 @@ void CodeText::request(int offset, quint64 serial) {
                        edit.toObject().value("refusal").toString();
             break;
           }
+        for (const auto &edit : payload.value("call_type_results").toArray())
+          if (!edit.toObject().value("applied").toBool()) {
+            status_ += QStringLiteral(" · ") +
+                       tr("Saved call-site declaration needs review: ") +
+                       edit.toObject().value("refusal").toString();
+            break;
+          }
         if (sourceOptions_.value("symbolic").toBool())
           status_ += QStringLiteral(" · ") + tr("Symbolic simplification");
         if (representation_ == QLatin1String("llvmc"))
@@ -1574,6 +1581,12 @@ std::optional<Address> CodeText::currentAddress() const {
       lines_[cursorLine_].addresses.contains(*selectedAddress_))
     return selectedAddress_;
   return lines_[cursorLine_].addresses.front();
+}
+
+QVector<Address> CodeText::currentAddresses() const {
+  return cursorLine_ >= 0 && cursorLine_ < lines_.size()
+             ? lines_[cursorLine_].addresses
+             : QVector<Address>{};
 }
 
 void CodeText::selectAddress(Address address) {

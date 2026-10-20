@@ -11,6 +11,7 @@
 #ifndef NEVERD_PIPELINE_SOURCEVIEWOPTIONS_H
 #define NEVERD_PIPELINE_SOURCEVIEWOPTIONS_H
 
+#include "neverd/ir/SourceCallEdits.h"
 #include "neverd/ir/SourceVariableEdits.h"
 
 #include <cstdint>
@@ -50,6 +51,7 @@ struct SourceViewOptions {
   /// enter the image, machine IR or native ABI recovery.
   std::vector<VariableType> VariableTypes;
   std::vector<SourceVariableEdit> VariableEdits;
+  std::vector<SourceCallEdit> CallTypes;
   bool operator==(const SourceViewOptions &) const = default;
 };
 

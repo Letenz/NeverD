@@ -1483,6 +1483,10 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                         ? "descriptor_"
                         : "literal_") +
                 llvm::utohexstr(Hint.TargetAddress, true) + "_address");
+        } else if (Hint.CallKind == SourceCallTypeHint::Kind::Analyst) {
+          if (!Ex.IsIndirectCall)
+            Targets.insert(Ex.CallTarget.empty() ? Hint.TargetName
+                                                 : Ex.CallTarget);
         } else if (Hint.CallKind != SourceCallTypeHint::Kind::BlockInvoke) {
           NeedsObjCRuntime = true;
           NeedsObjCSuper2 |=

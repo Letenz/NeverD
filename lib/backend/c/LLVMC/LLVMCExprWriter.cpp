@@ -698,10 +698,14 @@ std::string LLVMCWriter::getName(const llvm::Value *V) {
 }
 
 TypeRef LLVMCWriter::statedVariableType(const llvm::Value *V) const {
+  TypeRef CallType;
+  if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(V))
+    if (const auto *Hint = analystCallHint(*Call))
+      CallType = Hint->Signature.ReturnType;
   if (!Opts.VariableTypes || !FunctionEntry ||
       (Opts.VariableTypes->Locals.empty() &&
        Opts.VariableTypes->Globals.empty()))
-    return nullptr;
+    return CallType;
   const auto Id = SourceValueIds.find(V);
   const auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(V);
   if (Id != SourceValueIds.end())
@@ -731,7 +735,7 @@ TypeRef LLVMCWriter::statedVariableType(const llvm::Value *V) const {
                    ? Type
                    : nullptr;
   }
-  return nullptr;
+  return CallType;
 }
 
 std::string LLVMCWriter::sourceVariableDeclaration(const llvm::Instruction &I,

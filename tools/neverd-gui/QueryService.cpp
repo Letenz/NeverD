@@ -54,6 +54,7 @@ bool readable(const QString &operation) {
                                         "function_type",
                                         "source_type",
                                         "source_variables",
+                                        "call_sites",
                                         "local_types",
                                         "local_type",
                                         "local_types_source",

@@ -202,6 +202,7 @@ Json hello() {
                 "code_edit",
                 "source_type",
                 "source_variables",
+                "call_sites",
                 "save",
                 "reload",
                 "segments",

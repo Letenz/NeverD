@@ -160,6 +160,9 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
       add_test(NAME NeverDWorkerSourceVariableEdits
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/source_variable_edits_test.py" $<TARGET_FILE:neverd-worker> --cc "${CMAKE_C_COMPILER}")
       set_tests_properties(NeverDWorkerSourceVariableEdits PROPERTIES TIMEOUT 120)
+      add_test(NAME NeverDWorkerCallSiteTypes
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/call_site_types_test.py" $<TARGET_FILE:neverd-worker> --cc "${CMAKE_C_COMPILER}")
+      set_tests_properties(NeverDWorkerCallSiteTypes PROPERTIES TIMEOUT 180)
       add_test(NAME NeverDWorkerDwarfReference
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/dwarf_reference_test.py"
                 "$<TARGET_FILE:neverd-worker>")

@@ -59,6 +59,10 @@ public:
   void setSourceCallHintsEnabled(bool Enabled) {
     SourceCallHintsEnabled = Enabled;
   }
+  void setSourceCallSiteHints(
+      const std::map<SourceCallOccurrenceKey, SourceCallTypeHint> *Hints) {
+    SourceCallSiteHints = Hints;
+  }
   /// Source rendering only. Entry contracts describe the function currently
   /// being converted and must remain independent from call-only overrides for
   /// compiler thunks whose public source ABI differs from their machine body.
@@ -370,6 +374,8 @@ private:
 
   const BinaryImage *Image = nullptr;
   bool SourceCallHintsEnabled = false;
+  const std::map<SourceCallOccurrenceKey, SourceCallTypeHint>
+      *SourceCallSiteHints = nullptr;
   bool SEHSourceProjectionEnabled = false;
   const std::map<va_t, SourceFunctionTypeHint> *SourceEntryTypeHints = nullptr;
   const std::map<va_t, SourceFunctionTypeHint> *SourceCalleeTypeHints = nullptr;

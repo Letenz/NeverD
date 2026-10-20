@@ -750,6 +750,7 @@ public:
   std::string getName(const llvm::Value *V);
   std::string rawSourceName(const llvm::Value *V);
   TypeRef statedVariableType(const llvm::Value *V) const;
+  const SourceCallTypeHint *analystCallHint(const llvm::CallBase &Call) const;
   std::string sourceVariableDeclaration(const llvm::Instruction &I,
                                         llvm::StringRef Name);
   std::map<const llvm::Value *, std::string> SourceValueIds;

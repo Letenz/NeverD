@@ -250,6 +250,20 @@ struct Session {
     HighSourceMap HighSources;
   };
   std::unique_ptr<HighIRVariant> EnhancedHighIR;
+  struct CallIRVariant {
+    va_t Entry = 0;
+    std::string Snapshot;
+    bool Symbolic = false;
+    std::vector<SourceCallEdit> Edits;
+    std::vector<SourceCallEditResult> Results;
+    std::unique_ptr<PipelineResult> Result;
+    std::optional<std::vector<MedFunc>> Native;
+    MedLLVMEmitter::SourceTargetSignatures TargetSignatures;
+    std::map<std::string, SourceCallTypeHint> Hints;
+  };
+  std::unique_ptr<CallIRVariant> CallVariant;
+  std::vector<SourceCallEditResult> CurrentCallResults;
+  bool UsingAnalystCallContracts = false;
   /// One function's native LLVM module: its body, with every other function
   /// declared by its own signature.  A page shows one function, so a sibling
   /// the emitter refuses cannot hide it, and showing it emits one body.
@@ -855,6 +869,9 @@ struct Session {
     FunctionLlvmModules.clear();
     FunctionSources.clear();
     EnhancedHighIR.reset();
+    CallVariant.reset();
+    CurrentCallResults.clear();
+    UsingAnalystCallContracts = false;
     NativeMedFuncs.reset();
     PipeResult = {};
     LLVMCtx.reset();
@@ -1059,6 +1076,9 @@ struct Session {
     for (const auto &[Addr, Name] : Img.getImportAddressNames())
       ImportMap.emplace_back(Addr, Name);
     MedLLVMEmitter Emitter;
+    Emitter.setAnalystSourceProjection(UsingAnalystCallContracts);
+    if (UsingAnalystCallContracts && CallVariant)
+      Emitter.setSourceTargetSignatures(&CallVariant->TargetSignatures);
     Emitter.setDebugContext(decompileDebug());
     Emitter.setUserPrototypeCallees(&PipeResult.CallUserPrototypes);
     // Native source views need surviving instruction observations even when

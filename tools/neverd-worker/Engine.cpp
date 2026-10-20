@@ -867,7 +867,8 @@ void Engine::forgetEncodedPages() {
 
 std::shared_ptr<const Engine::NamedView>
 Engine::namedView(std::uint64_t address, const std::string &representation,
-                  const Json &options, const Json *variableEdits) {
+                  const Json &options, const Json *variableEdits,
+                  const Json *callTypes) {
   const auto view = irViewFunction();
   const auto extended = irViewExFunction();
   if (!options.is_object() || options.dump().size() > 4096)
@@ -897,6 +898,24 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
         row.is_object()
             ? row.value("views", Json::object()).value(route, Json::object())
             : Json::object();
+    const auto calls = callTypes ? *callTypes
+                       : row.is_object()
+                           ? row.value("call_types", Json::object())
+                           : Json::object();
+    Json bindings = Json::array();
+    for (const auto &[id, type] : calls.items()) {
+      if (!currentTypeImage(type)) {
+        staleVariableTypes.push_back(
+            "A saved call-site declaration belongs to a different input image; "
+            "reset or reapply it");
+        continue;
+      }
+      Json binding = type;
+      binding["id"] = id;
+      bindings.push_back(std::move(binding));
+    }
+    if (!bindings.empty())
+      engineOptions["call_types"] = std::move(bindings);
     const auto associations =
         variableEdits ? *variableEdits
                       : edits.value("variable_edits", Json::array());
@@ -3163,6 +3182,24 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     }
     return page(items, p, {"text"});
   }
+  if (operation == "call_sites") {
+    const auto address = parseAddress(stringField(p, "address"));
+    const auto representation = stringField(p, "representation");
+    if (representation != "c" && representation != "source" &&
+        representation != "llvmc")
+      throw Error("unsupported",
+                  "Call-site declarations require Pseudocode or LLVM C");
+    const auto document = namedView(address, representation,
+                                    p.value("source_options", Json::object()));
+    if (!document)
+      throw Error("unsupported",
+                  "The engine does not expose original call occurrences");
+    const auto row = codeEditRow(address);
+    return {{"calls", document->value.value("source_calls", Json::array())},
+            {"snapshot", document->value.value("call_snapshot", std::string())},
+            {"types", row.is_object() ? row.value("call_types", Json::object())
+                                      : Json::object()}};
+  }
   if (operation == "source_variables") {
     const auto address = parseAddress(stringField(p, "address"));
     const auto representation = stringField(p, "representation");
@@ -3259,6 +3296,55 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     // The names keep while the code keeps its locals (code_shape).
     Json request = p;
     std::uint64_t owner = address;
+    if (p.value("kind", std::string()) == "call_type") {
+      const bool clear = p.value("action", std::string()) == "clear";
+      const auto id =
+          clear ? std::string() : stringField(p, "call_id", {}, 256);
+      Json calls = before.is_object()
+                       ? before.value("call_types", Json::object())
+                       : Json::object();
+      if (clear)
+        calls = Json::object();
+      else if (p.value("reset", false))
+        calls.erase(id);
+      else {
+        Json actuals = p.value("variadic_types", Json::array());
+        if (!actuals.is_array() || actuals.size() > 32)
+          throw Error("invalid_request", "Invalid actual variadic types");
+        for (const auto &type : actuals)
+          if (!type.is_string() ||
+              type.get_ref<const std::string &>().empty() ||
+              type.get_ref<const std::string &>().size() > 4096)
+            throw Error("invalid_request",
+                        "Each actual variadic argument needs a bounded type");
+        calls[id] = {{"input_sha256", inputHash()},
+                     {"snapshot", p.at("snapshot")},
+                     {"declaration", stringField(p, "declaration", {}, 4096)},
+                     {"variadic_types", actuals}};
+        if (calls.size() > 32)
+          throw Error(
+              "edit_budget",
+              "At most 32 call-site declarations are supported per function");
+        const auto preview = namedView(
+            address, stringField(p, "representation"),
+            p.value("source_options", Json::object()), nullptr, &calls);
+        bool applied = false;
+        std::string reason =
+            "The call-site declaration could not be bound to complete operands";
+        if (preview)
+          for (const auto &status :
+               preview->value.value("call_type_results", Json::array()))
+            if (status.value("id", std::string()) == id) {
+              applied = status.value("applied", false);
+              reason = status.value("refusal", reason);
+            }
+        if (!applied)
+          throw Error("call_type_refused", reason);
+      }
+      request["call_types"] = std::move(calls);
+      if (request.value("representation", std::string()) == "source")
+        request["representation"] = "c";
+    }
     if (associations) {
       const auto representation = stringField(p, "representation");
       if (representation != "c" && representation != "source" &&

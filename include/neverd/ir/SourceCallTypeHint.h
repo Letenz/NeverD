@@ -268,9 +268,14 @@ struct SourceCallTypeHint {
     RuntimeCFunctionAddress,
     /// A real indirect call through an explicitly typed ordinary C function
     /// pointer parameter, unchanged on every reaching machine path.
-    CFunctionParameterCall
+    CFunctionParameterCall,
+    /// One explicit call-site contract in a private source-analysis variant.
+    /// It does not change the callee declaration or native analysis authority.
+    Analyst
   };
   Kind CallKind = Kind::Native;
+  std::optional<SourceCallOccurrenceKey> AnalystSite;
+  int AnalystFixedCount = -1;
   struct BooleanResultProjection {
     va_t FunctionEntry = 0;
     SourceCallOccurrenceKey Site;
