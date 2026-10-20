@@ -43,6 +43,17 @@
 
 namespace neverd {
 
+namespace {
+/// The argument counts of prototyped imports that the conversion of an
+/// omitted callee reads (PipelineResult::OmittedCalleeArgumentCounts).
+const std::map<va_t, int> &
+omittedCalleeArgumentCounts(const PipelineResult &Result) {
+  return Result.OmittedCalleeArgumentCounts
+             ? *Result.OmittedCalleeArgumentCounts
+             : Result.CallEntryArgumentCounts;
+}
+} // namespace
+
 OmittedCalleeMemo::SummaryRead
 OmittedCalleeMemo::readAt(const PipelineResult &Result, va_t Key) {
   SummaryRead Read;
@@ -57,8 +68,8 @@ OmittedCalleeMemo::readAt(const PipelineResult &Result, va_t Key) {
       It != Result.CallEntryStackArgs.end())
     Read.StackArgs = It->second;
   Read.StackSlot = Result.CallEntryStackSlots.count(Key) != 0;
-  if (const auto It = Result.CallEntryArgumentCounts.find(Key);
-      It != Result.CallEntryArgumentCounts.end())
+  const std::map<va_t, int> &Counts = omittedCalleeArgumentCounts(Result);
+  if (const auto It = Counts.find(Key); It != Counts.end())
     Read.ArgumentCount = It->second;
   return Read;
 }
@@ -238,7 +249,8 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
         Converter.setCallArgumentSources(&Result.CallArgumentSources);
         Converter.setCallEntryStackArgs(&Result.CallEntryStackArgs);
         Converter.setCallEntryStackSlots(&Result.CallEntryStackSlots);
-        Converter.setCallEntryArgumentCounts(&Result.CallEntryArgumentCounts);
+        Converter.setCallEntryArgumentCounts(
+            &omittedCalleeArgumentCounts(Result));
         Converter.setCallSummaryKeysRead(&Keys);
         MedFunc Med = Converter.convert(Lifted, Img.Arch, Img.abiFormat());
         size_t MedOperations = 0;

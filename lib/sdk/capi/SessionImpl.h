@@ -225,6 +225,8 @@ struct Session {
         ShownTypes.insert(Name.getKey());
     LocalTypesDbg.reset();
     LocalTypesChecked = false;
+    // The counts of prototyped imports read the declarations it gave.
+    AnalysisCache.forgetDeclarations();
   }
   /// The library's types the text kept in FunctionSources read through
   /// contexts since dropped: a change to one changes that text.
@@ -1045,6 +1047,8 @@ struct Session {
       Recovery.CallEntryStackArgs = PipeResult.CallEntryStackArgs;
       Recovery.CallEntryStackSlots = PipeResult.CallEntryStackSlots;
       Recovery.CallEntryArgumentCounts = PipeResult.CallEntryArgumentCounts;
+      Recovery.OmittedCalleeArgumentCounts =
+          PipeResult.OmittedCalleeArgumentCounts;
       Recovery.CallUserPrototypes = PipeResult.CallUserPrototypes;
       Recovery.CallArgumentSources = PipeResult.CallArgumentSources;
       Recovery.OmittedCallees = PipeResult.OmittedCallees;

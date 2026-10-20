@@ -5870,6 +5870,14 @@ TEST_F(SessionCAPITest, CalleeSignaturesReadOnceServeLaterSelections) {
             neverd::sdk::toSession(Kept)->AnalysisCache);
     ASSERT_NE(Memo, nullptr);
     EXPECT_FALSE(Memo->Callees.empty());
+    // Where only the counts of prototyped imports vary between selections
+    // (AArch64 and ARM), a callee reads those of every import, so one
+    // conversion serves every selection.
+    if (llvm::StringRef(Fixture) != "linux_libc_calls_x86")
+      for (const auto &[Entry, Callee] : Memo->Callees) {
+        SCOPED_TRACE(Entry);
+        EXPECT_LE(Callee.Conversions.size(), 1u);
+      }
   }
 }
 

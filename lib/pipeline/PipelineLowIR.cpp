@@ -3392,7 +3392,8 @@ ImportPrototypeArguments importPrototypeArguments(
     const LocalRegisterEffectRefs &Effects, bool StackArguments,
     const DebugContext *Dbg, bool RegisterArguments = true,
     const std::map<va_t, PointerVariableCallee> *PointerCallees = nullptr,
-    const std::vector<va_t> *ExportStarts = nullptr) {
+    const std::vector<va_t> *ExportStarts = nullptr,
+    const std::vector<va_t> *AlsoClassify = nullptr) {
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const llvm::ArrayRef<uint64_t> Registers =
       RegisterArguments
@@ -3733,6 +3734,10 @@ ImportPrototypeArguments importPrototypeArguments(
                   loadedCallSlot(F, Block, I, Op.Inputs[0]))
             Classify(*Slot);
       }
+  // Addresses no call above names, classified as a call to them would be.
+  if (AlsoClassify)
+    for (const va_t Addr : *AlsoClassify)
+      Classify(Addr);
   for (const auto &[Entry, Effect] : Effects) {
     Classify(Entry);
     for (const RegisterBlock &Block : Effect->Blocks)
@@ -3763,7 +3768,9 @@ void computeCallRegisterEffects(
     const std::map<va_t, PointerVariableCallee> &PointerCallees,
     pipeline_detail::CalleeFactsCache &KnownCallees, const DebugContext *Dbg,
     const std::map<va_t, std::string> *FunctionNames,
-    const std::vector<va_t> *ExportStarts, PipelineResult &Result) {
+    const std::vector<va_t> *ExportStarts,
+    std::shared_ptr<const ImageImportCounts> *KeptImportCounts,
+    PipelineResult &Result) {
   // A call through a function-pointer variable passes the arguments of the
   // routine the variable starts at (PointerCallees): another module's, whose
   // prototype is kept under the variable's address, or this image's, by its
@@ -3797,6 +3804,41 @@ void computeCallRegisterEffects(
           Img, Result.LowFuncs, {}, /*StackArguments=*/true, Dbg,
           /*RegisterArguments=*/true, &PointerCallees);
       Result.CallEntryArgumentCounts = std::move(Prototyped.Counts);
+      // An omitted callee's conversion reads the counts of the imports its
+      // own calls reach, as its own selection does, whichever functions this
+      // run selects: those of every import, counted once while the
+      // program's declarations stay (PipelineAnalysisCache::ImportCounts).
+      std::shared_ptr<const ImageImportCounts> Everywhere =
+          KeptImportCounts && *KeptImportCounts &&
+                  (*KeptImportCounts)->readFrom(Img, Dbg)
+              ? *KeptImportCounts
+              : nullptr;
+      if (!Everywhere) {
+        std::vector<va_t> Addresses;
+        for (const auto &[Addr, Name] : Img.getImportAddressNames())
+          Addresses.push_back(Addr);
+        for (const RelocationEntry &Rel : Img.Relocations)
+          if (!Rel.SymbolName.empty())
+            Addresses.push_back(Rel.Address);
+        for (const auto &[Slot, Callee] : PointerCallees)
+          Addresses.push_back(Slot);
+        for (const Export &Exp : Img.Exports)
+          Addresses.push_back(Exp.Addr);
+        Everywhere = std::make_shared<const ImageImportCounts>(
+            ImageImportCounts{&Img, Dbg, Img.Imports.data(), Img.Imports.size(),
+                              Img.Relocations.data(), Img.Relocations.size(),
+                              Img.Exports.data(), Img.Exports.size(),
+                              importPrototypeArguments(
+                                  Img, {}, {}, /*StackArguments=*/true, Dbg,
+                                  /*RegisterArguments=*/true, &PointerCallees,
+                                  /*ExportStarts=*/nullptr, &Addresses)
+                                  .Counts});
+        if (KeptImportCounts)
+          *KeptImportCounts = Everywhere;
+      }
+      Result.OmittedCalleeArgumentCounts =
+          std::shared_ptr<const std::map<va_t, int>>(Everywhere,
+                                                     &Everywhere->Counts);
       Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
     }
     return;
@@ -4940,7 +4982,8 @@ void Pipeline::buildLowIR(
       Img, FuncEntries, NoReturnTargets, Facts.StackProbes, NoReturnCallees,
       AbsoluteRelocationRoots, CodeOwnerIndex, X87Graphs, Facts.PointerCallees,
       Facts.CalleeFacts, Dbg, Shared ? &Inventory->functionNames(Img) : nullptr,
-      Shared ? &Inventory->ExportStarts : nullptr, Result);
+      Shared ? &Inventory->ExportStarts : nullptr,
+      Opts.AnalysisCache ? &Opts.AnalysisCache->ImportCounts : nullptr, Result);
 }
 
 } // namespace neverd
