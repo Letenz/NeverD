@@ -855,6 +855,8 @@ private:
   SpecializationResult Result;
   // Borrowed only while evaluate() owns the matching context and cache.
   MBARewriteCache *FrameRewrites = nullptr;
+  // Borrowed only while emitTargets() projects this transfer's successors.
+  detail::ControlDependencyCache *DependencyCache = nullptr;
   std::vector<Node> Nodes;
   std::map<ContextKey, int> Indices;
   std::map<std::pair<va_t, InstructionMode>, uint32_t> ContextCounts;
@@ -979,8 +981,11 @@ void Specializer::discover(SymState &State, SymRef Value, SymRef Root,
     return;
   if (ReplayingDemands && Demand != ControlDemand::Closure)
     return;
-  auto Dependencies = detail::gatherControlDependencies(
-      State, Value, Root, Options.MaxDiscoveryVisits - Refinement.Visits);
+  const auto Remaining = Options.MaxDiscoveryVisits - Refinement.Visits;
+  auto Dependencies =
+      DependencyCache
+          ? DependencyCache->gather(State, Value, Root, Remaining)
+          : detail::gatherControlDependencies(State, Value, Root, Remaining);
   Refinement.Visits += Dependencies.Visited;
   if (Dependencies.Status == detail::ControlDiscoveryStatus::BudgetExceeded) {
     Refinement.BudgetExceeded = true;
@@ -1941,7 +1946,16 @@ bool Specializer::emitTargets(Node &Draft,
                               SymExec &Exec, SymContext &Ctx, SymState &State,
                               SymRef FrameRoot, const FrameOrigins &Origins,
                               const FrameFacts &Frame, StepResult Flow) {
+  std::optional<detail::ControlDependencyCache> LocalDependencies;
+  llvm::SaveAndRestore<detail::ControlDependencyCache *> RestoreDependencies(
+      DependencyCache, nullptr);
+  const auto ReuseDependencies = [&]() {
+    LocalDependencies.emplace(Ctx, Options.MaxSymbolicNodes);
+    DependencyCache = &*LocalDependencies;
+  };
   if (ReplayingDemands) {
+    if (Nodes[FailureNode].Transfers.size() > 1)
+      ReuseDependencies();
     // The saved edges route candidates through previously observed native
     // transfers, including successors behind synthetic dispatch chains. They
     // do not enumerate or prune targets in this replay, or assume an edge's
@@ -2088,6 +2102,7 @@ bool Specializer::emitTargets(Node &Draft,
       return fail(SpecializationStatus::UnresolvedControl,
                   "conditional branch has no exact destination");
     const SymRef Condition = Exec.branchCondition();
+    ReuseDependencies();
     const int Taken = destination(Address->getZExtValue(), Condition);
     if (Taken == -1)
       return false;
@@ -2141,6 +2156,8 @@ bool Specializer::emitTargets(Node &Draft,
       Targets.insert(Tuple.front());
   }
   std::vector<std::pair<uint64_t, int>> Destinations;
+  if (Targets.size() > 1)
+    ReuseDependencies();
   for (uint64_t Target : Targets) {
     SymRef Guard =
         Ctx.mkEq(TargetValue, Ctx.mkConst(Ctx.width(TargetValue), Target));

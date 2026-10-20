@@ -38,6 +38,13 @@ std::optional<uint64_t> frameRelativeOffset(const SymContext &Ctx, SymRef Value,
 
 namespace {
 
+struct DiscoveryEvidence {
+  uint64_t MaxWords = 0;
+  uint64_t Words = 0;
+  bool Complete = true;
+  std::map<uint32_t, llvm::SmallVector<SymState::MemoryInputOrigin, 1>> Inputs;
+};
+
 struct Demand {
   SymRef Value;
   uint32_t Low;
@@ -46,9 +53,10 @@ struct Demand {
 
 class Discoverer {
 public:
-  Discoverer(const SymState &State, SymRef Root, uint64_t MaxVisited)
-      : State(&State), Ctx(State.context()), Root(Root),
-        MaxVisited(MaxVisited) {}
+  Discoverer(const SymState &State, SymRef Root, uint64_t MaxVisited,
+             DiscoveryEvidence *Evidence = nullptr)
+      : State(&State), Ctx(State.context()), Root(Root), MaxVisited(MaxVisited),
+        Evidence(Evidence) {}
 
   Discoverer(const SymContext &Ctx, SymRef Variable, uint64_t MaxVisited)
       : Ctx(Ctx), Root(Variable), MaxVisited(MaxVisited) {}
@@ -168,8 +176,28 @@ private:
         enqueue(Origin.Base, 0, Ctx.width(Origin.Base));
       }
     }
-    if (!Inputs.empty())
+
+    if (!Inputs.empty()) {
+      // A complete walk only consumes births at this exact frame root.
+      // Later load history is deliberately not consulted on this path.
+      if (Evidence && Evidence->Complete &&
+          Result.Status == ControlDiscoveryStatus::Complete) {
+        if (!charge())
+          return;
+        if (!Evidence->Inputs.contains(Current.Value.index())) {
+          const uint64_t Words = 2 + uint64_t{3} * Inputs.size();
+          if (Words > Evidence->MaxWords - Evidence->Words) {
+            Evidence->Complete = false;
+          } else if (charge(Words)) {
+            Evidence->Inputs[Current.Value.index()] =
+                llvm::SmallVector<SymState::MemoryInputOrigin, 1>(
+                    Inputs.begin(), Inputs.end());
+            Evidence->Words += Words;
+          }
+        }
+      }
       return;
+    }
 
     // A later memory epoch is not the node's entry memory. Historical loads
     // may still explain its address, but never nominate their storage as an
@@ -556,6 +584,7 @@ private:
   uint64_t MaxVisited;
   uint64_t RootBits = 0;
   ControlDiscovery Result;
+  DiscoveryEvidence *Evidence = nullptr;
   llvm::SmallVector<Demand, 16> Pending;
   std::set<std::tuple<uint32_t, uint32_t, uint32_t>> Seen;
   std::map<std::pair<uint64_t, uint16_t>, uint64_t> Registers;
@@ -568,6 +597,108 @@ ControlDiscovery gatherControlDependencies(const SymState &State, SymRef Value,
                                            SymRef FrameRoot,
                                            uint64_t MaxVisited) {
   return Discoverer(State, FrameRoot, MaxVisited).run(Value);
+}
+
+struct ControlDependencyCache::Impl {
+  using Key = std::tuple<uint32_t, uint32_t, llvm::endianness>;
+  struct Entry {
+    ControlDiscovery Result;
+    DiscoveryEvidence Evidence;
+    uint64_t Words = 0;
+  };
+
+  Impl(const SymContext &Context, uint64_t MaxWords)
+      : Context(Context), MaxWords(MaxWords) {}
+  const SymContext &Context;
+  uint64_t MaxWords;
+  uint64_t Words = 0;
+  std::map<Key, Entry> Entries;
+};
+
+ControlDependencyCache::ControlDependencyCache(const SymContext &Context,
+                                               uint64_t MaxWords)
+    : P(std::make_unique<Impl>(Context, MaxWords)) {}
+
+ControlDependencyCache::~ControlDependencyCache() = default;
+
+ControlDiscovery ControlDependencyCache::gather(const SymState &State,
+                                                SymRef Value, SymRef Root,
+                                                uint64_t MaxVisited) {
+  if (&State.context() != &P->Context || !P->MaxWords || !Value ||
+      Value.index() >= P->Context.numNodes() || P->Context.isConst(Value) ||
+      P->Context.isVar(Value))
+    return gatherControlDependencies(State, Value, Root, MaxVisited);
+  uint64_t Work = 0;
+  const auto Charge = [&](uint64_t Count) {
+    if (Count > MaxVisited - Work)
+      return false;
+    Work += Count;
+    return true;
+  };
+  const auto Exhausted = [&]() {
+    ControlDiscovery Result;
+    Result.Status = ControlDiscoveryStatus::BudgetExceeded;
+    Result.Visited = MaxVisited;
+    return Result;
+  };
+  if (!Charge(1))
+    return Exhausted();
+  const Impl::Key Key{Value.index(), Root.index(), State.byteOrder()};
+  auto It = P->Entries.find(Key);
+  if (It != P->Entries.end()) {
+    bool Valid = true;
+    for (const auto &[Id, Origins] : It->second.Evidence.Inputs) {
+      if (!Charge(1))
+        return Exhausted();
+      const auto Current = State.memoryInputOrigins(SymRef(Id));
+      if (Current.size() != Origins.size()) {
+        Valid = false;
+        break;
+      }
+      if (!Charge(uint64_t{3} * Current.size()))
+        return Exhausted();
+      if (!std::equal(Current.begin(), Current.end(), Origins.begin())) {
+        Valid = false;
+        break;
+      }
+    }
+    if (Valid) {
+      const auto &Saved = It->second.Result;
+      const uint64_t CopyWords =
+          2 +
+          uint64_t{3} * (Saved.RegisterRanges.size() + Saved.FrameSlots.size());
+      if (!Charge(CopyWords))
+        return Exhausted();
+      auto Result = Saved;
+      Result.Visited = Work;
+      return Result;
+    }
+    P->Words -= It->second.Words;
+    P->Entries.erase(It);
+  }
+  DiscoveryEvidence Evidence;
+  Evidence.MaxWords = P->MaxWords - P->Words;
+  auto Result = Discoverer(State, Root, MaxVisited - Work,
+                           Evidence.MaxWords ? &Evidence : nullptr)
+                    .run(Value);
+  Result.Visited += Work;
+  // Unknown births and incomplete walks can acquire new origins. They never
+  // become cache entries, even when they offered useful partial nominations.
+  if (Result.Status != ControlDiscoveryStatus::Complete || !Evidence.Complete ||
+      !Evidence.MaxWords)
+    return Result;
+  const uint64_t CopyWords =
+      3 * (uint64_t{Result.RegisterRanges.size()} + Result.FrameSlots.size());
+  const uint64_t Words = 8 + CopyWords + Evidence.Words;
+  // Insertion is optional. Refusing its bounded copy does not invalidate an
+  // already completed dependency walk or evict unrelated completed results.
+  if (Words > P->MaxWords - P->Words ||
+      CopyWords + 1 > MaxVisited - Result.Visited)
+    return Result;
+  Result.Visited += CopyWords + 1;
+  P->Entries.emplace(Key, Impl::Entry{Result, std::move(Evidence), Words});
+  P->Words += Words;
+  return Result;
 }
 
 VariableBitDemand gatherVariableBitDemand(const SymContext &Ctx, SymRef Value,

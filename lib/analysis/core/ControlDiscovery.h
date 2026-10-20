@@ -11,6 +11,8 @@
 #include "neverd/analysis/InterpreterSpecialization.h"
 #include "neverd/symbolic/SymState.h"
 
+#include <memory>
+
 namespace neverd::analysis::detail {
 
 enum class ControlDiscoveryStatus {
@@ -71,6 +73,33 @@ ControlDiscovery gatherControlDependencies(const symbolic::SymState &State,
                                            symbolic::SymRef Value,
                                            symbolic::SymRef FrameRoot,
                                            uint64_t MaxVisited);
+
+/// Bounded completed-query reuse within one append-only symbolic context.
+/// The context must outlive this cache and retain its existing nodes.
+/// Each hit revalidates the exact memory-input origins read by the discovery
+/// walk. State copies, memory epochs, new load history and sibling predicates
+/// are not interchangeable facts. Only the dependency result is cached; the
+/// caller still applies its current successor's nomination policy and proves
+/// values and feasible edges independently. MaxWords bounds retained metadata
+/// and result words; lookups, validation and copying consume MaxVisited.
+class ControlDependencyCache {
+public:
+  ControlDependencyCache(const symbolic::SymContext &Context,
+                         uint64_t MaxWords);
+  ~ControlDependencyCache();
+  ControlDependencyCache(const ControlDependencyCache &) = delete;
+  ControlDependencyCache &operator=(const ControlDependencyCache &) = delete;
+  ControlDependencyCache(ControlDependencyCache &&) = delete;
+  ControlDependencyCache &operator=(ControlDependencyCache &&) = delete;
+
+  ControlDiscovery gather(const symbolic::SymState &State,
+                          symbolic::SymRef Value, symbolic::SymRef Root,
+                          uint64_t MaxVisited);
+
+private:
+  struct Impl;
+  std::unique_ptr<Impl> P;
+};
 
 struct VariableBitDemand {
   /// Conservative dependencies on one exact Var of at most 64 bits. Missing
