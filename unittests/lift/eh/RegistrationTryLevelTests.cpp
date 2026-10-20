@@ -17,6 +17,7 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/Limits.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/RegistrationState.h"
 #include "neverd/ir/high/MedToHigh.h"
@@ -981,6 +982,124 @@ BinaryImage makeCxxContinuationImage(va_t Target = kText + 0xc0,
   Img.ExceptionMetadata.Functions.push_back(std::move(EH));
   Img.CodePtrRelocSlots.insert(kRData + 0x6c);
   return Img;
+}
+
+TEST(RegistrationTryLevel, DirectCxxStackGuardPreservesTheRegistrationNode) {
+  auto makeImage = [&](unsigned Allocation, unsigned Saves, bool AlternateXor,
+                       bool AlternateStore, unsigned Mutation) {
+    auto Img = makeCxxContinuationImage();
+    constexpr uint32_t Cookie = kRData + 0xf0;
+    Img.DynInfo.SecurityCookieRVA = Cookie - kBase;
+    std::vector<uint8_t> Prefix = {0x55, 0x8b, 0xec, 0x6a, 0xff, 0x68};
+    emit32(Prefix, kPersonality);
+    Prefix.insert(Prefix.end(), {0x64, 0xa1, 0, 0, 0, 0, 0x50});
+    if (Allocation || Mutation == 10 || Mutation == 11) {
+      if (Allocation < 128 && Mutation != 10 && Mutation != 11)
+        Prefix.insert(Prefix.end(), {0x83, 0xec, uint8_t(Allocation)});
+      else {
+        Prefix.insert(Prefix.end(), {0x81, 0xec});
+        emit32(Prefix, Mutation == 10 ? uint32_t(-4)
+                       : Mutation == 11
+                           ? limits::kMaxSourceCallBorrowedBytes + 1
+                           : Allocation);
+      }
+    }
+    const uint8_t Saved[] = {0x53, 0x56, 0x57};
+    for (unsigned I = 0; I != 3; ++I)
+      if (Saves & (1u << I))
+        Prefix.push_back(Saved[I]);
+    if (Mutation == 8)
+      Prefix.insert(Prefix.end(), {0x53, 0x53});
+    if (Mutation == 9)
+      Prefix.push_back(0x90);
+    Prefix.push_back(0xa1);
+    emit32(Prefix, Mutation == 2 ? Cookie + 4 : Cookie);
+    Prefix.push_back(AlternateXor ? 0x33 : 0x31);
+    Prefix.push_back(Mutation == 3 ? (AlternateXor ? 0xc4 : 0xe0)
+                                   : (AlternateXor ? 0xc5 : 0xe8));
+    Prefix.push_back(Mutation == 4 ? 0x51 : 0x50);
+    Prefix.insert(Prefix.end(),
+                  {0x8d, 0x45, uint8_t(Mutation == 5 ? 0xf8 : 0xf4)});
+    const va_t Publication = kText + Prefix.size();
+    if (AlternateStore)
+      Prefix.insert(Prefix.end(),
+                    {0x64, 0x89, uint8_t(Mutation == 7 ? 0x0d : 0x05)});
+    else
+      Prefix.insert(Prefix.end(), {0x64, uint8_t(Mutation == 7 ? 0xa2 : 0xa3)});
+    emit32(Prefix, Mutation == 6 ? 4 : 0);
+    // Ordinary body allocation starts after publication and leaves the
+    // original node and pushed guard word in place.
+    Prefix.insert(Prefix.end(), {0x83, 0xec, 0x10});
+    emitFrameStore(Prefix, -4, 0);
+    emitFrameStore(Prefix, -4, -1);
+    Prefix.push_back(0xe9);
+    emit32(Prefix, 0x80 - (Prefix.size() + 4));
+    EXPECT_LT(Prefix.size(), 0x80u);
+    auto &Text = Img.Segments[0];
+    std::fill(Text.Data.begin(), Text.Data.begin() + 0x80, 0xcc);
+    std::copy(Prefix.begin(), Prefix.end(), Text.Data.begin());
+    if (Mutation == 13)
+      Text.Data[4] = 0;
+    if (Mutation == 14)
+      Text.Data[2] = 0xc4;
+    if (Mutation == 1)
+      Img.DynInfo.SecurityCookieRVA = 0;
+    if (Mutation == 15)
+      Img.DynInfo.SecurityCookieRVA = UINT32_MAX;
+    // Reconstruct the C++ identity from the actual personality thunk and
+    // FuncInfo bytes, rather than carrying over the helper's metadata.
+    Text.Data.resize(0x110, 0xcc);
+    Text.Size = Text.FileSz = Text.Data.size();
+    Img.Sections[0].Size = Img.Sections[0].FileSz = Text.Size;
+    Text.Data[0x100] = 0xb8;
+    writeLE<uint32_t>(Text.Data.data() + 0x101, kRData);
+    Text.Data[0x105] = 0xff;
+    Text.Data[0x106] = 0x25;
+    writeLE<uint32_t>(Text.Data.data() + 0x107, kRData + 0x90);
+    for (auto &Symbol : Img.Symbols)
+      if (Symbol.Addr == kPersonality)
+        Symbol.Name = "cxx_personality_thunk";
+    Img.Imports.push_back(
+        {"vcruntime140.dll", "__CxxFrameHandler3", 0, kRData + 0x90});
+    if (Mutation == 12) {
+      Text.Data.resize(Publication - kText + 5);
+      Text.Size = Text.FileSz = Text.Data.size();
+      Img.Sections[0].Size = Img.Sections[0].FileSz = Text.Size;
+    }
+    Img.ExceptionMetadata = {};
+    coff_loader::parseX86RegistrationExceptions(Img);
+    return std::make_pair(std::move(Img), Publication);
+  };
+  for (unsigned Allocation : {0u, 16u, 128u})
+    for (unsigned Saves = 0; Saves != 8; ++Saves)
+      for (bool Xor : {false, true})
+        for (bool Store : {false, true}) {
+          SCOPED_TRACE(std::to_string(Allocation) + "/" +
+                       std::to_string(Saves) + "/" + std::to_string(Xor) + "/" +
+                       std::to_string(Store));
+          const auto [Img, Publication] =
+              makeImage(Allocation, Saves, Xor, Store, 0);
+          const auto *EH = Img.ExceptionMetadata.findFunction(kText);
+          ASSERT_NE(EH, nullptr);
+          ASSERT_TRUE(EH->Registration);
+          ASSERT_TRUE(EH->Cxx);
+          EXPECT_EQ(EH->ParseStatus, ExceptionParseStatus::Complete);
+          const auto &Chain = *EH->Registration;
+          EXPECT_EQ(Chain.RegistrationOffset, -12);
+          EXPECT_EQ(Chain.TryLevelOffset, -4);
+          EXPECT_EQ(Chain.SeededTryLevel, -1);
+          EXPECT_EQ(Chain.cxxRuntimeFrameOffset(), 0);
+          EXPECT_EQ(Chain.ChainInstallVA, Publication);
+          EXPECT_FALSE(Chain.HasSecurityCookies);
+        }
+  for (unsigned Mutation = 1; Mutation != 16; ++Mutation)
+    for (bool Store : {false, true}) {
+      SCOPED_TRACE(std::to_string(Mutation) + "/" + std::to_string(Store));
+      const auto [Img, Publication] = makeImage(16, 7, true, Store, Mutation);
+      const auto *EH = Img.ExceptionMetadata.findFunction(kText);
+      EXPECT_FALSE(EH && EH->Registration &&
+                   EH->Registration->cxxRuntimeFrameOffset());
+    }
 }
 
 TEST(RegistrationTryLevel, CxxFuncInfoPointersKeepTheirRuntimeEntryRole) {
