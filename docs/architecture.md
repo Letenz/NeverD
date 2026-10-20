@@ -6815,6 +6815,29 @@ redundant and is skipped. This avoids repeated analysis without removing a
 candidate the polynomial solver could produce. Both source renderers and the
 expression CLI use this shared core.
 
+Weighted literal-mask sums also have a direct full-word reading. Terms sharing
+one exact opaque carrier are grouped by their modular coefficient at each bit;
+equal coefficients merge their masks, including overlapping masks, negative
+weights and contributions that vanish through overflow. A separate checker
+parses the original and proposed expressions and compares every shifted
+single-bit contribution and the constant offset. Other opaque words must cancel
+exactly; incomplete work cannot authorize a rewrite. Scaled or negated additive
+groups receive an additional proof against the actual, unexpanded input, so
+LLVM reassociation cannot hide the common masked word. Flattened
+AND carriers and constant-scaled products retain exact operand matching.
+Only strictly smaller groups survive, within cumulative work and temporary
+storage bounds. The deep entry tries this reading before spending work on
+repeated masked uses, then continues simplifying the recovered carrier and
+other terms through the ordinary walk. CLI and GUI source toggles reach the
+same implementation without an additional enable flag.
+
+The LLVM translator admits `nuw`/`nsw` additions only when independent operand
+bounds prove every requested no-overflow condition. Literal masks and bounded
+additive groups supply those bounds without consulting flags, range metadata or
+path assumptions. Unknown operations retain their full value domain; depth,
+node and width ceilings keep admission finite. The normal operand traversal
+still rejects hidden poison, undef, freeze and unproved annotations.
+
 Private-frame forwarding accepts empty block anchors left by dead-store
 cleanup. Nonempty scopes, expression-bearing malformed anchors, memory effects,
 overlaps and address escapes retain their existing barriers. This lets the

@@ -13,6 +13,10 @@ from transport_test import Client
 
 
 ENTRY = 0x400078
+WEIGHTED_MASKS = (0x7A6D35C1, 0xB53C678A, 0x4EF0A903, 0xD2195A6C)
+WEIGHTED_UNION = 0
+for _mask in WEIGHTED_MASKS:
+    WEIGHTED_UNION |= _mask
 
 
 def affine_elf():
@@ -52,6 +56,21 @@ def frame_elf():
     code = bytes.fromhex(
         "55 4889e5 897dfc 8975f8 8955f4 8b4dfc f7d1 "
         "8b45f4 09c8 0345f4 ffc0 234df4 01c8 5d c3")
+    return elf(code)
+
+
+def weighted_elf():
+    # Fifteen overlapping masks form an inclusion-exclusion union over x^y.
+    # Keep every AND/add/sub in machine code, then scale the sum and add z.
+    code = bytearray.fromhex("89f9 31f1 31c0")
+    for subset in range(1, 1 << len(WEIGHTED_MASKS)):
+        mask = 0xFFFFFFFF
+        for bit, value in enumerate(WEIGHTED_MASKS):
+            if subset & (1 << bit):
+                mask &= value
+        code += bytes.fromhex("4189c8 4181e0") + struct.pack("<I", mask)
+        code += bytes.fromhex("4401c0" if subset.bit_count() % 2 else "4429c0")
+    code += bytes.fromhex("6bc025 01d0 c3")
     return elf(code)
 
 
@@ -133,6 +152,8 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             assert text.count("^") <= 2, text
         elif kind == "frame":
             assert all(op not in text for op in ("|", "^", "&")), text
+        elif kind == "weighted":
+            assert text.count("&") <= 1 and text.count("^") <= 1, text
         else:
             assert ">>" not in text, text
 
@@ -153,6 +174,8 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                         assert ordinary.count("^") >= 3, ordinary
                     elif kind == "frame":
                         assert "|" in ordinary, ordinary
+                    elif kind == "weighted":
+                        assert ordinary.count("&") >= 7, ordinary
                     else:
                         assert ">>" in ordinary, ordinary
                     assert enhanced != ordinary
@@ -199,6 +222,7 @@ if __name__ == "__main__":
             ("quadratic", quadratic_elf(), "11U*x*x + 73U*x*y + 182U*y + 211U*z + 37U"),
             ("masked", masked_elf(), "(37U*((x ^ ~0x39U)&(y ^ 0x6dU))|0x55U)+z"),
             ("frame", frame_elf(), "2U*z-x"),
+            ("weighted", weighted_elf(), f"37U*((x^y)&{WEIGHTED_UNION}U)+z"),
         ):
             run_fixture(options.worker, options.cli, options.compiler, kind,
                         image, expected)

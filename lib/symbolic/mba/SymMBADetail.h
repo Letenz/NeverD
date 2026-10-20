@@ -440,6 +440,13 @@ bool provePolynomialIdentity(SymContext &Ctx, SymRef Before, SymRef After,
                              unsigned MaxAtoms, WorkBudget &Budget,
                              size_t MaxBytes = MBAOptions{}.MaxTableBytes);
 
+/// Certify a literal-masked linear equality over every bit of one opaque word.
+/// Opaque residual words must cancel exactly. Reject incomplete proofs;
+/// sampling is not authority.
+bool proveMaskedSumIdentity(const SymContext &Ctx, SymRef Before, SymRef After,
+                            SymRef Carrier, WorkBudget &Budget,
+                            size_t MaxBytes = MBAOptions{}.MaxTableBytes);
+
 //===----------------------------------------------------------------------===//
 // Solving
 //===----------------------------------------------------------------------===//
@@ -466,6 +473,11 @@ struct SolveReport {
   /// answer.
   bool BudgetExhausted = false;
 };
+
+/// Combine weighted masks of identical carriers by their per-bit coefficients.
+/// Independently prove each shorter group before composing the result.
+SymRef solveWeightedMasks(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                          WorkBudget &Budget, SolveReport &Rep);
 
 /// Normalize and factor Add/Mul regions over fixed-width words. Other
 /// operations remain opaque atoms; resource refusal leaves the region intact.

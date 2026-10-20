@@ -556,6 +556,18 @@ SymRef solveRegionOrSplit(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   if (SymRef Fast = tryFastComplementarySum(Ctx, E, Opts, Budget, Rep);
       Fast != E)
     return Fast;
+  if (SymRef Weighted = solveWeightedMasks(Ctx, E, Opts, Budget, Rep);
+      Weighted != E) {
+    SolveReport Refined;
+    SymRef Candidate = solveOneRegion(Ctx, Weighted, Opts, Budget, Refined);
+    Rep.BudgetExhausted |= Refined.BudgetExhausted;
+    Rep.NumAtoms = Refined.NumAtoms;
+    if (readingScore(Ctx, Candidate) < readingScore(Ctx, Weighted)) {
+      Rep.Evidence = Refined.Evidence;
+      return Candidate;
+    }
+    return Weighted;
+  }
   SymRef Solved = solveOneRegion(Ctx, E, Opts, Budget, Rep);
   return Solved == E ? solveMasked(Ctx, E, Opts, Budget, Rep) : Solved;
 }
@@ -1026,12 +1038,18 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     return Result;
   }
 
+  // Recover a shared masked word before visiting its many independently
+  // obfuscated uses. The proof is complete even for opaque arithmetic words;
+  // the normal walk still simplifies their children and any remaining terms.
+  SolveReport WeightedRep;
+  const SymRef WalkRoot = solveWeightedMasks(Ctx, E, Opts, Budget, WeightedRep);
+
   // Walking children before parents means that by the time a node is reached,
   // everything below it has already been shortened, so each layer is measured
   // over the result of the one beneath rather than over the obfuscation that
   // was wrapped around it.  It also keeps the walk iterative: obfuscated
   // expressions nest deeply enough that recursion is a real hazard.
-  const std::vector<uint32_t> Order = reachableInOrder(Ctx, E);
+  const std::vector<uint32_t> Order = reachableInOrder(Ctx, WalkRoot);
   llvm::DenseMap<uint32_t, SymRef> Solved;
   bool Skipped = false;
   size_t RefinementStorage = Opts.MaxTableBytes;
@@ -1187,7 +1205,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     Remember(Index, Rebuilt, Complete);
   }
 
-  SymRef Out = Solved.lookup(E.index());
+  SymRef Out = Solved.lookup(WalkRoot.index());
   if (!Budget.exhausted()) {
     SolveReport Final;
     Out = solveCoefficientFactors(Ctx, Out, Opts, Budget, Final);
@@ -1230,6 +1248,9 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     for (auto [Index, Value] : PendingRewrites)
       if (Cache.Rewrites.size() < Cache.Capacity)
         Cache.Rewrites.try_emplace(Index, Value);
+    if (WalkRoot != E && !Skipped && !Budget.exhausted() &&
+        Cache.Rewrites.size() < Cache.Capacity)
+      Cache.Rewrites.try_emplace(E.index(), Out);
     if (Reused)
       ++Cache.ReusedRoots;
   }
