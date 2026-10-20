@@ -1466,6 +1466,10 @@ public:
     /// type the header gives it (HeaderType).  Empty for any other object.
     std::string Header;
     TypeRef HeaderType;
+    /// A header's object whose type is none HighC holds, a record's or an
+    /// array's (<netinet/in.h>'s in6addr_loopback): the unit reaches it
+    /// through its bytes.
+    bool HeaderBytes = false;
   };
   std::map<va_t, ImageObject> ImageObjects;
   /// The access width that names the unnamed object \p Obj at \p Addr, as
@@ -1606,6 +1610,10 @@ public:
   /// symbols and relocations.
   std::optional<std::string> stringLiteral(va_t Addr) const;
   mutable std::unordered_map<va_t, std::optional<std::string>> StringLiterals;
+  /// The constants a call passes to a narrow string parameter, which print
+  /// as narrow literals (imageStringLiteral's Narrow) where the image's
+  /// bytes read as wide ones too.
+  std::set<const HighExpr *> NarrowStringOperands;
   /// A pointer-sized object at a relocated slot: the address it holds, as
   /// its initializer.
   std::optional<std::string>
