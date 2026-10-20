@@ -113,7 +113,7 @@ def interleaved_elf():
     return elf(code)
 
 
-def partitioned_elf():
+def partitioned_elf(mixed=False):
     # Multiply all four independently partitioned pieces of A=x^y and B=y|z.
     # r8d/r9d retain A/B; r10d/r11d form each product. The three arguments
     # remain intact, and the final word is (x^y)*(y|z)+x+y modulo 2^32.
@@ -126,7 +126,34 @@ def partitioned_elf():
             code += bytes.fromhex(
                 "89f9 f7d1 4121cb" if invert_b else "4121fb")
             code += bytes.fromhex("450fafd3 4401d0")
+    if mixed:
+        # A scaled cubic residual used to exhaust the search allowance before
+        # the enclosing quadratic/linear expression could finish.
+        code += bytes.fromhex("69c0b6000000 89f9 0fafce 0fafca 6bc925 01c8")
     code += bytes.fromhex("01f8 01f0 c3")
+    return elf(code)
+
+
+def cubic_elf():
+    # Eight products of separately partitioned A=x^y, B=y|z and C=x|z.
+    # Every original instruction remains in the fixture; no host optimizer
+    # can fold the expansion before NeverD sees it. Keep a high-bit remainder.
+    code = bytearray.fromhex("4189f8 4131f0 4189f1 4109d1 31c0")
+    for invert_a in (False, True):
+        for invert_b in (False, True):
+            for invert_c in (False, True):
+                code += bytes.fromhex("4589c2 4589cb")
+                code += bytes.fromhex(
+                    "89d1 f7d1 4121ca" if invert_a else "4121d2")
+                code += bytes.fromhex(
+                    "89f9 f7d1 4121cb" if invert_b else "4121fb")
+                code += bytes.fromhex("450fafd3 89f9 09d1")
+                code += bytes.fromhex(
+                    "4189f3 41f7d3 4421d9" if invert_c else "21f1")
+                code += bytes.fromhex("440fafd1 4401d0")
+    code += bytes.fromhex(
+        "6bc025 89f9 31f1 01c8 89f9 21f1 d1e1 01c8 "
+        "89f9 81e100000080 01c8 c3")
     return elf(code)
 
 
@@ -214,8 +241,10 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             assert "&" not in text and text.count("^") <= 2, text
         elif kind == "interleaved":
             assert text.count("&") <= 2 and text.count("^") <= 1, text
-        elif kind == "partitioned":
+        elif kind in ("partitioned", "mixed"):
             assert "&" not in text and text.count("^") <= 1, text
+        elif kind == "cubic":
+            assert text.count("&") <= 1 and text.count("^") <= 1, text
         else:
             assert ">>" not in text, text
 
@@ -238,7 +267,7 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                         assert "|" in ordinary, ordinary
                     elif kind in ("weighted", "bitwise", "interleaved"):
                         assert ordinary.count("&") >= 7, ordinary
-                    elif kind == "partitioned":
+                    elif kind in ("partitioned", "mixed", "cubic"):
                         assert ordinary.count("&") >= 4, ordinary
                     else:
                         assert ">>" in ordinary, ordinary
@@ -291,6 +320,10 @@ if __name__ == "__main__":
             ("interleaved", interleaved_elf(),
              f"7U*(((x^y)&{WEIGHTED_UNION}U)+((x*y)&{PRODUCT_UNION}U))+z"),
             ("partitioned", partitioned_elf(), "(x^y)*(y|z)+x+y"),
+            ("mixed", partitioned_elf(mixed=True),
+             "182U*(x^y)*(y|z)+37U*x*y*z+x+y"),
+            ("cubic", cubic_elf(),
+             "37U*(x^y)*(y|z)*(x|z)+x+y+(x&0x80000000U)"),
         ):
             run_fixture(options.worker, options.cli, options.compiler, kind,
                         image, expected)

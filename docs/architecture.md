@@ -1073,13 +1073,24 @@ Diagonal entries identify the factors' intersection and fix the modular
 scale; off-diagonal entries partition the remaining minterms between the two
 factors. It checks every matrix entry, including absent edges and coefficients
 that wrap to zero, within shared work and storage limits. The independent
-polynomial difference verifier still authorizes the replacement. Higher-degree
-products retain the bounded factor search.
-An expanded quadratic root gets a bounded whole-region reading before the deep
-walk can spend its allowance on incomplete local pieces. A structural hint only
-selects that attempt; the same degree check, matrix reconstruction and polynomial
-proof must finish. Optional Boolean table searches preflight their full charge
-against the remaining shared work rather than consuming it on a refused query.
+polynomial difference verifier still authorizes the replacement.
+Cubic recovery uses a minterm shared by all three factors as an anchor. Its
+diagonal coefficient fixes the scale; coefficients with two copies of the
+anchor identify how many factors select each other minterm. Coefficients with
+one anchor then distinguish the selected or omitted factor. The candidate's
+entire expansion must match, including missing coefficients and modular zeros,
+before the independent polynomial difference proof can authorize it. This
+direct reading requires a scale with additive order at least four; other cubic
+products and higher degrees retain the bounded factor search.
+Each degree is expanded over only the variables in its factors, so unrelated
+linear inputs do not inflate a cubic table. Linear and nonlinear parts are
+recombined before the full original-expression proof.
+An expanded quadratic/cubic root gets a bounded whole-region reading before the
+deep walk can spend its allowance on incomplete local pieces. A structural hint
+only selects that attempt; the same degree check, coefficient reconstruction
+and polynomial proof must finish. Optional Boolean table searches preflight
+their full charge against the remaining shared work rather than consuming it
+on a refused query.
 The LLVM bridge admits compiler-created `or disjoint` only after independent
 literal-mask/OR/wrapping-add facts establish nonoverlap, then exposes that sum
 to the shared engine. The bounded check uses no flags or metadata as premises;
