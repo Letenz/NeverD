@@ -372,6 +372,37 @@
           "neverd_web_wails_extract_json",
           "neverd_web_wails_records_json"
         ]
+      },
+      {
+        "owner": "emulation",
+        "reason": "Caller-owned module sets and persistent raw-buffer execution are qualified separately in docs/runtime-modules.md and its tests; these declarations do not claim process emulation",
+        "names": [
+          "neverd_execution_command_json",
+          "neverd_execution_create_v1",
+          "neverd_execution_declare_binding_json",
+          "neverd_execution_destroy",
+          "neverd_execution_inspect_json",
+          "neverd_execution_instances_json",
+          "neverd_execution_invoke_json",
+          "neverd_execution_lookup_symbol_json",
+          "neverd_execution_read_memory",
+          "neverd_execution_request_pause",
+          "neverd_execution_resume",
+          "neverd_execution_run_json",
+          "neverd_execution_state_json",
+          "neverd_execution_supply_json",
+          "neverd_execution_write_memory",
+          "neverd_module_set_add_json",
+          "neverd_module_set_attach_debug_json",
+          "neverd_module_set_create_v1",
+          "neverd_module_set_destroy",
+          "neverd_module_set_from_file",
+          "neverd_module_set_inspect_json",
+          "neverd_module_set_lookup_symbol_json",
+          "neverd_module_set_prepare",
+          "neverd_module_set_prepare_eager",
+          "neverd_module_set_revise_unprepared_json"
+        ]
       }
     ],
     "cli": [
@@ -1420,6 +1451,17 @@
         "names": [
           "neverd web"
         ]
+      },
+      {
+        "owner": "emulation",
+        "reason": "Caller-owned module sets and persistent raw-buffer execution are qualified separately in docs/runtime-modules.md and its tests; these declarations do not claim process emulation",
+        "names": [
+          "neverd execution",
+          "neverd execution --modules",
+          "neverd modules",
+          "neverd modules --module",
+          "neverd modules --symbol"
+        ]
       }
     ],
     "json": [
@@ -1601,6 +1643,26 @@
           "neverd_web_wails_export_json",
           "neverd_web_wails_extract_json",
           "neverd_web_wails_records_json"
+        ]
+      },
+      {
+        "owner": "emulation",
+        "reason": "Caller-owned module sets and persistent raw-buffer execution are qualified separately in docs/runtime-modules.md and its tests; these declarations do not claim process emulation",
+        "names": [
+          "neverd_execution_command_json",
+          "neverd_execution_declare_binding_json",
+          "neverd_execution_inspect_json",
+          "neverd_execution_instances_json",
+          "neverd_execution_invoke_json",
+          "neverd_execution_lookup_symbol_json",
+          "neverd_execution_run_json",
+          "neverd_execution_state_json",
+          "neverd_execution_supply_json",
+          "neverd_module_set_add_json",
+          "neverd_module_set_attach_debug_json",
+          "neverd_module_set_inspect_json",
+          "neverd_module_set_lookup_symbol_json",
+          "neverd_module_set_revise_unprepared_json"
         ]
       }
     ],
