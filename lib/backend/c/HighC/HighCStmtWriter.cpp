@@ -997,6 +997,15 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
                printsAsInteger(*Stmt.Val, ValueText))
         OS << "(" << typeToC(DestinationType->second) << ")(uintptr_t)("
            << ValueText << ")";
+      // A local C declares floating takes the integer of its width HighIR
+      // assigns as the bits it is (strtod's double, read from the vector
+      // register), and an integer one a floating value likewise.
+      else if (std::optional<std::string> Bits =
+                   DestinationType != DeclaredCTypes.end()
+                       ? reinterpretedBits(DestinationType->second,
+                                           Stmt.Val->Type, ValueText)
+                       : std::nullopt)
+        OS << *Bits;
       else
         OS << ValueText;
     } else {

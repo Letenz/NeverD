@@ -6019,13 +6019,78 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec,
   if (const llvm::StringRef Name = plainText(Text, Storage);
       !Name.empty() && (llvm::isAlpha(Name.front()) || Name.front() == '_'))
     if (const auto Declared = DeclaredCTypes.find(Name.str());
-        Declared != DeclaredCTypes.end() && isPlainInteger(Declared->second))
-      PrintedIntegerTypes[&E] = {Declared->second->Size,
-                                 Declared->second->IsSigned};
+        Declared != DeclaredCTypes.end()) {
+      // A floating local HighIR reads as the integer of its register, or an
+      // integer one it reads as floating, gives its bits: find's double
+      // `v2` passes to the state helper of addsd as the bits it holds.
+      if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) && E.Type)
+        if (auto Bits = reinterpretedBits(E.Type, Declared->second, Text)) {
+          if (isPlainInteger(E.Type))
+            PrintedIntegerTypes[&E] = {E.Type->Size, false};
+          Text = std::move(*Bits);
+          return SourceRecorder && CurrentFunc
+                     ? SourceRecorder->expression(CurrentFunc->Entry, E,
+                                                  std::move(Text))
+                     : Text;
+        }
+      if (isPlainInteger(Declared->second))
+        PrintedIntegerTypes[&E] = {Declared->second->Size,
+                                   Declared->second->IsSigned};
+    }
   return SourceRecorder && CurrentFunc
              ? SourceRecorder->expression(CurrentFunc->Entry, E,
                                           std::move(Text))
              : Text;
+}
+
+std::optional<std::string>
+HighCWriter::reinterpretedBits(const TypeRef &To, const TypeRef &From,
+                               const std::string &Text) const {
+  auto Floating = [](const TypeRef &Type) {
+    return Type && Type->Kind == NdTypeKind::Float &&
+           (Type->Size == 4 || Type->Size == 8);
+  };
+  auto Integer = [](const TypeRef &Type) {
+    return Type && Type->Kind == NdTypeKind::Int && !Type->IsEnum;
+  };
+  // The bits of a floating value, which the text casts back: the value.  A
+  // call's result HighIR leaves untyped prints so too.
+  if (Floating(To) && (!From || Integer(From))) {
+    const std::string Unsigned = typeToC(NdType::makeInt(To->Size, false));
+    const std::string Prefix = "__builtin_bit_cast(" + Unsigned + ", ";
+    if (llvm::StringRef(Text).starts_with(Prefix) && Text.back() == ')') {
+      int Depth = 0;
+      size_t Close = std::string::npos;
+      for (size_t I = Prefix.find('('); I < Text.size(); ++I)
+        if (Text[I] == '(')
+          ++Depth;
+        else if (Text[I] == ')' && --Depth == 0) {
+          Close = I;
+          break;
+        }
+      if (Close + 1 == Text.size())
+        return Text.substr(Prefix.size(), Close - Prefix.size());
+    }
+    if (!From || From->Size != To->Size)
+      return std::nullopt;
+    return "__builtin_bit_cast(" + typeToC(To) + ", (" + Unsigned + ")(" +
+           Text + "))";
+  }
+  // A floating value's bits as an integer at least as wide: the vector
+  // register a double fills reads as its integer, zero past the double, as
+  // the local holds no more.
+  if (!Floating(From) || !Integer(To) || To->Size < From->Size)
+    return std::nullopt;
+  // A name has its type already; another text converts to it first.
+  const bool Name =
+      !Text.empty() && (llvm::isAlpha(Text.front()) || Text.front() == '_') &&
+      llvm::all_of(Text, [](char C) { return llvm::isAlnum(C) || C == '_'; });
+  const std::string Value =
+      Name ? Text : "(" + typeToC(From) + ")(" + Text + ")";
+  if (To->Size == From->Size)
+    return "__builtin_bit_cast(" + typeToC(To) + ", " + Value + ")";
+  return "(" + typeToC(To) + ")__builtin_bit_cast(" +
+         typeToC(NdType::makeInt(From->Size, false)) + ", " + Value + ")";
 }
 
 std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
