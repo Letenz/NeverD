@@ -160,6 +160,7 @@ struct PipelineOptions {
   std::map<va_t, SourceFunctionTypeHint> SourceCalleeTypeHints;
   std::map<va_t, std::map<SourceCallOccurrenceKey, SourceCallTypeHint>>
       SourceCallSiteHints;
+  std::map<va_t, SourceStackFrame> SourceStackFrames;
   /// Source-only descriptor and ownership proofs for captured block calls.
   std::map<va_t, ObjCBlockCaptureCallFields> ObjCBlockCaptureFields;
   /// Source-only receiver roots from authenticated invoke/descriptor pairs.

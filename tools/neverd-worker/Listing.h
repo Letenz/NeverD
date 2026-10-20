@@ -38,6 +38,7 @@ public:
 
   /// Names, comments or function boundaries changed.
   void invalidate();
+  void setStackFrames(const Json &rows, const std::string &imageHash);
   /// The neverd_strings_ex_json options strings are found with, as JSON
   /// text; empty for the engine's defaults.
   void setStringOptions(std::string options);

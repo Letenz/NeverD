@@ -33,6 +33,10 @@ std::string variableCallProfile(std::string Snapshot,
 std::optional<SourceCallTypeHint>
 parseSourceCallType(Session &S, const SourceCallEdit &Edit,
                     const SourceCallOccurrenceKey &Site, std::string &Error);
+SourceStackFrame readSourceStackFrame(const llvm::json::Object &);
+std::string sourceStackSnapshot(const LowFunc &);
+void validateSourceStackFrame(Session &, const LowFunc &,
+                              const SourceStackFrame &);
 void prepareSourceCallVariant(Session &S, va_t Entry,
                               const SourceViewOptions &Options);
 } // namespace neverd::sdk

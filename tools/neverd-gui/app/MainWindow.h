@@ -199,6 +199,7 @@ private:
   void setType();
   void editVariable(const QString &action);
   void editCallType(bool resetAll = false);
+  void editStackFrame(int mode);
   /// Hex-Rays' Convert to struct *: the parameter under the pseudocode
   /// cursor made a pointer to the local type its accesses fit.
   void convertToStruct();

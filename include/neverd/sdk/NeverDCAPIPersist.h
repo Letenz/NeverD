@@ -156,6 +156,13 @@ NEVERD_API const char *neverd_func_attributes_json(neverd_session_t Sess,
 NEVERD_API const char *neverd_func_type_json(neverd_session_t Sess,
                                              neverd_va_t Entry,
                                              const char *OptionsJson);
+/// Inspect/validate a bounded analyst stack frame; returned JSON is owned by
+/// the caller. Options: {snapshot, points:[{address,after}],
+/// variables:[{offset,bytes,name,type}]}. Null with neverd_last_error on
+/// refusal; free with neverd_free_string.
+NEVERD_API const char *neverd_stack_frame_json(neverd_session_t Sess,
+                                               neverd_va_t Entry,
+                                               const char *OptionsJSON);
 /// Check a source-only scalar/pointer type against the local library and
 /// exact machine width. Request: {"type":string,"bytes":1..16,"floating":bool}.
 /// Does not change the image, machine IR, ABI or rewriting authority.

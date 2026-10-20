@@ -670,14 +670,15 @@ bool Session::typesChanged(const types::TypeLibrary &Library,
   dropLocalTypesDebug();
   CallVariant.reset();
   for (auto It = FunctionLlvmModules.begin(); It != FunctionLlvmModules.end();)
-    if (!It->Options.CallTypes.empty())
+    if ((!It->Options.CallTypes.empty() || !It->Options.StackFrame.empty()))
       It = FunctionLlvmModules.erase(It);
     else
       ++It;
   const bool SourceAssertions =
       llvm::any_of(FunctionSources, [](const auto &Source) {
         return !Source.Options.VariableTypes.empty() ||
-               !Source.Options.CallTypes.empty();
+               !Source.Options.CallTypes.empty() ||
+               !Source.Options.StackFrame.empty();
       });
   const bool Shows =
       SourceAssertions || llvm::any_of(Changed, [&](const std::string &Name) {

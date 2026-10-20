@@ -471,6 +471,9 @@ NEVERD_ACTION(
     QT_TRANSLATE_NOOP("Actions",
                       "Restart the analysis process and reopen the binary"))
 
+NEVERD_ACTION(EditStackFrame, QT_TRANSLATE_NOOP("Actions", "Stack variables..."), "Ctrl+K", "functions", QT_TRANSLATE_NOOP("Actions", "Inspect and correct local stack variables"))
+NEVERD_ACTION(EditStackPointer, QT_TRANSLATE_NOOP("Actions", "Change stack pointer..."), "Alt+K", "functions", QT_TRANSLATE_NOOP("Actions", "Correct the entry-relative SP after this instruction"))
+NEVERD_ACTION(EditStackOperand, QT_TRANSLATE_NOOP("Actions", "Stack variable operand..."), "K", "functions", QT_TRANSLATE_NOOP("Actions", "Name a proven stack operand without changing its address"))
 // Windows.
 NEVERD_ACTION(WindowsSaveDesktop, QT_TRANSLATE_NOOP("Actions", "&Save desktop"),
               "", "save",

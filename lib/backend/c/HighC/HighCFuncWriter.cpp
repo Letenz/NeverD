@@ -1320,6 +1320,16 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
     if (!Slot.Type)
       Slot.Type = NdType::makeInt(4);
   for (auto &[Disp, Slot] : FrameSlots) {
+    if (Opts.FrameVariables)
+      if (const auto It = Opts.FrameVariables->find(Disp);
+          It != Opts.FrameVariables->end()) {
+        if (Slot.Type->Size != It->second.Type->Size)
+          throw std::runtime_error(
+              "The named stack slot has an incompatible source extent");
+        Slot.Name = It->second.Name;
+        Slot.Type = It->second.Type;
+        StatedLocalTypes[Slot.Name] = Slot.Type;
+      }
     const std::string Id = "stack:" + std::to_string(Disp);
     if (Opts.SourceMap) {
       SourceVariable Variable;

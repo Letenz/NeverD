@@ -2,6 +2,7 @@
 #include "CodeView.h"
 #include "DisassemblyView.h"
 #include "Docking.h"
+#include "ListingView.h"
 #include "MainWindow.h"
 #include "Session.h"
 #include "SetTypeDialog.h"
@@ -11,6 +12,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QDataStream>
+#include <QDialogButtonBox>
 #include <QFile>
 #include <QInputDialog>
 #include <QLabel>
@@ -18,6 +20,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -64,6 +67,71 @@ private slots:
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        Settings.path());
     configureDocking();
+  }
+  void stackFrameDialogs() {
+    QTemporaryDir Directory;
+    const auto Path = fixture(
+        Directory, QByteArray::fromHex(
+                       "4883ec2848897c2418e8c3ff0f00488b4424184883c428c3"));
+    QVERIFY(!Path.isEmpty());
+    Session Session(QString::fromLocal8Bit(TEST_REAL_WORKER));
+    McpConnectionManager Mcp;
+    GuiSessionBroker Broker;
+    MainWindow Window(Session, Mcp, Broker);
+    Window.setAsksForDebugInfo(false);
+    Window.setLayoutPath(Directory.filePath("layout.json"));
+    Window.resize(1400, 900);
+    Window.initializeLayout();
+    Window.show();
+    Session.open(Path);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.loaded(), 30000);
+    Window.disassembly()->navigate(0x40007C);
+    QTRY_COMPARE_WITH_TIMEOUT(Window.disassembly()->currentFunction(),
+                              std::optional<Address>(0x400078), 30000);
+    Window.disassembly()->listing()->setFocus();
+    auto *Action = Window.actions().action(ActionId::EditStackFrame);
+    QTRY_VERIFY(Action->isEnabled());
+    bool Opened = false;
+    QTimer Editor;
+    connect(&Editor, &QTimer::timeout, this, [&] {
+      auto *Dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (!Dialog || Dialog->objectName() != "stackFrameDialog")
+        return;
+      auto *Table = Dialog->findChild<QTableWidget *>("stackVariablesTable");
+      if (!Table) {
+        Dialog->reject();
+        return;
+      }
+      for (int Row = 0; Row < Table->rowCount(); ++Row)
+        if (Table->item(Row, 0)->text() == "-16") {
+          Table->item(Row, 2)->setText("gui_saved_context");
+          Table->item(Row, 3)->setText("uint64_t");
+          Opened = true;
+        }
+      Dialog->findChild<QDialogButtonBox *>()
+          ->button(QDialogButtonBox::Apply)
+          ->click();
+    });
+    Editor.start(20);
+    Action->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(Opened, 30000);
+    Editor.stop();
+    bool Saved = false;
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+                               Session.read("stack_frame",
+                                            {{"address", "0x400078"}}, &Window,
+                                            [&](const QJsonObject &Reply) {
+                                              Saved = Reply.value("policy")
+                                                          .toObject()
+                                                          .value("variables")
+                                                          .toArray()
+                                                          .size() == 1;
+                                            });
+                               return Saved;
+                             })(),
+                             30000);
+    Session.closeFile();
+    Window.close();
   }
   void localType_data() {
     QTest::addColumn<QString>("Representation");

@@ -7,6 +7,7 @@ add_neverd_component_library(NeverDIR
   NdTypes.cpp
   SourceABI.cpp
   SourceCallABI.cpp
+  SourceStackFrame.cpp
   SourceVariableFlow.cpp
   SourceParameterPlacement.cpp
   SourceParameterPlacementAAPCS64.cpp

@@ -1722,8 +1722,22 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
   };
 
   const NamedFrameSlot *Owner = nullptr;
+  if (Opts.FrameVariables &&
+      llvmc::syntheticFrameBaseOffset(
+          *SyntheticFrame, SyntheticFrame->getModule()->getDataLayout()))
+    if (const auto It = Opts.FrameVariables->find(Disp);
+        It != Opts.FrameVariables->end()) {
+      if ((AccessSize && AccessSize != It->second.Type->Size) || FrameRecord)
+        throw std::runtime_error(
+            "The named stack slot is not an independent scalar in LLVM C");
+      if (!Remember(Off, VariableSym{It->second.Name, It->second.Type}))
+        throw std::runtime_error(
+            "The named stack slot cannot preserve its storage identity");
+      Owner = &FrameSlots[Off];
+    }
   uint64_t Rel = 0;
-  if (auto Exact = debugFrameVariable(Disp)) {
+  if (auto Exact =
+          Owner ? std::optional<VariableSym>() : debugFrameVariable(Disp)) {
     bool WidthOk = true;
     if (AccessSize && !AddressOf && Exact->Type && Exact->Type->Size &&
         Exact->Type->Size != AccessSize) {
@@ -1857,6 +1871,7 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
     SourceVariable Variable;
     Variable.Function = *FunctionEntry;
     Variable.Id = llvmc::sourceStorageId(Ptr, AccessSize);
+    Variable.StackOffset = Disp;
     Variable.Name = Owner->Name;
     Variable.Bytes = AccessSize;
     Variable.Type = Owner->Type;
