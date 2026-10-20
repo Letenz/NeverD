@@ -3587,6 +3587,19 @@ Optional repeated-destination chain tests compare direct and nested loops under 
 
 `NativeStackSpecialization.NarrowAddressDemandRetainsCompletePointer` checks guarded pointer joins in registers and frame slots, both byte orders, modular wraparound and high roots, restored stack, and 120 frame bytes. Companion controls reject corrupted pointers and exercise exact/short query, operation, evaluation and refinement budgets, plus discovery and context exhaustion.
 
+`InterpreterSpecialization.StackControlDiscoversSavedRootAddresses` covers
+ordinary returns and native CALL/RET after joined saved-pointer loads, with
+register and frame carriers in both byte orders. Independent byte oracles check
+complete memory effects, zero/wrapped/high roots and both branches; unknown
+saved values and exhausted refinement budgets still refuse.
+
+`InterpreterSpecialization.WideIntegerConcat*` covers intermediate widths from
+nine through sixteen bytes, every valid split, both byte orders, output aliases,
+malformed extents and exact/short operation budgets. Decoded `PACKSSDW` and
+`PACKSSWB` cases use independent signed-saturation oracles at both boundaries.
+`BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` separately
+checks that these instructions do not acquire source or native proof support.
+
 Finite-value observer tests cover early refusal, constants, empty projections and the final UNSAT query. Immutable-read regressions keep runtime loads after a refuting witness, revalidate cached address domains for a different read extent, and reject malformed certificates without publishing partial witnesses.
 
 Affine-control tests cover low-bit guards with an eight-query budget, register and frame-slot carriers in both byte orders, modular wraparound, frame-byte observations and restored stack. A nonliteral contradictory guard must prune an unsupported arm; two roots with identical low 32 bits but different high bits must preserve both indirect destinations.
