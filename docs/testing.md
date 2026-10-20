@@ -3091,6 +3091,11 @@ that same slot, in either operand order.
 strings, generic builtins compiled for a different source ISA, and dead image
 address calculations. The latter must retain volatile/atomic loads and
 observable calls while leaving the input LLVM module unchanged.
+Integer-initializer regressions give scalars, arrays and records values that
+match known image string addresses, then compile and execute their generated C
+at O0/O2 with x64 and AArch64 writer options. Symbolic global references retain
+their pointer relocations. The MinGW whole-module regression separately checks
+that the runtime's integer switch tables produce compilable LLVM C.
 Return-only join tests compare 6144 full-status cases at each O0/O2 level against
 independently compiled LLVM, checking call counts and volatile output effects.
 They also require direct returns in the C and unchanged input IR. Effectful

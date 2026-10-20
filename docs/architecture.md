@@ -31,6 +31,11 @@ target's minimum instruction unit. The table must be immutable, while target
 code may be writable or execute-only. Import-thunk decoding requires the full
 instruction span to remain in executable ownership.
 
+LLVM C's constant printer preserves storage and aggregate integer constants
+as literal bits, including values that coincide with image string or function
+addresses. Scalars, arrays, records and vector lanes share this rule. Explicit
+pointer constant expressions retain their symbolic addresses and relocations.
+
 This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
