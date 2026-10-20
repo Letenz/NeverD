@@ -243,6 +243,16 @@ Heap-backed 128/257-bit cube coefficients use a 131,072-unit allowance to
 include their limb costs. Independent Z3 gates cover complete cubic rewrites
 at 2/3 bits; exhaustive four-bit and randomized wide arithmetic checks also
 preserve multiple cubic products and high-bit remainders.
+`SymMBAHigherProduct` runs in the same two targets. It covers four through
+twelve factors at 8–257 bits, 64 separately expanded products, nonlinear
+quotients, repeated factors, even scales and changed coefficients. Exhaustive
+three-bit assignments check partial-budget results against an independent
+formula; zero/one-short work and storage refusals protect the distribution
+proof. Independent Z3 checks cover complete four/six-factor rewrites at 2/3
+bits, with an explicit skip when unavailable. Wider checks use independent
+word arithmetic. Independently enumerated modular products validate the
+necessary coefficient bounds, and unchanged sixteen-factor residuals must
+cancel before minterm expansion in the difference proof.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
 signed/unsigned overflow admission against all byte pairs, including unsafe
 neighboring masks. `NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains`
@@ -282,6 +292,10 @@ high-bit near misses and mixed-degree remainders.
 Use `--family cubic --count 24` for three independently partitioned Boolean
 factors over three to five inputs, even/negative scales, mixed quadratic
 remainders and high-bit perturbations. Run all earlier families as controls.
+Use `--family higher --count 64` for fourth, fifth, sixth and eighth degrees:
+independent partitions up to 64 products, products of quadratic identities,
+mixed degrees, same-degree residuals and deliberately changed coefficients.
+The previous six families remain controls.
 
 `tools/neverd-worker/tests/source_synthesis_test.py WORKER --cli CLI` checks the
 real source-option request used by the GUI and both CLI source emitters, for
@@ -295,6 +309,8 @@ The mixed-degree fixture retains a scaled cubic residual beside the expanded
 quadratic. The cubic fixture executes eight products before adding a linear
 MBA and an observable high-bit remainder. Both exercise the same existing
 symbolic option through worker requests and single/whole-program CLI output.
+The fourth- and sixth-degree fixtures multiply additional factors in original
+x64 machine code, so a fixture compiler cannot simplify the input first.
 With Clang available, each generated C output executes at O0/O2 against an
 independent arithmetic oracle on boundary and deterministic random inputs.
 

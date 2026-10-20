@@ -10,6 +10,7 @@ is descriptive rather than a machine-dependent pass/fail threshold.
 import argparse
 import ast
 import hashlib
+import itertools
 import json
 import os
 import operator
@@ -270,6 +271,53 @@ def cubic_corpus(width, count):
     return rows
 
 
+def higher_corpus(width, count):
+    """Fourth through eighth degrees, mixed products and nonlinear quotients."""
+    rng = random.Random(0x4D424137 + width)
+    words = ("(x^y)", "(y|z)", "(x|z)", "(x&y)", "(x^z)", "(y^z)",
+             "(x|y)", "~(x&z)")
+    axes = ("z", "x", "y", "w", "v", "z")
+    rows = []
+    for index in range(count):
+        degree = (4, 5, 6, 8)[(index // 16) % 4]
+        kind = index % 16
+        scale = (1, 7, -11, 182, 1 << (width - 2), 37)[kind % 6]
+        if 6 <= kind < 10:
+            # Neither quadratic identity exposes a shared single factor.
+            # Their distributed product requires a two-factor quotient.
+            pairs = (("(x&y)", "(x|y)"), ("(x&~y)", "(~x&y)"))
+            other = (("(z&w)", "(z|w)"), ("(z&~w)", "(~z&w)"))
+            terms = ["(" + "*".join(a + b + words[4:degree]) + ")"
+                     for a in pairs for b in other]
+        else:
+            pieces = (min(degree, kind - 9) if kind >= 14
+                      else 2 + (kind % 6) // 2)
+            choices = [
+                (f"({word}&{axes[i]})", f"({word}&~{axes[i]})")
+                if i < pieces else (word,)
+                for i, word in enumerate(words[:degree])
+            ]
+            terms = ["(" + "*".join(fs) + ")"
+                     for fs in itertools.product(*choices)]
+        if kind == 9:
+            # Alter one nonlinear coefficient; a partial identity must not
+            # silently remove this difference.
+            terms[0] = f"(3*{terms[0]})"
+        rng.shuffle(terms)
+        expression = f"({scale}*({' + '.join(terms)}))+(x^y)+2*(x&y)"
+        if kind % 3 == 2:
+            expression += "+13*x*y*z"
+        if kind % 4 == 3:
+            expression += f"+(x&{1 << (width - 1)})"
+        if 10 <= kind < 14:
+            factors = ("x", "y", "z", "(x|y)") + ("x",) * (degree - 4)
+            if kind != 13:
+                factors += ("y",)
+            expression += "+19*" + "*".join(factors)
+        rows.append(expression)
+    return rows
+
+
 def check_semantics(expressions, results, width):
     """Independent modular evaluator; never execute parsed source as Python."""
     mask = (1 << width) - 1
@@ -363,7 +411,7 @@ def main():
     parser.add_argument(
         "--family",
         choices=("complement", "weighted", "bitwise", "interleaved", "quadratic",
-                 "cubic"),
+                 "cubic", "higher"),
         default="complement",
     )
     args = parser.parse_args()
@@ -386,6 +434,7 @@ def main():
                 "bitwise": bitwise_corpus, "interleaved": interleaved_corpus,
                 "quadratic": quadratic_corpus,
                 "cubic": cubic_corpus,
+                "higher": higher_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")

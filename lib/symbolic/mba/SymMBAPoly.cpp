@@ -175,7 +175,8 @@ llvm::SmallVector<MintermIndex, 8> selectedMinterms(const TruthTable &Table) {
 std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
                                            llvm::ArrayRef<PolyTerm> Terms,
                                            llvm::ArrayRef<uint32_t> AtomIds,
-                                           uint32_t Width, WorkBudget &Budget) {
+                                           uint32_t Width, WorkBudget &Budget,
+                                           bool Optional) {
   const std::optional<size_t> CornerCount = cornerCount(AtomIds.size());
   if (!CornerCount)
     return std::nullopt;
@@ -231,7 +232,8 @@ std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
         continue;
       if (ProductSize > std::numeric_limits<size_t>::max() - Pending ||
           !Budget.canConsume(Pending + ProductSize)) {
-        Budget.consume(std::numeric_limits<size_t>::max());
+        if (!Optional)
+          Budget.consume(std::numeric_limits<size_t>::max());
         return std::nullopt;
       }
       Pending += ProductSize;
@@ -280,7 +282,8 @@ std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
       ProductSize *= Choices.size();
     }
     if (!Budget.canConsume(ProductSize)) {
-      Budget.consume(ProductSize);
+      if (!Optional)
+        Budget.consume(ProductSize);
       return std::nullopt;
     }
     forEachMonomial(Selected, Budget, [&](const Monomial &Key) {
@@ -353,6 +356,40 @@ bool provePolynomialIdentity(SymContext &Ctx, SymRef Before, SymRef After,
       splitIntoTerms(Ctx, Abstract->Body);
   if (!Terms)
     return false;
+  // Equal products cancel by their exact factor identities, before either is
+  // expanded over minterms. Unchanged higher-degree residuals therefore do
+  // not make an otherwise small difference proof exponential.
+  bool HasHigher = llvm::any_of(
+      *Terms, [](const PolyTerm &Term) { return Term.Factors.size() > 3; });
+  if (HasHigher) {
+    const size_t Words = (size_t(Ctx.width(Abstract->Body)) - 1) / 64 + 1;
+    size_t Storage = MaxBytes;
+    std::map<Monomial, llvm::APInt> Coefficients;
+    for (const auto &Term : *Terms) {
+      const size_t Overhead = 256 + 4 * Words * sizeof(uint64_t);
+      if (Storage < Overhead ||
+          Term.Factors.size() > (Storage - Overhead) / (4 * sizeof(SymRef)) ||
+          !Budget.consume(Term.Factors.size() + 2 * Words + 1))
+        return false;
+      Storage -= Overhead + Term.Factors.size() * 4 * sizeof(SymRef);
+      Monomial Key;
+      for (SymRef Factor : Term.Factors)
+        Key.push_back(Factor.index());
+      llvm::sort(Key);
+      auto [It, New] = Coefficients.try_emplace(Key, Term.Coeff);
+      if (!New)
+        It->second += Term.Coeff;
+    }
+    Terms->clear();
+    for (const auto &[Key, Coeff] : Coefficients) {
+      if (Coeff.isZero())
+        continue;
+      PolyTerm Term{Coeff, {}};
+      for (uint32_t Id : Key)
+        Term.Factors.push_back(SymRef(Id));
+      Terms->push_back(std::move(Term));
+    }
+  }
   std::optional<PolyForm> Form = expandOverMinterms(
       Ctx, *Terms, AtomIds, Ctx.width(Abstract->Body), Budget);
   if (!Form)
