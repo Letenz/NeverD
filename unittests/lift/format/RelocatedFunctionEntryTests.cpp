@@ -191,6 +191,26 @@ TEST(RelocatedFunctionEntries, CallableProofDoesNotTreatBudgetAsSuccess) {
   }
 }
 
+TEST(RelocatedFunctionEntries, RelocationsDoNotAuthenticateContinuationStarts) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(::testing::Message() << static_cast<int>(Target) << ':'
+                                        << static_cast<int>(Format));
+      auto Img = pointerImage(Target, Format);
+      Img.ContinuationCodeStarts.insert(0x1040);
+      Img.KnownCodeRanges.emplace_back(0x1040, 0x1048);
+      EXPECT_FALSE(RelocatedFunctionEntryVerifier(Img).accepts(0x1040));
+      EXPECT_TRUE(Img.VerifiedFunctionEntries.empty());
+      llvm::LLVMContext Context;
+      auto Module =
+          MedLLVMEmitter().emit({pointerSource(Img)}, Context, "continuation",
+                                Target, {}, &Img, Format);
+      EXPECT_EQ(Module, nullptr);
+    }
+  }
+}
+
 TEST(RelocatedFunctionEntries, EmitterDoesNotRetainProofsAcrossImageChanges) {
   auto Img = pointerImage(Arch::X64, BinaryFormat::COFF);
   MedLLVMEmitter Emitter;
@@ -255,6 +275,43 @@ TEST(RelocatedFunctionEntries, CFGMetadataAuthenticatesIndirectTailEntries) {
   }
 }
 
+TEST(RelocatedFunctionEntries,
+     CFGMetadataAuthenticatesEntriesWithoutRelocations) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (bool HasMetadata : {false, true}) {
+      SCOPED_TRACE(::testing::Message()
+                   << static_cast<int>(Target) << ':' << HasMetadata);
+      auto Img = guardedImage(Target);
+      Img.CodePtrRelocSlots.clear();
+      if (!HasMetadata) {
+        Img.DynInfo.GuardFlags = 0;
+        Img.DynInfo.GuardCFFunctionTableRVA = 0;
+        Img.DynInfo.GuardCFFunctionCount = 0;
+      }
+      EXPECT_EQ(RelocatedFunctionEntryVerifier(Img).accepts(0x1040),
+                HasMetadata);
+      auto Source = pointerSource(Img);
+      // Keep the ABI return-register write. The observable return resolves
+      // this completed address on every architecture.
+      Source.Blocks[0].Ops[0].Inputs[0] = MedVar::makeConst(
+          Target == Arch::ARM ? 0x1041 : 0x1040, Img.getPointerSize(),
+          ConstantAddressProvenance::Address);
+      llvm::LLVMContext Context;
+      auto Module =
+          MedLLVMEmitter().emit({Source}, Context, "cfg-no-relocations", Target,
+                                {}, &Img, Img.Format);
+      if (HasMetadata) {
+        ASSERT_NE(Module, nullptr);
+        EXPECT_FALSE(llvm::verifyModule(*Module));
+        EXPECT_NE(Module->getFunction("sub_1040"), nullptr);
+      } else {
+        EXPECT_EQ(Module, nullptr);
+      }
+      EXPECT_TRUE(Img.VerifiedFunctionEntries.empty());
+    }
+  }
+}
+
 TEST(RelocatedFunctionEntries, CFGSuppressionDoesNotGrantCallableAuthority) {
   for (uint8_t Flag : {1, 2, 3}) {
     auto Img = guardedImage(Arch::X64, 1);
@@ -263,6 +320,23 @@ TEST(RelocatedFunctionEntries, CFGSuppressionDoesNotGrantCallableAuthority) {
     ASSERT_TRUE(bool(Entries));
     EXPECT_EQ(*Entries, (std::vector<va_t>{0x1000}));
     EXPECT_FALSE(RelocatedFunctionEntryVerifier(Img).accepts(0x1040));
+  }
+}
+
+TEST(RelocatedFunctionEntries,
+     CFGMetadataDoesNotAuthenticateContinuationStarts) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(Target));
+    auto Img = guardedImage(Target);
+    Img.ContinuationCodeStarts.insert(0x1040);
+    Img.KnownCodeRanges.emplace_back(0x1040, 0x1048);
+    EXPECT_FALSE(RelocatedFunctionEntryVerifier(Img).accepts(0x1040));
+    EXPECT_TRUE(Img.VerifiedFunctionEntries.empty());
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit({pointerSource(Img)}, Context, "cfg-continuation",
+                              Target, {}, &Img, Img.Format);
+    EXPECT_EQ(Module, nullptr);
   }
 }
 
