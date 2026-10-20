@@ -34,6 +34,23 @@ inline symbolic::SymRef nonwrappingFramePredicate(symbolic::SymContext &Ctx,
   return Predicate;
 }
 
+/// Nonwrapping frame bounds must already hold. Compare first and last bytes
+/// so adjacency remains valid, including a frame whose last byte is UINT64_MAX.
+inline symbolic::SymRef excludedFrameRangePredicate(symbolic::SymContext &Ctx,
+                                                    symbolic::SymRef Root,
+                                                    int64_t Begin, int64_t End,
+                                                    uint64_t ExcludedBegin,
+                                                    uint64_t ExcludedEnd) {
+  assert(Root && Ctx.width(Root) == 64 && Begin < End &&
+         ExcludedBegin < ExcludedEnd);
+  const auto First =
+      Ctx.mkAdd(Root, Ctx.mkConst(64, static_cast<uint64_t>(Begin)));
+  const auto Last =
+      Ctx.mkAdd(Root, Ctx.mkConst(64, static_cast<uint64_t>(End) - 1));
+  return Ctx.mkOr(Ctx.mkUlt(Last, Ctx.mkConst(64, ExcludedBegin)),
+                  Ctx.mkUle(Ctx.mkConst(64, ExcludedEnd), First));
+}
+
 } // namespace neverd::analysis::detail
 
 #endif

@@ -2381,4 +2381,24 @@ TEST(OriginalBinaryUndefinedIndependence,
 
 #include "KernelInterruptFlagTests.inc"
 
+TEST(OriginalBinaryUndefinedIndependence,
+     FrameExclusionsRequireMatchingProofDomain) {
+  Program P({0xb8, 17, 0, 0, 0, 0xc3});
+  P.Options.EntryFrameBounds = SpecializationEntryFrameBounds{-32, 8};
+  P.Options.EntryFrameBounds->ExcludedAddressRanges = {{0x8000, 0x8100}};
+  P.Options.ProveStoreFrameSeparation = true;
+  expectRefusal(P, Status::Invalid);
+  P.Contract.Frame->ExcludedAddressRanges = {{0x8000, 0x8100}};
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  const auto Recovered = P.recover();
+  ASSERT_TRUE(Recovered.Recovery.complete()) << Recovered.Recovery.Diagnostic;
+  ++P.Options.EntryFrameBounds->ExcludedAddressRanges[0].End;
+  expectRefusal(P, Status::Invalid);
+  ++P.Contract.Frame->ExcludedAddressRanges[0].End;
+  const auto Changed = P.check();
+  ASSERT_TRUE(Changed.proved()) << Changed.Proof.Diagnostic;
+  EXPECT_NE(Good.Certificate->InputDigest, Changed.Certificate->InputDigest);
+}
+
 } // namespace

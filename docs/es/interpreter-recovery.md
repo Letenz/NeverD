@@ -154,6 +154,8 @@ Si un destino sigue sin resolverse cuando los refinamientos de productores, cond
 
 `EntryFrameBounds` declara explícitamente un intervalo `[Begin, End)` sin desbordamiento respecto al valor de entrada de `FrameBaseRegister`. No concede acceso a memoria ni garantiza ausencia de alias. Sin él, las raíces conservan su dominio modular. La prueba nativa exige los mismos límites en el contrato del llamador y los vincula al comprobante; la prueba LLVM conserva el dominio existente del marco. La recuperación sola no certifica equivalencia.
 
+`EntryFrameBounds::ExcludedAddressRanges` también puede declarar intervalos absolutos, no vacíos y sin desbordamiento, disjuntos de todo el marco de entrada. Son precondiciones explícitas del llamador, nunca inferidas de una dirección observada ni del origen de un puntero. `ProveStoreFrameSeparation` conserva los bytes actuales del marco y los punteros afines guardados solo después de demostrar que toda la escritura queda fuera del marco. Las escrituras sin esa prueba mantienen la invalidación normal por alias; una prueba desconocida o un presupuesto agotado provoca rechazo. Se incluye toda la fase de escritura CMPXCHG. La prueba nativa requiere la misma lista de exclusiones en su contrato de marco. Los comprobantes brutos vinculan la lista y la estrategia; los consumidores del código residual deben mantener las precondiciones.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contrato de ejecución

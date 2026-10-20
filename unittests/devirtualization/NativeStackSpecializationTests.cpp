@@ -2619,4 +2619,115 @@ TEST(NativeStackSpecialization, TargetContextsShareRecoveryBudgets) {
   }
 }
 
+TEST(NativeStackSpecialization, ProvedFrameSeparationRetainsSpilledRoot) {
+  StackProvider P;
+  P.add(0x100, {operation(NdOp::INT_SUB, r(40), {r(32), c(16)}),
+                operation(NdOp::STORE, {}, {r(40), r(32)})});
+  P.nativeCall(0x101, 0x200);
+  P.add(0x102, {operation(NdOp::LOAD, r(32), {r(40)}),
+                operation(NdOp::LOAD, r(0), {c(0x8080)})});
+  P.nativeReturn(0x103);
+  P.add(0x200, {operation(NdOp::STORE, {}, {c(0x8080), c(17)})});
+  P.nativeReturn(0x201);
+  auto O = stackOptions();
+  O.EntryFrameBounds = SpecializationEntryFrameBounds{-32, 8};
+  O.EntryFrameBounds->ExcludedAddressRanges = {{0x8000, 0x8100}};
+  O.ExternalStoresPreserveEntryReturnSlot = false;
+  O.ProveStoreReturnSlotSeparation = true;
+  // Proving the live return word alone cannot retain the separately saved root.
+  EXPECT_FALSE(specializeInterpreter(P, {0x100}, O).complete());
+  O.ProveStoreFrameSeparation = true;
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    O.ByteOrder = Order;
+    const auto Good = specializeInterpreter(P, {0x100}, O);
+    ASSERT_TRUE(Good.complete()) << Good.Diagnostic;
+    for (uint64_t Root : {uint64_t{0x8000 - 8}, uint64_t{0x8100 + 32},
+                          uint64_t{0xffff900000001008}}) {
+      const auto Run = execute(Good.Residual, 0, 0, Order, Root);
+      ASSERT_TRUE(Run);
+      EXPECT_EQ(Run->Value, 17U);
+      EXPECT_EQ(Run->Stack, Root);
+    }
+    auto Exact = O;
+    Exact.MaxOperations = Good.EvaluatedOperations;
+    EXPECT_TRUE(specializeInterpreter(P, {0x100}, Exact).complete());
+    --Exact.MaxOperations;
+    EXPECT_EQ(specializeInterpreter(P, {0x100}, Exact).Status,
+              SpecializationStatus::BudgetExceeded);
+    auto Missing = O;
+    Missing.EntryFrameBounds->ExcludedAddressRanges.clear();
+    EXPECT_FALSE(specializeInterpreter(P, {0x100}, Missing).complete());
+  }
+}
+
+TEST(NativeStackSpecialization, FrameExclusionsDoNotExemptUnprovedStores) {
+  auto O = stackOptions();
+  O.EntryFrameBounds = SpecializationEntryFrameBounds{-32, 24};
+  O.EntryFrameBounds->ExcludedAddressRanges = {{0x8000, 0x8100}};
+  O.ProveStoreFrameSeparation = true;
+  O.ProveStoreReturnSlotSeparation = true;
+  // Both straddling writes miss the live native return word. Place the saved
+  // root near the corresponding frame edge: preserving only that return word
+  // cannot preserve a root whose bytes the write may change.
+  for (auto Address : {r(8), c(0x7ffc), c(0x80fc)}) {
+    SCOPED_TRACE(Address.Offset);
+    StackProvider P;
+    const uint64_t Slot = Address == c(0x7ffc) ? 16 : uint64_t(-32);
+    P.add(0x100, {operation(NdOp::INT_ADD, r(40), {r(32), c(Slot)}),
+                  operation(NdOp::STORE, {}, {r(40), r(32)})});
+    P.nativeCall(0x101, 0x200);
+    P.add(0x102, {operation(NdOp::LOAD, r(32), {r(40)})});
+    P.nativeReturn(0x103);
+    P.add(0x200, {operation(NdOp::STORE, {}, {Address, c(7)})});
+    P.nativeReturn(0x201);
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    EXPECT_FALSE(R.complete());
+    EXPECT_TRUE(R.Residual.Blocks.empty());
+  }
+  // A real write to the saved return address still changes the destination.
+  StackProvider P;
+  P.nativeCall(0x100, 0x200);
+  P.nativeReturn(0x101);
+  P.nativeReturn(0x201);
+  P.add(0x200, {operation(NdOp::STORE, {}, {r(32), c(0x300)})});
+  P.add(0x300, {operation(NdOp::COPY, r(0), {c(71)})});
+  P.nativeReturn(0x301);
+  const auto Changed = specializeInterpreter(P, {0x100}, O);
+  ASSERT_TRUE(Changed.complete()) << Changed.Diagnostic;
+  const auto Run = execute(Changed.Residual);
+  ASSERT_TRUE(Run);
+  EXPECT_EQ(Run->Value, 71U);
+  // Missing the frame does not imply missing a return word outside it.
+  StackProvider Outside;
+  Outside.add(0x100, {operation(NdOp::STORE, {}, {c(0x8080), c(7)})});
+  Outside.nativeReturn(0x101);
+  O.EntryFrameBounds = SpecializationEntryFrameBounds{-32, 0};
+  O.EntryFrameBounds->ExcludedAddressRanges = {{0x8080, 0x8088}};
+  O.ExternalStoresPreserveEntryReturnSlot = false;
+  EXPECT_FALSE(specializeInterpreter(Outside, {0x100}, O).complete());
+}
+
+TEST(NativeStackSpecialization,
+     FrameSeparationRejectsInvalidDomainsAndBudgets) {
+  StackProvider P;
+  P.nativeReturn(0x100);
+  auto O = stackOptions();
+  O.ProveStoreFrameSeparation = true;
+  EXPECT_EQ(specializeInterpreter(P, {0x100}, O).Status,
+            SpecializationStatus::InvalidInput);
+  O.EntryFrameBounds = SpecializationEntryFrameBounds{-16, 8};
+  for (auto Range : {SpecializationFrameExclusion{7, 7}, {8, 7}}) {
+    O.EntryFrameBounds->ExcludedAddressRanges = {Range};
+    EXPECT_EQ(specializeInterpreter(P, {0x100}, O).Status,
+              SpecializationStatus::InvalidInput);
+  }
+  O.EntryFrameBounds->ExcludedAddressRanges = {{0x8000, 0x8100}};
+  O.MaxOperations = 0;
+  EXPECT_EQ(specializeInterpreter(P, {0x100}, O).Status,
+            SpecializationStatus::InvalidInput);
+  O.MaxOperations = 1;
+  EXPECT_EQ(specializeInterpreter(P, {0x100}, O).Status,
+            SpecializationStatus::BudgetExceeded);
+}
+
 } // namespace

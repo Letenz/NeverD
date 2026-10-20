@@ -154,6 +154,8 @@ Se una destinazione rimane irrisolta dopo l’esaurimento dei candidati di raffi
 
 `EntryFrameBounds` dichiara esplicitamente un intervallo `[Begin, End)` senza riavvolgimento rispetto al valore iniziale di `FrameBaseRegister`. Non autorizza accessi alla memoria né assenza di alias. Se omesso, le radici restano modulari. La prova nativa richiede gli stessi limiti nel contratto del chiamante e li vincola alla ricevuta; la prova LLVM conserva il dominio esistente del frame. Il solo recupero non certifica l’equivalenza.
 
+`EntryFrameBounds::ExcludedAddressRanges` può inoltre dichiarare intervalli assoluti, non vuoti e senza riavvolgimento, disgiunti dall’intero frame iniziale. Sono precondizioni esplicite del chiamante, mai dedotte da indirizzi osservati o dalla provenienza dei puntatori. `ProveStoreFrameSeparation` conserva i byte correnti del frame e i puntatori affini salvati solo dopo aver provato la separazione dell’intera scrittura. Le scritture non provate mantengono la normale invalidazione degli alias; prove sconosciute o budget esauriti causano un rifiuto. È inclusa tutta la fase di scrittura CMPXCHG. La prova nativa richiede lo stesso elenco di esclusioni nel contratto del frame. Le ricevute grezze vincolano elenco e strategia; chi usa il codice residuo deve mantenere le precondizioni.
+
 <!-- i18n-section: execution-contract -->
 
 ## Contratto di esecuzione

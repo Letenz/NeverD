@@ -293,6 +293,14 @@ void appendRawEnvironmentPolicy(RecoveryDigest &H,
   if (O.EntryFrameBounds) {
     H.number(O.EntryFrameBounds->Begin);
     H.number(O.EntryFrameBounds->End);
+    if (!O.EntryFrameBounds->ExcludedAddressRanges.empty()) {
+      H.text("entry-frame-exclusions-v1");
+      H.number(O.EntryFrameBounds->ExcludedAddressRanges.size());
+      for (const auto &Range : O.EntryFrameBounds->ExcludedAddressRanges) {
+        H.number(Range.Begin);
+        H.number(Range.End);
+      }
+    }
   }
   H.number(O.EntryFrameAlignment.has_value());
   if (O.EntryFrameAlignment) {
@@ -306,6 +314,8 @@ void appendRawEnvironmentPolicy(RecoveryDigest &H,
   }
   H.number(O.RequireRestoredFrameAtReturn);
   H.number(O.ProveStoreReturnSlotSeparation);
+  if (O.ProveStoreFrameSeparation)
+    H.text("proved-store-frame-separation-v1");
   H.number(O.ExternalStoresPreserveEntryReturnSlot);
   H.number(O.ExternalStoresDisjointEntryFrame);
   H.number(O.EntryConstants.size());

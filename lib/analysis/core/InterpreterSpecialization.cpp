@@ -156,8 +156,8 @@ std::optional<uint64_t> affineDisplacement(SymContext &Ctx, SymRef Value,
 }
 
 /// Complete modular byte footprints, including partial/straddling overlap.
-SymRef memoryExtentsOverlap(SymContext &Ctx, SymRef Left, uint16_t LeftBytes,
-                            SymRef Right, uint16_t RightBytes) {
+SymRef memoryExtentsOverlap(SymContext &Ctx, SymRef Left, uint64_t LeftBytes,
+                            SymRef Right, uint64_t RightBytes) {
   return Ctx.mkOr(
       Ctx.mkUlt(Ctx.mkSub(Left, Right), Ctx.mkConst(64, RightBytes)),
       Ctx.mkUlt(Ctx.mkSub(Right, Left), Ctx.mkConst(64, LeftBytes)));
@@ -2220,6 +2220,19 @@ bool Specializer::evaluate(int Id) {
     IncomingPredicate = Ctx.mkAnd(
         IncomingPredicate, detail::nonwrappingFramePredicate(
                                Ctx, FrameRoot, Bounds.Begin, Bounds.End));
+    for (const auto &Range : Bounds.ExcludedAddressRanges) {
+      if (Result.EvaluatedOperations >= Options.MaxOperations)
+        return fail(SpecializationStatus::BudgetExceeded,
+                    "entry frame exclusion predicate budget exhausted");
+      ++Result.EvaluatedOperations;
+      IncomingPredicate =
+          Ctx.mkAnd(IncomingPredicate, detail::excludedFrameRangePredicate(
+                                           Ctx, FrameRoot, Bounds.Begin,
+                                           Bounds.End, Range.Begin, Range.End));
+      if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+        return fail(SpecializationStatus::BudgetExceeded,
+                    "entry frame exclusion node budget exhausted");
+    }
   }
   const auto &Joint = Draft.Incoming.Controls;
   for (const auto &Column : Draft.Incoming.Marginals) {
@@ -2640,6 +2653,7 @@ bool Specializer::evaluate(int Id) {
       // arbitrary base. Keep that value unsafe through copies and frame spills.
       bool OutputUnsafe = EnvironmentRead || CompareExchange;
       bool ExactFrameAddress = false;
+      bool ProvedFrameSeparation = false;
       std::optional<SymStorePreservation> StorePreservation;
       llvm::SmallVector<SymStorePreservationRange, 4> ProvedStoreRanges;
       for (unsigned J = 0; J < Original.NumInputs; ++J)
@@ -2684,6 +2698,40 @@ bool Specializer::evaluate(int Id) {
             const auto &Bounds = *Options.EntryFrameBounds;
             StorePreservation =
                 SymStorePreservation{FrameRoot, Bounds.Begin, Bounds.End};
+          }
+          if (!Displacement && !StorePreservation &&
+              Options.ProveStoreFrameSeparation) {
+            const auto &Bounds = *Options.EntryFrameBounds;
+            const auto Address = Exec.memoryAddressValue(Original);
+            if (Ctx.width(Address) == 64) {
+              if (Result.EvaluatedOperations >= Options.MaxOperations)
+                return fail(SpecializationStatus::BudgetExceeded,
+                            "frame separation predicate budget exhausted");
+              ++Result.EvaluatedOperations;
+              const auto First = Ctx.mkAdd(
+                  FrameRoot,
+                  Ctx.mkConst(64, static_cast<uint64_t>(Bounds.Begin)));
+              const auto Bytes = static_cast<uint64_t>(Bounds.End) -
+                                 static_cast<uint64_t>(Bounds.Begin);
+              const auto Overlap = memoryExtentsOverlap(
+                  Ctx, Address, Memory.AccessSize, First, Bytes);
+              if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+                return fail(SpecializationStatus::BudgetExceeded,
+                            "frame separation node budget exhausted");
+              const auto Domain =
+                  enumerate(Ctx, Exec.pathPredicate(), {Overlap}, 1);
+              if (Failed)
+                return false;
+              if (Domain.Status == FiniteValueStatus::Unknown)
+                return fail(SpecializationStatus::BudgetExceeded,
+                            "frame separation proof exceeded its budget");
+              if (Domain.Status == FiniteValueStatus::Complete &&
+                  Domain.Tuples == std::vector<std::vector<uint64_t>>{{0}}) {
+                StorePreservation =
+                    SymStorePreservation{FrameRoot, Bounds.Begin, Bounds.End};
+                ProvedFrameSeparation = true;
+              }
+            }
           }
           if (!Displacement && !StorePreservation &&
               Options.ProveStoreReturnSlotSeparation &&
@@ -2794,7 +2842,12 @@ bool Specializer::evaluate(int Id) {
                 ++It;
             }
           }
-          if (Options.RequireRestoredFrameAtReturn) {
+          // A complete frame proof also covers its contained entry return
+          // word. Unchecked preservation and bounds that omit any return byte
+          // still require the independent control-slot check.
+          if (Options.RequireRestoredFrameAtReturn &&
+              !(ProvedFrameSeparation && Options.EntryFrameBounds->Begin <= 0 &&
+                Options.EntryFrameBounds->End >= 8)) {
             if (Displacement) {
               for (unsigned B = 0; B < Memory.AccessSize; ++B)
                 if (*Displacement + B < 8)
@@ -3977,6 +4030,27 @@ SpecializationResult Specializer::run() {
        Options.EntryFrameBounds->Begin >= Options.EntryFrameBounds->End)) {
     fail(SpecializationStatus::InvalidInput,
          "entry frame bounds require a root and a nonempty range");
+    return std::move(Result);
+  }
+  if (Options.EntryFrameBounds) {
+    const auto &Ranges = Options.EntryFrameBounds->ExcludedAddressRanges;
+    if (Ranges.size() > Options.MaxOperations - Result.EvaluatedOperations) {
+      fail(SpecializationStatus::BudgetExceeded,
+           "entry frame exclusion validation budget exhausted");
+      return std::move(Result);
+    }
+    Result.EvaluatedOperations += Ranges.size();
+    for (const auto &Range : Ranges)
+      if (Range.Begin >= Range.End) {
+        fail(SpecializationStatus::InvalidInput,
+             "invalid excluded entry frame address range");
+        return std::move(Result);
+      }
+  }
+  if (Options.ProveStoreFrameSeparation &&
+      (!Options.FrameBaseRegister || !Options.EntryFrameBounds)) {
+    fail(SpecializationStatus::InvalidInput,
+         "proved frame separation requires an entry root and frame bounds");
     return std::move(Result);
   }
   if (Options.ExternalStoresDisjointEntryFrame &&

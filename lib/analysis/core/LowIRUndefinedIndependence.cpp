@@ -2975,18 +2975,10 @@ public:
           }
           Predicate = Ctx.mkAnd(Predicate, detail::nonwrappingFramePredicate(
                                                Ctx, EntryRoot, F.Begin, F.End));
-          // The existing root bounds make these the unsigned first and last
-          // accessible bytes without wraparound. Exclusion is a symbolic entry
-          // precondition: adjacency is allowed, but no byte may overlap a
-          // range.
-          const auto First = Ctx.mkAdd(
-              EntryRoot, Ctx.mkConst(64, static_cast<uint64_t>(F.Begin)));
-          const auto Last = Ctx.mkAdd(
-              EntryRoot, Ctx.mkConst(64, static_cast<uint64_t>(F.End) - 1));
           for (const auto &R : F.ExcludedAddressRanges) {
             Predicate = Ctx.mkAnd(
-                Predicate, Ctx.mkOr(Ctx.mkUlt(Last, Ctx.mkConst(64, R.Begin)),
-                                    Ctx.mkUle(Ctx.mkConst(64, R.End), First)));
+                Predicate, detail::excludedFrameRangePredicate(
+                               Ctx, EntryRoot, F.Begin, F.End, R.Begin, R.End));
             nodes();
           }
           MemoryRoot = Ctx.mkFreshVar(64, "proof_frame");

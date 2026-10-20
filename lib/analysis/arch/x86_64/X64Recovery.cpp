@@ -91,7 +91,10 @@ validateRawEnvironmentDeclarations(const SpecializationOptions &Options) {
        {Options.X64CodeRegions.size(), Options.X64ImportBindings.size(),
         Options.X64TerminalImports.size(), Options.X64MachineExits.size(),
         Options.ControlRegisters.size(), Options.ControlFrameSlots.size(),
-        Options.EntryConstants.size()}) {
+        Options.EntryConstants.size(),
+        Options.EntryFrameBounds
+            ? Options.EntryFrameBounds->ExcludedAddressRanges.size()
+            : size_t{0}}) {
     if (Records > RecordLimit || Count > RecordLimit - Records)
       return Exhausted();
     Records += Count;

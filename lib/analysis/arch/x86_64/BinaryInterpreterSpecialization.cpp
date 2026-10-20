@@ -643,6 +643,8 @@ binaryExecutionDigest(const BinaryImage &Image,
     Hash.update(Binding.Symbol);
   }
   Number(Options.ProveStoreReturnSlotSeparation);
+  if (Options.ProveStoreFrameSeparation)
+    Hash.update("proved-store-frame-separation-v1");
   Number(Options.MaxFrameOffsetNormalizationWorkPerProof);
   Number(Options.ExternalStoresDisjointEntryFrame);
   Number(Options.EntryFrameAlignment.has_value());
@@ -654,6 +656,15 @@ binaryExecutionDigest(const BinaryImage &Image,
   if (Options.EntryFrameBounds) {
     Number(static_cast<uint64_t>(Options.EntryFrameBounds->Begin));
     Number(static_cast<uint64_t>(Options.EntryFrameBounds->End));
+    if (!Options.EntryFrameBounds->ExcludedAddressRanges.empty()) {
+      Hash.update("entry-frame-exclusions-v1");
+      Number(Options.EntryFrameBounds->ExcludedAddressRanges.size());
+      for (const auto &Range :
+           Options.EntryFrameBounds->ExcludedAddressRanges) {
+        Number(Range.Begin);
+        Number(Range.End);
+      }
+    }
   }
   Number(Options.X64FlagsProfile.has_value());
   if (Options.X64FlagsProfile)
@@ -810,6 +821,22 @@ prepareBinaryRelation(const BinaryImage &Image,
        Options.EntryFrameBounds->End != Contract.Frame->End))
     return Fail(Status::Invalid,
                 "recovery entry frame bounds do not match the proof contract");
+  if (Options.EntryFrameBounds &&
+      !Options.EntryFrameBounds->ExcludedAddressRanges.empty()) {
+    const auto &Ranges = Options.EntryFrameBounds->ExcludedAddressRanges;
+    if (Ranges.size() > Limits.MaxInstructions)
+      return Fail(Status::BudgetExceeded,
+                  "recovery frame exclusion metadata budget exhausted");
+    if (Ranges.size() != Contract.Frame->ExcludedAddressRanges.size())
+      return Fail(Status::Invalid,
+                  "recovery and proof frame exclusion contracts differ");
+    for (size_t I = 0; I != Ranges.size(); ++I)
+      if (Ranges[I].Begin >= Ranges[I].End ||
+          Ranges[I].Begin != Contract.Frame->ExcludedAddressRanges[I].Begin ||
+          Ranges[I].End != Contract.Frame->ExcludedAddressRanges[I].End)
+        return Fail(Status::Invalid,
+                    "recovery and proof frame exclusion contracts differ");
+  }
   if (Contract.X64FlagsProfile != Options.X64FlagsProfile ||
       Contract.ByteOrder != Options.ByteOrder ||
       Contract.EntryConstants.size() != Options.EntryConstants.size())
