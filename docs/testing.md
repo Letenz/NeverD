@@ -422,6 +422,11 @@ prebuilt-LLVM guidance.
 
 ## GUI function lists and navigation
 
+`NeverDFunctionAdmissionTests` checks unnamed non-leaf entries with partial
+unwind coverage, cached and uncached selections, actual split-chunk ownership,
+and rejection of truncated instructions. `SafetyReport.PipelineCoverageRejectsPartialFunctionLifts`
+also refuses legacy audits that dropped code solely for missing unwind data.
+
 `NeverDWorkerFunctionalRegressions` checks cached function sorting in both
 directions, exclusive navigation cursors beyond the first 512 functions, string
 sorting across pages, and search continuation in both directions. Length sorting also exercises multi-megabyte literals with bounded UTF-8 previews and filtering on text beyond the preview. On Windows it

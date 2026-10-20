@@ -102,6 +102,11 @@ add_neverd_unittest(NeverDPipelineOutcomeTests
 target_include_directories(NeverDPipelineOutcomeTests PRIVATE
   "${CMAKE_SOURCE_DIR}/lib/pipeline")
 
+add_neverd_unittest(NeverDFunctionAdmissionTests
+  FunctionAdmissionTests.cpp
+  LINK_COMPONENTS Pipeline
+)
+
 # These fixtures require externally supplied, natively verified MSVC images.
 # Keep their optional input separate from the mandatory portable pipeline owner.
 add_neverd_unittest(NeverDNativeFinallyInputTests
