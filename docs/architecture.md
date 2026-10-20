@@ -4076,7 +4076,12 @@ lifting retains no marker, since a proof that ran out or threw can cause it
 and another request may finish; a caller's exhausted proof allowance also
 cannot create one. The bodies a restricted run lifts for the signatures of the
 callees it omits (`omittedDirectCalleeSignatures`) share one cache of their
-own, whose construction context differs from the pipeline's. Every normal
+own, whose construction context differs from the pipeline's. A kept body also
+keeps its forwarder probes (`propagateForwardedCallArities`): a later run
+takes one where the callee summaries, user prototypes and names hold what the
+probe read under every key `recoverCallAbi` noted, so a new summary read in
+`recoverCallAbi` must note its key, and it may write summaries only at the
+recovered function's entry. Every normal
 return must agree on the stack change, and a pushed result must be initialized
 without reading an empty slot. Cycles in the call graph, incomplete lifting,
 environment restores, tag changes, unknown intrinsics and exceptional edges
