@@ -4787,6 +4787,16 @@ budgeted and publication requires a fresh complete proof.
 
 Context refinement may additionally nominate a tracked eight-byte address carrier when a later memory demand uses only its byte slice. The original narrow producer coordinates remain authoritative; only enqueue forms keys from proved constants or frame offsets.
 
+`ControlDependencyCache` reuses completed dependency walks only among sibling
+projections of one native transfer. Keys bind the append-only symbolic context,
+expression, frame root and byte order. Each hit revalidates every memory-input
+birth record consumed by the original walk; later load history cannot relabel
+an input. Missing or changed births invalidate the entry, and incomplete walks
+are never retained. Lookup, validation and result copying consume discovery
+work; retained metadata is bounded by the symbolic-node limit. Each successor
+still applies its own demand policy and proves values and feasible edges.
+The cache contains no memory values, alias facts, predicates or certificates.
+
 `LiftStateBase` allocates instruction-local temporary byte ranges for all three
 machine lifters. Each allocation reserves its complete size rounded up to the
 eight-byte granule, so live wide intermediates cannot overwrite one another in

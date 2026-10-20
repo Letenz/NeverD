@@ -3856,6 +3856,15 @@ Entry-alignment regressions cover finer partitions, every allowed residue, diffe
 
 `ControlDiscovery.*` and `NativeStackSpecialization.*` cover low-bit root guards, high-bit and whole-root dependencies, incomplete walks, exact and short traversal budgets, and preserved finite immutable-address witnesses.
 
+`ControlDiscoveryCache.*` checks completed-walk reuse, exact and short work
+budgets, changed or missing input births, later load history, context and byte
+order isolation, incomplete retries and storage saturation. The sibling
+producer regression executes both byte orders, retains its fixed discovery
+budget and rejects an unresolved sibling. Run the complete specialization,
+PE fixed-image, native/LLVM refinement and undefined-independence test owners
+when changing this shared dependency boundary. Reuse grants no larger proof
+or source-publication contract.
+
 Unresolved-target guard tests cover an unreachable invalid phase, an unknown target reachable at entry or after a backedge, exact refinement limits, and adjacent successful/exhausted discovery budgets. Refusal publishes no residual code, origins or read witnesses. Optional discovery work after complete recovery is not a required-budget lower bound.
 
 Demanded frame-projection regressions cover automatic and existing register carriers, high roots and modular wraparound, incomplete low-byte guards, conflicting or missing sibling facts, adjacent query-budget outcomes and solver unknown. A narrow demand never certifies only part of a full pointer; refused recovery publishes no residual code or witnesses.

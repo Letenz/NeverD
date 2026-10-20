@@ -2730,4 +2730,63 @@ TEST(NativeStackSpecialization,
             SpecializationStatus::BudgetExceeded);
 }
 
+StackProvider repeatedProducerDecoder() {
+  auto P = finiteDispatchDecoder(false);
+  P.add(0x201, {operation(NdOp::INT_MULT, r(24), {r(16), c(0x100)}),
+                operation(NdOp::INT_ADD, r(24), {r(24), c(0x400)}),
+                operation(NdOp::INDIR_BR, {}, {r(24)})});
+  const auto Selector = [&](va_t Start, uint64_t Register) {
+    P.add(Start, {operation(NdOp::COPY, r(Register), {r(8)})});
+    for (unsigned I = 0; I != 24; ++I)
+      P.add(
+          Start + I + 1,
+          {operation(NdOp::INT_RIGHT, r(64), {r(8), c(I % 2 + 1)}),
+           operation(NdOp::INT_MULT, r(Register), {r(Register), c(3 + 2 * I)}),
+           operation(NdOp::INT_XOR, r(Register), {r(Register), r(64)})});
+  };
+  Selector(0x400, 16);
+  P.add(0x419,
+        {operation(NdOp::INT_AND, r(16), {r(16), c(1)}),
+         operation(NdOp::INT_AND, r(24, 1), {r(8, 1), c(1, 1)}),
+         operation(NdOp::COND_BR, {}, {NdVar::cst(0x440, 8), r(24, 1)})});
+  P.add(0x41a, {branch(0x441)});
+  P.add(0x440, {branch(0x450)});
+  P.add(0x441, {branch(0x450)});
+  Selector(0x450, 56);
+  P.add(0x469, {operation(NdOp::INT_AND, r(56), {r(56), c(1)}),
+                operation(NdOp::INT_XOR, r(16), {r(16), r(56)}),
+                operation(NdOp::INT_ADD, r(16), {r(16), c(1)}), branch(0x200)});
+  return P;
+}
+
+TEST(NativeStackSpecialization, RepeatedProducerKeepsSiblingProofObligations) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    auto P = repeatedProducerDecoder();
+    auto O = stackOptions();
+    O.ByteOrder = Order;
+    O.DiscoverControlState = true;
+    O.MaxDiscoveryVisits = Order == llvm::endianness::little ? 2100 : 2800;
+    const auto R = specializeInterpreter(P, {0x100}, O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    RecordProperty(Order == llvm::endianness::little ? "little_visits"
+                                                     : "big_visits",
+                   R.DiscoveryVisits);
+    for (uint64_t Input :
+         {uint64_t{0}, uint64_t{1}, uint64_t{42}, uint64_t{137}, UINT64_MAX}) {
+      const auto Run = execute(R.Residual, Input, 0, Order);
+      ASSERT_TRUE(Run);
+      EXPECT_EQ(Run->Value, Input + 17);
+      EXPECT_EQ(Run->Stack, 0x10000U);
+    }
+    P.add(0x441, {operation(NdOp::INDIR_BR, {}, {r(96)})});
+    O.MaxDiscoveryVisits = 65536;
+    const auto MissingSibling = specializeInterpreter(P, {0x100}, O);
+    EXPECT_EQ(MissingSibling.Status, SpecializationStatus::UnresolvedControl)
+        << MissingSibling.Diagnostic;
+    EXPECT_TRUE(MissingSibling.Residual.Blocks.empty());
+    EXPECT_TRUE(MissingSibling.Origins.empty());
+    EXPECT_TRUE(MissingSibling.Reads.empty());
+  }
+}
+
 } // namespace

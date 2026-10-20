@@ -8,6 +8,7 @@
 #include "gtest/gtest.h"
 
 #include <limits>
+#include <tuple>
 
 using namespace neverd::analysis;
 using namespace neverd::analysis::detail;
@@ -1112,4 +1113,235 @@ TEST(ControlDiscovery, WideMultiplyAndShiftConstantsChargeBeforeReading) {
     EXPECT_EQ(JustShort.Status, ControlDiscoveryStatus::BudgetExceeded);
     EXPECT_TRUE(JustShort.RegisterRanges.empty());
   }
+}
+
+namespace {
+SymRef cacheDependencyExpression(SymContext &Ctx, SymRef Input) {
+  SymRef Value = Input;
+  for (unsigned I = 0; I != 24; ++I)
+    Value = Ctx.mkXor(Ctx.mkMul(Value, Ctx.mkConst(64, 3 + 2 * I)),
+                      Ctx.mkLShr(Input, Ctx.mkConst(64, I % 7 + 1)));
+  return Value;
+}
+
+void expectSameDiscovery(const ControlDiscovery &A, const ControlDiscovery &B) {
+  EXPECT_EQ(A.Status, B.Status);
+  EXPECT_EQ(A.FrameRootBits, B.FrameRootBits);
+  ASSERT_EQ(A.RegisterRanges.size(), B.RegisterRanges.size());
+  ASSERT_EQ(A.FrameSlots.size(), B.FrameSlots.size());
+  for (size_t I = 0; I != A.RegisterRanges.size(); ++I) {
+    EXPECT_EQ(A.RegisterRanges[I].Offset, B.RegisterRanges[I].Offset);
+    EXPECT_EQ(A.RegisterRanges[I].Bytes, B.RegisterRanges[I].Bytes);
+    EXPECT_EQ(A.RegisterRanges[I].DemandedBits,
+              B.RegisterRanges[I].DemandedBits);
+  }
+  for (size_t I = 0; I != A.FrameSlots.size(); ++I) {
+    EXPECT_EQ(A.FrameSlots[I].Offset, B.FrameSlots[I].Offset);
+    EXPECT_EQ(A.FrameSlots[I].Bytes, B.FrameSlots[I].Bytes);
+    EXPECT_EQ(A.FrameSlots[I].DemandedBits, B.FrameSlots[I].DemandedBits);
+  }
+}
+} // namespace
+
+TEST(ControlDiscoveryCache, ReusesCompletedFrameBirthsWithExactWorkBounds) {
+  SymContext Ctx;
+  SymState State(Ctx);
+  const auto Root = Ctx.mkFreshVar(64, "root");
+  const auto Input = State.load(Ctx.mkAdd(Root, Ctx.mkConst(64, -16)), 8);
+  const auto Value = cacheDependencyExpression(Ctx, Input);
+  const auto Nodes = Ctx.numNodes();
+  const auto Bytes = State.numLiveBytes();
+  const auto Fresh = gatherControlDependencies(State, Value, Root, 10000);
+  ASSERT_EQ(Fresh.Status, ControlDiscoveryStatus::Complete);
+  ASSERT_EQ(Fresh.FrameSlots.size(), 1U);
+  EXPECT_EQ(Fresh.FrameSlots[0].Offset, -16);
+  EXPECT_EQ(Fresh.FrameSlots[0].Bytes, 8);
+  EXPECT_EQ(Fresh.FrameSlots[0].DemandedBits, UINT64_MAX);
+  EXPECT_EQ(Fresh.FrameRootBits, 0U);
+  ControlDependencyCache Cache(Ctx, 4096);
+  expectSameDiscovery(Cache.gather(State, Value, Root, 10000), Fresh);
+  const auto Hit = Cache.gather(State, Value, Root, 10000);
+  expectSameDiscovery(Hit, Fresh);
+  EXPECT_LT(Hit.Visited, Fresh.Visited);
+  expectSameDiscovery(Cache.gather(State, Value, Root, Hit.Visited), Fresh);
+  const auto Short = Cache.gather(State, Value, Root, Hit.Visited - 1);
+  EXPECT_EQ(Short.Status, ControlDiscoveryStatus::BudgetExceeded);
+  EXPECT_TRUE(Short.FrameSlots.empty());
+  EXPECT_TRUE(Short.RegisterRanges.empty());
+  EXPECT_FALSE(Short.FrameRootBits);
+  EXPECT_EQ(Short.Visited, Hit.Visited - 1);
+  EXPECT_EQ(gatherControlDependencies(State, Value, Root, Hit.Visited).Status,
+            ControlDiscoveryStatus::BudgetExceeded);
+  EXPECT_EQ(Ctx.numNodes(), Nodes);
+  EXPECT_EQ(State.numLiveBytes(), Bytes);
+  RecordProperty("fresh_visits", Fresh.Visited);
+  RecordProperty("cached_visits", Hit.Visited);
+}
+
+TEST(ControlDiscoveryCache, RejectsChangedStateOriginsAndFrameIdentity) {
+  SymContext Ctx;
+  SymState State(Ctx);
+  const auto Root = Ctx.mkFreshVar(64, "root");
+  const auto Address = Ctx.mkAdd(Root, Ctx.mkConst(64, -16));
+  const auto Input = State.load(Address, 8);
+  const auto Value = cacheDependencyExpression(Ctx, Input);
+  ControlDependencyCache Cache(Ctx, 4096);
+  ASSERT_EQ(Cache.gather(State, Value, Root, 10000).Status,
+            ControlDiscoveryStatus::Complete);
+  // Replacing this same state object must not authenticate its old births.
+  State = SymState(Ctx);
+  const auto Empty = Cache.gather(State, Value, Root, 10000);
+  EXPECT_EQ(Empty.Status, ControlDiscoveryStatus::UnsupportedOrigin);
+  EXPECT_TRUE(Empty.FrameSlots.empty());
+  expectSameDiscovery(Empty,
+                      gatherControlDependencies(State, Value, Root, 10000));
+  ASSERT_EQ(State.load(Address, 8), Input);
+  EXPECT_EQ(Cache.gather(State, Value, Root, 10000).Status,
+            ControlDiscoveryStatus::Complete);
+  const auto OtherRoot = Ctx.mkFreshVar(64, "other_root");
+  const auto DifferentRoot = Cache.gather(State, Value, OtherRoot, 10000);
+  EXPECT_EQ(DifferentRoot.Status, ControlDiscoveryStatus::UnsupportedOrigin);
+  expectSameDiscovery(
+      DifferentRoot, gatherControlDependencies(State, Value, OtherRoot, 10000));
+}
+
+TEST(ControlDiscoveryCache, LaterLoadHistoryDoesNotRelabelInputBirths) {
+  SymContext Ctx;
+  SymState State(Ctx);
+  const auto Root = Ctx.mkFreshVar(64, "root");
+  const auto Input = State.load(Ctx.mkAdd(Root, Ctx.mkConst(64, -16)), 8);
+  const auto Value = cacheDependencyExpression(Ctx, Input);
+  ControlDependencyCache Cache(Ctx, 4096);
+  const auto Initial = Cache.gather(State, Value, Root, 10000);
+  const auto Hit = Cache.gather(State, Value, Root, 10000);
+  const auto OtherAddress = Ctx.mkAdd(Root, Ctx.mkConst(64, -64));
+  State.store(OtherAddress, Input);
+  ASSERT_EQ(State.load(OtherAddress, 8), Input);
+  ASSERT_EQ(State.loadOrigins(Input).size(), 2U);
+  const auto After = Cache.gather(State, Value, Root, Hit.Visited);
+  expectSameDiscovery(After, Initial);
+  ASSERT_EQ(After.FrameSlots.size(), 1U);
+  EXPECT_EQ(After.FrameSlots[0].Offset, -16);
+  State.clobberMemory();
+  const auto NewInput = State.load(OtherAddress, 8);
+  ASSERT_NE(Input, NewInput);
+  EXPECT_EQ(
+      Cache.gather(State, cacheDependencyExpression(Ctx, NewInput), Root, 10000)
+          .Status,
+      ControlDiscoveryStatus::UnsupportedOrigin);
+}
+
+TEST(ControlDiscoveryCache, ContextAndByteOrderKeepIndependentCoordinates) {
+  SymContext Ctx;
+  SymState Little(Ctx, llvm::endianness::little);
+  SymState Big(Ctx, llvm::endianness::big);
+  const auto Root = Ctx.mkFreshVar(64, "root");
+  const auto Address = Ctx.mkAdd(Root, Ctx.mkConst(64, -32));
+  const auto L = Little.load(Address, 8);
+  const auto B = Big.load(Address, 8);
+  ControlDependencyCache Cache(Ctx, 4096);
+  for (const auto &[State, Input, Offset] :
+       {std::tuple{&Little, L, -31}, std::tuple{&Big, B, -26}}) {
+    const auto Value = Ctx.mkExtract(Input, 8, 8);
+    const auto First = Cache.gather(*State, Value, Root, 10000);
+    ASSERT_EQ(First.Status, ControlDiscoveryStatus::Complete);
+    ASSERT_EQ(First.FrameSlots.size(), 1U);
+    EXPECT_EQ(First.FrameSlots[0].Offset, Offset);
+    EXPECT_EQ(First.FrameSlots[0].Bytes, 1);
+    EXPECT_EQ(First.FrameSlots[0].DemandedBits, 255U);
+    expectSameDiscovery(Cache.gather(*State, Value, Root, 10000), First);
+  }
+  SymContext Other;
+  SymState OtherState(Other);
+  const auto OtherRoot = Other.mkFreshVar(64, "root");
+  const auto Input = OtherState.read(SymSpace::Register, 96, 8);
+  const auto Value = cacheDependencyExpression(Other, Input);
+  const auto Expected =
+      gatherControlDependencies(OtherState, Value, OtherRoot, 10000);
+  expectSameDiscovery(Cache.gather(OtherState, Value, OtherRoot, 10000),
+                      Expected);
+  ASSERT_EQ(Expected.RegisterRanges.size(), 1U);
+  EXPECT_EQ(Expected.RegisterRanges[0].Offset, 96U);
+}
+
+TEST(ControlDiscoveryCache, IncompleteQueriesAndCapacityNeverSupplyFacts) {
+  SymContext Ctx;
+  SymState State(Ctx);
+  const auto Root = Ctx.mkFreshVar(64, "root");
+  const auto Input = State.load(Ctx.mkAdd(Root, Ctx.mkConst(64, -16)), 8);
+  const auto Value = cacheDependencyExpression(Ctx, Input);
+  const auto Expected = gatherControlDependencies(State, Value, Root, 10000);
+  for (uint64_t Capacity : {0U, 1U, 4U, 10U, 4096U}) {
+    ControlDependencyCache Cache(Ctx, Capacity);
+    const auto Failed = Cache.gather(State, Value, Root, 1);
+    EXPECT_EQ(Failed.Status, ControlDiscoveryStatus::BudgetExceeded);
+    EXPECT_TRUE(Failed.FrameSlots.empty());
+    EXPECT_FALSE(Failed.FrameRootBits);
+    expectSameDiscovery(Cache.gather(State, Value, Root, 10000), Expected);
+    expectSameDiscovery(Cache.gather(State, Value, Root, 10000), Expected);
+    const auto Unknown = Ctx.mkFreshVar(64, "unknown");
+    EXPECT_EQ(Cache.gather(State, Unknown, Root, 10000).Status,
+              ControlDiscoveryStatus::UnsupportedOrigin);
+    for (auto Invalid : {SymRef(), SymRef(UINT32_MAX - 1)})
+      EXPECT_NE(Cache.gather(State, Invalid, Root, 10000).Status,
+                ControlDiscoveryStatus::Complete);
+  }
+}
+
+TEST(ControlDiscoveryCache, MissingBirthNeverRetainsAnIncompleteResult) {
+  SymContext Ctx;
+  SymState Births(Ctx);
+  SymState State(Ctx);
+  const auto Root = Ctx.mkFreshVar(64, "root");
+  const auto Input = Births.load(Ctx.mkAdd(Root, Ctx.mkConst(64, -16)), 8);
+  const auto Register = State.read(SymSpace::Register, 96, 8);
+  const auto Value = Ctx.mkXor(cacheDependencyExpression(Ctx, Input), Register);
+  ControlDependencyCache Cache(Ctx, 4096);
+  const auto Missing = gatherControlDependencies(State, Value, Root, 10000);
+  ASSERT_EQ(Missing.Status, ControlDiscoveryStatus::UnsupportedOrigin);
+  ASSERT_EQ(Missing.RegisterRanges.size(), 1U);
+  EXPECT_EQ(Missing.RegisterRanges[0].Offset, 96U);
+  EXPECT_TRUE(Missing.FrameSlots.empty());
+  for (unsigned I = 0; I != 2; ++I)
+    expectSameDiscovery(Cache.gather(State, Value, Root, 10000), Missing);
+  State = Births;
+  const auto Complete = gatherControlDependencies(State, Value, Root, 10000);
+  ASSERT_EQ(Complete.Status, ControlDiscoveryStatus::Complete);
+  ASSERT_EQ(Complete.FrameSlots.size(), 1U);
+  EXPECT_EQ(Complete.FrameSlots[0].Offset, -16);
+  expectSameDiscovery(Cache.gather(State, Value, Root, 10000), Complete);
+  const auto Hit = Cache.gather(State, Value, Root, 10000);
+  expectSameDiscovery(Hit, Complete);
+  EXPECT_LT(Hit.Visited, Complete.Visited);
+}
+
+TEST(ControlDiscoveryCache, FullStorageKeepsExistingEntriesAndFreshWalks) {
+  SymContext Ctx;
+  SymState State(Ctx);
+  const auto Root = Ctx.mkFreshVar(64, "root");
+  ControlDependencyCache Cache(Ctx, 64);
+  SymRef First;
+  ControlDiscovery FirstResult;
+  for (unsigned I = 1; I != 17; ++I) {
+    const auto Input =
+        State.load(Ctx.mkAdd(Root, Ctx.mkConst(64, -int64_t(I * 16))), 8);
+    const auto Value = cacheDependencyExpression(Ctx, Input);
+    const auto Fresh = gatherControlDependencies(State, Value, Root, 10000);
+    ASSERT_EQ(Fresh.Status, ControlDiscoveryStatus::Complete);
+    ASSERT_EQ(Fresh.FrameSlots.size(), 1U);
+    EXPECT_EQ(Fresh.FrameSlots[0].Offset, -int64_t(I * 16));
+    expectSameDiscovery(Cache.gather(State, Value, Root, 10000), Fresh);
+    const auto Again = Cache.gather(State, Value, Root, 10000);
+    expectSameDiscovery(Again, Fresh);
+    if (I == 1) {
+      First = Value;
+      FirstResult = Fresh;
+      EXPECT_LT(Again.Visited, Fresh.Visited);
+    } else if (I == 16) {
+      EXPECT_GE(Again.Visited, Fresh.Visited);
+    }
+  }
+  const auto Retained = Cache.gather(State, First, Root, 10000);
+  expectSameDiscovery(Retained, FirstResult);
+  EXPECT_LT(Retained.Visited, FirstResult.Visited);
 }
