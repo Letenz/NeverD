@@ -496,6 +496,7 @@ TEST_P(AndroidJNI,
   Options.Android->DexImages.emplace_back(Bytes.begin(), Bytes.end());
   Options.Android->ObserveJavaState = true;
   Options.LinuxTime.emplace().AdvanceOnIdle = true;
+  Options.LinuxTime->Clocks = {{1, {0, 0}}};
   for (unsigned Mode : {0u, 18u, 21u, 22u, 23u, 24u}) {
     SCOPED_TRACE(Mode);
     Options.Android->Arguments = {Mode};

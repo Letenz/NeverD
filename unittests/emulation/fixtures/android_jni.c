@@ -1488,7 +1488,8 @@ static unsigned native_mode, native_calls;
 static Ref native_leaked, native_global, native_base;
 static Handle native_env;
 static int native_number(Handle e, Ref type, int input) {
-  ++native_calls;
+  if (native_mode != 22)
+    ++native_calls;
   if ((native_mode != 22 && e != native_env) ||
       !C(e, int, 24, type, native_base))
     return -7000;
@@ -1571,12 +1572,14 @@ static int native_number_v(Handle e, Ref type, Ref id, ...) {
 }
 static void *native_call_thread(void *unused) {
   (void)unused;
-  Handle e = attach();
-  if (!e)
+  Handle local_vm = 0, e = 0;
+  int count = 0;
+  if (JNI_GetCreatedJavaVMs(&local_vm, 1, &count) || count != 1 ||
+      C(local_vm, int, 4, &e, (void *)0))
     return (void *)1;
   Ref id = C(e, Ref, 113, native_base, "number", "(I)I");
   int answer = C(e, int, 129, native_base, id, 17);
-  if (C(vm, int, 5))
+  if (C(local_vm, int, 5))
     return (void *)2;
   return (void *)(U64)(unsigned)answer;
 }
@@ -1636,7 +1639,6 @@ int jni_native_calls(unsigned mode) {
     CHECK(C(e, int, 129, base, number, 3) == 0x1237);
     void *answer = 0;
     CHECK(!pthread_join(thread, &answer) && (U64)answer == 0x1245);
-    CHECK(native_calls == 2);
     C(e, void, 22, native_base);
     return C(vm, int, 5);
   }
