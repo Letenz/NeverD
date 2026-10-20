@@ -4,6 +4,16 @@
 
 # Testing NeverD
 
+`AndroidSignals.Sleep*`, `IgnoredAndBlockedSignalsDoNotShortenSleep` and
+`TerminationAndUnsupportedWaitsDoNotFabricateCompletion` execute independent
+relative-sleep callers at O0/O2 across relocation packing and available
+backends. They check remaining-time copy ordering and aliasing, raw versus
+libc errno timing, SA_RESTART, bad/partial output, nested interrupted handlers,
+mutable x0/PC, blocked/ignored signals, default termination and explicit
+refusal for other wait families. Run with the full signal, sleep, Android
+native, Linux process and execution-session suites after changes to wait
+ownership. The clock and signal delivery are guest-only.
+
 `AndroidSignals.Delivery*` executes independent O0/O2 AArch64 callers across
 relocation packing and available backends. It checks complete output buffers,
 blocked coalescing, nested handlers, NODEFER/RESETHAND, mutable ucontext,

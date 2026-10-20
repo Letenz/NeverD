@@ -113,7 +113,8 @@ std::optional<size_t> GuestThreads::nextRunnable() const {
   for (size_t Offset = 1; Offset <= Threads.size(); ++Offset) {
     size_t Candidate = (Current + Offset) % Threads.size();
     const auto &T = Threads[Candidate];
-    if (!T.Report.Finished && (!T.Waiting || ready(*T.Waiting)))
+    if (!T.Report.Finished &&
+        (!T.Waiting || ready(*T.Waiting) || Signals.ready(T.Kernel.ID)))
       return Candidate;
   }
   return std::nullopt;
@@ -155,6 +156,17 @@ llvm::Expected<bool> GuestThreads::schedule(Bionic &LibC) {
       return std::move(E);
     if (!current().Waiting)
       return true;
+    if (Signals.ready(id())) {
+      const auto Delivery = Signals.prepare(id(), Result);
+      if (!Delivery)
+        return false;
+      if (!ready(*current().Waiting)) {
+        if (Delivery->Signal)
+          return interruptWait();
+        // Ignored pending signals do not complete or interrupt this wait.
+        continue;
+      }
+    }
     auto Resumed = resumeWait(LibC);
     if (!Resumed)
       return Resumed.takeError();
@@ -188,7 +200,8 @@ std::vector<linux_model::ProcTask> GuestThreads::procTasks() const {
     if (I && T.Report.Finished)
       continue;
     Tasks.push_back({uint32_t(T.Report.ID), T.Report.Finished ? 'Z'
-                                            : T.Waiting && !ready(*T.Waiting)
+                                            : T.Waiting && !ready(*T.Waiting) &&
+                                                    !Signals.ready(T.Kernel.ID)
                                                 ? 'S'
                                                 : 'R'});
   }

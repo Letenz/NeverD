@@ -280,13 +280,26 @@ Nesting is bounded to 32 live frames.
 Android API 28 adapters include `sigprocmask[64]`, `sigpending[64]`, `signal`,
 and `sigemptyset`, `sigfillset`, `sigaddset`, `sigdelset`, `sigismember` (also their
 64 variants). They share the Linux state while preserving Bionic's reserved
-signals, wrapper copy ordering and errno. `signal` installs SA_RESTART; this
-flag does not imply that interrupted waits are implemented.
+signals, wrapper copy ordering and errno. `signal` installs SA_RESTART.
+
+An eligible pending signal also makes an Android cooperative waiter schedulable.
+Ignored signals leave its operation pending; default termination ends the
+process without completing that operation. A caught signal interrupts a
+relative `nanosleep` or `usleep` before its deadline, even with SA_RESTART.
+The shared sleep owner copies remaining time before entering the handler and
+supplies raw `-EINTR` (or `-EFAULT` for an inaccessible remainder). An already
+expired sleep completes normally. Partially accessible output stops explicitly.
+Bionic wrappers defer errno conversion until `rt_sigreturn`, so a handler sees
+the previous errno. Nested interrupted wrappers retain separate continuations.
+The resumed x0 is authoritative: handler edits affect the eventual wrapper
+result. Redirecting ucontext PC past the synthetic import's post-trap return
+boundary bypasses its adapter; the model preserves that redirect and leaves
+the native-call event incomplete instead of inventing a normal return.
 
 Real-time queues, thread-directed sends, alternate stacks, job control,
-synchronous fault delivery, core dumps, x64 handler frames and wait
-interruption/restart remain unsupported. Sending to a process whose only
-eligible receivers are waiting stops explicitly. No host signals, devices or
+synchronous fault delivery, core dumps, x64 handler frames and interruption
+or restart of other wait families remain unsupported. A caught signal directed
+to such a waiter stops explicitly. No host signals, devices or
 network services participate. ABI references:
 [Linux signal semantics](https://man7.org/linux/man-pages/man7/signal.7.html),
 [AArch64 signal frames](https://github.com/torvalds/linux/blob/v6.1/arch/arm64/kernel/signal.c),
@@ -448,7 +461,9 @@ nanoseconds. Bad input addresses return `EFAULT`; invalid values return `EINVAL`
 Normal completion leaves the remaining-time pointer and Bionic errno untouched.
 Zero duration returns without advancing. Saturated or overflowing deadlines and
 clock overflow stop explicitly; no partial clock advancement is committed.
-This deterministic policy excludes signal interruption/restart, absolute sleeps,
+Relative sleep interruption in cooperative Android threads follows the signal
+contract above; no SA_RESTART retry is applied. This deterministic policy excludes
+absolute sleeps,
 timer slack, CPU-time accounting and host scheduling. Disabled policy retains
 an explicit unsupported-service stop for sleep.
 The copy/validation/completion boundary follows Linux's

@@ -71,16 +71,11 @@ void GuestThreads::wakeMutex(uint64_t Address) {
 bool GuestThreads::waitKernel() {
   auto &T = current();
   if (T.Kernel.Pending) {
-    assert(!T.Waiting && !T.Kernel.SleepDeadline);
+    assert(!T.Waiting);
     T.Waiting = Wait{std::move(T.Kernel.Pending), std::nullopt};
     return true;
   }
-  if (!T.Kernel.SleepDeadline)
-    return false;
-  assert(!T.Waiting && "running thread already has a pending wait");
-  T.Waiting = Wait{Sleep{*T.Kernel.SleepDeadline}, std::nullopt};
-  T.Kernel.SleepDeadline.reset();
-  return true;
+  return false;
 }
 
 void GuestThreads::waitNative(std::unique_ptr<NativeWait> Pending) {
@@ -116,7 +111,6 @@ bool GuestThreads::ready(const Wait &Pending) const {
           [](const Once &O) { return O.Ready; },
           [](const Mutex &M) { return M.Ready; },
           [](const Semaphore &S) { return S.Ready; },
-          [&](const Sleep &S) { return S.Deadline <= Clock.elapsed(); },
           [](const std::unique_ptr<linux_model::KernelWait> &K) {
             return K->ready();
           },
@@ -130,11 +124,8 @@ std::optional<uint64_t> GuestThreads::nextWake() const {
     if (!T.Waiting || T.Report.Finished)
       continue;
     std::optional<uint64_t> Wake;
-    if (const auto *S = std::get_if<Sleep>(&T.Waiting->Operation))
-      Wake = S->Deadline;
-    else if (const auto *K =
-                 std::get_if<std::unique_ptr<linux_model::KernelWait>>(
-                     &T.Waiting->Operation))
+    if (const auto *K = std::get_if<std::unique_ptr<linux_model::KernelWait>>(
+            &T.Waiting->Operation))
       Wake = (*K)->nextWake();
     else if (const auto *N = std::get_if<std::unique_ptr<NativeWait>>(
                  &T.Waiting->Operation))
@@ -172,7 +163,6 @@ BionicResult GuestThreads::resumeWait(Bionic &LibC) {
                         [&](const Semaphore &S) {
                           return LibC.resumeSemaphore(S.Address, S.Shared);
                         },
-                        [&](const Sleep &) -> BionicResult { return value(0); },
                         [&](const std::unique_ptr<linux_model::KernelWait> &K)
                             -> BionicResult {
                           auto R = K->resume(Result);
@@ -224,6 +214,68 @@ llvm::Error GuestThreads::completeWait(uint64_t Value) {
   current().Waiting.reset();
   return llvm::Error::success();
 }
+
+llvm::Expected<bool> GuestThreads::interruptWait() {
+  auto &Pending = *current().Waiting;
+  assert(Pending.Request && "interrupted wait has no suspended service");
+  Result.PC = Pending.Request->PC;
+  auto *K =
+      std::get_if<std::unique_ptr<linux_model::KernelWait>>(&Pending.Operation);
+  if (!K) {
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic = linux_model::SignalWaitUnsupported;
+    return false;
+  }
+  auto Interrupted = (*K)->interrupt(Result);
+  if (!Interrupted)
+    return Interrupted.takeError();
+  if (!*Interrupted)
+    return false;
+  if (Pending.Source == WaitSource::KernelService) {
+    if (auto E = completeWait(**Interrupted))
+      return std::move(E);
+  } else {
+    // The modeled import's post-trap PC is its libc return boundary. Save the
+    // raw kernel result in the signal frame; errno conversion belongs after
+    // rt_sigreturn, not before entering the handler.
+    if (auto E =
+            linux_model::returnService(CPU, *Pending.Request, **Interrupted))
+      return std::move(E);
+    current().SignalReturns.push_back(
+        {*Pending.Request, Pending.Event, Signals.frameDepth(id())});
+    current().Waiting.reset();
+  }
+  return true;
+}
+
+llvm::Error GuestThreads::resumeSignal(Bionic &LibC) {
+  auto &Returns = current().SignalReturns;
+  if (Returns.empty() || Signals.frameDepth(id()) != Returns.back().Depth)
+    return llvm::Error::success();
+  const auto Pending = Returns.back();
+  Returns.pop_back();
+  auto PC = CPU.readRegister(CPURegister::AArch64PC);
+  if (!PC)
+    return PC.takeError();
+  // A ucontext redirect can deliberately bypass the modeled wrapper. Do not
+  // force its old return value/PC/errno onto the new guest continuation, or
+  // claim that this native call returned normally.
+  if ((*PC)[0] != Pending.Request.NextPC)
+    return llvm::Error::success();
+  auto Raw = CPU.readRegister(CPURegister::AArch64X0);
+  if (!Raw)
+    return Raw.takeError();
+  auto Adapted = LibC.kernelResult((*Raw)[0]);
+  if (!Adapted)
+    return Adapted.takeError();
+  assert(*Adapted && std::holds_alternative<uint64_t>(**Adapted));
+  const auto Value = std::get<uint64_t>(**Adapted);
+  if (auto E = CPU.writeRegister(CPURegister::AArch64X0, {Value, 0}))
+    return E;
+  Result.NativeCalls[Pending.Event].Result = Value;
+  return llvm::Error::success();
+}
+
 void GuestThreads::suspend(const ServiceRequest &Request, size_t Event,
                            WaitSource Source) {
   assert(current().Waiting && !current().Waiting->Request);

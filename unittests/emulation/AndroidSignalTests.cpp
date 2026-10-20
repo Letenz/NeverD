@@ -22,7 +22,7 @@ constexpr uint64_t Buffer = 0x20000000;
 constexpr LinuxSignalAction Initial{0x123456789abcdef0, 0x10000004,
                                     0xfedcba9876543210, 0x8000000000000001};
 
-TEST(AndroidSignalState, UnknownMasksAndWaitingRecipientsRemainExplicit) {
+TEST(AndroidSignalState, UnknownMasksAndWaitingRecipientsRemainDistinct) {
   LinuxSignalOptions Options;
   linux_model::LinuxSignals Signals{Options};
   ProcessResult R;
@@ -37,9 +37,9 @@ TEST(AndroidSignalState, UnknownMasksAndWaitingRecipientsRemainExplicit) {
   Signals.setTaskProvider([&] {
     return std::vector<linux_model::ProcTask>{{1000, 'R'}, {1001, ChildState}};
   });
-  EXPECT_FALSE(Signals.send(1000, 10, 1000, R));
-  EXPECT_NE(R.Diagnostic.find("waiting thread"), std::string::npos);
-  EXPECT_EQ(Signals.pending(1000, R), 0u);
+  ASSERT_EQ(Signals.send(1000, 10, 1000, R), 0u);
+  EXPECT_TRUE(Signals.ready(1001));
+  EXPECT_FALSE(Signals.ready(1000));
   ChildState = 'R';
   ASSERT_EQ(Signals.send(1000, 10, 1000, R), 0u);
   ASSERT_EQ(Signals.send(1000, 10, 1000, R), 0u);
@@ -116,7 +116,168 @@ protected:
               Error);
   }
   std::vector<uint8_t> &input() { return Options.Android->Memory[0].Bytes; }
+  ProcessResult sleep(uint64_t Op, uint64_t Mode) {
+    input().assign(8192, 0);
+    Options.LinuxSignals->InitialMask = 0;
+    Options.LinuxSignals->AlternateStackDisabled = true;
+    Options.Android->ThreadLimit = 2;
+    Options.LinuxTime.emplace();
+    Options.LinuxTime->AdvanceOnIdle = true;
+    Options.LinuxTime->Clocks[1] = {0, 0};
+    if (Mode == 15)
+      Options.LinuxFiles.emplace();
+    return run("signal_sleep", {Op, Mode, Buffer});
+  }
+  static uint64_t word(const ProcessResult &R, unsigned Index) {
+    return llvm::support::endian::read64le(
+        R.MemorySnapshots.at(0).Bytes.data() + Index * 8);
+  }
 };
+
+TEST_P(AndroidSignals,
+       SleepInterruptionWritesRemainderBeforeHandlerAndErrnoAfter) {
+  for (uint64_t Op : {0, 1, 2, 3}) {
+    for (uint64_t Mode : {0, 1, 2, 3}) {
+      if (Op == 3 && Mode > 1)
+        continue;
+      SCOPED_TRACE(Op);
+      SCOPED_TRACE(Mode);
+      const auto R = sleep(Op, Mode);
+      ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+      EXPECT_EQ(R.ReturnValue, 0u);
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      const uint64_t Error = Mode == 3 ? 14 : 4;
+      EXPECT_EQ(word(R, 0), 1u);
+      EXPECT_EQ(word(R, 1), 73u);
+      EXPECT_EQ(word(R, 2), uint64_t(0) - Error);
+      EXPECT_EQ(word(R, 5), 1000u);
+      EXPECT_EQ(word(R, 6), 1001u);
+      EXPECT_EQ(word(R, 8), Op == 2 ? uint64_t(0) - Error : UINT64_MAX);
+      EXPECT_EQ(word(R, 9), Op == 2 ? 55u : Error);
+      EXPECT_EQ(word(R, 10), 1000u);
+      EXPECT_EQ(word(R, 11), 1u);
+      EXPECT_EQ(word(R, 21), 77u);
+      if (Mode != 3) {
+        EXPECT_EQ(word(R, 3), Op == 3 ? 119u : 2u);
+        EXPECT_EQ(word(R, 4), Op == 3 ? 119u : 499999000u);
+      }
+      // Input is copied once, even if remainder output aliases it.
+      EXPECT_EQ(word(R, 32), 2u);
+      EXPECT_EQ(word(R, 33), Mode == 2 ? 499999000u : 500000000u);
+      EXPECT_EQ(word(R, 34),
+                Mode == 0 || Mode == 1 ? (Op == 3 ? 119u : 2u) : 119u);
+      if (Op == 2) {
+        const auto S =
+            std::find_if(R.Services.begin(), R.Services.end(),
+                         [](const auto &S) { return S.Number == 101; });
+        ASSERT_NE(S, R.Services.end());
+        EXPECT_EQ(S->Result, uint64_t(0) - Error);
+      }
+    }
+  }
+}
+
+TEST_P(AndroidSignals,
+       SleepReturnHonorsMutableContextAndNestedWrapperLifetimes) {
+  for (uint64_t Op : {0, 1, 2, 3}) {
+    for (uint64_t Mode : {5, 6, 11, 12, 16}) {
+      if (Op == 2 && Mode == 12)
+        continue; // Native wrapper bypass is a distinct synthetic boundary.
+      SCOPED_TRACE(Op);
+      SCOPED_TRACE(Mode);
+      const auto R = sleep(Op, Mode);
+      ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+      EXPECT_EQ(R.ReturnValue, 0u);
+      EXPECT_EQ(word(R, 0), Mode == 11 || Mode == 16 ? 2u : 1u);
+      EXPECT_EQ(word(R, 8), Mode == 5    ? 77u
+                            : Mode == 12 ? 88u
+                            : Op == 2    ? uint64_t(Mode == 6 ? -22 : -4)
+                                         : UINT64_MAX);
+      EXPECT_EQ(word(R, 9), Op == 2 || Mode == 5 || Mode == 12 ? 55u
+                            : Mode == 6                        ? 22u
+                                                               : 4u);
+      EXPECT_EQ(word(R, 10), Mode == 11 ? 3000u : 1000u);
+      if (Mode == 11) {
+        EXPECT_EQ(word(R, 1), 55u);
+        EXPECT_EQ(word(R, 7), UINT64_MAX);
+        EXPECT_EQ(word(R, 12), 4u);
+      }
+      if (Mode == 16)
+        EXPECT_EQ(word(R, 1), 55u); // No early libc conversion between frames.
+      if (Op != 2) {
+        const auto Call = std::find_if(
+            R.NativeCalls.begin(), R.NativeCalls.end(), [&](const auto &C) {
+              return C.ThreadID == 1001 &&
+                     (C.Name == "nanosleep" || C.Name == "syscall" ||
+                      (C.Name == "usleep" && C.Arguments[0] == 2500000));
+            });
+        ASSERT_NE(Call, R.NativeCalls.end());
+        if (Mode == 12)
+          EXPECT_FALSE(Call->Result);
+        else
+          EXPECT_EQ(Call->Result, word(R, 8));
+      }
+    }
+  }
+}
+
+TEST_P(AndroidSignals, IgnoredAndBlockedSignalsDoNotShortenSleep) {
+  for (uint64_t Op : {0, 2, 3}) {
+    for (uint64_t Mode : {7, 8, 13}) {
+      SCOPED_TRACE(Op);
+      SCOPED_TRACE(Mode);
+      const auto R = sleep(Op, Mode);
+      ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+      EXPECT_EQ(R.ReturnValue, 0u);
+      EXPECT_EQ(word(R, 0), Mode == 7 ? 1u : 0u);
+      EXPECT_EQ(word(R, 8), 0u);
+      EXPECT_EQ(word(R, 9), 73u);
+      EXPECT_EQ(word(R, 10), 2500000000u);
+      EXPECT_EQ(word(R, 34), 119u);
+      EXPECT_EQ(word(R, 35), 119u);
+    }
+  }
+}
+
+TEST_P(AndroidSignals, TerminationAndUnsupportedWaitsDoNotFabricateCompletion) {
+  for (uint64_t Mode : {4, 9, 10, 15}) {
+    SCOPED_TRACE(Mode);
+    const auto R = sleep(0, Mode);
+    ASSERT_EQ(R.Stop, Mode == 9 ? ProcessStopReason::Signaled
+                                : ProcessStopReason::UnsupportedService)
+        << R.Diagnostic;
+    EXPECT_EQ(word(R, 0), 0u);
+    EXPECT_EQ(word(R, 8), 0u);
+    EXPECT_EQ(word(R, 11), 0u);
+    EXPECT_EQ(word(R, 34), 119u);
+    EXPECT_EQ(word(R, 35), 119u);
+    EXPECT_EQ(word(R, 511), 0u); // No invented partial remainder stores.
+    if (Mode == 9)
+      EXPECT_EQ(R.TerminationSignal, 15u);
+    else
+      EXPECT_NE(R.Diagnostic.find(Mode == 4 ? "partial" : "waiting thread"),
+                std::string::npos);
+  }
+}
+
+TEST_P(AndroidSignals, SleepDeadlineCompletionWinsBeforePendingHandler) {
+  // Keep the sender running until join, making both expired sleep and pending
+  // signal observable at the receiver's next scheduling boundary.
+  Options.InstructionQuantum = 2048;
+  for (uint64_t Op : {0, 1, 2, 3}) {
+    const auto R = sleep(Op, 14);
+    ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+    EXPECT_EQ(R.ReturnValue, 0u);
+    EXPECT_EQ(word(R, 0), 1u);
+    EXPECT_EQ(word(R, 1), 73u);
+    EXPECT_EQ(word(R, 2), 0u);
+    EXPECT_EQ(word(R, 8), 0u);
+    EXPECT_EQ(word(R, 9), 55u);
+    EXPECT_EQ(word(R, 10), 1000u);
+    EXPECT_EQ(word(R, 34), 119u);
+    EXPECT_EQ(word(R, 35), 119u);
+  }
+}
 
 TEST_P(AndroidSignals, QueryTranslatesBothLayoutsPreservesPaddingAndErrno) {
   for (unsigned Op : {0, 1, 2, 3}) {

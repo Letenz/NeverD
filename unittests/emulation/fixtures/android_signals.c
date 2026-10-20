@@ -456,3 +456,146 @@ U64 signal_registers(U64 Mode, volatile U64 *Out) {
                      "memory");
   return 0;
 }
+
+struct SleepTime {
+  long Seconds, Nanoseconds;
+};
+extern int nanosleep(const struct SleepTime *, struct SleepTime *);
+extern int clock_gettime(int, struct SleepTime *);
+extern int sem_init(void *, int, unsigned);
+extern int sem_wait(void *);
+extern int poll(void *, unsigned, int);
+static volatile U64 *SleepOut;
+static U64 SleepMode, SleepOp;
+static struct SleepTime *SleepRemainder;
+static unsigned SleepSemaphore[4];
+
+static U64 sleep_clock(void) {
+  struct SleepTime T;
+  if (clock_gettime(1, &T))
+    return ~0UL;
+  return (U64)T.Seconds * 1000000000UL + (U64)T.Nanoseconds;
+}
+
+static void sleep_handler(int Number, void *Info, void *Context) {
+  (void)Number;
+  (void)Info;
+  struct SignalContext *UC = Context;
+  ++SleepOut[0];
+  SleepOut[1] = (unsigned)*__errno();
+  SleepOut[2] = UC->Machine.Regs[0];
+  if (SleepMode != 3 && SleepMode != 4) {
+    SleepOut[3] = (U64)SleepRemainder->Seconds;
+    SleepOut[4] = (U64)SleepRemainder->Nanoseconds;
+  }
+  SleepOut[5] = sleep_clock();
+  SleepOut[6] = (U64)gettid();
+  *__errno() = 55;
+  if (SleepMode == 16 && SleepOut[0] == 1)
+    kill(getpid(), 10); // Deferred until this frame's blocked set is restored.
+  if (SleepMode == 5)
+    UC->Machine.Regs[0] = 77;
+  if (SleepMode == 6)
+    UC->Machine.Regs[0] = (U64)-22;
+  if (SleepMode == 11 && SleepOut[0] == 1) {
+    SleepOut[7] = (U64)(long)usleep(100);
+    SleepOut[12] = (unsigned)*__errno();
+    *__errno() = 55;
+  }
+  if (SleepMode == 12) {
+    UC->Machine.Regs[0] = 88;
+    UC->Machine.PC = UC->Machine.Regs[30];
+  }
+}
+
+static void *sleep_worker(void *Arg) {
+  (void)Arg;
+  U64 Mask = 0;
+  if (SleepMode != 7 && sigprocmask64(2, &Mask, 0))
+    return (void *)91;
+  struct SleepTime *Request = (void *)(SleepOut + 32);
+  Request->Seconds = 2;
+  Request->Nanoseconds = 500000000;
+  if (SleepMode == 14) {
+    Request->Seconds = 0;
+    Request->Nanoseconds = 1000;
+  }
+  SleepRemainder = (void *)(SleepOut + 34);
+  SleepRemainder->Seconds = 119;
+  SleepRemainder->Nanoseconds = 119;
+  if (SleepMode == 2)
+    SleepRemainder = Request;
+  if (SleepMode == 3)
+    SleepRemainder = (void *)1;
+  if (SleepMode == 4) {
+    SleepRemainder = (void *)((unsigned char *)SleepOut + 4088);
+    if (mprotect((unsigned char *)SleepOut + 4096, 4096, 1))
+      return (void *)92;
+  }
+  if (SleepMode == 10 && sem_init(SleepSemaphore, 0, 0))
+    return (void *)93;
+  *__errno() = 73;
+  __atomic_store_n(SleepOut + 20, 1, __ATOMIC_RELEASE);
+  if (SleepMode == 14)
+    while (!__atomic_load_n(SleepOut + 22, __ATOMIC_ACQUIRE))
+      gettid();
+  U64 R;
+  if (SleepMode == 10)
+    R = (U64)(long)sem_wait(SleepSemaphore);
+  else if (SleepMode == 15)
+    R = (U64)(long)poll(0, 0, 2500);
+  else if (SleepOp == 0)
+    R = (U64)(long)nanosleep(Request, SleepRemainder);
+  else if (SleepOp == 1)
+    R = (U64)syscall(101, Request, SleepRemainder);
+  else if (SleepOp == 2)
+    R = raw_signal(101, (U64)Request, (U64)SleepRemainder, 0, 0);
+  else
+    R = (U64)(long)usleep(SleepMode == 14 ? 1 : 2500000);
+  SleepOut[8] = R;
+  SleepOut[9] = (unsigned)*__errno();
+  SleepOut[10] = sleep_clock();
+  SleepOut[11] = 1;
+  if (SleepMode == 7)
+    sigprocmask64(2, &Mask, 0);
+  return (void *)77;
+}
+
+U64 signal_sleep(U64 Op, U64 Mode, volatile U64 *Out) {
+  SleepOut = Out;
+  SleepMode = Mode;
+  SleepOp = Op;
+  int Number = Mode == 9 ? 15 : Mode == 13 ? 17 : 10;
+  struct Action A = {4, (void (*)(int))sleep_handler, 0, 0};
+  if (Mode == 1)
+    A.Flags |= 0x10000000; // SA_RESTART does not restart relative sleep.
+  if (Mode == 8)
+    A.Handler = (void (*)(int))1;
+  if (Mode == 9 || Mode == 13)
+    A.Handler = 0;
+  if (Mode == 11)
+    A.Flags |= 0x40000000; // Permit nested interruption of a handler's sleep.
+  if (sigaction(Number, &A, 0))
+    return 91;
+  U64 Mask = (1UL << 9) | (1UL << 14) | (1UL << 16), Thread;
+  if (sigprocmask64(2, &Mask, 0))
+    return 92;
+  if (pthread_create(&Thread, 0, sleep_worker, 0))
+    return 93;
+  while (!__atomic_load_n(Out + 20, __ATOMIC_ACQUIRE))
+    gettid();
+  if (Mode == 14)
+    __atomic_store_n(Out + 22, 1, __ATOMIC_RELEASE);
+  // Both threads must enter their waits before idle time can advance.
+  if (usleep(1) || kill(getpid(), Number))
+    return 94;
+  if (Mode == 11) {
+    if (usleep(2) || kill(getpid(), Number))
+      return 95;
+  }
+  void *Value;
+  if (pthread_join(Thread, &Value))
+    return 96;
+  Out[21] = (U64)Value;
+  return 0;
+}

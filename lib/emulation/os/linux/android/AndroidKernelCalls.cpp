@@ -59,7 +59,8 @@ BionicResult Bionic::usleep(const NativeCallEvent &Call) {
   const LinuxTimespec Duration{int64_t(Nanoseconds / 1000000000),
                                int64_t(Nanoseconds % 1000000000)};
   return kernelResult(linux_model::sleepRelative(
-      Duration, Kernel.clock(), Threads ? Threads->kernel() : nullptr, Result));
+      CPU, Layout, Duration, Kernel.clock(),
+      Threads ? Threads->kernel() : nullptr, Result));
 }
 
 BionicResult Bionic::getcwd(const NativeCallEvent &Call) {

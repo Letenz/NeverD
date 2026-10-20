@@ -235,7 +235,7 @@ LinuxFiles::select(const ProcessServiceEvent &Event, ProcessResult &Result,
     return unsupported(Result,
                        "blocking select waits require a readiness schedule");
   if (Thread) {
-    assert(!Thread->Pending && !Thread->SleepDeadline && !Thread->Exit);
+    assert(!Thread->Pending && !Thread->Exit);
     Thread->Pending = std::move(Pending);
     return Reply();
   }

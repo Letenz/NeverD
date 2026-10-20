@@ -126,7 +126,7 @@ LinuxFiles::awaitDescriptors(std::unique_ptr<KernelWait> Pending,
     return unsupported(Result,
                        "descriptor wait requires a virtual readiness schedule");
   if (Thread) {
-    assert(!Thread->Pending && !Thread->SleepDeadline && !Thread->Exit);
+    assert(!Thread->Pending && !Thread->Exit);
     Thread->Pending = std::move(Pending);
     return std::optional<uint64_t>();
   }

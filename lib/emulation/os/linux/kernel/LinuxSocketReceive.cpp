@@ -131,7 +131,7 @@ LinuxFiles::receiveSocket(std::shared_ptr<Descriptor> Owner, uint64_t Address,
       return Reply();
   }
   if (Thread) {
-    assert(!Thread->Pending && !Thread->SleepDeadline && !Thread->Exit);
+    assert(!Thread->Pending && !Thread->Exit);
     Thread->Pending = std::move(Pending);
     return Reply();
   }
