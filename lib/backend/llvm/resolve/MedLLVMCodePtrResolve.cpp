@@ -2302,16 +2302,20 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
       bool SawRuntime = false;
       unsigned MergeBudget = 256;
       std::set<std::tuple<int, int, int>> MergeSeen;
-      std::function<bool(const MedVar &, bool)> isRuntimeOrMirrored =
-          [&](const MedVar &V, bool DirectPhiConstant) -> bool {
+      enum class MergeOccurrence { Input, PhiConstant, StoredConstant };
+      std::function<bool(const MedVar &, MergeOccurrence)> isRuntimeOrMirrored =
+          [&](const MedVar &V, MergeOccurrence Occurrence) -> bool {
         if (!MergeBudget--)
           return false;
         if (V.isConst()) {
           // A table base buried in arithmetic (a narrowing slice, a masked
           // coincidence) is not the mirror's pointer; only a constant the
-          // code chose directly as an arm is.
-          if (DirectPhiConstant) {
-            const AddressProof Static = proveAddressRole(V, 1, {}, true);
+          // code chose directly as an arm is. A stored constant passed through
+          // getVar at its STORE; a direct PHI constant has its own occurrence
+          // policy. Do not replace either with the other's address model.
+          if (Occurrence != MergeOccurrence::Input) {
+            const AddressProof Static = proveAddressRole(
+                V, 1, {}, Occurrence == MergeOccurrence::PhiConstant);
             if (Static.Role == AddressRole::PointerTable) {
               if (Static.Model != AddressModel::Symbolized)
                 return false;
@@ -2335,11 +2339,29 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
           return true;
         if (const PhiNode *Phi = lookupPhi(V)) {
           for (const auto &[Pred, Arg] : Phi->Args)
-            if (!isRuntimeOrMirrored(Arg, Arg.isConst()))
+            if (!isRuntimeOrMirrored(Arg, Arg.isConst()
+                                              ? MergeOccurrence::PhiConstant
+                                              : MergeOccurrence::Input))
               return false;
           return true;
         }
         const MedOp *Def = lookupDef(V);
+        if (Def && Def->Opcode == NdOp::LOAD) {
+          std::vector<MedVar> Sources;
+          if (collectFrameReloadSources(*Def, Sources)) {
+            if (Sources.empty() || V.Size != Img->getPointerSize())
+              return false;
+            // A complete private-slot reload selects precisely these stored
+            // values. Treating it as an opaque runtime leaf loses the static
+            // arm that the address-role proof above already discovered.
+            for (const MedVar &Source : Sources)
+              if (!isRuntimeOrMirrored(
+                      Source, Source.isConst() ? MergeOccurrence::StoredConstant
+                                               : MergeOccurrence::Input))
+                return false;
+            return true;
+          }
+        }
         // SSA declares an incoming architectural register with an exact
         // self-copy. It supplies a runtime value just as an explicit parameter
         // does; following the edge would merely revisit the same node without
@@ -2360,15 +2382,15 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
           return true;
         }
         for (uint8_t I = 0; I < Def->NumInputs; ++I)
-          if (!isRuntimeOrMirrored(Def->Inputs[I], false))
+          if (!isRuntimeOrMirrored(Def->Inputs[I], MergeOccurrence::Input))
             return false;
         return true;
       };
       // Only a genuine mix applies: every arm a static image needs no mirror
       // (every arm the existing proof already decides), and the existing proof
       // refuses a recurrence whose arms rematerialize different tables.
-      if (isRuntimeOrMirrored(AddrVar, false) && SawMirroredStatic &&
-          SawRuntime)
+      if (isRuntimeOrMirrored(AddrVar, MergeOccurrence::Input) &&
+          SawMirroredStatic && SawRuntime)
         if (llvm::Value *A = getVar(AddrVar, Builder))
           return A->getType()->isPointerTy()
                      ? A

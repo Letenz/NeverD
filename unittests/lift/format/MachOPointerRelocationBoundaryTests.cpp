@@ -17263,133 +17263,232 @@ TEST(MachOLLVMDataPointerBoundary,
 
 TEST(LLVMDataPointerInvariantBoundary,
      RuntimeEntrySeedAndStaticStringKeepTheirPointerWalk) {
-  for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
-    const TargetRegInfo &TRI = getTargetRegInfo(TargetArch);
-    const uint16_t Width = TRI.PointerSize;
-    SCOPED_TRACE(static_cast<int>(TargetArch));
-    BinaryImage Image;
-    Image.Arch = TargetArch;
-    Image.Format = BinaryFormat::COFF;
-    Image.Bits = Width == 8 ? Bitness::Bits64 : Bitness::Bits32;
-    constexpr va_t StaticVA = 0x4020;
-    Segment Data;
-    Data.Name = ".rdata";
-    Data.VA = 0x4000;
-    Data.Flags = SegmentFlags::Readable;
-    Data.Data.resize(64);
-    std::memcpy(Data.Data.data(), &StaticVA, Width);
-    Data.Data[32] = 'x';
-    Data.Size = Data.FileSz = Data.Data.size();
-    Image.Segments.push_back(Data);
-    Image.DataPtrRelocSlots.insert(0x4000);
-    Image.DataPtrRelocTargetOwners[0x4000] = 0x4000;
-    Image.RelocDataAddrs.insert(StaticVA);
+  for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (unsigned Storage = 0; Storage != 4; ++Storage) {
+      const TargetRegInfo &TRI = getTargetRegInfo(TargetArch);
+      const uint16_t Width = TRI.PointerSize;
+      SCOPED_TRACE(static_cast<int>(TargetArch));
+      SCOPED_TRACE(Storage);
+      const bool Spill = Storage != 0;
+      BinaryImage Image;
+      Image.Arch = TargetArch;
+      Image.Format = BinaryFormat::COFF;
+      Image.Bits = Width == 8 ? Bitness::Bits64 : Bitness::Bits32;
+      constexpr va_t StaticVA = 0x4020;
+      Segment Data;
+      Data.Name = ".rdata";
+      Data.VA = 0x4000;
+      Data.Flags = SegmentFlags::Readable;
+      Data.Data.resize(64);
+      std::memcpy(Data.Data.data(), &StaticVA, Width);
+      Data.Data[32] = 'x';
+      Data.Size = Data.FileSz = Data.Data.size();
+      Image.Segments.push_back(Data);
+      Image.DataPtrRelocSlots.insert(0x4000);
+      Image.DataPtrRelocTargetOwners[0x4000] = 0x4000;
+      Image.RelocDataAddrs.insert(StaticVA);
 
-    auto variable = [&](MedVar::VarKind Kind, int Id, uint16_t Size) {
-      MedVar V;
-      V.Kind = Kind;
-      V.TheArch = TargetArch;
-      V.Id = Id;
-      V.Size = Size;
-      return V;
-    };
-    MedVar Condition = variable(MedVar::Param, 0, 1);
-    Condition.RegOff = TRI.IntParamRegs[0];
-    MedVar Runtime = variable(MedVar::Reg, 1, Width);
-    Runtime.RegOff = TRI.IntParamRegs[1];
-    MedVar Cursor = variable(MedVar::Temp, 2, Width);
-    MedVar Next = variable(MedVar::Temp, 3, Width);
-    MedVar Byte = variable(MedVar::Temp, 4, 1);
-    MedVar More = variable(MedVar::Temp, 5, 1);
-    MedFunc Func;
-    Func.Entry = CallerVA;
-    Func.Name = "runtime_or_static_string_walk";
-    Func.Params = {Condition, Runtime};
-    Func.ReturnType = NdType::makeInt(1);
-    Func.Blocks.resize(5);
-    for (int I = 0; I != 5; ++I) {
-      Func.Blocks[I].Id = I;
-      Func.Blocks[I].StartAddr = CallerVA + I * 0x10;
-      Func.Blocks[I].EndAddr = CallerVA + (I + 1) * 0x10;
-    }
-    auto branch = [&](MedBlock &Block, int Destination,
-                      const MedVar *Predicate = nullptr) {
-      MedOp Op;
-      Op.Opcode = Predicate ? NdOp::COND_BR : NdOp::BRANCH;
-      Op.addInput(MedVar::makeConst(Func.Blocks[Destination].StartAddr, Width));
-      if (Predicate)
-        Op.addInput(*Predicate);
-      Block.Ops.push_back(std::move(Op));
-    };
-    MedOp Seed;
-    Seed.Opcode = NdOp::COPY;
-    Seed.Output = Runtime;
-    Seed.addInput(Runtime);
-    Func.Blocks[0].Ops.push_back(Seed);
-    Func.Blocks[0].Succs = {1, 2};
-    branch(Func.Blocks[0], 1, &Condition);
-    for (int I : {1, 2}) {
-      Func.Blocks[I].Preds = {0};
-      Func.Blocks[I].Succs = {3};
-      branch(Func.Blocks[I], 3);
-    }
-    MedBlock &Loop = Func.Blocks[3];
-    Loop.Preds = {1, 2, 3};
-    Loop.Succs = {3, 4};
-    PhiNode Phi;
-    Phi.Output = Cursor;
-    Phi.Args = {{1, Runtime},
-                {2, MedVar::makeConst(StaticVA, Width,
-                                      ConstantAddressProvenance::DataAddress)},
-                {3, Next}};
-    Loop.Phis.push_back(Phi);
-    MedOp Load;
-    Load.Opcode = NdOp::LOAD;
-    Load.Output = Byte;
-    Load.addInput(Cursor);
-    Loop.Ops.push_back(Load);
-    MedOp Advance;
-    Advance.Opcode = NdOp::INT_ADD;
-    Advance.Output = Next;
-    Advance.addInput(Cursor);
-    Advance.addInput(
-        MedVar::makeConst(1, Width, ConstantAddressProvenance::Scalar));
-    Loop.Ops.push_back(Advance);
-    MedOp Compare;
-    Compare.Opcode = NdOp::INT_NOTEQUAL;
-    Compare.Output = More;
-    Compare.addInput(Byte);
-    Compare.addInput(MedVar::makeConst(0, 1));
-    Loop.Ops.push_back(Compare);
-    branch(Loop, 3, &More);
-    Func.Blocks[4].Preds = {3};
-    MedOp Return;
-    Return.Opcode = NdOp::RETURN;
-    Return.addInput(Byte);
-    Func.Blocks[4].Ops.push_back(Return);
+      auto variable = [&](MedVar::VarKind Kind, int Id, uint16_t Size) {
+        MedVar V;
+        V.Kind = Kind;
+        V.TheArch = TargetArch;
+        V.Id = Id;
+        V.Size = Size;
+        return V;
+      };
+      MedVar Condition = variable(MedVar::Param, 0, 1);
+      Condition.RegOff = TRI.IntParamRegs[0];
+      MedVar Runtime = variable(MedVar::Reg, 1, Width);
+      Runtime.RegOff = TRI.IntParamRegs[1];
+      MedVar Cursor = variable(MedVar::Temp, 2, Width);
+      MedVar Next = variable(MedVar::Temp, 3, Width);
+      MedVar Byte = variable(MedVar::Temp, 4, 1);
+      MedVar More = variable(MedVar::Temp, 5, 1);
+      MedVar SP = variable(MedVar::Reg, 6, Width);
+      SP.RegOff = TRI.StackPointer;
+      MedVar Slot = variable(MedVar::Temp, 7, Width);
+      MedVar Reloaded = variable(MedVar::Temp, 8, Width);
+      MedVar Buffer = variable(MedVar::Temp, 9, Width);
+      const MedVar Static = MedVar::makeConst(
+          StaticVA, Width, ConstantAddressProvenance::DataAddress);
+      MedFunc Func;
+      Func.Entry = CallerVA;
+      Func.Name = "runtime_or_static_string_walk";
+      Func.Params = {Condition, Runtime};
+      Func.ReturnType = NdType::makeInt(1);
+      Func.FrameSize = Spill ? 64 : 0;
+      Func.Blocks.resize(Spill ? 6 : 5);
+      for (unsigned I = 0; I != Func.Blocks.size(); ++I) {
+        Func.Blocks[I].Id = I;
+        Func.Blocks[I].StartAddr = CallerVA + I * 0x10;
+        Func.Blocks[I].EndAddr = CallerVA + (I + 1) * 0x10;
+      }
+      auto branch = [&](MedBlock &Block, int Destination,
+                        const MedVar *Predicate = nullptr) {
+        MedOp Op;
+        Op.Opcode = Predicate ? NdOp::COND_BR : NdOp::BRANCH;
+        Op.addInput(
+            MedVar::makeConst(Func.Blocks[Destination].StartAddr, Width));
+        if (Predicate)
+          Op.addInput(*Predicate);
+        Block.Ops.push_back(std::move(Op));
+      };
+      MedOp Seed;
+      Seed.Opcode = NdOp::COPY;
+      Seed.Output = Runtime;
+      Seed.addInput(Runtime);
+      Func.Blocks[0].Ops.push_back(Seed);
+      if (Spill) {
+        auto append = [&](NdOp Opcode, MedVar Output,
+                          std::initializer_list<MedVar> Inputs) {
+          MedOp Op;
+          Op.Opcode = Opcode;
+          Op.Output = Output;
+          for (const auto &Input : Inputs)
+            Op.addInput(Input);
+          Func.Blocks[0].Ops.push_back(Op);
+        };
+        append(NdOp::COPY, SP, {SP});
+        MedVar Frame = SP;
+        if (Storage == 3) {
+          Frame.SSAVer = 1;
+          append(
+              NdOp::INT_AND, Frame,
+              {SP, MedVar::makeConst(Width == 4 ? UINT32_C(0xfffffff0)
+                                                : UINT64_C(0xfffffffffffffff0),
+                                     Width)});
+        }
+        append(NdOp::INT_ADD, Slot,
+               {Frame, MedVar::makeConst(uint64_t(-8), Width)});
+        if (Storage >= 2) {
+          append(NdOp::INT_ADD, Buffer,
+                 {Frame, MedVar::makeConst(uint64_t(-48), Width)});
+          append(NdOp::STORE, {}, {Buffer, MedVar::makeConst(0, 1)});
+        }
+      }
+      Func.Blocks[0].Succs = {1, 2};
+      branch(Func.Blocks[0], 1, &Condition);
+      for (int I : {1, 2}) {
+        Func.Blocks[I].Preds = {0};
+        Func.Blocks[I].Succs = {3};
+        if (Spill) {
+          MedOp Store;
+          Store.Opcode = NdOp::STORE;
+          Store.addInput(Slot);
+          Store.addInput(I == 2 ? Static : Storage >= 2 ? Buffer : Runtime);
+          Func.Blocks[I].Ops.push_back(Store);
+        }
+        branch(Func.Blocks[I], 3);
+      }
+      const int LoopID = Spill ? 4 : 3;
+      const int ExitID = LoopID + 1;
+      if (Spill) {
+        auto &Merge = Func.Blocks[3];
+        Merge.Preds = {1, 2};
+        Merge.Succs = {LoopID};
+        MedOp Reload;
+        Reload.Opcode = NdOp::LOAD;
+        Reload.Output = Reloaded;
+        Reload.addInput(Slot);
+        Merge.Ops.push_back(Reload);
+        branch(Merge, LoopID);
+      }
+      MedBlock &Loop = Func.Blocks[LoopID];
+      Loop.Preds =
+          Spill ? std::vector<int>{3, LoopID} : std::vector<int>{1, 2, LoopID};
+      Loop.Succs = {LoopID, ExitID};
+      PhiNode Phi;
+      Phi.Output = Cursor;
+      if (Spill)
+        Phi.Args = {{3, Reloaded}, {LoopID, Next}};
+      else
+        Phi.Args = {{1, Runtime}, {2, Static}, {LoopID, Next}};
+      Loop.Phis.push_back(Phi);
+      MedOp Load;
+      Load.Opcode = NdOp::LOAD;
+      Load.Output = Byte;
+      Load.addInput(Cursor);
+      Loop.Ops.push_back(Load);
+      MedOp Advance;
+      Advance.Opcode = NdOp::INT_ADD;
+      Advance.Output = Next;
+      Advance.addInput(Cursor);
+      Advance.addInput(
+          MedVar::makeConst(1, Width, ConstantAddressProvenance::Scalar));
+      Loop.Ops.push_back(Advance);
+      MedOp Compare;
+      Compare.Opcode = NdOp::INT_NOTEQUAL;
+      Compare.Output = More;
+      Compare.addInput(Byte);
+      Compare.addInput(MedVar::makeConst(0, 1));
+      Loop.Ops.push_back(Compare);
+      branch(Loop, LoopID, &More);
+      Func.Blocks[ExitID].Preds = {LoopID};
+      MedOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.addInput(Byte);
+      Func.Blocks[ExitID].Ops.push_back(Return);
 
-    llvm::LLVMContext Context;
-    auto Module =
-        MedLLVMEmitter().emit({Func}, Context, "runtime-seed-walk", TargetArch,
-                              {}, &Image, BinaryFormat::COFF);
-    ASSERT_NE(Module, nullptr);
-    expectValidModule(*Module);
-    llvm::Function *Function = Module->getFunction(Func.Name);
-    ASSERT_NE(Function, nullptr);
-    const llvm::LoadInst *Read = nullptr;
-    for (const llvm::BasicBlock &Block : *Function)
-      for (const llvm::Instruction &Instruction : Block)
-        if (const auto *Candidate =
-                llvm::dyn_cast<llvm::LoadInst>(&Instruction);
-            Candidate && Candidate->isVolatile() &&
-            Candidate->getType()->isIntegerTy(8))
-          Read = Candidate;
-    ASSERT_NE(Read, nullptr);
-    std::set<const llvm::Value *> Seen;
-    EXPECT_TRUE(
-        valueReferencesMaterializedGlobal(Read->getPointerOperand(), Seen));
-    EXPECT_FALSE(llvm::isa<llvm::Constant>(Read->getPointerOperand()));
-  }
+      llvm::LLVMContext Context;
+      auto Module =
+          MedLLVMEmitter().emit({Func}, Context, "runtime-seed-walk",
+                                TargetArch, {}, &Image, BinaryFormat::COFF);
+      ASSERT_NE(Module, nullptr);
+      expectValidModule(*Module);
+      llvm::Function *Function = Module->getFunction(Func.Name);
+      ASSERT_NE(Function, nullptr);
+      const llvm::LoadInst *Read = nullptr;
+      bool StoresMirroredPointer = false;
+      for (const llvm::BasicBlock &Block : *Function)
+        for (const llvm::Instruction &Instruction : Block) {
+          if (const auto *Candidate =
+                  llvm::dyn_cast<llvm::LoadInst>(&Instruction);
+              Candidate && Candidate->isVolatile() &&
+              Candidate->getType()->isIntegerTy(8))
+            Read = Candidate;
+          if (const auto *Store =
+                  llvm::dyn_cast<llvm::StoreInst>(&Instruction)) {
+            std::set<const llvm::Value *> Seen;
+            StoresMirroredPointer |= valueReferencesMaterializedGlobal(
+                Store->getValueOperand(), Seen);
+          }
+        }
+      ASSERT_NE(Read, nullptr);
+      if (Spill)
+        EXPECT_TRUE(StoresMirroredPointer);
+      else {
+        std::set<const llvm::Value *> Seen;
+        EXPECT_TRUE(
+            valueReferencesMaterializedGlobal(Read->getPointerOperand(), Seen));
+      }
+      EXPECT_FALSE(llvm::isa<llvm::Constant>(Read->getPointerOperand()));
+      if (Spill)
+        for (bool Destructive : {false, true}) {
+          SCOPED_TRACE(Destructive);
+          auto Changed = Func;
+          auto &StaticBlock = Changed.Blocks[2];
+          if (Destructive) {
+            MedOp Mask;
+            Mask.Opcode = NdOp::INT_AND;
+            Mask.Output = variable(MedVar::Temp, 10, Width);
+            Mask.addInput(Static);
+            Mask.addInput(MedVar::makeConst(0xffff, Width));
+            StaticBlock.Ops.front().Inputs[1] = Mask.Output;
+            StaticBlock.Ops.insert(StaticBlock.Ops.begin(), Mask);
+          } else
+            StaticBlock.Ops.front().Inputs[1].Provenance =
+                ConstantAddressProvenance::Scalar;
+          testing::internal::CaptureStderr();
+          auto Refused = MedLLVMEmitter().emit(
+              {Changed}, Context, "invalid-spilled-string-walk", TargetArch, {},
+              &Image, BinaryFormat::COFF);
+          const auto Diagnostic = testing::internal::GetCapturedStderr();
+          EXPECT_EQ(Refused, nullptr);
+          EXPECT_NE(Diagnostic.find("refusing stale-address fallback"),
+                    std::string::npos)
+              << Diagnostic;
+        }
+    }
 }
 
 TEST(LLVMDataPointerInvariantBoundary,
