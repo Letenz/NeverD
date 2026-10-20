@@ -42,7 +42,6 @@ C(Intrinsic::ArmVzip,          "vzipq");
 
 // Trap / debug
 // BKPT keeps its encoded immediate in assembly; debugtrap chooses a new code.
-C(Intrinsic::ArmHlt,           "__builtin_trap");
 C(Intrinsic::ArmClrex,         "__clrex");
 
 // Barriers (ACLE)

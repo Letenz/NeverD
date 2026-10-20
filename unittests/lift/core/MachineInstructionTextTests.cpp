@@ -603,6 +603,10 @@ TEST(MachineInstructionText, HighCPrintsTheInstruction) {
   EXPECT_NE(C.find("__asm__ volatile(\"udf #0xFE\" ::: \"memory\")"),
             std::string::npos)
       << C;
+  C = highC(Arch::ARM, Intrinsic::ArmHlt, 0x1234, 2);
+  EXPECT_NE(C.find("__asm__ volatile(\"hlt #0x1234\" ::: \"memory\")"),
+            std::string::npos)
+      << C;
 }
 
 /// HighC of one AArch64 function returning \p ReturnType with \p Body.

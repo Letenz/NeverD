@@ -165,6 +165,41 @@ TEST(ResumableTrapIdentity, ArmBreakpointKeepsItsImmediate) {
     }
 }
 
+TEST(ResumableTrapIdentity, ArmHaltKeepsItsCodeAndResumedReturn) {
+  for (InstructionMode Mode : {InstructionMode::ARM, InstructionMode::Thumb})
+    for (uint32_t Code : {0u, 1u, 0x3cu, 0x3fu, 0x1234u, 0xffffu}) {
+      if (Mode == InstructionMode::Thumb && Code > 0x3f)
+        continue;
+      const uint32_t Word =
+          Mode == InstructionMode::Thumb
+              ? 0xba80 | Code
+              : 0xe1000070 | ((Code & 0xfff0) << 4) | (Code & 0xf);
+      std::vector<uint8_t> Bytes;
+      for (unsigned Shift = 0;
+           Shift < (Mode == InstructionMode::Thumb ? 16u : 32u); Shift += 8)
+        Bytes.push_back(Word >> Shift);
+      auto Repeated = Bytes;
+      Repeated.insert(Repeated.end(), Bytes.begin(), Bytes.end());
+      for (BinaryFormat Format :
+           {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+        for (bool LLVMRoute : {false, true})
+          for (bool NoOpt : {false, true}) {
+            SCOPED_TRACE(::testing::Message()
+                         << int(Mode) << "/" << Code << "/" << int(Format)
+                         << "/" << LLVMRoute << "/" << NoOpt);
+            const auto Source = emitTraps(Repeated, "trap_identity", Arch::ARM,
+                                          Format, LLVMRoute, NoOpt, Mode);
+            EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos)
+                << Source;
+            EXPECT_EQ(occurrences(Source, "__asm__ volatile(\"hlt #0x" +
+                                              llvm::utohexstr(Code) + "\""),
+                      2u)
+                << Source;
+            EXPECT_NE(Source.find("return 7;"), std::string::npos) << Source;
+          }
+    }
+}
+
 TEST(ResumableTrapIdentity, ArmUndefinedAliasesKeepTheirCodeAndLiveReturn) {
   for (InstructionMode Mode : {InstructionMode::ARM, InstructionMode::Thumb})
     for (uint32_t Code :
@@ -209,12 +244,14 @@ TEST(ResumableTrapIdentity, ArmUndefinedAliasesKeepTheirCodeAndLiveReturn) {
 
 TEST(ResumableTrapIdentity, EveryNarrowThumbTrapKeepsItsCodeAndVoidEffect) {
   constexpr va_t Entry = 0x1000;
-  for (const uint8_t Opcode : {0xbe, 0xde})
-    for (unsigned Code = 0; Code < 256; ++Code) {
+  for (const uint8_t Opcode : {0xbe, 0xde, 0xba})
+    for (unsigned Code = 0; Code < (Opcode == 0xba ? 64u : 256u); ++Code) {
       SCOPED_TRACE(::testing::Message() << unsigned(Opcode) << "/" << Code);
-      const uint8_t Bytes[] = {static_cast<uint8_t>(Code), Opcode};
-      const Intrinsic Expected =
-          Opcode == 0xbe ? Intrinsic::ArmBkpt : Intrinsic::ArmUdf;
+      const uint8_t Bytes[] = {
+          static_cast<uint8_t>(Code | (Opcode == 0xba ? 0x80 : 0)), Opcode};
+      const Intrinsic Expected = Opcode == 0xbe   ? Intrinsic::ArmBkpt
+                                 : Opcode == 0xba ? Intrinsic::ArmHlt
+                                                  : Intrinsic::ArmUdf;
       for (bool Detail : {false, true}) {
         Decoder Dec;
         ASSERT_TRUE(Dec.init(Arch::ARM, InstructionMode::Thumb));
@@ -281,7 +318,7 @@ TEST(ResumableTrapIdentity, EveryWideUndefinedEncodingKeepsItsCode) {
   }
 }
 
-TEST(ResumableTrapIdentity, ArmSourcesRecompileWithTheirUndefinedCodes) {
+TEST(ResumableTrapIdentity, ArmSourcesRecompileWithTheirTrapCodes) {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -326,6 +363,26 @@ TEST(ResumableTrapIdentity, ArmSourcesRecompileWithTheirUndefinedCodes) {
               emitTraps(Repeated, "trap_" + std::to_string(Index++), Arch::ARM,
                         BinaryFormat::ELF, LLVMRoute, NoOpt, Mode);
     }
+    for (uint32_t Code : {0u, 0x3cu, 0x3fu, 0x1234u, 0xffffu}) {
+      if (Mode == InstructionMode::Thumb && Code > 0x3f)
+        continue;
+      const uint32_t Word =
+          Mode == InstructionMode::Thumb
+              ? 0xba80 | Code
+              : 0xe1000070 | ((Code & 0xfff0) << 4) | (Code & 0xf);
+      std::vector<uint8_t> Bytes;
+      for (unsigned Shift = 0;
+           Shift < (Mode == InstructionMode::Thumb ? 16u : 32u); Shift += 8)
+        Bytes.push_back(Word >> Shift);
+      Encodings.emplace_back(Bytes.begin(), Bytes.end());
+      auto Repeated = Bytes;
+      Repeated.insert(Repeated.end(), Bytes.begin(), Bytes.end());
+      for (bool LLVMRoute : {false, true})
+        for (bool NoOpt : {false, true})
+          Source +=
+              emitTraps(Repeated, "trap_" + std::to_string(Index++), Arch::ARM,
+                        BinaryFormat::ELF, LLVMRoute, NoOpt, Mode);
+    }
     std::error_code EC;
     {
       llvm::raw_fd_ostream Out(SourcePath, EC);
@@ -336,7 +393,7 @@ TEST(ResumableTrapIdentity, ArmSourcesRecompileWithTheirUndefinedCodes) {
       SCOPED_TRACE(::testing::Message() << int(Mode) << "/" << Optimization);
       const llvm::StringRef Arguments[] = {
           Compiler,
-          "--target=armv7-none-eabi",
+          "--target=armv8-none-eabi",
           Mode == InstructionMode::Thumb ? "-mthumb" : "-marm",
           "-mfpu=neon",
           "-mfloat-abi=softfp",

@@ -22,7 +22,8 @@ inline bool isARMUndefinedInstruction(unsigned Id) {
 /// These instructions can resume through an exception handler or debugger.
 /// Stopping discovery at one does not grant it a no-return source contract.
 inline bool isARMResumableTrapInstruction(unsigned Id) {
-  return Id == ARM_INS_BKPT || isARMUndefinedInstruction(Id);
+  return Id == ARM_INS_BKPT || Id == ARM_INS_HLT ||
+         isARMUndefinedInstruction(Id);
 }
 
 /// The immediate of a detailed ARM exception instruction. Compiler UDF

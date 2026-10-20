@@ -1829,15 +1829,18 @@ signal codes and event order for single, repeated and mixed breaks. The native
 check explicitly skips on other hosts; source and LLVM verification still run.
 The same identity suite checks repeated ARM/Thumb BKPT with zero, nonzero and
 maximum immediates, preserving the actual instruction in both C routes.
-It exhausts the 256 narrow Thumb BKPT and UDF codes and all 65,536 codes of
-both ARM and wide Thumb UDF. Compiler aliases retain the exception kind, code,
-void effect and live return. The division-trap alias also participates in the
-boundary matrix; ARM mode discovery and COFF GS-wrapper tests cover the same
+It exhausts the 256 narrow Thumb BKPT and UDF codes, the 64 Thumb HLT codes,
+and all 65,536 codes of both ARM and wide Thumb UDF. Compiler aliases retain
+the exception kind, code, void effect and live return. The division-trap alias
+also participates in the boundary matrix; ARM mode discovery and COFF GS-wrapper
+tests cover the same
 aliases. Wrapper recovery separately checks consistent and conflicting
 personality paths after resumable ARM/AArch64 debugger breaks, including wide
 Thumb UDF #254.
 Generated sources are cross-compiled at O0/O2 in both ARM and Thumb mode and
 their object bytes checked, including the 255/256 transition requiring `.w`.
+ARMv8 HLT also participates in source, object-byte and boundary checks,
+including repeated interior halts and a halt immediately before another entry.
 This is a compilation and encoding check, not native ARM execution.
 Live and indexed symbol queries distinguish padding guesses from confirmed
 names, independent aliases, code ranges and discovered call targets. Full and

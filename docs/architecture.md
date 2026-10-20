@@ -3320,6 +3320,9 @@ builtin would replace that code with the compiler's default breakpoint code.
 recognition. Thumb `__brkdiv0` remains UDF #249 with a void effect and the same
 owned-continuation rules as other UDF encodings; it cannot become BKPT or
 define R0.
+ARM/Thumb HLT shares the resumable boundary rule and retains its exact assembly
+in both C routes. It cannot manufacture an adjacent-function call or acquire
+the stronger non-returning contract of `__builtin_trap`.
 UDF codes above 255 use the unified-assembly `.w` suffix, which is required
 to assemble their wide Thumb form and is also accepted in ARM mode.
 Windows GS-wrapper recovery follows code after ARM UDF #254 and AArch64

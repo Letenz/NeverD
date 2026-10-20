@@ -207,6 +207,11 @@ conditional memory, invocation lifetime and both C routes remain open.
 
 ## Closed control-flow regressions
 
+- ARM/Thumb HLT now uses the same resumable ownership checks as BKPT/UDF.
+  HighC retains its instruction and code instead of substituting a fatal C
+  trap. Sized/unsized boundaries, resumed return values, all narrow HLT codes
+  and ARMv8 source recompilation cover both C routes; AArch64 fatal HLT remains
+  a separate contract.
 - Thumb `__brkdiv0` now shares UDF's classification, immediate and void effect
   instead of becoming BKPT with a synthetic R0 result. Lifting, reachable mode
   discovery and COFF GS-wrapper recognition consume shared alias predicates.
