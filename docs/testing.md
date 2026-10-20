@@ -3091,6 +3091,11 @@ that same slot, in either operand order.
 strings, generic builtins compiled for a different source ISA, and dead image
 address calculations. The latter must retain volatile/atomic loads and
 observable calls while leaving the input LLVM module unchanged.
+Integer-initializer regressions give scalars, arrays and records values that
+match known image string addresses, then compile and execute their generated C
+at O0/O2 with x64 and AArch64 writer options. Symbolic global references retain
+their pointer relocations. The MinGW whole-module regression separately checks
+that the runtime's integer switch tables produce compilable LLVM C.
 Return-only join tests compare 6144 full-status cases at each O0/O2 level against
 independently compiled LLVM, checking call counts and volatile output effects.
 They also require direct returns in the C and unchanged input IR. Effectful
@@ -8088,6 +8093,18 @@ identifies a code address, while its absence still refuses that address.
 `RelocationsDoNotAuthenticateContinuationStarts` and
 `CFGMetadataDoesNotAuthenticateContinuationStarts` reject independent function
 identity for continuation code through both the verifier and LLVM emission.
+The `FunctionEntryAdmission` cases exercise runtime, verified, symbol, unwind,
+known-range and import evidence against the same data, continuation and
+alignment rejections. They also check Thumb mode aliases, primary entries
+preceding their unwind frames, index rebuilds and next-entry bounds. A named continuation jump
+must retain its parent CFG and return; LLVM must keep interior frame addresses
+relative to the primary function. CFG targets reject virtual tails, incomplete
+instruction units and overlapping owners while admitting writable and
+execute-only code. On-demand x86 import-thunk decoding cannot join code bytes
+with adjacent data. Run `NeverDFunctionAdmissionTests`,
+`NeverDNativePointerRelocationBoundaryTests`,
+`NeverDMachOPointerRelocationBoundaryTests` and `NeverDSourcePatchLayoutTests`
+when changing this shared entry boundary.
 
 `PointerRelocationBatch.PointerRunsAmongCodeAreData` records an i386 jump
 table's three relocated slots in `.text` as data slots and the displacement

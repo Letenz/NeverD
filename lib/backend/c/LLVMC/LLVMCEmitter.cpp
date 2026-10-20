@@ -1452,7 +1452,8 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
         for (uint64_t I = 0; I < Array->getNumElements(); ++I) {
           if (I)
             Elements += ", ";
-          Elements += constStr(Init->getAggregateElement(unsigned(I)));
+          Elements += constStr(Init->getAggregateElement(unsigned(I)),
+                               /*AllowImageAddress=*/false);
         }
       OS << wrapInitializer(std::move(Elements)) << "};\n";
       continue;
@@ -1464,7 +1465,8 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
       OS << "const ";
     OS << typeToCLLVM(GV.getValueType()) << " " << Name;
     if (!llvm::isa<llvm::ConstantAggregateZero>(Init))
-      OS << " = " << wrapInitializer(constStr(Init));
+      OS << " = "
+         << wrapInitializer(constStr(Init, /*AllowImageAddress=*/false));
     OS << ";\n";
   }
 }

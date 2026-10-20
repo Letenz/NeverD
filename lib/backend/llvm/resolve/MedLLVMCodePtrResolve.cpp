@@ -51,7 +51,8 @@ bool MedLLVMEmitter::preservesRegistrationImageStorage(uint64_t Begin,
 
 bool MedLLVMEmitter::hasAuthenticatedFunctionEntryVA(va_t Address) const {
   return EmittedFuncNames.count(Address) != 0 ||
-         (Img && Img->isImportStubAt(Address));
+         (Img && Img->isFunctionEntryCandidateAt(Address) &&
+          Img->isImportStubAt(Address));
 }
 
 llvm::Function *MedLLVMEmitter::resolveLiftedFunctionEntry(va_t Address) const {
@@ -115,7 +116,8 @@ llvm::Constant *MedLLVMEmitter::resolveLiftedFunctionInterior(va_t Address) {
     for (const auto &Rec : Img->COFFPDataRecords) {
       const va_t Begin = Img->Base + Rec.BeginRVA;
       const va_t End = Img->Base + Rec.EndRVA;
-      if (Address < Begin || Address >= End)
+      if (Address < Begin || Address >= End ||
+          !Img->hasKnownFunctionEntryAt(Begin))
         continue;
       const va_t Span = End - Begin;
       if (!BestEntry || Span < BestSpan ||
@@ -179,9 +181,14 @@ imageFunctionSymbolsAt(const BinaryImage &Img, va_t Address) {
     if (!Sym.IsFunc)
       continue;
     const va_t Entry = normalizeCodeAddress(Sym.Addr, Img.Arch, Img.Mode);
-    if (Entry == Address)
+    const bool IsExact = Entry == Address;
+    const bool IsEnding =
+        Sym.Size != 0 && Entry <= Address && Address - Entry == Sym.Size;
+    if ((!IsExact && !IsEnding) || !Img.isFunctionEntryCandidateAt(Sym.Addr))
+      continue;
+    if (IsExact)
       Exact = &Sym;
-    if (Sym.Size != 0 && Entry <= Address && Address - Entry == Sym.Size)
+    if (IsEnding)
       Ending = &Sym;
   }
   return {Exact, Ending};
@@ -190,8 +197,9 @@ imageFunctionSymbolsAt(const BinaryImage &Img, va_t Address) {
 /// Whether runtime ownership or unwind metadata proves a function entry
 /// without a symbol naming it.
 bool isImageFunctionEntry(const BinaryImage &Img, va_t Address) {
-  if (Img.isRuntimeFunctionAt(Address) ||
-      (Img.Arch == Arch::ARM && Img.isRuntimeFunctionAt(Address | 1)))
+  if (!Img.isFunctionEntryCandidateAt(Address))
+    return false;
+  if (Img.isRuntimeFunctionAt(Address))
     return true;
   // Unwind metadata can prove an entry without a function symbol.  A code
   // reference alone, an interior continuation, or a range over data cannot.
@@ -200,8 +208,7 @@ bool isImageFunctionEntry(const BinaryImage &Img, va_t Address) {
   if (!Segment || !Segment->isReadable() ||
       (Section && !Section->isExecutable()))
     return false;
-  return !Img.ContinuationCodeStarts.count(Address) &&
-         (Img.hasKnownFunctionEntryAt(Address) ||
+  return (Img.hasKnownFunctionEntryAt(Address) ||
           Img.VerifiedFunctionEntries.count(
               normalizeCodeAddress(Address, Img.Arch, Img.Mode))) &&
          Img.hasExecutableCodeOwnerAt(Address);
@@ -213,7 +220,8 @@ bool isImageFunctionEntry(const BinaryImage &Img, va_t Address) {
 va_t imageFunctionEntryContaining(const BinaryImage &Img, va_t Address) {
   va_t Best = InvalidVA;
   for (const Symbol &Sym : Img.Symbols) {
-    if (!Sym.IsFunc || Sym.Size == 0)
+    if (!Sym.IsFunc || Sym.Size == 0 ||
+        !Img.isFunctionEntryCandidateAt(Sym.Addr))
       continue;
     const va_t Entry = normalizeCodeAddress(Sym.Addr, Img.Arch, Img.Mode);
     if (Entry < Address && Address - Entry < Sym.Size &&
@@ -222,9 +230,20 @@ va_t imageFunctionEntryContaining(const BinaryImage &Img, va_t Address) {
   }
   if (Best != InvalidVA)
     return Best;
+  for (const auto &F : Img.ExceptionMetadata.Functions) {
+    const va_t Entry = F.FunctionEntry ? F.FunctionEntry : F.CodeRange.Begin;
+    if (F.Kind == RuntimeFunctionKind::Primary && F.CodeRange.isValid() &&
+        F.ParseStatus != ExceptionParseStatus::Malformed && Entry < Address &&
+        Address >= F.CodeRange.Begin && Address < F.CodeRange.End &&
+        Img.isFunctionEntryCandidateAt(Entry) &&
+        (Best == InvalidVA || Entry > Best))
+      Best = Entry;
+  }
+  if (Best != InvalidVA)
+    return Best;
   for (const auto &[Start, End] : Img.KnownCodeRanges)
     if (Start < Address && Address < End &&
-        !Img.ContinuationCodeStarts.count(Start) &&
+        Img.hasKnownFunctionEntryAt(Start) &&
         (Best == InvalidVA || Start > Best))
       Best = Start;
   return Best;
@@ -244,6 +263,8 @@ llvm::Function *MedLLVMEmitter::resolveImageFunctionEntry(va_t Address) {
   if (llvm::Function *Lifted = resolveLiftedFunctionEntry(Address))
     return Lifted;
   if (!Img || !Mod || !Ctx)
+    return nullptr;
+  if (!Img->isFunctionEntryCandidateAt(Address))
     return nullptr;
   if (const Symbol *Exact = imageFunctionSymbolsAt(*Img, Address).first)
     return materializeImageFunctionDeclaration(Address, Exact->Name);

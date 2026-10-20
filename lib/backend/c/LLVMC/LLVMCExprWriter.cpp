@@ -765,7 +765,8 @@ std::string LLVMCWriter::rawSourceName(const llvm::Value *V) {
   return Name;
 }
 
-std::string LLVMCWriter::constStr(const llvm::Constant *C) {
+std::string LLVMCWriter::constStr(const llvm::Constant *C,
+                                  bool AllowImageAddress) {
   if (const auto *Vector =
           llvm::dyn_cast<llvm::FixedVectorType>(C->getType())) {
     if (!isCVectorType(C->getType()))
@@ -792,7 +793,7 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
       } else {
         Text += llvm::isa<llvm::UndefValue, llvm::PoisonValue>(Element)
                     ? "0"
-                    : constStr(Element);
+                    : constStr(Element, /*AllowImageAddress=*/false);
       }
     }
     return Text + "}";
@@ -819,6 +820,8 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
       return "(((__uint128_t)0x" + llvm::utohexstr(High) +
              "ULL << 64) | (__uint128_t)0x" + llvm::utohexstr(Low) + "ULL)";
     }
+    if (!AllowImageAddress)
+      return integerConstantText(CI->getValue());
     if (auto Text = codeSectionAddressText(*CI))
       return *Text;
     if (auto Lit = stringLiteralAt(Img, Dbg, CI->getZExtValue(),
@@ -848,7 +851,7 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
       if (const auto *Folded =
               llvm::ConstantFoldConstant(CE, CurMod->getDataLayout());
           Folded != CE)
-        return constStr(Folded);
+        return constStr(Folded, AllowImageAddress);
     }
     if (CE->getOpcode() == llvm::Instruction::GetElementPtr) {
       std::string Image = imageDataCName(CE);
@@ -880,10 +883,12 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
       // each operand at the LLVM bit width and normalize the result after C's
       // integer promotions; do not evaluate a pointer using its old image VA.
       const std::string Type = typeToCLLVM(CE->getType());
-      const std::string Left =
-          "(" + Type + ")(" + constStr(CE->getOperand(0)) + ")";
-      const std::string Right =
-          "(" + Type + ")(" + constStr(CE->getOperand(1)) + ")";
+      const std::string Left = "(" + Type + ")(" +
+                               constStr(CE->getOperand(0), AllowImageAddress) +
+                               ")";
+      const std::string Right = "(" + Type + ")(" +
+                                constStr(CE->getOperand(1), AllowImageAddress) +
+                                ")";
       return "(" + Type + ")(" + Left +
              (CE->getOpcode() == llvm::Instruction::Add ? " + " : " - ") +
              Right + ")";
@@ -932,10 +937,7 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
         const auto *Element = C->getAggregateElement(I);
         // Aggregate integer elements are literal bits, never image addresses.
         // Low byte values can coincide with strings in a low-VA ELF header.
-        if (const auto *Integer = llvm::dyn_cast<llvm::ConstantInt>(Element))
-          Text += integerConstantText(Integer->getValue());
-        else
-          Text += constStr(Element);
+        Text += constStr(Element, /*AllowImageAddress=*/false);
       }
     }
     return Text + (Array ? "}}" : "}");
@@ -949,7 +951,8 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
     for (unsigned I = 0; I < CA->getNumOperands(); ++I) {
       if (I > 0)
         S += ", ";
-      S += constStr(llvm::cast<llvm::Constant>(CA->getOperand(I)));
+      S += constStr(llvm::cast<llvm::Constant>(CA->getOperand(I)),
+                    /*AllowImageAddress=*/false);
     }
     S += "}";
     return S;
@@ -962,7 +965,7 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
     for (unsigned I = 0; I < CDA->getNumElements(); ++I) {
       if (I > 0)
         S += ", ";
-      S += constStr(CDA->getElementAsConstant(I));
+      S += constStr(CDA->getElementAsConstant(I), /*AllowImageAddress=*/false);
     }
     S += "}";
     return S;

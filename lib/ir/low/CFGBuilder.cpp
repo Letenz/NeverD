@@ -53,6 +53,8 @@
 namespace neverd {
 
 bool CFGBuilder::isKnownFunctionEntry(va_t Addr) const {
+  if (CurrentImg && !CurrentImg->isFunctionEntryCandidateAt(Addr))
+    return false;
   if (KnownFuncEntries && KnownFuncEntries->count(Addr) != 0)
     return true;
   return CurrentImg && CurrentImg->hasKnownFunctionEntryAt(Addr);

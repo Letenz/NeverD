@@ -2298,8 +2298,9 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
     return Result;
 
   auto isFunctionEntry = [&](va_t Addr) {
-    return FunctionEntries.count(Addr) != 0 ||
-           Img.hasKnownFunctionEntryAt(Addr);
+    return Img.isFunctionEntryCandidateAt(Addr) &&
+           (FunctionEntries.count(Addr) != 0 ||
+            Img.hasKnownFunctionEntryAt(Addr));
   };
 
   // A catch continuation an FH4 handler names in another function of its
@@ -4235,7 +4236,7 @@ std::vector<va_t> symbolFunctionStarts(const BinaryImage &Img,
   // begins none, though a symbol names it (`foo.cold`).
   for (const auto &Sym : Img.Symbols)
     if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr) &&
-        !Img.ContinuationCodeStarts.count(Sym.Addr))
+        !Img.isFunctionContinuationAt(Sym.Addr))
       Starts.push_back(Sym.Addr);
   llvm::sort(Starts);
   Starts.erase(std::unique(Starts.begin(), Starts.end()), Starts.end());
@@ -4330,7 +4331,7 @@ void warmCalleeFacts(
     pipeline_detail::CalleeFactsCache &Known) {
   std::vector<va_t> Missing;
   for (va_t Entry : Functions)
-    if (Img.hasExecutableCodeOwnerAt(Entry) && !Known.find(Entry))
+    if (Img.isFunctionEntryCandidateAt(Entry) && !Known.find(Entry))
       Missing.push_back(Entry);
   if (Missing.empty())
     return;
@@ -4497,6 +4498,8 @@ void Pipeline::buildLowIR(
   const std::vector<va_t> &SymbolStarts = Inventory->Starts;
   std::vector<va_t> Added;
   const auto Add = [&](va_t Entry) {
+    if (!Img.isFunctionEntryCandidateAt(Entry))
+      return;
     if (!std::binary_search(SymbolStarts.begin(), SymbolStarts.end(), Entry))
       Added.push_back(Entry);
   };
@@ -4508,7 +4511,7 @@ void Pipeline::buildLowIR(
     // to it must be followed, not modeled as a tail call to a missing one.
     for (const auto &[Start, End] : Img.KnownCodeRanges) {
       (void)End;
-      if (Start != 0 && !Img.ContinuationCodeStarts.count(Start))
+      if (Start != 0 && Img.hasKnownFunctionEntryAt(Start))
         Add(Start);
     }
   }

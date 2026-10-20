@@ -8,6 +8,7 @@
 
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/FuncDetector.h"
 #include "neverd/loader/COFF/ControlFlowEntries.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -90,6 +91,228 @@ MedFunc pointerSource(const BinaryImage &Img) {
   return F;
 }
 
+void addEntryEvidence(BinaryImage &Img, va_t Address, unsigned Evidence) {
+  switch (Evidence) {
+  case 0:
+    Img.RuntimeFunctionAddrs.insert(Address);
+    break;
+  case 1:
+    Img.VerifiedFunctionEntries.insert(Address);
+    break;
+  case 2: {
+    auto Sym = Symbol::makeFunc(Address, 8);
+    Sym.Name = "metadata_leaf";
+    Img.Symbols.push_back(std::move(Sym));
+    break;
+  }
+  case 3:
+    Img.KnownCodeRanges.emplace_back(Address, Address + 8);
+    break;
+  case 4:
+    Img.ImportStubRanges.emplace_back(Address, Address + 8);
+    break;
+  }
+}
+
+TEST(FunctionEntryAdmission, ContinuationsCannotBeReauthenticatedByMetadata) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      for (unsigned Evidence = 0; Evidence != 5; ++Evidence) {
+        SCOPED_TRACE(::testing::Message()
+                     << static_cast<int>(Target) << ':'
+                     << static_cast<int>(Format) << ':' << Evidence);
+        auto Img = pointerImage(Target, Format);
+        addEntryEvidence(Img, 0x1040, Evidence);
+        ASSERT_TRUE(Img.hasAuthenticatedFunctionEntryAt(0x1040));
+        Img.ContinuationCodeStarts.insert(0x1040);
+        EXPECT_FALSE(Img.hasAuthenticatedFunctionEntryAt(0x1040));
+        EXPECT_FALSE(Img.hasKnownFunctionEntryAt(0x1040));
+      }
+    }
+  }
+}
+
+TEST(FunctionEntryAdmission, DiscoveryCannotRepublishContinuationPointers) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(::testing::Message() << static_cast<int>(Target) << ':'
+                                        << static_cast<int>(Format));
+      auto Img = pointerImage(Target, Format);
+      Img.ContinuationCodeStarts.insert(0x1040);
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Img));
+      const auto Found = FuncDetector().detect(Img, Dec);
+      EXPECT_TRUE(std::none_of(Found.begin(), Found.end(), [](const auto &F) {
+        return F.first == 0x1040;
+      }));
+      EXPECT_FALSE(Img.VerifiedFunctionEntries.count(0x1040));
+    }
+  }
+}
+
+TEST(FunctionEntryAdmission, DataObjectsCannotBeReauthenticatedByMetadata) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      for (unsigned Evidence = 0; Evidence != 5; ++Evidence) {
+        SCOPED_TRACE(::testing::Message()
+                     << static_cast<int>(Target) << ':'
+                     << static_cast<int>(Format) << ':' << Evidence);
+        auto Img = pointerImage(Target, Format);
+        addEntryEvidence(Img, 0x1040, Evidence);
+        ASSERT_TRUE(Img.hasAuthenticatedFunctionEntryAt(0x1040));
+        Img.DataInCode.insert(0x1040);
+        EXPECT_FALSE(Img.hasAuthenticatedFunctionEntryAt(0x1040));
+        EXPECT_FALSE(Img.hasKnownFunctionEntryAt(0x1040));
+        EXPECT_FALSE(RelocatedFunctionEntryVerifier(Img).accepts(0x1040));
+      }
+    }
+  }
+}
+
+TEST(FunctionEntryAdmission, LLVMRejectsNamedAndRuntimeContinuationEntries) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      for (unsigned Evidence : {0u, 2u}) {
+        SCOPED_TRACE(::testing::Message()
+                     << static_cast<int>(Target) << ':'
+                     << static_cast<int>(Format) << ':' << Evidence);
+        auto Img = pointerImage(Target, Format);
+        addEntryEvidence(Img, 0x1040, Evidence);
+        Img.ContinuationCodeStarts.insert(0x1040);
+        llvm::LLVMContext Context;
+        auto Module = MedLLVMEmitter().emit({pointerSource(Img)}, Context,
+                                            "named-continuation", Target, {},
+                                            &Img, Format);
+        EXPECT_EQ(Module, nullptr);
+      }
+    }
+  }
+}
+
+TEST(FunctionEntryAdmission,
+     MetadataDoesNotAuthorizeMisalignedInstructionStarts) {
+  for (Arch Target : {Arch::ARM, Arch::AArch64}) {
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      for (unsigned Evidence = 0; Evidence != 5; ++Evidence) {
+        SCOPED_TRACE(::testing::Message()
+                     << static_cast<int>(Target) << ':'
+                     << static_cast<int>(Format) << ':' << Evidence);
+        auto Img = pointerImage(Target, Format);
+        if (Target == Arch::ARM)
+          Img.Mode = InstructionMode::ARM;
+        addEntryEvidence(Img, 0x1042, Evidence);
+        EXPECT_FALSE(Img.hasAuthenticatedFunctionEntryAt(0x1042));
+        if (Evidence == 4)
+          continue; // Import identity has a separate LLVM materialization path.
+        if (Img.is64Bit())
+          writeLE<uint64_t>(Img.Segments[1].Data.data(), 0x1042);
+        else
+          writeLE<uint32_t>(Img.Segments[1].Data.data(), 0x1042);
+        llvm::LLVMContext Context;
+        auto Module =
+            MedLLVMEmitter().emit({pointerSource(Img)}, Context,
+                                  "misaligned-entry", Target, {}, &Img, Format);
+        EXPECT_EQ(Module, nullptr);
+      }
+    }
+  }
+}
+
+TEST(FunctionEntryAdmission, NestedRangeStartsSupplyNoIndependentIdentity) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(::testing::Message() << static_cast<int>(Target) << ':'
+                                        << static_cast<int>(Format));
+      auto Img = pointerImage(Target, Format);
+      Img.KnownCodeRanges = {{0x1020, 0x1070}, {0x1040, 0x1048}};
+      EXPECT_FALSE(Img.hasKnownFunctionEntryAt(0x1040));
+      EXPECT_FALSE(Img.hasAuthenticatedFunctionEntryAt(0x1040));
+    }
+  }
+}
+
+TEST(FunctionEntryAdmission,
+     RestrictedPdataStillAuthenticatesIndependentEntries) {
+  auto Img = pointerImage(Arch::X64, BinaryFormat::COFF);
+  Img.COFFPDataRecords.push_back({0x1040, 0x1048, 0x3000, 0x4000});
+  ASSERT_TRUE(Img.hasKnownFunctionEntryAt(0x1040));
+  EXPECT_TRUE(Img.hasAuthenticatedFunctionEntryAt(0x1040));
+  Img.ContinuationCodeStarts.insert(0x1040);
+  EXPECT_FALSE(Img.hasKnownFunctionEntryAt(0x1040));
+  EXPECT_FALSE(Img.hasAuthenticatedFunctionEntryAt(0x1040));
+}
+
+TEST(FunctionEntryAdmission,
+     ThumbRuntimeAndContinuationQueriesShareOneIdentity) {
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    auto Img = pointerImage(Arch::ARM, Format);
+    Img.CodePtrRelocSlots.clear();
+    ASSERT_TRUE(Img.recordRuntimeFunction(0x1041));
+    EXPECT_TRUE(Img.isRuntimeFunctionAt(0x1040));
+    EXPECT_TRUE(Img.hasKnownFunctionEntryAt(0x1040));
+    EXPECT_TRUE(Img.hasAuthenticatedFunctionEntryAt(0x1040));
+    auto Sym = Symbol::makeFunc(0x1041, 4);
+    Img.Symbols.push_back(std::move(Sym));
+    Img.ContinuationCodeStarts.insert(0x1040);
+    EXPECT_TRUE(Img.getFunctionSymbols().empty());
+    EXPECT_FALSE(Img.hasAuthenticatedFunctionEntryAt(0x1041));
+    EXPECT_FALSE(Img.hasKnownFunctionEntryAt(0x1041));
+  }
+}
+
+TEST(FunctionEntryAdmission, UnwindFrameStartsAreNotAlwaysFunctionEntries) {
+  for (RuntimeFunctionKind Kind :
+       {RuntimeFunctionKind::Primary, RuntimeFunctionKind::Chained,
+        RuntimeFunctionKind::Fragment}) {
+    auto Img = pointerImage(Arch::X64, BinaryFormat::COFF);
+    Img.CodePtrRelocSlots.clear();
+    ExceptionFunction F;
+    F.Kind = Kind;
+    F.CodeRange = {0x1040, 0x1048};
+    Img.ExceptionMetadata.Functions.push_back(F);
+    Img.ExceptionMetadata.rebuildIndex();
+    const bool Independent = Kind == RuntimeFunctionKind::Primary;
+    EXPECT_EQ(Img.hasKnownFunctionEntryAt(0x1040), Independent);
+    EXPECT_EQ(Img.hasAuthenticatedFunctionEntryAt(0x1040), Independent);
+  }
+  auto Img = pointerImage(Arch::AArch64, BinaryFormat::ELF);
+  Img.CodePtrRelocSlots.clear();
+  ExceptionFunction F;
+  F.CodeRange = {0x1044, 0x1048};
+  F.FunctionEntry = 0x1040; // A landing instruction precedes the unwind frame.
+  Img.ExceptionMetadata.Functions.push_back(F);
+  Img.ExceptionMetadata.rebuildIndex();
+  EXPECT_TRUE(Img.hasKnownFunctionEntryAt(0x1040));
+  EXPECT_TRUE(Img.hasAuthenticatedFunctionEntryAt(0x1040));
+  EXPECT_FALSE(Img.hasKnownFunctionEntryAt(0x1044));
+  EXPECT_FALSE(Img.hasAuthenticatedFunctionEntryAt(0x1044));
+}
+
+TEST(FunctionEntryAdmission, MalformedUnwindCannotSupplyEntryEvidence) {
+  auto Img = pointerImage(Arch::X64, BinaryFormat::COFF);
+  Img.CodePtrRelocSlots.clear();
+  Img.Entry = 0;
+  ExceptionFunction F;
+  F.CodeRange = {0x1040, 0x1048};
+  F.ParseStatus = ExceptionParseStatus::Malformed;
+  Img.ExceptionMetadata.Functions.push_back(F);
+  Img.ExceptionMetadata.rebuildIndex();
+  EXPECT_FALSE(Img.hasKnownFunctionEntryAt(0x1040));
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Img));
+  const auto Found = FuncDetector().detect(Img, Dec);
+  EXPECT_TRUE(std::none_of(Found.begin(), Found.end(), [](const auto &Entry) {
+    return Entry.first == 0x1040;
+  }));
+}
+
 TEST(RelocatedFunctionEntries, LLVMConsumesVerifiedEntriesWithoutSymbols) {
   for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
     for (BinaryFormat Format :
@@ -107,6 +330,198 @@ TEST(RelocatedFunctionEntries, LLVMConsumesVerifiedEntriesWithoutSymbols) {
       ASSERT_NE(Leaf, nullptr);
       EXPECT_TRUE(Leaf->isDeclaration());
       EXPECT_FALSE(Leaf->use_empty());
+    }
+  }
+}
+
+TEST(FunctionEntryAdmission, ImportVeneersCannotOverrideStructuralRejection) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      for (bool Rejected : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << static_cast<int>(Target) << ':'
+                     << static_cast<int>(Format) << ':' << Rejected);
+        auto Img = pointerImage(Target, Format);
+        Img.Imports.push_back({"fixture", "imported_leaf", 0, 0x2008});
+        ASSERT_TRUE(Img.recordImportStub(0x1040, 0));
+        if (Rejected)
+          Img.ContinuationCodeStarts.insert(0x1040);
+        EXPECT_EQ(Img.findImportStubAt(0x1040) != nullptr, !Rejected);
+        const auto Names = Img.getImportAddressNames();
+        std::vector<std::pair<va_t, std::string>> Imports(Names.begin(),
+                                                          Names.end());
+        llvm::LLVMContext Context;
+        auto Module =
+            MedLLVMEmitter().emit({pointerSource(Img)}, Context, "import-entry",
+                                  Target, Imports, &Img, Format);
+        if (Rejected) {
+          EXPECT_EQ(Module, nullptr);
+        } else {
+          ASSERT_NE(Module, nullptr);
+          EXPECT_FALSE(llvm::verifyModule(*Module));
+          const auto *Imported = Module->getNamedValue("imported_leaf");
+          ASSERT_NE(Imported, nullptr);
+          EXPECT_TRUE(Imported->isDeclaration());
+        }
+      }
+    }
+  }
+}
+
+TEST(FunctionEntryAdmission, ThumbVeneerRegistrationUsesInstructionIdentity) {
+  auto Img = pointerImage(Arch::ARM, BinaryFormat::COFF);
+  Img.Imports.push_back({"fixture", "imported_leaf", 0, 0x2008});
+  ASSERT_TRUE(Img.recordImportStub(0x1041, 0));
+  EXPECT_NE(Img.findImportStubAt(0x1040), nullptr);
+  EXPECT_NE(Img.findImportStubAt(0x1041), nullptr);
+  EXPECT_TRUE(Img.hasAuthenticatedFunctionEntryAt(0x1040));
+  EXPECT_TRUE(Img.getImportAddressNames().count(0x1040));
+  Img.ContinuationCodeStarts.insert(0x1041);
+  EXPECT_EQ(Img.findImportStubAt(0x1040), nullptr);
+  EXPECT_FALSE(Img.getImportAddressNames().count(0x1040));
+  EXPECT_FALSE(RelocatedFunctionEntryVerifier(Img).accepts(0x1040));
+}
+
+TEST(FunctionEntryAdmission, ThunkDecodeCannotCrossIntoAdjacentData) {
+  auto Img = pointerImage(Arch::X64, BinaryFormat::COFF);
+  Img.Imports.push_back({"fixture", "imported_leaf", 0, 0x2008});
+  Img.Segments[0].Data[0x40] = 0xff;
+  Img.Segments[0].Data[0x41] = 0x25;
+  writeLE<uint32_t>(Img.Segments[0].Data.data() + 0x42, 0x2008 - 0x1046);
+  ASSERT_NE(Img.findImportStubAt(0x1040), nullptr);
+  Section Code;
+  Code.VA = 0x1000;
+  Code.Size = Code.FileSz = 0x43;
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Img.Sections.push_back(Code);
+  Section Data;
+  Data.VA = 0x1043;
+  Data.Size = Data.FileSz = 0x3d;
+  Data.Flags = SegmentFlags::Readable;
+  Img.Sections.push_back(Data);
+  EXPECT_EQ(Img.findImportStubAt(0x1040), nullptr);
+  EXPECT_FALSE(Img.hasAuthenticatedFunctionEntryAt(0x1040));
+}
+
+TEST(FunctionEntryAdmission, NamedContinuationJumpsRetainTheParentFrame) {
+  auto Img = pointerImage(Arch::X64, BinaryFormat::COFF);
+  Img.Segments[0].Data[0] = 0xe9; // jmp 0x1040
+  writeLE<uint32_t>(Img.Segments[0].Data.data() + 1, 0x3b);
+  Img.Symbols.push_back(Symbol::makeFunc(0x1040, 8));
+  Img.ContinuationCodeStarts.insert(0x1040);
+  const std::set<va_t> OldEntries{0x1000, 0x1040};
+  CFGBuilder Builder;
+  Builder.setKnownFuncEntries(&OldEntries);
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Img));
+  const LowFunc F = Builder.build(Img, Dec, 0x1000, "parent");
+  bool SawContinuationReturn = false;
+  for (const auto &Block : F.Blocks)
+    for (const auto &Op : Block.Ops) {
+      EXPECT_NE(Op.Opcode, NdOp::CALL);
+      SawContinuationReturn |= Op.Opcode == NdOp::RETURN && Op.Addr == 0x1044;
+    }
+  EXPECT_TRUE(SawContinuationReturn);
+}
+
+TEST(FunctionEntryAdmission, PrimaryEntryIndexTracksEntryAndKindUpdates) {
+  auto Img = pointerImage(Arch::AArch64, BinaryFormat::ELF);
+  Img.CodePtrRelocSlots.clear();
+  ExceptionFunction F;
+  F.CodeRange = {0x1044, 0x1048};
+  F.FunctionEntry = 0x1040;
+  Img.ExceptionMetadata.Functions.push_back(F);
+  Img.ExceptionMetadata.rebuildIndex();
+  EXPECT_TRUE(Img.hasKnownFunctionEntryAt(0x1040));
+  Img.ExceptionMetadata.Functions[0].FunctionEntry = 0;
+  Img.ExceptionMetadata.rebuildIndex();
+  EXPECT_FALSE(Img.hasKnownFunctionEntryAt(0x1040));
+  EXPECT_TRUE(Img.hasKnownFunctionEntryAt(0x1044));
+  Img.ExceptionMetadata.Functions[0].Kind = RuntimeFunctionKind::Fragment;
+  Img.ExceptionMetadata.rebuildIndex();
+  EXPECT_FALSE(Img.hasKnownFunctionEntryAt(0x1044));
+  EXPECT_FALSE(Img.hasAuthenticatedFunctionEntryAt(0x1044));
+}
+
+TEST(FunctionEntryAdmission, NextEntryQueriesSkipThumbAliasesAndContinuations) {
+  auto Img = pointerImage(Arch::ARM, BinaryFormat::ELF);
+  Img.RuntimeFunctionAddrs = {0x1041, 0x1051, 0x1061};
+  Img.ContinuationCodeStarts.insert(0x1050);
+  EXPECT_EQ(Img.nextKnownFunctionEntryAfter(0x1040), 0x1060u);
+  EXPECT_EQ(Img.nextKnownFunctionEntryAfter(0x1041), 0x1060u);
+}
+
+TEST(FunctionEntryAdmission, NextUnwindEntryUsesPrimaryInstructionAddresses) {
+  auto Img = pointerImage(Arch::AArch64, BinaryFormat::ELF);
+  ExceptionFunction First;
+  First.CodeRange = {0x1044, 0x1048};
+  First.FunctionEntry = 0x1040;
+  ExceptionFunction Fragment;
+  Fragment.CodeRange = {0x1050, 0x1058};
+  Fragment.Kind = RuntimeFunctionKind::Fragment;
+  ExceptionFunction Next;
+  Next.CodeRange = {0x1060, 0x1068};
+  Img.ExceptionMetadata.Functions = {First, Fragment, Next};
+  Img.ExceptionMetadata.rebuildIndex();
+  EXPECT_EQ(Img.nextKnownFunctionEntryAfter(0x1000), 0x1040u);
+  EXPECT_EQ(Img.nextKnownFunctionEntryAfter(0x1040), 0x1060u);
+}
+
+TEST(FunctionEntryAdmission, NextCompactPdataEntrySkipsContinuations) {
+  auto Img = pointerImage(Arch::X64, BinaryFormat::COFF);
+  Img.COFFPDataRecords = {{0x1040, 0x1048, 0x3000, 0x4000},
+                          {0x1050, 0x1058, 0x3010, 0x400c},
+                          {0x1060, 0x1068, 0x3020, 0x4018}};
+  Img.ContinuationCodeStarts.insert(0x1050);
+  EXPECT_EQ(Img.nextKnownFunctionEntryAfter(0x1040), 0x1060u);
+}
+
+TEST(FunctionEntryAdmission, LLVMKeepsFrameAddressesRelativeToThePrimaryEntry) {
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    SCOPED_TRACE(static_cast<int>(Format));
+    auto Img = pointerImage(Arch::AArch64, Format);
+    writeLE<uint64_t>(Img.Segments[1].Data.data(), 0x1044);
+    ExceptionFunction F;
+    F.CodeRange = {0x1044, 0x1048};
+    F.FunctionEntry = 0x1040;
+    Img.ExceptionMetadata.Functions.push_back(F);
+    Img.ExceptionMetadata.rebuildIndex();
+    if (Format == BinaryFormat::COFF)
+      Img.COFFPDataRecords.push_back({0x1044, 0x1048, 0x3000, 0x4000});
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit({pointerSource(Img)}, Context, "frame-interior",
+                              Img.Arch, {}, &Img, Img.Format);
+    ASSERT_NE(Module, nullptr);
+    EXPECT_FALSE(llvm::verifyModule(*Module));
+    EXPECT_NE(Module->getFunction("sub_1040"), nullptr);
+    EXPECT_EQ(Module->getFunction("sub_1044"), nullptr);
+  }
+}
+
+TEST(FunctionEntryAdmission,
+     LLVMCompactPdataCannotReauthenticateContinuations) {
+  for (Arch Target : {Arch::X64, Arch::AArch64}) {
+    for (bool Continuation : {false, true}) {
+      SCOPED_TRACE(::testing::Message()
+                   << static_cast<int>(Target) << ':' << Continuation);
+      auto Img = pointerImage(Target, BinaryFormat::COFF);
+      Img.COFFPDataRecords.push_back({0x1040, 0x1048, 0x3000, 0x4000});
+      if (Continuation)
+        Img.ContinuationCodeStarts.insert(0x1040);
+      llvm::LLVMContext Context;
+      auto Module = MedLLVMEmitter().emit({pointerSource(Img)}, Context,
+                                          "compact-frame-entry", Target, {},
+                                          &Img, Img.Format);
+      if (Continuation) {
+        EXPECT_EQ(Module, nullptr);
+      } else {
+        ASSERT_NE(Module, nullptr);
+        EXPECT_FALSE(llvm::verifyModule(*Module));
+        EXPECT_NE(Module->getFunction("sub_1040"), nullptr);
+      }
     }
   }
 }
@@ -252,6 +667,68 @@ BinaryImage guardedImage(Arch Target, unsigned Extra = 0) {
   Img.DynInfo.GuardCFFunctionTableRVA = 0x3002;
   Img.DynInfo.GuardCFFunctionCount = 2;
   return Img;
+}
+
+TEST(RelocatedFunctionEntries, CFGTargetsNeedUniqueCompleteFileStorage) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (unsigned Case = 0; Case != 4; ++Case) {
+      if (Case == 3 && Target != Arch::ARM && Target != Arch::AArch64)
+        continue;
+      SCOPED_TRACE(::testing::Message()
+                   << static_cast<int>(Target) << ':' << Case);
+      auto Img = guardedImage(Target);
+      switch (Case) {
+      case 0: // The target is in virtual storage, beyond the file bytes.
+        Img.Segments[0].FileSz = Img.Sections[0].FileSz = 0x40;
+        break;
+      case 1:
+        Img.Segments.push_back(Img.Segments[0]);
+        break;
+      case 2:
+        Img.Sections.push_back(Img.Sections[0]);
+        break;
+      case 3: // Not enough bytes remain for even one instruction.
+        Img.Segments[0].Size = Img.Segments[0].FileSz = 0x41;
+        Img.Segments[0].Data.resize(0x41);
+        Img.Sections[0].Size = Img.Sections[0].FileSz = 0x41;
+        break;
+      }
+      auto Entries = readPEControlFlowEntries(Img);
+      EXPECT_FALSE(bool(Entries));
+      if (!Entries)
+        EXPECT_FALSE(llvm::toString(Entries.takeError()).empty());
+    }
+  }
+}
+
+TEST(RelocatedFunctionEntries, CFGTargetIdentityDoesNotRequireImmutableCode) {
+  for (auto Flags : {SegmentFlags::Executable, SegmentFlags::Readable |
+                                                   SegmentFlags::Writable |
+                                                   SegmentFlags::Executable}) {
+    auto Img = guardedImage(Arch::X64);
+    Img.Segments[0].Flags = Img.Sections[0].Flags = Flags;
+    auto Entries = readPEControlFlowEntries(Img);
+    ASSERT_TRUE(bool(Entries))
+        << (Entries ? "" : llvm::toString(Entries.takeError()));
+    EXPECT_EQ(*Entries, (std::vector<va_t>{0x1000, 0x1040}));
+  }
+}
+
+TEST(RelocatedFunctionEntries, CFGUsesAddressSpecificARMInstructionUnits) {
+  for (auto LocalMode : {InstructionMode::ARM, InstructionMode::Thumb}) {
+    SCOPED_TRACE(static_cast<int>(LocalMode));
+    auto Img = guardedImage(Arch::ARM);
+    Img.Mode = InstructionMode::MixedARMThumb;
+    Img.ARMCodeModeEntries = {{0x1000, InstructionMode::Thumb},
+                              {0x1040, LocalMode}};
+    // Only two target bytes are file-backed: enough for a Thumb instruction
+    // unit, but not for an ARM unit in the same mixed-mode image.
+    Img.Segments[0].FileSz = Img.Sections[0].FileSz = 0x42;
+    auto Entries = readPEControlFlowEntries(Img);
+    EXPECT_EQ(bool(Entries), LocalMode == InstructionMode::Thumb);
+    if (!Entries)
+      EXPECT_FALSE(llvm::toString(Entries.takeError()).empty());
+  }
 }
 
 TEST(RelocatedFunctionEntries, CFGMetadataAuthenticatesIndirectTailEntries) {
