@@ -48201,6 +48201,43 @@ TEST(HighCPointerAddresses, ForwardedVaListsPassToPointerParameters) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses, FloatingLocalsKeepTheirRegistersBits) {
+  // find keeps difftime's double in a local, which HighIR assigns and reads
+  // as the integer bits of its vector register: C declared it double and
+  // converted both ways by value, which rounds bits past 53 to the nearest
+  // double and hands the state helper of addsd another operand.  The
+  // local's write and reads reinterpret the bits.
+  const auto Double = NdType::makeFloat(8);
+  const auto Bits = NdType::makeInt(8, false);
+  HighFunc Func;
+  Func.Name = "elapsed_bits";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Bits;
+  Func.Params = {{"later", Bits}, {"earlier", Bits}};
+  MedVar Elapsed = temporary(7);
+  auto Difference = HighExpr::makeCall(
+      "difftime", 0x2000, {parameter(0, Bits), parameter(1, Bits)});
+  Difference->Type = Bits;
+  HighStmt Keep = assignTo(Elapsed, Difference);
+  Keep.Dst->Type = Double;
+  Func.Body = {Keep, callStmt("record_bits", 0x3000,
+                              {HighExpr::makeVar(Elapsed, Bits)})};
+  returnValue(Func, HighExpr::makeVar(Elapsed, Bits));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find(" = difftime(later, earlier);"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("return __builtin_bit_cast(uint64_t, "),
+            std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
   // sed passes a comparator of its own to qsort, whose prototype the header
   // library gives: its comparison's type keeps no const there, where the

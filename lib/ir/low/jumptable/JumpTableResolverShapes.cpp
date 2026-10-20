@@ -59,7 +59,8 @@ static uint64_t truncateToByteWidth(uint64_t Value, uint16_t Bytes) {
 bool CFGBuilder::tryTwoTableSelect(const BinaryImage &Img,
                                    const InsnRecord &Rec, JumpTableInfo &Info,
                                    size_t *CandidateEvidenceBudget,
-                                   bool *AnalysisComplete) {
+                                   bool *AnalysisComplete) const {
+  ResolverQueryScope AddressScope(*this);
   if (AnalysisComplete)
     *AnalysisComplete = false;
   bool Complete = true;
@@ -432,6 +433,19 @@ bool CFGBuilder::tryTwoTableSelect(const BinaryImage &Img,
     }
     if (V.isConst())
       return V.Offset;
+    if (From + 1 >= 0 && From + 1 < static_cast<int>(Ops.size())) {
+      const auto &Use = Ops[From + 1];
+      bool AddressComplete = false;
+      auto Address = queryConstantAddressAtUse(
+          Img, {V, Use.Addr, Use.Seq, false}, CandidateEvidenceBudget,
+          AddressComplete, &AddressScope);
+      if (!AddressComplete) {
+        Complete = false;
+        return std::nullopt;
+      }
+      if (Address)
+        return Address;
+    }
     NdVar Cur = V;
     int CurFrom = From;
     // A non-table constant a register folded to is kept only as a last resort:
@@ -1220,6 +1234,7 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
     JumpTableExactConsumerGroup *ExactConsumerGroup, bool *ShapeClaimed,
     size_t *EvidenceBudget, bool *AnalysisComplete, bool ScanExactGroup,
     bool RequireCurrentBranchLoad, bool RequireExactGroupAnchor) const {
+  ResolverQueryScope AddressScope(*this);
   if (AnalysisComplete)
     *AnalysisComplete = false;
   if (ShapeClaimed)
@@ -2361,10 +2376,13 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
           if (!consumeProducts(
                   {{Img.Segments.size(), 4}, {Img.Sections.size(), 2}}))
             return false;
-          auto F =
-              foldRegConstant(Img, Rec, BReg, Ops[AddressAddIdx].Addr,
-                              [&](size_t Amount) { return consume(Amount); });
-          if (BudgetExhausted)
+          bool AddressComplete = false;
+          auto F = foldTableAddressAtUse(
+              Img, Rec,
+              {BaseV, Ops[AddressAddIdx].Addr, Ops[AddressAddIdx].Seq, false},
+              BReg, Ops[AddressAddIdx].Addr, EvidenceBudget, AddressComplete,
+              /*AllowUnmappedCOFFImageBase=*/false, &AddressScope);
+          if (!AddressComplete || BudgetExhausted)
             return false;
           if (F && Img.getSegmentFor(*F))
             Base = static_cast<va_t>(*F);

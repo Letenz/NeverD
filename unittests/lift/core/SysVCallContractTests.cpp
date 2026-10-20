@@ -1637,6 +1637,64 @@ TEST(SysVCallContract, AStringCompareLeavesNoSecondResultInRDX) {
   EXPECT_NE(Source.find("int8_t same("), std::string::npos) << Source;
 }
 
+TEST(SysVCallContract, APaddingPushAfterAPointerCallReadsNoSecondResult) {
+  // ntfscp's utils_set_locale passes setlocale's result as the one stack
+  // argument of a variadic call, which GCC aligns with a `push rdx` between
+  // the call's register setup: a read of what setlocale left in RDX.
+  // setlocale declares a pointer, so RDX holds no second field of its
+  // result, and the call returns that one register.
+  constexpr va_t Setup = Text, SetlocaleStub = Text + 0x40,
+                 LogStub = Text + 0x48;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> SetupCode = {0x48, 0x83, 0xEC, 0x08, // sub rsp, 8
+                                    0x31, 0xF6,             // xor esi, esi
+                                    0xBF, 0x06, 0x00, 0x00, 0x00, // mov edi, 6
+                                    0xE8}; // call setlocale
+  for (uint8_t B : rel32(Setup + 16, SetlocaleStub))
+    SetupCode.push_back(B);
+  for (uint8_t B : {0xB9, 0x80, 0x00, 0x00, 0x00,       // mov ecx, 0x80
+                    0xBE, 0x34, 0x12, 0x00, 0x00,       // mov esi, 0x1234
+                    0x41, 0xB9, 0x78, 0x56, 0x00, 0x00, // mov r9d, 0x5678
+                    0x52,                               // push rdx
+                    0x45, 0x31, 0xC0,                   // xor r8d, r8d
+                    0xBA, 0x8C, 0x00, 0x00, 0x00,       // mov edx, 0x8c
+                    0xBF, 0xBC, 0x9A, 0x00, 0x00,       // mov edi, 0x9abc
+                    0x50,                               // push rax
+                    0x31, 0xC0,                         // xor eax, eax
+                    0xE8})                              // call log_it
+    SetupCode.push_back(B);
+  for (uint8_t B : rel32(Setup + 54, LogStub))
+    SetupCode.push_back(B);
+  for (uint8_t B : {0x59,                   // pop rcx
+                    0x5E,                   // pop rsi
+                    0x48, 0x83, 0xC4, 0x08, // add rsp, 8
+                    0xC3})                  // ret
+    SetupCode.push_back(B);
+  put(Code, Setup, SetupCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{Setup, "setup"}},
+                      {{SetlocaleStub, "setlocale"}, {LogStub, "log_it"}});
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Setup};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  const auto Caller = std::find_if(
+      Result.MedFuncs.begin(), Result.MedFuncs.end(),
+      [&](const MedFunc &Function) { return Function.Entry == Setup; });
+  ASSERT_NE(Caller, Result.MedFuncs.end());
+  const MedOp *Call = nullptr;
+  for (const MedBlock &Block : Caller->Blocks)
+    for (const MedOp &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
+          Op.Inputs[0].isConst() && Op.Inputs[0].ConstVal == SetlocaleStub)
+        Call = &Op;
+  ASSERT_NE(Call, nullptr);
+  EXPECT_EQ(Call->Output.Kind, MedVar::Reg);
+  EXPECT_EQ(Call->Output.Size, 8);
+}
+
 TEST(SysVCallContract, ATailCallLeavesNoRegisterOfTheCallersOwn) {
   // g adds RDX to what f returns in RAX, so f returns the pair.  f sets
   // EDX to 11 and tail-jumps to an import no declaration describes: RDX

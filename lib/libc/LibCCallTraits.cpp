@@ -713,4 +713,22 @@ const LibCVariadicForward *libcVariadicForward(std::string_view Name) {
   return nullptr;
 }
 
+std::optional<unsigned> vaListParameter(std::string_view Name) {
+  // A va_list form takes the variadic routine's fixed parameters, then the
+  // va_list.
+  static const std::unordered_map<std::string_view, unsigned> Positions = [] {
+    std::unordered_map<std::string_view, unsigned> Map;
+#define LIBC_VA_LIST_FORM(Routine, ReturnType, TypeHeader, Form, ...)          \
+  Map.emplace(                                                                 \
+      Form, static_cast<unsigned>(                                             \
+                std::initializer_list<std::string_view>{__VA_ARGS__}.size()));
+#include "neverd/libc/LibCVariadicForwards.inc"
+    return Map;
+  }();
+  const auto It = Positions.find(Name);
+  if (It == Positions.end())
+    return std::nullopt;
+  return It->second;
+}
+
 } // namespace neverd::libc

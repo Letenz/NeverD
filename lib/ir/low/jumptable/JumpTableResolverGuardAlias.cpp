@@ -595,7 +595,7 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
     const InsnRecord &Rec, JumpTableInfo &Info, size_t *CandidateEvidenceBudget,
     bool UseDefinedAlternativesAsRoots,
     const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides,
-    bool AllowSparseDomain) {
+    bool AllowSparseDomain) const {
   Info.IncompleteGuardDomain = false;
   Info.SemanticGuardDomainAmbiguous = false;
   if ((!Info.IndexValueAtUse.isReg() && !Info.IndexValueAtUse.isTemp()) ||

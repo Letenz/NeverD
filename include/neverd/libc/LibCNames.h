@@ -288,6 +288,11 @@ struct LibCVariadicForward {
 /// \p Name links to, or null when C cannot.
 const LibCVariadicForward *libcVariadicForward(std::string_view Name);
 
+/// The position of the va_list parameter of the routine C name \p Name links
+/// to, where it is the va_list form of a variadic one: 2 for
+/// `vfprintf(FILE *, const char *, va_list)`.  Empty for any other routine.
+std::optional<unsigned> vaListParameter(std::string_view Name);
+
 /// Whether a program of C library \p Variant declares \p Forward's routine
 /// variadic: every C library does where the row names no format, and where
 /// it names ELF, Linux's do (GNU, musl and bionic), as Linux's ptrace

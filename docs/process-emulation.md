@@ -280,13 +280,56 @@ Nesting is bounded to 32 live frames.
 Android API 28 adapters include `sigprocmask[64]`, `sigpending[64]`, `signal`,
 and `sigemptyset`, `sigfillset`, `sigaddset`, `sigdelset`, `sigismember` (also their
 64 variants). They share the Linux state while preserving Bionic's reserved
-signals, wrapper copy ordering and errno. `signal` installs SA_RESTART; this
-flag does not imply that interrupted waits are implemented.
+signals, wrapper copy ordering and errno. `signal` installs SA_RESTART.
+
+An eligible pending signal also makes an Android cooperative waiter schedulable.
+Ignored signals leave its operation pending; default termination ends the
+process without completing that operation. A caught signal interrupts a
+relative `nanosleep` or `usleep` before its deadline, even with SA_RESTART.
+The shared sleep owner copies remaining time before entering the handler and
+supplies raw `-EINTR` (or `-EFAULT` for an inaccessible remainder). An already
+expired sleep completes normally. Partially accessible output stops explicitly.
+Bionic wrappers defer errno conversion until `rt_sigreturn`, so a handler sees
+the previous errno. Nested interrupted wrappers retain separate continuations.
+The resumed x0 is authoritative: handler edits affect the eventual wrapper
+result. Redirecting ucontext PC past the synthetic import's post-trap return
+boundary bypasses its adapter; the model preserves that redirect and leaves
+the native-call event incomplete instead of inventing a normal return.
+
+Caught signals also interrupt cooperative `poll/ppoll`, `epoll_wait/epoll_pwait`
+and raw `pselect6`; SA_RESTART does not retry these operations. Poll copies zero
+revents before returning EINTR, while pselect6 leaves the input sets unchanged.
+Raw ppoll/pselect6 update their remaining timeout; Bionic ppoll preserves the
+caller's const timespec. Epoll leaves event storage, rotation and one-shot state
+unchanged. A wholly inaccessible poll output returns EFAULT before EINTR;
+inaccessible timeout output is ignored, and partial-field access stops explicitly.
+These rules follow [Linux poll/select](https://github.com/torvalds/linux/blob/v6.12/fs/select.c),
+[epoll](https://github.com/torvalds/linux/blob/v6.12/fs/eventpoll.c) and
+[API 28 wrappers](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/poll.cpp).
+
+Direct socket read/recv/recvfrom waits have made no transfer before suspension.
+Without SA_RESTART they return EINTR without consuming input or touching the
+buffer/peer output. With SA_RESTART and no receive timeout captured on entry,
+the wait is released and the original trap is restored in the signal frame.
+After the handler, the guest re-executes that trap using its restored registers,
+so changed arguments, descriptor reuse and PC redirection remain observable.
+The interrupted attempt has no completed result; re-entry records a new attempt.
+Modeled imports restart at their synthetic trap and expose their import argument
+ABI, including the leading number for `syscall`. They do not manufacture the
+internal registers/stack of a real libc implementation.
+An entry-time SO_RCVTIMEO disables restart even if changed while suspended.
+An already ready transfer completes before handler delivery, including short
+reads. See [socket interruption](https://github.com/torvalds/linux/blob/v6.12/include/net/sock.h)
+and [ARM64 restart](https://github.com/torvalds/linux/blob/v6.12/arch/arm64/kernel/signal.c).
+An indefinite cooperative descriptor wait can be woken by another guest thread;
+without a runnable owner, eligible signal or scheduled event it still stops
+explicitly instead of consulting a host clock or transport.
 
 Real-time queues, thread-directed sends, alternate stacks, job control,
-synchronous fault delivery, core dumps, x64 handler frames and wait
-interruption/restart remain unsupported. Sending to a process whose only
-eligible receivers are waiting stops explicitly. No host signals, devices or
+synchronous fault delivery, core dumps, x64 handler frames and interruption
+of synchronization/stdio waits remain unsupported. Temporary wait masks and
+TCP WAITALL partial-progress restart are also outside this contract. A caught signal directed
+to such a waiter stops explicitly. No host signals, devices or
 network services participate. ABI references:
 [Linux signal semantics](https://man7.org/linux/man-pages/man7/signal.7.html),
 [AArch64 signal frames](https://github.com/torvalds/linux/blob/v6.1/arch/arm64/kernel/signal.c),
@@ -448,7 +491,9 @@ nanoseconds. Bad input addresses return `EFAULT`; invalid values return `EINVAL`
 Normal completion leaves the remaining-time pointer and Bionic errno untouched.
 Zero duration returns without advancing. Saturated or overflowing deadlines and
 clock overflow stop explicitly; no partial clock advancement is committed.
-This deterministic policy excludes signal interruption/restart, absolute sleeps,
+Relative sleep interruption in cooperative Android threads follows the signal
+contract above; no SA_RESTART retry is applied. This deterministic policy excludes
+absolute sleeps,
 timer slack, CPU-time accounting and host scheduling. Disabled policy retains
 an explicit unsupported-service stop for sleep.
 The copy/validation/completion boundary follows Linux's

@@ -33,7 +33,8 @@ namespace neverd {
 //===----------------------------------------------------------------------===//
 
 bool CFGBuilder::tryARMTableBranch(const BinaryImage &Img,
-                                   const InsnRecord &Rec, JumpTableInfo &Info) {
+                                   const InsnRecord &Rec, JumpTableInfo &Info,
+                                   size_t *CandidateEvidenceBudget) const {
   if (Img.Arch != Arch::ARM)
     return false;
 
@@ -152,6 +153,7 @@ bool CFGBuilder::tryARMTableBranch(const BinaryImage &Img,
     int UseSeq = -1;
     std::optional<va_t> Folded;
   } Candidate[2];
+  ResolverQueryScope AddressScope(*this);
   for (int Side = 0; Side < 2; ++Side) {
     const NdVar &V = Ops[AddrAddIdx].Inputs[Side];
     Candidate[Side].Reg = traceToRegister(Ops, AddrAddIdx - 1, V);
@@ -164,8 +166,22 @@ bool CFGBuilder::tryARMTableBranch(const BinaryImage &Img,
           scaledIndexReg(Ops, AddrAddIdx - 1, V, &Candidate[Side].Value,
                          &Candidate[Side].UseAddr, &Candidate[Side].UseSeq);
     }
-    if (Candidate[Side].Reg != InvalidVA)
-      Candidate[Side].Folded = foldRegister(Candidate[Side].Reg);
+    if (Candidate[Side].Reg != InvalidVA) {
+      bool Complete = true;
+      // Either ADD input may be the selector. A lexical scalar from a sibling
+      // path can numerically fall inside a low-address relocatable image; only
+      // an address proven at this use may compete for the table-base role.
+      Candidate[Side].Folded =
+          Candidate[Side].Reg == armreg::PC
+              ? std::optional<va_t>(ArchitecturalPC)
+              : queryConstantAddressAtUse(
+                    Img, {V, Ops[AddrAddIdx].Addr, Ops[AddrAddIdx].Seq, false},
+                    CandidateEvidenceBudget, Complete, &AddressScope);
+      if (!Complete) {
+        Info.IncompleteGuardDomain = true;
+        return false;
+      }
+    }
   }
 
   int BaseSide = -1;
@@ -227,7 +243,8 @@ bool CFGBuilder::tryARMTableBranch(const BinaryImage &Img,
 /// differ and the entry is scaled, so it needs TargetBase + entry*EntryScale.
 bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
                                         const InsnRecord &Rec,
-                                        JumpTableInfo &Info) {
+                                        JumpTableInfo &Info,
+                                        size_t *CandidateEvidenceBudget) const {
   if (!CurrentImg || CurrentImg->Arch != Arch::AArch64)
     return false;
 
@@ -452,6 +469,7 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
       Candidate.Reg = Candidate.Value.Offset;
   };
   std::optional<uint64_t> TableBase;
+  ResolverQueryScope AddressScope(*this);
   // Fold the base where the entry is loaded: GCC reuses its register for the
   // anchor before the branch (`ldrb w0, [x1, w0, uxtw]; adr x1, anchor`).
   const va_t LoadAddr =
@@ -460,7 +478,16 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
     uint64_t BaseCand = Pick == 0 ? CandA.Reg : CandB.Reg;
     if (BaseCand == InvalidVA)
       continue;
-    auto V = foldRegConstant(Img, Rec, BaseCand, LoadAddr);
+    const auto &Candidate = Pick == 0 ? CandA : CandB;
+    bool Complete = false;
+    auto V = foldTableAddressAtUse(
+        Img, Rec, {Candidate.Value, Candidate.UseAddr, Candidate.UseSeq, false},
+        BaseCand, LoadAddr, CandidateEvidenceBudget, Complete,
+        /*AllowUnmappedCOFFImageBase=*/false, &AddressScope);
+    if (!Complete) {
+      Info.IncompleteGuardDomain = true;
+      return false;
+    }
     if (!V || !Img.getSegmentFor(*V))
       continue;
     const auto *S = Img.getSegmentFor(*V);
@@ -516,35 +543,19 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
   normalizeLogicalLane(IndexCandidateAtLoad);
   IndexReg = IndexCandidateAtLoad.Reg;
 
-  // Resolve the anchor operand to a code address (an `adr` lifts to a COPY of
-  // the absolute target constant).
-  std::optional<uint64_t> Anchor;
-  {
-    NdVar V = Ops[AddIdx].Inputs[AnchorWhich];
-    int CurFrom = AddIdx - 1;
-    for (int Guard = 0; Guard < limits::kMaxSliceDepth; ++Guard) {
-      if (V.isConst()) {
-        Anchor = V.Offset;
-        break;
-      }
-      int D = reachingDefIdx(Ops, CurFrom, V);
-      if (D < 0)
-        break;
-      const LowOp &O = Ops[D];
-      if (O.Opcode == NdOp::COPY && O.NumInputs >= 1) {
-        if (O.Inputs[0].isConst()) {
-          Anchor = O.Inputs[0].Offset;
-          break;
-        }
-        V = O.Inputs[0];
-        CurFrom = D - 1;
-        continue;
-      }
-      break;
-    }
+  // The anchor and the table address are different exact operand uses; GCC
+  // may overwrite the table-base register between them.
+  bool AnchorComplete = false;
+  const NdVar &AnchorValue = Ops[AddIdx].Inputs[AnchorWhich];
+  auto Anchor = foldTableAddressAtUse(
+      Img, Rec, {AnchorValue, Ops[AddIdx].Addr, Ops[AddIdx].Seq, false},
+      AnchorValue.isReg() ? AnchorValue.Offset : InvalidVA, Ops[AddIdx].Addr,
+      CandidateEvidenceBudget, AnchorComplete,
+      /*AllowUnmappedCOFFImageBase=*/false, &AddressScope);
+  if (!AnchorComplete) {
+    Info.IncompleteGuardDomain = true;
+    return false;
   }
-  if (!Anchor && Ops[AddIdx].Inputs[AnchorWhich].isReg())
-    Anchor = foldRegConstant(Img, Rec, Ops[AddIdx].Inputs[AnchorWhich].Offset);
   if (!Anchor)
     return false;
   if (!Img.hasExecutableCodeOwnerAt(*Anchor, ExecutableCodeOwners))

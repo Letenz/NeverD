@@ -332,6 +332,28 @@ TEST(FunctionDiscoveryThumb, CodePointersStateTheModeOfWhatTheyAddress) {
   EXPECT_EQ(ModeAt(0x1000), InstructionMode::Thumb);
 }
 
+TEST(FunctionDiscoveryThumb, UndefinedAliasesStopReachableModeDiscovery) {
+  for (uint8_t Code : {0x00, 0xf9, 0xfe, 0xff}) {
+    SCOPED_TRACE(unsigned(Code));
+    BinaryImage Img = makeThumbImage();
+    Img.Mode = InstructionMode::Default;
+    Img.Format = BinaryFormat::ELF;
+    const std::array<uint8_t, 6> Bytes = {
+        Code, 0xde, // udf #imm8, including __brkdiv0 and trap
+        42,   0x20, 0x70, 0x47};
+    Img.Segments.push_back(makeExecutableSegment(0x1000, Bytes));
+    Img.ARMCodeModeEntries.emplace(0x1000, InstructionMode::Thumb);
+    ARMModeDiscovery Discovery(Img);
+    if (llvm::Error Err = Discovery.discover())
+      FAIL() << llvm::toString(std::move(Err));
+    EXPECT_EQ(Discovery.disassembledInstructions(), 1u);
+    EXPECT_EQ(Img.instructionModeAt(0x1000), InstructionMode::Thumb);
+    EXPECT_EQ(Img.instructionModeAt(0x1002), std::nullopt);
+    ASSERT_EQ(Img.ARMReachableCodeRegions.size(), 1u);
+    EXPECT_EQ(Img.ARMReachableCodeRegions.front().End, 0x1002u);
+  }
+}
+
 // The passes that decode an image's reachable code repeat when they learn a
 // literal or a routine that never returns, and the landing pads of the
 // exception tables extend what they decoded.  Neither decodes an instruction

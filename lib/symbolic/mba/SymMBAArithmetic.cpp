@@ -68,12 +68,14 @@ class ArithmeticNormalizer {
   ArithmeticResources &Resources;
   uint32_t Width;
   size_t Words;
+  bool ExpandComplements;
 
 public:
   ArithmeticNormalizer(SymContext &Ctx, ArithmeticResources &Resources,
-                       uint32_t Width)
+                       uint32_t Width, bool ExpandComplements = true)
       : Ctx(Ctx), Resources(Resources), Width(Width),
-        Words((size_t(Width) + 63) / 64) {}
+        Words((size_t(Width) + 63) / 64), ExpandComplements(ExpandComplements) {
+  }
 
   bool add(Polynomial &To, const Monomial &Key,
            const llvm::APInt &Coefficient) {
@@ -162,7 +164,7 @@ public:
       if (Ctx.width(R) != Width)
         return std::nullopt;
       if (Ctx.op(R) != SymOp::Add && Ctx.op(R) != SymOp::Mul &&
-          Ctx.op(R) != SymOp::Not)
+          (Ctx.op(R) != SymOp::Not || !ExpandComplements))
         continue;
       llvm::ArrayRef<SymRef> Children = Ctx.operands(R);
       if (!Resources.array(Children.size(), sizeof(SymRef)))
@@ -188,9 +190,44 @@ public:
           if (!copy(Memo.at(Child.index()), P))
             return std::nullopt;
       } else if (Ctx.op(R) == SymOp::Mul) {
-        if (!add(P, {}, llvm::APInt(Width, 1)))
+        // Assemble monomial operands once. Repeatedly multiplying one more
+        // atom copies the growing key at every step, making a flat product's
+        // distribution proof quadratic in its number of factors.
+        llvm::APInt Scale(Width, 1);
+        std::map<uint32_t, uint32_t> Powers;
+        for (SymRef Child : Ctx.operands(R)) {
+          const auto &Operand = Memo.at(Child.index());
+          if (Operand.empty()) {
+            Scale.clearAllBits();
+            break;
+          }
+          if (Operand.size() != 1)
+            continue;
+          if (Words > std::numeric_limits<size_t>::max() / Words ||
+              !Resources.charge(Words * Words) ||
+              !Resources.array(Words, sizeof(uint64_t)))
+            return std::nullopt;
+          const auto &[Key, Coefficient] = *Operand.begin();
+          Scale *= Coefficient;
+          for (const auto &[Id, Power] : Key) {
+            if (!Resources.charge(1, 128))
+              return std::nullopt;
+            auto &Total = Powers[Id];
+            if (Power > std::numeric_limits<uint32_t>::max() - Total)
+              return std::nullopt;
+            Total += Power;
+          }
+        }
+        if (!Resources.array(Powers.size(), sizeof(Factor)))
+          return std::nullopt;
+        Monomial Key(Powers.begin(), Powers.end());
+        if (!add(P, Key, Scale))
           return std::nullopt;
         for (SymRef Child : Ctx.operands(R)) {
+          if (P.empty())
+            break;
+          if (Memo.at(Child.index()).size() == 1)
+            continue;
           Polynomial Next;
           if (!multiply(P, Memo.at(Child.index()), Next))
             return std::nullopt;
@@ -198,7 +235,7 @@ public:
           if (P.empty())
             break;
         }
-      } else if (Ctx.op(R) == SymOp::Not) {
+      } else if (Ctx.op(R) == SymOp::Not && ExpandComplements) {
         // A word complement is exactly -1-X in the modular ring. Only
         // arithmetic paths reach this node: bitwise consumers remain opaque.
         if (!Resources.array(Words, sizeof(uint64_t)) ||
@@ -519,12 +556,14 @@ bool hasRepeatedCoefficients(const SymContext &Ctx, SymRef E) {
 } // namespace
 
 bool proveArithmeticIdentity(SymContext &Ctx, SymRef Before, SymRef After,
-                             WorkBudget &Budget, size_t MaxBytes) {
+                             WorkBudget &Budget, size_t MaxBytes,
+                             bool ExpandComplements) {
   if (!Before.isValid() || !After.isValid() ||
       Ctx.width(Before) != Ctx.width(After))
     return false;
   ArithmeticResources Resources(Budget, MaxBytes);
-  ArithmeticNormalizer Normalizer(Ctx, Resources, Ctx.width(Before));
+  ArithmeticNormalizer Normalizer(Ctx, Resources, Ctx.width(Before),
+                                  ExpandComplements);
   auto Left = Normalizer.normalize(Before);
   if (!Left)
     return false;

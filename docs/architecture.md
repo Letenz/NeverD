@@ -1073,13 +1073,40 @@ Diagonal entries identify the factors' intersection and fix the modular
 scale; off-diagonal entries partition the remaining minterms between the two
 factors. It checks every matrix entry, including absent edges and coefficients
 that wrap to zero, within shared work and storage limits. The independent
-polynomial difference verifier still authorizes the replacement. Higher-degree
+polynomial difference verifier still authorizes the replacement.
+Cubic recovery uses a minterm shared by all three factors as an anchor. Its
+diagonal coefficient fixes the scale; coefficients with two copies of the
+anchor identify how many factors select each other minterm. Coefficients with
+one anchor then distinguish the selected or omitted factor. The candidate's
+entire expansion must match, including missing coefficients and modular zeros,
+before the independent polynomial difference proof can authorize it. This
+direct reading requires a scale with additive order at least four; other cubic
 products retain the bounded factor search.
-An expanded quadratic root gets a bounded whole-region reading before the deep
-walk can spend its allowance on incomplete local pieces. A structural hint only
-selects that attempt; the same degree check, matrix reconstruction and polynomial
-proof must finish. Optional Boolean table searches preflight their full charge
-against the remaining shared work rather than consuming it on a refused query.
+Higher-degree roots first group terms sharing all but one or two factors.
+The existing semantic solver proves each small quotient, and an independent
+arithmetic proof checks the complete distribution before substituting those
+quotients. That proof leaves complements opaque: distribution depends on their
+exact identity, not on expanding them as `-1-x`. Equal scales and repeated
+factors remain exact, and identical proved quotients share a charged local
+cache. A bounded frontier and cumulative work/storage admission preserve the
+best completed root on refusal.
+Already factored higher components remain intact while other degrees improve.
+Unaffordable optional expansions leave work for the rest of the expression;
+an unrecovered degree is retained verbatim, never dropped. Exact opposing
+products cancel before the independent difference proof expands minterms.
+The remaining higher-degree search preflights complete candidate lists and
+uses anchored scale/multinomial bounds to reject impossible products early.
+These bounds only reject candidates; complete expansion and proof still
+authorize any recovered product.
+Each degree is expanded over only the variables in its factors, so unrelated
+linear inputs do not inflate a cubic table. Linear and nonlinear parts are
+recombined before the full original-expression proof.
+An expanded quadratic/cubic root gets a bounded whole-region reading before the
+deep walk can spend its allowance on incomplete local pieces. A structural hint
+only selects that attempt; the same degree check, coefficient reconstruction
+and polynomial proof must finish. Optional Boolean table searches preflight
+their full charge against the remaining shared work rather than consuming it
+on a refused query.
 The LLVM bridge admits compiler-created `or disjoint` only after independent
 literal-mask/OR/wrapping-add facts establish nonoverlap, then exposes that sum
 to the shared engine. The bounded check uses no flags or metadata as premises;
@@ -2596,6 +2623,25 @@ Exact guard-occurrence queries use the expanded CFG value-reconstruction depth
 limit. Guard syntax collection and materialization keep their separate, smaller
 expression limit. This lets a shallow guard cross a longer predecessor graph
 without treating depth exhaustion as a completed proof or skipping replay.
+Linked x64 PE RVA tables query the loader's image base at each exact address
+operand through that same all-path value resolver. The candidate does not
+depend on finding a nearby lexical LEA, and a different value folded from an
+unrelated block cannot shadow it. Single-level LOADs, both levels of compacted
+tables and target anchors share this query. A completed mismatch retains the
+ordinary relative-base path; an incomplete query stops the candidate and
+requests complete-graph replay. Every query consumes the enclosing candidate
+and stage evidence, preserves address provenance and replays after CFG growth.
+It grants no table storage, selector domain, target or SEH frame authority.
+Other table bases and target anchors use a constant-address query on that same
+graph. The reconstructed value proposes one pointer-width address, and the
+ordinary all-path matcher authenticates it against every reaching arm. Scalar
+collisions and address fragments cannot propose addresses. Ordinary relative,
+absolute, selected and two-level tables, AArch64 compact tables and Thumb
+register-based TBB/TBH share this query, independently of format or lexical
+distance. A completed refusal can retain legacy candidate folding; incomplete
+work cannot. Address results participate in the value cache's output identity,
+cold-work accounting and transactional failure clearing. Final storage, domain
+and target proofs still replay after graph growth.
 A failed optional consumer audit grants no relocation-root suppression. With
 its shared evidence budget intact, the resolver retains every root and replays
 the mandatory selector, address and target proofs under that stronger context.
@@ -2764,14 +2810,18 @@ exact instruction facts, LowOps, effective edges, block starts, proof roots,
 conditional roots and storage-owner inputs. Hits pay the complete original
 graph-construction charge. The graph may also retain up to 64 query outcomes
 under a separate 8 MiB retained-payload allowance. Within one read-only target
-role, load-address role or mask-domain invocation, a local scope can reuse its
-validated graph without recopying the instruction snapshot. It is bound to its
-builder and cannot cross instruction, block or storage-owner mutations.
+role, load-address role, address-discovery or mask-domain invocation, a local
+scope can reuse its validated graph without recopying the instruction snapshot.
+It is bound to its builder and cannot cross instruction, block or storage-owner
+mutations.
 Each query still compares roots and owned effective edge overrides, including
 temporary and empty overrides, and pays the original snapshot and graph work.
 One scope retains one bounded graph and at most 64 KiB of override keys;
 oversized keys keep the ordinary validation path. Nested queries own separate
 leases, and a new invocation validates its graph in full.
+Address discovery shares this scope across base candidates, relative anchors
+and both levels of a composite table. Its recognizers are const; each new
+recognizer invocation starts a fresh scope before any proposal is published.
 Exact ordered query fields, proof limits, output shape, function context and
 both relocation occurrence inventories bind each retained value result.
 Hits pay the complete cold value
@@ -3315,6 +3365,19 @@ HighC uses the target toolchain's byte directive instead of an unsupported
 INT1 mnemonic. Both forms remain resumable and preserve the live return value.
 ARM/Thumb BKPT also remains assembly with its actual immediate; a debugtrap
 builtin would replace that code with the compiler's default breakpoint code.
+`support/ARMTrap.h` identifies UDF and its compiler aliases (`trap` and
+`__brkdiv0`) and their codes for lifting, discovery and exception-wrapper
+recognition. Thumb `__brkdiv0` remains UDF #249 with a void effect and the same
+owned-continuation rules as other UDF encodings; it cannot become BKPT or
+define R0.
+ARM/Thumb HLT shares the resumable boundary rule and retains its exact assembly
+in both C routes. It cannot manufacture an adjacent-function call or acquire
+the stronger non-returning contract of `__builtin_trap`.
+UDF codes above 255 use the unified-assembly `.w` suffix, which is required
+to assemble their wide Thumb form and is also accepted in ARM mode.
+Windows GS-wrapper recovery follows code after ARM UDF #254 and AArch64
+BRK #0xF000 instead of accepting those debugger breaks as terminal exits.
+A conflicting resumed path prevents inferring the wrapper's personality.
 `IntrinsicTermination.h` distinguishes the compiler's AArch64 `brk #0xF000`
 debugtrap from fatal BRK codes. Decode, LowIR/MedIR no-return propagation,
 HighIR effect classification and both C routes consume that code-sensitive
@@ -4754,6 +4817,17 @@ Runtime-derived pointers keep unknown provenance. The retained read preserves
 the original instruction's observable ordering; source and native proof
 consumers continue to reject this unaudited runtime contract.
 
+Canonical x64 `RDMSR` additionally requires the explicit
+`KernelX64NoFaultV1` profile. The x64 owner authenticates its complete six-operation
+bundle and ECX selector before connecting one fresh unconstrained 64-bit sample
+to the original result temporary. The retained operations split it into EDX:EAX
+and clear both upper halves; other registers, flags and memory remain unchanged.
+The declared nonfaulting supervisor domain supplies neither an MSR value nor a
+relationship between reads, and unimplemented result bits remain unconstrained.
+The original instruction remains observable. This adds no MSR-accessibility
+proof, pointer provenance, exception handling or source/native proof contract;
+write instructions and incomplete or mismatched bundles still refuse.
+
 Finite-value enumeration may observe feasible tuples without changing the proof query. An observer refusal returns an incomplete result with no tuples. The cache retains only mathematical domain proofs; immutable-read certificates remain local until enumeration completes.
 
 `NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.
@@ -5669,6 +5743,21 @@ the restored PC or x0 with an ordinary service return. CPU backends do not own
 signal policy or synthesize handlers. Unknown initial masks/alternate stacks,
 unsupported waiting recipients and context extensions remain explicit stops.
 No SDK or host signal mechanism participates.
+`KernelWait` owns each suspended operation's signal interruption contract.
+Relative sleeps retain copied deadlines and remaining-time output addresses in
+`LinuxSleep`; no second sleep state lives in the Android scheduler. Scheduling
+considers eligible process-pending signals before advancing idle time. The
+shared signal owner discards ignored signals and classifies default termination
+before a waiter can report EINTR. Poll, select and epoll owners perform their
+distinct interrupted copy-out rules. The receive owner alone decides whether
+its captured timeout and zero-progress state permit SA_RESTART. The scheduler
+then releases that wait and restores its trap PC, without installing a result;
+normal execution re-imports the mutable registers and descriptor identity.
+Other wait owners refuse interruption until their own contracts exist. For modeled native wrappers,
+the scheduler records a per-thread continuation at the import's post-trap PC
+and current signal-frame depth. After `rt_sigreturn`, Bionic converts the
+restored raw result, including guest edits, to errno/-1. A guest PC redirect
+bypasses that adapter without fabricating a returned native-call event.
 `AndroidAuxv` owns admission and lookup of the native workload's explicit,
 complete auxiliary vector. Bionic alone applies `getauxval`'s full-width
 lookup and thread-local errno behavior; constructors and dynamic imports use
@@ -8375,6 +8464,8 @@ Interpreter specialization retains full-width guest addresses. At publication, i
 
 `ProveStoreReturnSlotSeparation` also proves preservation of individual live native return cells across ordinary non-frame stores with 64-bit addresses. Each complete eight-byte cell must be disjoint under the current path. Only existing bytes in the accepted range union survive; gaps, unproved cells and other banks keep normal alias invalidation. Proof and preservation share the existing budgets and add no stack-ownership assumption.
 
+Current saved frame-address cells reuse this per-write separation proof. Successful proofs retain their materialized bytes and affine relations across ordinary or conditional writes. Later overlapping writes still invalidate those relations. Each cell is checked independently; no interval between accepted cells becomes protected, and no observation supplies a new alias premise.
+
 `MaxFrameOffsetNormalizationWorkPerProof` defaults to zero. When enabled, an incomplete cold frame-offset query may use the existing exact MBA derivation to prove a 64-bit offset against the identical root, retaining the original operations. Alone, this supplies no reachability or memory-ownership fact and cannot populate the finite-domain cache. Each attempt charges one unit per uncached readability-prefix node, operand edge and 64-bit constant limb, plus reported MBA measurement work, to both this limit and `MaxOperations`. Failed attempts remain charged. Internal traversals, rebuilding and sample defect checks are not separately metered; the final `MaxSymbolicNodes` check gates publication, not peak allocation. If exact normalization changes the expression without exposing a structural offset, the ordinary frame prover retries once with a fresh encoding, the same predicate, root and solver settings, and the existing cumulative query and node limits. The retry disables normalization. Completed enumeration or proved excess cardinality can populate the original query cache through the exact expression equality, retaining its constant-bias translation. Algebraic offsets alone and incomplete retries cannot populate finite domains.
 
 If the same cache already holds a completed empty-projection proof for the identical predicate at limit one, `FrameOffsets` can combine it with the exact algebraic offset and cache the original query, preserving modular bias translation. Feasible predicates yield a singleton; proved infeasibility stays empty. Missing, incomplete or unrelated proofs cannot enable this reuse. No additional solver query or memory premise is introduced.
@@ -8842,8 +8933,8 @@ cursors as transfers; it does not consume input or create a parallel socket
 registry. `LinuxSocketReadiness` projects declared arrivals and quiet intervals
 onto those same cursors. `SelectWait` retains copied arguments and description
 identities, rechecks live readiness and output access, and computes remaining
-time from `LinuxClock`. `KernelWait` exposes only readiness, the next wake and
-completion to `GuestThreads`; it introduces no second scheduler or socket
+time from `LinuxClock`. `KernelWait` exposes readiness, the next wake,
+completion and operation-owned signal policy to `GuestThreads`; it introduces no second scheduler or socket
 registry. Runnable threads precede idle advancement; sleep and I/O deadlines
 compete in one ordering. Resume completes the original service event, and Bionic
 alone converts errors using the resumed thread's errno. Unknown observations

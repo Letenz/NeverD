@@ -4,6 +4,26 @@
 
 # Testing NeverD
 
+`AndroidSignals.Descriptor*` and `Receive*` check caught/ignored/blocked and
+terminating signals during original poll/epoll/pselect6 and TCP/UDP receive
+calls. Independent O0/O2 fixtures run across relocation packing and available
+backends, checking raw versus libc errno, full output guards, remaining timeout
+and fault ordering, one-shot preservation, short reads, SA_RESTART, captured
+SO_RCVTIMEO, FD reuse, mutable context, deferred handlers and nested receives.
+Re-executed traps have separate attempts; abandoned attempts must not acquire
+a fabricated result. Run these with all Android signal/poll/readiness/receive,
+Linux process and execution-session regressions. All peers are offline inputs.
+
+`AndroidSignals.Sleep*`, `IgnoredAndBlockedSignalsDoNotShortenSleep` and
+`TerminationAndUnsupportedWaitsDoNotFabricateCompletion` execute independent
+relative-sleep callers at O0/O2 across relocation packing and available
+backends. They check remaining-time copy ordering and aliasing, raw versus
+libc errno timing, SA_RESTART, bad/partial output, nested interrupted handlers,
+mutable x0/PC, blocked/ignored signals, default termination and explicit
+refusal for unmodeled synchronization waits. Run with the full signal, sleep, Android
+native, Linux process and execution-session suites after changes to wait
+ownership. The clock and signal delivery are guest-only.
+
 `AndroidSignals.Delivery*` executes independent O0/O2 AArch64 callers across
 relocation packing and available backends. It checks complete output buffers,
 blocked coalescing, nested handlers, NODEFER/RESETHAND, mutable ucontext,
@@ -211,6 +231,28 @@ complete partitioned product at 2/4 bits; its 8–64-bit queries exceed the
 five-second allowance and are not counted as SMT coverage. Wider cases use the
 complete coefficient proof, independent word arithmetic and generated-C checks;
 the four-bit case also exhausts all 65,536 assignments of its four variables.
+`SymMBACubic` runs in both the full symbolic suite and
+`NeverDSymMBAQuadraticTests`. Independent multiplication checks every unordered
+triple of two-input Boolean functions with odd/even scales modulo eight.
+Random anchored tables and scales through 257 bits check coefficients outside
+the anchor slice, including multiplicities that wrap to zero. Zero/one-short
+work, storage refusal and malformed coefficients must fail closed.
+The previously capped mixed-degree cases and expanded cubes with unrelated
+linear high-bit masks must finish within 65,536 units at 8/16/32/64 bits.
+Heap-backed 128/257-bit cube coefficients use a 131,072-unit allowance to
+include their limb costs. Independent Z3 gates cover complete cubic rewrites
+at 2/3 bits; exhaustive four-bit and randomized wide arithmetic checks also
+preserve multiple cubic products and high-bit remainders.
+`SymMBAHigherProduct` runs in the same two targets. It covers four through
+twelve factors at 8–257 bits, 64 separately expanded products, nonlinear
+quotients, repeated factors, even scales and changed coefficients. Exhaustive
+three-bit assignments check partial-budget results against an independent
+formula; zero/one-short work and storage refusals protect the distribution
+proof. Independent Z3 checks cover complete four/six-factor rewrites at 2/3
+bits, with an explicit skip when unavailable. Wider checks use independent
+word arithmetic. Independently enumerated modular products validate the
+necessary coefficient bounds, and unchanged sixteen-factor residuals must
+cancel before minterm expansion in the difference proof.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
 signed/unsigned overflow admission against all byte pairs, including unsafe
 neighboring masks. `NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains`
@@ -247,6 +289,13 @@ nearby high-bit errors. Run the earlier families as controls.
 Use `--family quadratic --count 24` for expanded products with three to five
 inputs, independent Boolean partitions, odd/even scales, modular zeros,
 high-bit near misses and mixed-degree remainders.
+Use `--family cubic --count 24` for three independently partitioned Boolean
+factors over three to five inputs, even/negative scales, mixed quadratic
+remainders and high-bit perturbations. Run all earlier families as controls.
+Use `--family higher --count 64` for fourth, fifth, sixth and eighth degrees:
+independent partitions up to 64 products, products of quadratic identities,
+mixed degrees, same-degree residuals and deliberately changed coefficients.
+The previous six families remain controls.
 
 `tools/neverd-worker/tests/source_synthesis_test.py WORKER --cli CLI` checks the
 real source-option request used by the GUI and both CLI source emitters, for
@@ -256,6 +305,12 @@ The interleaved fixture combines thirty masked terms from XOR and product
 carriers in shared positive/negative accumulators before scaling the result.
 The partitioned-product fixture executes four products of Boolean pieces before
 adding its linear remainder; both enhanced emitters must remove the partitions.
+The mixed-degree fixture retains a scaled cubic residual beside the expanded
+quadratic. The cubic fixture executes eight products before adding a linear
+MBA and an observable high-bit remainder. Both exercise the same existing
+symbolic option through worker requests and single/whole-program CLI output.
+The fourth- and sixth-degree fixtures multiply additional factors in original
+x64 machine code, so a fixture compiler cannot simplify the input first.
 With Clang available, each generated C output executes at O0/O2 against an
 independent arithmetic oracle on boundary and deterministic random inputs.
 
@@ -1829,6 +1884,19 @@ signal codes and event order for single, repeated and mixed breaks. The native
 check explicitly skips on other hosts; source and LLVM verification still run.
 The same identity suite checks repeated ARM/Thumb BKPT with zero, nonzero and
 maximum immediates, preserving the actual instruction in both C routes.
+It exhausts the 256 narrow Thumb BKPT and UDF codes, the 64 Thumb HLT codes,
+and all 65,536 codes of both ARM and wide Thumb UDF. Compiler aliases retain
+the exception kind, code, void effect and live return. The division-trap alias
+also participates in the boundary matrix; ARM mode discovery and COFF GS-wrapper
+tests cover the same
+aliases. Wrapper recovery separately checks consistent and conflicting
+personality paths after resumable ARM/AArch64 debugger breaks, including wide
+Thumb UDF #254.
+Generated sources are cross-compiled at O0/O2 in both ARM and Thumb mode and
+their object bytes checked, including the 255/256 transition requiring `.w`.
+ARMv8 HLT also participates in source, object-byte and boundary checks,
+including repeated interior halts and a halt immediately before another entry.
+This is a compilation and encoding check, not native ARM execution.
 Live and indexed symbol queries distinguish padding guesses from confirmed
 names, independent aliases, code ranges and discovered call targets. Full and
 selected pipeline runs absorb a guessed entry actually reached after repeated
@@ -3055,6 +3123,33 @@ silently omitted by the ordinary graph because its model is missing.
 Exact/one-short work checks require no stale completeness output on exhaustion.
 These controls exercise the shared graph gate, not a new table admission route.
 
+`COFFTableBase.*` in `NeverDJumpTableTests` checks image-base definitions across
+0, 32 and 160 unrelated lexical blocks, mapped decoy definitions, single- and
+two-level RVA tables, conflicting predecessors, scalar provenance, calls and
+full/partial clobbers. A serial dispatch discovers new blocks and a second
+switch before the SEH source-frame gate is checked. Tiny aggregate budgets
+cannot publish partial tables; a non-image-base relative table remains valid.
+`ResolverPEImageBase.*` checks exact/one-short query budgets, incomplete graphs
+and freshness after definition/provenance/root changes. `COFFTableBaseCLI.*`
+writes a minimal linked PE, verifies its decoded targets and invokes HighC and
+LLVM-to-C through the CLI, without depending on a platform linker.
+
+`ResolverConstantAddress.*` checks address discovery across four architectures
+and three formats, equal and conflicting predecessor values, scalar/fragment
+collisions, uninitialized arms, loop backedges, cache output identity, every
+small-fixture budget boundary, changed roots and shared failure clearing.
+Scoped address discovery and its legacy-fold wrapper must preserve every
+budget boundary, completion state and address across all four architectures
+and three formats. New scopes revalidate changed instructions; roots are
+checked on each query. The PE image-base helper has the same budget checks.
+`Native/JumpTableAddress.*` assembles
+x86, x64, AArch64 and Thumb ELF objects and x64/AArch64 Mach-O objects. It checks
+0/32/160 unrelated blocks, mapped decoys, agreeing joins, clobbers, calls and
+tiny budgets against independent case-label offsets. It also covers absolute
+tables on x64/AArch64 and a two-level x64 ELF table. With LLD it checks
+the linked ELF and Mach-O images. These are loader/LowIR checks on the host;
+they do not claim native execution on each target operating system.
+
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
 fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer
@@ -3665,6 +3760,27 @@ registers, flags, memory and segment bases. Timestamp regressions exercise the
 same architecture dispatch. `BinaryLowIRRefinement.CPUQueryCompletesOnlyRawRecovery`
 checks raw completion while retaining native-proof and both source-layout
 refusals. These checks establish no CPU-feature profile or backend execution.
+
+`InterpreterSpecialization.SavedFrameAddress*` checks indexed and conditional
+writes against an independent complete-byte-memory oracle, modular addresses,
+partial overlap, later overwrite, disjoint saved cells with a writable gap,
+projection and exact/short work and query budgets.
+`BinaryLowIRRefinement.SavedFrameAddressRetainsIndexedProofBoundary` checks
+strictly decoded native bytes. Unrestricted symbolic indexing still refuses a
+native certificate; separately bound selector controls prove complete frame
+writes and reject a corrupted byte store. Run the full specialization, original
+binary independence, PE fixed-image, LowIR independence and LowIR refinement
+owners after changing this shared preservation boundary.
+
+`InterpreterSpecialization.SupervisorRead*` checks ECX selectors with nonzero
+upper RCX bits, full-width results, zero upper destination halves, independent
+and repeated reads, exact/short budgets, malformed bundles, required supervisor
+domain and unknown-address stores. Independent value and complete-state oracles
+preserve unrelated registers, flags, memory and segment bases.
+`BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` includes a proved
+supervisor return control before checking raw RDMSR completion and continued
+native-proof and both source-layout refusals. User-profile reads still refuse.
+These tests do not establish runtime MSR accessibility or backend execution.
 
 The following behavior uses the default strict audit contract. `NeverDOriginalBinaryUndefinedIndependenceTests` uses independent fixed-map x64 bytes to test physical native CALL/RET, modified return targets, exhaustive finite indirect targets and immutable loads. The same target checks complete direct-branch collection, exact byte/effect/mapping/read-witness binding, outer-return preservation of entry RSP and its return slot, and image-disjoint frame feasibility. Missing or overlapping instructions, unaudited arms outside the exact trap and explicit profile-projection rules, nonterminating or over-budget loops, incomplete target enumeration, profile/contract mismatches and exhausted budgets must refuse without a certificate or residual code. Success requires every feasible native path to finish. This opt-in gate does not certify loop invariants, exception dispatch, CET-enabled execution or native-to-C equivalence; ordinary recovery remains separate. The target also checks strictly lifted `INT3`/`UD2` terminal boundaries and binding of their complete bytes and operation digests. A `Missing` undefined-output sidecar must remain `Missing`; only symbolically unreachable traps may appear in a certificate, while any feasible trap path must return `ContractViolation` without a certificate or residual code. Trap fallthrough and exception recovery are not modeled, `codeFollowsTrap` is not used, and static LowIR API support remains unchanged.
 

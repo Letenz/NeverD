@@ -207,6 +207,20 @@ conditional memory, invocation lifetime and both C routes remain open.
 
 ## Closed control-flow regressions
 
+- ARM/Thumb HLT now uses the same resumable ownership checks as BKPT/UDF.
+  HighC retains its instruction and code instead of substituting a fatal C
+  trap. Sized/unsized boundaries, resumed return values, all narrow HLT codes
+  and ARMv8 source recompilation cover both C routes; AArch64 fatal HLT remains
+  a separate contract.
+- Thumb `__brkdiv0` now shares UDF's classification, immediate and void effect
+  instead of becoming BKPT with a synthetic R0 result. Lifting, reachable mode
+  discovery and COFF GS-wrapper recognition consume shared alias predicates.
+  Boundary/source matrices and exhaustive narrow Thumb and wide ARM/Thumb UDF
+  code checks cover compiler aliases as well as ordinary encodings. Wide UDF
+  codes use `.w`; O0/O2 cross-compilation checks the actual ARM/Thumb object
+  bytes so a source-only spelling check cannot miss an assembler rejection.
+  GS-wrapper recovery follows ARM UDF #254 and AArch64 BRK #0xF000
+  continuations; conflicting resumed paths prevent personality inference.
 - INT1/ICEBP now retains #DB through LLVM and both C routes instead of becoming
   INT3's #BP. GNU/LLVM byte assembly and the MSVC `_emit` spelling also avoid
   unsupported assembler aliases. Native Linux x64 tests compare exception

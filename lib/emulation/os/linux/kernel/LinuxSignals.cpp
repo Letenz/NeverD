@@ -142,7 +142,6 @@ std::optional<uint64_t> LinuxSignals::send(int32_t PID, int32_t Signal,
     return std::nullopt;
   }
   if ((*I->second.Mask & bit(Signal)) && Tasks) {
-    bool Runnable = false, Waiting = false;
     for (const auto &Task : Tasks()) {
       if (Task.State == 'Z')
         continue;
@@ -151,14 +150,6 @@ std::optional<uint64_t> LinuxSignals::send(int32_t PID, int32_t Signal,
         unsupported(Result, SignalMaskMissing);
         return std::nullopt;
       }
-      if (!(*T->second.Mask & bit(Signal))) {
-        Runnable |= Task.State == 'R';
-        Waiting |= Task.State == 'S';
-      }
-    }
-    if (!Runnable && Waiting) {
-      unsupported(Result, SignalWaitUnsupported);
-      return std::nullopt;
     }
   }
   Pending |= bit(Signal); // Standard signals coalesce, including while blocked.
@@ -252,23 +243,26 @@ LinuxSignals::maskService(ExecutionBackend &CPU, const MemoryLayout &Layout,
   return Reply();
 }
 
-llvm::Expected<bool> LinuxSignals::deliver(ExecutionBackend &CPU,
-                                           const MemoryLayout &Layout,
-                                           LinuxMemory &Memory, uint64_t TID,
-                                           ProcessResult &Result) {
+bool LinuxSignals::ready(uint64_t TID) const {
+  auto I = Threads.find(TID);
+  return I != Threads.end() && I->second.Mask && (Pending & ~*I->second.Mask);
+}
+
+std::optional<LinuxSignals::Delivery>
+LinuxSignals::prepare(uint64_t TID, ProcessResult &Result) {
   if (!Pending)
-    return true;
+    return Delivery{};
   auto I = Threads.find(TID);
   if (I == Threads.end() || !I->second.Mask) {
     unsupported(Result, SignalMaskMissing);
-    return false;
+    return std::nullopt;
   }
   while (const uint64_t Ready = Pending & ~*I->second.Mask) {
     const int32_t Signal = llvm::countr_zero(Ready) + 1;
     auto A = State.Actions.find(Signal);
     if (A == State.Actions.end()) {
       unsupported(Result, llvm::formatv(SignalActionMissing, Signal).str());
-      return false;
+      return std::nullopt;
     }
     const auto Action = A->second;
     if (Action.Handler == 1 || (!Action.Handler && defaultIgnored(Signal))) {
@@ -279,26 +273,40 @@ llvm::Expected<bool> LinuxSignals::deliver(ExecutionBackend &CPU,
       if (!defaultTerminates(Signal)) {
         unsupported(Result,
                     llvm::formatv(SignalDeliveryUnsupported, Signal).str());
-        return false;
+        return std::nullopt;
       }
       Pending &= ~bit(Signal);
       Result.Stop = ProcessStopReason::Signaled;
       Result.TerminationSignal = Signal;
       Result.ExitStatus.reset();
-      return false;
+      return std::nullopt;
     }
-    auto Entered = enter(CPU, Layout, Memory, TID, Signal, Action, Result);
-    if (!Entered || !*Entered)
-      return Entered;
-    Pending &= ~bit(Signal);
-    if (uint32_t(Action.Flags) & 0x80000000u)
-      A->second.Handler = 0; // SA_RESETHAND, before executing guest code.
-    *I->second.Mask |= Action.Mask;
-    if (!(Action.Flags & 0x40000000)) // SA_NODEFER
-      *I->second.Mask |= bit(Signal);
-    *I->second.Mask &= ~Unblockable;
-    return true;
+    return Delivery{Signal, Action};
   }
+  return Delivery{};
+}
+
+llvm::Expected<bool> LinuxSignals::deliver(ExecutionBackend &CPU,
+                                           const MemoryLayout &Layout,
+                                           LinuxMemory &Memory, uint64_t TID,
+                                           ProcessResult &Result) {
+  const auto Next = prepare(TID, Result);
+  if (!Next)
+    return false;
+  if (!Next->Signal)
+    return true;
+  const auto &[Signal, Action] = *Next;
+  auto Entered = enter(CPU, Layout, Memory, TID, Signal, Action, Result);
+  if (!Entered || !*Entered)
+    return Entered;
+  Pending &= ~bit(Signal);
+  if (uint32_t(Action.Flags) & 0x80000000u)
+    State.Actions.at(Signal).Handler = 0; // SA_RESETHAND, before guest code.
+  auto &Mask = *Threads.at(TID).Mask;
+  Mask |= Action.Mask;
+  if (!(Action.Flags & 0x40000000)) // SA_NODEFER
+    Mask |= bit(Signal);
+  Mask &= ~Unblockable;
   return true;
 }
 
