@@ -265,6 +265,69 @@ TEST(PipelineOutcome, AnalysisCachePreservesFloatingAndIntegerCallChains) {
   }
 }
 
+BinaryImage aarch64SelectionCacheImage() {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::ELF;
+  Image.Entry = 0x1000;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = Image.Entry;
+  Text.Size = Text.FileSz = 0x2000;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0);
+  const auto Word = [&](va_t At, uint32_t Insn) {
+    for (unsigned I = 0; I != 4; ++I)
+      Text.Data[At - Text.VA + I] = static_cast<uint8_t>(Insn >> (I * 8));
+  };
+  // stp x29, x30, [sp, #-16]!; bl To; ldp x29, x30, [sp], #16; ret
+  const auto Wrapper = [&](va_t From, va_t To) {
+    Word(From, 0xa9bf7bfd);
+    Word(From + 4, 0x94000000 | static_cast<uint32_t>(((To - From - 4) >> 2) &
+                                                      0x3ffffff));
+    Word(From + 8, 0xa8c17bfd);
+    Word(From + 12, 0xd65f03c0);
+    Image.Symbols.push_back(Symbol::makeFunc(From, 16));
+  };
+  Wrapper(0x1000, 0x1800);
+  Wrapper(0x1100, 0x1800);
+  Wrapper(0x1800, 0x2000);
+  // The callers share a chain to a leaf that returns its second argument:
+  // mov x0, x1; ret.
+  Word(0x2000, 0xaa0103e0);
+  Word(0x2004, 0xd65f03c0);
+  Image.Symbols.push_back(Symbol::makeFunc(0x2000, 8));
+  Image.Segments.push_back(std::move(Text));
+  return Image;
+}
+
+TEST(PipelineOutcome, AnalysisCacheServesAArch64Selections) {
+  // AArch64 selections share the analysis cache as x64 ones do: the facts
+  // of the symbol inventory serve every symbol start, and each run reads
+  // what a cold run does.
+  const BinaryImage Image = aarch64SelectionCacheImage();
+  PipelineAnalysisCache Cache;
+  PipelineResult First;
+  PipelineTestPeer::buildLowIR(Image, First, {0x1000}, &Cache);
+  const auto Facts = PipelineTestPeer::analysisFacts(Cache);
+  const auto Inventory = PipelineTestPeer::symbolInventory(Cache);
+  ASSERT_NE(Facts, nullptr);
+  ASSERT_NE(Inventory, nullptr);
+  for (const va_t Entry :
+       {va_t{0x1100}, va_t{0x1800}, va_t{0x2000}, va_t{0x1000}}) {
+    SCOPED_TRACE(Entry);
+    PipelineResult Kept, Cold;
+    PipelineTestPeer::buildLowIR(Image, Kept, {Entry}, &Cache);
+    PipelineTestPeer::buildLowIR(Image, Cold, {Entry});
+    EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), Facts);
+    EXPECT_EQ(PipelineTestPeer::symbolInventory(Cache), Inventory);
+    expectSameSelection(Kept, Cold);
+    EXPECT_EQ(Kept.CallEntryArgumentCounts, Cold.CallEntryArgumentCounts);
+    EXPECT_EQ(Kept.CallArgumentSources, Cold.CallArgumentSources);
+  }
+}
+
 TEST(PipelineOutcome, AnalysisCacheBindsExactEntryInventories) {
   BinaryImage Image = selectionCacheImage(true);
   PipelineAnalysisCache Cache;

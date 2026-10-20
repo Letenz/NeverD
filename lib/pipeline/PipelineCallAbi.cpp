@@ -63,10 +63,22 @@ OmittedCalleeMemo::readAt(const PipelineResult &Result, va_t Key) {
   return Read;
 }
 
-bool OmittedCalleeMemo::Callee::readsHold(const PipelineResult &Result) const {
+bool OmittedCalleeMemo::Conversion::readsHold(
+    const PipelineResult &Result) const {
   return std::all_of(Reads.begin(), Reads.end(), [&](const SummaryRead &Read) {
     return readAt(Result, Read.Key) == Read;
   });
+}
+
+const OmittedCalleeMemo::Conversion *
+OmittedCalleeMemo::Callee::conversionFor(const PipelineResult &Result) {
+  const auto Holds =
+      std::find_if(Conversions.begin(), Conversions.end(),
+                   [&](const Conversion &C) { return C.readsHold(Result); });
+  if (Holds == Conversions.end())
+    return nullptr;
+  std::rotate(Conversions.begin(), Holds, std::next(Holds));
+  return &Conversions.front();
 }
 
 void OmittedCalleeMemo::adopt(const BinaryImage &Img,
@@ -208,11 +220,11 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
         return Signatures;
       Operations += BlockOps;
     }
-    // A conversion that read summaries this run states otherwise is read
-    // again.
-    if (Read->Converted && !Read->readsHold(Result))
-      Read->Converted = false;
-    if (!Read->Converted) {
+    // A conversion that read summaries this run states otherwise serves
+    // none of its reads: the callee is converted again.
+    const OmittedCalleeMemo::Conversion *Conversion =
+        Read->conversionFor(Result);
+    if (!Conversion) {
       const LowFunc &Lifted = lift();
       std::shared_ptr<const MedFunc> Body;
       // The callee's parameters read the entry-read summary of its own entry.
@@ -242,16 +254,19 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
       }
       if (Body && Memo && Read != &Local)
         Memo->remember(*Body);
-      Read->Body = std::move(Body);
-      Read->Reads.clear();
+      OmittedCalleeMemo::Conversion Converted{std::move(Body), {}};
       for (const va_t Key : Keys)
-        Read->Reads.push_back(OmittedCalleeMemo::readAt(Result, Key));
-      Read->Converted = true;
+        Converted.Reads.push_back(OmittedCalleeMemo::readAt(Result, Key));
+      // The conversion used longest ago makes room.
+      if (Read->Conversions.size() == OmittedCalleeMemo::MaxConversions)
+        Read->Conversions.pop_back();
+      Read->Conversions.insert(Read->Conversions.begin(), std::move(Converted));
+      Conversion = &Read->Conversions.front();
     }
-    if (!Read->Body)
+    if (!Conversion->Body)
       continue;
-    enqueueCallees(*Read->Body);
-    Signatures.push_back(*Read->Body);
+    enqueueCallees(*Conversion->Body);
+    Signatures.push_back(*Conversion->Body);
   }
   return Signatures;
 }
@@ -321,7 +336,8 @@ void propagateForwardedCallArities(
     std::map<va_t, std::vector<uint64_t>> &CalleeIntRegs,
     const std::set<va_t> &VectorArgumentCallees,
     const std::map<va_t, PointerVariableCallee> &PointerCallees,
-    const std::set<va_t> &UserPrototypeCallees) {
+    const std::set<va_t> &UserPrototypeCallees,
+    const RelocationSymbolIndex &RelocationSymbols) {
   if (Funcs.empty())
     return;
 
@@ -358,7 +374,7 @@ void propagateForwardedCallArities(
                    &CalleeFPRegs, &CalleeHasSret, &CalleeIsVariadic,
                    &CalleeConsumesVaList, /*FrameLocalLeafCallees=*/nullptr,
                    &CalleeIntRegs, &VectorArgumentCallees, &PointerCallees,
-                   &UserPrototypeCallees);
+                   &UserPrototypeCallees, &RelocationSymbols);
     int MaxRegIdx = -1;
     int MaxIdx = -1;
     std::vector<uint64_t> FPRegs;
@@ -465,6 +481,8 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
   // What a call through each function-pointer variable passes on.
   const std::map<va_t, PointerVariableCallee> PointerCallees =
       collectPointerVariableCallees(Img);
+  // The relocation that names each call's callee, where one does.
+  const RelocationSymbolIndex RelocationSymbols(Img);
   std::vector<MedFunc *> SignatureBodies;
   for (MedFunc &F : Result.MedFuncs)
     SignatureBodies.push_back(&F);
@@ -723,21 +741,39 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
       SignatureBodies, Img.Arch, AllFuncNames, Img, CalleeRegArity,
       CalleeTotalArity, CalleeFPArity, CalleeFPReturnSize, CalleeFPRegs,
       CalleeHasSret, CalleeIsVariadic, CalleeConsumesVaList, CalleeIntRegs,
-      VectorArgumentCallees, PointerCallees, Result.CallUserPrototypes);
+      VectorArgumentCallees, PointerCallees, Result.CallUserPrototypes,
+      RelocationSymbols);
 
   const auto FrameLocalLeafCallees =
       Convention && Convention->TargetSpillsSurviveLeafCalls
           ? findFrameLocalLeafCallees(Result.MedFuncs, Img.Arch)
           : std::set<va_t>{};
-  for (MedFunc *Body : SignatureBodies) {
-    MedFunc &MF = *Body;
+  auto recover = [&](MedFunc &MF) {
     recoverCallAbi(MF, Img.Arch, AllFuncNames, &Img, &CalleeRegArity,
                    &CalleeTotalArity, &CalleeFPArity, &CalleeFPReturnSize,
                    &CalleeFPRegs, &CalleeHasSret, &CalleeIsVariadic,
                    &CalleeConsumesVaList, &FrameLocalLeafCallees,
                    &CalleeIntRegs, &VectorArgumentCallees, &PointerCallees,
-                   &Result.CallUserPrototypes);
+                   &Result.CallUserPrototypes, &RelocationSymbols);
+  };
+  for (MedFunc &F : Result.MedFuncs)
+    recover(F);
+  // An omitted body's recovery gives the bound below on the run's direct
+  // calls to it, and the bodies after it read the arities and variadic
+  // marks it leaves.  Past the last body those calls reach, only the second
+  // regparm pass, which reads every body, reads what recovery gives.
+  size_t Recovered = OmittedCallees.size();
+  if (!Convention || !Convention->RegparmOnlyForInternalCalls) {
+    std::set<va_t> Called;
+    for (const MedFunc &F : Result.MedFuncs)
+      for (const MedCallInfo &CI : F.CallInfos)
+        if (!CI.IsIndirect)
+          Called.insert(CI.TargetAddr);
+    while (Recovered && !Called.count(OmittedCallees[Recovered - 1].Entry))
+      --Recovered;
   }
+  for (size_t I = 0; I < Recovered; ++I)
+    recover(OmittedCallees[I]);
 
   // Regparm two-pass call recovery (i386): the first pass promotes forwarder
   // register params (PromoteParams).  Recompute CalleeRegArity from the
@@ -775,7 +811,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                      &CalleeHasSret, &CalleeIsVariadic, &CalleeConsumesVaList,
                      /*FrameLocalLeafCallees=*/nullptr, &CalleeIntRegs2,
                      &VectorArgumentCallees, &PointerCallees,
-                     &Result.CallUserPrototypes);
+                     &Result.CallUserPrototypes, &RelocationSymbols);
     }
   }
   // An omitted definition cannot give the emitter its parameter count.

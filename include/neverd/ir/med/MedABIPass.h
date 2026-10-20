@@ -19,7 +19,10 @@
 #include "neverd/loader/DataSymbolBinding.h"
 
 #include <map>
+#include <optional>
 #include <set>
+#include <utility>
+#include <vector>
 
 namespace neverd {
 
@@ -91,6 +94,22 @@ std::set<va_t> findFrameLocalLeafCallees(const std::vector<MedFunc> &Funcs,
 bool promoteFloatCallResult(MedFunc &Func, MedBlock &Blk, size_t OpIdx,
                             uint16_t Size, Arch TheArch);
 
+/// The relocations of an image that name a symbol, by the address each
+/// relocates, read from the image on the first query, so a module recovery
+/// that names no call by its relocation reads none.  For one thread.
+class RelocationSymbolIndex {
+public:
+  explicit RelocationSymbolIndex(const BinaryImage &Img) : Img(Img) {}
+  /// The first relocation, in the image's order, at \p Address that names
+  /// a symbol; null for none.
+  const RelocationEntry *at(va_t Address) const;
+
+private:
+  const BinaryImage &Img;
+  /// Each such relocation's address and position, in order.
+  mutable std::optional<std::vector<std::pair<va_t, size_t>>> Named;
+};
+
 void recoverCallAbi(
     MedFunc &Func, Arch TheArch, const std::map<va_t, std::string> &FuncNames,
     const BinaryImage *Img = nullptr,
@@ -106,7 +125,8 @@ void recoverCallAbi(
     const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs = nullptr,
     const std::set<va_t> *VectorArgumentCallees = nullptr,
     const std::map<va_t, PointerVariableCallee> *PointerCallees = nullptr,
-    const std::set<va_t> *UserPrototypeCallees = nullptr);
+    const std::set<va_t> *UserPrototypeCallees = nullptr,
+    const RelocationSymbolIndex *RelocationSymbols = nullptr);
 
 /// The integer argument layout \p Func takes its register arguments in: its
 /// own register order (MedFunc::IntegerArgumentRegisters) where it has one,

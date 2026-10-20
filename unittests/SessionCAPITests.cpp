@@ -5845,7 +5845,7 @@ TEST(CalleeSignatureMemo, AKeptBodyServesWhileTheSummariesItReadHold) {
   };
   neverd::PipelineResult Read;
   State(Read);
-  neverd::OmittedCalleeMemo::Callee Callee;
+  neverd::OmittedCalleeMemo::Conversion Callee;
   for (const neverd::va_t Key : {0x1000, 0x2000})
     Callee.Reads.push_back(neverd::OmittedCalleeMemo::readAt(Read, Key));
   EXPECT_TRUE(Callee.readsHold(Read));
@@ -5877,6 +5877,42 @@ TEST(CalleeSignatureMemo, AKeptBodyServesWhileTheSummariesItReadHold) {
     Changes[I](Changed);
     EXPECT_FALSE(Callee.readsHold(Changed));
   }
+}
+
+TEST(CalleeSignatureMemo, ACalleeKeepsTheConversionOfEachSummaryItReads) {
+  // A callee read around selections that call different imports keeps a
+  // conversion for each, and a run takes the one its summaries hold for.
+  using Memo = neverd::OmittedCalleeMemo;
+  auto Counted = [](int Count) {
+    auto R = std::make_unique<neverd::PipelineResult>();
+    if (Count)
+      R->CallEntryArgumentCounts[0x4000] = Count;
+    return R;
+  };
+  auto Converted = [](const neverd::PipelineResult &R) {
+    Memo::Conversion C;
+    C.Body = std::make_shared<const neverd::MedFunc>();
+    C.Reads.push_back(Memo::readAt(R, 0x4000));
+    return C;
+  };
+  Memo::Callee Callee;
+  const auto None = Counted(0), Two = Counted(2), Three = Counted(3);
+  EXPECT_EQ(Callee.conversionFor(*None), nullptr);
+  Callee.Conversions.push_back(Converted(*None));
+  Callee.Conversions.insert(Callee.Conversions.begin(), Converted(*Two));
+  const auto TwoBody = Callee.Conversions.front().Body;
+  const auto NoneBody = Callee.Conversions.back().Body;
+  // Each run finds its own conversion, which it then uses first.
+  const Memo::Conversion *Found = Callee.conversionFor(*None);
+  ASSERT_NE(Found, nullptr);
+  EXPECT_EQ(Found->Body, NoneBody);
+  EXPECT_EQ(&Callee.Conversions.front(), Found);
+  Found = Callee.conversionFor(*Two);
+  ASSERT_NE(Found, nullptr);
+  EXPECT_EQ(Found->Body, TwoBody);
+  EXPECT_EQ(&Callee.Conversions.front(), Found);
+  EXPECT_EQ(Callee.conversionFor(*Three), nullptr);
+  EXPECT_EQ(Callee.Conversions.size(), 2u);
 }
 
 TEST_F(SessionCAPITest, AProgramsOwnDeclarationOfAnImportDecides) {

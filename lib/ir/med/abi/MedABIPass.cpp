@@ -469,7 +469,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                     const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs,
                     const std::set<va_t> *VectorArgumentCallees,
                     const std::map<va_t, PointerVariableCallee> *PointerCallees,
-                    const std::set<va_t> *UserPrototypeCallees) {
+                    const std::set<va_t> *UserPrototypeCallees,
+                    const RelocationSymbolIndex *RelocationSymbols) {
   Func.CallInfos.clear();
 
   const auto &TRI = getTargetRegInfo(TheArch);
@@ -760,7 +761,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       bool IsRelocExtern = false;
       if (Img &&
           (CI.TargetAddr == 0 || CI.TargetName.starts_with(kAutoFuncPrefix))) {
-        if (std::string RelName = relocCalleeName(*Img, Op.Addr);
+        if (std::string RelName =
+                relocCalleeName(*Img, Op.Addr, RelocationSymbols);
             !RelName.empty()) {
           // External when the relocation names a different symbol than the one
           // the placeholder target address resolves to (compare underscore-

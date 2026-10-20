@@ -1025,24 +1025,51 @@ std::optional<int64_t> relStackOff(const MedFunc &Func,
   return safety::detail::checkedStackOffset(*Base, Step->Delta, Step->Subtract);
 }
 
-std::string relocCalleeName(const BinaryImage &Img, va_t InsnAddr) {
-  for (const auto &Rel : Img.Relocations) {
-    // The branch relocation sits at the instruction's displacement field: at
-    // the instruction address itself for AArch64/ARM `bl` (the imm is in the
-    // opcode word), but one byte in for x86 `call rel32` (the 0xE8 opcode
-    // precedes the 4-byte displacement).  Accept both so a relocatable-object
-    // external call is named on x86 too (otherwise its placeholder-0 target
-    // resolves to whatever symbol sits at VA 0 — e.g. the function itself,
-    // lifting a libc call into a bogus self-recursion).
-    if ((Rel.Address != InsnAddr && Rel.Address != InsnAddr + 1) ||
-        Rel.SymbolName.empty())
-      continue;
-    llvm::StringRef Name = stripLeadingUnderscores(Rel.SymbolName);
-    if (libc::isKnownFunction(Name))
-      return Name.str();
-    return Rel.SymbolName;
+const RelocationEntry *RelocationSymbolIndex::at(va_t Address) const {
+  if (!Named) {
+    Named.emplace();
+    for (size_t I = 0; I < Img.Relocations.size(); ++I)
+      if (!Img.Relocations[I].SymbolName.empty())
+        Named->emplace_back(Img.Relocations[I].Address, I);
+    std::sort(Named->begin(), Named->end());
   }
-  return {};
+  const auto It = std::lower_bound(Named->begin(), Named->end(),
+                                   std::make_pair(Address, size_t{0}));
+  return It != Named->end() && It->first == Address
+             ? &Img.Relocations[It->second]
+             : nullptr;
+}
+
+std::string relocCalleeName(const BinaryImage &Img, va_t InsnAddr,
+                            const RelocationSymbolIndex *Index) {
+  // The branch relocation sits at the instruction's displacement field: at
+  // the instruction address itself for AArch64/ARM `bl` (the imm is in the
+  // opcode word), but one byte in for x86 `call rel32` (the 0xE8 opcode
+  // precedes the 4-byte displacement).  Accept both so a relocatable-object
+  // external call is named on x86 too (otherwise its placeholder-0 target
+  // resolves to whatever symbol sits at VA 0 — e.g. the function itself,
+  // lifting a libc call into a bogus self-recursion).  The first such
+  // relocation in the image's order names it.
+  const RelocationEntry *Rel = nullptr;
+  if (Index) {
+    const RelocationEntry *At = Index->at(InsnAddr);
+    const RelocationEntry *After = Index->at(InsnAddr + 1);
+    Rel = !At || (After && After < At) ? After : At;
+  } else {
+    for (const auto &Candidate : Img.Relocations)
+      if ((Candidate.Address == InsnAddr ||
+           Candidate.Address == InsnAddr + 1) &&
+          !Candidate.SymbolName.empty()) {
+        Rel = &Candidate;
+        break;
+      }
+  }
+  if (!Rel)
+    return {};
+  llvm::StringRef Name = stripLeadingUnderscores(Rel->SymbolName);
+  if (libc::isKnownFunction(Name))
+    return Name.str();
+  return Rel->SymbolName;
 }
 
 // The value an argument-register-defining op contributes to its slot: the
