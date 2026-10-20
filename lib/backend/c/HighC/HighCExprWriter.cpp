@@ -2128,6 +2128,19 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       // An array parameter is the pointer to its element that C passes.
       if (!Expected && Array)
         Expected = NdType::makePtr(Declared->ElemType);
+      // A record the header passes by value which the call model says takes
+      // an object pointer is a transparent union of pointers (glibc's
+      // __CONST_SOCKADDR_ARG under _GNU_SOURCE): it takes one as void *, as
+      // it takes no integer and no pointer to another record.  An import the
+      // unit declares under another identifier takes its own declaration's.
+      const bool PointerUnion =
+          Declared && Declared->Kind == NdTypeKind::Struct &&
+          !Declared->IsEnum && Callee->PrototypeFromCLibrary &&
+          Name == Callee->Name && headerTypeOfCallee(E, Declared) &&
+          libc::isObjectPointerParameter(Callee->Name, static_cast<unsigned>(I),
+                                         Opts.libcVariant());
+      if (PointerUnion)
+        Expected = NdType::makePtr();
       if (Expected) {
         // The pointer to a typedef, or the array a parameter declares
         // (jmp_buf), converts explicitly, as no pointer of the unit's own
@@ -2144,7 +2157,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                          : nullptr;
         if (Expected) {
           std::string Text = exprStrAsTypedArg(*Op, Expected);
-          if (Header && Typedef && Text != "0" &&
+          if (((Header && Typedef) || PointerUnion) && Text != "0" &&
               !llvm::StringRef(Text).starts_with("(void*)"))
             Text =
                 "(void*)" +

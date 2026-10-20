@@ -47770,6 +47770,58 @@ TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses, SocketAddressesPassAsVoidPointers) {
+  // Under _GNU_SOURCE glibc declares bind's address a transparent union of
+  // the sockaddr pointers, which the type library gives as the union: an
+  // address the machine holds as an integer passes as void *, which the
+  // union takes, as it takes no integer and no pointer to another record.
+  const auto Union = NdType::makeNamedRecord("__CONST_SOCKADDR_ARG", 8);
+  class SocketDbg : public NullDebugContext {
+  public:
+    explicit SocketDbg(TypeRef Union) : Union(std::move(Union)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x140002000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "bind";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makeInt(4);
+      FS.Params = {{"fd", NdType::makeInt(4)},
+                   {"addr", Union},
+                   {"len", NdType::makeInt(4, false)}};
+      FS.PrototypeFromCLibrary = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Union;
+  } Dbg(Union);
+  const auto Int = NdType::makeInt(4);
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "bind_to";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = Int;
+  Func.Params = {{"fd", Int}, {"address", Word}};
+  auto Bound = HighExpr::makeCall(
+      "bind", 0x140002000,
+      {parameter(0, Int), parameter(1, Word), HighExpr::makeConst(16, 4)});
+  Bound->Type = Int;
+  returnValue(Func, std::move(Bound));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <sys/socket.h>"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("(void*)(uintptr_t)"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, LargeFileComparatorsTakeTheirOwnRecords) {
   // A program built for large files calls scandir64, whose comparison the
   // header types with struct dirent64 where scandir's takes struct dirent:

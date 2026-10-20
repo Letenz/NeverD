@@ -750,6 +750,18 @@ TEST(ObjectPointerParameter, HeadersSayWhichParametersTakePointers) {
       isObjectPointerParameter("not_a_libc_function", 0, LibCVariant::GNU));
 }
 
+TEST(ObjectPointerParameter, SocketAddressesTakeTheirPointers) {
+  // glibc declares a socket function's address as a transparent union of
+  // the sockaddr pointers under _GNU_SOURCE, which the units define: the
+  // union takes a machine integer converted to a pointer, as each member.
+  EXPECT_TRUE(isObjectPointerParameter("bind", 1, LibCVariant::GNU));
+  EXPECT_TRUE(isObjectPointerParameter("connect", 1, LibCVariant::GNU));
+  EXPECT_TRUE(isObjectPointerParameter("accept", 1, LibCVariant::GNU));
+  EXPECT_TRUE(isObjectPointerParameter("sendto", 4, LibCVariant::GNU));
+  EXPECT_TRUE(isObjectPointerParameter("recvfrom", 4, LibCVariant::GNU));
+  EXPECT_FALSE(isObjectPointerParameter("bind", 2, LibCVariant::GNU));
+}
+
 TEST(FunctionPointerParameter, StandardCallbacks) {
   EXPECT_EQ(functionPointerParameter("qsort", 3, LibCVariant::GNU),
             "int (*)(const void *, const void *)");
