@@ -227,14 +227,26 @@ NEVERD_API const char *neverd_search_bytes(neverd_session_t Sess,
 NEVERD_API const char *neverd_search_string(neverd_session_t Sess,
                                             const char *Pattern,
                                             int CaseSensitive, int MaxResults);
-/// Bounded search in address order. Options: kind (bytes/text), pattern,
-/// limit (1..4096), optional exclusive from address, backward and
+/// Bounded search in address order. Options: kind (bytes/text/immediate),
+/// pattern, limit (1..4096), optional exclusive from address, backward and
 /// case_sensitive booleans. Returns owned JSON {items,complete,next_address};
 /// a non-null next_address resumes after the last item in the same direction.
+/// Immediate pages decode native executable ranges in bounded chunks. Repeat
+/// the same request while building is true. coverage and undecoded_ranges
+/// report skipped ranges; matches do not assert reachability or include memory
+/// displacements. Numeric values use the logical operand width.
 /// Matches stay within one segment's initialized bytes. Invalid options fail
 /// with null and a session error. Legacy search uses the same matcher.
 NEVERD_API const char *neverd_search_page(neverd_session_t Sess,
                                           const char *OptionsJSON);
+
+/// Physical register inventory, reaching definitions, uses or static value
+/// before PC in Entry's original LowIR. Options: kind and register. Calls,
+/// undefined effects and unknown paths remain explicit boundaries. Owned JSON.
+NEVERD_API const char *neverd_register_flow_json(neverd_session_t Sess,
+                                                 neverd_va_t Entry,
+                                                 neverd_va_t PC,
+                                                 const char *OptionsJSON);
 
 // ===--------------------------------------------------------------------===//
 // Binary diff (function-level comparison between two sessions)

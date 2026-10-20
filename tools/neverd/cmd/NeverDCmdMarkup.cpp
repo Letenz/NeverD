@@ -692,7 +692,9 @@ StringRef valueItemKind(unsigned Bytes) {
 Expected<json::Object> itemRow(neverd_session_t Sess, uint64_t Addr) {
   if (!ItemArray.empty())
     return json::Object{{"kind", "array"},
-                        {"element_size", ItemSize.getValue()},
+                        {"element_size", ItemElementSize.getNumOccurrences()
+                                             ? ItemElementSize.getValue()
+                                             : ItemSize.getValue()},
                         {"count", ItemCount.getValue()},
                         {"type", ItemType.getValue()}};
   if (!ItemAlignment.empty()) {
@@ -747,6 +749,12 @@ Expected<json::Object> itemRow(neverd_session_t Sess, uint64_t Addr) {
 } // namespace
 
 int runItems(neverd_session_t Sess) {
+  if (ItemElementSize.getNumOccurrences() &&
+      (ItemArray.empty() || ItemSize.getNumOccurrences())) {
+    WithColor::error()
+        << "--element-size requires --array; choose --size or --element-size\n";
+    return 1;
+  }
   if ((ItemArray.getNumOccurrences() && ItemArray.empty()) ||
       (ItemAlignment.getNumOccurrences() && ItemAlignment.empty())) {
     WithColor::error() << "--array and --alignment require an address\n";

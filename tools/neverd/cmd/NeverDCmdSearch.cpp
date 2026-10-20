@@ -13,6 +13,7 @@
 
 #include "../NeverDCLI.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/WithColor.h"
@@ -28,8 +29,60 @@
 using namespace llvm;
 
 namespace neverd::cli {
+namespace {
+cl::opt<std::string> SearchImmediate(
+    "immediate",
+    cl::desc("Search logical native immediates (signed decimal or 0x hex)"),
+    cl::init(""), cl::sub(SearchCmd));
+cl::opt<std::string> SearchFrom("from",
+                                cl::desc("Exclusive search cursor (hex)"),
+                                cl::init(""), cl::sub(SearchCmd));
+cl::opt<bool> SearchBackward("backward",
+                             cl::desc("Search in descending address order"),
+                             cl::sub(SearchCmd));
+} // namespace
 
 int runSearch(neverd_session_t Sess) {
+  if (!SearchImmediate.empty()) {
+    if (!SearchHex.empty() || !SearchText.empty() || SearchMaxResults < 1 ||
+        SearchMaxResults > 4096) {
+      WithColor::error()
+          << "--immediate requires one pattern and --max-results in 1..4096\n";
+      return 1;
+    }
+    json::Object Request{{"kind", "immediate"},
+                         {"pattern", SearchImmediate.getValue()},
+                         {"limit", SearchMaxResults.getValue()},
+                         {"backward", bool(SearchBackward)}};
+    if (!SearchFrom.empty()) {
+      const auto From = parseAddrArg(SearchFrom);
+      if (!From) {
+        WithColor::error() << "invalid --from address\n";
+        return 1;
+      }
+      Request["from"] = "0x" + utohexstr(*From);
+    }
+    std::string Text;
+    raw_string_ostream(Text) << json::Value(std::move(Request));
+    // One SDK page builds bounded chunks; continue without changing its cursor.
+    for (;;) {
+      const auto *Reply = neverd_search_page(Sess, Text.c_str());
+      if (!Reply) {
+        WithColor::error() << takeLastError(Sess) << "\n";
+        return 1;
+      }
+      auto Parsed = json::parse(Reply);
+      neverd_free_string(Reply);
+      if (!Parsed) {
+        WithColor::error() << toString(Parsed.takeError()) << "\n";
+        return 1;
+      }
+      if (Parsed->getAsObject()->getBoolean("building").value_or(false))
+        continue;
+      outs() << *Parsed << "\n";
+      return 0;
+    }
+  }
   int MaxRes = static_cast<int>(SearchMaxResults.getValue());
 
   if (!SearchHex.empty()) {

@@ -1119,6 +1119,10 @@ cl::opt<bool>
               cl::desc("Persist --declare types in the binary's project for "
                        "later CLI commands and the GUI"),
               cl::sub(TypesCmd));
+cl::opt<bool>
+    TypesSaveDeclarations("save-declarations",
+                          cl::desc("Same as --save: persist --declare types"),
+                          cl::sub(TypesCmd));
 cl::opt<bool> TypesNoOffsets("no-offsets",
                              cl::desc("Leave out the offset comments"),
                              cl::sub(TypesCmd));
@@ -1582,6 +1586,10 @@ cl::opt<unsigned> ItemSize("size",
                            cl::desc("Bytes of a value, an array element, or "
                                     "undefined bytes"),
                            cl::init(1), cl::sub(ItemsCmd));
+cl::opt<unsigned>
+    ItemElementSize("element-size",
+                    cl::desc("Array element width in bytes (same as --size)"),
+                    cl::init(1), cl::sub(ItemsCmd));
 cl::opt<std::string>
     ItemArray("array",
               cl::desc("Define an array at this address (hex), with --size "

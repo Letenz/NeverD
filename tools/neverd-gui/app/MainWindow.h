@@ -222,6 +222,7 @@ private:
                       bool selectAssemblyAddress = false);
   void toggleGraph();
   void searchBinary(const QString &kind, bool again);
+  void queryRegister(const QString &kind);
   void searchHighlight(bool forward);
   void stepFunction(bool forward);
   void showCalculator();
@@ -316,7 +317,7 @@ private:
   QMenu *recentMenu_ = nullptr;
   QMenu *windowsMenu_ = nullptr;
   QString layoutPath_;
-  QString lastTextSearch_, lastByteSearch_;
+  QString lastTextSearch_, lastByteSearch_, lastImmediateSearch_;
   quint64 searchSerial_ = 0, searchSubscription_ = 0;
   QString lastPaletteCommand_;
   bool searchDown_ = true;

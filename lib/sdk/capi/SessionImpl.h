@@ -20,6 +20,7 @@
 #include "InstructionFlow.h"
 #include "LoadOptions.h"
 #include "LocalTypesDebugContext.h"
+#include "NativeImmediateIndex.h"
 
 #include "neverd/DataAccessWidths.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -654,6 +655,7 @@ struct Session {
     bool operator==(const DataItem &) const = default;
   };
   std::map<va_t, DataItem> DataItems;
+  NativeImmediateIndex ImmediateIndex;
   /// How the user shows an instruction operand's number
   /// (neverd_operand_format_set): a base of OperandFormats.def, with its sign
   /// changed or its bits inverted, or for a structure offset the local type

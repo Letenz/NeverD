@@ -175,6 +175,15 @@ const char *neverd_search_page(neverd_session_t Sess, const char *OptionsJSON) {
     From = Value;
   }
   std::vector<unsigned char> Bytes;
+  if (Kind == "immediate") {
+    try {
+      return dupStr(jsonToString(llvm::json::Value(searchNativeImmediates(
+          *S, *Pattern, From, Options->getBoolean("backward").value_or(false),
+          size_t(Limit)))));
+    } catch (const std::exception &E) {
+      return Fail(E.what());
+    }
+  }
   if (Kind == "bytes") {
     int High = -1;
     for (const unsigned char C : *Pattern) {
@@ -198,7 +207,7 @@ const char *neverd_search_page(neverd_session_t Sess, const char *OptionsJSON) {
   } else if (Kind == "text") {
     Bytes.assign(Pattern->bytes_begin(), Pattern->bytes_end());
   } else
-    return Fail("Search kind must be bytes or text");
+    return Fail("Search kind must be bytes, text or immediate");
   auto Page = searchPage(
       *S, Bytes,
       Kind == "bytes" || Options->getBoolean("case_sensitive").value_or(false),

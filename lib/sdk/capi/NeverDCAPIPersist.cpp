@@ -14,6 +14,7 @@
 #include "SessionImpl.h"
 
 #include "neverd/decode/Decoder.h"
+#include "neverd/decode/NativeOperands.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/InternalNoReturn.h"
 #include "neverd/ir/low/LowNoReturn.h"
@@ -623,6 +624,7 @@ int neverd_func_create(neverd_session_t Sess, neverd_va_t Entry) {
       }
   }
   S->FunctionEdits[Entry] = true;
+  S->ImmediateIndex = {};
   S->invalidatePipeline();
   return 0;
 }
@@ -645,6 +647,7 @@ int neverd_func_delete(neverd_session_t Sess, neverd_va_t Entry) {
   // Recorded for a created function too: the image, the detector or analysis
   // may find a function there as well.
   S->FunctionEdits[Entry] = false;
+  S->ImmediateIndex = {};
   // What the user stated of the function goes with it, as in IDA.
   const auto Attributes = S->FunctionAttributeEdits.find(Entry);
   const bool StatedNoReturn = Attributes != S->FunctionAttributeEdits.end() &&
@@ -1400,18 +1403,22 @@ int neverd_operand_format_set(neverd_session_t Sess, neverd_va_t Addr,
               Seg->Data.data() + (Addr - Seg->VA),
               std::min<size_t>(16, Seg->Data.size() - (Addr - Seg->VA)), Addr,
               Insn) ||
-          !Insn.Raw || !Insn.Raw->detail ||
-          Operand >= Insn.Raw->detail->x86.op_count ||
-          Insn.Raw->detail->x86.operands[Operand].type != X86_OP_IMM) {
+          !Insn.Raw || !Insn.Raw->detail) {
         S->setError("Select an actual decoded x86 immediate operand");
         return -1;
       }
-      const auto &OperandInfo = Insn.Raw->detail->x86.operands[Operand];
-      const auto Value =
-          "0x" + llvm::utohexstr(static_cast<uint64_t>(OperandInfo.imm));
+      const auto Facts = describeNativeOperands(Dec, Insn, S->Img.Arch, false);
+      auto Selected = std::find_if(
+          Facts.Immediates.begin(), Facts.Immediates.end(),
+          [&](const auto &I) { return I.Operand == unsigned(Operand); });
+      if (Selected == Facts.Immediates.end()) {
+        S->setError("Select an actual decoded x86 immediate operand");
+        return -1;
+      }
+      const auto Value = "0x" + llvm::utohexstr(Selected->Value);
       const auto *Checked =
           neverd_enum_value_json(Sess, Format->Type.c_str(), Value.c_str(),
-                                 OperandInfo.size * 8, Format->Delta != 0);
+                                 Selected->Bits, Format->Delta != 0);
       if (!Checked)
         return -1;
       neverd_free_string(Checked);
