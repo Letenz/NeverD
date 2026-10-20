@@ -3836,6 +3836,28 @@ if(LLD_EXEC)
   list(APPEND ELF_EXECUTABLES ${plt_byte_write_x64_obj}
                               ${plt_byte_write_x64_so})
 
+  # Calls through PLT entries whose callees return a register pair.
+  set(plt_pair_returns_x64_src
+      "${CMAKE_CURRENT_SOURCE_DIR}/x86_64/test_plt_pair_returns_x64.s")
+  set(plt_pair_returns_x64_obj
+      "${CMAKE_CURRENT_BINARY_DIR}/test_plt_pair_returns_x64.o")
+  set(plt_pair_returns_x64_so
+      "${CMAKE_CURRENT_BINARY_DIR}/test_plt_pair_returns_x64.so")
+  add_custom_command(
+    OUTPUT ${plt_pair_returns_x64_obj}
+    COMMAND ${CLANG_EXEC} -target x86_64-linux-gnu -c ${plt_pair_returns_x64_src}
+            -o ${plt_pair_returns_x64_obj}
+    DEPENDS ${plt_pair_returns_x64_src}
+    COMMENT "Compiling x86-64 PLT pair-return fixture")
+  add_custom_command(
+    OUTPUT ${plt_pair_returns_x64_so}
+    COMMAND ${LLD_EXEC} -shared --eh-frame-hdr -o ${plt_pair_returns_x64_so}
+            ${plt_pair_returns_x64_obj}
+    DEPENDS ${plt_pair_returns_x64_obj}
+    COMMENT "Linking x86-64 PLT pair-return fixture")
+  list(APPEND ELF_EXECUTABLES ${plt_pair_returns_x64_obj}
+                              ${plt_pair_returns_x64_so})
+
   # Switch tables of an i386 shared library, relative to its GOT address.
   set(pic_switch_i386_src
       "${CMAKE_CURRENT_SOURCE_DIR}/x86_32/test_pic_switch_i386.s")

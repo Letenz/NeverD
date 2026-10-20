@@ -12,6 +12,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedCallClobber.h"
 
 #include <algorithm>
 #include <map>
@@ -320,6 +321,7 @@ void LowToMedConverter::modelCallFPReturn(MedFunc &Func) {
       Out.RegOff = FPRet;
       Out.SSAVer = NewVer;
       Out.TheArch = TargetArch;
+      keepReplacedCallOutput(Func, Op, Op.Output);
       Op.Output = Out;
 
       // Straight-line reads after the call observe the result until a redef.

@@ -1522,6 +1522,213 @@ TEST(SysVCallContract, GccSplitVaStartMarksTheFunctionVariadic) {
   }
 }
 
+TEST(SysVCallContract, AColdFragmentCallingAbortThroughItsStubNeverReturns) {
+  // check(x) jumps to its cold fragment, which calls abort through the PLT
+  // stub that function discovery also lists as a function.  The stub's
+  // import never returns, so neither does the fragment, and check's jump to
+  // it hands back no value.
+  constexpr va_t Check = Text, Cold = Text + 0x40, AbortStub = Text + 0x100;
+  std::vector<uint8_t> Code(0x110, 0xCC);
+  std::vector<uint8_t> CheckCode = {0x85, 0xFF,  // test edi, edi
+                                    0x0F, 0x88}; // js cold
+  for (uint8_t B : rel32(Check + CheckCode.size() + 4, Cold))
+    CheckCode.push_back(B);
+  for (uint8_t B : {0x8D, 0x04, 0x7F, // lea eax, [rdi + rdi*2]
+                    0xC3})            // ret
+    CheckCode.push_back(B);
+  put(Code, Check, CheckCode);
+  std::vector<uint8_t> ColdCode = {0xE8}; // call abort
+  for (uint8_t B : rel32(Cold + 5, AbortStub))
+    ColdCode.push_back(B);
+  put(Code, Cold, ColdCode);
+  const BinaryImage Img = makeImportImage(
+      Code, {{Check, "check"}, {Cold, "check_cold"}}, {{AbortStub, "abort"}});
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {Check, Cold, AbortStub};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  auto Find = [&](va_t Entry) {
+    return std::find_if(
+        Result.MedFuncs.begin(), Result.MedFuncs.end(),
+        [&](const MedFunc &Function) { return Function.Entry == Entry; });
+  };
+  const auto Fragment = Find(Cold);
+  ASSERT_NE(Fragment, Result.MedFuncs.end());
+  EXPECT_TRUE(Fragment->DoesNotReturn);
+  const auto Caller = Find(Check);
+  ASSERT_NE(Caller, Result.MedFuncs.end());
+  bool SawJump = false;
+  for (const MedBlock &Block : Caller->Blocks)
+    for (const MedOp &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst() &&
+          Op.Inputs[0].ConstVal == Cold) {
+        SawJump = true;
+        EXPECT_TRUE(Op.DoesNotReturn);
+      }
+  EXPECT_TRUE(SawJump);
+}
+
+TEST(SysVCallContract, AByteSetAfterACallReadsNoSecondResult) {
+  // g calls f, which clobbers EDX, then compares two flags it sets in DL and
+  // AL.  `setne dl` keeps what f left in the rest of RDX, but nothing reads
+  // those bytes, so f returns one register and no record of two.
+  constexpr va_t G = Text, F = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> GCode = {0x53,             // push rbx
+                                0x48, 0x89, 0xFB, // mov rbx, rdi
+                                0xE8};            // call f
+  for (uint8_t B : rel32(G + GCode.size() + 4, F))
+    GCode.push_back(B);
+  for (uint8_t B : {0x80, 0x3B, 0x00, // cmp byte [rbx], 0
+                    0x0F, 0x95, 0xC2, // setne dl
+                    0x83, 0xF8, 0x07, // cmp eax, 7
+                    0x0F, 0x94, 0xC0, // sete al
+                    0x38, 0xD0,       // cmp al, dl
+                    0x0F, 0x94, 0xC0, // sete al
+                    0x0F, 0xB6, 0xC0, // movzx eax, al
+                    0x5B,             // pop rbx
+                    0xC3})            // ret
+    GCode.push_back(B);
+  put(Code, G, GCode);
+  put(Code, F,
+      {0x89, 0xFA,       // mov edx, edi
+       0x8D, 0x04, 0x52, // lea eax, [rdx + rdx*2]
+       0xC3});           // ret
+  const BinaryImage Img = makeImportImage(Code, {{G, "g"}, {F, "f"}}, {});
+  llvm::LLVMContext Ctx;
+  PipelineOptions Opts;
+  Opts.EmitDumpOutput = false;
+  Opts.OnlyFunctionEntries = {G, F};
+  const PipelineResult Result = Pipeline().run(Img, Ctx, Opts);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  const auto Callee = std::find_if(
+      Result.MedFuncs.begin(), Result.MedFuncs.end(),
+      [&](const MedFunc &Function) { return Function.Entry == F; });
+  ASSERT_NE(Callee, Result.MedFuncs.end());
+  EXPECT_TRUE(Callee->MultiReturn.empty());
+}
+
+TEST(SysVCallContract, AStringCompareLeavesNoSecondResultInRDX) {
+  // same(a, b) returns `a && strcmp(a, b) != 0` the way GCC returns a bool:
+  // EDX is zero, or `setne dl` over what strcmp left in RDX, and EDX moves
+  // whole into EAX.  strcmp declares an int, so RDX holds no second field of
+  // its result and its stub returns one register; same returns the one byte
+  // both paths define, which no byte strcmp left in RDX reaches.
+  constexpr va_t Same = Text, StrcmpStub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> SameCode = {0x31, 0xD2,       // xor edx, edx
+                                   0x48, 0x85, 0xFF, // test rdi, rdi
+                                   0x74, 0x0A,       // je done
+                                   0xE8};            // call strcmp
+  for (uint8_t B : rel32(Same + 12, StrcmpStub))
+    SameCode.push_back(B);
+  for (uint8_t B : {0x85, 0xC0,       // test eax, eax
+                    0x0F, 0x95, 0xC2, // setne dl
+                    0x89, 0xD0,       // done: mov eax, edx
+                    0xC3})            // ret
+    SameCode.push_back(B);
+  put(Code, Same, SameCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{Same, "same"}}, {{StrcmpStub, "strcmp"}});
+  const std::string Source = liftEntries(Img, {Same, StrcmpStub});
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("int8_t same("), std::string::npos) << Source;
+}
+
+TEST(SysVCallContract, ATailCallLeavesNoRegisterOfTheCallersOwn) {
+  // g adds RDX to what f returns in RAX, so f returns the pair.  f sets
+  // EDX to 11 and tail-jumps to an import no declaration describes: RDX
+  // then holds what the import leaves there, not 11.  Nothing forwards the
+  // pair such an import returns yet, so f refuses to return one.
+  constexpr va_t F = Text, G = Text + 0x20, Stub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> FCode = {0xBA, 0x0B, 0x00, 0x00, 0x00, // mov edx, 11
+                                0xE9};                        // jmp stub
+  for (uint8_t B : rel32(F + 10, Stub))
+    FCode.push_back(B);
+  put(Code, F, FCode);
+  std::vector<uint8_t> GCode = {0xE8}; // call f
+  for (uint8_t B : rel32(G + 5, F))
+    GCode.push_back(B);
+  for (uint8_t B : {0x48, 0x01, 0xD0, // add rax, rdx
+                    0xC3})            // ret
+    GCode.push_back(B);
+  put(Code, G, GCode);
+  const BinaryImage Img = makeImportImage(Code, {{F, "f"}, {G, "g"}},
+                                          {{Stub, "neverd_pair_source"}});
+  const std::string Source = liftEntries(Img, {F, G, Stub});
+  EXPECT_EQ(Source.find("(11)) << 64"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("int64_t f(void) {\n    __builtin_trap(); /* unknown "
+                        "return value */"),
+            std::string::npos)
+      << Source;
+}
+
+TEST(SysVCallContract, AByteSetAfterAFloatCallLeavesNoUnknownBytes) {
+  // later(a, b) returns `a && difftime(a, b) >= 0` the way GCC returns a
+  // bool: EAX is zero, or `setbe al` over what difftime, which returns a
+  // double, left in RAX.  later returns the one byte both paths define.
+  constexpr va_t Later = Text, DifftimeStub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> LaterCode = {0x31, 0xC0,       // xor eax, eax
+                                    0x48, 0x85, 0xFF, // test rdi, rdi
+                                    0x74, 0x10,       // je done
+                                    0xE8};            // call difftime
+  for (uint8_t B : rel32(Later + 12, DifftimeStub))
+    LaterCode.push_back(B);
+  for (uint8_t B : {0x66, 0x0F, 0xEF, 0xC9, // pxor xmm1, xmm1
+                    0x66, 0x0F, 0x2F, 0xC8, // comisd xmm1, xmm0
+                    0x0F, 0x96, 0xC0,       // setbe al
+                    0xC3})                  // done: ret
+    LaterCode.push_back(B);
+  put(Code, Later, LaterCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{Later, "later"}}, {{DifftimeStub, "difftime"}});
+  const std::string Source = liftEntries(Img, {Later, DifftimeStub});
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("int8_t later("), std::string::npos) << Source;
+}
+
+TEST(SysVCallContract, ABoolCallersTestIsNoFloatALeftoverReturns) {
+  // f(s) parses s with strtod and returns whether the value is positive,
+  // like find's get_relative_timestamp: EAX is 1 or 0 at the shared
+  // epilogue, where XMM0 still holds the value or its square.  g tests AL
+  // after the call, so f returns that integer and no double.
+  constexpr va_t F = Text, G = Text + 0x30, StrtodStub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> FCode = {0x53,  // push rbx
+                                0xE8}; // call strtod
+  for (uint8_t B : rel32(F + 6, StrtodStub))
+    FCode.push_back(B);
+  for (uint8_t B : {0x66, 0x0F, 0xEF, 0xC9,       // pxor xmm1, xmm1
+                    0x66, 0x0F, 0x2F, 0xC1,       // comisd xmm0, xmm1
+                    0x76, 0x0B,                   // jbe false
+                    0xF2, 0x0F, 0x59, 0xC0,       // mulsd xmm0, xmm0
+                    0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
+                    0xEB, 0x02,                   // jmp done
+                    0x31, 0xC0,                   // false: xor eax, eax
+                    0x5B,                         // done: pop rbx
+                    0xC3})                        // ret
+    FCode.push_back(B);
+  put(Code, F, FCode);
+  std::vector<uint8_t> GCode = {0xE8}; // call f
+  for (uint8_t B : rel32(G + 5, F))
+    GCode.push_back(B);
+  for (uint8_t B : {0x84, 0xC0,       // test al, al
+                    0x0F, 0x94, 0xC0, // sete al
+                    0x0F, 0xB6, 0xC0, // movzx eax, al
+                    0xC3})            // ret
+    GCode.push_back(B);
+  put(Code, G, GCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{F, "f"}, {G, "g"}}, {{StrtodStub, "strtod"}});
+  const std::string Source = liftEntries(Img, {F, G, StrtodStub});
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("double f("), std::string::npos) << Source;
+}
+
 TEST(SysVCallContract, AnAlignmentPushIsNoStackArgument) {
   // die() calls the variadic panic("out of memory") and never returns, so
   // it aligns the stack for the call with a push of RAX (Clang) or a push,

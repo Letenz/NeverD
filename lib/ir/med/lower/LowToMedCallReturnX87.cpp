@@ -11,6 +11,7 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedCallClobber.h"
 
 #include <algorithm>
 
@@ -78,6 +79,7 @@ void LowToMedConverter::modelCallX87Return(MedFunc &Func) {
       Out.RegOff = StRead.RegOff;
       Out.SSAVer = NewVer;
       Out.TheArch = TargetArch;
+      keepReplacedCallOutput(Func, Op, Op.Output);
       Op.Output = Out;
 
       for (size_t J = OI + 1; J < Blk.Ops.size(); ++J) {

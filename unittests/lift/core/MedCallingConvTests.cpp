@@ -4159,6 +4159,88 @@ TEST(MedTypePass, ByteResultOverUndefinedEntryRegisterIsOneByte) {
   EXPECT_EQ(Func.ReturnType->Size, 1u);
 }
 
+TEST(MedTypePass, ByteResultZeroExtendedThroughAnotherRegisterIsOneByte) {
+  // `sete al; mov r14d, eax; ...; mov eax, r14d; ret`: the 32-bit copy
+  // carries AL over the entry RAX's undefined bytes, and the zero extension
+  // back into RAX defines nothing above AL.
+  constexpr Arch TheArch = Arch::X64;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Blocks.resize(1);
+  MedBlock &Block = Func.Blocks[0];
+  const MedVar EntryRAX = reg(1, 0, 8, TRI.IntReturnReg, TheArch);
+  addLiveIn(Block, EntryRAX);
+  const MedVar AL = reg(2, 1, 1, TRI.IntReturnReg, TheArch);
+  Block.Ops.push_back(unary(NdOp::COPY, AL, MedVar::makeConst(1, 1)));
+  const MedVar Kept = temp(10, 0, 8, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_AND, Kept, EntryRAX,
+                             MedVar::makeConst(~uint64_t{0xff}, 8)));
+  const MedVar Byte = temp(11, 0, 8, TheArch);
+  Block.Ops.push_back(unary(NdOp::INT_ZEXT, Byte, AL));
+  const MedVar Merged = temp(12, 0, 8, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_OR, Merged, Kept, Byte));
+  const MedVar R14D = reg(13, 1, 4, x86reg::R14, TheArch);
+  Block.Ops.push_back(
+      binary(NdOp::SUBBYTES, R14D, Merged, MedVar::makeConst(0, 4)));
+  const MedVar Result = reg(1, 2, 8, TRI.IntReturnReg, TheArch);
+  Block.Ops.push_back(unary(NdOp::INT_ZEXT, Result, R14D));
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(Result);
+  Block.Ops.push_back(Return);
+
+  inferMedTypes(Func, TheArch);
+
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Func.ReturnType->Size, 1u);
+}
+
+TEST(MedTypePass, ByteSetOverACallClobberIsOneByte) {
+  // `call f; test eax, eax; setne dl; mov eax, edx; ret`: f leaves its
+  // scratch in RDX, so of what EAX returns only DL is defined.
+  constexpr Arch TheArch = Arch::X64;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Blocks.resize(1);
+  MedBlock &Block = Func.Blocks[0];
+  MedOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.CallSiteId = 1;
+  Call.Output = reg(1, 1, 8, TRI.IntReturnReg, TheArch);
+  Call.addInput(MedVar::makeConst(0x2000, 8));
+  Block.Ops.push_back(Call);
+  const MedVar Clobbered = reg(2, 1, 8, x86reg::RDX, TheArch);
+  Func.CallClobbers.push_back({Clobbered, 1});
+  const MedVar Nonzero = temp(10, 0, 1, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_NOTEQUAL, Nonzero, Call.Output,
+                             MedVar::makeConst(0, 8)));
+  const MedVar Kept = temp(11, 0, 8, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_AND, Kept, Clobbered,
+                             MedVar::makeConst(~uint64_t{0xff}, 8)));
+  const MedVar Byte = temp(12, 0, 8, TheArch);
+  Block.Ops.push_back(unary(NdOp::INT_ZEXT, Byte, Nonzero));
+  const MedVar Merged = temp(13, 0, 8, TheArch);
+  Block.Ops.push_back(binary(NdOp::INT_OR, Merged, Kept, Byte));
+  const MedVar EDX = reg(2, 2, 4, x86reg::RDX, TheArch);
+  Block.Ops.push_back(
+      binary(NdOp::SUBBYTES, EDX, Merged, MedVar::makeConst(0, 4)));
+  const MedVar Result = reg(1, 2, 8, TRI.IntReturnReg, TheArch);
+  Block.Ops.push_back(unary(NdOp::INT_ZEXT, Result, EDX));
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.addInput(Result);
+  Block.Ops.push_back(Return);
+
+  inferMedTypes(Func, TheArch);
+
+  ASSERT_TRUE(Func.ReturnType);
+  EXPECT_EQ(Func.ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Func.ReturnType->Size, 1u);
+}
+
 TEST(MedTypePass, MaskedByteMergeOverUndefinedEntryRegisterIsOneByte) {
   // `sete al; ret` merges the byte as `(RAX & ~0xFF) | zext(ZF)`.
   constexpr Arch TheArch = Arch::X64;

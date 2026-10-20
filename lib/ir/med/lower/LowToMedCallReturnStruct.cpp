@@ -11,6 +11,7 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -280,6 +281,21 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
                                     }),
                      Fields.end());
       }
+      // A compiler runtime routine declared to return a double word returns
+      // both halves of the integer pair, whichever of them its caller reads:
+      // `(n / d) >> 64` reads only RDX after `call __udivti3`.
+      if (Image && Op.Inputs[0].isConst() && TRI.IntReturnReg2 &&
+          importReturnsDoubleWord(*Image, Op.Inputs[0].ConstVal,
+                                  TRI.PointerSize))
+        for (const uint64_t Register : {TRI.IntReturnReg, TRI.IntReturnReg2}) {
+          auto Known = std::find_if(
+              Fields.begin(), Fields.end(),
+              [&](const FieldRead &F) { return F.RegOff == Register; });
+          if (Known == Fields.end())
+            Fields.push_back({Register, false, TRI.PointerSize, MedVar{}});
+          else
+            Known->Size = std::max<uint16_t>(Known->Size, TRI.PointerSize);
+        }
       if (Fields.size() < 2)
         continue;
       bool AnyFP = false, AnyInt = false;

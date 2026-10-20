@@ -18,6 +18,7 @@
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedNoReturn.h"
 #include "neverd/ir/med/MedTypePass.h"
@@ -171,7 +172,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     propagateForwardedPointerParams(Result.MedFuncs, Img.Arch);
   // Late ABI remodelling may reconvert a function from LowIR.  Refresh the
   // interprocedural facts before either serial or sharded LLVM emission.
-  propagateInternalNoReturn(Result.MedFuncs, Img.Arch, Img.UserNoReturn);
+  propagateInternalNoReturn(Result.MedFuncs, Img.Arch, Img.UserNoReturn,
+                            importCallAddresses(Img));
 
   if (!recordMedIRVerification(Result, "pipeline-backend-input")) {
     Result.Error = "MedIR verification failed before backend emission";

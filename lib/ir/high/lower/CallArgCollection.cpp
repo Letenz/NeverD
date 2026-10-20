@@ -1090,9 +1090,18 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
         (!Image || importCalleeName(*Image, Call.Inputs[0].ConstVal).empty());
   }
   Scan.FirstStackSlot = FirstStackSlot;
-  Scan.TailJump = CallIdx + 1 < Ops.size() &&
-                  Ops[CallIdx + 1].Opcode == NdOp::RETURN &&
-                  Ops[CallIdx + 1].Addr == Ops[CallIdx].Addr;
+  // A tail jump that returns a register pair or struct still leaves on the
+  // entry stack: the forwarder remodel unpacks its result into the field
+  // registers between the call and the RETURN, at the call's address.
+  size_t AfterCall = CallIdx + 1;
+  while (AfterCall < Ops.size() && Ops[AfterCall].Opcode == NdOp::SUBBYTES &&
+         Ops[AfterCall].Addr == Ops[CallIdx].Addr &&
+         Ops[AfterCall].NumInputs >= 1 &&
+         Ops[AfterCall].Inputs[0] == Ops[CallIdx].Output)
+    ++AfterCall;
+  Scan.TailJump = AfterCall < Ops.size() &&
+                  Ops[AfterCall].Opcode == NdOp::RETURN &&
+                  Ops[AfterCall].Addr == Ops[CallIdx].Addr;
   Scan.Indirect =
       CallIdx < Ops.size() && Ops[CallIdx].Opcode == NdOp::INDIR_CALL;
   Scan.StoreScanWindow = limits::kCallArgStoreScanWindow;

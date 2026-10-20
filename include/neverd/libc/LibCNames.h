@@ -188,9 +188,10 @@ const char *headerOfDataObject(std::string_view Name);
 const char *typeOfDataObject(std::string_view Name);
 
 /// Whether the compiler runtime routine C name \p Name returns a double-word
-/// integer in a register pair (CompilerRuntimeDoubleWord.def): `__udivdi3`
-/// on a 32-bit target.
-bool returnsDoubleWord(std::string_view Name);
+/// integer in a register pair on a target of \p WordBytes registers
+/// (CompilerRuntimeDoubleWord.def): `__udivdi3` on a 32-bit target, and
+/// `__udivti3` on a 64-bit one.
+bool returnsDoubleWord(std::string_view Name, unsigned WordBytes);
 
 /// The fixed argument arity of a known NON-variadic libc function (e.g. fputs
 /// -> {2,0}, sqrt -> {0,1}), used to bound the heuristic argument recovery for

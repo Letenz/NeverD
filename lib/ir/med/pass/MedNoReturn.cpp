@@ -145,10 +145,11 @@ bool hasProvenNoReturnExit(const MedFunc &Func, Arch TheArch) {
 }
 
 void propagateInternalNoReturn(std::vector<MedFunc> &Funcs, Arch TheArch,
-                               const std::map<va_t, bool> &Stated) {
+                               const std::map<va_t, bool> &Stated,
+                               const std::set<va_t> &ImportVeneers) {
   std::set<va_t> InternalEntries;
   for (const MedFunc &Func : Funcs)
-    if (!Func.Blocks.empty())
+    if (!Func.Blocks.empty() && !ImportVeneers.count(Func.Entry))
       InternalEntries.insert(Func.Entry);
 
   // A second run follows late ABI remodelling.  Recompute internal markers

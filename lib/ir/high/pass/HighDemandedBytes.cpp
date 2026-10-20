@@ -233,6 +233,20 @@ private:
     }
   }
 
+  /// The bytes of a returned value C returns: the integer return type's, as
+  /// a bound source declaration gives it or the lift inferred it.  None where
+  /// a debug declaration, which only C's writer looks up, may replace it.
+  std::optional<uint16_t> returnedBytes() const {
+    TypeRef Type = Func.ReturnType;
+    if (Func.SourceTypeHint && Func.SourceTypeHint->ReturnType)
+      Type = Func.SourceTypeHint->ReturnType;
+    else if (!Func.DebugName.empty())
+      return std::nullopt;
+    if (!Type || Type->Kind != NdTypeKind::Int || !Type->Size)
+      return std::nullopt;
+    return Type->Size;
+  }
+
   /// Every operand of every observable evaluation, and every root a
   /// statement reads for anything but a variable's value, is demanded whole.
   void seed() {
@@ -245,6 +259,14 @@ private:
           return;
         if (DefinesVar && &Root == &S.Val && readOnlyByUses(S.Dst->Var))
           return;
+        // A function returns its value as its return type: `return v;` of
+        // an int32_t v in an int8_t function reads v's low byte.
+        if (S.Kind == StmtKind::Return && &Root == &S.RetVal && Root)
+          if (const std::optional<uint16_t> Bytes = returnedBytes();
+              Bytes && *Bytes < exprBytes(*Root)) {
+            demand(Root.get(), allBytes(*Bytes));
+            return;
+          }
         if (S.Kind == StmtKind::Assign && &Root == &S.Dst) {
           // An assignment through memory reads its address.
           Root->forEachChildExpr([&](const ExprPtr &C) { demandAll(C); });
