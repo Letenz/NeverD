@@ -1956,6 +1956,11 @@ try and handler tables and bind each cleanup to its generated state and range.
 The COFF table validator reparses source metadata, checks all raw table edges,
 matches the physical catch subfield and authenticates every absolute pointer
 fixup. SEH and C++ share generated-section and pointer-field ownership checks.
+Parents with only cleanup actions obtain the same layout from their cleanup
+records. They retain a literal zero try count and pointer with no overlapping
+fixup; no empty table is allocated. The shared state-map proof checks every
+ordered cleanup and outer edge. Handler, SafeSEH, relocation and final PE graph
+validation apply equally to these parents.
 The emitter fixes original image storage identity before materializing any
 function or shard, including masked native C++ sources. Preserved callee
 footprints and ordinary helper bodies therefore share the same canonical image

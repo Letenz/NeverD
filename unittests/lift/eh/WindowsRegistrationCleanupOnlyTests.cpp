@@ -7,6 +7,9 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/ExceptionRewriteContract.h"
+#include "neverd/backend/RewriteSourceIdentity.h"
+#include "neverd/backend/codegen/BinaryRewriter.h"
+#include "neverd/backend/codegen/COFF/COFFPatch.h"
 #include "neverd/backend/codegen/COFF/COFFRegistrationPatch.h"
 #include "neverd/backend/codegen/CodeGen.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
@@ -18,10 +21,15 @@
 #include "neverd/ir/med/X86RegistrationCallback.h"
 #include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
+#include "neverd/object/PELayout.h"
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Mangler.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/TargetSelect.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
 #include <cstdlib>
@@ -95,9 +103,15 @@ void checkCleanupOnlyInput(const char *Path, bool RegisterStateWrite) {
       classifyWindowsEHNativeSource(*Source, Arch::X86, BinaryFormat::COFF,
                                     WindowsEHNativeCapability::IRLowering)
           .canLowerNativeIR());
+#ifdef LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS
+  EXPECT_TRUE(
+      classifyWindowsEHNativeSource(*Source, Arch::X86, BinaryFormat::COFF)
+          .canPatchOutput());
+#else
   EXPECT_FALSE(
       classifyWindowsEHNativeSource(*Source, Arch::X86, BinaryFormat::COFF)
           .canPatchOutput());
+#endif
   Decoder Decode;
   ASSERT_TRUE(Decode.init(*Image));
   auto Low = CFGBuilder().build(*Image, Decode, Export->Addr, "cleanup_only");
@@ -276,10 +290,212 @@ void checkCleanupOnlyInput(const char *Path, bool RegisterStateWrite) {
     EXPECT_TRUE(bool(Error));
     llvm::consumeError(std::move(Error));
   }
-  // The normal LLVM backend must retain real cleanup funclets and their EH
-  // tables even though PE installation remains a separate unsupported step.
-  auto Compiled = Codegen().compile(*Module, Arch::X86, BinaryFormat::COFF);
+  // Keep the object compile independent: code generation may mutate its IR.
+  auto ObjectModule = llvm::CloneModule(*Module);
+  auto Compiled =
+      Codegen().compile(*ObjectModule, Arch::X86, BinaryFormat::COFF);
   ASSERT_TRUE(Compiled.Success);
+#ifdef LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS
+  llvm::InitializeAllTargetInfos();
+  llvm::InitializeAllTargets();
+  llvm::InitializeAllTargetMCs();
+  llvm::InitializeAllAsmParsers();
+  llvm::InitializeAllAsmPrinters();
+  auto Resolve = [&](llvm::StringRef Symbol,
+                     uint32_t) -> std::optional<uint64_t> {
+    if (auto Address = parseNdDataSymbol(Symbol))
+      return *Address;
+    if (auto Address = parseNdCodePtrSymbol(Symbol))
+      return *Address;
+    for (const auto &Function : *Module) {
+      llvm::SmallString<64> Name;
+      llvm::Mangler Mangler;
+      Mangler.getNameWithPrefix(Name, &Function, false);
+      if (Name != Symbol)
+        continue;
+      auto Address = rewrite_source::getOriginalVA(Function);
+      if (!Address) {
+        llvm::consumeError(Address.takeError());
+        return std::nullopt;
+      }
+      return *Address;
+    }
+    return std::nullopt;
+  };
+  // The register-state variant above edits the decoded source in memory.
+  // Exercise installation against the unmodified on-disk fixture here.
+  if (RegisterStateWrite)
+    return;
+  auto Input = llvm::MemoryBuffer::getFile(Path);
+  ASSERT_TRUE(bool(Input));
+  const auto Bytes = (*Input)->getBuffer();
+  std::vector<uint8_t> Binary(Bytes.bytes_begin(), Bytes.bytes_end());
+  COFFPatcher Patcher;
+  const va_t CodeVA = Patcher.plannedExecSegmentVA(Binary, Arch::X86);
+  auto Native = compileImageForPatch(*Module, Arch::X86, BinaryFormat::COFF,
+                                     CodeVA, Resolve, Image->Base);
+  ASSERT_TRUE(Native.Success);
+  ASSERT_TRUE(Native.Unresolved.empty());
+  ASSERT_EQ(Native.WinEHSemanticRecords.size(), Actions);
+  for (const auto &Row : Native.WinEHSemanticRecords) {
+    ASSERT_EQ(Row.Token.Kind,
+              llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCleanup);
+    ASSERT_TRUE(Row.X86CxxLayout);
+    EXPECT_EQ(Row.X86CxxLayout->Tables[2].BeginVA, 0u);
+    EXPECT_EQ(Row.X86CxxLayout->Tables[2].EndVA, 0u);
+    EXPECT_EQ(Row.X86CxxLayout->Tables[3].BeginVA, 0u);
+    EXPECT_EQ(Row.X86CxxLayout->Tables[3].EndVA, 0u);
+  }
+  auto Tables = getCheckedCOFFRegistrationCxxTableReceipt(*Parent, *Source,
+                                                          *Image, Native);
+  ASSERT_TRUE(bool(Tables)) << llvm::toString(Tables.takeError());
+  EXPECT_EQ(Tables->Tables[2], (std::pair<va_t, va_t>{0, 0}));
+  EXPECT_EQ(Tables->SourceToGeneratedStates.size(),
+            Source->Cxx->UnwindMap.size() + 1);
+  EXPECT_TRUE(Tables->GeneratedCxxGraph.TryBlocks.empty());
+  EXPECT_EQ(Tables->AbsolutePointerFields.size(), Actions + 1);
+  auto Handler = getCheckedCOFFRegistrationCxxHandlerReceipt(*Parent, *Source,
+                                                             *Image, Native);
+  ASSERT_TRUE(bool(Handler)) << llvm::toString(Handler.takeError());
+  EXPECT_EQ(Handler->AbsolutePointerFields.size(), Actions + 3);
+  for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Native;
+    auto Word = [&](va_t Address, uint32_t Value) {
+      writeLE<uint32_t>(Changed.Bytes.data() + Address - Changed.BaseVA, Value);
+    };
+    const va_t Info = Tables->FuncInfoVA;
+    const auto Row = Changed.WinEHSemanticRecords.front();
+    switch (Mutation) {
+    case 0:
+      Changed.WinEHSemanticRecords.clear();
+      break;
+    case 1:
+      Changed.WinEHSemanticRecords.push_back(Row);
+      break;
+    case 2:
+      Changed.WinEHSemanticRecords.front().X86CxxLayout.reset();
+      break;
+    case 3:
+      Changed.WinEHSemanticRecords.front().X86CxxLayout->Tables[2] =
+          Row.X86CxxLayout->Tables[1];
+      break;
+    case 4:
+      Word(Info + 12, 1);
+      break;
+    case 5:
+      Word(Info + 16, Tables->Tables[1].first);
+      break;
+    case 6:
+      Changed.WinEHSemanticRecords.front().EnclosingState = Row.GeneratedState;
+      break;
+    case 7:
+      Word(Row.RecordVA, Row.GeneratedState);
+      break;
+    case 8:
+      Word(Row.RecordVA + 4, 0);
+      break;
+    case 9:
+      for (auto &Section : Changed.Sections)
+        std::erase_if(Section.FixupReferences, [&](const auto &Fixup) {
+          return Section.VA + Fixup.Offset == Info + 8;
+        });
+      break;
+    case 10: {
+      bool Added = false;
+      for (auto &Section : Changed.Sections) {
+        const auto Fixup =
+            llvm::find_if(Section.FixupReferences, [&](const auto &Candidate) {
+              return Section.VA + Candidate.Offset == Info + 8;
+            });
+        if (Fixup == Section.FixupReferences.end())
+          continue;
+        auto Zero = *Fixup;
+        Zero.Offset = Info + 16 - Section.VA;
+        Zero.ResolvedValue = 0;
+        Section.FixupReferences.push_back(Zero);
+        Added = true;
+        break;
+      }
+      ASSERT_TRUE(Added);
+      break;
+    }
+    case 11:
+      Word(Info + 4,
+           (Tables->Tables[1].second - Tables->Tables[1].first) / 8 + 1);
+      break;
+    case 12:
+      Changed.WinEHSemanticRecords.erase(Changed.WinEHSemanticRecords.begin());
+      break;
+    case 13:
+      Changed.WinEHSemanticRecords.front().X86CxxLayout->Tables[0].EndVA += 4;
+      break;
+    }
+    auto Rejected = getCheckedCOFFRegistrationCxxTableReceipt(*Parent, *Source,
+                                                              *Image, Changed);
+    EXPECT_FALSE(bool(Rejected));
+    if (!Rejected)
+      llvm::consumeError(Rejected.takeError());
+  }
+  {
+    auto Changed = Native;
+    Changed.Bytes[Handler->CodeRange.Begin - Changed.BaseVA] = 0x90;
+    auto Rejected = getCheckedCOFFRegistrationCxxHandlerReceipt(
+        *Parent, *Source, *Image, Changed);
+    EXPECT_FALSE(bool(Rejected));
+    if (!Rejected)
+      llvm::consumeError(Rejected.takeError());
+  }
+  const std::pair<va_t, va_t> Mapping{Source->CodeRange.Begin, Tables->OwnerVA};
+  auto Update = prepareCOFFRegistrationPatch(Binary, *Image, Native, {Mapping},
+                                             CodeVA, *Module);
+  ASSERT_TRUE(bool(Update)) << llvm::toString(Update.takeError());
+  ASSERT_TRUE(Update->Apply);
+  ASSERT_EQ(Update->GeneratedCxxGraphs.size(), 1u);
+  EXPECT_TRUE(Update->GeneratedCxxGraphs.front().TryBlocks.empty());
+  ASSERT_EQ(Patcher.appendExecSegment(Binary, Native.Bytes, kNdTextSection,
+                                      Arch::X86),
+            CodeVA);
+  auto PE = locatePEHeaders(Binary.data(), Binary.size());
+  std::optional<size_t> Entry;
+  forEachPESection(PE, [&](const PESectionFields &Section, uint16_t) {
+    const uint64_t RVA = Source->CodeRange.Begin - Image->Base;
+    if (RVA >= Section.VirtualAddress &&
+        rangeInBounds(RVA - Section.VirtualAddress, 5, Section.SizeOfRawData))
+      Entry = Section.PointerToRawData + RVA - Section.VirtualAddress;
+  });
+  ASSERT_TRUE(Entry);
+  ASSERT_TRUE(rangeInBounds(*Entry, 5, Binary.size()));
+  Binary[*Entry] = 0xe9;
+  writeLE<uint32_t>(Binary.data() + *Entry + 1,
+                    uint32_t(Tables->OwnerVA - Source->CodeRange.Begin - 5));
+  auto Applied = applyCOFFRegistrationPatch(Binary, *Update);
+  ASSERT_FALSE(bool(Applied)) << llvm::toString(std::move(Applied));
+  auto Checked = validateCOFFRegistrationPatch(Binary, *Update);
+  ASSERT_FALSE(bool(Checked)) << llvm::toString(std::move(Checked));
+  if (const char *Output =
+          std::getenv("NEVERD_REGISTRATION_CLEANUP_ONLY_OUTPUT_PE32")) {
+    std::error_code Error;
+    llvm::raw_fd_ostream Stream(Output, Error, llvm::sys::fs::OF_None);
+    ASSERT_FALSE(bool(Error)) << Error.message();
+    Stream.write(reinterpret_cast<const char *>(Binary.data()), Binary.size());
+    Stream.close();
+    ASSERT_FALSE(Stream.has_error());
+  }
+  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = *Update;
+    if (Mutation == 0)
+      Changed.GeneratedCxxGraphs.clear();
+    if (Mutation == 1)
+      Changed.GeneratedCxxGraphs.front().UnwindMap.front().ToState = 0;
+    if (Mutation == 2)
+      Changed.GeneratedCxxGraphs.front().UnwindMap.front().ActionVA += 1;
+    auto Rejected = validateCOFFRegistrationPatch(Binary, Changed);
+    EXPECT_TRUE(bool(Rejected));
+    llvm::consumeError(std::move(Rejected));
+  }
+#endif
 }
 
 TEST(WindowsRegistrationCleanupOnly, InputPE32PreservesEveryUnwindAction) {

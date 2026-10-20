@@ -1251,9 +1251,16 @@ TEST(WindowsEHNativeSource, PE32CleanupOnlyNeedsAnExactDirectActionGraph) {
 #endif
   const auto Output =
       classifyWindowsEHNativeSource(EH, Arch::X86, BinaryFormat::COFF);
+#if defined(LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS) &&                            \
+    defined(LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS) &&                          \
+    defined(LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS)
+  EXPECT_TRUE(Output.canPatchOutput());
+  EXPECT_EQ(Output.Reason, WindowsEHNativeSourceReason::Eligible);
+#else
   EXPECT_FALSE(Output.canPatchOutput());
   EXPECT_EQ(Output.Reason,
             WindowsEHNativeSourceReason::OutputReconstructionUnavailable);
+#endif
   for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Changed = EH;

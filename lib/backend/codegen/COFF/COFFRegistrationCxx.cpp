@@ -72,9 +72,6 @@ getCheckedCOFFRegistrationCxxTableReceipt(const llvm::Function &Function,
           Compiled.FunctionRanges, Compiled.FunctionOwnerAddrs))
     return rejectCxx("source or compiler contract is incomplete");
   const auto &Cxx = *Source.Cxx;
-  if (Cxx.TryBlocks.empty())
-    return rejectCxx(
-        "cleanup-only output has no complete table layout receipt");
   auto Root = coff_registration::ownerVA(Function, Compiled);
   if (!Root)
     return Root.takeError();
@@ -113,7 +110,15 @@ getCheckedCOFFRegistrationCxxTableReceipt(const llvm::Function &Function,
   }
   if (llvm::any_of(Catches, [](const auto &Item) { return !Item.second; }))
     return rejectCxx("generated FuncInfo lost a catch row");
-  const auto &Layout = *Catches.begin()->second->X86CxxLayout;
+  const auto *LayoutRow = !Catches.empty()    ? Catches.begin()->second
+                          : !BySource.empty() ? BySource.begin()->second
+                                              : nullptr;
+  if (!LayoutRow)
+    return rejectCxx("generated FuncInfo has no source-owned table receipt");
+  // Cleanup records carry the same compiler-owned FuncInfo, unwind map and
+  // registration node as catch records. Their absent try map is a literal
+  // null field, not an empty address range in the generated image.
+  const auto &Layout = *LayoutRow->X86CxxLayout;
   for (const auto &[Identity, Row] : Catches) {
     const auto &Other = *Row->X86CxxLayout;
     if (!std::equal(Other.Tables.begin(), Other.Tables.begin() + 3,
@@ -125,7 +130,7 @@ getCheckedCOFFRegistrationCxxTableReceipt(const llvm::Function &Function,
           "catch rows disagree about their complete runtime tables");
   }
   auto Tables = llvm::to_vector(Layout.Tables);
-  Tables.resize(3);
+  Tables.resize(Cxx.TryBlocks.empty() ? 2 : 3);
   for (uint32_t Region = 0; Region < Cxx.TryBlocks.size(); ++Region)
     Tables.push_back(Catches.at({Region, 0})->X86CxxLayout->Tables[3]);
   for (const auto &Table : Tables)
@@ -162,9 +167,18 @@ getCheckedCOFFRegistrationCxxTableReceipt(const llvm::Function &Function,
     Receipt.AbsolutePointerFields.push_back(Field);
     return true;
   };
-  if (!Pointer(Info + 8, Layout.Tables[1].BeginSymbol, Unwind) ||
-      !Pointer(Info + 16, Layout.Tables[2].BeginSymbol, TryMap))
+  if (!Pointer(Info + 8, Layout.Tables[1].BeginSymbol, Unwind))
     return rejectCxx("table pointers lost exact compiler fixup ownership");
+  if (Cxx.TryBlocks.empty()) {
+    const auto *Section = coff_registration::sectionAt(
+        Compiled, Info + 12, 8, SectionKind::ReadOnlyData);
+    if (TryMap || !Section ||
+        !coff_registration::hasNoFixup(*Section, Info + 12, 8))
+      return rejectCxx(
+          "absent try map is not a literal zero count and pointer");
+  } else if (!Pointer(Info + 16, Layout.Tables[2].BeginSymbol, TryMap)) {
+    return rejectCxx("table pointers lost exact compiler fixup ownership");
+  }
   std::vector<coff_registration::CxxGeneratedTry> Tries(Cxx.TryBlocks.size());
   std::set<va_t> TryRows;
   for (uint32_t Region = 0; Region < Cxx.TryBlocks.size(); ++Region) {
@@ -330,8 +344,10 @@ getCheckedCOFFRegistrationCxxHandlerReceipt(const llvm::Function &Function,
   const auto Row =
       llvm::find_if(Compiled.WinEHSemanticRecords, [&](const auto &R) {
         return R.SourceFunction == Function.getName() &&
-               R.Token.Kind ==
-                   llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCatch;
+               (R.Token.Kind ==
+                    llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCatch ||
+                R.Token.Kind ==
+                    llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCleanup);
       });
   if (!Runtime || Row == Compiled.WinEHSemanticRecords.end() ||
       !Row->X86CxxLayout)

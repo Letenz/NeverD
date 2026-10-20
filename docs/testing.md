@@ -5938,9 +5938,18 @@ build-release/bin/NeverDWindowsRegistrationNativeTests --runtime-libs PATH
 and no local catch. O0 uses two unwind actions; O1 combines their ordered calls.
 The test decodes the original source, verifies native LLVM cleanup/invoke edges,
 replays independent control and frame proofs, rejects eight verifier-valid IR
-mutations, and compiles the result to COFF. The script verifies captured MSVC
-library hashes and does not execute either image. Cleanup-only PE installation
-remains explicitly unavailable until its table layout has a complete receipt.
+mutations, and compiles the result to COFF. Cleanup records supply complete
+table and handler receipts without a catch row. Fourteen table mutations and
+a changed handler are rejected, including a relocation over the absent try-map
+pointer. The test installs the generated code, validates the final PE and
+rejects changed expected unwind graphs. The script records original and
+generated PE hashes and verifies captured MSVC library hashes. It does not
+execute either image by default. With `--wine PATH`, it runs both optimization
+profiles at their preferred and rebased addresses. Original and generated
+parents must return zero after the caller catches the thrown value and observes
+destructors in order; a changed initial trace must return one at both bases.
+`--wine-prefix PATH` selects an isolated prefix instead of the output directory's
+default prefix. These runtime checks execute only the generated test fixtures.
 `check_windows_registration_realigned_rewrite.py` separately emits aligned
 value/reference, unbound value/reference and catch-all parents. Independent
 assembly fixtures use the canonical direct MSVC EBP frame for the unbound forms.

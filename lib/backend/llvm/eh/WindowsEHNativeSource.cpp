@@ -661,11 +661,10 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
 #if defined(LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS) &&                            \
     defined(LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS) &&                          \
     defined(LLVM_NEVERD_X86_CXX_HANDLER_RECEIPTS)
-    // The current PE writer obtains the physical table layout from a catch
-    // receipt. Cleanup-only IR has no such row; do not advertise installation
-    // until reconstruction can independently bind its complete table layout.
-    if (!EH.Cxx->TryBlocks.empty())
-      return {Model, WindowsEHNativeSourceReason::Eligible, Capability};
+    // Both catch and cleanup records carry a complete compiler table layout.
+    // Installation replays the action graph and authenticates a missing try
+    // map as a literal zero count/pointer before constructing the PE update.
+    return {Model, WindowsEHNativeSourceReason::Eligible, Capability};
 #endif
     return reject(Model,
                   WindowsEHNativeSourceReason::OutputReconstructionUnavailable,

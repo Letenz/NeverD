@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Statically verify compiler-generated PE32 cleanup-only LLVM lowering."""
+"""Verify PE32 cleanup-only lowering and installation, with optional Wine checks."""
 from __future__ import annotations
 
 import argparse
@@ -7,14 +7,19 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import struct
 import subprocess
 import xml.etree.ElementTree as ET
 
 if __package__:
+    from .check_windows_registration_eh import run_image
     from .check_windows_registration_realigned import require_test_result
+    from .check_windows_registration_rewrite import PE32
     from .windows_registration_libraries import load_libraries
 else:
+    from check_windows_registration_eh import run_image
     from check_windows_registration_realigned import require_test_result
+    from check_windows_registration_rewrite import PE32
     from windows_registration_libraries import load_libraries
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,10 +33,15 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--compiler", default="clang++")
     parser.add_argument("--linker", default="lld-link")
+    parser.add_argument("--wine", help="optionally execute the generated fixture in Wine")
+    parser.add_argument("--wine-prefix", type=Path,
+                        help="isolated Wine prefix (default: OUTPUT/wine-prefix)")
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    report = {"schema": 1, "evidence": "static-cleanup-only-source-to-llvm",
+    evidence = ("cleanup-only-source-to-pe-and-wine" if args.wine else
+                "static-cleanup-only-source-to-pe")
+    report = {"schema": 2, "evidence": evidence,
               "passed": False, "commands": [], "cases": [],
               "source_sha256": hashlib.sha256(SOURCE.read_bytes()).hexdigest()}
 
@@ -53,8 +63,10 @@ def main() -> int:
         for optimization in ("O0", "O1"):
             case = output / optimization
             case.mkdir(exist_ok=True)
-            image, obj, xml = (case / name for name in
-                               ("original.exe", "source.obj", "proof.xml"))
+            image, obj, xml, product = (case / name for name in
+                                        ("original.exe", "source.obj", "proof.xml",
+                                         "product.exe"))
+            product.unlink(missing_ok=True)
             record = {"optimization": optimization, "passed": False}
             report["cases"].append(record)
             run([args.compiler, "--target=i686-pc-windows-msvc",
@@ -68,15 +80,43 @@ def main() -> int:
             run([args.test_binary.resolve(),
                  "--gtest_filter=WindowsRegistrationCleanupOnly.*",
                  "--gtest_output=xml:" + str(xml)],
-                {"NEVERD_REGISTRATION_CLEANUP_ONLY_PE32": str(image)})
+                {"NEVERD_REGISTRATION_CLEANUP_ONLY_PE32": str(image),
+                 "NEVERD_REGISTRATION_CLEANUP_ONLY_OUTPUT_PE32": str(product)})
             if require_test_result(xml) != 1:
                 raise ValueError("cleanup-only source proof missing or skipped")
+            record["product_sha256"] = hashlib.sha256(
+                product.read_bytes()).hexdigest()
+            if args.wine:
+                prefix = (args.wine_prefix or output / "wine-prefix").resolve()
+                environment = os.environ | {
+                    "WINEPREFIX": str(prefix), "WINEDEBUG": "-all",
+                    "WINEDLLOVERRIDES": "mscoree,mshtml=d"}
+                wrong = case / "wrong-trace.exe"
+                pe = PE32(product.read_bytes())
+                changed = bytearray(pe.data)
+                struct.pack_into("<I", changed,
+                                 pe.raw(pe.entry(b"cleanup_only_trace")), 3)
+                wrong.write_bytes(changed)
+                record["runtime"] = []
+                for original, expected in ((image, 0), (product, 0), (wrong, 1)):
+                    rebased = original.with_stem(original.stem + "-rebased")
+                    rebased.write_bytes(PE32(original.read_bytes()).rebase(0x500000))
+                    for executable in (original, rebased):
+                        observation = run_image(executable, [args.wine],
+                                                environment, 40)
+                        observation.update(
+                            image_sha256=hashlib.sha256(
+                                executable.read_bytes()).hexdigest(),
+                            expected_exit=expected)
+                        record["runtime"].append(observation)
+                        if observation.get("exit_code") != expected:
+                            raise ValueError("cleanup-only runtime result differs")
             record["passed"] = True
         report["passed"] = True
     except (OSError, ValueError, subprocess.TimeoutExpired, ET.ParseError) as error:
         report["error"] = str(error)
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
-    print("cleanup-only static proof:", "PASS" if report["passed"] else "FAIL")
+    print("cleanup-only proof:", "PASS" if report["passed"] else "FAIL")
     return 0 if report["passed"] else 1
 
 
