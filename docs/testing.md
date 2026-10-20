@@ -5285,6 +5285,10 @@ observations and metadata mutation. The leaf-callee matrix also checks separate
 private-stack/object spills, pointer escape, bounds, unknown addresses and
 nonvolatile-register preservation. These proofs do not enable native source
 C++ reconstruction on their own.
+`CxxDispatchAndThrowShareTheKnownRuntimeABI` checks the same provider policy
+through direct-IAT and veneer FH3 dispatch, retained handler identity, direct
+throw imports and initialized private throws. Case variants of VCRUNTIME140,
+VCRUNTIME140D and MSVCR100 qualify; neighboring and unknown module names do not.
 `StackCleanupRequiresEveryRestoredNearReturn` separately checks balanced
 caller/callee cleanup, nonvolatile restoration after an opaque call, dynamic
 alignment, disagreeing return pops, missing restoration, volatile anchors,

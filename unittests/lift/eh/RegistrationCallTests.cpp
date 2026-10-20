@@ -1668,6 +1668,48 @@ TEST(RegistrationCallABI, CxxPersonalitySkipsTheOriginalFuncInfoOperand) {
   }
 }
 
+TEST(RegistrationCallABI, CxxDispatchAndThrowShareTheKnownRuntimeABI) {
+  const std::pair<const char *, bool> Cases[] = {
+      {"VCRUNTIME140.dll", true},     {"vcruntime140d.DLL", true},
+      {"MSVCR100.dll", true},         {"msvcr100.DLL", true},
+      {"MSVCR100-custom.dll", false}, {"MSVCR100.dll.extra", false},
+      {"MSVCR100.exe", false},        {"MSVCR100", false},
+      {"MSVCR90.dll", false},         {"MSVCRT.dll", false},
+      {"application.dll", false}};
+  for (const auto &[Module, Known] : Cases) {
+    SCOPED_TRACE(Module);
+    for (bool Direct : {false, true}) {
+      SCOPED_TRACE(Direct);
+      CxxPersonalityImage F(Direct);
+      F.Source.Code.Image.Imports.front().Module = Module;
+      const auto Runtime = coff_loader::getCheckedX86CxxPersonalityABI(
+          F.Source.Code.Image, F.Source.EH);
+      ASSERT_EQ(Runtime.has_value(), Known);
+      EXPECT_EQ(coff_loader::isCheckedX86CxxHandlerReference(
+                    F.Source.Code.Image, F.HandlerVA),
+                Known);
+      if (Runtime) {
+        EXPECT_EQ(Runtime->RuntimeVA, Direct ? F.HandlerVA + 7 : F.RuntimeVA);
+        EXPECT_EQ(Runtime->IATVA, F.IATVA);
+      }
+    }
+    ThrowImage F;
+    F.Image.Imports.front().Module = Module;
+    const auto Entry =
+        getCheckedX86RegistrationThrowImportABI(F.Image, ThrowImage::ImportVA);
+    ASSERT_EQ(Entry.has_value(), Known);
+    const auto Throw =
+        getCheckedX86RegistrationThrowCalleeABI(F.Image, ThrowImage::TextVA);
+    ASSERT_EQ(Throw.has_value(), Known);
+    if (Throw) {
+      EXPECT_EQ(Throw->ImportVA, ThrowImage::ImportVA);
+      EXPECT_EQ(Throw->ImportIATVA, ThrowImage::IATVA);
+      EXPECT_EQ(Throw->ObjectOffset, -4);
+      EXPECT_EQ(Throw->ThrowInfo.ObjectSize, 4u);
+    }
+  }
+}
+
 TEST(RegistrationCallABI, CxxPersonalityRejectsStorageAndRuntimeConflicts) {
   for (unsigned Mutation = 0; Mutation != 21; ++Mutation) {
     SCOPED_TRACE(Mutation);

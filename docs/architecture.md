@@ -1406,6 +1406,11 @@ The COFF loader owns the checked SEH/FuncInfo records. LowIR's
 `analyzeRegistrationStates` owns reaching levels, callback roots and chain
 lifetime, including the untouched bytes of narrow state stores; HighIR and
 native LLVM lowering consume that same result.
+`X86CxxRuntimeABI` owns the shared PE32 provider selection for the FH3 cdecl
+dispatcher and the two-word stdcall throw entry: VCRUNTIME140,
+VCRUNTIME140D and MSVCR100. Both entry proofs still require their exact import
+names, slots and code. This provider identity does not authenticate a handler's
+GS prefix, its parent frame or its exception effects.
 SEH dispatch joins use an explicit pending queue. After ordinary propagation
 quiesces, equal source snapshots contribute their complete level domains to
 runtime roots together. `dispatchSource` owns the inherited facts used by both

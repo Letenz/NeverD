@@ -135,7 +135,7 @@ bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA);
 /// Separate the per-function EAX/FuncInfo thunk from its argument- and
 /// EAX-preserving CRT dispatch entry. A generated handler must use RuntimeVA;
 /// jumping to the original HandlerVA would reinstall the original FuncInfo.
-/// Only immutable unwrapped code and the exact VCRUNTIME140 FH3 import qualify.
+/// Only immutable unwrapped code and an exact known PE32 FH3 import qualify.
 struct X86CxxPersonalityABI {
   va_t RuntimeVA = InvalidVA;
   va_t IATVA = InvalidVA;

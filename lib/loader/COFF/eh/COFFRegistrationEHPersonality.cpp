@@ -6,6 +6,7 @@
 #include "COFFRegistrationEHDetail.h"
 
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
+#include "neverd/loader/COFF/X86CxxRuntimeABI.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
 #include <set>
@@ -119,10 +120,7 @@ getCheckedX86CxxPersonalityABI(const BinaryImage &Img,
         Import = &Candidate;
       }
     if (!Import || Import->Name != "__CxxFrameHandler3" ||
-        (!llvm::StringRef(Import->Module)
-              .equals_insensitive("vcruntime140.dll") &&
-         !llvm::StringRef(Import->Module)
-              .equals_insensitive("vcruntime140d.dll")) ||
+        !hasKnownX86CxxExceptionRuntimeABI(Import->Module) ||
         Result.IATVA > UINT32_MAX - 3 || !Img.readVA(Result.IATVA, 4))
       return std::nullopt;
     return Result;
