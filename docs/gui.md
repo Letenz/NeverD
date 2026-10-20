@@ -535,7 +535,7 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | P | Create a function at the address (**Edit → Functions** also deletes the current one) |
 | D / A / U | Make data (again for the next size) / a string / bytes of the item |
 | T | Show the operand as a structure offset, the local types ranked by the code's accesses |
-| Y | Set the type of the parameter under the pseudocode cursor, or the current function's declaration, checked as you type |
+| Y | Set the type of the local, parameter or global object under the pseudocode cursor, or the current function's declaration, checked as you type |
 | C | Define native instructions from the selected byte through a basic block |
 | : or ; | Comment the address |
 | Alt+M / Ctrl+M | Mark a position / jump to a marked position |
@@ -1127,7 +1127,8 @@ and ranks the types as the window does (`neverd types <input> --fit --func
 **Edit → Set type** (Y, as IDA's) gives a function a C declaration of the
 program's local types, which the decompiler prints and binds each parameter
 by, ahead of the debug information. In pseudocode, with the cursor on a
-parameter, it types that parameter alone. Elsewhere, and in the disassembly,
+parameter, it types that parameter alone. On an ordinary local or global object,
+it sets that value's source type. Elsewhere, and in the disassembly,
 it edits the function's whole declaration. The dialog starts from the
 declaration as the decompiler prints it. Each keystroke reads the text
 against the local types, and the dialog then shows one of two things:
@@ -1150,6 +1151,24 @@ line does the same (`neverd function-edits <input> --declaration <entry>`,
 `--retype '0=struct _KAPC *Apc' --apply`, `--check '<declaration>'`,
 `--edit <entry> --set 'type=<declaration>'`, `neverd types <input> --fit
 --func <function> --param 0`).
+
+Ordinary locals and global pointer/scalar objects accept a type from the local
+library with the same byte width and floating-point class as the original value.
+For example, setting a local to `struct DEVICE_CONTEXT *` makes accesses at known
+member offsets read as `context->State`. Ordinary C uses the chosen declaration
+and explicit machine-width conversions. LLVM C retains its scalar storage and
+shows the chosen source type beside the declaration, casting that value at field
+accesses so arithmetic and PHI copies keep their original bits. A global type
+applies in both C routes; local values have separate identities in the two routes.
+By-value records, arrays and changes of machine width are refused.
+
+Variable/object types are source assertions in `code.json`, with the same
+transactional history, undo/redo, database packing and replica loading as code
+names and comments. A local assertion binds an emitter value to a versioned
+fingerprint of the unedited source graph and the input image's SHA-256. Changing the analysis or source options
+can make it stale; the view reports this, retains the record and leaves the
+analysis type in use. Reset hands the selected type back to analysis. These
+assertions do not change machine IR, native ABI recovery or rewrite admission.
 
 Opening a file never starts whole-program analysis. The listing, function list,
 references and graph come from the loader and from per-function work: a

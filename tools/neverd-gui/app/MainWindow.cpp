@@ -3335,12 +3335,29 @@ void MainWindow::setType() {
   std::optional<Address> function;
   std::optional<int> parameter;
   QString name;
+  QJsonObject variable;
   if (view) {
     function = view->text()->function();
     if (const auto target = view->text()->renameTarget();
         target && target->contains(QStringLiteral("parameter"))) {
       parameter = target->value(QStringLiteral("parameter")).toInt();
       name = target->value(QStringLiteral("name")).toString();
+    } else if (target && (target->contains(QStringLiteral("variable_id")) ||
+                          target->value(QStringLiteral("object")).toBool() ||
+                          target->value(QStringLiteral("kind")).toString() ==
+                              QStringLiteral("local"))) {
+      if (!target->contains(QStringLiteral("variable_id"))) {
+        output_->append(
+            tr("The engine cannot identify this source variable unambiguously"),
+            1);
+        return;
+      }
+      name = target->value(QStringLiteral("name")).toString();
+      variable = {{"address", hexAddress(*function)},
+                  {"representation", view->text()->representation()},
+                  {"source_options", view->text()->sourceOptions()},
+                  {"variable_id", target->value(QStringLiteral("variable_id"))},
+                  {"snapshot", target->value(QStringLiteral("snapshot"))}};
     }
   } else {
     function = currentFunction();
@@ -3352,7 +3369,7 @@ void MainWindow::setType() {
   if (name.isEmpty())
     name = displayAddress(*function);
   const auto epoch = session_.epoch();
-  SetTypeDialog dialog(session_, *function, parameter, name, this);
+  SetTypeDialog dialog(session_, *function, parameter, name, this, variable);
   const bool accepted = dialog.exec() == QDialog::Accepted;
   if (view) {
     view->window()->activateWindow();
@@ -3360,6 +3377,14 @@ void MainWindow::setType() {
   }
   if (!accepted || session_.epoch() != epoch)
     return;
+  if (!variable.isEmpty()) {
+    variable.insert(QStringLiteral("kind"), QStringLiteral("type"));
+    variable.insert(QStringLiteral("reset"), dialog.resets());
+    if (!dialog.resets())
+      variable.insert(QStringLiteral("type"), dialog.declaration());
+    session_.editCode(variable, epoch);
+    return;
+  }
   session_.editFunction(
       *function,
       {{"type", dialog.resets() ? QJsonValue(QJsonValue::Null)

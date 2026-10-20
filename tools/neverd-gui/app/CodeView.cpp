@@ -742,6 +742,10 @@ void CodeText::request(int offset, quint64 serial) {
           status_ +=
               QStringLiteral(" · ") +
               tr("Saved variable names belong to a different source rendering");
+        if (!payload.value("stale_variable_types").toArray().isEmpty())
+          status_ +=
+              QStringLiteral(" · ") + tr("Saved variable types need review: "
+                                         "the analysis or local types changed");
         if (sourceOptions_.value("symbolic").toBool())
           status_ += QStringLiteral(" · ") + tr("Symbolic simplification");
         if (representation_ == QLatin1String("llvmc"))

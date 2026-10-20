@@ -882,7 +882,55 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
                           representation == "go";
   if (!sourceView && !options.empty())
     throw Error("invalid_request", "Source options require a source view");
-  const auto optionText = options.dump();
+  Json engineOptions = options;
+  Json staleVariableTypes = Json::array();
+  std::optional<std::string> typeImage;
+  auto currentTypeImage = [&](const Json &type) {
+    if (!typeImage)
+      typeImage = inputHash();
+    return type.value("input_sha256", std::string()) == *typeImage;
+  };
+  if (sourceView) {
+    const auto row = codeEditRow(address);
+    const auto route = representation == "source" ? "c" : representation;
+    const auto edits =
+        row.is_object()
+            ? row.value("views", Json::object()).value(route, Json::object())
+            : Json::object();
+    Json types = Json::array();
+    const Json variableTypes = edits.value("variable_types", Json::object());
+    for (const auto &[id, type] : variableTypes.items()) {
+      if (!currentTypeImage(type)) {
+        staleVariableTypes.push_back(
+            id + ": the saved type belongs to a different input image");
+        continue;
+      }
+      Json binding = type;
+      binding["id"] = id;
+      binding["function"] = hexAddress(address);
+      types.push_back(std::move(binding));
+    }
+    for (const auto &row : codeEdits_)
+      if (row.contains("object_type")) {
+        if (!currentTypeImage(row.at("object_type"))) {
+          if (staleVariableTypes.empty())
+            staleVariableTypes.push_back(
+                "Saved object types belong to a different input image");
+          continue;
+        }
+        Json binding = row.at("object_type");
+        binding["function"] = hexAddress(address);
+        binding["address"] = row.at("addr");
+        binding["id"] =
+            "global:" +
+            std::to_string(parseAddress(row.at("addr").get<std::string>()));
+        binding["snapshot"] = "";
+        types.push_back(std::move(binding));
+      }
+    if (!types.empty())
+      engineOptions["variable_types"] = std::move(types);
+  }
+  const auto optionText = engineOptions.dump();
   (void)listing().functionAliases();
   const auto cacheKey = [&] {
     const auto generation = listing().generation();
@@ -922,7 +970,7 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
     auto backendRepresentation = representation;
     for (std::size_t next = 0;;) {
       auto page = backendJson(
-          sourceView && extended && !options.empty()
+          sourceView && extended && !engineOptions.empty()
               ? extended(session_, address, backendRepresentation.c_str(), next,
                          EnginePageLines, optionText.c_str())
               : view(session_, address, backendRepresentation.c_str(), next,
@@ -971,6 +1019,8 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
       next = following.get<std::size_t>();
     }
     full["complete"] = true;
+    for (const auto &reason : staleVariableTypes)
+      full["stale_variable_types"].push_back(reason);
     full["next_offset"] = nullptr;
     full["representation"] = representation;
     full["source_options"] = options;
@@ -3101,13 +3151,66 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     }
     return page(items, p, {"text"});
   }
+  if (operation == "source_type") {
+    const auto address = parseAddress(stringField(p, "address"));
+    const auto representation = stringField(p, "representation");
+    const auto document = namedView(address, representation,
+                                    p.value("source_options", Json::object()));
+    if (!document)
+      throw Error("unsupported", "The engine does not expose source variables");
+    Json request = p;
+    request["kind"] = "type";
+    CodeEdits::validateChange(document->value, request);
+    const auto id = stringField(p, "variable_id", {}, 256);
+    Json variable;
+    for (const auto &item : document->value.at("source_variables"))
+      if (item.at("id") == id)
+        variable = item;
+    const auto row = codeEditRow(
+        variable.contains("address")
+            ? parseAddress(variable.at("address").get<std::string>())
+            : address);
+    const auto route = representation == "source" ? "c" : representation;
+    const auto edits = row.is_object()
+                           ? row.value("views", Json::object())
+                                 .value(route, Json::object())
+                                 .value("variable_types", Json::object())
+                           : Json::object();
+    const auto stated = variable.contains("address") && row.is_object()
+                            ? row.value("object_type", Json::object())
+                            : edits.value(id, Json::object());
+    Json result{
+        {"input_sha256", inputHash()},
+        {"stated", !stated.empty()},
+        {"name", variable.at("name")},
+        {"type", stated.value("type", variable.value("type", std::string()))},
+        {"bytes", variable.at("bytes")},
+        {"floating", variable.at("floating")}};
+    if (variable.contains("address"))
+      result["object_address"] = variable.at("address");
+    if (p.contains("type")) {
+      using Check = const char *(*)(neverd_session_t, const char *);
+      const auto check = engineSymbol<Check>("neverd_source_type_json");
+      if (!check)
+        throw Error("unsupported",
+                    "The engine cannot check source variable types");
+      const Json proposal{{"type", stringField(p, "type", {}, 4096)},
+                          {"bytes", variable.at("bytes")},
+                          {"floating", variable.at("floating")}};
+      const auto *reply = check(session_, proposal.dump().c_str());
+      if (!reply)
+        throw Error("invalid_type", error());
+      result["type"] = backendJson(reply).at("type");
+    }
+    return result;
+  }
   if (operation == "code_edit") {
     requireWriter();
     if (dirty_)
       throw Error("unsaved_changes", "Save staged comments before a code edit");
     const auto address = parseAddress(stringField(p, "address"));
     auto &store = history();
-    const auto before = codeEditRow(address);
+    Json before = codeEditRow(address);
     const auto document = namedView(address, stringField(p, "representation"),
                                     p.value("source_options", Json::object()));
     if (!document)
@@ -3116,6 +3219,21 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     CodeEdits::validateChange(document->value, p);
     // The names keep while the code keeps its locals (code_shape).
     Json request = p;
+    std::uint64_t owner = address;
+    if (p.value("kind", std::string()) == "type") {
+      const auto checked = execute("source_type", p);
+      request["bytes"] = checked.at("bytes");
+      request["input_sha256"] = checked.at("input_sha256");
+      request["floating"] = checked.at("floating");
+      if (checked.contains("object_address")) {
+        owner = parseAddress(checked.at("object_address").get<std::string>());
+        before = codeEditRow(owner);
+        request["address"] = hexAddress(owner);
+        request["kind"] = "global_type";
+      }
+      if (request.value("representation", std::string()) == "source")
+        request["representation"] = "c";
+    }
     if (const auto shape = document->value.find("code_shape");
         shape != document->value.end() && shape->is_string())
       request["shape"] = *shape;
@@ -3129,13 +3247,13 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                               [&](const Json &row) {
                                 return parseAddress(
                                            row.at("addr").get<std::string>()) ==
-                                       address;
+                                       owner;
                               }),
                rows.end());
     rows.push_back(after);
     try {
       store.stage({{"kind", "code"},
-                   {"address", hexAddress(address)},
+                   {"address", hexAddress(owner)},
                    {"before", before},
                    {"after", after}});
       store.persist(state);

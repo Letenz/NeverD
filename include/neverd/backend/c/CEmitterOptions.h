@@ -26,6 +26,7 @@ namespace neverd {
 struct BinaryImage;
 struct CSourceMap;
 struct CSourceName;
+struct SourceVariableTypes;
 class DataAccessWidths;
 struct NdType;
 
@@ -133,6 +134,9 @@ struct CEmitterOptions {
   std::function<CRecordDefinitions(
       const std::vector<std::shared_ptr<NdType>> &)>
       RecordDefinitions;
+  /// Analyst declarations for source interpretation only. They supply no
+  /// native ABI, memory extent, code ownership or rewriting authority.
+  const SourceVariableTypes *VariableTypes = nullptr;
 };
 
 } // namespace neverd

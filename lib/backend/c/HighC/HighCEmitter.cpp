@@ -4417,6 +4417,8 @@ void HighCEmitter::prepareImageFunctionNames(const BinaryImage &Image) {
 bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
                         llvm::raw_ostream &Out, const CEmitterOptions &Opts,
                         DebugContext *Dbg) {
+  if (Opts.SourceMap)
+    Opts.SourceMap->Variables.clear();
   // Check the complete supplied IR before source-only hiding or preparation
   // can discard an unreachable or malformed environment requirement.
   std::set<const HighExpr *> Seen;

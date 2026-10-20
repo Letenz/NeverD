@@ -668,9 +668,14 @@ bool Session::typesChanged(const types::TypeLibrary &Library,
   // the decompiler printed, or a unit held, take only the text that read
   // them.
   dropLocalTypesDebug();
-  const bool Shows = llvm::any_of(Changed, [&](const std::string &Name) {
-    return ShownTypes.contains(Name);
-  });
+  const bool SourceAssertions =
+      llvm::any_of(FunctionSources, [](const auto &Source) {
+        return !Source.Options.VariableTypes.empty();
+      });
+  const bool Shows =
+      SourceAssertions || llvm::any_of(Changed, [&](const std::string &Name) {
+        return ShownTypes.contains(Name);
+      });
   if (Shows) {
     FunctionSources.clear();
     ShownTypes.clear();
