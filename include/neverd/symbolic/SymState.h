@@ -292,6 +292,19 @@ public:
     llvm::endianness Order = llvm::endianness::little;
     std::vector<MemoryFact> Facts;
   };
+  struct MaterializedRange {
+    uint64_t Offset = 0;
+    uint64_t Bytes = 0;
+  };
+  /// Current materialized extents for this exact symbolic region base, in
+  /// unsigned offset order. Gaps and modular wrap separate ranges. This reads
+  /// no memory and constructs no expressions or alias facts. Absent or invalid
+  /// bases return an empty projection; references must belong to this context.
+  /// Charge one lookup and one unit per materialized byte before allocating.
+  /// Insufficient work returns nullopt; the state and context are unchanged.
+  std::optional<llvm::SmallVector<MaterializedRange, 8>>
+  materializedRegionRanges(SymRef Base, uint64_t &WorkBudget) const;
+
   /// Export only materialized bytes, in spans of at most eight bytes. This
   /// does not read unknown bytes or recover facts from old load provenance.
   MemoryKnowledge memoryKnowledge() const;

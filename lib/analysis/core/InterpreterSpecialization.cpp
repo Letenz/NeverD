@@ -2865,6 +2865,72 @@ bool Specializer::evaluate(int Id) {
                 StorePreservation->AdditionalRanges = ProvedStoreRanges;
             }
           }
+          // Current scalar values need the same physical protection as saved
+          // frame addresses. The projection exports extents only: no new load,
+          // value identity, object boundary or separation premise is created.
+          if (!Displacement && Options.ProveStoreReturnSlotSeparation) {
+            const auto Address = Exec.memoryAddressValue(Original);
+            if (Ctx.width(Address) == 64) {
+              uint64_t RemainingWork =
+                  Options.MaxOperations - Result.EvaluatedOperations;
+              const auto Ranges =
+                  State.materializedRegionRanges(FrameRoot, RemainingWork);
+              Result.EvaluatedOperations =
+                  Options.MaxOperations - RemainingWork;
+              if (!Ranges)
+                return fail(SpecializationStatus::BudgetExceeded,
+                            "materialized frame projection budget exhausted");
+              for (const auto &Range : *Ranges) {
+                uint64_t Offset = Range.Offset;
+                uint64_t RemainingBytes = Range.Bytes;
+                while (RemainingBytes) {
+                  const unsigned Bytes = std::min<uint64_t>(RemainingBytes, 8);
+                  const uint64_t Slot = Offset;
+                  Offset += Bytes;
+                  RemainingBytes -= Bytes;
+                  if (!PreservationMetadataWork())
+                    return fail(
+                        SpecializationStatus::BudgetExceeded,
+                        "materialized frame traversal budget exhausted");
+                  const int64_t Begin = static_cast<int64_t>(Slot);
+                  if (Begin > std::numeric_limits<int64_t>::max() - Bytes ||
+                      InPreservedFrame(Slot, Bytes))
+                    continue;
+                  const auto Cell = Ctx.mkAdd(FrameRoot, Ctx.mkConst(64, Slot));
+                  const auto Overlap = memoryExtentsOverlap(
+                      Ctx, Address, Memory.AccessSize, Cell, Bytes);
+                  if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+                    return fail(
+                        SpecializationStatus::BudgetExceeded,
+                        "materialized frame separation node budget exhausted");
+                  const auto Domain =
+                      enumerate(Ctx, Exec.pathPredicate(), {Overlap}, 1);
+                  if (Failed)
+                    return false;
+                  if (Domain.Status == FiniteValueStatus::Unknown)
+                    return fail(SpecializationStatus::BudgetExceeded,
+                                "materialized frame separation proof exceeded "
+                                "its budget");
+                  if (Domain.Status != FiniteValueStatus::Complete ||
+                      Domain.Tuples != std::vector<std::vector<uint64_t>>{{0}})
+                    continue;
+                  if (!StorePreservation)
+                    StorePreservation = SymStorePreservation{
+                        FrameRoot, Begin, Begin + static_cast<int64_t>(Bytes)};
+                  else if (StorePreservation->End == Begin)
+                    StorePreservation->End += Bytes;
+                  else if (!ProvedStoreRanges.empty() &&
+                           ProvedStoreRanges.back().End == Begin)
+                    ProvedStoreRanges.back().End += Bytes;
+                  else
+                    ProvedStoreRanges.push_back(
+                        {Begin, Begin + static_cast<int64_t>(Bytes)});
+                }
+              }
+              if (StorePreservation)
+                StorePreservation->AdditionalRanges = ProvedStoreRanges;
+            }
+          }
           if (Displacement) {
             for (auto It = Frame.AffineValues.begin();
                  It != Frame.AffineValues.end();) {

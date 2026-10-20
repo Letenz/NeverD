@@ -3752,6 +3752,8 @@ writes and reject a corrupted byte store. Run the full specialization, original
 binary independence, PE fixed-image, LowIR independence and LowIR refinement
 owners after changing this shared preservation boundary.
 
+`SymMaterializedRanges.*` in `NeverDSymMemoryKnowledgeTests` checks bounded extent projection without new nodes or bytes, exact and short budgets, modular wrap, holes, adjacent partial writes, invalid/noncanonical bases and post-havoc history. `InterpreterSpecialization.SavedScalar*` checks arbitrary narrow/full-width spills, indexed and conditional writes against complete byte-memory oracles, partial overlap, later overwrite, constant projection and exact work/query limits. Its external-store case must still refuse without a separate return-slot alias contract. These tests supplement the saved-address and writable-gap checks above.
+
 `InterpreterSpecialization.SupervisorRead*` checks ECX selectors with nonzero
 upper RCX bits, full-width results, zero upper destination halves, independent
 and repeated reads, exact/short budgets, malformed bundles, required supervisor

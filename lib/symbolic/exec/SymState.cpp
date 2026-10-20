@@ -406,6 +406,35 @@ bool SymState::bindLoadOrigins(llvm::ArrayRef<LoadOriginBinding> Bindings) {
   return true;
 }
 
+std::optional<llvm::SmallVector<SymState::MaterializedRange, 8>>
+SymState::materializedRegionRanges(SymRef Base, uint64_t &WorkBudget) const {
+  if (!WorkBudget)
+    return std::nullopt;
+  --WorkBudget;
+  llvm::SmallVector<MaterializedRange, 8> Result;
+  if (!Base || Base.index() >= Ctx->numNodes())
+    return Result;
+  const auto Found = Regions.find(Base.index());
+  if (Found == Regions.end())
+    return Result;
+  const auto &Bytes = Found->second.Bytes;
+  if (Bytes.size() > WorkBudget)
+    return std::nullopt;
+  WorkBudget -= Bytes.size();
+  for (const auto &[Offset, View] : Bytes) {
+    if (!Result.empty()) {
+      auto &Last = Result.back();
+      if (Last.Offset <= std::numeric_limits<uint64_t>::max() - Last.Bytes &&
+          Offset == Last.Offset + Last.Bytes) {
+        ++Last.Bytes;
+        continue;
+      }
+    }
+    Result.push_back({Offset, 1});
+  }
+  return Result;
+}
+
 SymState::MemoryKnowledge SymState::memoryKnowledge() const {
   MemoryKnowledge Out{Ctx, Order, {}};
   auto Export = [&](SymRef Base, const Bank &B) {
