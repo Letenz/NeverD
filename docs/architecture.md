@@ -3204,7 +3204,16 @@ source call. Reports, writes and traps before termination remain observable.
 HighIR cleanup, trailing-return insertion, and source-flow validation share
 the same exact source-termination predicate. An unconditional architectural
 trap removes an otherwise synthetic unknown return only when no branch enters
-that return; resumable debugger traps preserve fallthrough.
+that return; resumable debugger traps preserve fallthrough inside the function.
+CFGBuilder checks the shared instruction-range end and function-entry ownership
+before decoding a trap's continuation. An adjacent function cannot become a
+synthetic tail call through a breakpoint; an explicitly owned adjacent fragment
+still continues. This does not make a resumable trap a no-return operation.
+The architecture classifiers also recognize long-encoded x86 `int 3`, `int1`
+and ARM/Thumb `bkpt`/`udf` debugger continuations. Conditional ARM paths can
+still skip a trap, and continuation peeks use a separate decoder so Thumb IT
+state remains unchanged. x86 `ud0`/`ud1` and AArch64 `udf` end ordinary decode;
+AArch64's fast word classifier agrees with the decoded-instruction path.
 
 At source-bound runtime calls, Low-to-Med lowering carries the authenticated
 external no-return declaration into the MedIR call effect.

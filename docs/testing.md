@@ -1675,6 +1675,21 @@ host with OS-enabled FMA3. FMA4, EVEX/SAE and unavailable features are excluded.
 
 ## x86 invalid encodings and instruction boundaries
 
+`NeverDResumableTrapBoundaryTests` checks that an x86/x64 debugger trap at a
+known function end or before another function's entry does not acquire a
+synthetic tail call. Sized symbols, code ranges and unwind records supply
+independent boundary evidence. Interior debug breaks, adjacent owned fragments,
+ordinary fallthrough and explicit tail jumps remain controls. The PE source cases
+check HighC and LLVM-to-C with and without optimization, preserving the preceding
+returning call and the breakpoint.
+Sibling fixtures exercise short, long and prefixed x86 breakpoints, `int1`,
+`ud0`/`ud1`/`ud2`, fast-fail, ARM/Thumb `bkpt`/`udf`, and AArch64 traps. They
+check detailed and lightweight decode, range-only and entry-only metadata,
+interior continuations, conditional ARM paths and Thumb IT state. Ordinary
+interrupts remain a negative control. The target also runs AArch64 fast-classifier
+parity, including all UDF immediates; its optional real-binary walk needs
+`NEVERD_PARITY_BIN` and otherwise skips.
+
 `NeverDX86EncodingAccuracyTests` requires raw illegal LOCK forms (including
 memory-source arithmetic and multi-byte NOP) and MOV-to-CS to fail in every
 decode route, independently of strict, detail and text settings. Legal

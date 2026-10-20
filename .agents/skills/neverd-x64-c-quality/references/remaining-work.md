@@ -207,6 +207,14 @@ conditional memory, invocation lifetime and both C routes remain open.
 
 ## Closed control-flow regressions
 
+- Resumable x86 breakpoints at known function boundaries no longer create
+  synthetic tail calls to adjacent functions. CFGBuilder shares the existing
+  instruction-range ownership check with calls; interior debugger continuations
+  and adjacent owned fragments remain intact. Synthetic x86/x64 metadata cases
+  and both PE C routes cover the boundary without changing trap semantics.
+  The sibling audit also closes missing classification for long `int 3`,
+  `int1`, `ud0`/`ud1`, ARM/Thumb `bkpt`/`udf`, and AArch64 `udf`; fast AArch64
+  classification shares the same accepted terminator set.
 - LLVMC forwards exact private scalar homes through bounded CFG reaching
   definitions. Joins require agreement from every incoming edge; cycles,
   missing definitions and excessive expansion keep explicit snapshots. Shared

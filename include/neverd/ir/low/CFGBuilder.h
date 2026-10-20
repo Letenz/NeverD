@@ -1271,10 +1271,11 @@ private:
   /// call it knows never returns: an x86 `int3`, alignment no-ops up to
   /// another function, or another function's entry.
   bool callIsFollowedByPadding(const InsnRecord &Rec) const;
-  /// True when the call \p Rec is the last instruction of the code range
+  /// True when \p Rec is the last instruction of the code range
   /// that its function's own unwind record or sized symbol gives, and no
-  /// fragment of the function follows, so the call cannot return.
-  bool callEndsItsCodeRange(const InsnRecord &Rec) const;
+  /// fragment of the function follows. Calls cannot return into that range;
+  /// resumable traps have no ordinary continuation in it.
+  bool instructionEndsItsCodeRange(const InsnRecord &Rec) const;
 
   /// Rewrite an unconditional-branch instruction record into an explicit
   /// CALL + RETURN pair (tail call to another function).
