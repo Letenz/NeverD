@@ -919,6 +919,46 @@
         <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
         <translation>Show the type libraries the program&apos;s types join, and add or remove one</translation>
     </message>
+    <message>
+        <source>Split variable</source>
+        <translation>Split variable</translation>
+    </message>
+    <message>
+        <source>Separate independent local variable lifetimes</source>
+        <translation>Separate independent local variable lifetimes</translation>
+    </message>
+    <message>
+        <source>Map to variable...</source>
+        <translation>Map to variable...</translation>
+    </message>
+    <message>
+        <source>Associate copy-related variables with compatible live ranges</source>
+        <translation>Associate copy-related variables with compatible live ranges</translation>
+    </message>
+    <message>
+        <source>Unmap variable</source>
+        <translation>Unmap variable</translation>
+    </message>
+    <message>
+        <source>Remove a variable mapping</source>
+        <translation>Remove a variable mapping</translation>
+    </message>
+    <message>
+        <source>Unsplit variable</source>
+        <translation>Unsplit variable</translation>
+    </message>
+    <message>
+        <source>Restore the original variable lifetime grouping</source>
+        <translation>Restore the original variable lifetime grouping</translation>
+    </message>
+    <message>
+        <source>Reset variable associations</source>
+        <translation>Reset variable associations</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without variable associations</source>
+        <translation>Regenerate this function without variable associations</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1601,6 +1641,10 @@ Double-click to go to the declaration.</translation>
     <message>
         <source>Saved variable types need review: the analysis or local types changed</source>
         <translation>Saved variable types need review: the analysis or local types changed</translation>
+    </message>
+    <message>
+        <source>Saved variable associations need review: </source>
+        <translation>Saved variable associations need review: </translation>
     </message>
 </context>
 <context>
@@ -2489,6 +2533,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
     <message>
         <source>The engine cannot identify this source variable unambiguously</source>
         <translation>The engine cannot identify this source variable unambiguously</translation>
+    </message>
+    <message>
+        <source>Map variable</source>
+        <translation>Map variable</translation>
+    </message>
+    <message>
+        <source>Destination variable (the engine checks copy relationships and live ranges):</source>
+        <translation>Destination variable (the engine checks copy relationships and live ranges):</translation>
+    </message>
+    <message>
+        <source>No other unambiguous local variable is available</source>
+        <translation>No other unambiguous local variable is available</translation>
+    </message>
+    <message>
+        <source>The source analysis changed; select the variable again</source>
+        <translation>The source analysis changed; select the variable again</translation>
+    </message>
+    <message>
+        <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
+        <translation>This variable has no matching association. Use Reset variable associations to remove stale edits.</translation>
     </message>
 </context>
 <context>

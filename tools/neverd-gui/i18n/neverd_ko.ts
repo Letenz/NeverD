@@ -919,6 +919,46 @@
         <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
         <translation>프로그램의 형식에 결합되는 형식 라이브러리를 표시하고, 하나를 추가하거나 제외합니다</translation>
     </message>
+    <message>
+        <source>Split variable</source>
+        <translation>변수 분할</translation>
+    </message>
+    <message>
+        <source>Separate independent local variable lifetimes</source>
+        <translation>로컬 변수의 독립적인 수명 분리</translation>
+    </message>
+    <message>
+        <source>Map to variable...</source>
+        <translation>변수에 매핑...</translation>
+    </message>
+    <message>
+        <source>Associate copy-related variables with compatible live ranges</source>
+        <translation>복사 관계가 있고 활성 구간이 호환되는 변수 연결</translation>
+    </message>
+    <message>
+        <source>Unmap variable</source>
+        <translation>변수 매핑 해제</translation>
+    </message>
+    <message>
+        <source>Remove a variable mapping</source>
+        <translation>변수 매핑 제거</translation>
+    </message>
+    <message>
+        <source>Unsplit variable</source>
+        <translation>변수 분할 취소</translation>
+    </message>
+    <message>
+        <source>Restore the original variable lifetime grouping</source>
+        <translation>원래 변수 수명 그룹 복원</translation>
+    </message>
+    <message>
+        <source>Reset variable associations</source>
+        <translation>변수 연결 재설정</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without variable associations</source>
+        <translation>변수 연결을 적용하지 않고 이 함수 다시 생성</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1596,6 +1636,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved variable types need review: the analysis or local types changed</source>
         <translation>저장된 변수 유형을 검토해야 합니다: 분석 결과 또는 로컬 유형이 변경되었습니다</translation>
+    </message>
+    <message>
+        <source>Saved variable associations need review: </source>
+        <translation>저장된 변수 연결을 검토해야 합니다: </translation>
     </message>
 </context>
 <context>
@@ -2483,6 +2527,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>The engine cannot identify this source variable unambiguously</source>
         <translation>엔진이 이 소스 변수를 명확하게 식별할 수 없습니다</translation>
+    </message>
+    <message>
+        <source>Map variable</source>
+        <translation>변수 매핑</translation>
+    </message>
+    <message>
+        <source>Destination variable (the engine checks copy relationships and live ranges):</source>
+        <translation>대상 변수(엔진이 복사 관계와 활성 구간을 확인합니다):</translation>
+    </message>
+    <message>
+        <source>No other unambiguous local variable is available</source>
+        <translation>명확하게 식별할 수 있는 다른 로컬 변수가 없습니다</translation>
+    </message>
+    <message>
+        <source>The source analysis changed; select the variable again</source>
+        <translation>소스 분석이 변경되었습니다. 변수를 다시 선택하세요</translation>
+    </message>
+    <message>
+        <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
+        <translation>이 변수에 일치하는 연결이 없습니다. 오래된 편집 내용을 제거하려면 변수 연결 재설정을 사용하세요.</translation>
     </message>
 </context>
 <context>

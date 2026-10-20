@@ -919,6 +919,46 @@
         <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
         <translation>Afficher les bibliothèques de types jointes aux types du programme, et en ajouter ou en écarter une</translation>
     </message>
+    <message>
+        <source>Split variable</source>
+        <translation>Scinder la variable</translation>
+    </message>
+    <message>
+        <source>Separate independent local variable lifetimes</source>
+        <translation>Séparer les durées de vie indépendantes des variables locales</translation>
+    </message>
+    <message>
+        <source>Map to variable...</source>
+        <translation>Associer à une variable...</translation>
+    </message>
+    <message>
+        <source>Associate copy-related variables with compatible live ranges</source>
+        <translation>Associer des variables liées par copie avec des plages de vie compatibles</translation>
+    </message>
+    <message>
+        <source>Unmap variable</source>
+        <translation>Dissocier la variable</translation>
+    </message>
+    <message>
+        <source>Remove a variable mapping</source>
+        <translation>Supprimer une association de variables</translation>
+    </message>
+    <message>
+        <source>Unsplit variable</source>
+        <translation>Annuler la scission de la variable</translation>
+    </message>
+    <message>
+        <source>Restore the original variable lifetime grouping</source>
+        <translation>Restaurer le regroupement initial des durées de vie des variables</translation>
+    </message>
+    <message>
+        <source>Reset variable associations</source>
+        <translation>Réinitialiser les associations de variables</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without variable associations</source>
+        <translation>Régénérer cette fonction sans associations de variables</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1601,6 +1641,10 @@ Double-cliquez pour aller à la déclaration.</translation>
     <message>
         <source>Saved variable types need review: the analysis or local types changed</source>
         <translation>Les types de variables enregistrés doivent être vérifiés : l’analyse ou les types locaux ont changé</translation>
+    </message>
+    <message>
+        <source>Saved variable associations need review: </source>
+        <translation>Les associations de variables enregistrées doivent être vérifiées : </translation>
     </message>
 </context>
 <context>
@@ -2489,6 +2533,26 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
     <message>
         <source>The engine cannot identify this source variable unambiguously</source>
         <translation>Le moteur ne peut pas identifier cette variable source sans ambiguïté</translation>
+    </message>
+    <message>
+        <source>Map variable</source>
+        <translation>Associer une variable</translation>
+    </message>
+    <message>
+        <source>Destination variable (the engine checks copy relationships and live ranges):</source>
+        <translation>Variable de destination (le moteur vérifie les relations de copie et les plages de vie) :</translation>
+    </message>
+    <message>
+        <source>No other unambiguous local variable is available</source>
+        <translation>Aucune autre variable locale identifiable sans ambiguïté n’est disponible</translation>
+    </message>
+    <message>
+        <source>The source analysis changed; select the variable again</source>
+        <translation>L’analyse du code source a changé ; sélectionnez à nouveau la variable</translation>
+    </message>
+    <message>
+        <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
+        <translation>Cette variable n’a pas d’association correspondante. Utilisez Réinitialiser les associations de variables pour supprimer les modifications obsolètes.</translation>
     </message>
 </context>
 <context>

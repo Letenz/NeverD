@@ -919,6 +919,46 @@
         <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
         <translation>プログラムの型に結合される型ライブラリを表示し、追加または除外します</translation>
     </message>
+    <message>
+        <source>Split variable</source>
+        <translation>変数を分割</translation>
+    </message>
+    <message>
+        <source>Separate independent local variable lifetimes</source>
+        <translation>ローカル変数の独立した生存期間を分離する</translation>
+    </message>
+    <message>
+        <source>Map to variable...</source>
+        <translation>変数にマッピング...</translation>
+    </message>
+    <message>
+        <source>Associate copy-related variables with compatible live ranges</source>
+        <translation>コピー関係にあり生存区間が互換の変数を関連付ける</translation>
+    </message>
+    <message>
+        <source>Unmap variable</source>
+        <translation>変数のマッピングを解除</translation>
+    </message>
+    <message>
+        <source>Remove a variable mapping</source>
+        <translation>変数のマッピングを削除する</translation>
+    </message>
+    <message>
+        <source>Unsplit variable</source>
+        <translation>変数の分割を解除</translation>
+    </message>
+    <message>
+        <source>Restore the original variable lifetime grouping</source>
+        <translation>元の変数の生存期間のグループを復元する</translation>
+    </message>
+    <message>
+        <source>Reset variable associations</source>
+        <translation>変数の関連付けをリセット</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without variable associations</source>
+        <translation>変数の関連付けを適用せずにこの関数を再生成する</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1596,6 +1636,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved variable types need review: the analysis or local types changed</source>
         <translation>保存した変数の型を確認してください: 解析結果またはローカル型が変更されました</translation>
+    </message>
+    <message>
+        <source>Saved variable associations need review: </source>
+        <translation>保存した変数の関連付けを確認してください: </translation>
     </message>
 </context>
 <context>
@@ -2483,6 +2527,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>The engine cannot identify this source variable unambiguously</source>
         <translation>エンジンはこのソース変数を一意に識別できません</translation>
+    </message>
+    <message>
+        <source>Map variable</source>
+        <translation>変数をマッピング</translation>
+    </message>
+    <message>
+        <source>Destination variable (the engine checks copy relationships and live ranges):</source>
+        <translation>マッピング先の変数（エンジンがコピー関係と生存区間を検証します）:</translation>
+    </message>
+    <message>
+        <source>No other unambiguous local variable is available</source>
+        <translation>他に一意に識別できるローカル変数がありません</translation>
+    </message>
+    <message>
+        <source>The source analysis changed; select the variable again</source>
+        <translation>ソース解析が変更されました。変数を再選択してください</translation>
+    </message>
+    <message>
+        <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
+        <translation>この変数に一致する関連付けはありません。「変数の関連付けをリセット」で古い編集を削除してください。</translation>
     </message>
 </context>
 <context>

@@ -919,6 +919,46 @@
         <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
         <translation>显示并入程序类型的类型库，并添加或移除类型库</translation>
     </message>
+    <message>
+        <source>Split variable</source>
+        <translation>拆分变量</translation>
+    </message>
+    <message>
+        <source>Separate independent local variable lifetimes</source>
+        <translation>分离局部变量中相互独立的生存期</translation>
+    </message>
+    <message>
+        <source>Map to variable...</source>
+        <translation>映射到变量...</translation>
+    </message>
+    <message>
+        <source>Associate copy-related variables with compatible live ranges</source>
+        <translation>关联具有复制关系且活跃区间兼容的变量</translation>
+    </message>
+    <message>
+        <source>Unmap variable</source>
+        <translation>取消变量映射</translation>
+    </message>
+    <message>
+        <source>Remove a variable mapping</source>
+        <translation>移除变量映射</translation>
+    </message>
+    <message>
+        <source>Unsplit variable</source>
+        <translation>取消变量拆分</translation>
+    </message>
+    <message>
+        <source>Restore the original variable lifetime grouping</source>
+        <translation>恢复原始的变量生存期分组</translation>
+    </message>
+    <message>
+        <source>Reset variable associations</source>
+        <translation>重置变量关联</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without variable associations</source>
+        <translation>重新生成此函数，不应用变量关联</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1596,6 +1636,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved variable types need review: the analysis or local types changed</source>
         <translation>已保存的变量类型需要复核：分析结果或本地类型已改变</translation>
+    </message>
+    <message>
+        <source>Saved variable associations need review: </source>
+        <translation>已保存的变量关联需要复核：</translation>
     </message>
 </context>
 <context>
@@ -2483,6 +2527,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>The engine cannot identify this source variable unambiguously</source>
         <translation>引擎无法唯一确定此源代码变量</translation>
+    </message>
+    <message>
+        <source>Map variable</source>
+        <translation>映射变量</translation>
+    </message>
+    <message>
+        <source>Destination variable (the engine checks copy relationships and live ranges):</source>
+        <translation>目标变量（引擎将检查复制关系和活跃区间）：</translation>
+    </message>
+    <message>
+        <source>No other unambiguous local variable is available</source>
+        <translation>没有其他可唯一确定的局部变量</translation>
+    </message>
+    <message>
+        <source>The source analysis changed; select the variable again</source>
+        <translation>源代码分析已改变；请重新选择变量</translation>
+    </message>
+    <message>
+        <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
+        <translation>此变量没有匹配的关联。请使用“重置变量关联”移除过期的编辑。</translation>
     </message>
 </context>
 <context>

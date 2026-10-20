@@ -1705,6 +1705,7 @@ int neverd_prepare_function_view(neverd_session_t s, neverd_va_t address,
   session(s)->preparedView = representation ? representation : "";
   return prepareMockFunction(s, address);
 }
+extern "C++" {
 namespace {
 /// A function's declaration: the user's, else the one the mock prints.
 std::string mockDeclaration(neverd_session_t s, neverd_va_t address) {
@@ -1753,6 +1754,7 @@ mockParameters(const std::string &declaration) {
   return parameters;
 }
 } // namespace
+} // extern "C++"
 
 const char *neverd_decompile(neverd_session_t s, neverd_va_t address) {
   ++session(s)->sourceRenders;

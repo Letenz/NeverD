@@ -919,6 +919,46 @@
         <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
         <translation>Die Typbibliotheken anzeigen, die zu den Typen des Programms gehören, und eine hinzufügen oder weglassen</translation>
     </message>
+    <message>
+        <source>Split variable</source>
+        <translation>Variable aufteilen</translation>
+    </message>
+    <message>
+        <source>Separate independent local variable lifetimes</source>
+        <translation>Unabhängige Lebensdauern lokaler Variablen trennen</translation>
+    </message>
+    <message>
+        <source>Map to variable...</source>
+        <translation>Einer Variablen zuordnen...</translation>
+    </message>
+    <message>
+        <source>Associate copy-related variables with compatible live ranges</source>
+        <translation>Durch Kopien verbundene Variablen mit kompatiblen Lebensbereichen zuordnen</translation>
+    </message>
+    <message>
+        <source>Unmap variable</source>
+        <translation>Variablenzuordnung aufheben</translation>
+    </message>
+    <message>
+        <source>Remove a variable mapping</source>
+        <translation>Eine Variablenzuordnung entfernen</translation>
+    </message>
+    <message>
+        <source>Unsplit variable</source>
+        <translation>Variablenaufteilung aufheben</translation>
+    </message>
+    <message>
+        <source>Restore the original variable lifetime grouping</source>
+        <translation>Ursprüngliche Gruppierung der Variablenlebensdauern wiederherstellen</translation>
+    </message>
+    <message>
+        <source>Reset variable associations</source>
+        <translation>Variablenzuordnungen zurücksetzen</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without variable associations</source>
+        <translation>Diese Funktion ohne Variablenzuordnungen neu erzeugen</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1601,6 +1641,10 @@ Doppelklicken, um zur Deklaration zu springen.</translation>
     <message>
         <source>Saved variable types need review: the analysis or local types changed</source>
         <translation>Gespeicherte Variablentypen müssen überprüft werden: Die Analyse oder die lokalen Typen haben sich geändert</translation>
+    </message>
+    <message>
+        <source>Saved variable associations need review: </source>
+        <translation>Gespeicherte Variablenzuordnungen müssen überprüft werden: </translation>
     </message>
 </context>
 <context>
@@ -2489,6 +2533,26 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
     <message>
         <source>The engine cannot identify this source variable unambiguously</source>
         <translation>Die Engine kann diese Quelltextvariable nicht eindeutig identifizieren</translation>
+    </message>
+    <message>
+        <source>Map variable</source>
+        <translation>Variable zuordnen</translation>
+    </message>
+    <message>
+        <source>Destination variable (the engine checks copy relationships and live ranges):</source>
+        <translation>Zielvariable (die Engine prüft Kopierbeziehungen und Lebensbereiche):</translation>
+    </message>
+    <message>
+        <source>No other unambiguous local variable is available</source>
+        <translation>Keine weitere eindeutig identifizierbare lokale Variable verfügbar</translation>
+    </message>
+    <message>
+        <source>The source analysis changed; select the variable again</source>
+        <translation>Die Quelltextanalyse hat sich geändert; wählen Sie die Variable erneut aus</translation>
+    </message>
+    <message>
+        <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
+        <translation>Für diese Variable gibt es keine passende Zuordnung. Entfernen Sie veraltete Änderungen mit „Variablenzuordnungen zurücksetzen“.</translation>
     </message>
 </context>
 <context>

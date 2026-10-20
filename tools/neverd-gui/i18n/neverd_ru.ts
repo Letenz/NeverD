@@ -919,6 +919,46 @@
         <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
         <translation>Показать библиотеки типов, присоединённые к типам программы, и добавить или исключить одну</translation>
     </message>
+    <message>
+        <source>Split variable</source>
+        <translation>Разделить переменную</translation>
+    </message>
+    <message>
+        <source>Separate independent local variable lifetimes</source>
+        <translation>Разделить независимые периоды жизни локальной переменной</translation>
+    </message>
+    <message>
+        <source>Map to variable...</source>
+        <translation>Сопоставить с переменной...</translation>
+    </message>
+    <message>
+        <source>Associate copy-related variables with compatible live ranges</source>
+        <translation>Связать переменные, соединённые копированием и имеющие совместимые интервалы жизни</translation>
+    </message>
+    <message>
+        <source>Unmap variable</source>
+        <translation>Отменить сопоставление переменной</translation>
+    </message>
+    <message>
+        <source>Remove a variable mapping</source>
+        <translation>Удалить сопоставление переменной</translation>
+    </message>
+    <message>
+        <source>Unsplit variable</source>
+        <translation>Отменить разделение переменной</translation>
+    </message>
+    <message>
+        <source>Restore the original variable lifetime grouping</source>
+        <translation>Восстановить исходную группировку периодов жизни переменной</translation>
+    </message>
+    <message>
+        <source>Reset variable associations</source>
+        <translation>Сбросить связи переменных</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without variable associations</source>
+        <translation>Повторно создать эту функцию без связей переменных</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1606,6 +1646,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved variable types need review: the analysis or local types changed</source>
         <translation>Сохранённые типы переменных требуют проверки: анализ или локальные типы изменились</translation>
+    </message>
+    <message>
+        <source>Saved variable associations need review: </source>
+        <translation>Сохранённые связи переменных требуют проверки: </translation>
     </message>
 </context>
 <context>
@@ -2495,6 +2539,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>The engine cannot identify this source variable unambiguously</source>
         <translation>Движок не может однозначно определить эту переменную исходного кода</translation>
+    </message>
+    <message>
+        <source>Map variable</source>
+        <translation>Сопоставить переменную</translation>
+    </message>
+    <message>
+        <source>Destination variable (the engine checks copy relationships and live ranges):</source>
+        <translation>Целевая переменная (движок проверяет связи копирования и интервалы жизни):</translation>
+    </message>
+    <message>
+        <source>No other unambiguous local variable is available</source>
+        <translation>Нет другой однозначно определяемой локальной переменной</translation>
+    </message>
+    <message>
+        <source>The source analysis changed; select the variable again</source>
+        <translation>Анализ исходного кода изменился; выберите переменную заново</translation>
+    </message>
+    <message>
+        <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
+        <translation>Для этой переменной нет соответствующей связи. Используйте «Сбросить связи переменных», чтобы удалить устаревшие правки.</translation>
     </message>
 </context>
 <context>
