@@ -22291,6 +22291,168 @@ TEST(LLVMCodePointerInvariantBoundary,
 }
 
 TEST(LLVMCodePointerInvariantBoundary,
+     CallClobberCodeMergesPreserveValuesWithoutCallableAuthority) {
+  enum class Case {
+    Complete,
+    Partial,
+    WidthMismatch,
+    MissingOwner,
+    PreservingCall,
+    DuplicateOwner,
+    DuplicateClobber
+  };
+  enum class Sink { Return, Argument, IndirectCall };
+  constexpr va_t RuntimeVA = CodeVA + 0x80;
+  constexpr va_t SinkVA = CodeVA + 0xc0;
+  for (BinaryFormat Format :
+       {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF})
+    for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+      for (ExactAddressMergeKind Kind :
+           {ExactAddressMergeKind::Phi, ExactAddressMergeKind::Select})
+        for (Case Scenario :
+             {Case::Complete, Case::Partial, Case::WidthMismatch,
+              Case::MissingOwner, Case::PreservingCall, Case::DuplicateOwner,
+              Case::DuplicateClobber})
+          for (Sink Use : {Sink::Return, Sink::Argument, Sink::IndirectCall}) {
+            SCOPED_TRACE(formatTraceName(Format));
+            SCOPED_TRACE(static_cast<int>(TargetArch));
+            SCOPED_TRACE(static_cast<int>(Kind));
+            SCOPED_TRACE(static_cast<int>(Scenario));
+            SCOPED_TRACE(static_cast<int>(Use));
+            const TargetRegInfo &TRI = getTargetRegInfo(TargetArch);
+            const uint16_t Width = TRI.PointerSize;
+            BinaryImage Image = makeSpilledConstTableImage(TargetArch, Format);
+            Image.Bits = Width == 4 ? Bitness::Bits32 : Bitness::Bits64;
+            MedFunc Caller = Use == Sink::IndirectCall
+                                 ? makeMergedExactAddressIndirectCaller(
+                                       Kind, CodeVA, CodeVA, TargetArch)
+                                 : makeMergedExactAddressReturn(
+                                       Kind, TargetArch, CodeVA, CodeVA);
+            MedVar Clobbered;
+            Clobbered.Kind = MedVar::Reg;
+            Clobbered.TheArch = TargetArch;
+            Clobbered.Id = 30;
+            Clobbered.SSAVer = 2;
+            Clobbered.Size = Width;
+            Clobbered.RegOff = TRI.IntReturnReg;
+            replaceSecondMergedAddressArm(Caller, Kind, Clobbered);
+            MedCallClobber Record{Clobbered, 1};
+            MedVar Before = Clobbered;
+            Before.SSAVer = 1;
+            if (Scenario == Case::Partial) {
+              Record.PreservedInput = Before;
+              Record.PreservedPrefixSize = 1;
+            }
+            if (Scenario == Case::WidthMismatch)
+              Record.Value.Size = Width - 1;
+            if (Scenario == Case::MissingOwner)
+              Record.CallSiteId = 99;
+            Caller.CallClobbers.push_back(Record);
+            if (Scenario == Case::DuplicateClobber)
+              Caller.CallClobbers.push_back(Record);
+            MedOp Call;
+            Call.Opcode = NdOp::CALL;
+            Call.CallSiteId = 1;
+            Call.PreservesCallerSaved = Scenario == Case::PreservingCall;
+            Call.addInput(MedVar::makeConst(
+                RuntimeVA, Width, ConstantAddressProvenance::CodeAddress));
+            auto &Ops = Caller.Blocks.front().Ops;
+            Ops.insert(Ops.begin(), Call);
+            if (Scenario == Case::DuplicateOwner)
+              Ops.insert(Ops.begin(), Call);
+            if (Scenario == Case::Partial) {
+              MedOp Copy;
+              Copy.Opcode = NdOp::COPY;
+              Copy.Output = Before;
+              Copy.addInput(MedVar::makeConst(
+                  CodeVA, Width, ConstantAddressProvenance::CodeAddress));
+              Ops.insert(Ops.begin(), Copy);
+            }
+
+            MedFunc Consumer = makeReturnFunction("clobber_value_sink", SinkVA);
+            Consumer.ReturnType = NdType::makeVoid();
+            MedVar Argument;
+            Argument.Kind = MedVar::Param;
+            Argument.TheArch = TargetArch;
+            Argument.Id = 0;
+            Argument.Size = Width;
+            Argument.RegOff = TRI.IntParamRegs.front();
+            Consumer.Params.push_back(Argument);
+            if (Use == Sink::Argument) {
+              Caller.ReturnType = NdType::makeVoid();
+              for (MedBlock &Block : Caller.Blocks)
+                for (size_t I = 0; I < Block.Ops.size(); ++I) {
+                  MedOp &Op = Block.Ops[I];
+                  if (Op.Opcode != NdOp::COPY || Op.Output.Id != 13)
+                    continue;
+                  MedCallInfo Info;
+                  Info.BlockId = Block.Id;
+                  Info.OpIdx = static_cast<int>(I);
+                  Info.TargetAddr = SinkVA;
+                  Info.Args = {Op.Inputs[0]};
+                  Caller.CallInfos.push_back(Info);
+                  Op = {};
+                  Op.Opcode = NdOp::CALL;
+                  Op.CallSiteId = 2;
+                  Op.addInput(MedVar::makeConst(
+                      SinkVA, Width, ConstantAddressProvenance::CodeAddress));
+                }
+            }
+            MedFunc Callee =
+                makeReturnFunction("merged_function_identity", CodeVA);
+            MedFunc Runtime = makeReturnFunction("clobber_producer", RuntimeVA);
+            Runtime.ReturnType = NdType::makeVoid();
+            llvm::LLVMContext Context;
+            testing::internal::CaptureStderr();
+            auto Module =
+                MedLLVMEmitter().emit({Caller, Callee, Runtime, Consumer},
+                                      Context, "call-clobber-code-value-merge",
+                                      TargetArch, {}, &Image, Format);
+            const std::string Diagnostic =
+                testing::internal::GetCapturedStderr();
+            if (Scenario != Case::Complete || Use == Sink::IndirectCall) {
+              EXPECT_EQ(Module, nullptr);
+              EXPECT_NE(Diagnostic.find("refusing stale-address fallback"),
+                        std::string::npos)
+                  << Diagnostic;
+              continue;
+            }
+            ASSERT_NE(Module, nullptr) << Diagnostic;
+            expectValidModule(*Module);
+            auto *Emitted = Module->getFunction(Caller.Name);
+            ASSERT_NE(Emitted, nullptr);
+            const llvm::Value *Observed = nullptr;
+            const llvm::FreezeInst *Unknown = nullptr;
+            for (const auto &Block : *Emitted)
+              for (const auto &Instruction : Block) {
+                if (const auto *Freeze =
+                        llvm::dyn_cast<llvm::FreezeInst>(&Instruction))
+                  Unknown = Freeze;
+                if (Use == Sink::Return)
+                  if (const auto *Return =
+                          llvm::dyn_cast<llvm::ReturnInst>(&Instruction))
+                    Observed = Return->getReturnValue();
+                if (Use == Sink::Argument)
+                  if (const auto *Call =
+                          llvm::dyn_cast<llvm::CallInst>(&Instruction);
+                      Call && Call->getCalledFunction() ==
+                                  Module->getFunction(Consumer.Name)) {
+                    ASSERT_EQ(Call->arg_size(), 1u);
+                    Observed = Call->getArgOperand(0);
+                  }
+              }
+            ASSERT_NE(Observed, nullptr);
+            ASSERT_NE(Unknown, nullptr);
+            std::set<const llvm::Value *> SeenCode, SeenRuntime, SeenInteger;
+            EXPECT_TRUE(valueReferencesTarget(
+                Observed, Module->getFunction(Callee.Name), SeenCode));
+            EXPECT_TRUE(valueReferencesTarget(Observed, Unknown, SeenRuntime));
+            EXPECT_FALSE(observableValueReferencesInteger(Observed, CodeVA,
+                                                          SeenInteger));
+          }
+}
+
+TEST(LLVMCodePointerInvariantBoundary,
      PreservesDistinctSameOwnerBlockAddressesAcrossValueMerges) {
   constexpr Arch TargetArch = Arch::X64;
   constexpr va_t FirstInteriorVA = CodeVA + 0x10;

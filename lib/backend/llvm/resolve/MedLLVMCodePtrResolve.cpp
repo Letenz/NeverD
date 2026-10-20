@@ -17,7 +17,9 @@
 #include "neverd/backend/DataSymbolMetadata.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/FuncDetector.h"
+#include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -2812,6 +2814,43 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
 
   using CodeProofKey = std::pair<AddressProvenanceVarKey, bool>;
 
+  auto isRuntimeCallClobber = [&](const MedVar &Current) {
+    if (Current.Kind != MedVar::Reg || Current.TheArch != TargetArch ||
+        Current.Id < 0 || Current.SSAVer <= 0 || Current.Size != PointerSize)
+      return false;
+    const MedCallClobber *Record = nullptr;
+    for (const MedCallClobber &Clobber : CurMedFunc->CallClobbers) {
+      if (Clobber.Value != Current)
+        continue;
+      // getVar reads the declared clobber's storage. A different-width view,
+      // a partial preservation, or competing definitions cannot establish
+      // that every bit of this occurrence is an independent runtime value.
+      if (Record || Clobber.CallSiteId == 0 ||
+          Clobber.PreservedPrefixSize != 0 ||
+          addressProvenanceVarKey(Clobber.Value) !=
+              addressProvenanceVarKey(Current))
+        return false;
+      Record = &Clobber;
+    }
+    if (!Record)
+      return false;
+    const MedOp *Owner = nullptr;
+    for (const MedBlock &Block : CurMedFunc->Blocks)
+      for (const MedOp &Op : Block.Ops) {
+        if (Op.CallSiteId != Record->CallSiteId)
+          continue;
+        if (Owner || (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL))
+          return false;
+        Owner = &Op;
+      }
+    const TargetRegInfo &TRI = getTargetRegInfo(TargetArch);
+    return Owner && !Owner->DoesNotReturn &&
+           callClobbersRegister(*Owner, Current.RegOff, Current.Size, TRI,
+                                TargetFormat) &&
+           TRI.callPreservedPrefixSize(Current.RegOff, Current.Size,
+                                       TargetFormat) == 0;
+  };
+
   auto classifyCodeConstant = [&](const MedVar &Current,
                                   bool IncludeLayoutCodeOwners) -> CodeProof {
     if (Current.Provenance == ConstantAddressProvenance::AddressFragment)
@@ -3027,8 +3066,15 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
     }
 
     const MedOp *Def = lookupDef(Current);
-    if (!Def)
+    if (!Def) {
+      // SSA publishes caller-saved register writes as implicit definitions.
+      // Their whole-view clobbers are emitted as frozen unknown values. Keep
+      // that runtime arm when it meets a rebuilt code identity, without
+      // turning a register clobber into an authenticated callable pointer.
+      if (isRuntimeCallClobber(Current))
+        return Finish(completeProof({.SawRuntimeValue = true}));
       return Finish(completeProof({.SawUnresolved = true}));
+    }
     if (auto ExactTarget = exactFunctionMaterialization(Current))
       return Finish(completeProof({.CommonTarget = *ExactTarget,
                                    .SawCode = true,

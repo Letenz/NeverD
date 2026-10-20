@@ -2889,6 +2889,12 @@ checks all six integer comparisons of one complete rebuilt address across
 those architectures and ELF, Mach-O and COFF. Strict self-ordering excludes
 empty-table loop bodies. Distinct addresses, mixed raw/rebuilt values, narrow
 operands and independent entries cannot hide an observable incomplete address.
+`LLVMCodePointerInvariantBoundary.CallClobberCodeMergesPreserveValuesWithoutCallableAuthority`
+checks PHI and SELECT merges of a rebuilt function address with a whole-register
+call clobber on the same architecture/format matrix. Returns and arguments keep
+both the runtime value and the function identity. Indirect calls, partial
+preservation, mismatched widths, missing or duplicate definitions and calls
+that preserve the register cannot gain callable or relocation authority.
 
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
