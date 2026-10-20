@@ -230,24 +230,29 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
       Starts.push_back(Start);
   std::sort(Starts.begin(), Starts.end());
 
+  // Owner reachability needs instruction membership and ordinary edges.
+  // Only the last boundary of each provisional block is needed to link its
+  // successors. This control view is never published; final blocks materialize
+  // all retained boundaries and LowOps after instruction filtering below.
   std::map<va_t, int> AddrToBlock;
+  std::map<va_t, int> InsnToBlock;
   for (size_t I = 0; I < Starts.size(); ++I) {
     LowBlock Blk;
     Blk.Id = static_cast<int>(I);
     Blk.StartAddr = Starts[I];
 
     va_t End = (I + 1 < Starts.size()) ? Starts[I + 1] : InvalidVA;
+    const InsnRecord *Last = nullptr;
 
     for (auto It = Insns.lower_bound(Starts[I]); It != Insns.end(); ++It) {
       if (It->first >= End)
         break;
-      const uint64_t FirstOp = static_cast<uint64_t>(Blk.Ops.size());
-      for (auto &Op : It->second.Ops)
-        Blk.Ops.push_back(Op);
-      Blk.InstructionBoundaries.push_back(
-          makeInstructionBoundary(It->second, FirstOp));
+      InsnToBlock[It->second.Addr] = Blk.Id;
+      Last = &It->second;
       Blk.EndAddr = It->first + It->second.Size;
     }
+    if (Last)
+      Blk.InstructionBoundaries.push_back(makeInstructionBoundary(*Last, 0));
 
     AddrToBlock[Starts[I]] = Blk.Id;
     Func.Blocks.push_back(std::move(Blk));
@@ -265,10 +270,6 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
   // before exceptional edges and jump-table metadata are published.
   std::vector<bool> Reachable(Func.Blocks.size(), false);
   std::queue<int> Worklist;
-  std::map<va_t, int> InsnToBlock;
-  for (const LowBlock &Block : Func.Blocks)
-    for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries)
-      InsnToBlock[Boundary.Address] = Block.Id;
   auto Flood = [&] {
     while (!Worklist.empty()) {
       const int Block = Worklist.front();
@@ -387,33 +388,7 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
       break;
   }
 
-  if (std::find(Reachable.begin(), Reachable.end(), false) != Reachable.end()) {
-    std::vector<int> OldToNew(Func.Blocks.size(), -1);
-    std::vector<LowBlock> Pruned;
-    Pruned.reserve(static_cast<size_t>(
-        std::count(Reachable.begin(), Reachable.end(), true)));
-    for (size_t Old = 0; Old < Func.Blocks.size(); ++Old) {
-      if (!Reachable[Old])
-        continue;
-      OldToNew[Old] = static_cast<int>(Pruned.size());
-      Pruned.push_back(std::move(Func.Blocks[Old]));
-    }
-    for (LowBlock &Block : Pruned) {
-      std::vector<int> Succs;
-      Succs.reserve(Block.Succs.size());
-      for (int Succ : Block.Succs)
-        if (Succ >= 0 && Succ < static_cast<int>(OldToNew.size()) &&
-            OldToNew[Succ] >= 0)
-          Succs.push_back(OldToNew[Succ]);
-      Block.Succs = std::move(Succs);
-      Block.Preds.clear();
-      Block.Id = OldToNew[Block.Id];
-    }
-    for (LowBlock &Block : Pruned)
-      for (int Succ : Block.Succs)
-        Pruned[Succ].Preds.push_back(Block.Id);
-    Func.Blocks = std::move(Pruned);
-  }
+  Func.Blocks.clear();
 
   // Relative code relocations carry S+A-P in each physical slot.  During
   // speculative table recovery the relocation coordinate P+(S+A-P) can be
@@ -421,7 +396,7 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
   // dispatches through its base.  If that coordinate lands inside a real
   // instruction, forming blocks before removing the stale root makes the real
   // case fall through into the overlapping decode stream and defeats the
-  // block-level reachability pruning above.
+  // block-level reachability view above.
   //
   // Build a final, instruction-level view instead.  Relocation evidence is
   // source-counted: a root is hidden only when every absolute or relative

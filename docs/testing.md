@@ -3019,6 +3019,9 @@ potential writers with malformed operands, collisions and graph replacement.
 `ResolverGraphCache.MemoryScansKeepExactWritersBarriersAndBudgets` covers long
 memory scans across four architectures and three formats: a claimed memcpy at
 a pure operation remains invalid, and adding a call invalidates a cached scan.
+Changes to provisional CFG storage should run both `NeverDJumpTableTests` and
+`NeverDLowInstructionBoundaryTests` to cover stale targets, root ownership and
+the final published operation/boundary ranges.
 `ResolverLoadAddress.*` checks that one opaque load retains its identity when
 its unused address exceeds the proof depth. Across four architectures and
 three formats, stores, calls, ordered reads and incompatible widths prevent

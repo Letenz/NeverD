@@ -7297,6 +7297,13 @@ with other unwind records. A padding guess is absorbed only when another
 function's decoded CFG owns it. Code admission grants no exception-rewrite
 authority; the format backend still checks that contract separately.
 
+CFG block publication first builds a provisional control view from instruction
+membership and each block's terminal boundary. This view retains no copied
+LowOps; decoded instruction records remain authoritative. After final
+instruction reachability and relocation-root suppression settle, published
+blocks materialize every retained operation and instruction boundary. Root,
+exception-edge and jump-table publication retain their existing ordering.
+
 The pinned Capstone x86 decoder owns LOCK/MOV-to-CS encoding validity and UD1
 instruction extent and operand details. NeverD's detailed, lightweight and
 lifting decode routes consume that result, including REX2 forms. Illegal
