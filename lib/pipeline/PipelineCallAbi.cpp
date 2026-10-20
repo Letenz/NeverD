@@ -45,6 +45,16 @@
 namespace neverd {
 
 namespace {
+/// The entries callee lifts know: the function symbols of \p Img that are
+/// not boundary guesses.
+std::set<va_t> calleeLiftEntries(const BinaryImage &Img) {
+  std::set<va_t> Entries;
+  for (const auto &Symbol : Img.Symbols)
+    if (Symbol.IsFunc && !Symbol.IsBoundaryGuess)
+      Entries.insert(Symbol.Addr);
+  return Entries;
+}
+
 /// The argument counts of prototyped imports that the conversion of an
 /// omitted callee reads (PipelineResult::OmittedCalleeArgumentCounts).
 const std::map<va_t, int> &
@@ -103,6 +113,7 @@ void OmittedCalleeMemo::adopt(const BinaryImage &Img,
   SymbolData = Img.Symbols.data();
   SymbolCount = Img.Symbols.size();
   CallArgumentSources = Result.CallArgumentSources;
+  FunctionEntries = calleeLiftEntries(Img);
   Callees.clear();
   Bytes = 0;
 }
@@ -157,24 +168,23 @@ namespace {
 /// entries, and their conversions, into \p Result's memo where it has room.
 class CalleeReader {
 public:
+  /// \p Result's memo, where it has one, has adopted \p Img.
   CalleeReader(const BinaryImage &Img, const PipelineResult &Result)
       : Img(Img), Result(Result), Memo(Result.CalleeSignatureMemo.get()) {
-    for (const auto &Symbol : Img.Symbols)
-      if (Symbol.IsFunc && !Symbol.IsBoundaryGuess)
-        Entries.insert(Symbol.Addr);
-    Builder.setKnownFuncEntries(&Entries);
+    if (!Memo)
+      OwnEntries = calleeLiftEntries(Img);
+    Entries = Memo ? &Memo->functionEntries() : &OwnEntries;
+    Builder.setKnownFuncEntries(Entries);
     // The callees' builds prove each x87 call effect from the same callee
     // graphs: build each once.  A 32-bit printf engine in a call cycle with
     // the heap reaches every build here, and its jump tables take seconds.
     Builder.setX87CallGraphCache(createX87CallGraphCache());
   }
   bool init() { return Dec.init(Img); }
-  /// The function symbols' entries.
-  const std::set<va_t> &entries() const { return Entries; }
   /// Whether \p Target is a callee the read takes: a function of this image.
   bool reads(va_t Target) const {
     return !Img.findImportAt(Target) && !Img.isImportStubAt(Target) &&
-           (Entries.count(Target) || Img.hasKnownFunctionEntryAt(Target)) &&
+           (Entries->count(Target) || Img.hasKnownFunctionEntryAt(Target)) &&
            Img.hasExecutableCodeOwnerAt(Target);
   }
   /// Where \p Target's reading is kept: the memo's, or \p Local where the
@@ -254,7 +264,8 @@ private:
   const BinaryImage &Img;
   const PipelineResult &Result;
   OmittedCalleeMemo *Memo;
-  std::set<va_t> Entries;
+  std::set<va_t> OwnEntries;
+  const std::set<va_t> *Entries = nullptr;
   Decoder Dec;
   CFGBuilder Builder;
 };
@@ -267,6 +278,10 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
     return {};
   std::set<va_t> Present, Queued;
   std::queue<va_t> Pending;
+  // Each callee is read as an earlier run of the image read it, where the
+  // run shares what those read.
+  if (OmittedCalleeMemo *Memo = Result.CalleeSignatureMemo.get())
+    Memo->adopt(Img, Result);
   CalleeReader Reader(Img, Result);
   for (const MedFunc &F : Result.MedFuncs)
     Present.insert(F.Entry);
@@ -304,10 +319,6 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
   std::vector<std::shared_ptr<const MedFunc>> Signatures;
   if (Pending.empty())
     return Signatures;
-  // Each callee is read as an earlier run of the image read it, where the
-  // run shares what those read.
-  if (OmittedCalleeMemo *Memo = Result.CalleeSignatureMemo.get())
-    Memo->adopt(Img, Result);
   if (!Reader.init())
     return Signatures;
   size_t Inspected = 0;

@@ -621,7 +621,7 @@ bound what each object contributed. Once discovery has found the code, such
 an image's symbol of no function type in an executable section is data
 among the code when no code metadata claims it, it is no import thunk, and it
 starts no instruction, as GNU ld's -1-headed `__CTOR_LIST__` in `.text`
-(`recordSymbolTableDataInCode`). The relocated pointers to it, and those it
+  (`recordSymbolTableDataInCode`). The relocated pointers to it, and those it
 holds, which the base relocations took for pointers in code, are then
 pointers of data. LLVM-C mirrors a code segment that holds such slots as a
 pointer table, so a constructor's address in it is no stale one. Past the
@@ -629,7 +629,14 @@ embedding limit the segment has no such mirror, and LLVM-C refuses data whose
 raw copy would reach one of its slots (`tryResolveGlobalData`). A mirror built
 while an earlier one's initializer resolved follows that initializer in the
 module, so whole-module LLVM-C declares each global an earlier initializer
-names before defining the globals in module order (`writeGlobals`).
+  names before defining the globals in module order (`writeGlobals`).
+  Before heuristic discovery, x86/x64 relocated pointers to executable literal
+  regions are also classified as data when the shared literal decoder proves
+  every path through their text, zero bytes and padding traps. Function symbols,
+  runtime/unwind ranges, verified entries and exclusive function ends retain
+  precedence. The same `DataInCode` and data-pointer provenance is published for
+  full and restricted loads across PE, ELF and Mach-O; an unknown executable
+  target is not made data merely because it lacks a function symbol.
 MSVC places an i386 switch's jump table in `.text` after its function, where
 the base relocations record its slots as instruction operands. No instruction
 holds more pointer-wide relocated fields back to back than
@@ -8424,8 +8431,15 @@ admission fail explicitly rather than borrowing a host VM or driver.
 reports a sorted snapshot; the shared Program resolves declarations through the
 class/superclass chain without initializing them. The JSON adapter supplies
 explicit negative loader outcomes only; unknown inputs never imply absence.
-Neither FindClass nor registration executes a class initializer. Native method
-execution remains a separate unsupported contract.
+Neither FindClass nor registration executes a class initializer.
+`AndroidJNINativeCalls` admits ordinary registered native declarations reached
+through JNI method calls. It owns the JNI-to-AArch64 argument/reference mapping
+and implicit local-frame lifetime; the existing guest callback scheduler owns
+execution, waits and original-call resumption. Runtime retains class
+initialization and the shared heap. Binding lookup occurs at invocation, not
+method-ID resolution. DEX-to-native suspension, Java library loading, floating
+and stack-passed native arguments and synchronized native methods remain
+unsupported. See [the native call contract](android-application-runtime.md#calling-registered-native-methods-through-jni).
 `AndroidJNIMethods` owns JNI method identities and descriptor/argument binding;
 all JNI call forms and explicit DEX methods reuse it and Bionic's GP argument reader.
 The finite intrinsic catalogue and value semantics live in `dalvik::Library`;

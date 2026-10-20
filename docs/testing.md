@@ -4,6 +4,19 @@
 
 # Testing NeverD
 
+`AndroidJNI.RegisteredNativeCalls*` executes independently authored guest native
+targets through late-bound JNI method IDs at O0/O2 across ordinary, APS2 and
+RELR images and available ARM64 backends. It checks all three JNI argument
+forms, scalar widths, declaring-class identity, virtual/nonvirtual dispatch,
+rebinding, nested JNI, two sleeping native threads, caller/global reference
+survival, implicit frame retirement, exceptions and failed class initialization.
+Counterexamples cover missing/unregistered targets, alignment/access faults,
+argument/result types, retired references, frame underflow, monitor/FP/stack
+ABI refusal, recursion and original-machine instruction limits. Run the full
+Dalvik, Android JNI and existing callback/thread suites after changing this
+shared call boundary. These tests do not execute a device JVM or qualify
+DEX-to-native continuations or Java library loading.
+
 `AndroidFrameworkTest.*` checks explicit API 28 lifecycle phases, retained
 Application/Context identities, separate loader namespaces and parents,
 load-without-initialization, JNI-library/DEX sharing, type/null checks and

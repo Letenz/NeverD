@@ -9,6 +9,7 @@
 #include "FunctionDiscoveryDetail.h"
 
 #include "neverd/loader/LinkerThunk.h"
+#include "neverd/loader/PointerRelocation.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
 
@@ -347,6 +348,40 @@ collectClaimedCodeRanges(const BinaryImage &Img) {
     Merged.back().second = std::max(Merged.back().second, Range.second);
   }
   return Merged;
+}
+
+void recordRelocatedLiteralTargets(BinaryImage &Img) {
+  if ((Img.Arch != Arch::X86 && Img.Arch != Arch::X64) ||
+      Img.CodePtrRelocSlots.empty())
+    return;
+  X86StringLiteralRuns Literals(Img);
+  std::map<va_t, bool> Classified;
+  std::vector<va_t> Objects;
+  // Text alone is not enough: the shared literal decoder also requires every
+  // path through its bytes and padding to end in a trap. Decide every target
+  // before publishing any data objects or changing relocation classifications.
+  for (va_t Slot : Img.CodePtrRelocSlots) {
+    const uint8_t *Bytes = Img.readVA(Slot, Img.getPointerSize());
+    if (!Bytes)
+      continue;
+    const va_t Addr = readPtr(Bytes, Img.is64Bit());
+    const auto [It, Inserted] = Classified.try_emplace(Addr, false);
+    if (!Inserted)
+      continue;
+    const Segment *Seg = Img.getSegmentFor(Addr);
+    if (Seg && Seg->isExecutable() &&
+        Literals.at(*Seg, static_cast<size_t>(Addr - Seg->VA))) {
+      It->second = true;
+      Objects.push_back(Addr);
+    }
+  }
+  // Existing code metadata, including a function's exclusive end, has priority
+  // over this proof. Reuse the shared rules used for debug data objects.
+  recordDataInCode(Img, Objects);
+  recordDataPointerTargets(Img, [&](va_t Addr) {
+    const auto It = Classified.find(Addr);
+    return It != Classified.end() && It->second && Img.DataInCode.count(Addr);
+  });
 }
 
 void scanPaddingBoundaries(BinaryImage &Img) {

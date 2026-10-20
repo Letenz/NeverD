@@ -181,7 +181,9 @@ BionicResult Bionic::jniObjects(unsigned Slot, const NativeCallEvent &Call) {
     return value(0);
   }
   if (Slot == 20) {
-    if (Thread.Frames.size() == 1)
+    if (Thread.Frames.size() == 1 ||
+        (!Thread.NativeFrames.empty() &&
+         Thread.Frames.back() == Thread.NativeFrames.back()))
       return failure("JNI local frame stack underflow");
     auto Object = jniObject(A[1]);
     if (!Object)
