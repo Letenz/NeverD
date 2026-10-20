@@ -2911,8 +2911,12 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       }
     }
     // Structure offsets name the members of the types as they are now.
-    if (result.value("problems", Json::array()).empty())
+    if (result.value("problems", Json::array()).empty()) {
       operandFormatsChanged();
+      namesChanged();
+      if (!result.value("decompilation", false))
+        ++revision_;
+    }
     // A prototype the decompiler reads, or a type it names, changed: the
     // engine let its analysis go, as loading signatures does, and every view
     // reads anew.
@@ -3890,9 +3894,11 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                   "Code belongs to its function; delete the function to "
                   "define data in its bytes");
     // The item the cursor is in is the one the action changes.
-    const auto start = action == "code"
-                           ? address
-                           : parseAddress(at.at("start").get<std::string>());
+    const auto start =
+        action == "code"
+            ? address
+            : parseAddress(at.value("definition_start", at.at("start"))
+                               .get<std::string>());
     const auto user = at.value("user", std::string());
     Json row;
     std::vector<std::pair<std::uint64_t, Json>> code;
@@ -3936,6 +3942,23 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         if (!flow.empty() && flow != "call" && flow != "icall")
           break;
       }
+    } else if (action == "array") {
+      const auto width = sizeField(p, "element_size", 1, 65536);
+      const auto count = sizeField(p, "count", 0, 1048576);
+      if (!width || !count || width * count > 64 * 1024 * 1024)
+        throw Error("invalid_request", "Array extent exceeds 64 MiB");
+      size = width * count;
+      row = {{"kind", "array"},
+             {"element_size", width},
+             {"count", count},
+             {"size", size},
+             {"type", stringField(p, "type", {}, 512)}};
+    } else if (action == "alignment") {
+      const auto alignment = sizeField(p, "alignment", 16, 1048576);
+      if (alignment < 2 || (alignment & (alignment - 1)))
+        throw Error("invalid_request", "Alignment must be a power of two");
+      size = alignment - start % alignment;
+      row = {{"kind", "alignment"}, {"alignment", alignment}, {"size", size}};
     } else if (action == "data") {
       // The data carousel: byte, word, dword, qword, then byte again.
       static constexpr std::array<std::uint64_t, 4> Carousel = {1, 2, 4, 8};
@@ -3972,12 +3995,12 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     } else if (action == "undefine") {
       // Bytes the listing already shows one by one stay as they are.
       if (user == UndefinedItemKind || kind == "byte" ||
-          kind == "uninitialized" || kind == "align")
+          kind == "uninitialized" || (kind == "align" && user != "alignment"))
         return {{"address", hexAddress(start)},
                 {"kind", UndefinedItemKind},
                 {"size", at.at("size")},
                 {"saved", false}};
-      size = at.at("size").get<std::uint64_t>();
+      size = at.value("definition_size", at.at("size")).get<std::uint64_t>();
       row = {{"kind", UndefinedItemKind}, {"size", size}};
     } else {
       throw Error("invalid_request",
@@ -4099,7 +4122,13 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
           next = {{"base", entry.at("base")},
                   {"negate", entry.value("negate", false)},
                   {"invert", entry.value("invert", false)}};
-    if (structure) {
+    if (action == "enum") {
+      next = {{"base", "enum"},
+              {"negate", false},
+              {"invert", false},
+              {"type", stringField(p, "type", {}, 512)},
+              {"flags", p.value("flags", false)}};
+    } else if (structure) {
       // The member a structure offset names has no sign of its own.
       next = {{"base", action},
               {"negate", false},
@@ -4109,8 +4138,9 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       if (!next.at("delta").is_number_integer())
         throw Error("invalid_request", "delta must be an integer");
     } else if ((action == "negate" || action == "invert") &&
-               next.at("base") ==
-                   std::string(numberBaseName(NumberBase::Struct))) {
+               (next.at("base") ==
+                    std::string(numberBaseName(NumberBase::Struct)) ||
+                next.at("base") == "enum")) {
       throw Error(
           "invalid_request",
           "A structure offset has no sign or bits of its own to change");

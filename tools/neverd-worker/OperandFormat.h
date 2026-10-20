@@ -139,6 +139,9 @@ struct OperandFacts {
   const std::vector<NumberFormat> *numberFormats = nullptr;
   /// Names structure offsets, when the engine has local types.
   const StructNamer *structs = nullptr;
+  using EnumNamer = std::function<std::optional<std::string>(
+      std::string_view, std::uint64_t, unsigned, bool)>;
+  const EnumNamer *enums = nullptr;
 };
 
 /// A memory operand relative to a frame register.
@@ -158,6 +161,7 @@ std::string_view x86SizeKeyword(unsigned bytes);
 /// An instruction's mnemonic and operand text as classic listings spell it.
 struct ClassicInstruction {
   std::string mnemonic, operands;
+  std::vector<std::size_t> operandIndices;
 };
 
 /// Respell engine disassembler text for \p dialect: classic mnemonics, hidden

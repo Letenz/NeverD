@@ -1352,7 +1352,9 @@ void MainWindow::connectActions() {
            std::pair{ActionId::EditOperandInvert, QStringLiteral("invert")}})
     // A structure offset names a type the user picks first.
     on(id, [this, formatOperand, action] {
-      if (action == QLatin1String("struct"))
+      if (action == QLatin1String("enum"))
+        editDataPresentation("enum");
+      else if (action == QLatin1String("struct"))
         chooseStructOffset();
       else
         formatOperand(action);
@@ -1375,6 +1377,9 @@ void MainWindow::connectActions() {
   on(ActionId::EditUnmapVariable, [this] { editVariable("unmap"); });
   on(ActionId::EditUnsplitVariable, [this] { editVariable("unsplit"); });
   on(ActionId::EditResetVariables, [this] { editVariable("clear"); });
+  on(ActionId::EditMakeArray, [this] { editDataPresentation("array"); });
+  on(ActionId::EditMakeAlignment,
+     [this] { editDataPresentation("alignment"); });
   on(ActionId::EditStackFrame, [this] { editStackFrame(0); });
   on(ActionId::EditStackPointer, [this] { editStackFrame(1); });
   on(ActionId::EditStackOperand, [this] { editStackFrame(2); });
@@ -1710,6 +1715,11 @@ void MainWindow::updateActions() {
   // parameters take a type instead.
   actions_.action(ActionId::EditOperandStruct)
       ->setEnabled(operandFormats && session_.showsStructOffsets() && !code);
+  for (const auto id : {ActionId::EditMakeArray, ActionId::EditMakeAlignment})
+    actions_.action(id)->setEnabled(location && !code && !session_.readOnly() &&
+                                    session_.keepsDataItems());
+  actions_.action(ActionId::EditOperandEnum)
+      ->setEnabled(operandFormats && !code && session_.showsStructOffsets());
   const bool declarations =
       location && !session_.readOnly() && session_.typesFunctions();
   actions_.action(ActionId::EditSetType)
@@ -3436,6 +3446,92 @@ void MainWindow::setType() {
       {{"type", dialog.resets() ? QJsonValue(QJsonValue::Null)
                                 : QJsonValue(dialog.declaration())}},
       epoch);
+}
+
+void MainWindow::editDataPresentation(const QString &kind) {
+  const auto address = currentAddress();
+  if (!address || focusedCodeView() || session_.readOnly())
+    return;
+  const auto epoch = session_.epoch();
+  const auto revision = session_.revision();
+  const auto operand = disassembly_->currentOperand();
+  QDialog dialog(this);
+  dialog.setObjectName("dataPresentationDialog");
+  dialog.setWindowTitle(kind == "array"       ? tr("Make array")
+                        : kind == "alignment" ? tr("Make alignment")
+                                              : tr("Enum operand"));
+  auto *layout = new QVBoxLayout(&dialog);
+  layout->addWidget(
+      new QLabel(tr("Address: %1").arg(hexAddress(*address)), &dialog));
+  auto *type = new QLineEdit(&dialog);
+  type->setObjectName("dataPresentationType");
+  auto *width = new QSpinBox(&dialog);
+  width->setObjectName("arrayElementSize");
+  width->setRange(1, 65536);
+  width->setValue(1);
+  auto *count = new QSpinBox(&dialog);
+  count->setObjectName("arrayCount");
+  count->setRange(1, 1048576);
+  count->setValue(16);
+  auto *alignment = new QComboBox(&dialog);
+  alignment->setObjectName("dataAlignment");
+  for (int value = 2; value <= 1048576; value *= 2)
+    alignment->addItem(QString::number(value), value);
+  alignment->setCurrentIndex(3);
+  auto *flags = new QCheckBox(
+      tr("Combine bit flags; preserve unknown bits numerically"), &dialog);
+  flags->setObjectName("enumFlags");
+  type->setVisible(kind != "alignment");
+  width->setVisible(kind == "array");
+  count->setVisible(kind == "array");
+  alignment->setVisible(kind == "alignment");
+  flags->setVisible(kind == "enum");
+  if (kind == "array") {
+    layout->addWidget(new QLabel(tr("Element size in bytes:"), &dialog));
+    layout->addWidget(width);
+    layout->addWidget(new QLabel(
+        tr("Element count (complete initialized span, at most 64 MiB):"),
+        &dialog));
+    layout->addWidget(count);
+    layout->addWidget(new QLabel(tr("Local type name (optional; its layout "
+                                    "must match the element size):"),
+                                 &dialog));
+    layout->addWidget(type);
+  } else if (kind == "alignment") {
+    layout->addWidget(new QLabel(
+        tr("Alignment boundary (the marked span ends on this boundary):"),
+        &dialog));
+    layout->addWidget(alignment);
+  } else {
+    layout->addWidget(
+        new QLabel(tr("Enumeration declared in Local Types:"), &dialog));
+    layout->addWidget(type);
+    layout->addWidget(flags);
+  }
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  layout->addWidget(buttons);
+  if (dialog.exec() != QDialog::Accepted || session_.epoch() != epoch ||
+      session_.revision() != revision || currentAddress() != address)
+    return;
+  QJsonObject request{{"address", hexAddress(*address)}, {"action", kind}};
+  if (kind == "array") {
+    request.insert("element_size", width->value());
+    request.insert("count", count->value());
+    request.insert("type", type->text().trimmed());
+  }
+  if (kind == "alignment")
+    request.insert("alignment", alignment->currentData().toInt());
+  if (kind == "enum") {
+    request.insert("type", type->text().trimmed());
+    request.insert("flags", flags->isChecked());
+    if (operand)
+      request.insert("operand", *operand);
+  }
+  session_.editDataPresentation(
+      kind == "enum" ? "operand_format" : "item_define", request, epoch);
 }
 
 void MainWindow::editStackFrame(int mode) {

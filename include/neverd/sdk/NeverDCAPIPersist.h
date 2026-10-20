@@ -156,6 +156,12 @@ NEVERD_API const char *neverd_func_attributes_json(neverd_session_t Sess,
 NEVERD_API const char *neverd_func_type_json(neverd_session_t Sess,
                                              neverd_va_t Entry,
                                              const char *OptionsJson);
+/// Format exact enum/flag bits using the current local type library.
+/// Value is a hexadecimal/decimal string; Bits is the logical operand width.
+NEVERD_API const char *neverd_enum_value_json(neverd_session_t Sess,
+                                              const char *Type,
+                                              const char *Value, unsigned Bits,
+                                              int Flags);
 /// Inspect/validate a bounded analyst stack frame; returned JSON is owned by
 /// the caller. Options: {snapshot, points:[{address,after}],
 /// variables:[{offset,bytes,name,type}]}. Null with neverd_last_error on
