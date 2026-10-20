@@ -38,10 +38,6 @@ add_neverd_unittest(NeverDHighCParamUsageTests
   core/HighCParamUsageTests.cpp
   LINK_COMPONENTS BackendC)
 
-add_neverd_unittest(NeverDHighSymSimplifyTests
-  core/HighSymSimplifyTests.cpp
-  LINK_COMPONENTS BackendC Solver)
-
 add_neverd_unittest(NeverDHighCSupervisorCallTests
   core/HighCSupervisorCallTests.cpp
   LINK_COMPONENTS BackendC)
@@ -1181,6 +1177,10 @@ target_include_directories(NeverDLiftTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/loader/COFF/unwind
   ${LLVM_INCLUDE_DIRS}
 )
+
+add_neverd_unittest(NeverDHighSymSimplifyTests
+  core/HighSymSimplifyTests.cpp
+  LINK_COMPONENTS BackendC Solver)
 
 add_neverd_unittest(NeverDJumpTableTests
   core/GuardExpressionTests.cpp
