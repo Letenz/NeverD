@@ -578,6 +578,9 @@ static ResolverFlowGraph buildResolverFlowGraph(
   }
   UpperStart = BlockStarts.begin();
   LastAddress = 0;
+  auto GroupCursor = Grouped.begin();
+  va_t PreviousGroupStart = 0;
+  bool GroupsOrdered = true;
   for (const ResolverInsnSnapshot &Insn : Insns) {
     if (!consumeWork() || !consumeLookup(BlockStarts.size()))
       return failIncomplete();
@@ -587,10 +590,21 @@ static ResolverFlowGraph buildResolverFlowGraph(
     --BI;
     if (!consumeLookup(Grouped.size()))
       return failIncomplete();
-    auto Group = Grouped.find(*BI);
-    if (Group == Grouped.end())
+    // Group keys are frozen. Ordered snapshots advance this cursor at most
+    // once per group. After a backwards start, keep ordinary lookups so an
+    // oscillating input cannot repeatedly scan the whole map. Retain every
+    // original lookup charge regardless of the physical lookup path.
+    GroupsOrdered &= *BI >= PreviousGroupStart;
+    PreviousGroupStart = *BI;
+    if (GroupsOrdered) {
+      while (GroupCursor != Grouped.end() && GroupCursor->first < *BI)
+        ++GroupCursor;
+    } else {
+      GroupCursor = Grouped.find(*BI);
+    }
+    if (GroupCursor == Grouped.end() || GroupCursor->first != *BI)
       return failIncomplete();
-    Group->second.push_back(&Insn);
+    GroupCursor->second.push_back(&Insn);
   }
 
   std::pmr::map<va_t, int> StartToBlock{Graph.IndexStorage.get()};

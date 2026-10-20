@@ -2820,6 +2820,8 @@ leaves the coordinate unknown even when a more expensive path analysis might
 prove it within the bound.
 
 Proof graph indexes use a private arena that outlives their containers.
+Snapshot grouping advances through frozen group keys in order; a backward
+group start switches the remaining pass to ordinary ordered lookups.
 Ordered insertion hints preserve duplicate
 and out-of-order point handling. After construction and pruning, a frozen graph
 may retain point lookups in a lazily allocated table bounded to 13 KiB.
