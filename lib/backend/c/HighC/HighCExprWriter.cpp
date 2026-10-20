@@ -2024,6 +2024,24 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     return I < ArityFloats ? ArityIntegers + I : I - ArityFloats;
   };
   const llvm::StringRef HeaderCallee = headerDeclaredCallee(E);
+  // Whether the argument at \p I passes to an object pointer of the routine
+  // the header declares: one the unit declares no other way (HeaderCallee),
+  // or a C library routine the type library declares, called by its own
+  // name where the unit includes its header, at a parameter it makes a
+  // pointer too.  Its typed arguments above leave a signature that mixes
+  // integer and floating parameters to this one, as no positional one
+  // (positionalDebugSignature): modf's double *.
+  auto ObjectPointerAt = [&](size_t I) {
+    const unsigned Index = static_cast<unsigned>(I);
+    if (!HeaderCallee.empty())
+      return libc::isObjectPointerParameter(HeaderCallee, Index,
+                                            Opts.libcVariant());
+    return Callee && Callee->PrototypeFromCLibrary && Name == Callee->Name &&
+           includesHeaderOf(Name) && I < Callee->Params.size() &&
+           Callee->Params[I].second &&
+           Callee->Params[I].second->Kind == NdTypeKind::Ptr &&
+           libc::isObjectPointerParameter(Name, Index, Opts.libcVariant());
+  };
   const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format);
   // A call through a typed member that points to a function passes the
   // parameters its type declares (debugCallArgLimit), as their types.
@@ -2344,9 +2362,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       }
     // Its object pointer parameter takes a machine integer converted to a
     // pointer, which C does not do itself; any object pointer converts on.
-    if (!HeaderCallee.empty() && !PointerArgument &&
-        libc::isObjectPointerParameter(HeaderCallee, static_cast<unsigned>(I),
-                                       Opts.libcVariant()) &&
+    if (!PointerArgument && ObjectPointerAt(I) &&
         printsAsInteger(Imm ? *Imm : *Op, Arg))
       Arg = llvm::StringRef(Arg).starts_with("(uintptr_t)")
                 ? "(void *)" + castOperand(Arg)
