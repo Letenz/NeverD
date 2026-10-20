@@ -392,8 +392,10 @@ const char *neverd_warm_functions_json(neverd_session_t Sess,
     std::optional<AnalysisCacheWarmup> Warmup;
     std::optional<va_t> Next;
     // A PE function's preparation keeps this state unless its handler
-    // discovery adds metadata, which after a full load it does not.
-    if (S->Img.Arch == Arch::X64 && S->synchronizeFunctions()) {
+    // discovery adds metadata, which after a full load it does not.  Bytecode
+    // images have no C view to prepare.
+    if (S->Img.Arch != Arch::EVM && S->Img.Arch != Arch::SBF &&
+        S->synchronizeFunctions()) {
       // ensurePipeline drops analysis state from before the current
       // signature feature generation.  The state built here belongs to the
       // current one, so record it as ensurePipeline would after a run.
@@ -409,16 +411,21 @@ const char *neverd_warm_functions_json(neverd_session_t Sess,
       // them here, where nothing waits, as that view would; the session
       // keeps them while the functions' extents stay.
       S->dataAccessWidths();
-      const FunctionPage Page = functionPage(*S, FirstEntry, MaxFunctions);
-      std::vector<va_t> Entries;
-      Entries.reserve(Page.Functions.size());
-      for (const FuncInfo *F : Page.Functions)
-        Entries.push_back(F->Entry);
-      PipelineOptions Opts;
-      S->applyAnalysisOptions(Opts);
-      Opts.AnalysisCache = &S->AnalysisCache;
-      Warmup = Pipeline().warmAnalysisCache(S->Img, Opts, S->decompileDebug(),
-                                            Entries);
+      // x64 selections read bodies and graphs that warming builds a page of
+      // functions at a time.
+      if (S->Img.Arch == Arch::X64) {
+        const FunctionPage Page = functionPage(*S, FirstEntry, MaxFunctions);
+        std::vector<va_t> Entries;
+        Entries.reserve(Page.Functions.size());
+        for (const FuncInfo *F : Page.Functions)
+          Entries.push_back(F->Entry);
+        PipelineOptions Opts;
+        S->applyAnalysisOptions(Opts);
+        Opts.AnalysisCache = &S->AnalysisCache;
+        Warmup = Pipeline().warmAnalysisCache(S->Img, Opts, S->decompileDebug(),
+                                              Entries);
+        Next = Page.NextEntry;
+      }
       // The prototypes of callees are read by the names the image states
       // for them; read those here too.
       if (const LocalTypesDebugContext *Local = S->LocalTypesDbg.get()) {
@@ -427,7 +434,6 @@ const char *neverd_warm_functions_json(neverd_session_t Sess,
       }
       // So is what the C emitter reads of the image for every unit.
       (void)S->cEmitter();
-      Next = Page.NextEntry;
     }
     llvm::json::Object Result;
     Result["available"] = Warmup.has_value();

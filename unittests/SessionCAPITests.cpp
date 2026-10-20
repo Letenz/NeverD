@@ -2917,6 +2917,47 @@ TEST_F(SessionCAPITest, WarmingScansTheDataAccessWidthsTheFirstViewReads) {
   EXPECT_EQ(&*State.AccessWidths->begin(), Storage);
 }
 
+TEST_F(SessionCAPITest, WarmingPreparesTheFirstViewsOfAnAArch64Image) {
+  // Warming an AArch64 image builds no analysis bodies, but prepares what
+  // the first C views read, as on x64: the function list, the widths of
+  // the image's data accesses and the C emitter.  The views are those a
+  // cold session prints.
+  std::ifstream Input(std::filesystem::path(__FILE__).parent_path() / "types" /
+                          "fixtures" / "linux_libc_calls_arm64",
+                      std::ios::binary);
+  const std::string Path = write(
+      "warm_arm64", std::string(std::istreambuf_iterator<char>(Input), {}));
+  std::vector<std::string> Cold;
+  std::vector<neverd_va_t> Entries;
+  {
+    neverd_session_t Plain = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Plain, Path.c_str()), 1);
+    ASSERT_GE(neverd_session_discover_functions(Plain), 0);
+    for (int I = 0; I < neverd_func_count(Plain); ++I)
+      Entries.push_back(neverd_func_entry(Plain, I));
+    for (const neverd_va_t Entry : Entries)
+      Cold.push_back(takeString(neverd_decompile(Plain, Entry)));
+    neverd_session_destroy(Plain);
+  }
+  ASSERT_FALSE(Entries.empty());
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  ASSERT_GE(neverd_session_discover_functions(Session), 0);
+  auto &State = *neverd::sdk::toSession(Session);
+  ASSERT_FALSE(State.AccessWidths);
+  auto Page = llvm::json::parse(
+      takeString(neverd_warm_functions_json(Session, 0, 4096)));
+  ASSERT_TRUE(bool(Page)) << llvm::toString(Page.takeError());
+  ASSERT_NE(Page->getAsObject(), nullptr);
+  EXPECT_EQ(Page->getAsObject()->getBoolean("available"), false);
+  EXPECT_TRUE(State.AccessWidths);
+  EXPECT_TRUE(State.functionListCurrent());
+  EXPECT_EQ(State.CEmitterSymbols, State.Img.Symbols.data());
+  for (size_t I = 0; I < Entries.size(); ++I) {
+    SCOPED_TRACE(Entries[I]);
+    EXPECT_EQ(takeString(neverd_decompile(Session, Entries[I])), Cold[I]);
+  }
+}
+
 TEST_F(SessionCAPITest, WarmingPreparesWhatTheFirstSelectionsRead) {
   // Warming leaves the function list as a selection reads it, and the C
   // emitter prepared for the image, so the first views opened build
