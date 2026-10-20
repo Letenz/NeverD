@@ -8035,6 +8035,16 @@ and its i386 build `mingw_text_data32.exe`, which keep a -1-headed pointer
 table in `.text` as GNU ld keeps `__CTOR_LIST__`: the table is data, the
 pointer to it in `.data` points to data, and its entry is a slot that holds
 code.
+
+`NeverDRelocatedFunctionEntryTests` checks LLVM's shared entry evidence across
+x86, x64, Thumb and AArch64 with PE, ELF and Mach-O images. It covers bounded
+relocation proofs, complete CFG tables, malformed metadata and cache reuse.
+`CFGMetadataAuthenticatesEntriesWithoutRelocations` checks that metadata alone
+identifies a code address, while its absence still refuses that address.
+`RelocationsDoNotAuthenticateContinuationStarts` and
+`CFGMetadataDoesNotAuthenticateContinuationStarts` reject independent function
+identity for continuation code through both the verifier and LLVM emission.
+
 `PointerRelocationBatch.PointerRunsAmongCodeAreData` records an i386 jump
 table's three relocated slots in `.text` as data slots and the displacement
 naming it as a data operand, and keeps the two fields of one

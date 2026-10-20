@@ -181,7 +181,9 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
 
 bool RelocatedFunctionEntryVerifier::accepts(va_t Address) {
   Address = normalizeCodeAddress(Address, Img.Arch, Img.Mode);
-  if (Img.CodePtrRelocSlots.empty())
+  // Chained unwind and cold fragments continue another function's frame.
+  // Neither a relocated pointer nor CFG metadata makes them callable entries.
+  if (Img.ContinuationCodeStarts.count(Address))
     return false;
   if (!MetadataPrepared) {
     MetadataPrepared = true;
@@ -195,6 +197,8 @@ bool RelocatedFunctionEntryVerifier::accepts(va_t Address) {
   if (std::binary_search(MetadataEntries.begin(), MetadataEntries.end(),
                          Address))
     return true;
+  if (Img.CodePtrRelocSlots.empty())
+    return false;
   if (!Prepared) {
     Prepared = true;
     if (!Dec.init(Img))

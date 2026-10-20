@@ -78,10 +78,11 @@ private:
   std::set<va_t> RelocatedCandidates;
 };
 
-/// One immutable image's relocation-backed callable proofs. Candidate ownership
-/// uses the ordinary detector's filters, without a call/prologue sweep. Verify
-/// only requested targets and retain positive and negative answers locally;
-/// concurrent LLVM shards never publish into the image's mutable entry set.
+/// Callable entry evidence from one immutable image's metadata or relocations.
+/// Candidate ownership uses the detector's filters, without a call/prologue
+/// sweep. Verify only requested targets and retain positive and negative
+/// answers locally; concurrent LLVM shards never publish into the image's
+/// mutable entry set.
 class RelocatedFunctionEntryVerifier {
 public:
   explicit RelocatedFunctionEntryVerifier(const BinaryImage &Image)
