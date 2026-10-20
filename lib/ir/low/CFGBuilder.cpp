@@ -4327,9 +4327,20 @@ void CFGBuilder::multiStageResolve(const BinaryImage &Img, Decoder &Dec,
   std::optional<StageStart> PreviousStart;
   size_t PreviousMarkerEvidence = 0;
   bool PreviousStageGrew = true;
+  // The starts of the two stages before this one, from the third stage on,
+  // and what the marker account held as each started.
+  std::optional<StageStart> StartTwoBack, StartOneBack;
+  size_t MarkerTwoBack = 0, MarkerOneBack = 0;
+  // Once the stage that leaves the retries' last start runs: the debit of
+  // the retries after it.
+  std::optional<size_t> CycleDebit;
 
   bool ReachedFixedPoint = false;
   for (int Stage = 0; Stage < limits::kMaxMultiStageRetries; ++Stage) {
+    if (CycleDebit) {
+      IncompleteBranchMarkerEvidenceRemaining -= *CycleDebit;
+      break;
+    }
     // Only a stage after one that grew nothing can repeat it; capturing the
     // start of every other stage would cost a copy for nothing.
     if (PreviousStageGrew || StageTestingInjections) {
@@ -4349,6 +4360,44 @@ void CFGBuilder::multiStageResolve(const BinaryImage &Img, Decoder &Dec,
       }
       PreviousStart = std::move(Start);
       PreviousMarkerEvidence = IncompleteBranchMarkerEvidenceRemaining;
+    }
+    // Two stages can also alternate, as when one publishes a table that the
+    // next withdraws.  A stage that starts where the stage before the
+    // previous one started repeats the two since, and so does every retry
+    // after it, debiting the account as they did.  The last retry leaves this
+    // stage's start or the next one's, by parity.  If the account covers
+    // every debit, stopping there and charging them returns what the bounded
+    // retries return.  Few builds run three stages, so only theirs keep
+    // starts.
+    if (Stage >= 2 && !StageTestingInjections) {
+      StageStart Start = CaptureStageStart();
+      if (StartTwoBack && *StartTwoBack == Start &&
+          MarkerTwoBack >= MarkerOneBack &&
+          MarkerOneBack >= IncompleteBranchMarkerEvidenceRemaining) {
+        // The retries left debit these two alternately, this one first.
+        const size_t First = MarkerTwoBack - MarkerOneBack;
+        const size_t Second =
+            MarkerOneBack - IncompleteBranchMarkerEvidenceRemaining;
+        const size_t Retries =
+            static_cast<size_t>(limits::kMaxMultiStageRetries - Stage);
+        const size_t Rest = llvm::SaturatingMultiply(
+            llvm::SaturatingAdd(First, Second), Retries / 2);
+        const size_t Debit =
+            Retries % 2 ? llvm::SaturatingAdd(Rest, First) : Rest;
+        if (Debit < std::numeric_limits<size_t>::max() &&
+            IncompleteBranchMarkerEvidenceRemaining >= Debit) {
+          if (Retries % 2 == 0) {
+            IncompleteBranchMarkerEvidenceRemaining -= Debit;
+            break;
+          }
+          // This stage leaves the next one's start, where the retries end.
+          CycleDebit = Rest;
+        }
+      }
+      StartTwoBack = std::move(StartOneBack);
+      MarkerTwoBack = MarkerOneBack;
+      StartOneBack = std::move(Start);
+      MarkerOneBack = IncompleteBranchMarkerEvidenceRemaining;
     }
     PreviousStageGrew = false;
     // A joint proof has no individual member authority. Remove every live
