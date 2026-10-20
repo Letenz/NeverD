@@ -47973,6 +47973,64 @@ TEST(HighCPointerAddresses, CallResultLocalsConvertAsTheyAreDeclared) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses, PasswordRoutinesTakeTheirHeadersDeclarations) {
+  // gpg-mail-tube looks a user up with getpwnam, whose type library
+  // prototype keeps no const: the unit declared `extern passwd*
+  // getpwnam(char* __name);`, which contradicts <pwd.h>'s once a record
+  // definition includes it.  The header declares it.
+  const auto Char = NdType::makeInt(1);
+  Char->SourceName = "char";
+  const auto Text = NdType::makePtr(Char);
+  const auto Entry = NdType::makePtr(NdType::makeNamedRecord("passwd"));
+  class UserDbg : public NullDebugContext {
+  public:
+    UserDbg(TypeRef Text, TypeRef Entry)
+        : Text(std::move(Text)), Entry(std::move(Entry)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x2000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "getpwnam";
+      FS.Addr = Addr;
+      FS.ReturnType = Entry;
+      FS.Params = {{"name", Text}};
+      FS.PrototypeFromCLibrary = true;
+      FS.PlatformConvention = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Text, Entry;
+  } Dbg(Text, Entry);
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "find_user";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  Func.Params = {{"name", Word}};
+  auto Found = HighExpr::makeCall("getpwnam", 0x2000, {parameter(0, Word)});
+  Found->Type = Word;
+  returnValue(Func, std::move(Found));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text = "#include <pwd.h>\n";
+    Definitions.Tags = {{"passwd", false}};
+    Definitions.Types = {"passwd"};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_EQ(Source.find("getpwnam(char*"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("#include <pwd.h>"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
   // sed passes a comparator of its own to qsort, whose prototype the header
   // library gives: its comparison's type keeps no const there, where the

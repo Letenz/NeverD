@@ -300,6 +300,8 @@ int main() {
     std::vector<NumberFormat> formats(2);
     formats[1] = {NumberBase::Enum, false, false, "FLAGS", 1};
     facts.numberFormats = &formats;
+    std::vector<unsigned> widths{32, 32};
+    facts.operandBits = &widths;
     bool called = false;
     OperandFacts::EnumNamer enums =
         [&](std::string_view type, std::uint64_t value, unsigned bits,
@@ -314,6 +316,28 @@ int main() {
                                  });
     check(called && result.text() == "eax, FLAG_A | FLAG_B | 0x8",
           "Enum operands lost logical width or residual bits");
+    facts.mnemonic = "shl";
+    widths[1] = 8;
+    called = false;
+    enums = [&](std::string_view, std::uint64_t value, unsigned bits,
+                bool) -> std::optional<std::string> {
+      called = value == 255 && bits == 8;
+      return "BYTE_NEGATIVE";
+    };
+    const auto shifted = formatOperands(
+        "eax, 0xff", facts, [](std::uint64_t, NameUse, std::string_view) {
+          return LocationName{};
+        });
+    check(called && shifted.text() == "eax, BYTE_NEGATIVE",
+          "Enum immediate borrowed the destination register width");
+    facts.operandBits = nullptr;
+    called = false;
+    const auto unknown = formatOperands(
+        "eax, 0xff", facts, [](std::uint64_t, NameUse, std::string_view) {
+          return LocationName{};
+        });
+    check(!called && unknown.text().find("BYTE_NEGATIVE") == std::string::npos,
+          "Enum rendering invented an absent decoded operand width");
     const auto folded =
         classicInstruction(OperandDialect::X86, "imul", "eax, eax, 0xb", "");
     check(folded.operandIndices == std::vector<std::size_t>{0, 2},

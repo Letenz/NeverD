@@ -238,6 +238,38 @@ TEST_P(LinuxProcess, SignalActionsShareExactLP64StateAndCopyFailureOrdering) {
   }
 }
 
+TEST_P(LinuxProcess, KillSharesProcessTerminationAndUnknownDeliveryBoundaries) {
+  for (const char *Opt : {"O0", "O2"}) {
+    const auto SignalPath = Path.parent_path() /
+                            (Path.stem().string() + "-signals-" + Opt + ".elf");
+    for (const char *Mode : {"q", "k", "u", "h"}) {
+      SCOPED_TRACE(Opt);
+      SCOPED_TRACE(Mode);
+      Options.Arguments = {"signals", Mode};
+      const auto R = llvm::cantFail(
+          emulateProcess(SignalPath, ProcessProfile::LinuxELF64, Options));
+      if (*Mode == 'q') {
+        EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+        EXPECT_EQ(R.ExitStatus, 0u);
+        EXPECT_FALSE(R.TerminationSignal);
+        EXPECT_TRUE(R.StandardOutput.empty());
+      } else {
+        EXPECT_EQ(R.Stop, *Mode == 'k' ? ProcessStopReason::Signaled
+                                       : ProcessStopReason::UnsupportedService)
+            << R.Diagnostic;
+        EXPECT_EQ(R.TerminationSignal,
+                  *Mode == 'k' ? std::optional<uint32_t>(9) : std::nullopt);
+        EXPECT_FALSE(R.ExitStatus);
+        EXPECT_EQ(R.StandardOutput, "before");
+        ASSERT_FALSE(R.Services.empty());
+        EXPECT_EQ(R.Services.back().Number,
+                  GetParam().ISA == GuestArchitecture::X64 ? 62u : 129u);
+        EXPECT_FALSE(R.Services.back().Result);
+      }
+    }
+  }
+}
+
 TEST_P(LinuxProcess, MemoryFilesPreserveBinaryBytesCursorsAndFaultPrefixes) {
   // O0 link checks fill a complete page one guest instruction at a time.
   // Allow contended runners while retaining instruction/event limits.

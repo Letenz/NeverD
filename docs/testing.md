@@ -4,6 +4,16 @@
 
 # Testing NeverD
 
+`AndroidSignals.Kill*` executes independently authored direct, dynamically
+resolved, variadic and raw callers at O0/O2 across relocation formats and
+available ARM64 backends. It checks full-buffer effects, argument narrowing,
+errno, unknown process/group and handler boundaries, provider lifetime and
+whole-process termination initiated by either thread, including a completed
+join. `LinuxProcess.Kill*` exercises the x64 and AArch64 raw ABIs.
+`ProcessReport.SignalTermination*` checks the additive signal result and retained
+entry/thread history. Run the Linux, Android and execution-session suites after
+changing the shared signal service. These tests never signal a host process.
+
 `AndroidJNI.RegisteredNativeCalls*` executes independently authored guest native
 targets through late-bound JNI method IDs at O0/O2 across ordinary, APS2 and
 RELR images and available ARM64 backends. It checks all three JNI argument
@@ -820,6 +830,13 @@ to a disposable project, edit the real output through native widgets, and
 verify persistence. `NEVERD_CODE_NAV_CAPTURE_DIR` saves window captures.
 Run `neverd-gui-tests` directly with the native Qt platform to exercise native
 widgets; CTest sets the controller's platform to `offscreen`.
+
+`NeverDWorkerCLIDataPresentation` checks CLI/GUI array, alignment and enum
+parity against a real engine: identical sidecars, listing display, native IR
+isolation, saved type declarations, writer exclusion, resets, failed edits and
+malformed SDK array fields. Run it with
+`NeverDWorkerDataPresentation` and `NeverDWorkerFormat` when changing these
+presentation operations.
 
 `NeverDGuiSourceVariableTypes` uses the real worker for type editing and
 variable associations. It is registered only with
@@ -3667,6 +3684,19 @@ Public work-budget tests cover default and maximum 32-bit limits, independent ev
 Optional repeated-destination chain tests compare direct and nested loops under one fixed operation budget, execute the residual loops, distinguish decode modes, and check that zero chaining is unchanged. A correlation counterexample must still succeed by default and refuse publication with the option. Repeated native calls/return slots, dependency replay and late predecessors run with both settings. Public flag tests cover both source ABIs/backends, default and unknown flags, old APIs ignoring the extension, and the reported boolean.
 
 `NativeStackSpecialization.NarrowAddressDemandRetainsCompletePointer` checks guarded pointer joins in registers and frame slots, both byte orders, modular wraparound and high roots, restored stack, and 120 frame bytes. Companion controls reject corrupted pointers and exercise exact/short query, operation, evaluation and refinement budgets, plus discovery and context exhaustion.
+
+`InterpreterSpecialization.StackControlDiscoversSavedRootAddresses` covers
+ordinary returns and native CALL/RET after joined saved-pointer loads, with
+register and frame carriers in both byte orders. Independent byte oracles check
+complete memory effects, zero/wrapped/high roots and both branches; unknown
+saved values and exhausted refinement budgets still refuse.
+
+`InterpreterSpecialization.WideIntegerConcat*` covers intermediate widths from
+nine through sixteen bytes, every valid split, both byte orders, output aliases,
+malformed extents and exact/short operation budgets. Decoded `PACKSSDW` and
+`PACKSSWB` cases use independent signed-saturation oracles at both boundaries.
+`BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` separately
+checks that these instructions do not acquire source or native proof support.
 
 Finite-value observer tests cover early refusal, constants, empty projections and the final UNSAT query. Immutable-read regressions keep runtime loads after a refuting witness, revalidate cached address domains for a different read extent, and reject malformed certificates without publishing partial witnesses.
 

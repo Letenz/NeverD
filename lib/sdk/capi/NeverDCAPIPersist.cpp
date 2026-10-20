@@ -1090,7 +1090,9 @@ std::optional<Session::DataItem> parseDataItem(const Session &S, va_t Addr,
     Item.Count = *Count;
     Item.Size = Item.ElementSize * Item.Count;
     Item.Type = Row.getString("type").value_or("").str();
-    if ((Size && uint64_t(*Size) != Item.Size) || Item.Type.size() > 512 ||
+    if ((Row.get("size") && !Size) ||
+        (Row.get("type") && !Row.getString("type")) ||
+        (Size && uint64_t(*Size) != Item.Size) || Item.Type.size() > 512 ||
         (Item.Type.empty() && Item.ElementSize != 1 && Item.ElementSize != 2 &&
          Item.ElementSize != 4 && Item.ElementSize != 8)) {
       Error = "Array extent must match its element layout and count";
@@ -1256,15 +1258,39 @@ int neverd_item_set(neverd_session_t Sess, neverd_va_t Addr,
     return -1;
   }
   if (Item->Kind == "array" || Item->Kind == "alignment") {
-    if (!S->synchronizeFunctions())
+    if (neverd_session_discover_functions(Sess) < 0 ||
+        !S->synchronizeFunctions())
       return -1;
-    for (const auto &F : S->Functions)
-      if ((F.Entry >= Addr && F.Entry - Addr < Item->Size) ||
-          (Addr > F.Entry && Addr - F.Entry < F.Size)) {
-        S->setError("The data definition overlaps a function; remove its code "
-                    "ownership first");
+    for (unsigned Prepared = 0;; ++Prepared) {
+      for (const auto &F : S->Functions)
+        if ((F.Entry >= Addr && F.Entry - Addr < Item->Size) ||
+            (Addr > F.Entry && Addr - F.Entry < F.Size)) {
+          S->setError(
+              "The data definition overlaps a function; remove its code "
+              "ownership first");
+          return -1;
+        }
+      // Cold CLI/SDK sessions may know only an entry. A zero size is not
+      // evidence that the following bytes are data. Recover the same extent
+      // a prepared workbench uses before admitting an executable span.
+      const auto Unknown = std::find_if(
+          S->Functions.begin(), S->Functions.end(), [&](const auto &F) {
+            return F.Entry < Addr && F.Size == 0 &&
+                   S->Img.getSegmentFor(F.Entry) == S->Img.getSegmentFor(Addr);
+          });
+      if (Unknown == S->Functions.end())
+        break;
+      const va_t Entry = Unknown->Entry;
+      if (Prepared >= 32 || !neverd_prepare_function_view(Sess, Entry, "low") ||
+          !S->synchronizeFunctions() ||
+          std::any_of(
+              S->Functions.begin(), S->Functions.end(),
+              [&](const auto &F) { return F.Entry == Entry && F.Size == 0; })) {
+        S->setError("Cannot establish code ownership for this data span; "
+                    "set the function's end or remove its code ownership");
         return -1;
       }
+    }
     if (!Item->Type.empty()) {
       const auto *Library = S->readLocalTypes();
       const auto *Type = Library ? Library->find(Item->Type) : nullptr;

@@ -349,6 +349,10 @@ each a step of undo history: the history holds the file as a table whose rows
 lie at their places in the order made (`NEVERD_USER_STATE_ORDERED` in the
 worker's `UserStateTables.def`), and undo takes the last back off the file and
 the program's types.
+The CLI keeps `types --declare` local to its invocation by default. With a
+binary and `--save`, it persists the complete successfully parsed declaration
+batch through `neverd_type_declarations_save`, using the same sidecar and
+writer lock that the workbench uses.
 
 Header libraries (`HeaderLibraries.def`, `HeaderLibrary.h`) give a program
 the system's types and prototypes that its debug information lacks: the
@@ -569,6 +573,13 @@ operand, and `neverd_local_type_member_json` names one landing.  A
 structure offset is an operand format (`OperandFormats.def`) that names a
 local type and a delta; the worker spells it from the type's current
 layout, so an edited type renames its operands.
+Enum operand admission and rendering share the decoder's logical operand
+width. `neverd_disasm_json_ex` supplies `operand_bits` when
+`NEVERD_DISASM_OPERANDS` is requested; the worker carries those widths through
+classic operand folding with their original indices. It never infers an enum
+immediate's width from a different operand's register. Missing decoded widths
+leave numeric spelling, while `neverd_enum_value_json` owns enum aliases,
+signed extension and residual flag bits.
 
 `neverd_types_convert` and `neverd types --data-model` read and render
 declarations without a program, which is how the generator builds the
@@ -4699,7 +4710,14 @@ remain separate; whole memory accesses and existing alias checks are retained.
 Raw completeness grants neither an undefined-output audit nor a wider source or
 native-proof contract.
 
-Raw specialization also accepts exact 8+8-byte `CONCAT` into a writable 16-byte scalar. The first input supplies the high 64 bits and the second supplies the low 64 bits, independently of storage byte order. Both inputs must be complete scalar locations or constants. The existing explicit, nonfaulting, default-space and unordered-operation restrictions remain; `SymExec` owns evaluation, and aliasing outputs read both original inputs before writing. This adds no source layout or native-proof contract.
+Raw specialization also accepts exact whole-byte `CONCAT` up to 16 bytes,
+including intermediate widths used by packed integer lowering. The first input
+supplies the high bits and the second supplies the low bits, independently of
+storage byte order. Complete scalar locations or constants must have nonzero
+widths, nonwrapping extents and an exact combined width. The existing explicit,
+nonfaulting, default-space and unordered-operation restrictions remain;
+`SymExec` owns evaluation, and aliasing outputs read both original inputs before
+writing. This adds no source layout or native-proof contract.
 
 For explicit, nonfaulting, little-endian raw recovery, the x64 owner recognizes the complete canonical `RDTSC` instruction and its five-operation multi-output bundle. Each occurrence gets one fresh 64-bit sample; three charged scalar operations evaluated by `SymExec` bind the complete primary result and the two instruction-local placeholders. The original runtime read, copies and zero extensions remain in the residual. Clock values and relations are unconstrained, timestamp-derived addresses keep unknown provenance, and native/source proof contracts remain unchanged.
 
@@ -5603,8 +5621,12 @@ native import event without inventing another executed service instruction.
 and Bionic's `AndroidSignals` adapter use the same query/replacement operation;
 the Android adapter owns LP64 field order, reserved-mask filtering and errno.
 The kernel owner installs a new action before copying the old action out, so a
-copy fault does not undo the installation. No CPU backend or SDK interprets a
-handler address, queues a signal or delivers one.
+copy fault does not undo the installation. The same owner handles `kill` for
+self existence probes and uncatchable SIGKILL termination. It returns a typed
+`signaled` outcome without resuming the pending service; Android stops all live
+guest threads and records their termination separately from completed returns.
+No CPU backend or SDK interprets a handler address or sends a host signal.
+Other targets and signal delivery remain explicit unsupported boundaries.
 `AndroidAuxv` owns admission and lookup of the native workload's explicit,
 complete auxiliary vector. Bionic alone applies `getauxval`'s full-width
 lookup and thread-local errno behavior; constructors and dynamic imports use
@@ -6714,7 +6736,11 @@ current memory contents, accessibility, or disjointness.
 
 Interpreter specialization also owns context keys for exact entry-frame-relative
 pointers. Full-width proven displacements stay distinct from numeric constants;
-no sampled root address enters a key. When an unsupported operation is reached,
+no sampled root address enters a key. An unresolved stack address at an ordinary
+return or native CALL/RET nominates memory dependencies through the same bounded
+discovery used for stores. A fresh complete retry must still prove the required
+stack displacement; nomination supplies no pointer value or separation premise.
+When an unsupported operation is reached,
 bounded reverse traversal can nominate fields from the nearest undecided
 predecessor guards for control-state refinement. This is a candidate heuristic,
 not an unreachability proof: a fresh complete specialization must still prove

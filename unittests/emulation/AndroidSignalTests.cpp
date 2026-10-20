@@ -7,9 +7,11 @@
 #include "os/linux/android/AndroidInternal.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
+#include "neverd/emulation/ProcessReport.h"
 #include "neverd/emulation/ProcessSession.h"
 
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/JSON.h"
 
 #include <tuple>
 
@@ -219,6 +221,198 @@ TEST_P(AndroidSignals, DynamicCallsKeepTheirProviderAndClosedHandleBoundary) {
   EXPECT_EQ(R.NativeCalls.back().Library, "libsignals-model.so");
   EXPECT_EQ(run("signal_dynamic", {Buffer, 1}).Stop,
             ProcessStopReason::UnsupportedService);
+}
+
+TEST_P(AndroidSignals, KillQueryAndInvalidSignalsPreserveWidthErrnoAndMemory) {
+  Options.LinuxSignals.reset();
+  Options.Android->Libraries["libsignals-model.so"] = {"kill"};
+  for (uint64_t Op : {0, 1, 2, 3}) {
+    for (uint64_t Signal : {uint64_t(0), uint64_t(65), UINT64_MAX,
+                            uint64_t(0x1234567800000000)}) {
+      SCOPED_TRACE(Op);
+      SCOPED_TRACE(Signal);
+      const bool Invalid = Signal == 65 || Signal == UINT64_MAX;
+      const uint64_t Value = !Invalid  ? 0
+                             : Op == 2 ? uint64_t(-22)
+                                       : UINT64_MAX;
+      const auto R =
+          run("signal_send", {Op, 0x12345678000003e8, Signal, Buffer});
+      ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+      EXPECT_EQ(R.ReturnValue, Value);
+      EXPECT_FALSE(R.TerminationSignal);
+      EXPECT_FALSE(R.ExitStatus);
+      auto Expected = input();
+      put(Expected, 0, 0x11223344);
+      put(Expected, 8, Invalid && Op != 2 ? 22 : 73);
+      put(Expected, 16, Value);
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+    }
+    const auto InvalidTarget = run("signal_send", {Op, 0, 65, Buffer});
+    EXPECT_EQ(InvalidTarget.Stop, ProcessStopReason::Returned);
+    EXPECT_EQ(InvalidTarget.ReturnValue, Op == 2 ? uint64_t(-22) : UINT64_MAX);
+    EXPECT_FALSE(InvalidTarget.TerminationSignal);
+  }
+}
+
+TEST_P(AndroidSignals, KillTerminatesGuestWithoutAFunctionOrExitReturn) {
+  Options.Android->Libraries["libsignals-model.so"] = {"kill"};
+  for (bool ExplicitActions : {false, true}) {
+    if (ExplicitActions)
+      Options.LinuxSignals.emplace();
+    else
+      Options.LinuxSignals.reset();
+    for (uint64_t Op : {0, 1, 2, 3}) {
+      SCOPED_TRACE(Op);
+      const auto R = run("signal_send",
+                         {Op, 0x12345678000003e8, 0x7654321000000009, Buffer});
+      ASSERT_EQ(R.Stop, ProcessStopReason::Signaled) << R.Diagnostic;
+      EXPECT_EQ(R.TerminationSignal, 9u);
+      EXPECT_FALSE(R.ExitStatus);
+      EXPECT_FALSE(R.ReturnValue);
+      auto Expected = input();
+      put(Expected, 0, 0x11223344);
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+      if (Op == 2) {
+        ASSERT_FALSE(R.Services.empty());
+        EXPECT_EQ(R.Services.back().Number, 129u);
+        EXPECT_FALSE(R.Services.back().Result);
+      } else {
+        ASSERT_FALSE(R.NativeCalls.empty());
+        EXPECT_EQ(R.NativeCalls.back().Name, Op == 1 ? "syscall" : "kill");
+        EXPECT_FALSE(R.NativeCalls.back().Result);
+        if (Op == 3)
+          EXPECT_EQ(R.NativeCalls.back().Library, "libsignals-model.so");
+      }
+      auto JSON = llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+      EXPECT_EQ(JSON.getAsObject()->getString("stop_reason"), "signaled");
+      EXPECT_EQ(JSON.getAsObject()->getInteger("termination_signal"), 9);
+      EXPECT_EQ(*JSON.getAsObject()->get("exit_status"),
+                llvm::json::Value(nullptr));
+    }
+  }
+}
+
+TEST_P(AndroidSignals, KillDoesNotInventTargetsGroupsMasksOrHandlers) {
+  Options.Android->Libraries["libsignals-model.so"] = {"kill"};
+  Options.LinuxSignals->Actions[15] = {1, 0, 0, 0};
+  for (uint64_t Op : {0, 1, 2, 3}) {
+    for (auto [PID, Signal] : {std::pair<uint64_t, uint64_t>{0, 9},
+                               {UINT64_MAX, 0},
+                               {uint64_t(-1000), 9},
+                               {1001, 0},
+                               {1001, 9},
+                               {1000, 19},
+                               {1000, 15},
+                               {1000, 64},
+                               {1000, 11}}) {
+      auto R = run("signal_send", {Op, PID, Signal, Buffer});
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+      EXPECT_NE(R.Diagnostic.find(PID == 1000 ? "delivery" : "target"),
+                std::string::npos);
+      EXPECT_FALSE(R.TerminationSignal);
+      EXPECT_FALSE(R.ReturnValue);
+      EXPECT_FALSE(R.ExitStatus);
+      auto Expected = input();
+      put(Expected, 0, 0x11223344);
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+    }
+  }
+  // Provider lifetime is checked before even invalid syscall arguments.
+  const auto Closed = run("signal_send", {4, 1000, 65, Buffer});
+  EXPECT_EQ(Closed.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(Closed.Diagnostic.find("inactive"), std::string::npos);
+  EXPECT_FALSE(Closed.TerminationSignal);
+}
+
+TEST_P(AndroidSignals, KillStopsAllLiveThreadsAndKeepsCompletedThreadHistory) {
+  Options.LinuxSignals.reset();
+  Options.Android->ThreadLimit = 2;
+  input().assign(8192, 0);
+  for (uint64_t Mode : {0, 1, 2}) {
+    for (uint64_t Op : {0, 1, 2}) {
+      SCOPED_TRACE(Mode);
+      SCOPED_TRACE(Op);
+      const auto R = run("signal_threads", {Mode, Op, Buffer});
+      ASSERT_EQ(R.Stop, ProcessStopReason::Signaled) << R.Diagnostic;
+      EXPECT_EQ(R.TerminationSignal, 9u);
+      EXPECT_FALSE(R.ReturnValue);
+      EXPECT_FALSE(R.ExitStatus);
+      ASSERT_EQ(R.NativeThreads.size(), 2u);
+      for (size_t I = 0; I < 2; ++I) {
+        const auto &T = R.NativeThreads[I];
+        EXPECT_FALSE(T.Waiting);
+        if (I == 1 && Mode == 2) {
+          EXPECT_TRUE(T.Finished);
+          EXPECT_TRUE(T.Retired);
+          EXPECT_EQ(T.ReturnValue, 0x7788u);
+          EXPECT_FALSE(T.TerminationSignal);
+        } else {
+          EXPECT_FALSE(T.Finished);
+          EXPECT_FALSE(T.ReturnValue);
+          EXPECT_EQ(T.TerminationSignal, 9u);
+        }
+      }
+      auto Expected = input();
+      put(Expected, 0, 0x11223344);
+      put(Expected, 24, 1001);
+      if (Mode == 2) {
+        put(Expected, 40, 0x5566);
+        put(Expected, 48, 0x7788);
+      }
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+    }
+  }
+}
+
+TEST_P(AndroidSignals,
+       KillAfterEntryReturnPreservesHistoryWithoutDrainingAgain) {
+  Options.LinuxSignals.reset();
+  Options.Android->ThreadLimit = 2;
+  Options.Android->DrainThreads = true;
+  Options.LinuxTime.emplace();
+  Options.LinuxTime->AdvanceOnIdle = true;
+  input().assign(8192, 0);
+  const auto R = run("signal_threads", {3, 0, Buffer});
+  ASSERT_EQ(R.Stop, ProcessStopReason::Signaled) << R.Diagnostic;
+  EXPECT_EQ(R.TerminationSignal, 9u);
+  EXPECT_EQ(R.ReturnValue, 42u);
+  EXPECT_FALSE(R.ExitStatus);
+  ASSERT_EQ(R.NativeThreads.size(), 2u);
+  EXPECT_TRUE(R.NativeThreads[0].Finished);
+  EXPECT_EQ(R.NativeThreads[0].ReturnValue, 42u);
+  EXPECT_FALSE(R.NativeThreads[0].TerminationSignal);
+  EXPECT_FALSE(R.NativeThreads[1].Finished);
+  EXPECT_EQ(R.NativeThreads[1].TerminationSignal, 9u);
+  auto Expected = input();
+  put(Expected, 0, 0x11223344);
+  put(Expected, 24, 1001);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+}
+
+TEST_P(AndroidSignals, KillInsideCallbackDoesNotCompleteSuspendedCaller) {
+  Options.LinuxSignals.reset();
+  input().assign(8192, 0);
+  const auto R = run("signal_callback", {Buffer});
+  ASSERT_EQ(R.Stop, ProcessStopReason::Signaled) << R.Diagnostic;
+  EXPECT_EQ(R.TerminationSignal, 9u);
+  EXPECT_FALSE(R.ReturnValue);
+  unsigned Pending = 0;
+  for (const auto &Call : R.NativeCalls) {
+    if (Call.Name == "pthread_once" || Call.Name == "kill") {
+      EXPECT_FALSE(Call.Result);
+      ++Pending;
+    }
+  }
+  EXPECT_EQ(Pending, 2u);
+  auto Expected = input();
+  put(Expected, 0, 0x11223344);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
 }
 
 TEST(AndroidSignalMemory,

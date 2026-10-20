@@ -10,7 +10,7 @@ struct Action {
 };
 static struct Action Old, New = {1, 0x10000000, 0x123456789abcdef0UL, ~0UL};
 #if defined(__aarch64__)
-enum { Write = 64, Exit = 93 };
+enum { Write = 64, Exit = 93, Kill = 129, GetPID = 172 };
 static U64 action(U64 Signal, U64 Input, U64 Output, U64 Size) {
   register U64 X0 __asm__("x0") = Signal;
   register U64 X1 __asm__("x1") = Input;
@@ -24,7 +24,7 @@ static U64 action(U64 Signal, U64 Input, U64 Output, U64 Size) {
   return X0;
 }
 #else
-enum { Write = 1, Exit = 60 };
+enum { Write = 1, Exit = 60, Kill = 62, GetPID = 39 };
 static U64 action(U64 Signal, U64 Input, U64 Output, U64 Size) {
   register U64 R10 __asm__("r10") = Size;
   U64 Result;
@@ -50,6 +50,20 @@ void process_main(U64 *Stack) {
   if (Stack[0] != 2)
     finish(91);
   char Mode = ((const char **)(Stack + 1))[1][0];
+  if (Mode == 'k' || Mode == 'q' || Mode == 'u' || Mode == 'h') {
+    U64 PID = linux_service(GetPID, 0, 0, 0);
+    check(linux_service(Kill, PID, 65, 0), (U64)-22);
+    check(linux_service(Kill, PID, ~0UL, 0), (U64)-22);
+    check(linux_service(Kill, PID | 0x1234567800000000UL, 0x1234567800000000UL,
+                        0),
+          0);
+    if (Mode == 'q')
+      finish(0);
+    linux_service(Write, 1, (U64) "before", 6);
+    linux_service(Kill, Mode == 'u' ? 0 : PID, Mode == 'h' ? 15 : 9, 0);
+    linux_service(Write, 1, (U64) "after", 5);
+    finish(91);
+  }
   if (Mode == 'm') {
     action(11, 0, (U64)&Old, 8);
     finish(91);

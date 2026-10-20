@@ -24,6 +24,7 @@
 #include "neverd/libc/LibCFnmatch.h"
 #include "neverd/libc/LibCFortify.h"
 #include "neverd/libc/LibCGetopt.h"
+#include "neverd/libc/LibCGrp.h"
 #include "neverd/libc/LibCInttypes.h"
 #include "neverd/libc/LibCLanginfo.h"
 #include "neverd/libc/LibCLibintl.h"
@@ -34,12 +35,14 @@
 #include "neverd/libc/LibCObjC.h"
 #include "neverd/libc/LibCPoll.h"
 #include "neverd/libc/LibCPthread.h"
+#include "neverd/libc/LibCPwd.h"
 #include "neverd/libc/LibCRegex.h"
 #include "neverd/libc/LibCResult.h"
 #include "neverd/libc/LibCSched.h"
 #include "neverd/libc/LibCSearch.h"
 #include "neverd/libc/LibCSemaphore.h"
 #include "neverd/libc/LibCSetjmp.h"
+#include "neverd/libc/LibCShadow.h"
 #include "neverd/libc/LibCSignal.h"
 #include "neverd/libc/LibCSpawn.h"
 #include "neverd/libc/LibCStartup.h"
@@ -140,6 +143,9 @@ struct Registry {
     registerFunctions(All, ToHeader, kObjCFunctions, kObjCHeader);
     registerFunctions(All, ToHeader, kPollFunctions, kPollHeader);
     registerFunctions(All, ToHeader, kPthreadFunctions, kPthreadHeader);
+    registerFunctions(All, ToHeader, kPwdFunctions, kPwdHeader);
+    registerFunctions(All, ToHeader, kGrpFunctions, kGrpHeader);
+    registerFunctions(All, ToHeader, kShadowFunctions, kShadowHeader);
     registerFunctions(All, ToHeader, kRegexFunctions, kRegexHeader);
     registerFunctions(All, ToHeader, kSchedFunctions, kSchedHeader);
     registerFunctions(All, ToHeader, kSearchFunctions, kSearchHeader);
@@ -241,6 +247,9 @@ struct ArityRegistry {
     registerArity(Map, kNlTypesArity);
     registerArity(Map, kPollArity);
     registerArity(Map, kPthreadArity);
+    registerArity(Map, kPwdArity);
+    registerArity(Map, kGrpArity);
+    registerArity(Map, kShadowArity);
     registerArity(Map, kRegexArity);
     registerArity(Map, kSchedArity);
     registerArity(Map, kSearchArity);
