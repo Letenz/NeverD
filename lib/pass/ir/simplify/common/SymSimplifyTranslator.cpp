@@ -87,6 +87,88 @@ bool safeWidenedShift(const llvm::Instruction &I) {
   return Amount->getValue().ule(ResultWidth - SourceWidth);
 }
 
+struct MaskedAddBounds {
+  llvm::APInt UnsignedMax, SignedMin, SignedMax;
+
+  explicit MaskedAddBounds(unsigned Width)
+      : UnsignedMax(llvm::APInt::getAllOnes(Width)),
+        SignedMin(llvm::APInt::getSignedMinValue(Width)),
+        SignedMax(llvm::APInt::getSignedMaxValue(Width)) {}
+};
+
+// Compute bounds from values alone, never from nowrap flags, range metadata,
+// assumptions or the instruction being justified. Unknown operations keep the
+// full domain. The small depth/node/width limits bound admission work.
+MaskedAddBounds maskedAddBounds(const llvm::Value *V, unsigned Depth,
+                                unsigned &Remaining) {
+  const unsigned Width = V->getType()->getIntegerBitWidth();
+  MaskedAddBounds Result(Width);
+  if (!Remaining || !Depth)
+    return Result;
+  --Remaining;
+  if (const auto *C = llvm::dyn_cast<llvm::ConstantInt>(V)) {
+    Result.UnsignedMax = Result.SignedMin = Result.SignedMax = C->getValue();
+    return Result;
+  }
+  const auto *I = llvm::dyn_cast<llvm::BinaryOperator>(V);
+  if (!I)
+    return Result;
+  if (I->getOpcode() == llvm::Instruction::And) {
+    for (const llvm::Value *Operand : I->operands()) {
+      if (const auto *Mask = llvm::dyn_cast<llvm::ConstantInt>(Operand)) {
+        Result.UnsignedMax = Mask->getValue();
+        Result.SignedMax = Mask->getValue();
+        Result.SignedMax.clearSignBit();
+        if (!Mask->getValue().isNegative())
+          Result.SignedMin.clearAllBits();
+        return Result;
+      }
+    }
+  }
+  if (I->getOpcode() != llvm::Instruction::Add)
+    return Result;
+  auto Left = maskedAddBounds(I->getOperand(0), Depth - 1, Remaining);
+  auto Right = maskedAddBounds(I->getOperand(1), Depth - 1, Remaining);
+  bool Overflow;
+  auto UMax = Left.UnsignedMax.uadd_ov(Right.UnsignedMax, Overflow);
+  if (!Overflow)
+    Result.UnsignedMax = std::move(UMax);
+  auto SMin = Left.SignedMin.sadd_ov(Right.SignedMin, Overflow);
+  if (Overflow)
+    return Result;
+  auto SMax = Left.SignedMax.sadd_ov(Right.SignedMax, Overflow);
+  if (!Overflow) {
+    Result.SignedMin = std::move(SMin);
+    Result.SignedMax = std::move(SMax);
+  }
+  return Result;
+}
+
+bool safeMaskedAdd(const llvm::Instruction &I) {
+  if (I.getOpcode() != llvm::Instruction::Add || !I.getType()->isIntegerTy() ||
+      I.getType()->getIntegerBitWidth() > 512 ||
+      (!I.hasNoUnsignedWrap() && !I.hasNoSignedWrap()))
+    return false;
+  unsigned Remaining = 64;
+  auto Left = maskedAddBounds(I.getOperand(0), 8, Remaining);
+  auto Right = maskedAddBounds(I.getOperand(1), 8, Remaining);
+  bool Overflow;
+  if (I.hasNoUnsignedWrap()) {
+    (void)Left.UnsignedMax.uadd_ov(Right.UnsignedMax, Overflow);
+    if (Overflow)
+      return false;
+  }
+  if (I.hasNoSignedWrap()) {
+    (void)Left.SignedMin.sadd_ov(Right.SignedMin, Overflow);
+    if (Overflow)
+      return false;
+    (void)Left.SignedMax.sadd_ov(Right.SignedMax, Overflow);
+    if (Overflow)
+      return false;
+  }
+  return true;
+}
+
 /// Whether \p I has the same domain in LLVM IR and in the engine's total
 /// bitvector algebra.
 ///
@@ -100,7 +182,8 @@ bool hasCompatibleSemantics(const llvm::Instruction &I) {
   // This catches poison-generating flags added to LLVM after this switch was
   // written.  The per-opcode checks below remain deliberate documentation of
   // the exact language subset accepted today.
-  if ((I.hasPoisonGeneratingFlags() && !splitWordAssembly(I) &&
+  const bool SafeAdd = safeMaskedAdd(I);
+  if ((I.hasPoisonGeneratingFlags() && !SafeAdd && !splitWordAssembly(I) &&
        !safeWidenedShift(I)) ||
       I.hasPoisonGeneratingAttributes() || I.hasPoisonGeneratingMetadata())
     return false;
@@ -116,6 +199,7 @@ bool hasCompatibleSemantics(const llvm::Instruction &I) {
 
   switch (tagOf(I)) {
   case OpTag::Add:
+    return !HasNoWrap() || SafeAdd;
   case OpTag::Sub:
   case OpTag::Mul:
     return !HasNoWrap();
@@ -162,11 +246,11 @@ bool hasCompatibleSemantics(const llvm::Instruction &I) {
 /// scalar bitvector algebra.
 bool hasIncompatibleSemantics(const llvm::Instruction &I,
                               bool WithComparisons) {
-  if (llvm::isa<llvm::FreezeInst>(I) ||
-      (I.hasPoisonGeneratingAnnotations() && !splitWordAssembly(I) &&
-       !safeWidenedShift(I)))
+  if (llvm::isa<llvm::FreezeInst>(I))
     return true;
-  return isTranslatable(&I, WithComparisons) && !hasCompatibleSemantics(I);
+  if (isTranslatable(&I, WithComparisons))
+    return !hasCompatibleSemantics(I);
+  return I.hasPoisonGeneratingAnnotations();
 }
 
 /// Whether a translatable value hidden behind an opaque shared leaf contains

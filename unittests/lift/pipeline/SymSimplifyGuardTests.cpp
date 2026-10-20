@@ -556,6 +556,79 @@ TEST(SymSimplifyGuard, LeavesPoisonGeneratingOperationsOpaque) {
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }
 
+TEST(SymSimplifyGuard, MaskedNoWrapAdmissionMatchesExhaustiveByteDomains) {
+  llvm::LLVMContext C;
+  llvm::Module M("masked_add_domains", C);
+  auto *I8 = llvm::Type::getInt8Ty(C);
+  for (unsigned A : {0x35u, 0x7fu, 0x80u, 0x93u, 0xffu}) {
+    for (unsigned B : {0u, 1u, 0x11u, 0x80u, 0xffu}) {
+      for (unsigned Flags : {1u, 2u, 3u}) {
+        SCOPED_TRACE(::testing::Message() << A << "," << B << "," << Flags);
+        auto *F =
+            llvm::Function::Create(llvm::FunctionType::get(I8, {I8, I8}, false),
+                                   llvm::Function::ExternalLinkage, "f", &M);
+        llvm::IRBuilder<> IR(llvm::BasicBlock::Create(C, "entry", F));
+        auto make = [&] {
+          auto *L = IR.CreateAnd(F->getArg(0), IR.getInt8(A));
+          auto *R = IR.CreateAnd(F->getArg(1), IR.getInt8(B));
+          return IR.CreateAdd(L, R, "", Flags & 1, Flags & 2);
+        };
+        auto *Root = IR.CreateXor(make(), make());
+        IR.CreateRet(Root);
+        bool Defined = true;
+        // Independent integer arithmetic checks every pair, including each
+        // sign/unsigned overflow boundary; flags are never evidence here.
+        for (unsigned X = 0; X != 256; ++X)
+          for (unsigned Y = 0; Y != 256; ++Y) {
+            unsigned L = X & A, R = Y & B;
+            int SL = L < 128 ? int(L) : int(L) - 256;
+            int SR = R < 128 ? int(R) : int(R) - 256;
+            Defined &= (!(Flags & 1) || L + R < 256) &&
+                       (!(Flags & 2) || (SL + SR >= -128 && SL + SR <= 127));
+          }
+        auto Result = SymSimplifyPass::constantValueOf(Root);
+        EXPECT_EQ(Result.has_value(), Defined) << printFunction(*F);
+        if (Result)
+          EXPECT_TRUE(Result->isZero());
+      }
+    }
+  }
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains) {
+  for (unsigned Width : {8u, 16u, 32u, 64u, 128u, 257u}) {
+    for (bool Poisoned : {false, true}) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Poisoned);
+      llvm::LLVMContext C;
+      llvm::Module M("nested_mask_bounds", C);
+      auto *Ty = llvm::IntegerType::get(C, Width);
+      auto *F =
+          llvm::Function::Create(llvm::FunctionType::get(Ty, {Ty}, false),
+                                 llvm::Function::ExternalLinkage, "f", &M);
+      llvm::IRBuilder<> IR(llvm::BasicBlock::Create(C, "entry", F));
+      auto make = [&] {
+        llvm::Value *X = F->getArg(0);
+        if (Poisoned)
+          X = IR.CreateNSWAdd(X, llvm::ConstantInt::get(Ty, 1));
+        auto mask = [&](unsigned Value) {
+          return IR.CreateAnd(X, llvm::ConstantInt::get(Ty, Value));
+        };
+        auto *Inner = IR.CreateAdd(mask(0x35), mask(0x46), "", true, true);
+        return IR.CreateAdd(Inner, mask(3), "", true, true);
+      };
+      auto *Root = IR.CreateXor(make(), make());
+      IR.CreateRet(Root);
+      auto Result = SymSimplifyPass::constantValueOf(Root);
+      EXPECT_EQ(Result.has_value(), !Poisoned) << printFunction(*F);
+      if (Result)
+        EXPECT_TRUE(Result->isZero());
+      EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    }
+  }
+}
+
 // A same-sign comparison is poison when its operands do not have the same
 // sign.  Comparisons are opaque to the ordinary expression rewrite, so this
 // also pins the hidden-leaf path: standing one symbolic input in front of the

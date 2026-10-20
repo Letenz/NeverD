@@ -135,6 +135,22 @@ full-width APInt arithmetic, exhaustive byte pairs and nearby nonidentities;
 zero and incomplete work allowances must preserve semantics. The 257-bit test
 explicitly increases only its verifier's width allowance, retaining finite SAT
 and gate budgets. Production proof policies are unchanged.
+`NeverDSymMBAWeightedMaskTests` adds 7–31-term overlapping inclusion-exclusion
+sums and up to 16 disjoint weighted partitions, including opaque arithmetic,
+flattened carriers, scaled/negated groups, opaque residuals, even/negative
+coefficients and 257-bit words. Checks include
+an independent grammar/basis verifier, full-width Z3 proofs, exhaustive byte
+pairs, high-bit near misses, incomplete budgets, continued child simplification
+and reuse of the proved root. The small-budget case must finish within its
+8,192-unit allowance. The same cases also run in `NeverDSymbolicTests`.
+The Z3 gate covers odd weights through 64 bits and even weights through 16 bits.
+Dense 32/64-bit even cases exceeding its five-second allowance remain in a
+separate complete-certificate test with an 8,192-unit budget, every one/two-bit
+input, all-ones input and deterministic full-word samples.
+`SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
+signed/unsigned overflow admission against all byte pairs, including unsafe
+neighboring masks. `NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains`
+checks nested additions through 257 bits and rejects masked hidden poison.
 `HighSymSimplify` covers signedness-preserving definition conversion, disjoint
 frame locals, overlapping views, address escape and transitive store kills.
 `HighFrameStoreForwarding.EmptyDeadStoreAnchorsPreservePrivateFacts` checks
@@ -147,6 +163,11 @@ nearby noncomplementary expressions at four widths. Alternating warmed runs
 record both binaries/libraries' hashes, results, work and in-process latency;
 timings are measurements rather than CI thresholds. Copying an executable
 without its SDK does not preserve an old engine.
+Use `--family weighted --count 24` for seeded overlapping masks and partitions
+over XOR, sums, products and nested carriers, including compiler-style grouped
+subtractions and enclosing scales. Warm results from both builds pass an
+independent modular evaluator on boundary and random full-word
+inputs before timing; this sampling is a benchmark check, not rewrite authority.
 
 `NeverDSymLoadOriginBindingTests` checks transactional history rebinding,
 sorted conflict unions, independent forks and invalid batches. Historical
@@ -512,8 +533,9 @@ observable call. The real-engine
 `NeverDWorkerSourceSynthesis` test sends the GUI's `source_options` request,
 checks enhanced/ordinary cache isolation, and, when a CLI is configured,
 exercises single-function and whole-program source in both routes, using
-affine, quadratic, complemented-mask and private-frame machine-code fixtures.
-With Clang available it compiles all 24 enhanced outputs at O0/O2 and executes
+affine, quadratic, complemented-mask, private-frame and 15-term overlapping-mask
+machine-code fixtures.
+With Clang available it compiles all 30 enhanced outputs at O0/O2 and executes
 each against 1,331 boundary triples and 4,096 deterministic random triples.
 Missing Clang explicitly skips only that generated-C execution coverage.
 

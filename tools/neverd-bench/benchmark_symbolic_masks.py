@@ -8,9 +8,11 @@ is descriptive rather than a machine-dependent pass/fail threshold.
 """
 
 import argparse
+import ast
 import hashlib
 import json
 import os
+import operator
 from pathlib import Path
 import platform
 import random
@@ -51,6 +53,86 @@ def corpus(width, count):
     return rows
 
 
+def weighted_corpus(width, count):
+    rng = random.Random(0x4D424132 + width)
+    full = (1 << width) - 1
+    rows = []
+    for index in range(count):
+        carrier = ("(x^y)", "(x+y)", "(x*y)", "((x+y)^(x*y))")[(index // 6) % 4]
+        size = (3, 4, 5, 4, 8, 16)[index % 6]
+        if index % 6 < 3:
+            masks = [rng.getrandbits(width) for _ in range(size)]
+            terms = []
+            positive, negative = [], []
+            for subset in range(1, 1 << size):
+                mask = full
+                for bit in range(size):
+                    if subset & (1 << bit):
+                        mask &= masks[bit]
+                # A nearby nonidentity must retain its changed high-bit term.
+                if index % 4 == 3 and subset == 1:
+                    mask ^= 1 << (width - 1)
+                sign = "+" if subset.bit_count() % 2 else "-"
+                terms.append(f"{sign}({carrier}&{mask})")
+                (positive if sign == "+" else negative).append(f"({carrier}&{mask})")
+            if index % 24 >= 12:
+                # Compiler reassociation groups subtractions and hoists scales.
+                grouped = f"({'+'.join(positive)})-({'+'.join(negative)})"
+                rows.append(f"(3*({grouped}))+(x|y)")
+                continue
+        else:
+            masks = [0] * size
+            for bit in range(width):
+                masks[rng.randrange(size)] |= 1 << bit
+            scale = (37, -11, 182)[(index // 6) % 3]
+            terms = [f"+({scale}*({carrier}&{mask}))" for mask in masks]
+        rows.append("0" + "".join(terms))
+    return rows
+
+
+def check_semantics(expressions, results, width):
+    """Independent modular evaluator; never execute parsed source as Python."""
+    mask = (1 << width) - 1
+    binary = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.BitAnd: operator.and_,
+        ast.BitOr: operator.or_,
+        ast.BitXor: operator.xor,
+    }
+    unary = {ast.USub: operator.neg, ast.UAdd: operator.pos, ast.Invert: operator.invert}
+
+    def evaluate(node, values):
+        if isinstance(node, ast.Constant) and type(node.value) is int:
+            return node.value & mask
+        if isinstance(node, ast.Name) and node.id in values:
+            return values[node.id]
+        if isinstance(node, ast.BinOp) and type(node.op) in binary:
+            return binary[type(node.op)](
+                evaluate(node.left, values), evaluate(node.right, values)
+            ) & mask
+        if isinstance(node, ast.UnaryOp) and type(node.op) in unary:
+            return unary[type(node.op)](evaluate(node.operand, values)) & mask
+        raise ValueError(f"Unsupported benchmark expression: {ast.dump(node)}")
+
+    rng = random.Random(0x53454D00 + width)
+    edges = (0, 1, mask, mask >> 1, 1 << (width - 1), mask // 3)
+    assignments = [{"x": x, "y": y} for x in edges for y in edges]
+    assignments += [
+        {"x": rng.getrandbits(width), "y": rng.getrandbits(width)}
+        for _ in range(128)
+    ]
+    if len(expressions) != len(results):
+        raise AssertionError("Engine returned an incomplete corpus")
+    for expression, result in zip(expressions, results):
+        before = ast.parse(expression, mode="eval").body
+        after = ast.parse(result["output"], mode="eval").body
+        for values in assignments:
+            if evaluate(before, values) != evaluate(after, values):
+                raise AssertionError((width, expression, result["output"], values))
+
+
 def run(engine_info, corpus_path, width):
     executable = engine_info["path"]
     environment = os.environ.copy()
@@ -85,6 +167,9 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--rounds", type=int, default=7)
     parser.add_argument("--count", type=int, default=32)
+    parser.add_argument(
+        "--family", choices=("complement", "weighted"), default="complement"
+    )
     args = parser.parse_args()
     if args.rounds < 1 or args.count < 1:
         parser.error("rounds and count must be positive")
@@ -94,12 +179,14 @@ def main():
         "platform": platform.platform(),
         "engines": engines,
         "rounds": args.rounds,
+        "family": args.family,
         "widths": [],
     }
     with tempfile.TemporaryDirectory(prefix="neverd-mask-bench-") as directory:
         path = Path(directory) / "expressions.txt"
         for width in (8, 16, 32, 64):
-            expressions = corpus(width, args.count)
+            generate = weighted_corpus if args.family == "weighted" else corpus
+            expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")
             row = {
                 "width": width,
@@ -109,7 +196,8 @@ def main():
             }
             # Warm both processes, then alternate order to reduce thermal/load bias.
             for info in engines.values():
-                run(info, path, width)
+                warm = run(info, path, width)
+                check_semantics(expressions, warm["results"], width)
             for iteration in range(args.rounds):
                 for name in (
                     list(engines) if iteration % 2 == 0 else list(reversed(engines))
