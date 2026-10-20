@@ -180,7 +180,11 @@ complete proof removes them.
 The five-input expansion covers sixteen products, enclosing scales and a
 high-bit remainder through 257 bits. Root recovery must refuse zero and
 one-short proof allowances. Optional three-input Boolean tables that do not
-fit must leave work for subsequent regions. Independent Z3 gates cover the
+fit must leave work for subsequent regions. All 256 three-input selectors
+must remain exact with a 24-unit construction allowance, including wide words
+and refusal with no work. Shared recovered roots under opaque consumers retain
+their short Boolean form within the single-root work allowance plus 4,096.
+Independent Z3 gates cover the
 complete partitioned product at 2/4 bits; its 8–64-bit queries exceed the
 five-second allowance and are not counted as SMT coverage. Wider cases use the
 complete coefficient proof, independent word arithmetic and generated-C checks;

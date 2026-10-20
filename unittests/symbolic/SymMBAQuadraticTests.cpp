@@ -333,4 +333,41 @@ TEST(SymMBAQuadratic, UnaffordableOptionalTablesLeaveWorkForEnclosingRegions) {
   }
 }
 
+TEST(SymMBAQuadratic, SmallSelectorsUseAffordableExactConstructions) {
+  for (unsigned Width : {1u, 8u, 64u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    llvm::SmallVector<SymRef, 3> Atoms{C.mkVar("a", Width), C.mkVar("b", Width),
+                                       C.mkVar("c", Width)};
+    BitwiseSynthesisLimits Limits;
+    // A three-input ANF needs 24 units; the optimal table needs 65,536.
+    Limits.MaxWork = 24;
+    for (unsigned Bits = 0; Bits != 256; ++Bits) {
+      SCOPED_TRACE(Bits);
+      auto R = synthesizeBitwise(C, table(3, Bits), Atoms, Limits);
+      ASSERT_TRUE(R);
+      for (unsigned K = 0; K != 8; ++K) {
+        llvm::SmallVector<llvm::APInt, 3> Values;
+        for (unsigned I = 0; I != 3; ++I)
+          Values.push_back(K & (1u << I) ? llvm::APInt::getAllOnes(Width)
+                                         : llvm::APInt(Width, 0));
+        EXPECT_EQ(C.eval(*R, Values), (Bits >> K) & 1
+                                          ? llvm::APInt::getAllOnes(Width)
+                                          : llvm::APInt(Width, 0));
+      }
+    }
+    auto Relation = atomTruthTable(0, 3) & atomTruthTable(1, 3);
+    Relation ^= atomTruthTable(2, 3);
+    auto R = synthesizeBitwise(C, Relation, Atoms, Limits);
+    ASSERT_TRUE(R);
+    EXPECT_EQ(*R, C.mkXor(C.mkAnd(Atoms[0], Atoms[1]), Atoms[2]));
+    for (size_t Work : {size_t(0), size_t(1)}) {
+      Limits.MaxWork = Work;
+      const auto Before = C.numNodes();
+      EXPECT_FALSE(synthesizeBitwise(C, Relation, Atoms, Limits));
+      EXPECT_EQ(C.numNodes(), Before);
+    }
+  }
+}
+
 } // namespace

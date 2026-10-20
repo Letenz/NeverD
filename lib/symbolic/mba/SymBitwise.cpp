@@ -17,7 +17,7 @@
 ///     reused.  Each further input squares the count and then squares the
 ///     work, which is why the default stops at three and the ceiling at four.
 ///
-///   - Above that, two exact constructions are costed against each other.  A
+///   - Otherwise, two exact constructions are costed against each other.  A
 ///     cover by prime implicants, grown by merging adjacent product terms and
 ///     then selected greedily, is short for functions close to a union of
 ///     cubes.  An exclusive-or normal form, the table inverted over the subset
@@ -766,9 +766,12 @@ std::optional<SymRef> synthesizeBitwise(SymContext &Ctx,
   const auto NumVars = static_cast<unsigned>(Kept.size());
   const unsigned OptimalCeiling =
       std::min(Limits.MaxOptimalAtoms, kMaxTabulatedAtoms);
-  if (NumVars <= OptimalCeiling) {
-    if (optimalTableWork(NumVars) > Limits.MaxWork)
-      return std::nullopt;
+  // A small function can fit the ordinary cover or ANF construction even
+  // when the complete optimal recipe table would exceed this call's budget.
+  // In particular, do not discard a recovered product's simple XOR relation
+  // merely because its surrounding consumers have a small work allowance.
+  if (NumVars <= OptimalCeiling &&
+      optimalTableWork(NumVars) <= Limits.MaxWork) {
     if (minimumRecipeCost(Ctx, KeptAtoms) > Limits.MaxCost)
       return std::nullopt;
 
