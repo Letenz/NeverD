@@ -17140,6 +17140,137 @@ TEST(MachOLLVMDataPointerBoundary,
 }
 
 TEST(LLVMDataPointerInvariantBoundary,
+     RuntimeEntrySeedAndStaticStringKeepTheirPointerWalk) {
+  for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    const TargetRegInfo &TRI = getTargetRegInfo(TargetArch);
+    const uint16_t Width = TRI.PointerSize;
+    SCOPED_TRACE(static_cast<int>(TargetArch));
+    BinaryImage Image;
+    Image.Arch = TargetArch;
+    Image.Format = BinaryFormat::COFF;
+    Image.Bits = Width == 8 ? Bitness::Bits64 : Bitness::Bits32;
+    constexpr va_t StaticVA = 0x4020;
+    Segment Data;
+    Data.Name = ".rdata";
+    Data.VA = 0x4000;
+    Data.Flags = SegmentFlags::Readable;
+    Data.Data.resize(64);
+    std::memcpy(Data.Data.data(), &StaticVA, Width);
+    Data.Data[32] = 'x';
+    Data.Size = Data.FileSz = Data.Data.size();
+    Image.Segments.push_back(Data);
+    Image.DataPtrRelocSlots.insert(0x4000);
+    Image.DataPtrRelocTargetOwners[0x4000] = 0x4000;
+    Image.RelocDataAddrs.insert(StaticVA);
+
+    auto variable = [&](MedVar::VarKind Kind, int Id, uint16_t Size) {
+      MedVar V;
+      V.Kind = Kind;
+      V.TheArch = TargetArch;
+      V.Id = Id;
+      V.Size = Size;
+      return V;
+    };
+    MedVar Condition = variable(MedVar::Param, 0, 1);
+    Condition.RegOff = TRI.IntParamRegs[0];
+    MedVar Runtime = variable(MedVar::Reg, 1, Width);
+    Runtime.RegOff = TRI.IntParamRegs[1];
+    MedVar Cursor = variable(MedVar::Temp, 2, Width);
+    MedVar Next = variable(MedVar::Temp, 3, Width);
+    MedVar Byte = variable(MedVar::Temp, 4, 1);
+    MedVar More = variable(MedVar::Temp, 5, 1);
+    MedFunc Func;
+    Func.Entry = CallerVA;
+    Func.Name = "runtime_or_static_string_walk";
+    Func.Params = {Condition, Runtime};
+    Func.ReturnType = NdType::makeInt(1);
+    Func.Blocks.resize(5);
+    for (int I = 0; I != 5; ++I) {
+      Func.Blocks[I].Id = I;
+      Func.Blocks[I].StartAddr = CallerVA + I * 0x10;
+      Func.Blocks[I].EndAddr = CallerVA + (I + 1) * 0x10;
+    }
+    auto branch = [&](MedBlock &Block, int Destination,
+                      const MedVar *Predicate = nullptr) {
+      MedOp Op;
+      Op.Opcode = Predicate ? NdOp::COND_BR : NdOp::BRANCH;
+      Op.addInput(MedVar::makeConst(Func.Blocks[Destination].StartAddr, Width));
+      if (Predicate)
+        Op.addInput(*Predicate);
+      Block.Ops.push_back(std::move(Op));
+    };
+    MedOp Seed;
+    Seed.Opcode = NdOp::COPY;
+    Seed.Output = Runtime;
+    Seed.addInput(Runtime);
+    Func.Blocks[0].Ops.push_back(Seed);
+    Func.Blocks[0].Succs = {1, 2};
+    branch(Func.Blocks[0], 1, &Condition);
+    for (int I : {1, 2}) {
+      Func.Blocks[I].Preds = {0};
+      Func.Blocks[I].Succs = {3};
+      branch(Func.Blocks[I], 3);
+    }
+    MedBlock &Loop = Func.Blocks[3];
+    Loop.Preds = {1, 2, 3};
+    Loop.Succs = {3, 4};
+    PhiNode Phi;
+    Phi.Output = Cursor;
+    Phi.Args = {{1, Runtime},
+                {2, MedVar::makeConst(StaticVA, Width,
+                                      ConstantAddressProvenance::DataAddress)},
+                {3, Next}};
+    Loop.Phis.push_back(Phi);
+    MedOp Load;
+    Load.Opcode = NdOp::LOAD;
+    Load.Output = Byte;
+    Load.addInput(Cursor);
+    Loop.Ops.push_back(Load);
+    MedOp Advance;
+    Advance.Opcode = NdOp::INT_ADD;
+    Advance.Output = Next;
+    Advance.addInput(Cursor);
+    Advance.addInput(
+        MedVar::makeConst(1, Width, ConstantAddressProvenance::Scalar));
+    Loop.Ops.push_back(Advance);
+    MedOp Compare;
+    Compare.Opcode = NdOp::INT_NOTEQUAL;
+    Compare.Output = More;
+    Compare.addInput(Byte);
+    Compare.addInput(MedVar::makeConst(0, 1));
+    Loop.Ops.push_back(Compare);
+    branch(Loop, 3, &More);
+    Func.Blocks[4].Preds = {3};
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.addInput(Byte);
+    Func.Blocks[4].Ops.push_back(Return);
+
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit({Func}, Context, "runtime-seed-walk", TargetArch,
+                              {}, &Image, BinaryFormat::COFF);
+    ASSERT_NE(Module, nullptr);
+    expectValidModule(*Module);
+    llvm::Function *Function = Module->getFunction(Func.Name);
+    ASSERT_NE(Function, nullptr);
+    const llvm::LoadInst *Read = nullptr;
+    for (const llvm::BasicBlock &Block : *Function)
+      for (const llvm::Instruction &Instruction : Block)
+        if (const auto *Candidate =
+                llvm::dyn_cast<llvm::LoadInst>(&Instruction);
+            Candidate && Candidate->isVolatile() &&
+            Candidate->getType()->isIntegerTy(8))
+          Read = Candidate;
+    ASSERT_NE(Read, nullptr);
+    std::set<const llvm::Value *> Seen;
+    EXPECT_TRUE(
+        valueReferencesMaterializedGlobal(Read->getPointerOperand(), Seen));
+    EXPECT_FALSE(llvm::isa<llvm::Constant>(Read->getPointerOperand()));
+  }
+}
+
+TEST(LLVMDataPointerInvariantBoundary,
      SymbolizedAndRuntimePointersUseTheSameSelectionProof) {
   // A null-substitution CMOV in MinGW pformat has the same value semantics as
   // SELECT. Exercise direct parameters and a pointer read from a va_list.

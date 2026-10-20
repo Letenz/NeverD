@@ -2880,6 +2880,10 @@ The compact-index cases in
 occurrences and storage bases. Index/target side stores, an unrelated read,
 live selector/call-argument use and exhausted evidence must prevent omission;
 dead pure arithmetic does not.
+`LLVMDataPointerInvariantBoundary.RuntimeEntrySeedAndStaticStringKeepTheirPointerWalk`
+checks a loop merging an architectural entry register with a relocated static
+string on x86, x64, ARM and AArch64. The runtime self-copy remains an input;
+the static edge uses the rebuilt data object throughout the byte-read loop.
 
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new

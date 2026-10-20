@@ -2338,8 +2338,19 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
           return true;
         }
         const MedOp *Def = lookupDef(V);
-        if (!Def || Def->Opcode == NdOp::LOAD || Def->Opcode == NdOp::CALL ||
-            Def->Opcode == NdOp::INDIR_CALL) {
+        // SSA declares an incoming architectural register with an exact
+        // self-copy. It supplies a runtime value just as an explicit parameter
+        // does; following the edge would merely revisit the same node without
+        // recording the runtime arm of this pointer merge.
+        const bool EntrySeed = Def && V.Kind == MedVar::Reg && V.SSAVer == 0 &&
+                               Def->Opcode == NdOp::COPY &&
+                               Def->NumInputs == 1 &&
+                               addressProvenanceVarKey(Def->Output) ==
+                                   addressProvenanceVarKey(V) &&
+                               addressProvenanceVarKey(Def->Inputs[0]) ==
+                                   addressProvenanceVarKey(V);
+        if (!Def || EntrySeed || Def->Opcode == NdOp::LOAD ||
+            Def->Opcode == NdOp::CALL || Def->Opcode == NdOp::INDIR_CALL) {
           // A register with no definition in this function (a live-in or an
           // argument), a loaded word and a call result are the program's own
           // runtime values.
