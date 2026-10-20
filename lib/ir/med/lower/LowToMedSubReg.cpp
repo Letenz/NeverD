@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/SubRegViews.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/LowToMed.h"
@@ -59,6 +60,16 @@ static void insertPending(std::vector<MedOp> &Ops,
   for (; Next < Pending.size(); ++Next)
     Merged.push_back(std::move(Pending[Next].Op));
   Ops = std::move(Merged);
+}
+
+// Calls \p Visit on each write of \p Writes, keyed by (offset, size), to a
+// register wider than (\p Off, \p Size) that starts at \p Off, in key order.
+template <typename WriteMap, typename VisitFn>
+static void forEachWiderWriteAt(const WriteMap &Writes, uint64_t Off,
+                                uint16_t Size, VisitFn Visit) {
+  for (auto It = Writes.upper_bound({Off, Size});
+       It != Writes.end() && It->first.first == Off; ++It)
+    Visit(It->first, It->second);
 }
 
 void LowToMedConverter::fixupSubRegisters(MedFunc &Func) {
@@ -256,16 +267,19 @@ void LowToMedConverter::fixupSubRegisters(MedFunc &Func) {
             }
           };
           // (a) same start offset, wider size.
-          for (const auto &[Key, WI] : AllWrites)
-            if (Key.first == Inp.RegOff && Key.second > Inp.Size)
-              consider(Key.first, Key.second);
-          for (const auto &[Key, WI] : ZextWrites)
-            if (Key.first == Inp.RegOff && Key.second > Inp.Size)
-              consider(Key.first, Key.second);
+          forEachWiderWriteAt(AllWrites, Inp.RegOff, Inp.Size,
+                              [&](const auto &Key, const auto &) {
+                                consider(Key.first, Key.second);
+                              });
+          forEachWiderWriteAt(ZextWrites, Inp.RegOff, Inp.Size,
+                              [&](const auto &Key, const auto &) {
+                                consider(Key.first, Key.second);
+                              });
           // (b) SubRegs table (mid-register lanes whose start offset differs).
-          for (const auto &E : TRI.SubRegs)
-            if (E.NarrowRegOff == Inp.RegOff && E.NarrowSize == Inp.Size)
-              consider(E.WideRegOff, static_cast<uint16_t>(E.WideSize));
+          forEachSubRegOfNarrowView(
+              TRI, Inp.RegOff, Inp.Size, [&](const SubRegEntry &E) {
+                consider(E.WideRegOff, static_cast<uint16_t>(E.WideSize));
+              });
           if (HaveCandidate && tryRecord(BestOff, BestSz))
             Found = true;
         }
@@ -275,16 +289,15 @@ void LowToMedConverter::fixupSubRegisters(MedFunc &Func) {
           uint16_t BestSz = 0;
           size_t BestOrd = 0;
           bool HaveCandidate = false;
-          for (const auto &[Key, WI] : ZextWrites) {
-            if (Key.first == Inp.RegOff && Key.second > Inp.Size) {
-              if (!HaveCandidate || WI.Ord > BestOrd) {
-                BestOff = Key.first;
-                BestSz = Key.second;
-                BestOrd = WI.Ord;
-                HaveCandidate = true;
-              }
-            }
-          }
+          forEachWiderWriteAt(ZextWrites, Inp.RegOff, Inp.Size,
+                              [&](const auto &Key, const auto &WI) {
+                                if (!HaveCandidate || WI.Ord > BestOrd) {
+                                  BestOff = Key.first;
+                                  BestSz = Key.second;
+                                  BestOrd = WI.Ord;
+                                  HaveCandidate = true;
+                                }
+                              });
           if (HaveCandidate) {
             auto WKey = std::make_pair(BestOff, BestSz);
             auto WIt = ZextWrites.find(WKey);
