@@ -258,7 +258,11 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             assert text.count("&") <= 2, text
             assert text.count("^") <= (1 if kind == "quartic" else 3), text
         elif kind in ("perturbed-quartic", "perturbed-sextic"):
-            assert text.count("&") <= 8 and text.count("^") <= 4, text
+            # Keep the changed original product, but eliminate the remaining
+            # complemented partitions. The sextic tail adds two XOR factors.
+            assert text.count("&") <= 5 and "~" not in text, text
+            assert text.count("^") <= (
+                3 if kind == "perturbed-quartic" else 5), text
         else:
             assert ">>" not in text, text
 
