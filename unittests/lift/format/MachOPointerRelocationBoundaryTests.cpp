@@ -17750,6 +17750,112 @@ TEST(MachOLLVMDataPointerBoundary,
 }
 
 TEST(MachOLLVMDataPointerBoundary,
+     ReflexiveAddressComparisonsPruneOnlyProvenDeadBodies) {
+  enum class Case { Same, Different, Raw, Narrow, IndependentEntry };
+  for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+      for (NdOp Compare :
+           {NdOp::INT_EQUAL, NdOp::INT_NOTEQUAL, NdOp::INT_LESS,
+            NdOp::INT_SLESS, NdOp::INT_LESSEQUAL, NdOp::INT_SLESSEQUAL})
+        for (Case Scenario : {Case::Same, Case::Different, Case::Raw,
+                              Case::Narrow, Case::IndependentEntry}) {
+          SCOPED_TRACE(static_cast<int>(TargetArch));
+          SCOPED_TRACE(formatTraceName(Format));
+          SCOPED_TRACE(static_cast<int>(Compare));
+          SCOPED_TRACE(static_cast<int>(Scenario));
+          const uint16_t Width = getTargetRegInfo(TargetArch).PointerSize;
+          BinaryImage Image;
+          Image.Arch = TargetArch;
+          Image.Format = Format;
+          Image.Bits = Width == 8 ? Bitness::Bits64 : Bitness::Bits32;
+          Segment Data;
+          Data.Name = ".rdata";
+          Data.VA = 0x4000;
+          Data.Flags = SegmentFlags::Readable;
+          Data.Data.resize(64);
+          Data.Size = Data.FileSz = Data.Data.size();
+          Image.Segments.push_back(Data);
+          Image.RelocDataAddrs.insert(0x4010);
+          Image.RelocDataAddrs.insert(0x4020);
+
+          MedFunc Func;
+          Func.Name = "reflexive_address_guard";
+          Func.Entry = 0x100;
+          Func.ReturnType = NdType::makeInt(4);
+          Func.Blocks.resize(3);
+          for (int I = 0; I != 3; ++I) {
+            Func.Blocks[I].Id = I;
+            Func.Blocks[I].StartAddr = 0x100 + I * 0x10;
+            Func.Blocks[I].EndAddr = 0x110 + I * 0x10;
+          }
+          MedVar Condition;
+          Condition.Kind = MedVar::Temp;
+          Condition.TheArch = TargetArch;
+          Condition.Id = 1;
+          Condition.Size = 1;
+          MedOp Predicate;
+          Predicate.Opcode = Compare;
+          Predicate.Output = Condition;
+          Predicate.addInput(MedVar::makeConst(
+              0x4010, Width, ConstantAddressProvenance::DataAddress));
+          Predicate.addInput(MedVar::makeConst(
+              Scenario == Case::Different ? 0x4020 : 0x4010,
+              Scenario == Case::Narrow ? Width - 1 : Width,
+              Scenario == Case::Raw ? ConstantAddressProvenance::Scalar
+                                    : ConstantAddressProvenance::DataAddress));
+          Func.Blocks[0].Ops.push_back(Predicate);
+          const bool ReflexiveTrue = Compare == NdOp::INT_EQUAL ||
+                                     Compare == NdOp::INT_LESSEQUAL ||
+                                     Compare == NdOp::INT_SLESSEQUAL;
+          MedOp Branch;
+          Branch.Opcode = NdOp::COND_BR;
+          Branch.addInput(MedVar::makeConst(
+              Func.Blocks[ReflexiveTrue ? 1 : 2].StartAddr, Width));
+          Branch.addInput(Condition);
+          Func.Blocks[0].Ops.push_back(Branch);
+          Func.Blocks[0].Succs = {1, 2};
+          Func.Blocks[1].Preds = {0};
+          Func.Blocks[2].Preds = {0};
+          MedOp Return;
+          Return.Opcode = NdOp::RETURN;
+          Return.addInput(MedVar::makeConst(7, 4));
+          Func.Blocks[1].Ops.push_back(Return);
+          // An observable incomplete address must still refuse if this body
+          // is reachable, including through an independent published entry.
+          Return.Inputs[0] = MedVar::makeConst(
+              0x4010, Width, ConstantAddressProvenance::AddressFragment);
+          MedOp WriteReturn;
+          WriteReturn.Opcode = NdOp::COPY;
+          WriteReturn.Output.Kind = MedVar::Reg;
+          WriteReturn.Output.TheArch = TargetArch;
+          WriteReturn.Output.Id = 2;
+          WriteReturn.Output.SSAVer = 1;
+          WriteReturn.Output.Size = Width;
+          WriteReturn.Output.RegOff = getTargetRegInfo(TargetArch).IntReturnReg;
+          WriteReturn.addInput(Return.Inputs[0]);
+          Func.Blocks[2].Ops.push_back(WriteReturn);
+          Func.Blocks[2].Ops.push_back(Return);
+          if (Scenario == Case::IndependentEntry)
+            Func.ModuleAnalysisRoots.insert(Func.Blocks[2].StartAddr);
+
+          llvm::LLVMContext Context;
+          testing::internal::CaptureStderr();
+          auto Module = MedLLVMEmitter().emit({Func}, Context,
+                                              "reflexive-address-control",
+                                              TargetArch, {}, &Image, Format);
+          const std::string Diagnostic = testing::internal::GetCapturedStderr();
+          EXPECT_EQ(Module != nullptr, Scenario == Case::Same) << Diagnostic;
+          if (Module)
+            expectValidModule(*Module);
+          else
+            EXPECT_NE(Diagnostic.find("incomplete relocatable address"),
+                      std::string::npos)
+                << Diagnostic;
+        }
+}
+
+TEST(MachOLLVMDataPointerBoundary,
      RelocatableControlConstantsCannotPrunePhiEdges) {
   for (Arch TargetArch : {Arch::AArch64, Arch::X64}) {
     SCOPED_TRACE(TargetArch == Arch::AArch64 ? "arm64" : "x86_64");

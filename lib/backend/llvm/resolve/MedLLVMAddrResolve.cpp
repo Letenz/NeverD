@@ -1015,15 +1015,18 @@ MedLLVMEmitter::traceControlConst(const MedVar &V,
     case NdOp::INT_SLESS:
     case NdOp::INT_LESSEQUAL:
     case NdOp::INT_SLESSEQUAL:
-      if (!Bindings && Def->NumInputs >= 2 &&
-          (Def->Opcode == NdOp::INT_EQUAL ||
-           Def->Opcode == NdOp::INT_NOTEQUAL)) {
-        // Rebuilt addresses cannot be ordered by their original VA. Equality
-        // of the same defined object identity survives relocation, however.
+      if (!Bindings && Def->NumInputs >= 2) {
+        // Rebuilt addresses cannot be ordered by their original VA. The same
+        // complete object identity still compares equal to itself: both
+        // strict orders are false and both non-strict orders are true. This
+        // also proves an empty table's iteration body unreachable without
+        // deriving an ordering between distinct relocated objects.
         auto A = pureReadOnlyBaseIdentity(Def->Inputs[0], false);
         auto B = pureReadOnlyBaseIdentity(Def->Inputs[1], false);
         if (A && B && *A == *B) {
-          Result = Def->Opcode == NdOp::INT_EQUAL;
+          Result = Def->Opcode == NdOp::INT_EQUAL ||
+                   Def->Opcode == NdOp::INT_LESSEQUAL ||
+                   Def->Opcode == NdOp::INT_SLESSEQUAL;
           break;
         }
       }

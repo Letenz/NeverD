@@ -2884,6 +2884,11 @@ dead pure arithmetic does not.
 checks a loop merging an architectural entry register with a relocated static
 string on x86, x64, ARM and AArch64. The runtime self-copy remains an input;
 the static edge uses the rebuilt data object throughout the byte-read loop.
+`MachOLLVMDataPointerBoundary.ReflexiveAddressComparisonsPruneOnlyProvenDeadBodies`
+checks all six integer comparisons of one complete rebuilt address across
+those architectures and ELF, Mach-O and COFF. Strict self-ordering excludes
+empty-table loop bodies. Distinct addresses, mixed raw/rebuilt values, narrow
+operands and independent entries cannot hide an observable incomplete address.
 
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
