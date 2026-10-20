@@ -110,6 +110,13 @@ bool ARMLifter::liftControl(LiftState &S, const cs_insn *Insn,
                          : Insn->id == ARM_INS_BKPT ? Intrinsic::ArmBkpt
                                                     : Intrinsic::ArmHlt;
     const std::optional<uint64_t> Code = exceptionCode(Insn, ARM);
+    if (Id == Intrinsic::ArmBkpt || Id == Intrinsic::ArmHlt) {
+      if (Code)
+        S.emitVoidIntrinsic(Id, {NdVar::cst(*Code, 2)});
+      else
+        S.emitVoidIntrinsic(Id);
+      break;
+    }
     if (!Code) {
       S.emitIntrinsic(Id);
       break;

@@ -3998,7 +3998,8 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     if (AfterCxxThrow)
       return true;
     emitIndent(Indent);
-    OS << renderDebugBreak(Opts.TheArch, Opts.Format);
+    const std::string Text = renderDebugBreak(Opts.TheArch, Opts.Format);
+    OS << llvm::StringRef(Text).rtrim("\n") << instructionComment(Call) << "\n";
     AfterCxxThrow = false;
     return true;
   }

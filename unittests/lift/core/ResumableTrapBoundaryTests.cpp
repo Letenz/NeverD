@@ -16,8 +16,10 @@
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/IR/Verifier.h"
@@ -332,6 +334,12 @@ std::vector<TrapCase> siblingTraps() {
                    {0xfe, 0xde, 0xff, 0xe7},
                    {42, 0, 0xa0, 0xe3, 0x1e, 0xff, 0x2f, 0xe1},
                    true});
+  Cases.push_back({"a64 debugbreak",
+                   Arch::AArch64,
+                   InstructionMode::Default,
+                   {0, 0, 0x3e, 0xd4},
+                   {0x40, 0x05, 0x80, 0x52, 0xc0, 3, 0x5f, 0xd6},
+                   true});
   for (const auto &[Name, Bytes] :
        std::vector<std::pair<const char *, std::vector<uint8_t>>>{
            {"a64 brk", {0x20, 0, 0x20, 0xd4}},
@@ -503,6 +511,289 @@ TEST(ResumableTrapBoundary, OrdinaryInterruptKeepsItsContinuation) {
     EXPECT_TRUE(Function.hasCompleteLiftCoverage());
     EXPECT_EQ(Function.DecodedInstructionCount, 3u);
     EXPECT_FALSE(lowFunctionNeverReturns(Function, Architecture));
+  }
+}
+
+TEST(ResumableTrapBoundary, ConsecutiveInteriorBreaksRetainContinuation) {
+  for (Arch Architecture : {Arch::X86, Arch::X64})
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+      for (unsigned Metadata = 0; Metadata != 4; ++Metadata)
+        for (unsigned Count : {2u, 80u}) {
+          if (Metadata == 0 && Count > 2)
+            continue; // Unbounded padding lookahead deliberately has a budget.
+          SCOPED_TRACE(::testing::Message()
+                       << int(Architecture) << "/" << int(Format) << "/"
+                       << Metadata << "/" << Count);
+          auto Image = image(Architecture, Format);
+          auto &Text = Image.Segments.front();
+          Text.Data.insert(Text.Data.begin() + 6, Count - 1, 0xcc);
+          Text.Size = Text.Data.size();
+          const va_t End = Entry + Text.Size;
+          if (Metadata == 1)
+            Image.KnownCodeRanges.emplace_back(Entry, End);
+          else if (Metadata == 2)
+            addSymbol(Image, Entry, Text.Size, "trap_owner");
+          else if (Metadata == 3) {
+            ExceptionFunction Owner;
+            Owner.CodeRange = {Entry, End};
+            Owner.Kind = RuntimeFunctionKind::Primary;
+            Owner.Encoding = ExceptionEncoding::X64UnwindV1;
+            Owner.ParseStatus = ExceptionParseStatus::Complete;
+            Image.ExceptionMetadata.Functions.push_back(std::move(Owner));
+            Image.ExceptionMetadata.rebuildIndex();
+          }
+          const auto Function = build(Image);
+          EXPECT_TRUE(Function.hasCompleteLiftCoverage());
+          EXPECT_EQ(Function.DecodedInstructionCount, Count + 3);
+          ASSERT_EQ(Function.Blocks.size(), 1u);
+          EXPECT_EQ(Function.Blocks.front().EndAddr, End);
+          EXPECT_EQ(
+              Function.Blocks.front().InstructionBoundaries.back().Control,
+              LowInstructionControl::Return);
+        }
+}
+
+TEST(ResumableTrapBoundary, UnownedTrapAndNopPaddingDoesNotReachNeighbor) {
+  for (bool NoOps : {false, true}) {
+    auto Image = image();
+    auto &Text = Image.Segments.front();
+    Text.Data = {0xb8, 7,    0,    0,  0, 0xcc, 0xcc, 0xcc,
+                 0x90, 0x90, 0xb8, 42, 0, 0,    0,    0xc3};
+    if (!NoOps)
+      Text.Data[8] = Text.Data[9] = 0xcc;
+    Text.Size = Text.Data.size();
+    expectStoppedAtTrap(build(Image, {Entry + 10}));
+  }
+}
+
+TEST(ResumableTrapBoundary, PaddingGuessesDoNotOverrideResumableFallthrough) {
+  for (unsigned Evidence = 0; Evidence != 5; ++Evidence)
+    for (bool Indexed : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << Evidence << "/" << Indexed);
+      auto Image = image();
+      auto &Text = Image.Segments.front();
+      Text.Data.insert(Text.Data.begin() + 6, 0xcc);
+      Text.Size = Text.Data.size();
+      const va_t Continuation = Next + 1;
+      auto Guess = Symbol::makeFunc(Continuation);
+      Guess.IsBoundaryGuess = true;
+      Image.Symbols.push_back(Guess);
+      std::set<va_t> Entries;
+      switch (Evidence) {
+      case 1:
+        Image.Symbols.back().Name = "confirmed_by_debug_info";
+        break;
+      case 2:
+        addSymbol(Image, Continuation, 0, "independent_alias");
+        break;
+      case 3:
+        Image.KnownCodeRanges.emplace_back(Continuation, Entry + Text.Size);
+        break;
+      case 4:
+        Entries.insert(Continuation); // Independently discovered call target.
+        break;
+      }
+      const ExecutableCodeOwnerIndex Index(Image);
+      const auto *Owners = Indexed ? &Index : nullptr;
+      EXPECT_EQ(Image.hasFunctionSymbolAt(Continuation, Owners,
+                                          /*IncludeBoundaryGuesses=*/false),
+                Evidence != 0 && Evidence != 4);
+      EXPECT_TRUE(Image.hasFunctionSymbolAt(Continuation, Owners));
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Image));
+      CFGBuilder Builder;
+      Builder.setKnownFuncEntries(&Entries);
+      Builder.setExecutableCodeOwnerIndex(Owners);
+      const auto Function = Builder.build(Image, Dec, Entry, "trap_owner");
+      if (Evidence != 0) {
+        expectStoppedAtTrap(Function);
+      } else {
+        EXPECT_TRUE(Function.hasCompleteLiftCoverage());
+        EXPECT_EQ(Function.DecodedInstructionCount, 5u);
+        ASSERT_EQ(Function.Blocks.size(), 1u);
+        EXPECT_EQ(Function.Blocks.front().EndAddr, Entry + Text.Size);
+      }
+    }
+}
+
+TEST(ResumableTrapBoundary, ReachedColdBlockCanResumeBeyondPrimaryRange) {
+  auto Image = image();
+  auto &Text = Image.Segments.front();
+  Text.Data = {0xeb, 6,    0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc,
+               0xcc, 0xcc, 0xb8, 42,   0,    0,    0,    0xc3};
+  Text.Size = Text.Data.size();
+  Image.KnownCodeRanges.emplace_back(Entry, Entry + 2);
+  const auto Function = build(Image);
+  EXPECT_TRUE(Function.hasCompleteLiftCoverage());
+  EXPECT_EQ(Function.DecodedInstructionCount, 5u);
+  ASSERT_EQ(Function.Blocks.size(), 2u);
+  EXPECT_EQ(Function.Blocks.back().EndAddr, Entry + Text.Size);
+  EXPECT_EQ(Function.Blocks.back().InstructionBoundaries.back().Control,
+            LowInstructionControl::Return);
+}
+
+TEST(ResumableTrapBoundary, FullAndSelectedPipelinesAbsorbResumedPaddingGuess) {
+  for (bool Selected : {false, true})
+    for (bool LLVMRoute : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << Selected << "/" << LLVMRoute);
+      auto Image = image();
+      Image.IsRelocatable = true;
+      auto &Text = Image.Segments.front();
+      Text.Data = {0xcc, 0xcc, 0xb8, 42, 0, 0, 0, 0xc3};
+      Text.Size = Text.Data.size();
+      addSymbol(Image, Entry, 0, "double_debugbreak");
+      auto Guess = Symbol::makeFunc(Entry + 2);
+      Guess.IsBoundaryGuess = true;
+      Image.Symbols.push_back(Guess);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      if (Selected)
+        Options.OnlyFunctionEntries.insert(Entry);
+      Options.LiftMode = LLVMRoute;
+      Options.SourceProjection = LLVMRoute;
+      auto Result = Pipeline().run(Image, Context, Options);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      ASSERT_EQ(Result.LowFuncs.size(), 1u);
+      const auto &Function = Result.LowFuncs.front();
+      EXPECT_EQ(Function.Entry, Entry);
+      EXPECT_TRUE(Function.hasCompleteLiftCoverage());
+      EXPECT_EQ(Function.DecodedInstructionCount, 4u);
+      EXPECT_EQ(Function.Blocks.back().EndAddr, Entry + Text.Size);
+      if (!Selected) {
+        const auto Audit =
+            llvm::find_if(Result.FunctionAudits,
+                          [](const auto &A) { return A.Entry == Entry + 2; });
+        ASSERT_NE(Audit, Result.FunctionAudits.end());
+        EXPECT_EQ(Audit->Disposition,
+                  PipelineFunctionDisposition::AbsorbedFunctionChunk);
+      }
+    }
+}
+
+TEST(ResumableTrapBoundary, ResumableTrapsDoNotDefineReturnRegisters) {
+  for (const auto &Case : siblingTraps()) {
+    if (!Case.Resumable)
+      continue;
+    SCOPED_TRACE(::testing::Message()
+                 << Case.Name << "/" << int(Case.Architecture));
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Case.Architecture, Case.Mode));
+    DecodedInsn Insn;
+    ASSERT_EQ(Dec.decodeOne(Case.Trap.data(), Case.Trap.size(), Entry, Insn),
+              Case.Trap.size());
+    std::vector<LowOp> Ops;
+    Dec.liftToLow(Insn, Ops);
+    unsigned Intrinsics = 0;
+    for (const auto &Op : Ops) {
+      if (Op.Opcode != NdOp::INTRINSIC)
+        continue;
+      ++Intrinsics;
+      EXPECT_EQ(Op.Output.Size, 0u);
+      EXPECT_FALSE(lowIntrinsicIsUnconditionalTrap(Op));
+      if (Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Int3))
+        EXPECT_EQ(Op.NumInputs,
+                  1u); // All x86 encodings have one void contract.
+    }
+    EXPECT_EQ(Intrinsics, 1u);
+  }
+}
+
+TEST(ResumableTrapBoundary,
+     BothSourceRoutesPreserveLiveValuesAndRepeatedBreaks) {
+  for (const auto &Case : siblingTraps()) {
+    if (!Case.Resumable)
+      continue;
+    for (bool Repeated : {false, true})
+      for (bool LLVMRoute : {false, true})
+        for (bool NoOpt : {false, true}) {
+          SCOPED_TRACE(::testing::Message()
+                       << Case.Name << "/" << int(Case.Architecture) << "/"
+                       << Repeated << "/" << LLVMRoute << "/" << NoOpt);
+          auto Image = trapImage(Case);
+          auto &Text = Image.Segments.front();
+          if (Repeated) {
+            Text.Data.insert(Text.Data.begin(), Case.Trap.begin(),
+                             Case.Trap.end());
+          } else {
+            // The value is defined before the break and remains live across it.
+            switch (Case.Architecture) {
+            case Arch::X86:
+            case Arch::X64:
+              Text.Data = {0xb8, 7, 0, 0, 0};
+              break;
+            case Arch::ARM:
+              Text.Data = Case.Mode == InstructionMode::Thumb
+                              ? std::vector<uint8_t>{7, 0x20}
+                              : std::vector<uint8_t>{7, 0, 0xa0, 0xe3};
+              break;
+            case Arch::AArch64:
+              Text.Data = {0xe0, 0, 0x80, 0x52}; // mov w0, #7
+              break;
+            default:
+              FAIL() << "unexpected debugger architecture";
+            }
+            Text.Data.insert(Text.Data.end(), Case.Trap.begin(),
+                             Case.Trap.end());
+            const size_t ReturnSize =
+                Case.Architecture == Arch::ARM
+                    ? (Case.Mode == InstructionMode::Thumb ? 2 : 4)
+                : Case.Architecture == Arch::AArch64 ? 4
+                                                     : 1;
+            Text.Data.insert(Text.Data.end(),
+                             Case.Continuation.end() - ReturnSize,
+                             Case.Continuation.end());
+          }
+          Text.Size = Text.Data.size();
+          Image.KnownCodeRanges = {{Entry, Entry + Text.Size}};
+          addSymbol(Image, Entry, Text.Size, "trap_owner");
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.OnlyFunctionEntries.insert(Entry);
+          Options.LiftMode = LLVMRoute;
+          Options.SourceProjection = LLVMRoute;
+          Options.NoOpt = NoOpt;
+          auto Result = Pipeline().run(Image, Context, Options);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          std::string Source;
+          llvm::raw_string_ostream OS(Source);
+          CEmitterOptions COptions;
+          COptions.TheArch = Image.Arch;
+          COptions.Format = Image.Format;
+          if (LLVMRoute) {
+            ASSERT_TRUE(Result.LlvmModule);
+            EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+            ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, OS, COptions,
+                                            nullptr, &Image));
+          } else {
+            ASSERT_FALSE(Result.HighFuncs.empty());
+            ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, COptions));
+          }
+          EXPECT_TRUE(
+              Source.find(Repeated ? "return 42;" : "return 7;") !=
+                  std::string::npos ||
+              (Repeated && Source.find("return 0x2A;") != std::string::npos))
+              << Source;
+          EXPECT_EQ(Source.find("__builtin_trap("), std::string::npos)
+              << Source;
+          EXPECT_EQ(Source.find("__debugbreak(3)"), std::string::npos)
+              << Source;
+          const std::string Trap =
+              !LLVMRoute && std::string(Case.Name) == "int1" ? "int1"
+              : std::string(Case.Name).find("udf") != std::string::npos
+                  ? "udf #"
+              : Case.Architecture == Arch::X86 || Case.Architecture == Arch::X64
+                  ? "__debugbreak()"
+                  : "__builtin_debugtrap()";
+          unsigned Breaks = 0;
+          for (size_t Position = 0;
+               (Position = Source.find(Trap, Position)) != std::string::npos;
+               Position += Trap.size())
+            ++Breaks;
+          EXPECT_EQ(Breaks, Repeated ? 2u : 1u) << Source;
+        }
   }
 }
 

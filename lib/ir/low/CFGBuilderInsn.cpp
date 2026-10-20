@@ -323,7 +323,8 @@ bool CFGBuilder::hasFunctionSymbolAtIndexed(const BinaryImage &Img, va_t Addr) {
                             normalizeCodeAddress(Addr, Img.Arch, Img.Mode));
 }
 
-bool CFGBuilder::isTailCallTarget(va_t Target) const {
+bool CFGBuilder::isTailCallTarget(va_t Target,
+                                  bool IncludeBoundaryGuesses) const {
   if (Target == InvalidVA || Target == CurrentFuncEntry)
     return false;
   if (CurrentImg && !CurrentImg->isFunctionEntryCandidateAt(Target))
@@ -332,9 +333,10 @@ bool CFGBuilder::isTailCallTarget(va_t Target) const {
   // set. An explicit transfer to such a symbol still names a tail callee.
   // Symbol identity alone must not stop ordinary fallthrough exploration:
   // x86 call-next/POP retains its architectural push even at a named address.
-  const bool FunctionEntry = isKnownFunctionEntry(Target) ||
-                             (CurrentImg && CurrentImg->hasFunctionSymbolAt(
-                                                Target, ExecutableCodeOwners));
+  const bool FunctionEntry =
+      isKnownFunctionEntry(Target) ||
+      (CurrentImg && CurrentImg->hasFunctionSymbolAt(
+                         Target, ExecutableCodeOwners, IncludeBoundaryGuesses));
   if (FunctionEntry && !isCurrentExceptionalEntry(Target) &&
       !isCurrentOwnedFragment(Target))
     return true;

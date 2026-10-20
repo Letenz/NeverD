@@ -1388,9 +1388,11 @@ struct BinaryImage {
   /// An operation-scoped index makes repeated CFG queries logarithmic without
   /// mutating this publicly editable image from parallel workers. An absent or
   /// foreign index reads the current Symbols directly.
-  bool
-  hasFunctionSymbolAt(va_t Addr,
-                      const ExecutableCodeOwnerIndex *Index = nullptr) const;
+  /// Resumable fallthrough can exclude entries supported only by padding
+  /// guesses; explicit transfers still consider those potential callees.
+  bool hasFunctionSymbolAt(va_t Addr,
+                           const ExecutableCodeOwnerIndex *Index = nullptr,
+                           bool IncludeBoundaryGuesses = true) const;
 
   /// Largest non-function symbol size defined exactly at \p Addr (0 if none).
   /// Distinguishes a sized data object (a const array/table) from a bare label,

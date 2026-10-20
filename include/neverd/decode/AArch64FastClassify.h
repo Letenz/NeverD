@@ -67,7 +67,8 @@ inline va_t directCallTarget(uint32_t Word, va_t Addr) {
 ///            ARMv8.8 `bc.cond` (bits[31:24]==0x54 with bit4==1) is id 53, a
 ///            distinct id NOT in the set, so it is excluded by the bit-4 test.
 ///   * BRK/HLT — exception-generation encodings with a 16-bit immediate in
-///            bits[20:5]; both lower to a non-returning trap.
+///            bits[20:5]. CFG continuation additionally distinguishes the
+///            compiler's resumable BRK #0xF000 from terminating traps.
 ///   * UDF — permanently undefined, with its 16-bit immediate in bits[15:0].
 inline bool isTerminatorWord(uint32_t Word) {
   if ((Word & 0xFFFFFC1Fu) == 0xD65F0000u) // RET {Xn}

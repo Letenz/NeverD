@@ -1257,7 +1257,7 @@ private:
 
   /// Whether \p Target is the entry of a *different* known function — i.e. an
   /// unconditional direct branch to it is a tail call, not intra-function flow.
-  bool isTailCallTarget(va_t Target) const;
+  bool isTailCallTarget(va_t Target, bool IncludeBoundaryGuesses = true) const;
 
   /// Whether the call in \p Rec never returns: it ends its function's own
   /// code range, it targets a known no-return libc function
@@ -1276,6 +1276,9 @@ private:
   /// fragment of the function follows. Calls cannot return into that range;
   /// resumable traps have no ordinary continuation in it.
   bool instructionEndsItsCodeRange(const InsnRecord &Rec) const;
+  /// Whether a trap can resume in owned code, or a bounded look through
+  /// unowned trap/NOP padding finds code before the next function.
+  bool codeFollowsTrap(const Decoder &Dec, va_t Next) const;
 
   /// Rewrite an unconditional-branch instruction record into an explicit
   /// CALL + RETURN pair (tail call to another function).

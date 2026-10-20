@@ -59,7 +59,10 @@ inline bool lowIntrinsicIsUnconditionalTrap(const LowOp &Op) {
          Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
          Op.Inputs[0].Offset < static_cast<uint64_t>(Intrinsic::_Count) &&
          isUnconditionalTrapIntrinsic(
-             static_cast<Intrinsic>(Op.Inputs[0].Offset));
+             static_cast<Intrinsic>(Op.Inputs[0].Offset),
+             Op.NumInputs >= 2 && Op.Inputs[1].isConst()
+                 ? std::optional<uint64_t>(Op.Inputs[1].Offset)
+                 : std::nullopt);
 }
 
 /// The memory operands of an intrinsic whose complete effects

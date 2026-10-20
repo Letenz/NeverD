@@ -11,6 +11,8 @@
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
+#include "neverd/ir/intrinsics/IntrinsicTermination.h"
+
 #include <cstdio>
 #include <cstring>
 
@@ -88,15 +90,18 @@ const char *intrinsicAsmMnemonic(Intrinsic Id) {
   return kAsm.names[Idx];
 }
 
-const char *intrinsicCName(Intrinsic Id) {
+const char *intrinsicCName(Intrinsic Id, std::optional<uint64_t> Operand) {
+  if (Id == Intrinsic::Brk && isAArch64DebugBreakCode(Operand))
+    return "__builtin_debugtrap";
   auto Idx = static_cast<size_t>(Id);
   if (Idx >= kCount)
     return nullptr;
   return kCNames.names[Idx];
 }
 
-bool isUnconditionalTrapIntrinsic(Intrinsic Id) {
-  const auto *Name = intrinsicCName(Id);
+bool isUnconditionalTrapIntrinsic(Intrinsic Id,
+                                  std::optional<uint64_t> Operand) {
+  const auto *Name = intrinsicCName(Id, Operand);
   return Name &&
          (!std::strcmp(Name, "__builtin_trap") || !std::strcmp(Name, "__ud2"));
 }

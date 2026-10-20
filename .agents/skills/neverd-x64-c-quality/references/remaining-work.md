@@ -207,6 +207,18 @@ conditional memory, invocation lifetime and both C routes remain open.
 
 ## Closed control-flow regressions
 
+- Consecutive debugger breaks preserve owned continuations. Bounded lookahead
+  distinguishes unsized continuations from trap/NOP padding before independent
+  entries. Padding guesses alone do not stop fallthrough, and full/selected
+  pipelines absorb guesses at actually decoded instruction boundaries.
+- Long and prefixed x86 `int 3` use the short encoding's void, zero-argument
+  contract. ARM/Thumb `bkpt` and AArch64 `brk` define no return-register value.
+  Tests keep live values across breaks through both C routes at both pipeline
+  optimization settings, while service interrupt result contracts remain.
+- AArch64 compiler `brk #0xF000` shares one resumable policy across decoding,
+  termination analysis and source emission. Fatal BRK codes still propagate
+  no-return to callers. LLVM-to-C retains raw ARM UDF/HLT assembly instead of
+  silently giving it the stronger non-returning `__builtin_trap` contract.
 - Resumable x86 breakpoints at known function boundaries no longer create
   synthetic tail calls to adjacent functions. CFGBuilder shares the existing
   instruction-range ownership check with calls; interior debugger continuations

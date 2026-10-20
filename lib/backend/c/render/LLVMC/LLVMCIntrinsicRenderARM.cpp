@@ -105,8 +105,9 @@ InlineAsmRender renderARMInlineAsm(Arch TheArch, const std::string &AsmStr,
   }
 
   const char *ArmC = lookupArmAsmToC(AsmStr.c_str());
-  // A trap or a breakpoint builtin takes no code: the instruction it was
-  // lifted from goes beside it (`__builtin_trap(); /* udf #0xFE */`).
+  // A breakpoint builtin takes no code: retain the instruction beside it.
+  // Raw UDF/HLT assembly can have a continuation. Only an explicit llvm.trap
+  // grants the stronger, non-returning builtin contract.
   std::string Comment;
   if (!ArmC) {
     ArmC = lookupArmAsmToC(Mnemonic.c_str());

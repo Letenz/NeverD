@@ -32,6 +32,7 @@
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/BranchEncoding.h"
+#include "neverd/support/ProloguePatterns.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
@@ -241,37 +242,6 @@ bool isBackwardSharedEpilogue(const BinaryImage &Image, va_t FunctionEntry,
     return false;
   }
   return false;
-}
-
-/// True when \p Next begins a non-trap instruction. The caller first checks
-/// function ownership; decodable bytes alone cannot establish a continuation.
-///
-/// Padding is what this tells apart from a body.  A linker pads between
-/// functions with a run of `int3`, and a compiler plants a trap in front of an
-/// embedded jump table or string; in both cases the bytes after the trap are
-/// either another trap or not an instruction at all.  A `__debugbreak()` in a
-/// live function is followed by the rest of that function.
-bool codeFollowsTrap(const BinaryImage &Img, const Decoder &Dec, va_t Next) {
-  const Segment *Seg = Img.getSegmentFor(Next);
-  if (!Seg || !Img.hasExecutableCodeOwnerAt(Next) || Next < Seg->VA)
-    return false;
-  const size_t Offset = static_cast<size_t>(Next - Seg->VA);
-  if (Offset >= Seg->Data.size())
-    return false;
-
-  // Use a separate decoder: peeking at an ARM IT instruction must not consume
-  // or replace the surrounding walk's predicate state.
-  Decoder PeekDecoder;
-  if (!PeekDecoder.selectMode(Img, Next, Dec.currentMode()))
-    return false;
-  PeekDecoder.setDetail(false);
-  DecodedInsn Peek;
-  const int Size = PeekDecoder.decodeOneLight(
-      Seg->Data.data() + Offset, Seg->Data.size() - Offset, Next, Peek);
-  const bool HasCodeOwner = Size > 0 && Img.hasExecutableCodeOwnerRange(
-                                            Next, static_cast<uint64_t>(Size));
-  const bool IsTrap = HasCodeOwner && PeekDecoder.isResumableTrap(Peek);
-  return HasCodeOwner && !IsTrap;
 }
 
 InstructionMode effectiveInstructionMode(Arch Architecture,
@@ -541,6 +511,67 @@ std::set<va_t> frameReleasingIndirectJumps(const BinaryImage &Img,
 //===----------------------------------------------------------------------===//
 // CFGBuilder
 //===----------------------------------------------------------------------===//
+
+bool CFGBuilder::codeFollowsTrap(const Decoder &Dec, va_t Next) const {
+  const BinaryImage &Img = *CurrentImg;
+  // Keep this decoder separate: a peek must not consume Thumb IT state.
+  Decoder PeekDecoder;
+  // A branch may already have reached a cold block beyond the primary range.
+  // Bound a peek that starts inside that range without clipping such a block.
+  const va_t RangeEnd = CurrentFuncRange && Next >= CurrentFuncRange->first &&
+                                Next < CurrentFuncRange->second
+                            ? CurrentFuncRange->second
+                            : InvalidVA;
+  size_t Scanned = 0;
+  while (Scanned <= limits::kMaxAlignmentPaddingBytes) {
+    if (isTailCallTarget(Next, /*IncludeBoundaryGuesses=*/false))
+      return false;
+    const bool OwnedFragment = isCurrentOwnedFragment(Next);
+    if (Next >= RangeEnd && !OwnedFragment)
+      return false;
+    const Segment *Seg = Img.getSegmentFor(Next);
+    if (!Seg || Next < Seg->VA || !Img.hasExecutableCodeOwnerAt(Next))
+      return false;
+    const size_t Offset = static_cast<size_t>(Next - Seg->VA);
+    if (Offset >= Seg->Data.size())
+      return false;
+    size_t Available = Seg->Data.size() - Offset;
+    if (Next < RangeEnd)
+      Available = std::min<uint64_t>(Available, RangeEnd - Next);
+    if (!PeekDecoder.selectMode(Img, Next, Dec.currentMode()))
+      return false;
+    PeekDecoder.setDetail(false);
+    DecodedInsn Peek;
+    const int Size = PeekDecoder.decodeOneLight(Seg->Data.data() + Offset,
+                                                Available, Next, Peek);
+    if (Size <= 0 || static_cast<uint64_t>(Size) > InvalidVA - Next ||
+        !Img.hasExecutableCodeOwnerRange(Next, static_cast<uint64_t>(Size)))
+      return false;
+    const va_t End = Next + Size;
+    // Sized ownership admits each breakpoint, even a long consecutive run.
+    // A next-entry bound alone cannot distinguish a body from linker padding.
+    if ((AuthoritativeCurrentFuncRange &&
+         Next >= AuthoritativeCurrentFuncRange->first &&
+         End <= AuthoritativeCurrentFuncRange->second) ||
+        (OwnedFragment && isCurrentOwnedFragment(End - 1)))
+      return true;
+    const bool Padding = PeekDecoder.isResumableTrap(Peek) ||
+                         alignmentNopLength(Img.Arch, Seg->Data.data() + Offset,
+                                            Size) == static_cast<size_t>(Size);
+    if (!Padding)
+      return true;
+    // With no size evidence, look through a bounded run for real code before
+    // another function. Do not let trap/NOP alignment manufacture a tail call.
+    InsnRecord Probe;
+    Probe.Addr = Next;
+    Probe.Size = Size;
+    if (instructionEndsItsCodeRange(Probe))
+      return false;
+    Scanned += Size;
+    Next = End;
+  }
+  return false;
+}
 
 CFGBuilder::OwnInteriorCallVerdict
 CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
@@ -2439,7 +2470,7 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
         Rec.IsResumableTerminator = Dec.isResumableTrap(DI);
         Rec.IsRet = !Rec.IsResumableTerminator ||
                     instructionEndsItsCodeRange(Rec) ||
-                    isTailCallTarget(Next) || !codeFollowsTrap(Img, Dec, Next);
+                    !codeFollowsTrap(Dec, Next);
       }
 
       // operator[]= returns the stored element, so bind to it directly rather

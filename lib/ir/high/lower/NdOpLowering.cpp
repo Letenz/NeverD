@@ -222,7 +222,11 @@ void MedToHighConverter::lowerIntrinsic(HighFunc &Func,
   Intrinsic IID = Intrinsic::None;
   if (CurOp.NumInputs >= 1 && CurOp.Inputs[0].isConst())
     IID = static_cast<Intrinsic>(CurOp.Inputs[0].ConstVal);
-  const char *CName = intrinsicCName(IID);
+  const std::optional<uint64_t> Code =
+      CurOp.NumInputs >= 2 && CurOp.Inputs[1].isConst()
+          ? std::optional<uint64_t>(CurOp.Inputs[1].ConstVal)
+          : std::nullopt;
+  const char *CName = intrinsicCName(IID, Code);
   std::string Name = CName ? CName : intrinsicName(CurOp);
   if (Name.empty())
     Name = "unknown_intrinsic";
@@ -235,11 +239,11 @@ void MedToHighConverter::lowerIntrinsic(HighFunc &Func,
   CallExpr->MemoryAddressSpace = CurOp.MemoryAddressSpace;
   // A terminating instruction has no observable return value, even when
   // the generic intrinsic carrier contains a synthetic output temporary.
-  const bool HasResult =
-      CurOp.Output.Size > 0 && !isUnconditionalTrapIntrinsic(IID);
+  const bool Terminates = isUnconditionalTrapIntrinsic(IID, Code);
+  const bool HasResult = CurOp.Output.Size > 0 && !Terminates;
   if (HasResult)
     CallExpr->Type = NdType::makeInt(CurOp.Output.Size, false);
-  else if (isUnconditionalTrapIntrinsic(IID))
+  else
     CallExpr->Type = NdType::makeVoid();
 
   uint8_t NumOut = intrinsicOutputCount(IID);

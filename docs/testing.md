@@ -1718,6 +1718,20 @@ interior continuations, conditional ARM paths and Thumb IT state. Ordinary
 interrupts remain a negative control. The target also runs AArch64 fast-classifier
 parity, including all UDF immediates; its optional real-binary walk needs
 `NEVERD_PARITY_BIN` and otherwise skips.
+Consecutive-break fixtures include both bounded and unsized functions, long
+owned runs, and x86 trap/NOP padding before a distinct entry. Live-return fixtures
+place the return value before each resumable breakpoint, so a synthetic
+RAX/R0/X0 definition cannot hide behind a later overwrite. Both C routes run
+with and without optimization, retaining each repeated break and the returned
+constant. AArch64 `brk #0xF000` participates in the detailed/light decode,
+function-boundary and source tests; fatal BRK codes remain negative controls.
+Live and indexed symbol queries distinguish padding guesses from confirmed
+names, independent aliases, code ranges and discovered call targets. Full and
+selected pipeline runs absorb a guessed entry actually reached after repeated
+breaks; a reached cold block can continue beyond its primary range.
+`NeverDNoReturnTests` checks that only fatal BRK codes propagate no-return to
+callers. `NeverDMachineInstructionTextTests` preserves raw UDF/HLT inline
+assembly without replacing its continuation with a non-returning C builtin.
 
 `NeverDX86EncodingAccuracyTests` requires raw illegal LOCK forms (including
 memory-source arithmetic and multi-byte NOP) and MOV-to-CS to fail in every

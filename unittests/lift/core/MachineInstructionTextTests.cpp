@@ -90,6 +90,7 @@ TEST(MachineInstructionText, AArch64KeepsTrapCodesAndBarrierOptions) {
   // clang's __builtin_trap() and GCC's.
   A64({0x20, 0x00, 0x20, 0xd4}, Intrinsic::Brk, 0x1, "brk #0x1");
   A64({0x00, 0x7d, 0x20, 0xd4}, Intrinsic::Brk, 0x3E8, "brk #0x3E8");
+  A64({0x00, 0x00, 0x3e, 0xd4}, Intrinsic::Brk, 0xF000, "brk #0xF000");
   // An undefined instruction is not a breakpoint.
   A64({0x34, 0x12, 0x00, 0x00}, Intrinsic::Udf_A64, 0x1234, "udf #0x1234");
   A64({0x00, 0x00, 0x40, 0xd4}, Intrinsic::Hlt_A64, 0x0, "hlt #0x0");
@@ -579,6 +580,10 @@ TEST(MachineInstructionText, HighCPrintsTheInstruction) {
   std::string C = highC(Arch::AArch64, Intrinsic::Brk, 0x3E8, 2);
   EXPECT_NE(C.find("__builtin_trap(); /* brk #0x3E8 */"), std::string::npos)
       << C;
+  C = highC(Arch::AArch64, Intrinsic::Brk, 0xF000, 2);
+  EXPECT_NE(C.find("__builtin_debugtrap(); /* brk #0xF000 */"),
+            std::string::npos)
+      << C;
   C = highC(Arch::ARM, Intrinsic::ArmBkpt, 0x1, 2);
   EXPECT_NE(C.find("__builtin_debugtrap(); /* bkpt #0x1 */"), std::string::npos)
       << C;
@@ -638,6 +643,9 @@ TEST(MachineInstructionText, TrapsEndTheFlowWithTheirCode) {
   };
   EXPECT_TRUE(Terminates(Intrinsic::Brk, 0x1));
   EXPECT_TRUE(Terminates(Intrinsic::Brk, 0x3E8));
+  EXPECT_TRUE(Terminates(Intrinsic::Brk, 0xEFFF));
+  EXPECT_FALSE(Terminates(Intrinsic::Brk, 0xF000));
+  EXPECT_TRUE(Terminates(Intrinsic::Brk, 0xF001));
   EXPECT_TRUE(Terminates(Intrinsic::Udf_A64, 0x0));
   EXPECT_TRUE(Terminates(Intrinsic::Hlt_A64, 0x0));
   EXPECT_FALSE(Terminates(Intrinsic::ArmBkpt, 0x1));
@@ -708,6 +716,7 @@ entry:
   fence seq_cst, !neverd.instruction !1
   call void asm sideeffect "dsb ishst", "~{memory}"()
   call void asm sideeffect "udf #0xFE", "~{memory}"()
+  call void asm sideeffect "hlt #1", "~{memory}"()
   ret void
 }
 !0 = !{!"brk #0x3E8"}
@@ -720,7 +729,11 @@ entry:
   EXPECT_NE(C.find("; /* dmb ishld */"), std::string::npos) << C;
   // A barrier's own option, not its mnemonic's default.
   EXPECT_NE(C.find("__dsb(0xA);"), std::string::npos) << C;
-  EXPECT_NE(C.find("__builtin_trap(); /* udf #0xFE */"), std::string::npos)
+  EXPECT_NE(C.find("__asm__ volatile(\"udf #0xFE\" ::: \"memory\");"),
+            std::string::npos)
+      << C;
+  EXPECT_NE(C.find("__asm__ volatile(\"hlt #1\" ::: \"memory\");"),
+            std::string::npos)
       << C;
 }
 

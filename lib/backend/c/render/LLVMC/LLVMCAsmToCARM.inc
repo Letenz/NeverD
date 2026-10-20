@@ -27,8 +27,6 @@ M("sevl",        "__sevl()")
 
 // Trap / debug
 M("bkpt",        "__builtin_debugtrap()")
-M("hlt",         "__builtin_trap()")
-M("udf",         "__builtin_trap()")
 
 // Exclusive
 M("clrex",       "__clrex()")

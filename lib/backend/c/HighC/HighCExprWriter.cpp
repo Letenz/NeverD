@@ -1918,8 +1918,13 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     // beside it.  One with no C name runs as the instruction itself.
     if (const std::string Instruction = intrinsicInstruction(E);
         !Instruction.empty()) {
-      const char *CName = intrinsicCName(E.IntrinsicId);
-      if (CName && (isUnconditionalTrapIntrinsic(E.IntrinsicId) ||
+      const HighExpr *Operand = unwrapIntegerView(E.Operands[0].get());
+      const std::optional<uint64_t> Code =
+          Operand && Operand->Kind == ExprKind::Const
+              ? std::optional<uint64_t>(Operand->ConstVal)
+              : std::nullopt;
+      const char *CName = intrinsicCName(E.IntrinsicId, Code);
+      if (CName && (isUnconditionalTrapIntrinsic(E.IntrinsicId, Code) ||
                     llvm::StringRef(CName) == "__builtin_debugtrap"))
         return std::string(CName) + "()";
       if (!CName)

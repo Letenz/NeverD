@@ -15,12 +15,19 @@
 
 namespace neverd {
 
+/// LLVM's AArch64 debugtrap / __debugbreak encoding. Other BRK codes retain
+/// the terminating-trap contract (including Clang's #1 and GCC's #0x3E8).
+inline bool isAArch64DebugBreakCode(std::optional<uint64_t> Code) {
+  return Code && *Code == 0xF000;
+}
+
 /// Architectural termination, shared by LowIR and MedIR. This grants no
 /// source ABI or memory contract to an intrinsic.
 inline bool intrinsicNeverReturns(Intrinsic Id,
                                   std::optional<uint64_t> Operand) {
   switch (Id) {
   case Intrinsic::Brk:
+    return !isAArch64DebugBreakCode(Operand);
   case Intrinsic::Hlt_A64:
   case Intrinsic::Udf_A64:
     return true;

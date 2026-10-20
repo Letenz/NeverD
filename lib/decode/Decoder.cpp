@@ -627,6 +627,8 @@ bool Decoder::isResumableTrap(const DecodedInsn &Insn) const {
     return false;
   if (X86)
     return X86Lifter::isResumableTrap(Insn.Raw);
+  if (AArch64)
+    return AArch64Lifter::isResumableTrap(Insn.Raw);
   return ARM && ARMLifter::isResumableTrap(Insn.Raw);
 }
 

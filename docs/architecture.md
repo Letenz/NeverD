@@ -3244,6 +3244,25 @@ and ARM/Thumb `bkpt`/`udf` debugger continuations. Conditional ARM paths can
 still skip a trap, and continuation peeks use a separate decoder so Thumb IT
 state remains unchanged. x86 `ud0`/`ud1` and AArch64 `udf` end ordinary decode;
 AArch64's fast word classifier agrees with the decoded-instruction path.
+Consecutive debugger breaks remain code inside an authoritative function range
+or an explicitly owned fragment. Without that ownership, a bounded look through
+trap/NOP alignment must find code before another function entry; reaching that
+entry or exhausting the lookahead keeps the original stop. Peeks cannot consume
+the caller's decoder state. The shared symbol inventory distinguishes confirmed
+entries from padding guesses in both live and indexed queries. A guess alone
+does not stop resumable fallthrough; explicit transfers still retain potential
+callee boundaries. A decoded continuation absorbs a guessed function at its
+instruction boundary, even inside a basic block.
+Debugger breaks define no return register: long x86 `int 3` has the short
+encoding's void, zero-argument intrinsic contract, and ARM `bkpt` and AArch64
+`brk` leave R0/X0 intact. Service interrupts keep their own result contracts.
+`IntrinsicTermination.h` distinguishes the compiler's AArch64 `brk #0xF000`
+debugtrap from fatal BRK codes. Decode, LowIR/MedIR no-return propagation,
+HighIR effect classification and both C routes consume that code-sensitive
+policy. LLVM uses `debugtrap` for the resumable code and `trap` for fatal codes;
+the source projection retains the instruction code beside the builtin.
+LLVM-to-C preserves raw ARM UDF/HLT assembly and its continuation; a mnemonic
+alone cannot grant the non-returning contract of an explicit `llvm.trap`.
 
 At source-bound runtime calls, Low-to-Med lowering carries the authenticated
 external no-return declaration into the MedIR call effect.

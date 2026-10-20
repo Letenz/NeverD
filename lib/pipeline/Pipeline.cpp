@@ -421,8 +421,8 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       }
     }
 
-    // A padding-boundary guess that another function reaches by a direct jump
-    // is that function's split chunk, now lifted as part of it (see
+    // A padding-boundary guess that another function actually decodes is
+    // part of that function, including resumable fallthrough (see
     // BinaryImage::boundaryGuessFunctionStarts).  Keep it as a separate
     // function only when nothing absorbed it.
     {
@@ -441,8 +441,9 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       if (!Guesses.empty())
         for (const auto &LF : Result.LowFuncs)
           for (const auto &Block : LF.Blocks)
-            if (Block.StartAddr != LF.Entry && Guesses.count(Block.StartAddr))
-              Absorbed.insert(Block.StartAddr);
+            for (const auto &Insn : Block.InstructionBoundaries)
+              if (Insn.Address != LF.Entry && Guesses.count(Insn.Address))
+                Absorbed.insert(Insn.Address);
       // Missing unwind metadata is not evidence that decoded code is data.
       // Only an actual CFG owner can absorb a guessed entry. Instruction
       // completeness and exception-rewrite admission remain separate checks.
