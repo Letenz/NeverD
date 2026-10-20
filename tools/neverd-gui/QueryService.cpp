@@ -56,6 +56,7 @@ bool readable(const QString &operation) {
                                         "source_variables",
                                         "call_sites",
                                         "stack_frame",
+                                        "register_flow",
                                         "local_types",
                                         "local_type",
                                         "local_types_source",

@@ -103,6 +103,10 @@ add_neverd_unittest(NeverDSourceStackFrameTests
   SourceStackFrameTests.cpp
   LINK_COMPONENTS IR
 )
+add_neverd_unittest(NeverDRegisterFlowTests
+  RegisterFlowTests.cpp
+  LINK_COMPONENTS IR
+)
 add_neverd_unittest(NeverDSourceCallABITests
   SourceCallABITests.cpp
   LINK_COMPONENTS IR

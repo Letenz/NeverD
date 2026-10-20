@@ -1890,6 +1890,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_register_flow_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "neverd_va_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_sections_json",
     "const char *",
     ["neverd_session_t"],

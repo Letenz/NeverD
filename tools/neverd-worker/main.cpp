@@ -225,6 +225,7 @@ Json hello() {
                 "imports",
                 "exports",
                 "search",
+                "register_flow",
                 "string_encodings",
                 "string_options",
                 "string_references",

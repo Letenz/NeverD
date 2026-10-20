@@ -313,6 +313,11 @@ NEVERD_ACTION(JumpMark,
               QT_TRANSLATE_NOOP("Actions", "Choose a bookmark to jump to"))
 
 // Search.
+NEVERD_ACTION(SearchImmediate, QT_TRANSLATE_NOOP("Actions", "Immediate..."), "Alt+I", "search_bytes", QT_TRANSLATE_NOOP("Actions", "Search decoded executable instructions for an immediate"))
+NEVERD_ACTION(SearchNextImmediate, QT_TRANSLATE_NOOP("Actions", "Next immediate"), "Ctrl+I", "search_next", QT_TRANSLATE_NOOP("Actions", "Repeat the immediate search"))
+NEVERD_VIEW_ACTION(FindRegisterDefinition, QT_TRANSLATE_NOOP("Actions", "Register definitions..."), "Shift+Alt+Up", "up", QT_TRANSLATE_NOOP("Actions", "List reaching physical register definitions"))
+NEVERD_VIEW_ACTION(FindRegisterUse, QT_TRANSLATE_NOOP("Actions", "Register uses..."), "Shift+Alt+Down", "down", QT_TRANSLATE_NOOP("Actions", "List uses of the register value after this instruction"))
+NEVERD_VIEW_ACTION(FindRegisterValue, QT_TRANSLATE_NOOP("Actions", "Static register value..."), "Shift+Alt+V", "calculator", QT_TRANSLATE_NOOP("Actions", "Inspect the proven static value before this instruction"))
 NEVERD_ACTION(SearchText, QT_TRANSLATE_NOOP("Actions", "&Text..."), "Alt+T",
               "search_text",
               QT_TRANSLATE_NOOP("Actions", "Search the binary for text"))

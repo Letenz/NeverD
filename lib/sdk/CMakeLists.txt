@@ -38,6 +38,8 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPISourceEdits.cpp
     capi/NeverDCAPICallTypes.cpp
     capi/NeverDCAPIStackFrame.cpp
+    capi/NeverDCAPIRegisterFlow.cpp
+    capi/NeverDCAPIImmediates.cpp
     capi/NeverDCAPIEnumValue.cpp
     capi/NeverDCAPIRoundtrip.cpp
     capi/NeverDCAPISafety.cpp

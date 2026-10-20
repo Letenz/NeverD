@@ -966,6 +966,7 @@ void MainWindow::connectSession() {
     searchSubscription_ = 0;
     lastTextSearch_.clear();
     lastByteSearch_.clear();
+    lastImmediateSearch_.clear();
     showBookmarks({});
     updateTitle();
     updateActions();
@@ -1469,6 +1470,13 @@ void MainWindow::connectActions() {
      [this] { searchBinary(QStringLiteral("bytes"), false); });
   on(ActionId::SearchNextBytes,
      [this] { searchBinary(QStringLiteral("bytes"), true); });
+  on(ActionId::SearchImmediate, [this] { searchBinary("immediate", false); });
+  on(ActionId::SearchNextImmediate,
+     [this] { searchBinary("immediate", true); });
+  on(ActionId::FindRegisterDefinition,
+     [this] { queryRegister("definitions"); });
+  on(ActionId::FindRegisterUse, [this] { queryRegister("uses"); });
+  on(ActionId::FindRegisterValue, [this] { queryRegister("value"); });
   on(ActionId::SearchHighlightUp, [this] { searchHighlight(false); });
   on(ActionId::SearchHighlightDown, [this] { searchHighlight(true); });
   on(ActionId::SearchInView, [this] {
@@ -2643,15 +2651,20 @@ void MainWindow::toggleGraph() {
 }
 
 void MainWindow::searchBinary(const QString &kind, bool again) {
-  QString &last =
-      kind == QLatin1String("text") ? lastTextSearch_ : lastByteSearch_;
+  QString &last = kind == QLatin1String("text")        ? lastTextSearch_
+                  : kind == QLatin1String("immediate") ? lastImmediateSearch_
+                                                       : lastByteSearch_;
   if (!again || last.isEmpty()) {
     bool ok = false;
     const auto text = QInputDialog::getText(
         this,
-        kind == QLatin1String("text") ? tr("Text search") : tr("Binary search"),
+        kind == QLatin1String("text")        ? tr("Text search")
+        : kind == QLatin1String("immediate") ? tr("Immediate search")
+                                             : tr("Binary search"),
         kind == QLatin1String("text") ? tr("String:")
-                                      : tr("Hex bytes (e.g. 48 8B 05):"),
+        : kind == QLatin1String("immediate")
+            ? tr("Integer (decimal or 0x hex; negative allowed):")
+            : tr("Hex bytes (e.g. 48 8B 05):"),
         QLineEdit::Normal, last, &ok);
     if (!ok || text.trimmed().isEmpty())
       return;
@@ -2661,13 +2674,14 @@ void MainWindow::searchBinary(const QString &kind, bool again) {
   const auto pattern = last;
   const bool backward = !searchDown_;
   const auto serial = ++searchSerial_, epoch = session_.epoch();
+  const auto revision = session_.revision();
   if (searchSubscription_)
     session_.queries().unsubscribe(searchSubscription_);
   if (auto *results = choosers_.value(int(ChooserKind::SearchResults)))
     results->model().setLocalRows({});
   auto request = std::make_shared<std::function<void(bool)>>();
   const std::weak_ptr<std::function<void(bool)>> weak = request;
-  *request = [this, kind, pattern, from, backward, serial, epoch,
+  *request = [this, kind, pattern, from, backward, serial, epoch, revision,
               weak](bool wrapped) {
     auto keep = weak.lock();
     if (!keep)
@@ -2680,11 +2694,20 @@ void MainWindow::searchBinary(const QString &kind, bool again) {
       query["from"] = hexAddress(from);
     searchSubscription_ = session_.read(
         QStringLiteral("search"), query, this,
-        [this, kind, pattern, serial, epoch, backward, wrapped,
+        [this, kind, pattern, serial, epoch, revision, from, backward, wrapped,
          keep](const QJsonObject &payload) {
           if (serial != searchSerial_ || epoch != session_.epoch() ||
-              !session_.loaded())
+              revision != session_.revision() || !session_.loaded() ||
+              currentAddress().value_or(0) != from)
             return;
+          if (payload.value("building").toBool()) {
+            QTimer::singleShot(1, this, [keep, wrapped] { (*keep)(wrapped); });
+            return;
+          }
+          if (payload.value("coverage").toString() == "partial")
+            output_->append(tr("Immediate search has undecoded ranges; results "
+                               "cover decoded executable ranges only."),
+                            1);
           const auto items = payload.value("items").toArray();
           if (items.isEmpty() && !wrapped) {
             (*keep)(true);
@@ -2718,6 +2741,113 @@ void MainWindow::searchBinary(const QString &kind, bool again) {
         });
   };
   (*request)(false);
+}
+
+void MainWindow::queryRegister(const QString &kind) {
+  if (focusedCodeView())
+    return;
+  const auto function = currentFunction(), address = currentAddress();
+  if (!function || !address)
+    return;
+  const auto epoch = session_.epoch();
+  const auto revision = session_.revision();
+  const auto token = disassembly_->currentToken();
+  QJsonObject request{{"address", hexAddress(*function)},
+                      {"instruction", hexAddress(*address)},
+                      {"kind", "registers"}};
+  session_.read(
+      "register_flow", request, this,
+      [this, kind, function, address, epoch, revision, token,
+       request](const QJsonObject &inventory) mutable {
+        const auto valid = [&] {
+          return session_.epoch() == epoch && session_.revision() == revision &&
+                 currentFunction() == function && currentAddress() == address;
+        };
+        if (!valid())
+          return;
+        QStringList names;
+        for (const auto &value : inventory.value("registers").toArray())
+          names.append(value.toObject().value("name").toString());
+        if (names.isEmpty()) {
+          output_->append(tr("This instruction has no retained physical "
+                             "register operands."),
+                          1);
+          return;
+        }
+        QString name;
+        for (const auto &candidate : names)
+          if (candidate.compare(token, Qt::CaseInsensitive) == 0)
+            name = candidate;
+        if (name.isEmpty()) {
+          if (names.size() == 1)
+            name = names.first();
+          else {
+            bool accepted = false;
+            name = QInputDialog::getItem(
+                this, tr("Physical register"),
+                tr("Definitions and static values are before the instruction; "
+                   "uses start after it."),
+                names, 0, false, &accepted);
+            if (!accepted || !valid())
+              return;
+          }
+        }
+        request["kind"] = kind;
+        request["register"] = name;
+        session_.read(
+            "register_flow", request, this,
+            [this, kind, function, address, epoch,
+             revision](const QJsonObject &reply) {
+              if (session_.epoch() != epoch ||
+                  session_.revision() != revision ||
+                  currentFunction() != function || currentAddress() != address)
+                return;
+              if (kind == "value") {
+                QMessageBox::information(
+                    this, tr("Static register value"),
+                    reply.value("register").toString() + " @ " +
+                        hexAddress(*address) + " (before instruction)\n" +
+                        (reply.value("value").isString()
+                             ? reply.value("value").toString()
+                             : tr("Unknown: ") +
+                                   reply.value("reason").toString()));
+                return;
+              }
+              auto items = reply.value("items").toArray();
+              for (int i = 0; i < items.size(); ++i) {
+                auto item = items[i].toObject();
+                item["context"] = item.value("kind").toString() + ": " +
+                                  item.value("context").toString() + " - " +
+                                  item.value("name").toString();
+                items[i] = item;
+              }
+              if (items.isEmpty()) {
+                output_->append(
+                    tr("No register flow sites within this function."), 0);
+                return;
+              }
+              auto *dock = chooserDock(ChooserKind::SearchResults);
+              choosers_.value(int(ChooserKind::SearchResults))
+                  ->model()
+                  .setLocalRows(items);
+              if (!dock->isOpen())
+                addDockWidget(dock, KDDockWidgets::Location_OnBottom,
+                              docks_.value(DisassemblyDock));
+              dock->open();
+              if (items.size() == 1 && !reply.value("unknown").toBool())
+                if (auto target =
+                        addressValue(items.first().toObject().value("address")))
+                  navigate(*target);
+            },
+            [this, epoch, revision](const QString &, const QString &message) {
+              if (epoch == session_.epoch() && revision == session_.revision())
+                output_->append(message, 2);
+            });
+      },
+      [this, epoch, revision](const QString &, const QString &message) {
+        if (epoch == session_.epoch() && revision == session_.revision())
+          output_->append(message, 2);
+      });
 }
 
 void MainWindow::searchHighlight(bool forward) {
