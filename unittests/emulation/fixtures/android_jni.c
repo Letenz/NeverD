@@ -1537,7 +1537,7 @@ static Ref native_echo(Handle e, Ref type, Ref input) {
     return 0x1234;
   if (native_mode == 21) {
     Ref ex = C(e, Ref, 6, "java/lang/IllegalArgumentException");
-    C(e, int, 14, ex, "from guest");
+    C(e, int, 14, ex, (const char *)0);
     return 0xdeadbeef; /* Pending exception makes this carrier unspecified. */
   }
   if (e != native_env || !C(e, int, 24, type, native_base) ||

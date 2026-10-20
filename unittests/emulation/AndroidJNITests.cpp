@@ -532,6 +532,7 @@ TEST_P(AndroidJNI, RegisteredNativeCallsRejectUnknownBindingsAndInvalidABIs) {
   for (unsigned Mode = 1; Mode <= 17; ++Mode) {
     SCOPED_TRACE(Mode);
     Options.Android->Arguments = {Mode};
+    Options.Limits.Instructions = Mode == 16 ? 4096 : 200000;
     auto R = run("jni_native_calls");
     auto Expected =
         Mode == 1 || Mode == 2 || (Mode >= 10 && Mode <= 12) || Mode == 15
@@ -541,6 +542,8 @@ TEST_P(AndroidJNI, RegisteredNativeCallsRejectUnknownBindingsAndInvalidABIs) {
     EXPECT_EQ(R.Stop, Expected) << R.Diagnostic;
     EXPECT_FALSE(R.ReturnValue);
     EXPECT_FALSE(R.Diagnostic.empty());
+    if (Mode == 16)
+      EXPECT_EQ(R.Instructions, 4096u);
     if (Mode == 1 || Mode == 2 || Mode == 15) {
       ASSERT_FALSE(R.NativeCalls.empty());
       EXPECT_EQ(R.NativeCalls.back().Name, "JNIEnv.129");
