@@ -100,11 +100,16 @@ struct PropertyCallback {
   uint64_t Entry, Cookie;
 };
 struct PropertyReadCallback {};
+struct JNINativeCallback {
+  const mobile::dalvik::Method *Method;
+  uint64_t Thread, Frame;
+  size_t FrameDepth;
+};
 struct GuestCallback {
   uint64_t Entry;
   std::vector<uint64_t> Arguments;
   std::variant<OnceCallback, FinalizeCallback, PropertyCallback,
-               PropertyReadCallback>
+               PropertyReadCallback, JNINativeCallback>
       Continuation;
 };
 struct GuestThreadWait {};
@@ -189,6 +194,9 @@ private:
   BionicResult jniArrays(unsigned Slot, const NativeCallEvent &Call);
   bool jniAssignable(llvm::StringRef Source, llvm::StringRef Destination) const;
   BionicResult jniMethods(unsigned Slot, const NativeCallEvent &Call);
+  BionicResult callNativeJNI(const mobile::dalvik::Method &Method,
+                             llvm::ArrayRef<uint64_t> Arguments);
+  BionicResult finishNativeJNI(const JNINativeCallback &Continuation);
   BionicResult jniFields(unsigned Slot, const NativeCallEvent &Call);
   BionicResult
   runDex(const std::function<mobile::dalvik::ExecutionResult(

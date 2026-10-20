@@ -129,6 +129,8 @@ BionicResult Bionic::jniVM(const NativeCallEvent &Call) {
   if (Detach) {
     if (!Thread.Environment)
       return Status(-1);
+    if (!Thread.NativeFrames.empty())
+      return Status(-1);
     for (const auto &[Address, Borrow] : JNI.Borrows)
       if (Borrow.Thread == threadID())
         return failure("JNI detach with outstanding borrowed storage");
