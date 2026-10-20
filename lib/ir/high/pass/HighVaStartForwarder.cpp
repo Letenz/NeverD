@@ -8,11 +8,12 @@
 /// A System V x86-64 variadic function saves its argument registers to a
 /// register save area and builds a va_list over it and its incoming stack
 /// arguments.  Where it does nothing with them but pass the va_list's address
-/// to calls (`error(fmt, ...)` calling `verror(fmt, va)`), C says the same
-/// with `va_start` on a `va_list` of its own: the C writer prints the
-/// function as `T f(named, ...)`, and each call of it with the arguments its
-/// caller passes.  Anything else the body does with the save area, the
-/// va_list or the overflow homes keeps the function as it is.
+/// to parameters that take a va_list (`error(fmt, ...)` calling
+/// `verror(fmt, va)`; MedFunc::VaListCalls), C says the same with `va_start`
+/// on a `va_list` of its own: the C writer prints the function as
+/// `T f(named, ...)`, and each call of it with the arguments its caller
+/// passes.  Anything else the body does with the save area, the va_list or
+/// the overflow homes keeps the function as it is.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -192,7 +193,16 @@ void recognizeVaStartForwarder(HighFunc &Func, Arch Architecture) {
           Valid = false;
           return;
         }
-        (*At == VaList ? Passes : Junk)
+        // C's va_list goes only to a parameter that takes one.  Another
+        // takes the frame's bytes, which C then has no object for: a buffer
+        // the compiler placed where the list was once va_end was past.
+        const auto Taken = Func.VaListCalls.find(E->CallSiteAddr);
+        const bool Marked = *At == VaList && Taken != Func.VaListCalls.end();
+        if (Marked && !Taken->second) {
+          Valid = false;
+          return;
+        }
+        (Marked ? Passes : Junk)
             .emplace(E->CallSiteAddr, static_cast<unsigned>(I));
       }
       Check(E->IndirectTarget);

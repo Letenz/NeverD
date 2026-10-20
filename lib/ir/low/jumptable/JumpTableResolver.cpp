@@ -633,14 +633,15 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
     ProofScratch.I386GOTOFFProposalEvidenceRemaining = ModelAllowance;
     JumpTableInfo Probe;
     const bool Shape = ProofScratch.tryCrossInstrRelativeTable(
-        Img, ProofScratch.Insns.at(Branch), Probe);
+        Img, ProofScratch.Insns.at(Branch), Probe, EvidenceBudget);
     const size_t ModelUsed =
         ModelAllowance - ProofScratch.I386GOTOFFProposalEvidenceRemaining;
     if (!Charge(ModelUsed))
       return false;
     if (ProofScratch.I386GOTOFFProposalEvidenceIncomplete ||
         ProofScratch.I386GOTModelEvidenceIncomplete ||
-        ProofScratch.StackTableEvidenceIncompleteBranches.count(Branch))
+        ProofScratch.StackTableEvidenceIncompleteBranches.count(Branch) ||
+        Probe.IncompleteGuardDomain)
       return Incomplete();
     if (!Shape || !ProofScratch.I386GOTOFFProposalShapeClaimed ||
         !Probe.HasBaseAddr || Probe.BaseAddr != Base || Probe.EntrySize != 4 ||
@@ -1952,7 +1953,12 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   // detector to dispatch to here.
 
   // Strategy 1: ARM32 TBB/TBH table-branch (most specific, check first).
-  bool Recovered = tryARMTableBranch(Img, Rec, Info);
+  bool Recovered = tryARMTableBranch(Img, Rec, Info, &CandidateEvidenceBudget);
+  if (Info.IncompleteGuardDomain) {
+    CandidateEvidenceShapeClaimed = true;
+    CandidateEvidenceAnalysisIncomplete = true;
+    return {};
+  }
   if (Recovered && !HasOccurrenceMetadata(Info))
     Recovered = RejectIncompleteCandidate();
 
@@ -1962,7 +1968,8 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   bool RecoveredAArch64Compact = false;
   bool CompactOwnerCapacity = false;
   if (!Recovered) {
-    Recovered = tryAArch64CompactTable(Img, Rec, Info);
+    Recovered =
+        tryAArch64CompactTable(Img, Rec, Info, &CandidateEvidenceBudget);
     RecoveredAArch64Compact = Recovered;
   }
   // Compact byte/halfword tables have no per-entry relocations, so the generic
@@ -1996,6 +2003,11 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
         }
       }
     }
+  }
+  if (Info.IncompleteGuardDomain) {
+    CandidateEvidenceShapeClaimed = true;
+    CandidateEvidenceAnalysisIncomplete = true;
+    return {};
   }
   if (Recovered && !HasOccurrenceMetadata(Info))
     Recovered = RejectIncompleteCandidate();
@@ -2035,8 +2047,11 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   if (!Recovered) {
     Info = JumpTableInfo{};
     Recovered = tryTwoLevelIndexTable(Img, Rec, Info, &CandidateEvidenceBudget);
-    CandidateEvidenceShapeClaimed |= Info.CompositeShapeClaimed;
+    CandidateEvidenceShapeClaimed |=
+        Info.CompositeShapeClaimed || Info.IncompleteGuardDomain;
     CandidateEvidenceAnalysisIncomplete |= Info.IncompleteGuardDomain;
+    if (Info.IncompleteGuardDomain)
+      return {};
     if (Info.CompositeShapeClaimed &&
         (!Recovered || !HasOccurrenceMetadata(Info))) {
       return {};
@@ -2062,7 +2077,16 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   // per-record slice above cannot see the base, so fold it across
   // instructions by emulating the dominating prefix.
   if (!Recovered)
-    Recovered = tryCrossInstrRelativeTable(Img, Rec, Info);
+    Recovered =
+        tryCrossInstrRelativeTable(Img, Rec, Info, &CandidateEvidenceBudget);
+  if (Info.IncompleteGuardDomain) {
+    // Address discovery can now defer before the detector finishes the
+    // candidate. Retain the recognized load/branch shape on incomplete work;
+    // it is not evidence that the original indirect branch is a tail call.
+    CandidateEvidenceShapeClaimed = true;
+    CandidateEvidenceAnalysisIncomplete = true;
+    return {};
+  }
   if (StackTableEvidenceIncompleteBranches.count(Rec.Addr)) {
     CandidateEvidenceAnalysisIncomplete = true;
     return {};

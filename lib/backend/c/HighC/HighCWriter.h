@@ -572,6 +572,14 @@ public:
   /// (NdType::TypedefName) where the unit defines that typedef, as IDA
   /// prints `PKDEFERRED_ROUTINE DeferredRoutine`; else as C spells it.
   std::string declaredAs(const TypeRef &Type, llvm::StringRef Declarator) const;
+  /// \p Text, a value of type \p From, as the bits of a value of type
+  /// \p To where one is floating and the other an integer of its width, four
+  /// or eight bytes: a local C declares double that HighIR reads as the
+  /// integer of its vector register, or assigns one to.  None for any other
+  /// pair, which C converts as values.
+  std::optional<std::string> reinterpretedBits(const TypeRef &To,
+                                               const TypeRef &From,
+                                               const std::string &Text) const;
   /// The typedef declaredAs names \p Type by, if any.
   std::optional<std::string> declaredTypedef(const TypeRef &Type) const;
   /// Frame displacement that is a unique interior field of a named record

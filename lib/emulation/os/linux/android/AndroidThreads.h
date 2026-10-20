@@ -64,6 +64,8 @@ public:
   /// Round robin, including the current thread if it is the only runnable
   /// owner. False classifies all-finished or a wait cycle in Result.
   llvm::Expected<bool> schedule(Bionic &LibC);
+  /// Complete an interrupted libc wrapper only after its handler returns.
+  llvm::Error resumeSignal(Bionic &LibC);
   void report();
   std::vector<linux_model::ProcTask> procTasks() const;
 
@@ -82,15 +84,12 @@ private:
     uint16_t Attributes;
     bool Ready = false;
   };
-  struct Sleep {
-    uint64_t Deadline;
-  };
   struct Semaphore {
     uint64_t Address;
     bool Shared, Ready = false;
   };
   struct Wait {
-    std::variant<Join, Once, Mutex, Sleep, Semaphore,
+    std::variant<Join, Once, Mutex, Semaphore,
                  std::unique_ptr<linux_model::KernelWait>,
                  std::unique_ptr<NativeWait>>
         Operation;
@@ -98,12 +97,17 @@ private:
     size_t Event = 0;
     WaitSource Source = WaitSource::NativeCall;
   };
+  struct SignalReturn {
+    ServiceRequest Request;
+    size_t Event, Depth;
+  };
   struct Thread {
     NativeThreadSnapshot Report;
     linux_model::ThreadContext Kernel;
     std::array<uint8_t, thread_attribute_abi::ObjectBytes> Attributes{};
     std::unique_ptr<BackendContext> Context;
     std::vector<PendingCallback> Callbacks;
+    std::vector<SignalReturn> SignalReturns;
     std::optional<Wait> Waiting;
     std::optional<size_t> Joiner;
     uint64_t MappingBase = 0, MappingSize = 0, ReturnSP = 0;
@@ -133,6 +137,7 @@ private:
   BionicResult resumeOnce(const Once &Pending);
   BionicResult resumeWait(Bionic &LibC);
   llvm::Error completeWait(uint64_t Value);
+  llvm::Expected<bool> interruptWait(const LinuxSignalAction &Action);
   static std::optional<BionicValue> value(uint64_t Value) {
     return BionicValue(Value);
   }

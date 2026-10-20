@@ -46,6 +46,7 @@ NEVERD_LINUX_VALUE(AccessDenied, 13)
 NEVERD_LINUX_VALUE(ServiceNotImplemented, 38)
 NEVERD_LINUX_VALUE(BadDescriptor, 9)
 NEVERD_LINUX_VALUE(BadAddress, 14)
+NEVERD_LINUX_VALUE(InterruptedCall, 4)
 NEVERD_LINUX_VALUE(PermissionDenied, 1)
 NEVERD_LINUX_VALUE(InvalidArgument, 22)
 NEVERD_LINUX_VALUE(OperationNotSupported, 95)
@@ -283,8 +284,9 @@ NEVERD_LINUX_DIAGNOSTIC(SignalFlagsUnsupported,
                         "unmodeled Linux signal action flags")
 NEVERD_LINUX_DIAGNOSTIC(SignalMaskMissing,
                         "Linux signal delivery requires a known thread mask")
-NEVERD_LINUX_DIAGNOSTIC(SignalWaitUnsupported,
-                        "Linux signal interruption of a waiting thread is unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(
+    SignalWaitUnsupported,
+    "Linux signal interruption of a waiting thread is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(SignalFrameUnsupported,
                         "unsupported Linux signal frame or handler context")
 NEVERD_LINUX_DIAGNOSTIC(SignalFrameFault,
@@ -445,4 +447,6 @@ NEVERD_LINUX_DIAGNOSTIC(SleepPolicy,
                         "Linux nanosleep requires linux_time.advance_on_idle")
 NEVERD_LINUX_DIAGNOSTIC(
     SleepRange, "Linux sleep deadline exceeds the modeled virtual time range")
+NEVERD_LINUX_DIAGNOSTIC(SleepPartialOutput,
+                        "unmodeled partial Linux nanosleep remainder output")
 #endif

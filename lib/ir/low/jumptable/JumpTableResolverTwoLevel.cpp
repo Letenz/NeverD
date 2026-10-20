@@ -96,7 +96,10 @@ bool CFGBuilder::decomposeIndexTableLoadAddr(
     va_t &TableAddr, uint64_t &IndexReg, uint32_t &Scale, NdVar *IndexValue,
     va_t *IndexUseAddr, int *IndexUseSeq,
     std::function<bool(size_t)> ConsumeWork,
-    JumpTableDisplacedAddressRole *Displaced) const {
+    JumpTableDisplacedAddressRole *Displaced, size_t *CandidateEvidenceBudget,
+    bool *BaseAnalysisComplete, ResolverQueryScope *ReadOnlyScope) const {
+  if (BaseAnalysisComplete)
+    *BaseAnalysisComplete = true;
   if (LoadIdx <= 0 || LoadIdx >= static_cast<int>(Ops.size()))
     return false;
   // The decomposition performs several full backward scans: the address COPY
@@ -163,10 +166,17 @@ bool CFGBuilder::decomposeIndexTableLoadAddr(
       uint64_t BaseReg = traceToRegister(Ops, AddIdx - 1, BaseV);
       if (BaseReg == InvalidVA)
         continue;
-      auto Folded = foldRegConstant(Img, Rec, BaseReg, LoadAddr, ConsumeWork,
-                                    /*RequireMappedValue=*/true,
-                                    /*AllowUnmappedCOFFImageBase=*/
-                                    Disp != 0 && Img.isCOFF());
+      bool Complete = false;
+      auto Folded = foldTableAddressAtUse(
+          Img, Rec, {BaseV, Ops[AddIdx].Addr, Ops[AddIdx].Seq, false}, BaseReg,
+          LoadAddr, CandidateEvidenceBudget, Complete,
+          /*AllowUnmappedCOFFImageBase=*/Disp != 0 && Img.isCOFF(),
+          ReadOnlyScope);
+      if (!Complete) {
+        if (BaseAnalysisComplete)
+          *BaseAnalysisComplete = false;
+        return false;
+      }
       if (!Folded)
         continue;
       Base = *Folded;
@@ -244,7 +254,7 @@ bool CFGBuilder::decomposeIndexTableLoadAddr(
 bool CFGBuilder::tryTwoLevelIndexTable(const BinaryImage &Img,
                                        const InsnRecord &Rec,
                                        JumpTableInfo &Info,
-                                       size_t *CandidateEvidenceBudget) {
+                                       size_t *CandidateEvidenceBudget) const {
   if (!CurrentImg)
     return false;
 
@@ -1175,11 +1185,18 @@ bool CFGBuilder::tryTwoLevelIndexTable(const BinaryImage &Img,
                         {Img.Sections.size(), 6},
                         {Img.Symbols.size(), 1}}))
     return false;
-  if (!decomposeIndexTableLoadAddr(
-          Img, Rec, Ops, IdxLoadIdx, W1, IdxTab, SwitchIdxReg, IdxScale,
-          &SwitchIndexValue, &SwitchIndexUseAddr, &SwitchIndexUseSeq,
-          [&](size_t Amount) { return consumeEvidence(Amount); },
-          &IdxDisplaced))
+  bool BaseAnalysisComplete = true;
+  ResolverQueryScope AddressScope(*this);
+  const bool Decomposed = decomposeIndexTableLoadAddr(
+      Img, Rec, Ops, IdxLoadIdx, W1, IdxTab, SwitchIdxReg, IdxScale,
+      &SwitchIndexValue, &SwitchIndexUseAddr, &SwitchIndexUseSeq,
+      [&](size_t Amount) { return consumeEvidence(Amount); }, &IdxDisplaced,
+      CandidateEvidenceBudget, &BaseAnalysisComplete, &AddressScope);
+  if (!BaseAnalysisComplete) {
+    Info.IncompleteGuardDomain = true;
+    return false;
+  }
+  if (!Decomposed)
     return false;
 
   // 4) Fold the address-table base and confirm it is distinct from idxtab.
@@ -1187,11 +1204,16 @@ bool CFGBuilder::tryTwoLevelIndexTable(const BinaryImage &Img,
   va_t JmpBase = 0;
   {
     va_t FoldAt = Ops[JmpLoadIdx].Addr;
-    auto Folded = foldRegConstant(
-        Img, Rec, JmpBaseReg, FoldAt,
-        [&](size_t Amount) { return consumeEvidence(Amount); },
-        /*RequireMappedValue=*/true,
-        /*AllowUnmappedCOFFImageBase=*/JmpDisp != 0 && Img.isCOFF());
+    bool Complete = false;
+    auto Folded = foldTableAddressAtUse(
+        Img, Rec, JmpRuntimeBase.Use, JmpBaseReg, FoldAt,
+        CandidateEvidenceBudget, Complete,
+        /*AllowUnmappedCOFFImageBase=*/JmpDisp != 0 && Img.isCOFF(),
+        &AddressScope);
+    if (!Complete) {
+      Info.IncompleteGuardDomain = true;
+      return false;
+    }
     if (!Folded)
       return false;
     // The address table may be displaced from the folded base register (a PE
@@ -1268,10 +1290,22 @@ bool CFGBuilder::tryTwoLevelIndexTable(const BinaryImage &Img,
             traceToRegister(Ops, Sum - 1, Ops[Sum].Inputs[1 - Which]);
         if (BaseReg == InvalidVA)
           continue;
-        const std::optional<uint64_t> Base = foldRegConstant(
-            Img, Rec, BaseReg, Ops[Sum].Addr,
-            [&](size_t Amount) { return consumeEvidence(Amount); },
-            /*RequireMappedValue=*/true, /*AllowUnmappedCOFFImageBase=*/true);
+        const auto ImageBase = queryPEImageBaseAtUse(
+            Img,
+            {Ops[Sum].Inputs[1 - Which], Ops[Sum].Addr, Ops[Sum].Seq, false},
+            CandidateEvidenceBudget, &AddressScope);
+        if (!ImageBase) {
+          Info.IncompleteGuardDomain = true;
+          return false;
+        }
+        std::optional<uint64_t> Base;
+        if (*ImageBase)
+          Base = Img.Base;
+        else
+          Base = foldRegConstant(
+              Img, Rec, BaseReg, Ops[Sum].Addr,
+              [&](size_t Amount) { return consumeEvidence(Amount); },
+              /*RequireMappedValue=*/true, /*AllowUnmappedCOFFImageBase=*/true);
         PEImageRVA = Base && *Base == Img.Base;
       }
     }

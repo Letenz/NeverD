@@ -24,6 +24,15 @@ namespace neverd {
 
 bool ARMLifter::liftControl(LiftState &S, const cs_insn *Insn,
                             const cs_arm &ARM) {
+  if (isARMUndefinedInstruction(Insn->id)) {
+    // Undefined-instruction aliases share UDF's code and void effect. A
+    // resumed exception must see the original r0, not a synthetic result.
+    if (const std::optional<uint64_t> Code = armExceptionCode(*Insn, ARM))
+      S.emitVoidIntrinsic(Intrinsic::ArmUdf, {NdVar::cst(*Code, 2)});
+    else
+      S.emitVoidIntrinsic(Intrinsic::ArmUdf);
+    return true;
+  }
   switch (Insn->id) {
 
   // --- B / BL / BX / BLX ---
@@ -109,7 +118,7 @@ bool ARMLifter::liftControl(LiftState &S, const cs_insn *Insn,
                          : Insn->id == ARM_INS_SMC  ? Intrinsic::ArmSmc
                          : Insn->id == ARM_INS_BKPT ? Intrinsic::ArmBkpt
                                                     : Intrinsic::ArmHlt;
-    const std::optional<uint64_t> Code = exceptionCode(Insn, ARM);
+    const std::optional<uint64_t> Code = armExceptionCode(*Insn, ARM);
     if (Id == Intrinsic::ArmBkpt || Id == Intrinsic::ArmHlt) {
       if (Code)
         S.emitVoidIntrinsic(Id, {NdVar::cst(*Code, 2)});
@@ -130,15 +139,6 @@ bool ARMLifter::liftControl(LiftState &S, const cs_insn *Insn,
                {S.makeTemp(4)});
     break;
   }
-  case ARM_INS_UDF:
-  case ARM_INS_TRAP:
-    // An undefined instruction raises an exception and writes no register:
-    // a debugger break resumes with r0 as it was.
-    if (const std::optional<uint64_t> Code = exceptionCode(Insn, ARM))
-      S.emitVoidIntrinsic(Intrinsic::ArmUdf, {NdVar::cst(*Code, 2)});
-    else
-      S.emitVoidIntrinsic(Intrinsic::ArmUdf);
-    break;
   // Memory barriers, with their option (`dmb ish`, `dsb sy`).
   case ARM_INS_DMB:
   case ARM_INS_DSB:

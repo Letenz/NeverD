@@ -63,6 +63,251 @@ struct FactorUses {
 
 } // namespace
 
+SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                             WorkBudget &Budget, SolveReport &Rep) {
+  // Bound this optional frontier before allocating or distributing enclosing
+  // scales. Low-degree regions keep their existing reconstruction path.
+  constexpr size_t MaxTerms = 128, MaxEdges = 2048;
+  std::array<SymRef, MaxTerms> Pending;
+  size_t Top = 1, TermsSeen = 0, Edges = 0, Visits = 0;
+  unsigned Higher = 0;
+  Pending[0] = E;
+  while (Top) {
+    SymRef R = Pending[--Top];
+    if (++Visits > MaxEdges)
+      return E;
+    if (Ctx.op(R) == SymOp::Mul && Ctx.numOperands(R) == 2 &&
+        Ctx.isConst(Ctx.operand(R, 0)))
+      R = Ctx.operand(R, 1);
+    if (Ctx.op(R) == SymOp::Add) {
+      if (Ctx.numOperands(R) > Pending.size() - Top)
+        return E;
+      for (SymRef Term : Ctx.operands(R))
+        Pending[Top++] = Term;
+      continue;
+    }
+    if (++TermsSeen > MaxTerms)
+      return E;
+    if (Ctx.op(R) != SymOp::Mul)
+      continue;
+    auto Factors = Ctx.operands(R);
+    if (Ctx.isConst(Factors.front()))
+      Factors = Factors.drop_front();
+    if (Factors.size() > MaxEdges - Edges)
+      return E;
+    Edges += Factors.size();
+    Higher += Factors.size() >= 4;
+  }
+  if (Higher < 2 || Budget.exhausted())
+    return E;
+
+  size_t Storage = Opts.MaxTableBytes;
+  const size_t WordBytes =
+      ((size_t(Ctx.width(E)) - 1) / 64 + 1) * sizeof(uint64_t);
+  auto Charge = [&](size_t Work, size_t Slots) {
+    const size_t SlotBytes = 128 + 4 * WordBytes;
+    if (Slots > Storage / SlotBytes || !Budget.consume(Work)) {
+      Rep.BudgetExhausted = true;
+      return false;
+    }
+    Storage -= Slots * SlotBytes;
+    return true;
+  };
+  auto ChargeOperands = [&](SymOp Op, llvm::ArrayRef<SymRef> Operands,
+                            size_t Limit) {
+    size_t Count = 0;
+    for (SymRef R : Operands) {
+      const size_t N = Ctx.op(R) == Op ? Ctx.numOperands(R) : 1;
+      if (N > Limit - Count) {
+        Rep.BudgetExhausted = true;
+        return false;
+      }
+      Count += N;
+    }
+    return Charge(Count, Count);
+  };
+  if (!Charge(Visits + Edges, 2 * (TermsSeen + Edges)))
+    return E;
+  auto Parsed = splitIntoTerms(Ctx, E);
+  if (!Parsed)
+    return E;
+  auto Terms = std::move(*Parsed);
+  auto Write = [&](const PolyTerm &Term) {
+    llvm::SmallVector<SymRef, 8> Factors(Term.Factors.begin(),
+                                         Term.Factors.end());
+    Factors.push_back(Ctx.mkConst(Term.Coeff));
+    return Ctx.mkMul(Factors);
+  };
+  auto Read = [&](SymRef R) {
+    PolyTerm Term{llvm::APInt(Ctx.width(E), 1), {}};
+    if (Ctx.isConst(R)) {
+      Term.Coeff = Ctx.constValue(R);
+    } else if (Ctx.op(R) == SymOp::Mul) {
+      auto Factors = Ctx.operands(R);
+      if (Ctx.isConst(Factors.front())) {
+        Term.Coeff = Ctx.constValue(Factors.front());
+        Factors = Factors.drop_front();
+      }
+      Term.Factors.append(Factors.begin(), Factors.end());
+    } else {
+      Term.Factors.push_back(R);
+    }
+    return Term;
+  };
+  SymRef Best = E;
+  SymRef Current = E;
+  std::map<uint32_t, std::pair<SymRef, unsigned>> QuotientCache;
+  unsigned Omitted = 1;
+  while (!Budget.exhausted()) {
+    if (llvm::count_if(
+            Terms, [](const PolyTerm &T) { return T.Factors.size() >= 4; }) < 2)
+      break;
+    // Try linear quotients first, then quadratic ones only when a pass makes
+    // no progress. Neither requires expanding the shared higher product.
+    std::map<Monomial, llvm::SmallVector<unsigned, 2>> Groups;
+    bool Complete = true;
+    for (unsigned T = 0; T != Terms.size() && Complete; ++T) {
+      const auto &Factors = Terms[T].Factors;
+      if (Factors.size() < 4)
+        continue;
+      for (unsigned I = 0; I != Factors.size(); ++I) {
+        if (I && Factors[I] == Factors[I - 1])
+          continue;
+        for (unsigned J = Omitted == 1 ? I : I + 1; J != Factors.size(); ++J) {
+          if (J > I + 1 && Factors[J] == Factors[J - 1])
+            continue;
+          if (!Charge(Factors.size(), Factors.size() + 2)) {
+            Complete = false;
+            break;
+          }
+          Monomial Key;
+          for (unsigned K = 0; K != Factors.size(); ++K)
+            if (K != I && (Omitted == 1 || K != J))
+              Key.push_back(Factors[K].index());
+          Groups[std::move(Key)].push_back(T);
+          if (Omitted == 1)
+            break;
+        }
+        if (!Complete)
+          break;
+      }
+    }
+    // Reserve the complete reconstruction before any group can commit.
+    if (!Complete || !Charge(Terms.size() + Edges, Terms.size() + Edges))
+      break;
+    std::vector<bool> Used(Terms.size(), false);
+    llvm::SmallVector<PolyTerm, 8> Next;
+    llvm::SmallVector<SymRef, 16> Distribution;
+    for (const auto &[Key, Indices] : Groups) {
+      if (Budget.exhausted())
+        break;
+      if (llvm::count_if(Indices, [&](unsigned T) { return !Used[T]; }) < 2)
+        continue;
+      if (!Charge(Indices.size() * (Key.size() + 2),
+                  Indices.size() * (Key.size() + 4)))
+        break;
+      llvm::SmallVector<SymRef, 8> Common, Quotients, Originals;
+      for (uint32_t Id : Key)
+        Common.push_back(SymRef(Id));
+      auto First = llvm::find_if(Indices, [&](unsigned T) { return !Used[T]; });
+      const auto &Scale = Terms[*First].Coeff;
+      const bool SameScale = llvm::all_of(Indices, [&](unsigned T) {
+        return Used[T] || Terms[T].Coeff == Scale;
+      });
+      if (SameScale)
+        Common.push_back(Ctx.mkConst(Scale));
+      for (unsigned T : Indices) {
+        if (Used[T])
+          continue;
+        const auto &Term = Terms[T];
+        llvm::SmallVector<SymRef, 8> Remaining;
+        size_t K = 0;
+        for (SymRef Factor : Term.Factors)
+          if (K != Key.size() && Factor.index() == Key[K])
+            ++K;
+          else
+            Remaining.push_back(Factor);
+        assert(K == Key.size() && "cofactor must retain exact multiplicities");
+        if (!SameScale)
+          Remaining.push_back(Ctx.mkConst(Term.Coeff));
+        Quotients.push_back(Ctx.mkMul(Remaining));
+        Originals.push_back(Write(Term));
+      }
+      if (!ChargeOperands(SymOp::Add, Quotients, MaxTerms) ||
+          !ChargeOperands(SymOp::Add, Originals, MaxTerms) ||
+          !ChargeOperands(SymOp::Mul, Common, MaxEdges))
+        break;
+      SymRef Quotient = Ctx.mkAdd(Quotients);
+      SolveReport Local;
+      SymRef Reduced = Quotient;
+      if (!Charge(1, 2))
+        break;
+      if (auto It = QuotientCache.find(Quotient.index());
+          It != QuotientCache.end()) {
+        Reduced = It->second.first;
+        Local.NumAtoms = It->second.second;
+        Local.Evidence = MBAEvidence::Derivation;
+      } else {
+        MBAOptions Inner = Opts;
+        Inner.MaxTableBytes = Storage;
+        Reduced = solveOneRegion(Ctx, Quotient, Inner, Budget, Local);
+        Rep.BudgetExhausted |= Local.BudgetExhausted;
+        if (Reduced != Quotient && Local.Evidence == MBAEvidence::Derivation)
+          QuotientCache.try_emplace(Quotient.index(), Reduced, Local.NumAtoms);
+      }
+      if (Reduced == Quotient || Local.Evidence != MBAEvidence::Derivation)
+        continue;
+      SymRef Original = Ctx.mkAdd(Originals);
+      SymRef Cofactor = Ctx.mkMul(Common);
+      if (!ChargeOperands(SymOp::Mul, {Cofactor, Reduced}, MaxEdges) ||
+          !ChargeOperands(SymOp::Mul, {Cofactor, Quotient}, MaxEdges))
+        break;
+      SymRef Candidate = Ctx.mkMul(Cofactor, Reduced);
+      if (readingScore(Ctx, Candidate) >= readingScore(Ctx, Original))
+        continue;
+      Next.push_back(Read(Candidate));
+      Distribution.push_back(Ctx.mkMul(Cofactor, Quotient));
+      for (unsigned T : Indices)
+        Used[T] = true;
+      Rep.NumAtoms = std::max(Rep.NumAtoms, Local.NumAtoms);
+    }
+    if (Next.empty()) {
+      if (Omitted++ == 1 && !Rep.BudgetExhausted)
+        continue;
+      break;
+    }
+    Omitted = 1;
+    for (unsigned T = 0; T != Terms.size(); ++T)
+      if (!Used[T]) {
+        Distribution.push_back(Write(Terms[T]));
+        Next.push_back(std::move(Terms[T]));
+      }
+    // Check the complete distribution, including all untouched terms, before
+    // committing any quotient substitutions. A single proof shares the
+    // normalizer's exact-node memo across groups. The independently proved
+    // quotients then compose under their unchanged cofactors.
+    if (!ChargeOperands(SymOp::Add, Distribution, MaxTerms) ||
+        !proveArithmeticIdentity(Ctx, Current, Ctx.mkAdd(Distribution), Budget,
+                                 Storage,
+                                 /*ExpandComplements=*/false))
+      break;
+    Terms = std::move(Next);
+    llvm::SmallVector<SymRef, 16> Summands;
+    for (const auto &Term : Terms)
+      Summands.push_back(Write(Term));
+    if (!ChargeOperands(SymOp::Add, Summands, MaxTerms))
+      break;
+    Current = Ctx.mkAdd(Summands);
+    if (readingScore(Ctx, Current) < readingScore(Ctx, Best)) {
+      Best = Current;
+      Rep.Outcome = MBAOutcome::Rewritten;
+      Rep.Evidence = MBAEvidence::Derivation;
+    }
+  }
+  Rep.BudgetExhausted |= Budget.exhausted();
+  return Best;
+}
+
 SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                               WorkBudget &Budget, SolveReport &Rep) {
   // This optional reading only inspects immediate sums and products. Purely

@@ -22,6 +22,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <utility>
 
 using namespace neverd;
@@ -140,6 +141,11 @@ struct CPUQueryObservation {
   std::array<uint32_t, 4> Outputs;
 };
 
+struct MSRReadObservation {
+  uint32_t Index;
+  uint64_t Value;
+};
+
 /// Independent concrete oracle for the small integer corpus. It intentionally
 /// does not use SymExec: it executes residual operands, branches and byte
 /// lanes.
@@ -152,12 +158,14 @@ execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
         std::map<uint64_t, uint8_t> *FinalMemory = nullptr,
         std::optional<uint32_t> MXCSR = std::nullopt,
         uint32_t WritableMask = 0xffbf, uint32_t *FinalMXCSR = nullptr,
-        llvm::ArrayRef<CPUQueryObservation> CPUQueries = {}) {
+        llvm::ArrayRef<CPUQueryObservation> CPUQueries = {},
+        llvm::ArrayRef<MSRReadObservation> MSRReads = {}) {
   using Location = std::pair<VnodeSpace, uint64_t>;
   std::map<Location, uint8_t> Bytes;
   bool Defined = true;
   size_t TimestampIndex = 0;
   size_t CPUQueryIndex = 0;
+  size_t MSRReadIndex = 0;
   std::vector<uint32_t> RuntimeOutputs;
   const auto write = [&](NdVar Destination, uint64_t Value) {
     for (unsigned I = 0; I < Destination.Size; ++I)
@@ -208,6 +216,14 @@ execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
       case NdOp::INT_ZEXT:
         write(Op.Output, A());
         break;
+      case NdOp::SUBBYTES: {
+        const auto First = B();
+        if (Op.Inputs[0].Size > 8 || First >= Op.Inputs[0].Size ||
+            Op.Output.Size > Op.Inputs[0].Size - First)
+          return std::nullopt;
+        write(Op.Output, A() >> (8 * First));
+        break;
+      }
       case NdOp::INT_ADD:
         write(Op.Output, A() + B());
         break;
@@ -310,7 +326,8 @@ execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
       case NdOp::RETURN: {
         const auto Value = read(reg(0));
         if (!Defined || TimestampIndex != Timestamps.size() ||
-            CPUQueryIndex != CPUQueries.size() || !RuntimeOutputs.empty())
+            CPUQueryIndex != CPUQueries.size() ||
+            MSRReadIndex != MSRReads.size() || !RuntimeOutputs.empty())
           return std::nullopt;
         if (FinalMemory)
           *FinalMemory = std::move(Memory);
@@ -396,6 +413,15 @@ execute(const LowFunc &Function, std::map<uint64_t, uint64_t> Inputs = {},
             return std::nullopt;
           write(Op.Output, Query.Outputs[0]);
           RuntimeOutputs.assign(Query.Outputs.begin(), Query.Outputs.end());
+        } else if (Op.Inputs[0].Offset ==
+                   static_cast<uint64_t>(Intrinsic::Rdmsr)) {
+          if (MSRReadIndex == MSRReads.size() || !RuntimeOutputs.empty() ||
+              Op.NumInputs != 2)
+            return std::nullopt;
+          const auto &Read = MSRReads[MSRReadIndex++];
+          if (Op.Inputs[1].Size != 4 || read(Op.Inputs[1]) != Read.Index)
+            return std::nullopt;
+          write(Op.Output, Read.Value);
         } else {
           ADD_FAILURE() << "oracle received an unsupported intrinsic";
           return std::nullopt;
@@ -5114,6 +5140,8 @@ TEST(InterpreterSpecialization, TimestampTransitionMatchesCompleteStateOracle) {
 #include "AlignmentRecoveryTests.inc"
 #include "CPUQueryRecoveryTests.inc"
 #include "MXCSRRecoveryTests.inc"
+#include "SavedAddressCellsTests.inc"
 #include "SegmentedStoreTests.inc"
+#include "SupervisorReadRecoveryTests.inc"
 
 } // namespace

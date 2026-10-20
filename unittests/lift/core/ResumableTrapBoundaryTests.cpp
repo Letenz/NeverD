@@ -323,6 +323,18 @@ std::vector<TrapCase> siblingTraps() {
                    {0xfe, 0xde},
                    {42, 0x20, 0x70, 0x47},
                    true});
+  Cases.push_back({"thumb udf division alias",
+                   Arch::ARM,
+                   InstructionMode::Thumb,
+                   {0xf9, 0xde},
+                   {42, 0x20, 0x70, 0x47},
+                   true});
+  Cases.push_back({"thumb hlt",
+                   Arch::ARM,
+                   InstructionMode::Thumb,
+                   {0x87, 0xba},
+                   {42, 0x20, 0x70, 0x47},
+                   true});
   Cases.push_back({"arm bkpt",
                    Arch::ARM,
                    InstructionMode::ARM,
@@ -333,6 +345,12 @@ std::vector<TrapCase> siblingTraps() {
                    Arch::ARM,
                    InstructionMode::ARM,
                    {0xfe, 0xde, 0xff, 0xe7},
+                   {42, 0, 0xa0, 0xe3, 0x1e, 0xff, 0x2f, 0xe1},
+                   true});
+  Cases.push_back({"arm hlt",
+                   Arch::ARM,
+                   InstructionMode::ARM,
+                   {0x77, 0, 0, 0xe1},
                    {42, 0, 0xa0, 0xe3, 0x1e, 0xff, 0x2f, 0xe1},
                    true});
   Cases.push_back({"a64 debugbreak",
@@ -1332,7 +1350,9 @@ TEST(ResumableTrapBoundary,
               : std::string(Case.Name).find("bkpt") != std::string::npos
                   ? "bkpt #"
               : std::string(Case.Name).find("udf") != std::string::npos
-                  ? "udf #"
+                  ? "__asm__ volatile(\"udf"
+              : std::string(Case.Name).find("hlt") != std::string::npos
+                  ? "__asm__ volatile(\"hlt #"
               : Case.Architecture == Arch::X86 || Case.Architecture == Arch::X64
                   ? "__debugbreak()"
                   : "__builtin_debugtrap()";

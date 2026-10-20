@@ -461,8 +461,18 @@ The supported Bionic subset is:
   [idle clock advancement policy](process-emulation.md#explicit-guest-clocks)
   with raw and variadic calls. It retains the thread's original continuation
   while other guest threads run, and preserves remaining-time storage and errno
-  on success. The policy is disabled by default; signal interruption and
-  absolute sleeps remain unmodeled.
+  on success. Caught ordinary signals interrupt sleeping cooperative threads,
+  copy remaining time and return EINTR regardless of SA_RESTART. Bionic errno
+  conversion occurs after the guest handler returns; raw SVC keeps kernel
+  results. See the [signal continuation contract](process-emulation.md).
+  The policy is disabled by default; absolute sleeps remain unmodeled.
+- `poll/ppoll`, `epoll_wait/epoll_pwait`, raw `pselect6` and direct socket
+  `read/recv/recvfrom` share the [signal interruption/restart contract](process-emulation.md).
+  Ready operations finish first. Caught handlers interrupt readiness waits;
+  zero-progress receives restart only with SA_RESTART and no entry-time timeout.
+  Restart re-enters the original trap, rechecks the FD and preserves guest
+  context edits. Infinite cooperative waits need no invented future event when
+  another guest thread can wake them; an idle unresolved wait still stops.
 - `usleep` uses the same policy and thread wait ownership. The argument is
   unsigned 32-bit microseconds, including values of one second or more;
   successful calls preserve errno. Direct imports and dynamic lookups share
@@ -906,7 +916,8 @@ exits without an entry return, its low eight status bits become the workload
 exit status. `exit_group` terminates
 the workload. Guest cleanup handlers, TLS keys/destructors, exit during a
 once/finalize callback, timers, cancellation,
-signal interruption of waits and clone remain unsupported. No cleanup or completion is invented.
+interruption of synchronization/stdio waits, and clone remain
+unsupported. No cleanup or completion is invented.
 
 By default the selected entry's return stops observation, even with live
 children. `android.drain_threads: true` continues those children under the

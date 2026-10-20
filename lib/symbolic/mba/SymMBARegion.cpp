@@ -614,8 +614,8 @@ SymRef solveIndependentTerms(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
 
 } // namespace
 
-SymRef solveExpandedQuadratic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
-                              WorkBudget &Budget, SolveReport &Rep) {
+SymRef solveExpandedProducts(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                             WorkBudget &Budget, SolveReport &Rep) {
   // An allocation-free frontier hint keeps ordinary linear regions on their
   // existing path. It grants no equivalence: the full abstraction, degree
   // check and independent polynomial proof below must all succeed.
@@ -645,7 +645,7 @@ SymRef solveExpandedQuadratic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     auto Factors = Ctx.operands(R);
     if (Ctx.isConst(Factors.front()))
       Factors = Factors.drop_front();
-    Products += Factors.size() == 2;
+    Products += Factors.size() == 2 || Factors.size() == 3;
   };
   Inspect(Inspect, Sum, 0);
   if (Products < 2)
@@ -660,7 +660,7 @@ SymRef solveExpandedQuadratic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     return E;
   auto Terms = splitIntoTerms(Ctx, Region->Abstract.Body);
   if (!Terms || llvm::any_of(*Terms, [](const PolyTerm &T) {
-        return T.Factors.size() > 2;
+        return T.Factors.size() > 3;
       }))
     return E;
   auto Form = solvePolynomial(Ctx, Region->Abstract.Body, Region->AtomIds,

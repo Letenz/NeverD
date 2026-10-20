@@ -54,6 +54,17 @@ public:
   llvm::Expected<bool> restore(ExecutionBackend &CPU,
                                const MemoryLayout &Layout, uint64_t TID,
                                ProcessResult &Result);
+  bool ready(uint64_t TID) const;
+  struct Delivery {
+    int32_t Signal = 0;
+    LinuxSignalAction Action;
+  };
+  /// Discard ignored signals and resolve defaults before interrupting a wait.
+  /// Signal zero means no handler; an absent result is a classified stop.
+  std::optional<Delivery> prepare(uint64_t TID, ProcessResult &Result);
+  size_t frameDepth(uint64_t TID) const {
+    return Threads.at(TID).Frames.size();
+  }
   void inherit(uint64_t Parent, uint64_t Child) {
     Threads[Child].Mask = Threads.at(Parent).Mask;
   }

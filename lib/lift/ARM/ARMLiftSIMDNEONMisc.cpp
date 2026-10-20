@@ -351,10 +351,6 @@ bool liftSIMDNEONMisc(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn
     S.emitIntrinsic(Intrinsic::ArmVcx3a);
     break;
 
-  case ARM_INS___BRKDIV0:
-    S.emitIntrinsic(Intrinsic::ArmBkpt);
-    break;
-
   default:
     return false;
   }

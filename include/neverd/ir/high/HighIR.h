@@ -608,18 +608,22 @@ struct HighFunc {
     int64_t SaveArea = 0;
     /// The integer parameters ahead of the saved registers.
     unsigned NamedParams = 0;
-    /// The call operands that pass the va_list, as (call address, operand).
+    /// The call operands that pass the va_list to a parameter that takes
+    /// one (MedFunc::VaListCalls), as (call address, operand).
     std::set<std::pair<va_t, unsigned>> Passes;
     /// Call operands that only hold the address of one of va_start's areas:
-    /// its fields, stored where a stack argument would be, read back as one.
-    /// The C writer prints the function this way only if no call passes one.
+    /// its fields, stored where a stack argument would be, read back as one,
+    /// or the list's own in an argument no parameter of the call takes.  The
+    /// C writer prints the function this way only if no call passes one.
     std::set<std::pair<va_t, unsigned>> Junk;
   };
   std::optional<VaStartForwarder> VaStart;
-  /// MedFunc's va_start geometry, which recognizeVaStartForwarder reads.
+  /// MedFunc's va_start geometry, and the calls that pass its va_list on,
+  /// which recognizeVaStartForwarder reads.
   std::optional<int64_t> VaListDisplacement;
   std::optional<int64_t> VaRegisterSaveArea;
   int VaNamedIntegerRegisters = -1;
+  std::map<va_t, bool> VaListCalls;
   /// How execution reaches Entry (MedFunc::EntryKind).
   StackEntryKind EntryKind = StackEntryKind::Call;
   TypeRef ReturnType;

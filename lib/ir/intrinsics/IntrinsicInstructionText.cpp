@@ -347,6 +347,11 @@ std::string intrinsicInstructionText(Intrinsic Id,
     // SY is the only ISB option; the assembler spells it without one.
     return *Operand == 0xF ? std::string("isb")
                            : "isb #" + hexImmediate(*Operand);
+  case Intrinsic::ArmUdf:
+    // Thumb requires an explicit wide suffix for a code that does not fit
+    // imm8. Unified assembly accepts it in ARM mode as well.
+    return std::string(*Operand > 0xFF ? "udf.w #" : "udf #") +
+           hexImmediate(*Operand);
   default:
     break;
   }

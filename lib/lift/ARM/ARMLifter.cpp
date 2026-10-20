@@ -321,8 +321,7 @@ bool ARMLifter::isFunctionTerminator(const cs_insn *I) {
 }
 
 bool ARMLifter::isResumableTrap(const cs_insn *I) {
-  // UDF/TRAP includes the Thumb UDF #0xfe used for MSVC __debugbreak.
-  return I->id == ARM_INS_BKPT || I->id == ARM_INS_UDF || I->id == ARM_INS_TRAP;
+  return isARMResumableTrapInstruction(I->id);
 }
 
 bool ARMLifter::isReturn(const cs_insn *I) {
