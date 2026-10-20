@@ -729,15 +729,32 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
       Convention && Convention->TargetSpillsSurviveLeafCalls
           ? findFrameLocalLeafCallees(Result.MedFuncs, Img.Arch)
           : std::set<va_t>{};
-  for (MedFunc *Body : SignatureBodies) {
-    MedFunc &MF = *Body;
+  auto recover = [&](MedFunc &MF) {
     recoverCallAbi(MF, Img.Arch, AllFuncNames, &Img, &CalleeRegArity,
                    &CalleeTotalArity, &CalleeFPArity, &CalleeFPReturnSize,
                    &CalleeFPRegs, &CalleeHasSret, &CalleeIsVariadic,
                    &CalleeConsumesVaList, &FrameLocalLeafCallees,
                    &CalleeIntRegs, &VectorArgumentCallees, &PointerCallees,
                    &Result.CallUserPrototypes);
+  };
+  for (MedFunc &F : Result.MedFuncs)
+    recover(F);
+  // An omitted body's recovery gives the bound below on the run's direct
+  // calls to it, and the bodies after it read the arities and variadic
+  // marks it leaves.  Past the last body those calls reach, only the second
+  // regparm pass, which reads every body, reads what recovery gives.
+  size_t Recovered = OmittedCallees.size();
+  if (!Convention || !Convention->RegparmOnlyForInternalCalls) {
+    std::set<va_t> Called;
+    for (const MedFunc &F : Result.MedFuncs)
+      for (const MedCallInfo &CI : F.CallInfos)
+        if (!CI.IsIndirect)
+          Called.insert(CI.TargetAddr);
+    while (Recovered && !Called.count(OmittedCallees[Recovered - 1].Entry))
+      --Recovered;
   }
+  for (size_t I = 0; I < Recovered; ++I)
+    recover(OmittedCallees[I]);
 
   // Regparm two-pass call recovery (i386): the first pass promotes forwarder
   // register params (PromoteParams).  Recompute CalleeRegArity from the
