@@ -63,10 +63,22 @@ OmittedCalleeMemo::readAt(const PipelineResult &Result, va_t Key) {
   return Read;
 }
 
-bool OmittedCalleeMemo::Callee::readsHold(const PipelineResult &Result) const {
+bool OmittedCalleeMemo::Conversion::readsHold(
+    const PipelineResult &Result) const {
   return std::all_of(Reads.begin(), Reads.end(), [&](const SummaryRead &Read) {
     return readAt(Result, Read.Key) == Read;
   });
+}
+
+const OmittedCalleeMemo::Conversion *
+OmittedCalleeMemo::Callee::conversionFor(const PipelineResult &Result) {
+  const auto Holds =
+      std::find_if(Conversions.begin(), Conversions.end(),
+                   [&](const Conversion &C) { return C.readsHold(Result); });
+  if (Holds == Conversions.end())
+    return nullptr;
+  std::rotate(Conversions.begin(), Holds, std::next(Holds));
+  return &Conversions.front();
 }
 
 void OmittedCalleeMemo::adopt(const BinaryImage &Img,
@@ -208,11 +220,11 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
         return Signatures;
       Operations += BlockOps;
     }
-    // A conversion that read summaries this run states otherwise is read
-    // again.
-    if (Read->Converted && !Read->readsHold(Result))
-      Read->Converted = false;
-    if (!Read->Converted) {
+    // A conversion that read summaries this run states otherwise serves
+    // none of its reads: the callee is converted again.
+    const OmittedCalleeMemo::Conversion *Conversion =
+        Read->conversionFor(Result);
+    if (!Conversion) {
       const LowFunc &Lifted = lift();
       std::shared_ptr<const MedFunc> Body;
       // The callee's parameters read the entry-read summary of its own entry.
@@ -242,16 +254,19 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
       }
       if (Body && Memo && Read != &Local)
         Memo->remember(*Body);
-      Read->Body = std::move(Body);
-      Read->Reads.clear();
+      OmittedCalleeMemo::Conversion Converted{std::move(Body), {}};
       for (const va_t Key : Keys)
-        Read->Reads.push_back(OmittedCalleeMemo::readAt(Result, Key));
-      Read->Converted = true;
+        Converted.Reads.push_back(OmittedCalleeMemo::readAt(Result, Key));
+      // The conversion used longest ago makes room.
+      if (Read->Conversions.size() == OmittedCalleeMemo::MaxConversions)
+        Read->Conversions.pop_back();
+      Read->Conversions.insert(Read->Conversions.begin(), std::move(Converted));
+      Conversion = &Read->Conversions.front();
     }
-    if (!Read->Body)
+    if (!Conversion->Body)
       continue;
-    enqueueCallees(*Read->Body);
-    Signatures.push_back(*Read->Body);
+    enqueueCallees(*Conversion->Body);
+    Signatures.push_back(*Conversion->Body);
   }
   return Signatures;
 }

@@ -48,14 +48,8 @@ struct OmittedCalleeMemo {
     bool operator==(const SummaryRead &) const = default;
   };
   static SummaryRead readAt(const PipelineResult &Result, va_t Key);
-  struct Callee {
-    /// Whether the callee was lifted: BlockOps is then known.
-    bool Lifted = false;
-    /// The operations of each block of the lift, when the lift is complete
-    /// and has no unsafe indirect branch; none otherwise.
-    std::optional<std::vector<size_t>> BlockOps;
-    /// Whether the lift was converted: Body is then known.
-    bool Converted = false;
+  /// A conversion of a callee's lift.
+  struct Conversion {
     /// The typed body, or null where the conversion fails or the body is too
     /// large to be a signature.
     std::shared_ptr<const MedFunc> Body;
@@ -64,6 +58,23 @@ struct OmittedCalleeMemo {
     std::vector<SummaryRead> Reads;
     /// Whether \p Result's summaries read as they did for the conversion.
     bool readsHold(const PipelineResult &Result) const;
+  };
+  /// The conversions kept of each callee.  The selections around a callee
+  /// call different sets of the imports it calls, whose summaries its
+  /// conversion reads.
+  static constexpr size_t MaxConversions = 4;
+  struct Callee {
+    /// Whether the callee was lifted: BlockOps is then known.
+    bool Lifted = false;
+    /// The operations of each block of the lift, when the lift is complete
+    /// and has no unsafe indirect branch; none otherwise.
+    std::optional<std::vector<size_t>> BlockOps;
+    /// The conversions read under different summaries, the one used last
+    /// first; at most MaxConversions.
+    std::vector<Conversion> Conversions;
+    /// The conversion \p Result's summaries hold for, now the one used last;
+    /// null where none does.
+    const Conversion *conversionFor(const PipelineResult &Result);
   };
   /// Read of \p Img with \p Result's function-pointer variables; starts
   /// again when this was read of another image or with other variables.
