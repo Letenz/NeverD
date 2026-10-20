@@ -303,6 +303,8 @@ CFGBuilder::makeInstructionBoundary(const InsnRecord &Rec,
 //===----------------------------------------------------------------------===//
 
 bool CFGBuilder::hasFunctionSymbolAtIndexed(const BinaryImage &Img, va_t Addr) {
+  if (!Img.isFunctionEntryCandidateAt(Addr))
+    return false;
   if (FunctionSymbolIndexImage != &Img ||
       FunctionSymbolIndexData != Img.Symbols.data() ||
       FunctionSymbolIndexCount != Img.Symbols.size()) {
@@ -323,6 +325,8 @@ bool CFGBuilder::hasFunctionSymbolAtIndexed(const BinaryImage &Img, va_t Addr) {
 
 bool CFGBuilder::isTailCallTarget(va_t Target) const {
   if (Target == InvalidVA || Target == CurrentFuncEntry)
+    return false;
+  if (CurrentImg && !CurrentImg->isFunctionEntryCandidateAt(Target))
     return false;
   // A selected-function run may omit other function symbols from its work
   // set. An explicit transfer to such a symbol still names a tail callee.
@@ -519,8 +523,7 @@ void CFGBuilder::rewriteOwnInteriorCall(const BinaryImage &Img, InsnRecord &Rec,
       !exceptionEncodingBoundsOneFunction(Own->Encoding) ||
       Own->CodeRange.Begin != CurrentFuncEntry ||
       !Own->CodeRange.contains(Rec.Addr) || !Own->CodeRange.contains(Target) ||
-      Target == Own->CodeRange.Begin ||
-      (KnownFuncEntries && KnownFuncEntries->count(Target)) ||
+      Target == Own->CodeRange.Begin || isKnownFunctionEntry(Target) ||
       KeptOwnInteriorCallTargets.count(Target))
     return;
   const uint16_t PtrSize = TRI.PointerSize;

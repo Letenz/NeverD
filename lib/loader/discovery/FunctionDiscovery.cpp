@@ -45,6 +45,8 @@ const Import *BinaryImage::decodeImportThunkAt(va_t Addr) const {
   };
 
   if (Arch == Arch::X64 || Arch == Arch::X86) {
+    if (!hasExecutableCodeOwnerRange(Addr, x86::kJmpIndirectLen))
+      return nullptr;
     const uint8_t *Bytes = readVA(Addr, x86::kJmpIndirectLen);
     if (!Bytes || Bytes[0] != x86::kJmpIndirectOp)
       return nullptr;

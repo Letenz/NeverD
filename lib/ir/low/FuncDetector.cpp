@@ -183,7 +183,7 @@ bool RelocatedFunctionEntryVerifier::accepts(va_t Address) {
   Address = normalizeCodeAddress(Address, Img.Arch, Img.Mode);
   // Chained unwind and cold fragments continue another function's frame.
   // Neither a relocated pointer nor CFG metadata makes them callable entries.
-  if (Img.ContinuationCodeStarts.count(Address))
+  if (!Img.isFunctionEntryCandidateAt(Address))
     return false;
   if (!MetadataPrepared) {
     MetadataPrepared = true;
@@ -220,7 +220,7 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   std::vector<std::pair<va_t, std::string>> Results;
   std::set<va_t> VerifiedCandidates;
 
-  if (Img.Entry != 0) {
+  if (Img.Entry != 0 && Img.isFunctionEntryCandidateAt(Img.Entry)) {
     Entries.insert(Img.Entry);
     Results.push_back({Img.Entry, Img.getFunctionNameAt(Img.Entry)});
   }
@@ -233,6 +233,8 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   }
 
   for (const auto &Exp : Img.Exports) {
+    if (!Img.isFunctionEntryCandidateAt(Exp.Addr))
+      continue;
     if (Entries.count(Exp.Addr))
       continue;
     // Skip the image base marker for linked ELFs; relocatable .o files use
@@ -261,14 +263,9 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   }
 
   std::set<va_t> ExceptionEntries;
-  for (const ExceptionFunction &EH : Img.ExceptionMetadata.Functions) {
-    // A frame can begin after its function's first instruction.
-    const va_t EHEntry =
-        EH.FunctionEntry != 0 ? EH.FunctionEntry : EH.CodeRange.Begin;
-    if (EH.Kind == RuntimeFunctionKind::Primary && EH.CodeRange.isValid() &&
-        EHEntry != 0 && Img.hasExecutableCodeOwnerAt(EHEntry))
+  for (va_t EHEntry : Img.ExceptionMetadata.PrimaryFunctionEntries)
+    if (EHEntry != 0 && Img.isFunctionEntryCandidateAt(EHEntry))
       ExceptionEntries.insert(EHEntry);
-  }
   const std::set<va_t> ExceptionThunks =
       Img.ExceptionMetadata.registrationScopeThunks();
   const auto RegistrationPointerRoles =
@@ -279,11 +276,11 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   // begins none, though a symbol names it (`foo.cold`).
   for (const auto &Sym : Img.Symbols)
     if (Sym.IsFunc && Sym.Origin != NameOrigin::Synthesized &&
-        !Img.ContinuationCodeStarts.count(Sym.Addr))
+        Img.isFunctionEntryCandidateAt(Sym.Addr))
       IndependentEntries.insert(Sym.Addr);
 
   for (const auto &Sym : Img.Symbols) {
-    if (!Sym.IsFunc || Img.ContinuationCodeStarts.count(Sym.Addr))
+    if (!Sym.IsFunc || !Img.isFunctionEntryCandidateAt(Sym.Addr))
       continue;
     if (Sym.Addr == 0) {
       if (!Img.hasExecutableCodeOwnerAt(0))
@@ -323,7 +320,7 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   std::vector<va_t> MachOFunctionStarts;
   if (Img.Format == BinaryFormat::MachO && !Img.IsRelocatable) {
     for (const Symbol &Sym : Img.Symbols)
-      if (Sym.IsFunc && Img.hasExecutableCodeOwnerAt(Sym.Addr))
+      if (Sym.IsFunc && Img.isFunctionEntryCandidateAt(Sym.Addr))
         MachOFunctionStarts.push_back(
             normalizeCodeAddress(Sym.Addr, Img.Arch, Img.Mode));
     std::sort(MachOFunctionStarts.begin(), MachOFunctionStarts.end());
@@ -370,7 +367,7 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
             Source->second == Target)
           continue;
       if (Img.DataInCode.count(Target) ||
-          !Img.hasExecutableCodeOwnerAt(Target) || IsMachOLocalLabel(Target))
+          !Img.isFunctionEntryCandidateAt(Target) || IsMachOLocalLabel(Target))
         continue;
       if (IsX86LinkedCOFF && Img.hasExecutableCodeOwnerAt(Slot)) {
         CodeNamedByCode.emplace_back(Slot, Target);
@@ -430,6 +427,9 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   std::set<va_t> EvidencedX86Entries;
   if (Img.Entry != 0 && !RelocationsOnly) {
     scanCallTargets(Img, Dec, DirectCallTargets);
+    std::erase_if(DirectCallTargets, [&](va_t Addr) {
+      return !Img.isFunctionEntryCandidateAt(Addr);
+    });
     Entries.insert(DirectCallTargets.begin(), DirectCallTargets.end());
     // A binary file has no symbols, unwind tables or relocations to name
     // the functions its code only takes the address of.  A target starts
@@ -446,6 +446,15 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
       scanX86UnsymbolizedEntries(Img, Dec, Entries);
     }
   }
+
+  // Reject structurally ineligible roots before they can delimit another
+  // function's body. Every evidence source uses the image's same policy.
+  std::erase_if(Entries, [&](va_t Addr) {
+    return !Img.isFunctionEntryCandidateAt(Addr);
+  });
+  llvm::erase_if(Results, [&](const auto &R) {
+    return !Img.isFunctionEntryCandidateAt(R.first);
+  });
 
   if (RegistrationPointerRoles)
     for (va_t Target : RegistrationPointerRoles->RuntimeOnlyPointerTargets)
@@ -561,7 +570,8 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
           Img.DataPtrRelocSlots.count(Target) ||
           Img.CodeAddressRelocOperands.count(Target) ||
           Img.DataAddressRelocOperands.count(Target) ||
-          Img.DataInCode.count(Target) || !Img.hasExecutableCodeOwnerAt(Target))
+          Img.DataInCode.count(Target) ||
+          !Img.isFunctionEntryCandidateAt(Target))
         continue;
       if (RegistrationPointerRoles &&
           RegistrationPointerRoles->RuntimeOnlyPointerTargets.count(Target))
@@ -596,28 +606,6 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
     if (Already.insert(Addr).second)
       Results.push_back(
           {Addr, (kAutoFuncPrefix + llvm::utohexstr(Addr)).str()});
-  }
-
-  // Every AArch64 entry must be four-byte aligned, regardless of whether it
-  // came from the image entry, a symbol, an export, a relocation or a scan.
-  // Reject misaligned candidates before either trusting metadata or trying
-  // to decode and lift their bytes: a mid-instruction probe can otherwise
-  // reach a lifter with operands that do not describe the real instruction.
-  // Apply this to images without an entry point too. Other architectures
-  // have different alignment and instruction-set address conventions.
-  if (Img.Arch == Arch::AArch64) {
-    std::vector<std::pair<va_t, std::string>> Aligned;
-    Aligned.reserve(Results.size());
-    for (auto &R : Results) {
-      if ((R.first & 0x3) != 0) {
-        LLVM_DEBUG(llvm::dbgs()
-                   << "func-detector: dropping misaligned AArch64 entry 0x"
-                   << llvm::utohexstr(R.first) << "\n");
-        continue;
-      }
-      Aligned.push_back(std::move(R));
-    }
-    Results = std::move(Aligned);
   }
 
   if (Img.Entry != 0 || RelocationsOnly) {
@@ -879,6 +867,8 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
 bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
                                         va_t Addr, bool KeepInconclusive,
                                         bool RequireCallableExit) {
+  if (!Img.isFunctionEntryCandidateAt(Addr))
+    return false;
   constexpr int kMaxInsns = limits::kMaxVerifyInsns;
   const auto *Seg = Img.getSegmentFor(Addr);
   if (!Seg || !Img.hasExecutableCodeOwnerAt(Addr))

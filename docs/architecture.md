@@ -14,6 +14,23 @@ executable section nor a decodable prefix alone establishes a callable entry.
 Continuation ownership excludes both proof paths. A validated CFG entry needs
 no pointer relocation elsewhere in the image.
 
+`BinaryImage::isFunctionEntryCandidateAt` owns the shared structural gate for
+independent entries: executable ownership, instruction alignment, data-object
+exclusion and normalized continuation identity. Discovery, CFG tail calls,
+callee analysis and LLVM function-address resolution apply it before consuming
+positive metadata. It does not establish instruction semantics or an ABI.
+Thumb mode tags name the same instruction address. `ExceptionInfo` separately
+indexes primary function
+entries and unwind frame starts; a frame that begins later, a chained row or a
+cold fragment cannot supply an independent callable identity. Next-entry bounds
+use those primary identities as well. Explicitly selecting code for analysis
+retains its separate decode and admission checks.
+
+The COFF CFG reader also requires unique, complete file-backed storage for the
+target's minimum instruction unit. The table must be immutable, while target
+code may be writable or execute-only. Import-thunk decoding requires the full
+instruction span to remain in executable ownership.
+
 This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.

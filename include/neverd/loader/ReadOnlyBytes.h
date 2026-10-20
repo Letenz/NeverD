@@ -32,6 +32,12 @@ readInitialImageBytes(const BinaryImage &Image, va_t Address, uint32_t Size);
 std::optional<std::vector<uint8_t>>
 readImmutableCodeBytes(const BinaryImage &Image, va_t Address, uint32_t Size);
 
+/// Prove unique, complete file-backed instruction storage. Code may be
+/// writable, execute-only or contain fixups; this establishes neither
+/// immutability nor a callable identity, ABI or instruction semantics.
+bool isFileBackedCodeImageRange(const BinaryImage &Image, va_t Address,
+                                uint32_t Size);
+
 /// Read immutable PE32 instruction storage while admitting only HIGHLOW
 /// relocations at the supplied four-byte absolute operands. The consumer must
 /// decode and authenticate every operand; this proves storage and relocation

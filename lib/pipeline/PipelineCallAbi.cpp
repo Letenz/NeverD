@@ -267,7 +267,8 @@ public:
   bool init() { return Dec.init(Img); }
   /// Whether \p Target is a callee the read takes: a function of this image.
   bool reads(va_t Target) const {
-    return !Img.findImportAt(Target) && !Img.isImportStubAt(Target) &&
+    return Img.isFunctionEntryCandidateAt(Target) &&
+           !Img.findImportAt(Target) && !Img.isImportStubAt(Target) &&
            (Entries->count(Target) || Img.hasKnownFunctionEntryAt(Target)) &&
            Img.hasExecutableCodeOwnerAt(Target);
   }
