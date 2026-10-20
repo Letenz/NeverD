@@ -447,7 +447,9 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   std::vector<CallPlan> Calls;
   std::vector<x86_registration::SEHNestedFinallyCall> NestedFinallyCalls;
   std::vector<llvm::Instruction *> DeadCallResults = JumpPlan->DiscardedResults;
-  for (const auto &[Call, Address] : CallSiteAddrs) {
+  // Lowering names what it creates for the calls in this order.
+  for (const auto &[Call, Address] :
+       med_llvm_eh::sourceCallsInFunctionOrder(Parent, CallSiteAddrs)) {
     if (CookieCheckCalls.count(const_cast<llvm::CallInst *>(Call)))
       continue;
     auto *CallBlock = const_cast<llvm::BasicBlock *>(Call->getParent());
