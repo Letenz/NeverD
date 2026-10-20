@@ -1938,6 +1938,11 @@ target_include_directories(NeverDLLVMImportVeneerBoundaryTests PRIVATE
   ${LLVM_INCLUDE_DIRS}
 )
 
+add_neverd_unittest(NeverDRelocatedLiteralTests
+  format/RelocatedLiteralTests.cpp
+  LINK_COMPONENTS Loader BackendLLVM LibC Lift
+)
+
 # Pins Mach-O bind/rebase pointer provenance and its LLVM relocation boundary
 # without relinking the full lift suite during local RED/GREEN iterations.
 add_neverd_unittest(NeverDMachOPointerRelocationBoundaryTests
