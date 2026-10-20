@@ -930,8 +930,11 @@ struct BinaryImage {
   /// owner retained by the loader.  Code addresses must lie strictly inside
   /// their owner; data addresses may name the one-past value used by C/C++
   /// address arithmetic.  Numeric adjacency is not ownership: a target equal
-  /// to the next section's base remains one-past the recorded owner.
-  bool relocatedTargetBelongsToOwner(va_t TargetVA, va_t OwnerVA) const {
+  /// to the next section's base remains one-past the recorded owner.  The
+  /// optional index serves the executable-owner queries, with the same rules.
+  bool relocatedTargetBelongsToOwner(
+      va_t TargetVA, va_t OwnerVA,
+      const ExecutableCodeOwnerIndex *Index = nullptr) const {
     if (OwnerVA == InvalidVA)
       return false;
     for (const Section &Sec : Sections) {
@@ -939,20 +942,22 @@ struct BinaryImage {
           Sec.Size > InvalidVA - Sec.VA)
         continue;
       const va_t End = Sec.VA + Sec.Size;
-      const bool OwnerIsCode = hasExecutableCodeOwnerAt(OwnerVA);
+      const bool OwnerIsCode = hasExecutableCodeOwnerAt(OwnerVA, Index);
       return TargetVA >= Sec.VA &&
-             (OwnerIsCode ? TargetVA < End && hasExecutableCodeOwnerAt(TargetVA)
-                          : TargetVA <= End);
+             (OwnerIsCode
+                  ? TargetVA < End && hasExecutableCodeOwnerAt(TargetVA, Index)
+                  : TargetVA <= End);
     }
     for (const Segment &Seg : Segments) {
       if (!Seg.isReadable() || Seg.VA != OwnerVA ||
           Seg.Size > InvalidVA - Seg.VA)
         continue;
       const va_t End = Seg.VA + Seg.Size;
-      const bool OwnerIsCode = hasExecutableCodeOwnerAt(OwnerVA);
+      const bool OwnerIsCode = hasExecutableCodeOwnerAt(OwnerVA, Index);
       return TargetVA >= Seg.VA &&
-             (OwnerIsCode ? TargetVA < End && hasExecutableCodeOwnerAt(TargetVA)
-                          : TargetVA <= End);
+             (OwnerIsCode
+                  ? TargetVA < End && hasExecutableCodeOwnerAt(TargetVA, Index)
+                  : TargetVA <= End);
     }
     return false;
   }
@@ -1593,19 +1598,26 @@ struct BinaryImage {
   /// `call` to `_CxxThrowException`'s `jmp [rip+IAT]` still has to name
   /// the import.
   const Import *decodeImportThunkAt(va_t Addr) const;
+  /// Whether decodeImportThunkAt reads veneers of this architecture.
+  bool decodesImportThunks() const {
+    return Arch == neverd::Arch::X64 || Arch == neverd::Arch::X86;
+  }
 
   /// Find the import owned by an exact executable veneer registration.  This
   /// deliberately excludes coarse stub ranges and legacy IAT spellings: code
   /// that needs a symbolic callable identity must not splice those independent
   /// forms of evidence together.
   const Import *findImportStubAt(va_t Addr) const {
-    if (!isFunctionEntryCandidateAt(Addr))
+    const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
+    const auto It = ImportStubIndices.find(Normalized);
+    const bool Registered =
+        It != ImportStubIndices.end() && It->second < Imports.size();
+    // Where the architecture decodes no veneer, only a registered one can
+    // answer; the costlier entry question waits until one may.
+    if ((!Registered && !decodesImportThunks()) ||
+        !isFunctionEntryCandidateAt(Addr))
       return nullptr;
-    Addr = normalizeCodeAddress(Addr, Arch, Mode);
-    auto It = ImportStubIndices.find(Addr);
-    if (It != ImportStubIndices.end() && It->second < Imports.size())
-      return &Imports[It->second];
-    return decodeImportThunkAt(Addr);
+    return Registered ? &Imports[It->second] : decodeImportThunkAt(Normalized);
   }
 
   /// Find an import by its format-native IAT address or an exact executable
