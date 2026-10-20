@@ -2076,7 +2076,8 @@ private:
   bool tryRelativeTable(const BinaryImage &Img, const InsnRecord &Rec,
                         JumpTableInfo &Info);
   bool tryCrossInstrRelativeTable(const BinaryImage &Img, const InsnRecord &Rec,
-                                  JumpTableInfo &Info);
+                                  JumpTableInfo &Info,
+                                  size_t *CandidateEvidenceBudget);
   // Detect a constant-base absolute code-pointer table (`jmp *tab(,idx,W)`, the
   // non-PIC computed-goto / dense-switch shape) whose table load is decoupled
   // from the indirect branch by an -O0 spill/reload relay — the loaded target
@@ -2206,7 +2207,9 @@ private:
       va_t &TableAddr, uint64_t &IndexReg, uint32_t &Scale,
       NdVar *IndexValue = nullptr, va_t *IndexUseAddr = nullptr,
       int *IndexUseSeq = nullptr, std::function<bool(size_t)> ConsumeWork = {},
-      JumpTableDisplacedAddressRole *Displaced = nullptr) const;
+      JumpTableDisplacedAddressRole *Displaced = nullptr,
+      size_t *CandidateEvidenceBudget = nullptr,
+      bool *BaseAnalysisComplete = nullptr) const;
   /// Fold a register to a loader-mapped address.  Callers may explicitly admit
   /// an unmapped scalar candidate, while the narrower COFF exception admits
   /// only the exact PE image base.  Both exceptions still require
@@ -2424,6 +2427,16 @@ private:
                                    int UseSeq, const JumpTableInfo &Info,
                                    bool AllowZeroExtension = false,
                                    bool AllowSignExtension = false) const;
+  /// Prove a linked x64 PE image-base address at this exact operand use.
+  /// False is a completed mismatch (or another format); nullopt is incomplete
+  /// and must not grant a cheaper fallback or a fresh evidence allowance.
+  /// The loader proposes the expected address; the shared CFG value resolver
+  /// owns every reaching definition and its provenance. No proof survives a
+  /// changed graph merely because the expected numeric address is unchanged.
+  std::optional<bool>
+  queryPEImageBaseAtUse(const BinaryImage &Img,
+                        const JumpTableValueOccurrence &Use,
+                        size_t *CandidateEvidenceBudget) const;
   /// UseGroupContext=false only for final joint-domain replay on one frozen
   /// owner graph with every member's exact certified edge set.
   std::vector<bool> tableValuesMatchAtUses(

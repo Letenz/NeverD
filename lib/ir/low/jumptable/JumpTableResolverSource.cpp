@@ -329,7 +329,8 @@ static bool lastWriteReloadsFrameCell(const std::vector<LowOp> &Ops, int Before,
 
 bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
                                             const InsnRecord &Rec,
-                                            JumpTableInfo &Info) {
+                                            JumpTableInfo &Info,
+                                            size_t *CandidateEvidenceBudget) {
   // A memory-indirect jump (`jmp *(base,idx,8)`, the computed-goto / threaded
   // dispatch shape) lifts to a LOAD feeding an INDIR_BR whose input is a
   // *temp*; a register-indirect jump (`jmp *rax`) feeds a register.  The table
@@ -758,11 +759,25 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
       // than dispatching on the now-stale index->target map.
       Info.MutatedUnsafe = StackTableMutated;
     } else {
-      std::optional<uint64_t> RelBaseOpt =
-          foldRegConstant(Img, Rec, BaseReg, FoldAt, {},
-                          /*RequireMappedValue=*/true,
-                          /*AllowUnmappedCOFFImageBase=*/
-                          Disp != 0 && Img.isCOFF());
+      // A PE RVA table has one loader-owned base candidate, independent of
+      // nearby block layout. Authenticate the actual operand before choosing
+      // it, including when a lexical fold proposes a different mapped value.
+      std::optional<uint64_t> RelBaseOpt;
+      if (Disp != 0 && LoadWidth == 4 && SawZext && !SawSext && !BaseIsFrame) {
+        const auto ImageBase = queryPEImageBaseAtUse(Img, FrameRuntimeBase.Use,
+                                                     CandidateEvidenceBudget);
+        if (!ImageBase) {
+          Info.IncompleteGuardDomain = true;
+          return false;
+        }
+        if (*ImageBase)
+          RelBaseOpt = Img.Base;
+      }
+      if (!RelBaseOpt)
+        RelBaseOpt = foldRegConstant(Img, Rec, BaseReg, FoldAt, {},
+                                     /*RequireMappedValue=*/true,
+                                     /*AllowUnmappedCOFFImageBase=*/
+                                     Disp != 0 && Img.isCOFF());
       // Clang -O0 spills the GOT register and reloads it for the dispatch,
       // which no block-local fold follows.  In a linked i386 image, propose
       // the GOT address the image records; the displaced-base role must still
@@ -1255,6 +1270,18 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
       };
       auto traceConstAnchor = [&](NdVar V,
                                   int From) -> std::optional<uint64_t> {
+        if (FoldedTableBase == Img.Base && Info.EntrySize == 4 && SawZext &&
+            !SawSext && Info.EntryScale == 1 && (V.isReg() || V.isTemp())) {
+          const auto ImageBase = queryPEImageBaseAtUse(
+              Img, {V, BlockOps[AddD].Addr, BlockOps[AddD].Seq, false},
+              CandidateEvidenceBudget);
+          if (!ImageBase) {
+            Info.IncompleteGuardDomain = true;
+            return std::nullopt;
+          }
+          if (*ImageBase)
+            return Img.Base;
+        }
         const std::optional<bool> LoadFree = isLoadFreeAnchor(V, From);
         // A Win64 switch can keep the image base it located the table with in
         // a register set before an earlier dispatch, so the anchor has no
@@ -1304,6 +1331,8 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
       for (int W = 0; W < 2; ++W) {
         const NdVar &Input = BlockOps[AddD].Inputs[W];
         auto Anchor = traceConstAnchor(Input, AddD - 1);
+        if (Info.IncompleteGuardDomain)
+          return false;
         // Linked i386 PIC code adds each entry to the GOT register it read
         // the table through.  Clang computes that register from the return
         // address its call/pop pushed, which the load-free walk rejects but

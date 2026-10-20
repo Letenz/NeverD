@@ -2596,6 +2596,15 @@ Exact guard-occurrence queries use the expanded CFG value-reconstruction depth
 limit. Guard syntax collection and materialization keep their separate, smaller
 expression limit. This lets a shallow guard cross a longer predecessor graph
 without treating depth exhaustion as a completed proof or skipping replay.
+Linked x64 PE RVA tables query the loader's image base at each exact address
+operand through that same all-path value resolver. The candidate does not
+depend on finding a nearby lexical LEA, and a different value folded from an
+unrelated block cannot shadow it. Single-level LOADs, both levels of compacted
+tables and target anchors share this query. A completed mismatch retains the
+ordinary relative-base path; an incomplete query stops the candidate and
+requests complete-graph replay. Every query consumes the enclosing candidate
+and stage evidence, preserves address provenance and replays after CFG growth.
+It grants no table storage, selector domain, target or SEH frame authority.
 A failed optional consumer audit grants no relocation-root suppression. With
 its shared evidence budget intact, the resolver retains every root and replays
 the mandatory selector, address and target proofs under that stronger context.

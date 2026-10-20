@@ -1271,6 +1271,35 @@ struct ResolverGraphCacheTestAccess {
       B.BlockStarts.insert(nodeAddress(I));
     }
   }
+
+  static void seedPEBase(CFGBuilder &B, const BinaryImage &Image) {
+    seed(B, Image);
+    for (auto &[Address, Record] : B.Insns) {
+      (void)Address;
+      for (auto &Op : Record.Ops) {
+        if (Op.Output.isTemp())
+          Op.Output = NdVar::reg(0, 8);
+        for (unsigned I = 0; I < Op.NumInputs; ++I)
+          if (Op.Inputs[I].isTemp())
+            Op.Inputs[I] = NdVar::reg(0, 8);
+      }
+    }
+    B.Insns.at(0x100).Ops.front().Inputs[0] = NdVar::address(Image.Base, 8);
+  }
+  static std::optional<bool> peBase(CFGBuilder &B, const BinaryImage &Image,
+                                    size_t &Remaining) {
+    return B.queryPEImageBaseAtUse(Image, {NdVar::reg(0, 8), 0x103, 0, false},
+                                   &Remaining);
+  }
+  static void setPEBaseContext(CFGBuilder &B, bool Complete) {
+    B.JumpTableProofContextComplete = Complete;
+  }
+  static void changePEBase(CFGBuilder &B, NdVar Value) {
+    B.Insns.at(0x100).Ops.front().Inputs[0] = Value;
+  }
+  static void addPEBaseRoot(CFGBuilder &B) {
+    B.PersistentCFGRoots.insert(0x102);
+  }
 };
 
 } // namespace neverd::detail
@@ -1287,6 +1316,49 @@ BinaryImage image() {
 void expectColdAnswer(CFGBuilder &B, const Access::Answer &Warm) {
   Access::clear(B);
   EXPECT_EQ(Access::query(B), Warm);
+}
+
+TEST(ResolverPEImageBase, SharedBudgetAndIncompleteContextCannotGrantABase) {
+  auto Image = image();
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::COFF;
+  Image.Base = 0x140000000;
+  auto Run = [&](size_t Budget, bool Complete) {
+    CFGBuilder B;
+    Access::seedPEBase(B, Image);
+    Access::setPEBaseContext(B, Complete);
+    const auto Result = Access::peBase(B, Image, Budget);
+    return std::pair{Result, Budget};
+  };
+  const auto Full = Run(1u << 20, true);
+  ASSERT_EQ(Full.first, std::optional<bool>(true));
+  const size_t Used = (1u << 20) - Full.second;
+  EXPECT_EQ(Run(Used, true).first, std::optional<bool>(true));
+  EXPECT_EQ(Run(Used - 1, true).first, std::nullopt);
+  EXPECT_EQ(Run(0, true).first, std::nullopt);
+  EXPECT_EQ(Run(1u << 20, false).first, std::nullopt);
+}
+
+TEST(ResolverPEImageBase, ChangedDefinitionsAndRootsInvalidateACompletedQuery) {
+  auto Image = image();
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::COFF;
+  Image.Base = 0x140000000;
+  CFGBuilder B;
+  Access::seedPEBase(B, Image);
+  auto Query = [&] {
+    size_t Budget = 1u << 20;
+    return Access::peBase(B, Image, Budget);
+  };
+  ASSERT_EQ(Query(), std::optional<bool>(true));
+  Access::changePEBase(B, NdVar::scalar(Image.Base, 8));
+  EXPECT_EQ(Query(), std::optional<bool>(false));
+  Access::changePEBase(B, NdVar::address(Image.Base + 8, 8));
+  EXPECT_EQ(Query(), std::optional<bool>(false));
+  Access::changePEBase(B, NdVar::address(Image.Base, 8));
+  ASSERT_EQ(Query(), std::optional<bool>(true));
+  Access::addPEBaseRoot(B);
+  EXPECT_NE(Query(), std::optional<bool>(true));
 }
 
 TEST(ResolverLoadAddress, OpaqueLoadIdentityDoesNotRequireItsAddressValue) {

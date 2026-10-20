@@ -4951,6 +4951,38 @@ bool CFGBuilder::tableIndexMatchesValueAtUse(const NdVar &Candidate,
   return !Results.empty() && Results.front();
 }
 
+std::optional<bool>
+CFGBuilder::queryPEImageBaseAtUse(const BinaryImage &Img,
+                                  const JumpTableValueOccurrence &Use,
+                                  size_t *CandidateEvidenceBudget) const {
+  if (Img.IsRelocatable || !Img.isCOFF() || Img.Arch != Arch::X64 ||
+      Img.getPointerSize() != 8)
+    return false;
+  if (!CandidateEvidenceBudget || CurrentImg != &Img)
+    return std::nullopt;
+  // Prepay the query/alternative objects, their buffer and fixed field work.
+  // The shared query debits graph construction, value reconstruction and result
+  // storage from this same candidate/stage account.
+  if (!consumeResolverGraphWork(CandidateEvidenceBudget, 48))
+    return std::nullopt;
+  if (Use.DefinedAtPoint || Use.Addr == InvalidVA || Use.Seq < 0 ||
+      Use.Value.Size != 8 || (!Use.Value.isReg() && !Use.Value.isTemp()))
+    return false;
+  JumpTableValueQuery Query;
+  Query.Candidate = Use.Value;
+  Query.UseAddr = Use.Addr;
+  Query.UseSeq = Use.Seq;
+  Query.Alternatives = {{NdVar::address(Img.Base, 8), InvalidVA, -1, false}};
+  bool Complete = false;
+  const std::vector<bool> Matches = tableValuesMatchAtUses(
+      {Query}, &Complete, nullptr, InvalidVA, nullptr, CandidateEvidenceBudget,
+      limits::kMaxJumpTableRoleMatchEvidenceWork, nullptr, nullptr,
+      limits::kMaxJumpTableExpandedResolverDepth);
+  if (!Complete || Matches.size() != 1)
+    return std::nullopt;
+  return Matches.front();
+}
+
 std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     const std::vector<JumpTableValueQuery> &Queries, bool *AnalysisComplete,
     std::vector<bool> *QueryAnalysisComplete, va_t CandidateBranchOverride,
