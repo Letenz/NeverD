@@ -1041,16 +1041,18 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   // Recover a shared masked word before visiting its many independently
   // obfuscated uses. The proof is complete even for opaque arithmetic words;
   // the normal walk still simplifies their children and any remaining terms.
-  SolveReport WeightedRep;
-  const SymRef WalkRoot = solveWeightedMasks(Ctx, E, Opts, Budget, WeightedRep);
-  SymRef WeightedAlternative = WalkRoot;
+  SolveReport WholeRep;
+  SymRef WalkRoot = solveWeightedMasks(Ctx, E, Opts, Budget, WholeRep);
+  if (WalkRoot == E)
+    WalkRoot = solveExpandedQuadratic(Ctx, E, Opts, Budget, WholeRep);
+  SymRef WholeAlternative = WalkRoot;
   if (WalkRoot != E && !Budget.exhausted()) {
     // Preserve enclosing common scales before child readings can hide them
     // inside unrelated Boolean expressions.
     SolveReport Factored;
-    WeightedAlternative =
+    WholeAlternative =
         solveCoefficientFactors(Ctx, WalkRoot, Opts, Budget, Factored);
-    WeightedRep.BudgetExhausted |= Factored.BudgetExhausted;
+    WholeRep.BudgetExhausted |= Factored.BudgetExhausted;
   }
 
   // Walking children before parents means that by the time a node is reached,
@@ -1060,7 +1062,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   // expressions nest deeply enough that recursion is a real hazard.
   const std::vector<uint32_t> Order = reachableInOrder(Ctx, WalkRoot);
   llvm::DenseMap<uint32_t, SymRef> Solved;
-  bool Skipped = WeightedRep.BudgetExhausted;
+  bool Skipped = WholeRep.BudgetExhausted;
   size_t RefinementStorage = Opts.MaxTableBytes;
   SymKnownBits Known(Ctx);
   std::vector<std::pair<uint32_t, SymRef>> PendingRewrites;
@@ -1234,11 +1236,10 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   // A locally shorter child can make the composed spelling longer. Retain
   // the independently proved whole-root candidate as an alternative even
   // when subsequent search exhausts its allowance.
-  const bool KeptWeighted =
-      WalkRoot != E &&
-      readingScore(Ctx, WeightedAlternative) < readingScore(Ctx, Out);
-  if (KeptWeighted)
-    Out = WeightedAlternative;
+  const bool KeptWhole = WalkRoot != E && readingScore(Ctx, WholeAlternative) <
+                                              readingScore(Ctx, Out);
+  if (KeptWhole)
+    Out = WholeAlternative;
 
   // Every layer refused to grow and every layer was checked on its own, but
   // what the caller receives is the composition of all of them, and that is
@@ -1276,8 +1277,8 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   Result.SizeAfter = readingCost(Ctx, Out);
   Result.Changed = true;
   Result.Outcome = MBAOutcome::Rewritten;
-  Result.Evidence = AnySampled && !KeptWeighted ? MBAEvidence::Samples
-                                                : MBAEvidence::Derivation;
+  Result.Evidence =
+      AnySampled && !KeptWhole ? MBAEvidence::Samples : MBAEvidence::Derivation;
   return Result;
 }
 

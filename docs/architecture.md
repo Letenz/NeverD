@@ -1068,6 +1068,18 @@ words as interchangeable. All group and distribution proofs share the attempt's
 work and cumulative storage limits.
 The deep walk retains the factored whole-root proof as an alternative, so
 later local rewrites cannot discard a shorter result already established.
+Quadratic product recovery reads the minterm coefficient matrix directly.
+Diagonal entries identify the factors' intersection and fix the modular
+scale; off-diagonal entries partition the remaining minterms between the two
+factors. It checks every matrix entry, including absent edges and coefficients
+that wrap to zero, within shared work and storage limits. The independent
+polynomial difference verifier still authorizes the replacement. Higher-degree
+products retain the bounded factor search.
+An expanded quadratic root gets a bounded whole-region reading before the deep
+walk can spend its allowance on incomplete local pieces. A structural hint only
+selects that attempt; the same degree check, matrix reconstruction and polynomial
+proof must finish. Optional Boolean table searches preflight their full charge
+against the remaining shared work rather than consuming it on a refused query.
 The LLVM bridge admits compiler-created `or disjoint` only after independent
 literal-mask/OR/wrapping-add facts establish nonoverlap, then exposes that sum
 to the shared engine. The bounded check uses no flags or metadata as premises;

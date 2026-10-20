@@ -173,6 +173,104 @@ void forEachProductMatch(const HigherCoefficients &Higher, unsigned Degree,
 
 } // namespace
 
+std::optional<QuadraticProduct>
+recoverQuadraticProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
+                        uint32_t Width, WorkBudget &Budget, size_t MaxBytes) {
+  const auto Corners = cornerCount(NumAtoms);
+  // Three bitsets, the selected indices, container overhead and APInt scratch.
+  // Reserve before constructing any table, including for unlimited-work
+  // callers.
+  const size_t Words = Width ? (size_t(Width) - 1) / 64 + 1 : 0;
+  constexpr size_t Overhead = 256;
+  if (!Width || Higher.empty() || !Corners || MaxBytes < Overhead ||
+      Words > (MaxBytes - Overhead) / (4 * sizeof(uint64_t)))
+    return std::nullopt;
+  const size_t Scratch = Overhead + Words * 4 * sizeof(uint64_t);
+  if (*Corners > (MaxBytes - Scratch) / (2 * sizeof(MintermIndex) + 1) ||
+      !Budget.consume(*Corners))
+    return std::nullopt;
+
+  TruthTable Active = TruthTable::zero(NumAtoms);
+  for (const auto &[Key, Coeff] : Higher) {
+    if (!Budget.consume(2 + Words) || Key.size() != 2 || Key[0] > Key[1] ||
+        Key[1] >= *Corners || Coeff.getBitWidth() != Width || Coeff.isZero())
+      return std::nullopt;
+    Active.set(Key[0]);
+    Active.set(Key[1]);
+  }
+  const auto Selected = selectedMinterms(Active);
+  QuadraticProduct Result{
+      llvm::APInt(Width, 0),
+      {TruthTable::zero(NumAtoms), TruthTable::zero(NumAtoms)}};
+  auto &Left = Result.Factors[0];
+  auto &Right = Result.Factors[1];
+  std::optional<MintermIndex> Anchor;
+  for (MintermIndex M : Selected) {
+    if (!Budget.consume(1 + Words))
+      return std::nullopt;
+    if (auto It = Higher.find(Monomial{M, M}); It != Higher.end()) {
+      // A diagonal occurs exactly once iff both factors select this minterm.
+      // It fixes the scale even when twice that scale wraps to zero.
+      if (Result.Coefficient.isZero())
+        Result.Coefficient = It->second;
+      Left.set(M);
+      Right.set(M);
+    } else if (!Anchor) {
+      Anchor = M;
+    }
+  }
+  if (Result.Coefficient.isZero()) {
+    // With no diagonal the factors are disjoint; every nonzero off-diagonal
+    // coefficient is the scale. Pick in minterm order for stable work counts.
+    for (MintermIndex M : Selected) {
+      if (!Budget.consume(1 + Words))
+        return std::nullopt;
+      auto It = Higher.find(Monomial{Selected.front(), M});
+      if (It != Higher.end()) {
+        Result.Coefficient = It->second;
+        break;
+      }
+    }
+  }
+  if (Result.Coefficient.isZero())
+    return std::nullopt;
+  if (Anchor) {
+    // Every remaining minterm belongs to just one factor. Relative to one
+    // anchor, an edge means the other factor and no edge means the same one.
+    // Swapping the two factors is the only other possible assignment.
+    for (MintermIndex M : Selected) {
+      if (!Budget.consume())
+        return std::nullopt;
+      if (Left.at(M))
+        continue;
+      Monomial Edge{std::min(M, *Anchor), std::max(M, *Anchor)};
+      (Higher.count(Edge) ? Right : Left).set(M);
+    }
+  }
+
+  // Check the entire matrix, including absent edges and modular zeros.
+  // Matching existing edges alone could accept a disconnected or incomplete
+  // bipartite graph. This also rejects inconsistent scales and diagonals.
+  for (size_t I = 0; I != Selected.size(); ++I) {
+    const auto A = Selected[I];
+    for (size_t J = I; J != Selected.size(); ++J) {
+      if (!Budget.consume(1 + Words))
+        return std::nullopt;
+      const auto B = Selected[J];
+      unsigned Count = unsigned(Left.at(A) && Right.at(B));
+      if (I != J)
+        Count += unsigned(Left.at(B) && Right.at(A));
+      llvm::APInt Expected = Count == 2   ? Result.Coefficient.shl(1)
+                             : Count == 1 ? Result.Coefficient
+                                          : llvm::APInt(Width, 0);
+      auto It = Higher.find(Monomial{A, B});
+      if (It == Higher.end() ? !Expected.isZero() : It->second != Expected)
+        return std::nullopt;
+    }
+  }
+  return Result;
+}
+
 std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
                                       llvm::ArrayRef<uint32_t> AtomIds,
                                       llvm::ArrayRef<SymRef> Atoms,
@@ -250,27 +348,34 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
     // the remainder is the same term under every candidate.
     SymRef Best;
     SymReadability BestCost;
-    forEachProductMatch(
-        Part, Degree, NumAtoms, Width, MaxCandidates, Budget,
-        [&](const llvm::APInt &Coeff, llvm::ArrayRef<TruthTable> Match) {
-          llvm::SmallVector<SymRef, 8> Factors;
-          Factors.reserve(Match.size() + 1);
-          Factors.push_back(Ctx.mkConst(Coeff));
-          for (const TruthTable &Table : Match) {
-            std::optional<SymRef> Written =
-                synthesizeBitwise(Ctx, Table, Atoms, Synthesis);
-            if (!Written)
-              return true;
-            Factors.push_back(*Written);
-          }
-          SymRef Candidate = Ctx.mkMul(Factors);
-          const SymReadability Cost = readingScore(Ctx, Candidate);
-          if (!Best.isValid() || Cost < BestCost) {
-            Best = Candidate;
-            BestCost = Cost;
-          }
+    auto Consider = [&](const llvm::APInt &Coeff,
+                        llvm::ArrayRef<TruthTable> Match) {
+      llvm::SmallVector<SymRef, 8> Factors;
+      Factors.reserve(Match.size() + 1);
+      Factors.push_back(Ctx.mkConst(Coeff));
+      for (const TruthTable &Table : Match) {
+        std::optional<SymRef> Written =
+            synthesizeBitwise(Ctx, Table, Atoms, Synthesis);
+        if (!Written)
           return true;
-        });
+        Factors.push_back(*Written);
+      }
+      SymRef Candidate = Ctx.mkMul(Factors);
+      const SymReadability Cost = readingScore(Ctx, Candidate);
+      if (!Best.isValid() || Cost < BestCost) {
+        Best = Candidate;
+        BestCost = Cost;
+      }
+      return true;
+    };
+    if (Degree == 2) {
+      if (auto Product = recoverQuadraticProduct(Part, NumAtoms, Width, Budget,
+                                                 Opts.MaxTableBytes))
+        Consider(Product->Coefficient, Product->Factors);
+    } else {
+      forEachProductMatch(Part, Degree, NumAtoms, Width, MaxCandidates, Budget,
+                          Consider);
+    }
     // One unexplained degree means the whole reading is unexplained: dropping
     // it would return an expression missing a term rather than a shorter one.
     if (!Best.isValid())

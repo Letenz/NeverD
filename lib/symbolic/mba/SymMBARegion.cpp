@@ -614,6 +614,76 @@ SymRef solveIndependentTerms(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
 
 } // namespace
 
+SymRef solveExpandedQuadratic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                              WorkBudget &Budget, SolveReport &Rep) {
+  // An allocation-free frontier hint keeps ordinary linear regions on their
+  // existing path. It grants no equivalence: the full abstraction, degree
+  // check and independent polynomial proof below must all succeed.
+  auto Unscale = [&](SymRef R) {
+    return Ctx.op(R) == SymOp::Mul && Ctx.numOperands(R) == 2 &&
+                   Ctx.isConst(Ctx.operand(R, 0))
+               ? Ctx.operand(R, 1)
+               : R;
+  };
+  SymRef Sum = Unscale(E);
+  if (Ctx.op(Sum) != SymOp::Add || Ctx.numOperands(Sum) > 64 ||
+      Budget.exhausted())
+    return E;
+  unsigned Products = 0, Remaining = 128;
+  auto Inspect = [&](auto &&Self, SymRef R, unsigned Depth) -> void {
+    if (!Remaining || Products >= 2 || Depth > 2)
+      return;
+    --Remaining;
+    R = Unscale(R);
+    if (Ctx.op(R) == SymOp::Add && Ctx.numOperands(R) <= 64) {
+      for (SymRef Term : Ctx.operands(R))
+        Self(Self, Term, Depth + 1);
+      return;
+    }
+    if (Ctx.op(R) != SymOp::Mul)
+      return;
+    auto Factors = Ctx.operands(R);
+    if (Ctx.isConst(Factors.front()))
+      Factors = Factors.drop_front();
+    Products += Factors.size() == 2;
+  };
+  Inspect(Inspect, Sum, 0);
+  if (Products < 2)
+    return E;
+  if (!Budget.consume(Ctx.dagSize(E))) {
+    Rep.BudgetExhausted = true;
+    return E;
+  }
+  auto Region = readRegion(Ctx, E, Opts, true, Budget, Rep);
+  Rep.BudgetExhausted |= Budget.exhausted();
+  if (!Region)
+    return E;
+  auto Terms = splitIntoTerms(Ctx, Region->Abstract.Body);
+  if (!Terms || llvm::any_of(*Terms, [](const PolyTerm &T) {
+        return T.Factors.size() > 2;
+      }))
+    return E;
+  auto Form = solvePolynomial(Ctx, Region->Abstract.Body, Region->AtomIds,
+                              Region->Atoms, Opts, Budget);
+  if (!Form ||
+      !provePolynomialIdentity(Ctx, Region->Abstract.Body, *Form,
+                               resolveLimits(Opts).MaxAtoms, Budget,
+                               Opts.MaxTableBytes) ||
+      !Budget.consume(Ctx.dagSize(*Form))) {
+    Rep.BudgetExhausted |= Budget.exhausted();
+    return E;
+  }
+  SymRef Result = Region->Abstract.Hidden.empty()
+                      ? *Form
+                      : Ctx.substitute(*Form, Region->Abstract.Hidden);
+  if (readingScore(Ctx, Result) >= readingScore(Ctx, E))
+    return E;
+  Rep.NumAtoms = Region->Atoms.size();
+  Rep.Outcome = MBAOutcome::Rewritten;
+  Rep.Evidence = MBAEvidence::Derivation;
+  return Result;
+}
+
 SymRef solveOneRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                       WorkBudget &Budget, SolveReport &Rep) {
   SolveReport ArithmeticRep;
