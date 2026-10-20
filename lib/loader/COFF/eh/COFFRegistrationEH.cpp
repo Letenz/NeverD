@@ -288,10 +288,10 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
       Sites.push_back(std::move(Caller));
   if (Sites.empty())
     return;
-  std::vector<va_t> PhysicalEntries;
+  std::vector<registration_detail::PhysicalRegistrationEntry> PhysicalEntries;
   for (const auto &Site : Sites)
     if (Site.HasPhysicalEntry)
-      PhysicalEntries.push_back(Site.Range.Begin);
+      PhysicalEntries.push_back({Site.Range.Begin, Site.ReturningEntryCall});
   const FunctionRangeMap BodyFunctions(Img, PhysicalEntries);
 
   // Every table address the image installs, so each entry array can be capped

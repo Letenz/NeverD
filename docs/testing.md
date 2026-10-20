@@ -6010,6 +6010,9 @@ cases without granting fixed EBP slots or a verified native entry.
 COFF, ELF and Mach-O across x86, x64, ARM32 and ARM64, including existing
 symbols, relocation-slot order and later confirmation. Run these with
 `NeverDImageAnalysisBoundaryTests` and the registration suites.
+`CxxSharedEntryOwnsItsProvenReturningFallthrough` checks short/wide physical
+entry calls with exact instruction-boundary guesses, stated/exported roots,
+ordinary calls, later calls to the same helper and an earlier return.
 `check_windows_registration_realigned_rewrite.py` separately emits aligned
 value/reference, unbound value/reference and catch-all parents. Independent
 assembly fixtures use the canonical direct MSVC EBP frame for the unbound forms.

@@ -14,7 +14,8 @@
 
 namespace neverd::coff_loader::registration_detail {
 bool disprovesCallbackBoundary(const BinaryImage &Img, va_t Entry,
-                               va_t Boundary, size_t &Work) {
+                               va_t Boundary, size_t &Work,
+                               std::optional<va_t> ReturningEntryCall) {
   if (Entry >= Boundary || Work >= limits::kMaxRegistrationEHStateWork)
     return false;
   const auto *Segment = Img.getSegmentFor(Entry);
@@ -91,7 +92,12 @@ bool disprovesCallbackBoundary(const BinaryImage &Img, va_t Entry,
         break;
       if (Address > Boundary)
         Disproved = true;
-      CrossedControl |= Call || Jump;
+      // Only the immutable entry prefix's checked physical helper supplies
+      // this return edge. Ordinary calls, including later calls to that same
+      // helper, may leave independent code after a nonreturning invocation.
+      CrossedControl |=
+          Jump ||
+          (Call && (!ReturningEntryCall || Begin != *ReturningEntryCall));
       if (Address == Boundary && !CrossedControl)
         Disproved = true;
       if (Jump &&

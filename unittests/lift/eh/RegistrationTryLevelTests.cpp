@@ -2557,6 +2557,52 @@ TEST(RegistrationTryLevel, CxxSharedEntryDisprovesUntypedDataPointerBoundary) {
     }
 }
 
+TEST(RegistrationTryLevel, CxxSharedEntryOwnsItsProvenReturningFallthrough) {
+  for (bool Wide : {false, true})
+    for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+      SCOPED_TRACE(::testing::Message() << Wide << ' ' << Mutation);
+      auto [Image, Call] = makeCxxSharedEpilogueImage(Wide, 0, 32);
+      const va_t Body = Call - 19, Boundary = Body + 8;
+      auto Guess = Symbol::makeFunc(Boundary);
+      Guess.IsBoundaryGuess = true;
+      if (Mutation == 1) {
+        Guess.Origin = NameOrigin::Stated;
+        Guess.Name = "stated_entry";
+      }
+      Image.Symbols.push_back(Guess);
+      if (Mutation == 2) {
+        Export Other;
+        Other.Addr = Boundary;
+        Image.Exports.push_back(Other);
+      }
+      auto &Text = Image.Segments.front().Data;
+      if (Mutation == 3 || Mutation == 4) {
+        // Even another call to the same helper does not inherit the exact
+        // entry prefix's returning-call evidence.
+        Text[Body - kText] = 0xe8;
+        const va_t Target = kText + (Mutation == 3 ? 0x280 : 0x100);
+        writeLE<uint32_t>(Text.data() + Body - kText + 1,
+                          uint32_t(Target - Body - 5));
+        std::fill(Text.begin() + Body - kText + 5,
+                  Text.begin() + Boundary - kText, 0x90);
+      }
+      if (Mutation == 5)
+        Text[Body - kText] = 0xc3; // An earlier return owns no fallthrough.
+      Image.ExceptionMetadata = {};
+      coff_loader::parseX86RegistrationExceptions(Image);
+      const auto *EH = Image.ExceptionMetadata.findFunction(kText + 0x20);
+      ASSERT_TRUE(EH);
+      EXPECT_EQ(EH->CodeRange.End, Mutation == 0   ? Call + 6
+                                   : Mutation == 5 ? Body + 1
+                                                   : Boundary);
+      if (Mutation == 0) {
+        const auto Function = liftEntry(Image, kText + 0x20);
+        ASSERT_TRUE(Function.RegistrationStates);
+        EXPECT_TRUE(Function.RegistrationStates->RegistrationLifetimeComplete);
+      }
+    }
+}
+
 BinaryImage makeCxxEntryAlignedImage(unsigned Alignment, uint32_t Allocation,
                                      bool Wide) {
   auto Image = makeCxxEAXStateImage(false, 0);

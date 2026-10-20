@@ -1898,6 +1898,10 @@ it independently of scan order. A complete stack-aligned C++ prefix establishes
 the installing function's start only: it supplies no fixed EBP coordinates or
 native frame receipt. Cleanup-only C++ bodies can end at their closed return
 graph without absorbing the following function.
+The exact checked shared entry helper supplies its returning fallthrough to
+that ownership graph. Other calls, including later calls to the same target,
+retain the conservative control boundary; a function name alone proves no
+return edge.
 `getCheckedX86CxxEpilogueCall` authenticates the shared exit's immutable caller,
 complete restore body and optional GS-checking wrapper. `RegistrationCxxState` binds those
 current-image descriptions in the CFG layer; the state solver itself keeps no

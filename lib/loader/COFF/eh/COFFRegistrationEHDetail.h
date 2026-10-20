@@ -48,11 +48,14 @@ bool isExecutableAddress(const BinaryImage &Img, va_t Address);
 /// space, so a corrupt operand cannot fabricate an in-image target.
 std::optional<va_t> addSignedOffset(va_t Base, int64_t Displacement);
 
-/// Disprove a padding-derived boundary using decoded callback instructions.
-/// After a control transfer, only an instruction-interior guess can be removed.
-/// Independent entries, ambiguous decoding and exhausted budgets retain it.
+/// Disprove a heuristic boundary using decoded callback instructions.
+/// A separately checked physical entry call returns to its own fallthrough.
+/// After other control transfers, only instruction-interior guesses can go.
+/// Independent entries, ambiguous decoding and exhausted budgets retain them.
 bool disprovesCallbackBoundary(const BinaryImage &Img, va_t Entry,
-                               va_t Boundary, size_t &Work);
+                               va_t Boundary, size_t &Work,
+                               std::optional<va_t> ReturningEntryCall =
+                                   std::nullopt);
 
 /// Extend an exact padding guess only through a closed, unambiguous callback
 /// graph with a prior ordinary branch and no independent callee in the range.
@@ -75,22 +78,30 @@ std::optional<T> readScalar(const BinaryImage &Img, va_t Address) {
   return readLE<T>(P);
 }
 
+struct PhysicalRegistrationEntry {
+  va_t Address = 0;
+  std::optional<va_t> ReturningCall;
+};
+
 /// Half-open code ranges of every discovered function, sorted by start.  A
 /// recovered registration record belongs to whichever function contains its
 /// install site; without that attribution the record would have no code range
 /// and could not take part in CFG or structuring.
 class FunctionRangeMap {
 public:
-  explicit FunctionRangeMap(const BinaryImage &Img,
-                            const std::vector<va_t> &PhysicalEntries = {})
+  explicit FunctionRangeMap(
+      const BinaryImage &Img,
+      const std::vector<PhysicalRegistrationEntry> &PhysicalEntries = {})
       : Guesses(Img.boundaryGuessFunctionStarts()) {
     // These entries come from complete physical registration prefixes, not
     // from a range that merely contains a chain-head read. They constrain
     // body/callback ownership without promoting an ordinary callable symbol.
-    for (va_t Entry : PhysicalEntries)
-      if (isExecutableAddress(Img, Entry)) {
-        Starts.push_back(Entry);
-        Guesses.erase(Entry);
+    for (const auto &Entry : PhysicalEntries)
+      if (isExecutableAddress(Img, Entry.Address)) {
+        Starts.push_back(Entry.Address);
+        Guesses.erase(Entry.Address);
+        if (Entry.ReturningCall)
+          ReturningEntryCalls.emplace(Entry.Address, *Entry.ReturningCall);
       }
     // PE export entries and the image entry are format-owned boundaries even
     // when no COFF symbol table or preceding padding made them discoverable.
@@ -146,9 +157,14 @@ public:
     // A padding guess cannot truncate an authenticated entry's instructions.
     // Exact entries after control transfers, ambiguous decoding and every
     // stated symbol, export and other confirmed boundary remain independent.
+    const auto Call = ReturningEntryCalls.find(Address);
+    const std::optional<va_t> ReturningCall =
+        Call != ReturningEntryCalls.end() ? std::optional<va_t>(Call->second)
+                                          : std::nullopt;
     if (AuthenticatedEntry)
       while (It != Starts.end() && Guesses.count(*It) &&
-             disprovesCallbackBoundary(Img, Address, *It, CallbackWork))
+             disprovesCallbackBoundary(Img, Address, *It, CallbackWork,
+                                       ReturningCall))
         ++It;
     const Segment *Seg = Img.getSegmentFor(Begin);
     if (!Seg || !Seg->isExecutable())
@@ -194,6 +210,7 @@ public:
 private:
   std::vector<va_t> Starts;
   std::set<va_t> Guesses;
+  std::map<va_t, va_t> ReturningEntryCalls;
   mutable size_t CallbackWork = 0;
 };
 
@@ -292,6 +309,7 @@ struct InstallSite {
   HandlerIdentity Identity;
   ExceptionAddressRange Range;
   bool HasPhysicalEntry = false;
+  std::optional<va_t> ReturningEntryCall;
 };
 
 /// Observe the complete MSVC entry-aligned C++ installation prefix. Its
