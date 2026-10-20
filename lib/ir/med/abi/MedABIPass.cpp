@@ -19,6 +19,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/IndirectCallSlot.h"
+#include "neverd/ir/med/MedCallClobber.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/ir/med/MedReturnArguments.h"
@@ -410,27 +411,15 @@ bool promoteFloatCallResult(MedFunc &Func, MedBlock &Blk, size_t OI,
   Op.Output = ClobberIt->Value;
   Func.CallClobbers.erase(ClobberIt);
   // The integer return registers are caller-saved scratch after a
-  // floating-point call.  A remaining reader of either half now observes that
-  // clobber instead of a fabricated result.
+  // floating-point call.  A remaining reader of the integer result, or of
+  // either half, now observes that clobber instead of a fabricated result.
+  if (HasIntegerResult)
+    keepReplacedCallOutput(Func, Op, ExistingOutput);
   if (HasSyntheticWideResult) {
-    auto isRead = [&](const MedVar &V) {
-      for (const MedBlock &Other : Func.Blocks) {
-        for (const MedOp &User : Other.Ops)
-          for (uint8_t I = 0; I < User.NumInputs; ++I)
-            if (User.Inputs[I] == V)
-              return true;
-        for (const PhiNode &Phi : Other.Phis)
-          for (const auto &[Pred, Arg] : Phi.Args)
-            if (Arg == V)
-              return true;
-      }
-      return false;
-    };
     const auto First = Blk.Ops.begin() + OI + 1;
     const auto Last = First + SyntheticWideHalves;
     for (auto Half = First; Half != Last; ++Half)
-      if (isRead(Half->Output))
-        Func.CallClobbers.push_back({Half->Output, Op.CallSiteId});
+      keepReplacedCallOutput(Func, Op, Half->Output);
     Blk.Ops.erase(First, Last);
   }
   return true;

@@ -1666,6 +1666,31 @@ TEST(SysVCallContract, ATailCallLeavesNoRegisterOfTheCallersOwn) {
       << Source;
 }
 
+TEST(SysVCallContract, AByteSetAfterAFloatCallLeavesNoUnknownBytes) {
+  // later(a, b) returns `a && difftime(a, b) >= 0` the way GCC returns a
+  // bool: EAX is zero, or `setbe al` over what difftime, which returns a
+  // double, left in RAX.  later returns the one byte both paths define.
+  constexpr va_t Later = Text, DifftimeStub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> LaterCode = {0x31, 0xC0,       // xor eax, eax
+                                    0x48, 0x85, 0xFF, // test rdi, rdi
+                                    0x74, 0x10,       // je done
+                                    0xE8};            // call difftime
+  for (uint8_t B : rel32(Later + 12, DifftimeStub))
+    LaterCode.push_back(B);
+  for (uint8_t B : {0x66, 0x0F, 0xEF, 0xC9, // pxor xmm1, xmm1
+                    0x66, 0x0F, 0x2F, 0xC8, // comisd xmm1, xmm0
+                    0x0F, 0x96, 0xC0,       // setbe al
+                    0xC3})                  // done: ret
+    LaterCode.push_back(B);
+  put(Code, Later, LaterCode);
+  const BinaryImage Img =
+      makeImportImage(Code, {{Later, "later"}}, {{DifftimeStub, "difftime"}});
+  const std::string Source = liftEntries(Img, {Later, DifftimeStub});
+  EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("int8_t later("), std::string::npos) << Source;
+}
+
 TEST(SysVCallContract, AnAlignmentPushIsNoStackArgument) {
   // die() calls the variadic panic("out of memory") and never returns, so
   // it aligns the stack for the call with a push of RAX (Clang) or a push,
