@@ -147,6 +147,11 @@ llvm::Error
 verifyARMFunctionModeHints(const BinaryImage &Img,
                            const std::map<va_t, InstructionMode> &Hints);
 
+/// Correct relocated pointers to literal data inside executable sections when
+/// every decoded path through the literal region traps, and no code metadata
+/// owns the target. Unknown targets retain their original classification.
+void recordRelocatedLiteralTargets(BinaryImage &Img);
+
 /// Run all heuristic function discovery passes and emit the debug summary.
 /// Called at the end of every format-specific loader.
 //
@@ -157,6 +162,7 @@ verifyARMFunctionModeHints(const BinaryImage &Img,
 #define DEBUG_TYPE "neverd-func-discovery"
 inline void runPostLoadDiscovery(BinaryImage &Img,
                                  [[maybe_unused]] llvm::StringRef DebugTag) {
+  recordRelocatedLiteralTargets(Img);
   // Format-stated entries come before every heuristic scan.
   registerLoaderRunFunctions(Img);
   // A `--func` PE load already has `.pdata` ranges and the requested body.
