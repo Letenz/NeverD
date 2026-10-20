@@ -95,8 +95,7 @@ classpath are not supplied by these observations.
 The lifecycle phase is fixed per workload; modeled mutable fields retain guest writes. It does not execute
 `bindApplication`, custom Application constructors, framework class initializers,
 split/delegate-last/custom class loaders, security-manager policies, framework
-callbacks, a Java scheduler or `Class.forName`. DEX invoke instructions cannot
-yet suspend into native methods. JNI calls to registered native declarations
+callbacks, a Java scheduler or `Class.forName`. DEX invoke instructions and JNI calls to registered native declarations
 use the bounded guest-call contract below; registration alone executes nothing. The
 model does not give unmodeled framework fields or methods inferred values.
 Native evidence obtained under a snapshot remains conditional on that input.
@@ -250,3 +249,62 @@ Behavior references are API 28 [File](https://android.googlesource.com/platform/
 [UnixFileSystem](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/io/UnixFileSystem.java)
 and [Bionic getcwd](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/bionic/getcwd.cpp).
 Implementations and synthetic callers are independently written.
+
+## Java library loading and DEX/native continuation
+
+`android.java_library` explicitly binds the currently mapped, initialized ELF
+image to one logical `System.loadLibrary` name in the supplied DEX namespace:
+
+```json
+{"android":{"jni":true,"initialize":true,"java_library":"example",
+            "dex_images":["<explicit DEX bytes>"]}}
+```
+
+The name is a nonempty ASCII identifier of at most 255 bytes, using letters,
+digits, `_`, `-` and `.`. The input requires JNI and ELF initialization. It is
+an analysis binding, not evidence of an APK, a native search path, or the
+actual application class loader. No host file or shared library is opened.
+The existing `libraries` option remains the catalogue of modeled system APIs;
+it cannot supply an original `JNI_OnLoad` body.
+
+An actual DEX call to `System.loadLibrary(String)` suspends its Java activation.
+For the explicitly bound name, NeverD calls the ELF's original exported
+`JNI_OnLoad(JavaVM *, null)` after its ELF initializers. The callback uses the
+existing guest scheduler, instruction/deadline budget and implicit JNI local
+frame. `FindClass` sees the one supplied DEX namespace. A valid API 28 result
+(1.2, 1.4 or 1.6) completes the load. An ELF without that export completes without
+a callback. Repeated loads do not rerun it; same-thread recursive loads can
+continue. Invalid returned versions retain the failed load and throw
+`UnsatisfiedLinkError`; already performed native writes and registrations remain.
+Pending Java exceptions retain their heap identity, and class-initializer
+failure uses Runtime's ordinary erroneous-class rules.
+
+DEX invocations of registered ordinary native methods now use the same JNI
+argument transport as JNI method calls. After guest return, the retained Java
+registers, original invoke position, constructor state, exception handler and
+class-initialization stack continue. No instructions or prior effects are
+replayed. Native-to-Java callbacks can themselves suspend into another native
+call. JNI method/field lookup and allocation finish their original operation
+after a suspended initializer; reference returns are converted to caller-local
+JNI handles only when that operation completes. Native and on-load local frames
+retire even if an explicit nested frame was left open.
+
+The standalone `dalvik::Runtime` enables suspension with a nonzero owner ID.
+`ExecutionStop::Suspended` carries a request and a single-use continuation token;
+`resume` accepts shared-heap values or exceptions for that exact occurrence.
+Tokens are owner-bound and nested invocations complete in stack order. The
+instruction closure is retained, and nested entries share the remaining stack
+allowance. Synchronous callers still refuse native execution. At most 64
+invocations may be retained; a terminal non-Java stop cannot be retried.
+
+This is one explicit guest ELF and one supplied DEX namespace. Unknown library
+bindings, native symbol-name lookup, custom/delegating loaders, unloading,
+boot-loader native libraries, floating/stack native arguments, monitors and
+cross-thread class or library initialization waits remain explicit stops.
+Direct JNI calls to `System.loadLibrary` lack a DEX caller and remain unsupported.
+This contract does not execute Android framework Application creation.
+
+Behavior was checked against API 28 ART
+[`JavaVMExt::LoadNativeLibrary`](https://android.googlesource.com/platform/art/+/android-9.0.0_r1/runtime/java_vm_ext.cc)
+and the [JNI invocation specification](https://docs.oracle.com/javase/8/docs/technotes/guides/jni/spec/invocation.html#JNI_OnLoad).
+Implementation and synthetic programs are independently authored.

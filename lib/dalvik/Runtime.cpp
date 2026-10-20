@@ -9,6 +9,7 @@
 #include "neverd/dalvik/Runtime.h"
 
 #include "AndroidFramework.h"
+#include "ExecutionTask.h"
 
 #include "neverd/dalvik/Library.h"
 
@@ -159,11 +160,19 @@ struct Runtime::State {
       Initialized,
       Erroneous
     } status = Prepared;
+    uint64_t owner = 0;
     std::map<const Field *, uint64_t> fields;
   };
   std::map<const Class *, ClassState> classes;
   std::optional<ExecutionResult> stopped;
   struct Engine;
+  std::map<uint64_t, std::unique_ptr<Engine>> executions;
+  uint64_t next_execution = 1;
+  ~State();
+  ExecutionResult start(std::function<ExecutionTask(Engine &)> entry,
+                        const AdmitInstruction &admit, uint64_t stack,
+                        uint64_t owner);
+  ExecutionResult advance(uint64_t id);
   void throwable(ExecutionResult &result) {
     if (result.stop != ExecutionStop::Thrown || result.throwable)
       return;
@@ -192,11 +201,37 @@ struct Runtime::State {
 struct Runtime::State::Engine {
   State &state;
   const Program &program;
-  const AdmitInstruction &admit;
-  uint64_t remaining_stack;
-  Engine(State &state, const AdmitInstruction &admit, uint64_t stack)
+  AdmitInstruction admit;
+  uint64_t remaining_stack, owner;
+  std::function<ExecutionTask(Engine &)> entry;
+  std::optional<ExecutionTask> task;
+  std::coroutine_handle<> suspended;
+  std::optional<ExternalCall> external;
+  ExecutionResult completion;
+  struct ExternalAwaiter {
+    Engine &engine;
+    bool await_ready() const { return false; }
+    void await_suspend(std::coroutine_handle<> handle) {
+      engine.suspended = handle;
+    }
+    uint64_t await_resume() {
+      engine.external.reset();
+      if (engine.completion.stop != ExecutionStop::Returned)
+        throw Halt{std::move(engine.completion)};
+      return engine.completion.value;
+    }
+  };
+  ExternalAwaiter request(ExternalCall call) {
+    if (!owner)
+      fail(ExecutionStop::Unsupported,
+           "external Java invocation requires a resumable owner");
+    external = std::move(call);
+    return {*this};
+  }
+  Engine(State &state, const AdmitInstruction &admit, uint64_t stack,
+         uint64_t owner)
       : state(state), program(state.program), admit(admit),
-        remaining_stack(stack) {
+        remaining_stack(stack), owner(owner) {
     if (!admit)
       throw Error("DEX execution requires an instruction budget");
   }
@@ -234,7 +269,8 @@ struct Runtime::State::Engine {
       fail(ExecutionStop::Invalid,
            "object value is incompatible with declared type");
   }
-  uint64_t allocate(std::string_view name, bool initialized, unsigned depth) {
+  ExecutionTask allocate(std::string_view name, bool initialized,
+                         unsigned depth) {
     if (name == "Ljava/lang/String;" || name == "Ljava/lang/Object;" ||
         (!program.containsClass(name) && program.knownReference(name) &&
          program.assignable(name, "Ljava/lang/Throwable;"))) {
@@ -246,9 +282,9 @@ struct Runtime::State::Engine {
       if (!value)
         fail(ExecutionStop::HeapLimit, "Java object storage budget exhausted");
       value->Initialized = initialized;
-      return value->Identity;
+      co_return value->Identity;
     }
-    initialize(name, depth);
+    co_await initialize(name, depth);
     const auto *klass = program.findClass(name);
     if (has(klass->access, "abstract") || has(klass->access, "interface"))
       fail(ExecutionStop::Unsupported, "abstract DEX class allocation");
@@ -266,7 +302,7 @@ struct Runtime::State::Engine {
     value->Initialized = initialized;
     for (auto field : fields)
       value->Fields.emplace(field, 0);
-    return value->Identity;
+    co_return value->Identity;
   }
   std::shared_ptr<Object> array(std::string_view type, int32_t length) {
     known(type);
@@ -332,9 +368,9 @@ struct Runtime::State::Engine {
       fail(ExecutionStop::Invalid, "noncanonical boolean array value");
     return narrow(bits, type);
   }
-  uint64_t fieldValue(const Field &field, uint64_t receiver,
-                      std::optional<uint64_t> write, unsigned depth,
-                      const Frame *frame = nullptr) {
+  ExecutionTask fieldValue(const Field &field, uint64_t receiver,
+                           std::optional<uint64_t> write, unsigned depth,
+                           const Frame *frame = nullptr) {
     const auto &ref = field.reference;
     const bool is_static = has(field.access, "static");
     if (program.findField(ref, is_static) != &field)
@@ -356,7 +392,7 @@ struct Runtime::State::Engine {
     if (is_static) {
       if (receiver)
         fail(ExecutionStop::Invalid, "static field has an instance receiver");
-      initialize(ref.owner, depth);
+      co_await initialize(ref.owner, depth);
       value = &state.classes.at(program.findClass(ref.owner)).fields.at(&field);
     } else {
       auto instance = object(receiver, frame);
@@ -368,13 +404,13 @@ struct Runtime::State::Engine {
             state.framework.field(*state.heap, field, receiver, write, admit);
         if (result.stop != ExecutionStop::Returned)
           throw Halt{std::move(result)};
-        return result.value;
+        co_return result.value;
       }
       value = &instance->Fields.at(&field);
     }
     if (write)
       *value = narrow(*write, ref.type);
-    return *value;
+    co_return *value;
   }
   bool accessible(const std::string &owner, const Access &access,
                   const std::string &caller) const {
@@ -392,7 +428,7 @@ struct Runtime::State::Engine {
     return klass && has(access, "public") &&
            (has(klass->access, "public") || package(owner) == package(caller));
   }
-  void initialize(std::string_view name, unsigned depth) {
+  ExecutionTask initialize(std::string_view name, unsigned depth) {
     auto fail = [&](ExecutionStop stop, std::string message,
                     std::string exception = {}) {
       throw Halt{
@@ -465,23 +501,29 @@ struct Runtime::State::Engine {
         storage.fields.emplace(&field, value);
       }
     }
-    if (storage.status == ClassState::Initialized ||
-        storage.status == ClassState::Initializing)
-      return;
+    if (storage.status == ClassState::Initialized)
+      co_return 0;
+    if (storage.status == ClassState::Initializing) {
+      if (storage.owner != owner)
+        fail(ExecutionStop::Unsupported,
+             "class initialization is owned by another execution thread");
+      co_return 0;
+    }
     if (storage.status == ClassState::Erroneous)
       fail(ExecutionStop::Thrown, "class initialization previously failed",
            "java/lang/NoClassDefFoundError");
     storage.status = ClassState::Initializing;
+    storage.owner = owner;
     try {
       if (!has(klass->access, "interface") && klass->superclass &&
           program.containsClass(*klass->superclass))
-        initialize(*klass->superclass, depth + 1);
+        co_await initialize(*klass->superclass, depth + 1);
       for (const auto &method : klass->methods)
         if (method.reference.name == "<clinit>") {
           if (!method.reference.parameters.empty() ||
               method.reference.returns != "V")
             fail(ExecutionStop::Invalid, "malformed class initializer");
-          run(method, {}, depth, true);
+          co_await run(method, {}, depth, true);
         }
       storage.status = ClassState::Initialized;
     } catch (Halt &halt) {
@@ -496,17 +538,59 @@ struct Runtime::State::Engine {
       }
       throw;
     }
+    co_return 0;
   }
-  uint64_t run(const Method &method, std::span<const uint64_t> args,
-               unsigned depth, bool initializer = false, bool chained = false) {
-    if (auto reason = program.unsupported(method))
+  ExecutionTask run(const Method &method, std::span<const uint64_t> args,
+                    unsigned depth, bool initializer = false,
+                    bool chained = false) {
+    if (auto reason = program.unsupported(method, owner != 0))
       halt(ExecutionStop::Unsupported, method, 0, *reason);
     const bool constructor = method.reference.name == "<init>";
     const bool is_static = has(method.access, "static");
     if (method.reference.name.starts_with('<') && !initializer && !constructor)
       halt(ExecutionStop::Invalid, method, 0,
            "explicit initializer invocation");
-    initialize(method.reference.owner, depth);
+    co_await initialize(method.reference.owner, depth);
+    if (has(method.access, "native")) {
+      if (depth >= 64 || remaining_stack < 256)
+        halt(ExecutionStop::StackLimit, method, 0,
+             "DEX native frame budget exhausted");
+      if (args.size() != method.reference.parameters.size() + !is_static)
+        halt(ExecutionStop::Invalid, method, 0,
+             "native argument count mismatch");
+      if (!is_static) {
+        if (!args[0])
+          fail(ExecutionStop::Thrown, "null native receiver",
+               "java/lang/NullPointerException");
+        compatible(args[0], method.reference.owner);
+      }
+      for (size_t i = !is_static; i < args.size(); ++i) {
+        const auto &type = method.reference.parameters[i - !is_static];
+        if (referenceType(type))
+          compatible(args[i], type);
+        else if (args[i] != narrow(args[i], type) ||
+                 (type == "Z" && args[i] > 1))
+          halt(ExecutionStop::Invalid, method, 0,
+               "noncanonical native argument");
+      }
+      remaining_stack -= 256;
+      struct RestoreNativeStack {
+        uint64_t &remaining;
+        ~RestoreNativeStack() { remaining += 256; }
+      } restore_native{remaining_stack};
+      ExternalCall call;
+      call.method = &method;
+      call.arguments.assign(args.begin(), args.end());
+      auto result = co_await request(std::move(call));
+      const auto &type = method.reference.returns;
+      if (type == "V")
+        co_return 0;
+      if (referenceType(type))
+        compatible(result, type);
+      else if (result != narrow(result, type) || (type == "Z" && result > 1))
+        halt(ExecutionStop::Invalid, method, 0, "noncanonical native return");
+      co_return result;
+    }
     const uint64_t bytes = uint64_t(method.registers) * sizeof(Register) +
                            method.instructions.size() * 64 + 256;
     if (depth >= 64 || bytes > remaining_stack)
@@ -697,7 +781,7 @@ struct Runtime::State::Engine {
                 "return value is not canonical for its declared type");
           if (method.reference.returns == "Z" && value > 1)
             frame.invalid("noncanonical boolean return");
-          return value;
+          co_return value;
         } else if (op == "goto" || op == "goto/16" || op == "goto/32") {
           count(0);
           branch(insn.target);
@@ -760,7 +844,7 @@ struct Runtime::State::Engine {
           if (!accessible(*type, Access{"public"}, method.reference.owner))
             halt(ExecutionStop::Unsupported, method, frame.pc,
                  "inaccessible allocation class");
-          frame.putRef(r[0], allocate(*type, false, depth + 1));
+          frame.putRef(r[0], co_await allocate(*type, false, depth + 1));
         } else if (op == "new-array" || op == "filled-new-array" ||
                    op == "filled-new-array/range") {
           auto type = std::get_if<std::string>(&insn.reference);
@@ -949,7 +1033,7 @@ struct Runtime::State::Engine {
             if (!static_call &&
                 direct != (ctor || has(callee->access, "private")))
               frame.invalid("invoke kind does not match method access");
-            result = run(*callee, values, depth + 1, false, chain);
+            result = co_await run(*callee, values, depth + 1, false, chain);
           } else {
             const LibraryMethod *library = libraryMethod(selected, static_call);
             if (!library && !static_call && !ctor) {
@@ -971,9 +1055,15 @@ struct Runtime::State::Engine {
             auto executed =
                 executeLibrary(*state.heap, *library, receiver, args, admit,
                                super || direct, &program, &state.framework);
-            if (executed.stop != ExecutionStop::Returned)
-              throw Halt{std::move(executed)};
-            result = executed.value;
+            if (executed.stop == ExecutionStop::Suspended &&
+                executed.external) {
+              executed.external->caller = method.reference.owner;
+              result = co_await request(std::move(*executed.external));
+            } else {
+              if (executed.stop != ExecutionStop::Returned)
+                throw Halt{std::move(executed)};
+              result = executed.value;
+            }
             if (ctor && !chain)
               state.heap->get(receiver)->Initialized = true;
           }
@@ -1010,13 +1100,13 @@ struct Runtime::State::Engine {
           if (type.empty() || (type == "L" ? !referenceType(reference->type)
                                            : reference->type != type))
             frame.invalid("field opcode/type mismatch");
-          auto value =
-              fieldValue(*field, static_field ? 0 : frame.ref(r[1]),
-                         write ? std::optional<uint64_t>(
-                                     type == "L" ? frame.ref(r[0])
-                                                 : frame.get(r[0], type == "J"))
-                               : std::nullopt,
-                         depth + 1, &frame);
+          auto value = co_await fieldValue(
+              *field, static_field ? 0 : frame.ref(r[1]),
+              write ? std::optional<uint64_t>(
+                          type == "L" ? frame.ref(r[0])
+                                      : frame.get(r[0], type == "J"))
+                    : std::nullopt,
+              depth + 1, &frame);
           if (!write) {
             if (type == "L")
               frame.putRef(r[0], value);
@@ -1111,6 +1201,61 @@ struct Runtime::State::Engine {
     frame.invalid("execution fell off method body");
   }
 };
+
+Runtime::State::~State() = default;
+ExecutionResult
+Runtime::State::start(std::function<ExecutionTask(Engine &)> entry,
+                      const AdmitInstruction &admit, uint64_t stack,
+                      uint64_t owner) {
+  if (stopped)
+    return *stopped;
+  if (!admit || executions.size() >= 64 || next_execution == UINT64_MAX) {
+    stopped = ExecutionResult{
+        ExecutionStop::StackLimit, 0, {}, "Java invocation budget exhausted"};
+    return *stopped;
+  }
+  for (const auto &[id, prior] : executions)
+    if (prior->owner == owner)
+      stack = std::min(stack, prior->remaining_stack);
+  auto engine = std::make_unique<Engine>(*this, admit, stack, owner);
+  engine->entry = std::move(entry);
+  engine->task.emplace(engine->entry(*engine));
+  const auto id = next_execution++;
+  executions.emplace(id, std::move(engine));
+  return advance(id);
+}
+ExecutionResult Runtime::State::advance(uint64_t id) {
+  auto &engine = *executions.at(id);
+  if (stopped)
+    return *stopped;
+  if (engine.suspended) {
+    auto handle = std::exchange(engine.suspended, {});
+    handle.resume();
+  } else
+    engine.task->resume();
+  if (!engine.task->done()) {
+    ExecutionResult result;
+    result.stop = ExecutionStop::Suspended;
+    result.external = engine.external;
+    // A fresh token authenticates this occurrence, including two consecutive
+    // calls from the same retained Java activation.
+    if (next_execution == UINT64_MAX) {
+      stopped = ExecutionResult{ExecutionStop::StackLimit,
+                                0,
+                                {},
+                                "Java continuation identity budget exhausted"};
+      return *stopped;
+    }
+    result.continuation = next_execution++;
+    auto node = executions.extract(id);
+    node.key() = result.continuation;
+    executions.insert(std::move(node));
+    return result;
+  }
+  auto result = invoke([&] { return engine.task->await_resume(); });
+  executions.erase(id);
+  return result;
+}
 
 Program::Program(
     std::vector<Class> declarations,
@@ -1315,17 +1460,18 @@ Program::unsupportedClass(std::string_view name) const {
     return "class is not supplied by DEX";
   return check(name, 0);
 }
-std::optional<std::string> Program::unsupported(const Method &method) const {
+std::optional<std::string> Program::unsupported(const Method &method,
+                                                bool allow_native) const {
   auto owner = classes.find(method.reference.owner);
   if (owner == classes.end() ||
       findMethod(method.reference, has(method.access, "static")) != &method)
     return "method is not an admitted DEX body";
   if (auto reason = unsupportedClass(method.reference.owner))
     return reason;
-  if (has(method.access, "native") || has(method.access, "abstract") ||
-      has(method.access, "synchronized") ||
+  if ((!allow_native && has(method.access, "native")) ||
+      has(method.access, "abstract") || has(method.access, "synchronized") ||
       has(method.access, "declared-synchronized") ||
-      method.instructions.empty())
+      (method.instructions.empty() && !has(method.access, "native")))
     return "DEX native, abstract or synchronized body is "
            "unsupported";
   if (method.reference.returns != "V" && !integral(method.reference.returns) &&
@@ -1391,36 +1537,73 @@ RuntimeSnapshot Runtime::snapshot() const {
 }
 ExecutionResult Runtime::allocate(std::string_view descriptor, bool initialized,
                                   const AdmitInstruction &admit,
-                                  uint64_t stack_bytes) {
-  return state->invoke([&] {
-    return State::Engine(*state, admit, stack_bytes)
-        .allocate(descriptor, initialized, 0);
-  });
+                                  uint64_t stack_bytes, uint64_t owner) {
+  return state->start(
+      [name = std::string(descriptor), initialized](auto &engine) {
+        return engine.allocate(name, initialized, 0);
+      },
+      admit, stack_bytes, owner);
 }
 ExecutionResult Runtime::field(const Field &field, uint64_t receiver,
                                std::optional<uint64_t> write,
                                const AdmitInstruction &admit,
-                               uint64_t stack_bytes) {
-  return state->invoke([&] {
-    return State::Engine(*state, admit, stack_bytes)
-        .fieldValue(field, receiver, write, 0);
-  });
+                               uint64_t stack_bytes, uint64_t owner) {
+  return state->start(
+      [&field, receiver, write](auto &engine) {
+        return engine.fieldValue(field, receiver, write, 0);
+      },
+      admit, stack_bytes, owner);
 }
 ExecutionResult Runtime::initialize(std::string_view descriptor,
                                     const AdmitInstruction &admit,
-                                    uint64_t stack_bytes) {
-  return state->invoke([&] {
-    State::Engine(*state, admit, stack_bytes).initialize(descriptor, 0);
-    return uint64_t(0);
-  });
+                                    uint64_t stack_bytes, uint64_t owner) {
+  return state->start([name = std::string(descriptor)](
+                          auto &engine) { return engine.initialize(name, 0); },
+                      admit, stack_bytes, owner);
 }
 ExecutionResult Runtime::execute(const Method &method,
                                  std::span<const uint64_t> args,
                                  const AdmitInstruction &admit,
-                                 uint64_t stack_bytes) {
-  return state->invoke([&] {
-    return State::Engine(*state, admit, stack_bytes).run(method, args, 0);
-  });
+                                 uint64_t stack_bytes, uint64_t owner) {
+  return state->start(
+      [&method, values = std::vector<uint64_t>(args.begin(), args.end())](
+          auto &engine) { return engine.run(method, values, 0); },
+      admit, stack_bytes, owner);
+}
+ExecutionResult Runtime::resume(uint64_t id, uint64_t owner,
+                                ExecutionResult completion) {
+  auto it = state->executions.find(id);
+  if (!id || !owner || it == state->executions.end() ||
+      it->second->owner != owner || !it->second->suspended ||
+      completion.stop == ExecutionStop::Suspended || completion.external ||
+      completion.continuation)
+    return {
+        ExecutionStop::Invalid, 0, {}, "invalid Java continuation completion"};
+  for (auto later = std::next(it); later != state->executions.end(); ++later)
+    if (later->second->owner == owner)
+      return {ExecutionStop::Invalid,
+              0,
+              {},
+              "Java continuations must resume in owner stack order"};
+  if ((completion.stop == ExecutionStop::Returned &&
+       (completion.throwable || !completion.exception.empty())) ||
+      (completion.stop == ExecutionStop::Thrown &&
+       (!state->program.knownReference("L" + completion.exception + ";") ||
+        !state->program.assignable("L" + completion.exception + ";",
+                                   "Ljava/lang/Throwable;"))))
+    return {
+        ExecutionStop::Invalid, 0, {}, "invalid Java continuation exception"};
+  if (completion.stop == ExecutionStop::Thrown && completion.throwable) {
+    auto object = state->heap->get(completion.throwable);
+    if (!object || !object->Initialized ||
+        !state->program.assignable(objectDescriptor(*object),
+                                   "Ljava/lang/Throwable;") ||
+        object->ClassName != completion.exception)
+      return {
+          ExecutionStop::Invalid, 0, {}, "invalid Java continuation throwable"};
+  }
+  it->second->completion = std::move(completion);
+  return state->advance(id);
 }
 ExecutionResult Runtime::library(const LibraryMethod &method, uint64_t receiver,
                                  std::span<const uint64_t> args,
@@ -1432,6 +1615,11 @@ ExecutionResult Runtime::library(const LibraryMethod &method, uint64_t receiver,
     auto result =
         executeLibrary(*state->heap, method, receiver, args, admit, nonvirtual,
                        &state->program, &state->framework);
+    if (result.stop == ExecutionStop::Suspended)
+      result = {ExecutionStop::Unsupported,
+                0,
+                {},
+                "Java library loading requires a DEX caller"};
     if (result.stop != ExecutionStop::Returned)
       throw Halt{std::move(result)};
     return result.value;

@@ -322,6 +322,7 @@ NEVERD_PROCESS_REPORT_FIELD(ApplicationClassLookupFailures,
                             "class_lookup_failures")
 NEVERD_PROCESS_REPORT_FIELD(JNIRegistrations, "jni_registrations")
 NEVERD_PROCESS_REPORT_FIELD(ObserveJavaState, "observe_java_state")
+NEVERD_PROCESS_REPORT_FIELD(JavaLibrary, "java_library")
 NEVERD_PROCESS_REPORT_FIELD(JavaState, "java_state")
 NEVERD_PROCESS_REPORT_FIELD(JavaClasses, "classes")
 NEVERD_PROCESS_REPORT_FIELD(JavaDescriptor, "descriptor")

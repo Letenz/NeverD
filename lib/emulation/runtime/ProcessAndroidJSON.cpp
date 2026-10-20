@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "ProcessAndroidJSON.h"
 
+#include "../os/linux/android/AndroidJavaLibrary.h"
 #include "../os/linux/android/AndroidLog.h"
 #include "../os/linux/android/AndroidObservation.h"
 #include "ProcessNetworkJSON.h"
@@ -473,6 +474,14 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       if (!Observation)
         return Observation.takeError();
       Out.ObserveExecution = std::move(*Observation);
+    } else if (Name == field::JavaLibrary) {
+      auto S = string(V, Name);
+      if (!S || !android_model::validJavaLibraryName(*S)) {
+        if (!S)
+          llvm::consumeError(S.takeError());
+        return invalid(Name);
+      }
+      Out.JavaLibrary = std::move(*S);
     } else if (Name == field::ObserveJavaState) {
       auto B = V.getAsBoolean();
       if (!B)
@@ -532,6 +541,8 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
     return std::move(E);
   if (Out.ObserveJavaState && !Out.JNI)
     return invalid(field::ObserveJavaState);
+  if (Out.JavaLibrary && (!Out.JNI || !Out.Initialize))
+    return invalid(field::JavaLibrary);
   return Out;
 }
 llvm::json::Object androidResultJSON(const ProcessResult &Result) {

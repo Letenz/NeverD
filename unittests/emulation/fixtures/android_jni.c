@@ -1756,3 +1756,134 @@ int jni_native_calls(unsigned mode) {
   C(e, void, 22, native_base);
   return C(vm, int, 5);
 }
+
+/* Java -> loadLibrary -> original JNI_OnLoad -> Java -> native -> Java.
+ * State/counters distinguish one execution from replay or canned success. */
+static unsigned resume_mode, resume_loads, resume_calls, resume_helpers;
+static Ref resume_onload_local;
+static int resume_helper(Handle e, Ref type, int input) {
+  ++resume_helpers;
+  CHECK(C(vm, int, 5) == -1);
+  CHECK(!C(e, int, 19, 4)); /* Leave a nested frame for implicit cleanup. */
+  CHECK(C(e, Ref, 25, type));
+  return input * 2;
+}
+static int resume_apply(Handle e, Ref type, int input) {
+  ++resume_calls;
+  Ref step = C(e, Ref, 113, type, "step", "(I)I");
+  CHECK(step && !C(e, int, 228));
+  return C(e, int, 129, type, step, input);
+}
+static Ref resume_echo(Handle e, Ref type, Ref input) {
+  (void)type;
+  if (C(e, int, 19, 4))
+    return 0;
+  return C(e, Ref, 25, input);
+}
+static int resume_throw(Handle e, Ref type) {
+  (void)type;
+  Ref failure = C(e, Ref, 6, "java/lang/IllegalArgumentException");
+  C(e, int, 14, failure, (void *)0);
+  return 0x7341;
+}
+int JNI_OnLoad(Handle machine, void *reserved) {
+  Handle e = 0;
+  CHECK(machine == vm && !reserved && !C(machine, int, 6, &e, 0x10006));
+  CHECK(e && ++resume_loads == 1);
+  CHECK(C(vm, int, 5) == -1);
+  Ref type = C(e, Ref, 6, "resumption/Library");
+  resume_onload_local = type;
+  Ref count = C(e, Ref, 144, type, "count", "I");
+  CHECK(count && C(e, int, 150, type, count) == 1);
+  struct {
+    const char *name, *signature;
+    void *target;
+  } methods[] = {
+      {"apply", "(I)I", resume_apply},
+      {"helper", "(I)I", resume_helper},
+      {"echo", "(Ljava/lang/Object;)Ljava/lang/Object;", resume_echo},
+      {"fail", "()I", resume_throw}};
+  CHECK(!C(e, int, 215, type, methods, 4));
+  Ref again = C(e, Ref, 113, type, "again", "()V");
+  C(e, void, 141, type,
+    again); /* Recursive same-loader load must not call us again. */
+  Ref step = C(e, Ref, 113, type, "step", "(I)I");
+  CHECK(step && C(e, int, 129, type, step, 10) == 27);
+  CHECK(!C(e, int, 228) && resume_helpers == 1);
+  if (resume_mode == 5) {
+    Ref failure = C(e, Ref, 6, "java/lang/IllegalArgumentException");
+    C(e, int, 14, failure, (void *)0);
+  }
+  if (resume_mode == 6)
+    CHECK(!usleep(100));
+  return resume_mode == 2   ? 0x10008
+         : resume_mode == 3 ? 0x10002
+         : resume_mode == 4 ? 0x10004
+                            : 0x10006;
+}
+int jni_java_resume(unsigned mode) {
+  resume_mode = mode;
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "resumption/Library");
+  CHECK(type && !resume_loads);
+  Ref allocated = 0;
+  if (mode == 1)
+    allocated = C(e, Ref, 27, type);
+  if (mode == 7)
+    CHECK(C(e, Ref, 144, type, "count", "I"));
+  Ref run = C(e, Ref, 113, type, "run", "(I)I");
+  if (mode == 9) {
+    CHECK(run && !C(e, int, 228) && !resume_loads);
+    Ref count = C(e, Ref, 144, type, "count", "I");
+    CHECK(C(e, int, 150, type, count) == 2);
+    return C(vm, int, 5);
+  }
+  if (mode == 2 || mode == 5) {
+    CHECK(!run && C(e, int, 228) && resume_loads == 1);
+    Ref thrown = C(e, Ref, 15);
+    C(e, void, 17);
+    Ref error = C(e, Ref, 6,
+                  mode == 2 ? "java/lang/UnsatisfiedLinkError"
+                            : "java/lang/ExceptionInInitializerError");
+    CHECK(C(e, int, 32, thrown, error));
+    CHECK(!C(e, Ref, 113, type, "run", "(I)I") && C(e, int, 228));
+    thrown = C(e, Ref, 15);
+    C(e, void, 17);
+    error = C(e, Ref, 6, "java/lang/NoClassDefFoundError");
+    CHECK(C(e, int, 32, thrown, error) && resume_loads == 1);
+    return C(vm, int, 5);
+  }
+  CHECK(run && !C(e, int, 228) && resume_loads == 1);
+  if (mode == 8)
+    return C(e, int, 24, resume_onload_local,
+             type); /* Retired on-load local. */
+  if (mode == 1)
+    CHECK(allocated && C(e, int, 32, allocated, type));
+  Ref count = C(e, Ref, 144, type, "count", "I");
+  CHECK(C(e, int, 150, type, count) == 2);
+  CHECK(C(e, int, 129, type, run, 11) == 32);
+  CHECK(C(e, int, 129, type, run, -5) == 0);
+  CHECK(resume_calls == 2 && resume_helpers == 3);
+  Ref ctor = C(e, Ref, 33, type, "<init>", "()V");
+  Ref object = C(e, Ref, 28, type, ctor);
+  CHECK(object && !C(e, int, 228) && resume_calls == 3 && resume_helpers == 4);
+  Ref ref = C(e, Ref, 113, type, "reference",
+              "(Ljava/lang/Object;)Ljava/lang/Object;");
+  Ref echoed = C(e, Ref, 114, type, ref, object);
+  CHECK(C(e, int, 24, object, echoed));
+  Ref failure = C(e, Ref, 113, type, "throwing", "()I");
+  CHECK(!C(e, int, 129, type, failure) && C(e, int, 228));
+  Ref thrown = C(e, Ref, 15);
+  C(e, void, 17);
+  Ref error = C(e, Ref, 6, "java/lang/IllegalArgumentException");
+  CHECK(C(e, int, 32, thrown, error));
+  Ref again = C(e, Ref, 113, type, "again", "()V");
+  for (unsigned i = 0; i < 200; ++i)
+    C(e, void, 141, type, again);
+  Ref loop = C(e, Ref, 113, type, "loop", "()V");
+  C(e, void, 141, type, loop);
+  CHECK(!C(e, int, 228) && resume_loads == 1 &&
+        C(e, int, 150, type, count) == 2);
+  return C(vm, int, 5);
+}
