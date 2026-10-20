@@ -85,6 +85,7 @@
 #include <QStorageInfo>
 #include <QStyle>
 #include <QTableView>
+#include <QTableWidget>
 #include <QTextStream>
 #include <QToolBar>
 #include <QTreeView>
@@ -1374,6 +1375,9 @@ void MainWindow::connectActions() {
   on(ActionId::EditUnmapVariable, [this] { editVariable("unmap"); });
   on(ActionId::EditUnsplitVariable, [this] { editVariable("unsplit"); });
   on(ActionId::EditResetVariables, [this] { editVariable("clear"); });
+  on(ActionId::EditStackFrame, [this] { editStackFrame(0); });
+  on(ActionId::EditStackPointer, [this] { editStackFrame(1); });
+  on(ActionId::EditStackOperand, [this] { editStackFrame(2); });
   on(ActionId::EditCallType, [this] { editCallType(); });
   on(ActionId::EditResetCallTypes, [this] { editCallType(true); });
   on(ActionId::EditConvertToStruct, [this] { convertToStruct(); });
@@ -1711,6 +1715,10 @@ void MainWindow::updateActions() {
   actions_.action(ActionId::EditSetType)
       ->setEnabled(declarations && (code ? code->text()->function().has_value()
                                          : currentFunction().has_value()));
+  for (const auto id : {ActionId::EditStackFrame, ActionId::EditStackPointer,
+                        ActionId::EditStackOperand})
+    actions_.action(id)->setEnabled(location && !session_.readOnly() &&
+                                    currentFunction().has_value());
   const bool variableView =
       code && loaded && !session_.readOnly() && code->text()->function() &&
       (code->representation() == "source" || code->representation() == "c" ||
@@ -3428,6 +3436,188 @@ void MainWindow::setType() {
       {{"type", dialog.resets() ? QJsonValue(QJsonValue::Null)
                                 : QJsonValue(dialog.declaration())}},
       epoch);
+}
+
+void MainWindow::editStackFrame(int mode) {
+  const auto function = currentFunction();
+  const auto address = currentAddress();
+  if (!function || session_.readOnly())
+    return;
+  const auto epoch = session_.epoch();
+  const auto revision = session_.revision();
+  session_.read(
+      "stack_frame", {{"address", hexAddress(*function)}}, this,
+      [this, function, address, epoch, revision,
+       mode](const QJsonObject &reply) {
+        if (session_.epoch() != epoch || session_.revision() != revision ||
+            currentFunction() != function)
+          return;
+        auto policy = reply.value("policy").toObject();
+        policy.remove("input_sha256");
+        policy.insert("snapshot", reply.value("snapshot"));
+        const auto stale = reply.value("stale").toString();
+        QDialog dialog(this);
+        dialog.setObjectName("stackFrameDialog");
+        dialog.setWindowTitle(mode == 1 ? tr("Change stack pointer")
+                                        : tr("Stack variables"));
+        dialog.resize(680, 440);
+        auto *layout = new QVBoxLayout(&dialog);
+        auto *label = new QLabel(
+            stale.isEmpty()
+                ? tr("Offsets are relative to SP at function entry. "
+                     "Corrections apply to source analysis. Reset restores "
+                     "automatic analysis. Naming physical stack storage "
+                     "pauses LLVM optimizations for that function's C view.")
+                : stale +
+                      tr(". Reset the obsolete corrections before editing."),
+            &dialog);
+        label->setWordWrap(true);
+        layout->addWidget(label);
+        QLineEdit *after = nullptr;
+        QComboBox *basis = nullptr;
+        QTableWidget *table = nullptr;
+        QJsonObject instruction;
+        if (mode == 1) {
+          for (const auto &value : reply.value("instructions").toArray())
+            if (address &&
+                parseAddress(value.toObject().value("address").toString()) ==
+                    address)
+              instruction = value.toObject();
+          if (!instruction.value("correctable").toBool()) {
+            output_->append(tr("Select a retained non-branch instruction in "
+                               "the disassembly"),
+                            1);
+            return;
+          }
+          layout->addWidget(new QLabel(
+              tr("Instruction: %1; SP before: %2; SP after: %3")
+                  .arg(instruction.value("address").toString(),
+                       instruction.value("before").isDouble()
+                           ? QString::number(
+                                 instruction.value("before").toInteger())
+                           : tr("unknown"),
+                       instruction.value("after").isDouble()
+                           ? QString::number(
+                                 instruction.value("after").toInteger())
+                           : tr("unknown")),
+              &dialog));
+          basis = new QComboBox(&dialog);
+          basis->addItem(
+              tr("Absolute offset after instruction, relative to entry SP"));
+          if (instruction.value("before").isDouble())
+            basis->addItem(tr("Net SP change made by this instruction"));
+          layout->addWidget(basis);
+          after = new QLineEdit(
+              QString::number(instruction.value("after").toInteger()), &dialog);
+          after->setObjectName("stackPointerAfter");
+          layout->addWidget(after);
+        } else {
+          table = new QTableWidget(0, 4, &dialog);
+          table->setObjectName("stackVariablesTable");
+          table->setHorizontalHeaderLabels({tr("Entry offset"), tr("Bytes"),
+                                            tr("Name"),
+                                            tr("C type (optional)")});
+          table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+          QMap<QString, QJsonObject> rows;
+          for (const auto &value : reply.value("accesses").toArray()) {
+            const auto row = value.toObject();
+            if (row.value("offset").toInteger() >= 0)
+              continue;
+            if (mode == 2 &&
+                (!address ||
+                 parseAddress(row.value("address").toString()) != address))
+              continue;
+            rows.insert(QString::number(row.value("offset").toInteger()) + ":" +
+                            QString::number(row.value("bytes").toInt()),
+                        row);
+          }
+          for (const auto &value : policy.value("variables").toArray()) {
+            const auto row = value.toObject();
+            rows.insert(QString::number(row.value("offset").toInteger()) + ":" +
+                            QString::number(row.value("bytes").toInt()),
+                        row);
+          }
+          if (rows.isEmpty()) {
+            output_->append(tr("No exact local stack access is available here. "
+                               "Repair unknown SP first."),
+                            1);
+            return;
+          }
+          for (const auto &row : rows) {
+            const int index = table->rowCount();
+            table->insertRow(index);
+            const QStringList values{
+                QString::number(row.value("offset").toInteger()),
+                QString::number(row.value("bytes").toInt()),
+                row.value("name").toString(), row.value("type").toString()};
+            for (int col = 0; col < 4; ++col)
+              table->setItem(index, col, new QTableWidgetItem(values[col]));
+          }
+          layout->addWidget(table);
+        }
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Apply |
+                                                 QDialogButtonBox::Cancel |
+                                                 QDialogButtonBox::Reset,
+                                             &dialog);
+        bool reset = false;
+        buttons->button(QDialogButtonBox::Apply)->setEnabled(stale.isEmpty());
+        connect(buttons->button(QDialogButtonBox::Apply), &QPushButton::clicked,
+                &dialog, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog,
+                &QDialog::reject);
+        connect(buttons->button(QDialogButtonBox::Reset), &QPushButton::clicked,
+                &dialog, [&] {
+                  reset = true;
+                  dialog.accept();
+                });
+        layout->addWidget(buttons);
+        if (dialog.exec() != QDialog::Accepted || session_.epoch() != epoch ||
+            session_.revision() != revision || currentFunction() != function)
+          return;
+        if (!reset && after) {
+          bool valid = false;
+          qint64 value = after->text().toLongLong(&valid, 0);
+          if (!valid || value < -(1 << 20) || value > (1 << 20)) {
+            output_->append(tr("Enter a signed SP offset within one MiB"), 1);
+            return;
+          }
+          if (basis->currentIndex() == 1)
+            value += instruction.value("before").toInteger();
+          QJsonArray points;
+          for (const auto &p : policy.value("points").toArray())
+            if (p.toObject().value("address") != instruction.value("address"))
+              points.append(p);
+          points.append(QJsonObject{{"address", instruction.value("address")},
+                                    {"after", value}});
+          policy.insert("points", points);
+        }
+        if (!reset && table) {
+          QJsonArray variables;
+          for (int row = 0; row < table->rowCount(); ++row) {
+            if (table->item(row, 2)->text().trimmed().isEmpty())
+              continue;
+            bool atOK = false, bytesOK = false;
+            const auto at = table->item(row, 0)->text().toLongLong(&atOK, 0);
+            const auto bytes = table->item(row, 1)->text().toInt(&bytesOK, 0);
+            if (!atOK || !bytesOK) {
+              output_->append(tr("Invalid stack slot offset or width"), 1);
+              return;
+            }
+            variables.append(
+                QJsonObject{{"offset", at},
+                            {"bytes", bytes},
+                            {"name", table->item(row, 2)->text().trimmed()},
+                            {"type", table->item(row, 3)->text().trimmed()}});
+          }
+          policy.insert("variables", variables);
+        }
+        session_.editCode({{"address", hexAddress(*function)},
+                           {"kind", "stack_frame"},
+                           {"representation", "c"},
+                           {"reset", reset},
+                           {"stack_frame", policy}},
+                          epoch);
+      });
 }
 
 void MainWindow::editCallType(bool resetAll) {

@@ -18,8 +18,18 @@ std::string neverd::sdk::variableCallProfile(std::string Snapshot,
     for (const auto &Type : Edit.VariadicTypes)
       Snapshot += ":" + std::to_string(Type.size()) + ":" + Type;
   }
-  return Options.CallTypes.empty() ? Snapshot
-                                   : sourceVariableSnapshot(Snapshot);
+  if (!Options.StackFrame.empty()) {
+    Snapshot += Options.StackFrame.Snapshot;
+    for (const auto &[PC, Offset] : Options.StackFrame.Points)
+      Snapshot += ":sp:" + std::to_string(PC) + ":" + std::to_string(Offset);
+    for (const auto &V : Options.StackFrame.Variables)
+      Snapshot += ":slot:" + std::to_string(V.Offset) + ":" +
+                  std::to_string(V.Bytes) + ":" +
+                  std::to_string(V.Name.size()) + ":" + V.Name + ":" + V.Type;
+  }
+  return Options.CallTypes.empty() && Options.StackFrame.empty()
+             ? Snapshot
+             : sourceVariableSnapshot(Snapshot);
 }
 
 std::string neverd::sdk::sourceCallId(const SourceCallOccurrenceKey &Site) {
@@ -147,13 +157,15 @@ void neverd::sdk::prepareSourceCallVariant(Session &S, va_t Entry,
   if (S.CallVariant && S.CallVariant->Entry == Entry &&
       S.CallVariant->Snapshot == Snapshot &&
       S.CallVariant->Symbolic == Options.Symbolic &&
-      S.CallVariant->Edits == Options.CallTypes)
+      S.CallVariant->Edits == Options.CallTypes &&
+      S.CallVariant->Frame == Options.StackFrame)
     return;
   auto Variant = std::make_unique<Session::CallIRVariant>();
   Variant->Entry = Entry;
   Variant->Snapshot = Snapshot;
   Variant->Symbolic = Options.Symbolic;
   Variant->Edits = Options.CallTypes;
+  Variant->Frame = Options.StackFrame;
   std::map<std::string, SourceCallOccurrenceKey> Sites;
   if (Function)
     for (const auto &Block : Function->Blocks)
@@ -196,7 +208,14 @@ void neverd::sdk::prepareSourceCallVariant(Session &S, va_t Entry,
     }
     Variant->Results.push_back(std::move(Status));
   }
-  if (!Policy.SourceCallSiteHints[Entry].empty()) {
+  if (!Options.StackFrame.empty()) {
+    if (!Function)
+      throw std::invalid_argument("Original stack analysis is unavailable");
+    validateSourceStackFrame(S, *Function, Options.StackFrame);
+    Policy.SourceStackFrames[Entry] = Options.StackFrame;
+  }
+  if (!Policy.SourceCallSiteHints[Entry].empty() ||
+      !Policy.SourceStackFrames.empty()) {
     std::string Error;
     try {
       auto Result =
@@ -231,5 +250,8 @@ void neverd::sdk::prepareSourceCallVariant(Session &S, va_t Entry,
           Status.Refusal = Error;
         }
   }
+  if (!Options.StackFrame.empty() && !Variant->Result)
+    throw std::invalid_argument(
+        "The corrected stack frame could not be projected to source");
   S.CallVariant = std::move(Variant);
 }

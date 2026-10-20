@@ -265,6 +265,7 @@ struct UnwindMark {
   std::string personality;
 };
 struct DecodedFunction {
+  std::map<std::int64_t, std::string> manualNames;
   std::vector<Instruction> instructions;
   std::set<std::uint64_t> labels;
   std::uint64_t end = 0;
@@ -548,6 +549,7 @@ struct Listing::Impl {
     std::string kind, encoding;
   };
   std::map<std::uint64_t, UserItem> userItems;
+  std::map<std::uint64_t, Json> stackFrames;
   std::map<std::uint64_t, Instruction> userInstructions;
   StringRefsFunction stringRefs = nullptr;
   SwitchesFunction switchesQuery = nullptr;
@@ -1930,6 +1932,9 @@ struct Listing::Impl {
 
   std::string frameName(const DecodedFunction &body,
                         std::int64_t offset) const {
+    if (const auto It = body.manualNames.find(offset);
+        It != body.manualNames.end())
+      return It->second;
     return offset < 0 ? std::string(LocalPrefix) + upperHex(-offset)
                       : std::string(ArgumentPrefix) +
                             upperHex(offset - argumentBase(body));
@@ -2012,6 +2017,38 @@ struct Listing::Impl {
     // set up: its stack operands stay as they are.
     if (dialect == OperandDialect::X86 && !function.chunkOf)
       buildFrame(body);
+    if (const auto Frame = stackFrames.find(function.entry);
+        Frame != stackFrames.end()) {
+      using Inspect =
+          const char *(*)(neverd_session_t, neverd_va_t, const char *);
+      if (const auto inspect =
+              engineSymbol<Inspect>("neverd_stack_frame_json")) {
+        if (const auto *raw = inspect(session, function.entry,
+                                      Frame->second.dump().c_str())) {
+          const auto flow = takeJson(raw);
+          std::map<std::uint64_t, std::optional<std::int64_t>> offsets;
+          for (const auto &row : flow.at("instructions"))
+            offsets[parseAddress(row.at("address").get<std::string>())] =
+                row.at("before").is_number_integer()
+                    ? std::optional(row.at("before").get<std::int64_t>())
+                    : std::nullopt;
+          for (auto &insn : body.instructions)
+            insn.stackDelta = offsets[insn.address];
+          body.frame.clear();
+          for (const auto &access : flow.at("accesses")) {
+            const auto offset =
+                access.at("offset").get<std::int64_t>() - body.frameBase;
+            auto &bytes = body.frame[offset];
+            bytes = std::max(bytes, access.at("bytes").get<unsigned>());
+          }
+          for (const auto &variable :
+               Frame->second.value("variables", Json::array()))
+            body.manualNames[variable.at("offset").get<std::int64_t>() -
+                             body.frameBase] =
+                variable.at("name").get<std::string>();
+        }
+      }
+    }
     body.unwind = unwindAt(function.entry);
     // Only real instruction boundaries can carry labels.
     for (auto it = body.labels.begin(); it != body.labels.end();) {
@@ -3624,6 +3661,15 @@ struct Listing::Impl {
 Listing::Listing(neverd_session_t session)
     : impl_(std::make_unique<Impl>(session)) {}
 Listing::~Listing() = default;
+
+void Listing::setStackFrames(const Json &rows, const std::string &imageHash) {
+  impl_->stackFrames.clear();
+  for (const auto &row : rows)
+    if (row.contains("stack_frame") &&
+        row.at("stack_frame").value("input_sha256", std::string()) == imageHash)
+      impl_->stackFrames[parseAddress(row.at("addr").get<std::string>())] =
+          row.at("stack_frame");
+}
 
 void Listing::invalidate() {
   impl_->built = false;

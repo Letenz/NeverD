@@ -2549,8 +2549,10 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
         Entry->second = std::move(Name);
       }
   markInlinable(Fn);
-  analyzeDeadFrameStores(Analysis, Fn);
-  analyzeStoreForwarding(Analysis, Fn);
+  if (!Opts.FrameVariables || Opts.FrameVariables->empty()) {
+    analyzeDeadFrameStores(Analysis, Fn);
+    analyzeStoreForwarding(Analysis, Fn);
+  }
 
   // A frame address passed on can reach any byte of the frame, unless a type
   // bounds the object it starts: the callee's prototype, or the debug type of

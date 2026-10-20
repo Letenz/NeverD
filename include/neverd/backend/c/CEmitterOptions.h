@@ -140,6 +140,11 @@ struct CEmitterOptions {
   /// native ABI, memory extent, code ownership or rewriting authority.
   const SourceVariableTypes *VariableTypes = nullptr;
   const std::map<std::string, SourceCallTypeHint> *CallTypes = nullptr;
+  struct FrameVariable {
+    std::string Name;
+    std::shared_ptr<NdType> Type;
+  };
+  const std::map<int64_t, FrameVariable> *FrameVariables = nullptr;
   const std::vector<SourceVariableEdit> *VariableEdits = nullptr;
   std::string VariableSnapshot;
 };
