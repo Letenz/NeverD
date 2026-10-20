@@ -397,8 +397,10 @@ bool declare(neverd_session_t Sess) {
 /// The checks of options both ways of running share; false with an error
 /// printed.
 bool optionsValid() {
-  if (TypesSave && (TypesInput.empty() || TypesDeclare.empty())) {
-    WithColor::error() << "--save requires a binary and --declare files\n";
+  if ((TypesSave || TypesSaveDeclarations) &&
+      (TypesInput.empty() || TypesDeclare.empty())) {
+    WithColor::error()
+        << "--save/--save-declarations requires a binary and --declare files\n";
     return false;
   }
   if (const std::vector<std::string> Languages = languageIds();
@@ -698,7 +700,8 @@ int runTypes(neverd_session_t Sess) {
   raw_ostream &Out = File ? *File : outs();
   if (!declare(Sess) || !chooseLibraries(Sess))
     return 1;
-  if (TypesSave && neverd_type_declarations_save(Sess) != 0) {
+  if ((TypesSave || TypesSaveDeclarations) &&
+      neverd_type_declarations_save(Sess) != 0) {
     WithColor::error() << "type declarations save failed: "
                        << takeLastError(Sess) << "\n";
     return 1;

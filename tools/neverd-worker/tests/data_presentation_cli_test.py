@@ -90,8 +90,9 @@ def run(worker, cli, engine):
         invoke("types", "--declare", str(header), "--json")
         assert not (cli_project / "types.json").exists()
         invoke("types", "--declare", str(header), "--save", "--json")
+        invoke("types", "--declare", str(header), "--save-declarations", "--json")
         invoke("items", "--array", hex(DATA), "--size", "4", "--count", "16")
-        invoke("items", "--array", hex(DATA + 64), "--size", "12",
+        invoke("items", "--array", hex(DATA + 64), "--element-size", "12",
                "--count", "4", "--type", "QA_ROW")
         invoke("items", "--alignment", hex(DATA + 117), "--boundary", "16")
         invoke("items", "--alignment", hex(DATA + 128), "--boundary", "16")
@@ -145,9 +146,21 @@ def run(worker, cli, engine):
         for name, expected in saved.items():
             assert (gui_project / name).read_bytes() == expected, name
 
+        # CLI JSON preserves native operands while enum display and text use
+        # the same decoded logical widths and enum owner as the GUI.
+        decoded = json.loads(invoke("disasm", "--func", hex(entry), "--json"))
+        first = next(row for row in decoded if int(row["addr"], 16) == entry)
+        assert "QA_READ | QA_WRITE | 0x8" in first["display_op_str"], first
+        assert "QA_READ" not in first["op_str"], first
+        assert "QA_READ | QA_WRITE | 0x8" in invoke("disasm", "--func", hex(entry))
+
         # Invalid options and unsupported storage must not save partial edits.
         failures = [
             ("types", ["--save"]),
+            ("types", ["--save-declarations"]),
+            ("items", ["--element-size", "4"]),
+            ("items", ["--array", hex(DATA), "--size", "4",
+                       "--element-size", "8", "--count", "16"]),
             ("items", ["--array", hex(DATA)]),
             ("items", ["--array", hex(DATA), "--count", "0"]),
             ("items", ["--array", hex(DATA), "--count", "16", "--size", "3"]),
@@ -186,6 +199,9 @@ def run(worker, cli, engine):
         assert binary.read_bytes() == image
 
         invoke("operands", "--addr", hex(entry), "--operand", "1", "--enum", "QA_ALIAS")
+        decoded = json.loads(invoke("disasm", "--func", hex(entry), "--json"))
+        shown = str(decoded)
+        assert "QA_ELEVEN" in shown and "QA_ELEVEN_ALIAS" not in shown, shown
         with Client(worker) as client:
             ok(client, "open", {"path": str(binary), "analysis": False})
             source(client, "low", entry)
