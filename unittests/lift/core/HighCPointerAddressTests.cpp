@@ -47808,6 +47808,49 @@ TEST(HighCPointerAddresses, HeaderObjectsReadAsBytesStayTheHeaders) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses, HeaderRecordObjectsAreReachedThroughTheirBytes) {
+  // BIND's delv passes the address of its copy of in6addr_loopback, which
+  // <netinet/in.h> declares a const struct in6_addr: the unit declared it
+  // `unsigned char in6addr_loopback[16];`, a redefinition beside the
+  // header, and subscripted the record.  The object is the header's,
+  // reached through its bytes.
+  constexpr va_t Loopback = 0x6000;
+  BinaryImage Img =
+      makeImageObjectFixture(Loopback, std::vector<uint8_t>(16), true);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  Symbol Data;
+  Data.Name = "in6addr_loopback";
+  Data.Addr = Loopback;
+  Data.Size = 16;
+  Img.Symbols.push_back(Data);
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "bind_loopback";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  Func.Body = {callStmt(
+      "isc_sockaddr_fromin6", 0x2000,
+      {HighExpr::makeConst(Loopback, 8, ConstantAddressProvenance::Address)})};
+  returnValue(Func,
+              HighExpr::makeLoad(HighExpr::makeConst(Loopback + 8, 8), Word));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <netinet/in.h>"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("in6addr_loopback["), std::string::npos) << Source;
+  EXPECT_NE(Source.find("((unsigned char *)&in6addr_loopback)"),
+            std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
   // sed passes a comparator of its own to qsort, whose prototype the header
   // library gives: its comparison's type keeps no const there, where the

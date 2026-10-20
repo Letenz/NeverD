@@ -35,5 +35,16 @@ NEVERD_LIBC_DATA_OBJECT("program_invocation_short_name", "errno.h", "char *")
 NEVERD_LIBC_DATA_OBJECT("daylight", "time.h", "int")
 NEVERD_LIBC_DATA_OBJECT("timezone", "time.h", "long")
 NEVERD_LIBC_DATA_OBJECT("tzname", "time.h", "char *[2]")
+// Their GNU names, which <time.h> declares beside them.
+NEVERD_LIBC_DATA_OBJECT("__daylight", "time.h", "int")
+NEVERD_LIBC_DATA_OBJECT("__timezone", "time.h", "long")
+NEVERD_LIBC_DATA_OBJECT("__tzname", "time.h", "char *[2]")
+NEVERD_LIBC_DATA_OBJECT("getdate_err", "time.h", "int")
+// The IPv6 wildcard and loopback addresses, which an executable copies.
+NEVERD_LIBC_DATA_OBJECT("in6addr_any", "netinet/in.h", "const struct in6_addr")
+NEVERD_LIBC_DATA_OBJECT("in6addr_loopback", "netinet/in.h",
+                        "const struct in6_addr")
+// The sign lgamma leaves.
+NEVERD_LIBC_DATA_OBJECT("signgam", "math.h", "int")
 
 #undef NEVERD_LIBC_DATA_OBJECT

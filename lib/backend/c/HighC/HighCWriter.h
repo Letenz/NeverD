@@ -1466,6 +1466,10 @@ public:
     /// type the header gives it (HeaderType).  Empty for any other object.
     std::string Header;
     TypeRef HeaderType;
+    /// A header's object whose type is none HighC holds, a record's or an
+    /// array's (<netinet/in.h>'s in6addr_loopback): the unit reaches it
+    /// through its bytes.
+    bool HeaderBytes = false;
   };
   std::map<va_t, ImageObject> ImageObjects;
   /// The access width that names the unnamed object \p Obj at \p Addr, as

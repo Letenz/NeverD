@@ -7103,12 +7103,12 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
     // The image's copy of an object a C library header declares is the
     // header's, by its name: the copy relocation gives the program one.
     if (!Named.Raw.empty() && Obj.Name == Named.Raw)
-      if (const char *Header = libc::headerOfDataObject(Named.Raw))
-        if (TypeRef Declared = headerDataObjectType(
-                libc::typeOfDataObject(Named.Raw), Opts.TheArch, Opts.Format)) {
-          Obj.Header = Header;
-          Obj.HeaderType = std::move(Declared);
-        }
+      if (const char *Header = libc::headerOfDataObject(Named.Raw)) {
+        Obj.Header = Header;
+        Obj.HeaderType = headerDataObjectType(libc::typeOfDataObject(Named.Raw),
+                                              Opts.TheArch, Opts.Format);
+        Obj.HeaderBytes = !Obj.HeaderType;
+      }
     // An identifier spelled from the name, or numbered after another object
     // took it, has the name in its comment.
     Obj.Readable = !Named.Readable.empty() || Named.Raw.empty()
