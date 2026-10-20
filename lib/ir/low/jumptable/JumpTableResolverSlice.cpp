@@ -2754,21 +2754,25 @@ struct CFGBuilder::ResolverGraphCache {
     std::optional<size_t> FiniteSymbolBudget;
     bool QueryCompletion;
     bool FeasibleMasks;
+    bool ConstantAddresses;
     bool Complete;
     std::vector<bool> Results;
     std::vector<bool> Completions;
     std::vector<uint64_t> Masks;
+    std::vector<std::optional<va_t>> Addresses;
     size_t Work;
     size_t Bytes;
 
     bool matches(const std::vector<JumpTableValueQuery> &Input,
                  uint32_t InputDepth, size_t InputMatchBudget,
                  std::optional<size_t> InputFiniteSymbolBudget,
-                 bool InputQueryCompletion, bool InputFeasibleMasks) const {
+                 bool InputQueryCompletion, bool InputFeasibleMasks,
+                 bool InputConstantAddresses) const {
       return Depth == InputDepth && MatchBudget == InputMatchBudget &&
              FiniteSymbolBudget == InputFiniteSymbolBudget &&
              QueryCompletion == InputQueryCompletion &&
-             FeasibleMasks == InputFeasibleMasks && Queries == Input;
+             FeasibleMasks == InputFeasibleMasks &&
+             ConstantAddresses == InputConstantAddresses && Queries == Input;
     }
   };
   static constexpr size_t MaxValueBatches = 64;
@@ -2867,16 +2871,17 @@ struct CFGBuilder::ResolverGraphCache {
     return Bytes;
   }
 
-  static std::optional<size_t>
-  valueBatchBytes(const std::vector<JumpTableValueQuery> &Queries,
-                  const std::vector<bool> &Results,
-                  const std::vector<bool> *Completions,
-                  const std::vector<uint64_t> *Masks, bool Capacity) {
+  static std::optional<size_t> valueBatchBytes(
+      const std::vector<JumpTableValueQuery> &Queries,
+      const std::vector<bool> &Results, const std::vector<bool> *Completions,
+      const std::vector<uint64_t> *Masks,
+      const std::vector<std::optional<va_t>> *Addresses, bool Capacity) {
     size_t Bytes = sizeof(ValueBatch) + 8 * sizeof(void *);
     if (!accountValueVector(Bytes, Queries, Capacity) ||
         !accountValueVector(Bytes, Results, Capacity) ||
         (Completions && !accountValueVector(Bytes, *Completions, Capacity)) ||
-        (Masks && !accountValueVector(Bytes, *Masks, Capacity)))
+        (Masks && !accountValueVector(Bytes, *Masks, Capacity)) ||
+        (Addresses && !accountValueVector(Bytes, *Addresses, Capacity)))
       return std::nullopt;
     for (const auto &Query : Queries)
       if (!accountValueVector(Bytes, Query.Alternatives, Capacity) ||
@@ -2910,11 +2915,10 @@ struct CFGBuilder::ResolverGraphCache {
     ValueBytes = 0;
   }
 
-  const ValueBatch *
-  findValueBatch(const CFGBuilder &B,
-                 const std::vector<JumpTableValueQuery> &Queries,
-                 uint32_t Depth, size_t MatchBudget, bool QueryCompletion,
-                 bool FeasibleMasks, size_t RemainingWork) const {
+  const ValueBatch *findValueBatch(
+      const CFGBuilder &B, const std::vector<JumpTableValueQuery> &Queries,
+      uint32_t Depth, size_t MatchBudget, bool QueryCompletion,
+      bool FeasibleMasks, bool ConstantAddresses, size_t RemainingWork) const {
     if (!valueContextMatches(B)) {
       clearValueBatches();
       return nullptr;
@@ -2923,7 +2927,7 @@ struct CFGBuilder::ResolverGraphCache {
       if (It->Work <= RemainingWork &&
           It->matches(Queries, Depth, MatchBudget,
                       B.FiniteSetSymbolEvidenceBudgetForTesting,
-                      QueryCompletion, FeasibleMasks)) {
+                      QueryCompletion, FeasibleMasks, ConstantAddresses)) {
         ValueBatches.splice(ValueBatches.begin(), ValueBatches, It);
         ++ValueHits;
         return &ValueBatches.front();
@@ -2937,12 +2941,13 @@ struct CFGBuilder::ResolverGraphCache {
                           const std::vector<bool> &Results,
                           const std::vector<bool> *Completions,
                           const std::vector<uint64_t> *Masks,
+                          const std::vector<std::optional<va_t>> *Addresses,
                           size_t ColdWork) const {
     const auto EstimatedContext =
         valueContextBytes(B.RelocatedInstructionAddressOccurrences,
                           B.RelocatedInstructionScalarModelOccurrences, false);
     const auto EstimatedBatch =
-        valueBatchBytes(Queries, Results, Completions, Masks, false);
+        valueBatchBytes(Queries, Results, Completions, Masks, Addresses, false);
     if (!EstimatedContext || !EstimatedBatch ||
         *EstimatedBatch > MaxValueBytes - *EstimatedContext)
       return;
@@ -2970,14 +2975,18 @@ struct CFGBuilder::ResolverGraphCache {
                      B.FiniteSetSymbolEvidenceBudgetForTesting,
                      Completions != nullptr,
                      Masks != nullptr,
+                     Addresses != nullptr,
                      Complete,
                      Results,
                      Completions ? *Completions : std::vector<bool>{},
                      Masks ? *Masks : std::vector<uint64_t>{},
+                     Addresses ? *Addresses
+                               : std::vector<std::optional<va_t>>{},
                      ColdWork,
                      0};
-    const auto Bytes = valueBatchBytes(Batch.Queries, Batch.Results,
-                                       &Batch.Completions, &Batch.Masks, true);
+    const auto Bytes =
+        valueBatchBytes(Batch.Queries, Batch.Results, &Batch.Completions,
+                        &Batch.Masks, &Batch.Addresses, true);
     const auto ContextBytes = valueContextBytes(
         QueryContext->Addresses, QueryContext->ScalarModels, true);
     if (!Bytes || !ContextBytes || *Bytes > MaxValueBytes - *ContextBytes)
@@ -4986,6 +4995,60 @@ CFGBuilder::queryPEImageBaseAtUse(const BinaryImage &Img,
   return Matches.front();
 }
 
+std::optional<va_t> CFGBuilder::queryConstantAddressAtUse(
+    const BinaryImage &Img, const JumpTableValueOccurrence &Use,
+    size_t *CandidateEvidenceBudget, bool &AnalysisComplete) const {
+  AnalysisComplete = false;
+  if (!CandidateEvidenceBudget || CurrentImg != &Img ||
+      !consumeResolverGraphWork(CandidateEvidenceBudget, 48))
+    return std::nullopt;
+  if (Use.DefinedAtPoint || Use.Addr == InvalidVA || Use.Seq < 0 ||
+      Use.Value.Size != Img.getPointerSize() ||
+      (!Use.Value.isReg() && !Use.Value.isTemp() && !Use.Value.isConst())) {
+    AnalysisComplete = true;
+    return std::nullopt;
+  }
+  JumpTableValueQuery Query;
+  Query.Candidate = Use.Value;
+  Query.UseAddr = Use.Addr;
+  Query.UseSeq = Use.Seq;
+  Query.Relation = JumpTableValueRelation::ConstantAddress;
+  std::vector<std::optional<va_t>> Addresses;
+  const auto Results = tableValuesMatchAtUses(
+      {Query}, &AnalysisComplete, nullptr, InvalidVA, nullptr,
+      CandidateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
+      nullptr, nullptr, limits::kMaxJumpTableExpandedResolverDepth, nullptr,
+      true, nullptr, &Addresses);
+  if (Results.size() != 1 || Addresses.size() != 1)
+    AnalysisComplete = false;
+  if (!AnalysisComplete || !Results.front())
+    return std::nullopt;
+  return Addresses.front();
+}
+
+std::optional<va_t> CFGBuilder::foldTableAddressAtUse(
+    const BinaryImage &Img, const InsnRecord &Rec,
+    const JumpTableValueOccurrence &Use, uint64_t LegacyReg, va_t LegacyCutoff,
+    size_t *CandidateEvidenceBudget, bool &AnalysisComplete,
+    bool AllowUnmappedCOFFImageBase) const {
+  auto Address = queryConstantAddressAtUse(Img, Use, CandidateEvidenceBudget,
+                                           AnalysisComplete);
+  if (Address || !AnalysisComplete)
+    return Address;
+  if (LegacyReg == InvalidVA)
+    return std::nullopt;
+  return foldRegConstant(
+      Img, Rec, LegacyReg, LegacyCutoff,
+      [&](size_t Amount) {
+        if (!consumeResolverGraphWork(CandidateEvidenceBudget, Amount)) {
+          AnalysisComplete = false;
+          return false;
+        }
+        return true;
+      },
+      /*RequireMappedValue=*/true, AllowUnmappedCOFFImageBase);
+}
+
 std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     const std::vector<JumpTableValueQuery> &Queries, bool *AnalysisComplete,
     std::vector<bool> *QueryAnalysisComplete, va_t CandidateBranchOverride,
@@ -4995,7 +5058,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     std::vector<uint64_t> *QueryUnsignedFeasibleMasks,
     uint32_t ResolverDepthLimit,
     const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides,
-    bool UseGroupContext, ResolverQueryScope *ReadOnlyScope) const {
+    bool UseGroupContext, ResolverQueryScope *ReadOnlyScope,
+    std::vector<std::optional<va_t>> *QueryConstantAddresses) const {
   if (UseGroupContext && GuardedGroupProofContext)
     CertifiedEdgeOverrides =
         CandidateTargetsOverride && CandidateTargetsOverride->empty()
@@ -5007,6 +5071,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     QueryAnalysisComplete->clear();
   if (QueryUnsignedFeasibleMasks)
     QueryUnsignedFeasibleMasks->clear();
+  if (QueryConstantAddresses)
+    QueryConstantAddresses->clear();
   RequestedCompleteJumpTableProof = true;
   size_t ResultStorage = Queries.size();
   if (QueryAnalysisComplete) {
@@ -5025,6 +5091,14 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     }
     ResultStorage += Queries.size();
   }
+  if (QueryConstantAddresses) {
+    if (Queries.size() > std::numeric_limits<size_t>::max() - ResultStorage) {
+      if (GraphWorkBudget)
+        *GraphWorkBudget = 0;
+      return {};
+    }
+    ResultStorage += Queries.size();
+  }
   // A budgeted query may return an empty batch on exhaustion; every fixed-point
   // caller treats a size mismatch as incomplete.  This lets us charge output
   // storage before allocating it instead of allocating an attacker-sized false
@@ -5032,7 +5106,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   // callers retain the established one-result-per-query shape.
   const size_t ResultFixedWork =
       (QueryAnalysisComplete ? size_t{4} : size_t{2}) +
-      (QueryUnsignedFeasibleMasks ? size_t{2} : size_t{0});
+      (QueryUnsignedFeasibleMasks ? size_t{2} : size_t{0}) +
+      (QueryConstantAddresses ? size_t{2} : size_t{0});
   if ((ResultStorage != 0 &&
        3 > std::numeric_limits<size_t>::max() / ResultStorage) ||
       ResultStorage * 3 >
@@ -5049,6 +5124,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     QueryAnalysisComplete->assign(Queries.size(), false);
   if (QueryUnsignedFeasibleMasks)
     QueryUnsignedFeasibleMasks->assign(Queries.size(), 0);
+  if (QueryConstantAddresses)
+    QueryConstantAddresses->assign(Queries.size(), std::nullopt);
   if (!JumpTableProofContextComplete || !CurrentImg || Queries.empty())
     return Results;
   if (CandidateTargetsOverride && CandidateBranchesSharingTargets &&
@@ -5188,6 +5265,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
             *this, Queries, MaxResolverDepth, InitialMatchBudget,
             QueryAnalysisComplete != nullptr,
             QueryUnsignedFeasibleMasks != nullptr,
+            QueryConstantAddresses != nullptr,
             GraphWorkBudget ? *GraphWorkBudget
                             : std::numeric_limits<size_t>::max())) {
       if (GraphWorkBudget)
@@ -5197,6 +5275,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         *QueryAnalysisComplete = Batch->Completions;
       if (QueryUnsignedFeasibleMasks)
         *QueryUnsignedFeasibleMasks = Batch->Masks;
+      if (QueryConstantAddresses)
+        *QueryConstantAddresses = Batch->Addresses;
       if (AnalysisComplete)
         *AnalysisComplete = Batch->Complete;
       return Results;
@@ -9526,6 +9606,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     if (Query.Candidate.Size == 0 ||
         (Query.Relation != JumpTableValueRelation::UnsignedLessThan &&
          Query.Relation != JumpTableValueRelation::ResolvableValue &&
+         Query.Relation != JumpTableValueRelation::ConstantAddress &&
          !FiniteSet &&
          Query.Relation != JumpTableValueRelation::ExactUnsignedModuloRecipe &&
          Query.Relation != JumpTableValueRelation::AuthenticatedFrameMemory &&
@@ -9639,6 +9720,14 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
           Query.Alternatives.size())
         continue;
     } else if (Query.Candidate.isConst()) {
+      if (Query.Relation == JumpTableValueRelation::ConstantAddress) {
+        if (!consumeProofPointLookup()) {
+          markIncomplete(QueryIndex);
+          continue;
+        }
+        if (!Graph.PointToOp.count({Query.UseAddr, Query.UseSeq}))
+          continue;
+      }
       CandidateValue = constantValue(Query.Candidate);
     } else if (Query.Candidate.isReg() || Query.Candidate.isTemp()) {
       if (!consumeProofPointLookup()) {
@@ -9751,7 +9840,43 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       continue;
     }
 
+    std::optional<va_t> DiscoveredAddress;
     std::vector<ResolverValue> AllowedValues;
+    if (Query.Relation == JumpTableValueRelation::ConstantAddress) {
+      if (!Query.Alternatives.empty() ||
+          Query.Candidate.Size != CurrentImg->getPointerSize() ||
+          Query.AllowZeroExtension || Query.AllowSignExtension ||
+          Query.UseDefinedAlternativesAsOccurrenceRoots)
+        continue;
+      // A merge can propose any one of its arms: the existing all-path
+      // matcher below must then prove that every arm has that exact address.
+      // Following only the first arm avoids an independent graph search or
+      // an address-candidate inventory whose size depends on lexical layout.
+      ResolverValue Proposed = CandidateValue.Value;
+      unsigned Depth = 0;
+      while (Proposed && Proposed->K == ResolverValueExpr::Kind::Merge &&
+             !Proposed->Inputs.empty()) {
+        if (++Depth > MaxResolverDepth || !consumeMatchWork()) {
+          markIncomplete(QueryIndex, true);
+          Proposed.reset();
+          break;
+        }
+        Proposed = Proposed->Inputs.front();
+      }
+      if (!Proposed || Proposed->K != ResolverValueExpr::Kind::Constant ||
+          Proposed->Size != CurrentImg->getPointerSize() ||
+          !isExactAddressProvenance(Proposed->Provenance) ||
+          Proposed->ScalarModelOrigin)
+        continue;
+      if (!consumeEvidence(3)) {
+        markIncomplete(QueryIndex);
+        continue;
+      }
+      DiscoveredAddress = Proposed->Constant;
+      AllowedValues.push_back(budgetedResolverConstant(
+          *DiscoveredAddress, Proposed->Size,
+          ConstantAddressProvenance::Address, InvalidVA, consumeEvidence));
+    }
     if (!consumeEvidenceProduct(Query.Alternatives.size(), 2) ||
         !consumeEvidence(2)) {
       markIncomplete(QueryIndex);
@@ -10040,6 +10165,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         EvidenceBudgetExhausted) {
       markIncomplete(QueryIndex, MatchBudgetExhausted && MatchBudget == 0 &&
                                      !EvidenceBudgetExhausted);
+    } else if (Results[QueryIndex] && DiscoveredAddress &&
+               QueryConstantAddresses) {
+      (*QueryConstantAddresses)[QueryIndex] = DiscoveredAddress;
     }
   }
   // A shared allowance belongs to the complete query transaction.  Do not
@@ -10054,6 +10182,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     if (QueryUnsignedFeasibleMasks)
       std::fill(QueryUnsignedFeasibleMasks->begin(),
                 QueryUnsignedFeasibleMasks->end(), 0);
+    if (QueryConstantAddresses)
+      std::fill(QueryConstantAddresses->begin(), QueryConstantAddresses->end(),
+                std::nullopt);
     Complete = false;
   }
   if (AnalysisComplete)
@@ -10070,6 +10201,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     ReusedGraph->rememberValueBatch(
         *this, Queries, MaxResolverDepth, InitialMatchBudget, Complete, Results,
         QueryAnalysisComplete, QueryUnsignedFeasibleMasks,
+        QueryConstantAddresses,
         GraphWorkBudget ? ValueWorkBefore - *GraphWorkBudget : 0);
   return Results;
 }

@@ -2616,6 +2616,16 @@ ordinary relative-base path; an incomplete query stops the candidate and
 requests complete-graph replay. Every query consumes the enclosing candidate
 and stage evidence, preserves address provenance and replays after CFG growth.
 It grants no table storage, selector domain, target or SEH frame authority.
+Other table bases and target anchors use a constant-address query on that same
+graph. The reconstructed value proposes one pointer-width address, and the
+ordinary all-path matcher authenticates it against every reaching arm. Scalar
+collisions and address fragments cannot propose addresses. Ordinary relative,
+absolute, selected and two-level tables, AArch64 compact tables and Thumb
+register-based TBB/TBH share this query, independently of format or lexical
+distance. A completed refusal can retain legacy candidate folding; incomplete
+work cannot. Address results participate in the value cache's output identity,
+cold-work accounting and transactional failure clearing. Final storage, domain
+and target proofs still replay after graph growth.
 A failed optional consumer audit grants no relocation-root suppression. With
 its shared evidence budget intact, the resolver retains every root and replays
 the mandatory selector, address and target proofs under that stronger context.

@@ -1456,6 +1456,10 @@ private:
     /// an unreachable sibling consumer from a reachable but out-of-domain
     /// value when constructing a candidate-local finite-domain fixed point.
     ResolvableValue,
+    /// Discover one pointer-width address at the exact use, then prove it
+    /// against every feasible reaching value with the ordinary MustEqual
+    /// matcher. Scalars and address fragments cannot propose an address.
+    ConstantAddress,
     /// Every feasible value is below UnsignedUpperBound (at most 64), and the
     /// exact feasible coordinates are returned in the query's uint64_t result
     /// mask.  One resolver DAG and symbolic context own the whole enumeration;
@@ -2150,7 +2154,8 @@ private:
       std::vector<JumpTableValueOccurrence> *StorageConsumersOut =
           nullptr) const;
   bool tryAArch64CompactTable(const BinaryImage &Img, const InsnRecord &Rec,
-                              JumpTableInfo &Info);
+                              JumpTableInfo &Info,
+                              size_t *CandidateEvidenceBudget);
   bool analyzeTableLoadAddr(
       const std::vector<LowOp> &Ops, int FromIdx, const NdVar &AddrV,
       uint64_t &BaseReg, uint64_t &IndexReg, bool &HasScaledIndex,
@@ -2178,7 +2183,9 @@ private:
       uint64_t &IndexReg, uint16_t &LoadWidth, uint64_t &Disp, va_t &TableAddr,
       NdVar *LoadOutput = nullptr, va_t *LoadAddr = nullptr,
       int *LoadSeq = nullptr, NdVar *IndexValue = nullptr,
-      va_t *IndexUseAddr = nullptr, int *IndexUseSeq = nullptr) const;
+      va_t *IndexUseAddr = nullptr, int *IndexUseSeq = nullptr,
+      size_t *CandidateEvidenceBudget = nullptr,
+      bool *AnalysisComplete = nullptr) const;
   // Detect a runtime-selected table base (`base = cond ? A : B; jmp
   // *base[idx]`), where A and B are two adjacent code-pointer tables (clang
   // lowers a computed goto whose label table is chosen at runtime, e.g. `tbl =
@@ -2225,8 +2232,17 @@ private:
                   std::function<bool(size_t)> ConsumeWork = {},
                   bool RequireMappedValue = true,
                   bool AllowUnmappedCOFFImageBase = false) const;
+  /// Prefer the exact CFG address, retaining legacy folding only after a
+  /// completed query supplies none. Legacy results remain candidates for the
+  /// ordinary final address-role proof, never a substitute for that proof.
+  std::optional<va_t>
+  foldTableAddressAtUse(const BinaryImage &Img, const InsnRecord &Rec,
+                        const JumpTableValueOccurrence &Use, uint64_t LegacyReg,
+                        va_t LegacyCutoff, size_t *CandidateEvidenceBudget,
+                        bool &AnalysisComplete,
+                        bool AllowUnmappedCOFFImageBase = false) const;
   bool tryARMTableBranch(const BinaryImage &Img, const InsnRecord &Rec,
-                         JumpTableInfo &Info);
+                         JumpTableInfo &Info, size_t *CandidateEvidenceBudget);
   bool tryDualPathRecovery(const InsnRecord &Rec, JumpTableInfo &Info);
   bool inferBoundsFromUnrolledGuard(const InsnRecord &Rec, JumpTableInfo &Info);
   /// Recover the entry count by propagating a range guard's implied value
@@ -2442,6 +2458,12 @@ private:
   queryPEImageBaseAtUse(const BinaryImage &Img,
                         const JumpTableValueOccurrence &Use,
                         size_t *CandidateEvidenceBudget) const;
+  /// Discover and prove an address through the shared reaching-value graph.
+  /// A complete empty result grants no address; incomplete work must stop the
+  /// candidate rather than fall back to an unmetered lexical guess.
+  std::optional<va_t> queryConstantAddressAtUse(
+      const BinaryImage &Img, const JumpTableValueOccurrence &Use,
+      size_t *CandidateEvidenceBudget, bool &AnalysisComplete) const;
   /// UseGroupContext=false only for final joint-domain replay on one frozen
   /// owner graph with every member's exact certified edge set.
   std::vector<bool> tableValuesMatchAtUses(
@@ -2455,8 +2477,8 @@ private:
       std::vector<uint64_t> *QueryUnsignedFeasibleMasks = nullptr,
       uint32_t ResolverDepthLimit = 0,
       const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides = nullptr,
-      bool UseGroupContext = true,
-      ResolverQueryScope *ReadOnlyScope = nullptr) const;
+      bool UseGroupContext = true, ResolverQueryScope *ReadOnlyScope = nullptr,
+      std::vector<std::optional<va_t>> *QueryConstantAddresses = nullptr) const;
   /// Prove that the actual INDIR_BR input is derived from the strategy's exact
   /// TargetLoad occurrence on every feasible path.  Mere address co-occurrence
   /// in static scans or emulation is not sufficient.

@@ -166,24 +166,16 @@ bool CFGBuilder::decomposeIndexTableLoadAddr(
       uint64_t BaseReg = traceToRegister(Ops, AddIdx - 1, BaseV);
       if (BaseReg == InvalidVA)
         continue;
-      std::optional<uint64_t> Folded;
-      if (Disp != 0) {
-        const auto ImageBase = queryPEImageBaseAtUse(
-            Img, {BaseV, Ops[AddIdx].Addr, Ops[AddIdx].Seq, false},
-            CandidateEvidenceBudget);
-        if (!ImageBase) {
-          if (BaseAnalysisComplete)
-            *BaseAnalysisComplete = false;
-          return false;
-        }
-        if (*ImageBase)
-          Folded = Img.Base;
+      bool Complete = false;
+      auto Folded = foldTableAddressAtUse(
+          Img, Rec, {BaseV, Ops[AddIdx].Addr, Ops[AddIdx].Seq, false}, BaseReg,
+          LoadAddr, CandidateEvidenceBudget, Complete,
+          /*AllowUnmappedCOFFImageBase=*/Disp != 0 && Img.isCOFF());
+      if (!Complete) {
+        if (BaseAnalysisComplete)
+          *BaseAnalysisComplete = false;
+        return false;
       }
-      if (!Folded)
-        Folded = foldRegConstant(Img, Rec, BaseReg, LoadAddr, ConsumeWork,
-                                 /*RequireMappedValue=*/true,
-                                 /*AllowUnmappedCOFFImageBase=*/
-                                 Disp != 0 && Img.isCOFF());
       if (!Folded)
         continue;
       Base = *Folded;
@@ -1210,23 +1202,15 @@ bool CFGBuilder::tryTwoLevelIndexTable(const BinaryImage &Img,
   va_t JmpBase = 0;
   {
     va_t FoldAt = Ops[JmpLoadIdx].Addr;
-    std::optional<uint64_t> Folded;
-    if (JmpDisp != 0 && W2 == 4) {
-      const auto ImageBase = queryPEImageBaseAtUse(Img, JmpRuntimeBase.Use,
-                                                   CandidateEvidenceBudget);
-      if (!ImageBase) {
-        Info.IncompleteGuardDomain = true;
-        return false;
-      }
-      if (*ImageBase)
-        Folded = Img.Base;
+    bool Complete = false;
+    auto Folded = foldTableAddressAtUse(
+        Img, Rec, JmpRuntimeBase.Use, JmpBaseReg, FoldAt,
+        CandidateEvidenceBudget, Complete,
+        /*AllowUnmappedCOFFImageBase=*/JmpDisp != 0 && Img.isCOFF());
+    if (!Complete) {
+      Info.IncompleteGuardDomain = true;
+      return false;
     }
-    if (!Folded)
-      Folded = foldRegConstant(
-          Img, Rec, JmpBaseReg, FoldAt,
-          [&](size_t Amount) { return consumeEvidence(Amount); },
-          /*RequireMappedValue=*/true,
-          /*AllowUnmappedCOFFImageBase=*/JmpDisp != 0 && Img.isCOFF());
     if (!Folded)
       return false;
     // The address table may be displaced from the folded base register (a PE

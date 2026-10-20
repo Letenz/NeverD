@@ -1953,7 +1953,12 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   // detector to dispatch to here.
 
   // Strategy 1: ARM32 TBB/TBH table-branch (most specific, check first).
-  bool Recovered = tryARMTableBranch(Img, Rec, Info);
+  bool Recovered = tryARMTableBranch(Img, Rec, Info, &CandidateEvidenceBudget);
+  if (Info.IncompleteGuardDomain) {
+    CandidateEvidenceShapeClaimed = true;
+    CandidateEvidenceAnalysisIncomplete = true;
+    return {};
+  }
   if (Recovered && !HasOccurrenceMetadata(Info))
     Recovered = RejectIncompleteCandidate();
 
@@ -1963,7 +1968,8 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   bool RecoveredAArch64Compact = false;
   bool CompactOwnerCapacity = false;
   if (!Recovered) {
-    Recovered = tryAArch64CompactTable(Img, Rec, Info);
+    Recovered =
+        tryAArch64CompactTable(Img, Rec, Info, &CandidateEvidenceBudget);
     RecoveredAArch64Compact = Recovered;
   }
   // Compact byte/halfword tables have no per-entry relocations, so the generic
@@ -1997,6 +2003,11 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
         }
       }
     }
+  }
+  if (Info.IncompleteGuardDomain) {
+    CandidateEvidenceShapeClaimed = true;
+    CandidateEvidenceAnalysisIncomplete = true;
+    return {};
   }
   if (Recovered && !HasOccurrenceMetadata(Info))
     Recovered = RejectIncompleteCandidate();
@@ -2036,7 +2047,8 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   if (!Recovered) {
     Info = JumpTableInfo{};
     Recovered = tryTwoLevelIndexTable(Img, Rec, Info, &CandidateEvidenceBudget);
-    CandidateEvidenceShapeClaimed |= Info.CompositeShapeClaimed;
+    CandidateEvidenceShapeClaimed |=
+        Info.CompositeShapeClaimed || Info.IncompleteGuardDomain;
     CandidateEvidenceAnalysisIncomplete |= Info.IncompleteGuardDomain;
     if (Info.IncompleteGuardDomain)
       return {};
@@ -2068,6 +2080,10 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
     Recovered =
         tryCrossInstrRelativeTable(Img, Rec, Info, &CandidateEvidenceBudget);
   if (Info.IncompleteGuardDomain) {
+    // Address discovery can now defer before the detector finishes the
+    // candidate. Retain the recognized load/branch shape on incomplete work;
+    // it is not evidence that the original indirect branch is a tail call.
+    CandidateEvidenceShapeClaimed = true;
     CandidateEvidenceAnalysisIncomplete = true;
     return {};
   }

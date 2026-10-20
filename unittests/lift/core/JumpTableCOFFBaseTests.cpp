@@ -206,8 +206,11 @@ TEST(COFFTableBase, RejectsConflictingOrNonAddressDefinitions) {
 }
 
 TEST(COFFTableBase, KeepsOtherRelativeAnchors) {
-  const auto F = makeFixture(0, "otherbase");
-  expectExact(F, recover(F));
+  for (unsigned Count : {0u, 32u, 160u}) {
+    SCOPED_TRACE(Count);
+    const auto F = makeFixture(Count, "otherbase");
+    expectExact(F, recover(F));
+  }
 }
 
 TEST(COFFTableBase, ExhaustionCannotPublishAPartialTable) {
