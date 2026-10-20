@@ -22,6 +22,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <utility>
 
 using namespace neverd;
@@ -5139,6 +5140,7 @@ TEST(InterpreterSpecialization, TimestampTransitionMatchesCompleteStateOracle) {
 #include "AlignmentRecoveryTests.inc"
 #include "CPUQueryRecoveryTests.inc"
 #include "MXCSRRecoveryTests.inc"
+#include "SavedAddressCellsTests.inc"
 #include "SegmentedStoreTests.inc"
 #include "SupervisorReadRecoveryTests.inc"
 

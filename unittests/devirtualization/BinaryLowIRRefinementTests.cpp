@@ -3472,6 +3472,47 @@ TEST(BinaryLowIRRefinement, SupervisorReadCompletesOnlyRawRecovery) {
   EXPECT_FALSE(P.recover().complete());
 }
 
+TEST(BinaryLowIRRefinement, SavedFrameAddressRetainsIndexedProofBoundary) {
+  // Save a frame-local pointer, perform a separately indexed byte write,
+  // recover the pointer, write/read through it, and define the final flags.
+  Program P({0x48, 0x8d, 0x44, 0x24, 0xc8, 0x48, 0x89, 0x44, 0x24, 0xd0,
+             0x83, 0xe1, 0x07, 0x48, 0x8d, 0x54, 0x0c, 0xe0, 0xc6, 0x02,
+             0x5a, 0x48, 0x8b, 0x44, 0x24, 0xd0, 0x48, 0xc7, 0x00, 0x25,
+             0x00, 0x00, 0x00, 0x48, 0x8b, 0x00, 0x48, 0x39, 0xc0, 0xc3});
+  P.Options.RequireRestoredFrameAtReturn = true;
+  P.Options.ProveStoreReturnSlotSeparation = true;
+  const auto R = P.recover();
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  // General indexed frame accesses remain outside the current native proof
+  // contract. Raw recovery must not imply a certificate for that domain.
+  P.Contract.ObserveWrittenFrameBytes = true;
+  const auto Checked = P.check(R.Residual);
+  refused(Checked, Status::Unsupported);
+  EXPECT_EQ(Checked.Proof.Diagnostic,
+            "memory address is not an exact entry-frame offset");
+  auto Changed = R.Residual;
+  unsigned Changes = 0;
+  for (auto &Block : Changed.Blocks)
+    for (auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::STORE) {
+        auto &Value = Op.Inputs[Op.NumInputs - 1];
+        if (Value.isConst() && Value.Size == 1 && Value.Offset == 0x5a) {
+          Value.Offset ^= 1;
+          ++Changes;
+        }
+      }
+  ASSERT_EQ(Changes, 1u);
+  // Each explicitly bound selector is a separate positive proof control.
+  // These checks do not certify the unrestricted input domain above.
+  for (uint64_t Input = 0; Input != 8; ++Input) {
+    P.Options.EntryConstants = {{NdVar::reg(x86reg::RCX, 8), Input}};
+    P.Contract.EntryConstants = {{NdVar::reg(x86reg::RCX, 8), Input}};
+    const auto Good = P.check(R.Residual);
+    ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+    refused(P.check(Changed), Status::Different);
+  }
+}
+
 TEST(BinaryLowIRRefinement, HighAddressDecodedCallRetainsPhysicalReturnWord) {
   for (va_t Base : {va_t{0xffff800000001000}, InvalidVA - 32}) {
     // CALL callee; RET; callee: MOV RAX,[RSP]; RET.

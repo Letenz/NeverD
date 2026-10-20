@@ -3719,6 +3719,17 @@ same architecture dispatch. `BinaryLowIRRefinement.CPUQueryCompletesOnlyRawRecov
 checks raw completion while retaining native-proof and both source-layout
 refusals. These checks establish no CPU-feature profile or backend execution.
 
+`InterpreterSpecialization.SavedFrameAddress*` checks indexed and conditional
+writes against an independent complete-byte-memory oracle, modular addresses,
+partial overlap, later overwrite, disjoint saved cells with a writable gap,
+projection and exact/short work and query budgets.
+`BinaryLowIRRefinement.SavedFrameAddressRetainsIndexedProofBoundary` checks
+strictly decoded native bytes. Unrestricted symbolic indexing still refuses a
+native certificate; separately bound selector controls prove complete frame
+writes and reject a corrupted byte store. Run the full specialization, original
+binary independence, PE fixed-image, LowIR independence and LowIR refinement
+owners after changing this shared preservation boundary.
+
 `InterpreterSpecialization.SupervisorRead*` checks ECX selectors with nonzero
 upper RCX bits, full-width results, zero upper destination halves, independent
 and repeated reads, exact/short budgets, malformed bundles, required supervisor
