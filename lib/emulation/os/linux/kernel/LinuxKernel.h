@@ -50,12 +50,19 @@ public:
   virtual std::optional<uint64_t> nextWake() const = 0;
   virtual llvm::Expected<std::optional<uint64_t>>
   resume(ProcessResult &Result) = 0;
+  /// Only the operation owner can decide whether/how a caught signal ends a
+  /// wait. Unsupported restart/copy-out contracts must not become EINTR.
+  virtual llvm::Expected<std::optional<uint64_t>>
+  interrupt(ProcessResult &Result) {
+    Result.Stop = ProcessStopReason::UnsupportedService;
+    Result.Diagnostic = SignalWaitUnsupported;
+    return std::optional<uint64_t>();
+  }
 };
 struct ThreadContext {
   uint64_t ID = ThreadID;
   std::optional<uint64_t> Exit;
   /// Consumed by the scheduler before another service can run on this thread.
-  std::optional<uint64_t> SleepDeadline;
   std::unique_ptr<KernelWait> Pending;
 };
 struct ServiceABI {

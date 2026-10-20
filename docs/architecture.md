@@ -5693,6 +5693,17 @@ the restored PC or x0 with an ordinary service return. CPU backends do not own
 signal policy or synthesize handlers. Unknown initial masks/alternate stacks,
 unsupported waiting recipients and context extensions remain explicit stops.
 No SDK or host signal mechanism participates.
+`KernelWait` owns each suspended operation's signal interruption contract.
+Relative sleeps retain copied deadlines and remaining-time output addresses in
+`LinuxSleep`; no second sleep state lives in the Android scheduler. Scheduling
+considers eligible process-pending signals before advancing idle time. The
+shared signal owner discards ignored signals and classifies default termination
+before a waiter can report EINTR. Other wait owners refuse interruption until
+their own restart and copy-out semantics exist. For modeled native wrappers,
+the scheduler records a per-thread continuation at the import's post-trap PC
+and current signal-frame depth. After `rt_sigreturn`, Bionic converts the
+restored raw result, including guest edits, to errno/-1. A guest PC redirect
+bypasses that adapter without fabricating a returned native-call event.
 `AndroidAuxv` owns admission and lookup of the native workload's explicit,
 complete auxiliary vector. Bionic alone applies `getauxval`'s full-width
 lookup and thread-local errno behavior; constructors and dynamic imports use

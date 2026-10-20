@@ -46,6 +46,7 @@ NEVERD_LINUX_VALUE(AccessDenied, 13)
 NEVERD_LINUX_VALUE(ServiceNotImplemented, 38)
 NEVERD_LINUX_VALUE(BadDescriptor, 9)
 NEVERD_LINUX_VALUE(BadAddress, 14)
+NEVERD_LINUX_VALUE(InterruptedCall, 4)
 NEVERD_LINUX_VALUE(PermissionDenied, 1)
 NEVERD_LINUX_VALUE(InvalidArgument, 22)
 NEVERD_LINUX_VALUE(OperationNotSupported, 95)
@@ -445,4 +446,6 @@ NEVERD_LINUX_DIAGNOSTIC(SleepPolicy,
                         "Linux nanosleep requires linux_time.advance_on_idle")
 NEVERD_LINUX_DIAGNOSTIC(
     SleepRange, "Linux sleep deadline exceeds the modeled virtual time range")
+NEVERD_LINUX_DIAGNOSTIC(
+    SleepPartialOutput, "unmodeled partial Linux nanosleep remainder output")
 #endif
