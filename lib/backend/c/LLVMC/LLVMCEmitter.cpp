@@ -585,10 +585,16 @@ void LLVMCWriter::writeRecordDefinitions(std::string &Text) {
          << Name << " " << Name << ";\n";
   if (!Definitions.Text.empty())
     OS << "\n" << Definitions.Text << "\n";
-  // An enumeration's type is complete only where it is defined.
+  // An enumeration's type is complete only where it is defined.  One a header
+  // names by a typedef alone has no tag, and the header's typedef is the
+  // unit's (<search.h>'s VISIT).
+  bool EnumerationTypedefs = false;
   for (const std::string &Name : Enumerations)
-    OS << "typedef enum " << Name << " " << Name << ";\n";
-  if (!Enumerations.empty())
+    if (!llvm::is_contained(Definitions.HeaderTypedefs, Name)) {
+      OS << "typedef enum " << Name << " " << Name << ";\n";
+      EnumerationTypedefs = true;
+    }
+  if (EnumerationTypedefs)
     OS << "\n";
 }
 

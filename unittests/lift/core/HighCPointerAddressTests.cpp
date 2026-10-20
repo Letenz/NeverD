@@ -47234,6 +47234,41 @@ TEST(HighCPointerAddresses, RecordsHeadersNameByTypedefsTakeTheirTypedefs) {
   expectCSyntax("#include <pthread.h>\n" + Source);
 }
 
+TEST(HighCPointerAddresses,
+     EnumerationsHeadersNameByTypedefsTakeTheirTypedefs) {
+  // glibc's <search.h> names VISIT by a typedef alone, which leaves it no
+  // tag: the unit declares no `typedef enum VISIT VISIT;` of its own, which
+  // would contradict the header's.  An enumeration the unit's own types
+  // define keeps its typedef.
+  HighFunc Func;
+  Func.Name = "probe_walk";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(4);
+  Func.Params = {{"walk", NdType::makePtr(NdType::makeNamedRecord("walker"))}};
+  returnValue(Func, HighExpr::makeConst(0, 4));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text = "#include <search.h>\n"
+                       "enum order { first, last };\n"
+                       "struct walker { VISIT visit; enum order order; };\n";
+    Definitions.Records = {{"walker", false}};
+    Definitions.Tags = {{"walker", false}};
+    Definitions.Enumerations = {"VISIT", "order"};
+    Definitions.HeaderTypedefs = {"VISIT"};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_EQ(Source.find("typedef enum VISIT"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("typedef enum order order;"), std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, HeaderRoutinesReturnTheirDeclaredPointers) {
   // <semaphore.h> declares sem_open variadic, so no prototype here gives
   // its result: its declaration returns a sem_t *, which an integer local

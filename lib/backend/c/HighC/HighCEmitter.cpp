@@ -1787,10 +1787,15 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   if (!RecordDefinitions.Text.empty())
     OS << RecordDefinitions.Text << "\n";
   // An enumeration's type is complete only where it is defined, and the
-  // unit spells it by its tag's name.
+  // unit spells it by its tag's name.  One a header names by a typedef alone
+  // has no tag, and the header's typedef is the unit's (<search.h>'s VISIT).
+  bool EnumerationTypedefs = false;
   for (const std::string &Name : RecordDefinitions.Enumerations)
-    OS << "typedef enum " << Name << " " << Name << ";\n";
-  if (!RecordDefinitions.Enumerations.empty())
+    if (!llvm::is_contained(RecordDefinitions.HeaderTypedefs, Name)) {
+      OS << "typedef enum " << Name << " " << Name << ";\n";
+      EnumerationTypedefs = true;
+    }
+  if (EnumerationTypedefs)
     OS << "\n";
   // The unit spells the records the definitions name by their names alone
   // too, as where a member it reads gives a local its type, unless an
