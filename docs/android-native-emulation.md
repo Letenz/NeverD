@@ -4,9 +4,10 @@
 AArch64 shared library using NeverD's CPU, address space, AAPCS64 call frames,
 execution sessions, and Linux syscall models. This is a bounded native analysis
 environment, with explicit inputs and observable failures. It does not boot an
-Android system or supply a Java bytecode runtime, system-service peers, signal
-delivery, a general filesystem, or a network. JNI and Binder have explicit
-bounded models described below. It never calls host functions to satisfy a guest import.
+Android system or supply arbitrary system-service peers, a general filesystem,
+or a host network. Managed execution, JNI, Binder and standard signal delivery
+have explicit bounded models described below. It never calls host functions
+to satisfy a guest import.
 
 Build with `NEVERD_ENABLE_CPU_EMULATION=ON`. The host transport is selected
 independently of the guest profile; `unicorn` works without an Android device.
@@ -174,7 +175,7 @@ The supported Bionic subset is:
   1024-bit descriptor bitmap. The signed low 32-bit descriptor must be 0..1023,
   then the full-width object extent must be at least 128 bytes. Invalid values
   stop with a non-returning FORTIFY `runtime_failure` before touching the bitmap;
-  signal delivery is not modeled. Valid calls access only the selected eight-byte
+  FORTIFY-triggered signal delivery is not modeled. Valid calls access only the selected eight-byte
   word, preserve other bits and errno, and do not require an open descriptor.
   Queries return 0 or 1 and accept read-only memory; mutations require read/write
   access. Guest-pointer and wrapping-address failures remain explicit. These
@@ -207,7 +208,7 @@ The supported Bionic subset is:
   first search can return before reaching a terminator; reverse search must
   reach NUL. Fortified calls check the remaining extent before each read.
   Exhaustion produces a non-returning `runtime_failure` with a Fortify diagnostic,
-  consistent with the model's abort boundary; signal delivery is not modeled.
+  consistent with the model's abort boundary; abort-triggered signal delivery is not modeled.
   Invalid pointers and memory/deadline limits remain distinct failures. Only
   visited guest bytes are read, including a match at a readable page's last byte.
   These rules follow the pinned [API 28 implementation](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/fortify.cpp).
@@ -241,9 +242,10 @@ The supported Bionic subset is:
   byte-string formatting subset described below.
 - `sscanf`, `vsscanf`, for bounded integer scanning as described below.
 - `kill`, sharing the [Linux signal contract](process-emulation.md) with raw
-  SVC and variadic `syscall`: self signal-zero probes and process-wide SIGKILL,
+  SVC and variadic `syscall`: self signal-zero probes, process-wide SIGKILL and
+  bounded ordinary self-process signals,
   signed argument narrowing, invalid-signal errno and dynamic provider lifetime.
-  Other targets and signal delivery remain unsupported. No host signal is sent.
+  Other targets remain unsupported. No host signal is sent.
 - `sigaction`, `sigaction64`, sharing process-wide dispositions with raw
   `rt_sigaction` and the variadic `syscall` wrapper. Initial actions come from
   the explicit [`linux_signals` input](process-emulation.md). API 28 LP64 has
@@ -257,7 +259,15 @@ The supported Bionic subset is:
   on this path, so the model cannot invent its bytes. See the pinned
   [wrapper](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/bionic/sigaction.cpp)
   and [reserved mask](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r61/libc/private/sigrtmin.h).
-  Registering an action does not enable signal delivery or execute its handler.
+  Delivery additionally requires a known thread mask and, for guest handlers,
+  an explicitly cleared disabled alternate stack. AArch64 handlers execute
+  guest code and return through mutable Linux signal frames.
+- `sigprocmask`, `sigpending` and their 64 variants, plus `signal` and the
+  `sigemptyset`, `sigfillset`, `sigaddset`, `sigdelset`, `sigismember` families
+  (including 64 variants). The shared Linux owner retains masks, coalesced
+  standard process-pending signals and handler frames; child threads inherit
+  masks independently. See the [supported signal boundaries](process-emulation.md)
+  for copy ordering, context restoration and explicit unsupported cases.
 - `mincore`, for the shared Linux validation, empty-range and unmapped-first-page
   subset. Direct imports, variadic `syscall` and raw SVC share the same error
   priority and leave the output vector untouched. Only Bionic converts negative
@@ -896,7 +906,7 @@ exits without an entry return, its low eight status bits become the workload
 exit status. `exit_group` terminates
 the workload. Guest cleanup handlers, TLS keys/destructors, exit during a
 once/finalize callback, timers, cancellation,
-catchable signal delivery and clone remain unsupported. No cleanup or completion is invented.
+signal interruption of waits and clone remain unsupported. No cleanup or completion is invented.
 
 By default the selected entry's return stops observation, even with live
 children. `android.drain_threads: true` continues those children under the

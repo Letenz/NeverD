@@ -22,12 +22,28 @@ llvm::Error invalid(llvm::StringRef Name) {
 llvm::Expected<LinuxSignalOptions>
 linuxSignalOptionsFromJSON(const llvm::json::Value &Value) {
   const auto *Object = Value.getAsObject();
-  if (!Object || Object->size() != 1)
+  if (!Object)
     return invalid(field::LinuxSignals);
+  for (const auto &[Key, V] : *Object)
+    if (Key != field::SignalActions && Key != field::SignalInitialMask &&
+        Key != field::SignalAlternateStackDisabled)
+      return invalid(Key);
   const auto *Actions = Object->getArray(field::SignalActions);
   if (!Actions || Actions->size() > linux_model::SignalCount)
     return invalid(field::SignalActions);
   LinuxSignalOptions Out;
+  if (const auto *V = Object->get(field::SignalInitialMask)) {
+    auto Mask = process_json::integer<uint64_t>(*V);
+    if (!Mask)
+      return invalid(field::SignalInitialMask);
+    Out.InitialMask = *Mask;
+  }
+  if (const auto *V = Object->get(field::SignalAlternateStackDisabled)) {
+    auto Disabled = V->getAsBoolean();
+    if (!Disabled)
+      return invalid(field::SignalAlternateStackDisabled);
+    Out.AlternateStackDisabled = *Disabled;
+  }
   for (const auto &Entry : *Actions) {
     const auto *Action = Entry.getAsObject();
     if (!Action || Action->size() != 5 || !Action->get(field::SignalNumber))

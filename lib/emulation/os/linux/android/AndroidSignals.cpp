@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "../kernel/LinuxUserMemory.h"
 #include "AndroidInternal.h"
 
 #include "llvm/Support/Endian.h"
@@ -69,6 +70,114 @@ BionicResult Bionic::signalAction(const NativeCallEvent &Call) {
         return std::move(E);
     }
   }
+  return value(0);
+}
+
+BionicResult Bionic::signalMask(const NativeCallEvent &Call) {
+  const auto &A = Call.Arguments;
+  std::optional<uint64_t> Set;
+  if (A[1]) {
+    if (auto E = access(A[1], 8, Read))
+      return std::move(E);
+    uint8_t Bytes[8];
+    if (auto E = CPU.read(A[1], Bytes))
+      return std::move(E);
+    Set = llvm::support::endian::read64le(Bytes) & ~ReservedSignals;
+  }
+  const bool Classic = Call.Name == symbol::Sigprocmask;
+  // The classic LP64 wrapper asks the kernel for a local old-set temporary
+  // even when its caller omits the output. The 64 variant forwards null.
+  auto Applied = Kernel.signals().mask(threadID(), int32_t(uint32_t(A[0])), Set,
+                                       Classic || A[2], Result);
+  if (!Applied)
+    return std::optional<BionicValue>();
+  if (Applied->Status)
+    return kernelResult(Applied->Status);
+  if (!A[2])
+    return value(0);
+  uint8_t Bytes[8];
+  llvm::support::endian::write64le(Bytes, Applied->Previous);
+  if (Classic) {
+    if (auto E = access(A[2], 8, Write))
+      return std::move(E);
+    if (auto E = CPU.write(A[2], Bytes))
+      return std::move(E);
+    return value(0);
+  }
+  auto Stored = linux_model::writeUserMemory(CPU, Layout, A[2], Bytes);
+  if (!Stored)
+    return Stored.takeError();
+  if (*Stored == linux_model::UserWriteResult::Stored)
+    return value(0);
+  if (*Stored == linux_model::UserWriteResult::BadAddress)
+    return kernelResult(uint64_t(0) - linux_model::BadAddress);
+  Result.Stop = ProcessStopReason::UnsupportedService;
+  Result.Diagnostic = linux_model::SignalPartialOutput;
+  return std::optional<BionicValue>();
+}
+
+BionicResult Bionic::signalPending(const NativeCallEvent &Call) {
+  if (Call.Name == symbol::Sigpending64) {
+    auto Adapted = Call;
+    Adapted.Arguments[1] = linux_model::SignalMaskSize;
+    return kernelCall(linux_model::ServiceKind::SignalPending, Adapted);
+  }
+  if (auto E = access(Call.Arguments[0], 8, Read))
+    return std::move(E);
+  uint8_t Bytes[8];
+  if (auto E = CPU.read(Call.Arguments[0], Bytes))
+    return std::move(E);
+  auto Mask = Kernel.signals().pending(threadID(), Result);
+  if (!Mask)
+    return std::optional<BionicValue>();
+  if (auto E = access(Call.Arguments[0], 8, Write))
+    return std::move(E);
+  llvm::support::endian::write64le(Bytes, *Mask);
+  if (auto E = CPU.write(Call.Arguments[0], Bytes))
+    return std::move(E);
+  return value(0);
+}
+
+BionicResult Bionic::signalHandler(const NativeCallEvent &Call) {
+  LinuxSignalAction Action{Call.Arguments[1], 0x10000000, 0, 0};
+  auto Applied =
+      Kernel.signalAction(int32_t(uint32_t(Call.Arguments[0])), &Action, true);
+  if (!Applied)
+    return std::optional<BionicValue>();
+  if (Applied->Status)
+    return kernelResult(Applied->Status);
+  return value(Applied->Previous.Handler);
+}
+
+BionicResult Bionic::signalSet(const NativeCallEvent &Call) {
+  const auto Name = llvm::StringRef(Call.Name);
+  const bool Empty = Name.starts_with("sigemptyset");
+  const bool Fill = Name.starts_with("sigfillset");
+  const bool Member = Name.starts_with("sigismember");
+  const int32_t Signal = int32_t(uint32_t(Call.Arguments[1]));
+  if (!Call.Arguments[0] || (!Empty && !Fill && (Signal <= 0 || Signal > 64))) {
+    if (auto E = setErrno(linux_model::InvalidArgument))
+      return std::move(E);
+    return value(UINT64_MAX);
+  }
+  uint64_t Mask = Fill ? UINT64_MAX : 0;
+  uint8_t Bytes[8];
+  if (!Empty && !Fill) {
+    if (auto E = access(Call.Arguments[0], 8, Read))
+      return std::move(E);
+    if (auto E = CPU.read(Call.Arguments[0], Bytes))
+      return std::move(E);
+    Mask = llvm::support::endian::read64le(Bytes);
+    const uint64_t Bit = uint64_t(1) << (Signal - 1);
+    if (Member)
+      return value(bool(Mask & Bit));
+    Mask = Name.starts_with("sigaddset") ? Mask | Bit : Mask & ~Bit;
+  }
+  if (auto E = access(Call.Arguments[0], 8, Write))
+    return std::move(E);
+  llvm::support::endian::write64le(Bytes, Mask);
+  if (auto E = CPU.write(Call.Arguments[0], Bytes))
+    return std::move(E);
   return value(0);
 }
 } // namespace neverd::emulation::android_model

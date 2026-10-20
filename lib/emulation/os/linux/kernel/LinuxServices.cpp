@@ -81,9 +81,24 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     return std::optional<uint64_t>();
   case ServiceKind::SignalAction:
     return Signals.handle(CPU, Layout, Event, Result);
+  case ServiceKind::SignalMask:
+  case ServiceKind::SignalPending:
+    return Signals.maskService(CPU, Layout, Kind, Event,
+                               Thread ? Thread->ID : ThreadID, Result);
+  case ServiceKind::SignalReturn: {
+    auto Restored =
+        Signals.restore(CPU, Layout, Thread ? Thread->ID : ThreadID, Result);
+    if (!Restored)
+      return Restored.takeError();
+    if (!*Restored)
+      return std::optional<uint64_t>();
+    SignalRestored = true;
+    return std::optional<uint64_t>(0);
+  }
   case ServiceKind::Kill:
     return Signals.send(int32_t(uint32_t(Event.Arguments[0])),
-                        int32_t(uint32_t(Event.Arguments[1])), Result);
+                        int32_t(uint32_t(Event.Arguments[1])),
+                        Thread ? Thread->ID : ThreadID, Result);
   case ServiceKind::GetXAttr:
   case ServiceKind::LGetXAttr:
   case ServiceKind::FGetXAttr:

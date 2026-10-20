@@ -37,8 +37,15 @@ public:
          ThreadContext *Thread = nullptr);
   llvm::Error initializeProc() { return Memory.initializeProc(); }
   void setTaskProvider(std::function<std::vector<ProcTask>()> Provider) {
+    Signals.setTaskProvider(Provider);
     Files.setTaskProvider(std::move(Provider));
   }
+  LinuxSignals &signals() { return Signals; }
+  llvm::Expected<bool> deliverSignals(uint64_t TID = ThreadID) {
+    return Signals.deliver(CPU, Layout, Memory, TID, Result);
+  }
+  /// rt_sigreturn restores a continuation; it has no ordinary call result.
+  bool takeSignalRestore() { return std::exchange(SignalRestored, false); }
   auto descriptorStatus(uint32_t FD) const {
     return Files.descriptorStatus(FD, Result);
   }
@@ -76,6 +83,7 @@ private:
   LinuxFiles Files;
   LinuxSignals Signals;
   LinuxPriority Priority;
+  bool SignalRestored = false;
 };
 
 } // namespace neverd::emulation::linux_model

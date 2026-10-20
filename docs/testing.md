@@ -4,6 +4,18 @@
 
 # Testing NeverD
 
+`AndroidSignals.Delivery*` executes independent O0/O2 AArch64 callers across
+relocation packing and available backends. It checks complete output buffers,
+blocked coalescing, nested handlers, NODEFER/RESETHAND, mutable ucontext,
+integer/vector/FP control restoration, inherited thread masks, shared pending
+state, raw versus Bionic copy ordering and malformed-frame refusal.
+`LinuxProcess.SignalDelivery*` covers both raw LP64 ABIs and explicitly rejects
+x64 handler frames. `ProcessReport.SignalDelivery*` checks unknown and strict
+input state. Run these with all signal, Linux process, Android native and
+execution-session tests after changing shared delivery ownership. Unavailable
+CPU backends are skips, not qualified execution; all fixtures are authored
+locally and never signal a host process.
+
 `AndroidSignals.Kill*` executes independently authored direct, dynamically
 resolved, variadic and raw callers at O0/O2 across relocation formats and
 available ARM64 backends. It checks full-buffer effects, argument narrowing,

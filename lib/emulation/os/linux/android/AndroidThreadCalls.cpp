@@ -126,6 +126,7 @@ BionicResult GuestThreads::create(const NativeCallEvent &Call) {
   if (auto E = put64(A[0], Handle))
     return std::move(E);
   Threads.push_back(std::move(Child));
+  Signals.inherit(id(), ChildID);
   CancelPriority.release();
   Rollback.release();
   return value(0);

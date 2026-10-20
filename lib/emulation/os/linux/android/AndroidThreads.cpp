@@ -100,6 +100,7 @@ llvm::Error GuestThreads::finish(uint64_t Value, uint32_t ExitStatus) {
   current().Report.Finished = true;
   current().Report.ReturnValue = Value;
   current().Kernel.Exit.reset();
+  Signals.retire(id());
   // A joinable userspace handle can survive the nonleader kernel task.
   // Keep the entry/leader record consistent with the retained proc zombie.
   if (!isEntry())
