@@ -25,6 +25,38 @@
 #include "llvm/Support/JSON.h"
 
 namespace neverd::emulation {
+TEST(ProcessReport,
+     SignalTerminationIsDistinctFromExitAndCompletedEntryReturn) {
+  ProcessResult R{ProcessProfile::AndroidNativeAArch64,
+                  GuestArchitecture::AArch64,
+                  ExecutionBackendKind::Unicorn,
+                  {}};
+  auto Before = llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+  EXPECT_FALSE(Before.getAsObject()->get("termination_signal"));
+  R.Stop = ProcessStopReason::Signaled;
+  R.TerminationSignal = 9;
+  R.ReturnValue = 42; // The entry can finish before a drained child kills it.
+  NativeThreadSnapshot Entry{1000, 0, 0, 0, 0, 0};
+  Entry.Finished = true;
+  Entry.ReturnValue = 42;
+  NativeThreadSnapshot Child{1001, 0, 0, 0, 0, 0};
+  Child.TerminationSignal = 9;
+  R.NativeThreads = {Entry, Child};
+  auto JSON = llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+  auto *Root = JSON.getAsObject();
+  EXPECT_EQ(Root->getString("stop_reason"), "signaled");
+  EXPECT_EQ(Root->getInteger("termination_signal"), 9);
+  EXPECT_EQ(Root->getString("return_value"), "2a");
+  EXPECT_EQ(*Root->get("exit_status"), llvm::json::Value(nullptr));
+  const auto *Threads = Root->getObject("android")->getArray("threads");
+  ASSERT_EQ(Threads->size(), 2u);
+  EXPECT_FALSE((*Threads)[0].getAsObject()->get("termination_signal"));
+  EXPECT_EQ((*Threads)[1].getAsObject()->getInteger("termination_signal"), 9);
+  EXPECT_EQ((*Threads)[1].getAsObject()->getBoolean("finished"), false);
+  EXPECT_EQ(*(*Threads)[1].getAsObject()->get("return_value"),
+            llvm::json::Value(nullptr));
+}
+
 TEST(ProcessReport, IoctlTraceHasStrictBoundsAndExplicitCaptureStatus) {
   const char *Good = R"({"linux_files":{"files":[],"ioctl_trace":{
     "event_limit":8,"byte_limit":256,"requests":[{"request":"4294967295",
