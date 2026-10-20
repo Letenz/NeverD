@@ -146,12 +146,10 @@ int runFuncs(neverd_session_t Sess) {
 
 int runDisasm(neverd_session_t Sess) {
   if (!RegisterQuery.empty()) {
-    auto Entry = parseAddrArg(DisasmFunc);
-    if (!Entry) {
-      const auto Index = findFunction(Sess, DisasmFunc);
-      if (Index >= 0)
-        Entry = neverd_func_entry(Sess, Index);
-    }
+    std::optional<uint64_t> Entry;
+    const auto Index=neverd_func_find_by_name(Sess,DisasmFunc.getValue().c_str());
+    if (Index>=0) Entry=neverd_func_entry(Sess,Index);
+    else Entry=parseAddrArg(DisasmFunc);
     const auto PC = parseAddrArg(RegisterPC);
     if (!Entry || !PC) {
       WithColor::error() << "register flow requires --func and --instruction\n";
