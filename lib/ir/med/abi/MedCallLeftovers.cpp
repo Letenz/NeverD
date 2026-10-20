@@ -12,6 +12,7 @@
 #include "llvm/ADT/STLExtras.h"
 
 #include <map>
+#include <optional>
 #include <vector>
 
 namespace neverd {
@@ -30,7 +31,17 @@ bool conventionPreserves(const TargetRegInfo &TRI, BinaryFormat Format,
     return false;
   if (TRI.callPreservedPrefixSize(RegOff, Size) >= Size)
     return true;
-  return llvm::any_of(TRI.callPreservedRanges(Format), [&](const auto &Range) {
+  // A run asks about every register of every call with the same target and
+  // format, whose ranges never change: build them once per thread.
+  thread_local const TargetRegInfo *RangesTarget = nullptr;
+  thread_local std::optional<BinaryFormat> RangesFormat;
+  thread_local std::vector<TargetRegisterRange> Ranges;
+  if (RangesTarget != &TRI || RangesFormat != Format) {
+    Ranges = TRI.callPreservedRanges(Format);
+    RangesTarget = &TRI;
+    RangesFormat = Format;
+  }
+  return llvm::any_of(Ranges, [&](const auto &Range) {
     return RegOff >= Range.Offset && Size <= Range.Bytes &&
            RegOff + Size <= Range.Offset + Range.Bytes;
   });
