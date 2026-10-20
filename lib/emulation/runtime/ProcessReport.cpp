@@ -273,6 +273,8 @@ std::string processResultJSON(const ProcessResult &Result) {
     Object[field::IoctlTrace] = std::move(Calls);
     Object[field::IoctlTraceTruncated] = Result.IoctlTraceTruncated;
   }
+  if (Result.TerminationSignal)
+    Object[field::TerminationSignal] = *Result.TerminationSignal;
   if (Result.Profile == ProcessProfile::AndroidNativeAArch64) {
     Object[field::Android] = androidResultJSON(Result);
     Object[field::ReturnValue] =

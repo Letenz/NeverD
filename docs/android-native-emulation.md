@@ -240,6 +240,10 @@ The supported Bionic subset is:
 - `snprintf`, `vsnprintf`, `sprintf`, `vsprintf`, for the bounded integer and
   byte-string formatting subset described below.
 - `sscanf`, `vsscanf`, for bounded integer scanning as described below.
+- `kill`, sharing the [Linux signal contract](process-emulation.md) with raw
+  SVC and variadic `syscall`: self signal-zero probes and process-wide SIGKILL,
+  signed argument narrowing, invalid-signal errno and dynamic provider lifetime.
+  Other targets and signal delivery remain unsupported. No host signal is sent.
 - `sigaction`, `sigaction64`, sharing process-wide dispositions with raw
   `rt_sigaction` and the variadic `syscall` wrapper. Initial actions come from
   the explicit [`linux_signals` input](process-emulation.md). API 28 LP64 has
@@ -892,7 +896,7 @@ exits without an entry return, its low eight status bits become the workload
 exit status. `exit_group` terminates
 the workload. Guest cleanup handlers, TLS keys/destructors, exit during a
 once/finalize callback, timers, cancellation,
-signals and clone remain unsupported. No cleanup or completion is invented.
+catchable signal delivery and clone remain unsupported. No cleanup or completion is invented.
 
 By default the selected entry's return stops observation, even with live
 children. `android.drain_threads: true` continues those children under the
@@ -900,7 +904,10 @@ same limits. The entry's `return_value` remains visible if a later child stops
 with an error. `android.threads` records identity, placement, waiting,
 completion and retirement; completion of its initial row means the selected
 invocation ended, not that the process exited. Named calls and raw services
-include `thread_id`. `android.trace_threads` partitions the existing PC trace
+include `thread_id`. Process-wide SIGKILL adds `termination_signal` to each
+still-live thread, clears its waiting status and does not invent a return,
+join completion, destructor or retirement. Previously completed thread history
+and any completed entry return are retained. `android.trace_threads` partitions the existing PC trace
 using zero-based `trace_index` and `thread_id`. Each new run consumes 16 bytes
 of the remaining report allowance; insufficient allowance truncates trace
 retention, not execution. Thread metadata reserves 128 bytes per allowed

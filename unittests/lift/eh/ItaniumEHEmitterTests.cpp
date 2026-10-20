@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/backend/llvm/eh/MedLLVMEHHelpers.h"
 #include "gtest/gtest.h"
 
 #include "neverd/Common.h"
@@ -15,14 +16,51 @@
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace {
 
 using namespace neverd;
+
+TEST(ItaniumEHEmitter, MarkedSourceCallsFollowTheFunctionOrder) {
+  // Lowering names the invokes and continuations it creates for the marked
+  // calls in the order it visits them.  The calls' addresses, which order the
+  // map, differ between runs; the function's order does not.
+  llvm::LLVMContext Ctx;
+  llvm::Module Mod("calls", Ctx);
+  auto *FnTy = llvm::FunctionType::get(llvm::Type::getVoidTy(Ctx), false);
+  auto *Callee = llvm::Function::Create(FnTy, llvm::Function::ExternalLinkage,
+                                        "callee", Mod);
+  auto *Fn =
+      llvm::Function::Create(FnTy, llvm::Function::ExternalLinkage, "f", Mod);
+  auto *Entry = llvm::BasicBlock::Create(Ctx, "entry", Fn);
+  auto *Next = llvm::BasicBlock::Create(Ctx, "next", Fn);
+  llvm::IRBuilder<> Builder(Entry);
+  llvm::CallInst *First = Builder.CreateCall(Callee);
+  // An unmarked call is no source call.
+  Builder.CreateCall(Callee);
+  llvm::CallInst *Second = Builder.CreateCall(Callee);
+  Builder.CreateBr(Next);
+  Builder.SetInsertPoint(Next);
+  llvm::CallInst *Third = Builder.CreateCall(Callee);
+  Builder.CreateRetVoid();
+  const med_llvm_eh::SourceCallAddressMap Calls{
+      {Third, 0x30}, {First, 0x10}, {Second, 0x20}};
+  const auto Ordered = med_llvm_eh::sourceCallsInFunctionOrder(*Fn, Calls);
+  ASSERT_EQ(Ordered.size(), 3u);
+  EXPECT_EQ(Ordered[0].first, First);
+  EXPECT_EQ(Ordered[0].second, 0x10u);
+  EXPECT_EQ(Ordered[1].first, Second);
+  EXPECT_EQ(Ordered[1].second, 0x20u);
+  EXPECT_EQ(Ordered[2].first, Third);
+  EXPECT_EQ(Ordered[2].second, 0x30u);
+}
 
 const llvm::ConstantInt *metadataInteger(const llvm::MDNode *Node,
                                          unsigned Index, unsigned Width) {

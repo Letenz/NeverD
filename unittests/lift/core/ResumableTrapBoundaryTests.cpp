@@ -21,6 +21,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/support/ProloguePatterns.h"
 
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/Error.h"
@@ -369,23 +370,44 @@ BinaryImage trapImage(const TrapCase &Case) {
   return Image;
 }
 
+std::vector<std::vector<uint8_t>> siblingNops(const TrapCase &Case) {
+  if (Case.Architecture == Arch::AArch64)
+    return {{0x1f, 0x20, 3, 0xd5}};
+  if (Case.Architecture == Arch::ARM) {
+    if (Case.Mode == InstructionMode::Thumb)
+      return {{0, 0xbf}, {0xc0, 0x46}, {0xaf, 0xf3, 0, 0x80}};
+    std::vector<std::vector<uint8_t>> Nops = {{0, 0, 0xa0, 0xe1},
+                                              {0, 0xf0, 0x20, 0xe3}};
+    for (uint8_t Condition = 0; Condition != 14; ++Condition) {
+      Nops.push_back({0, 0, 0xa0, static_cast<uint8_t>((Condition << 4) | 1)});
+      Nops.push_back(
+          {0, 0xf0, 0x20, static_cast<uint8_t>((Condition << 4) | 3)});
+    }
+    return Nops;
+  }
+  if (Case.Architecture == Arch::X64)
+    return {{0x90},
+            {0x66, 0x90},
+            {0x40, 0x90},
+            {0x48, 0x90},
+            {0x42, 0x90},
+            {0x66, 0x48, 0x90},
+            {0x67, 0x90},
+            {0x2e, 0x48, 0x90},
+            {0x48, 0x0f, 0x1f, 0},
+            {0x41, 0x0f, 0x1f, 0xc0},
+            {0x0f, 0x1a, 0xc0},
+            {0x0f, 0x1b, 0xc0},
+            {0x0f, 0x1a, 0},
+            {0x0f, 0x1b, 0}};
+  return {{0x90}, {0x66, 0x90}, {0x89, 0xf6}, {0x8d, 0x76, 0}};
+}
+
 TEST(ResumableTrapBoundary, SiblingNopPaddingDoesNotCreateATailCall) {
   for (const auto &Case : siblingTraps()) {
     if (!Case.Resumable)
       continue;
-    std::vector<std::vector<uint8_t>> Nops;
-    if (Case.Architecture == Arch::AArch64)
-      Nops = {{0x1f, 0x20, 3, 0xd5}};
-    else if (Case.Architecture == Arch::ARM)
-      Nops = Case.Mode == InstructionMode::Thumb
-                 ? std::vector<std::vector<uint8_t>>{{0, 0xbf},
-                                                     {0xc0, 0x46},
-                                                     {0xaf, 0xf3, 0, 0x80}}
-                 : std::vector<std::vector<uint8_t>>{{0, 0, 0xa0, 0xe1},
-                                                     {0, 0xf0, 0x20, 0xe3}};
-    else
-      Nops = {{0x90}, {0x66, 0x90}};
-    for (const auto &Nop : Nops)
+    for (const auto &Nop : siblingNops(Case))
       for (BinaryFormat Format :
            {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
         for (unsigned Ownership = 0; Ownership != 3; ++Ownership) {
@@ -419,6 +441,372 @@ TEST(ResumableTrapBoundary, SiblingNopPaddingDoesNotCreateATailCall) {
           }
         }
   }
+}
+
+TEST(ResumableTrapBoundary, OwnedNopSuffixDoesNotCreateATailCall) {
+  for (const auto &Case : siblingTraps()) {
+    if (!Case.Resumable)
+      continue;
+    for (const auto &Nop : siblingNops(Case))
+      for (BinaryFormat Format :
+           {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+        for (unsigned Ownership = 0; Ownership != 3; ++Ownership)
+          for (unsigned Count : {1u, 65u})
+            for (bool HasNeighbor : {false, true}) {
+              SCOPED_TRACE(::testing::Message()
+                           << Case.Name << "/" << Nop.size() << "/"
+                           << static_cast<int>(Format) << "/" << Ownership
+                           << "/" << Count << "/" << HasNeighbor);
+              auto Image = trapImage(Case);
+              Image.Format = Format;
+              auto &Text = Image.Segments.front();
+              Text.Data = Case.Trap;
+              for (unsigned I = 0; I < Count; ++I)
+                Text.Data.insert(Text.Data.end(), Nop.begin(), Nop.end());
+              const va_t End = Entry + Text.Data.size();
+              Text.Data.insert(Text.Data.end(), Case.Continuation.begin(),
+                               Case.Continuation.end());
+              Text.Size = Text.Data.size();
+              if (Ownership == 0)
+                Image.KnownCodeRanges = {{Entry, End}};
+              else if (Ownership == 1)
+                addSymbol(Image, Entry, End - Entry, "trap_owner");
+              else {
+                ExceptionFunction Owner;
+                Owner.CodeRange = {Entry, Entry + Case.Trap.size()};
+                Owner.FragmentRanges = {{Owner.CodeRange.End, End}};
+                Owner.Kind = RuntimeFunctionKind::Primary;
+                Owner.Encoding = ExceptionEncoding::DwarfFDE;
+                Owner.ParseStatus = ExceptionParseStatus::Complete;
+                Image.ExceptionMetadata.Functions.push_back(Owner);
+                Image.ExceptionMetadata.rebuildIndex();
+              }
+              const auto Function = build(
+                  Image, HasNeighbor ? std::set<va_t>{End} : std::set<va_t>{});
+              ASSERT_TRUE(Function.hasCompleteLiftCoverage());
+              ASSERT_EQ(Function.Blocks.size(), 1u);
+              EXPECT_EQ(Function.DecodedInstructionCount, 1u);
+              EXPECT_EQ(Function.Blocks.front().EndAddr,
+                        Entry + Case.Trap.size());
+              EXPECT_TRUE(Function.Blocks.front().Succs.empty());
+              for (const auto &Op : Function.Blocks.front().Ops)
+                EXPECT_NE(Op.Opcode, NdOp::CALL);
+            }
+  }
+}
+
+TEST(ResumableTrapBoundary, LongOwnedNopsRetainRealContinuation) {
+  for (const auto &Case : siblingTraps()) {
+    if (!Case.Resumable)
+      continue;
+    auto Image = trapImage(Case);
+    auto &Text = Image.Segments.front();
+    const auto Nop = siblingNops(Case).front();
+    constexpr unsigned Count = 256;
+    for (unsigned I = 0; I < Count; ++I)
+      Text.Data.insert(Text.Data.begin() + Case.Trap.size(), Nop.begin(),
+                       Nop.end());
+    Text.Size = Text.Data.size();
+    Image.KnownCodeRanges = {{Entry, Entry + Text.Size}};
+    const auto Function = build(Image);
+    EXPECT_TRUE(Function.hasCompleteLiftCoverage()) << Case.Name;
+    EXPECT_EQ(Function.DecodedInstructionCount, Count + 3u) << Case.Name;
+    ASSERT_EQ(Function.Blocks.size(), 1u);
+    EXPECT_EQ(Function.Blocks.front().EndAddr, Entry + Text.Size);
+  }
+}
+
+TEST(ResumableTrapBoundary, LongOwnedNopsDoNotHideMalformedContinuation) {
+  for (unsigned Count : {1u, 65u, 256u})
+    for (bool Missing : {false, true}) {
+      auto Image = image();
+      auto &Text = Image.Segments.front();
+      Text.Data.resize(6);
+      Text.Data.insert(Text.Data.end(), Count, 0x90);
+      const va_t BadAddress = Entry + Text.Data.size();
+      if (!Missing)
+        Text.Data.push_back(0x0f);
+      Text.Size = BadAddress + 1 - Entry;
+      Image.KnownCodeRanges = {{Entry, BadAddress + 1}};
+      const auto Function = build(Image);
+      EXPECT_FALSE(Function.hasCompleteLiftCoverage());
+      EXPECT_EQ(Function.DecodedInstructionCount, Count + 2u);
+      EXPECT_EQ(Missing ? Function.TruncatedPathAddresses
+                        : Function.DecodeFailureAddresses,
+                std::vector<va_t>{BadAddress});
+    }
+}
+
+TEST(ResumableTrapBoundary, AlignmentNopClassifiersAgreeAcrossDecodeRoutes) {
+  for (const auto &Case : siblingTraps())
+    for (const auto &Nop : siblingNops(Case))
+      for (bool Detail : {false, true})
+        for (bool PrintText : {false, true})
+          for (unsigned Route = 0; Route != 3; ++Route) {
+            SCOPED_TRACE(::testing::Message()
+                         << Case.Name << "/" << Nop.size() << "/" << Detail
+                         << "/" << PrintText << "/" << Route);
+            Decoder Dec;
+            ASSERT_TRUE(Dec.init(Case.Architecture, Case.Mode));
+            Dec.setDetail(Detail);
+            Dec.setText(PrintText);
+            DecodedInsn Insn;
+            const int Size =
+                Route == 0 ? Dec.decodeOne(Nop.data(), Nop.size(), Entry, Insn)
+                : Route == 1
+                    ? Dec.decodeOneLight(Nop.data(), Nop.size(), Entry, Insn)
+                    : Dec.decodeOneForLift(Nop.data(), Nop.size(), Entry, Insn);
+            ASSERT_EQ(Size, Nop.size());
+            EXPECT_TRUE(Dec.isAlignmentNop(Insn));
+          }
+}
+
+TEST(ResumableTrapBoundary, OtherArmHintsAreNotAlignmentNops) {
+  for (uint8_t Condition = 0; Condition != 16; ++Condition)
+    for (uint8_t Hint : {0u, 1u, 2u, 3u, 4u, 5u}) {
+      if (Hint == 0 && Condition != 15)
+        continue;
+      const uint8_t Bytes[] = {Hint, 0xf0, 0x20,
+                               static_cast<uint8_t>((Condition << 4) | 3)};
+      EXPECT_EQ(alignmentNopLength(Arch::ARM, Bytes, sizeof(Bytes),
+                                   InstructionMode::ARM),
+                0u);
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Arch::ARM, InstructionMode::ARM));
+      DecodedInsn Insn;
+      if (Dec.decodeOneLight(Bytes, sizeof(Bytes), Entry, Insn))
+        EXPECT_FALSE(Dec.isAlignmentNop(Insn));
+    }
+}
+
+TEST(ResumableTrapBoundary, NopLookalikesRetainObservableContinuation) {
+  struct Case {
+    Arch Architecture;
+    std::vector<uint8_t> Code;
+  };
+  for (const auto &C :
+       std::vector<Case>{{Arch::X64, {0x41, 0x90}}, // xchg eax, r8d
+                         {Arch::X64, {0x49, 0x90}}, // xchg rax, r8
+                         {Arch::X64, {0x89, 0xc0}}, // clears upper RAX
+                         {Arch::X64, {0xf3, 0x90}}, // pause
+                         {Arch::X86, {0x40}}}) {    // inc eax, not REX
+    auto Image = image(C.Architecture);
+    auto &Text = Image.Segments.front();
+    Text.Data.insert(Text.Data.begin() + 6, C.Code.begin(), C.Code.end());
+    Text.Size = Text.Data.size();
+    const va_t Neighbor = Next + C.Code.size();
+    Image.KnownCodeRanges = {{Entry, Neighbor}, {Neighbor, Entry + Text.Size}};
+    const auto Function = build(Image);
+    EXPECT_TRUE(Function.hasCompleteLiftCoverage());
+    bool CallsNeighbor = false;
+    for (const auto &Block : Function.Blocks)
+      for (const auto &Op : Block.Ops)
+        CallsNeighbor |= Op.Opcode == NdOp::CALL && Op.Addr == Neighbor;
+    EXPECT_TRUE(CallsNeighbor);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Image));
+    for (bool Detail : {false, true}) {
+      Dec.setDetail(Detail);
+      DecodedInsn Insn;
+      ASSERT_EQ(Dec.decodeOneLight(C.Code.data(), C.Code.size(), Next, Insn),
+                C.Code.size());
+      EXPECT_FALSE(Dec.isAlignmentNop(Insn));
+    }
+  }
+}
+
+TEST(ResumableTrapBoundary, InstructionMustFitItsSizedOwner) {
+  auto Cases = siblingTraps();
+  // The extent rule also applies before any trap, to ordinary instructions.
+  Cases.push_back({"mov",
+                   Arch::X64,
+                   InstructionMode::Default,
+                   {0xb8, 7, 0, 0, 0},
+                   {0xc3},
+                   false});
+  Cases.push_back({"call",
+                   Arch::X64,
+                   InstructionMode::Default,
+                   {0xe8, 0, 0x20, 0, 0},
+                   {0xc3},
+                   false});
+  for (const auto &Case : Cases)
+    for (unsigned Cut = 1; Cut < Case.Trap.size(); ++Cut)
+      for (BinaryFormat Format :
+           {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+        for (unsigned Ownership = 0; Ownership != 4; ++Ownership) {
+          SCOPED_TRACE(::testing::Message()
+                       << Case.Name << "/" << Cut << "/"
+                       << static_cast<int>(Format) << "/" << Ownership);
+          auto Image = trapImage(Case);
+          Image.Format = Format;
+          va_t Address = Entry;
+          if (Ownership == 0)
+            Image.KnownCodeRanges = {{Entry, Entry + Cut}};
+          else if (Ownership == 1)
+            addSymbol(Image, Entry, Cut, "trap_owner");
+          else {
+            ExceptionFunction Owner;
+            Owner.Kind = RuntimeFunctionKind::Primary;
+            Owner.Encoding = ExceptionEncoding::DwarfFDE;
+            Owner.ParseStatus = ExceptionParseStatus::Complete;
+            Owner.CodeRange = {Entry, Entry + Cut};
+            if (Ownership == 3) {
+              auto &Text = Image.Segments.front();
+              auto Body = std::move(Text.Data);
+              if (Case.Architecture == Arch::AArch64)
+                Text.Data = {4, 0, 0, 0x14}; // b +16
+              else if (Case.Architecture == Arch::ARM)
+                Text.Data = Case.Mode == InstructionMode::Thumb
+                                ? std::vector<uint8_t>{6, 0xe0}
+                                : std::vector<uint8_t>{2, 0, 0, 0xea};
+              else
+                Text.Data = {0xeb, 14};
+              Owner.CodeRange.End = Entry + Text.Data.size();
+              Text.Data.resize(16);
+              Text.Data.insert(Text.Data.end(), Body.begin(), Body.end());
+              Text.Size = Text.Data.size();
+              Address += 16;
+              Owner.FragmentRanges = {{Address, Address + Cut}};
+            }
+            Image.ExceptionMetadata.Functions.push_back(Owner);
+            Image.ExceptionMetadata.rebuildIndex();
+          }
+          const auto Function = build(Image);
+          EXPECT_FALSE(Function.hasCompleteInstructionLift());
+          EXPECT_EQ(Function.DecodeFailureAddresses,
+                    std::vector<va_t>{Address});
+          EXPECT_EQ(Function.DecodedInstructionCount, Ownership == 3 ? 1u : 0u);
+        }
+}
+
+TEST(ResumableTrapBoundary, ContiguousOwnershipCanCoverOneInstruction) {
+  for (bool Peek : {false, true})
+    for (bool Gap : {false, true}) {
+      auto Image = image();
+      auto &Text = Image.Segments.front();
+      Text.Data = {0xcd, 3, 0xc3};
+      if (Peek)
+        Text.Data.insert(Text.Data.begin(), 0xcc);
+      Text.Size = Text.Data.size();
+      const va_t Address = Entry + (Peek ? 1 : 0);
+      ExceptionFunction Owner;
+      Owner.CodeRange = {Entry, Address + 1};
+      Owner.FragmentRanges = {{Address + 1 + (Gap ? 1 : 0), Entry + Text.Size}};
+      Owner.Kind = RuntimeFunctionKind::Primary;
+      Owner.Encoding = ExceptionEncoding::X64UnwindV1;
+      Owner.ParseStatus = ExceptionParseStatus::Complete;
+      Image.ExceptionMetadata.Functions.push_back(Owner);
+      Image.ExceptionMetadata.rebuildIndex();
+      const auto Function = build(Image);
+      EXPECT_EQ(Function.hasCompleteLiftCoverage(), !Gap);
+      if (Gap)
+        EXPECT_EQ(Function.DecodeFailureAddresses, std::vector<va_t>{Address});
+      else
+        EXPECT_EQ(Function.DecodedInstructionCount, Peek ? 3u : 2u);
+    }
+}
+
+TEST(ResumableTrapBoundary, CoarseUnwindExtentDoesNotSplitAnInstruction) {
+  for (ExceptionEncoding Encoding :
+       {ExceptionEncoding::CompactUnwind, ExceptionEncoding::X86ScopeTableEH3,
+        ExceptionEncoding::ARMEHABIInline})
+    for (unsigned EndOffset : {1u, 7u, 8u})
+      for (bool Nops : {false, true}) {
+        // A coarse frame span may cover several functions or be reconstructed.
+        // Its end is not a sized function boundary, before or after a trap.
+        auto Image = image();
+        if (Nops) {
+          auto &Text = Image.Segments.front();
+          Text.Data.insert(Text.Data.begin() + 6, {0x48, 0x90});
+          Text.Size = Text.Data.size();
+        }
+        ExceptionFunction Owner;
+        Owner.CodeRange = {Entry, Entry + EndOffset};
+        Owner.Kind = RuntimeFunctionKind::Primary;
+        Owner.Encoding = Encoding;
+        Owner.ParseStatus = ExceptionParseStatus::Complete;
+        Image.ExceptionMetadata.Functions.push_back(Owner);
+        Image.ExceptionMetadata.rebuildIndex();
+        const auto Function = build(Image);
+        EXPECT_TRUE(Function.hasCompleteLiftCoverage());
+        EXPECT_EQ(Function.DecodedInstructionCount, Nops ? 5u : 4u);
+      }
+}
+
+TEST(ResumableTrapBoundary, StrongSizeOutlivesCoarseFrameCoverage) {
+  for (bool Peek : {false, true})
+    for (bool Complete : {false, true})
+      for (bool SymbolSize : {false, true}) {
+        auto Image = image(Arch::X86);
+        auto &Text = Image.Segments.front();
+        if (!Peek)
+          Text.Data.erase(Text.Data.begin() + 5);
+        Text.Size = Text.Data.size();
+        ExceptionFunction Owner;
+        Owner.CodeRange = {Entry, Entry + 1};
+        Owner.Kind = RuntimeFunctionKind::Primary;
+        Owner.Encoding = ExceptionEncoding::X86ScopeTableEH3;
+        Owner.ParseStatus = ExceptionParseStatus::Complete;
+        if (Complete && Peek)
+          Owner.FragmentRanges = {{Entry + 5, Entry + 6}};
+        Image.ExceptionMetadata.Functions.push_back(Owner);
+        Image.ExceptionMetadata.rebuildIndex();
+        const va_t Address = Entry + (Peek ? 6 : 5);
+        const va_t End = Complete ? Entry + Text.Size : Address + 1;
+        if (SymbolSize)
+          addSymbol(Image, Entry, End - Entry, "trap_owner");
+        else
+          Image.KnownCodeRanges = {{Entry, End}};
+        const auto Function = build(Image);
+        EXPECT_EQ(Function.hasCompleteLiftCoverage(), Complete);
+        if (Complete)
+          EXPECT_EQ(Function.DecodedInstructionCount, Peek ? 4u : 3u);
+        else
+          EXPECT_EQ(Function.DecodeFailureAddresses,
+                    std::vector<va_t>{Address});
+      }
+}
+
+TEST(ResumableTrapBoundary, FragmentMayResumeAtPrimaryEntry) {
+  auto Image = image();
+  auto &Text = Image.Segments.front();
+  Text.VA = Entry - 6;
+  Text.Data = {0xb8, 7, 0, 0, 0, 0xcc, 0xeb, 0xf8};
+  Text.Size = Text.Data.size();
+  ExceptionFunction Owner;
+  Owner.CodeRange = {Entry, Entry + 2};
+  Owner.FragmentRanges = {{Entry - 6, Entry}};
+  Owner.Kind = RuntimeFunctionKind::Primary;
+  Owner.Encoding = ExceptionEncoding::X64UnwindV1;
+  Owner.ParseStatus = ExceptionParseStatus::Complete;
+  Image.ExceptionMetadata.Functions.push_back(Owner);
+  Image.ExceptionMetadata.rebuildIndex();
+  const auto Function = build(Image);
+  EXPECT_TRUE(Function.hasCompleteLiftCoverage());
+  EXPECT_EQ(Function.DecodedInstructionCount, 3u);
+  for (const auto &Block : Function.Blocks)
+    EXPECT_FALSE(Block.Succs.empty());
+}
+
+TEST(ResumableTrapBoundary, BranchIntoNopSuffixKeepsItsOwnFallthrough) {
+  auto Image = image();
+  auto &Text = Image.Segments.front();
+  // test ecx, ecx; jz nop; int3; nop; neighbor: mov eax, 42; ret.
+  Text.Data = {0x85, 0xc9, 0x74, 1, 0xcc, 0x90, 0xb8, 42, 0, 0, 0, 0xc3};
+  Text.Size = Text.Data.size();
+  Image.KnownCodeRanges = {{Entry, Next}, {Next, Entry + Text.Size}};
+  const auto Function = build(Image);
+  EXPECT_TRUE(Function.hasCompleteLiftCoverage());
+  bool TrapStops = false, NopCallsNeighbor = false;
+  for (const auto &Block : Function.Blocks) {
+    if (Block.EndAddr == Entry + 5)
+      TrapStops = Block.Succs.empty();
+    for (const auto &Op : Block.Ops)
+      NopCallsNeighbor |= Op.Opcode == NdOp::CALL && Op.Addr == Next;
+  }
+  EXPECT_TRUE(TrapStops);
+  EXPECT_TRUE(NopCallsNeighbor);
 }
 
 TEST(ResumableTrapBoundary, OwnedInvalidContinuationRetainsFailure) {

@@ -239,6 +239,10 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
                 "$<TARGET_FILE:neverd-worker>" ${_neverd_source_synthesis_args})
       set_tests_properties(NeverDWorkerSourceSynthesis PROPERTIES TIMEOUT 180)
       if(_neverd_worker_test_cli)
+        add_test(NAME NeverDWorkerCLIDataPresentation
+          COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_presentation_cli_test.py"
+                  "$<TARGET_FILE:neverd-worker>" "${_neverd_worker_test_cli}" --engine "$<TARGET_FILE:neverd_shared>")
+        set_tests_properties(NeverDWorkerCLIDataPresentation PROPERTIES TIMEOUT 180)
         add_test(NAME NeverDWorkerCLIStackFrame
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/stack_frame_cli_test.py"
                   "$<TARGET_FILE:neverd-worker>" "${_neverd_worker_test_cli}" --cc "${CMAKE_C_COMPILER}")

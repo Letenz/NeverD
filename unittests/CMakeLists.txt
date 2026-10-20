@@ -168,6 +168,7 @@ target_compile_definitions(NeverDSourceDialectTests PRIVATE
 # SDK's C++ implementation details outside its public ABI.
 add_neverd_unittest(NeverDSessionLLVMTests
   SessionLLVMTests.cpp
+  "${CMAKE_SOURCE_DIR}/lib/sdk/capi/AnalystStackObjects.cpp"
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi/LocalTypesDebugContext.cpp"
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi/NeverDCAPILocalTypes.cpp"
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi/SessionSidecar.cpp"

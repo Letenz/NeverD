@@ -204,7 +204,7 @@ bool CFGBuilder::resolveConstantIndirectBranch(const BinaryImage &Img,
       const va_t Target = clearThumbBit(TaggedTarget);
       const InstructionMode TargetMode =
           (TaggedTarget & 1u) ? InstructionMode::Thumb : InstructionMode::ARM;
-      if (Img.hasExecutableCodeOwnerAt(Target) &&
+      if (Img.hasExecutableCodeOwnerAt(Target, ExecutableCodeOwners) &&
           Img.instructionModeAt(Target, TargetMode) == TargetMode) {
         for (LowOp &Op : Rec.Ops) {
           if (Op.Opcode != NdOp::INDIR_BR || Op.NumInputs < 1)
@@ -238,7 +238,7 @@ bool CFGBuilder::resolveConstantIndirectBranch(const BinaryImage &Img,
     auto Target = foldRegConstant(Img, Rec, Op.Inputs[0].Offset);
     if (!Target)
       return false;
-    if (!Img.hasExecutableCodeOwnerAt(*Target) ||
+    if (!Img.hasExecutableCodeOwnerAt(*Target, ExecutableCodeOwners) ||
         (*Target % getInsnAlignment()) != 0)
       return false;
 
@@ -368,7 +368,7 @@ bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
   // A compiler places nothing after a call that cannot return where it is
   // made, such as error(3) with a constant nonzero status: a call that ends
   // its function's own code range does not return, whatever the callee.
-  if (instructionEndsItsCodeRange(Rec))
+  if (codeRangeEndsAt(Rec.Addr, Rec.Addr + Rec.Size))
     return true;
   va_t Target = InvalidVA;
   for (const auto &Op : Rec.Ops) {
@@ -396,7 +396,8 @@ bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
   // is where a compiler that knew the callee never returns left its trace;
   // a call followed by more code still deserves the proof when the callee
   // holds nothing that returns.
-  return NoReturnCallees && CurrentImg->hasExecutableCodeOwnerAt(Target) &&
+  return NoReturnCallees &&
+         CurrentImg->hasExecutableCodeOwnerAt(Target, ExecutableCodeOwners) &&
          (callIsFollowedByPadding(Rec) ||
           NoReturnCallees->mayNeverReturn(Target)) &&
          NoReturnCallees->neverReturns(Target, NoReturnCalleeDepth);
@@ -437,21 +438,17 @@ bool CFGBuilder::callIsFollowedByPadding(const InsnRecord &Rec) const {
          (Skipped != 0 && isKnownFunctionEntry(Next + Skipped));
 }
 
-bool CFGBuilder::instructionEndsItsCodeRange(const InsnRecord &Rec) const {
-  const va_t Next = Rec.Addr + Rec.Size;
+bool CFGBuilder::codeRangeEndsAt(va_t Address, va_t Next) const {
   // Another fragment of this function may continue right where one ends.
   if (isCurrentOwnedFragment(Next))
     return false;
   // A primary may list a cold fragment without a separate unwind record for
   // that fragment. Its end is still an ownership boundary.
-  if (isCurrentOwnedFragment(Rec.Addr) && Next > Rec.Addr &&
-      isCurrentOwnedFragment(Next - 1) &&
-      !(AuthoritativeCurrentFuncRange &&
-        Next >= AuthoritativeCurrentFuncRange->first &&
-        Next < AuthoritativeCurrentFuncRange->second))
+  if (isCurrentOwnedFragment(Address) && Next > Address &&
+      isCurrentOwnedFragment(Next - 1) && !isCurrentOwnedCode(Next))
     return true;
   if (const ExceptionFunction *Owner =
-          CurrentImg->ExceptionMetadata.findFunction(Rec.Addr);
+          CurrentImg->ExceptionMetadata.findFunction(Address);
       Owner && exceptionEncodingBoundsOneFunction(Owner->Encoding) &&
       Owner->CodeRange.End == Next)
     return true;

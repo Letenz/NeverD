@@ -78,6 +78,32 @@ LinuxSignals::action(int32_t Signal, const LinuxSignalAction *NewAction,
   return Reply;
 }
 
+std::optional<uint64_t> LinuxSignals::send(int32_t PID, int32_t Signal,
+                                           ProcessResult &Result) {
+  if (Signal < 0 || uint32_t(Signal) > SignalCount)
+    return uint64_t(0) - InvalidArgument;
+  // No host process lookup or signal delivery. Unknown PIDs are not evidence
+  // of ESRCH, and pid 0/-1/negative group selectors are not self aliases.
+  if (PID != ProcessID) {
+    unsupported(Result, llvm::formatv(SignalTargetUnsupported, PID).str());
+    return std::nullopt;
+  }
+  if (!Signal)
+    return 0;
+  // SIGKILL cannot be caught, blocked or ignored; it does not need a supplied
+  // disposition table and must not return to any thread in the guest group.
+  if (Signal == SignalKill) {
+    Result.Stop = ProcessStopReason::Signaled;
+    Result.TerminationSignal = Signal;
+    Result.ExitStatus.reset();
+    return std::nullopt;
+  }
+  // Even SIG_IGN needs the thread mask/pending model: a blocked ignored signal
+  // can become observable after a later disposition change and unblock.
+  unsupported(Result, llvm::formatv(SignalDeliveryUnsupported, Signal).str());
+  return std::nullopt;
+}
+
 llvm::Expected<std::optional<uint64_t>>
 LinuxSignals::handle(ExecutionBackend &CPU, const MemoryLayout &Layout,
                      const ProcessServiceEvent &Event, ProcessResult &Result) {

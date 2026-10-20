@@ -15,6 +15,7 @@
 
 #include "../../pipeline/PipelineCallAbiDetail.h"
 #include "../plugin/PluginManager.h"
+#include "FunctionAuditReason.h"
 #include "ImageStrings.h"
 #include "InstructionFlow.h"
 #include "LoadOptions.h"
@@ -1039,7 +1040,9 @@ struct Session {
       Match = &Function;
     }
     if (!Match)
-      setError("LLVM function not found at 0x" + llvm::utohexstr(Addr));
+      setError(missingPipelineFunctionReason(PipeResult, Addr,
+                                             "LLVM function not found at 0x" +
+                                                 llvm::utohexstr(Addr)));
     return Match;
   }
 
@@ -1163,7 +1166,9 @@ struct Session {
         Found = true;
       }
     if (!Found) {
-      setError("LLVM function not found at 0x" + llvm::utohexstr(Entry));
+      setError(missingPipelineFunctionReason(PipeResult, Entry,
+                                             "LLVM function not found at 0x" +
+                                                 llvm::utohexstr(Entry)));
       return nullptr;
     }
     FunctionLlvmModule Built;

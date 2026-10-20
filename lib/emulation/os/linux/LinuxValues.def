@@ -180,6 +180,7 @@ NEVERD_LINUX_SERVICE(Connect, 42, 203, 3)
 NEVERD_LINUX_SERVICE(SendTo, 44, 206, 6)
 NEVERD_LINUX_SERVICE(ReceiveFrom, 45, 207, 6)
 NEVERD_LINUX_SERVICE(SignalAction, 13, 134, 4)
+NEVERD_LINUX_SERVICE(Kill, 62, 129, 2)
 NEVERD_LINUX_SERVICE(Mincore, 27, 232, 3)
 // Linux UAPI: x86-64 and asm-generic numbers, followed by fixed arity.
 NEVERD_LINUX_SERVICE(OpenAt, 257, 56, 4)
@@ -265,6 +266,10 @@ NEVERD_LINUX_DIAGNOSTIC(PriorityThreadConflict,
 NEVERD_LINUX_DIAGNOSTIC(PriorityThreadLimit,
                         "Linux priority task lifetime limit reached")
 NEVERD_LINUX_DIAGNOSTIC(SignalOptions, "invalid Linux signal disposition input")
+NEVERD_LINUX_DIAGNOSTIC(SignalTargetUnsupported,
+                        "Linux kill target {0} requires process/group state")
+NEVERD_LINUX_DIAGNOSTIC(SignalDeliveryUnsupported,
+                        "unsupported Linux signal {0} delivery")
 NEVERD_LINUX_DIAGNOSTIC(SignalInputMissing,
                         "signal actions require explicit linux_signals input")
 NEVERD_LINUX_DIAGNOSTIC(SignalActionMissing,

@@ -110,7 +110,7 @@ bool CFGBuilder::tryARMTableBranch(const BinaryImage &Img,
   };
   std::optional<va_t> PCBase =
       foldValue(Ops[TargetAddIdx].Inputs[PCOperand], TargetAddIdx - 1);
-  if (!PCBase || !Img.hasExecutableCodeOwnerAt(*PCBase))
+  if (!PCBase || !Img.hasExecutableCodeOwnerAt(*PCBase, ExecutableCodeOwners))
     return false;
 
   int LoadIdx = -1;
@@ -547,7 +547,7 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
     Anchor = foldRegConstant(Img, Rec, Ops[AddIdx].Inputs[AnchorWhich].Offset);
   if (!Anchor)
     return false;
-  if (!Img.hasExecutableCodeOwnerAt(*Anchor))
+  if (!Img.hasExecutableCodeOwnerAt(*Anchor, ExecutableCodeOwners))
     return false;
 
   if (IndexReg != InvalidVA) {

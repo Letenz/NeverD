@@ -186,6 +186,48 @@ def interleaved_corpus(width, count):
     return rows
 
 
+def quadratic_corpus(width, count):
+    """Expanded products with three to five inputs and unrelated partitions."""
+    rng = random.Random(0x4D424135 + width)
+    full = (1 << width) - 1
+    families = (
+        ("(x^y)", "(y|z)", ("z",), ("x",)),
+        ("(x^y)", "(x|y)", ("z",), ("w",)),
+        ("(x|z)", "(y^w)", ("w",), ("z",)),
+        ("(x^y)", "(y|v)", ("z", "w"), ("x", "z")),
+    )
+    rows = []
+    for index in range(count):
+        left, right, axes_a, axes_b = families[(index // 6) % len(families)]
+        kind = index % 6
+        scale = (1, 7, -11, 182, 1 << (width - 1), 37)[kind]
+
+        def partition(word, axes):
+            return [
+                "(" + "&".join(
+                    [word] + [axis if mask & (1 << bit) else f"~{axis}"
+                              for bit, axis in enumerate(axes)]
+                ) + ")"
+                for mask in range(1 << len(axes))
+            ]
+
+        terms = [f"({a}*{b})"
+                 for a in partition(left, axes_a)
+                 for b in partition(right, axes_b)]
+        rng.shuffle(terms)
+        expression = f"({scale}*({' + '.join(terms)}))"
+        if kind in (1, 2, 3, 5):
+            expression += "+(x^y)+2*(x&y)"
+        if kind == 5:
+            # A changed high bit remains an observable extra term.
+            expression += f"+(x&{1 << (width - 1)})"
+        if kind == 3:
+            # A second, different degree must survive the quadratic recovery.
+            expression += f"+({(rng.getrandbits(width) | 1) & full}*x*y*z)"
+        rows.append(expression)
+    return rows
+
+
 def check_semantics(expressions, results, width):
     """Independent modular evaluator; never execute parsed source as Python."""
     mask = (1 << width) - 1
@@ -214,9 +256,22 @@ def check_semantics(expressions, results, width):
 
     rng = random.Random(0x53454D00 + width)
     edges = (0, 1, mask, mask >> 1, 1 << (width - 1), mask // 3)
-    assignments = [{"x": x, "y": y} for x in edges for y in edges]
+    names = sorted({
+        node.id for expression in expressions
+        for node in ast.walk(ast.parse(expression, mode="eval"))
+        if isinstance(node, ast.Name)
+    })
+    assignments = [
+        {name: (x if index % 2 == 0 else y)
+         for index, name in enumerate(names)}
+        for x in edges for y in edges
+    ]
+    for name in names:
+        for base in (0, mask):
+            for edge in edges:
+                assignments.append({**dict.fromkeys(names, base), name: edge})
     assignments += [
-        {"x": rng.getrandbits(width), "y": rng.getrandbits(width)}
+        {name: rng.getrandbits(width) for name in names}
         for _ in range(128)
     ]
     if len(expressions) != len(results):
@@ -264,7 +319,8 @@ def main():
     parser.add_argument("--rounds", type=int, default=7)
     parser.add_argument("--count", type=int, default=32)
     parser.add_argument(
-        "--family", choices=("complement", "weighted", "bitwise", "interleaved"),
+        "--family",
+        choices=("complement", "weighted", "bitwise", "interleaved", "quadratic"),
         default="complement",
     )
     args = parser.parse_args()
@@ -285,6 +341,7 @@ def main():
             generate = {
                 "complement": corpus, "weighted": weighted_corpus,
                 "bitwise": bitwise_corpus, "interleaved": interleaved_corpus,
+                "quadratic": quadratic_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")
