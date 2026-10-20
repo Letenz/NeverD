@@ -9,6 +9,7 @@
 #include "neverd/Limits.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/decode/Decoder.h"
+#include "neverd/decode/InstructionRelocations.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/FuncDetector.h"
@@ -60,6 +61,16 @@ BinaryImage makePeText(std::vector<uint8_t> Bytes, va_t Base = 0x401000) {
   Img.Sections.push_back(Sec);
   Img.KnownCodeRanges.emplace_back(Base, Base + Img.Segments[0].Size);
   return Img;
+}
+
+DecodedInsn decodeAt(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
+  const Segment *Seg = Img.getSegmentFor(Addr);
+  DecodedInsn DI{};
+  if (Seg) {
+    const size_t Off = static_cast<size_t>(Addr - Seg->VA);
+    Dec.decodeOne(Seg->Data.data() + Off, Seg->Data.size() - Off, Addr, DI);
+  }
+  return DI;
 }
 
 } // namespace
@@ -1160,6 +1171,45 @@ TEST(X86_32_FunctionDiscovery, SwitchTableAmongCodeLiftsPastTheMirrorLimit) {
             Dispatches |= Switch->getNumCases() == 3;
       EXPECT_TRUE(Dispatches) << "the three cases dispatch through a switch";
     }
+}
+
+TEST(X86_32_FunctionDiscovery, ANarrowLoadBaseAmongCodeIsData) {
+  // A two-level switch reads a byte index table laid among the code
+  // (`movzx eax, byte [eax + table]`) before the pointer-wide jump table it
+  // indexes.  A base relocation records the byte table's displacement, and it
+  // lands in `.text`, but a sub-pointer load cannot read a code pointer, so
+  // the operand names data, not a code address.
+  BinaryImage Img;
+  Img.Arch = Arch::X86;
+  Img.Bits = Bitness::Bits32;
+  Img.Format = BinaryFormat::COFF;
+  Img.IsRelocatable = false;
+  Img.LoadsAtLinkAddress = true;
+  Img.Base = 0x400000;
+  Img.Entry = 0x401000;
+  // movzx eax, byte [eax + 0x401010]   (0F B6 80 10 10 40 00)
+  // mov eax, dword [eax*4 + 0x401014]  (8B 04 85 14 10 40 00)
+  // ret
+  std::vector<uint8_t> Text = {0x0F, 0xB6, 0x80, 0x10, 0x10, 0x40, 0x00, 0x8B,
+                               0x04, 0x85, 0x14, 0x10, 0x40, 0x00, 0xC3};
+  Text.resize(0x40, 0xCC);
+  addPeSection(Img, ".text", 0x401000, std::move(Text),
+               SegmentFlags::Readable | SegmentFlags::Executable);
+
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Img));
+  const auto Narrow = instructionRelocations(
+      Img, decodeAt(Img, Dec, 0x401000)); // the movzx: byte-wide load
+  const auto Wide = instructionRelocations(
+      Img, decodeAt(Img, Dec, 0x401007)); // the jmp table: pointer-wide load
+  ASSERT_EQ(Narrow.Addresses.size(), 1u);
+  ASSERT_EQ(Wide.Addresses.size(), 1u);
+  EXPECT_EQ(Narrow.Addresses.front().Provenance,
+            ConstantAddressProvenance::DataAddress)
+      << "a byte-load base in .text is data, not a code address";
+  EXPECT_EQ(Wide.Addresses.front().Provenance,
+            ConstantAddressProvenance::CodeAddress)
+      << "the pointer-wide jump table stays a code address";
 }
 
 TEST(X86_32_FunctionDiscovery, InCodePointerTableMirrorsPastTheLimit) {

@@ -8082,6 +8082,11 @@ the read is a GEP into a read-only global and the table VA survives nowhere.
 lays among its code as data, in a `.text` over the 1 MiB single-global limit;
 the read resolves through the table run's own mirror rather than refusing that
 the code segment cannot mirror.
+`ANarrowLoadBaseAmongCodeIsData` decodes a two-level switch's `movzx r,
+byte [sel + table]` and its pointer-wide jump-table load; the byte table's
+base in `.text` names data, the jump table's names code. Without the
+narrow-load rule the byte-table base is a code address with no lifted
+identity.
 `SwitchCasesStayLabelsPastAnEntryBeforeTheTable` puts an aligned prologue
 match in dead code between a switch's seven-byte `mov eax, N; jmp tail` cases
 and its table among the code; the cases stay labels only because the

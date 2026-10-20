@@ -647,6 +647,14 @@ module, so whole-module LLVM-C declares each global an earlier initializer
   precedence. The same `DataInCode` and data-pointer provenance is published for
   full and restricted loads across PE, ELF and Mach-O; an unknown executable
   target is not made data merely because it lacks a function symbol.
+A two-level switch reads a byte index table laid among the code
+(`movzx r, byte [sel + table]`) before the pointer-wide jump table it
+indexes. The byte table's displacement lands in an executable segment, so a
+base relocation and the link-address fixed displacement both call it code,
+yet a load narrower than a pointer cannot read a code pointer: such a base is
+data among the code, an index table, not a code address
+(`instructionRelocations`, `addFixedImageDisplacement`). The pointer-wide
+jump table beside it stays a code address.
 MSVC places an i386 switch's jump table in `.text` after its function, where
 the base relocations record its slots as instruction operands. No instruction
 holds more pointer-wide relocated fields back to back than
