@@ -2821,6 +2821,50 @@ bool Specializer::evaluate(int Id) {
               return Contains(Range.Begin, Range.End);
             });
           };
+          // Preserve a current saved frame address only after proving that
+          // this write misses its complete physical cell. This carries no
+          // object identity or new alias premise; an overlapping or unknown
+          // footprint still drops the saved relation below.
+          if (!Displacement && Options.ProveStoreReturnSlotSeparation &&
+              !Frame.AffineValues.empty()) {
+            const auto Address = Exec.memoryAddressValue(Original);
+            if (Ctx.width(Address) == 64) {
+              for (const auto &[Slot, Value] : Frame.AffineValues) {
+                if (!PreservationMetadataWork())
+                  return fail(SpecializationStatus::BudgetExceeded,
+                              "saved frame-address traversal budget exhausted");
+                const int64_t Begin = static_cast<int64_t>(Slot);
+                if (Begin > std::numeric_limits<int64_t>::max() - 8 ||
+                    InPreservedFrame(Slot, 8))
+                  continue;
+                const auto Cell = Ctx.mkAdd(FrameRoot, Ctx.mkConst(64, Slot));
+                const auto Overlap = memoryExtentsOverlap(
+                    Ctx, Address, Memory.AccessSize, Cell, 8);
+                if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+                  return fail(
+                      SpecializationStatus::BudgetExceeded,
+                      "saved frame-address separation node budget exhausted");
+                const auto Domain =
+                    enumerate(Ctx, Exec.pathPredicate(), {Overlap}, 1);
+                if (Failed)
+                  return false;
+                if (Domain.Status == FiniteValueStatus::Unknown)
+                  return fail(SpecializationStatus::BudgetExceeded,
+                              "saved frame-address separation proof exceeded "
+                              "its budget");
+                if (Domain.Status != FiniteValueStatus::Complete ||
+                    Domain.Tuples != std::vector<std::vector<uint64_t>>{{0}})
+                  continue;
+                if (!StorePreservation)
+                  StorePreservation =
+                      SymStorePreservation{FrameRoot, Begin, Begin + 8};
+                else
+                  ProvedStoreRanges.push_back({Begin, Begin + 8});
+              }
+              if (StorePreservation)
+                StorePreservation->AdditionalRanges = ProvedStoreRanges;
+            }
+          }
           if (Displacement) {
             for (auto It = Frame.AffineValues.begin();
                  It != Frame.AffineValues.end();) {
@@ -2912,7 +2956,7 @@ bool Specializer::evaluate(int Id) {
                             "address origin");
               }
               // Entry separation grants no external provenance. Only the
-              // independently proved native cells above may survive havoc.
+              // individually proved frame cells above may survive havoc.
             } else if (!Options.ExternalStoresPreserveEntryReturnSlot) {
               return fail(SpecializationStatus::Unsupported,
                           "external STORE requires an entry control-slot "
