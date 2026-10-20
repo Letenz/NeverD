@@ -411,9 +411,10 @@ const char *neverd_warm_functions_json(neverd_session_t Sess,
       // them here, where nothing waits, as that view would; the session
       // keeps them while the functions' extents stay.
       S->dataAccessWidths();
-      // x64 selections read bodies and graphs that warming builds a page of
-      // functions at a time.
-      if (S->Img.Arch == Arch::X64) {
+      // Selections read bodies and graphs (x86-64), or the signature bodies
+      // of the callees they leave out (where each call's setup gives its
+      // arguments), that warming builds a page of functions at a time.
+      {
         const FunctionPage Page = functionPage(*S, FirstEntry, MaxFunctions);
         std::vector<va_t> Entries;
         Entries.reserve(Page.Functions.size());

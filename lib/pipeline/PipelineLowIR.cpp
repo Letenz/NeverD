@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "PipelineCallAbiDetail.h"
 #include "PipelineLowIRDetail.h"
 #include "PipelineSEHRuntimeMemory.h"
 #include "PipelineTrimStorage.h"
@@ -3757,6 +3758,53 @@ ImportPrototypeArguments importPrototypeArguments(
 /// up to the Limits.h depth and count; beyond those they stay unsummarized.
 /// An import reads the arguments its prototype declares, which \p Dbg gives
 /// where the libc tables know none of its name.
+/// What a call through each function-pointer variable of \p PointerCallees
+/// passes the arguments of (PipelineResult::CallArgumentSources): another
+/// module's routine, keyed by the variable's address, or this image's, by
+/// its entry.
+std::map<va_t, va_t> callArgumentSourcesOf(
+    const std::map<va_t, PointerVariableCallee> &PointerCallees) {
+  std::map<va_t, va_t> Sources;
+  for (const auto &[Slot, Callee] : PointerCallees)
+    Sources.emplace(Slot, Callee.ImportName.empty() ? Callee.LocalEntry : Slot);
+  return Sources;
+}
+
+/// The argument counts of every prototyped import of \p Img, as \p Kept
+/// holds them where they were read from the image as it is with \p Dbg; read
+/// now, and kept there, otherwise (PipelineAnalysisCache::ImportCounts).
+std::shared_ptr<const std::map<va_t, int>>
+imageImportCounts(const BinaryImage &Img, const DebugContext *Dbg,
+                  const std::map<va_t, PointerVariableCallee> &PointerCallees,
+                  std::shared_ptr<const ImageImportCounts> *Kept) {
+  std::shared_ptr<const ImageImportCounts> Everywhere =
+      Kept && *Kept && (*Kept)->readFrom(Img, Dbg) ? *Kept : nullptr;
+  if (!Everywhere) {
+    std::vector<va_t> Addresses;
+    for (const auto &[Addr, Name] : Img.getImportAddressNames())
+      Addresses.push_back(Addr);
+    for (const RelocationEntry &Rel : Img.Relocations)
+      if (!Rel.SymbolName.empty())
+        Addresses.push_back(Rel.Address);
+    for (const auto &[Slot, Callee] : PointerCallees)
+      Addresses.push_back(Slot);
+    for (const Export &Exp : Img.Exports)
+      Addresses.push_back(Exp.Addr);
+    Everywhere = std::make_shared<const ImageImportCounts>(ImageImportCounts{
+        &Img, Dbg, Img.Imports.data(), Img.Imports.size(),
+        Img.Relocations.data(), Img.Relocations.size(), Img.Exports.data(),
+        Img.Exports.size(),
+        importPrototypeArguments(Img, {}, {}, /*StackArguments=*/true, Dbg,
+                                 /*RegisterArguments=*/true, &PointerCallees,
+                                 /*ExportStarts=*/nullptr, &Addresses)
+            .Counts});
+    if (Kept)
+      *Kept = Everywhere;
+  }
+  return std::shared_ptr<const std::map<va_t, int>>(Everywhere,
+                                                    &Everywhere->Counts);
+}
+
 void computeCallRegisterEffects(
     const BinaryImage &Img, const std::set<va_t> &FuncEntries,
     const libc::NoReturnTargetIndex &NoReturnTargets,
@@ -3775,11 +3823,8 @@ void computeCallRegisterEffects(
   // routine the variable starts at (PointerCallees): another module's, whose
   // prototype is kept under the variable's address, or this image's, by its
   // entry.
-  Result.CallArgumentSources.clear();
+  Result.CallArgumentSources = callArgumentSourcesOf(PointerCallees);
   Result.CallUserPrototypes.clear();
-  for (const auto &[Slot, Callee] : PointerCallees)
-    Result.CallArgumentSources.emplace(
-        Slot, Callee.ImportName.empty() ? Callee.LocalEntry : Slot);
   if (Img.Arch != Arch::X64) {
     // Where an import takes every argument on the stack (i386: regparm is
     // for internal calls only), there are no register summaries, but a
@@ -3808,37 +3853,8 @@ void computeCallRegisterEffects(
       // own calls reach, as its own selection does, whichever functions this
       // run selects: those of every import, counted once while the
       // program's declarations stay (PipelineAnalysisCache::ImportCounts).
-      std::shared_ptr<const ImageImportCounts> Everywhere =
-          KeptImportCounts && *KeptImportCounts &&
-                  (*KeptImportCounts)->readFrom(Img, Dbg)
-              ? *KeptImportCounts
-              : nullptr;
-      if (!Everywhere) {
-        std::vector<va_t> Addresses;
-        for (const auto &[Addr, Name] : Img.getImportAddressNames())
-          Addresses.push_back(Addr);
-        for (const RelocationEntry &Rel : Img.Relocations)
-          if (!Rel.SymbolName.empty())
-            Addresses.push_back(Rel.Address);
-        for (const auto &[Slot, Callee] : PointerCallees)
-          Addresses.push_back(Slot);
-        for (const Export &Exp : Img.Exports)
-          Addresses.push_back(Exp.Addr);
-        Everywhere = std::make_shared<const ImageImportCounts>(
-            ImageImportCounts{&Img, Dbg, Img.Imports.data(), Img.Imports.size(),
-                              Img.Relocations.data(), Img.Relocations.size(),
-                              Img.Exports.data(), Img.Exports.size(),
-                              importPrototypeArguments(
-                                  Img, {}, {}, /*StackArguments=*/true, Dbg,
-                                  /*RegisterArguments=*/true, &PointerCallees,
-                                  /*ExportStarts=*/nullptr, &Addresses)
-                                  .Counts});
-        if (KeptImportCounts)
-          *KeptImportCounts = Everywhere;
-      }
       Result.OmittedCalleeArgumentCounts =
-          std::shared_ptr<const std::map<va_t, int>>(Everywhere,
-                                                     &Everywhere->Counts);
+          imageImportCounts(Img, Dbg, PointerCallees, KeptImportCounts);
       Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
     }
     return;
@@ -4390,8 +4406,33 @@ void warmCalleeFacts(
 std::optional<AnalysisCacheWarmup>
 Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
                             DebugContext *Dbg, llvm::ArrayRef<va_t> Functions) {
-  if (!Opts.AnalysisCache || Img.Arch != Arch::X64)
+  if (!Opts.AnalysisCache)
     return std::nullopt;
+  if (Img.Arch != Arch::X64) {
+    // Where each call's setup gives its arguments, a restricted run reads
+    // the signature bodies of the callees it leaves out.  Outside the
+    // regparm convention, the summaries their conversions read are the same
+    // for every selection (computeCallRegisterEffects): the function-pointer
+    // variables' routines and the counts of every import.  Read those of
+    // Functions as such a run reads them.
+    const CallArgumentConvention *Convention =
+        callArgumentConvention(Img.Arch, Img.abiFormat());
+    if (!Convention || !Convention->ArgumentsFromCallSetup ||
+        Convention->RegparmOnlyForInternalCalls || Img.IsRelocatable)
+      return std::nullopt;
+    PipelineAnalysisCache &Cache = *Opts.AnalysisCache;
+    const std::map<va_t, PointerVariableCallee> PointerCallees =
+        collectPointerVariableCallees(Img);
+    PipelineResult Summaries;
+    Summaries.CallArgumentSources = callArgumentSourcesOf(PointerCallees);
+    if (Convention->ImportArgumentsFromPrototype)
+      Summaries.OmittedCalleeArgumentCounts =
+          imageImportCounts(Img, Dbg, PointerCallees, &Cache.ImportCounts);
+    if (!Cache.CalleeSignatures)
+      Cache.CalleeSignatures = std::make_shared<OmittedCalleeMemo>();
+    Summaries.CalleeSignatureMemo = Cache.CalleeSignatures;
+    return warmOmittedCallees(Img, Summaries, Functions);
+  }
   // The entries a selected-function run of a symbol start knows (buildLowIR
   // below): its own entry adds nothing to them, so its run shares this state.
   PipelineAnalysisCache &Cache = *Opts.AnalysisCache;

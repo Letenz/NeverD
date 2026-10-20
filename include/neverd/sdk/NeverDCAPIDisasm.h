@@ -189,8 +189,11 @@ NEVERD_API int neverd_prepare_function_view(neverd_session_t Sess,
 /// says it refused one for lack of room, so further calls prepare no more
 /// functions.  They still keep what a decompile reads of calls to the
 /// page's functions, so a pass goes on to "next_entry" null either way.
-/// "available" is false where calls keep no such state, images other
-/// than x86-64.  Whatever it says, an image with a C view has its widths
+/// "available" is false where calls keep no such state: images other than
+/// x86-64 except those whose calls take their arguments from the caller's
+/// setup outside i386's regparm convention (AArch64, ARM), for which it
+/// reads the functions' signature bodies as their callers' selections read
+/// them.  Whatever it says, an image with a C view has its widths
 /// scanned, and the function list and the C emitter its first views read
 /// prepared.  A function that is not a symbol start keeps its own state
 /// beside it.  A PE function's preparation keeps it unless discovering the

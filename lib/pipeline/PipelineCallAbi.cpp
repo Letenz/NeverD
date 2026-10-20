@@ -35,6 +35,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <numeric>
 #include <queue>
 #include <set>
 #include <string>
@@ -104,24 +105,45 @@ void OmittedCalleeMemo::adopt(const BinaryImage &Img,
   CallArgumentSources = Result.CallArgumentSources;
   Callees.clear();
   Bytes = 0;
-  Full = false;
 }
 
 OmittedCalleeMemo::Callee *OmittedCalleeMemo::find(va_t Entry) {
-  if (const auto Found = Callees.find(Entry); Found != Callees.end())
-    return &Found->second;
-  return Full ? nullptr : &Callees[Entry];
+  Callee &Found = Callees[Entry];
+  Found.LastUsed = ++Clock;
+  return &Found;
 }
 
-void OmittedCalleeMemo::remember(const MedFunc &Body) {
-  // Bodies of a large image's every callee would hold most of its MedIR.
-  constexpr size_t MaxBytes = size_t{256} << 20;
-  size_t Size = sizeof(MedFunc);
-  for (const MedBlock &Block : Body.Blocks)
-    Size += sizeof(MedBlock) + Block.Ops.size() * sizeof(MedOp) +
-            Block.Phis.size() * sizeof(PhiNode);
-  Bytes += Size;
-  Full = Bytes > MaxBytes;
+const OmittedCalleeMemo::Conversion &
+OmittedCalleeMemo::keep(Callee &Holder, Conversion Converted) {
+  if (Converted.Body) {
+    Converted.Bytes = sizeof(MedFunc);
+    for (const MedBlock &Block : Converted.Body->Blocks)
+      Converted.Bytes += sizeof(MedBlock) + Block.Ops.size() * sizeof(MedOp) +
+                         Block.Phis.size() * sizeof(PhiNode);
+  }
+  if (Holder.Conversions.size() == MaxConversions) {
+    Bytes -= Holder.Conversions.back().Bytes;
+    Holder.Conversions.pop_back();
+  }
+  Bytes += Converted.Bytes;
+  Holder.Conversions.insert(Holder.Conversions.begin(), std::move(Converted));
+  if (Bytes > MaxBytes) {
+    // A callee's lift stays: it holds no body.
+    std::vector<std::pair<uint64_t, va_t>> Order;
+    for (const auto &[Entry, Read] : Callees)
+      if (&Read != &Holder && !Read.Conversions.empty())
+        Order.emplace_back(Read.LastUsed, Entry);
+    std::sort(Order.begin(), Order.end());
+    for (const auto &[Used, Entry] : Order) {
+      if (Bytes <= MaxBytes / 4 * 3)
+        break;
+      Callee &Gone = Callees.at(Entry);
+      for (const Conversion &Each : Gone.Conversions)
+        Bytes -= Each.Bytes;
+      Gone.Conversions.clear();
+    }
+  }
+  return Holder.Conversions.front();
 }
 
 namespace {
@@ -130,24 +152,127 @@ namespace {
 /// the normal parameter detector for their bodies instead of assigning the
 /// default register order merely because the user omitted their output.
 /// These bounded support bodies never become emitted definitions.
+/// Reads callees' signature bodies for a run under \p Result's call
+/// summaries: their lifts with the image's function symbols as the known
+/// entries, and their conversions, into \p Result's memo where it has room.
+class CalleeReader {
+public:
+  CalleeReader(const BinaryImage &Img, const PipelineResult &Result)
+      : Img(Img), Result(Result), Memo(Result.CalleeSignatureMemo.get()) {
+    for (const auto &Symbol : Img.Symbols)
+      if (Symbol.IsFunc && !Symbol.IsBoundaryGuess)
+        Entries.insert(Symbol.Addr);
+    Builder.setKnownFuncEntries(&Entries);
+    // The callees' builds prove each x87 call effect from the same callee
+    // graphs: build each once.  A 32-bit printf engine in a call cycle with
+    // the heap reaches every build here, and its jump tables take seconds.
+    Builder.setX87CallGraphCache(createX87CallGraphCache());
+  }
+  bool init() { return Dec.init(Img); }
+  /// The function symbols' entries.
+  const std::set<va_t> &entries() const { return Entries; }
+  /// Whether \p Target is a callee the read takes: a function of this image.
+  bool reads(va_t Target) const {
+    return !Img.findImportAt(Target) && !Img.isImportStubAt(Target) &&
+           (Entries.count(Target) || Img.hasKnownFunctionEntryAt(Target)) &&
+           Img.hasExecutableCodeOwnerAt(Target);
+  }
+  /// Where \p Target's reading is kept: the memo's, or \p Local where the
+  /// run keeps none.
+  OmittedCalleeMemo::Callee &callee(va_t Target,
+                                    OmittedCalleeMemo::Callee &Local) {
+    return Memo ? *Memo->find(Target) : Local;
+  }
+  /// Lifts \p Target into \p Low, once.
+  const LowFunc &lift(va_t Target, std::optional<LowFunc> &Low) {
+    if (!Low)
+      Low.emplace(
+          Builder.build(Img, Dec, Target, Img.getFunctionNameAt(Target)));
+    return *Low;
+  }
+  /// Reads \p Target's lift into \p Read: the operations of its blocks.
+  void readLift(va_t Target, OmittedCalleeMemo::Callee &Read,
+                std::optional<LowFunc> &Low) {
+    if (Read.Lifted)
+      return;
+    const LowFunc &Lifted = lift(Target, Low);
+    if (Lifted.hasCompleteLiftCoverage() &&
+        Lifted.UnsafeIndirectBranchAddresses.empty()) {
+      Read.BlockOps.emplace();
+      for (const auto &Block : Lifted.Blocks)
+        Read.BlockOps->push_back(Block.Ops.size());
+    }
+    Read.Lifted = true;
+  }
+  /// The conversion of \p Target's lift the run's summaries hold for,
+  /// converting it where none does.  \p Kept says \p Read is the memo's.
+  const OmittedCalleeMemo::Conversion &
+  conversion(va_t Target, OmittedCalleeMemo::Callee &Read, bool Kept,
+             std::optional<LowFunc> &Low) {
+    // A conversion that read summaries this run states otherwise serves
+    // none of its reads: the callee is converted again.
+    if (const OmittedCalleeMemo::Conversion *Held = Read.conversionFor(Result))
+      return *Held;
+    const LowFunc &Lifted = lift(Target, Low);
+    std::shared_ptr<const MedFunc> Body;
+    // The callee's parameters read the entry-read summary of its own entry.
+    std::set<va_t> Keys{Target};
+    try {
+      LowToMedConverter Converter;
+      Converter.setBinaryImage(&Img);
+      Converter.setSourceCallHintsEnabled(false);
+      Converter.setCallMayWriteGPRs(&Result.CallMayWriteGPRs);
+      Converter.setCallEntryReadGPRs(&Result.CallEntryReadGPRs);
+      Converter.setCallArgumentSources(&Result.CallArgumentSources);
+      Converter.setCallEntryStackArgs(&Result.CallEntryStackArgs);
+      Converter.setCallEntryStackSlots(&Result.CallEntryStackSlots);
+      Converter.setCallEntryArgumentCounts(
+          &omittedCalleeArgumentCounts(Result));
+      Converter.setCallSummaryKeysRead(&Keys);
+      MedFunc Med = Converter.convert(Lifted, Img.Arch, Img.abiFormat());
+      size_t MedOperations = 0;
+      for (const auto &Block : Med.Blocks)
+        MedOperations += Block.Ops.size();
+      if (Med.Blocks.size() <= limits::kMaxStructurableMedBlocks &&
+          MedOperations <= static_cast<size_t>(limits::kMaxSSANodes)) {
+        inferMedTypes(Med, Img.Arch);
+        Body = std::make_shared<const MedFunc>(std::move(Med));
+      }
+    } catch (const LowToMedConversionError &) {
+      // An unsupported callee's body supplies no signature evidence.
+    }
+    OmittedCalleeMemo::Conversion Converted{std::move(Body), {}};
+    for (const va_t Key : Keys)
+      Converted.Reads.push_back(OmittedCalleeMemo::readAt(Result, Key));
+    if (Memo && Kept)
+      return Memo->keep(Read, std::move(Converted));
+    Read.Conversions.insert(Read.Conversions.begin(), std::move(Converted));
+    return Read.Conversions.front();
+  }
+
+private:
+  const BinaryImage &Img;
+  const PipelineResult &Result;
+  OmittedCalleeMemo *Memo;
+  std::set<va_t> Entries;
+  Decoder Dec;
+  CFGBuilder Builder;
+};
+
 std::vector<std::shared_ptr<const MedFunc>>
 omittedDirectCalleeSignatures(const BinaryImage &Img,
                               const PipelineResult &Result) {
   const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
   if (!Convention || !Convention->ArgumentsFromCallSetup || Img.IsRelocatable)
     return {};
-  std::set<va_t> Present, Queued, Entries;
+  std::set<va_t> Present, Queued;
   std::queue<va_t> Pending;
-  for (const auto &Symbol : Img.Symbols)
-    if (Symbol.IsFunc && !Symbol.IsBoundaryGuess)
-      Entries.insert(Symbol.Addr);
+  CalleeReader Reader(Img, Result);
   for (const MedFunc &F : Result.MedFuncs)
     Present.insert(F.Entry);
   auto enqueue = [&](va_t Target) {
-    if (!Present.count(Target) && !Img.findImportAt(Target) &&
-        !Img.isImportStubAt(Target) &&
-        (Entries.count(Target) || Img.hasKnownFunctionEntryAt(Target)) &&
-        Img.hasExecutableCodeOwnerAt(Target) && Queued.insert(Target).second)
+    if (!Present.count(Target) && Reader.reads(Target) &&
+        Queued.insert(Target).second)
       Pending.push(Target);
   };
   auto enqueueCallees = [&](const MedFunc &F) {
@@ -181,18 +306,10 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
     return Signatures;
   // Each callee is read as an earlier run of the image read it, where the
   // run shares what those read.
-  OmittedCalleeMemo *Memo = Result.CalleeSignatureMemo.get();
-  if (Memo)
+  if (OmittedCalleeMemo *Memo = Result.CalleeSignatureMemo.get())
     Memo->adopt(Img, Result);
-  Decoder Dec;
-  if (!Dec.init(Img))
+  if (!Reader.init())
     return Signatures;
-  CFGBuilder Builder;
-  Builder.setKnownFuncEntries(&Entries);
-  // The callees' builds prove each x87 call effect from the same callee
-  // graphs: build each once.  A 32-bit printf engine in a call cycle with
-  // the heap reaches every build here, and its jump tables take seconds.
-  Builder.setX87CallGraphCache(createX87CallGraphCache());
   size_t Inspected = 0;
   size_t Operations = 0;
   // Visit the selected functions' direct callees before their descendants.
@@ -204,81 +321,22 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
     Pending.pop();
     Present.insert(Target);
     OmittedCalleeMemo::Callee Local;
-    OmittedCalleeMemo::Callee *Read = Memo ? Memo->find(Target) : nullptr;
-    if (!Read)
-      Read = &Local;
+    OmittedCalleeMemo::Callee &Read = Reader.callee(Target, Local);
     std::optional<LowFunc> Low;
-    auto lift = [&]() -> LowFunc & {
-      if (!Low)
-        Low.emplace(
-            Builder.build(Img, Dec, Target, Img.getFunctionNameAt(Target)));
-      return *Low;
-    };
-    if (!Read->Lifted) {
-      const LowFunc &Lifted = lift();
-      if (Lifted.hasCompleteLiftCoverage() &&
-          Lifted.UnsafeIndirectBranchAddresses.empty()) {
-        Read->BlockOps.emplace();
-        for (const auto &Block : Lifted.Blocks)
-          Read->BlockOps->push_back(Block.Ops.size());
-      }
-      Read->Lifted = true;
-    }
-    if (!Read->BlockOps)
+    Reader.readLift(Target, Read, Low);
+    if (!Read.BlockOps)
       continue;
-    for (const size_t BlockOps : *Read->BlockOps) {
+    for (const size_t BlockOps : *Read.BlockOps) {
       if (BlockOps > limits::kMaxSSAFunctionOps - Operations)
         return Signatures;
       Operations += BlockOps;
     }
-    // A conversion that read summaries this run states otherwise serves
-    // none of its reads: the callee is converted again.
-    const OmittedCalleeMemo::Conversion *Conversion =
-        Read->conversionFor(Result);
-    if (!Conversion) {
-      const LowFunc &Lifted = lift();
-      std::shared_ptr<const MedFunc> Body;
-      // The callee's parameters read the entry-read summary of its own entry.
-      std::set<va_t> Keys{Target};
-      try {
-        LowToMedConverter Converter;
-        Converter.setBinaryImage(&Img);
-        Converter.setSourceCallHintsEnabled(false);
-        Converter.setCallMayWriteGPRs(&Result.CallMayWriteGPRs);
-        Converter.setCallEntryReadGPRs(&Result.CallEntryReadGPRs);
-        Converter.setCallArgumentSources(&Result.CallArgumentSources);
-        Converter.setCallEntryStackArgs(&Result.CallEntryStackArgs);
-        Converter.setCallEntryStackSlots(&Result.CallEntryStackSlots);
-        Converter.setCallEntryArgumentCounts(
-            &omittedCalleeArgumentCounts(Result));
-        Converter.setCallSummaryKeysRead(&Keys);
-        MedFunc Med = Converter.convert(Lifted, Img.Arch, Img.abiFormat());
-        size_t MedOperations = 0;
-        for (const auto &Block : Med.Blocks)
-          MedOperations += Block.Ops.size();
-        if (Med.Blocks.size() <= limits::kMaxStructurableMedBlocks &&
-            MedOperations <= static_cast<size_t>(limits::kMaxSSANodes)) {
-          inferMedTypes(Med, Img.Arch);
-          Body = std::make_shared<const MedFunc>(std::move(Med));
-        }
-      } catch (const LowToMedConversionError &) {
-        // An unsupported callee's body supplies no signature evidence.
-      }
-      if (Body && Memo && Read != &Local)
-        Memo->remember(*Body);
-      OmittedCalleeMemo::Conversion Converted{std::move(Body), {}};
-      for (const va_t Key : Keys)
-        Converted.Reads.push_back(OmittedCalleeMemo::readAt(Result, Key));
-      // The conversion used longest ago makes room.
-      if (Read->Conversions.size() == OmittedCalleeMemo::MaxConversions)
-        Read->Conversions.pop_back();
-      Read->Conversions.insert(Read->Conversions.begin(), std::move(Converted));
-      Conversion = &Read->Conversions.front();
-    }
-    if (!Conversion->Body)
+    const OmittedCalleeMemo::Conversion &Conversion =
+        Reader.conversion(Target, Read, &Read != &Local, Low);
+    if (!Conversion.Body)
       continue;
-    enqueueCallees(*Conversion->Body);
-    Signatures.push_back(Conversion->Body);
+    enqueueCallees(*Conversion.Body);
+    Signatures.push_back(Conversion.Body);
   }
   return Signatures;
 }
@@ -465,6 +523,44 @@ void propagateForwardedCallArities(
 }
 
 } // namespace
+
+AnalysisCacheWarmup warmOmittedCallees(const BinaryImage &Img,
+                                       const PipelineResult &Summaries,
+                                       llvm::ArrayRef<va_t> Functions) {
+  AnalysisCacheWarmup Warmup;
+  OmittedCalleeMemo *Memo = Summaries.CalleeSignatureMemo.get();
+  const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
+  if (!Memo || !Convention || !Convention->ArgumentsFromCallSetup ||
+      Img.IsRelocatable)
+    return Warmup;
+  Memo->adopt(Img, Summaries);
+  CalleeReader Reader(Img, Summaries);
+  if (!Reader.init())
+    return Warmup;
+  // Warming fills a quarter of the memo, and leaves the rest to the callees
+  // selections read: bodies past it would only push those out.
+  constexpr size_t WarmedBytes = OmittedCalleeMemo::MaxBytes / 4;
+  // A small body is the signature of a routine many functions call; a large
+  // one is read where a selection first reads it.
+  constexpr size_t MaxWarmedOperations = 512;
+  for (const va_t Target : Functions) {
+    if (!Reader.reads(Target))
+      continue;
+    if (Memo->bytes() >= WarmedBytes) {
+      Warmup.Full = true;
+      break;
+    }
+    OmittedCalleeMemo::Callee &Read = *Memo->find(Target);
+    std::optional<LowFunc> Low;
+    Reader.readLift(Target, Read, Low);
+    if (Read.BlockOps &&
+        std::accumulate(Read.BlockOps->begin(), Read.BlockOps->end(),
+                        size_t{0}) <= MaxWarmedOperations)
+      (void)Reader.conversion(Target, Read, /*Kept=*/true, Low);
+    ++Warmup.Prepared;
+  }
+  return Warmup;
+}
 
 void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                           const std::map<va_t, std::string> &AllFuncNames) {

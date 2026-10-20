@@ -17,6 +17,8 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/ArrayRef.h"
+
 #include <map>
 #include <memory>
 #include <optional>
@@ -27,6 +29,7 @@
 namespace neverd {
 
 struct BinaryImage;
+struct AnalysisCacheWarmup;
 struct PipelineResult;
 struct Symbol;
 
@@ -56,6 +59,8 @@ struct OmittedCalleeMemo {
     /// The call summaries the conversion read, under each key it read them
     /// under and the callee's own entry.
     std::vector<SummaryRead> Reads;
+    /// What Body counts against the memo's bound.
+    size_t Bytes = 0;
     /// Whether \p Result's summaries read as they did for the conversion.
     bool readsHold(const PipelineResult &Result) const;
   };
@@ -72,18 +77,28 @@ struct OmittedCalleeMemo {
     /// The conversions read under different summaries, the one used last
     /// first; at most MaxConversions.
     std::vector<Conversion> Conversions;
+    /// When the memo last handed the callee out (find).
+    uint64_t LastUsed = 0;
     /// The conversion \p Result's summaries hold for, now the one used last;
     /// null where none does.
     const Conversion *conversionFor(const PipelineResult &Result);
   };
+  /// The bodies the memo holds at most, counted by their blocks and
+  /// operations (keep): bodies of a large image's every callee would hold
+  /// most of its MedIR.
+  static constexpr size_t MaxBytes = size_t{256} << 20;
   /// Read of \p Img with \p Result's function-pointer variables; starts
   /// again when this was read of another image or with other variables.
   void adopt(const BinaryImage &Img, const PipelineResult &Result);
-  /// The callees read, unless the memo is full: the callee is then read for
-  /// the run alone.
+  /// The reading of the callee at \p Entry, now the one used last.
   Callee *find(va_t Entry);
-  /// Counts \p Body against the memo's bound.
-  void remember(const MedFunc &Body);
+  /// Keeps \p Converted as \p Holder's conversion used last, where its
+  /// conversion used longest ago makes room past MaxConversions.  Past
+  /// MaxBytes, the bodies of the callees used longest ago go, \p Holder's
+  /// aside, down to three quarters of it.
+  const Conversion &keep(Callee &Holder, Conversion Converted);
+  /// What the kept bodies count against MaxBytes.
+  size_t bytes() const { return Bytes; }
 
   std::map<va_t, Callee> Callees;
 
@@ -93,7 +108,7 @@ private:
   size_t SymbolCount = 0;
   std::map<va_t, va_t> CallArgumentSources;
   size_t Bytes = 0;
-  bool Full = false;
+  uint64_t Clock = 0;
 };
 
 /// Recover every call's arguments in \p Result, and the parameters each
@@ -107,6 +122,15 @@ private:
 /// the types the functions have already been given (inferMedTypes).
 void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                           const std::map<va_t, std::string> &AllFuncNames);
+
+/// Read the signature bodies of \p Functions into
+/// \p Summaries.CalleeSignatureMemo as a restricted run under \p Summaries'
+/// call summaries reads them as omitted callees (recoverModuleCallAbi):
+/// every lift, and the conversions of the small ones.  Stops, full, where
+/// the memo holds a quarter of its bound.
+AnalysisCacheWarmup warmOmittedCallees(const BinaryImage &Img,
+                                       const PipelineResult &Summaries,
+                                       llvm::ArrayRef<va_t> Functions);
 
 /// Give each call in \p Result exactly its callee's parameters, as the LLVM
 /// emitter does when it truncates a call to its callee's declaration: once
