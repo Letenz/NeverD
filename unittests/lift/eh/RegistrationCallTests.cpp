@@ -1656,6 +1656,11 @@ struct CxxPersonalityImage {
 TEST(RegistrationCallABI, CxxPersonalitySkipsTheOriginalFuncInfoOperand) {
   for (bool Direct : {false, true}) {
     CxxPersonalityImage F(Direct);
+    const auto Handler = coff_loader::getCheckedX86CxxHandlerABI(
+        F.Source.Code.Image, F.Source.EH);
+    ASSERT_TRUE(Handler);
+    EXPECT_TRUE(Handler->CookieGuards.empty());
+    EXPECT_EQ(Handler->SecurityCookieVA, 0u);
     const auto Runtime = coff_loader::getCheckedX86CxxPersonalityABI(
         F.Source.Code.Image, F.Source.EH);
     ASSERT_TRUE(Runtime);
@@ -1666,6 +1671,263 @@ TEST(RegistrationCallABI, CxxPersonalitySkipsTheOriginalFuncInfoOperand) {
     EXPECT_TRUE(coff_loader::isCheckedX86CxxHandlerReference(
         F.Source.Code.Image, F.HandlerVA));
   }
+}
+
+namespace {
+struct CxxGuardCase {
+  std::vector<uint8_t> Prefix;
+  std::vector<unsigned> Calls;
+  std::vector<std::pair<int32_t, int32_t>> Offsets;
+};
+
+const CxxGuardCase CxxGuardCases[] = {
+    // One node-relative cookie; EBP and cookie+4 are distinct XOR coordinates.
+    {{0x8b, 0x54, 0x24, 8, 0x8d, 0x42, 12, 0x8b, 0x4a, 0xfc, 0x33, 0xc8, 0xe8,
+      0, 0, 0, 0},
+     {12},
+     {{-4, 12}}},
+    {{0x8b, 0x54, 0x24, 8, 0x8d, 0x42, 0xd4, 0x8b, 0x4a, 0xd0, 0x33, 0xc8, 0xe8,
+      0, 0, 0, 0},
+     {12},
+     {{-48, -44}}},
+    // Each displacement can independently use the wide encoding.
+    {{0x8b, 0x54, 0x24, 8,    0x8d, 0x42, 12, 0x8b, 0x8a, 0,
+      0xff, 0xff, 0xff, 0x33, 0xc8, 0xe8, 0,  0,    0,    0},
+     {15},
+     {{-256, 12}}},
+    {{0x8b, 0x54, 0x24, 8,    0x8d, 0x82, 4, 0xff, 0xff, 0xff,
+      0x8b, 0x4a, 0xfc, 0x33, 0xc8, 0xe8, 0, 0,    0,    0},
+     {15},
+     {{-4, -252}}},
+    {{0x8b, 0x54, 0x24, 8,    0x8d, 0x82, 4,    0xff, 0xff, 0xff, 0x8b, 0x8a,
+      0,    0xff, 0xff, 0xff, 0x33, 0xc8, 0xe8, 0,    0,    0,    0},
+     {18},
+     {{-256, -252}}},
+    // Two checks can reuse EAX or add twelve before the second comparison.
+    {{0x8b, 0x54, 0x24, 8,    0x8d, 0x42, 12, 0x8b, 0x4a,
+      0xec, 0x33, 0xc8, 0xe8, 0,    0,    0,  0,    0x8b,
+      0x4a, 0xf8, 0x33, 0xc8, 0xe8, 0,    0,  0,    0},
+     {12, 22},
+     {{-20, 12}, {-8, 12}}},
+    {{0x8b, 0x54, 0x24, 8,    0x8d, 0x42, 0, 0x8b, 0x4a, 0xfc,
+      0x33, 0xc8, 0xe8, 0,    0,    0,    0, 0x83, 0xc0, 12,
+      0x8b, 0x4a, 0xf8, 0x33, 0xc8, 0xe8, 0, 0,    0,    0},
+     {12, 25},
+     {{-4, 0}, {-8, 12}}},
+    {{0x8b, 0x54, 0x24, 8,    0x8d, 0x42, 12, 0x8b, 0x8a, 0,
+      0xff, 0xff, 0xff, 0x33, 0xc8, 0xe8, 0,  0,    0,    0,
+      0x8b, 0x4a, 0xf8, 0x33, 0xc8, 0xe8, 0,  0,    0,    0},
+     {15, 25},
+     {{-256, 12}, {-8, 12}}},
+    {{0x8b, 0x54, 0x24, 8,    0x8d, 0x82, 0,    0xff, 0xff, 0xff, 0x8b, 0x8a,
+      0,    0xff, 0xff, 0xff, 0x33, 0xc8, 0xe8, 0,    0,    0,    0,    0x83,
+      0xc0, 12,   0x8b, 0x4a, 0xf8, 0x33, 0xc8, 0xe8, 0,    0,    0,    0},
+     {18, 31},
+     {{-256, -256}, {-8, -244}}},
+};
+
+struct CxxGuardImage {
+  CxxPersonalityImage Source;
+  static constexpr va_t HandlerVA = 0x401100;
+  static constexpr va_t CheckVA = 0x401200;
+  static constexpr va_t CookieVA = 0x4030a0;
+  va_t BodyVA;
+
+  CxxGuardImage(const CxxGuardCase &Case, bool Direct = false,
+                unsigned Padding = 0, bool SameChecker = true) {
+    auto &Image = Source.Source.Code.Image;
+    auto &EH = Source.Source.EH;
+    auto &Text = Image.Segments.front();
+    Text.Data.resize(0x300, 0xcc);
+    Text.Size = Text.FileSz = Text.Data.size();
+    Image.Sections.front().Size = Image.Sections.front().FileSz = Text.Size;
+    Image.DynInfo.SecurityCookieRVA = CookieVA - Image.Base;
+    Image.Imports.front().Module = "MSVCR100.dll";
+    EH.PersonalityVA = EH.Registration->HandlerVA = HandlerVA;
+    Image.BaseRelocations.clear();
+    Image.BaseRelocations.push_back(
+        {Source.RuntimeVA + 2, llvm::COFF::IMAGE_REL_BASED_HIGHLOW});
+    auto *Bytes = Text.Data.data() + HandlerVA - Text.VA;
+    std::fill(Bytes, Bytes + Padding, 0x90);
+    std::copy(Case.Prefix.begin(), Case.Prefix.end(), Bytes + Padding);
+    for (size_t I = 0; I < Case.Calls.size(); ++I) {
+      const va_t Check = CheckVA + (SameChecker ? 0 : I * 0x20);
+      const va_t Call = HandlerVA + Padding + Case.Calls[I];
+      writeLE<uint32_t>(Bytes + Padding + Case.Calls[I] + 1,
+                        Check - (Call + 5));
+    }
+    BodyVA = HandlerVA + Padding + Case.Prefix.size();
+    auto *Body = Text.Data.data() + BodyVA - Text.VA;
+    Body[0] = 0xb8;
+    writeLE<uint32_t>(Body + 1, Source.Source.TableVA);
+    Image.BaseRelocations.push_back(
+        {BodyVA + 1, llvm::COFF::IMAGE_REL_BASED_HIGHLOW});
+    if (Direct) {
+      Body[5] = 0xff;
+      Body[6] = 0x25;
+      writeLE<uint32_t>(Body + 7, Source.IATVA);
+      Image.BaseRelocations.push_back(
+          {BodyVA + 7, llvm::COFF::IMAGE_REL_BASED_HIGHLOW});
+    } else {
+      Body[5] = 0xe9;
+      writeLE<uint32_t>(Body + 6, Source.RuntimeVA - (BodyVA + 10));
+    }
+    const uint8_t CheckBytes[] = {0x3b, 0x0d, 0xa0, 0x30, 0x40,
+                                  0,    0x75, 0x10, 0xc3};
+    for (unsigned Offset : {0u, 0x20u}) {
+      std::copy(std::begin(CheckBytes), std::end(CheckBytes),
+                Text.Data.begin() + CheckVA + Offset - Text.VA);
+      Image.BaseRelocations.push_back(
+          {CheckVA + Offset + 2, llvm::COFF::IMAGE_REL_BASED_HIGHLOW});
+    }
+  }
+};
+} // namespace
+
+TEST(RegistrationCallABI, CxxHandlerRetainsEveryCookiePrecondition) {
+  for (const auto &Case : CxxGuardCases)
+    for (bool Direct : {false, true})
+      for (unsigned Padding : {0u, 2u, 8u})
+        for (bool SameChecker : {false, true}) {
+          SCOPED_TRACE(Case.Prefix.size());
+          SCOPED_TRACE(Direct);
+          SCOPED_TRACE(Padding);
+          SCOPED_TRACE(SameChecker);
+          CxxGuardImage F(Case, Direct, Padding, SameChecker);
+          auto &Image = F.Source.Source.Code.Image;
+          auto &EH = F.Source.Source.EH;
+          const auto Handler =
+              coff_loader::getCheckedX86CxxHandlerABI(Image, EH);
+          ASSERT_TRUE(Handler);
+          EXPECT_EQ(Handler->SecurityCookieVA, F.CookieVA);
+          EXPECT_EQ(Handler->Dispatch.RuntimeVA,
+                    Direct ? F.BodyVA + 5 : F.Source.RuntimeVA);
+          EXPECT_EQ(Handler->Dispatch.IATVA, F.Source.IATVA);
+          ASSERT_EQ(Handler->CookieGuards.size(), Case.Offsets.size());
+          for (size_t I = 0; I < Case.Offsets.size(); ++I) {
+            const auto &Guard = Handler->CookieGuards[I];
+            EXPECT_EQ(Guard.CookieOffset, Case.Offsets[I].first);
+            EXPECT_EQ(Guard.XOROffset, Case.Offsets[I].second);
+            EXPECT_EQ(Guard.CallVA, F.HandlerVA + Padding + Case.Calls[I]);
+            EXPECT_EQ(Guard.CheckVA, F.CheckVA + (SameChecker ? 0 : I * 0x20));
+            EXPECT_EQ(Guard.FailureVA, Guard.CheckVA + 24);
+            EXPECT_TRUE(std::any_of(Handler->Dispatch.CodeRanges.begin(),
+                                    Handler->Dispatch.CodeRanges.end(),
+                                    [&](const auto &Range) {
+                                      return Range.Begin == Guard.CheckVA &&
+                                             Range.End == Guard.CheckVA + 9;
+                                    }));
+          }
+          // No parent frame has been proved. The unguarded native-dispatch
+          // API must still reject this otherwise authenticated handler.
+          EXPECT_FALSE(EH.Registration->RegistrationOffset);
+          EXPECT_FALSE(coff_loader::getCheckedX86CxxPersonalityABI(Image, EH));
+          EXPECT_FALSE(
+              coff_loader::isCheckedX86CxxHandlerReference(Image, F.HandlerVA));
+        }
+}
+
+TEST(RegistrationCallABI, CxxHandlerRejectsChangedCookieGuardSemantics) {
+  for (unsigned Mutation = 0; Mutation != 24; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    CxxGuardImage F(CxxGuardCases[6], false, 0, false);
+    auto &Image = F.Source.Source.Code.Image;
+    auto &Text = Image.Segments.front();
+    auto *Prefix = Text.Data.data() + F.HandlerVA - Text.VA;
+    auto *Check = Text.Data.data() + F.CheckVA - Text.VA;
+    switch (Mutation) {
+    case 0:
+      Prefix[3] = 4;
+      break; // wrong handler argument
+    case 1:
+      Prefix[1] = 0x4c;
+      break; // destroys ECX instead of retaining EDX
+    case 2:
+      Prefix[5] = 0x45;
+      break; // EBP is not the node
+    case 3:
+      Prefix[8] = 0x48;
+      break; // reads through EAX
+    case 4:
+      Prefix[10] = 0x03;
+      break; // ADD does not decode an XOR cookie
+    case 5:
+      Prefix[11] = 0xca;
+      break; // XORs with EDX instead of EAX
+    case 6:
+      Prefix[12] = 0xe9;
+      break; // tail call does not return to dispatch
+    case 7:
+      Prefix[18] = 0xc2;
+      break; // modifies the retained node
+    case 8:
+      Prefix[19] = 8;
+      break; // unmodeled rebase
+    case 9:
+      Prefix[21] = 0x49;
+      break; // second load loses node identity
+    case 10:
+      Prefix[24] = 0xca;
+      break; // second check uses the wrong base
+    case 11:
+      Prefix[25] = 0xe9;
+      break;
+    case 12:
+      Check[0x20 + 6] = 0x74;
+      break; // inverted second comparison
+    case 13:
+      Check[0x20 + 2] += 4;
+      break; // second checker uses another cookie
+    case 14:
+      Check[8] = 0x5a;
+      break; // success path destroys EDX
+    case 15:
+      Check[7] = 0;
+      break; // mismatch also reaches RET
+    case 16:
+      Image.DynInfo.SecurityCookieRVA = 0;
+      break;
+    case 17:
+      Image.DynInfo.SecurityCookieRVA = UINT32_MAX;
+      break;
+    case 18:
+      Text.Flags = Text.Flags | SegmentFlags::Writable;
+      break;
+    case 19:
+      Image.BaseRelocations.push_back(
+          {F.HandlerVA + 13, llvm::COFF::IMAGE_REL_BASED_HIGHLOW});
+      break;
+    case 20:
+      Image.BaseRelocations.push_back(
+          {F.CheckVA + 0x20 + 6, llvm::COFF::IMAGE_REL_BASED_HIGHLOW});
+      break;
+    case 21:
+      Image.Sections.front().FileSz = F.CheckVA - Text.VA + 8;
+      break;
+    case 22:
+      Image.Imports.front().Module = "application.dll";
+      break;
+    case 23:
+      Image.Segments.push_back(Text);
+      break;
+    }
+    EXPECT_FALSE(
+        coff_loader::getCheckedX86CxxHandlerABI(Image, F.Source.Source.EH));
+    EXPECT_FALSE(
+        coff_loader::getCheckedX86CxxPersonalityABI(Image, F.Source.Source.EH));
+  }
+  auto Extra = CxxGuardCases[0];
+  Extra.Prefix.push_back(0x90);
+  CxxGuardImage F(Extra);
+  EXPECT_FALSE(coff_loader::getCheckedX86CxxHandlerABI(
+      F.Source.Source.Code.Image, F.Source.Source.EH));
+  Extra = CxxGuardCases[5];
+  Extra.Prefix.insert(Extra.Prefix.end(),
+                      {0x8b, 0x4a, 0xfc, 0x33, 0xc8, 0xe8, 0, 0, 0, 0});
+  Extra.Calls.push_back(32);
+  CxxGuardImage Three(Extra);
+  EXPECT_FALSE(coff_loader::getCheckedX86CxxHandlerABI(
+      Three.Source.Source.Code.Image, Three.Source.Source.EH));
 }
 
 TEST(RegistrationCallABI, CxxDispatchAndThrowShareTheKnownRuntimeABI) {
@@ -1788,6 +2050,7 @@ TEST(RegistrationCallABI, CxxPersonalityRejectsStorageAndRuntimeConflicts) {
     }
     EXPECT_FALSE(
         coff_loader::getCheckedX86CxxPersonalityABI(Image, F.Source.EH));
+    EXPECT_FALSE(coff_loader::getCheckedX86CxxHandlerABI(Image, F.Source.EH));
     // The independent reference has no parent record to trust. A forged
     // parent association leaves the actual retained thunk identity intact.
     EXPECT_EQ(coff_loader::isCheckedX86CxxHandlerReference(Image, F.HandlerVA),

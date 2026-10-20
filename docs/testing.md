@@ -5289,6 +5289,15 @@ C++ reconstruction on their own.
 through direct-IAT and veneer FH3 dispatch, retained handler identity, direct
 throw imports and initialized private throws. Case variants of VCRUNTIME140,
 VCRUNTIME140D and MSVCR100 qualify; neighboring and unknown module names do not.
+`CxxHandlerRetainsEveryCookiePrecondition` checks single and double GS prefixes,
+independent short/wide node displacements, non-EBP XOR bases, second-check
+rebasing, padding, direct-IAT/veneer dispatch and shared/distinct checkers.
+It requires the existing native-dispatch API to keep refusing these guarded
+handlers. `CxxHandlerRejectsChangedCookieGuardSemantics` changes the handler
+argument, registers, arithmetic, call/branch direction, cookie identity,
+immutable storage, fixups and provider; extra operations and a third check
+also refuse. These tests establish conditional handler behavior, not a proof
+that any source parent initializes or preserves its cookies.
 `StackCleanupRequiresEveryRestoredNearReturn` separately checks balanced
 caller/callee cleanup, nonvolatile restoration after an opaque call, dynamic
 alignment, disagreeing return pops, missing restoration, volatile anchors,

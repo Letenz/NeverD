@@ -1411,6 +1411,14 @@ dispatcher and the two-word stdcall throw entry: VCRUNTIME140,
 VCRUNTIME140D and MSVCR100. Both entry proofs still require their exact import
 names, slots and code. This provider identity does not authenticate a handler's
 GS prefix, its parent frame or its exception effects.
+`getCheckedX86CxxHandlerABI` retains each authenticated GS prefix condition:
+the cookie slot and XOR base relative to the registration node, the exact
+checker call and mismatch target, and the immutable code ranges. A second
+check can reuse the first XOR base or add twelve. The checker success-path
+decoder owns its register-preservation and image-cookie identity proof.
+`getCheckedX86CxxPersonalityABI` continues to require an unguarded dispatcher;
+the guarded description supplies no parent initialization, lifetime or check
+elision authority.
 SEH dispatch joins use an explicit pending queue. After ordinary propagation
 quiesces, equal source snapshots contribute their complete level domains to
 runtime roots together. `dispatchSource` owns the inherited facts used by both

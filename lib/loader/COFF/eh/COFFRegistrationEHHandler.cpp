@@ -22,18 +22,19 @@
 
 namespace neverd::coff_loader {
 
-bool hasCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA) {
+std::optional<X86CookieCheckSuccessPath>
+getCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA) {
   if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF ||
       Img.Bits != Bitness::Bits32 || Img.Base > UINT32_MAX ||
       CheckVA > UINT32_MAX - 14 || !Img.DynInfo.SecurityCookieRVA ||
       Img.DynInfo.SecurityCookieRVA > UINT32_MAX - Img.Base)
-    return false;
+    return std::nullopt;
   const va_t Cookie = Img.Base + Img.DynInfo.SecurityCookieRVA;
   const auto *Code = Img.readVA(CheckVA, 9);
   if (Cookie > UINT32_MAX - 3 || !Img.readVA(Cookie, 4) || !Code ||
       Code[0] != 0x3b || Code[1] != 0x0d ||
       readLE<uint32_t>(Code + 2) != Cookie)
-    return false;
+    return std::nullopt;
   size_t Success = 0;
   int64_t Failure = 0;
   if (Code[6] == 0x75) {
@@ -42,7 +43,7 @@ bool hasCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA) {
   } else {
     Code = Img.readVA(CheckVA, 13);
     if (!Code || Code[6] != 0x0f || Code[7] != 0x85)
-      return false;
+      return std::nullopt;
     Success = 12;
     Failure = int64_t(CheckVA) + Success + readLE<int32_t>(Code + 8);
   }
@@ -51,17 +52,24 @@ bool hasCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA) {
     ++Extent;
     Code = Img.readVA(CheckVA, Extent);
     if (!Code || Code[Success + 1] != 0xc3)
-      return false;
+      return std::nullopt;
   } else if (Code[Success] != 0xc3)
-    return false;
+    return std::nullopt;
   // Eliding this call relies on these instructions remaining unchanged after
   // loading. Only CMP's absolute cookie operand can carry a PE32 base fixup;
   // opcode, branch and return fixups cannot certify this success path.
-  return readImmutablePE32CodeBytes(Img, CheckVA, Extent, {CheckVA + 2}) &&
-         Img.hasExecutableCodeOwnerRange(CheckVA, Extent) && Failure > 0 &&
-         Failure <= UINT32_MAX && Img.isCodeAddress(va_t(Failure)) &&
-         Img.readVA(va_t(Failure), 1) &&
-         (uint64_t(Failure) < CheckVA || uint64_t(Failure) >= CheckVA + Extent);
+  if (!readImmutablePE32CodeBytes(Img, CheckVA, Extent, {CheckVA + 2}) ||
+      !Img.hasExecutableCodeOwnerRange(CheckVA, Extent) || Failure <= 0 ||
+      Failure > UINT32_MAX || !Img.isCodeAddress(va_t(Failure)) ||
+      !Img.readVA(va_t(Failure), 1) ||
+      (uint64_t(Failure) >= CheckVA && uint64_t(Failure) < CheckVA + Extent))
+    return std::nullopt;
+  return X86CookieCheckSuccessPath{
+      Cookie, va_t(Failure), {CheckVA, CheckVA + Extent}};
+}
+
+bool hasCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA) {
+  return getCheckedX86CookieCheckSuccessPath(Img, CheckVA).has_value();
 }
 
 bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA) {

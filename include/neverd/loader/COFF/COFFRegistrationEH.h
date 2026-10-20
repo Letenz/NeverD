@@ -145,6 +145,31 @@ std::optional<X86CxxPersonalityABI>
 getCheckedX86CxxPersonalityABI(const BinaryImage &Img,
                                const ExceptionFunction &Function);
 
+/// One checked handler-prefix comparison. Both displacements are relative to
+/// the registration node passed at [ESP+8], not necessarily to source EBP.
+/// The handler loads CookieOffset, XORs its value with node+XOROffset and
+/// invokes CheckVA. Mismatch branches to FailureVA in the original checker.
+struct X86CxxHandlerCookieGuard {
+  int32_t CookieOffset = 0;
+  int32_t XOROffset = 0;
+  va_t CallVA = 0;
+  va_t CheckVA = 0;
+  va_t FailureVA = 0;
+};
+
+/// The dispatch identity and its exact cookie preconditions. CodeRanges
+/// includes the immutable thunk, dispatcher veneers and checker success
+/// paths. This does not prove that any parent initializes or preserves the
+/// cookie cells, that a check succeeds, or that the prefix can be omitted.
+struct X86CxxHandlerABI {
+  X86CxxPersonalityABI Dispatch;
+  va_t SecurityCookieVA = 0;
+  std::vector<X86CxxHandlerCookieGuard> CookieGuards;
+};
+std::optional<X86CxxHandlerABI>
+getCheckedX86CxxHandlerABI(const BinaryImage &Img,
+                           const ExceptionFunction &Function);
+
 /// Authenticate a retained FH3 handler entry directly from its thunk, FuncInfo
 /// and CRT import. This supplies a code-address identity after the original
 /// parent's prologue has been replaced, not ownership of its former callbacks
@@ -162,6 +187,13 @@ std::optional<va_t> getCheckedX86EH4CookieCheck(const BinaryImage &Img,
 /// branch to the original failure code on mismatch, otherwise return without
 /// touching stack storage or other registers. This authorizes no elision for
 /// an argument whose equality with that cookie has not separately been proved.
+struct X86CookieCheckSuccessPath {
+  va_t SecurityCookieVA = 0;
+  va_t FailureVA = 0;
+  ExceptionAddressRange CodeRange;
+};
+std::optional<X86CookieCheckSuccessPath>
+getCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA);
 bool hasCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA);
 
 } // namespace neverd::coff_loader
