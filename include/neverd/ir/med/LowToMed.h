@@ -136,6 +136,11 @@ public:
   void setCallDispatchThunks(const std::set<va_t> *S) {
     CallDispatchThunks = S;
   }
+  /// Collects in \p Keys every key the call summaries above (write, entry
+  /// read, stack argument, stack slot and argument count) are read under.
+  void setCallSummaryKeysRead(std::set<va_t> *Keys) {
+    CallSummaryKeysRead = Keys;
+  }
   /// Variadic direct callees (PipelineResult::CallVariadicFrom).
   /// Calls whose constant format names every argument they pass
   /// (PipelineResult::FormattedCalls).
@@ -395,6 +400,7 @@ private:
   const std::set<va_t> *CallEntryStackSlots = nullptr;
   const std::map<va_t, int> *CallEntryArgumentCounts = nullptr;
   const std::set<va_t> *CallDispatchThunks = nullptr;
+  std::set<va_t> *CallSummaryKeysRead = nullptr;
   const std::map<va_t, int> *CallVariadicFrom = nullptr;
   const std::map<va_t, FormattedCall> *FormattedCalls = nullptr;
   /// Argument registers DispatchCallDefinedArgs tracks, one bit each.

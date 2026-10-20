@@ -43,26 +43,42 @@
 
 namespace neverd {
 
+OmittedCalleeMemo::SummaryRead
+OmittedCalleeMemo::readAt(const PipelineResult &Result, va_t Key) {
+  SummaryRead Read;
+  Read.Key = Key;
+  if (const auto It = Result.CallMayWriteGPRs.find(Key);
+      It != Result.CallMayWriteGPRs.end())
+    Read.MayWrite = It->second;
+  if (const auto It = Result.CallEntryReadGPRs.find(Key);
+      It != Result.CallEntryReadGPRs.end())
+    Read.EntryReads = It->second;
+  if (const auto It = Result.CallEntryStackArgs.find(Key);
+      It != Result.CallEntryStackArgs.end())
+    Read.StackArgs = It->second;
+  Read.StackSlot = Result.CallEntryStackSlots.count(Key) != 0;
+  if (const auto It = Result.CallEntryArgumentCounts.find(Key);
+      It != Result.CallEntryArgumentCounts.end())
+    Read.ArgumentCount = It->second;
+  return Read;
+}
+
+bool OmittedCalleeMemo::Callee::readsHold(const PipelineResult &Result) const {
+  return std::all_of(Reads.begin(), Reads.end(), [&](const SummaryRead &Read) {
+    return readAt(Result, Read.Key) == Read;
+  });
+}
+
 void OmittedCalleeMemo::adopt(const BinaryImage &Img,
                               const PipelineResult &Result) {
   if (Image == &Img && SymbolData == Img.Symbols.data() &&
       SymbolCount == Img.Symbols.size() &&
-      CallMayWriteGPRs == Result.CallMayWriteGPRs &&
-      CallEntryReadGPRs == Result.CallEntryReadGPRs &&
-      CallArgumentSources == Result.CallArgumentSources &&
-      CallEntryStackArgs == Result.CallEntryStackArgs &&
-      CallEntryStackSlots == Result.CallEntryStackSlots &&
-      CallEntryArgumentCounts == Result.CallEntryArgumentCounts)
+      CallArgumentSources == Result.CallArgumentSources)
     return;
   Image = &Img;
   SymbolData = Img.Symbols.data();
   SymbolCount = Img.Symbols.size();
-  CallMayWriteGPRs = Result.CallMayWriteGPRs;
-  CallEntryReadGPRs = Result.CallEntryReadGPRs;
   CallArgumentSources = Result.CallArgumentSources;
-  CallEntryStackArgs = Result.CallEntryStackArgs;
-  CallEntryStackSlots = Result.CallEntryStackSlots;
-  CallEntryArgumentCounts = Result.CallEntryArgumentCounts;
   Callees.clear();
   Bytes = 0;
   Full = false;
@@ -192,9 +208,15 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
         return Signatures;
       Operations += BlockOps;
     }
+    // A conversion that read summaries this run states otherwise is read
+    // again.
+    if (Read->Converted && !Read->readsHold(Result))
+      Read->Converted = false;
     if (!Read->Converted) {
       const LowFunc &Lifted = lift();
       std::shared_ptr<const MedFunc> Body;
+      // The callee's parameters read the entry-read summary of its own entry.
+      std::set<va_t> Keys{Target};
       try {
         LowToMedConverter Converter;
         Converter.setBinaryImage(&Img);
@@ -205,6 +227,7 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
         Converter.setCallEntryStackArgs(&Result.CallEntryStackArgs);
         Converter.setCallEntryStackSlots(&Result.CallEntryStackSlots);
         Converter.setCallEntryArgumentCounts(&Result.CallEntryArgumentCounts);
+        Converter.setCallSummaryKeysRead(&Keys);
         MedFunc Med = Converter.convert(Lifted, Img.Arch, Img.abiFormat());
         size_t MedOperations = 0;
         for (const auto &Block : Med.Blocks)
@@ -220,6 +243,9 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
       if (Body && Memo && Read != &Local)
         Memo->remember(*Body);
       Read->Body = std::move(Body);
+      Read->Reads.clear();
+      for (const va_t Key : Keys)
+        Read->Reads.push_back(OmittedCalleeMemo::readAt(Result, Key));
       Read->Converted = true;
     }
     if (!Read->Body)
