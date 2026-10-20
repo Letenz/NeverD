@@ -47912,6 +47912,67 @@ TEST(HighCPointerAddresses, NarrowStringParametersTakeNarrowLiterals) {
   }
 }
 
+TEST(HighCPointerAddresses, CallResultLocalsConvertAsTheyAreDeclared) {
+  // gpg-mail-tube keeps gpgrt_getcwd's result, which no prototype types, in
+  // a local the unit names `cwd` after the call and declares an integer,
+  // and passes it to strlen, whose prototype takes a const char *: the
+  // argument converts as the integer C declares, which it did under the
+  // local's own name only.
+  const auto Char = NdType::makeInt(1);
+  Char->SourceName = "char";
+  const auto Text = NdType::makePtr(Char);
+  const auto Word = NdType::makeInt(8, false);
+  class StringDbg : public NullDebugContext {
+  public:
+    StringDbg(TypeRef Text, TypeRef Word)
+        : Text(std::move(Text)), Word(std::move(Word)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x2000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "strlen";
+      FS.Addr = Addr;
+      FS.ReturnType = Word;
+      FS.Params = {{"s", Text}};
+      FS.PrototypeFromCLibrary = true;
+      FS.PlatformConvention = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Text, Word;
+  } Dbg(Text, Word);
+  HighFunc Func;
+  Func.Name = "measure_cwd";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  MedVar Cwd = temporary(7);
+  auto Got = HighExpr::makeCall("gpgrt_getcwd", 0x3000, {});
+  Got->Type = Word;
+  HighStmt Keep = assignTo(Cwd, Got);
+  Keep.Dst->Type = Word;
+  MedVar Length = temporary(8);
+  auto Measured =
+      HighExpr::makeCall("strlen", 0x2000, {HighExpr::makeVar(Cwd, Word)});
+  Measured->Type = Word;
+  HighStmt Measure = assignTo(Length, Measured);
+  Measure.Dst->Type = Word;
+  Func.Body = {Keep, Measure,
+               callStmt("gcry_free", 0x4000, {HighExpr::makeVar(Cwd, Word)})};
+  returnValue(Func, HighExpr::makeVar(Length, Word));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("cwd"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("strlen(cwd)"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
   // sed passes a comparator of its own to qsort, whose prototype the header
   // library gives: its comparison's type keeps no const there, where the
