@@ -225,8 +225,10 @@ set(NEVERD_SDK_HEADERS
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIDisasm.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIDevirtualize.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIEmulation.h
+    ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIExecution.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIQuery.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPILocalTypes.h
+    ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIModules.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPISymbolic.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPISafety.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIPatch.h
@@ -263,9 +265,15 @@ add_custom_command(TARGET neverd_shared POST_BUILD
         "${NEVERD_STAGED_SDK_DIRECTORY}/neverd"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/include/neverd/emulation/DriverScenarioLimits.def"
+        "${CMAKE_SOURCE_DIR}/include/neverd/emulation/ExecutionInputLimits.def"
         "${CMAKE_SOURCE_DIR}/include/neverd/emulation/ExecutionReport.def"
         "${CMAKE_SOURCE_DIR}/include/neverd/emulation/ProcessReport.def"
         "${NEVERD_STAGED_SDK_DIRECTORY}/neverd/emulation"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "${NEVERD_STAGED_SDK_DIRECTORY}/neverd/modules"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/include/neverd/modules/ModuleInputLimits.def"
+        "${NEVERD_STAGED_SDK_DIRECTORY}/neverd/modules"
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "${NEVERD_STAGED_SDK_DIRECTORY}/neverd/unpack"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
