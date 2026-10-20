@@ -431,6 +431,7 @@ HighVariableEditResult neverd::editHighVariable(const HighFunc &Function,
     Result.Outputs.push_back(highSourceVariableId(Values[I]));
   }
   std::map<const HighExpr *, std::vector<ExprPtr>> Copies;
+  std::set<std::pair<va_t, StmtKind>> ChangedStatements;
   Result.Function = Function;
   std::vector<const HighStmt *> Originals;
   walkStmts(Function.Body, [&](const HighStmt &S) { Originals.push_back(&S); });
@@ -499,6 +500,7 @@ HighVariableEditResult neverd::editHighVariable(const HighFunc &Function,
       ExprPtr Value = S.StoreVal;
       Rewrite(Value, false);
       const va_t Address = S.Addr;
+      ChangedStatements.emplace(Address, S.Kind);
       S = HighStmt{};
       S.Kind = StmtKind::Assign;
       S.Addr = Address;
@@ -517,6 +519,17 @@ HighVariableEditResult neverd::editHighVariable(const HighFunc &Function,
     }
   });
   for (const auto &Observation : Sources) {
+    if (Observation.Kind == HighSourceKind::Statement ||
+        Observation.Kind == HighSourceKind::Store) {
+      // Statement observations have no expression handle. Keep their original
+      // instruction identity only while the projection retains the statement
+      // kind; scalarizing a stack store must not inherit its old store anchor.
+      if (Observation.Function == Function.Entry && Observation.StatementKind &&
+          !ChangedStatements.contains(
+              {Observation.Occurrence.Address, *Observation.StatementKind}))
+        Result.Sources.push_back(Observation);
+      continue;
+    }
     const auto Expression = Observation.Expression.lock();
     if (Expression)
       if (const auto Found = Copies.find(Expression.get());

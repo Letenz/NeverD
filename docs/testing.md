@@ -753,6 +753,16 @@ verify persistence. `NEVERD_CODE_NAV_CAPTURE_DIR` saves window captures.
 Run `neverd-gui-tests` directly with the native Qt platform to exercise native
 widgets; CTest sets the controller's platform to `offscreen`.
 
+`NeverDGuiSourceVariableTypes` uses the real worker for type editing and
+variable associations. It is registered only with
+`NEVERD_WORKER_REAL_ENGINE_TESTS=ON`; fixture SDK builds keep it disabled.
+`NeverDWorkerSourceVariableTypes` and `NeverDWorkerSourceVariableEdits` also
+compile and execute their generated C using the configured C compiler.
+Run these with `NeverDSourceVariableFlowTests`, `NeverDHighVariableEditsTests`
+and `NeverDLLVMVariableEditsTests`. The HighIR tests preserve instruction
+anchors for unchanged statements and refuse old store anchors when a split
+replaces a stack store with a scalar assignment.
+
 ## Source dialects and DWARF ingestion
 
 The main CI matrix installs Rust 1.93.1 and Go 1.27.2, records their versions,
