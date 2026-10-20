@@ -798,6 +798,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     Mod_->setDataLayout(Mod_->getTargetTriple().computeDataLayout());
   }
   Img = Img_;
+  RelocatedEntryProofs.reset();
   ImportStorageSnapshotImage = nullptr;
   EffectiveImportStorageSlots.clear();
   ConflictingImportStorageSlots.clear();

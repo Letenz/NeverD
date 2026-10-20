@@ -20,6 +20,7 @@
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
+#include "neverd/loader/COFF/ControlFlowEntries.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/Parallel.h"
 #include "neverd/support/ProloguePatterns.h"
@@ -175,8 +176,43 @@ va_t forwardingJumpTarget(const BinaryImage &Img, Decoder &Dec, va_t Entry) {
 
 std::vector<std::pair<va_t, std::string>>
 FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
+  return detectImpl(Img, Dec, false);
+}
+
+bool RelocatedFunctionEntryVerifier::accepts(va_t Address) {
+  Address = normalizeCodeAddress(Address, Img.Arch, Img.Mode);
+  if (Img.CodePtrRelocSlots.empty())
+    return false;
+  if (!MetadataPrepared) {
+    MetadataPrepared = true;
+    auto Entries = readPEControlFlowEntries(Img);
+    if (Entries)
+      MetadataEntries = std::move(*Entries);
+    else
+      llvm::logAllUnhandledErrors(Entries.takeError(), llvm::errs(),
+                                  "function entry metadata: ");
+  }
+  if (std::binary_search(MetadataEntries.begin(), MetadataEntries.end(),
+                         Address))
+    return true;
+  if (!Prepared) {
+    Prepared = true;
+    if (!Dec.init(Img))
+      return false;
+    (void)Detector.detectImpl(Img, Dec, true);
+  }
+  const auto [It, Inserted] = Answers.try_emplace(Address, false);
+  if (Inserted && Detector.RelocatedCandidates.count(Address))
+    It->second = Detector.verifyFunctionDecode(Img, Dec, Address, true, true);
+  return It->second;
+}
+
+std::vector<std::pair<va_t, std::string>>
+FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
+                         bool RelocationsOnly) {
   Entries.clear();
   UnsymbolizedX86Entries.clear();
+  RelocatedCandidates.clear();
   std::vector<std::pair<va_t, std::string>> Results;
   std::set<va_t> VerifiedCandidates;
 
@@ -329,7 +365,8 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
             Source != RegistrationPointerRoles->Sources.end() &&
             Source->second == Target)
           continue;
-      if (!Img.hasExecutableCodeOwnerAt(Target) || IsMachOLocalLabel(Target))
+      if (Img.DataInCode.count(Target) ||
+          !Img.hasExecutableCodeOwnerAt(Target) || IsMachOLocalLabel(Target))
         continue;
       if (IsX86LinkedCOFF && Img.hasExecutableCodeOwnerAt(Slot)) {
         CodeNamedByCode.emplace_back(Slot, Target);
@@ -387,7 +424,7 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   std::set<va_t> CodePointerTargets;
   // The entries other evidence found before the prologue scan adds its own.
   std::set<va_t> EvidencedX86Entries;
-  if (Img.Entry != 0) {
+  if (Img.Entry != 0 && !RelocationsOnly) {
     scanCallTargets(Img, Dec, DirectCallTargets);
     Entries.insert(DirectCallTargets.begin(), DirectCallTargets.end());
     // A binary file has no symbols, unwind tables or relocations to name
@@ -455,7 +492,9 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   std::set<va_t> CodeNamedTargets;
   if (IsX86LinkedCOFF && Img.Entry != 0) {
     const size_t TableNames = CodeNamedByCode.size();
-    func_detect_detail::scanCodeAddressImmediatesX86(Img, Dec, CodeNamedByCode);
+    if (!RelocationsOnly)
+      func_detect_detail::scanCodeAddressImmediatesX86(Img, Dec,
+                                                       CodeNamedByCode);
     const std::vector<va_t> Starts(Entries.begin(), Entries.end());
     // The function an address lies in: the entry before it, and the next.
     auto functionOf = [&](va_t Addr) -> std::optional<std::pair<va_t, va_t>> {
@@ -577,7 +616,7 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
     Results = std::move(Aligned);
   }
 
-  if (Img.Entry != 0) {
+  if (Img.Entry != 0 || RelocationsOnly) {
     std::set<va_t> Trusted{Img.Entry};
     Trusted.insert(ExceptionEntries.begin(), ExceptionEntries.end());
     // PE exports are untyped: executable-section data can legally appear in
@@ -628,16 +667,24 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
     std::vector<size_t> NeedVerify;
     for (size_t I = 0; I < N; ++I) {
       va_t Addr = Results[I].first;
-      if (Trusted.count(Addr) || UnsymbolizedX86Entries.count(Addr) ||
-          IsX86LinkedCallOrRelocTarget(Addr))
+      if ((RelocationsOnly && !RelocationCodeTargets.count(Addr)) ||
+          Img.VerifiedFunctionEntries.count(
+              normalizeCodeAddress(Addr, Img.Arch, Img.Mode)) ||
+          Trusted.count(Addr) || UnsymbolizedX86Entries.count(Addr) ||
+          (!RelocationsOnly && IsX86LinkedCallOrRelocTarget(Addr)))
         Keep[I] = 1;
-      else if (UntypedCOFFExports.count(Addr) ||
+      else if ((RelocationsOnly && IsX86LinkedCallOrRelocTarget(Addr)) ||
+               UntypedCOFFExports.count(Addr) ||
                IsCoveredMachODirectCallTarget(Addr) ||
                IsCoveredImportCallTarget(Addr) ||
                ExplicitFunctionStarts.count(
                    normalizeCodeAddress(Addr, Img.Arch, Img.Mode)) != 0 ||
-               !InsideKnownButNotStart(Addr))
-        NeedVerify.push_back(I);
+               !InsideKnownButNotStart(Addr)) {
+        if (RelocationsOnly)
+          Keep[I] = 1;
+        else
+          NeedVerify.push_back(I);
+      }
     }
 
     // The trial decode dominates only when the scan produced many untrusted
@@ -698,7 +745,7 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
     // names the target, and the forwarder would otherwise absorb its body.  A
     // target between the forwarder and the next entry is the forwarder's own
     // code, such as a loop entered at its test, and stays inside it.
-    if (Img.Arch == Arch::X86 || Img.Arch == Arch::X64) {
+    if (!RelocationsOnly && (Img.Arch == Arch::X86 || Img.Arch == Arch::X64)) {
       std::set<va_t> Starts;
       for (const auto &R : Results)
         Starts.insert(R.first);
@@ -811,7 +858,9 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   for (const auto &[Addr, Name] : Results) {
     (void)Name;
     const va_t Normalized = normalizeCodeAddress(Addr, Img.Arch, Img.Mode);
-    if (VerifiedCandidates.count(Normalized))
+    if (RelocationsOnly && RelocationCodeTargets.count(Normalized))
+      RelocatedCandidates.insert(Normalized);
+    else if (VerifiedCandidates.count(Normalized))
       Img.VerifiedFunctionEntries.insert(Normalized);
   }
 
@@ -824,7 +873,8 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
 //===----------------------------------------------------------------------===//
 
 bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
-                                        va_t Addr, bool KeepInconclusive) {
+                                        va_t Addr, bool KeepInconclusive,
+                                        bool RequireCallableExit) {
   constexpr int kMaxInsns = limits::kMaxVerifyInsns;
   const auto *Seg = Img.getSegmentFor(Addr);
   if (!Seg || !Img.hasExecutableCodeOwnerAt(Addr))
@@ -884,6 +934,7 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
   Dec.setDetail(true);
   Dec.resetX86FpuState();
   const bool ReachablePathsDecode = [&]() {
+    bool SawCallableExit = false;
     constexpr size_t kCFGProbeBudget =
         static_cast<size_t>(limits::kMaxVerifyInsns) * 4;
     std::queue<std::pair<va_t, std::optional<InstructionMode>>> Worklist;
@@ -903,7 +954,7 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
           break;
         }
         if (Explored.size() >= kCFGProbeBudget)
-          return true;
+          return !RequireCallableExit;
 
         const auto *PathSeg = Img.getSegmentFor(Cur);
         if (!PathSeg || !Img.hasExecutableCodeOwnerAt(Cur) || Cur < PathSeg->VA)
@@ -932,7 +983,7 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
         try {
           Dec.liftToLow(DI, Ops);
         } catch (const UnliftedInstruction &) {
-          return true;
+          return !RequireCallableExit;
         }
         const bool IsNoReturnCall = isUnconditionalNoReturnCall(Img, Ops);
 
@@ -960,6 +1011,7 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
             break;
           case NdOp::RETURN:
             IsRet = true;
+            SawCallableExit = true;
             break;
           default:
             break;
@@ -983,8 +1035,10 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
           break;
         }
 
-        if (IsNoReturnCall)
+        if (IsNoReturnCall) {
+          SawCallableExit = true;
           break;
+        }
         if (IsRet && !(IsCond && IsBranch))
           break;
         if (IsRet && IsCond && IsBranch) {
@@ -999,12 +1053,21 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
         if (IsIndirect)
           break;
         if (BranchTarget == InvalidVA)
-          return true;
+          return !RequireCallableExit;
         if (BranchTarget != Addr && Entries.count(BranchTarget) > 0) {
+          if (RequireCallableExit &&
+              !Img.hasAuthenticatedFunctionEntryAt(BranchTarget)) {
+            Worklist.push({BranchTarget, BranchMode});
+            if (!IsCond)
+              break;
+            Cur += static_cast<va_t>(Sz);
+            continue;
+          }
           if (IsCond) {
             Cur += static_cast<va_t>(Sz);
             continue;
           }
+          SawCallableExit = true;
           break;
         }
 
@@ -1014,7 +1077,7 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
         Cur += static_cast<va_t>(Sz);
       }
     }
-    return true;
+    return !RequireCallableExit || SawCallableExit;
   }();
   Dec.resetX86FpuState();
   Dec.setDetail(PreviousDetail);

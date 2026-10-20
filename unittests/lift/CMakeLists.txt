@@ -1943,6 +1943,11 @@ add_neverd_unittest(NeverDRelocatedLiteralTests
   LINK_COMPONENTS Loader BackendLLVM LibC Lift
 )
 
+add_neverd_unittest(NeverDRelocatedFunctionEntryTests
+  format/RelocatedFunctionEntryTests.cpp
+  LINK_COMPONENTS IRLow BackendLLVM LibC Lift
+)
+
 # Pins Mach-O bind/rebase pointer provenance and its LLVM relocation boundary
 # without relinking the full lift suite during local RED/GREEN iterations.
 add_neverd_unittest(NeverDMachOPointerRelocationBoundaryTests

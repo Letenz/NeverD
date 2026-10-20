@@ -17,6 +17,7 @@
 #include "neverd/backend/DataSymbolMetadata.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/ir/low/FuncDetector.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -200,7 +201,9 @@ bool isImageFunctionEntry(const BinaryImage &Img, va_t Address) {
       (Section && !Section->isExecutable()))
     return false;
   return !Img.ContinuationCodeStarts.count(Address) &&
-         Img.hasKnownFunctionEntryAt(Address) &&
+         (Img.hasKnownFunctionEntryAt(Address) ||
+          Img.VerifiedFunctionEntries.count(
+              normalizeCodeAddress(Address, Img.Arch, Img.Mode))) &&
          Img.hasExecutableCodeOwnerAt(Address);
 }
 
@@ -228,6 +231,15 @@ va_t imageFunctionEntryContaining(const BinaryImage &Img, va_t Address) {
 }
 } // namespace
 
+bool MedLLVMEmitter::verifyRelocatedImageFunctionEntry(va_t Address) {
+  if (!Img)
+    return false;
+  if (!RelocatedEntryProofs)
+    RelocatedEntryProofs =
+        std::make_shared<RelocatedFunctionEntryVerifier>(*Img);
+  return RelocatedEntryProofs->accepts(Address);
+}
+
 llvm::Function *MedLLVMEmitter::resolveImageFunctionEntry(va_t Address) {
   if (llvm::Function *Lifted = resolveLiftedFunctionEntry(Address))
     return Lifted;
@@ -235,7 +247,8 @@ llvm::Function *MedLLVMEmitter::resolveImageFunctionEntry(va_t Address) {
     return nullptr;
   if (const Symbol *Exact = imageFunctionSymbolsAt(*Img, Address).first)
     return materializeImageFunctionDeclaration(Address, Exact->Name);
-  return isImageFunctionEntry(*Img, Address)
+  return (isImageFunctionEntry(*Img, Address) ||
+          verifyRelocatedImageFunctionEntry(Address))
              ? materializeImageFunctionDeclaration(Address, {})
              : nullptr;
 }
@@ -248,7 +261,8 @@ llvm::Constant *MedLLVMEmitter::resolveImageFunctionAddress(va_t Address) {
   const auto [Exact, Ending] = imageFunctionSymbolsAt(*Img, Address);
   // Adjacent functions share an address with the previous function's end.
   // Independent entry evidence owns that address before the end fallback.
-  if (!Exact && isImageFunctionEntry(*Img, Address))
+  if (!Exact && (isImageFunctionEntry(*Img, Address) ||
+                 verifyRelocatedImageFunctionEntry(Address)))
     return materializeImageFunctionDeclaration(Address, {});
   const Symbol *Use = Exact ? Exact : Ending;
   if (!Use) {

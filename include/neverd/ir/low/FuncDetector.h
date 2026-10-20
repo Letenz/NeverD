@@ -20,6 +20,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 
+#include <map>
 #include <set>
 #include <vector>
 
@@ -32,6 +33,9 @@ public:
                                                    Decoder &Dec);
 
 private:
+  friend class RelocatedFunctionEntryVerifier;
+  std::vector<std::pair<va_t, std::string>>
+  detectImpl(const BinaryImage &Img, Decoder &Dec, bool RelocationsOnly);
   void scanCallTargets(const BinaryImage &Img, Decoder &Dec,
                        std::set<va_t> &Out);
   /// Recover VC6 / MSVC functions that have no PDB symbol: EBP-frame
@@ -62,12 +66,36 @@ private:
                                    llvm::ArrayRef<va_t> Cases, bool &Computed);
   /// Validate a heuristic entry.  When KeepInconclusive is true, bounded
   /// probes that exhaust their budget remain candidates for the formal audit;
-  /// definite decode or mapping failures are still rejected.
+  /// definite decode or mapping failures are still rejected. Relocation-only
+  /// evidence additionally needs a supported, bounded CFG with a callable exit;
+  /// trap-only bytes and an exhausted proof do not establish that role.
   bool verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec, va_t Addr,
-                            bool KeepInconclusive = false);
+                            bool KeepInconclusive = false,
+                            bool RequireCallableExit = false);
 
   std::set<va_t> Entries;
   std::set<va_t> UnsymbolizedX86Entries;
+  std::set<va_t> RelocatedCandidates;
+};
+
+/// One immutable image's relocation-backed callable proofs. Candidate ownership
+/// uses the ordinary detector's filters, without a call/prologue sweep. Verify
+/// only requested targets and retain positive and negative answers locally;
+/// concurrent LLVM shards never publish into the image's mutable entry set.
+class RelocatedFunctionEntryVerifier {
+public:
+  explicit RelocatedFunctionEntryVerifier(const BinaryImage &Image)
+      : Img(Image) {}
+  bool accepts(va_t Address);
+
+private:
+  const BinaryImage &Img;
+  bool Prepared = false;
+  bool MetadataPrepared = false;
+  std::vector<va_t> MetadataEntries;
+  Decoder Dec;
+  FuncDetector Detector;
+  std::map<va_t, bool> Answers;
 };
 
 } // namespace neverd

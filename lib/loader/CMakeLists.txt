@@ -13,6 +13,7 @@ add_custom_command(
 
 add_neverd_component_library(NeverDLoader
   COFF/COFFLoader.cpp
+  COFF/ControlFlowEntries.cpp
   COFF/COFFLoaderUtils.cpp
   COFF/COFFObjectExterns.cpp
   COFF/COFFObjectView.cpp
