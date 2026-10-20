@@ -348,7 +348,7 @@ neither 请求可声明 `user_buffers`（`id`、`size`、可选 `input`／`acces
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 抛出来宾异常，无正常 API 返回；真实 C 过滤器／处理器及展开 finally，用户 CPU 访存异常的受限恢复见下文 |
 | `ExAllocatePool2` | 分页／非分页 NX 分配，默认清零；支持未初始化与缓存行对齐标志；无效的必需标志返回 NULL，配额／可执行池以及分配失败引发异常的路径会停止 |
 | `MmGetSystemRoutineAddress` | 通过共享导出清单解析带长度的来宾名称 |
-| `MmIsAddressValid` | IRQL ≤ 2 的有限具体查询：仅在零页未映射时将 NULL 判为假；只有活跃模型对象或非分页池的精确字节具有可读写 RAM 后备时才返回真。分页池、已释放或无主内存、分配填充、非池物理缓冲区及受保护后备均明确停止。查询不授予字段访问、所有权或未来生命周期保证，并保留环境恢复依赖。 |
+| `MmIsAddressValid` | IRQL ≤ 2 的有限具体查询：仅在零页未映射时将 NULL 判为假；活跃模型对象或非分页池的精确字节必须具有可读写 RAM 后备。模型自己建立的内核模块映像只需在精确范围内具有可读 RAM，因此只读模块头和导出表也可判为驻留。输入驱动的模块元数据、别名或任意映射不建立该所有权。分页池、已释放或无主内存、分配填充、非池物理缓冲区、不可访问或设备后备均明确停止。查询不授予字段访问、写权限、所有权或未来生命周期保证，并保留环境恢复依赖。 |
 | `KeRegisterBugCheckReasonCallback`, `KeDeregisterBugCheckReasonCallback` | 仅限 checked-x64 注册/注销：记录须为驱动映像内对齐、可读写的 48 字节区域，回调须为映像内可执行地址，原因限 2–7，最多保留 64 个记录身份；组件名初始须可读、以 NUL 结尾且不超过 256 字节。重复注册、注销和重新注册保留已知字段与 State 状态变化；只保留组件指针，不保证后续生命周期。仅回调、组件、原因和 State 字段可读；注销后仍禁止所有写入、不透明字段访问及相交页面的 MDL 借用。DriverUnload 必须注销活跃记录。环境依赖保留；不支持崩溃回调派发或转储生成。 |
 | `NtQuerySystemInformation`, `ZwQuerySystemInformation` | 在 PASSIVE_LEVEL 支持类 `11`（`SystemModuleInformation`）：零长度大小查询，以及模拟提供者和输入驱动的完整 Win64 模块记录。部分缓冲区和未知信息类会明确停止。 类 `196` 通过显式 `kernel_va_shadow_query` 支持，见对应查询章节。 |
 | `MmMapIoSpace`, `MmMapIoSpaceEx`, `MmUnmapIoSpace` | 声明的转换后子区间；非缓存 RO／RW、共享别名、精确取消映射；不提供任意物理内存 |

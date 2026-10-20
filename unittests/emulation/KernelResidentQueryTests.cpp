@@ -6,6 +6,7 @@
 
 #include "gtest/gtest.h"
 #include "os/windows/driver/DriverImage.h"
+#include "os/windows/kernel/KernelExportRegistry.h"
 #include "os/windows/kernel/KernelModel.h"
 
 #include "neverd/emulation/AddressSpace.h"
@@ -192,6 +193,123 @@ TEST_F(KernelResidentQuery, QueryBeforeOrAfterBaselineRetainsDependency) {
               (std::vector<std::string>{
                   "unreconstructed kernel or environment effects"}));
   }
+}
+
+class KernelProviderResidentQuery : public testing::Test {
+protected:
+  std::shared_ptr<AddressSpace> Memory = checked(AddressSpace::create(
+      checked(PhysicalMemory::create(MemoryLimit)), MemoryLimit));
+  KernelExportRegistry Exports;
+  DriverResult Result;
+  KernelModel Model{*Memory, Result, &Exports};
+  DriverImage Image;
+  std::vector<KernelModuleImage> Providers;
+
+  void SetUp() override {
+    checked(Exports.initialize({}));
+    Providers = checked(makeKernelModuleImages(Exports));
+    ASSERT_FALSE(Providers.empty());
+    // A familiar module name and readable mapping alone confer no residency
+    // authority. Only KernelModel's successfully mapped providers have it.
+    Image.Name = "ntoskrnl.exe";
+    Image.Base = 0x180000000;
+    Image.Entry = Image.Base + Page;
+    Image.Size = 3 * Page;
+    checked(Memory->map(Image.Base, Image.Size, Read | Execute));
+    checked(Model.initialize(Image, {}));
+  }
+
+  uint64_t query(uint64_t Address) {
+    return checked(Model.call("MmIsAddressValid", {Address}));
+  }
+  void rejects(uint64_t Address, llvm::StringRef Fragment) {
+    auto Value = Model.call("MmIsAddressValid", {Address});
+    ASSERT_FALSE(bool(Value));
+    const auto Text = llvm::toString(Value.takeError());
+    EXPECT_NE(Text.find(Fragment.str()), std::string::npos) << Text;
+  }
+};
+
+TEST_F(KernelProviderResidentQuery, ExactProvidersIncludeReadOnlyMetadata) {
+  for (const auto &Provider : Providers) {
+    const auto &M = Provider.Identity;
+    EXPECT_FALSE(M.ResidentProvider);
+    for (uint64_t Offset : {uint64_t(0), Page - 1, profile::KernelModuleCodeRVA,
+                            profile::KernelModuleDataRVA,
+                            profile::KernelModuleExportRVA, M.Size - 1}) {
+      EXPECT_TRUE(checked(Memory->canAccess(M.Base + Offset, 1, Read)));
+      EXPECT_FALSE(checked(Memory->canAccess(M.Base + Offset, 1, Write)));
+      EXPECT_EQ(query(M.Base + Offset), 1u);
+    }
+    rejects(M.Base - 1, "live modeled kernel");
+    rejects(M.Base + M.Size, "live modeled kernel");
+  }
+  rejects(Image.Base, "live modeled kernel");
+  rejects(Image.Entry, "live modeled kernel");
+  rejects(UINT64_MAX, "live modeled kernel");
+}
+
+TEST_F(KernelProviderResidentQuery, CurrentRAMPermissionsAreStillRequired) {
+  const uint64_t Base = Providers.front().Identity.Base;
+  for (unsigned Permissions : {0u, unsigned(Write), unsigned(Execute)}) {
+    checked(Memory->protect(Base, Page, Permissions));
+    rejects(Base, "resident readable provider RAM");
+    rejects(Base + Page - 1, "resident readable provider RAM");
+  }
+  checked(Memory->protect(Base, Page, Read));
+  EXPECT_EQ(query(Base), 1u);
+  checked(Memory->unmap(Base, Page));
+  rejects(Base, "resident readable provider RAM");
+}
+
+TEST_F(KernelProviderResidentQuery,
+       AliasesAndDevicesAcquireNoProviderAuthority) {
+  const uint64_t Base = Providers.front().Identity.Base;
+  checked(Memory->mapAlias(Scratch, Base, Page, Read));
+  rejects(Scratch, "live modeled kernel");
+  EXPECT_EQ(query(Base), 1u);
+
+  checked(Memory->unmap(Base, Page));
+  unsigned Effects = 0;
+  GuestMMIOCallbacks IO;
+  IO.Validate = [&](uint64_t, uint64_t, bool) {
+    ++Effects;
+    return llvm::Error::success();
+  };
+  IO.Read = [&](uint64_t, unsigned) -> llvm::Expected<uint64_t> {
+    ++Effects;
+    return 0;
+  };
+  IO.Write = [&](uint64_t, unsigned, uint64_t) {
+    ++Effects;
+    return llvm::Error::success();
+  };
+  checked(Memory->mapMMIO(Base, Page, std::move(IO)));
+  rejects(Base, "resident readable provider RAM");
+  EXPECT_EQ(Effects, 0u);
+}
+
+TEST_F(KernelProviderResidentQuery,
+       QueryPreservesOpacityAndRecoveryDependency) {
+  const uint64_t Base = Providers.front().Identity.Base;
+  checked(Model.captureUnpackBaseline());
+  EXPECT_TRUE(checked(Model.unpackDependencies()).empty());
+  const uint64_t Code = Base + profile::KernelModuleCodeRVA;
+  auto Before = Model.validateGuestAccess(Code, 1, false);
+  EXPECT_TRUE(bool(Before));
+  llvm::consumeError(std::move(Before));
+  EXPECT_EQ(query(Code), 1u);
+  auto After = Model.validateGuestAccess(Code, 1, false);
+  EXPECT_TRUE(bool(After));
+  llvm::consumeError(std::move(After));
+  EXPECT_FALSE(checked(Memory->canAccess(Code, 1, Write)));
+
+  // Undeclared debugger data remains inaccessible even inside the provider.
+  rejects(Base + profile::KernelModuleDataRVA + Page,
+          "resident readable provider RAM");
+  EXPECT_FALSE(checked(Model.unpackDependencies()).empty());
+  const auto State = checked(Model.captureUnpackRuntime(true));
+  EXPECT_TRUE(State.hasAdditionalDependencies());
 }
 } // namespace
 } // namespace neverd::emulation

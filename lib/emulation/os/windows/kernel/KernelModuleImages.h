@@ -17,6 +17,9 @@ class KernelExportRegistry;
 struct KernelLoadedModule {
   std::string Name;
   uint64_t Base = 0, Size = 0;
+  /// Set only after KernelModel creates the provider's resident RAM mapping.
+  /// An input image's module metadata does not establish this authority.
+  bool ResidentProvider = false;
 };
 struct KernelModuleImage {
   KernelLoadedModule Identity;
