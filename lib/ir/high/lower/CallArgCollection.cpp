@@ -24,6 +24,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/ImportCallee.h"
+#include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -562,9 +563,19 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     if (Prev.Output.Kind == MedVar::Reg && Prev.Output.Size > 0) {
       const int ArgIdx = integerSlot(Prev.Output.RegOff);
       if (ArgIdx >= 0 && ArgIdx < MaxArgs && !Found[ArgIdx]) {
+        // The low register the lifter syncs after a whole register's write
+        // is no narrower argument: after `lea rdi, [rip + s]` the call reads
+        // all of RDI, as MedABIPass does.
+        const MedVar Whole =
+            Prev.Opcode == NdOp::SUBBYTES
+                ? argRegSourceValueInBlock(CurBlock, J, TRI, IntLayout)
+                : Prev.Output;
         if (Prev.Opcode == NdOp::COPY && Prev.NumInputs >= 1) {
           Found[ArgIdx] = medvarToExpr(Prev.Inputs[0]);
           FoundSource[ArgIdx] = Prev.Inputs[0];
+        } else if (Whole.Size > Prev.Output.Size) {
+          Found[ArgIdx] = medvarToExpr(Whole);
+          FoundSource[ArgIdx] = Whole;
         } else {
           Found[ArgIdx] = medOpToExpr(Prev);
           FoundSource[ArgIdx] = Prev.Output;

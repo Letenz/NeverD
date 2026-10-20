@@ -141,6 +141,13 @@ void recoverCallAbi(
 IntegerArgumentLayout integerArgumentLayoutOf(const MedFunc &Func,
                                               const TargetRegInfo &TRI);
 
+/// The value an argument-register-defining op at index \p J contributes to its
+/// slot, resolving a low-half sub-register sync to the paired full-width write
+/// so a wide (pointer/struct) argument keeps its high bits.
+MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
+                                const TargetRegInfo &TRI,
+                                const IntegerArgumentLayout &Layout);
+
 // Finalize the overflow stack parameters of every variadic callee once all call
 // sites have been recovered.  A variadic function's va_arg overflow reads land
 // above the synthetic frame, so they cannot be rewritten to ordinary parameter
