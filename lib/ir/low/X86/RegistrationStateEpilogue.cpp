@@ -10,6 +10,8 @@
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/COFF/COFFCxxEpilogue.h"
 
+#include <algorithm>
+
 namespace neverd::registration_state {
 
 bool RegistrationStateSolver::transferCxxEpilogue(
@@ -68,6 +70,21 @@ bool RegistrationStateSolver::transferCxxEpilogue(
   }
   if (CxxCookies && !cxxCookiesReady(State))
     return false;
+  if (Call.CookieCheck) {
+    const auto &Check = *Call.CookieCheck;
+    // Current wrapper bytes describe a check, not its successful outcome.
+    // The exceptional cookie owner already proves initialization, lifetime
+    // and preservation of this same word and global across every call.
+    if (!CxxCookies || !CompleteCookies ||
+        Check.SecurityCookieVA != SecurityCookieVA ||
+        Check.Checker.Begin != CookieCheckVA ||
+        !std::any_of(CxxCookieConditions.begin(), CxxCookieConditions.end(),
+                     [](const auto &Condition) {
+                       return Condition.FrameOffset == -16 &&
+                              Condition.XORFrameOffset == 0;
+                     }))
+      return false;
+  }
   for (unsigned J = 0; J != 4; ++J) {
     State.Frame.Registers[Registers[J]] = State.Frame.load(Slots[J], 4);
     if (CheckRuntimeObjects)
@@ -78,12 +95,28 @@ bool RegistrationStateSolver::transferCxxEpilogue(
   // The final push overwrites the old EBP slot, below the returned ESP.
   const auto PC = FrameValue::constant(uint32_t(Call.Caller.End));
   State.Frame.store(*SP - 4, 4, PC);
+  if (Call.CookieCheck) {
+    State.Frame.store(*SP - 8, 4,
+                      FrameValue::constant(uint32_t(Call.Helper.Begin + 10)));
+    ImageReads.emplace(SecurityCookieVA, SecurityCookieVA + 4);
+    for (const auto Flag : {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF,
+                            x86reg::SF, x86reg::OF}) {
+      // Equal four-byte operands make CMP produce 0 without borrow,
+      // carry or overflow. Other flag/register provenance is unchanged.
+      State.Frame.OtherRegisterBytes[Flag] =
+          FrameValue::constant(Flag == x86reg::PF || Flag == x86reg::ZF);
+      if (CheckRuntimeObjects)
+        State.RuntimeObject.OtherRegisterBytes[Flag] = {};
+    }
+  }
   State.Frame.store(0, 4, PC);
   State.Frame.Registers[x86reg::RCX / x86reg::GeneralRegStride] = PC;
   State.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
       FrameValue::frame(4);
   if (CheckRuntimeObjects) {
     State.RuntimeObject.store(*SP - 4, 4, {});
+    if (Call.CookieCheck)
+      State.RuntimeObject.store(*SP - 8, 4, {});
     State.RuntimeObject.store(0, 4, {});
     State.RuntimeObject.Registers[x86reg::RCX / x86reg::GeneralRegStride] = {};
     State.RuntimeObject.Registers[x86reg::RSP / x86reg::GeneralRegStride] = {};

@@ -1889,16 +1889,22 @@ entry. Its cleanup-only transfer preserves ordered overlapping writes and
 publishes a distinct physical-call receipt, not an ordinary callee stack-pop
 contract. Catch entries and native reconstruction still require separate
 physical transfers; source-slot metadata alone grants neither.
-`getCheckedX86CxxEpilogueCall` authenticates the unguarded shared exit's
-immutable caller and complete helper body. `RegistrationCxxState` binds those
+`getCheckedX86CxxEpilogueCall` authenticates the shared exit's immutable caller,
+complete restore body and optional GS-checking wrapper. `RegistrationCxxState` binds those
 current-image descriptions in the CFG layer; the state solver itself keeps no
 loader dependency. Its exit transfer requires the installed node, outside
 state, initialized pop words, exact saved register identities and intact parent
 return address. It preserves EAX, EDX and flags, models the helper PC separately
 from the parent's PC, restores ESP and retires the chain at the exact call
 boundary. Shared exits are chain removals, not ordinary callee stack-pop
-contracts. Overlapping saves and guarded shared exits remain refused; the
-shared-prologue receipt still prevents native frame reconstruction.
+contracts. A guarded exit additionally requires the same live EBP-16 cookie
+condition owned by the checked exceptional handler, a current leaf checker
+and proven global-cookie preservation. Only then can the state solver follow
+the checker's equal-value return, model its nested return-PC store and replace
+the six arithmetic flags with CMP's actual result. Other register/flag
+provenance is retained. This physical wrapper never becomes an ordinary
+cookie-check receipt. Overlapping saves remain refused; the shared-prologue
+receipt still prevents native frame reconstruction.
 `RegistrationCleanupABI` authenticates immutable MSVC tail-jump relays and
 Clang relays that save EBP, adjust the source frame and call one or more checked
 leaves before restoring EBP. The ordered call list retains every ECX object

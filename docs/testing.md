@@ -5971,8 +5971,10 @@ allocation retains partial overlap. Run
 assembled PE32 source cases. Add `--wine <wine-command> --wine-prefix <directory>`
 to check live stack bytes, all GPRs, defined arithmetic flags, return-PC movement
 and FS chain state at preferred and rebased addresses. Wrong-seed,
-wrong-state and wrong-epilogue controls must return one; intact cases return zero (192 runtime
-observations). Set
+wrong-state and wrong-epilogue controls must return one; intact cases return
+zero. Four cases also execute guarded exits and a corrupted-cookie control,
+whose actual checker mismatch branch must return three (200 runtime
+observations altogether). Set
 `NEVERD_REGISTRATION_PROLOGUE_INPUT_PE32` to one generated `original.exe` when
 running the complete registration EH suite. Each image also contains an
 independent cleanup-only parent whose LowIR transfer must prove the helper
@@ -5987,8 +5989,18 @@ allocation, helper form and parent return-pop, eight overwritten-save cases,
 also contain a shared-exit parent whose source proof must reject overlapped
 saves. A separate machine oracle records the live save words, destroys the
 body's registers and checks EAX/EDX/flags preservation, restored registers,
-helper return PC, ESP and FS:[0]. This covers the unguarded shared epilogue;
-the separate GS-checking wrapper is not admitted.
+helper return PC, ESP and FS:[0].
+`RegistrationTryLevel.CxxGuardedSharedEpilogue*` adds twenty guarded source
+combinations with one or two handler cookie conditions, 35 current-image
+mutations, seven overlapping cookie writes and
+ten conditional-branch cases with five conditions and their inverses. The
+source proof must use the successful CMP flags, not the body's prior flags.
+The assembled guarded parents require the separately saved EBP-16 cookie;
+other helper forms and overlapping saves refuse. Machine execution compares
+all six arithmetic flags, preserved EAX/EDX, restored registers, helper return
+PC, ESP and FS:[0]. A changed cookie must take the original checker's failure
+branch at both image bases. These are source and physical-call proofs; the
+shared-frame native reconstruction gate remains closed.
 `check_windows_registration_realigned_rewrite.py` separately emits aligned
 value/reference, unbound value/reference and catch-all parents. Independent
 assembly fixtures use the canonical direct MSVC EBP frame for the unbound forms.

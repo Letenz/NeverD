@@ -18,10 +18,20 @@ struct ExceptionFunction;
 
 namespace coff_loader {
 
-/// The unguarded shared epilogue restores FS:[0] from EBP-12, discards the
+/// The optional wrapper decodes [EBP-16] with EBP, calls the checked leaf,
+/// and tail-jumps to Restore. Its successful CMP sets ZF/PF and clears
+/// CF/AF/SF/OF; no caller flag value may survive in those six flags.
+struct X86CxxEpilogueCookieCheck {
+  ExceptionAddressRange Checker;
+  va_t SecurityCookieVA = 0;
+  va_t FailureVA = 0;
+};
+
+/// The shared epilogue restores FS:[0] from EBP-12, discards the
 /// word at caller ESP, and loads EDI/ESI/EBX from caller ESP+4/+8/+12.
 /// It restores EBP from [EBP], returns with ESP at old EBP+4, and preserves
-/// EAX, EDX and flags. ECX contains Caller.End. The transient helper return
+/// EAX and EDX. Without CookieCheck it also preserves flags.
+/// ECX contains Caller.End. The transient helper return
 /// address also overwrites [old EBP], below the returned stack pointer.
 ///
 /// Current bytes authenticate this physical protocol only. The caller must
@@ -30,6 +40,8 @@ namespace coff_loader {
 struct X86CxxEpilogueCall {
   ExceptionAddressRange Caller;
   ExceptionAddressRange Helper;
+  ExceptionAddressRange Restore;
+  std::optional<X86CxxEpilogueCookieCheck> CookieCheck;
 };
 
 std::optional<X86CxxEpilogueCall>

@@ -1950,6 +1950,35 @@ TEST(RegistrationTryLevel, CxxEAXHelperInputPE32HasTheCheckedPhysicalCall) {
   EXPECT_EQ(bool(ExitStates.CxxPrologue), IntactSaves);
   EXPECT_FALSE(cxxRegistrationFrameCoordinate(*ExitFunction.ExceptionMetadata,
                                               &ExitStates));
+  const va_t GuardedParent = Export("guarded_state_parent");
+  ASSERT_NE(GuardedParent, InvalidVA);
+  const auto GuardedFunction = liftEntry(*Image, GuardedParent);
+  ASSERT_TRUE(GuardedFunction.ExceptionMetadata);
+  ASSERT_TRUE(GuardedFunction.RegistrationStates);
+  bool FoundGuardedExit = false;
+  for (const auto &Block : GuardedFunction.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
+          Op.Inputs[0].isConst() &&
+          Op.Inputs[0].Offset == Export("guarded_helper")) {
+        const auto Exit = coff_loader::getCheckedX86CxxEpilogueCall(
+            *Image, *GuardedFunction.ExceptionMetadata, Op.Addr);
+        ASSERT_TRUE(Exit);
+        EXPECT_EQ(Exit->Helper.size(), 15u);
+        EXPECT_EQ(Exit->Restore.Begin, Export("epilogue_helper"));
+        EXPECT_TRUE(Exit->CookieCheck);
+        FoundGuardedExit = true;
+      }
+  EXPECT_TRUE(FoundGuardedExit);
+  const bool IntactCookie =
+      Word("prologue_variant") == 2 && Word("prologue_allocation") >= 4;
+  const auto &GuardedStates = *GuardedFunction.RegistrationStates;
+  EXPECT_EQ(GuardedStates.RegistrationLifetimeComplete, IntactCookie);
+  EXPECT_EQ(GuardedStates.ChainOperationsComplete, IntactCookie);
+  EXPECT_EQ(GuardedStates.SecurityCookiesComplete, IntactCookie);
+  EXPECT_EQ(GuardedStates.CallFrameEffectsComplete, IntactCookie);
+  EXPECT_FALSE(cxxRegistrationFrameCoordinate(
+      *GuardedFunction.ExceptionMetadata, &GuardedStates));
 }
 
 TEST(RegistrationTryLevel, CxxEAXHelperRequiresClosedPrecedingBody) {
@@ -2450,6 +2479,213 @@ TEST(RegistrationTryLevel, CxxSharedEpilogueCannotRestoreOverwrittenSaves) {
         EXPECT_FALSE(Function.RegistrationStates->RegistrationLifetimeComplete);
         EXPECT_FALSE(Function.RegistrationStates->ChainOperationsComplete);
       }
+}
+
+std::pair<BinaryImage, va_t>
+makeCxxGuardedEpilogueImage(bool Wide, uint32_t Allocation,
+                            bool PopArguments = false,
+                            bool DoubleGuard = false) {
+  auto [Image, Call] =
+      makeCxxSharedEpilogueImage(Wide, 2, Allocation, PopArguments);
+  auto &Text = Image.Segments.front().Data;
+  constexpr va_t Wrapper = kText + 0x1a0, Checker = kText + 0x240;
+  writeLE<uint32_t>(Text.data() + Call - kText + 1, Wrapper - Call - 5);
+  // Load the separate GS word, decode it with source EBP, check it, then
+  // tail-jump to the same physical restore. The check changes flags.
+  std::vector<uint8_t> Guard{0x8b, 0x4d, 0xf0, 0x33, 0xcd, 0xe8};
+  emit32(Guard, Checker - Wrapper - 10);
+  Guard.push_back(0xe9);
+  emit32(Guard, uint32_t(kText + 0x180 - Wrapper - 15));
+  std::copy(Guard.begin(), Guard.end(), Text.begin() + 0x1a0);
+  std::vector<uint8_t> Check{0x3b, 0x0d};
+  emit32(Check, kRData + 0xf0);
+  Check.insert(Check.end(), {0x75, 0x18, 0xf3, 0xc3});
+  std::copy(Check.begin(), Check.end(), Text.begin() + 0x240);
+  // The exceptional dispatcher owns the same cookie, in node coordinates.
+  std::vector<uint8_t> Handler{0x8b, 0x54, 0x24, 8, 0x8d, 0x42, 12};
+  auto CheckCall = [&] {
+    Handler.insert(Handler.end(), {0x33, 0xc8, 0xe8});
+    emit32(Handler, uint32_t(Checker - (kText + 0x200 + Handler.size() + 4)));
+  };
+  if (DoubleGuard) {
+    Handler.insert(Handler.end(), {0x8b, 0x8a});
+    emit32(Handler, uint32_t(-16 - int32_t(Allocation)));
+    CheckCall();
+  }
+  Handler.insert(Handler.end(), {0x8b, 0x4a, 0xfc});
+  CheckCall();
+  Handler.push_back(0xb8);
+  emit32(Handler, kRData);
+  Handler.insert(Handler.end(), {0xff, 0x25});
+  emit32(Handler, kRData + 0x90);
+  std::copy(Handler.begin(), Handler.end(), Text.begin() + 0x200);
+  Image.ExceptionMetadata = {};
+  coff_loader::parseX86RegistrationExceptions(Image);
+  return {std::move(Image), Call};
+}
+
+TEST(RegistrationTryLevel, CxxGuardedSharedEpilogueProvesTheCookieBeforeExit) {
+  for (bool Wide : {false, true})
+    for (uint32_t Allocation : {4, 32, 248})
+      for (bool PopArguments : {false, true})
+        for (bool DoubleGuard : {false, true}) {
+          if (!Wide && Allocation > 127)
+            continue;
+          SCOPED_TRACE(::testing::Message()
+                       << Wide << ' ' << Allocation << ' ' << PopArguments
+                       << ' ' << DoubleGuard);
+          auto [Image, Call] = makeCxxGuardedEpilogueImage(
+              Wide, Allocation, PopArguments, DoubleGuard);
+          const auto Function = liftEntry(Image, kText + 0x20);
+          ASSERT_TRUE(Function.ExceptionMetadata);
+          const auto Exit = coff_loader::getCheckedX86CxxEpilogueCall(
+              Image, *Function.ExceptionMetadata, Call);
+          ASSERT_TRUE(Exit);
+          EXPECT_EQ(Exit->Restore.Begin, kText + 0x180);
+          ASSERT_TRUE(Exit->CookieCheck);
+          EXPECT_EQ(Exit->CookieCheck->Checker.Begin, kText + 0x240);
+          EXPECT_EQ(Exit->CookieCheck->SecurityCookieVA, kRData + 0xf0);
+          EXPECT_EQ(Exit->CookieCheck->FailureVA, kText + 0x260);
+          ASSERT_TRUE(Function.RegistrationStates);
+          const auto &States = *Function.RegistrationStates;
+          EXPECT_TRUE(States.Complete);
+          EXPECT_TRUE(States.RegistrationLifetimeComplete);
+          EXPECT_TRUE(States.ChainOperationsComplete);
+          EXPECT_TRUE(States.CallFrameEffectsComplete);
+          EXPECT_TRUE(States.SecurityCookiesComplete);
+          EXPECT_TRUE(States.CxxPrologue);
+          ASSERT_EQ(States.CxxCookieConditions.size(), DoubleGuard ? 2u : 1u);
+          EXPECT_EQ(States.CxxCookieConditions.back().FrameOffset, -16);
+          EXPECT_EQ(States.CxxCookieConditions.back().XORFrameOffset, 0);
+          if (DoubleGuard)
+            EXPECT_EQ(States.CxxCookieConditions.front().FrameOffset,
+                      -28 - int32_t(Allocation));
+          // The complete physical wrapper is not an ordinary cookie CALL.
+          EXPECT_TRUE(States.CookieChecks.empty());
+          EXPECT_TRUE(States.CallFrameEffects.empty());
+          EXPECT_FALSE(cxxRegistrationFrameCoordinate(
+              *Function.ExceptionMetadata, &States));
+        }
+}
+
+TEST(RegistrationTryLevel, CxxGuardedSharedEpilogueRechecksItsWholeCallChain) {
+  auto [OriginalImage, Call] = makeCxxGuardedEpilogueImage(false, 32);
+  const auto Original = liftEntry(OriginalImage, kText + 0x20);
+  ASSERT_TRUE(Original.RegistrationStates);
+  ASSERT_TRUE(Original.RegistrationStates->SecurityCookiesComplete);
+  const std::vector<RegistrationCalleeFrameContract> Callees;
+  const std::vector<RegistrationCleanupFrameContract> Cleanups;
+  for (unsigned Mutation = 0; Mutation != 35; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = OriginalImage;
+    auto &Text = Image.Segments.front().Data;
+    if (Mutation < 15)
+      Text[0x1a0 + Mutation] ^= 1;
+    if (Mutation >= 15 && Mutation < 24) {
+      // A different mapped mismatch destination is still a valid leaf
+      // success path. All opcode/cookie/return changes must be rejected.
+      const unsigned Byte = Mutation - 15;
+      Text[0x240 + Byte + (Byte >= 7)] ^= 1;
+    }
+    switch (Mutation) {
+    case 24:
+      Image.BaseRelocations.push_back({kText + 0x241, 3});
+      break;
+    case 25:
+      Image.BaseRelocations.push_back({kText + 0x1a6, 3});
+      break;
+    case 26:
+      Text[0x180 + 13] = 0x5f;
+      break;
+    case 27:
+      Image.BaseRelocations.push_back({Call + 1, 3});
+      break;
+    case 28:
+      Image.Segments.push_back(Image.Segments.front());
+      break;
+    case 29:
+      Image.Segments.front().Flags =
+          Image.Segments.front().Flags | SegmentFlags::Writable;
+      break;
+    case 30:
+      Text[0x209] = 0xf8; // Handler checks a different word.
+      break;
+    case 31:
+      Text[0x206] = 8; // Handler decodes against a different frame point.
+      break;
+    case 32:
+      Text[0x120] = 0x65; // Prologue stores ESP instead of the GS cookie.
+      break;
+    case 33:
+      Image.DynInfo.SecurityCookieRVA += 4;
+      break;
+    case 34:
+      // Retarget the caller away from the authenticated wrapper entry.
+      Text[Call - kText + 1] ^= 1;
+      break;
+    }
+    if (Mutation < 30 || Mutation >= 33)
+      EXPECT_FALSE(coff_loader::getCheckedX86CxxEpilogueCall(
+          Image, *Original.ExceptionMetadata, Call));
+    const auto States =
+        analyzeCheckedX86CxxStates(Image, Original, &Callees, &Cleanups);
+    EXPECT_FALSE(States.RegistrationLifetimeComplete);
+    EXPECT_FALSE(States.SecurityCookiesComplete);
+    EXPECT_FALSE(States.CallFrameEffectsComplete);
+    EXPECT_FALSE(States.CxxPrologue);
+  }
+}
+
+TEST(RegistrationTryLevel, CxxGuardedSharedEpilogueUsesTheSuccessfulCMPFlags) {
+  // A wrong flag choice reaches an ordinary unproved call. The success
+  // branches must instead use CMP(cookie,cookie), not the body's OR flags.
+  for (uint8_t Opcode : {0x74, 0x7a, 0x73, 0x79, 0x71})
+    for (bool Invert : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << unsigned(Opcode) << ' ' << Invert);
+      auto [Image, Call] = makeCxxGuardedEpilogueImage(false, 32);
+      const uint8_t Before[] = {0x31, 0xc0, 0x83, 0xe8, 2}; // 0 - 2
+      std::copy(std::begin(Before), std::end(Before),
+                Image.Segments.front().Data.begin() + Call - kText - 5);
+      std::vector<uint8_t> Tail{uint8_t(Opcode ^ Invert), 5, 0xe8};
+      emit32(Tail, uint32_t(kText + 0x260 - Call - 12));
+      Tail.push_back(0xc3);
+      std::copy(Tail.begin(), Tail.end(),
+                Image.Segments.front().Data.begin() + Call - kText + 5);
+      Image.ExceptionMetadata = {};
+      coff_loader::parseX86RegistrationExceptions(Image);
+      const auto Function = liftEntry(Image, kText + 0x20);
+      ASSERT_TRUE(Function.RegistrationStates);
+      EXPECT_EQ(Function.RegistrationStates->CallFrameEffectsComplete, !Invert);
+      EXPECT_EQ(Function.RegistrationStates->SecurityCookiesComplete, !Invert);
+    }
+}
+
+TEST(RegistrationTryLevel, CxxGuardedSharedEpilogueRejectsAChangedLiveCookie) {
+  auto [Image, Call] = makeCxxGuardedEpilogueImage(false, 32);
+  const auto Original = liftEntry(Image, kText + 0x20);
+  ASSERT_TRUE(Original.RegistrationStates);
+  ASSERT_TRUE(Original.RegistrationStates->SecurityCookiesComplete);
+  const std::vector<RegistrationCalleeFrameContract> Callees;
+  const std::vector<RegistrationCleanupFrameContract> Cleanups;
+  for (int32_t Offset : {-19, -18, -17, -16, -15, -14, -13}) {
+    SCOPED_TRACE(Offset);
+    auto Function = Original;
+    bool Changed = false;
+    for (auto &Block : Function.Blocks)
+      for (auto &Op : Block.Ops)
+        if (Op.Addr == Call - 19 && Op.Opcode == NdOp::INT_ADD &&
+            Op.NumInputs == 2 && Op.Inputs[1].isConst() &&
+            uint32_t(Op.Inputs[1].Offset) == uint32_t(-4)) {
+          Op.Inputs[1] = NdVar::cst(uint32_t(Offset), 4);
+          Changed = true;
+        }
+    ASSERT_TRUE(Changed);
+    const auto States =
+        analyzeCheckedX86CxxStates(Image, Function, &Callees, &Cleanups);
+    EXPECT_FALSE(States.SecurityCookiesComplete);
+    EXPECT_FALSE(States.RegistrationLifetimeComplete);
+    EXPECT_FALSE(States.CallFrameEffectsComplete);
+  }
 }
 
 TEST(RegistrationTryLevel, CxxSharedEpilogueRequiresCurrentImmutableBytes) {

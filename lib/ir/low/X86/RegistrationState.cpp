@@ -116,8 +116,16 @@ bool RegistrationStateSolver::initialize() {
           Call.Caller.End - Call.Caller.Begin != 5 ||
           Call.Caller.Begin < CxxPrologue->Caller.End ||
           Call.Caller.End > EH.CodeRange.End || !Call.Helper.isValid() ||
-          Call.Helper.End - Call.Helper.Begin != 20 ||
-          EH.CodeRange.overlaps(Call.Helper) ||
+          Call.Helper.size() != (Call.CookieCheck ? 15u : 20u) ||
+          EH.CodeRange.overlaps(Call.Helper) || !Call.Restore.isValid() ||
+          Call.Restore.size() != 20 || EH.CodeRange.overlaps(Call.Restore) ||
+          (Call.CookieCheck
+               ? Call.Helper.overlaps(Call.Restore) ||
+                     !Call.CookieCheck->Checker.isValid() ||
+                     Call.CookieCheck->Checker.overlaps(EH.CodeRange) ||
+                     Call.CookieCheck->Checker.overlaps(Call.Helper) ||
+                     Call.CookieCheck->Checker.overlaps(Call.Restore)
+               : Call.Helper.Begin != Call.Restore.Begin) ||
           !CxxEpilogueIndex.emplace(Call.Caller.Begin, &Call).second) {
         Result.Diagnostics.push_back(
             "shared C++ epilogue has no unique physical call description");

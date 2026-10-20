@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check shared PE32 C++ prologue receipts and physical effects in safe fixtures."""
+"""Check shared PE32 C++ frame calls and physical effects in safe fixtures."""
 from __future__ import annotations
 
 import argparse
@@ -57,6 +57,46 @@ def assembly(allocation: int, variant: int, wide: bool) -> str:
     push = f".byte 0x68\n.long {allocation}" if wide else f"push {allocation}"
     extra = ("mov dword ptr [ebp-16], esp" if variant == 1 else
              "mov dword ptr [ebp-16], eax" if variant == 2 else "")
+    guarded_checks = """
+  call _guarded_state_parent
+  cmp eax, 0x11223344
+  jne state_failed
+  cmp esp, dword ptr [main_stack]
+  jne state_failed
+  mov eax, dword ptr fs:[0]
+  cmp eax, dword ptr [old_chain]
+  jne state_failed
+  mov ebp, 0x12345678
+  mov ebx, 0x23456789
+  mov esi, 0x3456789a
+  mov edi, 0x456789ab
+  call _guarded_parent
+  pushfd
+  pop dword ptr [actual_flags]
+  cmp eax, 0x11223344
+  jne state_failed
+  cmp edx, 0x22334455
+  jne state_failed
+  cmp ecx, offset guarded_return
+  jne state_failed
+  cmp ebp, 0x12345678
+  jne state_failed
+  cmp ebx, 0x23456789
+  jne state_failed
+  cmp esi, 0x3456789a
+  jne state_failed
+  cmp edi, 0x456789ab
+  jne state_failed
+  cmp esp, dword ptr [main_stack]
+  jne state_failed
+  mov eax, dword ptr fs:[0]
+  cmp eax, dword ptr [old_chain]
+  jne state_failed
+  mov eax, dword ptr [actual_flags]
+  and eax, 0x8d5
+  cmp eax, 0x44
+  jne state_failed
+""" if variant == 2 and allocation >= 4 else ""
     return f"""
 .intel_syntax noprefix
 .text
@@ -111,6 +151,7 @@ _mainCRTStartup:
   xor eax, dword ptr [epilogue_flags]
   test eax, 0x8d5
   jne state_failed
+  {guarded_checks}
   mov ebp, 0x12345678
   mov ebx, 0x23456789
   mov esi, 0x3456789a
@@ -267,6 +308,69 @@ _epilogue_helper:
   push ecx
   ret
 .p2align 4, 0x90
+.globl _guarded_state_parent
+_guarded_state_parent:
+  {push}
+  mov eax, offset _guarded_handler
+  call _prologue_helper
+  and dword ptr [ebp-4], 0
+  or dword ptr [ebp-4], -1
+  xor ebx, ebx
+  xor esi, esi
+  xor edi, edi
+  mov eax, 0x11223344
+  call _guarded_helper
+  ret
+.p2align 4, 0x90
+.globl _guarded_parent
+_guarded_parent:
+  {push}
+  mov eax, offset _guarded_handler
+  call _prologue_helper
+  mov eax, dword ptr [_guarded_cookie_mask]
+  xor dword ptr [ebp-16], eax
+  xor ebx, ebx
+  xor esi, esi
+  xor edi, edi
+  mov eax, 0x11223344
+  mov edx, 0x22334455
+  cmp eax, edx
+  call _guarded_helper
+guarded_return:
+  ret
+.p2align 4, 0x90
+.globl _guarded_helper
+_guarded_helper:
+  mov ecx, dword ptr [ebp-16]
+  .byte 0x33, 0xcd
+  call _guarded_checker
+  .byte 0xe9
+  .long _epilogue_helper - . - 4
+.p2align 4, 0x90
+_guarded_checker:
+  .byte 0x3b, 0x0d
+  .long ___security_cookie
+  jne guarded_failed
+  .byte 0xf3, 0xc3
+guarded_failed:
+  push 3
+  call dword ptr ["__imp__ExitProcess@4"]
+  int3
+.p2align 4, 0x90
+.globl _guarded_handler
+_guarded_handler:
+  mov edx, dword ptr [esp+8]
+  lea eax, [edx+12]
+  mov ecx, dword ptr [edx{stack + 12:+}]
+  .byte 0x33, 0xc8
+  call _guarded_checker
+  mov ecx, dword ptr [edx-4]
+  .byte 0x33, 0xc8
+  call _guarded_checker
+  mov eax, offset func_info
+  jmp ___CxxFrameHandler3
+.safeseh _guarded_handler
+.p2align 4, 0x90
 .globl _prologue_handler
 _prologue_handler:
   mov eax, offset func_info
@@ -302,6 +406,8 @@ _prologue_allocation: .long {allocation}
 _prologue_variant: .long {variant}
 _prologue_wide: .long {int(wide)}
 _prologue_seed: .long 0x23456789
+.globl _guarded_cookie_mask
+_guarded_cookie_mask: .long 0
 """
 
 
@@ -357,6 +463,9 @@ def main() -> int:
                                 "allocation", "variant", "wide", "seed")]
                     exports += ["epilogue_parent", "epilogue_state_parent",
                                 "epilogue_helper"]
+                    exports += ["guarded_parent", "guarded_state_parent",
+                                "guarded_helper", "guarded_handler",
+                                "guarded_cookie_mask"]
                     run([args.linker, "/entry:mainCRTStartup", "/nodefaultlib",
                          "/machine:x86", "/subsystem:console", "/fixed:no",
                          "/dynamicbase:no", "/out:" + str(image), obj,
@@ -389,9 +498,19 @@ def main() -> int:
                             raise ValueError("independent epilogue restore has changed")
                         changed[restore] = 0x5f
                         wrong_exit.write_bytes(changed)
+                        images = [(image, 0), (wrong, 1), (wrong_state, 1),
+                                  (wrong_exit, 1)]
+                        if variant == 2 and allocation >= 4:
+                            wrong_cookie = case / "wrong-cookie.exe"
+                            changed = bytearray(pe.data)
+                            struct.pack_into("<I", changed,
+                                             pe.raw(pe.entry(b"guarded_cookie_mask")), 1)
+                            wrong_cookie.write_bytes(changed)
+                            # The actual checker mismatch branch exits with
+                            # its own code, distinct from a harness failure.
+                            images.append((wrong_cookie, 3))
                         record["runtime"] = []
-                        for original, expected in ((image, 0), (wrong, 1),
-                                                   (wrong_state, 1), (wrong_exit, 1)):
+                        for original, expected in images:
                             rebased = original.with_stem(original.stem + "-rebased")
                             rebased.write_bytes(PE32(original.read_bytes()).rebase(0x500000))
                             for executable in (original, rebased):
