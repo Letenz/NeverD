@@ -3077,7 +3077,7 @@ TEST(WindowsRegistrationNative, ResolvesOnlyTheAuthenticatedEH4RuntimeSymbols) {
   Image.DynInfo.SecurityCookieRVA = 0x3000;
   Segment Text;
   Text.VA = 0x401000;
-  Text.Size = 192;
+  Text.Size = Text.FileSz = 192;
   Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
   Text.Data.assign(Text.Size, 0xcc);
   const uint8_t Wrapper[] = {
@@ -3092,6 +3092,11 @@ TEST(WindowsRegistrationNative, ResolvesOnlyTheAuthenticatedEH4RuntimeSymbols) {
                            0x00, 0x75, 0x10, 0xc3};
   std::copy(std::begin(Check), std::end(Check), Text.Data.begin() + 128);
   std::copy(std::begin(Check), std::end(Check), Text.Data.begin() + 160);
+  Section TextSection;
+  TextSection.VA = Text.VA;
+  TextSection.Size = TextSection.FileSz = Text.Size;
+  TextSection.Flags = Text.Flags;
+  Image.Sections.push_back(TextSection);
   Image.Segments.push_back(Text);
   Segment Data;
   Data.VA = 0x403000;

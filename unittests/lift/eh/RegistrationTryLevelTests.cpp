@@ -371,6 +371,18 @@ TEST(RegistrationTryLevel, GSCookieCheckerHasOnlyTheCheckedLeafSuccessPath) {
       Image.DynInfo.SecurityCookieRVA = kRData - kBase;
       ASSERT_TRUE(
           coff_loader::hasCheckedX86CookieCheckSuccessPath(Image, kText));
+      // A relocated absolute cookie operand preserves the checked operation.
+      // Its normalized field must agree with both the bytes and the fixup.
+      Image.BaseRelocations.push_back({kText + 2, 3});
+      ASSERT_TRUE(
+          coff_loader::hasCheckedX86CookieCheckSuccessPath(Image, kText));
+      RelocatedAddressField Field;
+      Field.EncodedValue = kRData;
+      Field.TargetVA = kRData;
+      Field.Width = 4;
+      Image.DataAddressRelocOperands.emplace(kText + 2, Field);
+      ASSERT_TRUE(
+          coff_loader::hasCheckedX86CookieCheckSuccessPath(Image, kText));
       for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
         auto Changed = Image;
         auto &Code = Changed.Segments.front().Data;
@@ -400,6 +412,56 @@ TEST(RegistrationTryLevel, GSCookieCheckerHasOnlyTheCheckedLeafSuccessPath) {
           Changed.Segments[1].Data.clear();
         if (Mutation == 8)
           Changed.Segments.front().Flags = SegmentFlags::Readable;
+        EXPECT_FALSE(
+            coff_loader::hasCheckedX86CookieCheckSuccessPath(Changed, kText))
+            << Near << RepReturn << Mutation;
+      }
+      for (unsigned Mutation = 0; Mutation != 20; ++Mutation) {
+        auto Changed = Image;
+        auto &Text = Changed.Segments.front();
+        auto &Section = Changed.Sections.front();
+        if (Mutation == 0)
+          Text.Flags = Text.Flags | SegmentFlags::Writable;
+        if (Mutation == 1)
+          Section.Flags = Section.Flags | SegmentFlags::Writable;
+        if (Mutation == 2)
+          Text.Flags = SegmentFlags::Executable;
+        if (Mutation == 3)
+          Section.FileSz = Return;
+        if (Mutation == 4)
+          Text.FileSz = Return;
+        if (Mutation == 5)
+          ++Section.FileOff;
+        if (Mutation == 6)
+          Changed.Sections.push_back(Section);
+        if (Mutation == 7)
+          Changed.Segments.push_back(Text);
+        if (Mutation == 8)
+          Changed.BaseRelocations.push_back({kText, 3});
+        if (Mutation == 9)
+          Changed.BaseRelocations.push_back({kText + 6, 3});
+        if (Mutation == 10)
+          Changed.BaseRelocations.push_back({kText + Return, 3});
+        if (Mutation == 11)
+          Changed.BaseRelocations.push_back({kText + 2, 3});
+        if (Mutation == 12)
+          Changed.BaseRelocations.front().Type = 10;
+        if (Mutation == 13)
+          Changed.BaseRelocations.clear();
+        if (Mutation == 14)
+          Changed.DataAddressRelocOperands.begin()->second.TargetVA += 4;
+        if (Mutation == 15)
+          Changed.DataPtrRelocSlots.insert(kText + 2);
+        if (Mutation == 16)
+          Changed.IsRelocatable = true;
+        if (Mutation == 17)
+          Changed.Bits = Bitness::Bits64;
+        if (Mutation == 18)
+          Changed.DynInfo.SecurityCookieRVA = UINT32_MAX;
+        if (Mutation == 19) {
+          Changed.Base = kRData + 4;
+          Changed.DynInfo.SecurityCookieRVA = InvalidVA - 3;
+        }
         EXPECT_FALSE(
             coff_loader::hasCheckedX86CookieCheckSuccessPath(Changed, kText))
             << Near << RepReturn << Mutation;

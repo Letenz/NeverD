@@ -9,6 +9,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/LanguageRuntime.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/ISAEncoding.h"
 
 #include <algorithm>
@@ -23,8 +24,9 @@ namespace neverd::coff_loader {
 
 bool hasCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA) {
   if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF ||
-      Img.Base > UINT32_MAX || CheckVA > UINT32_MAX - 14 ||
-      !Img.DynInfo.SecurityCookieRVA)
+      Img.Bits != Bitness::Bits32 || Img.Base > UINT32_MAX ||
+      CheckVA > UINT32_MAX - 14 || !Img.DynInfo.SecurityCookieRVA ||
+      Img.DynInfo.SecurityCookieRVA > UINT32_MAX - Img.Base)
     return false;
   const va_t Cookie = Img.Base + Img.DynInfo.SecurityCookieRVA;
   const auto *Code = Img.readVA(CheckVA, 9);
@@ -52,7 +54,11 @@ bool hasCheckedX86CookieCheckSuccessPath(const BinaryImage &Img, va_t CheckVA) {
       return false;
   } else if (Code[Success] != 0xc3)
     return false;
-  return Img.hasExecutableCodeOwnerRange(CheckVA, Extent) && Failure > 0 &&
+  // Eliding this call relies on these instructions remaining unchanged after
+  // loading. Only CMP's absolute cookie operand can carry a PE32 base fixup;
+  // opcode, branch and return fixups cannot certify this success path.
+  return readImmutablePE32CodeBytes(Img, CheckVA, Extent, {CheckVA + 2}) &&
+         Img.hasExecutableCodeOwnerRange(CheckVA, Extent) && Failure > 0 &&
          Failure <= UINT32_MAX && Img.isCodeAddress(va_t(Failure)) &&
          Img.readVA(va_t(Failure), 1) &&
          (uint64_t(Failure) < CheckVA || uint64_t(Failure) >= CheckVA + Extent);
