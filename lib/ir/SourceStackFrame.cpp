@@ -55,10 +55,16 @@ void transfer(State &S, const LowOp &Op, uint16_t Width) {
       S[{Op.Output.Space, Op.Output.Offset}] = *Result;
   }
 }
-void expire(State &S, const LowFunc &F) {
+void expire(State &S, const LowFunc &F, uint16_t Width) {
   std::erase_if(S, [&](const auto &Item) {
-    return Item.first.first == VnodeSpace::TEMP &&
-           !F.isFunctionTemporaryByte(Item.first.second);
+    if (Item.first.first != VnodeSpace::TEMP)
+      return false;
+    if (Item.first.second > UINT64_MAX - (Width - 1))
+      return true;
+    for (unsigned I = 0; I < Width; ++I)
+      if (!F.isFunctionTemporaryByte(Item.first.second + I))
+        return true;
+    return false;
   });
 }
 bool meet(State &Left, const State &Right) {
@@ -139,7 +145,7 @@ StackFrameAnalysis analyzeSourceStackFrame(const LowFunc &F, Arch Architecture,
   auto Run = [&](const LowBlock &B, State S, bool Record) {
     for (size_t I = 0; I < B.Ops.size();) {
       const auto PC = B.Ops[I].Addr;
-      expire(S, F);
+      expire(S, F, Width);
       if (Record)
         Out.Instructions[PC].Before =
             offset(S, NdVar::reg(TRI.StackPointer, Width), Width);
@@ -173,7 +179,7 @@ StackFrameAnalysis analyzeSourceStackFrame(const LowFunc &F, Arch Architecture,
         Out.Instructions[PC].After =
             offset(S, NdVar::reg(TRI.StackPointer, Width), Width);
     }
-    expire(S, F);
+    expire(S, F, Width);
     return S;
   };
   while (!Queue.empty() && Out.Error.empty()) {
@@ -213,6 +219,16 @@ std::optional<LowFunc> projectSourceStackFrame(const LowFunc &F, Arch A,
   LowFunc Result = F;
   if (Policy.Points.empty())
     return Result;
+  const auto Entry =
+      std::find_if(F.Blocks.begin(), F.Blocks.end(),
+                   [&](const LowBlock &B) { return B.StartAddr == F.Entry; });
+  if (std::any_of(F.Blocks.begin(), F.Blocks.end(),
+                  [&](const LowBlock &B) { return B.hasSucc(Entry->Id); })) {
+    // The entry-SP carrier below must execute exactly once. A backedge would
+    // recapture the current SP and silently change the correction's basis.
+    Error = "SP correction requires an entry block without incoming edges";
+    return {};
+  }
   if (std::any_of(F.Blocks.begin(), F.Blocks.end(), [&](const LowBlock &B) {
         return !B.ExceptionalPreds.empty() || !B.ExceptionalSuccs.empty() ||
                (B.StartAddr != F.Entry &&

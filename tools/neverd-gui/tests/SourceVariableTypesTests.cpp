@@ -228,6 +228,52 @@ private slots:
     Session.closeFile();
     Window.close();
   }
+  void unknownStackPointerRequiresAnExplicitValue() {
+    QTemporaryDir Directory;
+    const auto Path =
+        fixture(Directory, QByteArray::fromHex("4883e4f0488b0424c3"));
+    QVERIFY(!Path.isEmpty());
+    Session Session(QString::fromLocal8Bit(TEST_REAL_WORKER));
+    McpConnectionManager Mcp;
+    GuiSessionBroker Broker;
+    MainWindow Window(Session, Mcp, Broker);
+    Window.setAsksForDebugInfo(false);
+    Window.setLayoutPath(Directory.filePath("layout.json"));
+    Window.resize(1400, 900);
+    Window.initializeLayout();
+    Window.show();
+    Session.open(Path);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.loaded(), 30000);
+    Window.disassembly()->navigate(0x400078);
+    QTRY_COMPARE_WITH_TIMEOUT(Window.disassembly()->currentFunction(),
+                              std::optional<Address>(0x400078), 30000);
+    Window.disassembly()->listing()->setFocus();
+    auto *Action = Window.actions().action(ActionId::EditStackPointer);
+    QTRY_VERIFY(Action->isEnabled());
+    bool Opened = false, Empty = false;
+    QTimer Editor;
+    connect(&Editor, &QTimer::timeout, this, [&] {
+      auto *Dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (!Dialog || Dialog->objectName() != "stackFrameDialog")
+        return;
+      auto *After = Dialog->findChild<QLineEdit *>("stackPointerAfter");
+      Opened = After != nullptr;
+      Empty = After && After->text().isEmpty();
+      Editor.stop();
+      Dialog->reject();
+    });
+    Editor.start(20);
+    QTimer::singleShot(30000, &Window, [] {
+      if (auto *Dialog =
+              qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+        Dialog->reject();
+    });
+    Action->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(Opened, 30000);
+    QVERIFY2(Empty, "An unknown SP must not offer zero as a correction");
+    Session.closeFile();
+    Window.close();
+  }
   void localType_data() {
     QTest::addColumn<QString>("Representation");
     QTest::addColumn<QString>("Name");

@@ -137,4 +137,41 @@ TEST(SourceStackFrame, RefusesBranchesBudgetsAndIndependentRoots) {
   EXPECT_FALSE(projectSourceStackFrame(F, Arch::X64, P, Error));
   EXPECT_FALSE(analyzeSourceStackFrame(F, Arch::X86).Error.empty());
 }
+
+TEST(SourceStackFrame, RefusesCorrectionsWhenEntryCanExecuteAgain) {
+  for (bool SelfLoop : {false, true}) {
+    auto F = fixture();
+    F.Blocks[0].Ops.resize(1);
+    F.Blocks[0].Succs = {SelfLoop ? 0 : 1};
+    if (!SelfLoop) {
+      LowBlock Backedge;
+      Backedge.Id = 1;
+      Backedge.StartAddr = 0x1010;
+      Backedge.Succs = {0};
+      F.Blocks.push_back(Backedge);
+    }
+    SourceStackFrame Policy;
+    Policy.Points[0x1000] = -32;
+    std::string Error;
+    // Capturing entry SP in a loop would make each iteration's correction
+    // relative to the preceding iteration instead of the function entry.
+    EXPECT_FALSE(projectSourceStackFrame(F, Arch::X64, Policy, Error));
+    EXPECT_NE(Error.find("entry"), std::string::npos);
+    // Inspection and naming do not insert a carrier and remain available.
+    EXPECT_TRUE(projectSourceStackFrame(F, Arch::X64, {}, Error));
+  }
+}
+
+TEST(SourceStackFrame, RequiresTheWholeTemporaryToSurviveAnInstruction) {
+  auto F = fixture();
+  const auto SP = F.Blocks[0].Ops[0].Output;
+  const auto Pointer = NdVar::tmp(TmpBase, 8);
+  F.Blocks[0].Ops[0] = op(NdOp::COPY, 0x1000, Pointer, {SP});
+  F.Blocks[0].Ops[1] = op(NdOp::LOAD, 0x1004, NdVar::reg(0, 4), {Pointer});
+  F.Blocks[0].Ops.resize(2);
+  F.FunctionTemporaries = {{Pointer.Offset, 1}};
+  EXPECT_TRUE(analyzeSourceStackFrame(F, Arch::X64).Accesses.empty());
+  F.FunctionTemporaries = {{Pointer.Offset, 8}};
+  ASSERT_EQ(analyzeSourceStackFrame(F, Arch::X64).Accesses.size(), 1u);
+}
 } // namespace

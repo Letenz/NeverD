@@ -619,6 +619,21 @@ int runDecompile(neverd_session_t Sess) {
                                     SourceLLVMPasses.getNumOccurrences();
   const bool SourceTransforms =
       SourceSymbolic.getNumOccurrences() || LLVMSourceTransforms;
+  const bool HasStackFrame = StackFrameFile.getNumOccurrences() != 0;
+  if ((StackFrameInfo || HasStackFrame) &&
+      (ExportFunc.empty() || NoOpt || Devirtualize ||
+       OutputLanguage != NEVERD_OUTPUT_C)) {
+    WithColor::error()
+        << "stack frame options require --func and C output, without "
+           "--no-opt or --devirtualize\n";
+    return 1;
+  }
+  if (StackFrameInfo && (SourceTransforms || LlvmRoute)) {
+    WithColor::error()
+        << "--stack-frame-info inspects machine stack offsets; omit source "
+           "optimization options and --llvm\n";
+    return 1;
+  }
   if (SourceTransforms && (NoOpt || Devirtualize)) {
     WithColor::error() << "source optimization options cannot combine with "
                           "--no-opt or --devirtualize\n";
@@ -648,6 +663,41 @@ int runDecompile(neverd_session_t Sess) {
     for (const auto &Pass : SourceLLVMPasses)
       Passes.push_back(Pass);
     ViewOptions["llvm_passes"] = std::move(Passes);
+  }
+  std::string StackPolicyText = "{}";
+  bool HasStackVariables = false;
+  if (HasStackFrame) {
+    uint64_t Size = 0;
+    const auto EC = sys::fs::file_size(StackFrameFile.getValue(), Size);
+    if (EC || Size > 128 * 1024) {
+      WithColor::error() << "cannot read --stack-frame: "
+                         << (EC ? EC.message() : "policy exceeds 128 KiB")
+                         << '\n';
+      return 1;
+    }
+    auto Buffer = MemoryBuffer::getFile(StackFrameFile.getValue());
+    if (!Buffer || (*Buffer)->getBufferSize() > 128 * 1024) {
+      WithColor::error() << "cannot read bounded --stack-frame policy\n";
+      return 1;
+    }
+    auto Parsed = json::parse((*Buffer)->getBuffer());
+    if (!Parsed) {
+      WithColor::error() << "invalid --stack-frame JSON: "
+                         << toString(Parsed.takeError()) << '\n';
+      return 1;
+    }
+    auto *Policy = Parsed->getAsObject();
+    if (Policy && Policy->get("policy"))
+      Policy = Policy->getObject("policy");
+    if (!Policy) {
+      WithColor::error() << "--stack-frame must contain a policy object\n";
+      return 1;
+    }
+    if (const auto *Variables = Policy->getArray("variables"))
+      HasStackVariables = !Variables->empty();
+    StackPolicyText.clear();
+    raw_string_ostream(StackPolicyText) << json::Value(json::Object(*Policy));
+    ViewOptions["stack_frame"] = json::Object(*Policy);
   }
   std::string ViewOptionsText;
   raw_string_ostream(ViewOptionsText) << json::Value(std::move(ViewOptions));
@@ -820,14 +870,52 @@ int runDecompile(neverd_session_t Sess) {
     }
     const uint64_t Entry =
         FuncIdx >= 0 ? neverd_func_entry(Sess, FuncIdx) : DirectAddr;
-    if (JsonOutput || SourceTransforms || (SourceStage && !Devirtualize)) {
+    if (StackFrameInfo || HasStackFrame) {
+      const char *Frame =
+          neverd_stack_frame_json(Sess, Entry, StackPolicyText.c_str());
+      if (!Frame) {
+        WithColor::error() << "stack frame refused: " << takeLastError(Sess)
+                           << '\n';
+        return 1;
+      }
+      if (StackFrameInfo) {
+        std::error_code EC;
+        std::optional<raw_fd_ostream> File;
+        if (!OutputFile.empty())
+          File.emplace(OutputFile, EC);
+        if (EC) {
+          neverd_free_string(Frame);
+          WithColor::error() << "cannot open: " << EC.message() << '\n';
+          return 1;
+        }
+        (File ? *File : outs()) << Frame << '\n';
+        neverd_free_string(Frame);
+        return 0;
+      }
+      neverd_free_string(Frame);
+      if (HasStackVariables) {
+        // Both frontends require the policy to preserve storage in both C
+        // routes. The SDK checks the emitted bindings, including name clashes.
+        const char *Other = neverd_ir_view_ex_json(
+            Sess, Entry, LlvmRoute ? "c" : "llvmc", 0, 1,
+            ("{\"stack_frame\":" + StackPolicyText + "}").c_str());
+        if (!Other) {
+          WithColor::error()
+              << "stack frame refused: " << takeLastError(Sess) << '\n';
+          return 1;
+        }
+        neverd_free_string(Other);
+      }
+    }
+    if (JsonOutput || SourceTransforms || HasStackFrame ||
+        (SourceStage && !Devirtualize)) {
       const char *Stage = SourceStage ? SourceStage : LlvmRoute ? "llvmc" : "c";
       json::Array Pages;
       std::string Text;
       size_t Offset = 0, Bytes = 0;
       for (;;) {
         const char *Raw =
-            SourceTransforms
+            SourceTransforms || HasStackFrame
                 ? neverd_ir_view_ex_json(Sess, Entry, Stage, Offset, 2048,
                                          ViewOptionsText.c_str())
                 : neverd_ir_view_json(Sess, Entry, Stage, Offset, 2048);

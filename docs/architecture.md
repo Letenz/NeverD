@@ -8822,6 +8822,15 @@ into occurrence-specific call types. A policy that cannot prove every required
 carrier reports refusal instead of manufacturing operands or changing the
 original analysis.
 
+Stack-frame policies use the same private source variant. `SourceStackFrame`
+owns bounded entry-relative offsets, full temporary lifetimes and admission
+of a single, non-reentered entry-SP carrier. SDK source emission checks every
+requested stack binding against its actual variable inventory before exposing
+the C text. GUI worker previews and CLI `--stack-frame` requests use this same
+check for both C routes. The SDK checks optional input digests and original
+graph snapshots; the worker owns project history while CLI policies are
+explicit JSON inputs. See [stack-frame corrections](gui-stack-frame.md).
+
 ## Explicit runtime modules and persistent execution
 
 `modules/ModuleSet` owns caller-declared files and debug identity independently

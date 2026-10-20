@@ -804,6 +804,16 @@ and `NeverDLLVMVariableEditsTests`. The HighIR tests preserve instruction
 anchors for unchanged statements and refuse old store anchors when a split
 replaces a stack store with a scalar assignment.
 
+`NeverDSourceStackFrameTests` covers entry-relative offsets, joins, ordinary
+loops, entry-backedge refusal and complete temporary lifetimes.
+`NeverDWorkerStackFrame` checks saved stack corrections, both C routes, native
+IR isolation, history and replicas. `NeverDWorkerCLIStackFrame` compares the
+CLI's `--stack-frame-info` and `--stack-frame` with the worker, compiles and
+executes the resulting C, and checks stale/image identities, dynamic SP
+recovery, lost storage, invalid options and output preservation. Build `neverd`,
+`neverd-worker` and `NeverDSourceStackFrameTests`, then run
+`ctest --test-dir build-release -R 'SourceStackFrame|Worker.*StackFrame' --output-on-failure`.
+
 ## Source dialects and DWARF ingestion
 
 The main CI matrix installs Rust 1.93.1 and Go 1.27.2, records their versions,

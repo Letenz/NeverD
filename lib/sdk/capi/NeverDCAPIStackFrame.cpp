@@ -67,7 +67,21 @@ std::string neverd::sdk::sourceStackSnapshot(const LowFunc &F) {
 SourceStackFrame
 neverd::sdk::readSourceStackFrame(const llvm::json::Object &O) {
   SourceStackFrame F;
+  for (const auto &[Key, Value] : O)
+    if (Key != "snapshot" && Key != "input_sha256" && Key != "points" &&
+        Key != "variables")
+      throw std::invalid_argument("Unknown stack policy field: " + Key.str());
+  if (O.get("snapshot") && !O.getString("snapshot"))
+    throw std::invalid_argument("Stack snapshot must be a string");
   F.Snapshot = O.getString("snapshot").value_or("").str();
+  if (const auto *Hash = O.get("input_sha256")) {
+    const auto Text = Hash->getAsString();
+    if (!Text || Text->size() != 64 ||
+        !std::all_of(Text->begin(), Text->end(),
+                     [](unsigned char C) { return llvm::isHexDigit(C); }))
+      throw std::invalid_argument("Invalid stack policy input digest");
+    F.InputSHA256 = Text->lower();
+  }
   if (const auto *Points = O.getArray("points")) {
     if (Points->size() > 256)
       throw std::invalid_argument("Too many SP corrections");
@@ -91,7 +105,8 @@ neverd::sdk::readSourceStackFrame(const llvm::json::Object &O) {
       const auto Bytes = Row ? Row->getInteger("bytes") : std::nullopt;
       const auto Name = Row ? Row->getString("name") : std::nullopt;
       if (!At || !Bytes || *Bytes < 1 || *Bytes > 16 || !Name ||
-          Name->empty() || Name->size() > 128)
+          (Row->get("type") && !Row->getString("type")) || Name->empty() ||
+          Name->size() > 128)
         throw std::invalid_argument("Invalid stack variable");
       F.Variables.push_back({*At, static_cast<uint16_t>(*Bytes), Name->str(),
                              Row->getString("type").value_or("").str()});
@@ -106,6 +121,9 @@ neverd::sdk::readSourceStackFrame(const llvm::json::Object &O) {
 
 void neverd::sdk::validateSourceStackFrame(Session &S, const LowFunc &F,
                                            const SourceStackFrame &Policy) {
+  if (!Policy.InputSHA256.empty() && Policy.InputSHA256 != inputSha256(S))
+    throw std::invalid_argument(
+        "The stack policy belongs to a different input image");
   if (!Policy.empty() && Policy.Snapshot != sourceStackSnapshot(F))
     throw std::invalid_argument(
         "The stack analysis changed; reset or reapply the correction");
@@ -165,6 +183,29 @@ void neverd::sdk::validateSourceStackFrame(Session &S, const LowFunc &F,
   }
 }
 
+void neverd::sdk::validateSourceStackBindings(const SourceStackFrame &Policy,
+                                              const CSourceMap &Map, va_t Entry,
+                                              llvm::StringRef Route) {
+  for (const auto &Variable : Policy.Variables) {
+    bool Found = false;
+    for (const auto &[Key, Actual] : Map.Variables) {
+      if (Actual.Function != Entry)
+        continue;
+      if (Actual.Name == Variable.Name && Actual.StackOffset != Variable.Offset)
+        throw std::invalid_argument(
+            "The stack name conflicts with another source variable");
+      Found |= Actual.StackOffset == Variable.Offset &&
+               Actual.Name == Variable.Name && Actual.Bytes == Variable.Bytes &&
+               !Actual.Ambiguous &&
+               SourceVariableTypes::compatible(Actual.Type, Actual.Bytes);
+    }
+    if (!Found)
+      throw std::invalid_argument(
+          "The slot has no independent named storage in " + Route.str() +
+          "; retain its backing storage");
+  }
+}
+
 const char *neverd_stack_frame_json(neverd_session_t Sess, neverd_va_t Entry,
                                     const char *OptionsJSON) {
   auto *S = toSession(Sess);
@@ -209,8 +250,18 @@ const char *neverd_stack_frame_json(neverd_session_t Sess, neverd_va_t Entry,
                                             {"offset", A.Offset},
                                             {"bytes", A.Bytes},
                                             {"write", A.Write}});
+    llvm::json::Object SavedPolicy{
+        {"snapshot", sourceStackSnapshot(*F)},
+        {"input_sha256", inputSha256(*S)},
+        {"points", O->getArray("points")
+                       ? llvm::json::Array(*O->getArray("points"))
+                       : llvm::json::Array()},
+        {"variables", O->getArray("variables")
+                          ? llvm::json::Array(*O->getArray("variables"))
+                          : llvm::json::Array()}};
     llvm::json::Value Result =
         llvm::json::Object{{"snapshot", sourceStackSnapshot(*F)},
+                           {"policy", std::move(SavedPolicy)},
                            {"instructions", std::move(Instructions)},
                            {"accesses", std::move(Accesses)},
                            {"valid", true}};

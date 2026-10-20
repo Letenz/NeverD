@@ -637,6 +637,9 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
   try {
     S->cEmitter().emit(Single, OS, Opts, Debug);
     if (SourceMap)
+      validateSourceStackBindings(S->SourceOptions.StackFrame, *SourceMap,
+                                  FuncEntry, "HighC");
+    if (SourceMap)
       SourceMap->HighSources = nullptr;
     if (SourceMap)
       noteUnboundVariableTypes(*SourceMap, VariableTypes, FuncEntry);
@@ -753,6 +756,9 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
   try {
     LLVMCEmitter Emitter;
     Emitter.emit(*Native->Module, OS, Opts, Debug, &S->Img, LF);
+    if (SourceMap)
+      validateSourceStackBindings(S->SourceOptions.StackFrame, *SourceMap,
+                                  FuncEntry, "LLVM C");
     if (SourceMap)
       noteUnboundVariableTypes(*SourceMap, VariableTypes, FuncEntry);
   } catch (const std::exception &Error) {
