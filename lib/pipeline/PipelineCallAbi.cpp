@@ -117,6 +117,7 @@ void OmittedCalleeMemo::adopt(const BinaryImage &Img,
   FunctionEntries = calleeLiftEntries(Img);
   PointerCallees = collectPointerVariableCallees(Img);
   CodeOwners.reset();
+  AbsoluteRelocationRoots.reset();
   RuntimeRoutineCalls.reset();
   CodePointerTargets.reset();
   Callees.clear();
@@ -127,6 +128,14 @@ const ExecutableCodeOwnerIndex &OmittedCalleeMemo::codeOwners() {
   if (!CodeOwners)
     CodeOwners.emplace(*Image);
   return *CodeOwners;
+}
+
+const detail::AbsoluteRelocationRootIndex &
+OmittedCalleeMemo::absoluteRelocationRoots() {
+  if (!AbsoluteRelocationRoots)
+    AbsoluteRelocationRoots =
+        std::make_shared<const detail::AbsoluteRelocationRootIndex>(*Image);
+  return *AbsoluteRelocationRoots;
 }
 
 const std::map<va_t, Intrinsic> &OmittedCalleeMemo::runtimeRoutineCalls() {
@@ -319,11 +328,15 @@ public:
   /// Lifts \p Target into \p Low, once.
   const LowFunc &lift(va_t Target, std::optional<LowFunc> &Low) {
     if (!Low) {
-      // The lifts look the image's code owners up in one index: the memo's,
-      // or one built for the first lift of this read.
+      // The lifts look the image's code owners and absolute relocations up
+      // in one index each: the memo's, or ones built for the first lift of
+      // this read.
       if (!OwnersLent) {
         Builder.setExecutableCodeOwnerIndex(Memo ? &Memo->codeOwners()
                                                  : &Owners.emplace(Img));
+        Builder.setAbsoluteRelocationRootIndex(
+            Memo ? &Memo->absoluteRelocationRoots()
+                 : &RelocationRoots.emplace(Img));
         OwnersLent = true;
       }
       Low.emplace(
@@ -430,6 +443,7 @@ private:
   const std::set<va_t> *Entries = nullptr;
   Decoder Dec;
   std::optional<ExecutableCodeOwnerIndex> Owners;
+  std::optional<detail::AbsoluteRelocationRootIndex> RelocationRoots;
   bool OwnersLent = false;
   std::optional<std::map<va_t, Intrinsic>> OwnRuntimeRoutineCalls;
   std::optional<std::vector<va_t>> OwnCodePointerTargets;

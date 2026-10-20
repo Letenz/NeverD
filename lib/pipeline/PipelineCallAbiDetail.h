@@ -35,6 +35,9 @@ struct BinaryImage;
 struct AnalysisCacheWarmup;
 struct PipelineResult;
 struct Symbol;
+namespace detail {
+class AbsoluteRelocationRootIndex;
+} // namespace detail
 
 /// What reading the signature bodies of omitted callees read of each callee
 /// (recoverModuleCallAbi): how its lift's blocks count against the bound on
@@ -189,6 +192,9 @@ struct OmittedCalleeMemo {
   /// cache's, the index serves until the memo adopts another image or the
   /// cache is reset.
   const ExecutableCodeOwnerIndex &codeOwners();
+  /// The absolute relocations of the image the memo adopted, indexed by
+  /// target for the lifts of the callees read of it, kept like codeOwners.
+  const detail::AbsoluteRelocationRootIndex &absoluteRelocationRoots();
   /// The addresses that name a runtime routine one intrinsic models in the
   /// image the memo adopted (runtimeRoutineCallsOf), read for the
   /// conversions of the callees read of it where they first need them, and
@@ -208,6 +214,8 @@ private:
   std::set<va_t> FunctionEntries;
   std::map<va_t, PointerVariableCallee> PointerCallees;
   std::optional<ExecutableCodeOwnerIndex> CodeOwners;
+  std::shared_ptr<const detail::AbsoluteRelocationRootIndex>
+      AbsoluteRelocationRoots;
   std::optional<std::map<va_t, Intrinsic>> RuntimeRoutineCalls;
   std::optional<std::vector<va_t>> CodePointerTargets;
   size_t Bytes = 0;
