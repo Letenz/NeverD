@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <initializer_list>
 #include <set>
 
 using namespace neverd;
@@ -3360,28 +3361,33 @@ TEST(BinaryLowIRRefinement, WideIntegerProductCompletesOnlyRawRecovery) {
 }
 
 TEST(BinaryLowIRRefinement, WideIntegerConcatCompletesOnlyRawRecovery) {
-  // PSHUFD xmm1,xmm0,0x44; RET. Both complete 64-bit words are runtime data.
-  Program P({0x66, 0x0f, 0x70, 0xc8, 0x44, 0xc3});
-  const auto R = P.recover();
-  ASSERT_TRUE(R.complete()) << R.Diagnostic;
-  unsigned Concatenations = 0;
-  for (const auto &B : R.Residual.Blocks)
-    for (const auto &O : B.Ops)
-      Concatenations += O.Opcode == NdOp::CONCAT && O.Output.Size == 16;
-  EXPECT_EQ(Concatenations, 1U);
-  const auto Checked = P.check(R.Residual);
-  EXPECT_FALSE(Checked.proved());
-  EXPECT_FALSE(Checked.Certificate);
-  for (auto Layout : {InterpreterMachineStateLayout::InlineReturns,
-                      InterpreterMachineStateLayout::SharedGPRExit}) {
-    auto Source = wrapInterpreterMachineStateX64(
-        R.Residual, BinaryFormat::ELF,
-        InterpreterMachineStateProfile::UserX64NoFaultV1, {}, Layout);
-    ASSERT_FALSE(bool(Source));
-    llvm::consumeError(Source.takeError());
+  const std::initializer_list<uint8_t> Programs[]{
+      {0x66, 0x0f, 0x70, 0xc8, 0x44, 0xc3}, // PSHUFD xmm1,xmm0,0x44; RET.
+      {0x66, 0x0f, 0x6b, 0xc1, 0xc3},       // PACKSSDW xmm0,xmm1; RET.
+      {0x66, 0x0f, 0x63, 0xc0, 0xc3}};      // PACKSSWB xmm0,xmm0; RET.
+  for (const auto &Bytes : Programs) {
+    Program P(Bytes);
+    const auto R = P.recover();
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    unsigned Concatenations = 0;
+    for (const auto &B : R.Residual.Blocks)
+      for (const auto &O : B.Ops)
+        Concatenations += O.Opcode == NdOp::CONCAT && O.Output.Size == 16;
+    EXPECT_EQ(Concatenations, 1U);
+    const auto Checked = P.check(R.Residual);
+    EXPECT_FALSE(Checked.proved());
+    EXPECT_FALSE(Checked.Certificate);
+    for (auto Layout : {InterpreterMachineStateLayout::InlineReturns,
+                        InterpreterMachineStateLayout::SharedGPRExit}) {
+      auto Source = wrapInterpreterMachineStateX64(
+          R.Residual, BinaryFormat::ELF,
+          InterpreterMachineStateProfile::UserX64NoFaultV1, {}, Layout);
+      ASSERT_FALSE(bool(Source));
+      llvm::consumeError(Source.takeError());
+    }
+    P.Options.ExplicitMachineState = false;
+    EXPECT_FALSE(P.recover().complete());
   }
-  P.Options.ExplicitMachineState = false;
-  EXPECT_FALSE(P.recover().complete());
 }
 
 TEST(BinaryLowIRRefinement, TimestampCompletesOnlyRawRecovery) {
