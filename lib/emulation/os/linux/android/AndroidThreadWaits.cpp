@@ -215,7 +215,8 @@ llvm::Error GuestThreads::completeWait(uint64_t Value) {
   return llvm::Error::success();
 }
 
-llvm::Expected<bool> GuestThreads::interruptWait() {
+llvm::Expected<bool>
+GuestThreads::interruptWait(const LinuxSignalAction &Action) {
   auto &Pending = *current().Waiting;
   assert(Pending.Request && "interrupted wait has no suspended service");
   Result.PC = Pending.Request->PC;
@@ -225,6 +226,19 @@ llvm::Expected<bool> GuestThreads::interruptWait() {
     Result.Stop = ProcessStopReason::UnsupportedService;
     Result.Diagnostic = linux_model::SignalWaitUnsupported;
     return false;
+  }
+  if ((*K)->restartOnSignal(Action)) {
+    // No result was installed while suspended: registers still hold the
+    // original trap/import arguments. Put that PC in the mutable signal frame.
+    // A handler may redirect it, change arguments, close/reuse the FD, or issue
+    // a nested wait. Re-execute only the trap, never the caller's earlier code.
+    if (auto E =
+            CPU.writeRegister(CPURegister::AArch64PC, {Pending.Request->PC, 0}))
+      return std::move(E);
+    current().Waiting.reset();
+    // This attempt did not return. A re-entered trap has its own event; do not
+    // manufacture a completed result for the abandoned attempt.
+    return true;
   }
   auto Interrupted = (*K)->interrupt(Result);
   if (!Interrupted)

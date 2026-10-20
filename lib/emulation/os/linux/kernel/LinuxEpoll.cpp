@@ -89,6 +89,11 @@ public:
       return Deadline;
     return O.Wake;
   }
+  llvm::Expected<std::optional<uint64_t>> interrupt(ProcessResult &) override {
+    // No event was delivered: preserve output, rotation and one-shot state.
+    // epoll waits do not restart after a caught handler.
+    return std::optional<uint64_t>(uint64_t(0) - InterruptedCall);
+  }
   llvm::Expected<std::optional<uint64_t>>
   resume(ProcessResult &Result) override {
     using Reply = std::optional<uint64_t>;

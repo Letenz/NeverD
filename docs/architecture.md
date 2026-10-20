@@ -5718,8 +5718,12 @@ Relative sleeps retain copied deadlines and remaining-time output addresses in
 `LinuxSleep`; no second sleep state lives in the Android scheduler. Scheduling
 considers eligible process-pending signals before advancing idle time. The
 shared signal owner discards ignored signals and classifies default termination
-before a waiter can report EINTR. Other wait owners refuse interruption until
-their own restart and copy-out semantics exist. For modeled native wrappers,
+before a waiter can report EINTR. Poll, select and epoll owners perform their
+distinct interrupted copy-out rules. The receive owner alone decides whether
+its captured timeout and zero-progress state permit SA_RESTART. The scheduler
+then releases that wait and restores its trap PC, without installing a result;
+normal execution re-imports the mutable registers and descriptor identity.
+Other wait owners refuse interruption until their own contracts exist. For modeled native wrappers,
 the scheduler records a per-thread continuation at the import's post-trap PC
 and current signal-frame depth. After `rt_sigreturn`, Bionic converts the
 restored raw result, including guest edits, to errno/-1. A guest PC redirect
@@ -8899,8 +8903,8 @@ cursors as transfers; it does not consume input or create a parallel socket
 registry. `LinuxSocketReadiness` projects declared arrivals and quiet intervals
 onto those same cursors. `SelectWait` retains copied arguments and description
 identities, rechecks live readiness and output access, and computes remaining
-time from `LinuxClock`. `KernelWait` exposes only readiness, the next wake and
-completion to `GuestThreads`; it introduces no second scheduler or socket
+time from `LinuxClock`. `KernelWait` exposes readiness, the next wake,
+completion and operation-owned signal policy to `GuestThreads`; it introduces no second scheduler or socket
 registry. Runnable threads precede idle advancement; sleep and I/O deadlines
 compete in one ordering. Resume completes the original service event, and Bionic
 alone converts errors using the resumed thread's errno. Unknown observations

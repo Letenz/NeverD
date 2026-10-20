@@ -4,13 +4,23 @@
 
 # Testing NeverD
 
+`AndroidSignals.Descriptor*` and `Receive*` check caught/ignored/blocked and
+terminating signals during original poll/epoll/pselect6 and TCP/UDP receive
+calls. Independent O0/O2 fixtures run across relocation packing and available
+backends, checking raw versus libc errno, full output guards, remaining timeout
+and fault ordering, one-shot preservation, short reads, SA_RESTART, captured
+SO_RCVTIMEO, FD reuse, mutable context, deferred handlers and nested receives.
+Re-executed traps have separate attempts; abandoned attempts must not acquire
+a fabricated result. Run these with all Android signal/poll/readiness/receive,
+Linux process and execution-session regressions. All peers are offline inputs.
+
 `AndroidSignals.Sleep*`, `IgnoredAndBlockedSignalsDoNotShortenSleep` and
 `TerminationAndUnsupportedWaitsDoNotFabricateCompletion` execute independent
 relative-sleep callers at O0/O2 across relocation packing and available
 backends. They check remaining-time copy ordering and aliasing, raw versus
 libc errno timing, SA_RESTART, bad/partial output, nested interrupted handlers,
 mutable x0/PC, blocked/ignored signals, default termination and explicit
-refusal for other wait families. Run with the full signal, sleep, Android
+refusal for unmodeled synchronization waits. Run with the full signal, sleep, Android
 native, Linux process and execution-session suites after changes to wait
 ownership. The clock and signal delivery are guest-only.
 

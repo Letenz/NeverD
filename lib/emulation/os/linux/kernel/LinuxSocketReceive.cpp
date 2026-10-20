@@ -42,6 +42,15 @@ public:
   std::optional<uint64_t> Deadline;
   bool MayReturnAgain = false;
 
+  bool restartOnSignal(const LinuxSignalAction &Action) const override {
+    // sock_intr_errno uses the timeout captured on entry, not a subsequently
+    // changed SO_RCVTIMEO. This wait has not copied or consumed any bytes.
+    return !Deadline && (Action.Flags & 0x10000000); // SA_RESTART
+  }
+  llvm::Expected<std::optional<uint64_t>> interrupt(ProcessResult &) override {
+    return std::optional<uint64_t>(uint64_t(0) - InterruptedCall);
+  }
+
   OpenSocket &socket() const { return std::get<OpenSocket>(*Owner); }
   const LinuxNetworkReceive *event() const {
     const auto &S = socket();
@@ -122,10 +131,10 @@ LinuxFiles::receiveSocket(std::shared_ptr<Descriptor> Owner, uint64_t Address,
   // Known absence permits EAGAIN. An unknown observation above never does.
   if (Nonblocking || Seconds < 0)
     return Reply(uint64_t(0) - 11);
-  if (!Clock || !Clock->advancesOnIdle() || !Pending->nextWake())
-    return unsupported(Result,
-                       "blocking receive requires a readiness schedule");
   if (Seconds > 0) {
+    if (!Clock || !Clock->advancesOnIdle())
+      return unsupported(Result,
+                         "blocking receive requires a readiness schedule");
     Pending->Deadline = Clock->deadline({Seconds, 0}, Result);
     if (!Pending->Deadline)
       return Reply();
@@ -136,6 +145,9 @@ LinuxFiles::receiveSocket(std::shared_ptr<Descriptor> Owner, uint64_t Address,
     return Reply();
   }
   // No runnable guest thread remains in a single-thread workload.
+  if (!Clock || !Clock->advancesOnIdle() || !Pending->nextWake())
+    return unsupported(Result,
+                       "blocking receive requires a readiness schedule");
   if (!Clock->advanceTo(*Pending->nextWake(), Result))
     return Reply();
   return Pending->resume(Result);

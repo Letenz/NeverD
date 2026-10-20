@@ -296,9 +296,39 @@ result. Redirecting ucontext PC past the synthetic import's post-trap return
 boundary bypasses its adapter; the model preserves that redirect and leaves
 the native-call event incomplete instead of inventing a normal return.
 
+Caught signals also interrupt cooperative `poll/ppoll`, `epoll_wait/epoll_pwait`
+and raw `pselect6`; SA_RESTART does not retry these operations. Poll copies zero
+revents before returning EINTR, while pselect6 leaves the input sets unchanged.
+Raw ppoll/pselect6 update their remaining timeout; Bionic ppoll preserves the
+caller's const timespec. Epoll leaves event storage, rotation and one-shot state
+unchanged. A wholly inaccessible poll output returns EFAULT before EINTR;
+inaccessible timeout output is ignored, and partial-field access stops explicitly.
+These rules follow [Linux poll/select](https://github.com/torvalds/linux/blob/v6.12/fs/select.c),
+[epoll](https://github.com/torvalds/linux/blob/v6.12/fs/eventpoll.c) and
+[API 28 wrappers](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/poll.cpp).
+
+Direct socket read/recv/recvfrom waits have made no transfer before suspension.
+Without SA_RESTART they return EINTR without consuming input or touching the
+buffer/peer output. With SA_RESTART and no receive timeout captured on entry,
+the wait is released and the original trap is restored in the signal frame.
+After the handler, the guest re-executes that trap using its restored registers,
+so changed arguments, descriptor reuse and PC redirection remain observable.
+The interrupted attempt has no completed result; re-entry records a new attempt.
+Modeled imports restart at their synthetic trap and expose their import argument
+ABI, including the leading number for `syscall`. They do not manufacture the
+internal registers/stack of a real libc implementation.
+An entry-time SO_RCVTIMEO disables restart even if changed while suspended.
+An already ready transfer completes before handler delivery, including short
+reads. See [socket interruption](https://github.com/torvalds/linux/blob/v6.12/include/net/sock.h)
+and [ARM64 restart](https://github.com/torvalds/linux/blob/v6.12/arch/arm64/kernel/signal.c).
+An indefinite cooperative descriptor wait can be woken by another guest thread;
+without a runnable owner, eligible signal or scheduled event it still stops
+explicitly instead of consulting a host clock or transport.
+
 Real-time queues, thread-directed sends, alternate stacks, job control,
 synchronous fault delivery, core dumps, x64 handler frames and interruption
-or restart of other wait families remain unsupported. A caught signal directed
+of synchronization/stdio waits remain unsupported. Temporary wait masks and
+TCP WAITALL partial-progress restart are also outside this contract. A caught signal directed
 to such a waiter stops explicitly. No host signals, devices or
 network services participate. ABI references:
 [Linux signal semantics](https://man7.org/linux/man-pages/man7/signal.7.html),

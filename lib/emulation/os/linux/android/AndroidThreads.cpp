@@ -162,7 +162,7 @@ llvm::Expected<bool> GuestThreads::schedule(Bionic &LibC) {
         return false;
       if (!ready(*current().Waiting)) {
         if (Delivery->Signal)
-          return interruptWait();
+          return interruptWait(Delivery->Action);
         // Ignored pending signals do not complete or interrupt this wait.
         continue;
       }
