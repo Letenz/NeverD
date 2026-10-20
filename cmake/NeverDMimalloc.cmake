@@ -63,13 +63,37 @@ function(neverd_link_mimalloc target)
     target_link_libraries(${target} PRIVATE mimalloc-obj)
   endif()
   get_property(_notices GLOBAL PROPERTY NEVERD_FORK_NOTICES_neverd_mimalloc)
-  add_custom_command(TARGET ${target} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-      "$<TARGET_FILE_DIR:${target}>/licenses/mimalloc"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-      "${_notices}"
-      "$<TARGET_FILE_DIR:${target}>/licenses/mimalloc"
-    VERBATIM)
+  # Executables in the shared runtime directory take the notices from one
+  # target: a copy after each link raced with the others' copies into the
+  # same directory when they linked in parallel ("Error copying directory").
+  # An executable with a directory of its own copies them there itself.
+  get_target_property(_runtime_dir ${target} RUNTIME_OUTPUT_DIRECTORY)
+  if(_runtime_dir STREQUAL "${CMAKE_BINARY_DIR}/bin")
+    if(NOT TARGET neverd-mimalloc-notices)
+      set(_notices_dir "${CMAKE_BINARY_DIR}/bin")
+      get_property(_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+      if(_multi_config)
+        string(APPEND _notices_dir "/$<CONFIG>")
+      endif()
+      add_custom_target(neverd-mimalloc-notices
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+          "${_notices_dir}/licenses/mimalloc"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+          "${_notices}"
+          "${_notices_dir}/licenses/mimalloc"
+        COMMENT "Copying the mimalloc notices next to NeverD executables"
+        VERBATIM)
+    endif()
+    add_dependencies(${target} neverd-mimalloc-notices)
+  else()
+    add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:${target}>/licenses/mimalloc"
+      COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${_notices}"
+        "$<TARGET_FILE_DIR:${target}>/licenses/mimalloc"
+      VERBATIM)
+  endif()
 endfunction()
 
 set(_neverd_mimalloc_default OFF)
