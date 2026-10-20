@@ -2,7 +2,7 @@
 
 ## Current snapshot — 2026-10-20
 
-- Snapshot cutoff: **2026-10-20 01:05 UTC / 09:05 Asia/Shanghai**. Source pin: dev [1c17dade](https://github.com/NeverSight/NeverD/commit/1c17dade28812e6eba52e5725301704425c36d46).
+- Snapshot cutoff: **2026-10-20T01:05:00Z**. Source pin: dev [1c17dade](https://github.com/NeverSight/NeverD/commit/1c17dade28812e6eba52e5725301704425c36d46).
 - Since the previous source pin [b139b307](https://github.com/NeverSight/NeverD/commit/b139b307297477fef1ef914865de36a82c8d1aa1): **288 commits; 534 changed non-directory paths (144 added, 390 modified, zero removed)**. Commit pages were 100 + 100 + 88; complete recursive trees were compared because the comparison file list stops at 300. This is an inventory, not a full-source audit. PROGRESS-only commits are excluded from implementation progress.
 - **No new source defect was proved or repaired in this bounded static review.** Only this progress document is proposed. No project, build, test, benchmark, target execution, repository script or manual CI action was performed.
 - Read current AGENTS.md, CONTRIBUTING.md, SECURITY.md, existing PROGRESS and relevant architecture/testing sections. The complete tree contains only the root AGENTS.md. Contributor execution requirements remain unperformed under the stricter static-only constraint.
