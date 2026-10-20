@@ -47891,3 +47891,42 @@ TEST(HighCPointerAddresses, NarrowObjectsPassedAsPointersStayIntegers) {
   EXPECT_NE(Source.find("int32_t dword_6000"), std::string::npos) << Source;
   expectCSyntax(Source);
 }
+
+TEST(HighCPointerAddresses, AlignedReadsOfAStringAlignItsArray) {
+  // make and patch read a string constant with an aligned access, whose
+  // guard masked the literal: `("$(-*-eval-flags-" & 15)` is no C, and a
+  // literal is no object C aligns as the image does.  The string is its
+  // array, declared as aligned as the access requires, and the guard reads
+  // its address.
+  constexpr va_t At = 0x140003000;
+  const std::string Text = "-*-command-variables-*-";
+  std::vector<uint8_t> Bytes(Text.begin(), Text.end());
+  Bytes.resize(32, 0);
+  BinaryImage Img = makeImageObjectFixture(At, Bytes, false);
+  HighFunc Func;
+  Func.Name = "show_variables";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  HighStmt Guard =
+      callStmt("require_aligned", 0,
+               {HighExpr::makeConst(At, 8, ConstantAddressProvenance::Address),
+                HighExpr::makeConst(16, 8)});
+  Guard.CallExpr->IntrinsicId = Intrinsic::RequireAligned;
+  Func.Body = {Guard,
+               callStmt("puts", 0x140002000,
+                        {HighExpr::makeConst(
+                            At, 8, ConstantAddressProvenance::Address)})};
+  returnValue(Func, nullptr);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_EQ(Source.find("(\"" + Text + "\" & 15)"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("_Alignas(16)"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}

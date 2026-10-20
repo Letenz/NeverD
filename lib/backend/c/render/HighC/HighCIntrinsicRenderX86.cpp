@@ -856,8 +856,11 @@ std::string renderAlignmentPrecondition(
   // narrower, converts first.  An operator binding looser than `&` keeps its
   // parentheses.
   std::string Value = ExprFn(*Address);
+  // So does an address the text spells as a pointer: a string literal, or
+  // an object's `&`.
   if (!Address->Type || Address->Type->Kind != NdTypeKind::Int ||
-      Address->Type->Size != 8)
+      Address->Type->Size != 8 || isStringLiteralText(Value) ||
+      llvm::StringRef(Value).starts_with("&"))
     Value = "(uint64_t)(" + Value + ")";
   else if (Address->Kind != ExprKind::Var && Address->Kind != ExprKind::Const &&
            Address->Kind != ExprKind::Cast)

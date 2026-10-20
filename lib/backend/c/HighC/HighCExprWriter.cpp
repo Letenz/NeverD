@@ -5952,8 +5952,11 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return "(" + typeToC(E.Type) + ")" + *Anchored;
       return PointerInteger(*Anchored);
     }
+    // A string an aligned access reads is its aligned object instead.
+    const auto Aligned = ImageObjects.find(E.ConstVal);
     if (auto Lit = stringLiteral(E.ConstVal);
-        Lit && !objectOutgrowsLiteral(E.ConstVal, *Lit))
+        Lit && !objectOutgrowsLiteral(E.ConstVal, *Lit) &&
+        (Aligned == ImageObjects.end() || Aligned->second.AlignedBytes <= 1))
       return LiteralAddressOperands.count(&E)
                  ? PointerInteger("(uintptr_t)" + *Lit)
                  : *Lit;

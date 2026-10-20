@@ -3359,9 +3359,15 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           std::max(Obj.IndexedBytes, Whole ? Bytes : Bounded.Reach);
     }
   }
-  for (const auto &[VA, Bytes] : GuardedAlignments)
+  for (const auto &[VA, Bytes] : GuardedAlignments) {
+    // A string an aligned access reads where it starts is the object C
+    // aligns as the image does (`_Alignas`), declared as its array below, not
+    // a literal C places where it likes.
+    if (!ImageObjects.count(VA) && stringLiteral(VA))
+      noteImageAddress(VA);
     if (auto It = ImageObjects.find(VA); It != ImageObjects.end())
       It->second.AlignedBytes = std::max(It->second.AlignedBytes, Bytes);
+  }
 
   // A table the code keeps only the address of, through a variable it
   // indexes, may be relative all the same: every entry an offset to a sized
