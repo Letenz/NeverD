@@ -129,6 +129,117 @@ TEST(MedStackAlignment, RejectsAnAmbiguousEntryStackDefinition) {
   EXPECT_EQ(Ops[2].Opcode, NdOp::INT_AND);
 }
 
+TEST(MedStackAlignment, RealignmentRootsDoNotInventAnEntryDisplacement) {
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+      for (bool MaskFirst : {false, true}) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(static_cast<int>(Format));
+        SCOPED_TRACE(MaskFirst);
+        MedFunc Func = frameWithEntrySP(Architecture);
+        auto &Ops = Func.Blocks[0].Ops;
+        const uint16_t Width = getTargetRegInfo(Architecture).PointerSize;
+        Ops.push_back(op(NdOp::INT_SUB, reg(1, Architecture),
+                         reg(0, Architecture),
+                         MedVar::makeConst(Width, Width)));
+        const auto Mask =
+            MedVar::makeConst(Width == 4 ? uint64_t{0xffffffc0} : uint64_t(-64),
+                              Width, ConstantAddressProvenance::Scalar);
+        Ops.push_back(op(NdOp::INT_AND, reg(2, Architecture),
+                         MaskFirst ? Mask : reg(1, Architecture),
+                         MaskFirst ? reg(1, Architecture) : Mask));
+        const auto Roots =
+            entryStackRealignmentRoots(Func, Architecture, Format);
+        ASSERT_EQ(Roots.size(), 1u);
+        EXPECT_EQ(Roots.front(), reg(2, Architecture));
+        EXPECT_FALSE(
+            entryStackOffset(Func, Roots.front(), Architecture, Format));
+        simplifyProvenStackAlignment(Func, Architecture, Format);
+        EXPECT_EQ(Ops.back().Opcode, NdOp::INT_AND);
+      }
+}
+
+TEST(MedStackAlignment, RejectsUnownedOrMalformedRealignmentRoots) {
+  for (unsigned Mutation = 0; Mutation != 20; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    MedFunc Func = frameWithEntrySP(Arch::X86);
+    auto &Block = Func.Blocks.front();
+    Block.Ops.push_back(op(NdOp::INT_SUB, reg(1, Arch::X86), reg(0, Arch::X86),
+                           MedVar::makeConst(4, 4)));
+    Block.Ops.push_back(op(NdOp::INT_AND, reg(2, Arch::X86), reg(1, Arch::X86),
+                           MedVar::makeConst(0xfffffff8, 4)));
+    auto &Align = Block.Ops.back();
+    switch (Mutation) {
+    case 0:
+      Block.Ops.erase(Block.Ops.begin());
+      break;
+    case 1:
+      Align.Output.Size = 2;
+      break;
+    case 2:
+      Align.Inputs[0].Size = 2;
+      break;
+    case 3:
+      Align.Inputs[1].ConstVal = 0xfffffff5;
+      break;
+    case 4:
+      Align.Inputs[1].Provenance = ConstantAddressProvenance::DataAddress;
+      break;
+    case 5:
+      Align.Inputs[1].Size = 8;
+      break;
+    case 6:
+      Align.Output.TheArch = Arch::ARM;
+      break;
+    case 7:
+      Block.Ops[1].Inputs[0].TheArch = Arch::ARM;
+      break;
+    case 8:
+      Align.Output.RegOff = getTargetRegInfo(Arch::X86).FramePointer;
+      break;
+    case 9:
+      Block.Ops.push_back(Align);
+      break;
+    case 10:
+      Block.Preds.push_back(0);
+      break;
+    case 11:
+      Block.Succs.push_back(0);
+      break;
+    case 12:
+      Align.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 13:
+      Align.MemoryOrdering = NdMemoryOrdering::Relaxed;
+      break;
+    case 14:
+      Align.Inputs[0] = temp(99, Arch::X86);
+      break;
+    case 15:
+      Align.Inputs[1].ConstVal = 0;
+      break;
+    case 16: {
+      MedBlock Other = Block;
+      Other.Id = 1;
+      Func.Blocks.push_back(std::move(Other));
+      break;
+    }
+    case 17:
+      Block.Ops.front().MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 18:
+      std::swap(Block.Ops[1], Block.Ops[2]);
+      break;
+    case 19:
+      Block.Ops[1].Inputs[0].RenameTag = 1;
+      break;
+    }
+    EXPECT_TRUE(entryStackRealignmentRoots(Func, Arch::X86, BinaryFormat::COFF)
+                    .empty());
+  }
+}
+
 TEST(MedStackAlignment, RegistrationRootsKeepDistinctRuntimeStackCoordinates) {
   MedFunc Func = frameWithEntrySP(Arch::X86);
   MedBlock Runtime;

@@ -22,6 +22,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedDynamicStack.h"
+#include "neverd/ir/med/MedStackAlignment.h"
 
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -284,6 +285,26 @@ MedLLVMEmitter::addrSlotKey(const MedVar &V, int Depth,
   if (CurMedFunc)
     DefOf = [this](const MedVar &Value) { return lookupDef(Value); };
   return medAddressSlotKey(V, DefOf, Depth, ThroughRegs);
+}
+
+bool MedLLVMEmitter::isEntryStackRealignmentRoot(const MedVar &V) const {
+  const auto &TRI = getTargetRegInfo(TargetArch);
+  if (!CurMedFunc || V.Kind != MedVar::Reg || V.TheArch != TargetArch ||
+      V.RegOff != TRI.StackPointer || V.Size != TRI.PointerSize)
+    return false;
+  const MedOp *Def = lookupDef(V);
+  if (!Def || Def->Opcode != NdOp::INT_AND)
+    return false;
+  const auto Owner = std::make_tuple(CurMedFunc, TargetArch, TargetFormat,
+                                     FrameReloadCacheGeneration);
+  if (EntryStackRealignmentRootsFor != Owner) {
+    EntryStackRealignmentRoots.clear();
+    for (const MedVar &Root :
+         entryStackRealignmentRoots(*CurMedFunc, TargetArch, TargetFormat))
+      EntryStackRealignmentRoots.insert(addressProvenanceVarKey(Root));
+    EntryStackRealignmentRootsFor = Owner;
+  }
+  return EntryStackRealignmentRoots.count(addressProvenanceVarKey(V)) != 0;
 }
 
 std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
@@ -560,9 +581,11 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
     auto Cleanup = llvm::scope_exit([&] { Active.erase(Key); });
     auto Proof = [&]() -> std::optional<med_llvm::SlotKey> {
       const MedOp *Def = lookupDef(Cur);
-      // A runtime definition is not an identity copy of the ordinary entry
-      // register. Keep its invocation as the origin of any derived slots.
-      if (Def && Def->RegistrationRoot != MedOp::RegistrationRootKind::None)
+      // A runtime definition or entry realignment is not an identity copy of
+      // the ordinary entry register. Keep the exact definition as the origin
+      // of derived slots, without inventing a displacement from entry SP.
+      if (Def && (Def->RegistrationRoot != MedOp::RegistrationRootKind::None ||
+                  isEntryStackRealignmentRoot(Cur)))
         return RequireEntryStackPointer ? std::nullopt
                                         : std::optional<med_llvm::SlotKey>(
                                               {{Cur.Id, Cur.SSAVer}, 0});
@@ -755,7 +778,8 @@ MedLLVMEmitter::affineFrameKey(const MedVar &V,
         return std::nullopt;
       const MedOp *Def = lookupDef(Cur);
       const med_llvm::SlotKey Key{{Cur.Id, Cur.SSAVer}, 0};
-      if (Def && Def->RegistrationRoot != MedOp::RegistrationRootKind::None)
+      if (Def && (Def->RegistrationRoot != MedOp::RegistrationRootKind::None ||
+                  isEntryStackRealignmentRoot(Cur)))
         return AffineFrameKey{Key, /*EntryStackPointer=*/false};
       const bool IsSelfCopy =
           Def && Def->Opcode == NdOp::COPY && Def->NumInputs >= 1 &&

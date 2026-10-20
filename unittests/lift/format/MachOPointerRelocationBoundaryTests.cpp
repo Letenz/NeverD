@@ -10998,6 +10998,122 @@ TEST(MachOLLVMDataPointerBoundary,
 }
 
 TEST(MachOLLVMDataPointerBoundary,
+     RealignedFrameReloadsKeepTheirOwnOriginAcrossFormats) {
+  for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+      for (bool UnknownRootWrite : {false, true}) {
+        SCOPED_TRACE(static_cast<int>(TargetArch));
+        SCOPED_TRACE(static_cast<int>(Format));
+        SCOPED_TRACE(UnknownRootWrite);
+        const auto &TRI = getTargetRegInfo(TargetArch);
+        const uint16_t Width = TRI.PointerSize;
+        auto var = [&](MedVar::VarKind Kind, int Id, int Version) {
+          MedVar V;
+          V.Kind = Kind;
+          V.Id = Id;
+          V.SSAVer = Version;
+          V.Size = Width;
+          V.TheArch = TargetArch;
+          if (Kind == MedVar::Reg)
+            V.RegOff = TRI.StackPointer;
+          return V;
+        };
+        const auto SP = var(MedVar::Reg, 100, 0);
+        const auto PushedSP = var(MedVar::Reg, 100, 1);
+        const auto AlignedSP = var(MedVar::Reg, 100, 2);
+        const auto LocalSP = var(MedVar::Reg, 100, 3);
+        const auto JoinSP = var(MedVar::Reg, 100, 4);
+        const auto OutgoingSP = var(MedVar::Reg, 100, 5);
+        const auto RestoredSP = var(MedVar::Reg, 100, 6);
+        const auto StoredAddress = var(MedVar::Temp, 1, 1);
+        const auto ReloadAddress = var(MedVar::Temp, 2, 1);
+        const auto Reloaded = var(MedVar::Temp, 3, 1);
+        const auto Scalar =
+            MedVar::makeConst(7, Width, ConstantAddressProvenance::Scalar);
+        auto constant = [&](uint64_t N) {
+          return MedVar::makeConst(N, Width, ConstantAddressProvenance::Scalar);
+        };
+        auto op = [](NdOp Opcode, MedVar Output,
+                     std::initializer_list<MedVar> Inputs) {
+          MedOp O;
+          O.Opcode = Opcode;
+          O.Output = Output;
+          for (const auto &Input : Inputs)
+            O.addInput(Input);
+          return O;
+        };
+        MedFunc Func;
+        Func.Entry = CallerVA;
+        Func.Name = "realigned_frame_reload";
+        MedBlock Entry;
+        Entry.Id = 0;
+        Entry.StartAddr = Func.Entry;
+        Entry.Succs = {1};
+        Entry.Ops = {
+            op(NdOp::COPY, SP, {SP}),
+            op(NdOp::INT_SUB, PushedSP, {SP, constant(Width)}),
+            op(NdOp::INT_AND, AlignedSP,
+               {PushedSP,
+                constant(Width == 4 ? uint64_t{0xffffffc0} : uint64_t(-64))}),
+            op(NdOp::INT_SUB, LocalSP, {AlignedSP, constant(32)}),
+            op(NdOp::INT_ADD, StoredAddress, {LocalSP, constant(8)}),
+            op(NdOp::STORE, {}, {StoredAddress, Scalar}),
+        };
+        MedBlock Loop;
+        Loop.Id = 1;
+        Loop.StartAddr = CallerVA + 0x10;
+        Loop.Preds = {0, 1};
+        Loop.Succs = {1};
+        PhiNode Phi;
+        Phi.Output = JoinSP;
+        Phi.Args = {{0, LocalSP}, {1, RestoredSP}};
+        Loop.Phis.push_back(Phi);
+        Loop.Ops = {
+            op(NdOp::INT_SUB, OutgoingSP, {JoinSP, constant(Width)}),
+            op(NdOp::STORE, {}, {OutgoingSP, constant(3)}),
+            op(NdOp::INT_ADD, RestoredSP, {OutgoingSP, constant(Width)}),
+        };
+        // A write under the unaligned entry SP has an unknown relationship to
+        // the aligned local. It must still poison the reaching-value proof.
+        if (UnknownRootWrite)
+          Loop.Ops.push_back(op(NdOp::STORE, {}, {SP, constant(11)}));
+        Loop.Ops.push_back(
+            op(NdOp::INT_ADD, ReloadAddress, {RestoredSP, constant(8)}));
+        Loop.Ops.push_back(op(NdOp::LOAD, Reloaded, {ReloadAddress}));
+        Func.Blocks = {Entry, Loop};
+        BinaryImage Image;
+        Image.Arch = TargetArch;
+        Image.Format = Format;
+        MedLLVMEmitter Emitter;
+        MedLLVMProvenanceTestPeer::prepareFreshAnalysis(Emitter, Func, Image,
+                                                        TargetArch, Format);
+        const auto Stored = MedLLVMProvenanceTestPeer::defaultFrameSlot(
+            Emitter, Func, TargetArch, StoredAddress);
+        const auto Reload = MedLLVMProvenanceTestPeer::defaultFrameSlot(
+            Emitter, Func, TargetArch, ReloadAddress);
+        ASSERT_TRUE(Stored);
+        EXPECT_EQ(Stored, Reload);
+        EXPECT_EQ(Stored->first,
+                  std::make_pair(AlignedSP.Id, AlignedSP.SSAVer));
+        EXPECT_EQ(Stored->second, -24);
+        EXPECT_FALSE(MedLLVMProvenanceTestPeer::defaultFrameSlot(
+            Emitter, Func, TargetArch, ReloadAddress, true));
+        std::vector<MedVar> Sources;
+        EXPECT_EQ(
+            MedLLVMProvenanceTestPeer::collectFrameReloadSources(
+                Emitter, Func, TargetArch, Func.Blocks[1].Ops.back(), Sources),
+            !UnknownRootWrite);
+        if (!UnknownRootWrite) {
+          ASSERT_EQ(Sources.size(), 1u);
+          EXPECT_EQ(Sources.front(), Scalar);
+        } else {
+          EXPECT_TRUE(Sources.empty());
+        }
+      }
+}
+
+TEST(MachOLLVMDataPointerBoundary,
      IncomingParameterHomesMatchEmittedEntryStores) {
   for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::AArch64})
     for (bool ViaFP : {false, true}) {

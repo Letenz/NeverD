@@ -1783,6 +1783,8 @@ private:
                         const ControlValueBindings *Bindings = nullptr,
                         size_t *SharedProofBudget = nullptr) const;
 
+  bool isEntryStackRealignmentRoot(const MedVar &V) const;
+
   /// True when \p V is reloaded from a stack slot that a stack-pointer-derived
   /// value was spilled to (`mov [slot],sp ; ... ; mov reg,[slot]`).  clang
   /// spills the pre-`alloca` SP to the frame and rederives the VLA base from
@@ -1817,6 +1819,10 @@ private:
 
   using AddressProvenanceVarKey =
       std::tuple<int, int, int, int, int, uint16_t, uint64_t, int, uint64_t>;
+  mutable std::optional<
+      std::tuple<const MedFunc *, Arch, BinaryFormat, uint64_t>>
+      EntryStackRealignmentRootsFor;
+  mutable std::set<AddressProvenanceVarKey> EntryStackRealignmentRoots;
   struct FrameReloadCacheKey {
     va_t Addr = InvalidVA;
     int OriginSeq = -1;

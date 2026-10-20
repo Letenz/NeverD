@@ -50,6 +50,13 @@ entryStackOffsets(const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
                   Arch Architecture, BinaryFormat Format,
                   StackEntryKind Entry = StackEntryKind::Call);
 
+/// Full-width SP definitions in the entry block that align an authenticated
+/// entry-stack offset. Each definition is a distinct frame origin; this does
+/// not establish a constant displacement from the unaligned entry SP.
+std::vector<MedVar> entryStackRealignmentRoots(const MedFunc &Func,
+                                               Arch Architecture,
+                                               BinaryFormat Format);
+
 } // namespace neverd
 
 #endif // NEVERD_IR_MED_MEDSTACKALIGNMENT_H
