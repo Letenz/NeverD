@@ -26,6 +26,7 @@
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/Parallel.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/LLVMContext.h"
@@ -87,6 +88,40 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   [[maybe_unused]] const char *ModeName = Opts.PatchMode ? "patch" : "lift";
   LLVM_DEBUG(llvm::dbgs() << "pipeline: " << ModeName
                           << " mode -- MedIR -> LLVM IR, skipping HighIR\n");
+
+  // A selected parent may fail instruction admission while its automatically
+  // included cleanup bodies survive. Emitting those bodies is not a successful
+  // export of the requested entry. Analysis views retain their partial results.
+  std::set<va_t> AdmittedEntries;
+  for (const auto &Function : Result.MedFuncs)
+    AdmittedEntries.insert(
+        normalizeCodeAddress(Function.Entry, Img.Arch, Img.Mode));
+  for (va_t Requested : Opts.OnlyFunctionEntries) {
+    const va_t Entry = normalizeCodeAddress(Requested, Img.Arch, Img.Mode);
+    if (AdmittedEntries.count(Entry))
+      continue;
+    Result.Error = "selected " + std::string(ModeName) + " function 0x" +
+                   llvm::utohexstr(Requested) + " was not admitted";
+    const auto Audit =
+        std::find_if(Result.FunctionAudits.begin(), Result.FunctionAudits.end(),
+                     [&](const PipelineFunctionAudit &Candidate) {
+                       return normalizeCodeAddress(Candidate.Entry, Img.Arch,
+                                                   Img.Mode) == Entry;
+                     });
+    if (Audit != Result.FunctionAudits.end()) {
+      Result.Error +=
+          " (" +
+          std::string(pipelineFunctionDispositionName(Audit->Disposition)) +
+          ")";
+      if (!Audit->DecodeFailures.empty())
+        Result.Error += "; decode failure at 0x" +
+                        llvm::utohexstr(Audit->DecodeFailures.front());
+      else if (!Audit->UnsupportedInstructions.empty())
+        Result.Error += "; unsupported instruction at 0x" +
+                        llvm::utohexstr(Audit->UnsupportedInstructions.front());
+    }
+    return false;
+  }
 
   auto AllFuncNames = buildFuncNameMap(Img, Result);
 

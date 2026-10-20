@@ -8374,6 +8374,15 @@ with adjacent data. Run `NeverDFunctionAdmissionTests`,
 `NeverDNativePointerRelocationBoundaryTests`,
 `NeverDMachOPointerRelocationBoundaryTests` and `NeverDSourcePatchLayoutTests`
 when changing this shared entry boundary.
+`FunctionAdmission.NativeOutputRequiresEverySelectedEntry` checks mixed valid,
+truncated and unmapped selections for patch and lift output across COFF, ELF
+and Mach-O, with and without the shared analysis cache.
+`ASelectedRejectedParentCannotExportOnlyItsCleanup` keeps source analysis
+available while requiring native output to report the rejected parent and
+its decode failure instead of exporting only an automatically selected callback.
+`SelectedLiftReportsUnsupportedInstructionSemantics` checks that complete
+decoding does not hide an unsupported x87 payload/tag read, and that the
+selected-entry diagnostic identifies the unsupported instruction.
 
 `PointerRelocationBatch.PointerRunsAmongCodeAreData` records an i386 jump
 table's three relocated slots in `.text` as data slots and the displacement

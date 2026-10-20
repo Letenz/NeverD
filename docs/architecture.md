@@ -25,6 +25,11 @@ entries and unwind frame starts; a frame that begins later, a chained row or a
 cold fragment cannot supply an independent callable identity. Next-entry bounds
 use those primary identities as well. Explicitly selecting code for analysis
 retains its separate decode and admission checks.
+Patch/lift output requires every explicitly selected entry to survive into
+MedIR before LLVM emission. Automatically included exception callbacks cannot
+substitute for a rejected parent. Failures retain the entry's audit disposition
+and first decode or unsupported-instruction address; source views can still
+return their partial analysis.
 
 The COFF CFG reader also requires unique, complete file-backed storage for the
 target's minimum instruction unit. The table must be immutable, while target
