@@ -623,7 +623,10 @@ void affineResidualCandidates(SymContext &Ctx,
           const unsigned Arity = std::popcount(truthTableSupport(Table));
           const size_t Functions = size_t(1) << (size_t(1) << Arity);
           const size_t SynthesisWork = Functions * Functions;
-          if (SynthesisWork > Limits.SynthesisWork)
+          // This optional table must fit the remaining shared allowance.
+          // Refusing it must not spend work that later regions could use.
+          if (SynthesisWork > Limits.SynthesisWork ||
+              !Budget.canConsume(SynthesisWork))
             continue;
           if (!Budget.consume(SynthesisWork))
             return;
@@ -721,7 +724,7 @@ void booleanResidualCandidates(SymContext &Ctx,
       const unsigned Arity = std::popcount(truthTableSupport(Table));
       const size_t Functions = size_t(1) << (size_t(1) << Arity);
       const size_t Work = Functions * Functions;
-      if (Work > Limits.SynthesisWork)
+      if (Work > Limits.SynthesisWork || !Budget.canConsume(Work))
         return std::nullopt;
       if (!Budget.consume(Work))
         return std::nullopt;
