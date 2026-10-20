@@ -1610,6 +1610,10 @@ public:
   /// symbols and relocations.
   std::optional<std::string> stringLiteral(va_t Addr) const;
   mutable std::unordered_map<va_t, std::optional<std::string>> StringLiterals;
+  /// The constants a call passes to a narrow string parameter, which print
+  /// as narrow literals (imageStringLiteral's Narrow) where the image's
+  /// bytes read as wide ones too.
+  std::set<const HighExpr *> NarrowStringOperands;
   /// A pointer-sized object at a relocated slot: the address it holds, as
   /// its initializer.
   std::optional<std::string>

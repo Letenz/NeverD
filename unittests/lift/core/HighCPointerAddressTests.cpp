@@ -47851,6 +47851,67 @@ TEST(HighCPointerAddresses, HeaderRecordObjectsAreReachedThroughTheirBytes) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses, NarrowStringParametersTakeNarrowLiterals) {
+  // addr2line opens a file with mode "r", whose terminator and the zeros
+  // after it read as the UTF-16 string L"r" too: fopen's mode is a narrow
+  // string, so its argument is "r", whether the type library declares fopen
+  // or its header alone does.
+  constexpr va_t Mode = 0x6000;
+  std::vector<uint8_t> Bytes(16, 0);
+  Bytes[0] = 'r';
+  BinaryImage Img = makeImageObjectFixture(Mode, Bytes, false);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  const auto Char = NdType::makeInt(1);
+  Char->SourceName = "char";
+  const auto Text = NdType::makePtr(Char);
+  class FileDbg : public NullDebugContext {
+  public:
+    explicit FileDbg(TypeRef Text) : Text(std::move(Text)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x2000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "fopen";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makePtr(NdType::makeNamedRecord("_IO_FILE"));
+      FS.Params = {{"filename", Text}, {"modes", Text}};
+      FS.PrototypeFromCLibrary = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Text;
+  } Dbg(Text);
+  for (DebugContext *Context : {static_cast<DebugContext *>(&Dbg),
+                                static_cast<DebugContext *>(nullptr)}) {
+    const auto Word = NdType::makeInt(8);
+    HighFunc Func;
+    Func.Name = "open_input";
+    Func.Entry = 0x1000;
+    Func.ReturnType = Word;
+    Func.Params = {{"path", Word}};
+    auto Opened = HighExpr::makeCall(
+        "fopen", 0x2000,
+        {parameter(0, Word),
+         HighExpr::makeConst(Mode, 8, ConstantAddressProvenance::Address)});
+    Opened->Type = Word;
+    returnValue(Func, std::move(Opened));
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::ELF;
+    Options.Image = &Img;
+    ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, Context));
+    OS.flush();
+    EXPECT_EQ(Source.find("L\"r\""), std::string::npos) << Source;
+    EXPECT_NE(Source.find(", \"r\")"), std::string::npos) << Source;
+    expectCSyntax(Source);
+  }
+}
+
 TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
   // sed passes a comparator of its own to qsort, whose prototype the header
   // library gives: its comparison's type keeps no const there, where the

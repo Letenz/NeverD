@@ -167,7 +167,7 @@ bool appendStatedLiteralCharacter(uint32_t Ch, std::string &Out) {
 } // namespace
 
 std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
-                                              bool AllowEmpty) {
+                                              bool AllowEmpty, bool Narrow) {
   if (!Img || Addr == 0 || Addr == InvalidVA)
     return std::nullopt;
   if (Img->findImportAt(Addr) || !terminatesStrings(*Img))
@@ -219,7 +219,7 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
     const va_t First = Addr >= Reach ? Addr - Reach : 0;
     return !hasRelocationProvenanceIn(*Img, First, Addr + Extent);
   };
-  if (Remain >= 2 && Base[1] == 0) {
+  if (!Narrow && Remain >= 2 && Base[1] == 0) {
     std::string Body;
     unsigned N = 0;
     for (size_t I = 0; I + 1 < Remain && N < kMaxLit; I += 2, ++N) {
