@@ -959,6 +959,22 @@
         <source>Regenerate this function without variable associations</source>
         <translation>Повторно создать эту функцию без связей переменных</translation>
     </message>
+    <message>
+        <source>Declare the prototype and actual variadic argument types for this call only</source>
+        <translation>Задать прототип и фактические типы вариативных аргументов только для этого вызова</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without call-site declarations</source>
+        <translation>Повторно сгенерировать эту функцию без объявлений мест вызова</translation>
+    </message>
+    <message>
+        <source>Reset call-site declarations</source>
+        <translation>Сбросить объявления мест вызова</translation>
+    </message>
+    <message>
+        <source>Set call type...</source>
+        <translation>Задать тип вызова...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1650,6 +1666,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved variable associations need review: </source>
         <translation>Сохранённые связи переменных требуют проверки: </translation>
+    </message>
+    <message>
+        <source>Saved call-site declaration needs review: </source>
+        <translation>Сохранённое объявление места вызова требует проверки: </translation>
     </message>
 </context>
 <context>
@@ -2559,6 +2579,38 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
         <translation>Для этой переменной нет соответствующей связи. Используйте «Сбросить связи переменных», чтобы удалить устаревшие правки.</translation>
+    </message>
+    <message>
+        <source>Actual variadic argument types for this call, one per line (use int or double after default promotions):</source>
+        <translation>Фактические типы вариативных аргументов этого вызова, по одному в строке (используйте int или double после стандартных повышений типов):</translation>
+    </message>
+    <message>
+        <source>C declaration (include ... for a variadic call):</source>
+        <translation>Объявление C (добавьте ... для вариативного вызова):</translation>
+    </message>
+    <message>
+        <source>Call at %1. This declaration applies to this call only in both C views.</source>
+        <translation>Вызов по адресу %1. Это объявление применяется только к этому вызову в обоих представлениях C.</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a pseudocode row mapped to an original call instruction</source>
+        <translation>Поместите курсор на строку псевдокода, соответствующую исходной инструкции вызова</translation>
+    </message>
+    <message>
+        <source>Select call instruction</source>
+        <translation>Выбрать инструкцию вызова</translation>
+    </message>
+    <message>
+        <source>Set call type</source>
+        <translation>Задать тип вызова</translation>
+    </message>
+    <message>
+        <source>This source row contains multiple calls:</source>
+        <translation>Эта строка исходного кода содержит несколько вызовов:</translation>
+    </message>
+    <message>
+        <source>indirect call</source>
+        <translation>косвенный вызов</translation>
     </message>
 </context>
 <context>

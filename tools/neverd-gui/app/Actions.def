@@ -122,13 +122,41 @@ NEVERD_VIEW_ACTION(
                       "Make the parameter under the cursor a pointer to a "
                       "local type, the types ranked by how its accesses fit "
                       "them"))
-NEVERD_VIEW_ACTION(EditSplitVariable, QT_TRANSLATE_NOOP("Actions", "Split variable"), "", "set_type", QT_TRANSLATE_NOOP("Actions", "Separate independent local variable lifetimes"))
-NEVERD_VIEW_ACTION(EditMapVariable, QT_TRANSLATE_NOOP("Actions", "Map to variable..."), "", "rename", QT_TRANSLATE_NOOP("Actions", "Associate copy-related variables with compatible live ranges"))
-NEVERD_VIEW_ACTION(EditUnmapVariable, QT_TRANSLATE_NOOP("Actions", "Unmap variable"), "", "rename", QT_TRANSLATE_NOOP("Actions", "Remove a variable mapping"))
-NEVERD_VIEW_ACTION(EditUnsplitVariable, QT_TRANSLATE_NOOP("Actions", "Unsplit variable"), "", "set_type", QT_TRANSLATE_NOOP("Actions", "Restore the original variable lifetime grouping"))
-NEVERD_VIEW_ACTION(EditResetVariables, QT_TRANSLATE_NOOP("Actions", "Reset variable associations"), "", "rename", QT_TRANSLATE_NOOP("Actions", "Regenerate this function without variable associations"))
-NEVERD_VIEW_ACTION(EditCallType, QT_TRANSLATE_NOOP("Actions", "Set call type..."), "", "set_type", QT_TRANSLATE_NOOP("Actions", "Declare the prototype and actual variadic argument types for this call only"))
-NEVERD_VIEW_ACTION(EditResetCallTypes, QT_TRANSLATE_NOOP("Actions", "Reset call-site declarations"), "", "set_type", QT_TRANSLATE_NOOP("Actions", "Regenerate this function without call-site declarations"))
+NEVERD_VIEW_ACTION(
+    EditSplitVariable, QT_TRANSLATE_NOOP("Actions", "Split variable"), "",
+    "set_type",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Separate independent local variable lifetimes"))
+NEVERD_VIEW_ACTION(
+    EditMapVariable, QT_TRANSLATE_NOOP("Actions", "Map to variable..."), "",
+    "rename",
+    QT_TRANSLATE_NOOP(
+        "Actions",
+        "Associate copy-related variables with compatible live ranges"))
+NEVERD_VIEW_ACTION(EditUnmapVariable,
+                   QT_TRANSLATE_NOOP("Actions", "Unmap variable"), "", "rename",
+                   QT_TRANSLATE_NOOP("Actions", "Remove a variable mapping"))
+NEVERD_VIEW_ACTION(
+    EditUnsplitVariable, QT_TRANSLATE_NOOP("Actions", "Unsplit variable"), "",
+    "set_type",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Restore the original variable lifetime grouping"))
+NEVERD_VIEW_ACTION(
+    EditResetVariables,
+    QT_TRANSLATE_NOOP("Actions", "Reset variable associations"), "", "rename",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Regenerate this function without variable associations"))
+NEVERD_VIEW_ACTION(
+    EditCallType, QT_TRANSLATE_NOOP("Actions", "Set call type..."), "",
+    "set_type",
+    QT_TRANSLATE_NOOP("Actions", "Declare the prototype and actual variadic "
+                                 "argument types for this call only"))
+NEVERD_VIEW_ACTION(
+    EditResetCallTypes,
+    QT_TRANSLATE_NOOP("Actions", "Reset call-site declarations"), "",
+    "set_type",
+    QT_TRANSLATE_NOOP(
+        "Actions", "Regenerate this function without call-site declarations"))
 NEVERD_VIEW_ACTION(EditCreateFunction,
                    QT_TRANSLATE_NOOP("Actions", "Create &function"), "P",
                    "function_create",

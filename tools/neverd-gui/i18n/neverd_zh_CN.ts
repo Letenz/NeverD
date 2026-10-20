@@ -959,6 +959,22 @@
         <source>Regenerate this function without variable associations</source>
         <translation>重新生成此函数，不应用变量关联</translation>
     </message>
+    <message>
+        <source>Declare the prototype and actual variadic argument types for this call only</source>
+        <translation>仅为此调用声明函数原型和实际可变参数类型</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without call-site declarations</source>
+        <translation>不使用调用点声明，重新生成此函数</translation>
+    </message>
+    <message>
+        <source>Reset call-site declarations</source>
+        <translation>重置调用点声明</translation>
+    </message>
+    <message>
+        <source>Set call type...</source>
+        <translation>设置调用类型...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1640,6 +1656,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved variable associations need review: </source>
         <translation>已保存的变量关联需要复核：</translation>
+    </message>
+    <message>
+        <source>Saved call-site declaration needs review: </source>
+        <translation>已保存的调用点声明需要检查： </translation>
     </message>
 </context>
 <context>
@@ -2547,6 +2567,38 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
         <translation>此变量没有匹配的关联。请使用“重置变量关联”移除过期的编辑。</translation>
+    </message>
+    <message>
+        <source>Actual variadic argument types for this call, one per line (use int or double after default promotions):</source>
+        <translation>此调用的实际可变参数类型，每行一个（按默认参数提升规则使用 int 或 double）：</translation>
+    </message>
+    <message>
+        <source>C declaration (include ... for a variadic call):</source>
+        <translation>C 声明（可变参数调用需包含 ...）：</translation>
+    </message>
+    <message>
+        <source>Call at %1. This declaration applies to this call only in both C views.</source>
+        <translation>位于 %1 的调用。此声明在两种 C 视图中都仅适用于此调用。</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a pseudocode row mapped to an original call instruction</source>
+        <translation>将光标放在映射到原始调用指令的伪代码行上</translation>
+    </message>
+    <message>
+        <source>Select call instruction</source>
+        <translation>选择调用指令</translation>
+    </message>
+    <message>
+        <source>Set call type</source>
+        <translation>设置调用类型</translation>
+    </message>
+    <message>
+        <source>This source row contains multiple calls:</source>
+        <translation>此源代码行包含多个调用：</translation>
+    </message>
+    <message>
+        <source>indirect call</source>
+        <translation>间接调用</translation>
     </message>
 </context>
 <context>
