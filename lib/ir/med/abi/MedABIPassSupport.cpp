@@ -1091,11 +1091,13 @@ static MedVar argRegSourceValue(const MedOp &Op) {
   return Op.Output;
 }
 
-// Resolve synthetic low-register observations back to the whole argument
-// written by the same machine instruction. Multiple sibling aliases may
-// intervene, but a real partial write, another instruction, or a call ends
-// the proof. Source identity includes constant provenance and owner as well
-// as the exact register/temporary SSA occurrence.
+// Resolve synthetic low-register observations back to the whole argument the
+// register holds: its nearest write, where that writes the same source.  SSA
+// syncs a low register where an instruction reads it, so the write may be an
+// earlier instruction's (`lea rdi, [rip + s]` before `mov ebx, edi`).
+// Multiple sibling aliases may intervene, but a real partial write or a call
+// ends the proof. Source identity includes constant provenance and owner as
+// well as the exact register/temporary SSA occurrence.
 MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
                                 const TargetRegInfo &TRI,
                                 const IntegerArgumentLayout &Layout) {
@@ -1123,7 +1125,7 @@ MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
   const uint64_t Register = Layout.Registers[ArgIdx];
   for (int K = J - 1; K >= 0; --K) {
     const MedOp &W = Blk.Ops[K];
-    if (W.Addr != Op.Addr || isAbiRecoveryBarrier(W))
+    if (isAbiRecoveryBarrier(W))
       break;
     if (W.Output.Kind != MedVar::Reg || W.Output.Size == 0)
       continue;

@@ -1637,6 +1637,39 @@ TEST(SysVCallContract, AStringCompareLeavesNoSecondResultInRDX) {
   EXPECT_NE(Source.find("int8_t same("), std::string::npos) << Source;
 }
 
+TEST(SysVCallContract, AWholeRegisterArgumentKeepsItsHighBytes) {
+  // ntfscp's parse_options passes a string to an import no declaration
+  // describes with `lea rdi, [rip + s]` while EDI is live: the lifter syncs
+  // EDI with the address's low bytes, and the call took that sync for its
+  // argument, printing `(int32_t)("parse_options")`.  The call reads all of
+  // RDI.
+  constexpr va_t Name = Text, Str = Text + 0x20, LogStub = Text + 0x40;
+  std::vector<uint8_t> Code(0x50, 0xCC);
+  std::vector<uint8_t> NameCode = {0x53,              // push rbx
+                                   0x48, 0x8D, 0x3D}; // lea rdi, [rip + str]
+  for (uint8_t B : rel32(Name + 8, Str))
+    NameCode.push_back(B);
+  for (uint8_t B : {0x89, 0xFB, // mov ebx, edi
+                    0xE8})      // call log_name
+    NameCode.push_back(B);
+  for (uint8_t B : rel32(Name + 15, LogStub))
+    NameCode.push_back(B);
+  for (uint8_t B : {0x89, 0xD8, // mov eax, ebx
+                    0x5B,       // pop rbx
+                    0xC3})      // ret
+    NameCode.push_back(B);
+  put(Code, Name, NameCode);
+  put(Code, Str, {'h', 'i', 0});
+  const BinaryImage Img =
+      makeImportImage(Code, {{Name, "name"}}, {{LogStub, "log_name"}});
+  const std::string Source = liftEntries(Img, {Name});
+  const std::string Body = body(Source, "name");
+  const size_t Call = Body.find("log_name(");
+  ASSERT_NE(Call, std::string::npos) << Source;
+  const std::string Line = Body.substr(Call, Body.find('\n', Call) - Call);
+  EXPECT_EQ(Line.find("int32_t"), std::string::npos) << Body;
+}
+
 TEST(SysVCallContract, APaddingPushAfterAPointerCallReadsNoSecondResult) {
   // ntfscp's utils_set_locale passes setlocale's result as the one stack
   // argument of a variadic call, which GCC aligns with a `push rdx` between

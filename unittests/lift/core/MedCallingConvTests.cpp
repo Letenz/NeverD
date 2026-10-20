@@ -274,13 +274,13 @@ TEST(MedCallABI, SyntheticSubregisterViewsPreserveTheReachingWholeArgument) {
         const auto &CI = F.CallInfos.back();
         ASSERT_EQ(CI.TargetAddr, 0x2000u);
         ASSERT_EQ(CI.Args.size(), 1u);
-        EXPECT_EQ(CI.Args.front().Size, C == Case::Siblings ||
-                                                C == Case::TempSource ||
-                                                C == Case::ConstantSource
-                                            ? Width
-                                            : Width / 2);
-        if (C == Case::Siblings || C == Case::TempSource ||
-            C == Case::ConstantSource) {
+        // SSA syncs a low register where an instruction reads it, so the
+        // whole write the sync mirrors may be an earlier instruction's.
+        const bool Whole = C == Case::Siblings || C == Case::TempSource ||
+                           C == Case::ConstantSource ||
+                           C == Case::NewInstruction;
+        EXPECT_EQ(CI.Args.front().Size, Whole ? Width : Width / 2);
+        if (Whole) {
           EXPECT_EQ(CI.Args.front().Kind, Source.Kind);
           EXPECT_EQ(CI.Args.front().Id, Source.Id);
           EXPECT_EQ(CI.Args.front().SSAVer, Source.SSAVer);

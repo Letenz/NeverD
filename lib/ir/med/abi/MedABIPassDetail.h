@@ -25,6 +25,7 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedIR.h"
 
@@ -277,13 +278,6 @@ class RelocationSymbolIndex;
 /// \p Img's relocations.
 std::string relocCalleeName(const BinaryImage &Img, va_t InsnAddr,
                             const RelocationSymbolIndex *Index = nullptr);
-
-/// The value an argument-register-defining op at index \p J contributes to its
-/// slot, resolving a low-half sub-register sync to the paired full-width write
-/// so a wide (pointer/struct) argument keeps its high bits.
-MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
-                                const TargetRegInfo &TRI,
-                                const IntegerArgumentLayout &Layout);
 
 /// Select the authoritative PHI for integer argument slot \p ArgIdx in
 /// \p Block.  A PHI with a value on every function-entry edge wins over an
