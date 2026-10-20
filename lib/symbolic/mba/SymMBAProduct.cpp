@@ -98,6 +98,64 @@ void forEachProductMatch(const HigherCoefficients &Higher, unsigned Degree,
 
   llvm::SmallVector<TruthTable, 64> Candidates;
   const TruthTable Free = Active & ~Shared;
+  if (Degree > 3) {
+    // No candidate is visited until this list is complete. Do not construct
+    // an unaffordable prefix only to discard it without testing a product.
+    const size_t FreeBits = Free.count();
+    if (FreeBits >= std::numeric_limits<size_t>::digits)
+      return;
+    const size_t Count = (size_t(1) << FreeBits) - unsigned(Shared.isZero());
+    if (Count > MaxCandidates || !Budget.canConsume(Count))
+      return;
+
+    // An anchor fixes the scale. Its adjacent coefficients must be the scale
+    // times a factor-membership count. This is only a necessary condition:
+    // candidates still need their complete expansion and independent proof.
+    std::optional<MintermIndex> Anchor;
+    const llvm::APInt *Scale = nullptr;
+    for (size_t M = 0; M < *Corners; ++M) {
+      if (!Shared.at(M))
+        continue;
+      if (!Budget.consume(Degree + 1))
+        return;
+      const auto &Value = Higher.at(Monomial(Degree, MintermIndex(M)));
+      if (!Anchor) {
+        Anchor = M;
+        Scale = &Value;
+      } else if (Value != *Scale) {
+        return;
+      }
+    }
+    if (Anchor) {
+      const size_t Words = (size_t(Width) - 1) / 64 + 1;
+      for (size_t M = 0; M < *Corners; ++M) {
+        if (!Active.at(M) || M == *Anchor)
+          continue;
+        if (!Budget.consume(Degree + 1))
+          return;
+        Monomial Key(Degree, *Anchor);
+        Key.back() = M;
+        llvm::sort(Key);
+        auto It = Higher.find(Key);
+        const auto Value =
+            It == Higher.end() ? llvm::APInt(Width, 0) : It->second;
+        llvm::APInt Expected(Width, 0);
+        bool Possible = false;
+        for (unsigned N = 1; N <= Degree; ++N) {
+          if (!Budget.consume(Words))
+            return;
+          Expected += *Scale;
+          Possible |= Expected == Value;
+        }
+        if (!Possible)
+          return;
+      }
+      if (!productCoefficientsFitScale(Higher, Degree, *Scale, Budget))
+        return;
+    }
+    if (!Budget.canConsume(Count))
+      return;
+  }
   for (TruthTable Sub = Free;; Sub = Sub.nextSubsetBelow(Free)) {
     TruthTable Table = Shared | Sub;
     if (!Table.isZero()) {
@@ -173,6 +231,53 @@ void forEachProductMatch(const HigherCoefficients &Higher, unsigned Degree,
 }
 
 } // namespace
+
+bool productCoefficientsFitScale(const HigherCoefficients &Higher,
+                                 unsigned Degree, const llvm::APInt &Scale,
+                                 WorkBudget &Budget) {
+  if (Scale.isZero())
+    return false;
+  const unsigned Width = Scale.getBitWidth();
+  const unsigned Zeros = Scale.countr_zero(), Bits = Width - Zeros;
+  const size_t Words = (size_t(Width) - 1) / 64 + 1;
+  if (Words > (std::numeric_limits<size_t>::max() - Words) / (2 * Words) ||
+      !Budget.consume(4 * Words))
+    return false;
+  auto Odd = Scale.lshr(Zeros).zextOrTrunc(Bits);
+  llvm::APInt Inverse(Bits, 1);
+  // Newton lifting doubles the known low bits of an odd modular inverse.
+  for (unsigned Known = 1;
+       Known<Bits; Known = Known> Bits / 2 ? Bits : 2 * Known) {
+    if (!Budget.consume(2 * Words * Words + Words))
+      return false;
+    Inverse *= llvm::APInt(Bits, 2, false, true) - Odd * Inverse;
+  }
+  for (const auto &[Key, Coefficient] : Higher) {
+    if (!Budget.consume(Key.size()) ||
+        !Budget.consume(Words * Words + 2 * Words + 1) ||
+        Key.size() != Degree || Coefficient.getBitWidth() != Width ||
+        Coefficient.countr_zero() < Zeros)
+      return false;
+    // A sorted monomial can be reached at most d! / product(repeats!) times.
+    // Saturation only declines this optional rejection; it grants no match.
+    uint64_t Bound = 1, Repeat = 0;
+    bool Bounded = true;
+    for (size_t I = 0; I != Key.size(); ++I) {
+      Repeat = I && Key[I] == Key[I - 1] ? Repeat + 1 : 1;
+      if (Bound > std::numeric_limits<uint64_t>::max() / (I + 1)) {
+        Bounded = false;
+        break;
+      }
+      Bound = Bound * (I + 1) / Repeat;
+    }
+    if (!Bounded)
+      continue;
+    auto Count = Coefficient.lshr(Zeros).zextOrTrunc(Bits) * Inverse;
+    if (Count.getActiveBits() > 64 || Count.getZExtValue() > Bound)
+      return false;
+  }
+  return true;
+}
 
 std::optional<QuadraticProduct>
 recoverQuadraticProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
@@ -459,6 +564,36 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
   const BitwiseSynthesisLimits Synthesis = Limits.synthesis(TermCeiling);
   llvm::SmallVector<SymRef, 4> Parts;
   for (const auto &[Degree, DegreeTerms] : ByDegree) {
+    auto Retain = [&]() {
+      const size_t MaxSlots = Opts.MaxTableBytes / (2 * sizeof(SymRef));
+      size_t Slots = DegreeTerms.size();
+      if (Slots > MaxSlots)
+        return false;
+      for (const auto &Term : DegreeTerms) {
+        if (Term.Factors.size() > MaxSlots - Slots)
+          return false;
+        Slots += Term.Factors.size();
+      }
+      if (!Budget.consume(Slots))
+        return false;
+      llvm::SmallVector<SymRef, 8> Summands;
+      for (const auto &Term : DegreeTerms) {
+        llvm::SmallVector<SymRef, 8> Factors(Term.Factors.begin(),
+                                             Term.Factors.end());
+        Factors.push_back(Ctx.mkConst(Term.Coeff));
+        Summands.push_back(Ctx.mkMul(Factors));
+      }
+      Parts.push_back(Ctx.mkAdd(Summands));
+      return true;
+    };
+    // An unchanged, already factored higher-degree component needs no factor
+    // search. Preserve its exact coefficient and multiplicities while other
+    // degrees improve. The caller still proves the complete recombination.
+    if (Degree > 3 && DegreeTerms.size() == 1) {
+      if (!Retain())
+        return std::nullopt;
+      continue;
+    }
     llvm::SmallVector<uint32_t, 16> DegreeIds;
     llvm::DenseSet<uint32_t> Seen;
     for (const auto &Term : DegreeTerms)
@@ -471,9 +606,13 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
     llvm::SmallVector<SymRef, 16> DegreeAtoms;
     for (uint32_t Id : DegreeIds)
       DegreeAtoms.push_back(Ctx.varRef(Id));
-    auto Form = expandOverMinterms(Ctx, DegreeTerms, DegreeIds, Width, Budget);
-    if (!Form)
+    auto Form = expandOverMinterms(Ctx, DegreeTerms, DegreeIds, Width, Budget,
+                                   /*Optional=*/Degree > 3);
+    if (!Form) {
+      if (Degree > 3 && !Budget.exhausted() && Retain())
+        continue;
       return std::nullopt;
+    }
     // Exact cancellation can remove a degree altogether.
     if (Form->Higher.empty())
       continue;
@@ -522,10 +661,13 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
       forEachProductMatch(Part, Degree, DegreeArity, Width, MaxCandidates,
                           Budget, Consider);
     }
-    // One unexplained degree means the whole reading is unexplained: dropping
-    // it would return an expression missing a term rather than a shorter one.
-    if (!Best.isValid())
+    // Preserve an unrecovered higher degree exactly. Other degrees may still
+    // improve; dropping the residual would silently change the expression.
+    if (!Best.isValid()) {
+      if (Degree > 3 && !Budget.exhausted() && Retain())
+        continue;
       return std::nullopt;
+    }
     Parts.push_back(Best);
   }
 

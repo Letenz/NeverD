@@ -396,7 +396,8 @@ recoverCubicProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
 std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
                                            llvm::ArrayRef<PolyTerm> Terms,
                                            llvm::ArrayRef<uint32_t> AtomIds,
-                                           uint32_t Width, WorkBudget &Budget);
+                                           uint32_t Width, WorkBudget &Budget,
+                                           bool Optional = false);
 
 /// Walk every way of taking one minterm from each factor, handing each
 /// resulting monomial to \p Visit.  Stops early when \p Visit returns false.
@@ -466,7 +467,8 @@ bool provePolynomialIdentity(SymContext &Ctx, SymRef Before, SymRef After,
 /// Normalize both sides independently; incomplete normalization is refusal.
 bool proveArithmeticIdentity(SymContext &Ctx, SymRef Before, SymRef After,
                              WorkBudget &Budget,
-                             size_t MaxBytes = MBAOptions{}.MaxTableBytes);
+                             size_t MaxBytes = MBAOptions{}.MaxTableBytes,
+                             bool ExpandComplements = true);
 
 /// Certify an affine equality over bitwise views of every bit of one opaque
 /// word, including literal AND/OR/XOR and NOT chains.
@@ -534,6 +536,15 @@ SymRef foldPartitionedMaskSum(SymContext &Ctx, SymRef A, SymRef B,
 /// shared spelling; measure at most two quotients using the same budget.
 SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                               WorkBudget &Budget, SolveReport &Rep);
+
+/// Recover higher products by proving small quotients under shared cofactors.
+SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                             WorkBudget &Budget, SolveReport &Rep);
+
+/// Necessary multiplicity bounds only; never authorizes a replacement.
+bool productCoefficientsFitScale(const HigherCoefficients &Higher,
+                                 unsigned Degree, const llvm::APInt &Scale,
+                                 WorkBudget &Budget);
 
 /// Solve independent summand groups before measuring \p E as one region.
 /// This is the mask-free half of the region solver; \c solveMasked reduces to

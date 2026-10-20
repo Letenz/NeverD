@@ -1081,7 +1081,23 @@ one anchor then distinguish the selected or omitted factor. The candidate's
 entire expansion must match, including missing coefficients and modular zeros,
 before the independent polynomial difference proof can authorize it. This
 direct reading requires a scale with additive order at least four; other cubic
-products and higher degrees retain the bounded factor search.
+products retain the bounded factor search.
+Higher-degree roots first group terms sharing all but one or two factors.
+The existing semantic solver proves each small quotient, and an independent
+arithmetic proof checks the complete distribution before substituting those
+quotients. That proof leaves complements opaque: distribution depends on their
+exact identity, not on expanding them as `-1-x`. Equal scales and repeated
+factors remain exact, and identical proved quotients share a charged local
+cache. A bounded frontier and cumulative work/storage admission preserve the
+best completed root on refusal.
+Already factored higher components remain intact while other degrees improve.
+Unaffordable optional expansions leave work for the rest of the expression;
+an unrecovered degree is retained verbatim, never dropped. Exact opposing
+products cancel before the independent difference proof expands minterms.
+The remaining higher-degree search preflights complete candidate lists and
+uses anchored scale/multinomial bounds to reject impossible products early.
+These bounds only reject candidates; complete expansion and proof still
+authorize any recovered product.
 Each degree is expanded over only the variables in its factors, so unrelated
 linear inputs do not inflate a cubic table. Linear and nonlinear parts are
 recombined before the full original-expression proof.

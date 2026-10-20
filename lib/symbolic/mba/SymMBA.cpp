@@ -1044,6 +1044,8 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   SolveReport WholeRep;
   SymRef WalkRoot = solveWeightedMasks(Ctx, E, Opts, Budget, WholeRep);
   if (WalkRoot == E)
+    WalkRoot = solveProductCofactors(Ctx, E, Opts, Budget, WholeRep);
+  if (WalkRoot == E)
     WalkRoot = solveExpandedProducts(Ctx, E, Opts, Budget, WholeRep);
   SymRef WholeAlternative = WalkRoot;
   if (WalkRoot != E && !Budget.exhausted()) {

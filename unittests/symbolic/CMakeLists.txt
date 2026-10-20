@@ -37,6 +37,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymMBAMultiCarrierTests.cpp
   SymMBAQuadraticTests.cpp
   SymMBACubicTests.cpp
+  SymMBAHigherProductTests.cpp
   SymMBAComplementBoundaryTests.cpp
   SymMBAConstantRegionTests.cpp
   SymMBAMeasureTests.cpp
@@ -101,6 +102,7 @@ add_neverd_unittest(NeverDSymMBAWeightedMaskTests
 add_neverd_unittest(NeverDSymMBAQuadraticTests
   SymMBAQuadraticTests.cpp
   SymMBACubicTests.cpp
+  SymMBAHigherProductTests.cpp
   LINK_COMPONENTS Symbolic Solver
 )
 

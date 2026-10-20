@@ -134,7 +134,7 @@ def partitioned_elf(mixed=False):
     return elf(code)
 
 
-def cubic_elf():
+def cubic_elf(degree=3):
     # Eight products of separately partitioned A=x^y, B=y|z and C=x|z.
     # Every original instruction remains in the fixture; no host optimizer
     # can fold the expansion before NeverD sees it. Keep a high-bit remainder.
@@ -150,7 +150,14 @@ def cubic_elf():
                 code += bytes.fromhex("450fafd3 89f9 09d1")
                 code += bytes.fromhex(
                     "4189f3 41f7d3 4421d9" if invert_c else "21f1")
-                code += bytes.fromhex("440fafd1 4401d0")
+                code += bytes.fromhex("440fafd1")
+                for factor in (
+                    "4189fb 4121f3",  # r11d = x & y
+                    "4189fb 4131d3",  # r11d = x ^ z
+                    "4189f3 4131d3",  # r11d = y ^ z
+                )[:degree - 3]:
+                    code += bytes.fromhex(factor + " 450fafd3")
+                code += bytes.fromhex("4401d0")
     code += bytes.fromhex(
         "6bc025 89f9 31f1 01c8 89f9 21f1 d1e1 01c8 "
         "89f9 81e100000080 01c8 c3")
@@ -245,6 +252,9 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             assert "&" not in text and text.count("^") <= 1, text
         elif kind == "cubic":
             assert text.count("&") <= 1 and text.count("^") <= 1, text
+        elif kind in ("quartic", "sextic"):
+            assert text.count("&") <= 2, text
+            assert text.count("^") <= (1 if kind == "quartic" else 3), text
         else:
             assert ">>" not in text, text
 
@@ -267,7 +277,8 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                         assert "|" in ordinary, ordinary
                     elif kind in ("weighted", "bitwise", "interleaved"):
                         assert ordinary.count("&") >= 7, ordinary
-                    elif kind in ("partitioned", "mixed", "cubic"):
+                    elif kind in ("partitioned", "mixed", "cubic", "quartic",
+                                  "sextic"):
                         assert ordinary.count("&") >= 4, ordinary
                     else:
                         assert ">>" in ordinary, ordinary
@@ -324,6 +335,11 @@ if __name__ == "__main__":
              "182U*(x^y)*(y|z)+37U*x*y*z+x+y"),
             ("cubic", cubic_elf(),
              "37U*(x^y)*(y|z)*(x|z)+x+y+(x&0x80000000U)"),
+            ("quartic", cubic_elf(degree=4),
+             "37U*(x^y)*(y|z)*(x|z)*(x&y)+x+y+(x&0x80000000U)"),
+            ("sextic", cubic_elf(degree=6),
+             "37U*(x^y)*(y|z)*(x|z)*(x&y)*(x^z)*(y^z)"
+             "+x+y+(x&0x80000000U)"),
         ):
             run_fixture(options.worker, options.cli, options.compiler, kind,
                         image, expected)
