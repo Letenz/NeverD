@@ -743,6 +743,140 @@ TEST(RegistrationTryLevel, GuardsOnlyTheBlocksTheTryLevelIsCurrentIn) {
   EXPECT_TRUE(edgesAt(Func, After).empty());
 }
 
+TEST(RegistrationTryLevel, RegisterZeroStoresUseTheDecodedReachingValue) {
+  for (uint8_t Register : {0, 1, 2, 3, 6, 7})
+    for (uint8_t Xor : {0x31, 0x33})
+      for (bool WideDisplacement : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << unsigned(Register) << " " << unsigned(Xor) << " "
+                     << WideDisplacement);
+        ImageBuilder B;
+        B.addScope(-1, kText + 0x80, kText + 0x90);
+        B.endScopes();
+        emitInstall(B.Text, -1, kRData);
+        B.Text.insert(B.Text.end(),
+                      {Xor, uint8_t(0xc0 | (Register << 3) | Register)});
+        const va_t Store = B.textVA();
+        B.Text.insert(B.Text.end(),
+                      {0x89, uint8_t((WideDisplacement ? 0x85 : 0x45) |
+                                     (Register << 3))});
+        if (WideDisplacement)
+          emit32(B.Text, uint32_t(-4));
+        else
+          B.Text.push_back(0xfc);
+        const va_t Guarded = B.textVA();
+        B.Text.push_back(0x90);
+        emitFrameStore(B.Text, -4, -1);
+        const va_t After = B.textVA();
+        B.Text.push_back(0xc3);
+        B.Text.resize(0x80, 0xcc);
+        B.addStub();
+        B.Text.resize(0x90, 0xcc);
+        B.addStub();
+        auto Image = B.build({{"guarded", kText}});
+        const auto *Chain = chainAt(Image, kText);
+        ASSERT_NE(Chain, nullptr);
+        ASSERT_EQ(Chain->TryLevelStores.size(), 2u);
+        const auto &Observed = Chain->TryLevelStores.front();
+        EXPECT_EQ(Observed.StoreVA, Store);
+        EXPECT_EQ(Observed.EndVA, Guarded);
+        EXPECT_EQ(Observed.Level, 0);
+        EXPECT_EQ(Observed.Width, 4u);
+        const auto Function = liftEntry(Image, kText);
+        ASSERT_TRUE(Function.hasCompleteLiftCoverage());
+        EXPECT_TRUE(edgesAt(Function, Store).empty());
+        EXPECT_EQ(
+            edgesAt(Function, Guarded),
+            (std::vector<std::string>{"seh-filter@128", "seh-handler@144"}));
+        EXPECT_TRUE(edgesAt(Function, After).empty());
+      }
+}
+
+TEST(RegistrationTryLevel, RegisterStoreObservationsRequireAnAdjacentClear) {
+  const std::vector<std::vector<uint8_t>> Candidates = {
+      {0x33, 0xc0, 0x89, 0x7d, 0xfc},       // different source register
+      {0x66, 0x33, 0xff, 0x89, 0x7d, 0xfc}, // only DI is cleared
+      {0x33, 0xff, 0x47, 0x89, 0x7d, 0xfc}, // intervening increment
+      {0x33, 0xf8, 0x89, 0x7d, 0xfc},       // not a self-XOR
+      {0x33, 0xff, 0x89, 0x7e, 0xfc},       // different memory base
+      {0x33, 0xff, 0x88, 0x7d, 0xfc},       // byte store
+      {0x33, 0xff, 0x66, 0x89, 0x7d, 0xfc}, // word store
+      {0x33, 0xe4, 0x89, 0x65, 0xfc},       // destroys the stack pointer
+      {0x33, 0xed, 0x89, 0x6d, 0xfc},       // destroys the frame base
+      {0x89, 0x7d, 0xfc},                   // no observed clear
+  };
+  for (size_t I = 0; I < Candidates.size(); ++I) {
+    SCOPED_TRACE(I);
+    ImageBuilder B;
+    B.addScope(-1, kText + 0x80, kText + 0x90);
+    B.endScopes();
+    emitInstall(B.Text, -1, kRData);
+    B.Text.insert(B.Text.end(), Candidates[I].begin(), Candidates[I].end());
+    B.Text.push_back(0xc3);
+    B.Text.resize(0x80, 0xcc);
+    B.addStub();
+    B.Text.resize(0x90, 0xcc);
+    B.addStub();
+    const auto Image = B.build({{"guarded", kText}});
+    const auto *Chain = chainAt(Image, kText);
+    ASSERT_NE(Chain, nullptr);
+    EXPECT_TRUE(Chain->TryLevelStores.empty());
+  }
+}
+
+TEST(RegistrationTryLevel, RegisterZeroHintsCannotAuthorizeUnprovenStates) {
+  for (bool InteriorInstruction : {false, true}) {
+    SCOPED_TRACE(InteriorInstruction);
+    ImageBuilder B;
+    B.addScope(-1, kText + 0x80, kText + 0x90);
+    B.endScopes();
+    emitInstall(B.Text, -1, kRData);
+    if (InteriorInstruction)
+      // The apparent XOR and MOV start in the immediate of MOV EAX, imm32.
+      B.Text.push_back(0xb8);
+    else {
+      B.Text.push_back(0xbf); // mov edi, 1
+      emit32(B.Text, 1);
+      B.Text.insert(B.Text.end(), {0x85, 0xc9, 0x74, 0x02});
+      // The conditional branch skips the clear and reaches the same store.
+    }
+    B.Text.insert(B.Text.end(), {0x33, 0xff});
+    const va_t Candidate = B.textVA();
+    B.Text.insert(B.Text.end(), {0x89, 0x7d, 0xfc});
+    const va_t After = B.textVA();
+    B.Text.push_back(0x90);
+    emitFrameStore(B.Text, -4, -1);
+    B.Text.push_back(0xc3);
+    B.Text.resize(0x80, 0xcc);
+    B.addStub();
+    B.Text.resize(0x90, 0xcc);
+    B.addStub();
+    auto Image = B.build({{"guarded", kText}});
+    const auto *Chain = chainAt(Image, kText);
+    ASSERT_NE(Chain, nullptr);
+    ASSERT_EQ(Chain->TryLevelStores.size(), 2u);
+    EXPECT_EQ(Chain->TryLevelStores.front().StoreVA, Candidate);
+    auto Function = liftEntry(Image, kText);
+    ASSERT_TRUE(Function.hasCompleteLiftCoverage());
+    ASSERT_TRUE(Function.RegistrationStates);
+    EXPECT_FALSE(Function.RegistrationStates->Complete);
+    EXPECT_FALSE(Function.RegistrationStates->SEHStateStoresComplete);
+    // No trusted state-write receipt may arise from the byte observation.
+    for (const auto &Store : Function.RegistrationStates->SEHStateStores)
+      EXPECT_NE(Store.Address, Candidate);
+    const auto *Block = Function.blockFor(After);
+    ASSERT_NE(Block, nullptr);
+    const auto State =
+        std::find_if(Function.RegistrationStates->Blocks.begin(),
+                     Function.RegistrationStates->Blocks.end(),
+                     [&](const auto &S) { return S.BlockId == Block->Id; });
+    ASSERT_NE(State, Function.RegistrationStates->Blocks.end());
+    // Conservative dispatch edges remain inspectable, but cannot claim a
+    // proven current level or authorize native exception rewriting.
+    EXPECT_TRUE(State->Unknown);
+  }
+}
+
 TEST(RegistrationTryLevel, ScopePointerRelocationsKeepTheirDispatchRole) {
   ImageBuilder B;
   B.addScope(-1, kText + 0x40, kText + 0x50);
