@@ -4963,10 +4963,9 @@ bool CFGBuilder::tableIndexMatchesValueAtUse(const NdVar &Candidate,
   return !Results.empty() && Results.front();
 }
 
-std::optional<bool>
-CFGBuilder::queryPEImageBaseAtUse(const BinaryImage &Img,
-                                  const JumpTableValueOccurrence &Use,
-                                  size_t *CandidateEvidenceBudget) const {
+std::optional<bool> CFGBuilder::queryPEImageBaseAtUse(
+    const BinaryImage &Img, const JumpTableValueOccurrence &Use,
+    size_t *CandidateEvidenceBudget, ResolverQueryScope *ReadOnlyScope) const {
   if (Img.IsRelocatable || !Img.isCOFF() || Img.Arch != Arch::X64 ||
       Img.getPointerSize() != 8)
     return false;
@@ -4989,7 +4988,7 @@ CFGBuilder::queryPEImageBaseAtUse(const BinaryImage &Img,
   const std::vector<bool> Matches = tableValuesMatchAtUses(
       {Query}, &Complete, nullptr, InvalidVA, nullptr, CandidateEvidenceBudget,
       limits::kMaxJumpTableRoleMatchEvidenceWork, nullptr, nullptr,
-      limits::kMaxJumpTableExpandedResolverDepth);
+      limits::kMaxJumpTableExpandedResolverDepth, nullptr, true, ReadOnlyScope);
   if (!Complete || Matches.size() != 1)
     return std::nullopt;
   return Matches.front();
@@ -4997,7 +4996,8 @@ CFGBuilder::queryPEImageBaseAtUse(const BinaryImage &Img,
 
 std::optional<va_t> CFGBuilder::queryConstantAddressAtUse(
     const BinaryImage &Img, const JumpTableValueOccurrence &Use,
-    size_t *CandidateEvidenceBudget, bool &AnalysisComplete) const {
+    size_t *CandidateEvidenceBudget, bool &AnalysisComplete,
+    ResolverQueryScope *ReadOnlyScope) const {
   AnalysisComplete = false;
   if (!CandidateEvidenceBudget || CurrentImg != &Img ||
       !consumeResolverGraphWork(CandidateEvidenceBudget, 48))
@@ -5018,7 +5018,7 @@ std::optional<va_t> CFGBuilder::queryConstantAddressAtUse(
       {Query}, &AnalysisComplete, nullptr, InvalidVA, nullptr,
       CandidateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
       nullptr, nullptr, limits::kMaxJumpTableExpandedResolverDepth, nullptr,
-      true, nullptr, &Addresses);
+      true, ReadOnlyScope, &Addresses);
   if (Results.size() != 1 || Addresses.size() != 1)
     AnalysisComplete = false;
   if (!AnalysisComplete || !Results.front())
@@ -5030,9 +5030,9 @@ std::optional<va_t> CFGBuilder::foldTableAddressAtUse(
     const BinaryImage &Img, const InsnRecord &Rec,
     const JumpTableValueOccurrence &Use, uint64_t LegacyReg, va_t LegacyCutoff,
     size_t *CandidateEvidenceBudget, bool &AnalysisComplete,
-    bool AllowUnmappedCOFFImageBase) const {
+    bool AllowUnmappedCOFFImageBase, ResolverQueryScope *ReadOnlyScope) const {
   auto Address = queryConstantAddressAtUse(Img, Use, CandidateEvidenceBudget,
-                                           AnalysisComplete);
+                                           AnalysisComplete, ReadOnlyScope);
   if (Address || !AnalysisComplete)
     return Address;
   if (LegacyReg == InvalidVA)

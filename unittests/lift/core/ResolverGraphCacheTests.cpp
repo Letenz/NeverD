@@ -1361,6 +1361,9 @@ struct ResolverGraphCacheTestAccess {
   static void addAddressUseRoot(CFGBuilder &B) {
     B.PersistentCFGRoots.insert(0x103);
   }
+  static void setAddressUseRoot(CFGBuilder &B) {
+    B.ActiveJumpTableProofRoots = std::set<va_t>{0x103};
+  }
   static std::vector<Query>
   seedAddressCycle(CFGBuilder &B, const BinaryImage &Image, bool Changes) {
     auto Queries = seedPendingCycle(B, Image, false);
@@ -1395,9 +1398,27 @@ struct ResolverGraphCacheTestAccess {
     return A;
   }
   static std::optional<bool> peBase(CFGBuilder &B, const BinaryImage &Image,
-                                    size_t &Remaining) {
+                                    size_t &Remaining,
+                                    Scope *ReadOnlyScope = nullptr) {
     return B.queryPEImageBaseAtUse(Image, {NdVar::reg(0, 8), 0x103, 0, false},
-                                   &Remaining);
+                                   &Remaining, ReadOnlyScope);
+  }
+  static Answer addressAtUse(CFGBuilder &B, const BinaryImage &Image,
+                             const Query &Q, Scope *ReadOnlyScope,
+                             size_t Budget = 1000000, bool Fold = false) {
+    Answer A;
+    A.Remaining = Budget;
+    const Occurrence Use{Q.Candidate, Q.UseAddr, Q.UseSeq, false};
+    A.Addresses.push_back(
+        Fold ? B.foldTableAddressAtUse(
+                   Image, B.Insns.at(Q.UseAddr), Use, Q.Candidate.Offset,
+                   Q.UseAddr, &A.Remaining, A.Complete, false, ReadOnlyScope)
+             : B.queryConstantAddressAtUse(Image, Use, &A.Remaining, A.Complete,
+                                           ReadOnlyScope));
+    return A;
+  }
+  static void changeAddressArm(CFGBuilder &B, NdVar Value) {
+    B.Insns.at(0x102).Ops.front().Inputs[0] = Value;
   }
   static void setPEBaseContext(CFGBuilder &B, bool Complete) {
     B.JumpTableProofContextComplete = Complete;
@@ -1499,6 +1520,111 @@ TEST(ResolverConstantAddress, EveryArchitectureAndFormatRequiresOneAddress) {
         }
       }
     }
+}
+
+TEST(ResolverConstantAddress, ScopedDiscoveryPreservesEveryBudgetBoundary) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      auto Image = image();
+      Image.Arch = Target;
+      Image.Format = Format;
+      Image.Bits = Target == Arch::X86 || Target == Arch::ARM ? Bitness::Bits32
+                                                              : Bitness::Bits64;
+      const auto Width = static_cast<uint16_t>(Image.getPointerSize());
+      const auto Expected = NdVar::address(0x4000, Width);
+      for (NdVar Other :
+           {Expected, NdVar::scalar(0x4000, Width), NdVar::reg(24, Width)})
+        for (bool Fold : {false, true}) {
+          SCOPED_TRACE(static_cast<unsigned>(Target));
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(static_cast<unsigned>(Other.Space));
+          SCOPED_TRACE(static_cast<unsigned>(Other.Provenance));
+          SCOPED_TRACE(Fold);
+          CFGBuilder Warm;
+          const auto Q = Access::seedAddressJoin(Warm, Image, Expected, Other);
+          Access::Scope Scope(Warm);
+          const auto Full =
+              Access::addressAtUse(Warm, Image, Q, &Scope, 1000000, Fold);
+          ASSERT_TRUE(Full.Complete);
+          ASSERT_EQ(Full.Addresses,
+                    (std::vector<std::optional<va_t>>{
+                        Other == Expected ? std::optional<va_t>(0x4000)
+                                          : std::nullopt}));
+          const auto State = Scope.State;
+          ASSERT_TRUE(State);
+          const size_t Work = 1000000 - Full.Remaining;
+          ASSERT_LT(Work, 50000u);
+          for (size_t Budget = 0; Budget <= Work + 1; ++Budget) {
+            SCOPED_TRACE(Budget);
+            CFGBuilder Cold;
+            Access::seedAddressJoin(Cold, Image, Expected, Other);
+            EXPECT_EQ(
+                Access::addressAtUse(Warm, Image, Q, &Scope, Budget, Fold),
+                Access::addressAtUse(Cold, Image, Q, nullptr, Budget, Fold));
+          }
+          EXPECT_EQ(Scope.State, State);
+        }
+    }
+}
+
+TEST(ResolverConstantAddress, ScopedDiscoveryRechecksRootsAndNewInvocations) {
+  auto Image = image();
+  Image.Bits = Bitness::Bits64;
+  CFGBuilder B;
+  const auto Q = Access::seedAddressJoin(B, Image, NdVar::address(0x4000, 8),
+                                         NdVar::address(0x4000, 8));
+  {
+    Access::Scope Scope(B);
+    ASSERT_EQ(Access::addressAtUse(B, Image, Q, &Scope).Addresses,
+              (std::vector<std::optional<va_t>>{0x4000}));
+    Access::setAddressUseRoot(B);
+    const auto Changed = Access::addressAtUse(B, Image, Q, &Scope);
+    EXPECT_EQ(Changed.Addresses,
+              (std::vector<std::optional<va_t>>{std::nullopt}));
+    Access::clear(B);
+    EXPECT_EQ(Changed, Access::addressAtUse(B, Image, Q, nullptr));
+  }
+  Access::resetRoot(B);
+  // Every invocation must authenticate equal-sized instruction changes before
+  // a local scope can reuse the graph, including restoring an earlier value.
+  for (NdVar Value : {NdVar::address(0x4010, 8), NdVar::scalar(0x4000, 8),
+                      NdVar::address(0x4000, 8)}) {
+    Access::changeAddressArm(B, Value);
+    Access::Scope Scope(B);
+    const auto Result = Access::addressAtUse(B, Image, Q, &Scope);
+    EXPECT_EQ(Result.Addresses, (std::vector<std::optional<va_t>>{
+                                    Value == NdVar::address(0x4000, 8)
+                                        ? std::optional<va_t>(0x4000)
+                                        : std::nullopt}));
+    Access::clear(B);
+    EXPECT_EQ(Result, Access::addressAtUse(B, Image, Q, nullptr));
+  }
+}
+
+TEST(ResolverPEImageBase, ScopedDiscoveryPreservesEveryBudgetBoundary) {
+  auto Image = image();
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::COFF;
+  Image.Base = 0x140000000;
+  CFGBuilder Warm;
+  Access::seedPEBase(Warm, Image);
+  Access::Scope Scope(Warm);
+  size_t Remaining = 1000000;
+  ASSERT_EQ(Access::peBase(Warm, Image, Remaining, &Scope), true);
+  const auto State = Scope.State;
+  ASSERT_TRUE(State);
+  const size_t Work = 1000000 - Remaining;
+  for (size_t Budget = 0; Budget <= Work + 1; ++Budget) {
+    SCOPED_TRACE(Budget);
+    CFGBuilder Cold;
+    Access::seedPEBase(Cold, Image);
+    size_t WarmBudget = Budget, ColdBudget = Budget;
+    EXPECT_EQ(Access::peBase(Warm, Image, WarmBudget, &Scope),
+              Access::peBase(Cold, Image, ColdBudget));
+    EXPECT_EQ(WarmBudget, ColdBudget);
+  }
+  EXPECT_EQ(Scope.State, State);
 }
 
 TEST(ResolverConstantAddress, WarmAndColdBudgetsAndGraphChangesAgree) {

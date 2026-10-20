@@ -97,7 +97,7 @@ bool CFGBuilder::decomposeIndexTableLoadAddr(
     va_t *IndexUseAddr, int *IndexUseSeq,
     std::function<bool(size_t)> ConsumeWork,
     JumpTableDisplacedAddressRole *Displaced, size_t *CandidateEvidenceBudget,
-    bool *BaseAnalysisComplete) const {
+    bool *BaseAnalysisComplete, ResolverQueryScope *ReadOnlyScope) const {
   if (BaseAnalysisComplete)
     *BaseAnalysisComplete = true;
   if (LoadIdx <= 0 || LoadIdx >= static_cast<int>(Ops.size()))
@@ -170,7 +170,8 @@ bool CFGBuilder::decomposeIndexTableLoadAddr(
       auto Folded = foldTableAddressAtUse(
           Img, Rec, {BaseV, Ops[AddIdx].Addr, Ops[AddIdx].Seq, false}, BaseReg,
           LoadAddr, CandidateEvidenceBudget, Complete,
-          /*AllowUnmappedCOFFImageBase=*/Disp != 0 && Img.isCOFF());
+          /*AllowUnmappedCOFFImageBase=*/Disp != 0 && Img.isCOFF(),
+          ReadOnlyScope);
       if (!Complete) {
         if (BaseAnalysisComplete)
           *BaseAnalysisComplete = false;
@@ -253,7 +254,7 @@ bool CFGBuilder::decomposeIndexTableLoadAddr(
 bool CFGBuilder::tryTwoLevelIndexTable(const BinaryImage &Img,
                                        const InsnRecord &Rec,
                                        JumpTableInfo &Info,
-                                       size_t *CandidateEvidenceBudget) {
+                                       size_t *CandidateEvidenceBudget) const {
   if (!CurrentImg)
     return false;
 
@@ -1185,11 +1186,12 @@ bool CFGBuilder::tryTwoLevelIndexTable(const BinaryImage &Img,
                         {Img.Symbols.size(), 1}}))
     return false;
   bool BaseAnalysisComplete = true;
+  ResolverQueryScope AddressScope(*this);
   const bool Decomposed = decomposeIndexTableLoadAddr(
       Img, Rec, Ops, IdxLoadIdx, W1, IdxTab, SwitchIdxReg, IdxScale,
       &SwitchIndexValue, &SwitchIndexUseAddr, &SwitchIndexUseSeq,
       [&](size_t Amount) { return consumeEvidence(Amount); }, &IdxDisplaced,
-      CandidateEvidenceBudget, &BaseAnalysisComplete);
+      CandidateEvidenceBudget, &BaseAnalysisComplete, &AddressScope);
   if (!BaseAnalysisComplete) {
     Info.IncompleteGuardDomain = true;
     return false;
@@ -1206,7 +1208,8 @@ bool CFGBuilder::tryTwoLevelIndexTable(const BinaryImage &Img,
     auto Folded = foldTableAddressAtUse(
         Img, Rec, JmpRuntimeBase.Use, JmpBaseReg, FoldAt,
         CandidateEvidenceBudget, Complete,
-        /*AllowUnmappedCOFFImageBase=*/JmpDisp != 0 && Img.isCOFF());
+        /*AllowUnmappedCOFFImageBase=*/JmpDisp != 0 && Img.isCOFF(),
+        &AddressScope);
     if (!Complete) {
       Info.IncompleteGuardDomain = true;
       return false;
@@ -1290,7 +1293,7 @@ bool CFGBuilder::tryTwoLevelIndexTable(const BinaryImage &Img,
         const auto ImageBase = queryPEImageBaseAtUse(
             Img,
             {Ops[Sum].Inputs[1 - Which], Ops[Sum].Addr, Ops[Sum].Seq, false},
-            CandidateEvidenceBudget);
+            CandidateEvidenceBudget, &AddressScope);
         if (!ImageBase) {
           Info.IncompleteGuardDomain = true;
           return false;

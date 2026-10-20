@@ -2810,14 +2810,18 @@ exact instruction facts, LowOps, effective edges, block starts, proof roots,
 conditional roots and storage-owner inputs. Hits pay the complete original
 graph-construction charge. The graph may also retain up to 64 query outcomes
 under a separate 8 MiB retained-payload allowance. Within one read-only target
-role, load-address role or mask-domain invocation, a local scope can reuse its
-validated graph without recopying the instruction snapshot. It is bound to its
-builder and cannot cross instruction, block or storage-owner mutations.
+role, load-address role, address-discovery or mask-domain invocation, a local
+scope can reuse its validated graph without recopying the instruction snapshot.
+It is bound to its builder and cannot cross instruction, block or storage-owner
+mutations.
 Each query still compares roots and owned effective edge overrides, including
 temporary and empty overrides, and pays the original snapshot and graph work.
 One scope retains one bounded graph and at most 64 KiB of override keys;
 oversized keys keep the ordinary validation path. Nested queries own separate
 leases, and a new invocation validates its graph in full.
+Address discovery shares this scope across base candidates, relative anchors
+and both levels of a composite table. Its recognizers are const; each new
+recognizer invocation starts a fresh scope before any proposal is published.
 Exact ordered query fields, proof limits, output shape, function context and
 both relocation occurrence inventories bind each retained value result.
 Hits pay the complete cold value

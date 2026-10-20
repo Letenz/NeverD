@@ -3138,6 +3138,10 @@ LLVM-to-C through the CLI, without depending on a platform linker.
 and three formats, equal and conflicting predecessor values, scalar/fragment
 collisions, uninitialized arms, loop backedges, cache output identity, every
 small-fixture budget boundary, changed roots and shared failure clearing.
+Scoped address discovery and its legacy-fold wrapper must preserve every
+budget boundary, completion state and address across all four architectures
+and three formats. New scopes revalidate changed instructions; roots are
+checked on each query. The PE image-base helper has the same budget checks.
 `Native/JumpTableAddress.*` assembles
 x86, x64, AArch64 and Thumb ELF objects and x64/AArch64 Mach-O objects. It checks
 0/32/160 unrelated blocks, mapped decoys, agreeing joins, clobbers, calls and

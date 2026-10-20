@@ -59,7 +59,8 @@ static uint64_t truncateToByteWidth(uint64_t Value, uint16_t Bytes) {
 bool CFGBuilder::tryTwoTableSelect(const BinaryImage &Img,
                                    const InsnRecord &Rec, JumpTableInfo &Info,
                                    size_t *CandidateEvidenceBudget,
-                                   bool *AnalysisComplete) {
+                                   bool *AnalysisComplete) const {
+  ResolverQueryScope AddressScope(*this);
   if (AnalysisComplete)
     *AnalysisComplete = false;
   bool Complete = true;
@@ -435,9 +436,9 @@ bool CFGBuilder::tryTwoTableSelect(const BinaryImage &Img,
     if (From + 1 >= 0 && From + 1 < static_cast<int>(Ops.size())) {
       const auto &Use = Ops[From + 1];
       bool AddressComplete = false;
-      auto Address =
-          queryConstantAddressAtUse(Img, {V, Use.Addr, Use.Seq, false},
-                                    CandidateEvidenceBudget, AddressComplete);
+      auto Address = queryConstantAddressAtUse(
+          Img, {V, Use.Addr, Use.Seq, false}, CandidateEvidenceBudget,
+          AddressComplete, &AddressScope);
       if (!AddressComplete) {
         Complete = false;
         return std::nullopt;
@@ -1233,6 +1234,7 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
     JumpTableExactConsumerGroup *ExactConsumerGroup, bool *ShapeClaimed,
     size_t *EvidenceBudget, bool *AnalysisComplete, bool ScanExactGroup,
     bool RequireCurrentBranchLoad, bool RequireExactGroupAnchor) const {
+  ResolverQueryScope AddressScope(*this);
   if (AnalysisComplete)
     *AnalysisComplete = false;
   if (ShapeClaimed)
@@ -2378,7 +2380,8 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
           auto F = foldTableAddressAtUse(
               Img, Rec,
               {BaseV, Ops[AddressAddIdx].Addr, Ops[AddressAddIdx].Seq, false},
-              BReg, Ops[AddressAddIdx].Addr, EvidenceBudget, AddressComplete);
+              BReg, Ops[AddressAddIdx].Addr, EvidenceBudget, AddressComplete,
+              /*AllowUnmappedCOFFImageBase=*/false, &AddressScope);
           if (!AddressComplete || BudgetExhausted)
             return false;
           if (F && Img.getSegmentFor(*F))

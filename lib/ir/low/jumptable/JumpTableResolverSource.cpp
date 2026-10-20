@@ -113,7 +113,7 @@ bool CFGBuilder::detectUnscaledRelocTableLoad(
     uint64_t &IndexReg, uint16_t &LoadWidth, uint64_t &Disp, va_t &TableAddr,
     NdVar *LoadOutput, va_t *LoadAddr, int *LoadSeq, NdVar *IndexValue,
     va_t *IndexUseAddr, int *IndexUseSeq, size_t *CandidateEvidenceBudget,
-    bool *AnalysisComplete) const {
+    bool *AnalysisComplete, ResolverQueryScope *ReadOnlyScope) const {
   if (AnalysisComplete)
     *AnalysisComplete = true;
   // Flatten the whole function prefix up to the dispatch so the pre-scaling
@@ -218,7 +218,8 @@ bool CFGBuilder::detectUnscaledRelocTableLoad(
         bool Complete = false;
         auto BaseAddrOpt = foldTableAddressAtUse(
             Img, Rec, {Sum.Inputs[1 - Side], Sum.Addr, Sum.Seq, false}, Base,
-            LoadInsnAddr, CandidateEvidenceBudget, Complete);
+            LoadInsnAddr, CandidateEvidenceBudget, Complete,
+            /*AllowUnmappedCOFFImageBase=*/false, ReadOnlyScope);
         if (!Complete) {
           if (AnalysisComplete)
             *AnalysisComplete = false;
@@ -338,10 +339,10 @@ static bool lastWriteReloadsFrameCell(const std::vector<LowOp> &Ops, int Before,
   return false;
 }
 
-bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
-                                            const InsnRecord &Rec,
-                                            JumpTableInfo &Info,
-                                            size_t *CandidateEvidenceBudget) {
+bool CFGBuilder::tryCrossInstrRelativeTable(
+    const BinaryImage &Img, const InsnRecord &Rec, JumpTableInfo &Info,
+    size_t *CandidateEvidenceBudget) const {
+  ResolverQueryScope AddressScope(*this);
   // A memory-indirect jump (`jmp *(base,idx,8)`, the computed-goto / threaded
   // dispatch shape) lifts to a LOAD feeding an INDIR_BR whose input is a
   // *temp*; a register-indirect jump (`jmp *rax`) feeds a register.  The table
@@ -501,7 +502,7 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
         Img, Rec, BaseReg, IndexReg, LoadWidth, Disp, UnscaledTableAddr,
         &UnscaledLoadOutput, &UnscaledLoadAddr, &UnscaledLoadSeq,
         &IndexValueAtUse, &IndexUseAddr, &IndexUseSeq, CandidateEvidenceBudget,
-        &UnscaledComplete);
+        &UnscaledComplete, &AddressScope);
   if (!UnscaledComplete) {
     Info.IncompleteGuardDomain = true;
     return false;
@@ -780,7 +781,8 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
       auto RelBaseOpt = foldTableAddressAtUse(
           Img, Rec, FrameRuntimeBase.Use, BaseReg, FoldAt,
           CandidateEvidenceBudget, BaseComplete,
-          /*AllowUnmappedCOFFImageBase=*/Disp != 0 && Img.isCOFF());
+          /*AllowUnmappedCOFFImageBase=*/Disp != 0 && Img.isCOFF(),
+          &AddressScope);
       if (!BaseComplete) {
         Info.IncompleteGuardDomain = true;
         return false;
@@ -1280,7 +1282,7 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
         bool AddressComplete = false;
         const auto Address = queryConstantAddressAtUse(
             Img, {V, BlockOps[AddD].Addr, BlockOps[AddD].Seq, false},
-            CandidateEvidenceBudget, AddressComplete);
+            CandidateEvidenceBudget, AddressComplete, &AddressScope);
         if (!AddressComplete) {
           Info.IncompleteGuardDomain = true;
           return std::nullopt;
