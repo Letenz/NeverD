@@ -174,6 +174,19 @@ X86CIntrinsicFeatures collectX86CIntrinsicFeatures(const HighFunc &Func) {
     default:
       break;
     }
+    // A VEX.256 or EVEX.512 form of an SSE operation takes the features its
+    // own intrinsic's header declares it with (pshufb's _mm256_shuffle_epi8
+    // AVX2's), which GFNI's and vdbpsadbw's above choose by width already.
+    if (Expr.IntrinsicId != I::Gf2p8MulB &&
+        Expr.IntrinsicId != I::Gf2p8AffineQb &&
+        Expr.IntrinsicId != I::Gf2p8AffineInvQb &&
+        Expr.IntrinsicId != I::Vdbpsadbw && Expr.Type &&
+        Expr.Type->Kind == NdTypeKind::Int)
+      if (const auto Widened =
+              x86WidenedIntrinsic(Expr.IntrinsicId, Expr.Type->Size))
+        for (llvm::StringRef Feature :
+             llvm::split(llvm::StringRef(Widened->Features), ','))
+          Features.Named.insert(Feature.str());
     for (const ExprPtr &Operand : Expr.Operands)
       if (Operand)
         Visit(*Operand);

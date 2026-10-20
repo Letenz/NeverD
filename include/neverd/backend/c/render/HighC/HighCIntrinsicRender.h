@@ -144,6 +144,17 @@ std::string renderX86SaturatingLane(
 /// may proceed. renderX86IntrinsicCall uses this same policy.
 const char *x86HighCIntrinsicFatalReason(Intrinsic Id);
 
+/// The VEX.256 or EVEX.512 form of the SSE intrinsic \p Id that a register
+/// of \p Bytes carries, as renderX86VectorIntrinsic calls it: the C
+/// intrinsic and the target features Clang's header declares it with.  None
+/// for another width, or an operation no SSE intrinsic spells.
+struct X86WidenedIntrinsic {
+  std::string Name;
+  std::string Features;
+};
+std::optional<X86WidenedIntrinsic> x86WidenedIntrinsic(Intrinsic Id,
+                                                       uint16_t Bytes);
+
 /// Whether a flat x86 memory intrinsic renders through an <immintrin.h>
 /// intrinsic rather than inline assembly.
 bool x86MemoryIntrinsicUsesCHeader(Intrinsic Id);
