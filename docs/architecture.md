@@ -4,6 +4,14 @@
 
 # NeverD Architecture
 
+PE GuardCFFunctionTable parsing belongs to the COFF loader. Its complete,
+immutable table supplies address-taken function identities, without asserting
+an ABI, a supported body or runtime CFG admission. The low-level detector owns
+bounded proofs for relocation-backed entries without such metadata. Native
+LLVM resolution consumes those same proofs lazily per image and emitter;
+parallel shards do not mutate the image's verified-entry set. Neither an
+executable section nor a decodable prefix alone establishes a callable entry.
+
 This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.

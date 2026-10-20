@@ -72,6 +72,7 @@ struct SyscallConvention;
 class DebugContext;
 struct MedDynamicStackLookups;
 class MedLLVMEmitterTestPeer;
+class RelocatedFunctionEntryVerifier;
 class MedLLVMProvenanceTestPeer;
 class LLVMSourceMap;
 
@@ -1573,6 +1574,7 @@ private:
   /// one (`pdata` EndAddress).  Returns a function constant or a GEP past
   /// the last byte; null if the image has no such function identity.
   llvm::Constant *resolveImageFunctionAddress(va_t Address);
+  bool verifyRelocatedImageFunctionEntry(va_t Address);
   /// \p Address inside a function this module only declares, as that
   /// function's address plus the offset; null otherwise.
   llvm::Constant *resolveDeclaredFunctionInterior(va_t Address);
@@ -2310,6 +2312,7 @@ private:
   // One synthesized code-pointer mirror global per data segment base VA (see
   // buildCodePtrSegmentGlobal); reused across every access into that segment.
   std::map<uint64_t, llvm::Constant *> CodePtrTableGlobals;
+  std::shared_ptr<RelocatedFunctionEntryVerifier> RelocatedEntryProofs;
   // Relocation-free intervals used only by finite direct loads/stores. They
   // never enter GlobalDataCache, whose address-valued uses need a whole run.
   std::map<uint64_t, llvm::GlobalVariable *> DirectDataByteGlobals;

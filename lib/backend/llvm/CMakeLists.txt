@@ -107,6 +107,7 @@ add_neverd_component_library(NeverDBackendLLVM
   LINK_COMPONENTS
   LLVMFloatConvertLowering
   IR
+  IRLow
   WindowsEHMetadata
   WindowsRegistrationFrame
 )
