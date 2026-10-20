@@ -2137,6 +2137,80 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
                 tryResolveSelectMergeTable(AddrVar, 0, true, Builder))
           return Pointer;
       }
+      // A pointer the code chooses between a runtime value and a static
+      // object of a mirrored segment (`p = i < n ? &buf[i] : &empty`) is
+      // no table address.  Each mirrored static arm is already the mirror's
+      // own pointer (the Symbolized model), another proved address keeps
+      // its own route, and a runtime arm, one memory holds, a call returns
+      // or the code computes from those, is the program's own value.  The
+      // address stands as the code formed it when no arm carries an image
+      // address the emitter would not rebuild.
+      bool SawMirroredStatic = false;
+      bool SawRuntime = false;
+      unsigned MergeBudget = 256;
+      std::set<std::tuple<int, int, int>> MergeSeen;
+      std::function<bool(const MedVar &, bool)> isRuntimeOrMirrored =
+          [&](const MedVar &V, bool DirectPhiConstant) -> bool {
+        if (!MergeBudget--)
+          return false;
+        if (V.isConst()) {
+          // A table base buried in arithmetic (a narrowing slice, a masked
+          // coincidence) is not the mirror's pointer; only a constant the
+          // code chose directly as an arm is.
+          if (DirectPhiConstant) {
+            const AddressProof Static = proveAddressRole(V, 1, {}, true);
+            if (Static.Role == AddressRole::PointerTable) {
+              if (Static.Model != AddressModel::Symbolized)
+                return false;
+              SawMirroredStatic = true;
+              return true;
+            }
+            // A constant the loader proved an address keeps its own route,
+            // which rebuilds it or refuses.
+            if (isExactAddressProvenance(V.Provenance))
+              return true;
+          }
+          // An unproved constant is a number, unless it lands in the image
+          // as an original address would.
+          return !isExactAddressProvenance(V.Provenance) &&
+                 !Img->getSegmentFor(V.ConstVal);
+        }
+        if (!MergeSeen
+                 .insert(
+                     std::make_tuple(static_cast<int>(V.Kind), V.Id, V.SSAVer))
+                 .second)
+          return true;
+        if (const PhiNode *Phi = lookupPhi(V)) {
+          for (const auto &[Pred, Arg] : Phi->Args)
+            if (!isRuntimeOrMirrored(Arg, Arg.isConst()))
+              return false;
+          return true;
+        }
+        const MedOp *Def = lookupDef(V);
+        if (!Def || Def->Opcode == NdOp::LOAD || Def->Opcode == NdOp::CALL ||
+            Def->Opcode == NdOp::INDIR_CALL) {
+          // A register with no definition in this function (a live-in or an
+          // argument), a loaded word and a call result are the program's own
+          // runtime values.
+          SawRuntime = true;
+          return true;
+        }
+        for (uint8_t I = 0; I < Def->NumInputs; ++I)
+          if (!isRuntimeOrMirrored(Def->Inputs[I], false))
+            return false;
+        return true;
+      };
+      // Only a genuine mix applies: every arm a static image needs no mirror
+      // (every arm the existing proof already decides), and the existing proof
+      // refuses a recurrence whose arms rematerialize different tables.
+      if (isRuntimeOrMirrored(AddrVar, false) && SawMirroredStatic &&
+          SawRuntime)
+        if (llvm::Value *A = getVar(AddrVar, Builder))
+          return A->getType()->isPointerTy()
+                     ? A
+                     : Builder.CreateIntToPtr(
+                           A, llvm::PointerType::getUnqual(*Ctx),
+                           "cptsel.merge");
       if (!FatalDataPointerResolution)
         syncError() << "med_llvm_emitter: ambiguous pointer-table address "
                     << AddrVar.display() << " in " << CurMedFunc->Name

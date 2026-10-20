@@ -8036,6 +8036,14 @@ guess, while a padded start nothing names stays one.
 exact import veneer's code-address constant, as `push offset` does; the
 module names the import rather than refusing that the veneer has no code
 identity.
+`ARuntimeOrStaticPointerReadsThroughTheMirror` reads `p = arg ? arg : &empty`
+with the default in a `.data` that holds a relocated code pointer, the shape
+GOF2's merges take; `AMergeOfMirroredAndReadOnlyStaticsResolvesEach` adds a
+relocated `.rdata` string arm, and both lift without an image address. Without
+the merge rule they refuse as an ambiguous pointer-table address.
+`AMergeWithAnUnprovedImageAddressKeepsItsProof` drops the string's relocation,
+so its number lands in the image unproved: the read keeps the refusal, and
+without that guard it would keep `0x402000` raw.
 `I386CallContract.ABlockPhiIsNoArgumentPastAnEarlierCallInItsBlock` joins a
 callback's address and an import call's leftover in EDX, calls the import
 again in the join block, then a routine reading ECX and EDX: the argument is

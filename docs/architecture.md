@@ -2555,6 +2555,17 @@ optimistic fixed point over copies, extensions, constant additions and PHIs
 from the frame roots, under the walk's edge feasibility, which closes every
 cycle at once. A PHI that settled while an arm stayed unreached has no key.
 
+A pointer the code chooses between a runtime value and a static object of a
+mirrored segment (`p = i < n ? &buf[i] : &empty`) is no table address, so
+the role proof, which merges one role per PHI, refuses it as ambiguous. The
+address then stands as the code formed it when every static arm is either
+the mirror's own pointer (a pointer-table constant of the Symbolized model)
+or an address a relocation proved, which keeps its own route, and every
+other leaf is a runtime value: one memory holds, a call returns, a live-in
+register or argument, or arithmetic on those. A number that lands in the
+image without that proof would stand as an original address, so it keeps
+the refusal.
+
 MedIR binds a switch selector to its dispatch block as well as its machine
 address. CFG products can copy one instruction into distinct SSA lifetimes;
 every path back from a dispatch must reach the same exact operand occurrence
