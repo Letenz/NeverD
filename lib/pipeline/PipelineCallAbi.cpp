@@ -321,7 +321,8 @@ void propagateForwardedCallArities(
     std::map<va_t, std::vector<uint64_t>> &CalleeIntRegs,
     const std::set<va_t> &VectorArgumentCallees,
     const std::map<va_t, PointerVariableCallee> &PointerCallees,
-    const std::set<va_t> &UserPrototypeCallees) {
+    const std::set<va_t> &UserPrototypeCallees,
+    const RelocationSymbolIndex &RelocationSymbols) {
   if (Funcs.empty())
     return;
 
@@ -358,7 +359,7 @@ void propagateForwardedCallArities(
                    &CalleeFPRegs, &CalleeHasSret, &CalleeIsVariadic,
                    &CalleeConsumesVaList, /*FrameLocalLeafCallees=*/nullptr,
                    &CalleeIntRegs, &VectorArgumentCallees, &PointerCallees,
-                   &UserPrototypeCallees);
+                   &UserPrototypeCallees, &RelocationSymbols);
     int MaxRegIdx = -1;
     int MaxIdx = -1;
     std::vector<uint64_t> FPRegs;
@@ -465,6 +466,8 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
   // What a call through each function-pointer variable passes on.
   const std::map<va_t, PointerVariableCallee> PointerCallees =
       collectPointerVariableCallees(Img);
+  // The relocation that names each call's callee, where one does.
+  const RelocationSymbolIndex RelocationSymbols(Img);
   std::vector<MedFunc *> SignatureBodies;
   for (MedFunc &F : Result.MedFuncs)
     SignatureBodies.push_back(&F);
@@ -723,7 +726,8 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
       SignatureBodies, Img.Arch, AllFuncNames, Img, CalleeRegArity,
       CalleeTotalArity, CalleeFPArity, CalleeFPReturnSize, CalleeFPRegs,
       CalleeHasSret, CalleeIsVariadic, CalleeConsumesVaList, CalleeIntRegs,
-      VectorArgumentCallees, PointerCallees, Result.CallUserPrototypes);
+      VectorArgumentCallees, PointerCallees, Result.CallUserPrototypes,
+      RelocationSymbols);
 
   const auto FrameLocalLeafCallees =
       Convention && Convention->TargetSpillsSurviveLeafCalls
@@ -735,7 +739,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                    &CalleeFPRegs, &CalleeHasSret, &CalleeIsVariadic,
                    &CalleeConsumesVaList, &FrameLocalLeafCallees,
                    &CalleeIntRegs, &VectorArgumentCallees, &PointerCallees,
-                   &Result.CallUserPrototypes);
+                   &Result.CallUserPrototypes, &RelocationSymbols);
   };
   for (MedFunc &F : Result.MedFuncs)
     recover(F);
@@ -792,7 +796,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                      &CalleeHasSret, &CalleeIsVariadic, &CalleeConsumesVaList,
                      /*FrameLocalLeafCallees=*/nullptr, &CalleeIntRegs2,
                      &VectorArgumentCallees, &PointerCallees,
-                     &Result.CallUserPrototypes);
+                     &Result.CallUserPrototypes, &RelocationSymbols);
     }
   }
   // An omitted definition cannot give the emitter its parameter count.

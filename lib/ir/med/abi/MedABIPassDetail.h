@@ -268,10 +268,14 @@ std::optional<int64_t> relStackOff(const MedFunc &Func,
 // Argument-register recovery
 //===----------------------------------------------------------------------===//
 
+class RelocationSymbolIndex;
+
 /// Name of the callee reached by the branch relocation at \p InsnAddr (for a
 /// relocatable object whose direct-call target operand is a placeholder), or an
-/// empty string when no such relocation exists.
-std::string relocCalleeName(const BinaryImage &Img, va_t InsnAddr);
+/// empty string when no such relocation exists.  \p Index, when given, indexes
+/// \p Img's relocations.
+std::string relocCalleeName(const BinaryImage &Img, va_t InsnAddr,
+                            const RelocationSymbolIndex *Index = nullptr);
 
 /// The value an argument-register-defining op at index \p J contributes to its
 /// slot, resolving a low-half sub-register sync to the paired full-width write
