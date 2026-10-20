@@ -39,8 +39,7 @@ std::string neverd::sdk::sourceCallId(const SourceCallOccurrenceKey &Site) {
          (Site.StaticTarget ? llvm::utohexstr(*Site.StaticTarget) : "indirect");
 }
 std::string neverd::sdk::sourceCallSnapshot(const LowFunc &Function) {
-  std::string Text;
-  llvm::raw_string_ostream OS(Text);
+  SnapshotStream OS;
   OS << "call-site-v1:" << Function.Entry << ':' << Function.OriginalSize;
   size_t Work = 0;
   auto Variable = [&](const NdVar &V) {
@@ -52,7 +51,7 @@ std::string neverd::sdk::sourceCallSnapshot(const LowFunc &Function) {
     for (auto Successor : Block.Succs)
       OS << ':' << Successor;
     for (const auto &Op : Block.Ops) {
-      if (++Work > 200000 || Text.size() > 16 * 1024 * 1024)
+      if (++Work > 200000 || OS.tell() > 16 * 1024 * 1024)
         return {};
       OS << "O" << unsigned(Op.Opcode) << ':' << Op.Addr << ':' << Op.Seq << ':'
          << unsigned(Op.MemoryOrdering) << ':'
@@ -62,7 +61,7 @@ std::string neverd::sdk::sourceCallSnapshot(const LowFunc &Function) {
         Variable(Op.Inputs[I]);
     }
   }
-  return sourceVariableSnapshot(Text);
+  return OS.snapshot();
 }
 
 std::optional<SourceCallTypeHint>

@@ -32,6 +32,11 @@ std::string neverd::sdk::sourceVariableSnapshot(llvm::StringRef IR) {
   return "source-variable-v1:" + llvm::toHex(Hash, true);
 }
 
+std::string neverd::sdk::SnapshotStream::snapshot() {
+  flush();
+  return "source-variable-v1:" + llvm::toHex(Hash.final(), true);
+}
+
 std::string
 neverd::sdk::editedVariableSnapshot(llvm::StringRef Before,
                                     const SourceVariableEdit &Edit) {
@@ -45,8 +50,7 @@ std::string neverd::sdk::highVariableSnapshot(const HighFunc &Function,
                                               bool Symbolic) {
   // Serialize the unedited value graph, once per node. Printed HighIR can
   // duplicate shared expressions exponentially and hides coalesced SSA keys.
-  std::string Text;
-  llvm::raw_string_ostream OS(Text);
+  SnapshotStream OS;
   OS << Function.Entry << ':' << Function.OriginalSize << ':' << Symbolic;
   std::map<const HighExpr *, unsigned> Seen;
   bool Complete = true;
@@ -64,7 +68,7 @@ std::string neverd::sdk::highVariableSnapshot(const HighFunc &Function,
     OS << '#' << It->second;
     if (!Inserted)
       return;
-    if (Seen.size() > 100000 || Text.size() > 16 * 1024 * 1024) {
+    if (Seen.size() > 100000 || OS.tell() > 16 * 1024 * 1024) {
       Complete = false;
       return;
     }
@@ -98,7 +102,7 @@ std::string neverd::sdk::highVariableSnapshot(const HighFunc &Function,
       OS << "case:" << Case.Value << ':' << Case.Body.size();
     forEachExpr(Stmt, Visit);
   });
-  return Complete ? sourceVariableSnapshot(Text) : std::string();
+  return Complete ? OS.snapshot() : std::string();
 }
 
 TypeRef neverd::sdk::parseSourceVariableType(Session &S, llvm::StringRef Text,
