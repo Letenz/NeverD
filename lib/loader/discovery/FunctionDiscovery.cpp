@@ -547,13 +547,13 @@ void scanDataFuncPointers(BinaryImage &Img) {
   if (Img.Arch == Arch::X86 || Img.Arch == Arch::X64)
     Literals.emplace(Img);
 
-  // A relocated pointer a PE keeps in its read-only data, a vtable's slot or
-  // a callback table's, names a function: MSVC enters the cold chunk of a
-  // function, which the same int3 padding separates, only by a jump.  It
-  // confirms the start the padding scan only guessed.
+  // Only a relocated slot confirms the pointer interpretation of its bytes.
+  // An untyped integer or string can coincide with a prologue-looking address
+  // inside another instruction. Keep that candidate as a boundary guess so
+  // the same decoded ownership proof used for padding can disprove it.
   // Indices: the scan below appends symbols.
   std::map<va_t, size_t> Guesses;
-  if (Img.Format == BinaryFormat::COFF && !Img.CodePtrRelocSlots.empty())
+  if (!Img.CodePtrRelocSlots.empty())
     for (size_t I = 0; I < Img.Symbols.size(); ++I)
       if (Img.Symbols[I].IsFunc && Img.Symbols[I].IsBoundaryGuess)
         Guesses.emplace(Img.Symbols[I].Addr, I);
@@ -608,7 +608,11 @@ void scanDataFuncPointers(BinaryImage &Img) {
         continue;
       if (!Existing.insert(Val).second)
         continue;
-      Img.Symbols.push_back(Symbol::makeFunc(Val));
+      auto Candidate = Symbol::makeFunc(Val);
+      Candidate.IsBoundaryGuess = !Img.CodePtrRelocSlots.count(Cur);
+      if (Candidate.IsBoundaryGuess && !Img.CodePtrRelocSlots.empty())
+        Guesses.emplace(Val, Img.Symbols.size());
+      Img.Symbols.push_back(std::move(Candidate));
       ++Added;
     }
   };

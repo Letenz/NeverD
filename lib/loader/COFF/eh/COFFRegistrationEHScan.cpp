@@ -394,9 +394,13 @@ std::vector<InstallSite> findInstallSites(const BinaryImage &Img,
 
       // A second complete direct prologue owns a separate frame even when
       // entry discovery placed both installs in one tentative range.
-      if (const auto Entry = directInstallEntry(Img, Site);
-          Entry && Range->contains(*Entry))
+      auto Entry = directInstallEntry(Img, Site);
+      if (!Entry)
+        Entry = alignedCxxInstallEntry(Img, Site);
+      if (Entry && Range->contains(*Entry)) {
         Range->Begin = *Entry;
+        Site.HasPhysicalEntry = true;
+      }
       // Other hits inside one body describe the same re-established frame.
       if (std::find(CoveredFunctions.begin(), CoveredFunctions.end(),
                     Range->Begin) != CoveredFunctions.end())

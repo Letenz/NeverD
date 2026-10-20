@@ -482,10 +482,10 @@ struct Symbol {
   va_t Addr = 0;
   uint64_t Size = 0;
   bool IsFunc = false;
-  /// The only evidence for this function start is a prologue-looking
-  /// instruction after inter-function padding.  Hot/cold split chunks look
-  /// the same, so a direct jump to such an address stays inside the jumping
-  /// function instead of becoming a tail call.
+  /// The only evidence for this start is a prologue-looking instruction
+  /// after padding or at an address-valued, unrelocated data word. A hot/cold
+  /// chunk or an instruction operand can look the same. Decoded ownership
+  /// may absorb this candidate instead of asserting an independent function.
   bool IsBoundaryGuess = false;
   /// A linked COFF image's symbol for a section an object contributed, which
   /// GNU ld keeps at that object's first function or variable.  It bounds

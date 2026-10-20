@@ -486,6 +486,78 @@ TEST(FunctionDiscoveryAlignment, DataPointersRejectMisalignedAArch64Entries) {
   EXPECT_EQ(Img.Symbols.front().Addr, 0x1008u);
 }
 
+TEST(FunctionDiscoveryAlignment, RawDataPointerCandidatesRemainGuesses) {
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+      for (unsigned Existing = 0; Existing != 4; ++Existing)
+        for (unsigned RelocatedSlot = 0; RelocatedSlot != 3; ++RelocatedSlot) {
+          SCOPED_TRACE(::testing::Message()
+                       << unsigned(Format) << ' ' << unsigned(Target) << ' '
+                       << Existing << ' ' << RelocatedSlot);
+          BinaryImage Img;
+          Img.Format = Format;
+          Img.Arch = Target;
+          Img.Bits = Target == Arch::X86 || Target == Arch::ARM
+                         ? Bitness::Bits32
+                         : Bitness::Bits64;
+          std::vector<uint8_t> Code(16, 0x90);
+          if (Target == Arch::AArch64)
+            writeLE<uint32_t>(Code.data(), 0xd10083ff);
+          else if (Target == Arch::ARM) {
+            Img.Mode = InstructionMode::Thumb;
+            Code = {0x10, 0xb5, 0x70, 0x47};
+          } else if (Target == Arch::X64) {
+            Code[0] = 0x55;
+            Code[1] = 0x48;
+            Code[2] = 0x89;
+            Code[3] = 0xe5;
+          } else {
+            Code[0] = 0x55;
+            Code[1] = 0x89;
+            Code[2] = 0xe5;
+          }
+          Img.Segments.push_back(executableSegment(0x1000, Code));
+          Segment Data;
+          Data.VA = 0x2000;
+          Data.Flags = SegmentFlags::Readable;
+          const unsigned Width = Img.getPointerSize();
+          Data.Size = 2 * Width;
+          Data.Data.resize(Data.Size);
+          for (unsigned Offset : {0u, Width}) {
+            const va_t Value = Target == Arch::ARM ? 0x1001 : 0x1000;
+            if (Width == 4)
+              writeLE<uint32_t>(Data.Data.data() + Offset, Value);
+            else
+              writeLE<uint64_t>(Data.Data.data() + Offset, Value);
+          }
+          Img.Segments.push_back(std::move(Data));
+          if (Existing) {
+            auto Candidate = Symbol::makeFunc(0x1000);
+            Candidate.IsBoundaryGuess = Existing == 1;
+            if (Existing == 2) {
+              Candidate.Name = "stated_function";
+              Candidate.Origin = NameOrigin::Stated;
+            }
+            Img.Symbols.push_back(Candidate);
+          }
+          if (RelocatedSlot)
+            Img.CodePtrRelocSlots.insert(0x2000 + (RelocatedSlot - 1) * Width);
+
+          scanDataFuncPointers(Img);
+
+          ASSERT_EQ(Img.Symbols.size(), 1u);
+          EXPECT_EQ(Img.Symbols.front().Addr, 0x1000u);
+          EXPECT_EQ(Img.Symbols.front().IsBoundaryGuess,
+                    Existing < 2 && !RelocatedSlot);
+          // A later scan can learn the slot's relocation independently of
+          // whether its earlier untyped value or padding created the guess.
+          Img.CodePtrRelocSlots.insert(0x2000);
+          scanDataFuncPointers(Img);
+          EXPECT_FALSE(Img.Symbols.front().IsBoundaryGuess);
+        }
+}
+
 TEST(FunctionDiscoveryAlignment, DebugCodeReferencesAreNotFunctionEntries) {
   for (BinaryFormat Format :
        {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {

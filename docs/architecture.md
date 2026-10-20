@@ -1889,6 +1889,15 @@ entry. Its cleanup-only transfer preserves ordered overlapping writes and
 publishes a distinct physical-call receipt, not an ordinary callee stack-pop
 contract. Catch entries and native reconstruction still require separate
 physical transfers; source-slot metadata alone grants neither.
+Registration range recovery uses complete installing prefixes as local entry
+boundaries. A bounded instruction graph can disprove a heuristic start inside
+an operand while retaining stated, exported, relocated and conflicting direct
+entries. Data-pointer discovery marks an unrelocated address-valued word as
+the same weak candidate used for padding; a later relocated slot can confirm
+it independently of scan order. A complete stack-aligned C++ prefix establishes
+the installing function's start only: it supplies no fixed EBP coordinates or
+native frame receipt. Cleanup-only C++ bodies can end at their closed return
+graph without absorbing the following function.
 `getCheckedX86CxxEpilogueCall` authenticates the shared exit's immutable caller,
 complete restore body and optional GS-checking wrapper. `RegistrationCxxState` binds those
 current-image descriptions in the CFG layer; the state solver itself keeps no

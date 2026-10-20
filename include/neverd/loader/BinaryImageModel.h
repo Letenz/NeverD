@@ -727,9 +727,9 @@ struct BinaryImage {
     return std::set<va_t>(Addrs.begin(), Addrs.end());
   }
 
-  /// Function starts whose only evidence is a padding-boundary guess: no
-  /// other symbol names the address and no primary unwind record begins
-  /// there.  See Symbol::IsBoundaryGuess.
+  /// Function starts supported only by a prologue heuristic: no other symbol
+  /// names the address and no primary unwind record begins there. Padding or
+  /// an unrelocated data word alone cannot confirm it. See IsBoundaryGuess.
   std::set<va_t> boundaryGuessFunctionStarts() const {
     // Debug info renames a guessed symbol in place; a real name confirms it.
     const auto Guessed = [](const Symbol &Sym) {

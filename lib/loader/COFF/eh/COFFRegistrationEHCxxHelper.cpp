@@ -214,6 +214,7 @@ findCxxEAXPrologueCallers(const BinaryImage &Img,
       Range->Begin = *Entry;
       InstallSite Site;
       Site.Range = *Range;
+      Site.HasPhysicalEntry = true;
       Site.InstallVA = CallVA;
       Site.HandlerVA = Handler;
       Site.TryLevel = -1;

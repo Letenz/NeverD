@@ -288,6 +288,11 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
       Sites.push_back(std::move(Caller));
   if (Sites.empty())
     return;
+  std::vector<va_t> PhysicalEntries;
+  for (const auto &Site : Sites)
+    if (Site.HasPhysicalEntry)
+      PhysicalEntries.push_back(Site.Range.Begin);
+  const FunctionRangeMap BodyFunctions(Img, PhysicalEntries);
 
   // Every table address the image installs, so each entry array can be capped
   // at the next one.  Both the scope tables and the C++ `FuncInfo` records
@@ -311,6 +316,10 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
     const HandlerIdentity &Identity = Site.Identity;
     ExceptionFunction F;
     F.CodeRange = Site.Range;
+    if (Site.HasPhysicalEntry)
+      if (const auto Body = BodyFunctions.find(Img, Site.Range.Begin, true);
+          Body && Body->Begin == Site.Range.Begin)
+        F.CodeRange.End = Body->End;
     F.Kind = RuntimeFunctionKind::Primary;
     F.PersonalityVA = Site.HandlerVA;
     F.PersonalityName = Identity.Name;
@@ -381,8 +390,8 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
       Chain.RegistrationOffset = X86CxxPrologueCall::RegistrationOffset;
       Chain.TryLevelOffset = X86CxxPrologueCall::TryLevelOffset;
     }
-    registration_detail::recoverRegistrationCallbackRanges(F, Img, Functions,
-                                                           Chain);
+    registration_detail::recoverRegistrationCallbackRanges(
+        F, Img, BodyFunctions, Chain);
     if (Chain.SeededTryLevel)
       recoverTryLevelStores(Img, F.CodeRange, *Chain.SeededTryLevel,
                             F.Cxx ? F.Cxx->MaxState : Chain.Scopes.size(),

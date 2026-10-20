@@ -6001,6 +6001,15 @@ all six arithmetic flags, preserved EAX/EDX, restored registers, helper return
 PC, ESP and FS:[0]. A changed cookie must take the original checker's failure
 branch at both image bases. These are source and physical-call proofs; the
 shared-frame native reconstruction gate remains closed.
+`RegistrationTryLevel.CxxSharedEntry*` checks guessed padding and untyped data
+words inside instructions, with stated, exported, relocated, unreachable and
+explicit-control-entry counterexamples. `CxxEntryAlignment*` checks twenty
+alignment/allocation/immediate-width cases and fifteen incomplete or changed-prefix
+cases without granting fixed EBP slots or a verified native entry.
+`FunctionDiscoveryAlignment.RawDataPointerCandidatesRemainGuesses` checks
+COFF, ELF and Mach-O across x86, x64, ARM32 and ARM64, including existing
+symbols, relocation-slot order and later confirmation. Run these with
+`NeverDImageAnalysisBoundaryTests` and the registration suites.
 `check_windows_registration_realigned_rewrite.py` separately emits aligned
 value/reference, unbound value/reference and catch-all parents. Independent
 assembly fixtures use the canonical direct MSVC EBP frame for the unbound forms.

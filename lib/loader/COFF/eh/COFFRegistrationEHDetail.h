@@ -81,8 +81,17 @@ std::optional<T> readScalar(const BinaryImage &Img, va_t Address) {
 /// and could not take part in CFG or structuring.
 class FunctionRangeMap {
 public:
-  explicit FunctionRangeMap(const BinaryImage &Img)
+  explicit FunctionRangeMap(const BinaryImage &Img,
+                            const std::vector<va_t> &PhysicalEntries = {})
       : Guesses(Img.boundaryGuessFunctionStarts()) {
+    // These entries come from complete physical registration prefixes, not
+    // from a range that merely contains a chain-head read. They constrain
+    // body/callback ownership without promoting an ordinary callable symbol.
+    for (va_t Entry : PhysicalEntries)
+      if (isExecutableAddress(Img, Entry)) {
+        Starts.push_back(Entry);
+        Guesses.erase(Entry);
+      }
     // PE export entries and the image entry are format-owned boundaries even
     // when no COFF symbol table or preceding padding made them discoverable.
     for (const Export &Entry : Img.Exports)
@@ -282,7 +291,14 @@ struct InstallSite {
   std::optional<int32_t> TryLevel;
   HandlerIdentity Identity;
   ExceptionAddressRange Range;
+  bool HasPhysicalEntry = false;
 };
+
+/// Observe the complete MSVC entry-aligned C++ installation prefix. Its
+/// runtime node has no fixed source-EBP displacement; this supplies an entry
+/// boundary only, not registration slots or a native frame protocol.
+std::optional<va_t> alignedCxxInstallEntry(const BinaryImage &Img,
+                                           const InstallSite &Site);
 
 bool proveFixedCxxRegistrationLayout(const BinaryImage &Img,
                                      const InstallSite &Site,

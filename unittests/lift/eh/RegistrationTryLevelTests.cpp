@@ -33,6 +33,7 @@
 #include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExceptionInfo.h"
+#include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -2479,6 +2480,208 @@ TEST(RegistrationTryLevel, CxxSharedEpilogueCannotRestoreOverwrittenSaves) {
         EXPECT_FALSE(Function.RegistrationStates->RegistrationLifetimeComplete);
         EXPECT_FALSE(Function.RegistrationStates->ChainOperationsComplete);
       }
+}
+
+TEST(RegistrationTryLevel, CxxSharedEntryOwnsOnlyDisprovedPaddingBoundaries) {
+  for (bool Wide : {false, true})
+    for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+      SCOPED_TRACE(::testing::Message() << Wide << ' ' << Mutation);
+      auto [Image, Call] = makeCxxSharedEpilogueImage(Wide, 0, 32);
+      const va_t Body = Call - 19, Boundary = Body + 1;
+      auto Guess = Symbol::makeFunc(Boundary);
+      Guess.IsBoundaryGuess = true;
+      if (Mutation == 1)
+        Guess.Name = "stated_entry";
+      Image.Symbols.push_back(Guess);
+      if (Mutation == 2) {
+        Export Other;
+        Other.Addr = Boundary;
+        Image.Exports.push_back(Other);
+      }
+      if (Mutation == 3)
+        Image.Symbols.push_back(Symbol::makeFunc(Boundary));
+      auto &Text = Image.Segments.front().Data;
+      if (Mutation == 4) {
+        Text[Body - kText] = 0xeb;
+        Text[Body - kText + 1] = 0xff; // A branch explicitly enters the byte.
+      }
+      if (Mutation == 5) {
+        Text[Body - kText] = 0xe8;
+        writeLE<uint32_t>(Text.data() + Body - kText + 1, uint32_t(-4));
+      }
+      if (Mutation == 6)
+        Text[Body - kText] = 0xc3; // The guessed byte is unreachable.
+      Image.ExceptionMetadata = {};
+      coff_loader::parseX86RegistrationExceptions(Image);
+      const auto *EH = Image.ExceptionMetadata.findFunction(kText + 0x20);
+      ASSERT_TRUE(EH);
+      EXPECT_EQ(EH->CodeRange.Begin, kText + 0x20);
+      EXPECT_EQ(EH->CodeRange.End, Mutation == 0 ? Call + 6 : Boundary);
+      if (Mutation == 0) {
+        EXPECT_TRUE(
+            coff_loader::getCheckedX86CxxEpilogueCall(Image, *EH, Call));
+        const auto Function = liftEntry(Image, kText + 0x20);
+        ASSERT_TRUE(Function.RegistrationStates);
+        EXPECT_TRUE(Function.RegistrationStates->RegistrationLifetimeComplete);
+      }
+    }
+}
+
+TEST(RegistrationTryLevel, CxxSharedEntryDisprovesUntypedDataPointerBoundary) {
+  for (bool Wide : {false, true})
+    for (bool Relocated : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << Wide << ' ' << Relocated);
+      auto [Image, Call] = makeCxxSharedEpilogueImage(Wide, 0, 32);
+      const va_t Boundary = Call - 4;
+      // The low byte of MOV EAX's scalar immediate also looks like PUSH EBP.
+      Image.Segments.front().Data[Boundary - kText] = 0x55;
+      for (auto &Segment : Image.Segments)
+        if (Segment.VA == kRData)
+          writeLE<uint32_t>(Segment.Data.data() + 0xf8, Boundary);
+      if (Relocated)
+        Image.CodePtrRelocSlots.insert(kRData + 0xf8);
+      Image.ExceptionMetadata = {};
+      scanDataFuncPointers(Image);
+      const auto Candidate = std::find_if(
+          Image.Symbols.begin(), Image.Symbols.end(),
+          [&](const auto &Symbol) { return Symbol.Addr == Boundary; });
+      ASSERT_NE(Candidate, Image.Symbols.end());
+      EXPECT_EQ(Candidate->IsBoundaryGuess, !Relocated);
+      coff_loader::parseX86RegistrationExceptions(Image);
+      const auto *EH = Image.ExceptionMetadata.findFunction(kText + 0x20);
+      ASSERT_TRUE(EH);
+      EXPECT_EQ(EH->CodeRange.End, Relocated ? Boundary : Call + 6);
+      EXPECT_EQ(
+          bool(coff_loader::getCheckedX86CxxEpilogueCall(Image, *EH, Call)),
+          !Relocated);
+    }
+}
+
+BinaryImage makeCxxEntryAlignedImage(unsigned Alignment, uint32_t Allocation,
+                                     bool Wide) {
+  auto Image = makeCxxEAXStateImage(false, 0);
+  auto &Text = Image.Segments.front().Data;
+  std::fill(Text.begin() + 0x20, Text.begin() + 0x100, 0xcc);
+  std::vector<uint8_t> Code{0x55, 0x8b, 0xec};
+  Code.insert(Code.end(), {uint8_t(Wide ? 0x81 : 0x83), 0xe4});
+  if (Wide)
+    emit32(Code, uint32_t(-Alignment));
+  else
+    Code.push_back(uint8_t(-Alignment));
+  Code.insert(Code.end(), {0x6a, 0xff, 0x68});
+  emit32(Code, kText + 0x200);
+  Code.insert(Code.end(), {0x64, 0xa1, 0, 0, 0, 0, 0x50,
+                           uint8_t(Wide ? 0x81 : 0x83), 0xec});
+  if (Wide)
+    emit32(Code, Allocation);
+  else
+    Code.push_back(uint8_t(Allocation));
+  Code.insert(Code.end(), {0x53, 0x56, 0x57, 0xa1});
+  emit32(Code, kRData + 0xf0);
+  Code.insert(Code.end(),
+              {0x33, 0xc4, 0x50, 0x8d, uint8_t(Wide ? 0x84 : 0x44), 0x24});
+  if (Wide)
+    emit32(Code, Allocation + 16);
+  else
+    Code.push_back(uint8_t(Allocation + 16));
+  Code.insert(Code.end(), {0x64, 0xa3, 0, 0, 0, 0, 0x8b, 0x08, 0x64, 0x89, 0x0d,
+                           0, 0, 0, 0, 0x8b, 0xe5, 0x5d, 0xc3});
+  std::copy(Code.begin(), Code.end(), Text.begin() + 0x20);
+  auto Guess = Symbol::makeFunc(kText + 0x10);
+  Guess.IsBoundaryGuess = true;
+  Image.Symbols.push_back(Guess);
+  Text[0xa0] = 0xc3;
+  Image.Symbols.push_back(Symbol::makeFunc(kText + 0xa0));
+  Image.ExceptionMetadata = {};
+  coff_loader::parseX86RegistrationExceptions(Image);
+  return Image;
+}
+
+TEST(RegistrationTryLevel, CxxEntryAlignmentDoesNotBorrowAPrecedingGuess) {
+  for (bool Wide : {false, true})
+    for (unsigned Alignment : {4, 8, 16, 128})
+      for (uint32_t Allocation : {0, 48, 256}) {
+        if (!Wide && Allocation > 127 - 16)
+          continue;
+        SCOPED_TRACE(::testing::Message()
+                     << Wide << ' ' << Alignment << ' ' << Allocation);
+        const auto Image =
+            makeCxxEntryAlignedImage(Alignment, Allocation, Wide);
+        const auto *EH = Image.ExceptionMetadata.findFunction(kText + 0x20);
+        ASSERT_TRUE(EH);
+        EXPECT_EQ(EH->CodeRange.Begin, kText + 0x20);
+        EXPECT_EQ(EH->PersonalityVA, kText + 0x200);
+        ASSERT_TRUE(EH->Registration);
+        EXPECT_EQ(EH->Registration->ChainInstallVA,
+                  kText + 0x20 + (Wide ? 16 : 13));
+        // Identifying an actual entry grants neither a fixed EBP coordinate
+        // nor the distinct realigned runtime-frame protocol.
+        EXPECT_FALSE(EH->Registration->RegistrationOffset);
+        EXPECT_FALSE(EH->Registration->TryLevelOffset);
+        EXPECT_FALSE(EH->Registration->RealignedFrame);
+        EXPECT_FALSE(Image.VerifiedFunctionEntries.count(kText + 0x20));
+      }
+}
+
+TEST(RegistrationTryLevel, CxxEntryAlignmentRequiresTheCompleteCurrentPrefix) {
+  const auto Original = makeCxxEntryAlignedImage(8, 48, false);
+  for (unsigned Mutation = 0; Mutation != 15; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = Original;
+    auto *Code = Image.Segments.front().Data.data() + 0x20;
+    switch (Mutation) {
+    case 0:
+      Code[0] = 0x56;
+      break;
+    case 1:
+      Code[2] = 0xed;
+      break;
+    case 2:
+      Code[5] = 0xfe;
+      break;
+    case 3:
+      Code[7] = 0;
+      break;
+    case 4:
+      Code[9] ^= 1;
+      break;
+    case 5:
+      Code[15] = 4;
+      break;
+    case 6:
+      Code[22] = 0xff;
+      break;
+    case 7:
+      Code[24] = 0x57;
+      break;
+    case 8:
+      Code[27] ^= 4;
+      break;
+    case 9:
+      Code[32] = 0xc5;
+      break;
+    case 10:
+      Code[37] += 4;
+      break;
+    case 11:
+      Code[40] = 4;
+      break;
+    case 12:
+      Image.BaseRelocations.push_back({kText + 0x25, 3});
+      break;
+    case 13:
+      Image.Segments.front().Flags =
+          Image.Segments.front().Flags | SegmentFlags::Writable;
+      break;
+    case 14:
+      Image.DynInfo.SecurityCookieRVA = 0;
+      break;
+    }
+    Image.ExceptionMetadata = {};
+    coff_loader::parseX86RegistrationExceptions(Image);
+    const auto *EH = Image.ExceptionMetadata.findFunction(kText + 0x20);
+    EXPECT_TRUE(!EH || EH->CodeRange.Begin != kText + 0x20);
+  }
 }
 
 std::pair<BinaryImage, va_t>

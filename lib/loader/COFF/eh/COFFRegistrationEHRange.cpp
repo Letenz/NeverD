@@ -91,9 +91,14 @@ void recoverRegistrationCallbackRanges(ExceptionFunction &F,
        F.Encoding == ExceptionEncoding::X86ScopeTableEH3) ||
       (F.Personality == ExceptionPersonality::ExceptHandler4 &&
        F.Encoding == ExceptionEncoding::X86ScopeTableEH4);
+  const bool CleanupOnlyCxx =
+      F.Encoding == ExceptionEncoding::X86CxxFuncInfo && F.Cxx &&
+      F.Cxx->TryBlocks.empty() &&
+      (F.Personality == ExceptionPersonality::CxxFrameHandler3 ||
+       F.Personality == ExceptionPersonality::CxxFrameHandlerX86);
   size_t Work = 0;
   for (auto Chunk : Chunks) {
-    if (KnownSEH && !F.Cxx && Chain.RegistrationOffset &&
+    if (((KnownSEH && !F.Cxx) || CleanupOnlyCxx) && Chain.RegistrationOffset &&
         Chain.TryLevelOffset) {
       std::vector<va_t> Roots;
       if (Chunk.contains(Entry))
