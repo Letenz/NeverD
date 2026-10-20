@@ -13,6 +13,7 @@
 #define NEVERD_BACKEND_C_CEMITTEROPTIONS_H
 
 #include "neverd/Common.h"
+#include "neverd/ir/SourceVariableEdits.h"
 #include "neverd/libc/LibCVariant.h"
 
 #include <functional>
@@ -26,6 +27,8 @@ namespace neverd {
 struct BinaryImage;
 struct CSourceMap;
 struct CSourceName;
+struct SourceVariableTypes;
+struct SourceCallTypeHint;
 class DataAccessWidths;
 struct NdType;
 
@@ -133,6 +136,17 @@ struct CEmitterOptions {
   std::function<CRecordDefinitions(
       const std::vector<std::shared_ptr<NdType>> &)>
       RecordDefinitions;
+  /// Analyst declarations for source interpretation only. They supply no
+  /// native ABI, memory extent, code ownership or rewriting authority.
+  const SourceVariableTypes *VariableTypes = nullptr;
+  const std::map<std::string, SourceCallTypeHint> *CallTypes = nullptr;
+  struct FrameVariable {
+    std::string Name;
+    std::shared_ptr<NdType> Type;
+  };
+  const std::map<int64_t, FrameVariable> *FrameVariables = nullptr;
+  const std::vector<SourceVariableEdit> *VariableEdits = nullptr;
+  std::string VariableSnapshot;
 };
 
 } // namespace neverd

@@ -3469,7 +3469,7 @@ bool CFGBuilder::tryRelativeTable(const BinaryImage &Img, const InsnRecord &Rec,
   if (CodeBase == 0 || LoadSize == 0)
     return false;
 
-  if (!Img.hasExecutableCodeOwnerAt(CodeBase))
+  if (!Img.hasExecutableCodeOwnerAt(CodeBase, ExecutableCodeOwners))
     return false;
 
   if (TableBase == 0)
@@ -7599,7 +7599,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
             auto ExactOwnerProvenance = [&](uint64_t Candidate) {
               if (!consumeExecutableOwnerQuery())
                 return ConstantAddressProvenance::Address;
-              if (CurrentImg->hasExecutableCodeOwnerAt(Candidate))
+              if (CurrentImg->hasExecutableCodeOwnerAt(Candidate,
+                                                       ExecutableCodeOwners))
                 return ConstantAddressProvenance::CodeAddress;
               if (!consumeObjectDataQuery())
                 return ConstantAddressProvenance::Address;
@@ -11982,9 +11983,10 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
             !consumeObjectDataQuery() ||
             !CurrentImg->hasObjectDataProvenance(Last) ||
             !consumeExecutableOwnerQuery() ||
-            CurrentImg->hasExecutableCodeOwnerAt(Address) ||
+            CurrentImg->hasExecutableCodeOwnerAt(Address,
+                                                 ExecutableCodeOwners) ||
             !consumeExecutableOwnerQuery() ||
-            CurrentImg->hasExecutableCodeOwnerAt(Last) ||
+            CurrentImg->hasExecutableCodeOwnerAt(Last, ExecutableCodeOwners) ||
             isRuntimeWritableAddress(*CurrentImg, Address) ||
             isRuntimeWritableAddress(*CurrentImg, Last) ||
             !consumeRelocatedOwnerQuery() ||

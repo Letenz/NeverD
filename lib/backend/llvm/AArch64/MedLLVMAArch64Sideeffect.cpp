@@ -16,6 +16,7 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/MedLLVMInstructionText.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
+#include "neverd/ir/intrinsics/IntrinsicTermination.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-aarch64-sideeffect"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -99,14 +100,14 @@ bool MedLLVMEmitter::emitAArch64Exception(const MedOp &Op, Intrinsic IC,
   case I::Brk:
   case I::Hlt_A64:
   case I::Udf_A64: {
-    // These instructions raise a synchronous exception and do not have an
-    // architectural fallthrough path.  Use the noreturn trap intrinsic rather
-    // than debugtrap; EH lowering removes the CFG's conservative fallthrough
-    // edge after block emission, once any edge-copy bookkeeping is complete.
-    // The trap carries the instruction and its code (`brk #0x3E8`).
-    markInstructionText(*Builder.CreateIntrinsic(llvm::Type::getVoidTy(*Ctx),
-                                                 llvm::Intrinsic::trap, {}),
-                        Op, IC);
+    // A compiler debug break resumes without defining X0. Fatal traps retain
+    // noreturn emission; all IR stages use the same instruction-code policy.
+    const auto Kind = intrinsicNeverReturns(IC, instructionOperand(Op))
+                          ? llvm::Intrinsic::trap
+                          : llvm::Intrinsic::debugtrap;
+    markInstructionText(
+        *Builder.CreateIntrinsic(llvm::Type::getVoidTy(*Ctx), Kind, {}), Op,
+        IC);
     return true;
   }
   case I::Svc:

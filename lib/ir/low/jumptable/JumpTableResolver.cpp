@@ -2680,7 +2680,8 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
     const uint32_t Align = getInsnAlignment();
     for (va_t Target : Targets) {
       const auto *Segment = Img.getSegmentFor(Target);
-      if (!Segment || !Img.hasExecutableCodeOwnerAt(Target) ||
+      if (!Segment ||
+          !Img.hasExecutableCodeOwnerAt(Target, ExecutableCodeOwners) ||
           (Align > 1 && Target % Align != 0))
         return std::nullopt;
       const size_t Offset = static_cast<size_t>(Target - Segment->VA);

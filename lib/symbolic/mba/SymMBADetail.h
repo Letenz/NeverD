@@ -371,6 +371,17 @@ struct PolyForm {
 /// The minterms \p Table selects, as indices.
 llvm::SmallVector<MintermIndex, 8> selectedMinterms(const TruthTable &Table);
 
+struct QuadraticProduct {
+  llvm::APInt Coefficient;
+  llvm::SmallVector<TruthTable, 2> Factors;
+};
+
+/// Recover the unique unordered pair of Boolean factors from a quadratic
+/// coefficient matrix. Missing coefficients are zero modulo the word width.
+std::optional<QuadraticProduct>
+recoverQuadraticProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
+                        uint32_t Width, WorkBudget &Budget, size_t MaxBytes);
+
 std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
                                            llvm::ArrayRef<PolyTerm> Terms,
                                            llvm::ArrayRef<uint32_t> AtomIds,
@@ -440,7 +451,14 @@ bool provePolynomialIdentity(SymContext &Ctx, SymRef Before, SymRef After,
                              unsigned MaxAtoms, WorkBudget &Budget,
                              size_t MaxBytes = MBAOptions{}.MaxTableBytes);
 
-/// Certify a literal-masked linear equality over every bit of one opaque word.
+/// Certify modular arithmetic distribution with nonarithmetic words opaque.
+/// Normalize both sides independently; incomplete normalization is refusal.
+bool proveArithmeticIdentity(SymContext &Ctx, SymRef Before, SymRef After,
+                             WorkBudget &Budget,
+                             size_t MaxBytes = MBAOptions{}.MaxTableBytes);
+
+/// Certify an affine equality over bitwise views of every bit of one opaque
+/// word, including literal AND/OR/XOR and NOT chains.
 /// Opaque residual words must cancel exactly. Reject incomplete proofs;
 /// sampling is not authority.
 bool proveMaskedSumIdentity(const SymContext &Ctx, SymRef Before, SymRef After,
@@ -474,7 +492,7 @@ struct SolveReport {
   bool BudgetExhausted = false;
 };
 
-/// Combine weighted masks of identical carriers by their per-bit coefficients.
+/// Combine weighted bitwise views by their per-bit coefficients and constants.
 /// Independently prove each shorter group before composing the result.
 SymRef solveWeightedMasks(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                           WorkBudget &Budget, SolveReport &Rep);
@@ -512,6 +530,11 @@ SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
 /// it separate is what stops the mask split from recursing into itself.
 SymRef solveOneRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                       WorkBudget &Budget, SolveReport &Rep);
+
+/// Recover an expanded quadratic root before local rewrites obscure its
+/// independently partitioned factors. Uses the same polynomial verifier.
+SymRef solveExpandedQuadratic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                              WorkBudget &Budget, SolveReport &Rep);
 
 } // namespace neverd::symbolic::detail
 

@@ -919,6 +919,62 @@
         <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
         <translation>Mostra le librerie di tipi unite ai tipi del programma, e aggiungine o escludine una</translation>
     </message>
+    <message>
+        <source>Split variable</source>
+        <translation>Dividi variabile</translation>
+    </message>
+    <message>
+        <source>Separate independent local variable lifetimes</source>
+        <translation>Separare i tempi di vita indipendenti delle variabili locali</translation>
+    </message>
+    <message>
+        <source>Map to variable...</source>
+        <translation>Associa a variabile...</translation>
+    </message>
+    <message>
+        <source>Associate copy-related variables with compatible live ranges</source>
+        <translation>Associare variabili legate da copie con intervalli di vita compatibili</translation>
+    </message>
+    <message>
+        <source>Unmap variable</source>
+        <translation>Dissocia variabile</translation>
+    </message>
+    <message>
+        <source>Remove a variable mapping</source>
+        <translation>Rimuovere un’associazione di variabili</translation>
+    </message>
+    <message>
+        <source>Unsplit variable</source>
+        <translation>Annulla divisione della variabile</translation>
+    </message>
+    <message>
+        <source>Restore the original variable lifetime grouping</source>
+        <translation>Ripristinare il raggruppamento originale dei tempi di vita delle variabili</translation>
+    </message>
+    <message>
+        <source>Reset variable associations</source>
+        <translation>Reimposta associazioni di variabili</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without variable associations</source>
+        <translation>Rigenerare questa funzione senza associazioni di variabili</translation>
+    </message>
+    <message>
+        <source>Declare the prototype and actual variadic argument types for this call only</source>
+        <translation>Dichiarare il prototipo e i tipi effettivi degli argomenti variadici solo per questa chiamata</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without call-site declarations</source>
+        <translation>Rigenerare questa funzione senza dichiarazioni dei siti di chiamata</translation>
+    </message>
+    <message>
+        <source>Reset call-site declarations</source>
+        <translation>Reimposta le dichiarazioni dei siti di chiamata</translation>
+    </message>
+    <message>
+        <source>Set call type...</source>
+        <translation>Imposta il tipo di chiamata...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1369,6 +1425,18 @@
         <source>Cannot write %1</source>
         <translation>Impossibile scrivere %1</translation>
     </message>
+    <message>
+        <source>Cannot create the recovery marker directory.</source>
+        <translation>Impossibile creare la directory dei marcatori di ripristino.</translation>
+    </message>
+    <message>
+        <source>Cannot remove %1: %2</source>
+        <translation>Impossibile rimuovere %1: %2</translation>
+    </message>
+    <message>
+        <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
+        <translation>Il database è cambiato mentre sono presenti modifiche recuperate in sospeso. Conservare la copia di lavoro prima di riaprirlo.</translation>
+    </message>
 </context>
 <context>
     <name>Representations</name>
@@ -1585,6 +1653,18 @@ Fai doppio clic per andare alla dichiarazione.</translation>
     <message>
         <source>Transformation failed: %1</source>
         <translation>Trasformazione non riuscita: %1</translation>
+    </message>
+    <message>
+        <source>Saved variable types need review: the analysis or local types changed</source>
+        <translation>I tipi di variabile salvati devono essere verificati: l’analisi o i tipi locali sono cambiati</translation>
+    </message>
+    <message>
+        <source>Saved variable associations need review: </source>
+        <translation>Le associazioni di variabili salvate devono essere verificate: </translation>
+    </message>
+    <message>
+        <source>Saved call-site declaration needs review: </source>
+        <translation>La dichiarazione salvata del sito di chiamata richiede una verifica: </translation>
     </message>
 </context>
 <context>
@@ -2453,6 +2533,78 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
     <message>
         <source>Type Libraries</source>
         <translation>Librerie di tipi</translation>
+    </message>
+    <message>
+        <source>Cannot open more disassembly views.</source>
+        <translation>Impossibile aprire altre viste di disassemblaggio.</translation>
+    </message>
+    <message>
+        <source>Could not export source: %1</source>
+        <translation>Impossibile esportare il codice sorgente: %1</translation>
+    </message>
+    <message>
+        <source>NeverD View-%1</source>
+        <translation>Vista NeverD-%1</translation>
+    </message>
+    <message>
+        <source>Showing %1 matches; use Next to continue the search.</source>
+        <translation>Visualizzate %1 corrispondenze; usare Avanti per continuare la ricerca.</translation>
+    </message>
+    <message>
+        <source>The engine cannot identify this source variable unambiguously</source>
+        <translation>Il motore non può identificare questa variabile sorgente senza ambiguità</translation>
+    </message>
+    <message>
+        <source>Map variable</source>
+        <translation>Associa variabile</translation>
+    </message>
+    <message>
+        <source>Destination variable (the engine checks copy relationships and live ranges):</source>
+        <translation>Variabile di destinazione (il motore verifica le relazioni di copia e gli intervalli di vita):</translation>
+    </message>
+    <message>
+        <source>No other unambiguous local variable is available</source>
+        <translation>Nessun’altra variabile locale identificabile senza ambiguità è disponibile</translation>
+    </message>
+    <message>
+        <source>The source analysis changed; select the variable again</source>
+        <translation>L’analisi del codice sorgente è cambiata; selezionare di nuovo la variabile</translation>
+    </message>
+    <message>
+        <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
+        <translation>Questa variabile non ha un’associazione corrispondente. Usare Reimposta associazioni di variabili per rimuovere le modifiche obsolete.</translation>
+    </message>
+    <message>
+        <source>Actual variadic argument types for this call, one per line (use int or double after default promotions):</source>
+        <translation>Tipi effettivi degli argomenti variadici di questa chiamata, uno per riga (usare int o double dopo le promozioni predefinite):</translation>
+    </message>
+    <message>
+        <source>C declaration (include ... for a variadic call):</source>
+        <translation>Dichiarazione C (includere ... per una chiamata variadica):</translation>
+    </message>
+    <message>
+        <source>Call at %1. This declaration applies to this call only in both C views.</source>
+        <translation>Chiamata a %1. Questa dichiarazione si applica solo a questa chiamata in entrambe le viste C.</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a pseudocode row mapped to an original call instruction</source>
+        <translation>Posizionare il cursore su una riga di pseudocodice associata a un’istruzione di chiamata originale</translation>
+    </message>
+    <message>
+        <source>Select call instruction</source>
+        <translation>Seleziona l’istruzione di chiamata</translation>
+    </message>
+    <message>
+        <source>Set call type</source>
+        <translation>Imposta il tipo di chiamata</translation>
+    </message>
+    <message>
+        <source>This source row contains multiple calls:</source>
+        <translation>Questa riga di codice sorgente contiene più chiamate:</translation>
+    </message>
+    <message>
+        <source>indirect call</source>
+        <translation>chiamata indiretta</translation>
     </message>
 </context>
 <context>
@@ -4344,6 +4496,14 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>Usa il tipo dell&apos;&amp;analisi</translation>
+    </message>
+    <message>
+        <source>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</source>
+        <translation>%1 è una variabile sorgente di %2 byte. Inserire un tipo scalare o puntatore tra i tipi locali.</translation>
+    </message>
+    <message>
+        <source>Remove this source type assertion and use the analysis type</source>
+        <translation>Rimuovere questa asserzione di tipo sorgente e usare il tipo ottenuto dall’analisi</translation>
     </message>
 </context>
 <context>

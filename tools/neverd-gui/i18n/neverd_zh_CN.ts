@@ -919,6 +919,62 @@
         <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
         <translation>显示并入程序类型的类型库，并添加或移除类型库</translation>
     </message>
+    <message>
+        <source>Split variable</source>
+        <translation>拆分变量</translation>
+    </message>
+    <message>
+        <source>Separate independent local variable lifetimes</source>
+        <translation>分离局部变量中相互独立的生存期</translation>
+    </message>
+    <message>
+        <source>Map to variable...</source>
+        <translation>映射到变量...</translation>
+    </message>
+    <message>
+        <source>Associate copy-related variables with compatible live ranges</source>
+        <translation>关联具有复制关系且活跃区间兼容的变量</translation>
+    </message>
+    <message>
+        <source>Unmap variable</source>
+        <translation>取消变量映射</translation>
+    </message>
+    <message>
+        <source>Remove a variable mapping</source>
+        <translation>移除变量映射</translation>
+    </message>
+    <message>
+        <source>Unsplit variable</source>
+        <translation>取消变量拆分</translation>
+    </message>
+    <message>
+        <source>Restore the original variable lifetime grouping</source>
+        <translation>恢复原始的变量生存期分组</translation>
+    </message>
+    <message>
+        <source>Reset variable associations</source>
+        <translation>重置变量关联</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without variable associations</source>
+        <translation>重新生成此函数，不应用变量关联</translation>
+    </message>
+    <message>
+        <source>Declare the prototype and actual variadic argument types for this call only</source>
+        <translation>仅为此调用声明函数原型和实际可变参数类型</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without call-site declarations</source>
+        <translation>不使用调用点声明，重新生成此函数</translation>
+    </message>
+    <message>
+        <source>Reset call-site declarations</source>
+        <translation>重置调用点声明</translation>
+    </message>
+    <message>
+        <source>Set call type...</source>
+        <translation>设置调用类型...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1369,6 +1425,18 @@
         <source>Cannot write %1</source>
         <translation>无法写入 %1</translation>
     </message>
+    <message>
+        <source>Cannot create the recovery marker directory.</source>
+        <translation>无法创建恢复标记目录。</translation>
+    </message>
+    <message>
+        <source>Cannot remove %1: %2</source>
+        <translation>无法移除 %1：%2</translation>
+    </message>
+    <message>
+        <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
+        <translation>恢复的编辑尚未处理时，数据库已发生变化。重新打开前请保留工作副本。</translation>
+    </message>
 </context>
 <context>
     <name>Representations</name>
@@ -1580,6 +1648,18 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Transformation failed: %1</source>
         <translation>转换失败：%1</translation>
+    </message>
+    <message>
+        <source>Saved variable types need review: the analysis or local types changed</source>
+        <translation>已保存的变量类型需要复核：分析结果或本地类型已改变</translation>
+    </message>
+    <message>
+        <source>Saved variable associations need review: </source>
+        <translation>已保存的变量关联需要复核：</translation>
+    </message>
+    <message>
+        <source>Saved call-site declaration needs review: </source>
+        <translation>已保存的调用点声明需要检查： </translation>
     </message>
 </context>
 <context>
@@ -2447,6 +2527,78 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Type Libraries</source>
         <translation>类型库</translation>
+    </message>
+    <message>
+        <source>Cannot open more disassembly views.</source>
+        <translation>无法打开更多反汇编视图。</translation>
+    </message>
+    <message>
+        <source>Could not export source: %1</source>
+        <translation>无法导出源代码：%1</translation>
+    </message>
+    <message>
+        <source>NeverD View-%1</source>
+        <translation>NeverD 视图-%1</translation>
+    </message>
+    <message>
+        <source>Showing %1 matches; use Next to continue the search.</source>
+        <translation>已显示 %1 个匹配项；使用“下一个”继续搜索。</translation>
+    </message>
+    <message>
+        <source>The engine cannot identify this source variable unambiguously</source>
+        <translation>引擎无法唯一确定此源代码变量</translation>
+    </message>
+    <message>
+        <source>Map variable</source>
+        <translation>映射变量</translation>
+    </message>
+    <message>
+        <source>Destination variable (the engine checks copy relationships and live ranges):</source>
+        <translation>目标变量（引擎将检查复制关系和活跃区间）：</translation>
+    </message>
+    <message>
+        <source>No other unambiguous local variable is available</source>
+        <translation>没有其他可唯一确定的局部变量</translation>
+    </message>
+    <message>
+        <source>The source analysis changed; select the variable again</source>
+        <translation>源代码分析已改变；请重新选择变量</translation>
+    </message>
+    <message>
+        <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
+        <translation>此变量没有匹配的关联。请使用“重置变量关联”移除过期的编辑。</translation>
+    </message>
+    <message>
+        <source>Actual variadic argument types for this call, one per line (use int or double after default promotions):</source>
+        <translation>此调用的实际可变参数类型，每行一个（按默认参数提升规则使用 int 或 double）：</translation>
+    </message>
+    <message>
+        <source>C declaration (include ... for a variadic call):</source>
+        <translation>C 声明（可变参数调用需包含 ...）：</translation>
+    </message>
+    <message>
+        <source>Call at %1. This declaration applies to this call only in both C views.</source>
+        <translation>位于 %1 的调用。此声明在两种 C 视图中都仅适用于此调用。</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a pseudocode row mapped to an original call instruction</source>
+        <translation>将光标放在映射到原始调用指令的伪代码行上</translation>
+    </message>
+    <message>
+        <source>Select call instruction</source>
+        <translation>选择调用指令</translation>
+    </message>
+    <message>
+        <source>Set call type</source>
+        <translation>设置调用类型</translation>
+    </message>
+    <message>
+        <source>This source row contains multiple calls:</source>
+        <translation>此源代码行包含多个调用：</translation>
+    </message>
+    <message>
+        <source>indirect call</source>
+        <translation>间接调用</translation>
     </message>
 </context>
 <context>
@@ -4317,6 +4469,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>使用分析得出的类型(&amp;A)</translation>
+    </message>
+    <message>
+        <source>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</source>
+        <translation>%1 是一个 %2 字节的源代码变量。请输入本地类型中的标量或指针类型。</translation>
+    </message>
+    <message>
+        <source>Remove this source type assertion and use the analysis type</source>
+        <translation>移除此源代码类型断言并使用分析得到的类型</translation>
     </message>
 </context>
 <context>

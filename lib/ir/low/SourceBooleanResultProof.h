@@ -5,6 +5,7 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/IntrinsicTermination.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
@@ -75,21 +76,21 @@ inline bool ordinaryBinary(NdOp Opcode) {
   }
 }
 
-// A BRK has no successor and cannot expose the selected Boolean's undefined
-// high bits through a return. The image-backed owner additionally checks the
-// exact immutable ARM64 instruction before using this LowIR shape.
+// A fatal BRK cannot expose the selected Boolean's undefined high bits through
+// a return. A debugger BRK may resume even when the CFG has no successor.
+// The image-backed owner additionally checks the exact immutable instruction.
 inline bool terminalBrk(const LowBlock &Block) {
   if (!Block.Succs.empty() || Block.Ops.size() != 1)
     return false;
   const auto &Op = Block.Ops.front();
-  // The BRK's code is its second input, when the lift kept it.
   return Block.EndAddr == Op.Addr + 4 && Op.Seq == 0 &&
-         Op.Opcode == NdOp::INTRINSIC &&
-         (Op.NumInputs == 1 || (Op.NumInputs == 2 && Op.Inputs[1].isConst())) &&
-         Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+         Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == 2 &&
+         Op.Inputs[1].isConst() && Op.Inputs[1].Size == 2 &&
+         Op.Inputs[1].Offset <= UINT16_MAX && Op.Inputs[0].isConst() &&
+         Op.Inputs[0].Size == 2 &&
          Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Brk) &&
-         Op.Output ==
-             NdVar::reg(getTargetRegInfo(Arch::AArch64).IntReturnReg, 8);
+         Op.Output.Size == 0 &&
+         intrinsicNeverReturns(Intrinsic::Brk, Op.Inputs[1].Offset);
 }
 
 struct Transfer {

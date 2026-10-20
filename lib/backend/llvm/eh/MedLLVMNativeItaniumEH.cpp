@@ -307,7 +307,9 @@ bool MedLLVMEmitter::emitNativeItaniumEH(
     return Best;
   };
 
-  for (const auto &[MarkedCall, Address] : *MarkedSourceCalls) {
+  // Lowering names the invokes and continuations it creates in this order.
+  for (const auto &[MarkedCall, Address] :
+       med_llvm_eh::sourceCallsInFunctionOrder(LLVMFunc, *MarkedSourceCalls)) {
     auto Owner = SourceCallOwners.find(Address);
     if (Owner == SourceCallOwners.end() ||
         !SeenSourceAddresses.insert(Address).second)

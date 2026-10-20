@@ -12,7 +12,10 @@
 #include "neverd/emulation/ProcessReport.h"
 #include "neverd/emulation/ProcessSession.h"
 
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <tuple>
 
@@ -518,6 +521,88 @@ TEST_P(AndroidJNI,
   }
 #endif
 }
+TEST_P(AndroidJNI, JavaLibraryLoadResumesInitializersAndNestedNativeCalls) {
+#ifndef NEVERD_ANDROID_DEX_FIXTURE_DIR
+  GTEST_SKIP() << "Python DEX fixture generator unavailable";
+#else
+  auto File = llvm::MemoryBuffer::getFile(
+      (std::filesystem::path(NEVERD_ANDROID_DEX_FIXTURE_DIR) /
+       "java-resume.dex")
+          .string());
+  ASSERT_TRUE(bool(File));
+  auto Bytes = (*File)->getBuffer();
+  Options.Android->DexImages.emplace_back(Bytes.begin(), Bytes.end());
+  Options.Android->ObserveJavaState = true;
+  Options.Android->JavaLibrary = "resumption";
+  Options.Android->Initialize = true;
+  Options.LinuxTime.emplace().AdvanceOnIdle = true;
+  Options.LinuxTime->Clocks = {{1, {0, 0}}};
+  for (unsigned Mode = 0; Mode <= 7; ++Mode) {
+    SCOPED_TRACE(Mode);
+    Options.Android->Arguments = {Mode};
+    auto R = run("jni_java_resume");
+    ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+    EXPECT_EQ(R.ReturnValue, 0u);
+    ASSERT_TRUE(R.JavaState);
+    EXPECT_FALSE(R.JavaState->terminal);
+    for (const auto &C : R.JavaState->classes)
+      if (C.descriptor == "Lresumption/Library;")
+        EXPECT_EQ(
+            C.initialization,
+            Mode == 2 || Mode == 5
+                ? mobile::dalvik::JavaClassState::Initialization::Erroneous
+                : mobile::dalvik::JavaClassState::Initialization::Initialized);
+    EXPECT_EQ(R.JNIRegistrations.size(), 4u);
+  }
+  Options.Android->Arguments = {8};
+  auto InvalidLocal = run("jni_java_resume");
+  EXPECT_EQ(InvalidLocal.Stop, ProcessStopReason::RuntimeFailure);
+  EXPECT_NE(InvalidLocal.Diagnostic.find("reference"), std::string::npos);
+  {
+    // Remove only the synthetic export name; the original executable bytes
+    // and relocations remain intact. An absent optional hook is not a call.
+    auto Original = llvm::MemoryBuffer::getFile(Path.string());
+    ASSERT_TRUE(bool(Original));
+    auto Bytes = (*Original)->getBuffer().str();
+    size_t At = 0, Renamed = 0;
+    while ((At = Bytes.find("JNI_OnLoad", At)) != std::string::npos) {
+      Bytes.replace(At, 10, "JNI_NoLoad");
+      At += 10;
+      ++Renamed;
+    }
+    ASSERT_GT(Renamed, 0u);
+    llvm::SmallString<128> Name;
+    int FD;
+    ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-java-no-hook", "so",
+                                                    FD, Name));
+    llvm::FileRemover Cleanup(Name);
+    llvm::raw_fd_ostream Stream(FD, true);
+    Stream.write(Bytes.data(), Bytes.size());
+    Stream.close();
+    auto Saved = Path;
+    Path = Name.str().str();
+    Options.Android->Arguments = {9};
+    auto NoHook = run("jni_java_resume");
+    Path = Saved;
+    EXPECT_EQ(NoHook.Stop, ProcessStopReason::Returned) << NoHook.Diagnostic;
+    EXPECT_EQ(NoHook.ReturnValue, 0u);
+    EXPECT_TRUE(NoHook.JNIRegistrations.empty());
+  }
+  Options.Android->Arguments = {0};
+  for (auto Name : {"", "different"}) {
+    if (*Name)
+      Options.Android->JavaLibrary = Name;
+    else
+      Options.Android->JavaLibrary.reset();
+    auto Unknown = run("jni_java_resume");
+    EXPECT_EQ(Unknown.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(Unknown.Diagnostic.find("guest ELF binding"), std::string::npos);
+    EXPECT_TRUE(Unknown.JNIRegistrations.empty());
+    ASSERT_TRUE(Unknown.JavaState);
+    EXPECT_TRUE(Unknown.JavaState->terminal);
+  }
+#endif
+}
 TEST_P(AndroidJNI, RegisteredNativeCallsRejectUnknownBindingsAndInvalidABIs) {
 #ifndef NEVERD_ANDROID_DEX_FIXTURE_DIR
   GTEST_SKIP() << "Python DEX fixture generator unavailable";
@@ -534,16 +619,19 @@ TEST_P(AndroidJNI, RegisteredNativeCallsRejectUnknownBindingsAndInvalidABIs) {
     Options.Android->Arguments = {Mode};
     Options.Limits.Instructions = Mode == 16 ? 4096 : 200000;
     auto R = run("jni_native_calls");
-    auto Expected =
-        Mode == 1 || Mode == 2 || (Mode >= 10 && Mode <= 12) || Mode == 15
-            ? ProcessStopReason::UnsupportedService
-        : Mode == 16 ? ProcessStopReason::InstructionLimit
-                     : ProcessStopReason::RuntimeFailure;
+    auto Expected = Mode == 1 || Mode == 2 || (Mode >= 10 && Mode <= 12) ||
+                            Mode == 15 || Mode == 17
+                        ? ProcessStopReason::UnsupportedService
+                    : Mode == 16 ? ProcessStopReason::InstructionLimit
+                                 : ProcessStopReason::RuntimeFailure;
     EXPECT_EQ(R.Stop, Expected) << R.Diagnostic;
     EXPECT_FALSE(R.ReturnValue);
     EXPECT_FALSE(R.Diagnostic.empty());
     if (Mode == 16)
       EXPECT_EQ(R.Instructions, 4096u);
+    if (Mode == 17)
+      EXPECT_NE(R.Diagnostic.find("Java invocation budget exhausted"),
+                std::string::npos);
     if (Mode == 1 || Mode == 2 || Mode == 15) {
       ASSERT_FALSE(R.NativeCalls.empty());
       EXPECT_EQ(R.NativeCalls.back().Name, "JNIEnv.129");

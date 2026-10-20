@@ -139,10 +139,8 @@ BionicResult Bionic::jniObjects(unsigned Slot, const NativeCallEvent &Call) {
       return failure("JNI AllocObject requires a class reference");
     if (!JNI.DexRuntime)
       return unsupportedImport(Call);
-    auto Allocated = allocateDex("L" + (*Class)->ClassName + ";", true);
-    if (!Allocated || !*Allocated || Thread.Exception)
-      return Allocated;
-    return Ref(JNI.Heap->get(std::get<uint64_t>(**Allocated)));
+    return allocateDex("L" + (*Class)->ClassName + ";", true,
+                       [this](uint64_t ID) { return dexReference(ID); });
   }
   if (Slot == 6) {
     auto Name = string(A[1]);

@@ -204,7 +204,7 @@ bool CFGBuilder::resolveConstantIndirectBranch(const BinaryImage &Img,
       const va_t Target = clearThumbBit(TaggedTarget);
       const InstructionMode TargetMode =
           (TaggedTarget & 1u) ? InstructionMode::Thumb : InstructionMode::ARM;
-      if (Img.hasExecutableCodeOwnerAt(Target) &&
+      if (Img.hasExecutableCodeOwnerAt(Target, ExecutableCodeOwners) &&
           Img.instructionModeAt(Target, TargetMode) == TargetMode) {
         for (LowOp &Op : Rec.Ops) {
           if (Op.Opcode != NdOp::INDIR_BR || Op.NumInputs < 1)
@@ -238,7 +238,7 @@ bool CFGBuilder::resolveConstantIndirectBranch(const BinaryImage &Img,
     auto Target = foldRegConstant(Img, Rec, Op.Inputs[0].Offset);
     if (!Target)
       return false;
-    if (!Img.hasExecutableCodeOwnerAt(*Target) ||
+    if (!Img.hasExecutableCodeOwnerAt(*Target, ExecutableCodeOwners) ||
         (*Target % getInsnAlignment()) != 0)
       return false;
 
@@ -303,6 +303,8 @@ CFGBuilder::makeInstructionBoundary(const InsnRecord &Rec,
 //===----------------------------------------------------------------------===//
 
 bool CFGBuilder::hasFunctionSymbolAtIndexed(const BinaryImage &Img, va_t Addr) {
+  if (!Img.isFunctionEntryCandidateAt(Addr))
+    return false;
   if (FunctionSymbolIndexImage != &Img ||
       FunctionSymbolIndexData != Img.Symbols.data() ||
       FunctionSymbolIndexCount != Img.Symbols.size()) {
@@ -321,16 +323,20 @@ bool CFGBuilder::hasFunctionSymbolAtIndexed(const BinaryImage &Img, va_t Addr) {
                             normalizeCodeAddress(Addr, Img.Arch, Img.Mode));
 }
 
-bool CFGBuilder::isTailCallTarget(va_t Target) const {
+bool CFGBuilder::isTailCallTarget(va_t Target,
+                                  bool IncludeBoundaryGuesses) const {
   if (Target == InvalidVA || Target == CurrentFuncEntry)
+    return false;
+  if (CurrentImg && !CurrentImg->isFunctionEntryCandidateAt(Target))
     return false;
   // A selected-function run may omit other function symbols from its work
   // set. An explicit transfer to such a symbol still names a tail callee.
   // Symbol identity alone must not stop ordinary fallthrough exploration:
   // x86 call-next/POP retains its architectural push even at a named address.
-  const bool FunctionEntry = isKnownFunctionEntry(Target) ||
-                             (CurrentImg && CurrentImg->hasFunctionSymbolAt(
-                                                Target, ExecutableCodeOwners));
+  const bool FunctionEntry =
+      isKnownFunctionEntry(Target) ||
+      (CurrentImg && CurrentImg->hasFunctionSymbolAt(
+                         Target, ExecutableCodeOwners, IncludeBoundaryGuesses));
   if (FunctionEntry && !isCurrentExceptionalEntry(Target) &&
       !isCurrentOwnedFragment(Target))
     return true;
@@ -362,7 +368,7 @@ bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
   // A compiler places nothing after a call that cannot return where it is
   // made, such as error(3) with a constant nonzero status: a call that ends
   // its function's own code range does not return, whatever the callee.
-  if (callEndsItsCodeRange(Rec))
+  if (codeRangeEndsAt(Rec.Addr, Rec.Addr + Rec.Size))
     return true;
   va_t Target = InvalidVA;
   for (const auto &Op : Rec.Ops) {
@@ -390,7 +396,8 @@ bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
   // is where a compiler that knew the callee never returns left its trace;
   // a call followed by more code still deserves the proof when the callee
   // holds nothing that returns.
-  return NoReturnCallees && CurrentImg->hasExecutableCodeOwnerAt(Target) &&
+  return NoReturnCallees &&
+         CurrentImg->hasExecutableCodeOwnerAt(Target, ExecutableCodeOwners) &&
          (callIsFollowedByPadding(Rec) ||
           NoReturnCallees->mayNeverReturn(Target)) &&
          NoReturnCallees->neverReturns(Target, NoReturnCalleeDepth);
@@ -414,8 +421,11 @@ bool CFGBuilder::callIsFollowedByPadding(const InsnRecord &Rec) const {
   // entry or at the end of the code counts.
   size_t Skipped = 0;
   while (Skipped < Window && !isTrapPaddingByte(A, Bytes[Skipped])) {
+    const auto Mode = CurrentImg->instructionModeAt(Next + Skipped, Rec.Mode);
+    if (!Mode)
+      break;
     const size_t Length =
-        alignmentNopLength(A, Bytes + Skipped, Window - Skipped);
+        alignmentNopLength(A, Bytes + Skipped, Window - Skipped, *Mode);
     if (Length == 0)
       break;
     Skipped += Length;
@@ -428,13 +438,17 @@ bool CFGBuilder::callIsFollowedByPadding(const InsnRecord &Rec) const {
          (Skipped != 0 && isKnownFunctionEntry(Next + Skipped));
 }
 
-bool CFGBuilder::callEndsItsCodeRange(const InsnRecord &Rec) const {
-  const va_t Next = Rec.Addr + Rec.Size;
+bool CFGBuilder::codeRangeEndsAt(va_t Address, va_t Next) const {
   // Another fragment of this function may continue right where one ends.
   if (isCurrentOwnedFragment(Next))
     return false;
+  // A primary may list a cold fragment without a separate unwind record for
+  // that fragment. Its end is still an ownership boundary.
+  if (isCurrentOwnedFragment(Address) && Next > Address &&
+      isCurrentOwnedFragment(Next - 1) && !isCurrentOwnedCode(Next))
+    return true;
   if (const ExceptionFunction *Owner =
-          CurrentImg->ExceptionMetadata.findFunction(Rec.Addr);
+          CurrentImg->ExceptionMetadata.findFunction(Address);
       Owner && exceptionEncodingBoundsOneFunction(Owner->Encoding) &&
       Owner->CodeRange.End == Next)
     return true;
@@ -519,8 +533,7 @@ void CFGBuilder::rewriteOwnInteriorCall(const BinaryImage &Img, InsnRecord &Rec,
       !exceptionEncodingBoundsOneFunction(Own->Encoding) ||
       Own->CodeRange.Begin != CurrentFuncEntry ||
       !Own->CodeRange.contains(Rec.Addr) || !Own->CodeRange.contains(Target) ||
-      Target == Own->CodeRange.Begin ||
-      (KnownFuncEntries && KnownFuncEntries->count(Target)) ||
+      Target == Own->CodeRange.Begin || isKnownFunctionEntry(Target) ||
       KeptOwnInteriorCallTargets.count(Target))
     return;
   const uint16_t PtrSize = TRI.PointerSize;

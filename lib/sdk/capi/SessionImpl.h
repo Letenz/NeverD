@@ -15,6 +15,7 @@
 
 #include "../../pipeline/PipelineCallAbiDetail.h"
 #include "../plugin/PluginManager.h"
+#include "FunctionAuditReason.h"
 #include "ImageStrings.h"
 #include "InstructionFlow.h"
 #include "LoadOptions.h"
@@ -72,6 +73,7 @@
 
 namespace neverd {
 namespace sdk {
+void preserveAnalystStackObjects(llvm::Module &);
 
 struct LLVMFunctionView;
 
@@ -250,6 +252,21 @@ struct Session {
     HighSourceMap HighSources;
   };
   std::unique_ptr<HighIRVariant> EnhancedHighIR;
+  struct CallIRVariant {
+    va_t Entry = 0;
+    std::string Snapshot;
+    bool Symbolic = false;
+    std::vector<SourceCallEdit> Edits;
+    SourceStackFrame Frame;
+    std::vector<SourceCallEditResult> Results;
+    std::unique_ptr<PipelineResult> Result;
+    std::optional<std::vector<MedFunc>> Native;
+    MedLLVMEmitter::SourceTargetSignatures TargetSignatures;
+    std::map<std::string, SourceCallTypeHint> Hints;
+  };
+  std::unique_ptr<CallIRVariant> CallVariant;
+  std::vector<SourceCallEditResult> CurrentCallResults;
+  bool UsingAnalystCallContracts = false;
   /// One function's native LLVM module: its body, with every other function
   /// declared by its own signature.  A page shows one function, so a sibling
   /// the emitter refuses cannot hide it, and showing it emits one body.
@@ -632,6 +649,8 @@ struct Session {
     uint64_t Size = 0;
     /// A string's encoding, as strings::encodingName spells it.
     std::string Encoding;
+    uint64_t ElementSize = 0, Count = 0, Alignment = 0;
+    std::string Type;
     bool operator==(const DataItem &) const = default;
   };
   std::map<va_t, DataItem> DataItems;
@@ -855,6 +874,9 @@ struct Session {
     FunctionLlvmModules.clear();
     FunctionSources.clear();
     EnhancedHighIR.reset();
+    CallVariant.reset();
+    CurrentCallResults.clear();
+    UsingAnalystCallContracts = false;
     NativeMedFuncs.reset();
     PipeResult = {};
     LLVMCtx.reset();
@@ -1016,7 +1038,9 @@ struct Session {
       Match = &Function;
     }
     if (!Match)
-      setError("LLVM function not found at 0x" + llvm::utohexstr(Addr));
+      setError(missingPipelineFunctionReason(PipeResult, Addr,
+                                             "LLVM function not found at 0x" +
+                                                 llvm::utohexstr(Addr)));
     return Match;
   }
 
@@ -1052,6 +1076,9 @@ struct Session {
       Recovery.CallUserPrototypes = PipeResult.CallUserPrototypes;
       Recovery.CallArgumentSources = PipeResult.CallArgumentSources;
       Recovery.OmittedCallees = PipeResult.OmittedCallees;
+      // The pipeline's callee memo keeps the forwarder probes of those
+      // callees, which serve where this recovery reads the same.
+      Recovery.CalleeSignatureMemo = PipeResult.CalleeSignatureMemo;
       recoverModuleCallAbi(Img, Recovery, FuncNames);
       NativeMedFuncs = std::move(Recovery.MedFuncs);
     }
@@ -1059,6 +1086,9 @@ struct Session {
     for (const auto &[Addr, Name] : Img.getImportAddressNames())
       ImportMap.emplace_back(Addr, Name);
     MedLLVMEmitter Emitter;
+    Emitter.setAnalystSourceProjection(UsingAnalystCallContracts);
+    if (UsingAnalystCallContracts && CallVariant)
+      Emitter.setSourceTargetSignatures(&CallVariant->TargetSignatures);
     Emitter.setDebugContext(decompileDebug());
     Emitter.setUserPrototypeCallees(&PipeResult.CallUserPrototypes);
     // Native source views need surviving instruction observations even when
@@ -1082,6 +1112,9 @@ struct Session {
       setError("native LLVM verification failed: " + VerifyError);
       return nullptr;
     }
+    if (UsingAnalystCallContracts &&
+        !SourceOptions.StackFrame.Variables.empty())
+      preserveAnalystStackObjects(*Candidate);
     if (NoOpt) {
       Pipeline::promoteScaffoldingAllocas(*Candidate);
       if (Sources)
@@ -1110,10 +1143,13 @@ struct Session {
   const FunctionLlvmModule *ensureFunctionLlvmModule(va_t Entry, bool NoOpt) {
     if (PipeRan && PipelineFeatureGeneration != SigDB.featureGeneration())
       clearPipeline();
+    SourceViewOptions NativeOptions = SourceOptions;
+    NativeOptions.VariableTypes.clear();
+    NativeOptions.VariableEdits.clear();
     for (auto It = FunctionLlvmModules.begin(); It != FunctionLlvmModules.end();
          ++It)
       if (It->Entry == Entry && It->NoOpt == NoOpt &&
-          It->Options == SourceOptions) {
+          It->Options == NativeOptions) {
         FunctionLlvmModules.splice(FunctionLlvmModules.begin(),
                                    FunctionLlvmModules, It);
         return &FunctionLlvmModules.front();
@@ -1128,13 +1164,15 @@ struct Session {
         Found = true;
       }
     if (!Found) {
-      setError("LLVM function not found at 0x" + llvm::utohexstr(Entry));
+      setError(missingPipelineFunctionReason(PipeResult, Entry,
+                                             "LLVM function not found at 0x" +
+                                                 llvm::utohexstr(Entry)));
       return nullptr;
     }
     FunctionLlvmModule Built;
     Built.Entry = Entry;
     Built.NoOpt = NoOpt;
-    Built.Options = SourceOptions;
+    Built.Options = std::move(NativeOptions);
     Built.Module = emitNativeLlvm(NoOpt, &Mask, Built.Sources);
     if (!Built.Module)
       return nullptr;

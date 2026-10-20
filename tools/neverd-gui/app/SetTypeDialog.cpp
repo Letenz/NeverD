@@ -49,9 +49,9 @@ bool identifierCharacter(QChar character) {
 
 SetTypeDialog::SetTypeDialog(Session &session, Address function,
                              std::optional<int> parameter, const QString &name,
-                             QWidget *parent)
+                             QWidget *parent, const QJsonObject &variable)
     : QDialog(parent), session_(session), function_(function),
-      parameter_(parameter), name_(name) {
+      parameter_(parameter), name_(name), variable_(variable) {
   setWindowTitle(tr("Set the type of %1").arg(name_));
   setWindowIcon(icon(QStringLiteral("set_type")));
   setSizeGripEnabled(true);
@@ -68,8 +68,9 @@ SetTypeDialog::SetTypeDialog(Session &session, Address function,
   field_->setFont(code);
   field_->setEnabled(false);
   field_->setPlaceholderText(
-      parameter_ ? QStringLiteral("struct _DEVICE *")
-                 : QStringLiteral("int f(struct _DEVICE *Device)"));
+      parameter_ || !variable_.isEmpty()
+          ? QStringLiteral("struct _DEVICE *")
+          : QStringLiteral("int f(struct _DEVICE *Device)"));
   field_->installEventFilter(this);
   layout->addWidget(field_);
 
@@ -97,6 +98,9 @@ SetTypeDialog::SetTypeDialog(Session &session, Address function,
   reset_button_->setObjectName(QStringLiteral("setTypeReset"));
   reset_button_->setToolTip(tr("Hand the function's declaration back to its "
                                "debug information and analysis"));
+  if (!variable_.isEmpty())
+    reset_button_->setToolTip(
+        tr("Remove this source type assertion and use the analysis type"));
   reset_button_->hide();
   apply_ = buttons->addButton(tr("Apply"), QDialogButtonBox::AcceptRole);
   apply_->setObjectName(QStringLiteral("setTypeApply"));
@@ -138,7 +142,10 @@ SetTypeDialog::SetTypeDialog(Session &session, Address function,
   resize(760, 400);
   restoreGeometry(QSettings().value(GeometrySetting).toByteArray());
   session_.read(
-      QStringLiteral("function_type"), {{"address", hexAddress(function_)}},
+      variable_.isEmpty() ? QStringLiteral("function_type")
+                          : QStringLiteral("source_type"),
+      variable_.isEmpty() ? QJsonObject{{"address", hexAddress(function_)}}
+                          : variable_,
       this, [this](const QJsonObject &reply) { loaded(reply); },
       [this](const QString &, const QString &message) {
         subject_->setText(message);
@@ -146,6 +153,20 @@ SetTypeDialog::SetTypeDialog(Session &session, Address function,
 }
 
 void SetTypeDialog::loaded(const QJsonObject &reply) {
+  if (!variable_.isEmpty()) {
+    reset_button_->setVisible(reply.value(QStringLiteral("stated")).toBool());
+    parameters_->hide();
+    subject_->setText(tr("%1 is a %2-byte source variable. Enter a scalar or "
+                         "pointer type from the local types.")
+                          .arg(name_)
+                          .arg(reply.value(QStringLiteral("bytes")).toInt()));
+    field_->setEnabled(true);
+    field_->setText(reply.value(QStringLiteral("type")).toString());
+    field_->selectAll();
+    field_->setFocus();
+    check();
+    return;
+  }
   const QString function = reply.value(QStringLiteral("name")).toString();
   const QJsonArray parameters =
       reply.value(QStringLiteral("parameters")).toArray();
@@ -202,14 +223,19 @@ void SetTypeDialog::check() {
     return;
   }
   QJsonObject request{{"address", hexAddress(function_)}};
-  if (parameter_) {
+  if (!variable_.isEmpty()) {
+    request = variable_;
+    request.insert(QStringLiteral("type"), text);
+  } else if (parameter_) {
     request.insert(QStringLiteral("parameter"), *parameter_);
     request.insert(QStringLiteral("type"), text);
   } else {
     request.insert(QStringLiteral("declaration"), text);
   }
   session_.read(
-      QStringLiteral("function_type"), request, this,
+      variable_.isEmpty() ? QStringLiteral("function_type")
+                          : QStringLiteral("source_type"),
+      request, this,
       [this, serial, text](const QJsonObject &reply) {
         checked(serial, text, reply);
       },
@@ -233,13 +259,16 @@ void SetTypeDialog::checked(quint64 serial, const QString &text,
     return;
   }
   reads_ = true;
-  proposal_ = reply.value(QStringLiteral("declaration")).toString();
+  proposal_ = reply
+                  .value(variable_.isEmpty() ? QStringLiteral("declaration")
+                                             : QStringLiteral("type"))
+                  .toString();
   const QJsonArray parameters =
       reply.value(QStringLiteral("parameters")).toArray();
   showParameters(parameters);
   const QColor good = Theme::instance().color(ColorRole::FitExact);
   status_->setStyleSheet(QStringLiteral("color: %1").arg(good.name()));
-  status_->setText(parameter_
+  status_->setText(parameter_ || !variable_.isEmpty()
                        ? QStringLiteral("✓ ") + proposal_
                        : QStringLiteral("✓ ") + tr("Reads: %n parameters", "",
                                                    int(parameters.size())));

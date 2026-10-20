@@ -47808,6 +47808,296 @@ TEST(HighCPointerAddresses, HeaderObjectsReadAsBytesStayTheHeaders) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses, HeaderRecordObjectsAreReachedThroughTheirBytes) {
+  // BIND's delv passes the address of its copy of in6addr_loopback, which
+  // <netinet/in.h> declares a const struct in6_addr: the unit declared it
+  // `unsigned char in6addr_loopback[16];`, a redefinition beside the
+  // header, and subscripted the record.  The object is the header's,
+  // reached through its bytes.
+  constexpr va_t Loopback = 0x6000;
+  BinaryImage Img =
+      makeImageObjectFixture(Loopback, std::vector<uint8_t>(16), true);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  Symbol Data;
+  Data.Name = "in6addr_loopback";
+  Data.Addr = Loopback;
+  Data.Size = 16;
+  Img.Symbols.push_back(Data);
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "bind_loopback";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  Func.Body = {callStmt(
+      "isc_sockaddr_fromin6", 0x2000,
+      {HighExpr::makeConst(Loopback, 8, ConstantAddressProvenance::Address)})};
+  returnValue(Func,
+              HighExpr::makeLoad(HighExpr::makeConst(Loopback + 8, 8), Word));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("#include <netinet/in.h>"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("in6addr_loopback["), std::string::npos) << Source;
+  EXPECT_NE(Source.find("((unsigned char *)&in6addr_loopback)"),
+            std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, NarrowStringParametersTakeNarrowLiterals) {
+  // addr2line opens a file with mode "r", whose terminator and the zeros
+  // after it read as the UTF-16 string L"r" too: fopen's mode is a narrow
+  // string, so its argument is "r", whether the type library declares fopen
+  // or its header alone does.
+  constexpr va_t Mode = 0x6000;
+  std::vector<uint8_t> Bytes(16, 0);
+  Bytes[0] = 'r';
+  BinaryImage Img = makeImageObjectFixture(Mode, Bytes, false);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  const auto Char = NdType::makeInt(1);
+  Char->SourceName = "char";
+  const auto Text = NdType::makePtr(Char);
+  class FileDbg : public NullDebugContext {
+  public:
+    explicit FileDbg(TypeRef Text) : Text(std::move(Text)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x2000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "fopen";
+      FS.Addr = Addr;
+      FS.ReturnType = NdType::makePtr(NdType::makeNamedRecord("_IO_FILE"));
+      FS.Params = {{"filename", Text}, {"modes", Text}};
+      FS.PrototypeFromCLibrary = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Text;
+  } Dbg(Text);
+  for (DebugContext *Context : {static_cast<DebugContext *>(&Dbg),
+                                static_cast<DebugContext *>(nullptr)}) {
+    const auto Word = NdType::makeInt(8);
+    HighFunc Func;
+    Func.Name = "open_input";
+    Func.Entry = 0x1000;
+    Func.ReturnType = Word;
+    Func.Params = {{"path", Word}};
+    auto Opened = HighExpr::makeCall(
+        "fopen", 0x2000,
+        {parameter(0, Word),
+         HighExpr::makeConst(Mode, 8, ConstantAddressProvenance::Address)});
+    Opened->Type = Word;
+    returnValue(Func, std::move(Opened));
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::ELF;
+    Options.Image = &Img;
+    ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, Context));
+    OS.flush();
+    EXPECT_EQ(Source.find("L\"r\""), std::string::npos) << Source;
+    EXPECT_NE(Source.find(", \"r\")"), std::string::npos) << Source;
+    expectCSyntax(Source);
+  }
+}
+
+TEST(HighCPointerAddresses, CallResultLocalsConvertAsTheyAreDeclared) {
+  // gpg-mail-tube keeps gpgrt_getcwd's result, which no prototype types, in
+  // a local the unit names `cwd` after the call and declares an integer,
+  // and passes it to strlen, whose prototype takes a const char *: the
+  // argument converts as the integer C declares, which it did under the
+  // local's own name only.
+  const auto Char = NdType::makeInt(1);
+  Char->SourceName = "char";
+  const auto Text = NdType::makePtr(Char);
+  const auto Word = NdType::makeInt(8, false);
+  class StringDbg : public NullDebugContext {
+  public:
+    StringDbg(TypeRef Text, TypeRef Word)
+        : Text(std::move(Text)), Word(std::move(Word)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x2000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "strlen";
+      FS.Addr = Addr;
+      FS.ReturnType = Word;
+      FS.Params = {{"s", Text}};
+      FS.PrototypeFromCLibrary = true;
+      FS.PlatformConvention = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Text, Word;
+  } Dbg(Text, Word);
+  HighFunc Func;
+  Func.Name = "measure_cwd";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  MedVar Cwd = temporary(7);
+  auto Got = HighExpr::makeCall("gpgrt_getcwd", 0x3000, {});
+  Got->Type = Word;
+  HighStmt Keep = assignTo(Cwd, Got);
+  Keep.Dst->Type = Word;
+  MedVar Length = temporary(8);
+  auto Measured =
+      HighExpr::makeCall("strlen", 0x2000, {HighExpr::makeVar(Cwd, Word)});
+  Measured->Type = Word;
+  HighStmt Measure = assignTo(Length, Measured);
+  Measure.Dst->Type = Word;
+  Func.Body = {Keep, Measure,
+               callStmt("gcry_free", 0x4000, {HighExpr::makeVar(Cwd, Word)})};
+  returnValue(Func, HighExpr::makeVar(Length, Word));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("cwd"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("strlen(cwd)"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, PasswordRoutinesTakeTheirHeadersDeclarations) {
+  // gpg-mail-tube looks a user up with getpwnam, whose type library
+  // prototype keeps no const: the unit declared `extern passwd*
+  // getpwnam(char* __name);`, which contradicts <pwd.h>'s once a record
+  // definition includes it.  The header declares it.
+  const auto Char = NdType::makeInt(1);
+  Char->SourceName = "char";
+  const auto Text = NdType::makePtr(Char);
+  const auto Entry = NdType::makePtr(NdType::makeNamedRecord("passwd"));
+  class UserDbg : public NullDebugContext {
+  public:
+    UserDbg(TypeRef Text, TypeRef Entry)
+        : Text(std::move(Text)), Entry(std::move(Entry)) {}
+    std::optional<FunctionSym> resolveFunction(va_t Addr) const override {
+      if (Addr != 0x2000)
+        return std::nullopt;
+      FunctionSym FS;
+      FS.Name = "getpwnam";
+      FS.Addr = Addr;
+      FS.ReturnType = Entry;
+      FS.Params = {{"name", Text}};
+      FS.PrototypeFromCLibrary = true;
+      FS.PlatformConvention = true;
+      return FS;
+    }
+    bool hasInfo() const override { return true; }
+
+  private:
+    TypeRef Text, Entry;
+  } Dbg(Text, Entry);
+  const auto Word = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "find_user";
+  Func.Entry = 0x1000;
+  Func.ReturnType = Word;
+  Func.Params = {{"name", Word}};
+  auto Found = HighExpr::makeCall("getpwnam", 0x2000, {parameter(0, Word)});
+  Found->Type = Word;
+  returnValue(Func, std::move(Found));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+    CRecordDefinitions Definitions;
+    Definitions.Text = "#include <pwd.h>\n";
+    Definitions.Tags = {{"passwd", false}};
+    Definitions.Types = {"passwd"};
+    return Definitions;
+  };
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_EQ(Source.find("getpwnam(char*"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("#include <pwd.h>"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
+TEST(HighCPointerAddresses, PointerObjectsComputeAsTheirIntegers) {
+  // telnet keeps option flags in a word another use stores a char pointer
+  // to, so the unit declares it `char*`; its code complements the word and
+  // ors bits into it, which C does on no pointer: the word is the integer
+  // it holds there.
+  constexpr va_t Flags = 0x6000;
+  BinaryImage Img =
+      makeImageObjectFixture(Flags, std::vector<uint8_t>(8), true);
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = 0;
+  const auto Char = NdType::makeInt(1);
+  Char->SourceName = "char";
+  const auto Text = NdType::makePtr(Char);
+  const auto Word = NdType::makeInt(8);
+  auto Address = [] { return HighExpr::makeConst(Flags, 8); };
+  HighFunc Name;
+  Name.Name = "set_name";
+  Name.Entry = 0x1000;
+  Name.ReturnType = NdType::makeVoid();
+  Name.Params = {{"name", Text}};
+  HighStmt Keep;
+  Keep.Kind = StmtKind::Store;
+  Keep.StoreAddr = Address();
+  Keep.StoreVal = parameter(0, Text);
+  Name.Body = {Keep};
+  returnValue(Name, nullptr);
+  HighFunc Set;
+  Set.Name = "set_flags";
+  Set.Entry = 0x1100;
+  Set.ReturnType = NdType::makeVoid();
+  Set.Params = {{"bits", Word}};
+  auto Ored = HighExpr::makeBinop(
+      NdOp::INT_OR, HighExpr::makeLoad(Address(), Word), parameter(0, Word));
+  Ored->Type = Word;
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr = Address();
+  Store.StoreVal = std::move(Ored);
+  Set.Body = {Store};
+  returnValue(Set, nullptr);
+  HighFunc Clear;
+  Clear.Name = "cleared_flags";
+  Clear.Entry = 0x1200;
+  Clear.ReturnType = Word;
+  Clear.Params = {{"mask", Word}};
+  auto Complement =
+      HighExpr::makeUnary(NdOp::INT_NOT, HighExpr::makeLoad(Address(), Word));
+  Complement->Type = Word;
+  auto Masked = HighExpr::makeBinop(NdOp::INT_AND, std::move(Complement),
+                                    parameter(0, Word));
+  Masked->Type = Word;
+  returnValue(Clear, std::move(Masked));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Name, Set, Clear}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("~(uintptr_t)qword_6000"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("(char*)(uintptr_t)((uintptr_t)qword_6000 | bits)"),
+            std::string::npos)
+      << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, LibraryComparatorsPassAsTheirHeadersTypeThem) {
   // sed passes a comparator of its own to qsort, whose prototype the header
   // library gives: its comparison's type keeps no const there, where the

@@ -224,6 +224,13 @@ bool AArch64Lifter::liftControl(LiftState &S, const cs_insn *Insn,
                          : Insn->id == AARCH64_INS_BRK ? Intrinsic::Brk
                                                        : Intrinsic::Hlt_A64;
     const std::optional<uint64_t> Code = exceptionCode(ARM64);
+    if (Id == Intrinsic::Brk || Id == Intrinsic::Hlt_A64) {
+      if (Code)
+        S.emitVoidIntrinsic(Id, {NdVar::cst(*Code, 2)});
+      else
+        S.emitVoidIntrinsic(Id);
+      break;
+    }
     if (!Code) {
       S.emitIntrinsic(Id);
       break;

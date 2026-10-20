@@ -17,6 +17,15 @@ WEIGHTED_MASKS = (0x7A6D35C1, 0xB53C678A, 0x4EF0A903, 0xD2195A6C)
 WEIGHTED_UNION = 0
 for _mask in WEIGHTED_MASKS:
     WEIGHTED_UNION |= _mask
+PRODUCT_MASKS = (0x91A2C45E, 0x6F3C92A1, 0xD8743BC6, 0x25E9A70D)
+PRODUCT_UNION = 0
+for _mask in PRODUCT_MASKS:
+    PRODUCT_UNION |= _mask
+VIEW_MASKS = tuple(0x10001 << bit for bit in range(16))
+VIEW_KEYS = tuple((0x13579BDF * (bit + 1)) & 0xFFFFFFFF for bit in range(16))
+VIEW_KEY = 0
+for _mask, _key in zip(VIEW_MASKS, VIEW_KEYS):
+    VIEW_KEY |= _mask & _key
 
 
 def affine_elf():
@@ -71,6 +80,53 @@ def weighted_elf():
         code += bytes.fromhex("4189c8 4181e0") + struct.pack("<I", mask)
         code += bytes.fromhex("4401c0" if subset.bit_count() % 2 else "4429c0")
     code += bytes.fromhex("6bc025 01d0 c3")
+    return elf(code)
+
+
+def bitwise_elf():
+    # Independently flipped, disjoint pieces of x^y recombine into one XOR.
+    # Encode every piece directly so a fixture compiler cannot simplify it.
+    code = bytearray.fromhex("89f9 31f1 31c0")
+    for mask, key in zip(VIEW_MASKS, VIEW_KEYS):
+        code += bytes.fromhex("4189c8 4181f0") + struct.pack("<I", key)
+        code += bytes.fromhex("4181e0") + struct.pack("<I", mask)
+        code += bytes.fromhex("4401c0")
+    code += bytes.fromhex("6bc025 01d0 c3")
+    return elf(code)
+
+
+def interleaved_elf():
+    # Interleave two fifteen-term inclusion-exclusion sums over x^y and x*y.
+    # Both words share the positive/negative accumulators and enclosing scale.
+    code = bytearray.fromhex("89f9 31f1 0faffe 31c0 4531d2")
+    for subset in range(1, 16):
+        masks = [0xFFFFFFFF, 0xFFFFFFFF]
+        for group, values in enumerate((WEIGHTED_MASKS, PRODUCT_MASKS)):
+            for bit, value in enumerate(values):
+                if subset & (1 << bit):
+                    masks[group] &= value
+        code += bytes.fromhex("4189c8 4181e0") + struct.pack("<I", masks[0])
+        code += bytes.fromhex("4189f9 4181e1") + struct.pack("<I", masks[1])
+        code += bytes.fromhex("4501c8")
+        code += bytes.fromhex("4401c0" if subset.bit_count() % 2 else "4501c2")
+    code += bytes.fromhex("4429d0 6bc007 01d0 c3")
+    return elf(code)
+
+
+def partitioned_elf():
+    # Multiply all four independently partitioned pieces of A=x^y and B=y|z.
+    # r8d/r9d retain A/B; r10d/r11d form each product. The three arguments
+    # remain intact, and the final word is (x^y)*(y|z)+x+y modulo 2^32.
+    code = bytearray.fromhex("4189f8 4131f0 4189f1 4109d1 31c0")
+    for invert_a in (False, True):
+        for invert_b in (False, True):
+            code += bytes.fromhex("4589c2 4589cb")
+            code += bytes.fromhex(
+                "89d1 f7d1 4121ca" if invert_a else "4121d2")
+            code += bytes.fromhex(
+                "89f9 f7d1 4121cb" if invert_b else "4121fb")
+            code += bytes.fromhex("450fafd3 4401d0")
+    code += bytes.fromhex("01f8 01f0 c3")
     return elf(code)
 
 
@@ -154,6 +210,12 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             assert all(op not in text for op in ("|", "^", "&")), text
         elif kind == "weighted":
             assert text.count("&") <= 1 and text.count("^") <= 1, text
+        elif kind == "bitwise":
+            assert "&" not in text and text.count("^") <= 2, text
+        elif kind == "interleaved":
+            assert text.count("&") <= 2 and text.count("^") <= 1, text
+        elif kind == "partitioned":
+            assert "&" not in text and text.count("^") <= 1, text
         else:
             assert ">>" not in text, text
 
@@ -174,8 +236,10 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                         assert ordinary.count("^") >= 3, ordinary
                     elif kind == "frame":
                         assert "|" in ordinary, ordinary
-                    elif kind == "weighted":
+                    elif kind in ("weighted", "bitwise", "interleaved"):
                         assert ordinary.count("&") >= 7, ordinary
+                    elif kind == "partitioned":
+                        assert ordinary.count("&") >= 4, ordinary
                     else:
                         assert ">>" in ordinary, ordinary
                     assert enhanced != ordinary
@@ -223,6 +287,10 @@ if __name__ == "__main__":
             ("masked", masked_elf(), "(37U*((x ^ ~0x39U)&(y ^ 0x6dU))|0x55U)+z"),
             ("frame", frame_elf(), "2U*z-x"),
             ("weighted", weighted_elf(), f"37U*((x^y)&{WEIGHTED_UNION}U)+z"),
+            ("bitwise", bitwise_elf(), f"37U*(x^y^{VIEW_KEY}U)+z"),
+            ("interleaved", interleaved_elf(),
+             f"7U*(((x^y)&{WEIGHTED_UNION}U)+((x*y)&{PRODUCT_UNION}U))+z"),
+            ("partitioned", partitioned_elf(), "(x^y)*(y|z)+x+y"),
         ):
             run_fixture(options.worker, options.cli, options.compiler, kind,
                         image, expected)

@@ -14,6 +14,28 @@ executable section nor a decodable prefix alone establishes a callable entry.
 Continuation ownership excludes both proof paths. A validated CFG entry needs
 no pointer relocation elsewhere in the image.
 
+`BinaryImage::isFunctionEntryCandidateAt` owns the shared structural gate for
+independent entries: executable ownership, instruction alignment, data-object
+exclusion and normalized continuation identity. Discovery, CFG tail calls,
+callee analysis and LLVM function-address resolution apply it before consuming
+positive metadata. It does not establish instruction semantics or an ABI.
+Thumb mode tags name the same instruction address. `ExceptionInfo` separately
+indexes primary function
+entries and unwind frame starts; a frame that begins later, a chained row or a
+cold fragment cannot supply an independent callable identity. Next-entry bounds
+use those primary identities as well. Explicitly selecting code for analysis
+retains its separate decode and admission checks.
+
+The COFF CFG reader also requires unique, complete file-backed storage for the
+target's minimum instruction unit. The table must be immutable, while target
+code may be writable or execute-only. Import-thunk decoding requires the full
+instruction span to remain in executable ownership.
+
+LLVM C's constant printer preserves storage and aggregate integer constants
+as literal bits, including values that coincide with image string or function
+addresses. Scalars, arrays, records and vector lanes share this rule. Explicit
+pointer constant expressions retain their symbolic addresses and relocations.
+
 This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
@@ -327,6 +349,10 @@ each a step of undo history: the history holds the file as a table whose rows
 lie at their places in the order made (`NEVERD_USER_STATE_ORDERED` in the
 worker's `UserStateTables.def`), and undo takes the last back off the file and
 the program's types.
+The CLI keeps `types --declare` local to its invocation by default. With a
+binary and `--save`, it persists the complete successfully parsed declaration
+batch through `neverd_type_declarations_save`, using the same sidecar and
+writer lock that the workbench uses.
 
 Header libraries (`HeaderLibraries.def`, `HeaderLibrary.h`) give a program
 the system's types and prototypes that its debug information lacks: the
@@ -547,6 +573,13 @@ operand, and `neverd_local_type_member_json` names one landing.  A
 structure offset is an operand format (`OperandFormats.def`) that names a
 local type and a delta; the worker spells it from the type's current
 layout, so an edited type renames its operands.
+Enum operand admission and rendering share the decoder's logical operand
+width. `neverd_disasm_json_ex` supplies `operand_bits` when
+`NEVERD_DISASM_OPERANDS` is requested; the worker carries those widths through
+classic operand folding with their original indices. It never infers an enum
+immediate's width from a different operand's register. Missing decoded widths
+leave numeric spelling, while `neverd_enum_value_json` owns enum aliases,
+signed extension and residual flag bits.
 
 `neverd_types_convert` and `neverd types --data-model` read and render
 declarations without a program, which is how the generator builds the
@@ -1033,6 +1066,38 @@ rewrite; the full-width verifier must accept it before the normal type,
 effect and profitability checks can publish it. Exhaustion preserves the
 expression. GUI menu requests, CLI single-function options and whole-program
 source sessions all reach these same policies.
+The shared exact MBA layer also recombines weighted literal AND/OR/XOR/NOT
+views of one opaque word. It constructs per-bit coefficients and a constant,
+then independently checks the pointwise grammar, constant difference and every
+shifted bit contribution modulo the full word width. Arithmetic inside the
+word remains opaque; unrelated residual words must cancel exactly. Finite
+work, storage and literal-chain depth limits preserve the original region on
+refusal. This derivation uses the existing symbolic switch in both source
+emitters without an additional GUI or CLI option.
+When enclosing arithmetic interleaves several such words, the same layer
+certifies each changed group and independently proves distribution against
+the original region using modular arithmetic normalization. This composition
+preserves opaque residuals and their multiplicities without treating different
+words as interchangeable. All group and distribution proofs share the attempt's
+work and cumulative storage limits.
+The deep walk retains the factored whole-root proof as an alternative, so
+later local rewrites cannot discard a shorter result already established.
+Quadratic product recovery reads the minterm coefficient matrix directly.
+Diagonal entries identify the factors' intersection and fix the modular
+scale; off-diagonal entries partition the remaining minterms between the two
+factors. It checks every matrix entry, including absent edges and coefficients
+that wrap to zero, within shared work and storage limits. The independent
+polynomial difference verifier still authorizes the replacement. Higher-degree
+products retain the bounded factor search.
+An expanded quadratic root gets a bounded whole-region reading before the deep
+walk can spend its allowance on incomplete local pieces. A structural hint only
+selects that attempt; the same degree check, matrix reconstruction and polynomial
+proof must finish. Optional Boolean table searches preflight their full charge
+against the remaining shared work rather than consuming it on a refused query.
+The LLVM bridge admits compiler-created `or disjoint` only after independent
+literal-mask/OR/wrapping-add facts establish nonoverlap, then exposes that sum
+to the shared engine. The bounded check uses no flags or metadata as premises;
+hidden poison, width/depth limits and ordinary eligibility checks still apply.
 The source policy also enables modular quadratic oracle fitting: it can propose
 squares and pairwise products as well as affine terms. This is one shared core
 option, so the CLI flag and GUI menu cannot select different fitting engines.
@@ -3218,7 +3283,55 @@ source call. Reports, writes and traps before termination remain observable.
 HighIR cleanup, trailing-return insertion, and source-flow validation share
 the same exact source-termination predicate. An unconditional architectural
 trap removes an otherwise synthetic unknown return only when no branch enters
-that return; resumable debugger traps preserve fallthrough.
+that return; resumable debugger traps preserve fallthrough inside the function.
+CFGBuilder checks the shared instruction-range end and function-entry ownership
+before decoding a trap's continuation. An adjacent function cannot become a
+synthetic tail call through a breakpoint; an explicitly owned adjacent fragment
+still continues. This does not make a resumable trap a no-return operation.
+The architecture classifiers also recognize long-encoded x86 `int 3`, `int1`
+and ARM/Thumb `bkpt`/`udf` debugger continuations. Conditional ARM paths can
+still skip a trap, and continuation peeks use a separate decoder so Thumb IT
+state remains unchanged. x86 `ud0`/`ud1` and AArch64 `udf` end ordinary decode;
+AArch64's fast word classifier agrees with the decoded-instruction path.
+Consecutive debugger breaks remain code inside an authoritative function range
+or an explicitly owned fragment. Without that ownership, a bounded look through
+trap/NOP alignment must find code before another function entry; reaching that
+entry or exhausting the lookahead keeps the original stop. Peeks cannot consume
+the caller's decoder state. Alignment recognition includes ARM, Thumb (narrow
+and wide) and AArch64 NOPs in the active instruction mode. A failed decode or
+missing byte inside an authoritative continuation remains a coverage failure;
+it cannot silently turn into a complete trap-terminated function. Explicit
+cold-fragment ends also bound calls and traps when no separate unwind record
+describes the fragment. An adjacent owned fragment still continues.
+Owned NOP suffixes also need observable code before the owner ends; a sized
+range containing alignment does not make the next function a continuation.
+Decoded NOP identity handles x86 prefixes and MPX-disabled compatibility forms,
+with mode-aware legacy alignment patterns shared by the decoder. Both peeking
+and ordinary exploration reject an instruction that starts in sized ownership
+but borrows bytes outside the primary and its explicitly owned fragments.
+Contiguous fragments may supply those bytes; an ownership gap may not.
+Coarse unwind spans do not declare a single function's end and cannot split
+an instruction or clip its continuation. These checks use the same endpoint
+policy as call termination.
+Candidate-proof lookahead consumes the same bounded allowance as exploration.
+The shared symbol inventory distinguishes confirmed
+entries from padding guesses in both live and indexed queries. A guess alone
+does not stop resumable fallthrough; explicit transfers still retain potential
+callee boundaries. A decoded continuation absorbs a guessed function at its
+instruction boundary, even inside a basic block.
+Debugger breaks define no return register: long x86 `int 3` has the short
+encoding's void, zero-argument intrinsic contract, and ARM `bkpt` and AArch64
+`brk` leave R0/X0 intact. Service interrupts keep their own result contracts.
+`IntrinsicTermination.h` distinguishes the compiler's AArch64 `brk #0xF000`
+debugtrap from fatal BRK codes. Decode, LowIR/MedIR no-return propagation,
+HighIR effect classification and both C routes consume that code-sensitive
+policy. LLVM uses `debugtrap` for the resumable code and `trap` for fatal codes;
+the source projection retains the instruction code beside the builtin.
+Boolean-result normalization accepts only a void fatal BRK with its code
+present. Its image-backed proof matches that code against the current immutable
+instruction, so an absent successor or stale IR cannot make a debugger BRK fatal.
+LLVM-to-C preserves raw ARM UDF/HLT assembly and its continuation; a mnemonic
+alone cannot grant the non-returning contract of an explicit `llvm.trap`.
 
 At source-bound runtime calls, Low-to-Med lowering carries the authenticated
 external no-return declaration into the MedIR call effect.
@@ -4622,7 +4735,14 @@ remain separate; whole memory accesses and existing alias checks are retained.
 Raw completeness grants neither an undefined-output audit nor a wider source or
 native-proof contract.
 
-Raw specialization also accepts exact 8+8-byte `CONCAT` into a writable 16-byte scalar. The first input supplies the high 64 bits and the second supplies the low 64 bits, independently of storage byte order. Both inputs must be complete scalar locations or constants. The existing explicit, nonfaulting, default-space and unordered-operation restrictions remain; `SymExec` owns evaluation, and aliasing outputs read both original inputs before writing. This adds no source layout or native-proof contract.
+Raw specialization also accepts exact whole-byte `CONCAT` up to 16 bytes,
+including intermediate widths used by packed integer lowering. The first input
+supplies the high bits and the second supplies the low bits, independently of
+storage byte order. Complete scalar locations or constants must have nonzero
+widths, nonwrapping extents and an exact combined width. The existing explicit,
+nonfaulting, default-space and unordered-operation restrictions remain;
+`SymExec` owns evaluation, and aliasing outputs read both original inputs before
+writing. This adds no source layout or native-proof contract.
 
 For explicit, nonfaulting, little-endian raw recovery, the x64 owner recognizes the complete canonical `RDTSC` instruction and its five-operation multi-output bundle. Each occurrence gets one fresh 64-bit sample; three charged scalar operations evaluated by `SymExec` bind the complete primary result and the two instruction-local placeholders. The original runtime read, copies and zero extensions remain in the residual. Clock values and relations are unconstrained, timestamp-derived addresses keep unknown provenance, and native/source proof contracts remain unchanged.
 
@@ -5526,8 +5646,12 @@ native import event without inventing another executed service instruction.
 and Bionic's `AndroidSignals` adapter use the same query/replacement operation;
 the Android adapter owns LP64 field order, reserved-mask filtering and errno.
 The kernel owner installs a new action before copying the old action out, so a
-copy fault does not undo the installation. No CPU backend or SDK interprets a
-handler address, queues a signal or delivers one.
+copy fault does not undo the installation. The same owner handles `kill` for
+self existence probes and uncatchable SIGKILL termination. It returns a typed
+`signaled` outcome without resuming the pending service; Android stops all live
+guest threads and records their termination separately from completed returns.
+No CPU backend or SDK interprets a handler address or sends a host signal.
+Other targets and signal delivery remain explicit unsupported boundaries.
 `AndroidAuxv` owns admission and lookup of the native workload's explicit,
 complete auxiliary vector. Bionic alone applies `getauxval`'s full-width
 lookup and thread-local errno behavior; constructors and dynamic imports use
@@ -6637,7 +6761,11 @@ current memory contents, accessibility, or disjointness.
 
 Interpreter specialization also owns context keys for exact entry-frame-relative
 pointers. Full-width proven displacements stay distinct from numeric constants;
-no sampled root address enters a key. When an unsupported operation is reached,
+no sampled root address enters a key. An unresolved stack address at an ordinary
+return or native CALL/RET nominates memory dependencies through the same bounded
+discovery used for stores. A fresh complete retry must still prove the required
+stack displacement; nomination supplies no pointer value or separation premise.
+When an unsupported operation is reached,
 bounded reverse traversal can nominate fields from the nearest undecided
 predecessor guards for control-state refinement. This is a candidate heuristic,
 not an unreachability proof: a fresh complete specialization must still prove
@@ -8474,9 +8602,8 @@ through JNI method calls. It owns the JNI-to-AArch64 argument/reference mapping
 and implicit local-frame lifetime; the existing guest callback scheduler owns
 execution, waits and original-call resumption. Runtime retains class
 initialization and the shared heap. Binding lookup occurs at invocation, not
-method-ID resolution. DEX-to-native suspension, Java library loading, floating
-and stack-passed native arguments and synchronized native methods remain
-unsupported. See [the native call contract](android-application-runtime.md#calling-registered-native-methods-through-jni).
+method-ID resolution. DEX native calls enter this same transport through Runtime continuations.
+Floating and stack-passed native arguments and synchronized methods remain unsupported. See [the native call contract](android-application-runtime.md#calling-registered-native-methods-through-jni).
 `AndroidJNIMethods` owns JNI method identities and descriptor/argument binding;
 all JNI call forms and explicit DEX methods reuse it and Bionic's GP argument reader.
 The finite intrinsic catalogue and value semantics live in `dalvik::Library`;
@@ -8555,8 +8682,8 @@ from disposable local references and thread attachments. Initialization and
 static field instructions have one semantic owner in Runtime, including recursive
 initialization, persistent erroneous classes and terminal non-Java stops.
 Program's convenience execute creates a fresh Runtime; repeated calls must use
-the workload instance. Execution is synchronous, without Java preemption or a
-concurrent Java memory-model claim. The supported class contract excludes
+the workload instance. Execution yields only at explicit external-call requests,
+without Java preemption or a concurrent Java memory-model claim. The supported class contract excludes
 floating/volatile fields, synchronization and default interface bodies.
 `Program` owns superclass/interface assignability and member resolution;
 Runtime selects virtual, super and direct targets, allocates inherited fields,
@@ -8734,6 +8861,39 @@ reservation explicitly excludes unsupported concurrent operations.
 
 `SymState::storeConditional` optionally applies one STORE or atomic write phase without a nonalias contract. It constructs byte-equality conditions for current materialized bytes in other absolute or 64-bit symbolic banks; the actual bank uses ordinary overlap handling. Missing bytes retain the write's new unknown epochs, and historical facts are never imported. Complete plan validation and work charges precede conditional expression construction and the single store. Owner refusal leaves state unchanged. `SymExec::stepWithConditionalStore` uses this only for STORE and strictly admitted scalar CMPXCHG, retaining existing refusal havoc and publishing Old only after success. Other operations leave the policy Invalid. This does not prove access validity or initial alias consistency, or guarantee inexpensive downstream solving.
 
+## Analyst call-site source contracts
+
+`SourceCallOccurrenceKey` owns original instruction/sequence/opcode/target
+identity; names and source anchors cannot bind a per-call policy.
+`SourceCallABI` uses the existing platform parameter/variadic placement owners
+and bounds outgoing stack-write and SSA-carrier proofs. `LowToMedSourceCalls`
+publishes these physical inputs before SSA and argument pruning, with discovery
+of platform runtime calls still restricted to its original supported formats.
+
+`Pipeline::rebuildSourceCalls` builds a private source variant from retained
+LowIR and existing callee summaries. The SDK scopes this variant to one C-view
+request, keeps source fingerprints dependent on the policy, and restores the
+ordinary pipeline afterwards. Worker `code.json` transactions own persistence,
+history and replicas. HighC and LLVM C consume the same selected occurrence and
+actual carriers. LLVM C retains ordinary target declarations and uses a typed
+call instruction/pointer cast for the selected occurrence only.
+
+Analyst declarations do not establish library effects, no-return control flow,
+native patch/lift contracts or safety receipts. Native LLVM call normalization
+and validation remain strict by default; only the private source emitter opts
+into occurrence-specific call types. A policy that cannot prove every required
+carrier reports refusal instead of manufacturing operands or changing the
+original analysis.
+
+Stack-frame policies use the same private source variant. `SourceStackFrame`
+owns bounded entry-relative offsets, full temporary lifetimes and admission
+of a single, non-reentered entry-SP carrier. SDK source emission checks every
+requested stack binding against its actual variable inventory before exposing
+the C text. GUI worker previews and CLI `--stack-frame` requests use this same
+check for both C routes. The SDK checks optional input digests and original
+graph snapshots; the worker owns project history while CLI policies are
+explicit JSON inputs. See [stack-frame corrections](gui-stack-frame.md).
+
 ## Explicit runtime modules and persistent execution
 
 `modules/ModuleSet` owns caller-declared files and debug identity independently
@@ -8743,3 +8903,23 @@ boundary. `ExecutionRun` owns persistent stage, resource pause and finite call
 control over one `ExecutionSession`. Transport adapters delegate to these owners.
 The registered raw-buffer factory requires CPU emulation only. See
 [runtime modules](runtime-modules.md) for contracts, bounds and C/CLI entry points.
+
+### Resumable Java activations
+
+`dalvik::Runtime` owns retained interpreter activations, original PCs/registers,
+exception handlers, construction and class-initialization state. Private C++20
+coroutines transfer between those activations; only explicit external requests
+yield to the native owner. Resume tokens authenticate one occurrence and owner,
+and same-owner nested entries consume the parent's remaining stack allowance.
+Class initialization records its owner: another thread cannot observe partial
+static state as initialized. Existing synchronous callers use the same executor
+and refuse an external request rather than replaying effects.
+
+`AndroidDex` transports requests and applies retained JNI operation completions.
+`AndroidJNINativeCalls` alone owns native ABI/reference transport. The image loader
+resolves the original `JNI_OnLoad` export for an explicitly named current ELF;
+`AndroidJavaLibrary` owns its single-namespace load state and on-load callback
+lifetime. The callback scheduler remains the owner of guest execution and waits.
+Immediate completed loads are resumed in a loop, without growing the host call
+stack. No Java frontend or private input adapter supplies method bodies or
+loader success. See the [execution boundary](android-application-runtime.md#java-library-loading-and-dexnative-continuation).

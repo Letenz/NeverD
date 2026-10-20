@@ -42,7 +42,7 @@ public:
   /// what the dialog types.
   SetTypeDialog(Session &session, Address function,
                 std::optional<int> parameter, const QString &name,
-                QWidget *parent = nullptr);
+                QWidget *parent = nullptr, const QJsonObject &variable = {});
 
   /// The declaration to state once the dialog is accepted, unless the user
   /// handed the function's type back to analysis (resets).
@@ -71,6 +71,7 @@ private:
   Address function_;
   std::optional<int> parameter_;
   QString name_;
+  QJsonObject variable_;
   QLabel *subject_ = nullptr;
   QLineEdit *field_ = nullptr;
   QLabel *status_ = nullptr;

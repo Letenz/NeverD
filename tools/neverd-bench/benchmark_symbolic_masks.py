@@ -90,6 +90,144 @@ def weighted_corpus(width, count):
     return rows
 
 
+def bitwise_corpus(width, count):
+    """Literal flips, forced bits and nested views of opaque arithmetic words."""
+    rng = random.Random(0x4D424133 + width)
+    full = (1 << width) - 1
+    rows = []
+    for index in range(count):
+        carrier = ("(x^y)", "(x+y)", "(x*y)", "((x+y)^(x*y))")[(index // 6) % 4]
+        kind = index % 6
+        weight = (37, -11, 182, 1)[(index // 6) % 4]
+        if kind in (0, 1, 4):
+            masks = [0] * 16
+            for bit in range(width):
+                masks[rng.randrange(len(masks))] |= 1 << bit
+            terms = []
+            for mask in masks:
+                key = rng.getrandbits(width)
+                view = f"({carrier}^{key})"
+                if kind == 4:
+                    view = f"(~{view}|{rng.getrandbits(width)})"
+                terms.append(f"({weight}*({view}&{mask}))")
+                if kind == 1:
+                    terms.extend((
+                        f"({2*weight}*({carrier}&{key&mask}))",
+                        str(-weight * (key & mask)),
+                    ))
+            rows.append("+".join(terms))
+        else:
+            positive, negative = [], []
+            for part in range(8):
+                key, forced = rng.getrandbits(width), rng.getrandbits(width)
+                view = f"({carrier}^{key})"
+                if kind == 3:
+                    view = f"~{view}"
+                    key ^= full
+                compensation = key
+                # A high-bit error must survive even if most terms collapse.
+                if kind == 5 and part == 0:
+                    compensation ^= 1 << (width - 2)
+                positive.extend((
+                    f"({view}|{forced})", f"({view}&{forced})",
+                    f"(2*({carrier}&{compensation}))",
+                ))
+                negative.extend((str(key), str(forced)))
+            rows.append(
+                f"(-5*(({'+'.join(positive)})-({'+'.join(negative)})))+(x|y)"
+            )
+    return rows
+
+
+def interleaved_corpus(width, count):
+    """Several opaque words mixed inside shared scales and subtractions."""
+    rng = random.Random(0x4D424134 + width)
+    full = (1 << width) - 1
+    families = (
+        ("(x^y)", "(x*y)"),
+        ("(x+y)", "(x*y)"),
+        ("(x&y)", "(x^y)", "(x*y)"),
+        ("(x+y)", "(x*y)", "((x+y)^(x*y))", "(x|y)"),
+    )
+    rows = []
+    for index in range(count):
+        carriers = families[(index // 6) % len(families)]
+        pieces = (4, 8, 16)[(index % 6) // 2]
+        if index % 2 == 0:
+            groups = []
+            for carrier in carriers:
+                masks = [0] * pieces
+                for bit in range(width):
+                    masks[rng.randrange(pieces)] |= 1 << bit
+                groups.append([
+                    f"(({carrier}^{rng.getrandbits(width)})&{mask})"
+                    for mask in masks
+                ])
+            rows.append("+".join(
+                f"(37*({'+'.join(group[part] for group in groups)}))"
+                for part in range(pieces)
+            ))
+        else:
+            positive, negative = [], []
+            for group, carrier in enumerate(carriers):
+                masks = [rng.getrandbits(width) for _ in range(4)]
+                for subset in range(1, 16):
+                    mask = full
+                    for bit in range(4):
+                        if subset & (1 << bit):
+                            mask &= masks[bit]
+                    if index % 6 == 5 and group == 0 and subset == 1:
+                        mask ^= 1 << (width - 1)
+                    destination = positive if subset.bit_count() % 2 else negative
+                    destination.append(f"({carrier}&{mask})")
+            rows.append(
+                f"(7*(({'+'.join(positive)})-({'+'.join(negative)})))+(x|y)"
+            )
+    return rows
+
+
+def quadratic_corpus(width, count):
+    """Expanded products with three to five inputs and unrelated partitions."""
+    rng = random.Random(0x4D424135 + width)
+    full = (1 << width) - 1
+    families = (
+        ("(x^y)", "(y|z)", ("z",), ("x",)),
+        ("(x^y)", "(x|y)", ("z",), ("w",)),
+        ("(x|z)", "(y^w)", ("w",), ("z",)),
+        ("(x^y)", "(y|v)", ("z", "w"), ("x", "z")),
+    )
+    rows = []
+    for index in range(count):
+        left, right, axes_a, axes_b = families[(index // 6) % len(families)]
+        kind = index % 6
+        scale = (1, 7, -11, 182, 1 << (width - 1), 37)[kind]
+
+        def partition(word, axes):
+            return [
+                "(" + "&".join(
+                    [word] + [axis if mask & (1 << bit) else f"~{axis}"
+                              for bit, axis in enumerate(axes)]
+                ) + ")"
+                for mask in range(1 << len(axes))
+            ]
+
+        terms = [f"({a}*{b})"
+                 for a in partition(left, axes_a)
+                 for b in partition(right, axes_b)]
+        rng.shuffle(terms)
+        expression = f"({scale}*({' + '.join(terms)}))"
+        if kind in (1, 2, 3, 5):
+            expression += "+(x^y)+2*(x&y)"
+        if kind == 5:
+            # A changed high bit remains an observable extra term.
+            expression += f"+(x&{1 << (width - 1)})"
+        if kind == 3:
+            # A second, different degree must survive the quadratic recovery.
+            expression += f"+({(rng.getrandbits(width) | 1) & full}*x*y*z)"
+        rows.append(expression)
+    return rows
+
+
 def check_semantics(expressions, results, width):
     """Independent modular evaluator; never execute parsed source as Python."""
     mask = (1 << width) - 1
@@ -118,9 +256,22 @@ def check_semantics(expressions, results, width):
 
     rng = random.Random(0x53454D00 + width)
     edges = (0, 1, mask, mask >> 1, 1 << (width - 1), mask // 3)
-    assignments = [{"x": x, "y": y} for x in edges for y in edges]
+    names = sorted({
+        node.id for expression in expressions
+        for node in ast.walk(ast.parse(expression, mode="eval"))
+        if isinstance(node, ast.Name)
+    })
+    assignments = [
+        {name: (x if index % 2 == 0 else y)
+         for index, name in enumerate(names)}
+        for x in edges for y in edges
+    ]
+    for name in names:
+        for base in (0, mask):
+            for edge in edges:
+                assignments.append({**dict.fromkeys(names, base), name: edge})
     assignments += [
-        {"x": rng.getrandbits(width), "y": rng.getrandbits(width)}
+        {name: rng.getrandbits(width) for name in names}
         for _ in range(128)
     ]
     if len(expressions) != len(results):
@@ -168,7 +319,9 @@ def main():
     parser.add_argument("--rounds", type=int, default=7)
     parser.add_argument("--count", type=int, default=32)
     parser.add_argument(
-        "--family", choices=("complement", "weighted"), default="complement"
+        "--family",
+        choices=("complement", "weighted", "bitwise", "interleaved", "quadratic"),
+        default="complement",
     )
     args = parser.parse_args()
     if args.rounds < 1 or args.count < 1:
@@ -185,7 +338,11 @@ def main():
     with tempfile.TemporaryDirectory(prefix="neverd-mask-bench-") as directory:
         path = Path(directory) / "expressions.txt"
         for width in (8, 16, 32, 64):
-            generate = weighted_corpus if args.family == "weighted" else corpus
+            generate = {
+                "complement": corpus, "weighted": weighted_corpus,
+                "bitwise": bitwise_corpus, "interleaved": interleaved_corpus,
+                "quadratic": quadratic_corpus,
+            }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")
             row = {

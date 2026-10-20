@@ -20,6 +20,8 @@
 #include "neverd/Common.h"
 #include "neverd/support/ISAEncoding.h"
 
+#include "llvm/Support/Endian.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -145,14 +147,43 @@ inline size_t x86AlignmentNopLength(const uint8_t *Data, size_t Size,
   return SelfCopy ? 1 + Operand->Length : 0;
 }
 
-/// Length of the alignment no-op at \p Data in \p A code, or zero.  Only the
-/// x86 forms are known (x86AlignmentNopLength).
-inline size_t alignmentNopLength(Arch A, const uint8_t *Data, size_t Size) {
+/// Length of a toolchain alignment no-op, or zero. ARM needs the actual
+/// instruction mode; Thumb halfwords must not be read as ARM words.
+inline size_t
+alignmentNopLength(Arch A, const uint8_t *Data, size_t Size,
+                   InstructionMode Mode = InstructionMode::Default) {
   switch (A) {
   case Arch::X86:
     return x86AlignmentNopLength(Data, Size, /*Is64Bit=*/false);
   case Arch::X64:
     return x86AlignmentNopLength(Data, Size, /*Is64Bit=*/true);
+  case Arch::AArch64:
+    return Size >= 4 && llvm::support::endian::read32le(Data) == aarch64::kNop
+               ? 4
+               : 0;
+  case Arch::ARM:
+    if (Mode == InstructionMode::Thumb) {
+      if (Size >= 2) {
+        const uint16_t Word = llvm::support::endian::read16le(Data);
+        if (Word == arm::kThumbNop || Word == arm::kThumbLegacyNop)
+          return 2;
+      }
+      return Size >= 4 &&
+                     llvm::support::endian::read32le(Data) == arm::kThumbWideNop
+                 ? 4
+                 : 0;
+    }
+    if (Mode == InstructionMode::ARM && Size >= 4) {
+      const uint32_t Word = llvm::support::endian::read32le(Data);
+      // A predicate does not give a NOP any effect. Condition 0xf belongs
+      // to a different encoding space and must not reuse this recognition.
+      constexpr uint32_t BodyMask = 0x0fffffffu;
+      const uint32_t Body = Word & BodyMask;
+      if ((Word >> 28) != 0xf && (Body == (arm::kArmNop & BodyMask) ||
+                                  Body == (arm::kArmHintNop & BodyMask)))
+        return 4;
+    }
+    return 0;
   default:
     return 0;
   }

@@ -1303,8 +1303,8 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
         const bool IsI386GOTRelative = I386GOT && *Anchor == *I386GOT &&
                                        Info.EntrySize == sizeof(uint32_t) &&
                                        Info.EntryScale == 1;
-        if (Img.hasExecutableCodeOwnerAt(*Anchor) || IsCOFFImageBaseRVA ||
-            IsI386GOTRelative) {
+        if (Img.hasExecutableCodeOwnerAt(*Anchor, ExecutableCodeOwners) ||
+            IsCOFFImageBaseRVA || IsI386GOTRelative) {
           Info.setTargetBase(*Anchor);
           Info.EntryScale = 1;
           Info.IsPEImageRelativeRVA = IsCOFFImageBaseRVA;

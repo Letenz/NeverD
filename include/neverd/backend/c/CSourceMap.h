@@ -7,6 +7,8 @@
 #ifndef NEVERD_BACKEND_C_CSOURCEMAP_H
 #define NEVERD_BACKEND_C_CSOURCEMAP_H
 
+#include "neverd/backend/c/SourceVariableTypes.h"
+#include "neverd/ir/SourceVariableEdits.h"
 #include "neverd/ir/high/HighSourceMap.h"
 
 #include <optional>
@@ -99,6 +101,11 @@ struct CSourceMap {
   std::vector<CSourceName> Names;
   /// The local types the text defines, replaced on every emit.
   std::optional<CSourceLocalTypes> LocalTypes;
+  /// Emitter-owned variable identities, independently of presentation edits.
+  SourceVariableInventory Variables;
+  std::string VariableSnapshot;
+  std::vector<std::string> StaleVariableTypes;
+  std::vector<SourceVariableEditResult> VariableEditResults;
 };
 
 } // namespace neverd

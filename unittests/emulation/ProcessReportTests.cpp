@@ -25,6 +25,38 @@
 #include "llvm/Support/JSON.h"
 
 namespace neverd::emulation {
+TEST(ProcessReport,
+     SignalTerminationIsDistinctFromExitAndCompletedEntryReturn) {
+  ProcessResult R{ProcessProfile::AndroidNativeAArch64,
+                  GuestArchitecture::AArch64,
+                  ExecutionBackendKind::Unicorn,
+                  {}};
+  auto Before = llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+  EXPECT_FALSE(Before.getAsObject()->get("termination_signal"));
+  R.Stop = ProcessStopReason::Signaled;
+  R.TerminationSignal = 9;
+  R.ReturnValue = 42; // The entry can finish before a drained child kills it.
+  NativeThreadSnapshot Entry{1000, 0, 0, 0, 0, 0};
+  Entry.Finished = true;
+  Entry.ReturnValue = 42;
+  NativeThreadSnapshot Child{1001, 0, 0, 0, 0, 0};
+  Child.TerminationSignal = 9;
+  R.NativeThreads = {Entry, Child};
+  auto JSON = llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+  auto *Root = JSON.getAsObject();
+  EXPECT_EQ(Root->getString("stop_reason"), "signaled");
+  EXPECT_EQ(Root->getInteger("termination_signal"), 9);
+  EXPECT_EQ(Root->getString("return_value"), "2a");
+  EXPECT_EQ(*Root->get("exit_status"), llvm::json::Value(nullptr));
+  const auto *Threads = Root->getObject("android")->getArray("threads");
+  ASSERT_EQ(Threads->size(), 2u);
+  EXPECT_FALSE((*Threads)[0].getAsObject()->get("termination_signal"));
+  EXPECT_EQ((*Threads)[1].getAsObject()->getInteger("termination_signal"), 9);
+  EXPECT_EQ((*Threads)[1].getAsObject()->getBoolean("finished"), false);
+  EXPECT_EQ(*(*Threads)[1].getAsObject()->get("return_value"),
+            llvm::json::Value(nullptr));
+}
+
 TEST(ProcessReport, IoctlTraceHasStrictBoundsAndExplicitCaptureStatus) {
   const char *Good = R"({"linux_files":{"files":[],"ioctl_trace":{
     "event_limit":8,"byte_limit":256,"requests":[{"request":"4294967295",
@@ -1692,6 +1724,27 @@ TEST(ProcessReport, AndroidApplicationSnapshotIsExplicitAndStrict) {
   }
 }
 
+TEST(ProcessReport, JavaLibraryBindingRequiresInitializedJNIGuestImage) {
+  auto Parsed = processOptionsFromJSON(
+      R"({"android":{"jni":true,"java_library":"synthetic-1.0"}})");
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  ASSERT_TRUE(Parsed->Android->JavaLibrary);
+  EXPECT_EQ(*Parsed->Android->JavaLibrary, "synthetic-1.0");
+  for (auto Input :
+       {R"({"java_library":"sample"})",
+        R"({"jni":true,"initialize":false,"java_library":"sample"})",
+        R"({"jni":true,"java_library":false})",
+        R"({"jni":true,"java_library":null})",
+        R"({"jni":true,"java_library":""})",
+        R"({"jni":true,"java_library":"/tmp/sample"})",
+        R"({"jni":true,"java_library":"a\u0000b"})"}) {
+    auto Bad =
+        processOptionsFromJSON(std::string("{\"android\":") + Input + "}");
+    EXPECT_FALSE(bool(Bad));
+    if (!Bad)
+      llvm::consumeError(Bad.takeError());
+  }
+}
 TEST(ProcessReport, JavaStateObservationIsOptInStrictAndRetainsUnknownValues) {
   for (bool Enabled : {false, true}) {
     auto Parsed = processOptionsFromJSON(

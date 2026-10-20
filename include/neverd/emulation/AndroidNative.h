@@ -146,6 +146,10 @@ struct AndroidNativeOptions {
   /// Opt-in final, read-only declaration/initialization/framework directory.
   /// Requires JNI; never initializes Java classes or materializes identities.
   bool ObserveJavaState = false;
+  /// Bind this already mapped ELF to one logical System.loadLibrary name in
+  /// the supplied DEX namespace. Requires JNI and ELF initialization. The
+  /// original exported JNI_OnLoad is called once; no host library is loaded.
+  std::optional<std::string> JavaLibrary;
   /// Explicit API 28 framework snapshot. Absent means unknown, not unattached.
   std::optional<mobile::dalvik::AndroidApplicationSnapshot> Application;
   /// Explicit negative results from the workload's class loader. Keys are
@@ -172,6 +176,8 @@ struct NativeThreadSnapshot {
   uint64_t ID, Handle, TLS, StackBase, StackSize, GuardSize;
   bool Finished = false, Detached = false, Retired = false, Waiting = false;
   std::optional<uint64_t> ReturnValue;
+  /// Process-wide termination of a still-live thread; no return or cleanup.
+  std::optional<uint32_t> TerminationSignal;
 };
 /// Retained RegisterNatives binding, independent of JNI reference lifetime.
 struct NativeJNIRegistration {

@@ -3998,7 +3998,8 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     if (AfterCxxThrow)
       return true;
     emitIndent(Indent);
-    OS << renderDebugBreak(Opts.TheArch, Opts.Format);
+    const std::string Text = renderDebugBreak(Opts.TheArch, Opts.Format);
+    OS << llvm::StringRef(Text).rtrim("\n") << instructionComment(Call) << "\n";
     AfterCxxThrow = false;
     return true;
   }
@@ -4959,12 +4960,71 @@ std::string LLVMCWriter::indirectCalleeType(const llvm::CallBase &Call,
          " (" + Convention + "*)(" + Parameters + ")";
 }
 
+const SourceCallTypeHint *
+LLVMCWriter::analystCallHint(const llvm::CallBase &Call) const {
+  const auto *Node = Call.getMetadata("neverd.source.analyst-call");
+  if (!Node || !Opts.CallTypes)
+    return nullptr;
+  if (Node->getNumOperands() != 2)
+    throw std::runtime_error("Invalid call-site source identity metadata");
+  const auto *Address =
+      llvm::mdconst::dyn_extract<llvm::ConstantInt>(Node->getOperand(0));
+  const auto *Sequence =
+      llvm::mdconst::dyn_extract<llvm::ConstantInt>(Node->getOperand(1));
+  if (!Address || !Sequence || Address->getBitWidth() != 64 ||
+      Sequence->getBitWidth() != 32)
+    throw std::runtime_error("Invalid call-site source identity");
+  const SourceCallTypeHint *Found = nullptr;
+  for (const auto &[Id, Hint] : *Opts.CallTypes)
+    if (Hint.AnalystSite &&
+        Hint.AnalystSite->Instruction == Address->getZExtValue() &&
+        Hint.AnalystSite->Sequence == Sequence->getSExtValue()) {
+      if (Found)
+        throw std::runtime_error(
+            "The call-site source identity became ambiguous");
+      Found = &Hint;
+    }
+  if (!Found || Call.arg_size() != Found->Signature.Parameters.size())
+    throw std::runtime_error(
+        "The call-site source declaration lost its complete operands");
+  if ((Call.getType()->isVoidTy() ? 0 : llvmAccessSize(Call.getType())) !=
+      Found->Signature.ReturnType->Size)
+    throw std::runtime_error("The call-site source result carrier changed");
+  for (unsigned I = 0; I < Call.arg_size(); ++I)
+    if (llvmAccessSize(Call.getArgOperand(I)->getType()) !=
+        Found->Signature.Parameters[I].Type->Size)
+      throw std::runtime_error("A call-site source argument carrier changed");
+  return Found;
+}
+
 std::string
 LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
   // Opaque LLVM pointers do not carry a C function-pointer type. The call
   // instruction owns the exact result, parameter widths and convention.
-  return "((" + indirectCalleeType(Call, /*Strict=*/true) + ")(" +
-         valueStr(Call.getCalledOperand()) + "))";
+  std::string Type = indirectCalleeType(Call, /*Strict=*/true);
+  if (const auto *Hint = analystCallHint(Call)) {
+    std::string Params;
+    const unsigned Fixed = Hint->AnalystFixedCount < 0
+                               ? Hint->Signature.Parameters.size()
+                               : Hint->AnalystFixedCount;
+    if (!Fixed)
+      Params = "void";
+    for (unsigned I = 0; I < Fixed; ++I) {
+      if (I)
+        Params += ", ";
+      Params +=
+          declarationToC(cDisplayType(Hint->Signature.Parameters[I].Type), "");
+    }
+    if (Hint->AnalystFixedCount >= 0)
+      Params += ", ...";
+    const std::string Convention =
+        Call.getCallingConv() == llvm::CallingConv::Win64
+            ? "__attribute__((ms_abi)) "
+            : "";
+    Type = declarationToC(cDisplayType(Hint->Signature.ReturnType),
+                          "(" + Convention + "*)(" + Params + ")");
+  }
+  return "((" + Type + ")(" + valueStr(Call.getCalledOperand()) + "))";
 }
 
 std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
@@ -4975,6 +5035,24 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
     if (Pending == &Call)
       return getName(&Call);
   RenderingCalls.push_back(&Call);
+
+  if (Call.getMetadata("neverd.source.analyst-call")) {
+    const auto *Hint = analystCallHint(Call);
+    std::string Expression = preservedIndirectCalleeStr(Call) + "(";
+    for (unsigned I = 0; I < Call.arg_size(); ++I) {
+      if (I)
+        Expression += ", ";
+      const auto Type =
+          Hint ? declarationToC(
+                     cDisplayType(Hint->Signature.Parameters[I].Type), "")
+               : sourceScalarType(Call.getArgOperand(I)->getType(),
+                                  Call.getAttributes().hasParamAttr(
+                                      I, LLVMSourceSignedParameter));
+      Expression += "(" + Type + ")(" + valueStr(Call.getArgOperand(I)) + ")";
+    }
+    RenderingCalls.pop_back();
+    return Expression + ")";
+  }
 
   if (scalarUnary(Call)) {
     const std::string Expr = functionIdentifier(*Call.getCalledFunction()) +

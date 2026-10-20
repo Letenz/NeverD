@@ -17,6 +17,7 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/DataSymbolBinding.h"
+#include "neverd/loader/ExecutableCodeOwnerIndex.h"
 
 #include "llvm/ADT/ArrayRef.h"
 
@@ -94,6 +95,21 @@ struct OmittedCalleeMemo {
     /// What the probe counts against the memo's bound.
     size_t Bytes = 0;
   };
+  /// What a body's own parameters say of the calls to it before recovery
+  /// finds the ones it forwards (recoverModuleCallAbi): a fact of the body
+  /// and the image.
+  struct CalleeSummary {
+    std::vector<uint64_t> IntegerArgumentRegisters;
+    int RegArity = 0;
+    int TotalArity = 0;
+    bool HasSret = false;
+    bool IsVariadic = false;
+    bool VectorArguments = false;
+    bool ConsumesVaList = false;
+    int FPArity = 0;
+    std::vector<uint64_t> FPRegs;
+    uint16_t FPReturnSize = 0;
+  };
   /// A conversion of a callee's lift.
   struct Conversion {
     /// The typed body, or null where the conversion fails or the body is too
@@ -107,6 +123,12 @@ struct OmittedCalleeMemo {
     /// The forwarder probes of Body under different summaries, the one used
     /// last first; at most MaxProbes.
     std::vector<Probe> Probes;
+    /// What Body says of the calls to it, and the callees it calls: their
+    /// entries in the order a run reads them, and the targets of its direct
+    /// calls, one for each call.  Read where the memo keeps the body.
+    std::optional<CalleeSummary> Summary;
+    std::vector<va_t> CalleesRead;
+    std::vector<va_t> DirectCallTargets;
     /// Whether \p Result's summaries read as they did for the conversion.
     bool readsHold(const PipelineResult &Result) const;
   };
@@ -161,6 +183,11 @@ struct OmittedCalleeMemo {
   const std::map<va_t, PointerVariableCallee> &pointerCallees() const {
     return PointerCallees;
   }
+  /// The code owners of the image the memo adopted, indexed for the lifts of
+  /// the callees read of it, where they first need them.  Like the analysis
+  /// cache's, the index serves until the memo adopts another image or the
+  /// cache is reset.
+  const ExecutableCodeOwnerIndex &codeOwners();
 
   std::map<va_t, Callee> Callees;
 
@@ -171,6 +198,7 @@ private:
   std::map<va_t, va_t> CallArgumentSources;
   std::set<va_t> FunctionEntries;
   std::map<va_t, PointerVariableCallee> PointerCallees;
+  std::optional<ExecutableCodeOwnerIndex> CodeOwners;
   size_t Bytes = 0;
   uint64_t Clock = 0;
 };

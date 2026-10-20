@@ -175,8 +175,14 @@ public:
   bool textEnabled() const { return Text; }
 
   /// True when \p Insn is a trap execution can continue past, so the bytes
-  /// after it may still belong to the same function.  Only x86 `int3` is.
+  /// after it may still belong to the same function (x86, ARM32, or the
+  /// compiler's AArch64 debugtrap).
   bool isResumableTrap(const DecodedInsn &Insn) const;
+
+  /// A decoded NOP or a mode-correct legacy alignment self-copy. Canonical
+  /// x86 NOP identities include valid prefixes and the compatibility profile's
+  /// MPX-disabled forms; validity and extent remain the decoder's decisions.
+  bool isAlignmentNop(const DecodedInsn &Insn) const;
 
   /// Lift a single decoded instruction to LowIR ops. When supplied, \p Relocs
   /// describes exact loader-authenticated address operands in the encoded

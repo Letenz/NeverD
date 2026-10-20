@@ -2081,6 +2081,69 @@ int main(void) {
     }
 }
 
+TEST(LLVMCValues, IntegerInitializersDoNotBorrowImageStringAddresses) {
+  const char *IR = R"ir(
+target datalayout = "e-p:64:64"
+@scalar_bits = internal constant i64 8192
+@narrow_bits = internal constant i32 8192
+@word_bits = internal constant [2 x i64] [i64 8192, i64 8200]
+@record_bits = internal constant {i64, i64} {i64 8192, i64 8200}
+define i64 @observe_bits(i64 %index) {
+  %scalar = load i64, ptr @scalar_bits
+  %narrow = load i32, ptr @narrow_bits
+  %wide = zext i32 %narrow to i64
+  %slot = getelementptr [2 x i64], ptr @word_bits, i64 0, i64 %index
+  %word = load i64, ptr %slot
+  %field = getelementptr {i64, i64}, ptr @record_bits, i64 0, i32 1
+  %record = load i64, ptr %field
+  %a = add i64 %scalar, %wide
+  %b = add i64 %a, %word
+  %sum = add i64 %b, %record
+  ret i64 %sum
+}
+)ir";
+  for (auto Arch : {neverd::Arch::X64, neverd::Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(Arch));
+    neverd::BinaryImage Image;
+    Image.Arch = Arch;
+    Image.Format = neverd::BinaryFormat::ELF;
+    Image.Bits = neverd::Bitness::Bits64;
+    neverd::Segment Data;
+    Data.VA = 0x2000;
+    Data.Size = Data.FileSz = 16;
+    Data.Flags = neverd::SegmentFlags::Readable;
+    Data.Data = {'l', 'i', 't', 'e', 'r', 'a', 'l', 0,
+                 's', 'e', 'c', 'o', 'n', 'd', 0,   0};
+    Image.Segments.push_back(std::move(Data));
+    ASSERT_TRUE(neverd::imageStringLiteral(&Image, 8192));
+    ASSERT_TRUE(neverd::imageStringLiteral(&Image, 8200));
+    llvm::LLVMContext Context;
+    llvm::SMDiagnostic Diagnostic;
+    auto Module = llvm::parseAssemblyString(IR, Diagnostic, Context);
+    ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+    ASSERT_FALSE(llvm::verifyModule(*Module));
+    neverd::CEmitterOptions Options;
+    Options.TheArch = Arch;
+    Options.Format = Image.Format;
+    Options.PreserveLLVMFunctionTypes = true;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(
+        neverd::LLVMCEmitter().emit(*Module, Out, Options, nullptr, &Image));
+    Source += R"c(
+int main(void) {
+  for (uint64_t i = 0; i < 2; ++i) {
+    const uint64_t expected = 8192 + 8192 + (8192 + i * 8) + 8200;
+    if (observe_bits(i) != expected) return 1;
+  }
+  return 0;
+}
+)c";
+    for (const char *Level : {"-O0", "-O2"})
+      compileAndRun(Source, Level);
+  }
+}
+
 TEST(LLVMCValues, GlobalByteViewsUseObjectAddresses) {
   llvm::LLVMContext Context;
   llvm::SMDiagnostic Diagnostic;

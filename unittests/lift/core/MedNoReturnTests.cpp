@@ -115,6 +115,23 @@ TEST(MedNoReturn, WhatTheUserStatesDecidesHowCallsEnd) {
   EXPECT_FALSE(Funcs[3].Blocks[0].Ops[0].DoesNotReturn);
 }
 
+TEST(MedNoReturn, DebuggerBrkDoesNotMakeItsCallersNoReturn) {
+  for (uint64_t Code : {0x1u, 0x3E8u, 0xEFFFu, 0xF000u, 0xF001u}) {
+    SCOPED_TRACE(Code);
+    auto Trap = trapOp();
+    Trap.addInput(MedVar::makeConst(Code, 2));
+    std::vector<MedFunc> Functions;
+    Functions.push_back(
+        function(0x1000, {block(0, {callOp(0x2000), returnOp()})}));
+    Functions.push_back(function(0x2000, {block(0, {Trap, returnOp()})}));
+    propagateInternalNoReturn(Functions, Arch::AArch64);
+    const bool Fatal = Code != 0xF000;
+    EXPECT_EQ(Functions[0].DoesNotReturn, Fatal);
+    EXPECT_EQ(Functions[1].DoesNotReturn, Fatal);
+    EXPECT_EQ(Functions[0].Blocks[0].Ops[0].DoesNotReturn, Fatal);
+  }
+}
+
 TEST(MedNoReturn, NativeSourceEffectsFollowCurrentProofWithoutSharedMutation) {
   auto Call = callOp(0x2000);
   auto Hint = std::make_shared<SourceCallTypeHint>();

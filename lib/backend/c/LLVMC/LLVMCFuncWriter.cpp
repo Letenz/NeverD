@@ -16,6 +16,7 @@
 #include "../X86GetPcThunk.h"
 #include "LLVMCStackAllocation.h"
 #include "LLVMCStorage.h"
+#include "LLVMCVariableEdits.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Limits.h"
@@ -488,7 +489,8 @@ void LLVMCWriter::markInlinable(llvm::Function &Fn) {
   planExpressionMaterialization(Fn);
   for (auto &BB : Fn) {
     for (auto &Inst : BB) {
-      if (Inst.getType()->isVoidTy() || MaterializedExpressions.count(&Inst))
+      if (Inst.getType()->isVoidTy() || MaterializedExpressions.count(&Inst) ||
+          statedVariableType(&Inst))
         continue;
       // Freeze materializes one stable, defined choice before any folding.
       if (llvm::isa<llvm::FreezeInst>(&Inst))
@@ -2124,6 +2126,10 @@ bool LLVMCWriter::isUnknownCopyInst(const llvm::Instruction &Inst) const {
 }
 
 bool LLVMCWriter::allocaAddressTaken(const llvm::AllocaInst *AI) const {
+  // Keep an explicitly associated storage lifetime materialized. Reusing the
+  // conservative address-observed path avoids folding the user's local away.
+  if (AI && AI->getMetadata("neverd.source.association"))
+    return true;
   if (!AI)
     return false;
   if (auto It = AllocaAddressTakenCache.find(AI);
@@ -2391,6 +2397,18 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   ArgDebugNames.clear();
   DebugArgsBound = false;
   FunctionEntry.reset();
+  SourceValueIds.clear();
+  unsigned SourceValueIndex = 0;
+  if (Opts.SourceMap ||
+      (Opts.VariableTypes && !Opts.VariableTypes->Locals.empty())) {
+    for (const auto &Argument : Fn.args())
+      SourceValueIds[&Argument] =
+          "argument:" + std::to_string(Argument.getArgNo());
+    for (const auto &Block : Fn)
+      for (const auto &Instruction : Block)
+        SourceValueIds[&Instruction] =
+            llvmc::sourceValueId(Instruction, SourceValueIndex++);
+  }
   SyntheticFrame = nullptr;
   FrameBaseOffset = 0;
   SpLocalOwner.clear();
@@ -2531,8 +2549,10 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
         Entry->second = std::move(Name);
       }
   markInlinable(Fn);
-  analyzeDeadFrameStores(Analysis, Fn);
-  analyzeStoreForwarding(Analysis, Fn);
+  if (!Opts.FrameVariables || Opts.FrameVariables->empty()) {
+    analyzeDeadFrameStores(Analysis, Fn);
+    analyzeStoreForwarding(Analysis, Fn);
+  }
 
   // A frame address passed on can reach any byte of the frame, unless a type
   // bounds the object it starts: the callee's prototype, or the debug type of
@@ -8635,7 +8655,7 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
       // name never appears in the body, and keep a printed unused assign.
       CallDeclNames.push_back(DeclName);
       emitIndent(1);
-      OS << typeToCLLVM(Inst.getType()) << " " << DeclName << ";\n";
+      OS << sourceVariableDeclaration(Inst, DeclName) << "\n";
     }
   }
 
@@ -9949,7 +9969,7 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
         }
       } else {
         Declaration =
-            "    " + typeToCLLVM(Inst.getType()) + " " + It->second + ";\n";
+            "    " + sourceVariableDeclaration(Inst, It->second) + "\n";
       }
       MissingDecls.emplace_back(*FirstUse, std::move(Declaration));
       DeclaredNames.insert(It->second);

@@ -843,8 +843,14 @@ void Engine::functionsChanged() {
 void Engine::invalidate() {
   forgetNamedViews();
   graphs_.clear();
-  if (listing_)
+  if (listing_) {
+    bool frames =
+        std::any_of(codeEdits_.begin(), codeEdits_.end(), [](const Json &row) {
+          return row.contains("stack_frame");
+        });
+    listing_->setStackFrames(codeEdits_, frames ? inputHash() : std::string());
     listing_->invalidate();
+  }
   textKey_.clear();
   textCache_.clear();
   textLines_.clear();
@@ -867,7 +873,8 @@ void Engine::forgetEncodedPages() {
 
 std::shared_ptr<const Engine::NamedView>
 Engine::namedView(std::uint64_t address, const std::string &representation,
-                  const Json &options) {
+                  const Json &options, const Json *variableEdits,
+                  const Json *callTypes, const Json *stackFrame) {
   const auto view = irViewFunction();
   const auto extended = irViewExFunction();
   if (!options.is_object() || options.dump().size() > 4096)
@@ -882,7 +889,94 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
                           representation == "go";
   if (!sourceView && !options.empty())
     throw Error("invalid_request", "Source options require a source view");
-  const auto optionText = options.dump();
+  Json engineOptions = options;
+  Json staleVariableTypes = Json::array();
+  std::optional<std::string> typeImage;
+  auto currentTypeImage = [&](const Json &type) {
+    if (!typeImage)
+      typeImage = inputHash();
+    return type.value("input_sha256", std::string()) == *typeImage;
+  };
+  if (sourceView) {
+    const auto row = codeEditRow(address);
+    const auto route = representation == "source" ? "c" : representation;
+    const auto edits =
+        row.is_object()
+            ? row.value("views", Json::object()).value(route, Json::object())
+            : Json::object();
+    if (stackFrame || (row.is_object() && row.contains("stack_frame"))) {
+      const auto &Frame = stackFrame ? *stackFrame : row.at("stack_frame");
+      if (currentTypeImage(Frame))
+        engineOptions["stack_frame"] = Frame;
+      else
+        staleVariableTypes.push_back(
+            "A saved stack correction belongs to a different input image; "
+            "reset or reapply it");
+    }
+    const auto calls = callTypes ? *callTypes
+                       : row.is_object()
+                           ? row.value("call_types", Json::object())
+                           : Json::object();
+    Json bindings = Json::array();
+    for (const auto &[id, type] : calls.items()) {
+      if (!currentTypeImage(type)) {
+        staleVariableTypes.push_back(
+            "A saved call-site declaration belongs to a different input image; "
+            "reset or reapply it");
+        continue;
+      }
+      Json binding = type;
+      binding["id"] = id;
+      bindings.push_back(std::move(binding));
+    }
+    if (!bindings.empty())
+      engineOptions["call_types"] = std::move(bindings);
+    const auto associations =
+        variableEdits ? *variableEdits
+                      : edits.value("variable_edits", Json::array());
+    bool Foreign = false;
+    for (const auto &Association : associations)
+      Foreign |= !currentTypeImage(Association);
+    if (Foreign)
+      staleVariableTypes.push_back(
+          "Saved variable associations belong to a different input image; "
+          "reset or reapply them");
+    else if (!associations.empty())
+      engineOptions["variable_edits"] = associations;
+    Json types = Json::array();
+    const Json variableTypes = edits.value("variable_types", Json::object());
+    for (const auto &[id, type] : variableTypes.items()) {
+      if (!currentTypeImage(type)) {
+        staleVariableTypes.push_back(
+            id + ": the saved type belongs to a different input image");
+        continue;
+      }
+      Json binding = type;
+      binding["id"] = id;
+      binding["function"] = hexAddress(address);
+      types.push_back(std::move(binding));
+    }
+    for (const auto &row : codeEdits_)
+      if (row.contains("object_type")) {
+        if (!currentTypeImage(row.at("object_type"))) {
+          if (staleVariableTypes.empty())
+            staleVariableTypes.push_back(
+                "Saved object types belong to a different input image");
+          continue;
+        }
+        Json binding = row.at("object_type");
+        binding["function"] = hexAddress(address);
+        binding["address"] = row.at("addr");
+        binding["id"] =
+            "global:" +
+            std::to_string(parseAddress(row.at("addr").get<std::string>()));
+        binding["snapshot"] = "";
+        types.push_back(std::move(binding));
+      }
+    if (!types.empty())
+      engineOptions["variable_types"] = std::move(types);
+  }
+  const auto optionText = engineOptions.dump();
   (void)listing().functionAliases();
   const auto cacheKey = [&] {
     const auto generation = listing().generation();
@@ -922,7 +1016,7 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
     auto backendRepresentation = representation;
     for (std::size_t next = 0;;) {
       auto page = backendJson(
-          sourceView && extended && !options.empty()
+          sourceView && extended && !engineOptions.empty()
               ? extended(session_, address, backendRepresentation.c_str(), next,
                          EnginePageLines, optionText.c_str())
               : view(session_, address, backendRepresentation.c_str(), next,
@@ -971,6 +1065,8 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
       next = following.get<std::size_t>();
     }
     full["complete"] = true;
+    for (const auto &reason : staleVariableTypes)
+      full["stale_variable_types"].push_back(reason);
     full["next_offset"] = nullptr;
     full["representation"] = representation;
     full["source_options"] = options;
@@ -1282,6 +1378,10 @@ Listing &Engine::newListing() {
   listing_ = std::make_unique<Listing>(session_);
   listing_->setStringOptions(stringOptions_);
   listing_->setPdbDisplayNames(pdbDisplayNames_);
+  const bool frames =
+      std::any_of(codeEdits_.begin(), codeEdits_.end(),
+                  [](const Json &row) { return row.contains("stack_frame"); });
+  listing_->setStackFrames(codeEdits_, frames ? inputHash() : std::string());
   if (analyzed_)
     listing_->loadSwitches();
   return *listing_;
@@ -2811,8 +2911,12 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       }
     }
     // Structure offsets name the members of the types as they are now.
-    if (result.value("problems", Json::array()).empty())
+    if (result.value("problems", Json::array()).empty()) {
       operandFormatsChanged();
+      namesChanged();
+      if (!result.value("decompilation", false))
+        ++revision_;
+    }
     // A prototype the decompiler reads, or a type it names, changed: the
     // engine let its analysis go, as loading signatures does, and every view
     // reads anew.
@@ -3101,24 +3205,314 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     }
     return page(items, p, {"text"});
   }
+  if (operation == "stack_frame") {
+    const auto address = parseAddress(stringField(p, "address"));
+    using Inspect =
+        const char *(*)(neverd_session_t, neverd_va_t, const char *);
+    const auto inspect = engineSymbol<Inspect>("neverd_stack_frame_json");
+    if (!inspect)
+      throw Error("unsupported", "This engine cannot inspect stack frames");
+    const auto row = codeEditRow(address);
+    const auto policy = row.is_object()
+                            ? row.value("stack_frame", Json::object())
+                            : Json::object();
+    std::string stale;
+    const char *raw = nullptr;
+    if (policy.empty() ||
+        policy.value("input_sha256", std::string()) == inputHash())
+      raw = inspect(session_, address, policy.dump().c_str());
+    if (!raw) {
+      stale = policy.value("input_sha256", std::string()) != inputHash()
+                  ? "The saved stack policy belongs to a different input image"
+                  : error();
+      raw = inspect(session_, address, "{}");
+    }
+    if (!raw)
+      throw Error("stack_frame_failed", error());
+    auto result = backendJson(raw);
+    result["policy"] = policy;
+    result["stale"] = stale;
+    return result;
+  }
+  if (operation == "call_sites") {
+    const auto address = parseAddress(stringField(p, "address"));
+    const auto representation = stringField(p, "representation");
+    if (representation != "c" && representation != "source" &&
+        representation != "llvmc")
+      throw Error("unsupported",
+                  "Call-site declarations require Pseudocode or LLVM C");
+    const auto document = namedView(address, representation,
+                                    p.value("source_options", Json::object()));
+    if (!document)
+      throw Error("unsupported",
+                  "The engine does not expose original call occurrences");
+    const auto row = codeEditRow(address);
+    return {{"calls", document->value.value("source_calls", Json::array())},
+            {"snapshot", document->value.value("call_snapshot", std::string())},
+            {"types", row.is_object() ? row.value("call_types", Json::object())
+                                      : Json::object()}};
+  }
+  if (operation == "source_variables") {
+    const auto address = parseAddress(stringField(p, "address"));
+    const auto representation = stringField(p, "representation");
+    if (representation != "c" && representation != "source" &&
+        representation != "llvmc")
+      throw Error("unsupported",
+                  "Variable associations require Pseudocode or LLVM C");
+    const auto document = namedView(address, representation,
+                                    p.value("source_options", Json::object()));
+    if (!document)
+      throw Error("unsupported", "The engine does not expose source variables");
+    Json result{
+        {"variables", document->value.value("source_variables", Json::array())},
+        {"snapshot", document->value.value("variable_snapshot", std::string())},
+        {"results",
+         document->value.value("variable_edit_results", Json::array())}};
+    const auto row = codeEditRow(address);
+    const auto route = representation == "source" ? "c" : representation;
+    result["associations"] = row.is_object()
+                                 ? row.value("views", Json::object())
+                                       .value(route, Json::object())
+                                       .value("variable_edits", Json::array())
+                                 : Json::array();
+    return result;
+  }
+  if (operation == "source_type") {
+    const auto address = parseAddress(stringField(p, "address"));
+    const auto representation = stringField(p, "representation");
+    const auto document = namedView(address, representation,
+                                    p.value("source_options", Json::object()));
+    if (!document)
+      throw Error("unsupported", "The engine does not expose source variables");
+    Json request = p;
+    request["kind"] = "type";
+    CodeEdits::validateChange(document->value, request);
+    const auto id = stringField(p, "variable_id", {}, 256);
+    Json variable;
+    for (const auto &item : document->value.at("source_variables"))
+      if (item.at("id") == id)
+        variable = item;
+    const auto row = codeEditRow(
+        variable.contains("address")
+            ? parseAddress(variable.at("address").get<std::string>())
+            : address);
+    const auto route = representation == "source" ? "c" : representation;
+    const auto edits = row.is_object()
+                           ? row.value("views", Json::object())
+                                 .value(route, Json::object())
+                                 .value("variable_types", Json::object())
+                           : Json::object();
+    const auto stated = variable.contains("address") && row.is_object()
+                            ? row.value("object_type", Json::object())
+                            : edits.value(id, Json::object());
+    Json result{
+        {"input_sha256", inputHash()},
+        {"stated", !stated.empty()},
+        {"name", variable.at("name")},
+        {"type", stated.value("type", variable.value("type", std::string()))},
+        {"bytes", variable.at("bytes")},
+        {"floating", variable.at("floating")}};
+    if (variable.contains("address"))
+      result["object_address"] = variable.at("address");
+    if (p.contains("type")) {
+      using Check = const char *(*)(neverd_session_t, const char *);
+      const auto check = engineSymbol<Check>("neverd_source_type_json");
+      if (!check)
+        throw Error("unsupported",
+                    "The engine cannot check source variable types");
+      const Json proposal{{"type", stringField(p, "type", {}, 4096)},
+                          {"bytes", variable.at("bytes")},
+                          {"floating", variable.at("floating")}};
+      const auto *reply = check(session_, proposal.dump().c_str());
+      if (!reply)
+        throw Error("invalid_type", error());
+      result["type"] = backendJson(reply).at("type");
+    }
+    return result;
+  }
   if (operation == "code_edit") {
     requireWriter();
     if (dirty_)
       throw Error("unsaved_changes", "Save staged comments before a code edit");
     const auto address = parseAddress(stringField(p, "address"));
     auto &store = history();
-    const auto before = codeEditRow(address);
-    const auto document = namedView(address, stringField(p, "representation"),
-                                    p.value("source_options", Json::object()));
-    if (!document)
+    Json before = codeEditRow(address);
+    const bool frameEdit = p.value("kind", std::string()) == "stack_frame";
+    const auto document =
+        frameEdit
+            ? decltype(namedView(address, std::string(), Json::object()))()
+            : namedView(address, stringField(p, "representation"),
+                        p.value("source_options", Json::object()));
+    if (!frameEdit && !document)
       throw Error("unsupported",
                   "The engine does not expose editable source targets");
-    CodeEdits::validateChange(document->value, p);
+    const bool associations = p.value("kind", std::string()) == "variables";
+    if (!associations && !frameEdit)
+      CodeEdits::validateChange(document->value, p);
     // The names keep while the code keeps its locals (code_shape).
     Json request = p;
-    if (const auto shape = document->value.find("code_shape");
-        shape != document->value.end() && shape->is_string())
-      request["shape"] = *shape;
+    std::uint64_t owner = address;
+    if (frameEdit) {
+      request["representation"] = "c";
+      if (!p.value("reset", false)) {
+        auto frame = p.value("stack_frame", Json::object());
+        using Inspect =
+            const char *(*)(neverd_session_t, neverd_va_t, const char *);
+        const auto inspect = engineSymbol<Inspect>("neverd_stack_frame_json");
+        if (!inspect)
+          throw Error("unsupported", "This engine cannot correct stack frames");
+        const auto *reply = inspect(session_, address, frame.dump().c_str());
+        if (!reply)
+          throw Error("stack_frame_refused", error());
+        (void)backendJson(reply);
+        frame["input_sha256"] = inputHash();
+        if (!frame.value("variables", Json::array()).empty())
+          for (const auto *route : {"c", "llvmc"}) {
+            const auto preview = namedView(address, route, Json::object(),
+                                           nullptr, nullptr, &frame);
+            if (!preview)
+              throw Error("stack_frame_refused",
+                          "This frame cannot be named in both C views");
+          }
+        request["stack_frame"] = std::move(frame);
+      }
+    }
+    if (p.value("kind", std::string()) == "call_type") {
+      const bool clear = p.value("action", std::string()) == "clear";
+      const auto id =
+          clear ? std::string() : stringField(p, "call_id", {}, 256);
+      Json calls = before.is_object()
+                       ? before.value("call_types", Json::object())
+                       : Json::object();
+      if (clear)
+        calls = Json::object();
+      else if (p.value("reset", false))
+        calls.erase(id);
+      else {
+        Json actuals = p.value("variadic_types", Json::array());
+        if (!actuals.is_array() || actuals.size() > 32)
+          throw Error("invalid_request", "Invalid actual variadic types");
+        for (const auto &type : actuals)
+          if (!type.is_string() ||
+              type.get_ref<const std::string &>().empty() ||
+              type.get_ref<const std::string &>().size() > 4096)
+            throw Error("invalid_request",
+                        "Each actual variadic argument needs a bounded type");
+        calls[id] = {{"input_sha256", inputHash()},
+                     {"snapshot", p.at("snapshot")},
+                     {"declaration", stringField(p, "declaration", {}, 4096)},
+                     {"variadic_types", actuals}};
+        if (calls.size() > 32)
+          throw Error(
+              "edit_budget",
+              "At most 32 call-site declarations are supported per function");
+        const auto preview = namedView(
+            address, stringField(p, "representation"),
+            p.value("source_options", Json::object()), nullptr, &calls);
+        bool applied = false;
+        std::string reason =
+            "The call-site declaration could not be bound to complete operands";
+        if (preview)
+          for (const auto &status :
+               preview->value.value("call_type_results", Json::array()))
+            if (status.value("id", std::string()) == id) {
+              applied = status.value("applied", false);
+              reason = status.value("refusal", reason);
+            }
+        if (!applied)
+          throw Error("call_type_refused", reason);
+      }
+      request["call_types"] = std::move(calls);
+      if (request.value("representation", std::string()) == "source")
+        request["representation"] = "c";
+    }
+    if (associations) {
+      const auto representation = stringField(p, "representation");
+      if (representation != "c" && representation != "source" &&
+          representation != "llvmc")
+        throw Error("unsupported",
+                    "Variable associations require Pseudocode or LLVM C");
+      if (stringField(p, "snapshot", {}, 128) !=
+          document->value.value("variable_snapshot", std::string()))
+        throw Error("stale_target",
+                    "The source analysis changed; select the variable again");
+      const auto route = representation == "source" ? "c" : representation;
+      Json edits = before.is_object()
+                       ? before.value("views", Json::object())
+                             .value(route, Json::object())
+                             .value("variable_edits", Json::array())
+                       : Json::array();
+      const auto action = stringField(p, "action", {}, 16);
+      if (action == "clear")
+        edits = Json::array();
+      else if (action == "unmap" || action == "unsplit") {
+        const auto index = sizeField(p, "association", edits.size(), 63);
+        if (index >= edits.size() ||
+            edits[index].at("kind") != (action == "unmap" ? "map" : "split"))
+          throw Error("stale_target",
+                      "This variable association no longer exists");
+        edits.erase(index);
+      } else if (action == "map" || action == "split") {
+        if (edits.size() >= 64)
+          throw Error("edit_budget",
+                      "Reset an association before adding more than 64 edits");
+        const auto from = stringField(p, "variable_id", {}, 256);
+        const auto to =
+            action == "map" ? stringField(p, "to", {}, 256) : std::string();
+        auto available = [&](const std::string &id) {
+          for (const auto &v :
+               document->value.value("source_variables", Json::array()))
+            if (v.value("id", std::string()) == id &&
+                !v.value("ambiguous", true) && !v.contains("address"))
+              return true;
+          return false;
+        };
+        if (!available(from) || (action == "map" && !available(to)))
+          throw Error(
+              "stale_target",
+              "Select an unambiguous local variable in the current source");
+        edits.push_back({{"kind", action},
+                         {"from", from},
+                         {"to", to},
+                         {"snapshot", p.at("snapshot")},
+                         {"input_sha256", inputHash()}});
+        const auto preview =
+            namedView(address, representation,
+                      p.value("source_options", Json::object()), &edits);
+        const auto results =
+            preview
+                ? preview->value.value("variable_edit_results", Json::array())
+                : Json::array();
+        if (results.size() != edits.size() ||
+            !results.back().value("applied", false))
+          throw Error("variable_edit_refused",
+                      results.empty()
+                          ? "The engine cannot prove this variable association"
+                          : results.back().value(
+                                "refusal", "Variable association was refused"));
+      } else
+        throw Error("invalid_request", "Unknown variable association action");
+      request["representation"] = route;
+      request["variable_edits"] = std::move(edits);
+    }
+    if (p.value("kind", std::string()) == "type") {
+      const auto checked = execute("source_type", p);
+      request["bytes"] = checked.at("bytes");
+      request["input_sha256"] = checked.at("input_sha256");
+      request["floating"] = checked.at("floating");
+      if (checked.contains("object_address")) {
+        owner = parseAddress(checked.at("object_address").get<std::string>());
+        before = codeEditRow(owner);
+        request["address"] = hexAddress(owner);
+        request["kind"] = "global_type";
+      }
+      if (request.value("representation", std::string()) == "source")
+        request["representation"] = "c";
+    }
+    if (document)
+      if (const auto shape = document->value.find("code_shape");
+          shape != document->value.end() && shape->is_string())
+        request["shape"] = *shape;
     const auto after = CodeEdits::change(before, request);
     if (before == after)
       return {{"saved", false}, {"address", hexAddress(address)}};
@@ -3129,13 +3523,13 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                               [&](const Json &row) {
                                 return parseAddress(
                                            row.at("addr").get<std::string>()) ==
-                                       address;
+                                       owner;
                               }),
                rows.end());
     rows.push_back(after);
     try {
       store.stage({{"kind", "code"},
-                   {"address", hexAddress(address)},
+                   {"address", hexAddress(owner)},
                    {"before", before},
                    {"after", after}});
       store.persist(state);
@@ -3476,9 +3870,11 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                   "Code belongs to its function; delete the function to "
                   "define data in its bytes");
     // The item the cursor is in is the one the action changes.
-    const auto start = action == "code"
-                           ? address
-                           : parseAddress(at.at("start").get<std::string>());
+    const auto start =
+        action == "code"
+            ? address
+            : parseAddress(at.value("definition_start", at.at("start"))
+                               .get<std::string>());
     const auto user = at.value("user", std::string());
     Json row;
     std::vector<std::pair<std::uint64_t, Json>> code;
@@ -3522,6 +3918,23 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         if (!flow.empty() && flow != "call" && flow != "icall")
           break;
       }
+    } else if (action == "array") {
+      const auto width = sizeField(p, "element_size", 1, 65536);
+      const auto count = sizeField(p, "count", 0, 1048576);
+      if (!width || !count || width * count > 64 * 1024 * 1024)
+        throw Error("invalid_request", "Array extent exceeds 64 MiB");
+      size = width * count;
+      row = {{"kind", "array"},
+             {"element_size", width},
+             {"count", count},
+             {"size", size},
+             {"type", stringField(p, "type", {}, 512)}};
+    } else if (action == "alignment") {
+      const auto alignment = sizeField(p, "alignment", 16, 1048576);
+      if (alignment < 2 || (alignment & (alignment - 1)))
+        throw Error("invalid_request", "Alignment must be a power of two");
+      size = alignment - start % alignment;
+      row = {{"kind", "alignment"}, {"alignment", alignment}, {"size", size}};
     } else if (action == "data") {
       // The data carousel: byte, word, dword, qword, then byte again.
       static constexpr std::array<std::uint64_t, 4> Carousel = {1, 2, 4, 8};
@@ -3558,12 +3971,12 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     } else if (action == "undefine") {
       // Bytes the listing already shows one by one stay as they are.
       if (user == UndefinedItemKind || kind == "byte" ||
-          kind == "uninitialized" || kind == "align")
+          kind == "uninitialized" || (kind == "align" && user != "alignment"))
         return {{"address", hexAddress(start)},
                 {"kind", UndefinedItemKind},
                 {"size", at.at("size")},
                 {"saved", false}};
-      size = at.at("size").get<std::uint64_t>();
+      size = at.value("definition_size", at.at("size")).get<std::uint64_t>();
       row = {{"kind", UndefinedItemKind}, {"size", size}};
     } else {
       throw Error("invalid_request",
@@ -3685,7 +4098,13 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
           next = {{"base", entry.at("base")},
                   {"negate", entry.value("negate", false)},
                   {"invert", entry.value("invert", false)}};
-    if (structure) {
+    if (action == "enum") {
+      next = {{"base", "enum"},
+              {"negate", false},
+              {"invert", false},
+              {"type", stringField(p, "type", {}, 512)},
+              {"flags", p.value("flags", false)}};
+    } else if (structure) {
       // The member a structure offset names has no sign of its own.
       next = {{"base", action},
               {"negate", false},
@@ -3695,8 +4114,9 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       if (!next.at("delta").is_number_integer())
         throw Error("invalid_request", "delta must be an integer");
     } else if ((action == "negate" || action == "invert") &&
-               next.at("base") ==
-                   std::string(numberBaseName(NumberBase::Struct))) {
+               (next.at("base") ==
+                    std::string(numberBaseName(NumberBase::Struct)) ||
+                next.at("base") == "enum")) {
       throw Error(
           "invalid_request",
           "A structure offset has no sign or bits of its own to change");

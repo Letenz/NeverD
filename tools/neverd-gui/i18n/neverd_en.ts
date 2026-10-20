@@ -919,6 +919,62 @@
         <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
         <translation>Show the type libraries the program&apos;s types join, and add or remove one</translation>
     </message>
+    <message>
+        <source>Split variable</source>
+        <translation>Split variable</translation>
+    </message>
+    <message>
+        <source>Separate independent local variable lifetimes</source>
+        <translation>Separate independent local variable lifetimes</translation>
+    </message>
+    <message>
+        <source>Map to variable...</source>
+        <translation>Map to variable...</translation>
+    </message>
+    <message>
+        <source>Associate copy-related variables with compatible live ranges</source>
+        <translation>Associate copy-related variables with compatible live ranges</translation>
+    </message>
+    <message>
+        <source>Unmap variable</source>
+        <translation>Unmap variable</translation>
+    </message>
+    <message>
+        <source>Remove a variable mapping</source>
+        <translation>Remove a variable mapping</translation>
+    </message>
+    <message>
+        <source>Unsplit variable</source>
+        <translation>Unsplit variable</translation>
+    </message>
+    <message>
+        <source>Restore the original variable lifetime grouping</source>
+        <translation>Restore the original variable lifetime grouping</translation>
+    </message>
+    <message>
+        <source>Reset variable associations</source>
+        <translation>Reset variable associations</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without variable associations</source>
+        <translation>Regenerate this function without variable associations</translation>
+    </message>
+    <message>
+        <source>Declare the prototype and actual variadic argument types for this call only</source>
+        <translation>Declare the prototype and actual variadic argument types for this call only</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without call-site declarations</source>
+        <translation>Regenerate this function without call-site declarations</translation>
+    </message>
+    <message>
+        <source>Reset call-site declarations</source>
+        <translation>Reset call-site declarations</translation>
+    </message>
+    <message>
+        <source>Set call type...</source>
+        <translation>Set call type...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1369,6 +1425,18 @@
         <source>Cannot write %1</source>
         <translation>Cannot write %1</translation>
     </message>
+    <message>
+        <source>Cannot create the recovery marker directory.</source>
+        <translation>Cannot create the recovery marker directory.</translation>
+    </message>
+    <message>
+        <source>Cannot remove %1: %2</source>
+        <translation>Cannot remove %1: %2</translation>
+    </message>
+    <message>
+        <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
+        <translation>The database changed while recovered edits are pending. Preserve the working copy before reopening.</translation>
+    </message>
 </context>
 <context>
     <name>Representations</name>
@@ -1585,6 +1653,18 @@ Double-click to go to the declaration.</translation>
     <message>
         <source>Transformation failed: %1</source>
         <translation>Transformation failed: %1</translation>
+    </message>
+    <message>
+        <source>Saved variable types need review: the analysis or local types changed</source>
+        <translation>Saved variable types need review: the analysis or local types changed</translation>
+    </message>
+    <message>
+        <source>Saved variable associations need review: </source>
+        <translation>Saved variable associations need review: </translation>
+    </message>
+    <message>
+        <source>Saved call-site declaration needs review: </source>
+        <translation>Saved call-site declaration needs review: </translation>
     </message>
 </context>
 <context>
@@ -2453,6 +2533,78 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
     <message>
         <source>Type Libraries</source>
         <translation>Type Libraries</translation>
+    </message>
+    <message>
+        <source>Cannot open more disassembly views.</source>
+        <translation>Cannot open more disassembly views.</translation>
+    </message>
+    <message>
+        <source>Could not export source: %1</source>
+        <translation>Could not export source: %1</translation>
+    </message>
+    <message>
+        <source>NeverD View-%1</source>
+        <translation>NeverD View-%1</translation>
+    </message>
+    <message>
+        <source>Showing %1 matches; use Next to continue the search.</source>
+        <translation>Showing %1 matches; use Next to continue the search.</translation>
+    </message>
+    <message>
+        <source>The engine cannot identify this source variable unambiguously</source>
+        <translation>The engine cannot identify this source variable unambiguously</translation>
+    </message>
+    <message>
+        <source>Map variable</source>
+        <translation>Map variable</translation>
+    </message>
+    <message>
+        <source>Destination variable (the engine checks copy relationships and live ranges):</source>
+        <translation>Destination variable (the engine checks copy relationships and live ranges):</translation>
+    </message>
+    <message>
+        <source>No other unambiguous local variable is available</source>
+        <translation>No other unambiguous local variable is available</translation>
+    </message>
+    <message>
+        <source>The source analysis changed; select the variable again</source>
+        <translation>The source analysis changed; select the variable again</translation>
+    </message>
+    <message>
+        <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
+        <translation>This variable has no matching association. Use Reset variable associations to remove stale edits.</translation>
+    </message>
+    <message>
+        <source>Actual variadic argument types for this call, one per line (use int or double after default promotions):</source>
+        <translation>Actual variadic argument types for this call, one per line (use int or double after default promotions):</translation>
+    </message>
+    <message>
+        <source>C declaration (include ... for a variadic call):</source>
+        <translation>C declaration (include ... for a variadic call):</translation>
+    </message>
+    <message>
+        <source>Call at %1. This declaration applies to this call only in both C views.</source>
+        <translation>Call at %1. This declaration applies to this call only in both C views.</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a pseudocode row mapped to an original call instruction</source>
+        <translation>Put the cursor on a pseudocode row mapped to an original call instruction</translation>
+    </message>
+    <message>
+        <source>Select call instruction</source>
+        <translation>Select call instruction</translation>
+    </message>
+    <message>
+        <source>Set call type</source>
+        <translation>Set call type</translation>
+    </message>
+    <message>
+        <source>This source row contains multiple calls:</source>
+        <translation>This source row contains multiple calls:</translation>
+    </message>
+    <message>
+        <source>indirect call</source>
+        <translation>indirect call</translation>
     </message>
 </context>
 <context>
@@ -4344,6 +4496,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>Use the &amp;analysis&apos; type</translation>
+    </message>
+    <message>
+        <source>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</source>
+        <translation>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</translation>
+    </message>
+    <message>
+        <source>Remove this source type assertion and use the analysis type</source>
+        <translation>Remove this source type assertion and use the analysis type</translation>
     </message>
 </context>
 <context>

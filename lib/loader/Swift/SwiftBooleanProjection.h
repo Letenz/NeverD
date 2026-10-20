@@ -121,7 +121,8 @@ inline bool terminalBrk(const BinaryImage &Image, const LowBlock &Block) {
   if (!Bytes)
     return false;
   const auto Word = llvm::support::endian::read32le(Bytes->data());
-  return (Word & 0xffe0001f) == 0xd4200000;
+  return (Word & 0xffe0001f) == 0xd4200000 &&
+         ((Word >> 5) & 0xffff) == Block.Ops.front().Inputs[1].Offset;
 }
 
 inline bool ordinaryRuntime(const SourceCallTypeHint &Hint) {

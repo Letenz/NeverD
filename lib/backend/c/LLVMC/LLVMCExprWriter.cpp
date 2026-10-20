@@ -12,6 +12,7 @@
 
 #include "LLVMCFrameLayout.h"
 #include "LLVMCStorage.h"
+#include "LLVMCVariableEdits.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/ArchSupport.h"
@@ -675,6 +676,77 @@ std::string LLVMCWriter::freshVar(const std::string &Hint) {
 }
 
 std::string LLVMCWriter::getName(const llvm::Value *V) {
+  const std::string Name = rawSourceName(V);
+  if (Opts.SourceMap && FunctionEntry && SourceValueIds.count(V)) {
+    const auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(V);
+    llvm::Type *Type = Slot ? Slot->getAllocatedType() : V->getType();
+    SourceVariable Variable;
+    Variable.Function = *FunctionEntry;
+    Variable.Id = SourceValueIds.at(V);
+    Variable.Name = Name;
+    Variable.Bytes = llvmAccessSize(Type);
+    Variable.Type = Type->isFloatingPointTy()
+                        ? NdType::makeFloat(Variable.Bytes)
+                        : NdType::makeInt(Variable.Bytes);
+    Variable.Parameter = llvm::isa<llvm::Argument>(V);
+    Variable.Ambiguous =
+        !Variable.Bytes || (!Type->isIntegerTy() && !Type->isPointerTy() &&
+                            !Type->isFloatingPointTy());
+    recordSourceVariable(Opts.SourceMap->Variables, std::move(Variable));
+  }
+  return Name;
+}
+
+TypeRef LLVMCWriter::statedVariableType(const llvm::Value *V) const {
+  TypeRef CallType;
+  if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(V))
+    if (const auto *Hint = analystCallHint(*Call))
+      CallType = Hint->Signature.ReturnType;
+  if (!Opts.VariableTypes || !FunctionEntry ||
+      (Opts.VariableTypes->Locals.empty() &&
+       Opts.VariableTypes->Globals.empty()))
+    return CallType;
+  const auto Id = SourceValueIds.find(V);
+  const auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(V);
+  if (Id != SourceValueIds.end())
+    if (TypeRef Type = Opts.VariableTypes->local(
+            *FunctionEntry, Id->second,
+            llvmAccessSize(Slot ? Slot->getAllocatedType() : V->getType()))) {
+      if ((Type->Kind == NdTypeKind::Float) !=
+          (Slot ? Slot->getAllocatedType() : V->getType())->isFloatingPointTy())
+        throw std::runtime_error(
+            "source variable type changes floating-point bit interpretation");
+      return Type;
+    }
+  if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(V)) {
+    if (const auto Address = declaredImageDataVA(Load->getPointerOperand()))
+      if (TypeRef Type = Opts.VariableTypes->global(
+              *Address, llvmAccessSize(Load->getType()))) {
+        if ((Type->Kind == NdTypeKind::Float) !=
+            Load->getType()->isFloatingPointTy())
+          throw std::runtime_error(
+              "source object type changes floating-point bit interpretation");
+        return Type;
+      }
+    if (const auto *Slot = asAllocaPointer(Load->getPointerOperand()))
+      if (TypeRef Type = statedVariableType(Slot))
+        return SourceVariableTypes::compatible(Type,
+                                               llvmAccessSize(Load->getType()))
+                   ? Type
+                   : nullptr;
+  }
+  return CallType;
+}
+
+std::string LLVMCWriter::sourceVariableDeclaration(const llvm::Instruction &I,
+                                                   llvm::StringRef Name) {
+  std::string Text = typeToCLLVM(I.getType()) + " " + Name.str() + ";";
+  if (const TypeRef Type = statedVariableType(&I))
+    Text += " /* source type: " + declarationToC(Type, "") + " */";
+  return Text;
+}
+
+std::string LLVMCWriter::rawSourceName(const llvm::Value *V) {
   auto It = ValNames.find(V);
   if (It != ValNames.end())
     return It->second;
@@ -697,7 +769,8 @@ std::string LLVMCWriter::getName(const llvm::Value *V) {
   return Name;
 }
 
-std::string LLVMCWriter::constStr(const llvm::Constant *C) {
+std::string LLVMCWriter::constStr(const llvm::Constant *C,
+                                  bool AllowImageAddress) {
   if (const auto *Vector =
           llvm::dyn_cast<llvm::FixedVectorType>(C->getType())) {
     if (!isCVectorType(C->getType()))
@@ -724,7 +797,7 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
       } else {
         Text += llvm::isa<llvm::UndefValue, llvm::PoisonValue>(Element)
                     ? "0"
-                    : constStr(Element);
+                    : constStr(Element, /*AllowImageAddress=*/false);
       }
     }
     return Text + "}";
@@ -751,6 +824,8 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
       return "(((__uint128_t)0x" + llvm::utohexstr(High) +
              "ULL << 64) | (__uint128_t)0x" + llvm::utohexstr(Low) + "ULL)";
     }
+    if (!AllowImageAddress)
+      return integerConstantText(CI->getValue());
     if (auto Text = codeSectionAddressText(*CI))
       return *Text;
     if (auto Lit = stringLiteralAt(Img, Dbg, CI->getZExtValue(),
@@ -780,7 +855,7 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
       if (const auto *Folded =
               llvm::ConstantFoldConstant(CE, CurMod->getDataLayout());
           Folded != CE)
-        return constStr(Folded);
+        return constStr(Folded, AllowImageAddress);
     }
     if (CE->getOpcode() == llvm::Instruction::GetElementPtr) {
       std::string Image = imageDataCName(CE);
@@ -812,10 +887,12 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
       // each operand at the LLVM bit width and normalize the result after C's
       // integer promotions; do not evaluate a pointer using its old image VA.
       const std::string Type = typeToCLLVM(CE->getType());
-      const std::string Left =
-          "(" + Type + ")(" + constStr(CE->getOperand(0)) + ")";
-      const std::string Right =
-          "(" + Type + ")(" + constStr(CE->getOperand(1)) + ")";
+      const std::string Left = "(" + Type + ")(" +
+                               constStr(CE->getOperand(0), AllowImageAddress) +
+                               ")";
+      const std::string Right = "(" + Type + ")(" +
+                                constStr(CE->getOperand(1), AllowImageAddress) +
+                                ")";
       return "(" + Type + ")(" + Left +
              (CE->getOpcode() == llvm::Instruction::Add ? " + " : " - ") +
              Right + ")";
@@ -864,10 +941,7 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
         const auto *Element = C->getAggregateElement(I);
         // Aggregate integer elements are literal bits, never image addresses.
         // Low byte values can coincide with strings in a low-VA ELF header.
-        if (const auto *Integer = llvm::dyn_cast<llvm::ConstantInt>(Element))
-          Text += integerConstantText(Integer->getValue());
-        else
-          Text += constStr(Element);
+        Text += constStr(Element, /*AllowImageAddress=*/false);
       }
     }
     return Text + (Array ? "}}" : "}");
@@ -881,7 +955,8 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
     for (unsigned I = 0; I < CA->getNumOperands(); ++I) {
       if (I > 0)
         S += ", ";
-      S += constStr(llvm::cast<llvm::Constant>(CA->getOperand(I)));
+      S += constStr(llvm::cast<llvm::Constant>(CA->getOperand(I)),
+                    /*AllowImageAddress=*/false);
     }
     S += "}";
     return S;
@@ -894,7 +969,7 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
     for (unsigned I = 0; I < CDA->getNumElements(); ++I) {
       if (I > 0)
         S += ", ";
-      S += constStr(CDA->getElementAsConstant(I));
+      S += constStr(CDA->getElementAsConstant(I), /*AllowImageAddress=*/false);
     }
     S += "}";
     return S;
@@ -1650,8 +1725,22 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
   };
 
   const NamedFrameSlot *Owner = nullptr;
+  if (Opts.FrameVariables &&
+      llvmc::syntheticFrameBaseOffset(
+          *SyntheticFrame, SyntheticFrame->getModule()->getDataLayout()))
+    if (const auto It = Opts.FrameVariables->find(Disp);
+        It != Opts.FrameVariables->end()) {
+      if ((AccessSize && AccessSize != It->second.Type->Size) || FrameRecord)
+        throw std::runtime_error(
+            "The named stack slot is not an independent scalar in LLVM C");
+      if (!Remember(Off, VariableSym{It->second.Name, It->second.Type}))
+        throw std::runtime_error(
+            "The named stack slot cannot preserve its storage identity");
+      Owner = &FrameSlots[Off];
+    }
   uint64_t Rel = 0;
-  if (auto Exact = debugFrameVariable(Disp)) {
+  if (auto Exact =
+          Owner ? std::optional<VariableSym>() : debugFrameVariable(Disp)) {
     bool WidthOk = true;
     if (AccessSize && !AddressOf && Exact->Type && Exact->Type->Size &&
         Exact->Type->Size != AccessSize) {
@@ -1780,6 +1869,18 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
   if (!Owner || Owner->Name.empty())
     return std::nullopt;
   const std::string OwnerText = slotText(*Owner);
+  if (Opts.SourceMap && FunctionEntry && !FrameRecord && Rel == 0 &&
+      Owner->Type && SourceVariableTypes::compatible(Owner->Type, AccessSize)) {
+    SourceVariable Variable;
+    Variable.Function = *FunctionEntry;
+    Variable.Id = llvmc::sourceStorageId(Ptr, AccessSize);
+    Variable.StackOffset = Disp;
+    Variable.Name = Owner->Name;
+    Variable.Bytes = AccessSize;
+    Variable.Type = Owner->Type;
+    if (!Variable.Id.empty())
+      recordSourceVariable(Opts.SourceMap->Variables, std::move(Variable));
+  }
   // A frame record member names only its own bytes, as the type it was laid
   // out with: the whole member, its address, or a narrower view of its start.
   if (FrameRecord) {
@@ -1968,6 +2069,8 @@ LLVMCWriter::peelPointerOffset(const llvm::Value *V) const {
   } Guard(PeelDepth);
   const bool Nested = PeelDepth > 1;
   while (V && Seen.size() < 64 && Seen.insert(V).second) {
+    if (statedVariableType(V))
+      break;
     if (const auto *I2P = llvm::dyn_cast<llvm::IntToPtrInst>(V)) {
       V = I2P->getOperand(0);
       continue;
@@ -2077,6 +2180,8 @@ LLVMCWriter::peelPointerOffset(const llvm::Value *V) const {
 TypeRef LLVMCWriter::typeOfValue(const llvm::Value *V) const {
   if (!V)
     return nullptr;
+  if (TypeRef Type = statedVariableType(V))
+    return Type;
   if (auto It = ValueTypes.find(V); It != ValueTypes.end())
     return It->second;
   if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
@@ -2135,7 +2240,29 @@ LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
     return std::nullopt;
   TypeRef Rec;
   std::string BaseName;
-  if (Peeled->first == DebugThisArg && DebugThisRecord) {
+  if (TypeRef Type = statedVariableType(Peeled->first);
+      Type && Type->Kind == NdTypeKind::Ptr && Type->Pointee &&
+      Type->Pointee->Kind == NdTypeKind::Struct && !Type->Pointee->IsEnum) {
+    std::string Value;
+    if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Peeled->first)) {
+      if (declaredImageDataVA(Load->getPointerOperand())) {
+        if (const auto Name = ValNames.find(Load); Name != ValNames.end())
+          Value = Name->second;
+      } else if (const auto *Slot = asAllocaPointer(Load->getPointerOperand()))
+        if (const auto Name = ValNames.find(Slot); Name != ValNames.end())
+          Value = Name->second;
+    }
+    if (Value.empty()) {
+      const auto Name = ValNames.find(Peeled->first);
+      if (Name == ValNames.end())
+        return std::nullopt;
+      Value = Name->second;
+    }
+    Rec = Type->Pointee;
+    // Keep the LLVM scalar carrier for arithmetic and PHI copies. Only the
+    // typed memory view casts it, preserving byte offsets and access width.
+    BaseName = "((" + declarationToC(Type, "") + ")(uintptr_t)" + Value + ")";
+  } else if (Peeled->first == DebugThisArg && DebugThisRecord) {
     Rec = DebugThisRecord;
     auto Name = ValNames.find(DebugThisArg);
     if (Name == ValNames.end() || Name->second.empty())

@@ -159,8 +159,28 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setStackProbeSlots(&StackProbeSlots);
     for (size_t I; (I = Claim()) < N;) {
       try {
+        const auto Sites =
+            Opts.SourceCallSiteHints.find(Result.LowFuncs[I].Entry);
+        Local.setSourceCallSiteHints(!Opts.PatchMode && !Opts.LiftMode &&
+                                             Sites !=
+                                                 Opts.SourceCallSiteHints.end()
+                                         ? &Sites->second
+                                         : nullptr);
+        const auto Frame =
+            Opts.SourceStackFrames.find(Result.LowFuncs[I].Entry);
+        std::optional<LowFunc> Projected;
+        if (!Opts.PatchMode && !Opts.LiftMode &&
+            Frame != Opts.SourceStackFrames.end()) {
+          std::string Error;
+          Projected = projectSourceStackFrame(Result.LowFuncs[I], Img.Arch,
+                                              Frame->second, Error);
+          if (!Projected)
+            throw std::runtime_error(Error);
+        }
         Result.MedFuncs[I] =
-            Local.convert(Result.LowFuncs[I], Img.Arch, Img.abiFormat());
+            Local.convert(Projected ? *Projected : Result.LowFuncs[I], Img.Arch,
+                          Img.abiFormat());
+        Result.MedFuncs[I].AnalystStackFrame = Projected.has_value();
         auto &MF = Result.MedFuncs[I];
         auto &LF = Result.LowFuncs[I];
         trimFuncStorage(MF);
@@ -237,3 +257,47 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
 }
 
 } // namespace neverd
+
+neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
+    const BinaryImage &Img, const PipelineOptions &Opts,
+    const PipelineResult &Original, DebugContext *Dbg) {
+  PipelineResult Result;
+  if (Opts.PatchMode || Opts.LiftMode ||
+      (Opts.SourceCallSiteHints.empty() && Opts.SourceStackFrames.empty())) {
+    Result.Error =
+        "Call-site declarations require an explicit private source variant";
+    return Result;
+  }
+  Result.SourceImage = &Img;
+  for (const auto &Function : Original.LowFuncs)
+    if (Opts.OnlyFunctionEntries.count(Function.Entry))
+      Result.LowFuncs.push_back(Function);
+  if (Result.LowFuncs.empty()) {
+    Result.Error = "The original machine operations are unavailable";
+    return Result;
+  }
+#define COPY_SOURCE_FACT(Field) Result.Field = Original.Field
+  COPY_SOURCE_FACT(CallArgumentSources);
+  COPY_SOURCE_FACT(CallDispatchThunks);
+  COPY_SOURCE_FACT(CallEntryArgumentCounts);
+  COPY_SOURCE_FACT(CallEntryReadGPRs);
+  COPY_SOURCE_FACT(CallEntryStackArgs);
+  COPY_SOURCE_FACT(CallEntryStackPops);
+  COPY_SOURCE_FACT(CallEntryStackSlots);
+  COPY_SOURCE_FACT(CallMayWriteGPRs);
+  COPY_SOURCE_FACT(CallVariadicFrom);
+  COPY_SOURCE_FACT(FormattedCalls);
+  COPY_SOURCE_FACT(OmittedCalleeArgumentCounts);
+  COPY_SOURCE_FACT(OmittedCallees);
+  COPY_SOURCE_FACT(CallUserPrototypes);
+  COPY_SOURCE_FACT(CallFloatReturns);
+#undef COPY_SOURCE_FACT
+  Result.Success = true;
+  buildMedIR(Img, Opts, Result);
+  if (!Result.Success || Result.MedIRVerifierFailures) {
+    Result.Success = false;
+    return Result;
+  }
+  buildHighIR(Img, Opts, Result, Dbg);
+  return Result;
+}

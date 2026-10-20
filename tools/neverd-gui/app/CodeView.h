@@ -81,6 +81,7 @@ public:
   QString representation() const { return representation_; }
   /// The assembly-selected address on the cursor line, or its primary mapping.
   std::optional<Address> currentAddress() const;
+  QVector<Address> currentAddresses() const;
   /// Select the first row mapped to \p address, waiting for all pages and
   /// expanding its fold if needed. A new load or cursor move cancels the wait.
   void selectAddress(Address address);
@@ -210,6 +211,7 @@ signals:
   /// The cursor moved to a row mapped to \p address, not by selectAddress or
   /// revealAddress following the disassembly.
   void locationChanged(neverd::gui::Address address);
+  void cursorChanged();
   void addressSelected(neverd::gui::Address address, bool mapped);
   /// A name was double-clicked; the owner resolves and navigates.
   void nameActivated(const QString &name);

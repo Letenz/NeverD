@@ -325,6 +325,8 @@ extern llvm::cl::opt<bool> DumpHigh;
 // Decompile.
 extern llvm::cl::opt<bool> LlvmRoute;
 extern llvm::cl::opt<bool> SourceSymbolic;
+extern llvm::cl::opt<bool> StackFrameInfo;
+extern llvm::cl::opt<std::string> StackFrameFile;
 extern llvm::cl::opt<bool> SourceLLVMControlFlow;
 extern llvm::cl::opt<std::string> SourceLLVMLevel;
 extern llvm::cl::list<std::string> SourceLLVMPasses;
@@ -358,6 +360,7 @@ extern llvm::cl::opt<bool> TypesAsserts;
 extern llvm::cl::opt<bool> TypesDecimalOffsets;
 extern llvm::cl::opt<bool> TypesNoOffsets;
 extern llvm::cl::list<std::string> TypesDeclare;
+extern llvm::cl::opt<bool> TypesSave;
 extern llvm::cl::opt<std::string> TypesInput;
 extern llvm::cl::opt<std::string> TypesOrigin;
 extern llvm::cl::opt<std::string> TypesDataModel;
@@ -479,6 +482,11 @@ extern llvm::cl::opt<std::string> ItemData;
 extern llvm::cl::opt<std::string> ItemString;
 extern llvm::cl::opt<std::string> ItemUndefine;
 extern llvm::cl::opt<std::string> ItemClear;
+extern llvm::cl::opt<std::string> ItemArray;
+extern llvm::cl::opt<std::string> ItemAlignment;
+extern llvm::cl::opt<unsigned> ItemCount;
+extern llvm::cl::opt<std::string> ItemType;
+extern llvm::cl::opt<unsigned> ItemBoundary;
 extern llvm::cl::opt<unsigned> ItemSize;
 extern llvm::cl::opt<std::string> ItemEncoding;
 extern llvm::cl::opt<std::string> OperandAddr;
@@ -495,6 +503,8 @@ extern llvm::cl::opt<bool> OperandNegate;
 extern llvm::cl::opt<bool> OperandInvert;
 extern llvm::cl::opt<bool> OperandClear;
 extern llvm::cl::opt<std::string> OperandStruct;
+extern llvm::cl::opt<std::string> OperandEnum;
+extern llvm::cl::opt<bool> OperandFlags;
 extern llvm::cl::opt<long long> OperandDelta;
 
 // Search.

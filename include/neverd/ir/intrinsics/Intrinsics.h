@@ -1094,8 +1094,10 @@ constexpr bool isRawEnvironmentRequirementId(uint64_t Id) {
 const char *intrinsicName(Intrinsic Id);
 /// True only for intrinsic spellings that unconditionally terminate in C.
 /// Debugger breakpoints such as Int3 and ArmBkpt are excluded.
-bool isUnconditionalTrapIntrinsic(Intrinsic Id);
-const char *intrinsicCName(Intrinsic Id);
+bool isUnconditionalTrapIntrinsic(
+    Intrinsic Id, std::optional<uint64_t> Operand = std::nullopt);
+const char *intrinsicCName(Intrinsic Id,
+                           std::optional<uint64_t> Operand = std::nullopt);
 const char *intrinsicAsmMnemonic(Intrinsic Id);
 const char *llvmIntrinsicToCName(const char *LLVMName);
 Intrinsic intrinsicFromName(const char *Name);

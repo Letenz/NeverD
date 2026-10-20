@@ -132,6 +132,9 @@ struct ProcessResult {
   std::vector<NativeExecutionObservation> ExecutionObservations;
   bool ExecutionObservationsEnabled = false;
   bool ExecutionObservationsTruncated = false;
+  /// Guest signal termination, distinct from a normal exit status. No host
+  /// signal is sent. A previously completed entry ReturnValue may be retained.
+  std::optional<uint32_t> TerminationSignal;
 };
 
 llvm::Expected<ProcessProfile> parseProcessProfile(llvm::StringRef Name);

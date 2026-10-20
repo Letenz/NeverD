@@ -303,6 +303,8 @@ bool ARMLifter::isFunctionTerminator(const cs_insn *I) {
   const ControlInfo Control = classifyControl(I, InstructionMode::Default);
   if (Control.IsConditional)
     return false;
+  if (isResumableTrap(I))
+    return true;
 
   switch (Control.Kind) {
   case ControlKind::DirectBranch:
@@ -316,6 +318,11 @@ bool ARMLifter::isFunctionTerminator(const cs_insn *I) {
     return false;
   }
   return false;
+}
+
+bool ARMLifter::isResumableTrap(const cs_insn *I) {
+  // UDF/TRAP includes the Thumb UDF #0xfe used for MSVC __debugbreak.
+  return I->id == ARM_INS_BKPT || I->id == ARM_INS_UDF || I->id == ARM_INS_TRAP;
 }
 
 bool ARMLifter::isReturn(const cs_insn *I) {

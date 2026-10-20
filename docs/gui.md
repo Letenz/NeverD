@@ -535,7 +535,7 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | P | Create a function at the address (**Edit → Functions** also deletes the current one) |
 | D / A / U | Make data (again for the next size) / a string / bytes of the item |
 | T | Show the operand as a structure offset, the local types ranked by the code's accesses |
-| Y | Set the type of the parameter under the pseudocode cursor, or the current function's declaration, checked as you type |
+| Y | Set the type of the local, parameter or global object under the pseudocode cursor, or the current function's declaration, checked as you type |
 | C | Define native instructions from the selected byte through a basic block |
 | : or ; | Comment the address |
 | Alt+M / Ctrl+M | Mark a position / jump to a marked position |
@@ -1127,7 +1127,8 @@ and ranks the types as the window does (`neverd types <input> --fit --func
 **Edit → Set type** (Y, as IDA's) gives a function a C declaration of the
 program's local types, which the decompiler prints and binds each parameter
 by, ahead of the debug information. In pseudocode, with the cursor on a
-parameter, it types that parameter alone. Elsewhere, and in the disassembly,
+parameter, it types that parameter alone. On an ordinary local or global object,
+it sets that value's source type. Elsewhere, and in the disassembly,
 it edits the function's whole declaration. The dialog starts from the
 declaration as the decompiler prints it. Each keystroke reads the text
 against the local types, and the dialog then shows one of two things:
@@ -1151,6 +1152,45 @@ line does the same (`neverd function-edits <input> --declaration <entry>`,
 `--edit <entry> --set 'type=<declaration>'`, `neverd types <input> --fit
 --func <function> --param 0`).
 
+The Pseudocode and LLVM C context menus offer **Split variable**, **Map to
+variable…**, **Unmap variable**, **Unsplit variable**, and **Reset variable
+associations**. Splitting separates independent used reaching-definition
+lifetimes; definitions that meet at one use remain together. Mapping needs a
+whole-value copy relationship, compatible scalar widths and noninterfering live
+ranges. An entry parameter can be the mapping destination, never the source.
+Pseudocode supports scalar locals and exact negative frame slots, including
+single-definition frame aliases in the straight-line entry prefix. LLVM C
+supports complete scalar local storage and constant frame intervals; its SSA
+values already have one definition and are refused as storage edits. Escaping
+addresses, partial/overlapping accesses, dynamic indexes, exception entries and
+incomplete or over-budget proofs report a reason without committing the edit.
+
+Associations use image hashes, route-specific engine identities and an ordered
+source-profile fingerprint, independently of displayed names. They persist in
+the project and participate in undo/redo. Removing an association regenerates
+the source from the original analysis; dependent later edits with obsolete
+fingerprints stay unapplied with a diagnostic. Reset removes the whole chain.
+The original machine IR, image, native ABI facts and rewrite authority are not
+changed. Local type assertions tied to an older association profile need review.
+
+Ordinary locals and global pointer/scalar objects accept a type from the local
+library with the same byte width and floating-point class as the original value.
+For example, setting a local to `struct DEVICE_CONTEXT *` makes accesses at known
+member offsets read as `context->State`. Ordinary C uses the chosen declaration
+and explicit machine-width conversions. LLVM C retains its scalar storage and
+shows the chosen source type beside the declaration, casting that value at field
+accesses so arithmetic and PHI copies keep their original bits. A global type
+applies in both C routes; local values have separate identities in the two routes.
+By-value records, arrays and changes of machine width are refused.
+
+Variable/object types are source assertions in `code.json`, with the same
+transactional history, undo/redo, database packing and replica loading as code
+names and comments. A local assertion binds an emitter value to a versioned
+fingerprint of the unedited source graph and the input image's SHA-256. Changing the analysis or source options
+can make it stale; the view reports this, retains the record and leaves the
+analysis type in use. Reset hands the selected type back to analysis. These
+assertions do not change machine IR, native ABI recovery or rewrite admission.
+
 Opening a file never starts whole-program analysis. The listing, function list,
 references and graph come from the loader and from per-function work: a
 decompile, graph or IR request analyzes only the function it names. While the
@@ -1168,6 +1208,28 @@ image-relative tables), `switch 54 cases` on the instruction that loads it,
 dispatch and a data reference from the table. A table is laid out only when
 the engine has checked that every slot holds its target. Cancel removes
 queued work; a running engine call finishes unless the worker is restarted.
+
+## Call-site types
+
+In either **Pseudocode** or **LLVM C**, put the cursor on a call row and choose
+**Set call type…** from its context menu. Enter a complete C declaration, for
+example `int log(const char *format, ...);`, and list the actual trailing types,
+one per line, such as `unsigned int` and `const char *`. Use the promoted types
+passed by C varargs (`int`/`unsigned int` and `double`, not `char` or `float`).
+If a source row contains multiple mapped calls, select the original instruction
+in the picker. The declaration's name is a placeholder; the original direct or
+indirect target stays in use. The selected call gets this prototype in both C
+views. Other calls and the target's global declaration keep their own analysis.
+The dialog's **Reset** restores this occurrence; **Reset call-site declarations**
+in the context menu resets every call policy of this function. Undo/redo,
+database reopen and read-only replicas use the usual project history.
+
+This feature currently accepts scalar and pointer C ABIs on x64 PE/ELF/Mach-O
+and AArch64 ELF/Mach-O. Types declared in Local types can be used as pointer
+pointees. By-value aggregates, special conventions and Windows ARM64 require
+additional ABI support. An unproved register value, incomplete outgoing stack
+write or unsupported variadic floating carrier refuses the edit and reports its
+reason in Output. No missing argument is filled with an invented value.
 
 ## Languages, extensions and MCP
 

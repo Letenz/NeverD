@@ -23,12 +23,11 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "gtest/gtest.h"
+
 #include "neverd/decode/AArch64FastClassify.h"
 
 #include <capstone/capstone.h>
-
-#include "gtest/gtest.h"
-
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -69,9 +68,9 @@ public:
 
   CsTruth classify(uint32_t Word, va_t Addr) const {
     CsTruth T;
-    uint8_t Code[4] = {static_cast<uint8_t>(Word), static_cast<uint8_t>(Word >> 8),
-                       static_cast<uint8_t>(Word >> 16),
-                       static_cast<uint8_t>(Word >> 24)};
+    uint8_t Code[4] = {
+        static_cast<uint8_t>(Word), static_cast<uint8_t>(Word >> 8),
+        static_cast<uint8_t>(Word >> 16), static_cast<uint8_t>(Word >> 24)};
     const uint8_t *P = Code;
     size_t Sz = 4;
     uint64_t A = Addr;
@@ -79,9 +78,10 @@ public:
       return T; // Decoded stays false
     T.Decoded = true;
     unsigned Id = Insn->id;
-    T.Terminator = (Id == AARCH64_INS_RET || Id == AARCH64_INS_B ||
-                    Id == AARCH64_INS_BR || Id == AARCH64_INS_ERET ||
-                    Id == AARCH64_INS_BRK || Id == AARCH64_INS_HLT);
+    T.Terminator =
+        (Id == AARCH64_INS_RET || Id == AARCH64_INS_B || Id == AARCH64_INS_BR ||
+         Id == AARCH64_INS_ERET || Id == AARCH64_INS_BRK ||
+         Id == AARCH64_INS_HLT || Id == AARCH64_INS_UDF);
     if (Id == AARCH64_INS_BL && Insn->detail &&
         Insn->detail->aarch64.op_count >= 1 &&
         Insn->detail->aarch64.operands[0].type == AARCH64_OP_IMM)
@@ -115,9 +115,8 @@ std::string diffOne(const CapstoneOracle &O, uint32_t Word, va_t Addr) {
   // predicate is safe to use standalone, without a prior decode).
   bool WantTerm = T.Decoded ? T.Terminator : false;
   if (NatTerm != WantTerm) {
-    std::snprintf(Buf, sizeof(Buf),
-                  "term: w=0x%08X decoded=%d cs=%d nat=%d", Word,
-                  (int)T.Decoded, (int)WantTerm, (int)NatTerm);
+    std::snprintf(Buf, sizeof(Buf), "term: w=0x%08X decoded=%d cs=%d nat=%d",
+                  Word, (int)T.Decoded, (int)WantTerm, (int)NatTerm);
     return Buf;
   }
   return "";
@@ -200,12 +199,20 @@ TEST_F(A64FastClassifyParity, CondBranchSweep) {
 // B / BL immediate samples across the signed imm26 range.
 TEST_F(A64FastClassifyParity, BranchLinkImmSweep) {
   const va_t A = 0x800000;
-  const uint32_t Imm26Samples[] = {0u,        1u,        2u,        0x1FFFFFEu,
-                                   0x1FFFFFFu, 0x2000000u, 0x3FFFFFEu, 0x3FFFFFFu};
+  const uint32_t Imm26Samples[] = {
+      0u, 1u, 2u, 0x1FFFFFEu, 0x1FFFFFFu, 0x2000000u, 0x3FFFFFEu, 0x3FFFFFFu};
   for (uint32_t Imm : Imm26Samples) {
     EXPECT_TRUE(diffOne(Oracle, 0x14000000u | (Imm & 0x3FFFFFFu), A).empty());
     EXPECT_TRUE(diffOne(Oracle, 0x94000000u | (Imm & 0x3FFFFFFu), A).empty());
   }
+}
+
+TEST_F(A64FastClassifyParity, UndefinedInstructionImmediateSweep) {
+  for (uint32_t Code = 0; Code <= 0xffff; ++Code) {
+    EXPECT_TRUE(a64fast::isTerminatorWord(Code));
+    EXPECT_TRUE(diffOne(Oracle, Code, 0x1000).empty());
+  }
+  EXPECT_FALSE(a64fast::isTerminatorWord(0x10000));
 }
 
 // Large deterministic pseudo-random sweep: any missed boundary anywhere in the

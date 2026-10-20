@@ -13,11 +13,13 @@
 
 #include "neverd/decode/AArch64FastClassify.h"
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/intrinsics/IntrinsicTermination.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstring>
@@ -406,10 +408,18 @@ bool AArch64Lifter::isFunctionTerminator(const cs_insn *I) {
   case AARCH64_INS_ERET:
   case AARCH64_INS_BRK:
   case AARCH64_INS_HLT:
+  case AARCH64_INS_UDF:
     return true;
   default:
     return false;
   }
+}
+
+bool AArch64Lifter::isResumableTrap(const cs_insn *I) {
+  if (I->id != AARCH64_INS_BRK || I->size != 4)
+    return false;
+  const uint32_t Word = llvm::support::endian::read32le(I->bytes);
+  return isAArch64DebugBreakCode((Word >> 5) & 0xFFFF);
 }
 
 bool AArch64Lifter::isReturn(const cs_insn *I) {

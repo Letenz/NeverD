@@ -748,10 +748,18 @@ public:
   std::optional<va_t> declaredImageDataVA(const llvm::Value *V) const;
   std::string imageDataCName(const llvm::Value *V) const;
   std::string getName(const llvm::Value *V);
+  std::string rawSourceName(const llvm::Value *V);
+  TypeRef statedVariableType(const llvm::Value *V) const;
+  const SourceCallTypeHint *analystCallHint(const llvm::CallBase &Call) const;
+  std::string sourceVariableDeclaration(const llvm::Instruction &I,
+                                        llvm::StringRef Name);
+  std::map<const llvm::Value *, std::string> SourceValueIds;
   std::string freshVar(const std::string &Hint = "v");
   std::string valueStr(const llvm::Value *V, bool *PointerSpelling = nullptr);
   std::string globalNameStr(const llvm::GlobalValue *Global);
-  std::string constStr(const llvm::Constant *C);
+  /// Storage and aggregate integer constants retain their literal bits;
+  /// expression uses may additionally carry an image-address spelling.
+  std::string constStr(const llvm::Constant *C, bool AllowImageAddress = true);
   std::string blockLabel(const llvm::BasicBlock *BB);
   std::string binopStr(unsigned Opcode, const std::string &LHS,
                        const std::string &RHS, llvm::Type *Ty);

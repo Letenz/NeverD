@@ -747,7 +747,7 @@ struct BinaryImage {
       if (!Guessed(Sym))
         Guesses.erase(Sym.Addr);
     for (const auto &[Start, End] : KnownCodeRanges)
-      if (Guesses.count(Start) && !ContinuationCodeStarts.count(Start))
+      if (Guesses.count(Start) && !isFunctionContinuationAt(Start))
         Guesses.erase(Start);
     return Guesses;
   }
@@ -1388,9 +1388,11 @@ struct BinaryImage {
   /// An operation-scoped index makes repeated CFG queries logarithmic without
   /// mutating this publicly editable image from parallel workers. An absent or
   /// foreign index reads the current Symbols directly.
-  bool
-  hasFunctionSymbolAt(va_t Addr,
-                      const ExecutableCodeOwnerIndex *Index = nullptr) const;
+  /// Resumable fallthrough can exclude entries supported only by padding
+  /// guesses; explicit transfers still consider those potential callees.
+  bool hasFunctionSymbolAt(va_t Addr,
+                           const ExecutableCodeOwnerIndex *Index = nullptr,
+                           bool IncludeBoundaryGuesses = true) const;
 
   /// Largest non-function symbol size defined exactly at \p Addr (0 if none).
   /// Distinguishes a sized data object (a const array/table) from a bare label,
@@ -1462,7 +1464,7 @@ struct BinaryImage {
   std::vector<const Symbol *> getFunctionSymbols() const {
     std::vector<const Symbol *> Result;
     for (const auto &Sym : Symbols)
-      if (Sym.IsFunc && !ContinuationCodeStarts.count(Sym.Addr))
+      if (Sym.IsFunc && !isFunctionContinuationAt(Sym.Addr))
         Result.push_back(&Sym);
     // Aliases of one address keep their symbol table order, so the name a
     // function is listed under never depends on how many others exist.
@@ -1597,6 +1599,9 @@ struct BinaryImage {
   /// that needs a symbolic callable identity must not splice those independent
   /// forms of evidence together.
   const Import *findImportStubAt(va_t Addr) const {
+    if (!isFunctionEntryCandidateAt(Addr))
+      return nullptr;
+    Addr = normalizeCodeAddress(Addr, Arch, Mode);
     auto It = ImportStubIndices.find(Addr);
     if (It != ImportStubIndices.end() && It->second < Imports.size())
       return &Imports[It->second];
@@ -1622,7 +1627,8 @@ struct BinaryImage {
       if (Imp.IATAddr != 0 && !Imp.Name.empty())
         Result.try_emplace(Imp.IATAddr, Imp.Name);
     for (const auto &[Addr, Index] : ImportStubIndices)
-      if (Index < Imports.size() && !Imports[Index].Name.empty())
+      if (Index < Imports.size() && !Imports[Index].Name.empty() &&
+          isFunctionEntryCandidateAt(Addr))
         Result[Addr] = Imports[Index].Name;
     return Result;
   }
@@ -1756,6 +1762,7 @@ struct BinaryImage {
   bool recordImportStub(va_t StubAddr, size_t ImportIndex) {
     if (ImportIndex >= Imports.size())
       return false;
+    StubAddr = normalizeCodeAddress(StubAddr, Arch, Mode);
     const Segment *Seg = getSegmentFor(StubAddr);
     if (!Seg || !Seg->isExecutable())
       return false;
@@ -1819,27 +1826,53 @@ struct BinaryImage {
   getFunctionMetadataEnd(va_t Entry,
                          const ExecutableCodeOwnerIndex *Index = nullptr) const;
 
+  /// Shared structural admission for an independent entry. This supplies no
+  /// function identity, ABI or instruction semantics by itself.
+  bool isFunctionEntryCandidateAt(va_t Addr) const {
+    const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
+    if (DataInCode.count(Normalized) || isFunctionContinuationAt(Addr) ||
+        !hasExecutableCodeOwnerAt(Normalized))
+      return false;
+    if (Arch == neverd::Arch::AArch64)
+      return Normalized % 4 == 0;
+    if (Arch == neverd::Arch::ARM) {
+      const auto LocalMode = instructionModeAt(Normalized);
+      const bool IsARM = LocalMode ? *LocalMode == InstructionMode::ARM
+                                   : Mode == InstructionMode::ARM;
+      return Normalized % (IsARM ? 4 : 2) == 0;
+    }
+    return true;
+  }
+
+  /// A mode-tagged Thumb address and its instruction VA have the same owner.
+  bool isFunctionContinuationAt(va_t Addr) const {
+    const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
+    return ContinuationCodeStarts.count(Addr) ||
+           ContinuationCodeStarts.count(Normalized) ||
+           (normalizeCodeAddress(Normalized | 1, Arch, Mode) == Normalized &&
+            ContinuationCodeStarts.count(Normalized | 1)) ||
+           ExceptionMetadata.isFunctionContinuationAt(Normalized);
+  }
+
   /// True when p Addr is an authenticated callable entry, rather than merely
   /// an address inside executable code. Untyped COFF exports are deliberately
   /// excluded; they require decode/unwind evidence before a patcher may place
   /// a trampoline over the original bytes.
   bool hasAuthenticatedFunctionEntryAt(va_t Addr) const {
     const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
-    if (!hasExecutableCodeOwnerAt(Normalized))
+    if (!isFunctionEntryCandidateAt(Addr))
       return false;
     if ((Entry != 0 && normalizeCodeAddress(Entry, Arch, Mode) == Normalized) ||
-        RuntimeFunctionAddrs.count(Addr) != 0 ||
-        RuntimeFunctionAddrs.count(Normalized) != 0 ||
-        VerifiedFunctionEntries.count(Normalized) != 0 ||
-        ImportStubIndices.count(Addr) != 0 ||
-        ImportStubIndices.count(Normalized) != 0)
+        isRuntimeFunctionAt(Addr) ||
+        VerifiedFunctionEntries.count(Normalized) != 0)
+      return true;
+    if (findImportStubAt(Addr))
       return true;
     for (const auto &[Start, End] : ImportStubRanges)
       if (Start < End && Start == Normalized)
         return true;
-    for (const auto &[Start, End] : KnownCodeRanges)
-      if (Start < End && Start == Normalized)
-        return true;
+    if (hasKnownFunctionEntryAt(Addr))
+      return true;
     if (hasFunctionSymbolAt(Normalized))
       return true;
     // Export tables are not type metadata: Mach-O export tries and PE/ELF
@@ -1914,7 +1947,11 @@ struct BinaryImage {
   }
 
   bool isRuntimeFunctionAt(va_t Addr) const {
-    return RuntimeFunctionAddrs.count(Addr) != 0;
+    const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
+    return RuntimeFunctionAddrs.count(Addr) ||
+           RuntimeFunctionAddrs.count(Normalized) ||
+           (normalizeCodeAddress(Normalized | 1, Arch, Mode) == Normalized &&
+            RuntimeFunctionAddrs.count(Normalized | 1));
   }
 
   /// Compact `--func` `.pdata` start.  Does not materialize the body.
@@ -1961,11 +1998,11 @@ struct BinaryImage {
   /// chunk, so its start alone is not independent function-entry evidence.
   bool hasKnownFunctionEntryAt(va_t Addr) const {
     const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
-    if (RuntimeFunctionAddrs.count(Addr) != 0 ||
-        RuntimeFunctionAddrs.count(Normalized) != 0)
+    if (!isFunctionEntryCandidateAt(Addr))
+      return false;
+    if (isRuntimeFunctionAt(Addr))
       return true;
-    if (ExceptionMetadata.hasFunctionEntry(Addr) ||
-        ExceptionMetadata.hasFunctionEntry(Normalized))
+    if (ExceptionMetadata.hasPrimaryFunctionEntry(Normalized))
       return true;
     if (hasPdataFunctionEntryAt(Addr) || hasPdataFunctionEntryAt(Normalized))
       return true;
@@ -1990,17 +2027,25 @@ struct BinaryImage {
   /// Smallest function start strictly after Addr from the same metadata used
   /// by hasKnownFunctionEntryAt.  InvalidVA means this is the last start.
   va_t nextKnownFunctionEntryAfter(va_t Addr) const {
+    Addr = normalizeCodeAddress(Addr, Arch, Mode);
     va_t Best = InvalidVA;
     auto Consider = [&](va_t Start) {
-      if (Start > Addr && (Best == InvalidVA || Start < Best))
-        Best = Start;
+      Start = normalizeCodeAddress(Start, Arch, Mode);
+      if (Start <= Addr || !isFunctionEntryCandidateAt(Start))
+        return false;
+      Best = std::min(Best, Start);
+      return true;
     };
     if (auto It = RuntimeFunctionAddrs.upper_bound(Addr);
         It != RuntimeFunctionAddrs.end())
-      Consider(*It);
-    if (const ExceptionFunction *Next =
-            ExceptionMetadata.nextFunctionAfter(Addr))
-      Consider(Next->CodeRange.Begin);
+      for (; It != RuntimeFunctionAddrs.end(); ++It)
+        if (Consider(*It))
+          break;
+    const auto &Primaries = ExceptionMetadata.PrimaryFunctionEntries;
+    for (auto It = std::upper_bound(Primaries.begin(), Primaries.end(), Addr);
+         It != Primaries.end(); ++It)
+      if (Consider(*It))
+        break;
     if (!KnownCodeRanges.empty()) {
       const auto It =
           std::upper_bound(KnownCodeRanges.begin(), KnownCodeRanges.end(), Addr,
@@ -2013,8 +2058,10 @@ struct BinaryImage {
           break;
         }
     }
-    if (const va_t Next = nextPdataFunctionEntryAfter(Addr); Next != InvalidVA)
-      Consider(Next);
+    for (va_t Next = nextPdataFunctionEntryAfter(Addr); Next != InvalidVA;
+         Next = nextPdataFunctionEntryAfter(Next))
+      if (Consider(Next))
+        break;
     return Best;
   }
 

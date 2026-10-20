@@ -919,6 +919,62 @@
         <source>Show the type libraries the program&apos;s types join, and add or remove one</source>
         <translation>عرض مكتبات الأنواع التي تنضم إلى أنواع البرنامج، وإضافة مكتبة أو إزالتها</translation>
     </message>
+    <message>
+        <source>Split variable</source>
+        <translation>تقسيم المتغير</translation>
+    </message>
+    <message>
+        <source>Separate independent local variable lifetimes</source>
+        <translation>فصل فترات الحياة المستقلة للمتغيرات المحلية</translation>
+    </message>
+    <message>
+        <source>Map to variable...</source>
+        <translation>ربط بمتغير...</translation>
+    </message>
+    <message>
+        <source>Associate copy-related variables with compatible live ranges</source>
+        <translation>ربط المتغيرات ذات علاقات النسخ ونطاقات الحياة المتوافقة</translation>
+    </message>
+    <message>
+        <source>Unmap variable</source>
+        <translation>إلغاء ربط المتغير</translation>
+    </message>
+    <message>
+        <source>Remove a variable mapping</source>
+        <translation>إزالة ربط متغير</translation>
+    </message>
+    <message>
+        <source>Unsplit variable</source>
+        <translation>التراجع عن تقسيم المتغير</translation>
+    </message>
+    <message>
+        <source>Restore the original variable lifetime grouping</source>
+        <translation>استعادة التجميع الأصلي لفترات حياة المتغير</translation>
+    </message>
+    <message>
+        <source>Reset variable associations</source>
+        <translation>إعادة تعيين ارتباطات المتغيرات</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without variable associations</source>
+        <translation>إعادة إنشاء هذه الدالة دون ارتباطات المتغيرات</translation>
+    </message>
+    <message>
+        <source>Declare the prototype and actual variadic argument types for this call only</source>
+        <translation>تعريف النموذج الأولي والأنواع الفعلية للوسائط المتغيرة لهذا الاستدعاء فقط</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without call-site declarations</source>
+        <translation>إعادة توليد هذه الدالة دون تعريفات مواقع الاستدعاء</translation>
+    </message>
+    <message>
+        <source>Reset call-site declarations</source>
+        <translation>إعادة تعيين تعريفات مواقع الاستدعاء</translation>
+    </message>
+    <message>
+        <source>Set call type...</source>
+        <translation>تعيين نوع الاستدعاء...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1369,6 +1425,18 @@
         <source>Cannot write %1</source>
         <translation>تعذّرت كتابة %1</translation>
     </message>
+    <message>
+        <source>Cannot create the recovery marker directory.</source>
+        <translation>تعذر إنشاء دليل علامات الاستعادة.</translation>
+    </message>
+    <message>
+        <source>Cannot remove %1: %2</source>
+        <translation>تعذر إزالة %1: %2</translation>
+    </message>
+    <message>
+        <source>The database changed while recovered edits are pending. Preserve the working copy before reopening.</source>
+        <translation>تغيرت قاعدة البيانات بينما توجد تعديلات مستعادة معلقة. احتفظ بنسخة العمل قبل إعادة الفتح.</translation>
+    </message>
 </context>
 <context>
     <name>Representations</name>
@@ -1605,6 +1673,18 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Transformation failed: %1</source>
         <translation>فشل التحويل: %1</translation>
+    </message>
+    <message>
+        <source>Saved variable types need review: the analysis or local types changed</source>
+        <translation>تحتاج أنواع المتغيرات المحفوظة إلى مراجعة: تغير التحليل أو الأنواع المحلية</translation>
+    </message>
+    <message>
+        <source>Saved variable associations need review: </source>
+        <translation>تحتاج ارتباطات المتغيرات المحفوظة إلى مراجعة: </translation>
+    </message>
+    <message>
+        <source>Saved call-site declaration needs review: </source>
+        <translation>يحتاج تعريف موقع الاستدعاء المحفوظ إلى مراجعة: </translation>
     </message>
 </context>
 <context>
@@ -2477,6 +2557,78 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Type Libraries</source>
         <translation>مكتبات الأنواع</translation>
+    </message>
+    <message>
+        <source>Cannot open more disassembly views.</source>
+        <translation>لا يمكن فتح المزيد من عروض التفكيك.</translation>
+    </message>
+    <message>
+        <source>Could not export source: %1</source>
+        <translation>تعذر تصدير الشيفرة المصدرية: %1</translation>
+    </message>
+    <message>
+        <source>NeverD View-%1</source>
+        <translation>عرض NeverD-%1</translation>
+    </message>
+    <message>
+        <source>Showing %1 matches; use Next to continue the search.</source>
+        <translation>يتم عرض %1 من التطابقات؛ استخدم «التالي» لمتابعة البحث.</translation>
+    </message>
+    <message>
+        <source>The engine cannot identify this source variable unambiguously</source>
+        <translation>لا يمكن للمحرك تحديد متغير الشيفرة المصدرية هذا بشكل لا لبس فيه</translation>
+    </message>
+    <message>
+        <source>Map variable</source>
+        <translation>ربط المتغير</translation>
+    </message>
+    <message>
+        <source>Destination variable (the engine checks copy relationships and live ranges):</source>
+        <translation>المتغير الهدف (يتحقق المحرك من علاقات النسخ ونطاقات الحياة):</translation>
+    </message>
+    <message>
+        <source>No other unambiguous local variable is available</source>
+        <translation>لا يتوفر متغير محلي آخر يمكن تحديده بشكل لا لبس فيه</translation>
+    </message>
+    <message>
+        <source>The source analysis changed; select the variable again</source>
+        <translation>تغير تحليل الشيفرة المصدرية؛ حدد المتغير مرة أخرى</translation>
+    </message>
+    <message>
+        <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
+        <translation>لا يوجد ارتباط مطابق لهذا المتغير. استخدم إعادة تعيين ارتباطات المتغيرات لإزالة التعديلات القديمة.</translation>
+    </message>
+    <message>
+        <source>Actual variadic argument types for this call, one per line (use int or double after default promotions):</source>
+        <translation>الأنواع الفعلية للوسائط المتغيرة لهذا الاستدعاء، نوع واحد في كل سطر (استخدم int أو double بعد الترقيات الافتراضية):</translation>
+    </message>
+    <message>
+        <source>C declaration (include ... for a variadic call):</source>
+        <translation>تعريف C (أدرج ... للاستدعاء ذي الوسائط المتغيرة):</translation>
+    </message>
+    <message>
+        <source>Call at %1. This declaration applies to this call only in both C views.</source>
+        <translation>استدعاء عند %1. ينطبق هذا التعريف على هذا الاستدعاء فقط في كلا عرضَي C.</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a pseudocode row mapped to an original call instruction</source>
+        <translation>ضع المؤشر على سطر شفرة زائفة مرتبط بتعليمة استدعاء أصلية</translation>
+    </message>
+    <message>
+        <source>Select call instruction</source>
+        <translation>تحديد تعليمة الاستدعاء</translation>
+    </message>
+    <message>
+        <source>Set call type</source>
+        <translation>تعيين نوع الاستدعاء</translation>
+    </message>
+    <message>
+        <source>This source row contains multiple calls:</source>
+        <translation>يحتوي سطر المصدر هذا على استدعاءات متعددة:</translation>
+    </message>
+    <message>
+        <source>indirect call</source>
+        <translation>استدعاء غير مباشر</translation>
     </message>
 </context>
 <context>
@@ -4452,6 +4604,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Use the &amp;analysis&apos; type</source>
         <translation>استخدام نوع التحليل(&amp;A)</translation>
+    </message>
+    <message>
+        <source>%1 is a %2-byte source variable. Enter a scalar or pointer type from the local types.</source>
+        <translation>%1 متغير في الشيفرة المصدرية بحجم %2 بايت. أدخل نوعًا قياسيًا أو نوع مؤشر من الأنواع المحلية.</translation>
+    </message>
+    <message>
+        <source>Remove this source type assertion and use the analysis type</source>
+        <translation>إزالة تصريح نوع الشيفرة المصدرية هذا واستخدام النوع المستنتج من التحليل</translation>
     </message>
 </context>
 <context>

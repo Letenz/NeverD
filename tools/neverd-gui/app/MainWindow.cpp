@@ -85,6 +85,7 @@
 #include <QStorageInfo>
 #include <QStyle>
 #include <QTableView>
+#include <QTableWidget>
 #include <QTextStream>
 #include <QToolBar>
 #include <QTreeView>
@@ -809,6 +810,10 @@ CodeView *MainWindow::codeView(const QString &representation) {
           [this](Address address) { jump(address); });
   connect(view->text(), &CodeText::contextMenuRequested, this,
           &MainWindow::contextMenu);
+  connect(view->text(), &CodeText::cursorChanged, this,
+          &MainWindow::updateActions);
+  connect(view->text(), &CodeText::statusChanged, this,
+          &MainWindow::updateActions);
   if (c)
     pseudocode_ = view;
   return view;
@@ -1347,7 +1352,9 @@ void MainWindow::connectActions() {
            std::pair{ActionId::EditOperandInvert, QStringLiteral("invert")}})
     // A structure offset names a type the user picks first.
     on(id, [this, formatOperand, action] {
-      if (action == QLatin1String("struct"))
+      if (action == QLatin1String("enum"))
+        editDataPresentation("enum");
+      else if (action == QLatin1String("struct"))
         chooseStructOffset();
       else
         formatOperand(action);
@@ -1365,6 +1372,19 @@ void MainWindow::connectActions() {
         session_.defineItem(*address, action);
     });
   on(ActionId::EditSetType, [this] { setType(); });
+  on(ActionId::EditSplitVariable, [this] { editVariable("split"); });
+  on(ActionId::EditMapVariable, [this] { editVariable("map"); });
+  on(ActionId::EditUnmapVariable, [this] { editVariable("unmap"); });
+  on(ActionId::EditUnsplitVariable, [this] { editVariable("unsplit"); });
+  on(ActionId::EditResetVariables, [this] { editVariable("clear"); });
+  on(ActionId::EditMakeArray, [this] { editDataPresentation("array"); });
+  on(ActionId::EditMakeAlignment,
+     [this] { editDataPresentation("alignment"); });
+  on(ActionId::EditStackFrame, [this] { editStackFrame(0); });
+  on(ActionId::EditStackPointer, [this] { editStackFrame(1); });
+  on(ActionId::EditStackOperand, [this] { editStackFrame(2); });
+  on(ActionId::EditCallType, [this] { editCallType(); });
+  on(ActionId::EditResetCallTypes, [this] { editCallType(true); });
   on(ActionId::EditConvertToStruct, [this] { convertToStruct(); });
   on(ActionId::JumpBack, [this] { navigateHistory(false); });
   on(ActionId::JumpForward, [this] { navigateHistory(true); });
@@ -1695,11 +1715,38 @@ void MainWindow::updateActions() {
   // parameters take a type instead.
   actions_.action(ActionId::EditOperandStruct)
       ->setEnabled(operandFormats && session_.showsStructOffsets() && !code);
+  for (const auto id : {ActionId::EditMakeArray, ActionId::EditMakeAlignment})
+    actions_.action(id)->setEnabled(location && !code && !session_.readOnly() &&
+                                    session_.keepsDataItems());
+  actions_.action(ActionId::EditOperandEnum)
+      ->setEnabled(operandFormats && !code && session_.showsStructOffsets());
   const bool declarations =
       location && !session_.readOnly() && session_.typesFunctions();
   actions_.action(ActionId::EditSetType)
       ->setEnabled(declarations && (code ? code->text()->function().has_value()
                                          : currentFunction().has_value()));
+  for (const auto id : {ActionId::EditStackFrame, ActionId::EditStackPointer,
+                        ActionId::EditStackOperand})
+    actions_.action(id)->setEnabled(location && !session_.readOnly() &&
+                                    currentFunction().has_value());
+  const bool variableView =
+      code && loaded && !session_.readOnly() && code->text()->function() &&
+      (code->representation() == "source" || code->representation() == "c" ||
+       code->representation() == "llvmc");
+  const auto variableTarget =
+      variableView ? code->text()->renameTarget() : std::nullopt;
+  const bool variable = variableTarget &&
+                        variableTarget->contains("variable_id") &&
+                        !variableTarget->value("object").toBool();
+  for (const auto id :
+       {ActionId::EditSplitVariable, ActionId::EditMapVariable,
+        ActionId::EditUnmapVariable, ActionId::EditUnsplitVariable})
+    actions_.action(id)->setEnabled(variableView && variable);
+  actions_.action(ActionId::EditResetVariables)->setEnabled(variableView);
+  actions_.action(ActionId::EditCallType)
+      ->setEnabled(variableView && !code->text()->loading());
+  actions_.action(ActionId::EditResetCallTypes)
+      ->setEnabled(variableView && !code->text()->loading());
   actions_.action(ActionId::EditConvertToStruct)
       ->setEnabled(declarations && session_.convertsParameters() && code &&
                    code->text()->function().has_value());
@@ -3189,6 +3236,15 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   // record, after its rename.
   if (auto *type = actions_.action(ActionId::EditSetType); type->isEnabled())
     menu.addAction(type);
+  for (const auto id :
+       {ActionId::EditSplitVariable, ActionId::EditMapVariable,
+        ActionId::EditUnmapVariable, ActionId::EditUnsplitVariable,
+        ActionId::EditResetVariables})
+    if (auto *action = actions_.action(id); action->isEnabled())
+      menu.addAction(action);
+  for (const auto id : {ActionId::EditCallType, ActionId::EditResetCallTypes})
+    if (auto *action = actions_.action(id); action->isEnabled())
+      menu.addAction(action);
   if (auto *convert = actions_.action(ActionId::EditConvertToStruct);
       convert->isEnabled()) {
     const auto target = focusedCodeView()->text()->renameTarget();
@@ -3335,12 +3391,29 @@ void MainWindow::setType() {
   std::optional<Address> function;
   std::optional<int> parameter;
   QString name;
+  QJsonObject variable;
   if (view) {
     function = view->text()->function();
     if (const auto target = view->text()->renameTarget();
         target && target->contains(QStringLiteral("parameter"))) {
       parameter = target->value(QStringLiteral("parameter")).toInt();
       name = target->value(QStringLiteral("name")).toString();
+    } else if (target && (target->contains(QStringLiteral("variable_id")) ||
+                          target->value(QStringLiteral("object")).toBool() ||
+                          target->value(QStringLiteral("kind")).toString() ==
+                              QStringLiteral("local"))) {
+      if (!target->contains(QStringLiteral("variable_id"))) {
+        output_->append(
+            tr("The engine cannot identify this source variable unambiguously"),
+            1);
+        return;
+      }
+      name = target->value(QStringLiteral("name")).toString();
+      variable = {{"address", hexAddress(*function)},
+                  {"representation", view->text()->representation()},
+                  {"source_options", view->text()->sourceOptions()},
+                  {"variable_id", target->value(QStringLiteral("variable_id"))},
+                  {"snapshot", target->value(QStringLiteral("snapshot"))}};
     }
   } else {
     function = currentFunction();
@@ -3352,7 +3425,7 @@ void MainWindow::setType() {
   if (name.isEmpty())
     name = displayAddress(*function);
   const auto epoch = session_.epoch();
-  SetTypeDialog dialog(session_, *function, parameter, name, this);
+  SetTypeDialog dialog(session_, *function, parameter, name, this, variable);
   const bool accepted = dialog.exec() == QDialog::Accepted;
   if (view) {
     view->window()->activateWindow();
@@ -3360,11 +3433,518 @@ void MainWindow::setType() {
   }
   if (!accepted || session_.epoch() != epoch)
     return;
+  if (!variable.isEmpty()) {
+    variable.insert(QStringLiteral("kind"), QStringLiteral("type"));
+    variable.insert(QStringLiteral("reset"), dialog.resets());
+    if (!dialog.resets())
+      variable.insert(QStringLiteral("type"), dialog.declaration());
+    session_.editCode(variable, epoch);
+    return;
+  }
   session_.editFunction(
       *function,
       {{"type", dialog.resets() ? QJsonValue(QJsonValue::Null)
                                 : QJsonValue(dialog.declaration())}},
       epoch);
+}
+
+void MainWindow::editDataPresentation(const QString &kind) {
+  const auto address = currentAddress();
+  if (!address || focusedCodeView() || session_.readOnly())
+    return;
+  const auto epoch = session_.epoch();
+  const auto revision = session_.revision();
+  const auto operand = disassembly_->currentOperand();
+  QDialog dialog(this);
+  dialog.setObjectName("dataPresentationDialog");
+  dialog.setWindowTitle(kind == "array"       ? tr("Make array")
+                        : kind == "alignment" ? tr("Make alignment")
+                                              : tr("Enum operand"));
+  auto *layout = new QVBoxLayout(&dialog);
+  layout->addWidget(
+      new QLabel(tr("Address: %1").arg(hexAddress(*address)), &dialog));
+  auto *type = new QLineEdit(&dialog);
+  type->setObjectName("dataPresentationType");
+  auto *width = new QSpinBox(&dialog);
+  width->setObjectName("arrayElementSize");
+  width->setRange(1, 65536);
+  width->setValue(1);
+  auto *count = new QSpinBox(&dialog);
+  count->setObjectName("arrayCount");
+  count->setRange(1, 1048576);
+  count->setValue(16);
+  auto *alignment = new QComboBox(&dialog);
+  alignment->setObjectName("dataAlignment");
+  for (int value = 2; value <= 1048576; value *= 2)
+    alignment->addItem(QString::number(value), value);
+  alignment->setCurrentIndex(3);
+  auto *flags = new QCheckBox(
+      tr("Combine bit flags; preserve unknown bits numerically"), &dialog);
+  flags->setObjectName("enumFlags");
+  type->setVisible(kind != "alignment");
+  width->setVisible(kind == "array");
+  count->setVisible(kind == "array");
+  alignment->setVisible(kind == "alignment");
+  flags->setVisible(kind == "enum");
+  if (kind == "array") {
+    layout->addWidget(new QLabel(tr("Element size in bytes:"), &dialog));
+    layout->addWidget(width);
+    layout->addWidget(new QLabel(
+        tr("Element count (complete initialized span, at most 64 MiB):"),
+        &dialog));
+    layout->addWidget(count);
+    layout->addWidget(new QLabel(tr("Local type name (optional; its layout "
+                                    "must match the element size):"),
+                                 &dialog));
+    layout->addWidget(type);
+  } else if (kind == "alignment") {
+    layout->addWidget(new QLabel(
+        tr("Alignment boundary (the marked span ends on this boundary):"),
+        &dialog));
+    layout->addWidget(alignment);
+  } else {
+    layout->addWidget(
+        new QLabel(tr("Enumeration declared in Local Types:"), &dialog));
+    layout->addWidget(type);
+    layout->addWidget(flags);
+  }
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  layout->addWidget(buttons);
+  if (dialog.exec() != QDialog::Accepted || session_.epoch() != epoch ||
+      session_.revision() != revision || currentAddress() != address)
+    return;
+  QJsonObject request{{"address", hexAddress(*address)}, {"action", kind}};
+  if (kind == "array") {
+    request.insert("element_size", width->value());
+    request.insert("count", count->value());
+    request.insert("type", type->text().trimmed());
+  }
+  if (kind == "alignment")
+    request.insert("alignment", alignment->currentData().toInt());
+  if (kind == "enum") {
+    request.insert("type", type->text().trimmed());
+    request.insert("flags", flags->isChecked());
+    if (operand)
+      request.insert("operand", *operand);
+  }
+  session_.editDataPresentation(
+      kind == "enum" ? "operand_format" : "item_define", request, epoch);
+}
+
+void MainWindow::editStackFrame(int mode) {
+  const auto function = currentFunction();
+  const auto address = currentAddress();
+  if (!function || session_.readOnly())
+    return;
+  const auto epoch = session_.epoch();
+  const auto revision = session_.revision();
+  session_.read(
+      "stack_frame", {{"address", hexAddress(*function)}}, this,
+      [this, function, address, epoch, revision,
+       mode](const QJsonObject &reply) {
+        if (session_.epoch() != epoch || session_.revision() != revision ||
+            currentFunction() != function)
+          return;
+        auto policy = reply.value("policy").toObject();
+        policy.remove("input_sha256");
+        policy.insert("snapshot", reply.value("snapshot"));
+        const auto stale = reply.value("stale").toString();
+        QDialog dialog(this);
+        dialog.setObjectName("stackFrameDialog");
+        dialog.setWindowTitle(mode == 1 ? tr("Change stack pointer")
+                                        : tr("Stack variables"));
+        dialog.resize(680, 440);
+        auto *layout = new QVBoxLayout(&dialog);
+        auto *label = new QLabel(
+            stale.isEmpty()
+                ? tr("Offsets are relative to SP at function entry. "
+                     "Corrections apply to source analysis. Reset restores "
+                     "automatic analysis. Naming physical stack storage "
+                     "pauses LLVM optimizations for that function's C view.")
+                : stale +
+                      tr(". Reset the obsolete corrections before editing."),
+            &dialog);
+        label->setWordWrap(true);
+        layout->addWidget(label);
+        QLineEdit *after = nullptr;
+        QComboBox *basis = nullptr;
+        QTableWidget *table = nullptr;
+        QJsonObject instruction;
+        if (mode == 1) {
+          for (const auto &value : reply.value("instructions").toArray())
+            if (address &&
+                parseAddress(value.toObject().value("address").toString()) ==
+                    address)
+              instruction = value.toObject();
+          if (!instruction.value("correctable").toBool()) {
+            output_->append(tr("Select a retained non-branch instruction in "
+                               "the disassembly"),
+                            1);
+            return;
+          }
+          layout->addWidget(new QLabel(
+              tr("Instruction: %1; SP before: %2; SP after: %3")
+                  .arg(instruction.value("address").toString(),
+                       instruction.value("before").isDouble()
+                           ? QString::number(
+                                 instruction.value("before").toInteger())
+                           : tr("unknown"),
+                       instruction.value("after").isDouble()
+                           ? QString::number(
+                                 instruction.value("after").toInteger())
+                           : tr("unknown")),
+              &dialog));
+          basis = new QComboBox(&dialog);
+          basis->addItem(
+              tr("Absolute offset after instruction, relative to entry SP"));
+          if (instruction.value("before").isDouble())
+            basis->addItem(tr("Net SP change made by this instruction"));
+          layout->addWidget(basis);
+          after = new QLineEdit(
+              instruction.value("after").isDouble()
+                  ? QString::number(instruction.value("after").toInteger())
+                  : QString(),
+              &dialog);
+          after->setObjectName("stackPointerAfter");
+          layout->addWidget(after);
+        } else {
+          table = new QTableWidget(0, 4, &dialog);
+          table->setObjectName("stackVariablesTable");
+          table->setHorizontalHeaderLabels({tr("Entry offset"), tr("Bytes"),
+                                            tr("Name"),
+                                            tr("C type (optional)")});
+          table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+          QMap<QString, QJsonObject> rows;
+          for (const auto &value : reply.value("accesses").toArray()) {
+            const auto row = value.toObject();
+            if (row.value("offset").toInteger() >= 0)
+              continue;
+            if (mode == 2 &&
+                (!address ||
+                 parseAddress(row.value("address").toString()) != address))
+              continue;
+            rows.insert(QString::number(row.value("offset").toInteger()) + ":" +
+                            QString::number(row.value("bytes").toInt()),
+                        row);
+          }
+          for (const auto &value : policy.value("variables").toArray()) {
+            const auto row = value.toObject();
+            rows.insert(QString::number(row.value("offset").toInteger()) + ":" +
+                            QString::number(row.value("bytes").toInt()),
+                        row);
+          }
+          if (rows.isEmpty()) {
+            output_->append(tr("No exact local stack access is available here. "
+                               "Repair unknown SP first."),
+                            1);
+            return;
+          }
+          for (const auto &row : rows) {
+            const int index = table->rowCount();
+            table->insertRow(index);
+            const QStringList values{
+                QString::number(row.value("offset").toInteger()),
+                QString::number(row.value("bytes").toInt()),
+                row.value("name").toString(), row.value("type").toString()};
+            for (int col = 0; col < 4; ++col)
+              table->setItem(index, col, new QTableWidgetItem(values[col]));
+          }
+          layout->addWidget(table);
+        }
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Apply |
+                                                 QDialogButtonBox::Cancel |
+                                                 QDialogButtonBox::Reset,
+                                             &dialog);
+        bool reset = false;
+        buttons->button(QDialogButtonBox::Apply)->setEnabled(stale.isEmpty());
+        connect(buttons->button(QDialogButtonBox::Apply), &QPushButton::clicked,
+                &dialog, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog,
+                &QDialog::reject);
+        connect(buttons->button(QDialogButtonBox::Reset), &QPushButton::clicked,
+                &dialog, [&] {
+                  reset = true;
+                  dialog.accept();
+                });
+        layout->addWidget(buttons);
+        if (dialog.exec() != QDialog::Accepted || session_.epoch() != epoch ||
+            session_.revision() != revision || currentFunction() != function)
+          return;
+        if (!reset && after) {
+          bool valid = false;
+          qint64 value = after->text().toLongLong(&valid, 0);
+          if (!valid || value < -(1 << 20) || value > (1 << 20)) {
+            output_->append(tr("Enter a signed SP offset within one MiB"), 1);
+            return;
+          }
+          if (basis->currentIndex() == 1)
+            value += instruction.value("before").toInteger();
+          QJsonArray points;
+          for (const auto &p : policy.value("points").toArray())
+            if (p.toObject().value("address") != instruction.value("address"))
+              points.append(p);
+          points.append(QJsonObject{{"address", instruction.value("address")},
+                                    {"after", value}});
+          policy.insert("points", points);
+        }
+        if (!reset && table) {
+          QJsonArray variables;
+          for (int row = 0; row < table->rowCount(); ++row) {
+            if (table->item(row, 2)->text().trimmed().isEmpty())
+              continue;
+            bool atOK = false, bytesOK = false;
+            const auto at = table->item(row, 0)->text().toLongLong(&atOK, 0);
+            const auto bytes = table->item(row, 1)->text().toInt(&bytesOK, 0);
+            if (!atOK || !bytesOK) {
+              output_->append(tr("Invalid stack slot offset or width"), 1);
+              return;
+            }
+            variables.append(
+                QJsonObject{{"offset", at},
+                            {"bytes", bytes},
+                            {"name", table->item(row, 2)->text().trimmed()},
+                            {"type", table->item(row, 3)->text().trimmed()}});
+          }
+          policy.insert("variables", variables);
+        }
+        session_.editCode({{"address", hexAddress(*function)},
+                           {"kind", "stack_frame"},
+                           {"representation", "c"},
+                           {"reset", reset},
+                           {"stack_frame", policy}},
+                          epoch);
+      });
+}
+
+void MainWindow::editCallType(bool resetAll) {
+  const QPointer<CodeView> view = focusedCodeView();
+  if (!view || session_.readOnly() || !view->text()->function() ||
+      view->text()->loading())
+    return;
+  const auto epoch = session_.epoch();
+  const auto revision = session_.revision();
+  const auto function = view->text()->function();
+  const auto options = view->text()->sourceOptions();
+  const auto addresses = view->text()->currentAddresses();
+  QJsonObject request{{"address", hexAddress(*function)},
+                      {"representation", view->representation()},
+                      {"source_options", options},
+                      {"kind", "call_type"}};
+  session_.read(
+      "call_sites", request, this,
+      [this, view, epoch, revision, function, options, addresses, request,
+       resetAll](const QJsonObject &reply) mutable {
+        if (!view || session_.epoch() != epoch ||
+            session_.revision() != revision ||
+            view->text()->function() != function ||
+            view->text()->sourceOptions() != options)
+          return;
+        request.insert("snapshot", reply.value("snapshot"));
+        if (resetAll) {
+          request.insert("action", "clear");
+          session_.editCode(request, epoch);
+          return;
+        }
+        QList<QJsonObject> calls;
+        QStringList labels;
+        for (const auto &value : reply.value("calls").toArray()) {
+          const auto call = value.toObject();
+          const auto address =
+              parseAddress(call.value("instruction").toString());
+          if (!address || !addresses.contains(*address))
+            continue;
+          calls.append(call);
+          labels.append(call.value("instruction").toString() + "  →  " +
+                        call.value("target").toString(tr("indirect call")) +
+                        "  (" +
+                        QString::number(call.value("sequence").toInt()) + ")");
+        }
+        if (calls.isEmpty()) {
+          output_->append(tr("Put the cursor on a pseudocode row mapped to an "
+                             "original call instruction"),
+                          1);
+          return;
+        }
+        int index = 0;
+        if (calls.size() > 1) {
+          bool accepted = false;
+          const auto selected = QInputDialog::getItem(
+              this, tr("Select call instruction"),
+              tr("This source row contains multiple calls:"), labels, 0, false,
+              &accepted);
+          if (!accepted)
+            return;
+          index = labels.indexOf(selected);
+        }
+        const auto call = calls[index];
+        const auto id = call.value("id").toString();
+        const auto stated =
+            reply.value("types").toObject().value(id).toObject();
+        QDialog dialog(this);
+        dialog.setObjectName("callTypeDialog");
+        dialog.setWindowTitle(tr("Set call type"));
+        dialog.resize(660, 440);
+        auto *layout = new QVBoxLayout(&dialog);
+        auto *subject =
+            new QLabel(tr("Call at %1. This declaration applies to this call "
+                          "only in both C views.")
+                           .arg(call.value("instruction").toString()),
+                       &dialog);
+        subject->setWordWrap(true);
+        layout->addWidget(subject);
+        layout->addWidget(new QLabel(
+            tr("C declaration (include ... for a variadic call):"), &dialog));
+        auto *declaration = new QPlainTextEdit(&dialog);
+        declaration->setObjectName("callTypeDeclaration");
+        declaration->setPlainText(
+            stated.value("declaration").toString("int64_t call(void);"));
+        layout->addWidget(declaration);
+        layout->addWidget(new QLabel(
+            tr("Actual variadic argument types for this call, one per line "
+               "(use int or double after default promotions):"),
+            &dialog));
+        auto *actuals = new QPlainTextEdit(&dialog);
+        actuals->setObjectName("callTypeActuals");
+        QStringList types;
+        for (const auto &type : stated.value("variadic_types").toArray())
+          types.append(type.toString());
+        actuals->setPlainText(types.join('\n'));
+        layout->addWidget(actuals);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Apply |
+                                                 QDialogButtonBox::Cancel |
+                                                 QDialogButtonBox::Reset,
+                                             &dialog);
+        buttons->button(QDialogButtonBox::Apply)
+            ->setObjectName("callTypeApply");
+        buttons->button(QDialogButtonBox::Reset)
+            ->setObjectName("callTypeReset");
+        bool reset = false;
+        connect(buttons->button(QDialogButtonBox::Apply), &QPushButton::clicked,
+                &dialog, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog,
+                &QDialog::reject);
+        connect(buttons->button(QDialogButtonBox::Reset), &QPushButton::clicked,
+                &dialog, [&] {
+                  reset = true;
+                  dialog.accept();
+                });
+        layout->addWidget(buttons);
+        if (dialog.exec() != QDialog::Accepted || !view ||
+            session_.epoch() != epoch || session_.revision() != revision ||
+            view->text()->function() != function ||
+            view->text()->sourceOptions() != options)
+          return;
+        request.insert("call_id", id);
+        request.insert("reset", reset);
+        request.insert("declaration", declaration->toPlainText().trimmed());
+        QJsonArray arguments;
+        for (const auto &line : actuals->toPlainText().split('\n'))
+          if (!line.trimmed().isEmpty())
+            arguments.append(line.trimmed());
+        request.insert("variadic_types", arguments);
+        session_.editCode(request, epoch);
+        // Restore focus after the modal dialog and its activation state retire.
+        QTimer::singleShot(0, view, [this, view, epoch, function] {
+          if (!view || session_.epoch() != epoch ||
+              view->text()->function() != function)
+            return;
+          view->window()->activateWindow();
+          view->text()->setFocus();
+        });
+      });
+}
+
+void MainWindow::editVariable(const QString &action) {
+  const QPointer<CodeView> view = focusedCodeView();
+  if (!view || session_.readOnly() || !view->text()->function())
+    return;
+  const auto target = view->text()->renameTarget();
+  if (action != "clear" && (!target || !target->contains("variable_id")))
+    return;
+  const auto epoch = session_.epoch();
+  const auto identity = view->text()->function();
+  const auto options = view->text()->sourceOptions();
+  QJsonObject request{{"address", hexAddress(*identity)},
+                      {"representation", view->representation()},
+                      {"source_options", options},
+                      {"kind", "variables"},
+                      {"action", action}};
+  if (target) {
+    request.insert("variable_id", target->value("variable_id"));
+    if (action != "clear")
+      request.insert("snapshot", target->value("snapshot"));
+  }
+  session_.read(
+      "source_variables", request, this,
+      [this, view, epoch, identity, options, request,
+       action](const QJsonObject &reply) mutable {
+        if (!view || session_.epoch() != epoch ||
+            view->text()->function() != identity ||
+            view->text()->sourceOptions() != options)
+          return;
+        if (request.contains("snapshot") &&
+            request.value("snapshot") != reply.value("snapshot")) {
+          output_->append(
+              tr("The source analysis changed; select the variable again"), 1);
+          return;
+        }
+        request.insert("snapshot", reply.value("snapshot"));
+        if (action == "map") {
+          QStringList labels;
+          QList<QString> ids;
+          for (const auto &entry : reply.value("variables").toArray()) {
+            const auto v = entry.toObject();
+            if (v.value("ambiguous").toBool(true) || v.contains("address") ||
+                v.value("id") == request.value("variable_id"))
+              continue;
+            labels.append(v.value("name").toString() + "  (" +
+                          v.value("type").toString() + ")  [" +
+                          v.value("id").toString() + "]");
+            ids.append(v.value("id").toString());
+          }
+          if (labels.isEmpty()) {
+            output_->append(
+                tr("No other unambiguous local variable is available"), 1);
+            return;
+          }
+          bool accepted = false;
+          const auto selected = QInputDialog::getItem(
+              this, tr("Map variable"),
+              tr("Destination variable (the engine checks copy relationships "
+                 "and live ranges):"),
+              labels, 0, false, &accepted);
+          if (!accepted)
+            return;
+          request.insert("to", ids.at(labels.indexOf(selected)));
+        } else if (action == "unmap" || action == "unsplit") {
+          const auto edits = reply.value("associations").toArray();
+          const auto results = reply.value("results").toArray();
+          const auto kind = action == "unmap" ? "map" : "split";
+          int found = -1;
+          for (int i = 0; i < edits.size() && i < results.size(); ++i)
+            if (edits[i].toObject().value("kind") == kind &&
+                results[i].toObject().value("outputs").toArray().contains(
+                    request.value("variable_id")))
+              found = i;
+          if (found < 0) {
+            output_->append(
+                tr("This variable has no matching association. Use Reset "
+                   "variable associations to remove stale edits."),
+                1);
+            return;
+          }
+          request.insert("association", found);
+        }
+        if (session_.epoch() != epoch || !view ||
+            view->text()->function() != identity ||
+            view->text()->sourceOptions() != options)
+          return;
+        session_.editCode(request, epoch);
+        view->text()->setFocus();
+      });
 }
 
 void MainWindow::convertToStruct() {

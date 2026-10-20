@@ -1257,7 +1257,7 @@ private:
 
   /// Whether \p Target is the entry of a *different* known function — i.e. an
   /// unconditional direct branch to it is a tail call, not intra-function flow.
-  bool isTailCallTarget(va_t Target) const;
+  bool isTailCallTarget(va_t Target, bool IncludeBoundaryGuesses = true) const;
 
   /// Whether the call in \p Rec never returns: it ends its function's own
   /// code range, it targets a known no-return libc function
@@ -1271,10 +1271,15 @@ private:
   /// call it knows never returns: an x86 `int3`, alignment no-ops up to
   /// another function, or another function's entry.
   bool callIsFollowedByPadding(const InsnRecord &Rec) const;
-  /// True when the call \p Rec is the last instruction of the code range
-  /// that its function's own unwind record or sized symbol gives, and no
-  /// fragment of the function follows, so the call cannot return.
-  bool callEndsItsCodeRange(const InsnRecord &Rec) const;
+  /// True when \p Next ends the declared function range containing \p Address
+  /// and no fragment of the same function follows. Coarse frame spans do not
+  /// declare that boundary. Shared by instruction-extent checks, calls, and
+  /// resumable traps.
+  bool codeRangeEndsAt(va_t Address, va_t Next) const;
+  /// Whether a trap can resume in owned code, or a bounded look through
+  /// unowned trap/NOP padding finds code before the next function. Invalid
+  /// owned continuations retain their decode/coverage failure.
+  bool codeFollowsTrap(const Decoder &Dec, va_t Next);
 
   /// Rewrite an unconditional-branch instruction record into an explicit
   /// CALL + RETURN pair (tail call to another function).
@@ -1359,6 +1364,14 @@ private:
     return CurrentExceptionalEntries.count(Address) != 0;
   }
   bool isCurrentOwnedFragment(va_t Address) const;
+  bool isCurrentOwnedCode(va_t Address) const;
+  /// An instruction starting in sized ownership must fit wholly inside it.
+  /// Reached cold code without ownership metadata remains independently
+  /// decodable; absence of a range is not a bound.
+  bool instructionFitsCurrentOwnership(va_t Address, uint64_t Size) const;
+  /// Charge both exploration and continuation peeks in disposable proofs.
+  /// Ordinary CFG construction has no candidate-proof allowance to consume.
+  bool chargeCandidateDecodeAttempt(const BinaryImage &Img);
   /// True when \p Address is Win64 code no unwind record covers and the
   /// current function is a frameless leaf: a cold part of that function.
   /// A function with a frame needs a chained record over every part of it,

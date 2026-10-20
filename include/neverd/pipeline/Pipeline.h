@@ -158,6 +158,9 @@ struct PipelineOptions {
   /// have a public call contract whose machine body contains incidental live
   /// registers that are not source parameters.
   std::map<va_t, SourceFunctionTypeHint> SourceCalleeTypeHints;
+  std::map<va_t, std::map<SourceCallOccurrenceKey, SourceCallTypeHint>>
+      SourceCallSiteHints;
+  std::map<va_t, SourceStackFrame> SourceStackFrames;
   /// Source-only descriptor and ownership proofs for captured block calls.
   std::map<va_t, ObjCBlockCaptureCallFields> ObjCBlockCaptureFields;
   /// Source-only receiver roots from authenticated invoke/descriptor pairs.
@@ -402,6 +405,12 @@ public:
   /// recognitions; callers may copy those into a private result for a variant.
   void rebuildHighIR(const BinaryImage &Img, const PipelineOptions &Opts,
                      PipelineResult &Result, DebugContext *Dbg = nullptr);
+  /// Regenerate a private source variant from the original machine operations.
+  /// Explicit call contracts never enter the original result or patch/lift.
+  PipelineResult rebuildSourceCalls(const BinaryImage &Img,
+                                    const PipelineOptions &Opts,
+                                    const PipelineResult &Original,
+                                    DebugContext *Dbg = nullptr);
 
   /// Build into Opts.AnalysisCache the bodies that selected-function runs on
   /// \p Img would build on demand for \p Functions, so that those runs read

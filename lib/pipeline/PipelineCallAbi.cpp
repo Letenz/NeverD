@@ -29,6 +29,7 @@
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include <algorithm>
@@ -115,8 +116,15 @@ void OmittedCalleeMemo::adopt(const BinaryImage &Img,
   CallArgumentSources = Result.CallArgumentSources;
   FunctionEntries = calleeLiftEntries(Img);
   PointerCallees = collectPointerVariableCallees(Img);
+  CodeOwners.reset();
   Callees.clear();
   Bytes = 0;
+}
+
+const ExecutableCodeOwnerIndex &OmittedCalleeMemo::codeOwners() {
+  if (!CodeOwners)
+    CodeOwners.emplace(*Image);
+  return *CodeOwners;
 }
 
 OmittedCalleeMemo::Conversion *
@@ -163,6 +171,14 @@ OmittedCalleeMemo::keep(Callee &Holder, Conversion Converted) {
     for (const MedBlock &Block : Converted.Body->Blocks)
       Converted.Bytes += sizeof(MedBlock) + Block.Ops.size() * sizeof(MedOp) +
                          Block.Phis.size() * sizeof(PhiNode);
+    if (const auto &Summary = Converted.Summary)
+      Converted.Bytes +=
+          sizeof(CalleeSummary) +
+          (Summary->IntegerArgumentRegisters.size() + Summary->FPRegs.size()) *
+              sizeof(uint64_t);
+    Converted.Bytes +=
+        (Converted.CalleesRead.size() + Converted.DirectCallTargets.size()) *
+        sizeof(va_t);
   }
   if (Holder.Conversions.size() == MaxConversions) {
     Bytes -= Holder.Conversions.back().Bytes;
@@ -191,6 +207,50 @@ OmittedCalleeMemo::keep(Callee &Holder, Conversion Converted) {
 
 namespace {
 
+/// What \p MF's own parameters say of the calls to it before recovery.
+OmittedCalleeMemo::CalleeSummary summarizeCallee(const MedFunc &MF,
+                                                 const BinaryImage &Img);
+
+/// The callees a run reads the signature bodies of for \p F, in order: its
+/// direct callees and the routines the function-pointer variables it calls
+/// through start at (omittedDirectCalleeSignatures).
+std::vector<va_t> calleesToRead(const MedFunc &F, const BinaryImage &Img,
+                                const PipelineResult &Result) {
+  std::vector<va_t> Callees;
+  // A call through a function-pointer variable passes the arguments of the
+  // routine of this image the variable starts at (CallArgumentSources).
+  MedDefinitionIndex Definitions(F);
+  auto lookupDefinition = [&](const MedVar &V) { return Definitions.find(V); };
+  // A call to the stub of an import the loader starts at this image's own
+  // routine passes that routine's arguments.
+  for (const MedBlock &B : F.Blocks)
+    for (const MedOp &Op : B.Ops)
+      if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst())
+        Callees.push_back(importOwnRoutine(Img, &Result.CallArgumentSources,
+                                           Op.Inputs[0].ConstVal)
+                              .value_or(Op.Inputs[0].ConstVal));
+      else if (Op.Opcode == NdOp::INDIR_CALL &&
+               !Result.CallArgumentSources.empty())
+        if (const std::optional<va_t> Slot =
+                indirectCallSlot(F, Op, lookupDefinition))
+          if (const auto Source = Result.CallArgumentSources.find(*Slot);
+              Source != Result.CallArgumentSources.end() &&
+              Source->second != *Slot)
+            Callees.push_back(Source->second);
+  return Callees;
+}
+
+/// The target of each direct call of \p F, in order.
+std::vector<va_t> directCallTargets(const MedFunc &F) {
+  std::vector<va_t> Targets;
+  for (const auto &Blk : F.Blocks)
+    for (const auto &Op : Blk.Ops)
+      if (Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
+          Op.Inputs[0].isConst())
+        Targets.push_back(Op.Inputs[0].ConstVal);
+  return Targets;
+}
+
 /// A selected function still calls the image's other native functions. Use
 /// the normal parameter detector for their bodies instead of assigning the
 /// default register order merely because the user omitted their output.
@@ -215,7 +275,8 @@ public:
   bool init() { return Dec.init(Img); }
   /// Whether \p Target is a callee the read takes: a function of this image.
   bool reads(va_t Target) const {
-    return !Img.findImportAt(Target) && !Img.isImportStubAt(Target) &&
+    return Img.isFunctionEntryCandidateAt(Target) &&
+           !Img.findImportAt(Target) && !Img.isImportStubAt(Target) &&
            (Entries->count(Target) || Img.hasKnownFunctionEntryAt(Target)) &&
            Img.hasExecutableCodeOwnerAt(Target);
   }
@@ -227,9 +288,17 @@ public:
   }
   /// Lifts \p Target into \p Low, once.
   const LowFunc &lift(va_t Target, std::optional<LowFunc> &Low) {
-    if (!Low)
+    if (!Low) {
+      // The lifts look the image's code owners up in one index: the memo's,
+      // or one built for the first lift of this read.
+      if (!OwnersLent) {
+        Builder.setExecutableCodeOwnerIndex(Memo ? &Memo->codeOwners()
+                                                 : &Owners.emplace(Img));
+        OwnersLent = true;
+      }
       Low.emplace(
           Builder.build(Img, Dec, Target, Img.getFunctionNameAt(Target)));
+    }
     return *Low;
   }
   /// Reads \p Target's lift into \p Read: the operations of its blocks.
@@ -286,8 +355,15 @@ public:
     OmittedCalleeMemo::Conversion Converted{std::move(Body), {}};
     for (const va_t Key : Keys)
       Converted.Reads.push_back(OmittedCalleeMemo::readAt(Result, Key));
-    if (Memo && Kept)
+    if (Memo && Kept) {
+      // Every run that reads the body reads these of it.
+      if (Converted.Body) {
+        Converted.Summary = summarizeCallee(*Converted.Body, Img);
+        Converted.CalleesRead = calleesToRead(*Converted.Body, Img, Result);
+        Converted.DirectCallTargets = directCallTargets(*Converted.Body);
+      }
       return Memo->keep(Read, std::move(Converted));
+    }
     Read.Conversions.insert(Read.Conversions.begin(), std::move(Converted));
     return Read.Conversions.front();
   }
@@ -299,6 +375,8 @@ private:
   std::set<va_t> OwnEntries;
   const std::set<va_t> *Entries = nullptr;
   Decoder Dec;
+  std::optional<ExecutableCodeOwnerIndex> Owners;
+  bool OwnersLent = false;
   CFGBuilder Builder;
 };
 
@@ -322,32 +400,12 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
         Queued.insert(Target).second)
       Pending.push(Target);
   };
-  auto enqueueCallees = [&](const MedFunc &F) {
-    // A call through a function-pointer variable passes the arguments of the
-    // routine of this image the variable starts at (CallArgumentSources).
-    MedDefinitionIndex Definitions(F);
-    auto lookupDefinition = [&](const MedVar &V) {
-      return Definitions.find(V);
-    };
-    // A call to the stub of an import the loader starts at this image's own
-    // routine passes that routine's arguments.
-    for (const MedBlock &B : F.Blocks)
-      for (const MedOp &Op : B.Ops)
-        if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst())
-          enqueue(importOwnRoutine(Img, &Result.CallArgumentSources,
-                                   Op.Inputs[0].ConstVal)
-                      .value_or(Op.Inputs[0].ConstVal));
-        else if (Op.Opcode == NdOp::INDIR_CALL &&
-                 !Result.CallArgumentSources.empty())
-          if (const std::optional<va_t> Slot =
-                  indirectCallSlot(F, Op, lookupDefinition))
-            if (const auto Source = Result.CallArgumentSources.find(*Slot);
-                Source != Result.CallArgumentSources.end() &&
-                Source->second != *Slot)
-              enqueue(Source->second);
+  auto enqueueCallees = [&](llvm::ArrayRef<va_t> Callees) {
+    for (const va_t Callee : Callees)
+      enqueue(Callee);
   };
   for (const MedFunc &F : Result.MedFuncs)
-    enqueueCallees(F);
+    enqueueCallees(calleesToRead(F, Img, Result));
   std::vector<std::shared_ptr<const MedFunc>> Signatures;
   if (Pending.empty())
     return Signatures;
@@ -378,7 +436,10 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
         Reader.conversion(Target, Read, &Read != &Local, Low);
     if (!Conversion.Body)
       continue;
-    enqueueCallees(*Conversion.Body);
+    if (Conversion.Summary)
+      enqueueCallees(Conversion.CalleesRead);
+    else
+      enqueueCallees(calleesToRead(*Conversion.Body, Img, Result));
     Signatures.push_back(Conversion.Body);
   }
   return Signatures;
@@ -423,6 +484,108 @@ int countEntryLiveInFPArgs(const MedFunc &MF, const TargetRegInfo &TRI,
       break;
   }
   return Count;
+}
+
+OmittedCalleeMemo::CalleeSummary summarizeCallee(const MedFunc &MF,
+                                                 const BinaryImage &Img) {
+  OmittedCalleeMemo::CalleeSummary Summary;
+  const auto &TRI = getTargetRegInfo(Img.Arch);
+  const auto FPParamRegs = TRI.floatingParamRegs(Img.abiFormat());
+  // Internal x86/x86-64 scalar float/double, AArch64, and ARM hard-float
+  // calls return through XMM0/V0/D0.  External i386 cdecl calls are excluded
+  // by recoverCallAbi's relocation/import gates; x86 long double uses x87.
+  auto modelsScalarFPReturnInVectorReg = [&](uint16_t Size) {
+    if (TRI.WideFloatsReturnInX87 && Size > 8)
+      return false;
+    return TRI.isVectorReg(TRI.fpReturnModelReg());
+  };
+  int MaxRegIdx = -1, MaxIdx = -1;
+  const IntegerArgumentLayout IntegerLayout = integerArgumentLayoutOf(MF, TRI);
+  Summary.IntegerArgumentRegisters = MF.IntegerArgumentRegisters;
+  // The exact FP-argument register offsets, in ABI order.  ARM `float` args
+  // land in the single-width S registers (s0,s1,..) and `double` args in
+  // the D registers (d0,d1,..); recording the layout lets the caller
+  // recover FP arguments at the registers the callee actually reads (s1 !=
+  // d1).
+  std::vector<uint64_t> &FPRegs = Summary.FPRegs;
+  const uint64_t IRR = TRI.indirectResultReg();
+  for (const auto &P : MF.Params) {
+    if (IRR != 0 && P.RegOff == IRR) {
+      // Hidden indirect-result (sret) pointer (AArch64 x8): not an ordinary
+      // integer/FP/stack argument; recorded separately.
+      Summary.HasSret = true;
+    } else if (P.RegOff != kNoParamReg &&
+               TRI.isFPArgReg(P.RegOff, Img.abiFormat())) {
+      // Floating-point/vector argument register: counted separately.
+      FPRegs.push_back(P.RegOff);
+    } else if (P.RegOff != kNoParamReg) {
+      if (int Idx = IntegerLayout.registerIndex(P.RegOff); Idx > MaxRegIdx)
+        MaxRegIdx = Idx;
+      MaxIdx = std::max(MaxIdx, IntegerLayout.registerIndex(P.RegOff));
+    } else if (P.Kind == MedVar::Param) {
+      // Stack parameter (detectStackParams / detectCdeclStackParams): its
+      // Id is the argument index.
+      MaxIdx = std::max(MaxIdx, P.Id);
+    }
+  }
+  for (const auto &Blk : MF.Blocks)
+    for (const auto &Op : Blk.Ops)
+      if (Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
+          Op.Inputs[0].isConst()) {
+        if (const Import *Imp = Img.findImportAt(Op.Inputs[0].ConstVal)) {
+          if (libc::isVaListConsumer(stripLeadingUnderscores(Imp->Name)))
+            Summary.ConsumesVaList = true;
+        }
+      }
+  // A struct return field the function passes through unchanged is an
+  // argument its callers pass in that register, and so is each argument
+  // register of the field's class before it.
+  unsigned ReturnedFPArgs = 0;
+  for (const MedReturnReg &Field : MF.MultiReturn) {
+    if (!returnsArgumentUnchanged(MF, Field, TRI, Img.abiFormat()))
+      continue;
+    if (Field.IsFP) {
+      ReturnedFPArgs = std::max(
+          ReturnedFPArgs,
+          *argumentRegisterIndex(TRI, Img.abiFormat(), Field.RegOff, true) + 1);
+    } else if (const int Idx = IntegerLayout.registerIndex(Field.RegOff);
+               Idx >= 0) {
+      MaxRegIdx = std::max(MaxRegIdx, Idx);
+      MaxIdx = std::max(MaxIdx, Idx);
+    }
+  }
+  std::sort(FPRegs.begin(), FPRegs.end());
+  Summary.RegArity = callRegisterArity(MF, MaxRegIdx);
+  Summary.TotalArity = callRecoveryTotalArity(MF, MaxIdx);
+  Summary.IsVariadic = MF.IsVariadic;
+  Summary.VectorArguments = MF.takesVectorArgumentRegisters();
+  int FpArity = static_cast<int>(FPRegs.size());
+  // Params are not recovered yet (recoverCallAbi runs later), so fall back
+  // to entry live-in self-copies for intra-module FP callees like `mkD2`.
+  // Without this, tail-call struct-return forwarders (`fwdD2`) miss the
+  // KnownFPCallee gate and pass 0.0 for forwarded d0/d1.
+  if (FpArity == 0) {
+    FpArity = countEntryLiveInFPArgs(MF, TRI, Img.abiFormat());
+    if (FpArity > 0)
+      FPRegs.assign(FPParamRegs.begin(), FPParamRegs.begin() + FpArity);
+  }
+  if (ReturnedFPArgs > 0) {
+    for (unsigned K = 0; K < ReturnedFPArgs && K < FPParamRegs.size(); ++K)
+      if (std::find(FPRegs.begin(), FPRegs.end(), FPParamRegs[K]) ==
+          FPRegs.end())
+        FPRegs.push_back(FPParamRegs[K]);
+    std::sort(FPRegs.begin(), FPRegs.end());
+    FpArity = std::max(FpArity, static_cast<int>(FPRegs.size()));
+  }
+  Summary.FPArity = FpArity;
+  const uint16_t ReturnSize =
+      MF.ReturnType && MF.ReturnType->Size ? MF.ReturnType->Size : 8;
+  const bool ReturnsScalarFP = MF.ReturnType &&
+                               MF.ReturnType->Kind == NdTypeKind::Float &&
+                               MF.MultiReturn.empty() && !MF.FPReturnViaX87 &&
+                               modelsScalarFPReturnInVectorReg(ReturnSize);
+  Summary.FPReturnSize = ReturnsScalarFP ? ReturnSize : 0;
+  return Summary;
 }
 
 /// The value \p Map holds under \p Key, where it holds one.
@@ -471,12 +634,17 @@ void propagateForwardedCallArities(
   std::set<va_t> Entries;
   for (const MedFunc *MF : Funcs)
     Entries.insert(MF->Entry);
-  for (size_t I = 0; I < Funcs.size(); ++I)
-    for (const auto &Blk : Funcs[I]->Blocks)
-      for (const auto &Op : Blk.Ops)
-        if (Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
-            Op.Inputs[0].isConst() && Entries.count(Op.Inputs[0].ConstVal) != 0)
-          DirectCallers[Op.Inputs[0].ConstVal].push_back(I);
+  for (size_t I = 0; I < Funcs.size(); ++I) {
+    const OmittedCalleeMemo::Conversion *Held =
+        I < Kept.size() ? Kept[I] : nullptr;
+    std::vector<va_t> Own;
+    if (!Held || !Held->Summary)
+      Own = directCallTargets(*Funcs[I]);
+    for (const va_t Target :
+         Held && Held->Summary ? Held->DirectCallTargets : Own)
+      if (Entries.count(Target) != 0)
+        DirectCallers[Target].push_back(I);
+  }
 
   std::queue<size_t> Work;
   std::vector<bool> Queued(Funcs.size(), true);
@@ -502,20 +670,36 @@ void propagateForwardedCallArities(
     Read.UserPrototype = UserPrototypeCallees.count(Key) != 0;
     return Read;
   };
+  // Whether the run holds what \p Read read under its key: readAt(Key) ==
+  // Read, without copying what the run holds.
+  auto holds = [&](const OmittedCalleeMemo::ProbeRead &Read) {
+    const va_t Key = Read.Key;
+    auto same = [Key](const auto &Map, const auto &Value) {
+      const auto Found = Map.find(Key);
+      return Found == Map.end() ? !Value : Value && *Value == Found->second;
+    };
+    return same(CalleeRegArity, Read.RegArity) &&
+           same(CalleeTotalArity, Read.TotalArity) &&
+           same(CalleeIsVariadic, Read.IsVariadic) &&
+           same(CalleeFPArity, Read.FPArity) &&
+           same(CalleeFPReturnSize, Read.FPReturnSize) &&
+           same(CalleeHasSret, Read.HasSret) &&
+           same(CalleeConsumesVaList, Read.ConsumesVaList) &&
+           same(CalleeFPRegs, Read.FPRegs) &&
+           same(CalleeIntRegs, Read.IntRegs) &&
+           (VectorArgumentCallees.count(Key) != 0) == Read.VectorArguments &&
+           (UserPrototypeCallees.count(Key) != 0) == Read.UserPrototype &&
+           same(FuncNames, Read.Name);
+  };
   // What recovering a copy of Funcs[I] under the summaries gives, and the
   // summaries the recovery leaves at its entry, or a kept probe's where
   // they read the same.
   auto probe = [&](size_t I) {
     const MedFunc &Body = *Funcs[I];
     OmittedCalleeMemo::Conversion *Holder = I < Kept.size() ? Kept[I] : nullptr;
-    const OmittedCalleeMemo::ProbeRead EntryRead = readAt(Body.Entry);
     if (Holder)
       for (auto It = Holder->Probes.begin(); It != Holder->Probes.end(); ++It) {
-        if (It->Reads.front() != EntryRead ||
-            !std::all_of(std::next(It->Reads.begin()), It->Reads.end(),
-                         [&](const OmittedCalleeMemo::ProbeRead &Read) {
-                           return readAt(Read.Key) == Read;
-                         }))
+        if (!std::all_of(It->Reads.begin(), It->Reads.end(), holds))
           continue;
         std::rotate(Holder->Probes.begin(), It, std::next(It));
         const OmittedCalleeMemo::ProbeSignature &Gives =
@@ -528,6 +712,8 @@ void propagateForwardedCallArities(
           CalleeIsVariadic[Body.Entry] = *Gives.EntryIsVariadic;
         return Gives;
       }
+    // The recovery writes summaries at the entry: read them before it runs.
+    const OmittedCalleeMemo::ProbeRead EntryRead = readAt(Body.Entry);
     MedFunc Probe = Body;
     std::vector<va_t> Keys;
     recoverCallAbi(Probe, TheArch, FuncNames, &Img, &CalleeRegArity,
@@ -734,115 +920,25 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
       Result.MedFuncs.size());
   for (const auto &F : OmittedCallees)
     KeptBodies.push_back(Memo ? Memo->conversionOf(*F) : nullptr);
-  {
-    const auto &TRI = getTargetRegInfo(Img.Arch);
-    const auto FPParamRegs = TRI.floatingParamRegs(Img.abiFormat());
-    // Internal x86/x86-64 scalar float/double, AArch64, and ARM hard-float
-    // calls return through XMM0/V0/D0.  External i386 cdecl calls are excluded
-    // by recoverCallAbi's relocation/import gates; x86 long double uses x87.
-    auto modelsScalarFPReturnInVectorReg = [&](uint16_t Size) {
-      if (TRI.WideFloatsReturnInX87 && Size > 8)
-        return false;
-      return TRI.isVectorReg(TRI.fpReturnModelReg());
-    };
-    for (const MedFunc *Body : SignatureBodies) {
-      const MedFunc &MF = *Body;
-      int MaxRegIdx = -1, MaxIdx = -1;
-      const IntegerArgumentLayout IntegerLayout =
-          integerArgumentLayoutOf(MF, TRI);
-      if (!MF.IntegerArgumentRegisters.empty())
-        CalleeIntRegs[MF.Entry] = MF.IntegerArgumentRegisters;
-      // The exact FP-argument register offsets, in ABI order.  ARM `float` args
-      // land in the single-width S registers (s0,s1,..) and `double` args in
-      // the D registers (d0,d1,..); recording the layout lets the caller
-      // recover FP arguments at the registers the callee actually reads (s1 !=
-      // d1).
-      std::vector<uint64_t> FPRegs;
-      const uint64_t IRR = TRI.indirectResultReg();
-      bool HasSret = false;
-      for (const auto &P : MF.Params) {
-        if (IRR != 0 && P.RegOff == IRR) {
-          // Hidden indirect-result (sret) pointer (AArch64 x8): not an ordinary
-          // integer/FP/stack argument; recorded separately.
-          HasSret = true;
-        } else if (P.RegOff != kNoParamReg &&
-                   TRI.isFPArgReg(P.RegOff, Img.abiFormat())) {
-          // Floating-point/vector argument register: counted separately.
-          FPRegs.push_back(P.RegOff);
-        } else if (P.RegOff != kNoParamReg) {
-          if (int Idx = IntegerLayout.registerIndex(P.RegOff); Idx > MaxRegIdx)
-            MaxRegIdx = Idx;
-          MaxIdx = std::max(MaxIdx, IntegerLayout.registerIndex(P.RegOff));
-        } else if (P.Kind == MedVar::Param) {
-          // Stack parameter (detectStackParams / detectCdeclStackParams): its
-          // Id is the argument index.
-          MaxIdx = std::max(MaxIdx, P.Id);
-        }
-      }
-      bool ConsumesVaList = false;
-      for (const auto &Blk : MF.Blocks)
-        for (const auto &Op : Blk.Ops)
-          if (Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
-              Op.Inputs[0].isConst()) {
-            if (const Import *Imp = Img.findImportAt(Op.Inputs[0].ConstVal)) {
-              if (libc::isVaListConsumer(stripLeadingUnderscores(Imp->Name)))
-                ConsumesVaList = true;
-            }
-          }
-      CalleeConsumesVaList[MF.Entry] = ConsumesVaList;
-      // A struct return field the function passes through unchanged is an
-      // argument its callers pass in that register, and so is each argument
-      // register of the field's class before it.
-      unsigned ReturnedFPArgs = 0;
-      for (const MedReturnReg &Field : MF.MultiReturn) {
-        if (!returnsArgumentUnchanged(MF, Field, TRI, Img.abiFormat()))
-          continue;
-        if (Field.IsFP) {
-          ReturnedFPArgs = std::max(
-              ReturnedFPArgs,
-              *argumentRegisterIndex(TRI, Img.abiFormat(), Field.RegOff, true) +
-                  1);
-        } else if (const int Idx = IntegerLayout.registerIndex(Field.RegOff);
-                   Idx >= 0) {
-          MaxRegIdx = std::max(MaxRegIdx, Idx);
-          MaxIdx = std::max(MaxIdx, Idx);
-        }
-      }
-      std::sort(FPRegs.begin(), FPRegs.end());
-      CalleeRegArity[MF.Entry] = callRegisterArity(MF, MaxRegIdx);
-      CalleeTotalArity[MF.Entry] = callRecoveryTotalArity(MF, MaxIdx);
-      CalleeHasSret[MF.Entry] = HasSret;
-      CalleeIsVariadic[MF.Entry] = MF.IsVariadic;
-      if (MF.takesVectorArgumentRegisters())
-        VectorArgumentCallees.insert(MF.Entry);
-      int FpArity = static_cast<int>(FPRegs.size());
-      // Params are not recovered yet (recoverCallAbi runs later), so fall back
-      // to entry live-in self-copies for intra-module FP callees like `mkD2`.
-      // Without this, tail-call struct-return forwarders (`fwdD2`) miss the
-      // KnownFPCallee gate and pass 0.0 for forwarded d0/d1.
-      if (FpArity == 0) {
-        FpArity = countEntryLiveInFPArgs(MF, TRI, Img.abiFormat());
-        if (FpArity > 0)
-          FPRegs.assign(FPParamRegs.begin(), FPParamRegs.begin() + FpArity);
-      }
-      if (ReturnedFPArgs > 0) {
-        for (unsigned K = 0; K < ReturnedFPArgs && K < FPParamRegs.size(); ++K)
-          if (std::find(FPRegs.begin(), FPRegs.end(), FPParamRegs[K]) ==
-              FPRegs.end())
-            FPRegs.push_back(FPParamRegs[K]);
-        std::sort(FPRegs.begin(), FPRegs.end());
-        FpArity = std::max(FpArity, static_cast<int>(FPRegs.size()));
-      }
-      CalleeFPArity[MF.Entry] = FpArity;
-      CalleeFPRegs[MF.Entry] = std::move(FPRegs);
-      const uint16_t ReturnSize =
-          MF.ReturnType && MF.ReturnType->Size ? MF.ReturnType->Size : 8;
-      const bool ReturnsScalarFP =
-          MF.ReturnType && MF.ReturnType->Kind == NdTypeKind::Float &&
-          MF.MultiReturn.empty() && !MF.FPReturnViaX87 &&
-          modelsScalarFPReturnInVectorReg(ReturnSize);
-      CalleeFPReturnSize[MF.Entry] = ReturnsScalarFP ? ReturnSize : 0;
-    }
+  for (size_t I = 0; I < SignatureBodies.size(); ++I) {
+    const MedFunc &MF = *SignatureBodies[I];
+    std::optional<OmittedCalleeMemo::CalleeSummary> Own;
+    const OmittedCalleeMemo::CalleeSummary &Summary =
+        KeptBodies[I] && KeptBodies[I]->Summary
+            ? *KeptBodies[I]->Summary
+            : Own.emplace(summarizeCallee(MF, Img));
+    if (!Summary.IntegerArgumentRegisters.empty())
+      CalleeIntRegs[MF.Entry] = Summary.IntegerArgumentRegisters;
+    CalleeConsumesVaList[MF.Entry] = Summary.ConsumesVaList;
+    CalleeRegArity[MF.Entry] = Summary.RegArity;
+    CalleeTotalArity[MF.Entry] = Summary.TotalArity;
+    CalleeHasSret[MF.Entry] = Summary.HasSret;
+    CalleeIsVariadic[MF.Entry] = Summary.IsVariadic;
+    if (Summary.VectorArguments)
+      VectorArgumentCallees.insert(MF.Entry);
+    CalleeFPArity[MF.Entry] = Summary.FPArity;
+    CalleeFPRegs[MF.Entry] = Summary.FPRegs;
+    CalleeFPReturnSize[MF.Entry] = Summary.FPReturnSize;
   }
 
   // A pure tail-call forwarder `T f(args){return g(args);}` lowers at -O2 to a

@@ -421,7 +421,8 @@ bool appendStructOffset(StyledText &out, const NumberFormat &format,
 bool appendFormattedNumber(StyledText &out, std::uint64_t value, unsigned bits,
                            const NumberFormat &format,
                            const LocationNamer &namer,
-                           const StructNamer *structs) {
+                           const StructNamer *structs,
+                           const OperandFacts::EnumNamer *enums) {
   const std::uint64_t mask =
       bits >= 64 ? ~std::uint64_t(0) : (std::uint64_t(1) << bits) - 1;
   std::uint64_t shown = value & mask;
@@ -474,6 +475,15 @@ bool appendFormattedNumber(StyledText &out, std::uint64_t value, unsigned bits,
     out.append(name.text, name.role, name.address);
     return true;
   }
+  case NumberBase::Enum: {
+    if (!sign.empty() || !enums)
+      return false;
+    const auto symbolic = (*enums)(format.type, shown, bits, format.delta != 0);
+    if (!symbolic)
+      return false;
+    out.append(*symbolic, ListingRole::Keyword);
+    return true;
+  }
   case NumberBase::Struct: {
     if (!sign.empty() || !structs)
       return false;
@@ -494,8 +504,8 @@ bool appendFormattedNumber(StyledText &out, std::uint64_t value, unsigned bits,
 
 void formatX86Operand(StyledText &out, const OperandTokens &tokens,
                       const OperandFacts &facts, const LocationNamer &namer,
-                      const X86Context &context,
-                      const NumberFormat *format = nullptr) {
+                      const X86Context &context, const NumberFormat *format,
+                      unsigned operandBits) {
   const auto open =
       std::find_if(tokens.begin(), tokens.end(), [](const Token &t) {
         return t.kind == TokenKind::Punct && t.text == "[";
@@ -689,13 +699,17 @@ void formatX86Operand(StyledText &out, const OperandTokens &tokens,
   // An immediate the user formats: its value, unsigned in the operation's
   // width.
   if (format && !format->isDefault()) {
-    const unsigned bits = context.immediateBits ? context.immediateBits : 64;
-    const std::uint64_t mask =
-        bits >= 64 ? ~std::uint64_t(0) : (std::uint64_t(1) << bits) - 1;
-    if (const auto value = plainNumber(tokens, mask);
-        value &&
-        appendFormattedNumber(out, *value, bits, *format, namer, facts.structs))
-      return;
+    const unsigned bits = format->base == NumberBase::Enum ? operandBits
+                          : context.immediateBits ? context.immediateBits
+                                                  : 64;
+    if (bits && bits <= 64) {
+      const std::uint64_t mask =
+          bits == 64 ? ~std::uint64_t(0) : (std::uint64_t(1) << bits) - 1;
+      if (const auto value = plainNumber(tokens, mask);
+          value && appendFormattedNumber(out, *value, bits, *format, namer,
+                                         facts.structs, facts.enums))
+        return;
+    }
   }
   // A negative immediate is the unsigned value of the operation's width,
   // unless the instruction keeps a signed byte.
@@ -980,7 +994,10 @@ StyledText formatOperands(std::string_view operands, const OperandFacts &facts,
             ? &(*facts.numberFormats)[index]
             : nullptr;
     if (facts.dialect == OperandDialect::X86)
-      formatX86Operand(out, operand, facts, namer, context, format);
+      formatX86Operand(out, operand, facts, namer, context, format,
+                       facts.operandBits && index < facts.operandBits->size()
+                           ? (*facts.operandBits)[index]
+                           : 0);
     else
       formatGenericOperand(out, operand, facts, namer);
   }
@@ -1105,11 +1122,14 @@ ClassicInstruction classicInstruction(OperandDialect dialect,
   };
   const unsigned forms = x86OperandForms(base);
   if ((forms & FoldRepeatedSource) && pieces.size() == 3 &&
-      text(pieces[0]) == text(pieces[1]))
+      text(pieces[0]) == text(pieces[1])) {
     result.operands = text(pieces[0]) + ", " + text(pieces[2]);
-  else if ((forms & SwapRegisters) && pieces.size() == 2 &&
-           isLoneRegister(pieces[0]) && isLoneRegister(pieces[1]))
+    result.operandIndices = {0, 2};
+  } else if ((forms & SwapRegisters) && pieces.size() == 2 &&
+             isLoneRegister(pieces[0]) && isLoneRegister(pieces[1])) {
     result.operands = text(pieces[1]) + ", " + text(pieces[0]);
+    result.operandIndices = {1, 0};
+  }
   return result;
 }
 

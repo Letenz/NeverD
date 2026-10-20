@@ -257,6 +257,53 @@ std::string inlineComment(std::string text) {
 
 void CodeEdits::validateRow(const Json &row) {
   (void)parseAddress(stringField(row, "addr"));
+  auto typeImage = [](const Json &type) {
+    const auto hash = stringField(type, "input_sha256", {}, 64);
+    if (hash.size() != 64 ||
+        !std::all_of(hash.begin(), hash.end(),
+                     [](unsigned char c) { return std::isxdigit(c); }))
+      throw Error("invalid_request",
+                  "A source type needs its input image identity");
+  };
+  if (row.contains("object_type")) {
+    const auto &type = row.at("object_type");
+    typeImage(type);
+    (void)stringField(type, "type", {}, 4096);
+    if (!sizeField(type, "bytes", 0, 16) || !type.at("floating").is_boolean())
+      throw Error("invalid_request", "Invalid global object type");
+  }
+  if (row.contains("stack_frame")) {
+    const auto &Frame = row.at("stack_frame");
+    typeImage(Frame);
+    if (!Frame.is_object() || Frame.dump().size() > 128 * 1024 ||
+        stringField(Frame, "snapshot", {}, 128).empty() ||
+        !Frame.value("points", Json::array()).is_array() ||
+        Frame.value("points", Json::array()).size() > 256 ||
+        !Frame.value("variables", Json::array()).is_array() ||
+        Frame.value("variables", Json::array()).size() > 256)
+      throw Error("invalid_request", "Invalid stack frame table");
+  }
+  const auto calls = row.value("call_types", Json::object());
+  if (!calls.is_object() || calls.size() > 32 ||
+      calls.dump().size() > 64 * 1024)
+    throw Error("invalid_request",
+                "Invalid or over-budget call-site declaration table");
+  for (const auto &[id, type] : calls.items()) {
+    if (id.empty() || id.size() > 256)
+      throw Error("invalid_request", "Invalid call-site identity");
+    typeImage(type);
+    if (stringField(type, "snapshot", {}, 128).empty() ||
+        stringField(type, "declaration", {}, 4096).empty())
+      throw Error("invalid_request", "Invalid call-site declaration");
+    const auto actuals = type.value("variadic_types", Json::array());
+    if (!actuals.is_array() || actuals.size() > 32)
+      throw Error("invalid_request", "Invalid actual variadic argument types");
+    for (const auto &actual : actuals)
+      if (!actual.is_string() ||
+          actual.get_ref<const std::string &>().empty() ||
+          actual.get_ref<const std::string &>().size() > 4096)
+        throw Error("invalid_request", "Invalid actual variadic argument type");
+  }
   if (!row.contains("views") || !row.at("views").is_object() ||
       row.at("views").size() > 6 || row.dump().size() > 4 * 1024 * 1024)
     throw Error("invalid_request", "Invalid bounded code-edit state");
@@ -288,6 +335,31 @@ void CodeEdits::validateRow(const Json &row) {
     // The bases the user picked for the integer literals of a line, by their
     // index on it, while the line reads as its anchor.
     const auto numbers = view.value("numbers", Json::object());
+    const auto variableTypes = view.value("variable_types", Json::object());
+    const auto variableEdits = view.value("variable_edits", Json::array());
+    if (!variableEdits.is_array() || variableEdits.size() > 64)
+      throw Error("invalid_request", "Invalid variable association table");
+    for (const auto &edit : variableEdits) {
+      const auto kind = stringField(edit, "kind", {}, 16);
+      if (kind != "map" && kind != "split")
+        throw Error("invalid_request", "Invalid variable association kind");
+      if (stringField(edit, "from", {}, 256).empty() ||
+          stringField(edit, "snapshot", {}, 128).empty() ||
+          (kind == "map" && stringField(edit, "to", {}, 256).empty()))
+        throw Error("invalid_request", "Invalid variable association identity");
+      typeImage(edit);
+    }
+    if (!variableTypes.is_object() || variableTypes.size() > 256)
+      throw Error("invalid_request", "Invalid source variable type table");
+    for (const auto &[id, edit] : variableTypes.items()) {
+      if (id.empty() || id.size() > 256 || !edit.is_object())
+        throw Error("invalid_request", "Invalid source variable type identity");
+      (void)stringField(edit, "snapshot", {}, 128);
+      typeImage(edit);
+      (void)stringField(edit, "type", {}, 4096);
+      if (!sizeField(edit, "bytes", 0, 16) || !edit.at("floating").is_boolean())
+        throw Error("invalid_request", "Invalid source variable type width");
+    }
     if (!numbers.is_object() || numbers.size() > 2048)
       throw Error("invalid_request", "Code-edit entries exceed their budget");
     for (const auto &[line, entry] : numbers.items()) {
@@ -319,7 +391,21 @@ Json CodeEdits::change(Json row, const Json &request) {
   if (view.is_null())
     view = {{"names", Json::object()}, {"comments", Json::object()}};
   const auto kind = stringField(request, "kind", {}, 16);
-  if (kind == "name") {
+  if (kind == "stack_frame") {
+    if (request.value("reset", false))
+      row.erase("stack_frame");
+    else
+      row["stack_frame"] = request.at("stack_frame");
+  } else if (kind == "global_type") {
+    if (request.value("reset", false))
+      row.erase("object_type");
+    else
+      row["object_type"] = {
+          {"input_sha256", stringField(request, "input_sha256", {}, 64)},
+          {"type", stringField(request, "type", {}, 4096)},
+          {"bytes", sizeField(request, "bytes", 0, 16)},
+          {"floating", request.value("floating", false)}};
+  } else if (kind == "name") {
     const auto identity = stringField(request, "identity", {}, 32);
     (void)parseAddress(identity);
     // The names stay while the text is the same code's: the same locals
@@ -375,6 +461,23 @@ Json CodeEdits::change(Json row, const Json &request) {
       numbers.erase(key);
     if (numbers.empty())
       view.erase("numbers");
+  } else if (kind == "call_type") {
+    row["call_types"] = request.at("call_types");
+  } else if (kind == "variables") {
+    view["variable_edits"] = request.at("variable_edits");
+  } else if (kind == "type") {
+    const auto id = stringField(request, "variable_id", {}, 256);
+    if (!view.contains("variable_types"))
+      view["variable_types"] = Json::object();
+    if (request.value("reset", false))
+      view["variable_types"].erase(id);
+    else
+      view["variable_types"][id] = {
+          {"input_sha256", stringField(request, "input_sha256", {}, 64)},
+          {"snapshot", stringField(request, "snapshot", {}, 128)},
+          {"type", stringField(request, "type", {}, 4096)},
+          {"bytes", sizeField(request, "bytes", 0, 16)},
+          {"floating", request.value("floating", false)}};
   } else
     throw Error("invalid_request", "Unknown code edit kind");
   validateRow(row);
@@ -382,6 +485,39 @@ Json CodeEdits::change(Json row, const Json &request) {
 }
 
 void CodeEdits::validateChange(const Json &view, const Json &request) {
+  if (request.value("kind", std::string()) == "call_type") {
+    // Clearing policies never needs to rebind an occurrence. It must remain
+    // available when a stale or over-budget analysis cannot expose its graph.
+    if (request.value("action", std::string()) == "clear")
+      return;
+    if (view.value("call_snapshot", std::string()).empty())
+      throw Error("edit_budget",
+                  "The original call analysis exceeds the editing budget");
+    if (stringField(request, "snapshot", {}, 128) !=
+        view.value("call_snapshot", std::string()))
+      throw Error("stale_target",
+                  "The original call analysis changed; select the call again");
+    const auto id = stringField(request, "call_id", {}, 256);
+    for (const auto &call : view.value("source_calls", Json::array()))
+      if (call.value("id", std::string()) == id)
+        return;
+    throw Error("stale_target",
+                "The engine cannot identify this original call occurrence");
+  }
+  if (request.value("kind", std::string()) == "type") {
+    const auto id = stringField(request, "variable_id", {}, 256);
+    if (request.value("snapshot", std::string()) !=
+        view.value("variable_snapshot", std::string()))
+      throw Error("stale_target",
+                  "The source analysis changed; select the variable again");
+    for (const auto &variable : view.value("source_variables", Json::array()))
+      if (variable.value("id", std::string()) == id &&
+          !variable.value("ambiguous", true) &&
+          !variable.value("parameter", true))
+        return;
+    throw Error("stale_target",
+                "The engine cannot identify this variable unambiguously");
+  }
   if (request.value("kind", std::string()) == "name") {
     const auto original = stringField(request, "original");
     const auto identity = stringField(request, "identity");
@@ -743,6 +879,14 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
   // every use, also where the code takes its address: in an initializer, or
   // as an argument.  Each use then shows the name its declaration shows.
   std::set<std::string> functionNames;
+  std::map<std::string, Json> sourceVariables;
+  std::set<std::string> ambiguousVariables;
+  for (const auto &variable : view.value("source_variables", Json::array())) {
+    const auto name = variable.value("name", std::string());
+    if (variable.value("ambiguous", true) ||
+        !sourceVariables.emplace(name, variable).second)
+      ambiguousVariables.insert(name);
+  }
   for (std::size_t i = 0; i + 1 < ts.size(); ++i)
     if (identifier(ts[i].text) && ts[i + 1].text == "(" && !member(ts, i))
       functionNames.insert(ts[i].text);
@@ -763,16 +907,33 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
         display = *shown;
     } else if (i >= body && i < bodyEnd && declarations[token.text] == 1) {
       name["kind"] = "local";
+      const auto found = sourceVariables.find(token.text);
+      const Json *binding = found != sourceVariables.end() &&
+                                    !ambiguousVariables.contains(token.text)
+                                ? &found->second
+                                : nullptr;
+      if (binding && !binding->value("parameter", true)) {
+        name["variable_id"] = binding->at("id");
+        name["snapshot"] = view.value("variable_snapshot", std::string());
+      }
       name["identity"] = identity;
       if (const auto parameter = parameters.find(token.text);
           parameter != parameters.end())
         name["parameter"] = parameter->second;
       if (aliases.contains(token.text))
         display = aliases.at(token.text).get<std::string>();
-    } else if (globals.contains(token.text)) {
+    } else if (globals.contains(token.text) ||
+               (sourceVariables.contains(token.text) &&
+                sourceVariables.at(token.text).contains("address"))) {
       name["kind"] = "address";
-      name["address"] = hexAddress(globals.at(token.text));
-      if (const auto shown = shownName(globals.at(token.text), token.text))
+      const auto address = globals.contains(token.text)
+                               ? globals.at(token.text)
+                               : parseAddress(sourceVariables.at(token.text)
+                                                  .at("address")
+                                                  .get<std::string>());
+      name["address"] = hexAddress(address);
+      name["object"] = true;
+      if (const auto shown = shownName(address, token.text))
         display = *shown;
     } else if ((i + 1 < ts.size() &&
                 (ts[i + 1].text == "(" || links.contains(token.text))) ||
@@ -786,6 +947,15 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
         display = *shown;
     } else
       continue;
+    if (!name.contains("variable_id")) {
+      const auto binding = sourceVariables.find(token.text);
+      if (binding != sourceVariables.end() &&
+          !ambiguousVariables.contains(token.text) &&
+          binding->second.contains("address")) {
+        name["variable_id"] = binding->second.at("id");
+        name["snapshot"] = view.value("variable_snapshot", std::string());
+      }
+    }
     name["begin_byte"] = token.begin;
     name["end_byte"] = token.end;
     name["original"] = token.text;

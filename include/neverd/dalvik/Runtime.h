@@ -27,7 +27,15 @@ enum class ExecutionStop {
   InstructionLimit,
   Timeout,
   StackLimit,
-  HeapLimit
+  HeapLimit,
+  Suspended
+};
+struct ExternalCall {
+  enum Kind { Native, LoadLibrary } kind = Native;
+  const Method *method = nullptr;
+  std::vector<uint64_t> arguments; // Shared heap identities, never JNI handles.
+  std::string library;
+  std::string caller; // Declaring class of the actual DEX invocation.
 };
 struct ExecutionResult {
   ExecutionStop stop = ExecutionStop::Returned;
@@ -36,6 +44,8 @@ struct ExecutionResult {
   std::string diagnostic;
   uint64_t throwable =
       0; // Shared heap identity, retained across catch/rethrow/JNI.
+  uint64_t continuation = 0;
+  std::optional<ExternalCall> external;
 };
 // Return Returned to admit an instruction, or the resource stop to propagate.
 // The owner supplies one workload-wide instruction/deadline budget.
@@ -71,7 +81,8 @@ public:
   // Supplied integral/reference code and a validated finite hierarchy.
   // Unknown library bodies, synchronization and floating values are not
   // inferred.
-  std::optional<std::string> unsupported(const Method &method) const;
+  std::optional<std::string> unsupported(const Method &method,
+                                         bool allow_native = false) const;
   // One-shot convenience. Use Runtime to retain class state across calls.
   ExecutionResult execute(const Method &method, std::span<const uint64_t> args,
                           const AdmitInstruction &admit,
@@ -97,10 +108,11 @@ private:
 };
 
 // One workload's mutable class and object state over an immutable Program,
-// which must outlive it. Execution is synchronous and single-owner; no Java
-// scheduling or monitor/memory-model equivalence is implied. A non-Java stop
-// poisons the runtime: partially executed code cannot be retried as a fresh
-// invocation.
+// which must outlive it. A nonzero execution owner enables external-call
+// suspension. Retained activations are resumed in owner-local stack order;
+// no Java scheduling or monitor/memory-model equivalence is implied. A non-Java
+// stop poisons the runtime: partially executed code cannot be retried as a
+// fresh invocation.
 class Runtime {
 public:
   explicit Runtime(const Program &program, std::shared_ptr<Heap> heap = {},
@@ -109,15 +121,23 @@ public:
   Runtime(const Runtime &) = delete;
   Runtime &operator=(const Runtime &) = delete;
   ExecutionResult allocate(std::string_view descriptor, bool initialized,
-                           const AdmitInstruction &admit, uint64_t stack_bytes);
+                           const AdmitInstruction &admit, uint64_t stack_bytes,
+                           uint64_t owner = 0);
   ExecutionResult field(const Field &field, uint64_t receiver,
                         std::optional<uint64_t> write,
-                        const AdmitInstruction &admit, uint64_t stack_bytes);
+                        const AdmitInstruction &admit, uint64_t stack_bytes,
+                        uint64_t owner = 0);
   ExecutionResult initialize(std::string_view descriptor,
                              const AdmitInstruction &admit,
-                             uint64_t stack_bytes);
+                             uint64_t stack_bytes, uint64_t owner = 0);
   ExecutionResult execute(const Method &method, std::span<const uint64_t> args,
-                          const AdmitInstruction &admit, uint64_t stack_bytes);
+                          const AdmitInstruction &admit, uint64_t stack_bytes,
+                          uint64_t owner = 0);
+  // Resume exactly one issued request. The budget closure is retained from
+  // entry and must remain valid until completion. Returned reference values
+  // and thrown objects use the shared heap, not external ABI carriers.
+  ExecutionResult resume(uint64_t continuation, uint64_t owner,
+                         ExecutionResult completion);
   // JNI and DEX share library semantics and workload-owned framework objects.
   ExecutionResult library(const LibraryMethod &method, uint64_t receiver,
                           std::span<const uint64_t> args,

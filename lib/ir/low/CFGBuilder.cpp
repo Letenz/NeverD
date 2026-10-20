@@ -53,6 +53,8 @@
 namespace neverd {
 
 bool CFGBuilder::isKnownFunctionEntry(va_t Addr) const {
+  if (CurrentImg && !CurrentImg->isFunctionEntryCandidateAt(Addr))
+    return false;
   if (KnownFuncEntries && KnownFuncEntries->count(Addr) != 0)
     return true;
   return CurrentImg && CurrentImg->hasKnownFunctionEntryAt(Addr);
@@ -62,6 +64,42 @@ bool CFGBuilder::isCurrentOwnedFragment(va_t Addr) const {
   return CurrentImg &&
          isExplicitlyOwnedFunctionFragment(*CurrentImg, CurrentFuncEntry, Addr,
                                            ExecutableCodeOwners);
+}
+
+bool CFGBuilder::isCurrentOwnedCode(va_t Address) const {
+  if (AuthoritativeCurrentFuncRange &&
+      Address >= AuthoritativeCurrentFuncRange->first) {
+    if (Address < AuthoritativeCurrentFuncRange->second)
+      return true;
+    // Interior-query bounds may be shortened by a coarse frame span. That
+    // cannot erase independently declared symbol/code-range size evidence.
+    const va_t MetadataEnd = CurrentImg->getFunctionMetadataEnd(
+        CurrentFuncEntry, ExecutableCodeOwners);
+    if (MetadataEnd != InvalidVA && Address < MetadataEnd)
+      return true;
+  }
+  return isCurrentOwnedFragment(Address);
+}
+
+bool CFGBuilder::instructionFitsCurrentOwnership(va_t Address,
+                                                 uint64_t Size) const {
+  if (!Size || Size > InvalidVA - Address)
+    return false;
+  if (AuthoritativeCurrentFuncRange &&
+      Address >= AuthoritativeCurrentFuncRange->first &&
+      Address < AuthoritativeCurrentFuncRange->second &&
+      Size <= AuthoritativeCurrentFuncRange->second - Address)
+    return true;
+  if (!isCurrentOwnedCode(Address))
+    return true;
+  // Only boundary-crossing instructions and owned fragments need these
+  // queries. Use the same end policy as calls/traps: a coarse unwind range
+  // can support interior ownership without declaring one function's end.
+  // Adjacent owned fragments continue each other; ownership gaps do not.
+  for (uint64_t Offset = 1; Offset != Size; ++Offset)
+    if (codeRangeEndsAt(Address, Address + Offset))
+      return false;
+  return true;
 }
 
 bool CFGBuilder::isFramelessLeafColdPart(const BinaryImage &Img,
@@ -239,36 +277,6 @@ bool isBackwardSharedEpilogue(const BinaryImage &Image, va_t FunctionEntry,
     return false;
   }
   return false;
-}
-
-/// True when \p Next begins an instruction that belongs to the same function as
-/// the resumable trap in front of it.
-///
-/// Padding is what this tells apart from a body.  A linker pads between
-/// functions with a run of `int3`, and a compiler plants a trap in front of an
-/// embedded jump table or string; in both cases the bytes after the trap are
-/// either another trap or not an instruction at all.  A `__debugbreak()` in a
-/// live function is followed by the rest of that function.
-bool codeFollowsTrap(const BinaryImage &Img, Decoder &Dec, va_t Next) {
-  const Segment *Seg = Img.getSegmentFor(Next);
-  if (!Seg || !Img.hasExecutableCodeOwnerAt(Next) || Next < Seg->VA)
-    return false;
-  const size_t Offset = static_cast<size_t>(Next - Seg->VA);
-  if (Offset >= Seg->Data.size())
-    return false;
-
-  // Classification only: this must not disturb the operand detail or the x87
-  // stack state the surrounding lift walk depends on.
-  const bool PreviousDetail = Dec.detailEnabled();
-  Dec.setDetail(false);
-  DecodedInsn Peek;
-  const int Size = Dec.decodeOneLight(Seg->Data.data() + Offset,
-                                      Seg->Data.size() - Offset, Next, Peek);
-  const bool HasCodeOwner = Size > 0 && Img.hasExecutableCodeOwnerRange(
-                                            Next, static_cast<uint64_t>(Size));
-  const bool IsTrap = HasCodeOwner && Dec.isResumableTrap(Peek);
-  Dec.setDetail(PreviousDetail);
-  return HasCodeOwner && !IsTrap;
 }
 
 InstructionMode effectiveInstructionMode(Arch Architecture,
@@ -538,6 +546,92 @@ std::set<va_t> frameReleasingIndirectJumps(const BinaryImage &Img,
 //===----------------------------------------------------------------------===//
 // CFGBuilder
 //===----------------------------------------------------------------------===//
+
+bool CFGBuilder::codeFollowsTrap(const Decoder &Dec, va_t Next) {
+  const BinaryImage &Img = *CurrentImg;
+  // Keep this decoder separate: a peek must not consume Thumb IT state.
+  Decoder PeekDecoder;
+  // A branch may already have reached a cold block beyond the primary range.
+  // Bound a peek that starts inside that range without clipping such a block.
+  va_t RangeEnd = InvalidVA;
+  if (CurrentFuncRange && Next >= CurrentFuncRange->first &&
+      Next < CurrentFuncRange->second) {
+    const auto [Begin, End] = *CurrentFuncRange;
+    // Coarse unwind spans support interior queries, but only a real function
+    // end or an independent entry can clip this continuation.
+    if (codeRangeEndsAt(Begin, End) ||
+        isTailCallTarget(End, /*IncludeBoundaryGuesses=*/false))
+      RangeEnd = End;
+  }
+  size_t UnownedScanned = 0;
+  for (;;) {
+    if (!chargeCandidateDecodeAttempt(Img))
+      return false;
+    if (isTailCallTarget(Next, /*IncludeBoundaryGuesses=*/false))
+      return false;
+    const bool OwnedFragment = isCurrentOwnedFragment(Next);
+    if (Next >= RangeEnd && !OwnedFragment)
+      return false;
+    const bool Owned = isCurrentOwnedCode(Next);
+    if (!Owned && UnownedScanned > limits::kMaxAlignmentPaddingBytes)
+      return false;
+    const auto Fail = [&](bool Truncated) {
+      // Size evidence makes this a real continuation. A failed peek cannot
+      // turn malformed or missing owned code into a complete function.
+      if (!Owned)
+        return false;
+      (Truncated ? TruncatedPathAddresses : DecodeFailureAddresses)
+          .insert(Next);
+      // Retain the attempted fallthrough in final reachability accounting.
+      // Do not retry with the unbounded decoder and read past its owner.
+      ExploredAddrs.insert(Next);
+      return true;
+    };
+    const Segment *Seg = Img.getSegmentFor(Next);
+    if (!Seg || Next < Seg->VA || !Img.hasExecutableCodeOwnerAt(Next))
+      return Fail(/*Truncated=*/true);
+    const size_t Offset = static_cast<size_t>(Next - Seg->VA);
+    if (Offset >= Seg->Data.size())
+      return Fail(/*Truncated=*/true);
+    size_t Available = Seg->Data.size() - Offset;
+    if (!Owned && Next < RangeEnd)
+      Available = std::min<uint64_t>(Available, RangeEnd - Next);
+    if (!PeekDecoder.selectMode(Img, Next, Dec.currentMode()))
+      return Fail(/*Truncated=*/false);
+    PeekDecoder.setDetail(false);
+    DecodedInsn Peek;
+    const int Size = PeekDecoder.decodeOneLight(Seg->Data.data() + Offset,
+                                                Available, Next, Peek);
+    if (Size <= 0 || static_cast<uint64_t>(Size) > InvalidVA - Next)
+      return Fail(/*Truncated=*/false);
+    if (!Img.hasExecutableCodeOwnerRange(Next, static_cast<uint64_t>(Size)))
+      return Fail(/*Truncated=*/true);
+    const va_t End = Next + Size;
+    if (Img.Arch == Arch::ARM &&
+        Img.instructionModeAt(End - 1, PeekDecoder.currentMode()) !=
+            PeekDecoder.currentMode())
+      return Fail(/*Truncated=*/false);
+    if (!instructionFitsCurrentOwnership(Next, Size))
+      return Fail(/*Truncated=*/false);
+    const bool Nop = PeekDecoder.isAlignmentNop(Peek);
+    // Sized ownership admits each breakpoint, even a long consecutive run.
+    // NOPs have no observable continuation of their own: even an owned run
+    // must lead to code before a function boundary. Its finite ownership,
+    // rather than the heuristic padding budget, bounds this linear scan.
+    if (Owned && !Nop)
+      return true;
+    const bool Padding = PeekDecoder.isResumableTrap(Peek) || Nop;
+    if (!Padding)
+      return true;
+    // With no size evidence, look through a bounded run for real code before
+    // another function. Do not let trap/NOP alignment manufacture a tail call.
+    if (codeRangeEndsAt(Next, End))
+      return false;
+    if (!Owned)
+      UnownedScanned += Size;
+    Next = End;
+  }
+}
 
 CFGBuilder::OwnInteriorCallVerdict
 CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
@@ -1336,7 +1430,8 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
               !Occurrence.PCRelativeFromInstructionEnd ||
               Occurrence.TargetVA == InvalidVA ||
               Occurrence.TargetOwnerVA == InvalidVA ||
-              !Img.hasExecutableCodeOwnerAt(Occurrence.TargetVA) ||
+              !Img.hasExecutableCodeOwnerAt(Occurrence.TargetVA,
+                                            ExecutableCodeOwners) ||
               !Img.relocatedTargetBelongsToOwner(Occurrence.TargetVA,
                                                  Occurrence.TargetOwnerVA) ||
               Rec == Insns.end() || Rec->second.IsInstructionGuard ||
@@ -1598,8 +1693,8 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
         const va_t Last = Address + Memory.AccessSize - 1;
         if (!Img.hasObjectDataProvenance(Address) ||
             !Img.hasObjectDataProvenance(Last) ||
-            Img.hasExecutableCodeOwnerAt(Address) ||
-            Img.hasExecutableCodeOwnerAt(Last) ||
+            Img.hasExecutableCodeOwnerAt(Address, ExecutableCodeOwners) ||
+            Img.hasExecutableCodeOwnerAt(Last, ExecutableCodeOwners) ||
             isRuntimeWritableAddress(Img, Address) ||
             isRuntimeWritableAddress(Img, Last) ||
             !Img.relocatedTargetBelongsToOwner(Address,
@@ -1929,6 +2024,31 @@ candidateFiniteProofOwnerLookupWork(const BinaryImage &Img,
   return Work;
 }
 
+bool CFGBuilder::chargeCandidateDecodeAttempt(const BinaryImage &Img) {
+  if (!CandidateFiniteProofDecodeOnly)
+    return true;
+  // A disposable proof pays for direct-path decodes and trap lookahead alike.
+  // The base charge includes instruction/LowIR storage and its destruction;
+  // repeated owner and relocation queries also pay for the image inventories.
+  constexpr size_t MaxScratchDecodeAttempts = 1024;
+  const std::optional<size_t> OwnerWork =
+      candidateFiniteProofOwnerLookupWork(Img, knownFunctionEntryCount());
+  size_t ScratchDecodeWork = 8192;
+  if (!OwnerWork ||
+      !detail::addLinearComparisonWork(ScratchDecodeWork, *OwnerWork, 64) ||
+      !CandidateFiniteProofDecodeBudget ||
+      CandidateFiniteProofDecodeAttempts >= MaxScratchDecodeAttempts ||
+      *CandidateFiniteProofDecodeBudget < ScratchDecodeWork) {
+    CandidateFiniteProofDecodeIncomplete = true;
+    if (CandidateFiniteProofDecodeBudget)
+      *CandidateFiniteProofDecodeBudget = 0;
+    return false;
+  }
+  *CandidateFiniteProofDecodeBudget -= ScratchDecodeWork;
+  ++CandidateFiniteProofDecodeAttempts;
+  return true;
+}
+
 bool CFGBuilder::prepareCandidateFiniteProofScratch(
     CFGBuilder &Scratch, const std::vector<va_t> &PhysicalTargets,
     size_t *EvidenceBudget, bool *AnalysisIncomplete) const {
@@ -2008,7 +2128,7 @@ bool CFGBuilder::prepareCandidateFiniteProofScratch(
   const uint32_t Alignment = getInsnAlignment();
   for (va_t Target : PhysicalTargets) {
     if (Target == InvalidVA || (Alignment > 1 && Target % Alignment != 0) ||
-        !Img.hasExecutableCodeOwnerAt(Target) ||
+        !Img.hasExecutableCodeOwnerAt(Target, ExecutableCodeOwners) ||
         !Img.hasExecutableCodeOwnerRange(Target, Alignment) ||
         !Img.readVA(Target, 1))
       return false;
@@ -2193,31 +2313,8 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
         break;
       }
       SourceBranch.reset();
-      if (CandidateFiniteProofDecodeOnly) {
-        // This builder is a disposable proof snapshot.  Charge each attempted
-        // direct-path decode before it can allocate an instruction, its LowIR
-        // operations, relocation occurrences, or worklist successors.  The
-        // base charge includes their eventual destruction. Repeated live
-        // owner and relocation queries also pay for the image inventories;
-        // the hard cap bounds an unexpectedly large direct-path closure.
-        constexpr size_t MaxScratchDecodeAttempts = 1024;
-        const std::optional<size_t> OwnerWork =
-            candidateFiniteProofOwnerLookupWork(Img, knownFunctionEntryCount());
-        size_t ScratchDecodeWork = 8192;
-        if (!OwnerWork ||
-            !detail::addLinearComparisonWork(ScratchDecodeWork, *OwnerWork,
-                                             64) ||
-            !CandidateFiniteProofDecodeBudget ||
-            CandidateFiniteProofDecodeAttempts >= MaxScratchDecodeAttempts ||
-            *CandidateFiniteProofDecodeBudget < ScratchDecodeWork) {
-          CandidateFiniteProofDecodeIncomplete = true;
-          if (CandidateFiniteProofDecodeBudget)
-            *CandidateFiniteProofDecodeBudget = 0;
-          break;
-        }
-        *CandidateFiniteProofDecodeBudget -= ScratchDecodeWork;
-        ++CandidateFiniteProofDecodeAttempts;
-      }
+      if (!chargeCandidateDecodeAttempt(Img))
+        break;
       // An actual graph extension invalidates every generation-local replay
       // and positive ambiguity shadow.  Pending exact query identities remain
       // fail-closed carry, but only a fresh query on this immutable graph may
@@ -2227,7 +2324,7 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
       ExploredAddrs.insert(Cur);
 
       const auto *Seg = Img.getSegmentFor(Cur);
-      if (!Seg || !Img.hasExecutableCodeOwnerAt(Cur)) {
+      if (!Seg || !Img.hasExecutableCodeOwnerAt(Cur, ExecutableCodeOwners)) {
         TruncatedPathAddresses.insert(Cur);
         break;
       }
@@ -2255,6 +2352,10 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
       }
       if (!Img.hasExecutableCodeOwnerRange(Cur, static_cast<uint64_t>(Sz))) {
         TruncatedPathAddresses.insert(Cur);
+        break;
+      }
+      if (!instructionFitsCurrentOwnership(Cur, static_cast<uint64_t>(Sz))) {
+        DecodeFailureAddresses.insert(Cur);
         break;
       }
       if (Img.Arch == Arch::ARM &&
@@ -2342,7 +2443,7 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
       // loader saw no relocation).  Record the target so the emitter symbolizes
       // the folded constant to `ptrtoint @func` rather than the stale VA.
       if (va_t Ref = Dec.pcRelCodeRefTarget(DI); Ref != InvalidVA) {
-        if (Img.hasExecutableCodeOwnerAt(Ref)) {
+        if (Img.hasExecutableCodeOwnerAt(Ref, ExecutableCodeOwners)) {
           DiscoveredCodeRefs.insert(Ref);
           DiscoveredCodeRefSources[Ref].insert(Cur);
 
@@ -2424,16 +2525,19 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
       // commonly follows them.  Real branches/returns were already classified
       // from their LowIR ops and retain their more precise handling below.
       //
-      // `int3` is the exception: it is resumable, and `__debugbreak()` puts one
-      // in the middle of an ordinary function with the epilogue behind it.
+      // Debugger traps are resumable: `__debugbreak()` can put one in the
+      // middle of an ordinary function with the epilogue behind it.
       // Whether it ends the block is therefore decided by what follows, which
       // separates that case from the run of `int3` a linker pads with and from
-      // the embedded data a trap is often planted in front of.
+      // the embedded data a trap is often planted in front of. A known range
+      // end or another function's entry takes precedence over decodable bytes:
+      // resuming there must not manufacture a tail call to the next function.
       if (!Rec.IsBranch && !Rec.IsRet && Dec.isFunctionTerminator(DI)) {
         Rec.IsOpaqueTerminator = true;
         Rec.IsResumableTerminator = Dec.isResumableTrap(DI);
-        Rec.IsRet =
-            !Rec.IsResumableTerminator || !codeFollowsTrap(Img, Dec, Next);
+        Rec.IsRet = !Rec.IsResumableTerminator ||
+                    codeRangeEndsAt(Rec.Addr, Next) ||
+                    !codeFollowsTrap(Dec, Next);
       }
 
       // operator[]= returns the stored element, so bind to it directly rather
@@ -4134,7 +4238,8 @@ void CFGBuilder::completeExactARMRelativeLiteralAddresses(
         Occurrence.TargetVA = Candidate.TargetVA;
         Occurrence.TargetOwnerVA = Candidate.TargetOwnerVA;
         Occurrence.Width = 4;
-        Occurrence.Provenance = Img.hasExecutableCodeOwnerAt(Candidate.TargetVA)
+        Occurrence.Provenance = Img.hasExecutableCodeOwnerAt(
+                                    Candidate.TargetVA, ExecutableCodeOwners)
                                     ? ConstantAddressProvenance::CodeAddress
                                     : ConstantAddressProvenance::DataAddress;
         Occurrence.DefinesOutput = true;

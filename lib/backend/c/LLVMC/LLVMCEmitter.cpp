@@ -32,6 +32,7 @@
 #include "LLVMCSourceStrings.h"
 #include "LLVMCStackAllocation.h"
 #include "LLVMCStorage.h"
+#include "LLVMCVariableEdits.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
@@ -706,6 +707,26 @@ void LLVMCWriter::recordSourceNames(const llvm::Module &Mod) {
       Name.Address.reset();
   }
   std::vector<CSourceName> Names;
+  for (const auto &[Address, Use] : ImageDataUses) {
+    if (Use.CallSlot || Use.AccessBytes.size() != 1)
+      continue;
+    const std::string Name = namedImageObject(Address);
+    CSourceName Object;
+    Object.TheKind = CSourceName::Kind::Object;
+    Object.Identifier = Name;
+    Object.Address = Address;
+    ByIdentifier.emplace(Name, std::move(Object));
+    if (Opts.SourceMap && FunctionEntry) {
+      SourceVariable Variable;
+      Variable.Function = *FunctionEntry;
+      Variable.Address = Address;
+      Variable.Id = "global:" + std::to_string(Address);
+      Variable.Name = Name;
+      Variable.Bytes = *Use.AccessBytes.begin();
+      Variable.Type = NdType::makeInt(Variable.Bytes);
+      recordSourceVariable(Opts.SourceMap->Variables, std::move(Variable));
+    }
+  }
   Names.reserve(ByIdentifier.size());
   for (auto &[Identifier, Name] : ByIdentifier)
     Names.push_back(std::move(Name));
@@ -1431,7 +1452,8 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
         for (uint64_t I = 0; I < Array->getNumElements(); ++I) {
           if (I)
             Elements += ", ";
-          Elements += constStr(Init->getAggregateElement(unsigned(I)));
+          Elements += constStr(Init->getAggregateElement(unsigned(I)),
+                               /*AllowImageAddress=*/false);
         }
       OS << wrapInitializer(std::move(Elements)) << "};\n";
       continue;
@@ -1443,7 +1465,8 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
       OS << "const ";
     OS << typeToCLLVM(GV.getValueType()) << " " << Name;
     if (!llvm::isa<llvm::ConstantAggregateZero>(Init))
-      OS << " = " << wrapInitializer(constStr(Init));
+      OS << " = "
+         << wrapInitializer(constStr(Init, /*AllowImageAddress=*/false));
     OS << ";\n";
   }
 }
@@ -2342,6 +2365,8 @@ static void promoteCallResultHomes(llvm::Function &Function) {
 bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
                         const CEmitterOptions &Opts, DebugContext *Dbg,
                         const BinaryImage *Img, const llvm::Function *Only) {
+  if (Opts.SourceMap)
+    Opts.SourceMap->Variables.clear();
   if (Only && referencesVectorGlobal(*Only))
     throw std::runtime_error(
         "C projection references unsupported vector global storage");
@@ -2500,20 +2525,64 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
         }
     }
   }
+  CEmitterOptions EditedOpts = Opts;
+  SourceVariableTypes EditedTypes;
+  if (Opts.VariableTypes)
+    EditedTypes = *Opts.VariableTypes;
+  if (Opts.VariableEdits && !Opts.VariableEdits->empty()) {
+    std::string Snapshot = Opts.VariableSnapshot;
+    bool Failed = false;
+    unsigned Index = 0;
+    if (ProjectionOnly)
+      llvmc::captureSourceValueIds(
+          *const_cast<llvm::Function *>(ProjectionOnly));
+    for (const auto &Edit : *Opts.VariableEdits) {
+      SourceVariableEditResult Result;
+      if (!ProjectionOnly)
+        Result.Refusal = "Select one function for a variable association";
+      else if (Failed || Snapshot.empty() || Edit.Snapshot != Snapshot)
+        Result.Refusal = "The source analysis or an earlier association "
+                         "changed; reset or reapply the association";
+      else
+        Result = llvmc::editVariableStorage(
+            *const_cast<llvm::Function *>(ProjectionOnly), Edit, Index);
+      if (Result.Applied)
+        Snapshot = Edit.AfterSnapshot;
+      else
+        Failed = true;
+      if (Opts.SourceMap)
+        Opts.SourceMap->VariableEditResults.push_back(std::move(Result));
+      ++Index;
+    }
+    if (Failed) {
+      EditedTypes.Locals.clear();
+      if (Opts.SourceMap && Opts.VariableTypes &&
+          !Opts.VariableTypes->Locals.empty())
+        Opts.SourceMap->StaleVariableTypes.push_back(
+            "Local types were not bound because a variable association could "
+            "not be replayed");
+    }
+    EditedOpts.VariableTypes = &EditedTypes;
+    if (Opts.SourceMap)
+      Opts.SourceMap->VariableSnapshot = Snapshot;
+    if (llvm::verifyModule(*Projection, &llvm::errs()))
+      throw std::runtime_error(
+          "The private variable storage projection failed verification");
+  }
   if (!Opts.SourceMap) {
-    LLVMCWriter W(Out, Opts, Dbg, Img);
+    LLVMCWriter W(Out, EditedOpts, Dbg, Img);
     W.writeModule(*Projection, ProjectionOnly);
     return true;
   }
   std::string Ordinary, Annotated;
   llvm::raw_string_ostream OrdinaryOS(Ordinary), AnnotatedOS(Annotated);
-  LLVMCWriter Plain(OrdinaryOS, Opts, Dbg, Img);
+  LLVMCWriter Plain(OrdinaryOS, EditedOpts, Dbg, Img);
   Plain.writeModule(*Projection, ProjectionOnly);
   CSourceRecorder Recorder(*Opts.SourceMap, Ordinary);
   try {
     if (Sources)
       Recorder.prepareLLVMSources(*Sources);
-    LLVMCWriter Marked(AnnotatedOS, Opts, Dbg, Img, true, &Recorder);
+    LLVMCWriter Marked(AnnotatedOS, EditedOpts, Dbg, Img, true, &Recorder);
     Marked.writeModule(*Projection, ProjectionOnly);
     Recorder.finish(Annotated, Ordinary);
   } catch (const std::exception &) {
@@ -2527,7 +2596,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
       Instructions.prepareLLVMSources(*Sources);
     std::string Annotated;
     llvm::raw_string_ostream OS(Annotated);
-    LLVMCWriter Marked(OS, Opts, Dbg, Img, true, &Instructions);
+    LLVMCWriter Marked(OS, EditedOpts, Dbg, Img, true, &Instructions);
     Marked.writeModule(*Projection, ProjectionOnly);
     Instructions.finish(Annotated, Ordinary);
   } catch (const std::exception &) {

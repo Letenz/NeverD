@@ -73,14 +73,16 @@ readPEControlFlowEntries(const BinaryImage &Image) {
     const unsigned Alignment =
         Image.Arch == Arch::AArch64 ? 4
         : Image.Arch == Arch::ARM
-            ? (Image.Mode == InstructionMode::Thumb ? 2 : 4)
+            ? (Image.instructionModeAt(Target) == InstructionMode::Thumb ? 2
+                                                                         : 4)
             : 1;
     if (Target % Alignment || (I && Target <= PreviousTarget))
       return Invalid(
           "PE CFG function entries have invalid instruction alignment");
     PreviousTarget = Target;
-    if (Image.DataInCode.count(Target) ||
-        !Image.hasExecutableCodeOwnerAt(Target) || !Image.readVA(Target, 1))
+    if (!Image.isFunctionEntryCandidateAt(Target))
+      return Invalid("PE CFG function entry has no independent code identity");
+    if (!isFileBackedCodeImageRange(Image, Target, Alignment))
       return Invalid("PE CFG function entry lacks executable file storage");
     if (!EntryFlags)
       Entries.push_back(Target);

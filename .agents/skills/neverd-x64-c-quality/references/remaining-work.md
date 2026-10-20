@@ -207,6 +207,47 @@ conditional memory, invocation lifetime and both C routes remain open.
 
 ## Closed control-flow regressions
 
+- Owned NOP suffixes no longer manufacture a tail call after a debugger trap,
+  including long runs and decoded x86 prefix/MPX-disabled NOP forms. Real
+  continuations, register-changing lookalikes and independently reached suffixes
+  remain live; disposable proof peeks consume the existing decode allowance.
+  ARM NOP predicates retain this identity without accepting other hints or the
+  separate unconditional encoding space.
+- Instruction extents, trap peeks and call termination share the exact range-end
+  policy. Partial instructions retain decode failures across primary/fragment
+  ownership; contiguous owned extents still work. Coarse unwind spans neither
+  split instructions nor erase independent symbol/code-range size evidence.
+  LLVM source queries now retain the same pipeline rejection reason as HighIR,
+  including the failing instruction address.
+- Cross-architecture trap padding uses mode-aware ARM/Thumb/AArch64 NOP
+  recognition. Malformed or missing owned continuation bytes retain explicit
+  failure accounting, and cold-fragment ends bound calls/traps even without a
+  separate unwind record. Adjacent owned fragments and real continuations remain
+  controls across the shared metadata paths.
+- Boolean-result normalization consumes the current void BRK shape and the
+  shared code-sensitive termination rule. Actual lifted fatal BRKs qualify;
+  debugger BRKs, missing codes, stale outputs and mismatched immutable bytes
+  do not. This closes the stale consumer left by the earlier return-register fix.
+- Consecutive debugger breaks preserve owned continuations. Bounded lookahead
+  distinguishes unsized continuations from trap/NOP padding before independent
+  entries. Padding guesses alone do not stop fallthrough, and full/selected
+  pipelines absorb guesses at actually decoded instruction boundaries.
+- Long and prefixed x86 `int 3` use the short encoding's void, zero-argument
+  contract. ARM/Thumb `bkpt` and AArch64 `brk` define no return-register value.
+  Tests keep live values across breaks through both C routes at both pipeline
+  optimization settings, while service interrupt result contracts remain.
+- AArch64 compiler `brk #0xF000` shares one resumable policy across decoding,
+  termination analysis and source emission. Fatal BRK codes still propagate
+  no-return to callers. LLVM-to-C retains raw ARM UDF/HLT assembly instead of
+  silently giving it the stronger non-returning `__builtin_trap` contract.
+- Resumable x86 breakpoints at known function boundaries no longer create
+  synthetic tail calls to adjacent functions. CFGBuilder shares the existing
+  instruction-range ownership check with calls; interior debugger continuations
+  and adjacent owned fragments remain intact. Synthetic x86/x64 metadata cases
+  and both PE C routes cover the boundary without changing trap semantics.
+  The sibling audit also closes missing classification for long `int 3`,
+  `int1`, `ud0`/`ud1`, ARM/Thumb `bkpt`/`udf`, and AArch64 `udf`; fast AArch64
+  classification shares the same accepted terminator set.
 - LLVMC forwards exact private scalar homes through bounded CFG reaching
   definitions. Joins require agreement from every incoming edge; cycles,
   missing definitions and excessive expansion keep explicit snapshots. Shared

@@ -95,6 +95,27 @@ add_neverd_unittest(NeverDGraphCyclesTests
 target_include_directories(NeverDGraphCyclesTests PRIVATE
   "${CMAKE_SOURCE_DIR}/include")
 
+add_neverd_unittest(NeverDSourceVariableFlowTests
+  SourceVariableFlowTests.cpp
+  LINK_COMPONENTS IR
+)
+add_neverd_unittest(NeverDSourceStackFrameTests
+  SourceStackFrameTests.cpp
+  LINK_COMPONENTS IR
+)
+add_neverd_unittest(NeverDSourceCallABITests
+  SourceCallABITests.cpp
+  LINK_COMPONENTS IR
+)
+add_neverd_unittest(NeverDHighVariableEditsTests
+  HighVariableEditsTests.cpp
+  LINK_COMPONENTS IRHigh
+)
+add_neverd_unittest(NeverDLLVMVariableEditsTests
+  LLVMVariableEditsTests.cpp
+  LINK_COMPONENTS BackendC
+)
+
 add_neverd_unittest(NeverDPipelineOutcomeTests
   PipelineOutcomeTests.cpp
   LINK_COMPONENTS Pipeline BackendC
@@ -143,6 +164,7 @@ target_compile_definitions(NeverDSourceDialectTests PRIVATE
 # SDK's C++ implementation details outside its public ABI.
 add_neverd_unittest(NeverDSessionLLVMTests
   SessionLLVMTests.cpp
+  "${CMAKE_SOURCE_DIR}/lib/sdk/capi/AnalystStackObjects.cpp"
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi/LocalTypesDebugContext.cpp"
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi/NeverDCAPILocalTypes.cpp"
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi/SessionSidecar.cpp"

@@ -111,16 +111,20 @@ ExecutableCodeOwnerIndex::ExecutableCodeOwnerIndex(const BinaryImage &Image)
     for (const Import &Imp : Image.Imports)
       if (Image.isCodeAddress(Imp.IATAddr))
         ImportStubs.push_back(Imp.IATAddr);
+  const auto BoundaryGuesses = Image.boundaryGuessFunctionStarts();
   for (const Symbol &Sym : Image.Symbols) {
     if (!Sym.IsFunc)
       continue;
     const va_t Start = normalizeCodeAddress(Sym.Addr, Image.Arch, Image.Mode);
     FunctionStarts.push_back(Start);
+    if (!BoundaryGuesses.count(Sym.Addr))
+      NonGuessedFunctionStarts.push_back(Start);
     if (Sym.Size != 0 && Sym.Size <= InvalidVA - Start)
       CodeRanges.emplace_back(Start, Start + Sym.Size);
   }
   sortUnique(ImportStubs);
   sortUnique(FunctionStarts);
+  sortUnique(NonGuessedFunctionStarts);
   mergeRanges(ImportRanges);
   mergeRanges(CodeRanges);
   visitFunctionMetadataRanges(Image, [&](va_t Start, va_t End) {
@@ -229,8 +233,11 @@ bool ExecutableCodeOwnerIndex::isImportStubAt(va_t Addr) const {
          contains(ImportRanges, Addr);
 }
 
-bool ExecutableCodeOwnerIndex::hasFunctionSymbolAt(va_t Addr) const {
-  return std::binary_search(FunctionStarts.begin(), FunctionStarts.end(), Addr);
+bool ExecutableCodeOwnerIndex::hasFunctionSymbolAt(
+    va_t Addr, bool IncludeBoundaryGuesses) const {
+  const auto &Starts =
+      IncludeBoundaryGuesses ? FunctionStarts : NonGuessedFunctionStarts;
+  return std::binary_search(Starts.begin(), Starts.end(), Addr);
 }
 
 bool ExecutableCodeOwnerIndex::hasKnownOrTypedOwnerAt(va_t Addr) const {
@@ -276,13 +283,17 @@ bool BinaryImage::hasExecutableCodeOwnerAt(
   return false;
 }
 
-bool BinaryImage::hasFunctionSymbolAt(
-    va_t Addr, const ExecutableCodeOwnerIndex *Index) const {
+bool BinaryImage::hasFunctionSymbolAt(va_t Addr,
+                                      const ExecutableCodeOwnerIndex *Index,
+                                      bool IncludeBoundaryGuesses) const {
   const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
   if (Index && Index->Image == this)
-    return Index->hasFunctionSymbolAt(Normalized);
+    return Index->hasFunctionSymbolAt(Normalized, IncludeBoundaryGuesses);
+  const auto BoundaryGuesses =
+      IncludeBoundaryGuesses ? std::set<va_t>{} : boundaryGuessFunctionStarts();
   for (const Symbol &Sym : Symbols)
-    if (Sym.IsFunc && normalizeCodeAddress(Sym.Addr, Arch, Mode) == Normalized)
+    if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr) &&
+        normalizeCodeAddress(Sym.Addr, Arch, Mode) == Normalized)
       return true;
   return false;
 }

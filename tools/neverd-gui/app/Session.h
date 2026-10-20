@@ -279,6 +279,8 @@ public:
   /// Define the item at \p address: \p action "data" makes a value, the
   /// next size each time; "string" the string that starts there; "undefine"
   /// shows the item's bytes as bytes.  Each commits at once, like a rename.
+  void editDataPresentation(const QString &operation,
+                            const QJsonObject &request, quint64 epoch);
   void defineItem(Address address, const QString &action,
                   std::optional<quint64> epoch = {});
   /// Start a function at \p address, or stop treating the function at

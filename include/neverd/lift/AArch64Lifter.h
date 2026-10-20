@@ -41,6 +41,10 @@ public:
   /// Whether \p I ends a function's straight-line decode (ret/b/br/eret).
   static bool isFunctionTerminator(const cs_insn *I);
 
+  /// Whether this is the compiler's resumable debugger breakpoint.
+  /// Works without Capstone operand detail.
+  static bool isResumableTrap(const cs_insn *I);
+
   /// Whether \p I returns to a caller: `ret`, `eret`, or a form of them that
   /// authenticates the return address.
   static bool isReturn(const cs_insn *I);

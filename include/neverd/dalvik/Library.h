@@ -51,7 +51,8 @@ enum LibraryOperation {
   FileName,
   FileParent,
   FileIsAbsolute,
-  ThreadInstrumentation
+  ThreadInstrumentation,
+  LoadNativeLibrary
 };
 struct LibraryMethod {
   const char *Class, *Name, *Signature;

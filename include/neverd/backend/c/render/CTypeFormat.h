@@ -69,9 +69,12 @@ bool hasCValueLayout(const TypeRef &Ty);
 /// that belong to a data object the image's symbols size stay unnamed too,
 /// unless the object is the string: an address inside the object points
 /// into it, and an object whose bytes go on past the terminator with more
-/// than zeros holds more than the text.
+/// than zeros holds more than the text.  \p Narrow reads the bytes as a
+/// narrow string only: a narrow string parameter's "r", whose terminator and
+/// the zeros after it read as UTF-16 L"r" too.
 std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
-                                              bool AllowEmpty = false);
+                                              bool AllowEmpty = false,
+                                              bool Narrow = false);
 
 /// A string literal at \p Addr as C: the image's read-only printable text
 /// (imageStringLiteral), or the literal a symbol's name spells there (MSVC's
