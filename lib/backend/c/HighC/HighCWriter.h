@@ -1052,6 +1052,9 @@ public:
   /// The definitions whose own names are a C library routine's, which they
   /// step aside from (copiesHeaderRoutine, libraryDeclaresDefinition).
   std::set<const HighFunc *> HeaderRoutineCopies;
+  /// Whether the signature \p Func is emitted with is one C takes for a
+  /// hosted program's main.
+  bool takesMainSignature(const HighFunc &Func) const;
   /// The C name each defined function's symbol spells, for its comment.
   std::map<const HighFunc *, std::string> FunctionSymbolNames;
   std::map<std::string, std::string> FunctionIdentifiersBySourceName;

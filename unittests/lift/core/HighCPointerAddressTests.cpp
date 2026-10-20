@@ -47930,3 +47930,52 @@ TEST(HighCPointerAddresses, AlignedReadsOfAStringAlignItsArray) {
   EXPECT_NE(Source.find("_Alignas(16)"), std::string::npos) << Source;
   expectCSyntax(Source);
 }
+
+TEST(HighCPointerAddresses, MainKeepsItsNameOnlyWithCsSignature) {
+  // C holds a whole program's main to the result and parameters C gives
+  // it.  make's main never returns and takes the machine's (int32_t,
+  // int64_t, void*), which C rejects for main: it steps aside, as LLVM-C's
+  // whole-module main does.  One the C signature describes keeps the name,
+  // and so does a single function's view, as its listing names it.
+  auto Main = [](bool Standard) {
+    HighFunc Func;
+    Func.Name = "main";
+    Func.Entry = 0x1000;
+    if (Standard) {
+      // Plain char, as debug information gives it.
+      const auto Char = NdType::makeInt(1);
+      Char->SourceName = "char";
+      const auto Strings = NdType::makePtr(NdType::makePtr(Char));
+      Func.ReturnType = NdType::makeInt(4);
+      Func.Params = {{"argc", NdType::makeInt(4)}, {"argv", Strings}};
+      returnValue(Func, HighExpr::makeConst(0, 4));
+    } else {
+      Func.ReturnType = NdType::makeVoid();
+      Func.DoesNotReturn = true;
+      Func.Params = {{"arg0", NdType::makeInt(4)},
+                     {"arg1", NdType::makeInt(8)},
+                     {"arg2", NdType::makePtr()}};
+      Func.Body = {callStmt("exit", 0x2000, {HighExpr::makeConst(0, 4)})};
+    }
+    return Func;
+  };
+  auto Emit = [](const HighFunc &Func, bool WholeProgram) {
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.WholeProgram = WholeProgram;
+    EXPECT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+    OS.flush();
+    return Source;
+  };
+  const std::string Recovered = Emit(Main(false), true);
+  EXPECT_EQ(Recovered.find(" main("), std::string::npos) << Recovered;
+  EXPECT_NE(Recovered.find("main_1000("), std::string::npos) << Recovered;
+  expectCSyntax(Recovered);
+  const std::string Standard = Emit(Main(true), true);
+  EXPECT_NE(Standard.find("int32_t main("), std::string::npos) << Standard;
+  expectCSyntax(Standard);
+  const std::string View = Emit(Main(false), false);
+  EXPECT_NE(View.find(" main("), std::string::npos) << View;
+}

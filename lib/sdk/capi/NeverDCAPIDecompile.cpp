@@ -1906,6 +1906,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     if (Dialect)
       COpts.SourceNames = &Names;
     recordDefinitions(COpts);
+    COpts.WholeProgram = true;
     try {
       HighCEmitter Emitter;
       Emitter.emit(R.Result.HighFuncs, OS, COpts, Debug);

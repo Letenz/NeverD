@@ -291,6 +291,50 @@ std::string memoryPointerCast(llvm::StringRef Type, llvm::StringRef Address,
 
 } // anonymous namespace
 
+namespace {
+/// Whether C takes the signature \p Func is emitted with, its debug
+/// information's where it has any (\p Declared), for a hosted program's
+/// main: an int result and no parameter, or argc and argv, and maybe envp,
+/// with no function specifier (C11 5.1.2.2.1, 6.7.4).
+bool hasMainSignature(const HighFunc &Func,
+                      const std::optional<FunctionSym> &Declared) {
+  auto Int = [](const TypeRef &Type) {
+    return Type && Type->Kind == NdTypeKind::Int && Type->Size == 4;
+  };
+  // `char **`: plain char, which a signed or unsigned byte is not.
+  auto Strings = [](const TypeRef &Type) {
+    return Type && Type->Kind == NdTypeKind::Ptr && Type->Pointee &&
+           Type->Pointee->Kind == NdTypeKind::Ptr && Type->Pointee->Pointee &&
+           Type->Pointee->Pointee->Kind == NdTypeKind::Int &&
+           Type->Pointee->Pointee->Size == 1 &&
+           Type->Pointee->Pointee->SourceName == "char";
+  };
+  if (Func.DoesNotReturn)
+    return false;
+  std::vector<TypeRef> Params;
+  TypeRef Result = Func.ReturnType;
+  if (Declared && Declared->ReturnType) {
+    Result = Declared->ReturnType;
+    for (const auto &[Name, Type] : Declared->Params)
+      Params.push_back(Type);
+  } else {
+    for (const HighParam &Param : Func.Params)
+      Params.push_back(Param.Type);
+  }
+  if (!Int(Result) ||
+      (Params.size() != 0 && Params.size() != 2 && Params.size() != 3))
+    return false;
+  return Params.empty() ||
+         (Int(Params[0]) && llvm::all_of(llvm::drop_begin(Params), Strings));
+}
+} // namespace
+
+bool HighCWriter::takesMainSignature(const HighFunc &Func) const {
+  return hasMainSignature(Func, Dbg && Func.Entry
+                                    ? Dbg->resolveFunction(Func.Entry)
+                                    : std::nullopt);
+}
+
 void HighCWriter::prepareFunctionIdentifiers(
     const std::vector<HighFunc> &Funcs) {
   GlobalIdentifierAllocator = CProjectionIdentifierAllocator{};
@@ -408,6 +452,14 @@ void HighCWriter::prepareFunctionIdentifiers(
       Stem += "_" + llvm::utohexstr(Func.Entry);
       HeaderRoutineCopies.insert(&Func);
     }
+    // C holds a whole program's main to the result and parameters C gives
+    // main, not those the code has (make's `_Noreturn void main(int32_t,
+    // int64_t, void*)`): one whose signature C rejects steps aside as
+    // LLVM-C's whole-module main does, the C runtime reaching it by its
+    // address.
+    else if (Opts.WholeProgram && Func.Entry && Stem == "main" &&
+             !takesMainSignature(Func))
+      Stem += "_" + llvm::utohexstr(Func.Entry);
     std::string Identifier = GlobalIdentifierAllocator.allocateVerbatim(Stem);
     FunctionIdentifiers.emplace(&Func, Identifier);
     DefinedFunctionsByIdentifier.emplace(Identifier, &Func);
