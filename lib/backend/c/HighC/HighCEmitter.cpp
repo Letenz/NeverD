@@ -3656,10 +3656,17 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       Backing.Align = std::max(Backing.Align, Align);
     }
     Backing.Pad = GroupBase % Backing.Align;
-    // A C library header's object alone is the header's: its bytes are its
-    // address's, as aligned as the header declares it.
-    if (GroupCount == 1 && First != ImageObjects.end() &&
-        !First->second.Header.empty() && Backing.Words.empty()) {
+    // A C library header's object is the header's, and the reads of its
+    // members within it: its bytes are its address's, as aligned as the
+    // header declares it.
+    const auto WithinHeaderObject = [&] {
+      if (First == ImageObjects.end() || First->first != GroupBase ||
+          First->second.Header.empty())
+        return false;
+      const uint64_t Own = Opts.Image->dataObjectSizeAt(GroupBase);
+      return GroupCount == 1 || (Own && GroupEnd - GroupBase <= Own);
+    };
+    if (WithinHeaderObject() && Backing.Words.empty()) {
       Backing.Name = "((unsigned char *)&" + First->second.Name + ")";
       Backing.Header = true;
       Backing.Align = 1;
@@ -3690,7 +3697,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     // keeps that residue in bytes padded to the alignment: the access
     // faults in C as in the image.
     NeedsBacking |=
-        Obj.MemoryWidths.size() > 1 || Obj.IndexedBytes ||
+        Obj.MemoryWidths.size() > 1 || Obj.IndexedBytes || Obj.HeaderBytes ||
         (Obj.HoldsPointers && !Obj.PointsTo && Size > PointerBytes) ||
         (Obj.AlignedBytes > 1 && Addr % Obj.AlignedBytes);
     for (uint16_t Width : Obj.MemoryWidths)

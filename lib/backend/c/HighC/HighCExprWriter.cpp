@@ -2042,6 +2042,22 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
            Callee->Params[I].second->Kind == NdTypeKind::Ptr &&
            libc::isObjectPointerParameter(Name, Index, Opts.libcVariant());
   };
+  // Whether the argument at \p I passes to a narrow string: a parameter of
+  // plain char pointers of a C library routine's prototype, called by its
+  // own name, or one the call model reads as such of a routine its header
+  // alone declares.
+  auto NarrowStringAt = [&](size_t I) {
+    if (!HeaderCallee.empty())
+      return libc::isCStringParameter(HeaderCallee.str(),
+                                      static_cast<unsigned>(I));
+    if (!Callee || !Callee->PrototypeFromCLibrary || Name != Callee->Name ||
+        I >= Callee->Params.size())
+      return false;
+    const TypeRef &Param = Callee->Params[I].second;
+    return Param && Param->Kind == NdTypeKind::Ptr && Param->Pointee &&
+           Param->Pointee->Kind == NdTypeKind::Int &&
+           Param->Pointee->Size == 1 && Param->Pointee->SourceName == "char";
+  };
   const MsvcCallee *Msvc = msvcCallee(Name, Opts.Format);
   // A call through a typed member that points to a function passes the
   // parameters its type declares (debugCallArgLimit), as their types.
@@ -2083,6 +2099,16 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       Op = Missing.get();
     }
     Note = stringArgumentNote(*Op);
+    // A string its parameter reads narrow prints as a narrow literal.
+    const HighExpr *NarrowLiteral = nullptr;
+    if (const HighExpr *Value = unwrapIntegerView(Op);
+        Value && Value->Kind == ExprKind::Const && NarrowStringAt(I) &&
+        NarrowStringOperands.insert(Value).second)
+      NarrowLiteral = Value;
+    const auto Unmark = llvm::make_scope_exit([&] {
+      if (NarrowLiteral)
+        NarrowStringOperands.erase(NarrowLiteral);
+    });
     // A va_start forwarder passing its own va_list on passes C's.
     if (const HighFunc::VaStartForwarder *Va = currentVaStart();
         Va && E.CallSiteAddr &&
@@ -5997,10 +6023,18 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     const auto Aligned = ImageObjects.find(E.ConstVal);
     if (auto Lit = stringLiteral(E.ConstVal);
         Lit && !objectOutgrowsLiteral(E.ConstVal, *Lit) &&
-        (Aligned == ImageObjects.end() || Aligned->second.AlignedBytes <= 1))
+        (Aligned == ImageObjects.end() || Aligned->second.AlignedBytes <= 1)) {
+      // A narrow string parameter takes the bytes as a narrow string.
+      if (NarrowStringOperands.count(&E) &&
+          !llvm::StringRef(*Lit).starts_with("\""))
+        if (auto Narrow = imageStringLiteral(Opts.Image, E.ConstVal,
+                                             /*AllowEmpty=*/false,
+                                             /*Narrow=*/true))
+          Lit = std::move(Narrow);
       return LiteralAddressOperands.count(&E)
                  ? PointerInteger("(uintptr_t)" + *Lit)
                  : *Lit;
+    }
     // Preserve the existing exact-object spelling, but do not turn an
     // unrelated numeric immediate that happens to lie inside a backing range
     // into an address.
@@ -7103,12 +7137,12 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
     // The image's copy of an object a C library header declares is the
     // header's, by its name: the copy relocation gives the program one.
     if (!Named.Raw.empty() && Obj.Name == Named.Raw)
-      if (const char *Header = libc::headerOfDataObject(Named.Raw))
-        if (TypeRef Declared = headerDataObjectType(
-                libc::typeOfDataObject(Named.Raw), Opts.TheArch, Opts.Format)) {
-          Obj.Header = Header;
-          Obj.HeaderType = std::move(Declared);
-        }
+      if (const char *Header = libc::headerOfDataObject(Named.Raw)) {
+        Obj.Header = Header;
+        Obj.HeaderType = headerDataObjectType(libc::typeOfDataObject(Named.Raw),
+                                              Opts.TheArch, Opts.Format);
+        Obj.HeaderBytes = !Obj.HeaderType;
+      }
     // An identifier spelled from the name, or numbered after another object
     // took it, has the name in its comment.
     Obj.Readable = !Named.Readable.empty() || Named.Raw.empty()
