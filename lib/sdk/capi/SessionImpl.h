@@ -648,6 +648,8 @@ struct Session {
     uint64_t Size = 0;
     /// A string's encoding, as strings::encodingName spells it.
     std::string Encoding;
+    uint64_t ElementSize = 0, Count = 0, Alignment = 0;
+    std::string Type;
     bool operator==(const DataItem &) const = default;
   };
   std::map<va_t, DataItem> DataItems;

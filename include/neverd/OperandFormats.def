@@ -27,4 +27,5 @@ NEVERD_OPERAND_BASE(Offset, "offset")
 // number lands on, `delta` bytes further in when the register points that
 // far into the type.
 NEVERD_OPERAND_BASE(Struct, "struct")
+NEVERD_OPERAND_BASE(Enum, "enum")
 #undef NEVERD_OPERAND_BASE

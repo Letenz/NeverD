@@ -11,15 +11,18 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QDataStream>
 #include <QDialogButtonBox>
 #include <QFile>
 #include <QInputDialog>
+#include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QSpinBox>
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTest>
@@ -67,6 +70,98 @@ private slots:
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        Settings.path());
     configureDocking();
+  }
+  void dataPresentationDialogs_data() {
+    QTest::addColumn<QString>("Kind");
+    QTest::newRow("enum") << "enum";
+    QTest::newRow("array") << "array";
+    QTest::newRow("alignment") << "alignment";
+  }
+  void dataPresentationDialogs() {
+    QFETCH(QString, Kind);
+    QTemporaryDir Directory;
+    const auto Path =
+        fixture(Directory, QByteArray::fromHex("554889e5b80b0000005dc3") +
+                               QByteArray(96, '\0'));
+    Session Session(QString::fromLocal8Bit(TEST_REAL_WORKER));
+    McpConnectionManager Mcp;
+    GuiSessionBroker Broker;
+    MainWindow Window(Session, Mcp, Broker);
+    Window.setAsksForDebugInfo(false);
+    Window.setLayoutPath(Directory.filePath("layout.json"));
+    Window.resize(1400, 900);
+    Window.initializeLayout();
+    Window.show();
+    Session.open(Path);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.loaded(), 30000);
+    // The minimal ELF fixture has no symbol table. Publish the function as
+    // user state so every analysis replica has the same code ownership.
+    bool Created = false;
+    connect(&Session, &Session::message, this, [&](const QString &Text, int) {
+      if (Text.startsWith("Created a function"))
+        Created = true;
+    });
+    Session.createFunction(0x400078);
+    QTRY_VERIFY_WITH_TIMEOUT(Created, 30000);
+    bool Declared = false;
+    Session.declareTypes("c", "enum GUI_FLAGS { GUI_READ = 1, GUI_WRITE = 2 };",
+                         [&](const QJsonObject &) { Declared = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(Declared, 30000);
+    const Address Address = 0x400078 + (Kind == "enum"    ? 4
+                                        : Kind == "array" ? 11
+                                                          : 40);
+    Window.disassembly()->navigate(Address);
+    QTRY_COMPARE_WITH_TIMEOUT(Window.disassembly()->currentAddress(),
+                              std::optional<neverd::gui::Address>(Address),
+                              30000);
+    QTRY_COMPARE_WITH_TIMEOUT(Window.disassembly()->currentItem(),
+                              std::optional<neverd::gui::Address>(Address),
+                              30000);
+    Window.disassembly()->listing()->setFocus();
+    auto *Action = Window.actions().action(
+        Kind == "enum"    ? ActionId::EditOperandEnum
+        : Kind == "array" ? ActionId::EditMakeArray
+                          : ActionId::EditMakeAlignment);
+    QTRY_VERIFY(Action->isEnabled());
+    bool Opened = false, Saved = false;
+    QTimer Editor;
+    connect(&Editor, &QTimer::timeout, this, [&] {
+      auto *Dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (!Dialog || Dialog->objectName() != "dataPresentationDialog")
+        return;
+      if (Kind == "enum") {
+        Dialog->findChild<QLineEdit *>("dataPresentationType")
+            ->setText("GUI_FLAGS");
+        Dialog->findChild<QCheckBox *>("enumFlags")->setChecked(true);
+      } else if (Kind == "array") {
+        Dialog->findChild<QSpinBox *>("arrayElementSize")->setValue(4);
+        Dialog->findChild<QSpinBox *>("arrayCount")->setValue(4);
+      }
+      Opened = true;
+      Dialog->accept();
+    });
+    Editor.start(20);
+    Action->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(Opened, 30000);
+    Editor.stop();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        ([&] {
+          Session.read(
+              "listing",
+              {{"address", hexAddress(Address)}, {"before", 0}, {"after", 40}},
+              &Window, [&](const QJsonObject &Reply) {
+                const auto Text =
+                    QString::fromUtf8(QJsonDocument(Reply).toJson());
+                Saved =
+                    Text.contains(Kind == "enum" ? "GUI_READ | GUI_WRITE | 0x8"
+                                  : Kind == "array" ? "array element"
+                                                    : "align");
+              });
+          return Saved;
+        })(),
+        30000);
+    Session.closeFile();
+    Window.close();
   }
   void stackFrameDialogs() {
     QTemporaryDir Directory;

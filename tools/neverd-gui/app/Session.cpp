@@ -1095,6 +1095,17 @@ bool Session::acceptsEdit(std::optional<quint64> epoch) {
   return true;
 }
 
+void Session::editDataPresentation(const QString &operation,
+                                   const QJsonObject &request, quint64 epoch) {
+  if ((operation != "item_define" && operation != "operand_format") ||
+      !acceptsEdit(epoch))
+    return;
+  if (dirty_)
+    save();
+  command(operation, request,
+          [this](const QJsonObject &) { refreshHistory(); });
+}
+
 void Session::defineItem(Address address, const QString &action,
                          std::optional<quint64> epoch) {
   if (!acceptsEdit(epoch))

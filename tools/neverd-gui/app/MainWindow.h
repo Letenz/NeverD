@@ -194,6 +194,7 @@ private:
   /// T: the operand under the cursor as a member of the local type the
   /// user picks among those the code's accesses fit (TypePickerDialog).
   void chooseStructOffset();
+  void editDataPresentation(const QString &kind);
   /// IDA's Y: the type of the parameter under a pseudocode cursor, else the
   /// declaration of the current function.
   void setType();
