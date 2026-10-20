@@ -113,6 +113,23 @@ def interleaved_elf():
     return elf(code)
 
 
+def partitioned_elf():
+    # Multiply all four independently partitioned pieces of A=x^y and B=y|z.
+    # r8d/r9d retain A/B; r10d/r11d form each product. The three arguments
+    # remain intact, and the final word is (x^y)*(y|z)+x+y modulo 2^32.
+    code = bytearray.fromhex("4189f8 4131f0 4189f1 4109d1 31c0")
+    for invert_a in (False, True):
+        for invert_b in (False, True):
+            code += bytes.fromhex("4589c2 4589cb")
+            code += bytes.fromhex(
+                "89d1 f7d1 4121ca" if invert_a else "4121d2")
+            code += bytes.fromhex(
+                "89f9 f7d1 4121cb" if invert_b else "4121fb")
+            code += bytes.fromhex("450fafd3 4401d0")
+    code += bytes.fromhex("01f8 01f0 c3")
+    return elf(code)
+
+
 def elf(code):
     ident = b"\x7fELF\x02\x01\x01" + bytes(9)
     header = struct.pack("<16sHHIQQQIHHHHHH", ident, 2, 62, 1, ENTRY,
@@ -197,6 +214,8 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             assert "&" not in text and text.count("^") <= 2, text
         elif kind == "interleaved":
             assert text.count("&") <= 2 and text.count("^") <= 1, text
+        elif kind == "partitioned":
+            assert "&" not in text and text.count("^") <= 1, text
         else:
             assert ">>" not in text, text
 
@@ -219,6 +238,8 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                         assert "|" in ordinary, ordinary
                     elif kind in ("weighted", "bitwise", "interleaved"):
                         assert ordinary.count("&") >= 7, ordinary
+                    elif kind == "partitioned":
+                        assert ordinary.count("&") >= 4, ordinary
                     else:
                         assert ">>" in ordinary, ordinary
                     assert enhanced != ordinary
@@ -269,6 +290,7 @@ if __name__ == "__main__":
             ("bitwise", bitwise_elf(), f"37U*(x^y^{VIEW_KEY}U)+z"),
             ("interleaved", interleaved_elf(),
              f"7U*(((x^y)&{WEIGHTED_UNION}U)+((x*y)&{PRODUCT_UNION}U))+z"),
+            ("partitioned", partitioned_elf(), "(x^y)*(y|z)+x+y"),
         ):
             run_fixture(options.worker, options.cli, options.compiler, kind,
                         image, expected)

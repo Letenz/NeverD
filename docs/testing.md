@@ -167,6 +167,24 @@ complete derivation and checks every one/two-bit assignment across both words,
 zero and all-ones through 257 bits against independent arithmetic.
 The factored-result regression keeps a proved enclosing scale when subsequent
 child rewrites would increase the final expression's cost.
+`NeverDSymMBAQuadraticTests` (also `SymMBAQuadratic` in the full symbolic suite)
+checks direct factor recovery against every pair of two-input
+Boolean functions and nonzero scales modulo four, plus 4,096 independently
+generated coefficient matrices. Wide even scales include cross coefficients
+that vanish modulo the word width, through 257 bits. Exact/one-short work,
+storage refusal and malformed matrices protect the reconstruction boundary.
+The two previously capped masked-product regions must complete within 16,384
+work units; the byte case also checks every input pair against independent
+arithmetic. Expanded products retain unrelated partition variables until a
+complete proof removes them.
+The five-input expansion covers sixteen products, enclosing scales and a
+high-bit remainder through 257 bits. Root recovery must refuse zero and
+one-short proof allowances. Optional three-input Boolean tables that do not
+fit must leave work for subsequent regions. Independent Z3 gates cover the
+complete partitioned product at 2/4 bits; its 8–64-bit queries exceed the
+five-second allowance and are not counted as SMT coverage. Wider cases use the
+complete coefficient proof, independent word arithmetic and generated-C checks;
+the four-bit case also exhausts all 65,536 assignments of its four variables.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
 signed/unsigned overflow admission against all byte pairs, including unsafe
 neighboring masks. `NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains`
@@ -200,6 +218,9 @@ measure each new change independently of earlier improvements.
 Use `--family interleaved --count 24` for two-to-four-word partitions and
 overlapping inclusion-exclusion sums mixed inside common scales, including
 nearby high-bit errors. Run the earlier families as controls.
+Use `--family quadratic --count 24` for expanded products with three to five
+inputs, independent Boolean partitions, odd/even scales, modular zeros,
+high-bit near misses and mixed-degree remainders.
 
 `tools/neverd-worker/tests/source_synthesis_test.py WORKER --cli CLI` checks the
 real source-option request used by the GUI and both CLI source emitters, for
@@ -207,6 +228,8 @@ single-function and whole-program requests. The raw machine-code bitwise fixture
 retains sixteen separately flipped masks; enhanced output must recombine them.
 The interleaved fixture combines thirty masked terms from XOR and product
 carriers in shared positive/negative accumulators before scaling the result.
+The partitioned-product fixture executes four products of Boolean pieces before
+adding its linear remainder; both enhanced emitters must remove the partitions.
 With Clang available, each generated C output executes at O0/O2 against an
 independent arithmetic oracle on boundary and deterministic random inputs.
 

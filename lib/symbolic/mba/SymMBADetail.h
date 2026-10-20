@@ -371,6 +371,17 @@ struct PolyForm {
 /// The minterms \p Table selects, as indices.
 llvm::SmallVector<MintermIndex, 8> selectedMinterms(const TruthTable &Table);
 
+struct QuadraticProduct {
+  llvm::APInt Coefficient;
+  llvm::SmallVector<TruthTable, 2> Factors;
+};
+
+/// Recover the unique unordered pair of Boolean factors from a quadratic
+/// coefficient matrix. Missing coefficients are zero modulo the word width.
+std::optional<QuadraticProduct>
+recoverQuadraticProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
+                        uint32_t Width, WorkBudget &Budget, size_t MaxBytes);
+
 std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
                                            llvm::ArrayRef<PolyTerm> Terms,
                                            llvm::ArrayRef<uint32_t> AtomIds,
@@ -519,6 +530,11 @@ SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
 /// it separate is what stops the mask split from recursing into itself.
 SymRef solveOneRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                       WorkBudget &Budget, SolveReport &Rep);
+
+/// Recover an expanded quadratic root before local rewrites obscure its
+/// independently partitioned factors. Uses the same polynomial verifier.
+SymRef solveExpandedQuadratic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                              WorkBudget &Budget, SolveReport &Rep);
 
 } // namespace neverd::symbolic::detail
 
