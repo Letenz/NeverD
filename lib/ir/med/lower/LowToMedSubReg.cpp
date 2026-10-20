@@ -17,6 +17,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <vector>
 
 namespace neverd {
 
@@ -37,13 +38,43 @@ static bool isSelfLowSliceSubbytes(const MedOp &MOp) {
                                     : MOp.Inputs[1].ConstVal);
 }
 
+// Puts each pending op before the op of \p Ops at its index, in one pass:
+// what inserting them one at a time from the last gives.  \p Pending is in
+// index order, with no index past Ops.size(); ops pending at one index keep
+// their order.
+template <typename PendingOp>
+static void insertPending(std::vector<MedOp> &Ops,
+                          std::vector<PendingOp> &Pending,
+                          size_t PendingOp::*Index) {
+  if (Pending.empty())
+    return;
+  std::vector<MedOp> Merged;
+  Merged.reserve(Ops.size() + Pending.size());
+  size_t Next = 0;
+  for (size_t I = 0; I < Ops.size(); ++I) {
+    for (; Next < Pending.size() && Pending[Next].*Index == I; ++Next)
+      Merged.push_back(std::move(Pending[Next].Op));
+    Merged.push_back(std::move(Ops[I]));
+  }
+  for (; Next < Pending.size(); ++Next)
+    Merged.push_back(std::move(Pending[Next].Op));
+  Ops = std::move(Merged);
+}
+
 void LowToMedConverter::fixupSubRegisters(MedFunc &Func) {
   const auto &TRI = getTargetRegInfo(TargetArch);
 
   // Phase A: Implicit zero-extension insertion.
   // On x86-64 and AArch64, writing a 32-bit register implicitly zero-extends
   // to 64 bits.  Insert explicit INT_ZEXT so later passes see the dependency.
+  struct PendingZext {
+    size_t InsertBefore;
+    MedOp Op;
+  };
   for (auto &MB : Func.Blocks) {
+    // Each zero-extension goes right after its write, once the block has
+    // been read.
+    std::vector<PendingZext> Zexts;
     for (size_t OI = 0; OI < MB.Ops.size(); ++OI) {
       auto &MOp = MB.Ops[OI];
       if (MOp.Output.Kind != MedVar::Reg || MOp.Output.Size == 0)
@@ -90,9 +121,9 @@ void LowToMedConverter::fixupSubRegisters(MedFunc &Func) {
       Zext.Output.Id = WideId;
       Zext.Output.TheArch = TargetArch;
       Zext.addInput(MOp.Output);
-      MB.Ops.insert(MB.Ops.begin() + static_cast<long>(OI + 1), Zext);
-      ++OI;
+      Zexts.push_back({OI + 1, std::move(Zext)});
     }
+    insertPending(MB.Ops, Zexts, &PendingZext::InsertBefore);
   }
 
   // Phase B: Register-write → narrower-read SUBBYTES insertion.
@@ -407,10 +438,7 @@ void LowToMedConverter::fixupSubRegisters(MedFunc &Func) {
       }
     }
 
-    // Apply pending insertions in reverse order to preserve indices.
-    for (auto It = Pending.rbegin(); It != Pending.rend(); ++It)
-      MB.Ops.insert(MB.Ops.begin() + static_cast<long>(It->InsertBefore),
-                    std::move(It->Op));
+    insertPending(MB.Ops, Pending, &PendingSubpiece::InsertBefore);
   }
 
   // Phase B2 (x86/x64): merge a more-recent narrow partial write (AL/AH/AX)
@@ -615,9 +643,7 @@ void LowToMedConverter::fixupSubRegisters(MedFunc &Func) {
                 [](const NarrowInsert &A, const NarrowInsert &B) {
                   return A.InsertAfter < B.InsertAfter;
                 });
-      for (auto It = NPending.rbegin(); It != NPending.rend(); ++It)
-        MB.Ops.insert(MB.Ops.begin() + static_cast<long>(It->InsertAfter),
-                      std::move(It->Op));
+      insertPending(MB.Ops, NPending, &NarrowInsert::InsertAfter);
     }
   }
 
