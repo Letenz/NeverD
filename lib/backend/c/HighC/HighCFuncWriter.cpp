@@ -4597,6 +4597,9 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
 }
 
 TypeRef HighCWriter::callResultType(const HighExpr &Call) const {
+  if (Call.SourceCallHint &&
+      Call.SourceCallHint->CallKind == SourceCallTypeHint::Kind::Analyst)
+    return cDisplayType(Call.SourceCallHint->Signature.ReturnType);
   TypeRef ReturnType;
   if (const auto FS = debugCallee(Call)) {
     if (Dbg)

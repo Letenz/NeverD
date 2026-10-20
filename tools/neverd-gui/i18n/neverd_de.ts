@@ -959,6 +959,22 @@
         <source>Regenerate this function without variable associations</source>
         <translation>Diese Funktion ohne Variablenzuordnungen neu erzeugen</translation>
     </message>
+    <message>
+        <source>Declare the prototype and actual variadic argument types for this call only</source>
+        <translation>Prototyp und tatsächliche variadische Argumenttypen nur für diesen Aufruf deklarieren</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without call-site declarations</source>
+        <translation>Diese Funktion ohne Aufrufstellendeklarationen neu erzeugen</translation>
+    </message>
+    <message>
+        <source>Reset call-site declarations</source>
+        <translation>Aufrufstellendeklarationen zurücksetzen</translation>
+    </message>
+    <message>
+        <source>Set call type...</source>
+        <translation>Aufruftyp festlegen...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1645,6 +1661,10 @@ Doppelklicken, um zur Deklaration zu springen.</translation>
     <message>
         <source>Saved variable associations need review: </source>
         <translation>Gespeicherte Variablenzuordnungen müssen überprüft werden: </translation>
+    </message>
+    <message>
+        <source>Saved call-site declaration needs review: </source>
+        <translation>Die gespeicherte Aufrufstellendeklaration muss überprüft werden: </translation>
     </message>
 </context>
 <context>
@@ -2553,6 +2573,38 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
     <message>
         <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
         <translation>Für diese Variable gibt es keine passende Zuordnung. Entfernen Sie veraltete Änderungen mit „Variablenzuordnungen zurücksetzen“.</translation>
+    </message>
+    <message>
+        <source>Actual variadic argument types for this call, one per line (use int or double after default promotions):</source>
+        <translation>Tatsächliche variadische Argumenttypen für diesen Aufruf, einer pro Zeile (nach den Standardargument-Promotions int oder double verwenden):</translation>
+    </message>
+    <message>
+        <source>C declaration (include ... for a variadic call):</source>
+        <translation>C-Deklaration (für einen variadischen Aufruf ... angeben):</translation>
+    </message>
+    <message>
+        <source>Call at %1. This declaration applies to this call only in both C views.</source>
+        <translation>Aufruf bei %1. Diese Deklaration gilt in beiden C-Ansichten nur für diesen Aufruf.</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a pseudocode row mapped to an original call instruction</source>
+        <translation>Setzen Sie den Cursor auf eine Pseudocodezeile, die einer ursprünglichen Aufrufanweisung zugeordnet ist</translation>
+    </message>
+    <message>
+        <source>Select call instruction</source>
+        <translation>Aufrufanweisung auswählen</translation>
+    </message>
+    <message>
+        <source>Set call type</source>
+        <translation>Aufruftyp festlegen</translation>
+    </message>
+    <message>
+        <source>This source row contains multiple calls:</source>
+        <translation>Diese Quelltextzeile enthält mehrere Aufrufe:</translation>
+    </message>
+    <message>
+        <source>indirect call</source>
+        <translation>indirekter Aufruf</translation>
     </message>
 </context>
 <context>

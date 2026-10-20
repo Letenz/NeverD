@@ -959,6 +959,22 @@
         <source>Regenerate this function without variable associations</source>
         <translation>重新產生此函式，不套用變數關聯</translation>
     </message>
+    <message>
+        <source>Declare the prototype and actual variadic argument types for this call only</source>
+        <translation>僅為此呼叫宣告函式原型和實際可變參數型別</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without call-site declarations</source>
+        <translation>不使用呼叫點宣告，重新產生此函式</translation>
+    </message>
+    <message>
+        <source>Reset call-site declarations</source>
+        <translation>重設呼叫點宣告</translation>
+    </message>
+    <message>
+        <source>Set call type...</source>
+        <translation>設定呼叫型別...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1640,6 +1656,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved variable associations need review: </source>
         <translation>已儲存的變數關聯需要複核：</translation>
+    </message>
+    <message>
+        <source>Saved call-site declaration needs review: </source>
+        <translation>已儲存的呼叫點宣告需要檢查： </translation>
     </message>
 </context>
 <context>
@@ -2547,6 +2567,38 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
         <translation>此變數沒有相符的關聯。請使用「重設變數關聯」移除過期的編輯。</translation>
+    </message>
+    <message>
+        <source>Actual variadic argument types for this call, one per line (use int or double after default promotions):</source>
+        <translation>此呼叫的實際可變參數型別，每行一個（依預設參數提升規則使用 int 或 double）：</translation>
+    </message>
+    <message>
+        <source>C declaration (include ... for a variadic call):</source>
+        <translation>C 宣告（可變參數呼叫須包含 ...）：</translation>
+    </message>
+    <message>
+        <source>Call at %1. This declaration applies to this call only in both C views.</source>
+        <translation>位於 %1 的呼叫。此宣告在兩種 C 檢視中都僅適用於此呼叫。</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a pseudocode row mapped to an original call instruction</source>
+        <translation>將游標放在對應至原始呼叫指令的虛擬碼行上</translation>
+    </message>
+    <message>
+        <source>Select call instruction</source>
+        <translation>選取呼叫指令</translation>
+    </message>
+    <message>
+        <source>Set call type</source>
+        <translation>設定呼叫型別</translation>
+    </message>
+    <message>
+        <source>This source row contains multiple calls:</source>
+        <translation>此原始碼行包含多個呼叫：</translation>
+    </message>
+    <message>
+        <source>indirect call</source>
+        <translation>間接呼叫</translation>
     </message>
 </context>
 <context>

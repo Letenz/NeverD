@@ -272,6 +272,27 @@ void CodeEdits::validateRow(const Json &row) {
     if (!sizeField(type, "bytes", 0, 16) || !type.at("floating").is_boolean())
       throw Error("invalid_request", "Invalid global object type");
   }
+  const auto calls = row.value("call_types", Json::object());
+  if (!calls.is_object() || calls.size() > 32 ||
+      calls.dump().size() > 64 * 1024)
+    throw Error("invalid_request",
+                "Invalid or over-budget call-site declaration table");
+  for (const auto &[id, type] : calls.items()) {
+    if (id.empty() || id.size() > 256)
+      throw Error("invalid_request", "Invalid call-site identity");
+    typeImage(type);
+    if (stringField(type, "snapshot", {}, 128).empty() ||
+        stringField(type, "declaration", {}, 4096).empty())
+      throw Error("invalid_request", "Invalid call-site declaration");
+    const auto actuals = type.value("variadic_types", Json::array());
+    if (!actuals.is_array() || actuals.size() > 32)
+      throw Error("invalid_request", "Invalid actual variadic argument types");
+    for (const auto &actual : actuals)
+      if (!actual.is_string() ||
+          actual.get_ref<const std::string &>().empty() ||
+          actual.get_ref<const std::string &>().size() > 4096)
+        throw Error("invalid_request", "Invalid actual variadic argument type");
+  }
   if (!row.contains("views") || !row.at("views").is_object() ||
       row.at("views").size() > 6 || row.dump().size() > 4 * 1024 * 1024)
     throw Error("invalid_request", "Invalid bounded code-edit state");
@@ -424,6 +445,8 @@ Json CodeEdits::change(Json row, const Json &request) {
       numbers.erase(key);
     if (numbers.empty())
       view.erase("numbers");
+  } else if (kind == "call_type") {
+    row["call_types"] = request.at("call_types");
   } else if (kind == "variables") {
     view["variable_edits"] = request.at("variable_edits");
   } else if (kind == "type") {
@@ -446,6 +469,25 @@ Json CodeEdits::change(Json row, const Json &request) {
 }
 
 void CodeEdits::validateChange(const Json &view, const Json &request) {
+  if (request.value("kind", std::string()) == "call_type") {
+    // Clearing policies never needs to rebind an occurrence. It must remain
+    // available when a stale or over-budget analysis cannot expose its graph.
+    if (request.value("action", std::string()) == "clear")
+      return;
+    if (view.value("call_snapshot", std::string()).empty())
+      throw Error("edit_budget",
+                  "The original call analysis exceeds the editing budget");
+    if (stringField(request, "snapshot", {}, 128) !=
+        view.value("call_snapshot", std::string()))
+      throw Error("stale_target",
+                  "The original call analysis changed; select the call again");
+    const auto id = stringField(request, "call_id", {}, 256);
+    for (const auto &call : view.value("source_calls", Json::array()))
+      if (call.value("id", std::string()) == id)
+        return;
+    throw Error("stale_target",
+                "The engine cannot identify this original call occurrence");
+  }
   if (request.value("kind", std::string()) == "type") {
     const auto id = stringField(request, "variable_id", {}, 256);
     if (request.value("snapshot", std::string()) !=

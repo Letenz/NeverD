@@ -959,6 +959,22 @@
         <source>Regenerate this function without variable associations</source>
         <translation>変数の関連付けを適用せずにこの関数を再生成する</translation>
     </message>
+    <message>
+        <source>Declare the prototype and actual variadic argument types for this call only</source>
+        <translation>この呼び出しにのみプロトタイプと実際の可変引数の型を宣言</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without call-site declarations</source>
+        <translation>呼び出し箇所の宣言を使わずにこの関数を再生成</translation>
+    </message>
+    <message>
+        <source>Reset call-site declarations</source>
+        <translation>呼び出し箇所の宣言をリセット</translation>
+    </message>
+    <message>
+        <source>Set call type...</source>
+        <translation>呼び出しの型を設定...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1640,6 +1656,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved variable associations need review: </source>
         <translation>保存した変数の関連付けを確認してください: </translation>
+    </message>
+    <message>
+        <source>Saved call-site declaration needs review: </source>
+        <translation>保存された呼び出し箇所の宣言を確認してください: </translation>
     </message>
 </context>
 <context>
@@ -2547,6 +2567,38 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
         <translation>この変数に一致する関連付けはありません。「変数の関連付けをリセット」で古い編集を削除してください。</translation>
+    </message>
+    <message>
+        <source>Actual variadic argument types for this call, one per line (use int or double after default promotions):</source>
+        <translation>この呼び出しの実際の可変引数の型を1行に1つ入力（デフォルト引数拡張後の int または double を使用）:</translation>
+    </message>
+    <message>
+        <source>C declaration (include ... for a variadic call):</source>
+        <translation>C 宣言（可変引数の呼び出しには ... を含める）:</translation>
+    </message>
+    <message>
+        <source>Call at %1. This declaration applies to this call only in both C views.</source>
+        <translation>%1 の呼び出し。この宣言は両方の C ビューでこの呼び出しにのみ適用されます。</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a pseudocode row mapped to an original call instruction</source>
+        <translation>元の呼び出し命令に対応する疑似コード行にカーソルを置いてください</translation>
+    </message>
+    <message>
+        <source>Select call instruction</source>
+        <translation>呼び出し命令を選択</translation>
+    </message>
+    <message>
+        <source>Set call type</source>
+        <translation>呼び出しの型を設定</translation>
+    </message>
+    <message>
+        <source>This source row contains multiple calls:</source>
+        <translation>このソース行には複数の呼び出しがあります:</translation>
+    </message>
+    <message>
+        <source>indirect call</source>
+        <translation>間接呼び出し</translation>
     </message>
 </context>
 <context>

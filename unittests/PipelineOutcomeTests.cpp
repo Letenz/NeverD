@@ -1413,6 +1413,34 @@ TEST(PipelineOutcome, ResolvedCallsPreserveAllBytesAcrossStackStoreWidths) {
     }
 }
 
+TEST(PipelineOutcome, AnalystCallDeclarationsRequireExplicitSourceProjection) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("analyst_call_scope", Context);
+  Module.setDataLayout("e-p:64:64");
+  auto *I64 = llvm::Type::getInt64Ty(Context);
+  auto *Original = llvm::FunctionType::get(I64, {I64, I64}, false);
+  auto *Target = llvm::Function::Create(
+      Original, llvm::GlobalValue::ExternalLinkage, "target", Module);
+  auto *Caller = llvm::Function::Create(llvm::FunctionType::get(I64, false),
+                                        llvm::GlobalValue::ExternalLinkage,
+                                        "caller", Module);
+  llvm::IRBuilder<> Builder(llvm::BasicBlock::Create(Context, "entry", Caller));
+  auto *Selected = llvm::FunctionType::get(I64, {I64}, false);
+  auto *Call = Builder.CreateCall(Selected, Target, {Builder.getInt64(7)});
+  Call->setMetadata("neverd.source.analyst-call",
+                    llvm::MDNode::get(Context, {}));
+  Builder.CreateRet(Call);
+  EXPECT_TRUE(normalizeResolvedLLVMCalls(Module, nullptr, true));
+  EXPECT_TRUE(validateResolvedLLVMCallSignatures(Module, true));
+  EXPECT_EQ(Target->getFunctionType(), Original);
+  EXPECT_EQ(Call->getFunctionType(), Selected);
+  testing::internal::CaptureStderr();
+  EXPECT_FALSE(normalizeResolvedLLVMCalls(Module));
+  EXPECT_FALSE(validateResolvedLLVMCallSignatures(Module));
+  EXPECT_FALSE(testing::internal::GetCapturedStderr().empty());
+  EXPECT_EQ(Call->arg_size(), 1u);
+}
+
 TEST(PipelineOutcome, ResolvedCallsPlaceNarrowStackValuesInTheirSlots) {
   // -O0 code passes each int stack argument in the low half of its
   // eight-byte System V slot: `mov [rsp], r11d`, `mov [rsp+8], r10d`. The

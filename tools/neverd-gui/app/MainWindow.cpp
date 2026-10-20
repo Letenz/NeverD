@@ -1374,6 +1374,8 @@ void MainWindow::connectActions() {
   on(ActionId::EditUnmapVariable, [this] { editVariable("unmap"); });
   on(ActionId::EditUnsplitVariable, [this] { editVariable("unsplit"); });
   on(ActionId::EditResetVariables, [this] { editVariable("clear"); });
+  on(ActionId::EditCallType, [this] { editCallType(); });
+  on(ActionId::EditResetCallTypes, [this] { editCallType(true); });
   on(ActionId::EditConvertToStruct, [this] { convertToStruct(); });
   on(ActionId::JumpBack, [this] { navigateHistory(false); });
   on(ActionId::JumpForward, [this] { navigateHistory(true); });
@@ -1723,6 +1725,10 @@ void MainWindow::updateActions() {
         ActionId::EditUnmapVariable, ActionId::EditUnsplitVariable})
     actions_.action(id)->setEnabled(variableView && variable);
   actions_.action(ActionId::EditResetVariables)->setEnabled(variableView);
+  actions_.action(ActionId::EditCallType)
+      ->setEnabled(variableView && !code->text()->loading());
+  actions_.action(ActionId::EditResetCallTypes)
+      ->setEnabled(variableView && !code->text()->loading());
   actions_.action(ActionId::EditConvertToStruct)
       ->setEnabled(declarations && session_.convertsParameters() && code &&
                    code->text()->function().has_value());
@@ -3218,6 +3224,9 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
         ActionId::EditResetVariables})
     if (auto *action = actions_.action(id); action->isEnabled())
       menu.addAction(action);
+  for (const auto id : {ActionId::EditCallType, ActionId::EditResetCallTypes})
+    if (auto *action = actions_.action(id); action->isEnabled())
+      menu.addAction(action);
   if (auto *convert = actions_.action(ActionId::EditConvertToStruct);
       convert->isEnabled()) {
     const auto target = focusedCodeView()->text()->renameTarget();
@@ -3419,6 +3428,144 @@ void MainWindow::setType() {
       {{"type", dialog.resets() ? QJsonValue(QJsonValue::Null)
                                 : QJsonValue(dialog.declaration())}},
       epoch);
+}
+
+void MainWindow::editCallType(bool resetAll) {
+  const QPointer<CodeView> view = focusedCodeView();
+  if (!view || session_.readOnly() || !view->text()->function() ||
+      view->text()->loading())
+    return;
+  const auto epoch = session_.epoch();
+  const auto revision = session_.revision();
+  const auto function = view->text()->function();
+  const auto options = view->text()->sourceOptions();
+  const auto addresses = view->text()->currentAddresses();
+  QJsonObject request{{"address", hexAddress(*function)},
+                      {"representation", view->representation()},
+                      {"source_options", options},
+                      {"kind", "call_type"}};
+  session_.read(
+      "call_sites", request, this,
+      [this, view, epoch, revision, function, options, addresses, request,
+       resetAll](const QJsonObject &reply) mutable {
+        if (!view || session_.epoch() != epoch ||
+            session_.revision() != revision ||
+            view->text()->function() != function ||
+            view->text()->sourceOptions() != options)
+          return;
+        request.insert("snapshot", reply.value("snapshot"));
+        if (resetAll) {
+          request.insert("action", "clear");
+          session_.editCode(request, epoch);
+          return;
+        }
+        QList<QJsonObject> calls;
+        QStringList labels;
+        for (const auto &value : reply.value("calls").toArray()) {
+          const auto call = value.toObject();
+          const auto address =
+              parseAddress(call.value("instruction").toString());
+          if (!address || !addresses.contains(*address))
+            continue;
+          calls.append(call);
+          labels.append(call.value("instruction").toString() + "  →  " +
+                        call.value("target").toString(tr("indirect call")) +
+                        "  (" +
+                        QString::number(call.value("sequence").toInt()) + ")");
+        }
+        if (calls.isEmpty()) {
+          output_->append(tr("Put the cursor on a pseudocode row mapped to an "
+                             "original call instruction"),
+                          1);
+          return;
+        }
+        int index = 0;
+        if (calls.size() > 1) {
+          bool accepted = false;
+          const auto selected = QInputDialog::getItem(
+              this, tr("Select call instruction"),
+              tr("This source row contains multiple calls:"), labels, 0, false,
+              &accepted);
+          if (!accepted)
+            return;
+          index = labels.indexOf(selected);
+        }
+        const auto call = calls[index];
+        const auto id = call.value("id").toString();
+        const auto stated =
+            reply.value("types").toObject().value(id).toObject();
+        QDialog dialog(this);
+        dialog.setObjectName("callTypeDialog");
+        dialog.setWindowTitle(tr("Set call type"));
+        dialog.resize(660, 440);
+        auto *layout = new QVBoxLayout(&dialog);
+        auto *subject =
+            new QLabel(tr("Call at %1. This declaration applies to this call "
+                          "only in both C views.")
+                           .arg(call.value("instruction").toString()),
+                       &dialog);
+        subject->setWordWrap(true);
+        layout->addWidget(subject);
+        layout->addWidget(new QLabel(
+            tr("C declaration (include ... for a variadic call):"), &dialog));
+        auto *declaration = new QPlainTextEdit(&dialog);
+        declaration->setObjectName("callTypeDeclaration");
+        declaration->setPlainText(
+            stated.value("declaration").toString("int64_t call(void);"));
+        layout->addWidget(declaration);
+        layout->addWidget(new QLabel(
+            tr("Actual variadic argument types for this call, one per line "
+               "(use int or double after default promotions):"),
+            &dialog));
+        auto *actuals = new QPlainTextEdit(&dialog);
+        actuals->setObjectName("callTypeActuals");
+        QStringList types;
+        for (const auto &type : stated.value("variadic_types").toArray())
+          types.append(type.toString());
+        actuals->setPlainText(types.join('\n'));
+        layout->addWidget(actuals);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Apply |
+                                                 QDialogButtonBox::Cancel |
+                                                 QDialogButtonBox::Reset,
+                                             &dialog);
+        buttons->button(QDialogButtonBox::Apply)
+            ->setObjectName("callTypeApply");
+        buttons->button(QDialogButtonBox::Reset)
+            ->setObjectName("callTypeReset");
+        bool reset = false;
+        connect(buttons->button(QDialogButtonBox::Apply), &QPushButton::clicked,
+                &dialog, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog,
+                &QDialog::reject);
+        connect(buttons->button(QDialogButtonBox::Reset), &QPushButton::clicked,
+                &dialog, [&] {
+                  reset = true;
+                  dialog.accept();
+                });
+        layout->addWidget(buttons);
+        if (dialog.exec() != QDialog::Accepted || !view ||
+            session_.epoch() != epoch || session_.revision() != revision ||
+            view->text()->function() != function ||
+            view->text()->sourceOptions() != options)
+          return;
+        request.insert("call_id", id);
+        request.insert("reset", reset);
+        request.insert("declaration", declaration->toPlainText().trimmed());
+        QJsonArray arguments;
+        for (const auto &line : actuals->toPlainText().split('\n'))
+          if (!line.trimmed().isEmpty())
+            arguments.append(line.trimmed());
+        request.insert("variadic_types", arguments);
+        session_.editCode(request, epoch);
+        // Restore focus after the modal dialog and its activation state retire.
+        QTimer::singleShot(0, view, [this, view, epoch, function] {
+          if (!view || session_.epoch() != epoch ||
+              view->text()->function() != function)
+            return;
+          view->window()->activateWindow();
+          view->text()->setFocus();
+        });
+      });
 }
 
 void MainWindow::editVariable(const QString &action) {

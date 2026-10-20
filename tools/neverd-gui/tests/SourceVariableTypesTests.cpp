@@ -12,8 +12,10 @@
 #include <QApplication>
 #include <QDataStream>
 #include <QFile>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
 #include <QTemporaryDir>
@@ -164,6 +166,97 @@ private slots:
     Session.redo();
     QTRY_VERIFY_WITH_TIMEOUT(Code->allText().contains("->Length"), 30000);
     QVERIFY2(Session.lastError().isEmpty(), qPrintable(Session.lastError()));
+  }
+  void callSiteType_data() {
+    QTest::addColumn<QString>("Representation");
+    QTest::newRow("pseudocode") << "source";
+    QTest::newRow("llvm-c") << "llvmc";
+  }
+  void callSiteType() {
+    QFETCH(QString, Representation);
+    QTemporaryDir Directory;
+    const auto Code =
+        QByteArray::fromHex(
+            "bf07000000be0b000000ba0d000000e82c000000bf11000000e822000000c3")
+            .leftJustified(64, char(0x90)) +
+        QByteArray::fromHex("89f8c3");
+    const auto Path = fixture(Directory, Code);
+    Session Session(QString::fromLocal8Bit(TEST_REAL_WORKER));
+    McpConnectionManager Mcp;
+    GuiSessionBroker Broker;
+    MainWindow Window(Session, Mcp, Broker);
+    Window.setAsksForDebugInfo(false);
+    Window.setLayoutPath(Directory.filePath("layout.json"));
+    Window.resize(1400, 900);
+    Window.initializeLayout();
+    Window.show();
+    Session.open(Path);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.loaded(), 30000);
+    Window.disassembly()->navigate(0x400078);
+    QTRY_COMPARE_WITH_TIMEOUT(Window.disassembly()->currentFunction(),
+                              std::optional<Address>(0x400078), 30000);
+    Window.actions()
+        .action(Representation == "source" ? ActionId::ViewPseudocode
+                                           : ActionId::ViewLLVMC)
+        ->trigger();
+    CodeView *View = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        ([&] {
+          for (auto *Candidate : Window.findChildren<CodeView *>())
+            if (Candidate->representation() == Representation)
+              View = Candidate;
+          return View && !View->text()->loading() &&
+                 View->text()->allText().contains("sub_4000B8(7");
+        })(),
+        30000);
+    QVERIFY(View->text()->findText("sub_4000B8(7", true));
+    View->text()->setFocus();
+    QTRY_VERIFY(Window.actions().action(ActionId::EditCallType)->isEnabled());
+    bool Edited = false;
+    QTimer Editor;
+    connect(&Editor, &QTimer::timeout, this, [&] {
+      auto *Dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (auto *Picker = qobject_cast<QInputDialog *>(Dialog);
+          Picker && Picker->windowTitle() == "Select call instruction") {
+        Picker->accept();
+        return;
+      }
+      if (!Dialog || Dialog->objectName() != "callTypeDialog")
+        return;
+      Dialog->findChild<QPlainTextEdit *>("callTypeDeclaration")
+          ->setPlainText("uint64_t call(uint32_t first, ...);");
+      Dialog->findChild<QPlainTextEdit *>("callTypeActuals")
+          ->setPlainText("unsigned int\nunsigned int");
+      Edited = true;
+      Editor.stop();
+      Dialog->findChild<QPushButton *>("callTypeApply")->click();
+    });
+    Editor.start(10);
+    QTimer::singleShot(30000, &Window, [] {
+      auto *Dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (Dialog)
+        Dialog->reject();
+    });
+    Window.actions().action(ActionId::EditCallType)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(Edited, 30000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        View->text()->allText().contains("(*)(uint32_t, ...)"), 30000);
+    QVERIFY2(Session.lastError().isEmpty(), qPrintable(Session.lastError()));
+    Session.undo();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !View->text()->allText().contains("(*)(uint32_t, ...)"), 30000);
+    Session.redo();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        View->text()->allText().contains("(*)(uint32_t, ...)"), 30000);
+    Window.activateWindow();
+    View->text()->setFocus();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !View->text()->loading() &&
+            Window.actions().action(ActionId::EditResetCallTypes)->isEnabled(),
+        30000);
+    Window.actions().action(ActionId::EditResetCallTypes)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !View->text()->allText().contains("(*)(uint32_t, ...)"), 30000);
   }
   void variableAssociations() {
     QTemporaryDir Directory;

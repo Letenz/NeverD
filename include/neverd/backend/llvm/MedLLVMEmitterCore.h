@@ -79,6 +79,14 @@ class LLVMSourceMap;
 class MedLLVMEmitter {
 public:
   void setSourceMap(LLVMSourceMap *Map) { SourceMap = Map; }
+  void setAnalystSourceProjection(bool Enabled) {
+    AnalystSourceProjection = Enabled;
+  }
+  using SourceTargetSignatures =
+      std::map<std::string, std::pair<llvm::FunctionType *, unsigned>>;
+  void setSourceTargetSignatures(const SourceTargetSignatures *Signatures) {
+    AnalystTargets = Signatures;
+  }
   /// Debug information to name the image's data by where the image's own
   /// symbols do not: publics a single function's load leaves unread.  Its
   /// lookups may run from every shard at once.
@@ -127,6 +135,8 @@ public:
   }
 
 private:
+  bool AnalystSourceProjection = false;
+  const SourceTargetSignatures *AnalystTargets = nullptr;
   friend class MedLLVMEmitterTestPeer;
   friend class MedLLVMProvenanceTestPeer;
 

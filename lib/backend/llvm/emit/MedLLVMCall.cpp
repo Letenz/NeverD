@@ -16,6 +16,7 @@
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
+#include "neverd/backend/llvm/LLVMSourceTypeHints.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/PEImportShadow.h"
@@ -27,6 +28,7 @@
 #include "neverd/support/Diagnostic.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-call"
+#include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 
 #include "llvm/ADT/APInt.h"
@@ -327,7 +329,8 @@ std::optional<LLVMArgumentBinding> bindResolvedLLVMArguments(
   return Binding;
 }
 
-bool normalizeResolvedLLVMCalls(llvm::Module &Module, LLVMSourceMap *Sources) {
+bool normalizeResolvedLLVMCalls(llvm::Module &Module, LLVMSourceMap *Sources,
+                                bool AnalystSourceProjection) {
   const auto &Layout = Module.getDataLayout();
   const unsigned PointerBits = Layout.getPointerSizeInBits();
   auto Compatible = [&](llvm::Type *From, llvm::Type *To) {
@@ -357,6 +360,9 @@ bool normalizeResolvedLLVMCalls(llvm::Module &Module, LLVMSourceMap *Sources) {
         if (auto *Call = llvm::dyn_cast<llvm::CallBase>(&I))
           Calls.push_back(Call);
   for (auto *Call : Calls) {
+    if (AnalystSourceProjection &&
+        Call->getMetadata("neverd.source.analyst-call"))
+      continue;
     auto *Target = llvm::dyn_cast_or_null<llvm::Function>(
         constantCallIdentity(Call->getCalledOperand(), Layout, PointerBits));
     if (!Target || (Call->getFunctionType() == Target->getFunctionType() &&
@@ -465,7 +471,8 @@ bool normalizeResolvedLLVMCalls(llvm::Module &Module, LLVMSourceMap *Sources) {
   return true;
 }
 
-bool validateResolvedLLVMCallSignatures(llvm::Module &Module) {
+bool validateResolvedLLVMCallSignatures(llvm::Module &Module,
+                                        bool AnalystSourceProjection) {
   const auto &Layout = Module.getDataLayout();
   for (auto &Function : Module)
     for (auto &Block : Function)
@@ -476,6 +483,9 @@ bool validateResolvedLLVMCallSignatures(llvm::Module &Module) {
                                        Layout.getPointerSizeInBits()));
               Target && (Call->getFunctionType() != Target->getFunctionType() ||
                          Call->getCallingConv() != Target->getCallingConv())) {
+            if (AnalystSourceProjection &&
+                Call->getMetadata("neverd.source.analyst-call"))
+              continue;
             syncError() << "med_llvm_emitter: resolved call in "
                         << Function.getName() << " disagrees with the ABI of "
                         << Target->getName() << "\n";
@@ -755,6 +765,122 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     if (llvm::Error Error = safety_callsite_md::attach(Call, Record))
       llvm::consumeError(std::move(Error));
   };
+
+  if (CI && CI->SourceCallHint &&
+      CI->SourceCallHint->CallKind == SourceCallTypeHint::Kind::Analyst) {
+    const auto &Hint = *CI->SourceCallHint;
+    std::string Diagnostic;
+    auto Refuse = [&](llvm::StringRef Reason) {
+      syncError() << "source call contract: " << Reason << "\n";
+      FatalCodePointerResolution = true;
+    };
+    if (!AnalystSourceProjection || !Hint.AnalystSite ||
+        Hint.AnalystSite->Instruction != Op.Addr ||
+        Hint.AnalystSite->Sequence != Op.OriginSeq ||
+        Hint.Signature.Architecture != TargetArch ||
+        !validateSourceABI(Hint.Signature, Diagnostic) ||
+        Args.size() != Hint.Signature.Parameters.size()) {
+      Refuse("invalid or non-source-only occurrence binding");
+      return;
+    }
+    std::vector<llvm::Type *> Types;
+    std::vector<llvm::Value *> Values;
+    for (unsigned I = 0; I < Args.size(); ++I) {
+      auto *Type = mapNdtype(Hint.Signature.Parameters[I].Type);
+      auto *Value = Args[I];
+      const auto Bits = [](llvm::Type *T) -> unsigned {
+        return T->isPointerTy() ? 64
+                                : T->getPrimitiveSizeInBits().getFixedValue();
+      };
+      if (!Type || Bits(Type) != Bits(Value->getType()) ||
+          llvm::isa<llvm::UndefValue, llvm::PoisonValue>(Value)) {
+        Refuse("a complete argument carrier is unavailable");
+        return;
+      }
+      if (Type != Value->getType()) {
+        if (Type->isPointerTy())
+          Value = Builder.CreateIntToPtr(Value, Type);
+        else if (Value->getType()->isPointerTy())
+          Value = Builder.CreatePtrToInt(Value, Type);
+        else
+          Value = Builder.CreateBitCast(Value, Type);
+      }
+      Types.push_back(Type);
+      Values.push_back(Value);
+    }
+    const unsigned Fixed =
+        Hint.AnalystFixedCount < 0 ? Types.size() : Hint.AnalystFixedCount;
+    if (Fixed > Types.size()) {
+      Refuse("the variadic prefix exceeds the available operands");
+      return;
+    }
+    std::vector<llvm::Type *> Prefix(Types.begin(), Types.begin() + Fixed);
+    auto *FT = llvm::FunctionType::get(mapNdtype(Hint.Signature.ReturnType),
+                                       Prefix, Hint.AnalystFixedCount >= 0);
+    llvm::Value *Callable = Target;
+    if (!Callable) {
+      auto Name = resolveCalleeName();
+      if (Name.empty() && CallAddr)
+        Name = CI->TargetName.empty()
+                   ? (kAutoFuncPrefix + llvm::utohexstr(CallAddr)).str()
+                   : CI->TargetName;
+      if (Name.empty()) {
+        Refuse("the original target is unresolved");
+        return;
+      }
+      Callable = Mod->getNamedValue(Name);
+      if (!Callable) {
+        auto *DeclarationType = llvm::FunctionType::get(I64Ty, true);
+        unsigned Convention = llvm::CallingConv::C;
+        if (AnalystTargets)
+          if (const auto It = AnalystTargets->find(Name);
+              It != AnalystTargets->end()) {
+            DeclarationType = It->second.first;
+            Convention = It->second.second;
+          }
+        auto *Declaration = llvm::Function::Create(
+            DeclarationType, llvm::GlobalValue::ExternalLinkage, Name, Mod);
+        Declaration->setCallingConv(Convention);
+        Callable = Declaration;
+      }
+    }
+    if (Callable->getType()->isIntegerTy())
+      Callable = Builder.CreateIntToPtr(Callable, PtrTy);
+    auto *Call = Builder.CreateCall(FT, Callable, Values);
+    if (Hint.Signature.ReturnType->Kind == NdTypeKind::Int &&
+        Hint.Signature.ReturnType->IsSigned)
+      Call->addFnAttr(llvm::Attribute::get(*Ctx, LLVMSourceSignedResult));
+    for (unsigned I = 0; I < Hint.Signature.Parameters.size(); ++I)
+      if (const auto &Type = Hint.Signature.Parameters[I].Type;
+          Type->Kind == NdTypeKind::Int && Type->IsSigned)
+        Call->addParamAttr(
+            I, llvm::Attribute::get(*Ctx, LLVMSourceSignedParameter));
+    Call->setMetadata(
+        "neverd.source.analyst-call",
+        llvm::MDNode::get(*Ctx,
+                          {llvm::ConstantAsMetadata::get(
+                               llvm::ConstantInt::get(I64Ty, Op.Addr)),
+                           llvm::ConstantAsMetadata::get(
+                               llvm::ConstantInt::get(I32Ty, Op.OriginSeq))}));
+    if (TargetFormat == BinaryFormat::COFF && TargetArch == Arch::X64)
+      Call->setCallingConv(llvm::CallingConv::Win64);
+    if (SourceMap)
+      SourceMap->Observations.push_back(
+          {CurMedFunc->Entry, {Op.Addr, Op.OriginSeq}, Call});
+    Call->setMetadata(
+        language_eh_md::InternalSourceCallAttachment,
+        llvm::MDNode::get(*Ctx, llvm::ConstantAsMetadata::get(
+                                    llvm::ConstantInt::get(I64Ty, Op.Addr))));
+    CallSiteAddrs[Call] = Op.Addr;
+    if (Op.DoesNotReturn) {
+      Builder.CreateUnreachable();
+      return;
+    }
+    if (Op.Output.Size && !Call->getType()->isVoidTy())
+      setVar(Op.Output, Call, Builder);
+    defineCallClobbers(Op, Builder);
+    return;
+  }
 
   if (Op.Opcode == NdOp::CALL && CI && Args.size() >= 3) {
     std::string LibNameStr = resolveCalleeName();

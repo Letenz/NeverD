@@ -88,8 +88,22 @@ bool equalTypes(const TypeRef &Left, const TypeRef &Right, unsigned Depth,
 bool scalarType(const TypeRef &Type) {
   if (!Type)
     return false;
-  if (Type->Kind == NdTypeKind::Ptr)
+  if (Type->Kind == NdTypeKind::Ptr) {
+    // A named display record has an independently owned layout, and may be
+    // incomplete or recursive. Passing its address only transports pointer
+    // bits; it does not pass a record or authenticate that pointee's layout.
+    TypeRef Pointee = Type;
+    for (unsigned Depth = 0;
+         Depth < 16 && Pointee && Pointee->Kind == NdTypeKind::Ptr; ++Depth) {
+      if (Pointee->Size != 8)
+        return false;
+      Pointee = Pointee->Pointee;
+      if (Pointee && Pointee->Kind == NdTypeKind::Struct &&
+          !Pointee->SourceName.empty() && Pointee->Fields.empty())
+        return true;
+    }
     return Type->Size == 8 && equalSourceTypes(Type, Type);
+  }
   if (Type->Kind == NdTypeKind::Float)
     return Type->Size == 4 || Type->Size == 8;
   return Type->Kind == NdTypeKind::Int && (Type->Size == 1 || Type->Size == 2 ||

@@ -668,9 +668,16 @@ bool Session::typesChanged(const types::TypeLibrary &Library,
   // the decompiler printed, or a unit held, take only the text that read
   // them.
   dropLocalTypesDebug();
+  CallVariant.reset();
+  for (auto It = FunctionLlvmModules.begin(); It != FunctionLlvmModules.end();)
+    if (!It->Options.CallTypes.empty())
+      It = FunctionLlvmModules.erase(It);
+    else
+      ++It;
   const bool SourceAssertions =
       llvm::any_of(FunctionSources, [](const auto &Source) {
-        return !Source.Options.VariableTypes.empty();
+        return !Source.Options.VariableTypes.empty() ||
+               !Source.Options.CallTypes.empty();
       });
   const bool Shows =
       SourceAssertions || llvm::any_of(Changed, [&](const std::string &Name) {

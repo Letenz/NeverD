@@ -555,7 +555,9 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
   std::string VariableSnapshot =
       SourceMap || !S->SourceOptions.VariableTypes.empty() ||
               !S->SourceOptions.VariableEdits.empty()
-          ? highVariableSnapshot(*Attached, S->SourceOptions.Symbolic)
+          ? variableCallProfile(
+                highVariableSnapshot(*Attached, S->SourceOptions.Symbolic),
+                S->SourceOptions)
           : std::string();
   HighSourceMap EditedSources = S->PipeResult.HighSources;
   bool EditFailed = false;
@@ -686,7 +688,8 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
                << static_cast<unsigned>(S->SourceOptions.LLVM) << ':'
                << S->SourceOptions.Passes << ':'
                << S->SourceOptions.RecoverControlFlow;
-    VariableSnapshot = sourceVariableSnapshot(VariableIR);
+    VariableSnapshot = variableCallProfile(sourceVariableSnapshot(VariableIR),
+                                           S->SourceOptions);
   }
   Opts.VariableSnapshot = VariableSnapshot;
   std::vector<SourceVariableEdit> VariableEdits =
@@ -696,6 +699,8 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
     VariableSnapshot = Edit.AfterSnapshot;
   }
   Opts.VariableEdits = &VariableEdits;
+  if (S->UsingAnalystCallContracts && S->CallVariant)
+    Opts.CallTypes = &S->CallVariant->Hints;
   if (SourceMap)
     SourceMap->VariableSnapshot = Opts.VariableSnapshot;
   const SourceVariableTypes VariableTypes =
@@ -1113,6 +1118,34 @@ void writeSourcePage(llvm::raw_ostream &OS, neverd_session_t Sess, va_t Entry,
       J.attribute("dialect", sourceDialectKey(*Dialect));
     J.attribute("function_identity", std::move(Identity));
     J.attribute("variable_snapshot", Map.VariableSnapshot);
+    const auto *Low = toSession(Sess)->findLowFunc(Entry);
+    J.attribute("call_snapshot",
+                Low ? sourceCallSnapshot(*Low) : std::string());
+    J.attributeArray("source_calls", [&] {
+      if (!Low)
+        return;
+      size_t Count = 0;
+      for (const auto &Block : Low->Blocks)
+        for (const auto &Op : Block.Ops)
+          if (const auto Site = sourceCallOccurrenceKey(Op);
+              Site && ++Count <= 4096)
+            J.object([&] {
+              J.attribute("id", sourceCallId(*Site));
+              J.attribute("instruction", vaHex(Site->Instruction));
+              J.attribute("sequence", Site->Sequence);
+              J.attribute("indirect", Site->Opcode == NdOp::INDIR_CALL);
+              if (Site->StaticTarget)
+                J.attribute("target", vaHex(*Site->StaticTarget));
+            });
+    });
+    J.attributeArray("call_type_results", [&] {
+      for (const auto &Status : toSession(Sess)->CurrentCallResults)
+        J.object([&] {
+          J.attribute("id", Status.Id);
+          J.attribute("applied", Status.Applied);
+          J.attribute("refusal", Status.Refusal);
+        });
+    });
     J.attributeArray("variable_edit_results", [&] {
       for (const auto &Result : Map.VariableEditResults) {
         J.object([&] {
@@ -1266,12 +1299,49 @@ SourceViewOptions readSourceOptions(llvm::StringRef Text,
     const llvm::StringRef Key = Field.first;
     if (Key != "symbolic" && Key != "llvm_optimization" &&
         Key != "llvm_passes" && Key != "llvm_control_flow" &&
-        Key != "variable_types" && Key != "variable_edits")
+        Key != "variable_types" && Key != "variable_edits" &&
+        Key != "call_types")
       throw std::invalid_argument("unknown source option: " + Key.str());
     if (Key != "symbolic" && Key != "variable_types" &&
-        Key != "variable_edits" && Stage != "llvmc")
+        Key != "variable_edits" && Key != "call_types" && Stage != "llvmc")
       throw std::invalid_argument("LLVM options require llvmc");
   }
+  if (const auto *Calls = Object->getArray("call_types")) {
+    if (Calls->size() > 32)
+      throw std::invalid_argument(
+          "at most 32 call-site declarations are supported per function");
+    std::set<std::string> Seen;
+    for (const auto &Value : *Calls) {
+      const auto *Call = Value.getAsObject();
+      if (!Call)
+        throw std::invalid_argument(
+            "a call-site declaration must be an object");
+      SourceCallEdit Edit;
+      Edit.Id = Call->getString("id").value_or("").str();
+      Edit.Snapshot = Call->getString("snapshot").value_or("").str();
+      Edit.Declaration = Call->getString("declaration").value_or("").str();
+      if (Edit.Id.empty() || Edit.Id.size() > 256 ||
+          !Seen.insert(Edit.Id).second || Edit.Snapshot.empty() ||
+          Edit.Snapshot.size() > 128 || Edit.Declaration.empty() ||
+          Edit.Declaration.size() > 4096)
+        throw std::invalid_argument("invalid call-site declaration identity");
+      if (const auto *Actuals = Call->getArray("variadic_types")) {
+        if (Actuals->size() > 32)
+          throw std::invalid_argument(
+              "at most 32 actual variadic types are supported");
+        for (const auto &Actual : *Actuals) {
+          const auto Text = Actual.getAsString();
+          if (!Text || Text->empty() || Text->size() > 4096)
+            throw std::invalid_argument(
+                "an actual variadic argument needs a type");
+          Edit.VariadicTypes.push_back(Text->str());
+        }
+      } else if (Call->get("variadic_types"))
+        throw std::invalid_argument("variadic_types must be an array");
+      Options.CallTypes.push_back(std::move(Edit));
+    }
+  } else if (Object->get("call_types"))
+    throw std::invalid_argument("call_types must be an array");
   if (const auto *Edits = Object->getArray("variable_edits")) {
     if (Edits->size() > 64)
       throw std::invalid_argument(
@@ -1398,9 +1468,33 @@ struct ScopedSourceView {
   Session &S;
   SourceViewOptions Previous;
   bool Swapped = false;
-  ScopedSourceView(Session &S, const SourceViewOptions &Options, bool High)
+  bool CallsSwapped = false;
+  std::vector<SourceCallEditResult> PreviousCallResults;
+  ScopedSourceView(Session &S, va_t Entry, const SourceViewOptions &Options,
+                   bool High)
       : S(S), Previous(S.SourceOptions) {
-    if (High && Options.Symbolic) {
+    if (!Options.CallTypes.empty()) {
+      prepareSourceCallVariant(S, Entry, Options);
+      PreviousCallResults = std::move(S.CurrentCallResults);
+      S.CurrentCallResults = S.CallVariant->Results;
+      if (S.CallVariant->Result) {
+        if (!High && S.CallVariant->TargetSignatures.empty()) {
+          // Preserve the ordinary callee declarations. A call-site contract
+          // changes only its own CallBase type, never its siblings' prototype.
+          if (const auto *Base = S.ensureFunctionLlvmModule(Entry, false))
+            for (const auto &Function : *Base->Module)
+              S.CallVariant->TargetSignatures.emplace(
+                  Function.getName().str(),
+                  std::pair{Function.getFunctionType(),
+                            unsigned(Function.getCallingConv())});
+          S.clearError();
+        }
+        std::swap(S.PipeResult, *S.CallVariant->Result);
+        std::swap(S.NativeMedFuncs, S.CallVariant->Native);
+        S.UsingAnalystCallContracts = CallsSwapped = true;
+      }
+    }
+    if (!CallsSwapped && High && Options.Symbolic) {
       if (!S.EnhancedHighIR) {
         auto Variant = std::make_unique<PipelineResult>();
         Variant->LowFuncs = S.PipeResult.LowFuncs;
@@ -1425,6 +1519,12 @@ struct ScopedSourceView {
       S.PipeResult.HighFuncs.swap(S.EnhancedHighIR->HighFuncs);
       S.PipeResult.HighSources.swap(S.EnhancedHighIR->HighSources);
     }
+    if (CallsSwapped) {
+      std::swap(S.PipeResult, *S.CallVariant->Result);
+      std::swap(S.NativeMedFuncs, S.CallVariant->Native);
+      S.UsingAnalystCallContracts = false;
+    }
+    S.CurrentCallResults = std::move(PreviousCallResults);
   }
 };
 
@@ -1522,7 +1622,7 @@ const char *neverd_ir_view_ex_json(neverd_session_t Sess, neverd_va_t FuncEntry,
       return nullptr;
     if (S->PipeResult.EVM || S->PipeResult.SBF)
       throw std::invalid_argument("source transformations require native code");
-    ScopedSourceView View(*S, Options, Stage != "llvmc");
+    ScopedSourceView View(*S, FuncEntry, Options, Stage != "llvmc");
     return neverd_ir_view_json(Sess, FuncEntry, Representation, Offset, Limit);
   } catch (const std::exception &Error) {
     S->setError(Error.what());
