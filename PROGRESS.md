@@ -1,5 +1,66 @@
 # NeverD Daily Progress
 
+## Current snapshot — 2026-10-20
+
+- Snapshot cutoff: **2026-10-20T01:05:00Z**. Source pin: dev [1c17dade](https://github.com/NeverSight/NeverD/commit/1c17dade28812e6eba52e5725301704425c36d46).
+- Since the previous source pin [b139b307](https://github.com/NeverSight/NeverD/commit/b139b307297477fef1ef914865de36a82c8d1aa1): **288 commits; 534 changed non-directory paths (144 added, 390 modified, zero removed)**. Commit pages were 100 + 100 + 88; complete recursive trees were compared because the comparison file list stops at 300. This is an inventory, not a full-source audit. PROGRESS-only commits are excluded from implementation progress.
+- **No new source defect was proved or repaired in this bounded static review.** Only this progress document is proposed. No project, build, test, benchmark, target execution, repository script or manual CI action was performed.
+- Read current AGENTS.md, CONTRIBUTING.md, SECURITY.md, existing PROGRESS and relevant architecture/testing sections. The complete tree contains only the root AGENTS.md. Contributor execution requirements remain unperformed under the stricter static-only constraint.
+- Follow the documented topic-branch/draft-PR flow targeting dev even though dev is unprotected and the ruleset list is empty. No merge is performed.
+
+### Review scope and static observations
+
+The newest merged [#1504](https://github.com/NeverSight/NeverD/pull/1504), head [1875335c](https://github.com/NeverSight/NeverD/commit/1875335c827c2c86f491c658a2d8aa50171fd9a8), was inspected through its complete patch and related declarations/call sites:
+
+- lib/ir/med/lower/LowToMedCallReturnStruct.cpp: complete sameValue/keepsUpperBytesOfWrite helper and aggregate-return discovery, extraction, register rewiring and successor/PHI paths.
+- lib/ir/med/lower/LowToMed.cpp: orchestration surrounding SSA construction, aggregate/FP/x87/wide-int return modeling and copy propagation.
+- include/neverd/ir/med/MedIR.h: MedVar identity, width and register/constant representation.
+- include/neverd/ir/TargetRegInfo.h and include/neverd/ir/low/CallRegisterEffects.h: return-register classification and preservation/summary contracts.
+- unittests/lift/x86_64/X86_64_PltStubTests.cpp, test_plt_byte_write_x64.s and the changed unittests/lift/CMakeLists.txt registration/link steps: source inspection only.
+
+The new helper identifies an AND/OR/copy chain preserving high register bytes during a low-byte write, avoiding a false second aggregate-return field for the supplied strcmp/SETE fixture. The orchestration places this recognition after SSA and before the other return remodels. The source fixture discards the high bytes with MOVZX and the test rejects traps/struct rendering. This does not establish correctness for all partial-write consumers or ABIs.
+
+**Unconfirmed review question:** the helper's syntactic recognition does not itself prove that preserved high bytes are dead in every later use, and its short lookahead has no explicit call barrier. Genuine aggregate-return/high-byte consumers and nearby intervening calls merit negative fixtures. Reachability and an actual incorrect output through the complete pipeline were not established here, so this is a coverage question, not a confirmed bug and no speculative behavior change was made.
+
+The PR author reports corpus improvements, remaining wide-return/PLT limitations and some unchanged/new source-compilation diagnostics. Those are author reports, not measurements performed in this review. The test source alone is not a passed test.
+
+Not covered: the remaining changed implementations, every merged PR discussion, all architectures, parser malformed-input behavior, full alias/SSA correctness, runtime ABI qualification, or memory/performance reproduction of [#1189](https://github.com/NeverSight/NeverD/issues/1189). Large architecture/testing documents were consulted in relevant sections, not represented as completely reviewed.
+
+### Issues, PRs, reviews and changes since the last snapshot
+
+- Before this reporting PR: **55 open ordinary issues and 0 open PRs**, compared with 54 / 0 before yesterday's publication. Open issue collections returned 55 + 0 entries; no PRs were mixed into those 55.
+- Activity window: **2026-10-19 01:03 UTC through this cutoff**. One ordinary issue opened, [#1462](https://github.com/NeverSight/NeverD/issues/1462), and none closed in the returned interval.
+- **97 PRs created and 97 merged; zero closed without merge** in that window. Updated-item pagination was 99 + 0; two 100-item all-state PR pages reached before the window and were reconciled. These are gross repository events, not delivered-feature counts.
+- The gross counts include documentation-only [#1407](https://github.com/NeverSight/NeverD/pull/1407), merged externally at 2026-10-19 02:33:25 UTC; do not count it as implementation progress. Today's reporting PR is excluded from the pre-publication totals.
+- Relevant externally merged changes include [#1408](https://github.com/NeverSight/NeverD/pull/1408) restoring the poll documentation tokens reported yesterday; [#1420](https://github.com/NeverSight/NeverD/pull/1420), [#1423](https://github.com/NeverSight/NeverD/pull/1423), [#1425](https://github.com/NeverSight/NeverD/pull/1425), [#1426](https://github.com/NeverSight/NeverD/pull/1426) and [#1427](https://github.com/NeverSight/NeverD/pull/1427) maintenance work; and [#1503](https://github.com/NeverSight/NeverD/pull/1503)/[#1504](https://github.com/NeverSight/NeverD/pull/1504) call-summary/return handling. Their merge status is not independent acceptance evidence.
+- No open implementation PR was awaiting review at sampling. Selected #1504 review/comment collection was empty; other merged discussions were not exhaustively reviewed. This reporting draft still requires maintainer review.
+
+### Existing CI evidence, sampled 01:04–01:05 UTC
+
+For **dev 1c17dade28812e6eba52e5725301704425c36d46**, five exact-head runs were returned, with an empty next page:
+
+- [LLVM Style](https://github.com/NeverSight/NeverD/actions/runs/39350890528): success. This differs from yesterday's failed style/documentation gate.
+- [CI](https://github.com/NeverSight/NeverD/actions/runs/39350890425): in progress. All 13 visible jobs were read: 3 succeeded, 4 running, 6 skipped. There is no overall pass yet.
+- [Lift native qualification](https://github.com/NeverSight/NeverD/actions/runs/39350890313): in progress, not resolved or passed.
+- [Mobile Decompilation](https://github.com/NeverSight/NeverD/actions/runs/39350890393): queued.
+- [Mobile Real Applications](https://github.com/NeverSight/NeverD/actions/runs/39350922960): skipped, not validated.
+
+For **#1504 head 1875335c827c2c86f491c658a2d8aa50171fd9a8**, seven returned runs were three cancelled, three skipped and one successful operational Cancel Closed Pull Request Runs job. Those do not validate the merged dev source. Existing GitHub CI and author test reports are never represented as checks executed by this review.
+
+### Suggested priorities (no committed delivery date)
+
+1. Obtain terminal exact-head CI, lift and mobile qualification evidence before release-readiness conclusions. Dependency: existing CI execution/artifacts. Acceptance: each required job is explicitly passed, failed or documented unsupported; skipped/cancelled work remains separate.
+2. Add focused negative coverage around partial-register writes and real multi-register returns. Dependency: exact SysV/Win64/AArch64 return contracts and independently owned fixtures. Acceptance: low-byte scratch writes are distinguished from meaningful retained high-byte fields, intervening-call cases are rejected or justified, and focused maintainer-run regressions pass without guessed semantics.
+3. Reconcile [#1189](https://github.com/NeverSight/NeverD/issues/1189) and [#580](https://github.com/NeverSight/NeverD/issues/580) against current function-discovery/cache changes. Dependency: authorized reproducible corpus and a qualified execution environment outside this static task. Acceptance: end-to-end load/analyze/decompile time and peak-memory evidence tied to an exact build, with residual failures and unsupported cases preserved.
+
+## Daily log — 2026-10-20
+
+Completed the bounded #1504 return-model review and related interface/orchestration inspection; recorded one unconfirmed negative-coverage question, no newly proved source defect and no source patch. Reconciled the previous reporting PR as merged and current activity/CI without counting reporting commits as product progress. This document retains all prior text below verbatim. Publication commit/PR are available in file history and the reporting PR; full remote content and diff must be read back before email delivery.
+
+## Preserved history (unchanged)
+
+# NeverD Daily Progress
+
 ## Current snapshot — 2026-10-19
 
 - Snapshot cutoff: **2026-10-19 01:03 UTC / 09:03 Asia/Shanghai**. Source pin: dev [b139b307](https://github.com/NeverSight/NeverD/commit/b139b307297477fef1ef914865de36a82c8d1aa1), reread before publication.
