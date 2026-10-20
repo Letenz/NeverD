@@ -258,6 +258,22 @@ std::vector<va_t> directCallTargets(const MedFunc &F) {
   return Targets;
 }
 
+/// Releases the spare capacity of \p Med's containers, which grew by
+/// doubling while it was built.  Its contents do not change.
+void shrinkToFit(MedFunc &Med) {
+  for (MedBlock &Block : Med.Blocks) {
+    for (MedOp &Op : Block.Ops)
+      Op.IntrinsicOutputs.shrink_to_fit();
+    for (PhiNode &Phi : Block.Phis)
+      Phi.Args.shrink_to_fit();
+    Block.Ops.shrink_to_fit();
+    Block.Phis.shrink_to_fit();
+    Block.Succs.shrink_to_fit();
+    Block.Preds.shrink_to_fit();
+  }
+  Med.Blocks.shrink_to_fit();
+}
+
 /// A selected function still calls the image's other native functions. Use
 /// the normal parameter detector for their bodies instead of assigning the
 /// default register order merely because the user omitted their output.
@@ -355,6 +371,10 @@ public:
       if (Med.Blocks.size() <= limits::kMaxStructurableMedBlocks &&
           MedOperations <= static_cast<size_t>(limits::kMaxSSANodes)) {
         inferMedTypes(Med, Img.Arch);
+        // The memo keeps the body: drop the spare capacity its vectors grew
+        // by while it was built.
+        if (Memo && Kept)
+          shrinkToFit(Med);
         Body = std::make_shared<const MedFunc>(std::move(Med));
       }
     } catch (const LowToMedConversionError &) {
