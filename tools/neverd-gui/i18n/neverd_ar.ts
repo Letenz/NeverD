@@ -959,6 +959,22 @@
         <source>Regenerate this function without variable associations</source>
         <translation>إعادة إنشاء هذه الدالة دون ارتباطات المتغيرات</translation>
     </message>
+    <message>
+        <source>Declare the prototype and actual variadic argument types for this call only</source>
+        <translation>تعريف النموذج الأولي والأنواع الفعلية للوسائط المتغيرة لهذا الاستدعاء فقط</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without call-site declarations</source>
+        <translation>إعادة توليد هذه الدالة دون تعريفات مواقع الاستدعاء</translation>
+    </message>
+    <message>
+        <source>Reset call-site declarations</source>
+        <translation>إعادة تعيين تعريفات مواقع الاستدعاء</translation>
+    </message>
+    <message>
+        <source>Set call type...</source>
+        <translation>تعيين نوع الاستدعاء...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1665,6 +1681,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved variable associations need review: </source>
         <translation>تحتاج ارتباطات المتغيرات المحفوظة إلى مراجعة: </translation>
+    </message>
+    <message>
+        <source>Saved call-site declaration needs review: </source>
+        <translation>يحتاج تعريف موقع الاستدعاء المحفوظ إلى مراجعة: </translation>
     </message>
 </context>
 <context>
@@ -2577,6 +2597,38 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
         <translation>لا يوجد ارتباط مطابق لهذا المتغير. استخدم إعادة تعيين ارتباطات المتغيرات لإزالة التعديلات القديمة.</translation>
+    </message>
+    <message>
+        <source>Actual variadic argument types for this call, one per line (use int or double after default promotions):</source>
+        <translation>الأنواع الفعلية للوسائط المتغيرة لهذا الاستدعاء، نوع واحد في كل سطر (استخدم int أو double بعد الترقيات الافتراضية):</translation>
+    </message>
+    <message>
+        <source>C declaration (include ... for a variadic call):</source>
+        <translation>تعريف C (أدرج ... للاستدعاء ذي الوسائط المتغيرة):</translation>
+    </message>
+    <message>
+        <source>Call at %1. This declaration applies to this call only in both C views.</source>
+        <translation>استدعاء عند %1. ينطبق هذا التعريف على هذا الاستدعاء فقط في كلا عرضَي C.</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a pseudocode row mapped to an original call instruction</source>
+        <translation>ضع المؤشر على سطر شفرة زائفة مرتبط بتعليمة استدعاء أصلية</translation>
+    </message>
+    <message>
+        <source>Select call instruction</source>
+        <translation>تحديد تعليمة الاستدعاء</translation>
+    </message>
+    <message>
+        <source>Set call type</source>
+        <translation>تعيين نوع الاستدعاء</translation>
+    </message>
+    <message>
+        <source>This source row contains multiple calls:</source>
+        <translation>يحتوي سطر المصدر هذا على استدعاءات متعددة:</translation>
+    </message>
+    <message>
+        <source>indirect call</source>
+        <translation>استدعاء غير مباشر</translation>
     </message>
 </context>
 <context>

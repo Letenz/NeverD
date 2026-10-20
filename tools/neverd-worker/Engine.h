@@ -198,7 +198,8 @@ private:
   std::shared_ptr<const NamedView>
   namedView(std::uint64_t address, const std::string &representation,
             const Json &options = Json::object(),
-            const Json *variableEdits = nullptr);
+            const Json *variableEdits = nullptr,
+            const Json *callTypes = nullptr);
   std::optional<Json> namedViewPage(std::uint64_t address,
                                     const std::string &representation,
                                     std::size_t offset, std::size_t limit,

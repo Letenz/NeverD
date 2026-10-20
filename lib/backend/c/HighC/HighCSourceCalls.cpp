@@ -140,6 +140,67 @@ HighCWriter::sourceCallDefinition(const SourceCallTypeHint &Hint,
 
 std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
   const auto &Hint = *E.SourceCallHint;
+  if (Hint.CallKind == SourceCallTypeHint::Kind::Analyst) {
+    std::string Diagnostic;
+    if (!Hint.AnalystSite || Hint.AnalystSite->Instruction != E.CallSiteAddr ||
+        Hint.Signature.Architecture != Opts.TheArch ||
+        !validateSourceABI(Hint.Signature, Diagnostic) ||
+        E.Operands.size() != Hint.Signature.Parameters.size())
+      throw std::invalid_argument("The call-site contract lost its original "
+                                  "occurrence or complete operands");
+    const auto &Signature = Hint.Signature;
+    const unsigned Fixed = Hint.AnalystFixedCount < 0
+                               ? Signature.Parameters.size()
+                               : Hint.AnalystFixedCount;
+    if (Fixed > Signature.Parameters.size())
+      throw std::invalid_argument("Invalid call-site variadic prefix");
+    std::string Prototype = "(*)(";
+    if (!Fixed)
+      Prototype += "void";
+    for (unsigned I = 0; I < Fixed; ++I) {
+      if (I)
+        Prototype += ", ";
+      Prototype += declarationToC(Signature.Parameters[I].Type, "");
+    }
+    if (Hint.AnalystFixedCount >= 0)
+      Prototype += ", ...";
+    Prototype += ")";
+    if (E.IsIndirectCall && !E.IndirectTarget)
+      throw std::invalid_argument(
+          "The original indirect call target is unavailable");
+    std::string Target =
+        E.IsIndirectCall
+            ? exprStr(*E.IndirectTarget)
+            : functionIdentifier(!E.CallTarget.empty() ? E.CallTarget
+                                                       : Hint.TargetName);
+    if (Target.empty())
+      throw std::invalid_argument(
+          "The original call-site target is unresolved");
+    std::string Call = "((" + declarationToC(Signature.ReturnType, Prototype) +
+                       ")(uintptr_t)(" + Target + "))(";
+    for (unsigned I = 0; I < E.Operands.size(); ++I) {
+      const auto &Argument = E.Operands[I];
+      const auto Value = Argument
+                             ? sourceValue(exprStr(*Argument), Argument->Type,
+                                           Signature.Parameters[I].Type)
+                             : std::nullopt;
+      if (!Value)
+        throw std::invalid_argument(
+            "A complete call-site argument carrier is unavailable");
+      if (I)
+        Call += ", ";
+      Call += *Value;
+    }
+    Call += ")";
+    if (Signature.ReturnType->Kind == NdTypeKind::Void ||
+        Signature.ReturnType->Kind == NdTypeKind::Ptr)
+      return Call;
+    const auto Value = sourceValue(Call, Signature.ReturnType, E.Type);
+    if (!Value)
+      throw std::invalid_argument(
+          "The call-site result carrier is incompatible");
+    return *Value;
+  }
   if ((hasIndirectSourceParameters(Hint.Signature) || Hint.ByValueCopy) &&
       (!CurrentFunc ||
        !isObjCByValueCopyHint(Hint, CurrentFunc->Entry, Opts.TheArch) ||

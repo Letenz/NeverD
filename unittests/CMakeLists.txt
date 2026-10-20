@@ -99,6 +99,10 @@ add_neverd_unittest(NeverDSourceVariableFlowTests
   SourceVariableFlowTests.cpp
   LINK_COMPONENTS IR
 )
+add_neverd_unittest(NeverDSourceCallABITests
+  SourceCallABITests.cpp
+  LINK_COMPONENTS IR
+)
 add_neverd_unittest(NeverDHighVariableEditsTests
   HighVariableEditsTests.cpp
   LINK_COMPONENTS IRHigh

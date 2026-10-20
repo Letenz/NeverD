@@ -28,6 +28,7 @@ struct BinaryImage;
 struct CSourceMap;
 struct CSourceName;
 struct SourceVariableTypes;
+struct SourceCallTypeHint;
 class DataAccessWidths;
 struct NdType;
 
@@ -138,6 +139,7 @@ struct CEmitterOptions {
   /// Analyst declarations for source interpretation only. They supply no
   /// native ABI, memory extent, code ownership or rewriting authority.
   const SourceVariableTypes *VariableTypes = nullptr;
+  const std::map<std::string, SourceCallTypeHint> *CallTypes = nullptr;
   const std::vector<SourceVariableEdit> *VariableEdits = nullptr;
   std::string VariableSnapshot;
 };

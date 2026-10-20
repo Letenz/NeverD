@@ -959,6 +959,22 @@
         <source>Regenerate this function without variable associations</source>
         <translation>변수 연결을 적용하지 않고 이 함수 다시 생성</translation>
     </message>
+    <message>
+        <source>Declare the prototype and actual variadic argument types for this call only</source>
+        <translation>이 호출에만 적용할 원형과 실제 가변 인수 형식 선언</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without call-site declarations</source>
+        <translation>호출 지점 선언 없이 이 함수 다시 생성</translation>
+    </message>
+    <message>
+        <source>Reset call-site declarations</source>
+        <translation>호출 지점 선언 초기화</translation>
+    </message>
+    <message>
+        <source>Set call type...</source>
+        <translation>호출 형식 설정...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1640,6 +1656,10 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Saved variable associations need review: </source>
         <translation>저장된 변수 연결을 검토해야 합니다: </translation>
+    </message>
+    <message>
+        <source>Saved call-site declaration needs review: </source>
+        <translation>저장된 호출 지점 선언을 검토해야 합니다: </translation>
     </message>
 </context>
 <context>
@@ -2547,6 +2567,38 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
         <translation>이 변수에 일치하는 연결이 없습니다. 오래된 편집 내용을 제거하려면 변수 연결 재설정을 사용하세요.</translation>
+    </message>
+    <message>
+        <source>Actual variadic argument types for this call, one per line (use int or double after default promotions):</source>
+        <translation>이 호출의 실제 가변 인수 형식을 한 줄에 하나씩 입력하세요(기본 인수 승격 후 int 또는 double 사용):</translation>
+    </message>
+    <message>
+        <source>C declaration (include ... for a variadic call):</source>
+        <translation>C 선언(가변 인수 호출에는 ... 포함):</translation>
+    </message>
+    <message>
+        <source>Call at %1. This declaration applies to this call only in both C views.</source>
+        <translation>%1의 호출입니다. 이 선언은 두 C 보기에서 이 호출에만 적용됩니다.</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a pseudocode row mapped to an original call instruction</source>
+        <translation>원본 호출 명령에 대응하는 의사 코드 행에 커서를 놓으세요</translation>
+    </message>
+    <message>
+        <source>Select call instruction</source>
+        <translation>호출 명령 선택</translation>
+    </message>
+    <message>
+        <source>Set call type</source>
+        <translation>호출 형식 설정</translation>
+    </message>
+    <message>
+        <source>This source row contains multiple calls:</source>
+        <translation>이 소스 행에 여러 호출이 있습니다:</translation>
+    </message>
+    <message>
+        <source>indirect call</source>
+        <translation>간접 호출</translation>
     </message>
 </context>
 <context>

@@ -1403,8 +1403,8 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
       }
 
   if (FatalCodePointerResolution || FatalDataPointerResolution ||
-      !normalizeResolvedLLVMCalls(*Mod_, SourceMap) ||
-      !validateResolvedLLVMCallSignatures(*Mod_))
+      !normalizeResolvedLLVMCalls(*Mod_, SourceMap, AnalystSourceProjection) ||
+      !validateResolvedLLVMCallSignatures(*Mod_, AnalystSourceProjection))
     return nullptr;
 
   // Mark the producer schema independently of per-function attachments.  A

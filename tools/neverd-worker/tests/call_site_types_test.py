@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""Real call-site analysis: retained operands, per-call scope and native isolation."""
+import argparse
+import json
+import struct
+import subprocess
+import tempfile
+from pathlib import Path
+from transport_test import Client
+from source_synthesis_test import elf, ENTRY
+from source_variable_types_test import ok, source
+
+def fixture():
+    return elf(bytes.fromhex("bf07000000 be0b000000 ba0d000000 e82c000000 bf11000000 e822000000 c3").ljust(64, b"\x90") + bytes.fromhex("89f8c3"))
+
+def pe(code):
+    data = bytearray(1024)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 0x3C, 0x80)
+    data[0x80:0x84] = b"PE\0\0"
+    struct.pack_into("<HHIIIHH", data, 0x84, 0x8664, 1, 0, 0, 0, 0xF0, 0x22)
+    optional = 0x98
+    struct.pack_into("<H", data, optional, 0x20B)
+    struct.pack_into("<I", data, optional + 4, 512)
+    struct.pack_into("<I", data, optional + 16, 0x1000)
+    struct.pack_into("<Q", data, optional + 24, 0x140000000)
+    struct.pack_into("<II", data, optional + 32, 0x1000, 512)
+    struct.pack_into("<II", data, optional + 56, 0x2000, 512)
+    struct.pack_into("<H", data, optional + 68, 3)
+    struct.pack_into("<I", data, optional + 108, 16)
+    section = optional + 0xF0
+    struct.pack_into("<8sIIIIIIHHI", data, section, b".text\0\0\0", 512, 0x1000, 512, 512, 0, 0, 0, 0, 0x60000020)
+    data[512:512 + len(code)] = code
+    return bytes(data)
+
+def stack_fixture(partial=False):
+    code = bytearray(bytes.fromhex("b907000000 ba0b000000 41b80d000000 41b911000000 4883ec38"))
+    code += bytes.fromhex("66c74424201700" if partial else "48c744242017000000")
+    offset = len(code)
+    code += b"\xe8" + struct.pack("<i", 64 - offset - 5) + bytes.fromhex("4883c438 c3")
+    return pe(bytes(code).ljust(64, b"\x90") + bytes.fromhex("89c8c3"))
+
+def request(view, call, declaration, actuals=()):
+    return {"address": view["address"], "representation": view["representation"], "kind": "call_type",
+        "call_id": call["id"], "snapshot": view["call_snapshot"], "declaration": declaration,
+        "variadic_types": list(actuals)}
+
+def execute_source(root, text, route, compiler, harness=None):
+    c_file, harness_file, program = root / (route + ".c"), root / (route + "-harness.c"), root / (route + ".exe")
+    c_file.write_text(text)
+    harness_file.write_text(harness or """
+#include <stdint.h>
+#include <stdarg.h>
+static int calls, errors;
+extern int64_t start(void);
+uint64_t sub_4000B8(uint32_t first, ...) {
+  ++calls;
+  if (first == 7) {
+    va_list ap; va_start(ap, first);
+    unsigned a = va_arg(ap, unsigned), b = va_arg(ap, unsigned);
+    errors += a != 11 || b != 13; va_end(ap);
+  }
+  return first;
+}
+int main(void) { return start() != 17 || calls != 2 || errors; }
+""")
+    if Path(compiler).stem.lower() in ("cl", "clang-cl"):
+        command = [compiler, "/nologo", "/TC", "/std:c11", str(c_file), str(harness_file), "/Fe:" + str(program)]
+    else:
+        command = [compiler, "-std=c11", "-fno-strict-aliasing", str(c_file), str(harness_file), "-o", str(program)]
+    result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    subprocess.run([str(program)], cwd=root, check=True, timeout=10)
+
+def run(executable, compiler=None):
+    with tempfile.TemporaryDirectory(prefix="neverd-call-types-") as directory:
+        root = Path(directory)
+        binary = root / "calls.elf"
+        binary.write_bytes(fixture())
+        with Client(executable) as client:
+            ok(client, "open", {"path": str(binary), "analysis": False})
+            before = {route: source(client, route) for route in ("c", "llvmc")}
+            native = {route: source(client, route)["text"] for route in ("low", "med", "llvm")}
+            call = before["c"]["source_calls"][0]
+            edit = request(before["c"], call, "uint64_t call(uint32_t first, ...);", ("unsigned int", "unsigned int"))
+            for invalid in ({**edit, "snapshot": "obsolete"}, {**edit, "variadic_types": ["char"]},
+                            {**edit, "declaration": "struct MISSING call(int x);"}):
+                state = ok(client, "analysis_snapshot")
+                refused = client.call("code_edit", invalid)
+                assert refused["status"] == "error", refused
+                assert ok(client, "analysis_snapshot") == state
+            ok(client, "code_edit", edit)
+            after = {route: source(client, route) for route in ("c", "llvmc")}
+            for route, view in after.items():
+                assert view["call_type_results"] == [{"id": call["id"], "applied": True, "refusal": ""}], view
+                assert "(*)(uint32_t, ...)" in view["text"] and "0xB" in view["text"] and "0xD" in view["text"], view
+                assert "objc/" not in view["text"], view
+                # The original sibling call to this target keeps its argument list.
+                sibling = next(line for line in before[route]["text"].splitlines() if "return " in line)
+                assert sibling in view["text"], (sibling, view["text"])
+                declarations = [line for line in before[route]["text"].splitlines() if line and not line[0].isspace() and "sub_4000B8(" in line and line.endswith(";")]
+                assert all(line in view["text"].splitlines() for line in declarations), (declarations, view["text"])
+                if compiler: execute_source(root, view["text"], route, compiler)
+            for route, text in native.items(): assert source(client, route)["text"] == text
+            ok(client, "undo")
+            for route in before: assert source(client, route)["text"] == before[route]["text"]
+            ok(client, "redo")
+            for route in after: assert source(client, route)["text"] == after[route]["text"]
+            with Client(executable) as replica:
+                ok(replica, "analysis_restore", ok(client, "analysis_snapshot"))
+                assert source(replica)["text"] == after["c"]["text"]
+                refused = replica.call("code_edit", {**edit, "reset": True})
+                assert refused["status"] == "error" and refused["error"]["code"] == "read_only", refused
+        with Client(executable) as client:
+            ok(client, "open", {"path": str(binary), "analysis": False})
+            for route in after: assert source(client, route)["text"] == after[route]["text"]
+            ok(client, "code_edit", {**edit, "reset": True})
+            for route in before: assert source(client, route)["text"] == before[route]["text"]
+            # Fixed prototypes use the same route and can change the arg count
+            # before SSA DCE, retaining actual machine writes of RSI and RDX.
+            fixed = {**edit, "declaration": "uint64_t call(uint32_t a, uint32_t b, uint32_t c);", "variadic_types": []}
+            ok(client, "code_edit", fixed)
+            assert "(*)(uint32_t, uint32_t, uint32_t)" in source(client)["text"]
+            ok(client, "code_edit", {**fixed, "action": "clear"})
+            assert source(client)["text"] == before["c"]["text"]
+            ok(client, "code_edit", {**edit, "declaration": "void call(uint32_t a, uint32_t b, uint32_t c);", "variadic_types": []})
+            for route in ("c", "llvmc"):
+                result = source(client, route)
+                assert result["call_type_results"][0]["applied"] and "void (*)(uint32_t, uint32_t, uint32_t)" in result["text"], result
+        # Indirect targets retain the original pointer rather than resolving the
+        # analyst's placeholder declaration name as a global symbol.
+        indirect = root / "indirect.elf"
+        indirect.write_bytes(elf(bytes.fromhex("4889f8 bf07000000 be0b000000 ba0d000000 ffd0 c3")))
+        with Client(executable) as client:
+            ok(client, "open", {"path": str(indirect), "analysis": False})
+            view = source(client)
+            call = view["source_calls"][0]
+            assert call["indirect"], call
+            ok(client, "code_edit", request(view, call, "uint64_t call(uint32_t a, uint32_t b, uint32_t c);"))
+            for route in ("c", "llvmc"):
+                result = source(client, route)
+                assert result["call_type_results"][0]["applied"] and "(*)(uint32_t, uint32_t, uint32_t)" in result["text"] and "0xD" in result["text"], result
+                assert "call(" not in result["text"], result
+        # Opaque LLVM pointers must retain the declared record pointee in C.
+        records = root / "records.elf"
+        records.write_bytes(elf(bytes.fromhex("53 e80f000000 4889c3 8b4304 034308 5b c3 90909090 4889f8 c3")))
+        with Client(executable) as client:
+            ok(client, "open", {"path": str(records), "analysis": False})
+            ok(client, "local_types_declare", {"source": "struct QA_CONTEXT { unsigned int State; unsigned int Length; unsigned int Flags; };"})
+            view = source(client)
+            ok(client, "code_edit", request(view, view["source_calls"][0], "struct QA_CONTEXT *call(struct QA_CONTEXT *context);"))
+            for route in ("c", "llvmc"):
+                result = source(client, route)
+                assert result["call_type_results"][0]["applied"] and "QA_CONTEXT*(*)(QA_CONTEXT*)" in "".join(result["text"].split()), result["text"]
+                if route == "c": assert "->Length" in result["text"] and "->Flags" in result["text"], result["text"]
+                if compiler:
+                    execute_source(root, result["text"], "record-" + route, compiler, """
+#include <stdint.h>
+struct QA_CONTEXT { unsigned State, Length, Flags; };
+struct QA_CONTEXT *sub_40008D(struct QA_CONTEXT *context) { return context; }
+extern int32_t start(uintptr_t context);
+int main(void) { struct QA_CONTEXT context = { 1, 7, 9 }; return start((uintptr_t)&context) != 16; }
+""")
+        for count in (0, 1):
+            floating = root / ("floating-%d.elf" % count)
+            code = bytes.fromhex("48b8000000000000f83f 66480f6ec0 bf07000000")
+            code += b"\xb8" + struct.pack("<I", count)
+            code += b"\xe8" + struct.pack("<i", 64 - len(code) - 5) + b"\xc3"
+            floating.write_bytes(elf(code.ljust(64, b"\x90") + bytes.fromhex("89f8c3")))
+            with Client(executable) as client:
+                ok(client, "open", {"path": str(floating), "analysis": False})
+                view = source(client)
+                edit = request(view, view["source_calls"][0], "uint64_t call(uint32_t first, ...);", ["double"])
+                reply = client.call("code_edit", edit)
+                if not count:
+                    assert reply["status"] == "error" and "AL vector-register count" in reply["error"]["message"], reply
+                    continue
+                assert reply["status"] == "ok", reply
+                for route in ("c", "llvmc"):
+                    result = source(client, route)
+                    assert result["call_type_results"][0]["applied"], result
+                    if compiler:
+                        execute_source(root, result["text"], "floating-" + route, compiler, """
+#include <stdint.h>
+#include <stdarg.h>
+extern uint64_t start(void);
+static int errors;
+uint64_t sub_4000B8(uint32_t first, ...) {
+  va_list ap; va_start(ap, first); errors += va_arg(ap, double) != 1.5; va_end(ap); return first;
+}
+int main(void) { return start() != 7 || errors; }
+""")
+        # Real PE / Win64 call: its fifth value is read from the written stack
+        # bytes, while a partial write cannot manufacture the missing bytes.
+        for partial in (False, True):
+            path = root / ("partial.exe" if partial else "stack.exe")
+            path.write_bytes(stack_fixture(partial))
+            with Client(executable) as client:
+                ok(client, "open", {"path": str(path), "analysis": False})
+                view = source(client, "c", 0x140001000)
+                edit = request(view, view["source_calls"][0], "uint64_t call(uint32_t first, ...);", ["unsigned int"] * 4)
+                reply = client.call("code_edit", edit)
+                if partial:
+                    assert reply["status"] == "error" and "fully written" in reply["error"]["message"], reply
+                else:
+                    assert reply["status"] == "ok", reply
+                    for route in ("c", "llvmc"):
+                        result = source(client, route, 0x140001000)
+                        assert result["call_type_results"][0]["applied"] and "0x17" in result["text"], result
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("worker")
+    parser.add_argument("--cc")
+    arguments = parser.parse_args()
+    run(arguments.worker, arguments.cc)

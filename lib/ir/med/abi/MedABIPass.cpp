@@ -687,6 +687,8 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                                  : Hint.Signature.Parameters.size();
         if (Valid && Op.NumInputs == Count + 1) {
           CI.SourceCallHint = Op.SourceCallHint;
+          if (Hint.CallKind == SourceCallTypeHint::Kind::Analyst)
+            CI.VarArgFixedCount = Hint.AnalystFixedCount;
           CI.TargetAddr = Hint.TargetAddress;
           noteRead(CI.TargetAddr);
           auto Name = FuncNames.find(CI.TargetAddr);

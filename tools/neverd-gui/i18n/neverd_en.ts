@@ -959,6 +959,22 @@
         <source>Regenerate this function without variable associations</source>
         <translation>Regenerate this function without variable associations</translation>
     </message>
+    <message>
+        <source>Declare the prototype and actual variadic argument types for this call only</source>
+        <translation>Declare the prototype and actual variadic argument types for this call only</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without call-site declarations</source>
+        <translation>Regenerate this function without call-site declarations</translation>
+    </message>
+    <message>
+        <source>Reset call-site declarations</source>
+        <translation>Reset call-site declarations</translation>
+    </message>
+    <message>
+        <source>Set call type...</source>
+        <translation>Set call type...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1645,6 +1661,10 @@ Double-click to go to the declaration.</translation>
     <message>
         <source>Saved variable associations need review: </source>
         <translation>Saved variable associations need review: </translation>
+    </message>
+    <message>
+        <source>Saved call-site declaration needs review: </source>
+        <translation>Saved call-site declaration needs review: </translation>
     </message>
 </context>
 <context>
@@ -2553,6 +2573,38 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
     <message>
         <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
         <translation>This variable has no matching association. Use Reset variable associations to remove stale edits.</translation>
+    </message>
+    <message>
+        <source>Actual variadic argument types for this call, one per line (use int or double after default promotions):</source>
+        <translation>Actual variadic argument types for this call, one per line (use int or double after default promotions):</translation>
+    </message>
+    <message>
+        <source>C declaration (include ... for a variadic call):</source>
+        <translation>C declaration (include ... for a variadic call):</translation>
+    </message>
+    <message>
+        <source>Call at %1. This declaration applies to this call only in both C views.</source>
+        <translation>Call at %1. This declaration applies to this call only in both C views.</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a pseudocode row mapped to an original call instruction</source>
+        <translation>Put the cursor on a pseudocode row mapped to an original call instruction</translation>
+    </message>
+    <message>
+        <source>Select call instruction</source>
+        <translation>Select call instruction</translation>
+    </message>
+    <message>
+        <source>Set call type</source>
+        <translation>Set call type</translation>
+    </message>
+    <message>
+        <source>This source row contains multiple calls:</source>
+        <translation>This source row contains multiple calls:</translation>
+    </message>
+    <message>
+        <source>indirect call</source>
+        <translation>indirect call</translation>
     </message>
 </context>
 <context>

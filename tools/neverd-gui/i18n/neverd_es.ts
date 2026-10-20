@@ -959,6 +959,22 @@
         <source>Regenerate this function without variable associations</source>
         <translation>Regenerar esta función sin asociaciones de variables</translation>
     </message>
+    <message>
+        <source>Declare the prototype and actual variadic argument types for this call only</source>
+        <translation>Declarar el prototipo y los tipos reales de los argumentos variádicos solo para esta llamada</translation>
+    </message>
+    <message>
+        <source>Regenerate this function without call-site declarations</source>
+        <translation>Regenerar esta función sin declaraciones de sitios de llamada</translation>
+    </message>
+    <message>
+        <source>Reset call-site declarations</source>
+        <translation>Restablecer las declaraciones de sitios de llamada</translation>
+    </message>
+    <message>
+        <source>Set call type...</source>
+        <translation>Establecer el tipo de llamada...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1645,6 +1661,10 @@ Haga doble clic para ir a la declaración.</translation>
     <message>
         <source>Saved variable associations need review: </source>
         <translation>Las asociaciones de variables guardadas necesitan revisión: </translation>
+    </message>
+    <message>
+        <source>Saved call-site declaration needs review: </source>
+        <translation>La declaración guardada del sitio de llamada necesita revisión: </translation>
     </message>
 </context>
 <context>
@@ -2553,6 +2573,38 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>This variable has no matching association. Use Reset variable associations to remove stale edits.</source>
         <translation>Esta variable no tiene una asociación coincidente. Use Restablecer asociaciones de variables para eliminar las ediciones obsoletas.</translation>
+    </message>
+    <message>
+        <source>Actual variadic argument types for this call, one per line (use int or double after default promotions):</source>
+        <translation>Tipos reales de los argumentos variádicos de esta llamada, uno por línea (usar int o double tras las promociones predeterminadas):</translation>
+    </message>
+    <message>
+        <source>C declaration (include ... for a variadic call):</source>
+        <translation>Declaración C (incluir ... para una llamada variádica):</translation>
+    </message>
+    <message>
+        <source>Call at %1. This declaration applies to this call only in both C views.</source>
+        <translation>Llamada en %1. Esta declaración se aplica solo a esta llamada en ambas vistas C.</translation>
+    </message>
+    <message>
+        <source>Put the cursor on a pseudocode row mapped to an original call instruction</source>
+        <translation>Coloque el cursor en una línea de pseudocódigo asociada a una instrucción de llamada original</translation>
+    </message>
+    <message>
+        <source>Select call instruction</source>
+        <translation>Seleccionar instrucción de llamada</translation>
+    </message>
+    <message>
+        <source>Set call type</source>
+        <translation>Establecer el tipo de llamada</translation>
+    </message>
+    <message>
+        <source>This source row contains multiple calls:</source>
+        <translation>Esta línea de código fuente contiene varias llamadas:</translation>
+    </message>
+    <message>
+        <source>indirect call</source>
+        <translation>llamada indirecta</translation>
     </message>
 </context>
 <context>

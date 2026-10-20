@@ -1209,6 +1209,28 @@ dispatch and a data reference from the table. A table is laid out only when
 the engine has checked that every slot holds its target. Cancel removes
 queued work; a running engine call finishes unless the worker is restarted.
 
+## Call-site types
+
+In either **Pseudocode** or **LLVM C**, put the cursor on a call row and choose
+**Set call type…** from its context menu. Enter a complete C declaration, for
+example `int log(const char *format, ...);`, and list the actual trailing types,
+one per line, such as `unsigned int` and `const char *`. Use the promoted types
+passed by C varargs (`int`/`unsigned int` and `double`, not `char` or `float`).
+If a source row contains multiple mapped calls, select the original instruction
+in the picker. The declaration's name is a placeholder; the original direct or
+indirect target stays in use. The selected call gets this prototype in both C
+views. Other calls and the target's global declaration keep their own analysis.
+The dialog's **Reset** restores this occurrence; **Reset call-site declarations**
+in the context menu resets every call policy of this function. Undo/redo,
+database reopen and read-only replicas use the usual project history.
+
+This feature currently accepts scalar and pointer C ABIs on x64 PE/ELF/Mach-O
+and AArch64 ELF/Mach-O. Types declared in Local types can be used as pointer
+pointees. By-value aggregates, special conventions and Windows ARM64 require
+additional ABI support. An unproved register value, incomplete outgoing stack
+write or unsupported variadic floating carrier refuses the edit and reports its
+reason in Output. No missing argument is filled with an invented value.
+
 ## Languages, extensions and MCP
 
 The UI starts in English and bundles all 11 project languages; **Options →

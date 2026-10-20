@@ -3,12 +3,15 @@
 #define NEVERD_SDK_SOURCEEDITS_H
 
 #include "neverd/backend/c/SourceVariableTypes.h"
+#include "neverd/ir/SourceCallEdits.h"
 
 #include "llvm/ADT/StringRef.h"
 
 namespace neverd {
 struct HighFunc;
 struct CSourceMap;
+struct LowFunc;
+struct SourceViewOptions;
 } // namespace neverd
 namespace neverd::sdk {
 struct Session;
@@ -23,5 +26,14 @@ std::string sourceVariableSnapshot(llvm::StringRef IR);
 std::string highVariableSnapshot(const HighFunc &Function, bool Symbolic);
 std::string editedVariableSnapshot(llvm::StringRef Before,
                                    const SourceVariableEdit &Edit);
+std::string sourceCallId(const SourceCallOccurrenceKey &Site);
+std::string sourceCallSnapshot(const LowFunc &Function);
+std::string variableCallProfile(std::string Snapshot,
+                                const SourceViewOptions &Options);
+std::optional<SourceCallTypeHint>
+parseSourceCallType(Session &S, const SourceCallEdit &Edit,
+                    const SourceCallOccurrenceKey &Site, std::string &Error);
+void prepareSourceCallVariant(Session &S, va_t Entry,
+                              const SourceViewOptions &Options);
 } // namespace neverd::sdk
 #endif

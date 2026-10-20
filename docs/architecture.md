@@ -8758,6 +8758,30 @@ reservation explicitly excludes unsupported concurrent operations.
 
 `SymState::storeConditional` optionally applies one STORE or atomic write phase without a nonalias contract. It constructs byte-equality conditions for current materialized bytes in other absolute or 64-bit symbolic banks; the actual bank uses ordinary overlap handling. Missing bytes retain the write's new unknown epochs, and historical facts are never imported. Complete plan validation and work charges precede conditional expression construction and the single store. Owner refusal leaves state unchanged. `SymExec::stepWithConditionalStore` uses this only for STORE and strictly admitted scalar CMPXCHG, retaining existing refusal havoc and publishing Old only after success. Other operations leave the policy Invalid. This does not prove access validity or initial alias consistency, or guarantee inexpensive downstream solving.
 
+## Analyst call-site source contracts
+
+`SourceCallOccurrenceKey` owns original instruction/sequence/opcode/target
+identity; names and source anchors cannot bind a per-call policy.
+`SourceCallABI` uses the existing platform parameter/variadic placement owners
+and bounds outgoing stack-write and SSA-carrier proofs. `LowToMedSourceCalls`
+publishes these physical inputs before SSA and argument pruning, with discovery
+of platform runtime calls still restricted to its original supported formats.
+
+`Pipeline::rebuildSourceCalls` builds a private source variant from retained
+LowIR and existing callee summaries. The SDK scopes this variant to one C-view
+request, keeps source fingerprints dependent on the policy, and restores the
+ordinary pipeline afterwards. Worker `code.json` transactions own persistence,
+history and replicas. HighC and LLVM C consume the same selected occurrence and
+actual carriers. LLVM C retains ordinary target declarations and uses a typed
+call instruction/pointer cast for the selected occurrence only.
+
+Analyst declarations do not establish library effects, no-return control flow,
+native patch/lift contracts or safety receipts. Native LLVM call normalization
+and validation remain strict by default; only the private source emitter opts
+into occurrence-specific call types. A policy that cannot prove every required
+carrier reports refusal instead of manufacturing operands or changing the
+original analysis.
+
 ## Explicit runtime modules and persistent execution
 
 `modules/ModuleSet` owns caller-declared files and debug identity independently

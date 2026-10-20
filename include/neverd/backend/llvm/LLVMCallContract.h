@@ -53,12 +53,14 @@ std::optional<LLVMArgumentBinding> bindResolvedLLVMArguments(
 /// Drop surplus fixed arguments and adapt scalar integer/pointer carriers.
 /// Missing arguments, incompatible carriers and musttail changes fail clearly.
 bool normalizeResolvedLLVMCalls(llvm::Module &Module,
-                                LLVMSourceMap *Sources = nullptr);
+                                LLVMSourceMap *Sources = nullptr,
+                                bool AnalystSourceProjection = false);
 /// Check identities after deferred import placeholders have been promoted.
 /// Opaque pointers otherwise let a mismatched direct call pass LLVM's verifier.
 /// Check both the type and calling convention after optimization and linking.
 /// An inconsistent resolved target emits a diagnostic and returns false.
-bool validateResolvedLLVMCallSignatures(llvm::Module &Module);
+bool validateResolvedLLVMCallSignatures(llvm::Module &Module,
+                                        bool AnalystSourceProjection = false);
 } // namespace neverd
 
 #endif

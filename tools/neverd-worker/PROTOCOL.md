@@ -490,6 +490,36 @@ Reopening checks the image hash and every input fingerprint; stale dependent
 policies remain diagnosable instead of rebinding by display names. Read-only
 replicas can inspect and replay policies but cannot commit them.
 
+## Per-call declarations
+
+`call_sites` takes `{address,representation,source_options?}` for `c`, `source`
+or `llvmc` and returns `{calls,snapshot,types}`. Each original LowIR occurrence
+has an engine-owned `id`, `instruction`, `sequence`, `indirect`, and optional
+`target`. A source page publishes the same `source_calls` and `call_snapshot`,
+plus `call_type_results` with `{id,applied,refusal}` for persisted policies.
+
+`code_edit` with `kind:"call_type"` takes those view arguments, `call_id`, the
+current `snapshot`, and a complete C function `declaration`. For a variadic
+declaration, `variadic_types` lists the actual trailing types for this call,
+after default argument promotions; the fixed prefix comes from the declaration.
+The declaration's function name is a placeholder, never a replacement target.
+`reset:true` removes the selected occurrence; `action:"clear"` resets all call
+declarations of the function. Policies are shared by both C routes, stored in
+the function's `call_types` in `code.json`, image-hash and graph checked, and use
+the existing transaction/history/replica/database transport. A failed preview
+returns `call_type_refused` without changing state, revision or history.
+
+The engine places scalar and pointer operands with its ordinary x64 PE/ELF/Mach-O
+or AArch64 ELF/Mach-O C ABI. Aggregates, special calling conventions, Windows
+ARM64 and unproved Win64 duplicate floating variadic carriers are refused.
+System V x64 variadic floating arguments also require the original `AL` vector
+count to be defined and sufficient in that call's basic block.
+Stack arguments require complete writes in the call's own basic block, with no
+intervening call or unknown memory write. Register inputs must have actual
+defined SSA carriers. A private Low-to-Med rebuild retains those operands before
+argument pruning; native IR, other call sites, callee prototypes and native
+rewrite/safety admission keep their original analysis.
+
 ## IR and C source mapping
 
 Source pages with edit metadata carry `code_names`, half-open UTF-8 spans in
