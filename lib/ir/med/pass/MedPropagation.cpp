@@ -16,7 +16,8 @@
 #include "neverd/ir/med/MedConstantPropagation.h"
 #include "neverd/loader/BinaryImage.h"
 
-#include <map>
+#include "llvm/ADT/DenseMap.h"
+
 #include <optional>
 #include <tuple>
 
@@ -33,7 +34,8 @@ void LowToMedConverter::propagate(MedFunc &Func) {
   auto keyOf = [](const MedVar &V) -> DefKey {
     return {static_cast<int>(V.Kind), V.Id, V.SSAVer};
   };
-  std::map<DefKey, const MedOp *> Defs;
+  // Looked up and replaced by key, never walked.
+  llvm::DenseMap<DefKey, const MedOp *> Defs;
 
   const unsigned PointerSize = getTargetRegInfo(TargetArch).PointerSize;
   auto HasExactLoaderProvenance = [&](uint64_t Value) {
