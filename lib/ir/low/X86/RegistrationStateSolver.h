@@ -212,7 +212,8 @@ public:
       const std::vector<RegistrationSEHControlContract> *SEHControls,
       ConditionalFrame *Conditional = nullptr,
       const BoundCalleeProver *BoundCallees = nullptr,
-      const SEHJumpRuntime *JumpRuntime = nullptr);
+      const SEHJumpRuntime *JumpRuntime = nullptr,
+      const coff_loader::X86CxxHandlerABI *CxxHandler = nullptr);
   RegistrationStateAnalysis run();
   size_t workUsed() const { return WorkUsed; }
 
@@ -404,6 +405,8 @@ private:
                           bool Reads);
   std::optional<int32_t> cookieSlot(int32_t Displacement) const;
   bool cookiesReady(const FrameState &Frame) const;
+  bool cxxCookiesReady(const Domain &State) const;
+  void initializeCxxCookies();
   void recordChainAccess(const LowOp &Op, const LowBlock &Block,
                          RegistrationChainAccess::Kind Kind);
   void merge(size_t Target, const Domain &Source);
@@ -417,6 +420,7 @@ private:
   const RegistrationChainInfo &Chain;
   va_t SecurityCookieVA;
   va_t CookieCheckVA;
+  const coff_loader::X86CxxHandlerABI *CxxHandler;
   const std::vector<RegistrationCalleeFrameContract> *Callees;
   const std::vector<RegistrationCleanupFrameContract> *Cleanups;
   const std::vector<RegistrationCalleeStackContract> *Stacks;
@@ -508,6 +512,8 @@ private:
       SEHExceptionAccesses;
 
   bool CompleteCookies = false;
+  bool CxxCookies = false;
+  std::vector<RegistrationCxxCookieCondition> CxxCookieConditions;
   std::optional<int32_t> EHCookieSlot;
   std::optional<int32_t> GSCookieSlot;
   std::map<va_t, int> CookieCheckOccurrences;

@@ -111,6 +111,26 @@ bool hasRegistrationCallFrameABI(
           !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4 ||
           !Image.isCodeAddress(Op.Inputs[0].Offset))
         return false;
+      if (States && States->SecurityCookiesComplete)
+        if (const auto *Cookie = States->cookieCheck(Op.Addr, Op.Seq)) {
+          const auto Success = coff_loader::getCheckedX86CookieCheckSuccessPath(
+              Image, States->CookieCheckVA);
+          if (States->CookieCheckVA != Op.Inputs[0].Offset || !Success ||
+              Success->SecurityCookieVA != States->SecurityCookieVA ||
+              !chargeCalleeWork(Work, Block.InstructionBoundaries.size()))
+            return false;
+          const auto Boundary =
+              llvm::find_if(Block.InstructionBoundaries, [&](const auto &B) {
+                return B.Address == Op.Addr;
+              });
+          if (Boundary == Block.InstructionBoundaries.end() ||
+              Boundary->Control != LowInstructionControl::Call ||
+              Op.Addr + Boundary->Size != Cookie->EndAddress)
+            return false;
+          // The exact cookie receipt replaces an ordinary callee-frame
+          // effect. Its successful path preserves the source registers.
+          continue;
+        }
       if (UseReachability) {
         const auto *Call = States->callFrameEffect(Op.Addr, Op.Seq);
         if (!Call || Call->Target != Op.Inputs[0].Offset ||
@@ -123,15 +143,6 @@ bool hasRegistrationCallFrameABI(
             Boundary->Control != LowInstructionControl::Call ||
             Op.Addr + Boundary->Size != Call->EndAddress)
           return false;
-      }
-      if (Function.RegistrationStates &&
-          Function.RegistrationStates->SecurityCookiesComplete &&
-          Function.RegistrationStates->cookieCheck(Op.Addr, Op.Seq)) {
-        const va_t Check = Function.RegistrationStates->CookieCheckVA;
-        if (Check != Op.Inputs[0].Offset ||
-            !coff_loader::hasCheckedX86CookieCheckSuccessPath(Image, Check))
-          return false;
-        continue;
       }
       if (States && States->Complete && States->CallbackStatesComplete &&
           States->SEHJumpCapturesComplete &&

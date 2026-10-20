@@ -5298,6 +5298,21 @@ argument, registers, arithmetic, call/branch direction, cookie identity,
 immutable storage, fixups and provider; extra operations and a third check
 also refuse. These tests establish conditional handler behavior, not a proof
 that any source parent initializes or preserves its cookies.
+`RegistrationCxxCookieStateTests.cpp` separately checks the source parent:
+single and double guards, alternate XOR bases, ordinary and catch continuations,
+and complete initialization on every predecessor. Mutations cover partial
+initialization, wrong encoding, SavedESP/state overlap, changed image cookies,
+ordinary and cleanup writes, overlapping catch objects and absent call evidence.
+An adjacent private-object write remains valid. The ABI tests bind a checked
+C++ source call to its current ECX value despite incidental EDX, XMM and stack
+values, and reject missing cookie or personality evidence.
+`CxxCookieSourceProofReachesTheParentAndMedCallABI` reparses actual PE32 code
+and FuncInfo bytes, then builds LowIR and MedIR. It requires the dedicated
+source-check receipt to close the parent ABI and rejects changed instruction
+boundaries, checkers and image-cookie identities. A call-time stack test also
+rejects a temporary ESP adjustment that lets the return PC overwrite a cookie,
+even when ESP is restored within the same block. These source proofs do not
+enable native guarded-handler lowering.
 `StackCleanupRequiresEveryRestoredNearReturn` separately checks balanced
 caller/callee cleanup, nonvolatile restoration after an opaque call, dynamic
 alignment, disagreeing return pops, missing restoration, volatile anchors,

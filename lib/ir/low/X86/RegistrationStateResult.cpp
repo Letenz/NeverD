@@ -244,12 +244,25 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
   Result.SecurityCookiesComplete =
       CompleteCookies && Result.Complete && Result.CallbackStatesComplete &&
       Result.RegistrationLifetimeComplete && Result.ChainOperationsComplete &&
+      (!CxxCookies ||
+       (Result.CallFrameEffectsComplete && Result.CleanupFrameEffectsComplete &&
+        Result.CxxCatchObjectsComplete &&
+        Result.RuntimeObjectAccessesComplete)) &&
       hasCompleteCookieChecks() && (!ReadsGSCookie || !CookieChecks.empty());
   if (Result.SecurityCookiesComplete) {
     Result.SecurityCookieVA = SecurityCookieVA;
     Result.CookieCheckVA = CookieCheckVA;
+    Result.CxxCookieConditions = CxxCookieConditions;
     for (const auto &[Identity, Check] : CookieChecks)
       Result.CookieChecks.push_back(Check);
+  } else if (CxxCookies && !CookieChecks.empty()) {
+    // Transfer used these success paths instead of ordinary callee effects.
+    // Without published cookie receipts they cannot close the call or runtime
+    // memory proof: the original mismatch path has not been summarized.
+    Result.CallFrameEffectsComplete = Result.RuntimeObjectAccessesComplete =
+        Result.ImageReadsComplete = false;
+    Result.RuntimeObjectAccesses.clear();
+    Result.Diagnostics.push_back("C++ cookie call success is not proven");
   }
   if (Result.ImageReadsComplete)
     for (const auto &[Begin, End] : ImageReads)
@@ -277,6 +290,7 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
       Result.SecurityCookieVA = 0;
       Result.CookieCheckVA = 0;
       Result.CookieChecks.clear();
+      Result.CxxCookieConditions.clear();
       Result.ChainAccesses.clear();
       Result.Diagnostics.push_back(
           "registration-frame output budget exhausted");

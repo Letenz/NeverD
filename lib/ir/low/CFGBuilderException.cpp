@@ -42,6 +42,7 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     std::optional<std::vector<RegistrationCalleeStackContract>> Stacks;
     std::optional<std::vector<RegistrationLocalUnwindContract>> LocalUnwinds;
     std::optional<std::vector<RegistrationSEHControlContract>> SEHControls;
+    std::optional<coff_loader::X86CxxHandlerABI> CxxHandler;
     const bool CheckCalls = CurrentImg && Metadata.Cxx.has_value();
     RegistrationCallCalleeIndex *CalleeIndex = nullptr;
     if (CurrentImg) {
@@ -61,6 +62,8 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     if (CheckCalls) {
       Callees = CalleeIndex->contracts(Func);
       Cleanups = CalleeIndex->cleanupContracts(Func);
+      CxxHandler =
+          coff_loader::getCheckedX86CxxHandlerABI(*CurrentImg, Metadata);
     }
     if (CurrentImg && !Metadata.Cxx &&
         (Metadata.Personality == ExceptionPersonality::ExceptHandler3 ||
@@ -78,7 +81,8 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
           0, CheckCalls && Callees ? &*Callees : nullptr,
           CheckCalls && Cleanups ? &*Cleanups : nullptr,
           Stacks ? &*Stacks : nullptr, LocalUnwinds ? &*LocalUnwinds : nullptr,
-          SEHControls ? &*SEHControls : nullptr);
+          SEHControls ? &*SEHControls : nullptr,
+          CxxHandler ? &*CxxHandler : nullptr);
     if (CurrentImg && !SEHControls) {
       Func.RegistrationStates->Complete = false;
       Func.RegistrationStates->SEHStateStoresComplete = false;

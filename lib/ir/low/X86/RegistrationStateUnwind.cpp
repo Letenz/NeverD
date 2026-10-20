@@ -26,6 +26,8 @@ void RegistrationStateSolver::dispatchBlock(size_t I, const Domain &Before,
     queueSEHScopes(Before, Facts.Invalid);
     return;
   }
+  if (CxxCookies && !cxxCookiesReady(Before))
+    CompleteCookies = false;
   const std::set<int32_t> &DispatchLevels =
       Before.Unknown || Facts.Invalid ? AllLevels : Before.Levels;
   for (int32_t Level : DispatchLevels) {

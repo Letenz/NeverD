@@ -1419,6 +1419,20 @@ decoder owns its register-preservation and image-cookie identity proof.
 `getCheckedX86CxxPersonalityABI` continues to require an unguarded dispatcher;
 the guarded description supplies no parent initialization, lifetime or check
 elision authority.
+The same LowIR state solver projects those C++ conditions into the source
+parent's established frame. It requires complete four-byte initialization
+before publication, the exact image-cookie XOR base, and intact conditions at
+every exceptional dispatch. Ordinary calls, cleanup footprints and catch-object
+construction must preserve both the image cookie and the parent slots.
+Catch entry preserves an encoded word only after every cleanup's write extent
+is known to be disjoint. Exact successful source checks preserve all GPRs and
+use their own call receipts rather than an ordinary callee-frame effect.
+If those receipts cannot be published, call, runtime-object and image-read
+closure also fail; the unchecked mismatch path has no summarized effects.
+`CxxCookieConditions` describes source values only; it grants no generated
+cookie layout or authority to erase observable encoded values. The native
+dispatcher API continues to reject guarded handlers until those output
+obligations have their own proof.
 SEH dispatch joins use an explicit pending queue. After ordinary propagation
 quiesces, equal source snapshots contribute their complete level domains to
 runtime roots together. `dispatchSource` owns the inherited facts used by both
@@ -1488,9 +1502,9 @@ These invocation slots are separate from the logical register snapshots of
 source setjmp calls and must not be restored by source longjmp resumptions.
 The shared scope-retention owner also includes rows used solely by authenticated
 ordinary calls, without making their source try levels active.
-`abi/MedABIPassI386.cpp` binds an authenticated EH4 cookie check to its current
-ECX value. Finally register exchanges and inferred callee signatures cannot add
-EDX, floating-point or stack arguments to that checked protocol.
+`abi/MedABIPassI386.cpp` binds an authenticated EH4 or C++ cookie check to its
+current ECX value. Finally register exchanges and inferred callee signatures
+cannot add EDX, floating-point or stack arguments to that checked protocol.
 `X86/RegistrationSEHStateStore.cpp` binds complete source receipts to exact
 MedIR callback stores. Native writes require a checked byte, word or full-word
 constant store with a proved finite set of complete resulting states. Narrow

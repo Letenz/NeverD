@@ -23,13 +23,14 @@ RegistrationStateSolver::RegistrationStateSolver(
     const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
     const std::vector<RegistrationSEHControlContract> *SEHControls,
     ConditionalFrame *Conditional, const BoundCalleeProver *BoundCallees,
-    const SEHJumpRuntime *JumpRuntime)
+    const SEHJumpRuntime *JumpRuntime,
+    const coff_loader::X86CxxHandlerABI *CxxHandler)
     : Function(Function), EH(*Function.ExceptionMetadata),
       Chain(*EH.Registration), SecurityCookieVA(SecurityCookieVA),
-      CookieCheckVA(CookieCheckVA), Callees(Callees), Cleanups(Cleanups),
-      Stacks(Stacks), LocalUnwinds(LocalUnwinds), SEHControls(SEHControls),
-      Conditional(Conditional), BoundCallees(BoundCallees),
-      JumpRuntime(JumpRuntime),
+      CookieCheckVA(CookieCheckVA), CxxHandler(CxxHandler), Callees(Callees),
+      Cleanups(Cleanups), Stacks(Stacks), LocalUnwinds(LocalUnwinds),
+      SEHControls(SEHControls), Conditional(Conditional),
+      BoundCallees(BoundCallees), JumpRuntime(JumpRuntime),
       KnownCxx(EH.Encoding == ExceptionEncoding::X86CxxFuncInfo &&
                (EH.Personality == ExceptionPersonality::CxxFrameHandlerX86 ||
                 EH.Personality == ExceptionPersonality::CxxFrameHandler3)),
@@ -248,12 +249,14 @@ RegistrationStateAnalysis analyzeRegistrationStates(
     const std::vector<RegistrationCleanupFrameContract> *Cleanups,
     const std::vector<RegistrationCalleeStackContract> *Stacks,
     const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
-    const std::vector<RegistrationSEHControlContract> *SEHControls) {
+    const std::vector<RegistrationSEHControlContract> *SEHControls,
+    const coff_loader::X86CxxHandlerABI *CxxHandler) {
   if (!Function.ExceptionMetadata || !Function.ExceptionMetadata->Registration)
     return {};
   return registration_state::RegistrationStateSolver(
              Function, SecurityCookieVA, CookieCheckVA, Callees, Cleanups,
-             Stacks, LocalUnwinds, SEHControls)
+             Stacks, LocalUnwinds, SEHControls, nullptr, nullptr, nullptr,
+             CxxHandler)
       .run();
 }
 } // namespace neverd

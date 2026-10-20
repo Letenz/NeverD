@@ -87,6 +87,17 @@ struct CookieFixture {
                    &FPArity, nullptr, nullptr, nullptr, nullptr, nullptr,
                    nullptr, &RegisterOrder);
   }
+
+  void useCxxCookies(unsigned Count) {
+    auto &EH = *Function.ExceptionMetadata;
+    EH.Encoding = ExceptionEncoding::X86CxxFuncInfo;
+    EH.Personality = ExceptionPersonality::CxxFrameHandler3;
+    EH.Cxx.emplace();
+    auto &States = *Function.RegistrationStates;
+    States.SecurityCookieVA = 0x4000;
+    for (unsigned I = 0; I != Count; ++I)
+      States.CxxCookieConditions.push_back({-20 - int32_t(I) * 4, 0});
+  }
 };
 
 void checkCookieArgument(const CookieFixture &Fixture) {
@@ -118,6 +129,60 @@ TEST(RegistrationCookieABI, UsesCurrentCookiePhiAcrossAnEHBoundary) {
   Block.Preds = {1, 2};
   Fixture.recover();
   checkCookieArgument(Fixture);
+}
+
+TEST(RegistrationCookieABI, CxxCookieReceiptsKeepTheSameSingleECXProtocol) {
+  for (unsigned Count : {1u, 2u}) {
+    SCOPED_TRACE(Count);
+    CookieFixture Fixture;
+    Fixture.useCxxCookies(Count);
+    for (unsigned Pass = 0; Pass != 2; ++Pass) {
+      Fixture.recover();
+      checkCookieArgument(Fixture);
+    }
+  }
+}
+
+TEST(RegistrationCookieABI, CxxCallsNeedCompleteCookieAndPersonalityEvidence) {
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    CookieFixture Fixture;
+    Fixture.useCxxCookies(1);
+    auto &Function = Fixture.Function;
+    auto &States = *Function.RegistrationStates;
+    switch (Mutation) {
+    case 0:
+      Function.ExceptionMetadata->Cxx.reset();
+      break;
+    case 1:
+      Function.ExceptionMetadata->Personality =
+          ExceptionPersonality::CxxFrameHandler4;
+      break;
+    case 2:
+      States.CxxCookieConditions.clear();
+      break;
+    case 3:
+      States.CxxCookieConditions.resize(3);
+      break;
+    case 4:
+      States.SecurityCookieVA = 0;
+      break;
+    case 5:
+      States.SecurityCookieVA = UINT32_MAX - 2;
+      break;
+    case 6:
+      States.SecurityCookiesComplete = false;
+      break;
+    case 7:
+      States.CookieChecks.clear();
+      break;
+    }
+    const auto &Block = Function.Blocks.front();
+    MedCallInfo Info;
+    EXPECT_FALSE(
+        recoverI386RegistrationCookieCall(Function, Block, Block.Ops.size() - 1,
+                                          getTargetRegInfo(Arch::X86), Info));
+  }
 }
 
 TEST(RegistrationCookieABI, UncheckedOccurrencesDoNotAcquireTheCookieProtocol) {

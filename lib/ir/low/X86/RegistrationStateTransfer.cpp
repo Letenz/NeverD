@@ -34,9 +34,10 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     return true;
   Domain After = Before;
   std::optional<Domain> CallException;
-  FrameTransfer Transfer(
-      After.Frame, *Chain.RegistrationOffset, EH4 ? SecurityCookieVA : 0,
-      Chain.RealignedFrame ? &*Chain.RealignedFrame : nullptr);
+  FrameTransfer Transfer(After.Frame, *Chain.RegistrationOffset,
+                         EH4 || CxxCookies ? SecurityCookieVA : 0,
+                         Chain.RealignedFrame ? &*Chain.RealignedFrame
+                                              : nullptr);
   FrameTransfer RuntimeTransfer(After.RuntimeObject, *Chain.RegistrationOffset);
   std::set<va_t> ProvenStores;
   std::optional<RegistrationCxxContinuation> CatchReturn;
@@ -150,9 +151,10 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     if (Exhausted)
       break;
 
-    if (EH4 && Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op))
+    if ((EH4 || CxxCookies) && Op.Opcode == NdOp::INTRINSIC &&
+        !isFramePreservingIntrinsic(Op))
       CompleteCookies = false;
-    if (EH4 && Memory.Address &&
+    if ((EH4 || CxxCookies) && Memory.Address &&
         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
       const auto Address = Transfer.read(*Memory.Address);
       if (!Memory.Complete)
@@ -167,15 +169,23 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
         // Source cookie storage is owned only by its checked initialization
         // and the native runtime. Reads or writes after installation would
         // observe or change a synthetic cookie instead of the physical one.
-        const bool CheckedGSRead = CookieCheckVA && Op.Opcode == NdOp::LOAD &&
-                                   Address.Offset == GSCookieSlot &&
-                                   Memory.AccessSize == 4;
+        const bool CxxSlot =
+            llvm::any_of(CxxCookieConditions, [&](const auto &Condition) {
+              return Address.Offset == Condition.FrameOffset;
+            });
+        const bool CheckedGSRead =
+            CookieCheckVA && Op.Opcode == NdOp::LOAD &&
+            (Address.Offset == GSCookieSlot || CxxSlot) &&
+            Memory.AccessSize == 4;
         ReadsGSCookie |= CheckedGSRead;
-        if (Touches(EHCookieSlot) ||
-            (Touches(GSCookieSlot) && !CheckedGSRead) ||
-            overlaps(*Address.Offset, Memory.AccessSize,
-                     *Chain.RegistrationOffset + 8, 4))
+        if (EH4 && (Touches(EHCookieSlot) ||
+                    (Touches(GSCookieSlot) && !CheckedGSRead) ||
+                    overlaps(*Address.Offset, Memory.AccessSize,
+                             *Chain.RegistrationOffset + 8, 4)))
           CompleteCookies = false;
+        for (const auto &Condition : CxxCookieConditions)
+          if (Touches(Condition.FrameOffset) && !CheckedGSRead)
+            CompleteCookies = false;
       }
       if (Memory.StoredValue) {
         const uint64_t TableEnd =
@@ -187,23 +197,37 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
              (uint64_t(*Address.Constant) < SecurityCookieVA + 4 &&
               SecurityCookieVA <
                   uint64_t(*Address.Constant) + Memory.AccessSize) ||
-             (uint64_t(*Address.Constant) < TableEnd &&
+             (EH4 && uint64_t(*Address.Constant) < TableEnd &&
               Chain.ScopeTableVA <
                   uint64_t(*Address.Constant) + Memory.AccessSize)))
           CompleteCookies = false;
       }
     }
+    // A call also writes its return PC below the current ESP. A later ESP
+    // restoration cannot make a cookie that was deallocated at this exact
+    // call remain intact for exceptional dispatch.
+    if (CxxCookies && After.Installed &&
+        (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+        !cxxCookiesReady(After))
+      CompleteCookies = false;
+    bool CheckedCxxCookieCall = false;
     if (CookieCheckVA && Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
         Op.Inputs[0].isConst() && Op.Inputs[0].Offset == CookieCheckVA) {
       const auto Boundary = Boundaries.find(Op.Addr);
       if (!Transfer.isCookieCheck(Op, CookieCheckVA) || Op.Seq < 0 ||
-          Boundary == Boundaries.end() || Boundary->second.first != Block.Id)
+          Boundary == Boundaries.end() || Boundary->second.first != Block.Id ||
+          (CxxCookies &&
+           Boundary->second.second.Control != LowInstructionControl::Call))
         CompleteCookies = false;
-      else
+      else {
         CookieChecks.emplace(
             std::make_pair(Op.Addr, Op.Seq),
             RegistrationCookieCheck{
                 Op.Addr, Op.Addr + Boundary->second.second.Size, Op.Seq});
+        CheckedCxxCookieCall = CxxCookies;
+        if (CxxCookies)
+          ImageReads.emplace(SecurityCookieVA, SecurityCookieVA + 4);
+      }
     }
     if (!validateSEHParentChainUse(After, Op, Transfer))
       Result.SEHParentChainComplete = false;
@@ -307,6 +331,8 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
           After.JumpCaptures.clear();
           ProvenInstallation = true;
           if (EH4 && !cookiesReady(After.Frame))
+            CompleteCookies = false;
+          if (CxxCookies && !cxxCookiesReady(After))
             CompleteCookies = false;
           recordChainAccess(Op, Block, RegistrationChainAccess::Kind::Install);
         } else if (Address.Constant == uint32_t{0} && Width == 4 && AtEnd &&
@@ -435,7 +461,9 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
                              : std::nullopt;
     if (LocalSP)
       CallSP = *LocalSP;
-    if (!JumpCapture && !JumpResume && !LocalSP &&
+    if (CheckedCxxCookieCall)
+      CallSP = After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
+    if (!CheckedCxxCookieCall && !JumpCapture && !JumpResume && !LocalSP &&
         !transferOrdinaryFinally(I, After, Op, Facts, CallSP))
       if (auto Call = transferCall(I, After, Op, Facts)) {
         CheckedCall = true;
@@ -545,7 +573,8 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       After.Frame.Registers[x86reg::RAX / x86reg::GeneralRegStride] =
           FrameValue::constant(0);
     if (CheckRuntimeObjects) {
-      RuntimeTransfer.write(Op, RuntimeValue);
+      if (!CheckedCxxCookieCall)
+        RuntimeTransfer.write(Op, RuntimeValue);
       if (CheckedCall) {
         After.RuntimeObject
             .Registers[x86reg::RAX / x86reg::GeneralRegStride] = {};

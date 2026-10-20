@@ -10,6 +10,8 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/low/RegistrationABI.h"
+#include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedABIPass.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -1825,6 +1827,126 @@ TEST(RegistrationCallABI, CxxHandlerRetainsEveryCookiePrecondition) {
           EXPECT_FALSE(
               coff_loader::isCheckedX86CxxHandlerReference(Image, F.HandlerVA));
         }
+}
+
+TEST(RegistrationCallABI, CxxCookieSourceProofReachesTheParentAndMedCallABI) {
+  auto Case = CxxGuardCases[0];
+  Case.Prefix[9] = 0xe8; // cookie at node-24 == EBP-36
+  CxxGuardImage F(Case);
+  auto &Image = F.Source.Source.Code.Image;
+  auto &Text = Image.Segments.front();
+  const va_t Entry = Text.VA, LeafVA = Text.VA + 0x90;
+  std::vector<uint8_t> Body = {0x55, 0x8b, 0xec, 0x6a, 0xff, 0x68};
+  auto Word = [&](uint32_t Value) {
+    const size_t Offset = Body.size();
+    Body.resize(Offset + 4);
+    writeLE<uint32_t>(Body.data() + Offset, Value);
+  };
+  auto Address = [&](va_t Value) {
+    Image.BaseRelocations.push_back(
+        {Entry + Body.size(), llvm::COFF::IMAGE_REL_BASED_HIGHLOW});
+    Word(uint32_t(Value));
+  };
+  Address(F.HandlerVA);
+  Body.insert(Body.end(), {0x64, 0xa1, 0, 0, 0, 0, 0x50, 0x83, 0xec, 8, 0x53,
+                           0x56, 0x57, 0xa1});
+  Address(F.CookieVA);
+  Body.insert(Body.end(),
+              {0x33, 0xc5, 0x50, 0x8d, 0x45, 0xf4, 0x64, 0xa3, 0, 0,
+               0,    0,    0xc7, 0x45, 0xfc, 0,    0,    0,    0, 0xe8});
+  Word(uint32_t(LeafVA - (Entry + Body.size() + 4)));
+  // Unlink before popping the cookie. Its source storage is still live
+  // throughout every call at which the C++ handler can be dispatched.
+  Body.insert(Body.end(),
+              {0xc7, 0x45, 0xfc, 0xff, 0xff, 0xff, 0xff, 0x8b, 0x4d, 0xf4, 0x64,
+               0x89, 0x0d, 0,    0,    0,    0,    0x59, 0x33, 0xcd, 0xe8});
+  Word(uint32_t(F.CheckVA - (Entry + Body.size() + 4)));
+  Body.insert(Body.end(), {0x5f, 0x5e, 0x5b, 0x8b, 0xe5, 0x5d, 0xc3});
+  ASSERT_LT(Body.size(), 0x70u);
+  std::fill(Text.Data.begin(), Text.Data.begin() + 0x70, 0xcc);
+  std::copy(Body.begin(), Body.end(), Text.Data.begin());
+  const uint8_t Leaf[] = {0xb8, 37, 0, 0, 0, 0xc3};
+  std::copy(std::begin(Leaf), std::end(Leaf),
+            Text.Data.begin() + LeafVA - Text.VA);
+  auto &LeafExport = Image.Exports.emplace_back();
+  LeafExport.Name = "cookie_leaf";
+  LeafExport.Addr = LeafVA;
+  // One state with no cleanup or catch, retained in actual FuncInfo bytes.
+  F.Source.Source.tableWord(4, 1);
+  F.Source.Source.tableWord(12, 0);
+  F.Source.Source.tableWord(16, 0);
+  Image.ExceptionMetadata = {};
+  coff_loader::parseX86RegistrationExceptions(Image);
+  const auto *EH = Image.ExceptionMetadata.findFunction(Entry);
+  ASSERT_TRUE(EH && EH->Cxx && EH->Registration);
+  ASSERT_EQ(EH->Registration->RegistrationOffset, -12);
+  ASSERT_TRUE(coff_loader::getCheckedX86CxxHandlerABI(Image, *EH));
+  Decoder Decode;
+  ASSERT_TRUE(Decode.init(Image));
+  const auto Low = CFGBuilder().build(Image, Decode, Entry, "cookie_parent");
+  ASSERT_TRUE(Low.RegistrationStates);
+  const auto &States = *Low.RegistrationStates;
+  for (const auto &Diagnostic : States.Diagnostics)
+    llvm::errs() << Diagnostic << '\n';
+  ASSERT_TRUE(States.SecurityCookiesComplete);
+  EXPECT_EQ(States.CxxCookieConditions,
+            (std::vector<RegistrationCxxCookieCondition>{{-36, 0}}));
+  ASSERT_EQ(States.CookieChecks.size(), 1u);
+  const auto &Check = States.CookieChecks.front();
+  EXPECT_FALSE(States.callFrameEffect(Check.Address, Check.OpSeq));
+  ASSERT_EQ(getCheckedX86RegistrationCxxParentABI(Low, Image), 0);
+  EXPECT_FALSE(coff_loader::getCheckedX86CxxPersonalityABI(Image, *EH));
+  LowToMedConverter Converter;
+  Converter.setBinaryImage(&Image);
+  auto Med = Converter.convert(Low, Arch::X86, BinaryFormat::COFF);
+  recoverCallAbi(Med, Arch::X86, {}, &Image);
+  unsigned Matches = 0;
+  for (const auto &Block : Med.Blocks)
+    for (size_t I = 0; I != Block.Ops.size(); ++I) {
+      const auto &Op = Block.Ops[I];
+      if (Op.Addr != Check.Address || Op.OriginSeq != Check.OpSeq)
+        continue;
+      ++Matches;
+      const auto *Call = Med.findCall(Block.Id, I);
+      ASSERT_TRUE(Call);
+      EXPECT_EQ(Call->Args.size(), 1u);
+      EXPECT_EQ(Call->IntegerRegisterArgCount, 1);
+      EXPECT_EQ(Call->FloatingRegisterArgCount, 0);
+      EXPECT_EQ(Op.CallPreservedGPRs, 0xff);
+      EXPECT_EQ(Op.Output.Id, -1);
+      EXPECT_EQ(Op.Output.Size, 0);
+    }
+  EXPECT_EQ(Matches, 1u);
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Low;
+    auto ChangedImage = Image;
+    auto &Proof = *Changed.RegistrationStates;
+    switch (Mutation) {
+    case 0:
+      Proof.SecurityCookiesComplete = false;
+      break;
+    case 1:
+      ++Proof.SecurityCookieVA;
+      break;
+    case 2:
+      ++Proof.CookieChecks.front().EndAddress;
+      break;
+    case 3:
+      for (auto &Block : Changed.Blocks)
+        for (auto &Boundary : Block.InstructionBoundaries)
+          if (Boundary.Address == Check.Address)
+            Boundary.Control = LowInstructionControl::None;
+      break;
+    case 4:
+      ChangedImage.Segments.front().Data[F.CheckVA - Text.VA] = 0x33;
+      break;
+    case 5:
+      ChangedImage.DynInfo.SecurityCookieRVA += 4;
+      break;
+    }
+    EXPECT_FALSE(getCheckedX86RegistrationCxxParentABI(Changed, ChangedImage));
+  }
 }
 
 TEST(RegistrationCallABI, CxxHandlerRejectsChangedCookieGuardSemantics) {

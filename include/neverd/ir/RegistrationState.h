@@ -20,6 +20,9 @@
 #include <vector>
 
 namespace neverd {
+namespace coff_loader {
+struct X86CxxHandlerABI;
+}
 
 struct LowFunc;
 
@@ -124,12 +127,20 @@ struct RegistrationIncomingFrameAccess {
 };
 
 /// A source call whose authenticated leaf checker receives the exact decoded
-/// image cookie in ECX on every reaching path. Only this occurrence may be
-/// replaced by a compiler-owned physical cookie check.
+/// image cookie in ECX on every reaching path. Replacing this occurrence still
+/// requires the native frame protocol's independent output proof.
 struct RegistrationCookieCheck {
   va_t Address = InvalidVA;
   va_t EndAddress = InvalidVA;
   int OpSeq = -1;
+};
+
+/// A C++ handler's decoded cookie condition projected into the parent's
+/// established frame coordinate. This is not a physical output-frame offset.
+struct RegistrationCxxCookieCondition {
+  int32_t FrameOffset = 0;
+  int32_t XORFrameOffset = 0;
+  bool operator==(const RegistrationCxxCookieCondition &) const = default;
 };
 
 /// A typed scalar catch whose runtime object width follows the checked
@@ -373,13 +384,14 @@ struct RegistrationStateAnalysis {
   std::vector<RegistrationCxxCatchObject> CxxCatchObjects;
   bool RuntimeObjectAccessesComplete = false;
   std::vector<RegistrationRuntimeObjectAccess> RuntimeObjectAccesses;
-  /// EH4 source initialization, encoding and immutable cookie lifetime have
-  /// been checked across every ordinary and runtime path. This does not prove
-  /// the compiler's physical cookie; native codegen validates that separately.
+  /// EH4 source encoding or authenticated C++ handler cookie conditions have
+  /// been checked across ordinary and runtime paths. This grants no physical
+  /// output-cookie layout or permission to erase an observable encoded value.
   bool SecurityCookiesComplete = false;
   va_t SecurityCookieVA = 0;
   va_t CookieCheckVA = 0;
   std::vector<RegistrationCookieCheck> CookieChecks;
+  std::vector<RegistrationCxxCookieCondition> CxxCookieConditions;
   /// May-read image extents across all reachable ordinary and runtime roots.
   /// Exact frame-relative reads cannot alias these extents. Unknown addresses
   /// make the set incomplete rather than silently omitting a possible alias.
@@ -446,13 +458,16 @@ struct RegistrationStateAnalysis {
 /// Solve ordinary and runtime-dispatch state transfers together. Stores take
 /// effect only after their exact decoded instruction retires. A union at a
 /// join is retained; address order never selects a predecessor's state.
+/// CxxHandler, when supplied, must be the loader's checked description for this
+/// source function and image; its conditions alone do not prove the parent.
 RegistrationStateAnalysis analyzeRegistrationStates(
     const LowFunc &Function, va_t SecurityCookieVA = 0, va_t CookieCheckVA = 0,
     const std::vector<RegistrationCalleeFrameContract> *Callees = nullptr,
     const std::vector<RegistrationCleanupFrameContract> *Cleanups = nullptr,
     const std::vector<RegistrationCalleeStackContract> *Stacks = nullptr,
     const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds = nullptr,
-    const std::vector<RegistrationSEHControlContract> *SEHControls = nullptr);
+    const std::vector<RegistrationSEHControlContract> *SEHControls = nullptr,
+    const coff_loader::X86CxxHandlerABI *CxxHandler = nullptr);
 
 /// Return exact address intervals only if every reaching state agrees about
 /// membership. An ambiguous join cannot be flattened into a lexical try range.
