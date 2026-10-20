@@ -13,13 +13,26 @@
 #ifndef NEVERD_LIB_PIPELINE_PIPELINERETURNMODELINGDETAIL_H
 #define NEVERD_LIB_PIPELINE_PIPELINERETURNMODELINGDETAIL_H
 
+#include "neverd/Common.h"
+
 #include <cstdint>
+#include <map>
 
 namespace neverd {
 
 struct BinaryImage;
+struct MedFunc;
+struct MedOp;
 struct PipelineResult;
 class DebugContext;
+
+/// The function of this module that a forwarding call \p Call enters: its
+/// direct target, or this image's own routine that an import's stub or slot
+/// reaches (importOwnRoutine), which sets \p ThroughImport.  Null for another
+/// module's routine and for the stub that reaches one.
+MedFunc *forwardingCallee(const BinaryImage &Img, const PipelineResult &Result,
+                          const std::map<va_t, MedFunc *> &ByEntry,
+                          const MedOp &Call, bool *ThroughImport = nullptr);
 
 /// Widen every callee that returns a 64-bit integer in a register pair to an
 /// i64 return, and remodel the call sites (including loop-carried i64

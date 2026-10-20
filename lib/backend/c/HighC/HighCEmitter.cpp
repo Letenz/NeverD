@@ -2325,10 +2325,19 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
         const bool WholeRegister =
             Read != ResultBytes.end() && Read->second > sizeof(int32_t);
         const auto Floating = FloatingResults.find(Name);
-        const std::string Return = Floating != FloatingResults.end()
-                                       ? typeToC(Floating->second)
-                                   : WholeRegister ? Register
-                                                   : "int";
+        // A compiler runtime routine that returns a double word returns it
+        // in the register pair (CompilerRuntimeDoubleWord.def): `__udivti3`'s
+        // calls read RDX as its high half.
+        const bool DoubleWord = libc::returnsDoubleWord(
+            cNameOfSymbol(Symbol, Opts.Format, Opts.TheArch),
+            pointerBytes(Opts.TheArch));
+        const std::string Return =
+            Floating != FloatingResults.end() ? typeToC(Floating->second)
+            : DoubleWord
+                ? (pointerBytes(Opts.TheArch) == 8 ? "unsigned __int128"
+                                                   : "uint64_t")
+            : WholeRegister ? Register
+                            : "int";
         // A stdcall routine pops the arguments its calls push: C compiled
         // from the output leaves them to it, where its parameters fill the
         // slots its decoration spells.

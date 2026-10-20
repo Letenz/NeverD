@@ -399,12 +399,13 @@ const char *typeOfDataObject(std::string_view Name) {
   return It == Types.end() ? nullptr : It->second;
 }
 
-bool returnsDoubleWord(std::string_view Name) {
-  static const std::unordered_set<std::string_view> Names = {
-#define NEVERD_DOUBLE_WORD_RESULT(NAME) NAME,
+bool returnsDoubleWord(std::string_view Name, unsigned WordBytes) {
+  static const std::unordered_map<std::string_view, unsigned> Words = {
+#define NEVERD_DOUBLE_WORD_RESULT(NAME, WORD_BYTES) {NAME, WORD_BYTES},
 #include "neverd/libc/CompilerRuntimeDoubleWord.def"
   };
-  return Names.count(Name) != 0;
+  const auto It = Words.find(Name);
+  return It != Words.end() && It->second == WordBytes;
 }
 
 std::optional<LibCArity> libcArityForSymbol(std::string_view Name,

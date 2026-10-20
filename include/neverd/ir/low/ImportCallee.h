@@ -54,6 +54,21 @@ inline std::string importCalleeName(const BinaryImage &Img, va_t Addr) {
   return {};
 }
 
+/// Whether the import a call to \p Addr reaches, through its stub or its
+/// slot, is a compiler runtime routine that returns a double word on a target
+/// of \p WordBytes registers (libc::returnsDoubleWord): `__udivti3` returns
+/// RDX:RAX on x86-64.
+inline bool importReturnsDoubleWord(const BinaryImage &Img, va_t Addr,
+                                    unsigned WordBytes) {
+  std::string Name = importCalleeName(Img, Addr);
+  if (Name.empty())
+    if (const Import *Imp = Img.findImportStubAt(Addr))
+      Name = Imp->Name;
+  return !Name.empty() &&
+         libc::returnsDoubleWord(cNameOfSymbol(Name, Img.Format, Img.Arch),
+                                 WordBytes);
+}
+
 /// Every address a call reaches an import through: its executable stubs
 /// and its import address slots.
 inline std::set<va_t> importCallAddresses(const BinaryImage &Img) {

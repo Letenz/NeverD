@@ -705,6 +705,22 @@ int entry(int x) { return sum((x & 1) + 1, twice(x), twice(x + 3)); }
                             {0, 1, -1, 7, 1000});
 }
 
+// fwd returns what make returns, a struct of two registers, by a tail
+// call (`xor rdi, 5; jmp make`).  The call returns both registers, not the
+// RDX fwd held before it, which entry would read as the second field.
+TEST_F(X86_64_CallAbi, ATailCallForwardsATwoRegisterStruct) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+struct pair { long a, b; };
+struct pair make(long x) __attribute__((noinline));
+struct pair fwd(long x) __attribute__((noinline));
+struct pair make(long x) { struct pair p = {x * 3, x + 7}; return p; }
+struct pair fwd(long x) { return make(x ^ 5); }
+long entry(long x) { struct pair p = fwd(x); return p.a * 2 + p.b; }
+)C",
+                            "entry", {"entry", "fwd", "make"},
+                            {0, 1, -1, 7, 1000});
+}
+
 // A relocatable object's first function sits at address 0, which a call
 // still names: GCC emits a static function first, and a call to it reads
 // the callee's summary as any other does.

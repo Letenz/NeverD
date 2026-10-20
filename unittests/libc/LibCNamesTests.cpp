@@ -1070,3 +1070,17 @@ TEST(IsReturnsTwiceFunction, RejectsUnrelated) {
   EXPECT_FALSE(isReturnsTwiceFunction("malloc"));
   EXPECT_FALSE(isReturnsTwiceFunction(""));
 }
+
+// A DI mode routine returns a double word on a 32-bit target, a TI mode one
+// on a 64-bit target; one returning an int returns one register on either.
+TEST(ReturnsDoubleWord, TakesTheTargetWord) {
+  EXPECT_TRUE(returnsDoubleWord("__udivdi3", 4));
+  EXPECT_FALSE(returnsDoubleWord("__udivdi3", 8));
+  EXPECT_TRUE(returnsDoubleWord("__udivti3", 8));
+  EXPECT_FALSE(returnsDoubleWord("__udivti3", 4));
+  EXPECT_TRUE(returnsDoubleWord("__fixunsxfti", 8));
+  EXPECT_TRUE(returnsDoubleWord("_aulldiv", 4));
+  EXPECT_FALSE(returnsDoubleWord("__clzti2", 8));
+  EXPECT_FALSE(returnsDoubleWord("__popcountti2", 8));
+  EXPECT_FALSE(returnsDoubleWord("strcmp", 8));
+}

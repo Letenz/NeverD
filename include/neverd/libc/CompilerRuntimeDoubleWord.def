@@ -7,62 +7,99 @@
 // The compiler runtime routines that return a double-word integer.  On a
 // 32-bit target GCC's libgcc, LLVM's compiler-rt and the Microsoft C runtime
 // implement 64-bit arithmetic and conversions with them, and each returns its
-// result in a register pair: EDX:EAX on x86, R1:R0 on ARM.  The routines that
-// return more than the pair (__aeabi_uldivmod's remainder in R3:R2, MSVC's
-// _aulldvrm in ECX:EBX) and those returning an int or a float are not here.
+// result in a register pair: EDX:EAX on x86, R1:R0 on ARM.  On a 64-bit
+// target libgcc and compiler-rt implement 128-bit (TI mode) arithmetic and
+// conversions the same way, returning RDX:RAX on x86-64 and X1:X0 on AArch64.
+// The routines that return more than the pair (__aeabi_uldivmod's remainder
+// in R3:R2, MSVC's _aulldvrm in ECX:EBX) and those returning an int or a
+// float are not here.
 //
-// NEVERD_DOUBLE_WORD_RESULT(Name): the C name of one routine.
+// NEVERD_DOUBLE_WORD_RESULT(Name, WordBytes): the C name of one routine, and
+// the bytes of the word of the targets whose double word it returns: 4 for
+// a DI mode routine of a 32-bit target, 8 for a TI mode one of a 64-bit
+// target.  A DI mode routine a 64-bit target calls returns one register.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_DOUBLE_WORD_RESULT
-#error "define NEVERD_DOUBLE_WORD_RESULT(Name) before including this file"
+#error                                                                         \
+    "define NEVERD_DOUBLE_WORD_RESULT(Name, WordBytes) before including this file"
 #endif
 
 // libgcc and compiler-rt integer arithmetic.
-NEVERD_DOUBLE_WORD_RESULT("__absvdi2")
-NEVERD_DOUBLE_WORD_RESULT("__addvdi3")
-NEVERD_DOUBLE_WORD_RESULT("__ashldi3")
-NEVERD_DOUBLE_WORD_RESULT("__ashrdi3")
-NEVERD_DOUBLE_WORD_RESULT("__bswapdi2")
-NEVERD_DOUBLE_WORD_RESULT("__divdi3")
-NEVERD_DOUBLE_WORD_RESULT("__divmoddi4")
-NEVERD_DOUBLE_WORD_RESULT("__lshrdi3")
-NEVERD_DOUBLE_WORD_RESULT("__moddi3")
-NEVERD_DOUBLE_WORD_RESULT("__muldi3")
-NEVERD_DOUBLE_WORD_RESULT("__mulvdi3")
-NEVERD_DOUBLE_WORD_RESULT("__negdi2")
-NEVERD_DOUBLE_WORD_RESULT("__negvdi2")
-NEVERD_DOUBLE_WORD_RESULT("__subvdi3")
-NEVERD_DOUBLE_WORD_RESULT("__udivdi3")
-NEVERD_DOUBLE_WORD_RESULT("__udivmoddi4")
-NEVERD_DOUBLE_WORD_RESULT("__umoddi3")
+NEVERD_DOUBLE_WORD_RESULT("__absvdi2", 4)
+NEVERD_DOUBLE_WORD_RESULT("__addvdi3", 4)
+NEVERD_DOUBLE_WORD_RESULT("__ashldi3", 4)
+NEVERD_DOUBLE_WORD_RESULT("__ashrdi3", 4)
+NEVERD_DOUBLE_WORD_RESULT("__bswapdi2", 4)
+NEVERD_DOUBLE_WORD_RESULT("__divdi3", 4)
+NEVERD_DOUBLE_WORD_RESULT("__divmoddi4", 4)
+NEVERD_DOUBLE_WORD_RESULT("__lshrdi3", 4)
+NEVERD_DOUBLE_WORD_RESULT("__moddi3", 4)
+NEVERD_DOUBLE_WORD_RESULT("__muldi3", 4)
+NEVERD_DOUBLE_WORD_RESULT("__mulvdi3", 4)
+NEVERD_DOUBLE_WORD_RESULT("__negdi2", 4)
+NEVERD_DOUBLE_WORD_RESULT("__negvdi2", 4)
+NEVERD_DOUBLE_WORD_RESULT("__subvdi3", 4)
+NEVERD_DOUBLE_WORD_RESULT("__udivdi3", 4)
+NEVERD_DOUBLE_WORD_RESULT("__udivmoddi4", 4)
+NEVERD_DOUBLE_WORD_RESULT("__umoddi3", 4)
 // libgcc and compiler-rt floating-point to 64-bit integer conversions.
-NEVERD_DOUBLE_WORD_RESULT("__fixdfdi")
-NEVERD_DOUBLE_WORD_RESULT("__fixsfdi")
-NEVERD_DOUBLE_WORD_RESULT("__fixtfdi")
-NEVERD_DOUBLE_WORD_RESULT("__fixunsdfdi")
-NEVERD_DOUBLE_WORD_RESULT("__fixunssfdi")
-NEVERD_DOUBLE_WORD_RESULT("__fixunstfdi")
-NEVERD_DOUBLE_WORD_RESULT("__fixunsxfdi")
-NEVERD_DOUBLE_WORD_RESULT("__fixxfdi")
+NEVERD_DOUBLE_WORD_RESULT("__fixdfdi", 4)
+NEVERD_DOUBLE_WORD_RESULT("__fixsfdi", 4)
+NEVERD_DOUBLE_WORD_RESULT("__fixtfdi", 4)
+NEVERD_DOUBLE_WORD_RESULT("__fixunsdfdi", 4)
+NEVERD_DOUBLE_WORD_RESULT("__fixunssfdi", 4)
+NEVERD_DOUBLE_WORD_RESULT("__fixunstfdi", 4)
+NEVERD_DOUBLE_WORD_RESULT("__fixunsxfdi", 4)
+NEVERD_DOUBLE_WORD_RESULT("__fixxfdi", 4)
 // The ARM run-time ABI's 64-bit helpers.
-NEVERD_DOUBLE_WORD_RESULT("__aeabi_d2lz")
-NEVERD_DOUBLE_WORD_RESULT("__aeabi_d2ulz")
-NEVERD_DOUBLE_WORD_RESULT("__aeabi_f2lz")
-NEVERD_DOUBLE_WORD_RESULT("__aeabi_f2ulz")
-NEVERD_DOUBLE_WORD_RESULT("__aeabi_lasr")
-NEVERD_DOUBLE_WORD_RESULT("__aeabi_llsl")
-NEVERD_DOUBLE_WORD_RESULT("__aeabi_llsr")
-NEVERD_DOUBLE_WORD_RESULT("__aeabi_lmul")
+NEVERD_DOUBLE_WORD_RESULT("__aeabi_d2lz", 4)
+NEVERD_DOUBLE_WORD_RESULT("__aeabi_d2ulz", 4)
+NEVERD_DOUBLE_WORD_RESULT("__aeabi_f2lz", 4)
+NEVERD_DOUBLE_WORD_RESULT("__aeabi_f2ulz", 4)
+NEVERD_DOUBLE_WORD_RESULT("__aeabi_lasr", 4)
+NEVERD_DOUBLE_WORD_RESULT("__aeabi_llsl", 4)
+NEVERD_DOUBLE_WORD_RESULT("__aeabi_llsr", 4)
+NEVERD_DOUBLE_WORD_RESULT("__aeabi_lmul", 4)
 // The Microsoft C runtime's 32-bit x86 helpers.
-NEVERD_DOUBLE_WORD_RESULT("_alldiv")
-NEVERD_DOUBLE_WORD_RESULT("_allmul")
-NEVERD_DOUBLE_WORD_RESULT("_allrem")
-NEVERD_DOUBLE_WORD_RESULT("_allshl")
-NEVERD_DOUBLE_WORD_RESULT("_allshr")
-NEVERD_DOUBLE_WORD_RESULT("_aulldiv")
-NEVERD_DOUBLE_WORD_RESULT("_aullrem")
-NEVERD_DOUBLE_WORD_RESULT("_aullshr")
+NEVERD_DOUBLE_WORD_RESULT("_alldiv", 4)
+NEVERD_DOUBLE_WORD_RESULT("_allmul", 4)
+NEVERD_DOUBLE_WORD_RESULT("_allrem", 4)
+NEVERD_DOUBLE_WORD_RESULT("_allshl", 4)
+NEVERD_DOUBLE_WORD_RESULT("_allshr", 4)
+NEVERD_DOUBLE_WORD_RESULT("_aulldiv", 4)
+NEVERD_DOUBLE_WORD_RESULT("_aullrem", 4)
+NEVERD_DOUBLE_WORD_RESULT("_aullshr", 4)
+
+// libgcc and compiler-rt 128-bit integer arithmetic on a 64-bit target.
+NEVERD_DOUBLE_WORD_RESULT("__absvti2", 8)
+NEVERD_DOUBLE_WORD_RESULT("__addvti3", 8)
+NEVERD_DOUBLE_WORD_RESULT("__ashlti3", 8)
+NEVERD_DOUBLE_WORD_RESULT("__ashrti3", 8)
+NEVERD_DOUBLE_WORD_RESULT("__divmodti4", 8)
+NEVERD_DOUBLE_WORD_RESULT("__divti3", 8)
+NEVERD_DOUBLE_WORD_RESULT("__lshrti3", 8)
+NEVERD_DOUBLE_WORD_RESULT("__modti3", 8)
+NEVERD_DOUBLE_WORD_RESULT("__muloti4", 8)
+NEVERD_DOUBLE_WORD_RESULT("__multi3", 8)
+NEVERD_DOUBLE_WORD_RESULT("__mulvti3", 8)
+NEVERD_DOUBLE_WORD_RESULT("__negti2", 8)
+NEVERD_DOUBLE_WORD_RESULT("__negvti2", 8)
+NEVERD_DOUBLE_WORD_RESULT("__subvti3", 8)
+NEVERD_DOUBLE_WORD_RESULT("__udivmodti4", 8)
+NEVERD_DOUBLE_WORD_RESULT("__udivti3", 8)
+NEVERD_DOUBLE_WORD_RESULT("__umodti3", 8)
+// libgcc and compiler-rt floating-point to 128-bit integer conversions.
+NEVERD_DOUBLE_WORD_RESULT("__fixdfti", 8)
+NEVERD_DOUBLE_WORD_RESULT("__fixhfti", 8)
+NEVERD_DOUBLE_WORD_RESULT("__fixsfti", 8)
+NEVERD_DOUBLE_WORD_RESULT("__fixtfti", 8)
+NEVERD_DOUBLE_WORD_RESULT("__fixunsdfti", 8)
+NEVERD_DOUBLE_WORD_RESULT("__fixunshfti", 8)
+NEVERD_DOUBLE_WORD_RESULT("__fixunssfti", 8)
+NEVERD_DOUBLE_WORD_RESULT("__fixunstfti", 8)
+NEVERD_DOUBLE_WORD_RESULT("__fixunsxfti", 8)
+NEVERD_DOUBLE_WORD_RESULT("__fixxfti", 8)
 
 #undef NEVERD_DOUBLE_WORD_RESULT

@@ -424,7 +424,7 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
       for (const auto &MF : Result.MedFuncs) {
         ByEntry[MF.Entry] = &MF;
         if (libc::returnsDoubleWord(
-                cNameOfSymbol(MF.Name, Img.Format, Img.Arch)))
+                cNameOfSymbol(MF.Name, Img.Format, Img.Arch), TRI.PointerSize))
           WideRetCallees.insert(MF.Entry);
       }
       std::set<va_t> Proven;
@@ -447,8 +447,10 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
             const Import *Import = Img.findImportAt(Call.Inputs[0].ConstVal);
             // An opaque import's caller reading EDX/R1 cannot override the
             // import's ABI. Only a declared double-word runtime is evidence.
-            return Import && libc::returnsDoubleWord(cNameOfSymbol(
-                                 Import->Name, Img.Format, Img.Arch));
+            return Import &&
+                   libc::returnsDoubleWord(
+                       cNameOfSymbol(Import->Name, Img.Format, Img.Arch),
+                       TRI.PointerSize);
           };
           if (!returnsRegisterPairI64(Callee, TRI, TailReturnsPair))
             continue;

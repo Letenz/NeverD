@@ -139,6 +139,11 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
     // is the stack its calls store.
     sizeVariadicOverflowFromStores(Result.MedFuncs, Img.Arch);
   }
+  // A tail call that forwards a multi-register return (`return g(x);`, an
+  // import's stub) returns every register its callee returns, as in lift
+  // mode; without the remodel the RETURN finds the trailing registers only
+  // before the call, which may change them.
+  remodelStructReturnForwarderCalls(Img, Result);
 }
 
 void Pipeline::buildHighIR(const BinaryImage &Img, const PipelineOptions &Opts,
