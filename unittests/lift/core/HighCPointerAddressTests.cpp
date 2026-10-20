@@ -48101,6 +48101,51 @@ TEST(HighCPointerAddresses, NarrowObjectsPassedAsPointersStayIntegers) {
   expectCSyntax(Source);
 }
 
+TEST(HighCPointerAddresses, AlignedAccessesInRelocatedWordsKeepTheirResidue) {
+  // sort reads a table that holds a relocated pointer with a 16-byte access
+  // 8 bytes into it, which the image aligns: the table starts 8 bytes past
+  // a 16-byte boundary, and C laid its words out from one, so no unit was
+  // written at all.  A word before the table keeps every address's residue
+  // modulo 16 as in the image, and each slot word-aligned.
+  constexpr va_t Data = 0x140003000;
+  constexpr va_t Table = Data + 8;
+  constexpr va_t Target = Data + 0x100;
+  std::vector<uint8_t> Bytes(0x200, 0);
+  for (unsigned I = 0; I < 8; ++I)
+    Bytes[(Table - Data) + I] = static_cast<uint8_t>(Target >> (8 * I));
+  BinaryImage Img = makeImageObjectFixture(Data, Bytes, true);
+  Img.DataPtrRelocSlots.insert(Table);
+  const auto Wide = NdType::makeInt(16, false);
+  HighFunc Func;
+  Func.Name = "compare_keys";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = Wide;
+  HighStmt Guard = callStmt(
+      "require_aligned", 0,
+      {HighExpr::makeConst(Table + 8, 8, ConstantAddressProvenance::Address),
+       HighExpr::makeConst(16, 8)});
+  Guard.CallExpr->IntrinsicId = Intrinsic::RequireAligned;
+  Func.Body = {Guard};
+  // Two 16-byte reads that overlap: one group of the table's bytes.
+  auto Keys = HighExpr::makeBinop(
+      NdOp::INT_XOR, HighExpr::makeLoad(HighExpr::makeConst(Table, 8), Wide),
+      HighExpr::makeLoad(HighExpr::makeConst(Table + 8, 8), Wide));
+  Keys->Type = Wide;
+  returnValue(Func, std::move(Keys));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("_Alignas(16) uintptr_t w["), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find(".b[16]"), std::string::npos) << Source;
+  expectCSyntax(Source);
+}
+
 TEST(HighCPointerAddresses, AlignedReadsOfAStringAlignItsArray) {
   // make and patch read a string constant with an aligned access, whose
   // guard masked the literal: `("$(-*-eval-flags-" & 15)` is no C, and a

@@ -3624,7 +3624,9 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     // An atomic access in the bytes, or one that requires its alignment,
     // needs its address as aligned in C as in the image: bytes before the
     // group give every address its residue modulo the widest one.  Words
-    // start word-aligned, at the group.
+    // take them as whole words, which keeps each slot word-aligned: a group
+    // that starts at a word does (sort's table, 8 bytes past a 16-byte
+    // boundary, which a 16-byte access in it requires).
     for (auto It = ImageObjects.lower_bound(GroupBase);
          It != ImageObjects.end() && It->first < GroupEnd; ++It) {
       const ImageObject &Obj = It->second;
@@ -3636,7 +3638,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           Obj.AlignedBytes));
       if (Align <= 1)
         continue;
-      if (!Backing.Words.empty() && (It->first - GroupBase) % Align)
+      if (!Backing.Words.empty() && (GroupBase % Align) % PointerBytes)
         throw std::invalid_argument(
             std::string(Obj.AtomicBytes ? "an atomic" : "an aligned") +
             " access in relocated image words at 0x" +
@@ -3644,8 +3646,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
             " is less aligned in C than in the image");
       Backing.Align = std::max(Backing.Align, Align);
     }
-    if (Backing.Words.empty())
-      Backing.Pad = GroupBase % Backing.Align;
+    Backing.Pad = GroupBase % Backing.Align;
     // A C library header's object alone is the header's: its bytes are its
     // address's, as aligned as the header declares it.
     if (GroupCount == 1 && First != ImageObjects.end() &&
@@ -3915,7 +3916,8 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
   // each other by the declarations that come first.
   const unsigned PointerBytes = pointerBytes(Opts.TheArch);
   auto WordCount = [&](const ImageBacking &Backing) {
-    return (Backing.End - Backing.Base + PointerBytes - 1) / PointerBytes;
+    return (Backing.Pad + (Backing.End - Backing.Base) + PointerBytes - 1) /
+           PointerBytes;
   };
   for (const ImageBacking &Backing : ImageBackings) {
     if (Backing.Words.empty())
@@ -3953,7 +3955,8 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
     const uint64_t Words = WordCount(Backing);
     const bool Wrapped = Words > ImageWordsPerLine;
     for (uint64_t I = 0; I < Words; ++I) {
-      const va_t Slot = Backing.Base + I * PointerBytes;
+      // The words before the group pad it; they hold no byte of the image.
+      const va_t Slot = Backing.Base - Backing.Pad + I * PointerBytes;
       if (Wrapped && I % ImageWordsPerLine == 0)
         OS << (I ? ",\n  " : "\n  ");
       else
@@ -3965,10 +3968,10 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
           OS << *Target;
           continue;
         }
-      // Bytes past the image's data, and past the group, are zero.
+      // Bytes past the image's data, and outside the group, are zero.
       uint64_t Value = 0;
       for (unsigned Byte = 0; Byte < PointerBytes; ++Byte)
-        if (Slot + Byte < Backing.End)
+        if (Slot + Byte >= Backing.Base && Slot + Byte < Backing.End)
           if (const uint8_t *Data = Opts.Image->readVA(Slot + Byte, 1))
             Value |= uint64_t{*Data} << (8 * Byte);
       OS << (Value ? "0x" + llvm::utohexstr(Value) +
