@@ -5141,6 +5141,7 @@ TEST(InterpreterSpecialization, TimestampTransitionMatchesCompleteStateOracle) {
 #include "CPUQueryRecoveryTests.inc"
 #include "MXCSRRecoveryTests.inc"
 #include "SavedAddressCellsTests.inc"
+#include "SavedScalarCellsTests.inc"
 #include "SegmentedStoreTests.inc"
 #include "SupervisorReadRecoveryTests.inc"
 

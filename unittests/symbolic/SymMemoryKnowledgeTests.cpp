@@ -262,3 +262,121 @@ TEST(SymMemoryKnowledge, LaterWritesAndHavocStillInvalidateMayAliases) {
   EXPECT_TRUE(target.memoryKnowledge().Facts.empty());
   EXPECT_NE(target.load(p, 8), current);
 }
+
+TEST(SymMaterializedRanges, ProjectionDoesNotCreateValues) {
+  SymContext C;
+  SymState S(C);
+  const auto P = C.mkVar("p", 64);
+  S.store(P, C.mkVar("value", 64));
+  S.store(C.mkAdd(P, C.mkConst(64, 16)), C.mkConst(32, 17));
+  const auto Nodes = C.numNodes();
+  const auto Live = S.numLiveBytes();
+  uint64_t Budget = 13;
+  const auto R = S.materializedRegionRanges(P, Budget);
+  ASSERT_TRUE(R);
+  ASSERT_EQ(R->size(), 2u);
+  EXPECT_EQ((*R)[0].Offset, 0u);
+  EXPECT_EQ((*R)[0].Bytes, 8u);
+  EXPECT_EQ((*R)[1].Offset, 16u);
+  EXPECT_EQ((*R)[1].Bytes, 4u);
+  EXPECT_EQ(Budget, 0u);
+  EXPECT_EQ(C.numNodes(), Nodes);
+  EXPECT_EQ(S.numLiveBytes(), Live);
+}
+
+TEST(SymMaterializedRanges, GapsAndModularWrapStaySeparate) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    SymContext C;
+    SymState S(C, Order);
+    const auto P = C.mkVar("p", 64);
+    const auto Last = std::numeric_limits<uint64_t>::max();
+    S.store(C.mkAdd(P, C.mkConst(64, Last - 2)), C.mkConst(32, 0x11223344));
+    S.store(C.mkAdd(P, C.mkConst(64, 8)), C.mkConst(16, 0x5566));
+    uint64_t Budget = 7;
+    const auto R = S.materializedRegionRanges(P, Budget);
+    ASSERT_TRUE(R);
+    ASSERT_EQ(R->size(), 3u);
+    EXPECT_EQ((*R)[0].Offset, 0u);
+    EXPECT_EQ((*R)[0].Bytes, 1u);
+    EXPECT_EQ((*R)[1].Offset, 8u);
+    EXPECT_EQ((*R)[1].Bytes, 2u);
+    EXPECT_EQ((*R)[2].Offset, Last - 2);
+    EXPECT_EQ((*R)[2].Bytes, 3u);
+    EXPECT_EQ(Budget, 0u);
+  }
+}
+
+TEST(SymMaterializedRanges, AdjacentPartialWritesFormOneCurrentExtent) {
+  SymContext C;
+  SymState S(C);
+  const auto P = C.mkVar("p", 64);
+  S.store(P, C.mkConst(16, 0x1122));
+  S.store(C.mkAdd(P, C.mkConst(64, 2)), C.mkVar("tail", 32));
+  S.store(C.mkAdd(P, C.mkConst(64, 1)), C.mkConst(8, 0x33));
+  uint64_t Budget = 7;
+  const auto R = S.materializedRegionRanges(P, Budget);
+  ASSERT_TRUE(R);
+  ASSERT_EQ(R->size(), 1u);
+  EXPECT_EQ(R->front().Offset, 0u);
+  EXPECT_EQ(R->front().Bytes, 6u);
+  EXPECT_EQ(Budget, 0u);
+}
+
+TEST(SymMaterializedRanges, RefusedProjectionLeavesStateUnchanged) {
+  SymContext C;
+  SymState S(C);
+  const auto P = C.mkVar("p", 64);
+  const auto Value = C.mkVar("value", 64);
+  S.store(P, Value);
+  const auto Nodes = C.numNodes();
+  uint64_t Zero = 0;
+  EXPECT_FALSE(S.materializedRegionRanges(P, Zero));
+  EXPECT_EQ(Zero, 0u);
+  uint64_t Short = 8;
+  EXPECT_FALSE(S.materializedRegionRanges(P, Short));
+  EXPECT_EQ(Short, 7u);
+  EXPECT_EQ(C.numNodes(), Nodes);
+  EXPECT_EQ(S.load(P, 8), Value);
+  uint64_t Exact = 9;
+  ASSERT_TRUE(S.materializedRegionRanges(P, Exact));
+  EXPECT_EQ(Exact, 0u);
+}
+
+TEST(SymMaterializedRanges, MissingAndNoncanonicalBasesSupplyNoFacts) {
+  SymContext C;
+  SymState S(C);
+  const auto P = C.mkVar("p", 64);
+  const auto Shifted = C.mkAdd(P, C.mkConst(64, 8));
+  S.store(Shifted, C.mkConst(8, 0x55));
+  const auto Q = C.mkVar("q", 64);
+  const auto Invalid = SymRef(uint32_t(C.numNodes() + 20));
+  const auto Nodes = C.numNodes();
+  for (auto Base : {SymRef(), Invalid, Q, Shifted}) {
+    uint64_t Budget = 1;
+    const auto R = S.materializedRegionRanges(Base, Budget);
+    ASSERT_TRUE(R);
+    EXPECT_TRUE(R->empty());
+    EXPECT_EQ(Budget, 0u);
+  }
+  EXPECT_EQ(C.numNodes(), Nodes);
+}
+
+TEST(SymMaterializedRanges, HavocDoesNotResurrectHistoricalCells) {
+  SymContext C;
+  SymState S(C);
+  const auto P = C.mkVar("p", 64);
+  const auto Value = S.load(P, 8);
+  ASSERT_FALSE(S.loadOrigins(Value).empty());
+  S.store(C.mkVar("may_alias", 64), C.mkConst(8, 0));
+  uint64_t Budget = 1;
+  auto R = S.materializedRegionRanges(P, Budget);
+  ASSERT_TRUE(R);
+  EXPECT_TRUE(R->empty());
+  S.load(C.mkAdd(P, C.mkConst(64, 16)), 1);
+  Budget = 2;
+  R = S.materializedRegionRanges(P, Budget);
+  ASSERT_TRUE(R);
+  ASSERT_EQ(R->size(), 1u);
+  EXPECT_EQ(R->front().Offset, 16u);
+  EXPECT_EQ(R->front().Bytes, 1u);
+}

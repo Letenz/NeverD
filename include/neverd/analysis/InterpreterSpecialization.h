@@ -301,14 +301,14 @@ struct SpecializationOptions {
   bool RequireRestoredFrameAtReturn = false;
   /// Opt in to additional solver queries proving that an unknown-origin
   /// memory write's complete extent misses the entry return slot. Also preserve
-  /// live native return cells and saved frame-address cells across non-frame,
-  /// 64-bit-address stores only when each complete cell is proved disjoint
-  /// under the current path. This is a precision strategy, not a nonalias
-  /// assumption. Requires an active
-  /// restored-frame check. Unsafe provenance and all unproved memory alias
-  /// invalidation remain; proofs and preservation share global budgets.
-  /// Includes the complete CMPXCHG write phase, even when comparison fails.
-  /// Disabled by default so existing strategies keep their costs.
+  /// live native return cells, saved frame addresses and current scalar frame
+  /// values across non-frame, 64-bit-address stores only when each complete
+  /// cell is proved disjoint under the current path. This is a precision
+  /// strategy, not a nonalias assumption. Requires an active restored-frame
+  /// check. Unsafe provenance and all unproved memory alias invalidation
+  /// remain; proofs and preservation share global budgets. Includes the
+  /// complete CMPXCHG write phase, even when comparison fails. Disabled by
+  /// default so existing strategies keep their costs.
   bool ProveStoreReturnSlotSeparation = false;
   /// Prove each complete non-frame write disjoint from EntryFrameBounds under
   /// the current path and explicit frame domain before preserving its bytes.
