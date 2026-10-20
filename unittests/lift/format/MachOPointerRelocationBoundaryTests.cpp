@@ -187,6 +187,12 @@ public:
     return Emitter.classifyPointerTableLoadRoles(Value).isCallableOnly();
   }
 
+  static std::tuple<bool, bool, std::set<uint64_t>>
+  pointerTableLoadDomain(MedLLVMEmitter &Emitter, const MedVar &Value) {
+    const auto Roles = Emitter.classifyPointerTableLoadRoles(Value);
+    return {Roles.Complete, Roles.isCallableOnly(), Roles.Slots};
+  }
+
   static bool buildingEdgeQueryIsProvisional(MedLLVMEmitter &Emitter,
                                              const PhiNode &Phi, int PredId) {
     Emitter.FeasibleEdgesFor = Emitter.CurMedFunc;
@@ -21726,6 +21732,263 @@ TEST(LLVMCodePointerInvariantBoundary,
           << Diagnostic;
     }
   }
+}
+
+TEST(LLVMCodePointerInvariantBoundary,
+     PostTestedCounterPreservesExactRecordStrideAndRejectsBypasses) {
+  enum class Case {
+    Valid,
+    Unsigned,
+    NegatedGuard,
+    HeaderLoad,
+    NonzeroInitial,
+    NegativeInitial,
+    BadStep,
+    OldCountGuard,
+    MissingPred,
+    StructuralBypass,
+    Exceptional,
+    HeaderRoot,
+    BodyRoot,
+    LatchRoot,
+    ImageRoot,
+    DuplicatePhi,
+    DuplicateStep,
+    WrongStepSSA,
+    WrongGuardSSA,
+    AddressLimit,
+    WrappingLimit,
+    FutureStep,
+    WrongTarget,
+    ExtraBackedge,
+    MissingArm,
+    NarrowStep,
+    WrongArchitecture,
+    DataSlot,
+    UnknownSlot,
+    ImplicitClobber
+  };
+  for (Arch A : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+      for (unsigned Count : {1u, 4u, 63u})
+        for (Case C : {Case::Valid,
+                       Case::Unsigned,
+                       Case::NegatedGuard,
+                       Case::HeaderLoad,
+                       Case::NonzeroInitial,
+                       Case::NegativeInitial,
+                       Case::BadStep,
+                       Case::OldCountGuard,
+                       Case::MissingPred,
+                       Case::StructuralBypass,
+                       Case::Exceptional,
+                       Case::HeaderRoot,
+                       Case::BodyRoot,
+                       Case::LatchRoot,
+                       Case::ImageRoot,
+                       Case::DuplicatePhi,
+                       Case::DuplicateStep,
+                       Case::WrongStepSSA,
+                       Case::WrongGuardSSA,
+                       Case::AddressLimit,
+                       Case::WrappingLimit,
+                       Case::FutureStep,
+                       Case::WrongTarget,
+                       Case::ExtraBackedge,
+                       Case::MissingArm,
+                       Case::NarrowStep,
+                       Case::WrongArchitecture,
+                       Case::DataSlot,
+                       Case::UnknownSlot,
+                       Case::ImplicitClobber}) {
+          SCOPED_TRACE(std::to_string(static_cast<int>(A)) + "/" +
+                       formatTraceName(Format) + "/" + std::to_string(Count) +
+                       "/" + std::to_string(static_cast<int>(C)));
+          const unsigned Width = getTargetRegInfo(A).PointerSize;
+          constexpr uint64_t Stride = 88, TableVA = 0x4000, TargetVA = 0x2000;
+          BinaryImage Image;
+          Image.Arch = A;
+          Image.Format = Format;
+          Image.Bits = Width == 8 ? Bitness::Bits64 : Bitness::Bits32;
+          Segment Text;
+          Text.VA = 0x100;
+          Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+          Text.Data.resize(0x2000);
+          Text.Size = Text.FileSz = Text.Data.size();
+          Image.Segments.push_back(Text);
+          Segment Data;
+          Data.VA = TableVA;
+          Data.Name = ".rodata";
+          Data.Flags = SegmentFlags::Readable;
+          Data.Data.resize((Count + 1) * Stride, 0xff);
+          Data.Size = Data.FileSz = Data.Data.size();
+          std::set<uint64_t> ExpectedSlots;
+          for (unsigned I = 0; I < Count; ++I) {
+            const uint64_t Slot = TableVA + I * Stride;
+            std::memcpy(Data.Data.data() + I * Stride, &TargetVA, Width);
+            Image.CodePtrRelocSlots.insert(Slot);
+            ExpectedSlots.insert(Slot);
+          }
+          if (C == Case::DataSlot || C == Case::UnknownSlot) {
+            Image.CodePtrRelocSlots.erase(*ExpectedSlots.rbegin());
+            if (C == Case::DataSlot)
+              Image.DataPtrRelocSlots.insert(*ExpectedSlots.rbegin());
+          }
+          // An unused neighbouring relocation keeps the run recognizable even
+          // when the sole selected field has no role. The other fields and
+          // the first out-of-range record stay unknown.
+          std::memcpy(Data.Data.data() + Width, &TargetVA, Width);
+          Image.CodePtrRelocSlots.insert(TableVA + Width);
+          Image.Segments.push_back(Data);
+          Image.RelocDataAddrs.insert(TableVA);
+          Image.CodeRefTargets.insert(TargetVA);
+          Section S;
+          S.VA = TableVA;
+          S.Name = Data.Name;
+          S.Size = S.FileSz = Data.Size;
+          S.Flags = Data.Flags;
+          Image.Sections.push_back(S);
+          auto v = [&](int Id, unsigned Size = 0) {
+            MedVar V;
+            V.Kind = MedVar::Temp;
+            V.TheArch = A;
+            V.Id = Id;
+            V.SSAVer = 1;
+            V.Size = Size ? Size : Width;
+            return V;
+          };
+          auto n = [&](uint64_t N, unsigned Size = 0) {
+            return MedVar::makeConst(N, Size ? Size : Width,
+                                     ConstantAddressProvenance::Scalar);
+          };
+          MedFunc F;
+          F.Name = "post_tested_records";
+          F.Entry = 0x100;
+          F.ReturnType = NdType::makeVoid();
+          F.Blocks.resize(5);
+          for (unsigned I = 0; I < 5; ++I) {
+            F.Blocks[I].Id = I;
+            F.Blocks[I].StartAddr = 0x100 + I * 0x40;
+            F.Blocks[I].EndAddr = 0x140 + I * 0x40;
+          }
+          F.Blocks[0].Succs = {1};
+          F.Blocks[1].Preds = {0, 3};
+          F.Blocks[1].Succs = {2, 3};
+          F.Blocks[2].Preds = {1};
+          F.Blocks[2].Succs = {3};
+          F.Blocks[3].Preds = {1, 2};
+          F.Blocks[3].Succs = {4, 1};
+          F.Blocks[4].Preds = {3};
+          MedVar Choose = v(20, 1);
+          Choose.Kind = MedVar::Param;
+          F.Params.push_back(Choose);
+          const uint64_t Initial =
+              C == Case::NonzeroInitial ? 1
+              : C == Case::NegativeInitial
+                  ? (Width == 8 ? ~uint64_t(0) : 0xffffffff)
+                  : 0;
+          F.Blocks[1].Phis.push_back({v(0), {{0, n(Initial)}, {3, v(1)}}});
+          auto op = [&](int B, NdOp Code, MedVar Out,
+                        std::initializer_list<MedVar> Inputs) {
+            MedOp O;
+            O.Opcode = Code;
+            O.Output = Out;
+            O.Addr = F.Blocks[B].StartAddr + F.Blocks[B].Ops.size();
+            for (auto V : Inputs)
+              O.addInput(V);
+            F.Blocks[B].Ops.push_back(O);
+          };
+          op(0, NdOp::BRANCH, {}, {n(0x140)});
+          const int Body = C == Case::HeaderLoad ? 1 : 2;
+          op(Body, NdOp::INT_MULT, v(2), {v(0), n(Stride)});
+          op(Body, NdOp::INT_ADD, v(3),
+             {MedVar::makeConst(TableVA, Width,
+                                ConstantAddressProvenance::DataAddress),
+              v(2)});
+          op(Body, NdOp::LOAD, v(4), {v(3)});
+          op(Body, NdOp::INDIR_CALL, {}, {v(4)});
+          op(1, NdOp::COND_BR, {}, {n(0x1c0), Choose});
+          op(2, NdOp::BRANCH, {}, {n(0x1c0)});
+          op(3, NdOp::INT_ADD, v(1),
+             {C == Case::WrongStepSSA ? v(30) : v(0),
+              n(C == Case::BadStep ? 2 : 1)});
+          MedVar Limit =
+              n(C == Case::WrappingLimit ? uint64_t(1) << (Width * 8 - 1)
+                                         : Count);
+          if (C == Case::AddressLimit)
+            Limit.Provenance = ConstantAddressProvenance::DataAddress;
+          const MedVar Compared = C == Case::OldCountGuard   ? v(0)
+                                  : C == Case::WrongGuardSSA ? v(30)
+                                                             : v(1);
+          op(3, C == Case::Unsigned ? NdOp::INT_LESS : NdOp::INT_SLESS, v(5, 1),
+             {Compared, Limit});
+          if (C == Case::NegatedGuard)
+            op(3, NdOp::BOOL_NOT, v(6, 1), {v(5, 1)});
+          op(3, NdOp::COND_BR, {},
+             {n(C == Case::WrongTarget    ? 0x999
+                : C == Case::NegatedGuard ? 0x200
+                                          : 0x140),
+              C == Case::NegatedGuard ? v(6, 1) : v(5, 1)});
+          op(4, NdOp::RETURN, {}, {});
+          if (C == Case::MissingPred)
+            F.Blocks[1].Preds.pop_back();
+          if (C == Case::StructuralBypass) {
+            F.Blocks[0].Succs.push_back(2);
+            F.Blocks[2].Preds.push_back(0);
+          }
+          if (C == Case::Exceptional) {
+            F.Blocks[0].ExceptionalSuccs.push_back({2});
+            F.Blocks[2].ExceptionalPreds.push_back({0});
+          }
+          if (C == Case::HeaderRoot || C == Case::BodyRoot ||
+              C == Case::LatchRoot)
+            F.ModuleAnalysisRoots.insert(C == Case::HeaderRoot ? 0x141
+                                         : C == Case::BodyRoot ? 0x181
+                                                               : 0x1c1);
+          if (C == Case::ImageRoot)
+            Image.CodeRefTargets.insert(0x181);
+          if (C == Case::DuplicatePhi)
+            F.Blocks[1].Phis.push_back(F.Blocks[1].Phis.front());
+          if (C == Case::DuplicateStep)
+            F.Blocks[0].Ops.insert(F.Blocks[0].Ops.begin(), F.Blocks[3].Ops[0]);
+          if (C == Case::FutureStep)
+            std::swap(F.Blocks[3].Ops[0], F.Blocks[3].Ops[1]);
+          if (C == Case::ExtraBackedge) {
+            F.Blocks[4].Succs.push_back(1);
+            F.Blocks[1].Preds.push_back(4);
+          }
+          if (C == Case::MissingArm)
+            F.Blocks[1].Phis[0].Args.pop_back();
+          if (C == Case::NarrowStep)
+            F.Blocks[3].Ops[0].Output.Size = Width / 2;
+          if (C == Case::ImplicitClobber)
+            F.CallClobbers.push_back({v(1), 7});
+          if (C == Case::WrongArchitecture)
+            F.Blocks[3].Ops[0].Inputs[0].TheArch =
+                A == Arch::X86 ? Arch::ARM : Arch::X86;
+          MedLLVMEmitter Emitter;
+          MedLLVMProvenanceTestPeer::prepareFreshAnalysis(Emitter, F, Image, A,
+                                                          Format);
+          const auto [Complete, Callable, Slots] =
+              MedLLVMProvenanceTestPeer::pointerTableLoadDomain(Emitter, v(4));
+          const bool Valid = C == Case::Valid || C == Case::Unsigned ||
+                             C == Case::NegatedGuard || C == Case::HeaderLoad;
+          EXPECT_EQ(Callable, Valid);
+          if (Valid || C == Case::DataSlot || C == Case::UnknownSlot) {
+            EXPECT_TRUE(Complete);
+            EXPECT_EQ(Slots, ExpectedSlots);
+          }
+          if (Valid) {
+            llvm::LLVMContext Context;
+            MedFunc Callee = makeReturnFunction("post_tested_target", TargetVA);
+            auto M = MedLLVMEmitter().emit({F, Callee}, Context,
+                                           "post-tested-records", A, {}, &Image,
+                                           Format);
+            ASSERT_NE(M, nullptr);
+            expectValidModule(*M);
+          }
+        }
 }
 
 TEST(LLVMCodePointerInvariantBoundary,

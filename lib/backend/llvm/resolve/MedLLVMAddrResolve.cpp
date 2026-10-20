@@ -165,9 +165,9 @@ bool sameIndexValue(const MedVar &A, const MedVar &B) {
 
 template <typename LookupDefFn, typename NumericFn>
 std::optional<LoadIndexConstraint>
-operationIndexConstraint(const MedFunc *Func, const MedOp *Load,
-                         const BinaryImage *Image, LookupDefFn &&LookupDef,
-                         NumericFn &&IsNumeric) {
+predecessorIndexConstraint(const MedFunc *Func, const MedOp *Load,
+                           const BinaryImage *Image, LookupDefFn &&LookupDef,
+                           NumericFn &&IsNumeric) {
   if (!Func || !Load)
     return std::nullopt;
   size_t Remaining = static_cast<size_t>(limits::kMaxSSANodes);
@@ -366,6 +366,302 @@ operationIndexConstraint(const MedFunc *Func, const MedOp *Load,
   return std::nullopt;
 }
 
+// Prove the induction invariant of a post-tested counter independently of
+// table layout. The initial edge supplies zero; the only other edge supplies
+// i + 1 after testing that result against a positive, non-wrapping limit.
+// The header must dominate both the operation and the latch, including every
+// structural predecessor and independent/exceptional entry.
+template <typename LookupDefFn, typename NumericFn>
+std::optional<LoadIndexConstraint>
+postTestedIndexConstraint(const MedFunc *Func, const MedOp *SiteOp,
+                          const BinaryImage *Image, LookupDefFn &&LookupDef,
+                          NumericFn &&IsNumeric) {
+  if (!Func || !SiteOp || Func->Blocks.empty())
+    return std::nullopt;
+  size_t Budget = static_cast<size_t>(limits::kMaxSSANodes);
+  auto consume = [&]() {
+    if (!Budget)
+      return false;
+    --Budget;
+    return true;
+  };
+  auto key = [](const MedVar &V) {
+    const uint64_t Storage =
+        V.Kind == MedVar::Reg || V.Kind == MedVar::Param ? V.RegOff
+        : V.Kind == MedVar::Stack ? static_cast<uint64_t>(V.StackOff)
+                                  : 0;
+    return std::make_tuple(V.Kind, V.TheArch, V.RenameTag, V.Id, V.SSAVer,
+                           V.Size, Storage);
+  };
+  using Key = decltype(key(MedVar{}));
+  struct Definition {
+    const MedBlock *Block = nullptr;
+    const PhiNode *Phi = nullptr;
+    const MedOp *Op = nullptr;
+    size_t Position = 0;
+    unsigned Count = 0;
+  };
+  std::map<Key, Definition> Definitions;
+  std::map<int, const MedBlock *> Blocks;
+  std::map<int, std::set<int>> Incoming;
+  std::set<int> ExceptionalIncoming;
+  const MedBlock *Site = nullptr;
+  for (const MedBlock &B : Func->Blocks) {
+    if (!consume() || !Blocks.emplace(B.Id, &B).second)
+      return std::nullopt;
+    for (const PhiNode &P : B.Phis) {
+      if (!consume())
+        return std::nullopt;
+      auto &D = Definitions[key(P.Output)];
+      D = {&B, &P, nullptr, 0, D.Count + 1};
+    }
+    for (size_t I = 0; I < B.Ops.size(); ++I) {
+      if (!consume())
+        return std::nullopt;
+      const MedOp &Op = B.Ops[I];
+      if (&Op == SiteOp)
+        Site = &B;
+      auto add = [&](const MedVar &V) {
+        if (V.isConst() || !V.Size)
+          return;
+        auto &D = Definitions[key(V)];
+        D = {&B, nullptr, &Op, I, D.Count + 1};
+      };
+      add(Op.Output);
+      for (const MedVar &V : Op.IntrinsicOutputs) {
+        if (!consume())
+          return std::nullopt;
+        add(V);
+      }
+    }
+    for (int Successor : B.Succs) {
+      if (!consume())
+        return std::nullopt;
+      Incoming[Successor].insert(B.Id);
+    }
+    for (const ExceptionalEdge &E : B.ExceptionalSuccs) {
+      if (!consume())
+        return std::nullopt;
+      ExceptionalIncoming.insert(E.BlockId);
+    }
+  }
+  for (const MedCallClobber &Clobber : Func->CallClobbers) {
+    if (!consume())
+      return std::nullopt;
+    // An implicit runtime definition cannot simultaneously be an induction
+    // PHI, step, or guard definition, even if malformed SSA reuses its key.
+    Definitions[key(Clobber.Value)].Count += 2;
+  }
+  if (!Site)
+    return std::nullopt;
+  auto definition = [&](const MedVar &V) -> const Definition * {
+    if (V.isConst())
+      return nullptr;
+    auto It = Definitions.find(key(V));
+    if (It == Definitions.end() || It->second.Count != 1)
+      return nullptr;
+    const Definition &D = It->second;
+    if (D.Op && (LookupDef(V) != D.Op || !sameIndexValue(D.Op->Output, V)))
+      return nullptr;
+    return &D;
+  };
+  auto terminates = [](const MedOp &Op) {
+    return Op.Opcode == NdOp::COND_BR || Op.Opcode == NdOp::BRANCH ||
+           Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::RETURN;
+  };
+  for (const MedOp &Op : Site->Ops) {
+    if (&Op == SiteOp)
+      break;
+    if (terminates(Op))
+      return std::nullopt;
+  }
+  auto isRoot = [&](const MedBlock &B) {
+    auto contains = [&](const std::set<va_t> &Roots) {
+      auto It = Roots.lower_bound(B.StartAddr);
+      return It != Roots.end() && (*It == B.StartAddr || *It < B.EndAddr);
+    };
+    return &B == &Func->Blocks.front() || contains(Func->ModuleAnalysisRoots) ||
+           (Image && contains(Image->CodeRefTargets)) ||
+           !B.ExceptionalPreds.empty() || ExceptionalIncoming.count(B.Id);
+  };
+  auto validIncoming = [&](const MedBlock &B) {
+    return B.Preds.size() == Incoming[B.Id].size() &&
+           std::set<int>(B.Preds.begin(), B.Preds.end()) == Incoming[B.Id];
+  };
+  auto dominates = [&](const MedBlock &Header, const MedBlock &Use) {
+    std::vector<int> Work{Use.Id};
+    std::set<int> Seen;
+    bool ReachedHeader = false;
+    while (!Work.empty()) {
+      if (!consume())
+        return false;
+      const int Id = Work.back();
+      Work.pop_back();
+      if (!Seen.insert(Id).second)
+        continue;
+      auto It = Blocks.find(Id);
+      if (It == Blocks.end())
+        return false;
+      const MedBlock &B = *It->second;
+      if (isRoot(B) || !validIncoming(B))
+        return false;
+      if (Id == Header.Id) {
+        ReachedHeader = true;
+        continue;
+      }
+      if (B.Preds.empty())
+        return false;
+      for (int Pred : B.Preds) {
+        if (!consume())
+          return false;
+        Work.push_back(Pred);
+      }
+    }
+    return ReachedHeader;
+  };
+  auto numeric = [&](const MedVar &V, unsigned Width) {
+    return V.isConst() && V.Size == Width && Width > 0 && Width <= 8 &&
+           IsNumeric(V) &&
+           (Width == 8 || V.ConstVal < (uint64_t(1) << (Width * 8)));
+  };
+  auto prove = [&](const Definition &D) -> std::optional<LoadIndexConstraint> {
+    const MedBlock &Header = *D.Block;
+    const PhiNode &P = *D.Phi;
+    const MedVar &Index = P.Output;
+    if (Index.Size == 0 || Index.Size > 8 || P.ExceptionalEntry ||
+        P.Args.size() != 2 || Header.Preds.size() != 2 ||
+        !validIncoming(Header) || isRoot(Header))
+      return std::nullopt;
+    std::set<int> PhiPreds;
+    const MedVar *BackValue = nullptr;
+    const MedBlock *Latch = nullptr;
+    bool Initial = false;
+    for (const auto &[Pred, V] : P.Args) {
+      if (!PhiPreds.insert(Pred).second || V.Size != Index.Size)
+        return std::nullopt;
+      if (numeric(V, Index.Size) && V.ConstVal == 0) {
+        if (Initial)
+          return std::nullopt;
+        Initial = true;
+      } else {
+        auto It = Blocks.find(Pred);
+        if (BackValue || It == Blocks.end())
+          return std::nullopt;
+        BackValue = &V;
+        Latch = It->second;
+      }
+    }
+    if (!Initial || !BackValue || PhiPreds != Incoming[Header.Id] ||
+        !dominates(Header, *Site) || !dominates(Header, *Latch) ||
+        Latch->Succs.size() != 2 || Latch->Succs[0] == Latch->Succs[1] ||
+        !Latch->ExceptionalSuccs.empty() || Latch->Ops.empty())
+      return std::nullopt;
+    const Definition *Step = definition(*BackValue);
+    if (!Step || Step->Block != Latch || !Step->Op ||
+        Step->Op->Opcode != NdOp::INT_ADD || Step->Op->NumInputs != 2)
+      return std::nullopt;
+    bool UnitStep = false;
+    for (unsigned Side : {0U, 1U})
+      UnitStep |= sameIndexValue(Step->Op->Inputs[Side], Index) &&
+                  numeric(Step->Op->Inputs[Side ^ 1u], Index.Size) &&
+                  Step->Op->Inputs[Side ^ 1u].ConstVal == 1;
+    if (!UnitStep)
+      return std::nullopt;
+    const MedOp &Branch = Latch->Ops.back();
+    if (Branch.Opcode != NdOp::COND_BR || Branch.NumInputs != 2 ||
+        !Branch.Inputs[0].isConst())
+      return std::nullopt;
+    for (const MedOp &Op : Latch->Ops)
+      if (&Op != &Branch && terminates(Op))
+        return std::nullopt;
+    std::optional<int> Taken;
+    for (int Id : Latch->Succs) {
+      auto It = Blocks.find(Id);
+      if (It == Blocks.end())
+        return std::nullopt;
+      const MedBlock &B = *It->second;
+      const uint64_t VA =
+          B.StartAddr != 0 || B.Ops.empty() ? B.StartAddr : B.Ops.front().Addr;
+      if (VA == Branch.Inputs[0].ConstVal) {
+        if (Taken)
+          return std::nullopt;
+        Taken = Id;
+      }
+    }
+    if (!Taken)
+      return std::nullopt;
+    bool Truth = *Taken == Header.Id;
+    MedVar Condition = Branch.Inputs[1];
+    size_t Before = Latch->Ops.size() - 1;
+    for (unsigned Depth = 0; Depth != 16; ++Depth) {
+      const Definition *CD = definition(Condition);
+      if (!CD || CD->Block != Latch || !CD->Op || CD->Position >= Before)
+        return std::nullopt;
+      Before = CD->Position;
+      const MedOp &Compare = *CD->Op;
+      if ((Compare.Opcode == NdOp::COPY || Compare.Opcode == NdOp::BOOL_NOT) &&
+          Compare.NumInputs == 1 && Compare.Inputs[0].Size == Condition.Size) {
+        Truth ^= Compare.Opcode == NdOp::BOOL_NOT;
+        Condition = Compare.Inputs[0];
+        continue;
+      }
+      if (!Truth || Compare.Output.Size != 1 || Compare.NumInputs != 2 ||
+          (Compare.Opcode != NdOp::INT_LESS &&
+           Compare.Opcode != NdOp::INT_SLESS) ||
+          !sameIndexValue(Compare.Inputs[0], *BackValue) ||
+          !numeric(Compare.Inputs[1], Index.Size) || Step->Position >= Before)
+        return std::nullopt;
+      const uint64_t Limit = Compare.Inputs[1].ConstVal;
+      // Keeping the entire invariant below the signed maximum makes the ADD
+      // non-wrapping for either signed or unsigned comparison semantics.
+      if (!Limit || Limit > limits::kMaxJumpTableEntries ||
+          Limit >= (uint64_t(1) << (Index.Size * 8 - 1)))
+        return std::nullopt;
+      return LoadIndexConstraint{Index, Limit - 1, std::nullopt};
+    }
+    return std::nullopt;
+  };
+  // Only consider PHIs on this operation's dependency walk. An unrelated
+  // bounded loop in the function cannot constrain this address occurrence.
+  std::vector<MedVar> Work;
+  for (unsigned I = 0; I < SiteOp->NumInputs; ++I)
+    Work.push_back(SiteOp->Inputs[I]);
+  std::set<Key> Seen;
+  while (!Work.empty()) {
+    if (!consume())
+      return std::nullopt;
+    MedVar V = Work.back();
+    Work.pop_back();
+    if (V.isConst() || !Seen.insert(key(V)).second)
+      continue;
+    const Definition *D = definition(V);
+    if (!D)
+      continue;
+    if (D->Phi) {
+      if (auto Bound = prove(*D))
+        return Bound;
+      continue;
+    }
+    for (unsigned I = 0; I < D->Op->NumInputs; ++I) {
+      if (!consume())
+        return std::nullopt;
+      Work.push_back(D->Op->Inputs[I]);
+    }
+  }
+  return std::nullopt;
+}
+
+template <typename LookupDefFn, typename NumericFn>
+std::optional<LoadIndexConstraint>
+operationIndexConstraint(const MedFunc *Func, const MedOp *Op,
+                         const BinaryImage *Image, LookupDefFn &&LookupDef,
+                         NumericFn &&IsNumeric) {
+  if (auto Bound =
+          predecessorIndexConstraint(Func, Op, Image, LookupDef, IsNumeric))
+    return Bound;
+  return postTestedIndexConstraint(Func, Op, Image, LookupDef, IsNumeric);
+}
+
 /// Recover the one record lane selected by a conventional `base + index`
 /// address without deciding whether the runtime index itself is relocatable.
 /// The modular result is purely algebraic: multiplying any bit-pattern by 16
@@ -525,6 +821,8 @@ IndexedPointerLaneSummary analyzeIndexedPointerLane(
     return Key{static_cast<int>(Value.Kind), Value.Id, Value.SSAVer,
                Value.Size};
   };
+  size_t WalkBudget = static_cast<size_t>(limits::kMaxSSANodes);
+  std::optional<uint64_t> BoundIndex;
   std::function<OffsetCongruence(const MedVar &, int, std::set<Key>)> walk;
   auto walkUnconstrained = [&](const MedVar &Value, int Depth,
                                std::set<Key> Seen) -> OffsetCongruence {
@@ -649,7 +947,16 @@ IndexedPointerLaneSummary analyzeIndexedPointerLane(
   };
 
   walk = [&](const MedVar &Value, int Depth, std::set<Key> Seen) {
+    if (!WalkBudget)
+      return OffsetCongruence{};
+    --WalkBudget;
+    if (BoundIndex && Constraint && Value.Size <= PtrSize &&
+        sameIndexValue(Value, Constraint->Value))
+      return exact(*BoundIndex);
     OffsetCongruence Result = walkUnconstrained(Value, Depth, std::move(Seen));
+    if (BoundIndex && Result.isExact() && Value.Size > 0 &&
+        Value.Size < PtrSize)
+      Result = exact(Result.Residue & ((uint64_t(1) << (Value.Size * 8)) - 1));
     if (!Constraint || Value.Size > PtrSize ||
         !sameIndexValue(Value, Constraint->Value) || !Result.Valid)
       return Result;
@@ -696,8 +1003,33 @@ IndexedPointerLaneSummary analyzeIndexedPointerLane(
   OffsetCongruence Combined = exact(0);
   for (const MedVar &Term : Result.IndexTerms)
     Combined = add(Combined, walk(Term, 0, {}), SubtractKnownTerms);
-  if (!Combined.Valid || Combined.isExact() || Combined.Modulus < PtrSize ||
-      Combined.Modulus % PtrSize != 0)
+  // A finite control-flow bound can retain a non-power-of-two record
+  // stride (e.g. 88 bytes). Modular congruence alone reduces it to eight and
+  // would audit unrelated fields. Enumerate only the certified index domain;
+  // any other unknown term keeps the conservative congruence path below.
+  std::optional<std::set<uint64_t>> ExactOffsets;
+  if (Constraint && Constraint->Maximum &&
+      *Constraint->Maximum < limits::kMaxJumpTableEntries) {
+    ExactOffsets.emplace();
+    for (uint64_t I = 0; I <= *Constraint->Maximum; ++I) {
+      if (Constraint->Excluded && I == *Constraint->Excluded)
+        continue;
+      BoundIndex = I;
+      OffsetCongruence Offset = exact(0);
+      for (const MedVar &Term : Result.IndexTerms)
+        Offset = add(Offset, walk(Term, 0, {}), SubtractKnownTerms);
+      if (!Offset.isExact()) {
+        ExactOffsets.reset();
+        break;
+      }
+      ExactOffsets->insert(Offset.Residue);
+    }
+    BoundIndex.reset();
+  }
+  if (!WalkBudget || (ExactOffsets && ExactOffsets->empty()) ||
+      (!ExactOffsets &&
+       (!Combined.Valid || Combined.isExact() || Combined.Modulus < PtrSize ||
+        Combined.Modulus % PtrSize != 0)))
     return Result;
 
   size_t Remaining = static_cast<size_t>(limits::kMaxSSANodes);
@@ -705,7 +1037,11 @@ IndexedPointerLaneSummary analyzeIndexedPointerLane(
   for (uint64_t Base : Bases) {
     uint64_t Origin = (Base + Combined.Residue) & PtrMask;
     std::optional<uint64_t> LastBoundedSlot;
-    if (Combined.hasFiniteRange()) {
+    if (ExactOffsets) {
+      if (Base > PtrMask - *ExactOffsets->begin())
+        return Result;
+      Origin = Base + *ExactOffsets->begin();
+    } else if (Combined.hasFiniteRange()) {
       const uint64_t MinValue = *Combined.MinValue;
       const uint64_t MaxValue = *Combined.MaxValue;
       const uint64_t MinResidue = MinValue & (Combined.Modulus - 1);
@@ -745,6 +1081,27 @@ IndexedPointerLaneSummary analyzeIndexedPointerLane(
     CommonRunStart = RunStart;
 
     const uint64_t BoundEnd = OriginSection->VA + OriginSection->Size;
+    if (ExactOffsets) {
+      for (uint64_t Offset : *ExactOffsets) {
+        if (!Remaining || Base > PtrMask - Offset)
+          return Result;
+        --Remaining;
+        const uint64_t Slot = Base + Offset;
+        const Segment *SlotSegment = Img->getSegmentFor(Slot);
+        if (!SlotSegment || SlotSegment->isExecutable() ||
+            Img->getSectionFor(Slot) != OriginSection || Slot >= BoundEnd ||
+            PtrSize > BoundEnd - Slot)
+          return Result;
+        uint64_t SlotRunStart = SlotSegment->VA;
+        uint64_t SlotRunEnd = SlotSegment->VA + SlotSegment->Data.size();
+        ReadOnlyRun(SlotSegment, SlotRunStart, SlotRunEnd);
+        if (SlotRunStart != RunStart || Slot < SlotRunStart ||
+            Slot > SlotRunEnd || PtrSize > SlotRunEnd - Slot)
+          return Result;
+        Result.Slots.insert(Slot);
+      }
+      continue;
+    }
     uint64_t Slot = Origin;
     if (!LastBoundedSlot) {
       const uint64_t Residue = (Origin - OriginSection->VA) % Combined.Modulus;
