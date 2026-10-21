@@ -4246,6 +4246,14 @@ private slots:
     // without ever showing it.
     QFETCH(QString, choice);
     QFETCH(QString, button);
+    // The file-selection timer drives QFileDialog's widgets.
+    const bool nativeDialogsDisabled =
+        QCoreApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+    QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    const auto restoreDialogs = qScopeGuard([nativeDialogsDisabled] {
+      QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs,
+                                     nativeDialogsDisabled);
+    });
     QTemporaryDir directory;
     const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
     QSettings().setValue(settings::RecentFiles, QStringList{path});
@@ -4261,6 +4269,10 @@ private slots:
       if (auto *dialog =
               qobject_cast<QFileDialog *>(QApplication::activeModalWidget())) {
         dialog->selectFile(path);
+        // selectFile preserves the name while its editor has the focus.
+        if (auto *name =
+                dialog->findChild<QLineEdit *>(QStringLiteral("fileNameEdit")))
+          name->setText(path);
         // As pressing Open does; QFileDialog keeps its override protected.
         static_cast<QDialog *>(dialog)->accept();
       }
@@ -4290,8 +4302,32 @@ private slots:
         dialog->close();
     });
     answer.start(5);
+    bool startupTimedOut = false;
+    QString startupState;
+    QTimer deadline;
+    deadline.setSingleShot(true);
+    connect(&deadline, &QTimer::timeout, this, [&] {
+      startupTimedOut = true;
+      auto *modal = QApplication::activeModalWidget();
+      startupState = QStringLiteral("modal=%1 answered=%2")
+                         .arg(modal ? modal->metaObject()->className() : "none")
+                         .arg(answered);
+      if (auto *file = qobject_cast<QFileDialog *>(modal)) {
+        auto *name =
+            file->findChild<QLineEdit *>(QStringLiteral("fileNameEdit"));
+        startupState += QStringLiteral(" directory=%1 selected=%2 field=%3")
+                            .arg(file->directory().path(),
+                                 file->selectedFiles().join(QLatin1Char(';')),
+                                 name ? name->text() : QStringLiteral("none"));
+      }
+      if (modal)
+        modal->close();
+    });
+    deadline.start(OpenTimeoutMs);
     bench.window->scheduleQuickStart();
     QTRY_VERIFY_WITH_TIMEOUT(answered, 1000);
+    deadline.stop();
+    QVERIFY2(!startupTimedOut, qPrintable(startupState));
     QVERIFY(alone);
     QVERIFY(!QApplication::activeModalWidget());
     if (choice == QLatin1String("close")) {
@@ -5715,6 +5751,7 @@ private slots:
     picker->start(10);
     bool pickerTimedOut = false;
     QString pickerState;
+    int stage = 0;
     QTimer pickerDeadline;
     pickerDeadline.setSingleShot(true);
     connect(&pickerDeadline, &QTimer::timeout, this, [&] {
@@ -5747,6 +5784,14 @@ private slots:
                 .arg(name ? name->text() : QStringLiteral("missing"))
                 .arg(apply && apply->isEnabled())
                 .arg(summary ? summary->text() : QString());
+        auto *field =
+            dialog->findChild<QLineEdit *>(QStringLiteral("setTypeField"));
+        auto *status =
+            dialog->findChild<QLabel *>(QStringLiteral("setTypeStatus"));
+        pickerState += QStringLiteral(" stage=%1 field=%2 status=%3")
+                           .arg(stage)
+                           .arg(field ? field->text() : QString())
+                           .arg(status ? status->text() : QString());
         dialog->close();
       }
     });
@@ -5767,7 +5812,6 @@ private slots:
     QTRY_VERIFY(onParameter(QStringLiteral("arg1"), 1));
     QTRY_VERIFY(bench.action(ActionId::EditSetType)->isEnabled());
     QString subject, completed, refused;
-    int stage = 0;
     auto *typer = new QTimer(&bench.session);
     connect(typer, &QTimer::timeout, typer, [&, typer] {
       auto *dialog =
@@ -5823,7 +5867,10 @@ private slots:
       }
     });
     typer->start(10);
+    pickerDeadline.start(OpenTimeoutMs);
     bench.action(ActionId::EditSetType)->trigger();
+    pickerDeadline.stop();
+    QVERIFY2(!pickerTimedOut, qPrintable(pickerState));
     QTRY_VERIFY_WITH_TIMEOUT(code->allText().contains("_LIST_ENTRY *arg1"),
                              OpenTimeoutMs);
     QCOMPARE(subject, QStringLiteral(
@@ -5856,7 +5903,10 @@ private slots:
       reset->click();
     });
     resetter->start(10);
+    pickerDeadline.start(OpenTimeoutMs);
     bench.action(ActionId::EditSetType)->trigger();
+    pickerDeadline.stop();
+    QVERIFY2(!pickerTimedOut, qPrintable(pickerState));
     QTRY_VERIFY_WITH_TIMEOUT(code->allText().contains("void* arg0"),
                              OpenTimeoutMs);
     QCOMPARE(declaration, QStringLiteral("int64_t function_7(_DEVICE *Device, "
