@@ -21,6 +21,7 @@
 #include "DriverLoaderViewJSON.h"
 #include "DriverMSR.h"
 #include "DriverPhysicalInventoryJSON.h"
+#include "DriverProcessPeb.h"
 #include "DriverSchedulingJSON.h"
 #include "DriverVaShadowQueryJSON.h"
 #include "DriverVersionQueryJSON.h"
@@ -2101,6 +2102,8 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
       return E;
   if (auto E = driver_msr::validate(Options.MSRReads))
     return E;
+  if (auto E = driver_process_peb::validate(Options.ProcessPebs))
+    return E;
   if (auto E = driver_cpuid::validate(Options.CPUID))
     return E;
   if (Options.Scheduling)
@@ -2523,6 +2526,12 @@ driverOptionsFromScenarioJSON(llvm::StringRef JSON, DriverOptions Base) {
     if (!Parsed)
       return Parsed.takeError();
     Base.MSRReads = std::move(*Parsed);
+  }
+  if (const auto *Pebs = Object->get(ProcessPebsField)) {
+    auto Parsed = driver_process_peb::parse(*Pebs);
+    if (!Parsed)
+      return Parsed.takeError();
+    Base.ProcessPebs = std::move(*Parsed);
   }
   if (const auto *CPUID = Object->get(CPUIDField)) {
     auto Parsed = driver_cpuid::parse(*CPUID);

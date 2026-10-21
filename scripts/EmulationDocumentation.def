@@ -678,8 +678,8 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI,
                            "+ 4 image memory checks + 6 CPUID "
                            "+ 7 kernel snapshots + 10 pool captures "
                            "+ 4 DriverEntry caller checks "
-                           "+ 116 driver environment checks "
-                           "+ 116 driver API checks = 5785")
+                           "+ 126 driver environment checks "
+                           "+ 116 driver API checks = 5795")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif

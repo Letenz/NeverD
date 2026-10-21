@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "../driver/DriverProcessPeb.h"
 #include "KernelAPIIRQL.h"
 #include "KernelAPIKind.h"
 #include "KernelException.h"
@@ -144,6 +145,7 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
       Kind != KernelAPIKind::IoGetRequestorProcess &&
       Kind != KernelAPIKind::PsGetCurrentProcessId &&
       Kind != KernelAPIKind::PsGetProcessId &&
+      Kind != KernelAPIKind::PsGetProcessPeb &&
       Kind != KernelAPIKind::PsGetThreadProcess &&
       Kind != KernelAPIKind::IoThreadToProcess &&
       Kind != KernelAPIKind::IoGetRequestorProcessId &&
@@ -247,6 +249,12 @@ llvm::Expected<uint64_t> KernelModel::dispatchKernelCall(
     if (Process == ProcessObjectIDs.end())
       return modelError("PsGetProcessId requires a known process object");
     return uint64_t(Process->second);
+  }
+  case KernelAPIKind::PsGetProcessPeb: {
+    const auto Process = ProcessObjectIDs.find(A[0]);
+    if (Process == ProcessObjectIDs.end())
+      return modelError("PsGetProcessPeb requires a known process object");
+    return driver_process_peb::query(ProcessPebs, Process->second);
   }
   case KernelAPIKind::KeStackAttachProcess:
     if (auto E = stackAttachProcess(A[0], A[1]))

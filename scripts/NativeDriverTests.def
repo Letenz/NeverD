@@ -10,6 +10,31 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverProcessPebDeclaration.RoundTripsExactValuesAndExplicitAbsence")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "DriverProcessPebDeclaration.RejectsMalformedAndLegacyInputs")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProcessPeb.KnownObjectsKeepTheirOwnCopiedDeclaration")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProcessPeb.MissingAndForgedObjectsDoNotAcquireIdentity")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProcessPeb.ArityAndPassiveCeilingStayExplicit")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProcessPeb.UnusedDeclarationRetainsEnvironmentDependency")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelProcessPebInitialization.RejectsInvalidAndNonCheckedDeclarations")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/"
+    "DriverProcessPebExecution.NullDeclarationAndRepeatedQueriesAreExact/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverProcessPebExecution.MissingAndForeignDeclarationsStop/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/"
+    "DriverProcessPebExecution.ValuesGrantNeitherStorageNorProcessIdentity/"
+    "{backend}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverMSRDeclaration.RoundTripsFullWidthValuesAndCanBeCleared")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverMSRDeclaration.RejectsMalformedDuplicateAndUnownedInputs")
