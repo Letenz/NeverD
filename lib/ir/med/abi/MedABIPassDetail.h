@@ -224,12 +224,34 @@ public:
   MedDefSite find(const MedVar &V);
   void invalidate() {
     Sites.clear();
+    StackDeltas.clear();
     Built = false;
   }
 
+  /// A stackPtrDelta answer that no depth cap shaped: the offset, and how
+  /// many levels below the value its walk went.  A query at a depth where
+  /// that walk stays under the cap gets the same answer, so an answer serves
+  /// every query for as long as the definitions do.
+  struct StackDelta {
+    std::optional<int64_t> Delta;
+    int Height = 0;
+  };
+  const StackDelta *stackDelta(const MedVar &V) const {
+    const auto It = StackDeltas.find(key(V));
+    return It == StackDeltas.end() ? nullptr : &It->second;
+  }
+  void rememberStackDelta(const MedVar &V, StackDelta Answer) {
+    StackDeltas.try_emplace(key(V), Answer);
+  }
+
 private:
+  static std::tuple<int, int, int, uint64_t> key(const MedVar &V) {
+    return {static_cast<int>(V.Kind), V.Id, V.SSAVer, V.RegOff};
+  }
+
   const MedFunc &Func;
   llvm::DenseMap<std::tuple<int, int, int, uint64_t>, MedDefSite> Sites;
+  llvm::DenseMap<std::tuple<int, int, int, uint64_t>, StackDelta> StackDeltas;
   bool Built = false;
 };
 

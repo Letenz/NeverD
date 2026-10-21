@@ -637,10 +637,6 @@ static MedDefSite findFuncDef(const MedFunc &Func, const MedVar &V) {
 
 // The same sites as findFuncDef, keyed by its identity, built in one scan.
 MedDefSite MedDefSiteIndex::find(const MedVar &V) {
-  auto key = [](const MedVar &X) {
-    return std::tuple<int, int, int, uint64_t>{static_cast<int>(X.Kind), X.Id,
-                                               X.SSAVer, X.RegOff};
-  };
   if (!Built) {
     for (const MedBlock &Block : Func.Blocks) {
       auto Record = [&](const MedVar &Output, const MedOp *Op,
@@ -837,52 +833,70 @@ static std::optional<StackAddressStep> parseStackAddressStep(const MedOp &Op) {
   }
 }
 
+// stackPtrDelta's answer for a value: the offset, how many levels below the
+// value its walk went, and whether the depth cap cut that walk short.
+struct StackDeltaWalk {
+  std::optional<int64_t> Delta;
+  int Height = 0;
+  bool Capped = false;
+};
+
 // stackPtrDelta's answers within one query, by value identity and depth. The
 // depth cap makes an answer depend on the depth it was asked at; within that,
 // a PHI DAG shares each answer instead of re-walking it once per path.
 // Most queries hold a few answers, so the first ones stay inline.
 using StackDeltaMemo =
     llvm::SmallDenseMap<std::tuple<int, int, int, uint64_t, int>,
-                        std::optional<int64_t>, 8>;
+                        StackDeltaWalk, 8>;
 
-static std::optional<int64_t>
-stackPtrDeltaAt(const MedFunc &Func, const TargetRegInfo &TRI, const MedVar &V,
-                int Depth, MedDefSiteIndex *Defs, StackDeltaMemo &Memo);
+static StackDeltaWalk stackPtrDeltaAt(const MedFunc &Func,
+                                      const TargetRegInfo &TRI, const MedVar &V,
+                                      int Depth, MedDefSiteIndex *Defs,
+                                      StackDeltaMemo &Memo);
 
 std::optional<int64_t> stackPtrDelta(const MedFunc &Func,
                                      const TargetRegInfo &TRI, const MedVar &V,
                                      int Depth, MedDefSiteIndex *Defs) {
   StackDeltaMemo Memo;
-  return stackPtrDeltaAt(Func, TRI, V, Depth, Defs, Memo);
+  return stackPtrDeltaAt(Func, TRI, V, Depth, Defs, Memo).Delta;
 }
 
-static std::optional<int64_t> stackPtrDeltaUncached(const MedFunc &Func,
-                                                    const TargetRegInfo &TRI,
-                                                    const MedVar &V, int Depth,
-                                                    MedDefSiteIndex *Defs,
-                                                    StackDeltaMemo &Memo) {
+static StackDeltaWalk stackPtrDeltaUncached(const MedFunc &Func,
+                                            const TargetRegInfo &TRI,
+                                            const MedVar &V, int Depth,
+                                            MedDefSiteIndex *Defs,
+                                            StackDeltaMemo &Memo) {
+  StackDeltaWalk Walk;
+  auto Below = [&](const MedVar &Next) {
+    const StackDeltaWalk Step =
+        stackPtrDeltaAt(Func, TRI, Next, Depth + 1, Defs, Memo);
+    Walk.Height = std::max(Walk.Height, Step.Height + 1);
+    Walk.Capped |= Step.Capped;
+    return Step.Delta;
+  };
   const MedDefSite Site = Defs ? Defs->find(V) : findFuncDef(Func, V);
   if (Site.Ambiguous)
-    return std::nullopt;
+    return Walk;
   if (Site.Phi) {
     std::optional<int64_t> Common;
     for (const auto &[Pred, Incoming] : Site.Phi->Args) {
       (void)Pred;
       if (sameDefIdentity(Incoming, V))
         continue;
-      auto Delta = stackPtrDeltaAt(Func, TRI, Incoming, Depth + 1, Defs, Memo);
+      auto Delta = Below(Incoming);
       if (!Delta || (Common && *Common != *Delta))
-        return std::nullopt;
+        return Walk;
       Common = *Delta;
     }
-    return Common;
+    Walk.Delta = Common;
+    return Walk;
   }
   if (!Site.Op) {
     // No function-wide definition: the live-in stack pointer is the zero
     // reference; anything else is not SP-derived.
     if (V.Kind == MedVar::Reg && V.RegOff == TRI.StackPointer)
-      return 0;
-    return std::nullopt;
+      Walk.Delta = 0;
+    return Walk;
   }
   const MedOp *Def = Site.Op;
   const MedBlock &DefBlock = *Site.Block;
@@ -894,43 +908,52 @@ static std::optional<int64_t> stackPtrDeltaUncached(const MedFunc &Func,
     // cap and report the whole push chain as un-traceable, collapsing every
     // pushed argument onto slot 0.
     if (In.Kind == MedVar::Reg && In.RegOff == TRI.StackPointer &&
-        In.Id == V.Id && In.SSAVer == V.SSAVer)
-      return 0;
+        In.Id == V.Id && In.SSAVer == V.SSAVer) {
+      Walk.Delta = 0;
+      return Walk;
+    }
   }
   if (auto Step = parseStackAddressStep(*Def)) {
-    auto Base = stackPtrDeltaAt(Func, TRI, *Step->Base, Depth + 1, Defs, Memo);
-    if (!Base)
-      return std::nullopt;
-    return safety::detail::checkedStackOffset(*Base, Step->Delta,
-                                              Step->Subtract);
+    if (auto Base = Below(*Step->Base))
+      Walk.Delta = safety::detail::checkedStackOffset(*Base, Step->Delta,
+                                                      Step->Subtract);
+    return Walk;
   }
   if (Def->Opcode == NdOp::LOAD) {
     const int LoadIndex = static_cast<int>(Def - DefBlock.Ops.data());
-    const auto Store = reachingStore(DefBlock, LoadIndex);
-    if (!Store)
-      return std::nullopt;
-    return stackPtrDeltaAt(Func, TRI,
-                           *safety::detail::storedValue(DefBlock.Ops[*Store]),
-                           Depth + 1, Defs, Memo);
+    if (const auto Store = reachingStore(DefBlock, LoadIndex))
+      Walk.Delta = Below(*safety::detail::storedValue(DefBlock.Ops[*Store]));
+    return Walk;
   }
-  return std::nullopt;
+  return Walk;
 }
 
-static std::optional<int64_t>
-stackPtrDeltaAt(const MedFunc &Func, const TargetRegInfo &TRI, const MedVar &V,
-                int Depth, MedDefSiteIndex *Defs, StackDeltaMemo &Memo) {
-  if (Depth >
-          ::neverd::limits::ir::kMedABIPassSupportStackPtrDeltaAtDepthLimit ||
-      V.isConst())
-    return std::nullopt;
+static StackDeltaWalk stackPtrDeltaAt(const MedFunc &Func,
+                                      const TargetRegInfo &TRI, const MedVar &V,
+                                      int Depth, MedDefSiteIndex *Defs,
+                                      StackDeltaMemo &Memo) {
+  if (V.isConst())
+    return {};
+  if (Depth > ::neverd::limits::ir::kMedABIPassSupportStackPtrDeltaAtDepthLimit)
+    return {std::nullopt, 0, /*Capped=*/true};
+  // An answer no cap shaped serves any query whose walk stays under the cap,
+  // so the calls of one function share their stack-pointer chains.
+  if (Defs)
+    if (const auto *Known = Defs->stackDelta(V);
+        Known &&
+        Depth + Known->Height <=
+            ::neverd::limits::ir::kMedABIPassSupportStackPtrDeltaAtDepthLimit)
+      return {Known->Delta, Known->Height, false};
   // The answer reads V only through its definition identity.
   const auto Key = std::make_tuple(static_cast<int>(V.Kind), V.Id, V.SSAVer,
                                    V.RegOff, Depth);
   if (const auto It = Memo.find(Key); It != Memo.end())
     return It->second;
-  const auto Delta = stackPtrDeltaUncached(Func, TRI, V, Depth, Defs, Memo);
-  Memo.try_emplace(Key, Delta);
-  return Delta;
+  const auto Walk = stackPtrDeltaUncached(Func, TRI, V, Depth, Defs, Memo);
+  Memo.try_emplace(Key, Walk);
+  if (Defs && !Walk.Capped)
+    Defs->rememberStackDelta(V, {Walk.Delta, Walk.Height});
+  return Walk;
 }
 
 // Whether \p V is, or derives from (through copies, width casts and a constant
