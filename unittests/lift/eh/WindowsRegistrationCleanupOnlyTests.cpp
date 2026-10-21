@@ -21,6 +21,7 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/ir/med/X86RegistrationCallback.h"
+#include "neverd/ir/med/X86RegistrationPhysicalFrame.h"
 #include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/object/PELayout.h"
@@ -100,7 +101,8 @@ void checkCleanupOnlyInput(const char *Path, bool RegisterStateWrite) {
     return Entry.Name == "cleanup_only_parent";
   });
   ASSERT_NE(Export, Image->Exports.end());
-  const auto *Source = Image->ExceptionMetadata.findFunction(Export->Addr);
+  const va_t ParentEntry = Export->Addr;
+  const auto *Source = Image->ExceptionMetadata.findFunction(ParentEntry);
   ASSERT_TRUE(Source && Source->Cxx && Source->Registration);
   if (RegisterStateWrite) {
     const auto &Chain = *Source->Registration;
@@ -126,21 +128,33 @@ void checkCleanupOnlyInput(const char *Path, bool RegisterStateWrite) {
     const std::vector<uint8_t> Replacement = {
         0x31,     0xc0, uint8_t(Store->Level ? 0x40 : 0x90), 0x89, 0x45,
         Bytes[2], 0x90};
+    auto Input = llvm::MemoryBuffer::getFile(Path);
+    ASSERT_TRUE(bool(Input));
+    const auto Buffer = (*Input)->getBuffer();
+    std::vector<uint8_t> Changed(Buffer.bytes_begin(), Buffer.bytes_end());
     bool Patched = false;
-    for (auto &Segment : Image->Segments)
+    for (const auto &Segment : Image->Segments)
       if (Address >= Segment.VA && Address - Segment.VA < Segment.Data.size() &&
           Replacement.size() <= Segment.Data.size() - (Address - Segment.VA)) {
+        ASSERT_FALSE(Patched);
+        const uint64_t Offset = Segment.FileOff + Address - Segment.VA;
+        ASSERT_TRUE(rangeInBounds(Offset, Replacement.size(), Changed.size()));
         std::copy(Replacement.begin(), Replacement.end(),
-                  Segment.Data.begin() + (Address - Segment.VA));
+                  Changed.begin() + Offset);
         Patched = true;
-        break;
       }
     ASSERT_TRUE(Patched);
-    // Reparse the actual bytes. Neither XOR/NOP/MOV nor XOR/INC/MOV supplies
-    // a loader observation; the LowIR value transfer must prove the state.
-    Image->ExceptionMetadata = {};
-    coff_loader::parseX86RegistrationExceptions(*Image);
-    Source = Image->ExceptionMetadata.findFunction(Export->Addr);
+    // Reload the changed PE through all loader phases. Registration parsing
+    // consumes and prunes discovered callback symbols, so clearing metadata
+    // alone cannot reconstruct the original discovery input. Neither new
+    // instruction sequence supplies a state-store observation; LowIR must
+    // prove its value from the actual bytes.
+    Image = COFFLoader().loadBuffer(llvm::MemoryBufferRef(
+        llvm::StringRef(reinterpret_cast<const char *>(Changed.data()),
+                        Changed.size()),
+        Path));
+    ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+    Source = Image->ExceptionMetadata.findFunction(ParentEntry);
     ASSERT_TRUE(Source && Source->Cxx && Source->Registration);
     EXPECT_TRUE(
         llvm::none_of(Source->Registration->TryLevelStores, [&](const auto &S) {
@@ -169,7 +183,7 @@ void checkCleanupOnlyInput(const char *Path, bool RegisterStateWrite) {
 #endif
   Decoder Decode;
   ASSERT_TRUE(Decode.init(*Image));
-  auto Low = CFGBuilder().build(*Image, Decode, Export->Addr, "cleanup_only");
+  auto Low = CFGBuilder().build(*Image, Decode, ParentEntry, "cleanup_only");
   ASSERT_TRUE(Low.RegistrationStates);
   for (const auto &Diagnostic : Low.RegistrationStates->Diagnostics)
     llvm::errs() << Diagnostic << '\n';
@@ -184,6 +198,12 @@ void checkCleanupOnlyInput(const char *Path, bool RegisterStateWrite) {
   LowToMedConverter Converter;
   Converter.setBinaryImage(&*Image);
   auto Med = Converter.convert(Low, Arch::X86, BinaryFormat::COFF);
+  if (Low.RegistrationStates->CxxPrologue) {
+    ASSERT_TRUE(Med.RegistrationPhysicalFrame);
+    ASSERT_TRUE(hasCheckedX86RegistrationCxxPhysicalFrame(*Image, Med));
+    EXPECT_EQ(Med.RegistrationStates->CxxPrologue,
+              Low.RegistrationStates->CxxPrologue);
+  }
   inferMedTypes(Med, Arch::X86);
   const auto Owners = registrationCatchBlocks(Med);
   const auto Parents = registrationCleanupParents(Med);
@@ -220,6 +240,34 @@ void checkCleanupOnlyInput(const char *Path, bool RegisterStateWrite) {
   auto *Parent = Module->getFunction(Med.Name);
   ASSERT_TRUE(Parent);
   ASSERT_TRUE(Parent->getMetadata(windows_eh_md::NativeAttachment));
+  if (Med.RegistrationPhysicalFrame)
+    for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto Changed = Med;
+      if (Mutation == 0)
+        Changed.RegistrationPhysicalFrame.reset();
+      else if (Mutation == 1)
+        Changed.RegistrationStates->CxxPrologue.reset();
+      else {
+        auto Frame = std::make_shared<X86RegistrationCxxPhysicalFrame>(
+            *Changed.RegistrationPhysicalFrame);
+        if (Mutation == 2)
+          Frame->Exits.clear();
+        else
+          Frame->EntryCall.Writes.clear();
+        Changed.RegistrationPhysicalFrame = Frame;
+      }
+      llvm::LLVMContext OtherContext;
+      MedLLVMEmitter OtherEmitter;
+      auto Other =
+          OtherEmitter.emit({Changed}, OtherContext, "changed-frame", Arch::X86,
+                            {}, &*Image, BinaryFormat::COFF);
+      if (Other) {
+        const auto *Function = Other->getFunction(Med.Name);
+        ASSERT_TRUE(Function);
+        EXPECT_FALSE(Function->getMetadata(windows_eh_md::NativeAttachment));
+      }
+    }
   ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
   auto Control = validateCOFFRegistrationCxxControlIR(*Parent, *Source, *Image);
   ASSERT_FALSE(bool(Control)) << llvm::toString(std::move(Control));
@@ -502,6 +550,64 @@ void checkCleanupOnlyInput(const char *Path, bool RegisterStateWrite) {
       llvm::consumeError(Rejected.takeError());
   }
   const std::pair<va_t, va_t> Mapping{Source->CodeRange.Begin, Tables->OwnerVA};
+  if (Med.RegistrationPhysicalFrame &&
+      Med.RegistrationPhysicalFrame->EntryCall.CallVA == Mapping.first + 7) {
+    // The exact narrow entry retires the complete MOV handler operand even
+    // though only two of its bytes lie under the five-byte jump. Adjacent
+    // relocation fields and different operand bytes have no such proof.
+    auto PE = locatePEHeaders(Binary.data(), Binary.size());
+    const auto *Directory =
+        getPEDataDirectory(PE, llvm::COFF::BASE_RELOCATION_TABLE);
+    ASSERT_TRUE(Directory && Directory->Size);
+    auto Raw = [&](uint32_t RVA) -> std::optional<size_t> {
+      std::optional<size_t> Result;
+      forEachPESection(PE, [&](const PESectionFields &S, uint16_t) {
+        if (RVA >= S.VirtualAddress && RVA - S.VirtualAddress < S.SizeOfRawData)
+          Result = S.PointerToRawData + RVA - S.VirtualAddress;
+      });
+      return Result;
+    };
+    const auto Begin = Raw(Directory->RelativeVirtualAddress);
+    ASSERT_TRUE(Begin);
+    ASSERT_TRUE(rangeInBounds(*Begin, Directory->Size, Binary.size()));
+    const uint32_t FieldRVA = Mapping.first + 3 - Image->Base;
+    std::optional<size_t> Relocation;
+    for (size_t Offset = *Begin; Offset < *Begin + Directory->Size;) {
+      ASSERT_TRUE(rangeInBounds(Offset, 8, Binary.size()));
+      const auto Page = readLE<uint32_t>(Binary.data() + Offset);
+      const auto Size = readLE<uint32_t>(Binary.data() + Offset + 4);
+      ASSERT_GE(Size, 8u);
+      ASSERT_TRUE(rangeInBounds(Offset, Size, Binary.size()));
+      for (size_t Entry = Offset + 8; Entry + 2 <= Offset + Size; Entry += 2) {
+        const auto Word = readLE<uint16_t>(Binary.data() + Entry);
+        if ((Word >> 12) == llvm::COFF::IMAGE_REL_BASED_HIGHLOW &&
+            Page + (Word & 0xfff) == FieldRVA) {
+          ASSERT_FALSE(Relocation);
+          Relocation = Entry;
+        }
+      }
+      Offset += Size;
+    }
+    ASSERT_TRUE(Relocation);
+    const auto Field = Raw(FieldRVA);
+    ASSERT_TRUE(Field);
+    for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto Changed = Binary;
+      if (Mutation < 2) {
+        const auto Word = readLE<uint16_t>(Changed.data() + *Relocation);
+        writeLE<uint16_t>(Changed.data() + *Relocation,
+                          Mutation ? Word + 1 : Word - 1);
+      } else
+        Changed[*Field] ^= 1;
+      auto CompiledCopy = Native;
+      auto Rejected = prepareCOFFRegistrationPatch(
+          Changed, *Image, CompiledCopy, {Mapping}, CodeVA, *Module);
+      EXPECT_FALSE(bool(Rejected));
+      if (!Rejected)
+        llvm::consumeError(Rejected.takeError());
+    }
+  }
   auto Update = prepareCOFFRegistrationPatch(Binary, *Image, Native, {Mapping},
                                              CodeVA, *Module);
   ASSERT_TRUE(bool(Update)) << llvm::toString(Update.takeError());

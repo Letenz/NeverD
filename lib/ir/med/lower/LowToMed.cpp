@@ -14,6 +14,7 @@
 #include "neverd/ir/med/LowToMed.h"
 
 #include "../X86/RegistrationEpilogue.h"
+#include "../X86/RegistrationPhysicalFrame.h"
 #include "../X86/RegistrationPrologue.h"
 #include "../X86/RegistrationRoots.h"
 
@@ -586,6 +587,10 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
                       : std::nullopt;
   if (Physical)
     x86_registration::projectCxxEpilogues(*Image, SourceLow, *Physical);
+  const auto PhysicalFrame =
+      Physical ? x86_registration::analyzePhysicalCxxFrame(*Image, SourceLow,
+                                                           *Physical)
+               : nullptr;
   const LowFunc &Low = Physical ? *Physical : SourceLow;
   for (const LowBlock &Block : Low.Blocks)
     for (const LowOp &Op : Block.Ops) {
@@ -727,6 +732,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
   Func.UnsafeIndirectBranchAddresses = Low.UnsafeIndirectBranchAddresses;
   Func.ExceptionMetadata = Low.ExceptionMetadata;
   Func.RegistrationStates = Low.RegistrationStates;
+  Func.RegistrationPhysicalFrame = PhysicalFrame;
   Func.CalleePopBytes = Low.CalleePopBytes;
   Func.ConsumesX87Argument = Low.ConsumesX87Argument;
   bool HasReturn = false, AllX87Returns = true;

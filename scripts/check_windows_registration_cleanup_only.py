@@ -24,6 +24,7 @@ else:
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "unittests/lift/eh/fixtures/registration_cleanup_only.cpp"
+SHARED_SOURCE = ROOT / "unittests/lift/eh/fixtures/registration_cleanup_shared.s"
 
 
 def main() -> int:
@@ -33,6 +34,8 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--compiler", default="clang++")
     parser.add_argument("--linker", default="lld-link")
+    parser.add_argument("--shared-prologue", action="store_true",
+                        help="use the authored shared entry/exit parent")
     parser.add_argument("--wine", help="optionally execute the generated fixture in Wine")
     parser.add_argument("--wine-prefix", type=Path,
                         help="isolated Wine prefix (default: OUTPUT/wine-prefix)")
@@ -44,6 +47,9 @@ def main() -> int:
     report = {"schema": 2, "evidence": evidence,
               "passed": False, "commands": [], "cases": [],
               "source_sha256": hashlib.sha256(SOURCE.read_bytes()).hexdigest()}
+    if args.shared_prologue:
+        report["shared_source_sha256"] = hashlib.sha256(
+            SHARED_SOURCE.read_bytes()).hexdigest()
 
     def run(command: list[str | Path], extra: dict | None = None) -> None:
         command = list(map(str, command))
@@ -72,10 +78,19 @@ def main() -> int:
             run([args.compiler, "--target=i686-pc-windows-msvc",
                  "-fms-extensions", "-fexceptions", "-fcxx-exceptions",
                  "-fno-omit-frame-pointer", "-" + optimization,
+                 *(["-DNEVERD_SHARED_PROLOGUE"] if args.shared_prologue else []),
                  "-c", SOURCE, "-o", obj])
+            shared_objects = []
+            if args.shared_prologue:
+                shared = case / "shared.obj"
+                run([args.compiler, "--target=i686-pc-windows-msvc",
+                     "-c", SHARED_SOURCE, "-o", shared])
+                shared_objects = [shared]
             run([args.linker, "/entry:mainCRTStartup", "/nodefaultlib",
                  "/machine:x86", "/subsystem:console", "/fixed:no",
-                 "/dynamicbase:no", "/out:" + str(image), obj, *libraries])
+                 "/dynamicbase:no", "/out:" + str(image), obj, *shared_objects,
+                 *(["/export:cleanup_only_parent"] if args.shared_prologue else []),
+                 *libraries])
             record["image_sha256"] = hashlib.sha256(image.read_bytes()).hexdigest()
             run([args.test_binary.resolve(),
                  "--gtest_filter=WindowsRegistrationCleanupOnly.*",

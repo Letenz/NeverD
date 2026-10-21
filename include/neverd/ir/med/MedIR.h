@@ -33,6 +33,8 @@
 
 namespace neverd {
 
+struct X86RegistrationCxxPhysicalFrame;
+
 /// Sentinel RegOff for a stack-passed parameter (Kind==Param with no backing
 /// register).  The emitter must not enter such a param into its register->arg
 /// map; a stack parameter is wired to the body purely by its display name.
@@ -632,6 +634,10 @@ struct MedFunc {
   /// common SEH invocation frame. This function cannot be lowered to LLVM.
   bool HasUnresolvedSEHFrame = false;
   std::optional<RegistrationStateAnalysis> RegistrationStates;
+  /// Independent replay of expanded shared helpers. The source states above
+  /// retain their original call occurrences and prologue receipt.
+  std::shared_ptr<const X86RegistrationCxxPhysicalFrame>
+      RegistrationPhysicalFrame;
 
   bool hasTypeInfo() const { return ReturnType != nullptr; }
 

@@ -27,6 +27,7 @@
 #include "neverd/ir/med/X86RegistrationCallResult.h"
 #include "neverd/ir/med/X86RegistrationCallback.h"
 #include "neverd/ir/med/X86RegistrationFrame.h"
+#include "neverd/ir/med/X86RegistrationPhysicalFrame.h"
 #include "neverd/loader/ExceptionInfo.h"
 
 #include "llvm/IR/CFG.h"
@@ -66,20 +67,22 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   if (!Runtime || Mod->getModuleFlag("eh-asynch"))
     return false;
   const auto &States = *Func.RegistrationStates;
-  if (States.CxxPrologue || !States.Complete ||
-      !States.CallbackStatesComplete || !States.RegistrationLifetimeComplete ||
-      !States.ChainOperationsComplete ||
+  if (!States.Complete || !States.CallbackStatesComplete ||
+      !States.RegistrationLifetimeComplete || !States.ChainOperationsComplete ||
       !States.IncomingFrameAccessesComplete ||
       !States.CallFrameEffectsComplete || !States.CleanupFrameEffectsComplete ||
       !States.CxxContinuationsComplete || !States.CxxCatchObjectsComplete ||
       !States.RuntimeObjectAccessesComplete || !States.ImageReadsComplete)
+    return false;
+  const auto *ChainAccesses = getX86RegistrationCxxChainAccesses(Func);
+  if (!ChainAccesses || !hasCheckedX86RegistrationCxxPhysicalFrame(*Img, Func))
     return false;
   const auto &Cxx = *EH.Cxx;
   const auto UnwindGraph = projectX86RegistrationCxxUnwind(Cxx);
   if (!UnwindGraph)
     return false;
   const auto FrameBytes = FrameAlloca->getAllocationSize(Mod->getDataLayout());
-  const auto Coordinate = cxxRegistrationFrameCoordinate(EH, &States);
+  const auto Coordinate = cxxRegistrationFrameCoordinate(Func);
   const auto Layout =
       Coordinate && FrameBytes && !FrameBytes->isScalable()
           ? projectX86RegistrationFrame(
@@ -413,10 +416,10 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     }
   }
 
-  if (States.ChainAccesses.empty() ||
-      States.ChainAccesses.size() != RegistrationChainIR.size())
+  if (ChainAccesses->empty() ||
+      ChainAccesses->size() != RegistrationChainIR.size())
     return false;
-  for (const auto &Access : States.ChainAccesses) {
+  for (const auto &Access : *ChainAccesses) {
     auto It = RegistrationChainIR.find({Access.Address, Access.OpSeq});
     if (It == RegistrationChainIR.end() || !It->second ||
         !ChainInstructions.insert(It->second).second)
@@ -727,7 +730,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
         Stack ? *Stack->Allocation : *FrameAlloca,
         Stack ? Stack->Bytes : Layout->Establisher);
   }
-  for (const auto &Access : States.ChainAccesses) {
+  for (const auto &Access : *ChainAccesses) {
     auto *I = RegistrationChainIR.at({Access.Address, Access.OpSeq});
     llvm::IRBuilder<> B(I);
     med_llvm_eh::emitWindowsEHProvenanceAnchor(

@@ -21,6 +21,9 @@ CleanupOnlyGuard::~CleanupOnlyGuard() {
 }
 
 extern "C" __declspec(dllexport) __declspec(noinline) int
+#ifdef NEVERD_SHARED_PROLOGUE
+cleanup_only_parent();
+#else
 cleanup_only_parent() {
   if (!cleanup_only_enabled)
     return 0;
@@ -29,8 +32,16 @@ cleanup_only_parent() {
   cleanup_only_throw();
   return 9;
 }
+#endif
 
 extern "C" __declspec(noreturn) void mainCRTStartup() {
+#ifdef NEVERD_SHARED_PROLOGUE
+  const unsigned Before = cleanup_only_trace;
+  cleanup_only_enabled = 0;
+  if (cleanup_only_parent() != 0 || cleanup_only_trace != Before)
+    ExitProcess(3);
+  cleanup_only_enabled = 1;
+#endif
   try {
     cleanup_only_parent();
   } catch (int Value) {

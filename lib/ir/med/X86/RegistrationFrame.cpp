@@ -8,6 +8,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/X86RegistrationFrame.h"
+#include "neverd/ir/med/X86RegistrationPhysicalFrame.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -104,13 +105,9 @@ realignedRegistrationFrameCoordinate(const ExceptionFunction &EH,
       int32_t(-int64_t(Frame.AllocationBytes) - Frame.BaseOffset)};
 }
 
-std::optional<RegistrationFrameCoordinate>
-cxxRegistrationFrameCoordinate(const ExceptionFunction &EH,
-                               const RegistrationStateAnalysis *State) {
-  // The source call proof does not yet reconstruct its saved registers,
-  // allocated stack and cookie in generated code.
-  if (State && State->CxxPrologue)
-    return std::nullopt;
+static std::optional<RegistrationFrameCoordinate>
+describeCxxFrame(const ExceptionFunction &EH,
+                 const RegistrationStateAnalysis *State) {
   if (!EH.Registration || !EH.Registration->cxxRuntimeFrameOffset() ||
       EH.ParseStatus != ExceptionParseStatus::Complete ||
       EH.Encoding != ExceptionEncoding::X86CxxFuncInfo || !EH.Cxx ||
@@ -124,6 +121,23 @@ cxxRegistrationFrameCoordinate(const ExceptionFunction &EH,
   if (EH.Registration->RealignedFrame)
     return realignedRegistrationFrameCoordinate(EH, State);
   return RegistrationFrameCoordinate{-4, 1, 0};
+}
+
+std::optional<RegistrationFrameCoordinate>
+cxxRegistrationFrameCoordinate(const ExceptionFunction &EH,
+                               const RegistrationStateAnalysis *State) {
+  if (State && State->CxxPrologue)
+    return std::nullopt;
+  return describeCxxFrame(EH, State);
+}
+
+std::optional<RegistrationFrameCoordinate>
+cxxRegistrationFrameCoordinate(const MedFunc &Function) {
+  if (!Function.ExceptionMetadata || !Function.RegistrationStates ||
+      !getX86RegistrationCxxChainAccesses(Function))
+    return std::nullopt;
+  return describeCxxFrame(*Function.ExceptionMetadata,
+                          &*Function.RegistrationStates);
 }
 
 std::optional<RegistrationFrameCoordinate>
@@ -144,8 +158,7 @@ registrationRootFrameCoordinate(const MedFunc &Func, const MedOp &Op) {
       Func.RegistrationStates->CxxContinuations.size() >
           limits::kMaxRegistrationEHRecords)
     return std::nullopt;
-  auto Coordinate = cxxRegistrationFrameCoordinate(*Func.ExceptionMetadata,
-                                                   &*Func.RegistrationStates);
+  auto Coordinate = cxxRegistrationFrameCoordinate(Func);
   if (!Coordinate)
     return std::nullopt;
   const auto &EH = *Func.ExceptionMetadata;

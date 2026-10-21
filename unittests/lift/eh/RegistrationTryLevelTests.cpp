@@ -28,6 +28,7 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/X86RegistrationFrame.h"
+#include "neverd/ir/med/X86RegistrationPhysicalFrame.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/COFF/COFFCxxEpilogue.h"
 #include "neverd/loader/COFF/COFFException.h"
@@ -1946,6 +1947,9 @@ TEST(RegistrationTryLevel, CxxEAXHelperInputPE32HasTheCheckedPhysicalCall) {
   EXPECT_EQ(Installations, 1u);
   ASSERT_TRUE(Med.RegistrationStates);
   ASSERT_TRUE(Med.RegistrationStates->CxxPrologue);
+  ASSERT_TRUE(Med.RegistrationPhysicalFrame);
+  EXPECT_TRUE(hasCheckedX86RegistrationCxxPhysicalFrame(*Image, Med));
+  EXPECT_TRUE(cxxRegistrationFrameCoordinate(Med));
   EXPECT_FALSE(cxxRegistrationFrameCoordinate(*Med.ExceptionMetadata,
                                               &*Med.RegistrationStates));
   const va_t ExitParent = Export("epilogue_state_parent");
@@ -1991,6 +1995,10 @@ TEST(RegistrationTryLevel, CxxEAXHelperInputPE32HasTheCheckedPhysicalCall) {
   EXPECT_EQ(RetainedExitCall, !IntactSaves);
   EXPECT_EQ(bool(getCheckedX86RegistrationCxxParentABI(ExitFunction, *Image)),
             IntactSaves);
+  EXPECT_EQ(bool(ExitMed.RegistrationPhysicalFrame), IntactSaves);
+  EXPECT_EQ(bool(cxxRegistrationFrameCoordinate(ExitMed)), IntactSaves);
+  if (IntactSaves)
+    EXPECT_TRUE(hasCheckedX86RegistrationCxxPhysicalFrame(*Image, ExitMed));
   const va_t GuardedParent = Export("guarded_state_parent");
   ASSERT_NE(GuardedParent, InvalidVA);
   const auto GuardedFunction = liftEntry(*Image, GuardedParent);
@@ -2021,6 +2029,12 @@ TEST(RegistrationTryLevel, CxxEAXHelperInputPE32HasTheCheckedPhysicalCall) {
   EXPECT_FALSE(cxxRegistrationFrameCoordinate(
       *GuardedFunction.ExceptionMetadata, &GuardedStates));
   EXPECT_FALSE(getCheckedX86RegistrationCxxParentABI(GuardedFunction, *Image));
+  const auto GuardedMed =
+      Converter.convert(GuardedFunction, Arch::X86, BinaryFormat::COFF);
+  EXPECT_FALSE(GuardedMed.RegistrationPhysicalFrame);
+  EXPECT_FALSE(cxxRegistrationFrameCoordinate(GuardedMed));
+  if (GuardedStates.CxxPrologue)
+    EXPECT_FALSE(hasCheckedX86RegistrationCxxPhysicalFrame(*Image, GuardedMed));
 }
 
 TEST(RegistrationTryLevel, CxxEAXHelperProjectsItsPhysicalFrameBeforeSSA) {
@@ -2784,6 +2798,238 @@ TEST(RegistrationTryLevel, CxxSharedHelpersHaveTheCheckedParentEntryABI) {
         }
 }
 
+TEST(RegistrationTryLevel, CxxSharedHelpersBindTheirPhysicalFrame) {
+  for (bool Wide : {false, true})
+    for (unsigned Variant : {0, 1, 2})
+      for (uint32_t Allocation : {0, 1, 4, 32})
+        for (bool PopArguments : {false, true}) {
+          if (Variant && Allocation < 4)
+            continue;
+          SCOPED_TRACE(::testing::Message()
+                       << Wide << ' ' << Variant << ' ' << Allocation << ' '
+                       << PopArguments);
+          auto [Image, Call] = makeCxxSharedEpilogueImage(
+              Wide, Variant, Allocation, PopArguments);
+          const auto Low = liftEntry(Image, kText + 0x20);
+          ASSERT_TRUE(Low.RegistrationStates);
+          ASSERT_TRUE(Low.RegistrationStates->CxxPrologue);
+          LowToMedConverter Converter;
+          Converter.setBinaryImage(&Image);
+          const auto Med =
+              Converter.convert(Low, Arch::X86, BinaryFormat::COFF);
+          ASSERT_TRUE(Med.RegistrationPhysicalFrame);
+          EXPECT_EQ(Med.RegistrationStates->CxxPrologue,
+                    Low.RegistrationStates->CxxPrologue);
+          EXPECT_FALSE(cxxRegistrationFrameCoordinate(
+              *Low.ExceptionMetadata, &*Low.RegistrationStates));
+          const auto Coordinate = cxxRegistrationFrameCoordinate(Med);
+          ASSERT_TRUE(Coordinate);
+          EXPECT_EQ(Coordinate->EntryOffset, -4);
+          EXPECT_EQ(Coordinate->Alignment, 1u);
+          EXPECT_EQ(Coordinate->AlignedOffset, 0);
+          ASSERT_TRUE(hasCheckedX86RegistrationCxxPhysicalFrame(Image, Med));
+          const auto *Chain = getX86RegistrationCxxChainAccesses(Med);
+          ASSERT_TRUE(Chain);
+          EXPECT_EQ(Chain->size(),
+                    Low.RegistrationStates->ChainAccesses.size() + 1);
+        }
+}
+
+TEST(RegistrationTryLevel, CxxPhysicalFrameRequiresEveryCurrentChainEffect) {
+  auto [Original, Call] = makeCxxSharedEpilogueImage(false, 1, 32);
+  const auto Low = liftEntry(Original, kText + 0x20);
+  LowToMedConverter Converter;
+  Converter.setBinaryImage(&Original);
+  const auto Proven = Converter.convert(Low, Arch::X86, BinaryFormat::COFF);
+  ASSERT_TRUE(Proven.RegistrationPhysicalFrame);
+  ASSERT_TRUE(hasCheckedX86RegistrationCxxPhysicalFrame(Original, Proven));
+  for (unsigned Mutation = 0; Mutation != 22; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = Original;
+    auto Med = Proven;
+    auto Frame = std::make_shared<X86RegistrationCxxPhysicalFrame>(
+        *Med.RegistrationPhysicalFrame);
+    Med.RegistrationPhysicalFrame = Frame;
+    MedOp *Chain = nullptr;
+    for (auto &Block : Med.Blocks)
+      for (auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::STORE &&
+            Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS &&
+            Op.Addr == Call)
+          Chain = &Op;
+    ASSERT_TRUE(Chain);
+    switch (Mutation) {
+    case 0:
+      Med.RegistrationPhysicalFrame.reset();
+      break;
+    case 1:
+      ++Frame->Entry.OpSeq;
+      break;
+    case 2:
+      Frame->ChainAccesses.pop_back();
+      break;
+    case 3: {
+      const auto Duplicate = Frame->ChainAccesses.front();
+      Frame->ChainAccesses.push_back(Duplicate);
+      break;
+    }
+    case 4:
+      Frame->ChainAccesses.front().AccessKind =
+          RegistrationChainAccess::Kind::Remove;
+      break;
+    case 5:
+      ++Frame->ChainAccesses.back().OpSeq;
+      break;
+    case 6:
+      ++Frame->ChainAccesses.back().EndAddress;
+      break;
+    case 7:
+      Frame->Exits.clear();
+      break;
+    case 8:
+      ++Frame->Exits.front().Source.OpSeq;
+      break;
+    case 9:
+      ++Frame->Exits.front().HelperVA;
+      break;
+    case 10:
+      ++Frame->EntryCall.SecurityCookieVA;
+      break;
+    case 11:
+      ++Frame->EntryCall.HandlerVA;
+      break;
+    case 12:
+      ++Chain->OriginSeq;
+      break;
+    case 13:
+      Chain->Inputs[0].ConstVal = 4;
+      break;
+    case 14:
+      Chain->Inputs[1].Size = 2;
+      break;
+    case 15:
+      Chain->Dead = true;
+      break;
+    case 16:
+      Med.RegistrationStates->Complete = false;
+      break;
+    case 17:
+      Med.RegistrationStates->ChainAccesses.clear();
+      break;
+    case 18:
+      Image.Segments.front().Data[0x180 + 12] ^= 1;
+      break;
+    case 19:
+      Image.DynInfo.SecurityCookieRVA += 4;
+      writeLE<uint32_t>(Image.Segments.front().Data.data() + 0x118,
+                        kRData + 0xf4);
+      ASSERT_TRUE(coff_loader::getCheckedX86CxxPrologueCall(
+          Image, *Med.ExceptionMetadata));
+      break;
+    case 20:
+      // Both helper variants are valid and have the same extent and final SP,
+      // but one saves ESP while the other saves the encoded cookie at EBP-16.
+      Image.Segments.front().Data[0x120] = 0x45;
+      ASSERT_TRUE(coff_loader::getCheckedX86CxxPrologueCall(
+          Image, *Med.ExceptionMetadata));
+      break;
+    case 21:
+      Frame->EntryCall.Writes.pop_back();
+      break;
+    }
+    EXPECT_FALSE(hasCheckedX86RegistrationCxxPhysicalFrame(Image, Med));
+  }
+}
+
+TEST(RegistrationTryLevel, CxxPhysicalChainOffsetRequiresUniqueZeroTransport) {
+  auto [Image, Call] = makeCxxSharedEpilogueImage(false, 1, 32);
+  LowToMedConverter Converter;
+  Converter.setBinaryImage(&Image);
+  const auto Proven = Converter.convert(liftEntry(Image, kText + 0x20),
+                                        Arch::X86, BinaryFormat::COFF);
+  ASSERT_TRUE(hasCheckedX86RegistrationCxxPhysicalFrame(Image, Proven));
+  int Next = 0;
+  for (const auto &Block : Proven.Blocks)
+    for (const auto &Op : Block.Ops)
+      Next = std::max(Next, Op.Output.Id + 1);
+  for (unsigned Mutation = 0; Mutation != 13; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Med = Proven;
+    auto Block =
+        std::find_if(Med.Blocks.begin(), Med.Blocks.end(), [&](const auto &B) {
+          return B.StartAddr <= Call && Call < B.EndAddr;
+        });
+    ASSERT_NE(Block, Med.Blocks.end());
+    auto Access =
+        std::find_if(Block->Ops.begin(), Block->Ops.end(), [](const auto &Op) {
+          return Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS;
+        });
+    ASSERT_NE(Access, Block->Ops.end());
+    const size_t Index = Access - Block->Ops.begin();
+    ASSERT_GE(Access->OriginSeq, 2);
+    MedOp Copy;
+    Copy.Opcode = NdOp::COPY;
+    Copy.Addr = Call;
+    Copy.OriginSeq = Access->OriginSeq - 2;
+    Copy.Output.Kind = MedVar::Temp;
+    Copy.Output.Id = Next;
+    Copy.Output.SSAVer = 1;
+    Copy.Output.Size = 4;
+    Copy.addInput(MedVar::makeConst(0, 4));
+    auto Extend = Copy;
+    Extend.Opcode = NdOp::INT_ZEXT;
+    Extend.OriginSeq += 1;
+    Extend.Output.Id += 1;
+    Extend.Output.Size = 8;
+    Extend.Inputs[0] = Copy.Output;
+    Access->Inputs[0] = Extend.Output;
+    switch (Mutation) {
+    case 0:
+      break;
+    case 1:
+      Copy.Inputs[0].ConstVal = 4;
+      break;
+    case 2:
+      Extend.Inputs[0] = Extend.Output;
+      break;
+    case 3:
+      Extend.Dead = true;
+      break;
+    case 4:
+      Copy.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 5:
+      ++Copy.Addr;
+      break;
+    case 6:
+      Copy.OriginSeq = Access->OriginSeq;
+      break;
+    case 7:
+      Copy.Output.Size = 2;
+      break;
+    case 8:
+      Copy.addInput(MedVar::makeConst(0, 4));
+      break;
+    case 9:
+      Extend.Opcode = NdOp::INT_SEXT;
+      break;
+    case 10:
+      // A second definition cannot authenticate this value, even when equal.
+      Med.Blocks.front().Ops.push_back(Copy);
+      break;
+    case 11:
+      Copy.Output.Id += 2;
+      break;
+    case 12:
+      std::swap(Copy, Extend);
+      break;
+    }
+    Block->Ops.insert(Block->Ops.begin() + Index, {Copy, Extend});
+    EXPECT_EQ(hasCheckedX86RegistrationCxxPhysicalFrame(Image, Med),
+              Mutation == 0);
+  }
+}
+
 TEST(RegistrationTryLevel, CxxSharedEpilogueProjectionRequiresItsCurrentCall) {
   auto [Original, Call] = makeCxxSharedEpilogueImage(false, 2, 32);
   const auto Proven = liftEntry(Original, kText + 0x20);
@@ -3309,6 +3555,7 @@ TEST(RegistrationTryLevel, CxxGuardedSharedEpilogueProvesTheCookieBeforeExit) {
           Converter.setBinaryImage(&Image);
           const auto Med =
               Converter.convert(Function, Arch::X86, BinaryFormat::COFF);
+          EXPECT_FALSE(Med.RegistrationPhysicalFrame);
           EXPECT_TRUE(std::any_of(
               Med.Blocks.begin(), Med.Blocks.end(), [&](const auto &B) {
                 return std::any_of(

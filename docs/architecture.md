@@ -1907,7 +1907,7 @@ loader's ordered writes supply the save layout; the x86 lifter supplies XOR's
 arithmetic flags. Both return-PC stores, the cookie read and the FS chain
 transfer remain explicit. Scratch storage is separate from source temporaries,
 and all frame displacements keep their signed representation. This projection
-preserves the source EH metadata and does not grant native reconstruction.
+preserves the source EH metadata and needs a separate native frame binding.
 `RegistrationSharedCall` in LowIR binds each source occurrence to current
 immutable helper bytes, exact re-lifted caller operations, entry ownership,
 and a unique chain receipt. MedIR expansion and the parent's call/frame ABI
@@ -1921,7 +1921,18 @@ lifter as ordinary instructions. Exact caller boundaries and chain-removal
 receipts bind each occurrence. Explicit CALL/RET stack effects retain the
 moved return PC; EAX, EDX and flags are preserved by the helper's own dataflow.
 Guarded wrappers keep their original calls until the checker and its failure
-path have a physical projection. Neither expansion changes native EH admission.
+path have a physical projection.
+`RegistrationPhysicalFrame` independently replays the expanded private LowIR.
+Only the replay temporarily treats expanded helper boundaries as non-calls;
+source boundaries and state receipts, including `CxxPrologue`, stay unchanged.
+Every non-chain block, call, cleanup, incoming-frame, catch, runtime-object and
+image-read fact must agree. The separate immutable binding records the exact
+entry/exit occurrences and replayed chain operations. Consumers require each
+current MedIR FS access, a unique same-instruction zero-offset computation and
+fresh loader descriptors, including the entry's ordered writes. Native LLVM
+emission and independent COFF validation use that same binding and retain
+their other ABI, control, frame-privacy and output checks. Guarded handlers and
+guarded shared exits remain outside this physical native projection.
 Registration range recovery uses complete installing prefixes as local entry
 boundaries. A bounded instruction graph can disprove a heuristic start inside
 an operand while retaining stated, exported, relocated and conflicting direct
@@ -1951,8 +1962,8 @@ and proven global-cookie preservation. Only then can the state solver follow
 the checker's equal-value return, model its nested return-PC store and replace
 the six arithmetic flags with CMP's actual result. Other register/flag
 provenance is retained. This physical wrapper never becomes an ordinary
-cookie-check receipt. Overlapping saves remain refused; the shared-prologue
-receipt still prevents native frame reconstruction.
+cookie-check receipt. Overlapping saves remain refused, and guarded exits still
+need a physical checker/failure-path projection before native reconstruction.
 `RegistrationCleanupABI` authenticates immutable MSVC tail-jump relays and
 Clang relays that save EBP, adjust the source frame and call one or more checked
 leaves before restoring EBP. The ordered call list retains every ECX object
@@ -2083,6 +2094,11 @@ definition. The committed receipt retains sorted original/generated RVAs; final
 validation requires PE32 x86, an executable original entry and the exact E9
 target, in addition to the generated section hash. A complete language table
 cannot authorize an omitted or redirected entry trampoline.
+For a checked shared entry beginning with a narrow PUSH and MOV EAX, handler,
+the five-byte jump retires the MOV's complete HIGHLOW operand. Preparation
+authenticates that exact handler field and its original bytes before removing
+the relocation, including the operand bytes outside the jump. Other partially
+overwritten relocation fields still refuse.
 The same bounded COFF FuncInfo decoder exposes complete normalized wire graphs,
 record extents and callback-pointer fields without inventing a physical frame.
 Valid record aliases remain inspectable; distinct ownership is a separate

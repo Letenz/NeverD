@@ -6021,6 +6021,15 @@ parents must return zero after the caller catches the thrown value and observes
 destructors in order; a changed initial trace must return one at both bases.
 `--wine-prefix PATH` selects an isolated prefix instead of the output directory's
 default prefix. These runtime checks execute only the generated test fixtures.
+Add `--shared-prologue` to use the authored shared entry/exit assembly parent
+with the same C++ throwing helper, destructors and caller catch. The caller
+first exercises an ordinary return without cleanup, then enables the throw.
+Both O0 and O1 retain source receipts through the independent physical frame
+binding, native LLVM and output proofs. Missing or changed bindings must lose
+native admission. The narrow entry's handler relocation is retired only for
+its checked MOV operand; adjacent partial fields and changed operand bytes
+must refuse installation. Preferred/rebased execution and wrong-trace controls
+use the same runner checks as the compiled inline parent.
 Large cleanup graph tests cover 129 through 4,096 source states, independent
 lifetimes, a 128-action depth boundary and long empty transition chains.
 Self/forward edges, a 129-action chain and record-budget overflow refuse.
@@ -6047,14 +6056,14 @@ call, state writes and node removal. Machine execution verifies the bitwise
 state updates' ZF/SF results, returned ESP and FS:[0]. Synthetic
 instruction-boundary and input-value
 mutations must refuse the transfer, as must stale current-image bytes.
-The distinct source call receipt does not yet grant native EH lowering.
+The distinct source call receipt alone does not grant native EH lowering.
 `CxxEAXHelperProjectsItsPhysicalFrameBeforeSSA` also checks all 24 helper forms
 through MedIR: the first stack argument, complete frame extent and ordered
 stack writes, including overlapping saves and both return-PC stores.
 `CxxEAXHelperProjectionRechecksTheCurrentEntry` rejects stale bytes, allocation,
 handler, cookie, fixups, source operations, boundaries, entry ownership and
 receipts, including missing, repeated or contradictory installation events.
-Physical projection must keep the separate native EH gate closed.
+Incomplete physical frame bindings must keep native EH admission closed.
 `CxxSharedEpilogueProjectsThePhysicalReturnBeforeSSA` checks the returned scalar,
 restored ESP and chain removal for 32 source forms, including caller argument
 pops. `CxxSharedEpilogueProjectionRequiresItsCurrentCall` rejects 24 changed
@@ -6065,6 +6074,15 @@ changed-entry and changed-exit cases must fail the parent ABI query. Actual
 PE32 inputs exercise both inline and shared exits. The guarded-exit tests
 require their cookie-checking CALL to survive MedIR conversion and their
 parent ABI to remain unavailable even when the source cookie proof is complete.
+`CxxSharedHelpersBindTheirPhysicalFrame` checks 32 entry/exit combinations while
+retaining original source receipts. `CxxPhysicalFrameRequiresEveryCurrentChainEffect`
+rejects 22 changed bindings or current-image protocols, including replacement
+with another valid helper variant and a changed cookie identity.
+`CxxPhysicalChainOffsetRequiresUniqueZeroTransport` checks the unoptimized
+COPY/zero-extension form and rejects nonzero, missing, duplicate, cyclic,
+misordered or impure definitions. The actual cleanup-only PE fixture supplies
+the native EH acceptance check; the state-only synthetic graphs have no unwind
+action and do not establish native EH eligibility.
 `RegistrationTryLevel.CxxSharedEpilogue*` checks 32 combinations of push width,
 allocation, helper form and parent return-pop, eight overwritten-save cases,
 26 current-image mutations and 18 call/frame mutations. The assembled images
@@ -6082,7 +6100,7 @@ other helper forms and overlapping saves refuse. Machine execution compares
 all six arithmetic flags, preserved EAX/EDX, restored registers, helper return
 PC, ESP and FS:[0]. A changed cookie must take the original checker's failure
 branch at both image bases. These are source and physical-call proofs; the
-shared-frame native reconstruction gate remains closed.
+guarded shared-frame native reconstruction gate remains closed.
 `RegistrationTryLevel.CxxSharedEntry*` checks guessed padding and untyped data
 words inside instructions, with stated, exported, relocated, unreachable and
 explicit-control-entry counterexamples. `CxxEntryAlignment*` checks twenty
