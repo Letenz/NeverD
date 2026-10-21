@@ -30,6 +30,7 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/LibCRecordArguments.h"
 #include "neverd/libc/StackProbeIndex.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
@@ -3360,9 +3361,10 @@ struct ImportPrototypeArguments {
   /// The integer arguments each import's prototype counts, where the setup
   /// of each call gives it its arguments (Windows on ARM64).
   std::map<va_t, int> Counts;
-  /// The imports listed by the prototype the user declares (userPrototype),
-  /// which takes only integer arguments: their calls pass what it declares,
-  /// however many the arity tables give a routine of the name.
+  /// The imports whose integer arguments a user declaration or header record
+  /// layout specifies, overriding the parameter counts in the arity tables.
+  std::set<va_t> PrototypeDeclared;
+  /// The explicitly user-declared subset, for source-binding precedence.
   std::set<va_t> UserDeclared;
 };
 
@@ -3373,21 +3375,19 @@ struct ImportPrototypeArguments {
 /// is keyed too.  A call in a function whose own summary is incomplete still
 /// passes its import's parameters.  Only a routine with a fixed prototype is
 /// listed: the one the user declares (userPrototype), where it takes only
-/// integer arguments, which decides over the tables (UserDeclared); else one
-/// of the image format's own runtime (LibCPrototype, such as the
-/// Windows C runtime's `_initterm`), else one the arity tables give
-/// (LibCNames.h), by the exact name where the import entry is the C name,
-/// else one the program's types declare (\p Dbg's resolvePrototype), as the
-/// Windows kernel's headers declare the routines a driver imports.  A routine
-/// the image exports whose name binds a prototype (\p Dbg's resolveFunction)
-/// is listed too: where \p Effects summarizes its body, in DeclaredReads and
-/// DeclaredStackArgs, which join what the body reads, otherwise as an
-/// import is.
-/// Each integer register argument is read pointer-wide.  A floating argument
-/// is listed only under System V, which passes it in the next vector
-/// register at its width, and only when every argument has a register.
-/// The arguments past the registers are on the stack,
-/// which only a convention that summarizes stack arguments (\p
+/// integer arguments, which decides over the tables (PrototypeDeclared); else
+/// one of the image format's own runtime (LibCPrototype, such as the Windows C
+/// runtime's `_initterm`), else one the arity tables give (LibCNames.h), by the
+/// exact name where the import entry is the C name, else one the program's
+/// types declare (\p Dbg's resolvePrototype), as the Windows kernel's headers
+/// declare the routines a driver imports.  A routine the image exports whose
+/// name binds a prototype (\p Dbg's resolveFunction) is listed too: where \p
+/// Effects summarizes its body, in DeclaredReads and DeclaredStackArgs, which
+/// join what the body reads, otherwise as an import is. Each integer register
+/// argument is read pointer-wide.  A floating argument is listed only under
+/// System V, which passes it in the next vector register at its width, and only
+/// when every argument has a register. The arguments past the registers are on
+/// the stack, which only a convention that summarizes stack arguments (\p
 /// StackArguments) counts; elsewhere such a routine is not listed.  Without
 /// \p RegisterArguments an import takes every argument on the stack.
 ImportPrototypeArguments importPrototypeArguments(
@@ -3418,6 +3418,8 @@ ImportPrototypeArguments importPrototypeArguments(
   // order (0 for an integer one).
   struct Arguments {
     int Integers = 0;
+    /// A record may use stack slots while leaving integer registers free.
+    std::optional<int> Registers;
     std::vector<uint8_t> Floats;
     std::vector<uint8_t> Order;
     /// The bytes each integer argument declares, in order, where a
@@ -3652,12 +3654,29 @@ ImportPrototypeArguments importPrototypeArguments(
     std::optional<Arguments> Routine;
     // The summary of an exported routine's own body joins its prototype.
     bool Joins = false;
-    bool User = false;
+    bool PrototypeOwnsArguments = false;
+    bool UserDeclared = false;
     if (!Name.empty()) {
       if (const uint16_t Bytes = RoutineFloatReturn(Name))
         Result.FloatReturns[Addr] = Bytes;
       Routine = UserArguments(Name);
-      User = Routine.has_value();
+      UserDeclared = Routine.has_value();
+      PrototypeOwnsArguments = Routine.has_value();
+      // Header arity is a count of source parameters. A record's pieces take
+      // the target ABI's registers or stack positions before those tables.
+      if (!Routine)
+        if (const auto Function = Declared(Name))
+          if (const auto Layout = libc::recordCallArguments(
+                  *Function, Img.Arch, Img.abiFormat(),
+                  libc::libcVariantOf(Img))) {
+            Arguments Record;
+            Record.Integers = static_cast<int>(Layout->Positions);
+            Record.Registers = static_cast<int>(Layout->Registers);
+            Record.Order.assign(Layout->Positions, 0);
+            Record.Slots = !RegisterArguments;
+            Routine = std::move(Record);
+            PrototypeOwnsArguments = true;
+          }
       if (!Routine)
         Routine = RoutineArguments(Name);
       if (!Routine)
@@ -3680,8 +3699,16 @@ ImportPrototypeArguments importPrototypeArguments(
         : SlotVectors ? std::optional<int>(Routine->Order.size())
                       : std::optional<int>(Routine->Integers);
     const int InRegisters =
-        std::min(Count.value_or(0), static_cast<int>(Registers.size()));
+        Routine && Routine->Registers
+            ? *Routine->Registers
+            : std::min(Count.value_or(0), static_cast<int>(Registers.size()));
     if (!Count || (*Count > InRegisters && !StackArguments))
+      return;
+    // Setup-only conventions currently publish one dense count. A signature
+    // whose register padding needs a separate count cannot use that channel.
+    if (Convention && Convention->ArgumentsFromCallSetup &&
+        Routine->Registers &&
+        InRegisters != std::min(*Count, static_cast<int>(Registers.size())))
       return;
     GPRReadWidths Widths{};
     // An import's integer arguments are read pointer-wide; an exported
@@ -3718,8 +3745,11 @@ ImportPrototypeArguments importPrototypeArguments(
       if (Routine->CalleePops && *Count > 0)
         Result.StackPops[Addr] = *Count * static_cast<int>(TRI.PointerSize);
     }
-    if (User)
-      Result.UserDeclared.insert(Addr);
+    if (PrototypeOwnsArguments) {
+      Result.PrototypeDeclared.insert(Addr);
+      if (UserDeclared)
+        Result.UserDeclared.insert(Addr);
+    }
   };
   for (const LowFunc &F : Funcs)
     for (const LowBlock &Block : F.Blocks)
@@ -3826,6 +3856,7 @@ void computeCallRegisterEffects(
   // prototype is kept under the variable's address, or this image's, by its
   // entry.
   Result.CallArgumentSources = callArgumentSourcesOf(PointerCallees);
+  Result.CallPrototypeArguments.clear();
   Result.CallUserPrototypes.clear();
   if (Img.Arch != Arch::X64) {
     // Where an import takes every argument on the stack (i386: regparm is
@@ -3842,6 +3873,7 @@ void computeCallRegisterEffects(
       Result.CallEntryStackArgs = std::move(Prototyped.StackArgs);
       Result.CallEntryStackSlots = std::move(Prototyped.StackSlots);
       Result.CallEntryStackPops = std::move(Prototyped.StackPops);
+      Result.CallPrototypeArguments = std::move(Prototyped.PrototypeDeclared);
       Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
     } else if (Convention && Convention->ImportArgumentsFromPrototype &&
                Convention->ArgumentsFromCallSetup) {
@@ -3857,6 +3889,7 @@ void computeCallRegisterEffects(
       // program's declarations stay (PipelineAnalysisCache::ImportCounts).
       Result.OmittedCalleeArgumentCounts =
           imageImportCounts(Img, Dbg, PointerCallees, KeptImportCounts);
+      Result.CallPrototypeArguments = std::move(Prototyped.PrototypeDeclared);
       Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
     }
     return;
@@ -4115,8 +4148,11 @@ void computeCallRegisterEffects(
     for (auto &[Addr, Widths] : Prototyped.Reads)
       if (!DispatchThunks.count(Addr) &&
           FixedEntryReads.try_emplace(Addr, Widths).second &&
-          Prototyped.UserDeclared.count(Addr))
-        Result.CallUserPrototypes.insert(Addr);
+          Prototyped.PrototypeDeclared.count(Addr)) {
+        Result.CallPrototypeArguments.insert(Addr);
+        if (Prototyped.UserDeclared.count(Addr))
+          Result.CallUserPrototypes.insert(Addr);
+      }
     for (auto &[Addr, Count] : Prototyped.StackArgs)
       if (!DispatchThunks.count(Addr))
         FixedEntryStackArgs.try_emplace(Addr, Count);

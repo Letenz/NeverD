@@ -1740,6 +1740,85 @@ TEST(MedABIPass, X87WaitLeavesEarlierCallSetupInPlace) {
   }
 }
 
+TEST(MedABIPass, AFaultingCheckLeavesEarlierCallSetupInPlace) {
+  // sysctl sets RDI and RSI for fopencookie, then copies a record to the
+  // stack with `movdqa`, whose alignment check (RequireAligned) only faults.
+  // Neither it nor another check that only faults writes a register or
+  // memory: an argument set up before it still reaches the call, an i386
+  // push and an x86-64 RDI.
+  constexpr va_t Callee = 0x2000;
+  for (Intrinsic Check :
+       {Intrinsic::RequireAligned, Intrinsic::X86RequireDivPrecondition,
+        Intrinsic::Bound, Intrinsic::Into})
+    for (Arch TheArch : {Arch::X86, Arch::X64}) {
+      SCOPED_TRACE(unsigned(Check));
+      SCOPED_TRACE(int(TheArch));
+      const bool I386 = TheArch == Arch::X86;
+      const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+      const uint16_t Slot = TRI.PointerSize;
+      MedFunc Func;
+      Func.Entry = 0x1000;
+      Func.Name = "caller";
+      Func.Blocks.resize(1);
+      MedBlock &Block = Func.Blocks[0];
+      Block.Id = 0;
+      const MedVar Argument = I386 ? temp(2, 0, Slot, TheArch)
+                                   : reg(3, 1, Slot, x86reg::RDI, TheArch);
+      Block.Ops.push_back(
+          unary(NdOp::COPY, Argument, MedVar::makeConst(42, Slot)));
+      if (I386) {
+        const MedVar EntrySP = reg(1, 0, Slot, TRI.StackPointer, TheArch);
+        const MedVar CallSP = reg(1, 1, Slot, TRI.StackPointer, TheArch);
+        Block.Ops.push_back(
+            binary(NdOp::INT_SUB, CallSP, EntrySP, MedVar::makeConst(4, Slot)));
+        MedOp Push;
+        Push.Opcode = NdOp::STORE;
+        Push.addInput(CallSP);
+        Push.addInput(Argument);
+        Block.Ops.push_back(Push);
+      }
+      MedOp Fault;
+      Fault.Opcode = NdOp::INTRINSIC;
+      Fault.addInput(MedVar::makeConst(unsigned(Check), 2));
+      const MedVar Value = temp(5, 0, 4, TheArch);
+      switch (Check) {
+      case Intrinsic::RequireAligned:
+        Fault.addInput(MedVar::makeConst(0x6A00, 8));
+        Fault.addInput(MedVar::makeConst(16, 8));
+        break;
+      case Intrinsic::X86RequireDivPrecondition:
+        Fault.addInput(temp(4, 0, 8, TheArch));
+        Fault.addInput(Value);
+        Fault.addInput(MedVar::makeConst(1, 1));
+        break;
+      case Intrinsic::Bound:
+        Fault.addInput(Value);
+        Fault.addInput(MedVar::makeConst(0x6A00, 4));
+        break;
+      default:
+        break;
+      }
+      Block.Ops.push_back(Fault);
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Addr = 0x1010;
+      Call.addInput(MedVar::makeConst(Callee, Slot));
+      Block.Ops.push_back(Call);
+
+      const std::map<va_t, std::string> Names{{Callee, "callee"}};
+      std::map<va_t, int> RegArity{{Callee, I386 ? 0 : 1}};
+      std::map<va_t, int> TotalArity{{Callee, 1}};
+      recoverCallAbi(Func, TheArch, Names, nullptr, &RegArity, &TotalArity);
+
+      ASSERT_EQ(Func.CallInfos.size(), 1u);
+      const auto &Args = Func.CallInfos[0].Args;
+      ASSERT_EQ(Args.size(), 1u);
+      EXPECT_TRUE(Args[0] == Argument ||
+                  (Args[0].isConst() && Args[0].ConstVal == 42))
+          << int(Args[0].Kind) << ':' << Args[0].Id << ':' << Args[0].SSAVer;
+    }
+}
+
 TEST(MedABIPass, I386TailJumpPassesItsIncomingStackSlots) {
   // `jmp callee` leaves on this function's entry stack: the callee reads its
   // arguments at 4(%esp) and 8(%esp), above the return address.  swapper

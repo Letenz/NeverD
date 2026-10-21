@@ -77,10 +77,11 @@ std::set<va_t> findFrameLocalLeafCallees(const std::vector<MedFunc> &Funcs,
 // \p PointerCallees gives the routine each function-pointer variable starts
 // at (collectPointerVariableCallees): a call through the variable passes that
 // routine's arguments, though it never takes its name.
-// \p UserPrototypeCallees holds the imports, by their stubs and slots, whose
-// prototype the user declares (PipelineResult::CallUserPrototypes): a call
-// to one passes what its summary counts, which the prototype gives, however
-// many arguments the arity tables give a routine of its name.
+// \p PrototypeArgumentCallees holds the imports, by their stubs and slots,
+// whose integer arguments a user declaration or header record layout gives
+// (PipelineResult::CallPrototypeArguments): a
+// call to one passes what its summary counts, which the prototype gives,
+// however many arguments the arity tables give a routine of its name.
 // \p SummaryKeysRead, where given, gains every key at which the recovery
 // reads a callee summary, a user prototype or a name: \p Func's entry, the
 // only key at which it writes summaries, first.  A recovery of the same body
@@ -131,7 +132,7 @@ void recoverCallAbi(
     const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs = nullptr,
     const std::set<va_t> *VectorArgumentCallees = nullptr,
     const std::map<va_t, PointerVariableCallee> *PointerCallees = nullptr,
-    const std::set<va_t> *UserPrototypeCallees = nullptr,
+    const std::set<va_t> *PrototypeArgumentCallees = nullptr,
     const RelocationSymbolIndex *RelocationSymbols = nullptr,
     std::vector<va_t> *SummaryKeysRead = nullptr);
 

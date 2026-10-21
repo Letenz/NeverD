@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../CRecordCall.h"
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../render/X86FPStateHelpers.h"
@@ -34,6 +35,7 @@
 #include "neverd/backend/llvm/LLVMX87ConstantAsm.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/libc/LibCRecordArguments.h"
 #include "neverd/libc/LibCResult.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -5140,17 +5142,45 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
   std::string Expr = CalleeName + "(";
   const unsigned Limit = printedCallArgLimit(Call, CalleeName);
   const LibraryCallee Library = libraryCallee(Call);
-  for (unsigned ArgIdx = 0; ArgIdx < Limit; ++ArgIdx) {
+  const auto Function = debugCallee(Call);
+  const auto RecordCall =
+      Function && Library && Function->Name == Library.Name
+          ? libc::recordCallArguments(*Function, Opts.TheArch, Opts.Format,
+                                      libcVariant())
+          : std::nullopt;
+  if (Function && Library && Function->Name == Library.Name && !RecordCall &&
+      Function->PrototypeFromCLibrary &&
+      libc::hasRecordCallParameters(*Function, libcVariant()))
+    throw std::runtime_error("The header's record call ABI is unsupported");
+  if (RecordCall && RecordCall->Positions > Call.arg_size())
+    throw std::runtime_error("A record call argument is incomplete");
+  const unsigned Printed = RecordCall ? RecordCall->Parameters.size() : Limit;
+  for (unsigned ArgIdx = 0; ArgIdx < Printed; ++ArgIdx) {
     if (ArgIdx > 0)
       Expr += ", ";
+    if (RecordCall &&
+        (libc::isRecordCallParameter(*Function, ArgIdx, libcVariant()) ||
+         RecordCall->Parameters[ArgIdx].Pieces.size() > 1)) {
+      const TypeRef &Type = Function->Params[ArgIdx].second;
+      const std::string Spelling =
+          libc::isRecordCallParameter(*Function, ArgIdx, libcVariant())
+              ? c_detail::recordCallType(Type, Opts)
+              : typeToC(Type);
+      Expr += c_detail::recordCallArgument(
+          Spelling, RecordCall->Parameters[ArgIdx],
+          [&](unsigned Index) { return valueStr(Call.getArgOperand(Index)); });
+      continue;
+    }
+    const unsigned Source =
+        RecordCall ? RecordCall->Parameters[ArgIdx].Pieces[0].Argument : ArgIdx;
+    const llvm::Value *Operand = Call.getArgOperand(Source);
     bool PointerSpelling = false;
-    std::string Argument =
-        callArgStr(Call.getArgOperand(ArgIdx), Call, ArgIdx, &PointerSpelling);
+    std::string Argument = callArgStr(Operand, Call, ArgIdx, &PointerSpelling);
     if (auto Hint =
-            Call.getAttributes().getParamAttr(ArgIdx, LLVMSourceArgumentType);
+            Call.getAttributes().getParamAttr(Source, LLVMSourceArgumentType);
         Hint.isValid()) {
       auto Spelling = Hint.getValueAsString();
-      auto *T = Call.getArgOperand(ArgIdx)->getType();
+      auto *T = Operand->getType();
       bool Valid = ((Spelling == "int8_t" || Spelling == "uint8_t") &&
                     T->isIntegerTy(8)) ||
                    ((Spelling == "int16_t" || Spelling == "uint16_t") &&
@@ -5166,7 +5196,7 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
         throw std::runtime_error("invalid source scalar argument");
       Argument = "(" + Spelling.str() + ")(" + Argument + ")";
     }
-    const bool Integer = Call.getArgOperand(ArgIdx)->getType()->isIntegerTy();
+    const bool Integer = Operand->getType()->isIntegerTy();
     const bool HeaderInteger = Library && !Library.Prototype && Integer;
     const libc::LibCPrototype *Prototype =
         Library.Prototype && ArgIdx < Library.Prototype->ParamCount
@@ -5178,8 +5208,7 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
                   : std::string();
     // A zero is C's null pointer constant, which any pointer parameter
     // takes as it is (`RaiseException(code, 0, 0, 0)`).
-    const auto *Constant =
-        llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(ArgIdx));
+    const auto *Constant = llvm::dyn_cast<llvm::ConstantInt>(Operand);
     const bool Null = Constant && Constant->isZero();
     // A header's pointer parameter takes the integer that holds an address
     // converted, an object's or a function's (qsort's comparison).
@@ -5200,8 +5229,7 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
     else if (Prototype &&
              (libc::isPointerType(Param)
                   ? Integer
-                  : PointerSpelling ||
-                        Call.getArgOperand(ArgIdx)->getType()->isPointerTy()))
+                  : PointerSpelling || Operand->getType()->isPointerTy()))
       Argument = Null && Integer
                      ? "0"
                      : "(" + Param + ")(uintptr_t)(" + Argument + ")";
@@ -5209,8 +5237,8 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
     // declared to take an integer converts to it.
     else if (PointerSpelling &&
              declaredParameterIsInteger(Call, CalleeName, ArgIdx))
-      Argument = "(" + typeToCLLVM(Call.getArgOperand(ArgIdx)->getType()) +
-                 ")(uintptr_t)(" + Argument + ")";
+      Argument = "(" + typeToCLLVM(Operand->getType()) + ")(uintptr_t)(" +
+                 Argument + ")";
     Expr += Argument;
   }
   Expr += ")";
@@ -5481,7 +5509,16 @@ TypeRef LLVMCWriter::enumTypeUsedAsCallArg(const llvm::AllocaInst *Slot) const {
       for (unsigned I = 0; I < CB->arg_size(); ++I) {
         if (peelIntCast(CB->getArgOperand(I)) != LI)
           continue;
-        TypeRef Ty = debugCallArgType(*FS, I, Opts);
+        unsigned Parameter = I;
+        if (const auto Layout = libc::recordCallArguments(
+                *FS, Opts.TheArch, Opts.Format, libcVariant())) {
+          const auto Scalar =
+              libc::recordCallScalarParameter(*FS, *Layout, I, libcVariant());
+          if (!Scalar)
+            continue;
+          Parameter = *Scalar;
+        }
+        TypeRef Ty = debugCallArgType(*FS, Parameter, Opts);
         if (Ty && Ty->Kind == NdTypeKind::Struct && Ty->IsEnum)
           return Ty;
       }

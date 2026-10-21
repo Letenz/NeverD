@@ -257,14 +257,25 @@ inline X86FPStateShape x86FPStateMedShape(const MedOp &Op,
       .AddressIsScalar = Op.NumInputs > 1 && Scalar};
 }
 
+/// Whether \p Id only checks a condition, and faults where it fails: the
+/// alignment an aligned access requires (`movdqa`), a division's divisor
+/// and quotient, BOUND's range and INTO's overflow.  It writes no register
+/// and no memory.
+constexpr bool onlyChecksForAFault(Intrinsic Id) {
+  return Id == Intrinsic::RequireAligned ||
+         Id == Intrinsic::X86RequireDivPrecondition || Id == Intrinsic::Bound ||
+         Id == Intrinsic::Into;
+}
+
 /// Whether \p Op ends the setup of a later call's arguments: what an argument
 /// register or outgoing stack slot held before it is no longer set up for
 /// that call.  Another call ends it, and so does an intrinsic whose effects
-/// are not known.  The x87 wait and context transport (preservesCallSetup)
-/// and the explicit numerical and MXCSR effects of the x86 floating-state
-/// intrinsics call no callee and write no argument storage, so a compiler
-/// may schedule argument setup across them (`mov edi, 2; cvtsi2sd xmm1,
-/// ebp; call f`).
+/// are not known.  The x87 wait and context transport (preservesCallSetup),
+/// the explicit numerical and MXCSR effects of the x86 floating-state
+/// intrinsics and the checks that only fault (onlyChecksForAFault) call no
+/// callee and write no argument storage, so a compiler may schedule argument
+/// setup across them (`mov edi, 2; cvtsi2sd xmm1, ebp; call f`, or the
+/// `movdqa` of a record copied to the stack after `mov %rbx, %rdi`).
 inline bool endsCallArgumentSetup(const MedOp &Op) {
   if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
     return true;
@@ -275,7 +286,7 @@ inline bool endsCallArgumentSetup(const MedOp &Op) {
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
   if (static_cast<uint64_t>(Id) != Op.Inputs[0].ConstVal)
     return true;
-  return !preservesCallSetup(Id) &&
+  return !preservesCallSetup(Id) && !onlyChecksForAFault(Id) &&
          !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op));
 }
 

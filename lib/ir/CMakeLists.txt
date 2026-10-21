@@ -5,6 +5,7 @@ add_subdirectory(high)
 
 add_neverd_component_library(NeverDIR
   NdTypes.cpp
+  IntegerCallArguments.cpp
   RegisterFlow.cpp
   SourceABI.cpp
   SourceCallABI.cpp

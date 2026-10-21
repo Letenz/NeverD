@@ -10,7 +10,10 @@ endif()
 find_package(Threads REQUIRED)
 
 # The protocol, tools and result shapes; tests run them without an engine.
-add_library(neverd_mcp_protocol STATIC Backend.cpp Reading.cpp Server.cpp Stdio.cpp Tools.cpp)
+# This directory is on the include path, so no header here may share a
+# standard header's name: case-insensitive file systems (macOS, Windows)
+# would resolve <stdio.h> to a Stdio.h.
+add_library(neverd_mcp_protocol STATIC Backend.cpp Reading.cpp Server.cpp StdioTransport.cpp Tools.cpp)
 target_compile_features(neverd_mcp_protocol PUBLIC cxx_std_20)
 target_include_directories(neverd_mcp_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(neverd_mcp_protocol PUBLIC neverd_tool_json Threads::Threads)

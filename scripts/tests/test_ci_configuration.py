@@ -23,6 +23,11 @@ SEMANTIC_PLUGIN_CMAKE = ROOT / "plugins" / "semantic" / "CMakeLists.txt"
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 STYLE_WORKFLOW = ROOT / ".github" / "workflows" / "llvm-style.yml"
 STYLE_EXPECTATIONS = ROOT / "scripts" / "tests" / "CIStyleExpectations.def"
+# These configure-only fixtures inspect target metadata without building runtimes.
+CONFIGURE_ONLY_OPTIONS = tuple(
+    f"-DNEVERD_ENABLE_{provider}=OFF"
+    for provider in ("MIMALLOC", "TBB", "HIGHWAY", "SIMDUTF", "SIMDJSON")
+)
 
 
 class CiConfigurationTests(unittest.TestCase):
@@ -125,13 +130,13 @@ find() { return 0; }
                 (root / "CMakeLists.txt").write_text(source)
                 build = root / "build"
                 result = subprocess.run(
-                    ["cmake", "-S", str(root), "-B", str(build), "-G", "Ninja"],
+                    ["cmake", "-S", str(root), "-B", str(build), "-G", "Ninja",
+                     *CONFIGURE_ONLY_OPTIONS],
                     capture_output=True, text=True, check=False,
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 commands = json.loads((build / "compile_commands.json").read_text())
-                # The real helper also adds the process allocator's sources.
-                # Inspect this test target, independent of its dependencies.
+                # Inspect this test target's generated compile command.
                 commands = [entry for entry in commands
                             if Path(entry["file"]).name == "probe.cpp"]
                 self.assertEqual(len(commands), 1)
@@ -327,7 +332,8 @@ find() { return 0; }
                 encoding="utf-8",
             )
             result = subprocess.run(
-                ["cmake", "-S", str(root), "-B", str(root / "build")],
+                ["cmake", "-S", str(root), "-B", str(root / "build"),
+                 *CONFIGURE_ONLY_OPTIONS],
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -352,7 +358,8 @@ find() { return 0; }
                 encoding="utf-8",
             )
             result = subprocess.run(
-                ["cmake", "-S", str(root), "-B", str(root / "build")],
+                ["cmake", "-S", str(root), "-B", str(root / "build"),
+                 *CONFIGURE_ONLY_OPTIONS],
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -389,7 +396,8 @@ find() { return 0; }
                 encoding="utf-8",
             )
             result = subprocess.run(
-                ["cmake", "-S", str(root), "-B", str(root / "build")],
+                ["cmake", "-S", str(root), "-B", str(root / "build"),
+                 *CONFIGURE_ONLY_OPTIONS],
                 capture_output=True,
                 text=True,
                 timeout=120,

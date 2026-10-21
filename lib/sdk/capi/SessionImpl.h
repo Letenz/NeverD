@@ -1118,6 +1118,7 @@ struct Session {
       Recovery.CallEntryArgumentCounts = PipeResult.CallEntryArgumentCounts;
       Recovery.OmittedCalleeArgumentCounts =
           PipeResult.OmittedCalleeArgumentCounts;
+      Recovery.CallPrototypeArguments = PipeResult.CallPrototypeArguments;
       Recovery.CallUserPrototypes = PipeResult.CallUserPrototypes;
       Recovery.CallArgumentSources = PipeResult.CallArgumentSources;
       Recovery.OmittedCallees = PipeResult.OmittedCallees;
@@ -1135,7 +1136,7 @@ struct Session {
     if (UsingAnalystCallContracts && CallVariant)
       Emitter.setSourceTargetSignatures(&CallVariant->TargetSignatures);
     Emitter.setDebugContext(decompileDebug());
-    Emitter.setUserPrototypeCallees(&PipeResult.CallUserPrototypes);
+    Emitter.setPrototypeArgumentCallees(&PipeResult.CallPrototypeArguments);
     // Native source views need surviving instruction observations even when
     // this function contains no recognized library operation.
     Sources = std::make_shared<LLVMSourceMap>();

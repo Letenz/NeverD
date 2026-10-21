@@ -1,0 +1,137 @@
+//===- IntegerCallArgumentsTests.cpp - Source-call operand placement -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Register and stack operand identities for integer-class C records.
+///
+//===----------------------------------------------------------------------===//
+
+#include "gtest/gtest.h"
+
+#include "neverd/ir/IntegerCallArguments.h"
+
+using namespace neverd;
+
+namespace {
+TypeRef pointer(uint16_t Bytes = 8) {
+  auto Type = NdType::makePtr();
+  Type->Size = Bytes;
+  return Type;
+}
+
+TypeRef record(uint16_t Bytes, uint16_t Word) {
+  auto Type = std::make_shared<NdType>();
+  Type->Kind = NdTypeKind::Struct;
+  Type->Size = Bytes;
+  Type->Alignment = Word;
+  Type->Passing = NdRecordPassing::ByValue;
+  for (uint16_t Offset = 0; Offset < Bytes; Offset += Word)
+    Type->ScalarLeaves.push_back({Offset, Word, false});
+  return Type;
+}
+
+TEST(IntegerCallArguments, SysVMemoryRecordLeavesUnusedRegistersBeforeStack) {
+  const auto Layout = integerCallArguments(
+      Arch::X64, BinaryFormat::ELF, NdType::makePtr(),
+      {NdType::makePtr(), NdType::makePtr(), record(32, 8)});
+  ASSERT_TRUE(Layout);
+  EXPECT_EQ(Layout->Registers, 2u);
+  EXPECT_EQ(Layout->Positions, 10u);
+  ASSERT_EQ(Layout->Parameters.size(), 3u);
+  const auto &Record = Layout->Parameters[2];
+  EXPECT_FALSE(Record.Indirect);
+  ASSERT_EQ(Record.Pieces.size(), 4u);
+  for (unsigned I = 0; I < 4; ++I) {
+    EXPECT_EQ(Record.Pieces[I].Argument, 6u + I);
+    EXPECT_EQ(Record.Pieces[I].Offset, 8u * I);
+    EXPECT_EQ(Record.Pieces[I].Bytes, 8u);
+  }
+}
+
+TEST(IntegerCallArguments,
+     SysVEntryConsumesTwoRegistersBeforeActionAndPointers) {
+  const auto Layout = integerCallArguments(
+      Arch::X64, BinaryFormat::ELF, NdType::makeInt(4, true),
+      {record(16, 8), NdType::makeInt(4, true), NdType::makePtr(),
+       NdType::makePtr()});
+  ASSERT_TRUE(Layout);
+  EXPECT_EQ(Layout->Registers, 5u);
+  EXPECT_EQ(Layout->Positions, 5u);
+  ASSERT_EQ(Layout->Parameters[0].Pieces.size(), 2u);
+  EXPECT_EQ(Layout->Parameters[0].Pieces[0].Argument, 0u);
+  EXPECT_EQ(Layout->Parameters[0].Pieces[1].Argument, 1u);
+  EXPECT_EQ(Layout->Parameters[1].Pieces[0].Argument, 2u);
+  EXPECT_EQ(Layout->Parameters[2].Pieces[0].Argument, 3u);
+  EXPECT_EQ(Layout->Parameters[3].Pieces[0].Argument, 4u);
+}
+
+TEST(IntegerCallArguments, SysVSpilledRecordDoesNotConsumeRemainingRegister) {
+  std::vector<TypeRef> Parameters(5, NdType::makeInt(8, false));
+  Parameters.push_back(record(16, 8));
+  Parameters.push_back(NdType::makeInt(8, false));
+  const auto Layout = integerCallArguments(Arch::X64, BinaryFormat::ELF,
+                                           NdType::makeVoid(), Parameters);
+  ASSERT_TRUE(Layout);
+  EXPECT_EQ(Layout->Registers, 6u);
+  EXPECT_EQ(Layout->Positions, 8u);
+  EXPECT_EQ(Layout->Parameters[5].Pieces[0].Argument, 6u);
+  EXPECT_EQ(Layout->Parameters[5].Pieces[1].Argument, 7u);
+  EXPECT_EQ(Layout->Parameters[6].Pieces[0].Argument, 5u);
+}
+
+TEST(IntegerCallArguments, I386CountsEveryRecordWordBeforeFollowingParameters) {
+  const auto Layout = integerCallArguments(
+      Arch::X86, BinaryFormat::ELF, NdType::makeInt(4, true),
+      {record(8, 4), NdType::makeInt(4, true), pointer(4), pointer(4)});
+  ASSERT_TRUE(Layout);
+  EXPECT_EQ(Layout->Registers, 0u);
+  EXPECT_EQ(Layout->Positions, 5u);
+  ASSERT_EQ(Layout->Parameters[0].Pieces.size(), 2u);
+  for (unsigned I = 1; I < 4; ++I)
+    EXPECT_EQ(Layout->Parameters[I].Pieces[0].Argument, I + 1);
+}
+
+TEST(IntegerCallArguments, LargeRecordsUseThePlatformsIndirectCopyCarrier) {
+  for (const auto &[Architecture, Format] :
+       {std::pair{Arch::AArch64, BinaryFormat::ELF},
+        std::pair{Arch::X64, BinaryFormat::COFF}}) {
+    const auto Layout = integerCallArguments(
+        Architecture, Format, NdType::makePtr(),
+        {NdType::makePtr(), NdType::makePtr(), record(32, 8)});
+    ASSERT_TRUE(Layout);
+    EXPECT_EQ(Layout->Registers, 3u);
+    EXPECT_EQ(Layout->Positions, 3u);
+    ASSERT_EQ(Layout->Parameters.size(), 3u);
+    const auto &Record = Layout->Parameters[2];
+    EXPECT_TRUE(Record.Indirect);
+    ASSERT_EQ(Record.Pieces.size(), 1u);
+    EXPECT_EQ(Record.Pieces[0].Argument, 2u);
+    EXPECT_EQ(Record.Pieces[0].Bytes, 8u);
+  }
+}
+
+TEST(IntegerCallArguments, RefusesIncompleteOrDifferentCarrierContracts) {
+  EXPECT_FALSE(integerCallArguments(Arch::X64, BinaryFormat::ELF,
+                                    NdType::makeVoid(),
+                                    {record(16, 8), NdType::makeFloat(8)}));
+  EXPECT_FALSE(integerCallArguments(Arch::X64, BinaryFormat::ELF, record(32, 8),
+                                    {NdType::makePtr()}));
+  auto Unknown = record(16, 8);
+  Unknown->Passing = NdRecordPassing::Unknown;
+  EXPECT_FALSE(integerCallArguments(Arch::X64, BinaryFormat::ELF,
+                                    NdType::makeVoid(), {Unknown}));
+  EXPECT_FALSE(integerCallArguments(Arch::ARM, BinaryFormat::ELF,
+                                    NdType::makeVoid(), {record(8, 4)}));
+  EXPECT_FALSE(integerCallArguments(Arch::X64, BinaryFormat::ELF,
+                                    NdType::makeVoid(), {record(256, 8)}));
+  auto OverAligned = record(32, 8);
+  OverAligned->Alignment = 16;
+  EXPECT_FALSE(integerCallArguments(Arch::X64, BinaryFormat::ELF,
+                                    NdType::makeVoid(), {OverAligned}));
+  EXPECT_FALSE(integerCallArguments(Arch::X64, BinaryFormat::ELF, {},
+                                    {NdType::makePtr()}));
+}
+} // namespace
