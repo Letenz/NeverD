@@ -8701,6 +8701,99 @@ TEST(HighControlFlowSemantics,
 }
 
 TEST(HighControlFlowSemantics,
+     ACallReadsTheWholeRegisterPastItsPredecessorsLowSync) {
+  // linux_server loads a format with `lea rsi, [rip + s]` in the block
+  // before its call to a va_start forwarder, and SSA syncs ESI with the
+  // address's low bytes at a later instruction.  The call finds its named
+  // parameter in RSI through its predecessor, whose last write of the
+  // register is that sync, and passed its low four bytes,
+  // `(int32_t)("...")`.
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  auto Reg = [&](int Id, uint64_t RegOff, uint16_t Size) {
+    MedVar V;
+    V.Kind = MedVar::Reg;
+    V.TheArch = Arch::X64;
+    V.Id = Id;
+    V.SSAVer = 1;
+    V.Size = Size;
+    V.RegOff = RegOff;
+    return V;
+  };
+  const uint64_t Rdi = TRI.IntParamRegs[0], Rsi = TRI.IntParamRegs[1];
+  MedVar Address;
+  Address.Kind = MedVar::Temp;
+  Address.TheArch = Arch::X64;
+  Address.Id = 116;
+  Address.SSAVer = 3;
+  Address.Size = 8;
+  const MedVar Format = MedVar::makeConst(0x48A5CA, 8);
+  MedVar Result = Reg(20, TRI.IntReturnReg, 8);
+  MedFunc F;
+  F.Entry = 0x1000;
+  F.Name = "format_in_predecessor";
+  F.ReturnType = NdType::makeInt(8, false);
+  // Block 0 branches on its first argument, so it ends no straight line
+  // the call's block could join.
+  const MedVar Flag = Reg(41, Rdi, 1);
+  F.Blocks.resize(3);
+  F.Blocks[0].Id = 0;
+  F.Blocks[0].StartAddr = 0x1000;
+  F.Blocks[0].EndAddr = 0x1010;
+  F.Blocks[0].Succs = {1, 2};
+  MedOp Sync = operation(NdOp::SUBBYTES, 0x1007, Reg(31, Rsi, 4),
+                         {Format, MedVar::makeConst(0, 4)});
+  Sync.OriginSeq = -1;
+  F.Blocks[0].Ops = {operation(NdOp::COPY, 0x1000, Address, {Format}),
+                     operation(NdOp::COPY, 0x1000, Reg(30, Rsi, 8), {Format}),
+                     Sync,
+                     operation(NdOp::COND_BR, 0x100C, {},
+                               {MedVar::makeConst(0x1020, 8), Flag})};
+  F.Blocks[1].Id = 1;
+  F.Blocks[1].StartAddr = 0x1010;
+  F.Blocks[1].EndAddr = 0x1020;
+  F.Blocks[1].Preds = {0};
+  MedOp Call =
+      operation(NdOp::CALL, 0x1012, Result, {MedVar::makeConst(0x3000, 8)});
+  Call.CalleeRegisterArgs = 2;
+  Call.CalleeStackArgs = 0;
+  F.Blocks[1].Ops = {
+      operation(NdOp::COPY, 0x1010, Reg(40, Rdi, 8), {MedVar::makeConst(0, 8)}),
+      Call, operation(NdOp::RETURN, 0x1017, {}, {Result})};
+  F.Blocks[2].Id = 2;
+  F.Blocks[2].StartAddr = 0x1020;
+  F.Blocks[2].EndAddr = 0x1024;
+  F.Blocks[2].Preds = {0};
+  F.Blocks[2].Ops = {
+      operation(NdOp::RETURN, 0x1020, {}, {MedVar::makeConst(0, 8)})};
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  // The callee is a va_start forwarder whose two named parameters are its
+  // first integer registers: a call passes them as they reach it.
+  const std::map<va_t, VariadicVectorCallee> Forwarders{{0x3000, {0, 2}}};
+  MedToHighConverter Converter;
+  Converter.setBinaryImage(&Img);
+  Converter.setVariadicVectorCallees(&Forwarders);
+  const auto High = Converter.convert(F, Arch::X64);
+  const HighExpr *Found = nullptr;
+  walkStmts(High.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      std::function<void(const HighExpr &)> Walk = [&](const HighExpr &N) {
+        if (N.Kind == ExprKind::Call && N.CallAddr == 0x3000)
+          Found = &N;
+        N.forEachChildExpr([&](const ExprPtr &C) { Walk(*C); });
+      };
+      if (E)
+        Walk(*E);
+    });
+  });
+  ASSERT_NE(Found, nullptr);
+  ASSERT_GE(Found->Operands.size(), 2u);
+  ASSERT_TRUE(Found->Operands[1] && Found->Operands[1]->Type);
+  EXPECT_EQ(Found->Operands[1]->Type->Size, 8);
+}
+
+TEST(HighControlFlowSemantics,
      SummarizedCallPassesZeroInRegistersItNeverReads) {
   // The callee reads RCX and its sixth argument, so RDX, R8, R9 and the
   // fifth slot keep their positions.  It reads none of those registers:

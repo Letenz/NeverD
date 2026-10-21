@@ -191,6 +191,7 @@ TEST(MedCallABI, SyntheticSubregisterViewsPreserveTheReachingWholeArgument) {
     Siblings,
     TempSource,
     ConstantSource,
+    CopiedConstant,
     ChangedConstant,
     ActualSlice,
     NewInstruction,
@@ -203,8 +204,9 @@ TEST(MedCallABI, SyntheticSubregisterViewsPreserveTheReachingWholeArgument) {
          {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
       for (Case C :
            {Case::Siblings, Case::TempSource, Case::ConstantSource,
-            Case::ChangedConstant, Case::ActualSlice, Case::NewInstruction,
-            Case::DifferentSource, Case::PartialWrite, Case::Barrier}) {
+            Case::CopiedConstant, Case::ChangedConstant, Case::ActualSlice,
+            Case::NewInstruction, Case::DifferentSource, Case::PartialWrite,
+            Case::Barrier}) {
         SCOPED_TRACE(std::to_string(static_cast<int>(A)) + "/" +
                      std::to_string(static_cast<int>(Format)) + "/" +
                      std::to_string(static_cast<int>(C)));
@@ -224,7 +226,8 @@ TEST(MedCallABI, SyntheticSubregisterViewsPreserveTheReachingWholeArgument) {
         MedVar Source = reg(200, 1, Width, TRI.CalleeSaveRegs.back(), A);
         if (C == Case::TempSource)
           Source = temp(200, 1, Width, A);
-        if (C == Case::ConstantSource || C == Case::ChangedConstant)
+        if (C == Case::ConstantSource || C == Case::ChangedConstant ||
+            C == Case::CopiedConstant)
           Source = MedVar::makeConst(0x4020, Width,
                                      ConstantAddressProvenance::DataAddress);
         MedVar Full = reg(201, 1, Width, ArgReg, A);
@@ -232,6 +235,11 @@ TEST(MedCallABI, SyntheticSubregisterViewsPreserveTheReachingWholeArgument) {
         B.Id = 0;
         B.StartAddr = F.Entry;
         B.EndAddr = F.Entry + 16;
+        // `lea` computes the address into a temporary, copies the constant
+        // on to the register, and syncs the low bytes from the temporary.
+        MedVar Address = temp(205, 1, Width, A);
+        if (C == Case::CopiedConstant)
+          B.Ops.push_back(unary(NdOp::COPY, Address, Source));
         B.Ops.push_back(unary(NdOp::COPY, Full, Source));
         B.Ops.back().Addr = F.Entry;
         B.Ops.back().OriginSeq = 0;
@@ -250,7 +258,7 @@ TEST(MedCallABI, SyntheticSubregisterViewsPreserveTheReachingWholeArgument) {
         }
         for (uint16_t Size = 1; Size < Width; Size *= 2) {
           MedVar Alias = reg(220 + Size, 1, Size, ArgReg, A);
-          MedVar Input = Source;
+          MedVar Input = C == Case::CopiedConstant ? Address : Source;
           if (C == Case::DifferentSource && Size == 1)
             ++Input.SSAVer;
           if (C == Case::ChangedConstant && Size == 1)
@@ -278,12 +286,15 @@ TEST(MedCallABI, SyntheticSubregisterViewsPreserveTheReachingWholeArgument) {
         // whole write the sync mirrors may be an earlier instruction's.
         const bool Whole = C == Case::Siblings || C == Case::TempSource ||
                            C == Case::ConstantSource ||
+                           C == Case::CopiedConstant ||
                            C == Case::NewInstruction;
         EXPECT_EQ(CI.Args.front().Size, Whole ? Width : Width / 2);
         if (Whole) {
-          EXPECT_EQ(CI.Args.front().Kind, Source.Kind);
-          EXPECT_EQ(CI.Args.front().Id, Source.Id);
-          EXPECT_EQ(CI.Args.front().SSAVer, Source.SSAVer);
+          // The temporary the sync reads holds the copied constant.
+          const MedVar &Value = C == Case::CopiedConstant ? Address : Source;
+          EXPECT_EQ(CI.Args.front().Kind, Value.Kind);
+          EXPECT_EQ(CI.Args.front().Id, Value.Id);
+          EXPECT_EQ(CI.Args.front().SSAVer, Value.SSAVer);
         }
       }
 }

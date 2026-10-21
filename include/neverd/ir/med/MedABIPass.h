@@ -148,6 +148,13 @@ MedVar argRegSourceValueInBlock(const MedBlock &Blk, int J,
                                 const TargetRegInfo &TRI,
                                 const IntegerArgumentLayout &Layout);
 
+/// The index in \p Blk of the whole argument-register write that the
+/// synthetic low-register sync at index \p J mirrors, or -1 where the op at
+/// \p J is no such sync (argRegSourceValueInBlock).
+int wholeArgRegWriteInBlock(const MedBlock &Blk, int J,
+                            const TargetRegInfo &TRI,
+                            const IntegerArgumentLayout &Layout);
+
 // Finalize the overflow stack parameters of every variadic callee once all call
 // sites have been recovered.  A variadic function's va_arg overflow reads land
 // above the synthetic frame, so they cannot be rewritten to ordinary parameter
