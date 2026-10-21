@@ -13,6 +13,9 @@
 
 #include "llvm/Support/Errc.h"
 
+#include <memory>
+#include <optional>
+
 namespace neverd::symbolic {
 class SymContext;
 class SymState;
@@ -111,6 +114,17 @@ struct RecoveryValidationBudget {
   }
 };
 
+/// Immutable index of caller-declared physical exits. Lookup supplies only a
+/// declaration; the original instruction still needs its native validation.
+/// Construction and queries share the specialization operation allowance.
+class RecoveryMachineExitLookup {
+public:
+  virtual ~RecoveryMachineExitLookup() = default;
+  /// False means insufficient work. A successful miss leaves Exit empty.
+  virtual bool lookup(va_t Address, uint64_t &Work,
+                      std::optional<SpecializationExternalExit> &Exit) const = 0;
+};
+
 /// Native policies live under arch/<isa>. Core owns graph/evidence integrity
 /// and generic resource accounting; raw integrity never interprets native
 /// fields.
@@ -119,6 +133,11 @@ public:
   virtual ~RecoveryArchitecture() = default;
   virtual llvm::Expected<RawEnvironmentPreparation>
   validateRawDeclarations(const SpecializationOptions &Options) const = 0;
+  /// Options must have passed declaration validation. The owned snapshot is
+  /// reusable across precision retries, which cannot change native exits.
+  virtual llvm::Expected<std::unique_ptr<RecoveryMachineExitLookup>>
+  prepareMachineExitLookup(const SpecializationOptions &Options,
+                           uint64_t &Work) const = 0;
   virtual std::string
   rawOptionsDigest(const SpecializationOptions &Options) const = 0;
   virtual llvm::Error

@@ -328,6 +328,48 @@ TEST_F(PEFixedImageTest, MachineExitProvesLiveInternalReturnCells) {
   }
 }
 
+TEST_F(PEFixedImageTest, MachineExitLookupUsesBoundedIndexedWork) {
+  std::vector<uint8_t> Code(64, 0x90);
+  Code.push_back(0xc3);
+  auto Loaded = load(machineExitFixture(Code));
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  for (bool Reverse : {false, true}) {
+    auto O = machineExitOptions(Base + 0x1040, MachineExitKind::Return);
+    for (unsigned I = 0; I != 31; ++I)
+      O.X64MachineExits.push_back(
+          {1, Base + 0x1100 + I, MachineExitKind::Return});
+    if (Reverse)
+      std::reverse(O.X64MachineExits.begin(), O.X64MachineExits.end());
+    // Enough for a bounded index and all original instructions, but not a
+    // complete declaration scan at every NOP. No declaration may end a NOP.
+    O.MaxOperations = 1024;
+    const auto R = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+    ASSERT_TRUE(R.complete()) << R.Diagnostic;
+    ASSERT_TRUE(R.RawEnvironment);
+    ASSERT_EQ(R.ExternalExits.size(), 1u);
+    ASSERT_TRUE(R.ExternalExits.front().MachineExit);
+    EXPECT_EQ(R.ExternalExits.front().MachineExit->Address, Base + 0x1040);
+    auto Actual = machineExitState(0x800000);
+    Actual.memory(0x800000, 0x12340, 8);
+    auto Expected = Actual;
+    Expected.write(NdVar::reg(x86reg::RSP, 8), 0x800008);
+    ASSERT_TRUE(Actual.run(R, O)) << Actual.Diagnostic;
+    expectMachineExitState(Actual, Expected, 0x12340);
+    O.MaxOperations = R.EvaluatedOperations;
+    EXPECT_TRUE(specializeBinaryInterpreter(*Loaded, Base + 0x1000, O).complete());
+    for (uint64_t Limit : {uint64_t{1}, R.EvaluatedOperations - 1}) {
+      O.MaxOperations = Limit;
+      const auto Short = specializeBinaryInterpreter(*Loaded, Base + 0x1000, O);
+      EXPECT_EQ(Short.Status, SpecializationStatus::BudgetExceeded);
+      EXPECT_TRUE(Short.Residual.Blocks.empty());
+      EXPECT_TRUE(Short.Origins.empty());
+      EXPECT_TRUE(Short.Reads.empty());
+      EXPECT_TRUE(Short.ExternalExits.empty());
+      EXPECT_FALSE(Short.RawEnvironment);
+    }
+  }
+}
+
 TEST_F(PEFixedImageTest, MachineExitIntegrityBudgetsAndOrdinaryConsumers) {
   auto Loaded = load(machineExitFixture({0xff, 0xd0}));
   ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());

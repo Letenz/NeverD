@@ -113,6 +113,8 @@ struct RawByteOracle {
               !lowRawEnvironmentRequirementShapeIsValid(Op))
             return false;
           break;
+        case NdOp::NOP:
+          break;
         case NdOp::COPY:
         case NdOp::INT_ZEXT:
           write(Op.Output, read(Op.Inputs[0]));

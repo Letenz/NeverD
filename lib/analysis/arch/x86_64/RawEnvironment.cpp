@@ -8,7 +8,11 @@
 #include "../../core/RecoveryDigest.h"
 #include "X64Recovery.h"
 
+#include <algorithm>
 #include <bit>
+#include <memory>
+#include <utility>
+#include <vector>
 
 namespace neverd::analysis::x64 {
 namespace {
@@ -71,11 +75,58 @@ std::string optionsDigest(const SpecializationOptions &O) {
   return H.finish();
 }
 
+class X64MachineExitLookup final : public RecoveryMachineExitLookup {
+  std::vector<SpecializationX64MachineExit> Declarations;
+
+public:
+  explicit X64MachineExitLookup(
+      std::vector<SpecializationX64MachineExit> Entries)
+      : Declarations(std::move(Entries)) {
+    std::sort(Declarations.begin(), Declarations.end(),
+              [](const auto &A, const auto &B) { return A.Address < B.Address; });
+  }
+
+  bool lookup(va_t Address, uint64_t &Work,
+              std::optional<SpecializationExternalExit> &Exit) const override {
+    Exit.reset();
+    if (Declarations.empty())
+      return true;
+    // Bound the ordered search and final equality comparison before lookup.
+    const uint64_t Cost = std::bit_width(Declarations.size()) + 1;
+    if (Cost > Work)
+      return false;
+    Work -= Cost;
+    const auto At = std::lower_bound(
+        Declarations.begin(), Declarations.end(), Address,
+        [](const auto &Declaration, va_t Value) {
+          return Declaration.Address < Value;
+        });
+    if (At != Declarations.end() && At->Address == Address) {
+      Exit.emplace();
+      Exit->MachineExit = *At;
+    }
+    return true;
+  }
+};
+
 class X64RecoveryArchitecture final : public RecoveryArchitecture {
 public:
   llvm::Expected<RawEnvironmentPreparation>
   validateRawDeclarations(const SpecializationOptions &Options) const override {
     return validateRawEnvironmentDeclarations(Options);
+  }
+  llvm::Expected<std::unique_ptr<RecoveryMachineExitLookup>>
+  prepareMachineExitLookup(const SpecializationOptions &Options,
+                           uint64_t &Work) const override {
+    const uint64_t Count = Options.X64MachineExits.size();
+    // Pay copying and ordered-index construction before allocation. The
+    // original declaration order remains authoritative for domain receipts.
+    const uint64_t Comparisons = 2 * std::bit_width(Count) + 2;
+    if (Count > Work / Comparisons)
+      return llvm::createStringError(std::errc::value_too_large,
+                                     "machine-exit index budget exhausted");
+    Work -= Count * Comparisons;
+    return std::make_unique<X64MachineExitLookup>(Options.X64MachineExits);
   }
   std::string
   rawOptionsDigest(const SpecializationOptions &Options) const override {
