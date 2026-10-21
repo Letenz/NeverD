@@ -2401,4 +2401,36 @@ TEST(OriginalBinaryUndefinedIndependence,
   EXPECT_NE(Good.Certificate->InputDigest, Changed.Certificate->InputDigest);
 }
 
+TEST(OriginalBinaryUndefinedIndependence,
+     OrdinaryReadTracePreservesNativeMemoryInputs) {
+  // mov rax,[rcx]; ret. The pointer may alias the accessible frame.
+  Program P({0x48, 0x8b, 0x01, 0xc3});
+  P.flagsProfile();
+  EXPECT_FALSE(P.check().proved());
+  P.Contract.ExternalReads = LowIRExternalReadModel::OrderedOrdinaryRAMV1;
+  P.Contract.NativePreservedState = LowIRNativePreservationRequirement{};
+  const auto Independence = P.check();
+  ASSERT_TRUE(Independence.proved()) << Independence.Proof.Diagnostic;
+  ASSERT_TRUE(Independence.Certificate);
+  EXPECT_EQ(Independence.Certificate->LowIR.Contract.ExternalReads,
+            LowIRExternalReadModel::OrderedOrdinaryRAMV1);
+  const auto Recovered = specializeBinaryInterpreter(P.Image, Entry, P.Options);
+  ASSERT_TRUE(Recovered.complete()) << Recovered.Diagnostic;
+  P.Contract.NativePreservedState->Quantifier =
+      LowIRNativePreservationQuantifier::SelectedWitness;
+  const auto Relation = checkBinaryLowIRRefinement(
+      P.Image, Entry, P.Options, Recovered.Residual, P.Contract);
+  EXPECT_TRUE(Relation.proved()) << Relation.Proof.Diagnostic;
+  Program Changed({0x48, 0x8b, 0x02, 0xc3}); // mov rax,[rdx]; ret.
+  Changed.flagsProfile();
+  const auto Wrong =
+      specializeBinaryInterpreter(Changed.Image, Entry, Changed.Options);
+  ASSERT_TRUE(Wrong.complete()) << Wrong.Diagnostic;
+  const auto Different = checkBinaryLowIRRefinement(P.Image, Entry, P.Options,
+                                                    Wrong.Residual, P.Contract);
+  EXPECT_EQ(Different.Proof.Status, LowIRRefinementStatus::Different)
+      << Different.Proof.Diagnostic;
+  EXPECT_FALSE(Different.Certificate);
+}
+
 } // namespace

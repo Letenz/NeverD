@@ -95,6 +95,7 @@ endif()
 
 add_neverd_unittest(NeverDLowIRRefinementTests
   LowIRRefinementTests.cpp
+  LowIRReadTraceTests.cpp
   CompleteModelTests.cpp
   CompletedTargetFactsTests.cpp
   ConditionalImplicationTests.cpp

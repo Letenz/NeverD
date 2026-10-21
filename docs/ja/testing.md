@@ -2123,3 +2123,7 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `AbsoluteMemoryFactsTests.inc` はノード間の絶対ターゲット、合流の競合、部分重複と未知の別名書き込み、両バイト順と連鎖の有無でのスタック分離を検査する。独立バイト実行器が効果を確認し、除外範囲の欠落と予算不足は拒否する。`SymStorePreservation.Absolute*` と `SymState.AbsoluteProjections*` は領域の共存、高位アドレス、純粋で有界な射影、未知世代とトランザクション的拒否を検査する。`NeverDInterpreterSpecializationTests`、`NeverDSymbolicIntegerIntrinsicTests`、`NeverDSymMemoryKnowledgeTests`、続いてネイティブ独立性とLowIR精緻化スイートを実行する。
 
 絶対メモリの回帰テストは、有界の連続・疎バッチ、書き込みとセルの完全な包含、フレーム境界と除外境界の両端での具体的な別名反例を検証します。順序付きと逆順の範囲和集合は同じセルを保持し、隙間を破棄し、保持予算が一作業単位不足した場合に状態を変更しない必要があります。
+
+## 有限の通常 RAM 読み取り回帰テスト
+
+`LowIRReadTrace.*` は共有入力、両バイト順、アドレス・幅・順序・回数の変更、全分岐、先行フレーム書き込みとの部分重複、未定義値、反復読み取りの独立性、正確な予算と不足時の拒否、ループ拒否を確認します。`OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` は元の機械語の独立性、機械語から LowIR への精緻化、ポインター変更の拒否を確認します。`NeverDLowIRRefinementTests`、`NeverDLowIRUndefinedIndependenceTests`、`NeverDOriginalBinaryUndefinedIndependenceTests`、`NeverDPEFixedImageTests`、`NeverDInterpreterSpecializationTests` を実行してください。これらの証明だけではコンパイル済み C や具体的 CPU バックエンドを認証しません。
