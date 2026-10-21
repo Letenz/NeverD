@@ -1055,6 +1055,10 @@ Thumb addresses, unregistered x86 veneers and section-symbol aliases.
 and rejects treating ordinary data/IAT slots as synthetic object callees.
 `NeverDWorkerCallSiteTypes` compiles and executes both C routes, including all
 five Win64 variadic integer arguments, and retains partial-stack-write refusal.
+The engine's C is Clang's dialect (`__builtin_bit_cast`, calls through casts
+to a call site's own ABI, which GCC folds into the declared one), so a host
+without Clang skips it after the analysis checks, naming the routes it did not
+execute.
 `NeverDWorkerHeaderRecords` builds a program with the host compiler that reads
 `<netdb.h>`'s `struct addrinfo` and `struct servent` through a pointer
 `getaddrinfo` stores in a local and through `getservbyname`'s result, and
