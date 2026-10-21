@@ -319,6 +319,8 @@ closed product minus missing corners and a coefficient disturbance. Run these
 with `NeverDHighSymSimplifyTests`, `NeverDSymSimplifyGuardTests`,
 `NeverDMBASourceTests` and the worker source-synthesis test to check the common
 CLI and GUI optimization path.
+`SymParseLexer` checks every punctuation pair at end of input and before an
+identifier, plus unknown bytes and exact diagnostics for malformed operators.
 Sixteen repeated small partitions check that exponential expansion is refused
 before consuming the budget needed to simplify their shared child.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
