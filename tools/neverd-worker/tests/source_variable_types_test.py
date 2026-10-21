@@ -151,7 +151,8 @@ def run(executable, compiler=None):
         typed_call.write_bytes(binary.read_bytes())
         ok(owner, "open", {"path": str(typed_call), "analysis": False})
         ok(owner, "analyze")
-        ok(owner, "function_create", {"address": hex(ENTRY + 21)})
+        # Discovery finds the helper the entry calls.
+        assert ok(owner, "resolve", {"query": hex(ENTRY + 21)})["function_address"] == hex(ENTRY + 21)
         ok(owner, "local_types_declare", {"source":
             "struct QA_PREVIOUS { unsigned int OldState; unsigned int OldLength; unsigned int OldFlags; };"
             "struct QA_CHOSEN { unsigned int State; unsigned int Length; unsigned int Flags; };"})
