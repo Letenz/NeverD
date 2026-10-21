@@ -22,16 +22,18 @@ target_link_libraries(neverd_tool_json PUBLIC nlohmann_json::nlohmann_json)
 set_target_properties(neverd_tool_json PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 function(neverd_stage_json_notice Target)
-  add_custom_command(TARGET ${Target} POST_BUILD
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:${Target}>/licenses/nlohmann-json"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../../LICENSES/nlohmann-json/LICENSE.MIT"
-      "$<TARGET_FILE_DIR:${Target}>/licenses/nlohmann-json/LICENSE.MIT")
+  set(_licenses "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../../LICENSES")
+  neverd_stage_notices(${Target} nlohmann-json
+    "${_licenses}/nlohmann-json/LICENSE.MIT")
   if(NEVERD_ENABLE_SIMDJSON)
-    add_custom_command(TARGET ${Target} POST_BUILD
-      COMMAND "${CMAKE_COMMAND}" -E copy_directory
-        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../../LICENSES/simdjson"
-        "$<TARGET_FILE_DIR:${Target}>/licenses/simdjson")
+    # The notices the performance libraries stage in the same directory: the
+    # fork build's, which name the exact source the build compiled.
+    neverd_add_simdjson()
+    get_property(_simdjson GLOBAL PROPERTY NEVERD_FORK_NOTICES_neverd_simdjson)
+    if(NOT _simdjson)
+      set(_simdjson "${_licenses}/simdjson")
+    endif()
+    neverd_stage_notices(${Target} simdjson "${_simdjson}")
   endif()
 endfunction()
 
