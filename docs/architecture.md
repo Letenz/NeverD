@@ -9088,3 +9088,6 @@ lifetime. The callback scheduler remains the owner of guest execution and waits.
 Immediate completed loads are resumed in a loop, without growing the host call
 stack. No Java frontend or private input adapter supplies method bodies or
 loader success. See the [execution boundary](android-application-runtime.md#java-library-loading-and-dexnative-continuation).
+
+
+`SymStorePreservation` uses an empty base for current absolute memory; a nonempty base still requires a nonconstant 64-bit value in the state context. The actual write bank cannot be declared protected. With `ProveStoreFrameSeparation`, recovery also proves each current absolute cell disjoint from the complete symbolic write before preserving it. Projection carries only surviving constant bytes, intersects them at joins and rebinds them together with frame facts. Missing, conflicting or invalidated bytes stay unknown. This grants neither an initial memory value nor immutable storage, access validity or a global nonalias premise.

@@ -5137,6 +5137,7 @@ TEST(InterpreterSpecialization, TimestampTransitionMatchesCompleteStateOracle) {
     EXPECT_FALSE(x64::lowerRuntimeTimestampRead(I, Invalid));
 }
 
+#include "AbsoluteMemoryFactsTests.inc"
 #include "AlignmentRecoveryTests.inc"
 #include "CPUQueryRecoveryTests.inc"
 #include "MXCSRRecoveryTests.inc"

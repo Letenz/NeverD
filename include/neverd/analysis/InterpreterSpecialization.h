@@ -315,6 +315,9 @@ struct SpecializationOptions {
   /// Requires a frame root and bounds. This grants no external provenance or
   /// unchecked store exemption. Unknown proofs fail closed; unproved writes
   /// retain normal alias invalidation. Applies to the complete CMPXCHG phase.
+  /// Also prove separation of currently materialized absolute-memory cells
+  /// from symbolic writes. Preserved constants can cross nodes by intersection;
+  /// no initial memory value or global nonalias premise is introduced.
   bool ProveStoreFrameSeparation = false;
   /// Explicit source-ABI precondition: every external-origin store target
   /// range, including computed external addresses, is disjoint from the entry

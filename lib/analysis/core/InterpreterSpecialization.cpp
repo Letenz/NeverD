@@ -101,6 +101,7 @@ struct Projection {
   /// modular displacement. No arbitrary expression escapes a node context.
   std::map<uint64_t, uint64_t> AffineRegisters;
   std::map<uint64_t, uint8_t> FrameBytes;
+  std::map<uint64_t, uint8_t> AbsoluteBytes;
   FrameFacts Frame;
   FrameOrigins Origins;
   ControlRelation Controls;
@@ -171,6 +172,8 @@ Projection project(SymState &State, SymRef Root,
   Result.Frame = Frame;
   for (const auto &Byte : State.constantScalarBytes())
     Result.Scalars.emplace(ByteKey{Byte.Space, Byte.Offset}, Byte.Value);
+  for (const auto &Byte : State.constantAbsoluteBytes())
+    Result.AbsoluteBytes.emplace(Byte.Offset, Byte.Value);
   if (Root) {
     for (uint64_t Offset : AffineCandidates)
       if (const auto Displacement = affineDisplacement(
@@ -182,24 +185,27 @@ Projection project(SymState &State, SymRef Root,
   return Result;
 }
 
-void seed(SymContext &Ctx, SymState &State, SymRef Root,
+bool seed(SymContext &Ctx, SymState &State, SymRef Root,
           const Projection &Values) {
   for (const auto &[Key, Value] : Values.Scalars)
     State.write(Key.first, Key.second, Ctx.mkConst(8, Value));
+  SymState::MemoryKnowledge Memory{&Ctx, State.byteOrder(), {}};
+  for (const auto &[Offset, Value] : Values.AbsoluteBytes)
+    Memory.Facts.push_back({{}, Offset, Ctx.mkConst(8, Value)});
   if (!Root)
-    return;
+    return Memory.Facts.empty() || State.restoreMemoryKnowledge(Memory);
   for (const auto &[Register, Displacement] : Values.AffineRegisters)
     State.write(SymSpace::Register, Register,
                 Ctx.mkAdd(Root, Ctx.mkConst(64, Displacement)));
-  // The node starts with no memory facts. All imported bytes have the same
-  // root, so using ordinary store() here cannot discard another imported
-  // region or bypass a guest alias invalidation from the predecessor.
+  // These are current predecessor facts, intersected at joins after every
+  // guest write has applied its alias effects. Rebinding them is not a guest
+  // STORE: coexisting frame and absolute bytes must not invalidate each other.
   for (const auto &[Offset, Value] : Values.FrameBytes)
-    State.store(Ctx.mkAdd(Root, Ctx.mkConst(64, Offset)),
-                Ctx.mkConst(8, Value));
+    Memory.Facts.push_back({Root, Offset, Ctx.mkConst(8, Value)});
   for (const auto &[Offset, Displacement] : Values.Frame.AffineValues)
-    State.store(Ctx.mkAdd(Root, Ctx.mkConst(64, Offset)),
-                Ctx.mkAdd(Root, Ctx.mkConst(64, Displacement)));
+    Memory.Facts.push_back(
+        {Root, Offset, Ctx.mkAdd(Root, Ctx.mkConst(64, Displacement))});
+  return Memory.Facts.empty() || State.restoreMemoryKnowledge(Memory);
 }
 
 template <class Map> bool intersectMap(Map &Into, const Map &Incoming) {
@@ -308,6 +314,7 @@ bool intersect(Projection &Into, const Projection &Incoming,
   bool Changed = intersectMap(Into.Scalars, Incoming.Scalars);
   Changed |= intersectMap(Into.AffineRegisters, Incoming.AffineRegisters);
   Changed |= intersectMap(Into.FrameBytes, Incoming.FrameBytes);
+  Changed |= intersectMap(Into.AbsoluteBytes, Incoming.AbsoluteBytes);
   Changed |= intersectMap(Into.Frame.AffineValues, Incoming.Frame.AffineValues);
   Changed |=
       joinControls(Into.Controls, Incoming.Controls, TupleLimit, Widenings);
@@ -2233,7 +2240,9 @@ bool Specializer::evaluate(int Id) {
   SymState State(Ctx, Options.ByteOrder);
   const SymRef FrameRoot =
       Options.FrameBaseRegister ? Ctx.mkFreshVar(64, "entry_frame") : SymRef();
-  seed(Ctx, State, FrameRoot, Draft.Incoming);
+  if (!seed(Ctx, State, FrameRoot, Draft.Incoming))
+    return fail(SpecializationStatus::InvalidInput,
+                "inconsistent projected memory facts");
   seedRuntimeMemoryState(Ctx, State, Options);
   auto RuntimeControls = seedRuntimeControlState(Ctx, State, Options);
   // Rebuilt nodes forget correlations, including prior writes, but retain the
@@ -2690,6 +2699,7 @@ bool Specializer::evaluate(int Id) {
       bool ProvedFrameSeparation = false;
       std::optional<SymStorePreservation> StorePreservation;
       llvm::SmallVector<SymStorePreservationRange, 4> ProvedStoreRanges;
+      llvm::SmallVector<SymStorePreservationRegion, 4> ProvedAbsoluteRanges;
       for (unsigned J = 0; J < Original.NumInputs; ++J)
         OutputUnsafe |= unsafeOrigin(Original.Inputs[J], Origins);
       if (FrameRoot && (!RuntimeMemory || Original.Opcode == NdOp::STORE) &&
@@ -3077,6 +3087,62 @@ bool Specializer::evaluate(int Id) {
           // An unknown write of external-origin bytes may change known frame
           // values, but cannot turn already-external bytes into root pointers.
           // SymState still invalidates their constant values independently.
+        }
+      }
+      // An ordinary symbolic store also havocs the absolute bank. Preserve
+      // only its current materialized cells whose complete byte footprints
+      // are proved disjoint from this particular write under this path.
+      if ((Original.Opcode == NdOp::STORE || CompareExchange) &&
+          Options.ProveStoreFrameSeparation) {
+        const auto Memory = lowMemoryOperands(Evaluated);
+        const auto Address = Exec.memoryAddressValue(Evaluated);
+        if (Ctx.width(Address) == 64 && !Ctx.isConst(Address)) {
+          uint64_t Work = Options.MaxOperations - Result.EvaluatedOperations;
+          const auto Ranges = State.materializedAbsoluteRanges(Work);
+          Result.EvaluatedOperations = Options.MaxOperations - Work;
+          if (!Ranges)
+            return fail(SpecializationStatus::BudgetExceeded,
+                        "absolute memory projection budget exhausted");
+          for (const auto &Range : *Ranges) {
+            uint64_t Offset = Range.Offset;
+            uint64_t Remaining = Range.Bytes;
+            while (Remaining) {
+              const unsigned Bytes = std::min<uint64_t>(Remaining, 8);
+              const int64_t Begin = static_cast<int64_t>(Offset);
+              Offset += Bytes;
+              Remaining -= Bytes;
+              if (Result.EvaluatedOperations >= Options.MaxOperations)
+                return fail(SpecializationStatus::BudgetExceeded,
+                            "absolute memory separation budget exhausted");
+              ++Result.EvaluatedOperations;
+              if (Begin > std::numeric_limits<int64_t>::max() - Bytes)
+                continue;
+              const auto Overlap = memoryExtentsOverlap(
+                  Ctx, Address, Memory.AccessSize,
+                  Ctx.mkConst(64, static_cast<uint64_t>(Begin)), Bytes);
+              if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+                return fail(SpecializationStatus::BudgetExceeded,
+                            "absolute memory separation node budget exhausted");
+              const auto Domain =
+                  enumerate(Ctx, Exec.pathPredicate(), {Overlap}, 1);
+              if (Failed)
+                return false;
+              if (Domain.Status == FiniteValueStatus::Unknown)
+                return fail(SpecializationStatus::BudgetExceeded,
+                            "absolute memory separation proof exceeded its "
+                            "budget");
+              if (Domain.Status != FiniteValueStatus::Complete ||
+                  Domain.Tuples != std::vector<std::vector<uint64_t>>{{0}})
+                continue;
+              if (!StorePreservation)
+                StorePreservation =
+                    SymStorePreservation{{}, Begin, Begin + Bytes};
+              else
+                ProvedAbsoluteRanges.push_back({{}, Begin, Begin + Bytes});
+            }
+          }
+          if (StorePreservation)
+            StorePreservation->AdditionalRegions = ProvedAbsoluteRanges;
         }
       }
       if (FrameRoot) {

@@ -83,6 +83,16 @@ SymState::constantRegionBytes(SymRef Base) const {
   return Result;
 }
 
+llvm::SmallVector<SymConstantRegionByte, 32>
+SymState::constantAbsoluteBytes() const {
+  llvm::SmallVector<SymConstantRegionByte, 32> Result;
+  for (const auto &[Offset, View] : AbsoluteMemory.Bytes)
+    if (const auto Constant = Ctx->constantWindow(View.Value, View.Low, 8))
+      Result.push_back(
+          {Offset, static_cast<uint8_t>(Constant->getZExtValue())});
+  return Result;
+}
+
 namespace {
 constexpr uint32_t kByteBits = 8;
 
@@ -417,7 +427,21 @@ SymState::materializedRegionRanges(SymRef Base, uint64_t &WorkBudget) const {
   const auto Found = Regions.find(Base.index());
   if (Found == Regions.end())
     return Result;
-  const auto &Bytes = Found->second.Bytes;
+  return materializedBankRanges(Found->second, WorkBudget);
+}
+
+std::optional<llvm::SmallVector<SymState::MaterializedRange, 8>>
+SymState::materializedAbsoluteRanges(uint64_t &WorkBudget) const {
+  if (!WorkBudget)
+    return std::nullopt;
+  --WorkBudget;
+  return materializedBankRanges(AbsoluteMemory, WorkBudget);
+}
+
+std::optional<llvm::SmallVector<SymState::MaterializedRange, 8>>
+SymState::materializedBankRanges(const Bank &B, uint64_t &WorkBudget) const {
+  llvm::SmallVector<MaterializedRange, 8> Result;
+  const auto &Bytes = B.Bytes;
   if (Bytes.size() > WorkBudget)
     return std::nullopt;
   WorkBudget -= Bytes.size();
@@ -602,7 +626,8 @@ bool SymState::store(SymRef Addr, SymRef Value,
     return Ref && Ref.index() < Ctx->numNodes();
   };
   const auto ValidBase = [&](SymRef Base) {
-    return ValidRef(Base) && Ctx->width(Base) == 64 && !Ctx->isConst(Base);
+    return !Base ||
+           (ValidRef(Base) && Ctx->width(Base) == 64 && !Ctx->isConst(Base));
   };
   if (!ValidRef(Addr) || Ctx->width(Addr) != 64 || !ValidRef(Value) ||
       !ValidBase(Preservation.Base) || Preservation.Begin >= Preservation.End)
@@ -642,12 +667,16 @@ bool SymState::store(SymRef Addr, SymRef Value,
   llvm::SmallVector<SavedByte, 32> Saved;
   const auto SaveRegion = [&](SymRef Base, int64_t Lower, int64_t Upper,
                               llvm::ArrayRef<SymStorePreservationRange> More) {
-    auto Found = Regions.find(Base.index());
-    if (Found == Regions.end())
-      return true;
+    Bank *Storage = &AbsoluteMemory;
+    if (Base) {
+      auto Found = Regions.find(Base.index());
+      if (Found == Regions.end())
+        return true;
+      Storage = &Found->second;
+    }
     const uint64_t Begin = static_cast<uint64_t>(Lower);
     const uint64_t Size = static_cast<uint64_t>(Upper) - Begin;
-    for (const auto &[Offset, Byte] : Found->second.Bytes) {
+    for (const auto &[Offset, Byte] : Storage->Bytes) {
       if (!Charge(1))
         return false;
       bool Protected = Offset - Begin < Size;
@@ -665,7 +694,7 @@ bool SymState::store(SymRef Addr, SymRef Value,
       if (Protected) {
         if (!Charge(2))
           return false;
-        Saved.push_back({&Found->second, Offset, Byte});
+        Saved.push_back({Storage, Offset, Byte});
       }
     }
     return true;

@@ -86,7 +86,8 @@ struct SymStorePreservationRange {
   int64_t End = 0;
 };
 
-/// One interval of an independently based current memory region.
+/// One interval of a current memory region. An empty Base denotes absolute
+/// memory; other bases must be nonconstant 64-bit values in this context.
 struct SymStorePreservationRegion {
   SymRef Base;
   int64_t Begin = 0;
@@ -98,7 +99,8 @@ struct SymStorePreservationRegion {
 /// root-relative ranges. Addresses use modulo-2^64 arithmetic. This interface
 /// does not prove separation or grant accessibility; callers supply a proof
 /// or an explicit domain contract for every declared region. Only already
-/// materialised bytes of each exact symbolic base survive. References must
+/// materialised bytes of each exact base survive. An empty Base denotes the
+/// absolute bank, with the same modular range coordinates. References must
 /// belong to the state context; SymRef indices cannot authenticate ownership
 /// across contexts. Work counts validation, membership checks, saving and
 /// restoring; budget failure applies no store or preservation. Never reuse this
@@ -113,10 +115,11 @@ struct SymStorePreservation {
   /// Borrowed for this single store. Empty retains the original single-range
   /// accounting; every additional range must independently have Begin < End.
   llvm::ArrayRef<SymStorePreservationRange> AdditionalRanges;
-  /// Borrowed for this single store. Each region requires a nonconstant
-  /// 64-bit Base and Begin < End. No declared Base may be the STORE's own
-  /// region. Overlapping and repeated declarations form a union; each is
-  /// inspected and charged separately. Empty preserves the old accounting.
+  /// Borrowed for this single store. Each region requires an empty or
+  /// nonconstant 64-bit Base and Begin < End. No declared Base may be the
+  /// STORE's own region. Overlapping and repeated declarations form a union;
+  /// each is inspected and charged separately. Empty preserves the old
+  /// accounting.
   llvm::ArrayRef<SymStorePreservationRegion> AdditionalRegions;
 };
 
@@ -305,6 +308,11 @@ public:
   std::optional<llvm::SmallVector<MaterializedRange, 8>>
   materializedRegionRanges(SymRef Base, uint64_t &WorkBudget) const;
 
+  /// Current absolute-memory extents, with the same read-only projection and
+  /// work accounting as materializedRegionRanges(). No initial bytes appear.
+  std::optional<llvm::SmallVector<MaterializedRange, 8>>
+  materializedAbsoluteRanges(uint64_t &WorkBudget) const;
+
   /// Export only materialized bytes, in spans of at most eight bytes. This
   /// does not read unknown bytes or recover facts from old load provenance.
   MemoryKnowledge memoryKnowledge() const;
@@ -345,6 +353,11 @@ public:
   /// missing bytes, and returns nothing for an absent/invalid base.
   llvm::SmallVector<SymConstantRegionByte, 32>
   constantRegionBytes(SymRef Base) const;
+
+  /// Constant bytes currently retained in absolute memory, after all writes
+  /// and alias invalidations. This pure projection neither reads missing bytes
+  /// nor gives mutable memory an immutable-input contract.
+  llvm::SmallVector<SymConstantRegionByte, 32> constantAbsoluteBytes() const;
 
   /// A value nothing determines, of the given width.  Every unknown the engine
   /// invents comes from here, so they are all named and none can collide.
@@ -415,6 +428,8 @@ private:
   ByteView byteAt(Bank &B, uint64_t Offset);
   SymRef readBank(Bank &B, uint64_t Offset, uint16_t Bytes);
   bool writeBank(Bank &B, uint64_t Offset, SymRef Value);
+  std::optional<llvm::SmallVector<MaterializedRange, 8>>
+  materializedBankRanges(const Bank &B, uint64_t &WorkBudget) const;
 
   /// Give up everything \p B held, and start an epoch so that what is read
   /// from it next cannot be mistaken for what was read before.

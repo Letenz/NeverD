@@ -18,6 +18,104 @@ using namespace neverd::symbolic;
 
 namespace {
 
+TEST(SymStorePreservation, AbsoluteCellsNeedAnExplicitPerWriteContract) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    SymContext C;
+    SymState S(C, Order);
+    const auto Address = C.mkConst(64, 0x1000);
+    const auto Pointer = C.mkVar("pointer", 64);
+    ASSERT_TRUE(S.store(Address, C.mkConst(64, 0x123456789abcdef0)));
+    const auto Before = S;
+    SymStorePreservation P{{}, 0x1000, 0x1008, 23};
+    EXPECT_FALSE(S.store(Pointer, C.mkConst(8, 7), P));
+    EXPECT_EQ(P.Status, SymStorePreservationStatus::BudgetExceeded);
+    EXPECT_TRUE(S.mergeIdentical(Before));
+    P.MaxWork = 24;
+    EXPECT_FALSE(S.store(Pointer, C.mkConst(8, 7), P));
+    ASSERT_EQ(P.Status, SymStorePreservationStatus::Applied);
+    EXPECT_EQ(P.WorkUsed, 24u);
+    EXPECT_EQ(S.load(Address, 8), C.mkConst(64, 0x123456789abcdef0));
+    EXPECT_EQ(S.load(Pointer, 1), C.mkConst(8, 7));
+    EXPECT_TRUE(S.memoryIsUnknown());
+    EXPECT_TRUE(S.memoryInputOrigins(S.load(C.mkConst(64, 0x1008), 1)).empty());
+    S.store(C.mkVar("next_pointer", 64), C.mkConst(8, 9));
+    EXPECT_FALSE(C.isConst(S.load(Address, 8)));
+  }
+}
+
+TEST(SymStorePreservation, AbsoluteRangesCannotProtectTheirOwnWriteBank) {
+  SymContext C;
+  SymState S(C);
+  const auto Address = C.mkConst(64, 0x1000);
+  S.store(Address, C.mkConst(64, 11));
+  const auto Before = S;
+  SymStorePreservation P{{}, 0x1000, 0x1008, 100};
+  EXPECT_FALSE(S.store(C.mkConst(64, 0x2000), C.mkConst(64, 17), P));
+  EXPECT_EQ(P.Status, SymStorePreservationStatus::Invalid);
+  EXPECT_TRUE(S.mergeIdentical(Before));
+  const auto Root = C.mkVar("root", 64);
+  const SymStorePreservationRegion More[] = {{{}, 0x1000, 0x1008}};
+  P = {Root, -8, 8, 100};
+  P.AdditionalRegions = More;
+  EXPECT_FALSE(S.store(Address, C.mkConst(64, 17), P));
+  EXPECT_EQ(P.Status, SymStorePreservationStatus::Invalid);
+  EXPECT_TRUE(S.mergeIdentical(Before));
+}
+
+TEST(SymStorePreservation, AbsoluteAndSymbolicCellsShareOnePreservation) {
+  SymContext C;
+  SymState S(C);
+  const auto Root = C.mkVar("root", 64);
+  const auto Other = C.mkVar("other", 64);
+  ASSERT_TRUE(
+      S.restoreMemoryKnowledge({&C,
+                                llvm::endianness::little,
+                                {{{}, UINT64_MAX - 7, C.mkConst(64, 19)},
+                                 {Root, 0, C.mkConst(64, 23)}}}));
+  const SymStorePreservationRegion More[] = {{{}, -8, 0}};
+  SymStorePreservation P{Root, 0, 8, 49};
+  P.AdditionalRegions = More;
+  EXPECT_FALSE(S.store(Other, C.mkConst(8, 31), P));
+  ASSERT_EQ(P.Status, SymStorePreservationStatus::Applied);
+  EXPECT_EQ(P.WorkUsed, 49u);
+  EXPECT_EQ(S.load(C.mkConst(64, UINT64_MAX - 7), 8), C.mkConst(64, 19));
+  EXPECT_EQ(S.load(Root, 8), C.mkConst(64, 23));
+}
+
+TEST(SymState, AbsoluteProjectionsArePureBoundedAndKeepByteOrder) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    SymContext C;
+    SymState S(C, Order);
+    S.store(C.mkConst(64, 0x1000), C.mkConst(32, 0x12345678));
+    S.load(C.mkConst(64, 0x1008), 2);
+    const auto Nodes = C.numNodes();
+    const auto Live = S.numLiveBytes();
+    const auto Constants = S.constantAbsoluteBytes();
+    ASSERT_EQ(Constants.size(), 4u);
+    for (unsigned I = 0; I != 4; ++I) {
+      EXPECT_EQ(Constants[I].Offset, 0x1000u + I);
+      const unsigned Shift =
+          (Order == llvm::endianness::little ? I : 3 - I) * 8;
+      EXPECT_EQ(Constants[I].Value, uint8_t(0x12345678u >> Shift));
+    }
+    uint64_t Work = 6;
+    EXPECT_FALSE(S.materializedAbsoluteRanges(Work));
+    Work = 7;
+    const auto Ranges = S.materializedAbsoluteRanges(Work);
+    ASSERT_TRUE(Ranges);
+    EXPECT_EQ(Work, 0u);
+    ASSERT_EQ(Ranges->size(), 2u);
+    EXPECT_EQ((*Ranges)[0].Offset, 0x1000u);
+    EXPECT_EQ((*Ranges)[0].Bytes, 4u);
+    EXPECT_EQ((*Ranges)[1].Offset, 0x1008u);
+    EXPECT_EQ((*Ranges)[1].Bytes, 2u);
+    EXPECT_EQ(C.numNodes(), Nodes);
+    EXPECT_EQ(S.numLiveBytes(), Live);
+    S.clobberMemory();
+    EXPECT_TRUE(S.constantAbsoluteBytes().empty());
+  }
+}
+
 TEST(SymStorePreservation, RetainsOnlyKnownBytesAndKeepsPostStoreEpochs) {
   for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
     SymContext C;
@@ -767,8 +865,7 @@ TEST(SymStorePreservation, IndependentRegionValidationNeverMutatesState) {
   const auto Bad = SymRef(uint32_t(C.numNodes() + 100));
   const auto Before = S;
   for (const auto Invalid :
-       std::vector<SymStorePreservationRegion>{{{}, 0, 8},
-                                               {Bad, 0, 8},
+       std::vector<SymStorePreservationRegion>{{Bad, 0, 8},
                                                {Narrow, 0, 8},
                                                {Constant, 0, 8},
                                                {B, 8, 8},

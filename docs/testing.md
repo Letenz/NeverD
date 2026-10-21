@@ -9562,3 +9562,6 @@ checks typed explicit input and invalid names/lifecycle combinations.
 Run these with all Dalvik and Android JNI tests, existing callback/thread/
 property/finalizer tests and ProcessReport after changing this shared boundary.
 Unsupported CPU transports are platform skips, not successful qualification.
+
+
+`AbsoluteMemoryFactsTests.inc` checks written absolute targets across nodes, conflicting joins, partial and unknown alias writes, and proved stack separation in both byte orders with chaining enabled or disabled. Independent byte execution checks retained effects; missing exclusions and short budgets must refuse. `SymStorePreservation.Absolute*` and `SymState.AbsoluteProjections*` check absolute/symbolic coexistence, upper addresses, pure bounded projections, post-write unknown epochs and transactional refusal. Run `NeverDInterpreterSpecializationTests`, `NeverDSymbolicIntegerIntrinsicTests` and `NeverDSymMemoryKnowledgeTests`, then the native independence and LowIR refinement suites.
