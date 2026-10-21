@@ -189,7 +189,8 @@ void collectFormattedCalls(const BinaryImage &Img, const LowFunc &F,
                            std::map<va_t, FormattedCall> &Calls);
 void collectFormattedCalls(const BinaryImage &Img,
                            llvm::ArrayRef<LowBlock> Blocks,
-                           std::map<va_t, FormattedCall> &Calls);
+                           std::map<va_t, FormattedCall> &Calls,
+                           bool HasIndependentRoots = false);
 
 } // namespace neverd::pipeline_detail
 
