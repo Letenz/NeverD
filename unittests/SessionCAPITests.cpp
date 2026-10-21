@@ -9946,7 +9946,11 @@ TEST_F(SessionCAPITest, UserFunctionAttributesDecideHowCallsEndAndPersist) {
   const auto Entry = neverd_session_entry_addr(Session);
   const auto Helper = Entry + 11;
   const std::string HelperHex = "0x" + llvm::utohexstr(Helper);
-  // No symbol names the helper; the user makes it a function first.
+  // The direct call discovers the unnamed helper. Recreate it as an analyst
+  // entry so the sidecar below also covers the explicitly created state.
+  ASSERT_GE(neverd_func_find_by_addr(Session, Helper), 0);
+  ASSERT_EQ(neverd_func_delete(Session, Helper), 0)
+      << takeString(neverd_last_error(Session));
   ASSERT_EQ(neverd_func_create(Session, Helper), 0)
       << takeString(neverd_last_error(Session));
   const auto analyzeAll = [&](neverd_session_t In) {
