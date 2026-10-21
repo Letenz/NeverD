@@ -52,6 +52,51 @@ function(neverd_stage_task_runtime Target)
   endif()
 endfunction()
 
+# Stage \p Source, a notice directory or file, as licenses/<Directory> beside
+# \p Target. Every target in the shared output directory takes it from one
+# target, as the mimalloc notices do (NeverDMimalloc.cmake): a copy after each
+# link raced with the others' copies into the same directory when they linked
+# in parallel, which Windows reports as "Error copying directory ...
+# Permission denied". A target with a directory of its own copies there.
+function(neverd_stage_notices Target Directory Source)
+  get_target_property(_type ${Target} TYPE)
+  if(_type STREQUAL "SHARED_LIBRARY" AND NOT WIN32)
+    get_target_property(_output_dir ${Target} LIBRARY_OUTPUT_DIRECTORY)
+  else()
+    get_target_property(_output_dir ${Target} RUNTIME_OUTPUT_DIRECTORY)
+  endif()
+  if(IS_DIRECTORY "${Source}")
+    set(_copy copy_directory)
+  else()
+    set(_copy copy_if_different)
+  endif()
+  if(_output_dir STREQUAL "${CMAKE_BINARY_DIR}/bin")
+    set(_stage neverd-notices-${Directory})
+    if(NOT TARGET ${_stage})
+      set(_dir "${CMAKE_BINARY_DIR}/bin")
+      get_property(_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+      if(_multi_config)
+        string(APPEND _dir "/$<CONFIG>")
+      endif()
+      add_custom_target(${_stage}
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+          "${_dir}/licenses/${Directory}"
+        COMMAND "${CMAKE_COMMAND}" -E ${_copy} "${Source}"
+          "${_dir}/licenses/${Directory}"
+        COMMENT "Copying the ${Directory} notices next to NeverD executables"
+        VERBATIM)
+    endif()
+    add_dependencies(${Target} ${_stage})
+  else()
+    add_custom_command(TARGET ${Target} POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E make_directory
+        "$<TARGET_FILE_DIR:${Target}>/licenses/${Directory}"
+      COMMAND "${CMAKE_COMMAND}" -E ${_copy} "${Source}"
+        "$<TARGET_FILE_DIR:${Target}>/licenses/${Directory}"
+      VERBATIM)
+  endif()
+endfunction()
+
 function(neverd_stage_performance_notices Target)
   # The SDK registers its post-build notices before the transport directory
   # is configured. Resolve that provider before capturing its notice path.
@@ -62,10 +107,7 @@ function(neverd_stage_performance_notices Target)
     if(NEVERD_ENABLE_${_option})
       string(TOLOWER "${_option}" _name)
       get_property(_notices GLOBAL PROPERTY NEVERD_FORK_NOTICES_neverd_${_name})
-      add_custom_command(TARGET ${Target} POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E copy_directory
-          "${_notices}"
-          "$<TARGET_FILE_DIR:${Target}>/licenses/${_directory}" VERBATIM)
+      neverd_stage_notices(${Target} ${_directory} "${_notices}")
     endif()
   endforeach()
 endfunction()
