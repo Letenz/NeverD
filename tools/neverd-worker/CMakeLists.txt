@@ -103,6 +103,19 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
         ENVIRONMENT "TMPDIR=${_worker_canonical_tmp}")
     endif()
     set_tests_properties(NeverDWorkerTransport PROPERTIES TIMEOUT 40)
+    add_executable(neverd-worker-discovery-test-server main.cpp Engine.cpp Listing.cpp StringReferences.cpp TextFold.cpp ProjectHistory.cpp Contributions.cpp tests/mock_engine.cpp)
+    set_target_properties(neverd-worker-discovery-test-server PROPERTIES ENABLE_EXPORTS ON)
+    target_compile_features(neverd-worker-discovery-test-server PRIVATE cxx_std_20)
+    target_compile_definitions(neverd-worker-discovery-test-server PRIVATE NEVERD_EXPORTS NEVERD_TEST_STEPPED_DISCOVERY)
+    target_include_directories(neverd-worker-discovery-test-server PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
+    target_link_libraries(neverd-worker-discovery-test-server PRIVATE neverd_worker_graph neverd_worker_format neverd_tool_web Threads::Threads ${CMAKE_DL_LIBS})
+    add_test(NAME NeverDWorkerDiscoveryReady
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/discovery_ready_test.py"
+              "$<TARGET_FILE:neverd-worker-discovery-test-server>")
+    add_test(NAME NeverDWorkerDiscoveryReadyLegacy
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/discovery_ready_test.py"
+              "$<TARGET_FILE:neverd-worker-test-server>")
+    set_tests_properties(NeverDWorkerDiscoveryReady NeverDWorkerDiscoveryReadyLegacy PROPERTIES TIMEOUT 30)
     add_test(NAME NeverDWorkerSourceCache
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/source_cache_test.py"
               "$<TARGET_FILE:neverd-worker-test-server>")

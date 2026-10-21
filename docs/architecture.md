@@ -968,6 +968,22 @@ only when discovery is complete. Worker polling waits for requests rather
 than busy-spinning while a snapshot is computing. Older SDKs retain the
 synchronous fallback.
 
+The worker polls stepped function discovery when the engine exports it;
+the client must also opt in through `open.step_discovery`. The default preserves
+synchronous discovery for older clients that do not coordinate image memory.
+Older engines retain synchronous discovery. Pending work yields to foreground
+requests without publishing a partial discovery result.
+
+Discovery completion is a worker scheduling boundary before the derived
+listing rebuild. The executor publishes an immediate heartbeat using the same
+state envelope as periodic liveness notifications, then waits for requests for
+at most its existing idle grace (waking on arrival). This lets a large-image
+GUI waiting for discovery publication export its analysis snapshot before
+further listing work. The GUI's large-image memory gate remains in force;
+completion does not claim reference-index readiness, and later listing reads
+still build from the published SDK functions. Errors publish an unavailable
+index without keeping replica startup blocked.
+
 Function preparation uses `neverd_prepare_function_view`, which shares the
 source route's ARM mode, exception-handler discovery and analysis-scope checks
 without emitting C. Source, IR and CFG views consume that prepared pipeline.
