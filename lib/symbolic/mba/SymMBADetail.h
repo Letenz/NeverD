@@ -376,11 +376,24 @@ struct QuadraticProduct {
   llvm::SmallVector<TruthTable, 2> Factors;
 };
 
+/// Remove the exact common factor multiset of a homogeneous term group.
+/// An empty result leaves the group unchanged, including on optional refusal.
+llvm::SmallVector<SymRef, 8>
+extractPolynomialCofactor(llvm::SmallVectorImpl<PolyTerm> &Terms,
+                          WorkBudget &Budget, size_t MaxBytes);
+
 /// Recover the unique unordered pair of Boolean factors from a quadratic
 /// coefficient matrix. Missing coefficients are zero modulo the word width.
 std::optional<QuadraticProduct>
 recoverQuadraticProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
                         uint32_t Width, WorkBudget &Budget, size_t MaxBytes);
+
+/// Recover a quadratic product by reading coefficient rows directly from its
+/// terms. Determined distinguishes a disproved product from resource refusal.
+std::optional<QuadraticProduct>
+recoverQuadraticTerms(const SymContext &Ctx, llvm::ArrayRef<PolyTerm> Terms,
+                      llvm::ArrayRef<uint32_t> AtomIds, uint32_t Width,
+                      WorkBudget &Budget, size_t MaxBytes, bool &Determined);
 
 /// Infer factor supports from all subset degrees. Nullopt declines the bounded
 /// reconstruction; an empty vector disproves a single product. Nonempty support

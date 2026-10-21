@@ -14,6 +14,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "Limits.h"
 #include "SymMBADetail.h"
 
 #include "llvm/ADT/DenseSet.h"
@@ -787,7 +788,27 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
 
   const BitwiseSynthesisLimits Synthesis = Limits.synthesis(TermCeiling);
   llvm::SmallVector<SymRef, 4> Parts;
-  for (const auto &[Degree, DegreeTerms] : ByDegree) {
+  for (auto &[SourceDegree, DegreeTerms] : ByDegree) {
+    auto Common =
+        extractPolynomialCofactor(DegreeTerms, Budget, Opts.MaxTableBytes);
+    unsigned Degree = SourceDegree - Common.size();
+    auto Attach = [&](SymRef Part) {
+      if (Common.empty())
+        return Part;
+      if (Ctx.op(Part) == SymOp::Add) {
+        llvm::SmallVector<SymRef, 8> Terms(Ctx.operands(Part));
+        llvm::SmallVector<SymRef, 8> Summands;
+        for (SymRef Term : Terms) {
+          llvm::SmallVector<SymRef, 8> Factors(Common);
+          Factors.push_back(Term);
+          Summands.push_back(Ctx.mkMul(Factors));
+        }
+        return Ctx.mkAdd(Summands);
+      }
+      llvm::SmallVector<SymRef, 8> Factors(Common);
+      Factors.push_back(Part);
+      return Ctx.mkMul(Factors);
+    };
     auto Retain = [&]() {
       const size_t MaxSlots = Opts.MaxTableBytes / (2 * sizeof(SymRef));
       size_t Slots = DegreeTerms.size();
@@ -807,7 +828,7 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
         Factors.push_back(Ctx.mkConst(Term.Coeff));
         Summands.push_back(Ctx.mkMul(Factors));
       }
-      Parts.push_back(Ctx.mkAdd(Summands));
+      Parts.push_back(Attach(Ctx.mkAdd(Summands)));
       return true;
     };
     // An unchanged, already factored higher-degree component needs no factor
@@ -827,24 +848,28 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
             return std::nullopt;
           Ctx.collectVars(Factor, DegreeIds);
         }
+    // Factoring can expose a previously unaffordable search. Keep the original
+    // bounded reading for wider residuals; the row reconstruction handles
+    // broad quadratic quotients, while cubic enumeration stays on few inputs.
+    if (!Common.empty() &&
+        (Degree > limits::kMaxCofactorSearchDegree ||
+         (Degree == 3 &&
+          DegreeIds.size() > limits::kMaxCubicCofactorSearchAtoms))) {
+      for (SymRef Factor : Common) {
+        if (!Budget.consume(Ctx.dagSize(Factor)))
+          return std::nullopt;
+        Ctx.collectVars(Factor, DegreeIds);
+      }
+      for (auto &Term : DegreeTerms) {
+        Term.Factors.append(Common);
+        llvm::sort(Term.Factors);
+      }
+      Common.clear();
+      Degree = SourceDegree;
+    }
     llvm::SmallVector<SymRef, 16> DegreeAtoms;
     for (uint32_t Id : DegreeIds)
       DegreeAtoms.push_back(Ctx.varRef(Id));
-    auto Form = expandOverMinterms(Ctx, DegreeTerms, DegreeIds, Width, Budget,
-                                   /*Optional=*/Degree >= 3,
-                                   /*SingleProduct=*/Degree >= 3);
-    if (!Form) {
-      if (Degree >= 3 && !Budget.exhausted() && Retain())
-        continue;
-      return std::nullopt;
-    }
-    // Exact cancellation can remove a degree altogether.
-    if (Form->Higher.empty())
-      continue;
-    const auto &Part = Form->Higher;
-    const unsigned DegreeArity = DegreeIds.size();
-    const size_t MaxCandidates =
-        std::max<size_t>(1, Limits.SynthesisWork / *cornerCount(DegreeArity));
     // More than one product can match, and which reads best is not the order
     // they are found in, so every match reached within the budget is ranked.
     // Ranking the product alone rather than the whole sum is the same order:
@@ -872,6 +897,48 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
       return true;
     };
     if (Degree == 2) {
+      bool Determined = false;
+      auto Product =
+          recoverQuadraticTerms(Ctx, DegreeTerms, DegreeIds, Width, Budget,
+                                Opts.MaxTableBytes, Determined);
+      if (Product) {
+        Consider(Product->Coefficient, Product->Factors);
+        if (!Best.isValid())
+          return std::nullopt;
+        Parts.push_back(Attach(Best));
+        continue;
+      }
+      if (Determined && SourceDegree >= 3 && !Budget.exhausted() && Retain())
+        continue;
+      if (Determined || Budget.exhausted())
+        return std::nullopt;
+    }
+    auto Form = expandOverMinterms(Ctx, DegreeTerms, DegreeIds, Width, Budget,
+                                   /*Optional=*/Degree >= 3,
+                                   /*SingleProduct=*/Degree >= 3);
+    if (!Form) {
+      if (SourceDegree >= 3 && !Budget.exhausted() && Retain())
+        continue;
+      return std::nullopt;
+    }
+    if (Degree < 2) {
+      llvm::SmallVector<SymRef, 4> Forms;
+      linearCandidates(Ctx, std::move(Form->Linear), DegreeAtoms, TermCeiling,
+                       Limits, Forms);
+      SymRef Best = cheapestOf(Ctx, Forms);
+      if (!Best.isValid())
+        return std::nullopt;
+      Parts.push_back(Attach(Best));
+      continue;
+    }
+    // Exact cancellation can remove a degree altogether.
+    if (Form->Higher.empty())
+      continue;
+    const auto &Part = Form->Higher;
+    const unsigned DegreeArity = DegreeIds.size();
+    const size_t MaxCandidates =
+        std::max<size_t>(1, Limits.SynthesisWork / *cornerCount(DegreeArity));
+    if (Degree == 2) {
       if (auto Product = recoverQuadraticProduct(Part, DegreeArity, Width,
                                                  Budget, Opts.MaxTableBytes))
         Consider(Product->Coefficient, Product->Factors);
@@ -890,11 +957,11 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
     // Preserve an unrecovered higher degree exactly. Other degrees may still
     // improve; dropping the residual would silently change the expression.
     if (!Best.isValid()) {
-      if (Degree >= 3 && !Budget.exhausted() && Retain())
+      if (SourceDegree >= 3 && !Budget.exhausted() && Retain())
         continue;
       return std::nullopt;
     }
-    Parts.push_back(Best);
+    Parts.push_back(Attach(Best));
   }
 
   Parts.push_back(Remainder);

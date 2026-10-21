@@ -551,8 +551,8 @@ SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
 
 /// Measure \p E as one region, splitting a wide one into independent parts and
 /// a masked one into mask-uniform columns.
-SymRef solveRegionOrSplit(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
-                          WorkBudget &Budget, SolveReport &Rep) {
+SymRef solveRegionOrSplitImpl(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                              WorkBudget &Budget, SolveReport &Rep) {
   if (!Budget.exhausted() && isMinimalBinaryLeafExpression(Ctx, E, Opts)) {
     Rep.Outcome = MBAOutcome::AlreadyShortest;
     return E;
@@ -574,6 +574,41 @@ SymRef solveRegionOrSplit(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   }
   SymRef Solved = solveOneRegion(Ctx, E, Opts, Budget, Rep);
   return Solved == E ? solveMasked(Ctx, E, Opts, Budget, Rep) : Solved;
+}
+
+using CompletedRegions =
+    llvm::DenseMap<uint32_t, std::pair<SymRef, SolveReport>>;
+
+SymRef solveRegionOrSplit(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                          WorkBudget &Budget, SolveReport &Rep,
+                          CompletedRegions *Cache = nullptr,
+                          size_t *Storage = nullptr) {
+  if (Cache) {
+    auto It = Cache->find(E.index());
+    if (It != Cache->end()) {
+      if (!Budget.consume()) {
+        Rep.BudgetExhausted = true;
+        return E;
+      }
+      Rep = It->second.second;
+      return It->second.first;
+    }
+  }
+  const size_t Before = Budget.used();
+  SymRef Result = solveRegionOrSplitImpl(Ctx, E, Opts, Budget, Rep);
+  // This cache belongs to one deep invocation, with one context and option
+  // set. Candidate refinement and the original-region reading often revisit
+  // exactly the same emitted expression. Reuse only completed exact results;
+  // a refusal must remain eligible for a later attempt.
+  constexpr size_t EntryBytes = 128;
+  if (Cache && Storage && !Budget.exhausted() && !Rep.BudgetExhausted &&
+      (Result == E || Rep.Evidence == MBAEvidence::Derivation) &&
+      Budget.used() - Before >= detail::limits::kMinCompletedRegionCacheWork &&
+      *Storage >= EntryBytes && Budget.consume()) {
+    *Storage -= EntryBytes;
+    Cache->try_emplace(E.index(), Result, Rep);
+  }
+  return Result;
 }
 
 // Child rewrites can hide a shared arithmetic input in one bitwise use while
@@ -621,7 +656,8 @@ bool hasBitwiseProductSum(const SymContext &Ctx, SymRef R) {
 SymRef refineCandidate(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                        llvm::ArrayRef<uint32_t> OriginalOrder,
                        llvm::DenseMap<uint32_t, SymRef> &Solved,
-                       WorkBudget &Budget, size_t &Storage, SolveReport &Rep) {
+                       CompletedRegions &Regions, WorkBudget &Budget,
+                       size_t &Storage, SolveReport &Rep) {
   auto Known = [&](SymRef R) {
     auto It = Solved.find(R.index());
     if (It != Solved.end())
@@ -699,7 +735,8 @@ SymRef refineCandidate(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       if (Budget.exhausted() || !Budget.consume(Ctx.dagSize(Rebuilt)))
         return Stop();
       SolveReport Local;
-      SymRef Measured = solveRegionOrSplit(Ctx, Rebuilt, Opts, Budget, Local);
+      SymRef Measured = solveRegionOrSplit(Ctx, Rebuilt, Opts, Budget, Local,
+                                           &Regions, &Storage);
       Rep.BudgetExhausted |= Local.BudgetExhausted;
       if (readingScore(Ctx, Measured) < readingScore(Ctx, Best)) {
         Best = Measured;
@@ -1192,6 +1229,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   // expressions nest deeply enough that recursion is a real hazard.
   const std::vector<uint32_t> Order = reachableInOrder(Ctx, WalkRoot);
   llvm::DenseMap<uint32_t, SymRef> Solved;
+  CompletedRegions Regions;
   bool Skipped = WholeRep.BudgetExhausted;
   size_t RefinementStorage = Opts.MaxTableBytes;
   SymKnownBits Known(Ctx);
@@ -1268,12 +1306,13 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       }
       const bool ChildrenChanged = Rebuilt != R;
       SolveReport Rep;
-      SymRef Measured = solveRegionOrSplit(Ctx, Rebuilt, Opts, Budget, Rep);
+      SymRef Measured = solveRegionOrSplit(Ctx, Rebuilt, Opts, Budget, Rep,
+                                           &Regions, &RefinementStorage);
       Complete = !Rep.BudgetExhausted;
       if (Measured != Rebuilt) {
         SolveReport Refined;
-        Rebuilt = refineCandidate(Ctx, Measured, Opts, Order, Solved, Budget,
-                                  RefinementStorage, Refined);
+        Rebuilt = refineCandidate(Ctx, Measured, Opts, Order, Solved, Regions,
+                                  Budget, RefinementStorage, Refined);
         Result.NumAtoms = std::max(Result.NumAtoms, Rep.NumAtoms);
         Result.NumAtoms = std::max(Result.NumAtoms, Refined.NumAtoms);
         AnySampled |= Rep.Evidence == MBAEvidence::Samples;
@@ -1299,14 +1338,15 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       SymRef Original = R;
       if (ChildrenChanged && !Budget.exhausted())
         Original = WholeRegion
-                       ? solveRegionOrSplit(Ctx, R, Opts, Budget, OriginalRep)
+                       ? solveRegionOrSplit(Ctx, R, Opts, Budget, OriginalRep,
+                                            &Regions, &RefinementStorage)
                        : solveArithmetic(Ctx, R, Opts, Budget, OriginalRep);
       Skipped |= OriginalRep.BudgetExhausted;
       Complete &= !OriginalRep.BudgetExhausted;
       if (Original != R && !Budget.exhausted()) {
         SolveReport Refined;
-        Original = refineCandidate(Ctx, Original, Opts, Order, Solved, Budget,
-                                   RefinementStorage, Refined);
+        Original = refineCandidate(Ctx, Original, Opts, Order, Solved, Regions,
+                                   Budget, RefinementStorage, Refined);
         OriginalRep.NumAtoms = std::max(OriginalRep.NumAtoms, Refined.NumAtoms);
         if (Refined.Evidence == MBAEvidence::Samples)
           OriginalRep.Evidence = MBAEvidence::Samples;
@@ -1319,7 +1359,8 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
         // in the original postorder, so finish that region before selecting it.
         SolveReport Refined;
         if (!WholeRegion && !Budget.exhausted())
-          Original = solveRegionOrSplit(Ctx, Original, Opts, Budget, Refined);
+          Original = solveRegionOrSplit(Ctx, Original, Opts, Budget, Refined,
+                                        &Regions, &RefinementStorage);
         Rebuilt = Original;
         Result.NumAtoms =
             std::max({Result.NumAtoms, OriginalRep.NumAtoms, Refined.NumAtoms});

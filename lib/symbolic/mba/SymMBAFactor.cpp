@@ -429,6 +429,12 @@ SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
           Inner.MaxTableBytes = Storage;
           Rel.Reduced = solveOneRegion(Ctx, Rel.Sum, Inner, Budget, Local);
           Rep.BudgetExhausted |= Local.BudgetExhausted;
+          // Completed failures are reusable too: this call's options stay
+          // fixed and its available work/storage only decrease. Do not cache
+          // a refusal or an incomplete search as a negative result.
+          if (Rel.Reduced == Rel.Sum && !Local.BudgetExhausted &&
+              !Budget.exhausted())
+            QuotientCache.try_emplace(Rel.Sum.index(), Rel.Sum, 0);
           if (Rel.Reduced == Rel.Sum ||
               Local.Evidence != MBAEvidence::Derivation)
             continue;
@@ -436,6 +442,8 @@ SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                                     Local.NumAtoms);
           Rep.NumAtoms = std::max(Rep.NumAtoms, Local.NumAtoms);
         }
+        if (Rel.Reduced == Rel.Sum)
+          continue;
         Relations.push_back(std::move(Rel));
       }
       std::map<uint32_t, llvm::SmallVector<std::pair<unsigned, unsigned>, 2>>
@@ -713,6 +721,9 @@ SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
           if (Reduced != Quotient && Local.Evidence == MBAEvidence::Derivation)
             QuotientCache.try_emplace(Quotient.index(), Reduced,
                                       Local.NumAtoms);
+          else if (Reduced == Quotient && !Local.BudgetExhausted &&
+                   !Budget.exhausted())
+            QuotientCache.try_emplace(Quotient.index(), Quotient, 0);
         }
         return Reduced != Quotient && Local.Evidence == MBAEvidence::Derivation;
       };

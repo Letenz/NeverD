@@ -12,6 +12,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "Limits.h"
 #include "SymMBADetail.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -150,12 +151,244 @@ splitIntoTerms(const SymContext &Ctx, SymRef Body) {
   return Terms;
 }
 
+llvm::SmallVector<SymRef, 8>
+extractPolynomialCofactor(llvm::SmallVectorImpl<PolyTerm> &Terms,
+                          WorkBudget &Budget, size_t MaxBytes) {
+  llvm::SmallVector<SymRef, 8> Common;
+  if (Terms.size() < 2 || Terms.size() > limits::kMaxPolynomialCofactorTerms)
+    return Common;
+  const size_t Degree = Terms.front().Factors.size();
+  if (Degree < 3 || Degree > limits::kMaxPolynomialCofactorEdges / Terms.size())
+    return Common;
+  // Three sorted factor buffers and the retained/rebuilt terms, including
+  // capacity growth. Coefficients stay in place and need no wide-word copies.
+  const size_t Edges = Degree * Terms.size();
+  const size_t SortWork = Degree * (std::bit_width(Degree) + 1);
+  const size_t Work = Terms.size() * (2 * SortWork + 4 * Degree);
+  if (Edges > MaxBytes / (8 * sizeof(SymRef)) || !Budget.canConsume(Work) ||
+      llvm::any_of(Terms, [&](const PolyTerm &Term) {
+        return Term.Factors.size() != Degree;
+      }))
+    return Common;
+  Budget.consume(SortWork);
+  Common.assign(Terms.front().Factors.begin(), Terms.front().Factors.end());
+  llvm::sort(Common);
+  llvm::SmallVector<SymRef, 8> Factors, Next;
+  for (const PolyTerm &Term : llvm::drop_begin(Terms)) {
+    Budget.consume(SortWork + Common.size() + Term.Factors.size());
+    Factors.assign(Term.Factors.begin(), Term.Factors.end());
+    llvm::sort(Factors);
+    Next.clear();
+    std::set_intersection(Common.begin(), Common.end(), Factors.begin(),
+                          Factors.end(), std::back_inserter(Next));
+    Common.swap(Next);
+    if (Common.empty())
+      return Common;
+  }
+  for (PolyTerm &Term : Terms) {
+    Budget.consume(2 * Term.Factors.size());
+    if (!llvm::is_sorted(Term.Factors)) {
+      Budget.consume(SortWork);
+      llvm::sort(Term.Factors);
+    }
+    Next.clear();
+    std::set_difference(Term.Factors.begin(), Term.Factors.end(),
+                        Common.begin(), Common.end(), std::back_inserter(Next));
+    Term.Factors.assign(Next.begin(), Next.end());
+  }
+  return Common;
+}
+
 Monomial makeMonomial(llvm::ArrayRef<MintermIndex> Sorted) {
   return Monomial(Sorted.begin(), Sorted.end());
 }
 
 unsigned monomialDegree(const Monomial &Key) {
   return static_cast<unsigned>(Key.size());
+}
+
+std::optional<QuadraticProduct>
+recoverQuadraticTerms(const SymContext &Ctx, llvm::ArrayRef<PolyTerm> Terms,
+                      llvm::ArrayRef<uint32_t> AtomIds, uint32_t Width,
+                      WorkBudget &Budget, size_t MaxBytes, bool &Determined) {
+  Determined = false;
+  if (!Width || Terms.empty() || Terms.size() > limits::kMaxQuadraticRowTerms ||
+      AtomIds.size() < limits::kMinQuadraticRowAtoms ||
+      AtomIds.size() > limits::kMaxQuadraticRowAtoms)
+    return std::nullopt;
+  const size_t Corners = *cornerCount(AtomIds.size());
+  const size_t Words = (size_t(Width) - 1) / 64 + 1;
+  // Four coefficient rows, selected-index capacities, factor tables, and
+  // container/APInt scratch. Reserve before constructing any wide table.
+  const size_t PerCorner =
+      4 * (sizeof(llvm::APInt) + Words * sizeof(uint64_t)) +
+      8 * Terms.size() * sizeof(MintermIndex);
+  const size_t Overhead = 1024 + 512 * Terms.size();
+  if (MaxBytes < Overhead || Corners > (MaxBytes - Overhead) / PerCorner)
+    return std::nullopt;
+  struct Factor {
+    TruthTable Table;
+    llvm::SmallVector<MintermIndex, 8> Selected;
+  };
+  llvm::DenseMap<uint32_t, Factor> Factors;
+  const size_t Scratch = Overhead + Corners * PerCorner;
+  for (const auto &Term : Terms) {
+    if (Term.Factors.size() != 2 || Term.Coeff.getBitWidth() != Width)
+      return std::nullopt;
+    for (SymRef F : Term.Factors) {
+      if (Factors.count(F.index()))
+        continue;
+      const size_t Nodes = Ctx.dagSize(F);
+      if (Ctx.width(F) != Width ||
+          Nodes > (MaxBytes - Scratch) / (128 + 2 * Words * sizeof(uint64_t)) ||
+          !Budget.consume(Nodes + Corners))
+        return std::nullopt;
+      auto Table = bitwiseTable(Ctx, F, AtomIds);
+      if (!Table)
+        return std::nullopt;
+      auto Selected = selectedMinterms(*Table);
+      Factors.try_emplace(F.index(), std::move(*Table), std::move(Selected));
+    }
+  }
+  auto Zero = llvm::APInt(Width, 0);
+  std::vector<llvm::APInt> Diagonal(Corners, Zero), RowA(Corners, Zero),
+      RowB(Corners, Zero), Row(Corners, Zero);
+  auto ReadRow = [&](size_t A, std::vector<llvm::APInt> &Out,
+                     size_t Lower = 0) {
+    if (!Budget.consume((Corners - Lower) * Words + 2 * Terms.size()))
+      return false;
+    for (size_t B = Lower; B != Corners; ++B)
+      Out[B].clearAllBits();
+    for (const auto &Term : Terms) {
+      const auto &Left = Factors.at(Term.Factors[0].index());
+      const auto &Right = Factors.at(Term.Factors[1].index());
+      auto Accumulate = [&](const Factor &F, bool SkipDiagonal) {
+        for (auto B : F.Selected) {
+          if (B < Lower || (SkipDiagonal && B == A))
+            continue;
+          if (!Budget.consume(Words))
+            return false;
+          Out[B] += Term.Coeff;
+        }
+        return true;
+      };
+      if ((Left.Table.at(A) && !Accumulate(Right, false)) ||
+          (Right.Table.at(A) && !Accumulate(Left, true)))
+        return false;
+    }
+    return true;
+  };
+  for (const auto &Term : Terms) {
+    const auto &Left = Factors.at(Term.Factors[0].index());
+    const auto &Right = Factors.at(Term.Factors[1].index());
+    if (!Budget.consume(Left.Selected.size() * (1 + Words)))
+      return std::nullopt;
+    for (auto M : Left.Selected)
+      if (Right.Table.at(M))
+        Diagonal[M] += Term.Coeff;
+  }
+  QuadraticProduct Result{
+      Zero,
+      {TruthTable::zero(AtomIds.size()), TruthTable::zero(AtomIds.size())}};
+  auto &Left = Result.Factors[0];
+  auto &Right = Result.Factors[1];
+  std::optional<size_t> Shared, Anchor, Opposite;
+  auto Impossible = [&]() -> std::optional<QuadraticProduct> {
+    Determined = true;
+    return std::nullopt;
+  };
+  if (!Budget.consume(Corners * Words))
+    return std::nullopt;
+  for (size_t M = 0; M != Corners; ++M) {
+    if (Diagonal[M].isZero())
+      continue;
+    if (!Shared) {
+      Shared = M;
+      Result.Coefficient = Diagonal[M];
+    } else if (Diagonal[M] != Result.Coefficient)
+      return Impossible();
+    Left.set(M);
+    Right.set(M);
+  }
+  if (Shared) {
+    if (!ReadRow(*Shared, RowA) || !Budget.consume(Corners * Words))
+      return std::nullopt;
+    for (size_t M = 0; M != Corners; ++M) {
+      if (!Diagonal[M].isZero())
+        continue;
+      if (RowA[M].isZero())
+        continue;
+      if (RowA[M] != Result.Coefficient)
+        return Impossible();
+      if (!Anchor)
+        Anchor = M;
+    }
+    if (Anchor && !ReadRow(*Anchor, RowB))
+      return std::nullopt;
+  } else {
+    // A nonzero off-diagonal with zero diagonals fixes two disjoint factors.
+    // Canceled minterms need not belong to either factor: classify from both
+    // anchor rows instead of using the union of the source factor supports.
+    for (size_t A = 0; A != Corners && !Anchor; ++A) {
+      if (!ReadRow(A, RowA, A + 1) ||
+          !Budget.consume((Corners - A - 1) * Words))
+        return std::nullopt;
+      for (size_t B = A + 1; B != Corners; ++B)
+        if (!RowA[B].isZero()) {
+          Anchor = A;
+          Opposite = B;
+          Result.Coefficient = RowA[B];
+          break;
+        }
+    }
+    if (!Anchor) {
+      Determined = true;
+      return Result;
+    }
+    if (!ReadRow(*Anchor, RowA) || !ReadRow(*Opposite, RowB))
+      return std::nullopt;
+  }
+  if (Anchor) {
+    if (!Budget.consume(2 * Corners * Words))
+      return std::nullopt;
+    for (size_t M = 0; M != Corners; ++M) {
+      if (Shared && !Diagonal[M].isZero())
+        continue;
+      if ((!RowA[M].isZero() && RowA[M] != Result.Coefficient) ||
+          (!RowB[M].isZero() && RowB[M] != Result.Coefficient))
+        return Impossible();
+      if (Shared) {
+        if (RowA[M].isZero() && !RowB[M].isZero())
+          return Impossible();
+        if (!RowA[M].isZero())
+          (RowB[M].isZero() ? Left : Right).set(M);
+      } else {
+        if (!RowA[M].isZero() && !RowB[M].isZero())
+          return Impossible();
+        Left.setValue(M, !RowB[M].isZero());
+        Right.setValue(M, !RowA[M].isZero());
+      }
+    }
+  }
+  // The slices propose only a candidate. Check the full coefficient matrix,
+  // including missing edges, disappearing minterms, and modular zeros. Read
+  // rows lazily so a counterexample avoids expanding every remaining term.
+  for (size_t A = 0; A != Corners; ++A) {
+    if (!ReadRow(A, Row, A) || !Budget.consume((Corners - A) * Words))
+      return std::nullopt;
+    for (size_t B = A; B != Corners; ++B) {
+      unsigned Count = unsigned(Left.at(A) && Right.at(B));
+      if (A != B)
+        Count += unsigned(Left.at(B) && Right.at(A));
+      auto Expected = Count == 2 ? Result.Coefficient.shl(1)
+                      : Count    ? Result.Coefficient
+                                 : Zero;
+      if (Row[B] != Expected)
+        return Impossible();
+    }
+  }
+  Determined = true;
+  return Result;
 }
 
 TruthTable monomialSupport(const Monomial &Key, unsigned NumVars) {
@@ -433,14 +666,39 @@ bool provePolynomialIdentity(SymContext &Ctx, SymRef Before, SymRef After,
       Terms->push_back(std::move(Term));
     }
   }
-  std::optional<PolyForm> Form = expandOverMinterms(
-      Ctx, *Terms, AtomIds, Ctx.width(Abstract->Body), Budget);
-  if (!Form)
+  if (Terms->size() > MaxBytes / (4 * sizeof(PolyTerm)) ||
+      !Budget.consume(Terms->size()))
     return false;
-
-  return llvm::all_of(Form->Linear,
-                      [](const llvm::APInt &C) { return C.isZero(); }) &&
-         Form->Higher.empty();
+  std::map<unsigned, llvm::SmallVector<PolyTerm, 8>> ByDegree;
+  for (auto &Term : *Terms)
+    // Constants and linear terms share the linear minterm table: the sum of
+    // all minterms is the all-ones word, so their weights can cancel.
+    ByDegree[std::max<size_t>(1, Term.Factors.size())].push_back(
+        std::move(Term));
+  for (auto &[Degree, DegreeTerms] : ByDegree) {
+    // Prove each homogeneous difference independently. Removing a common
+    // multiset is sufficient: a zero quotient stays zero after multiplication,
+    // including zero divisors. No modular division or cancellation assumption
+    // is used to accept equality.
+    auto Common = extractPolynomialCofactor(DegreeTerms, Budget, MaxBytes);
+    llvm::SmallVector<uint32_t, 16> Inputs;
+    if (Common.empty())
+      Inputs.append(AtomIds);
+    else
+      for (const auto &Term : DegreeTerms)
+        for (SymRef Factor : Term.Factors) {
+          if (!Budget.consume(Ctx.dagSize(Factor)))
+            return false;
+          Ctx.collectVars(Factor, Inputs);
+        }
+    auto Form = expandOverMinterms(Ctx, DegreeTerms, Inputs,
+                                   Ctx.width(Abstract->Body), Budget);
+    if (!Form || !Form->Higher.empty() ||
+        !llvm::all_of(Form->Linear,
+                      [](const llvm::APInt &C) { return C.isZero(); }))
+      return false;
+  }
+  return true;
 }
 
 } // namespace neverd::symbolic::detail

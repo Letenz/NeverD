@@ -273,7 +273,9 @@ public:
         llvm::APInt Scale(Width, 1);
         std::map<uint32_t, uint32_t> Powers;
         unsigned PolynomialOperands = 0;
-        for (SymRef Child : Ctx.operands(R)) {
+        const auto Operands = Ctx.operands(R);
+        for (size_t I = 0; I != Operands.size();) {
+          SymRef Child = Operands[I++];
           const auto &Operand = Memo.at(Child.index());
           if (Operand.empty()) {
             Scale.clearAllBits();
@@ -283,23 +285,51 @@ public:
             ++PolynomialOperands;
             continue;
           }
+          // Canonical multiplication sorts its factors. Merge a repeated
+          // monomial operand once, retaining its exact exponent; repeated
+          // lookups and map allocations otherwise dominate long residuals.
+          size_t Count = 1;
+          while (I != Operands.size() && Operands[I] == Child) {
+            ++I;
+            ++Count;
+          }
+          if (!Resources.charge(Count - 1))
+            return nullptr;
           const auto &[Key, Coefficient] = *Operand.begin();
           if (!Resources.charge(Words))
             return nullptr;
           if (!Coefficient.isOne()) {
-            if (Words > std::numeric_limits<size_t>::max() / Words ||
-                !Resources.charge(Words * Words) ||
-                !Resources.array(Words, sizeof(uint64_t)))
-              return nullptr;
-            Scale *= Coefficient;
+            auto Power = Coefficient;
+            size_t Exponent = Count;
+            while (Exponent) {
+              if (Words > std::numeric_limits<size_t>::max() / Words ||
+                  !Resources.charge(Words * Words) ||
+                  !Resources.array(Words, sizeof(uint64_t)))
+                return nullptr;
+              if (Exponent & 1)
+                Scale *= Power;
+              Exponent >>= 1;
+              if (Exponent) {
+                if (!Resources.charge(Words * Words) ||
+                    !Resources.array(Words, sizeof(uint64_t)))
+                  return nullptr;
+                Power *= Power;
+              }
+            }
           }
           for (const auto &[Id, Power] : Key) {
-            if (!Resources.charge(1, 128))
+            if (!Resources.charge(1))
               return nullptr;
-            auto &Total = Powers[Id];
-            if (Power > std::numeric_limits<uint32_t>::max() - Total)
+            auto It = Powers.find(Id);
+            if (It == Powers.end()) {
+              if (!Resources.charge(0, 128))
+                return nullptr;
+              It = Powers.emplace(Id, 0).first;
+            }
+            auto &Total = It->second;
+            if (Count > (std::numeric_limits<uint32_t>::max() - Total) / Power)
               return nullptr;
-            Total += Power;
+            Total += Power * Count;
           }
         }
         if (!Resources.array(Powers.size(), sizeof(Factor)))

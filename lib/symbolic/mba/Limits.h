@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Internal bounds for additive-tail and completed-product refinements.
+/// Internal bounds for MBA refinement, polynomial recovery and result reuse.
 /// These refinements share the caller's existing work and storage budgets.
 ///
 //===----------------------------------------------------------------------===//
@@ -30,6 +30,15 @@ inline constexpr std::size_t kMaxCompletedProductTerms = 128;
 
 inline constexpr std::size_t kMinDelayedCommonAtoms = 4;
 inline constexpr unsigned kMinDelayedPolynomialOperands = 2;
+
+inline constexpr std::size_t kMaxPolynomialCofactorTerms = 128;
+inline constexpr std::size_t kMaxPolynomialCofactorEdges = 4096;
+inline constexpr unsigned kMaxCofactorSearchDegree = 3;
+inline constexpr unsigned kMaxCubicCofactorSearchAtoms = 3;
+inline constexpr unsigned kMinQuadraticRowAtoms = 4;
+inline constexpr unsigned kMaxQuadraticRowAtoms = 8;
+inline constexpr std::size_t kMaxQuadraticRowTerms = 8;
+inline constexpr std::size_t kMinCompletedRegionCacheWork = 256;
 
 } // namespace neverd::symbolic::detail::limits
 
