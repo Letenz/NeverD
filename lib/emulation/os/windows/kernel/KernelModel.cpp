@@ -14,6 +14,7 @@
 #include "../../../core/RAMInitializationWatch.h"
 #include "../driver/DriverImage.h"
 #include "../driver/DriverMSR.h"
+#include "../driver/DriverProcessPeb.h"
 #include "KernelException.h"
 #include "KernelLoaderView.h"
 #include "KernelModelRuntime.h"
@@ -183,6 +184,11 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
   if (!Options.MSRReads.empty() &&
       Options.Contract != ExecutionContract::CheckedX64)
     return modelError("driver msr_reads requires checked-x64 execution");
+  if (auto E = driver_process_peb::validate(Options.ProcessPebs))
+    return E;
+  if (!Options.ProcessPebs.empty() &&
+      Options.Contract != ExecutionContract::CheckedX64)
+    return modelError("driver process_pebs requires checked-x64 execution");
   if (Options.KernelVaShadowQuery) {
     if (auto E = kernel_va_shadow_query::validate(*Options.KernelVaShadowQuery))
       return E;
@@ -214,8 +220,9 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
   VersionQuery = Options.VersionQuery;
   PhysicalMemoryInventory = Options.PhysicalMemoryInventory;
   KernelVaShadowQuery = Options.KernelVaShadowQuery;
+  ProcessPebs = Options.ProcessPebs;
   if (VersionQuery || PhysicalMemoryInventory || KernelVaShadowQuery ||
-      !Options.MSRReads.empty())
+      !Options.MSRReads.empty() || !ProcessPebs.empty())
     UnpackOpaqueEffects = true;
   InstructionClock = Options.Scheduling.has_value();
   Scheduler = KernelScheduler(KernelScheduler::Limits{},
