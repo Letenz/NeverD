@@ -894,13 +894,25 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
     SymRef Best;
     SymReadability BestCost;
     auto Consider = [&](const llvm::APInt &Coeff,
-                        llvm::ArrayRef<TruthTable> Match) {
+                        llvm::ArrayRef<TruthTable> Match,
+                        llvm::ArrayRef<SymRef> KnownFactors = {}) {
       llvm::SmallVector<SymRef, 8> Factors;
       Factors.reserve(Match.size() + 1);
       Factors.push_back(Ctx.mkConst(Coeff));
-      for (const TruthTable &Table : Match) {
+      for (size_t I = 0; I != Match.size(); ++I) {
+        auto FactorLimits = Synthesis;
+        if (!KnownFactors.empty())
+          FactorLimits.MaxCost =
+              std::min(FactorLimits.MaxCost, readingCost(Ctx, KnownFactors[I]));
         std::optional<SymRef> Written =
-            synthesizeBitwise(Ctx, Table, DegreeAtoms, Synthesis);
+            synthesizeBitwise(Ctx, Match[I], DegreeAtoms, FactorLimits);
+        // Single-term recovery retains these exact input tables. Their known
+        // spelling bounds synthesis and remains available when an optional
+        // cover cannot improve it. The complete result is still proved later.
+        if (!KnownFactors.empty() &&
+            (!Written ||
+             readingScore(Ctx, KnownFactors[I]) < readingScore(Ctx, *Written)))
+          Written = KnownFactors[I];
         if (!Written)
           return true;
         Factors.push_back(*Written);
@@ -919,7 +931,10 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
           recoverQuadraticTerms(Ctx, DegreeTerms, DegreeIds, Width, Budget,
                                 Opts.MaxTableBytes, Determined);
       if (Product) {
-        Consider(Product->Coefficient, Product->Factors);
+        Consider(Product->Coefficient, Product->Factors,
+                 DegreeTerms.size() == 1
+                     ? llvm::ArrayRef<SymRef>(DegreeTerms.front().Factors)
+                     : llvm::ArrayRef<SymRef>{});
         if (!Best.isValid())
           return std::nullopt;
         if (!Append(Best))

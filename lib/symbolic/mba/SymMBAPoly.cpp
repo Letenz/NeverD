@@ -129,6 +129,82 @@ std::optional<TruthTable> bitwiseTable(const SymContext &Ctx, SymRef F,
   const std::optional<size_t> Corners = cornerCount(NumAtoms);
   if (!Corners)
     return std::nullopt;
+  if (Ctx.isVar(F)) {
+    const auto It = llvm::find(AtomIds, Ctx.varId(F));
+    return It == AtomIds.end()
+               ? TruthTable::zero(NumAtoms)
+               : atomTruthTable(static_cast<unsigned>(It - AtomIds.begin()),
+                                NumAtoms);
+  }
+  const unsigned Width = Ctx.width(F);
+  if (NumAtoms >= limits::kMinPackedPolynomialAtoms &&
+      Width >= limits::kMinPackedPolynomialWidth) {
+    bool IndependentBits = true;
+    for (uint32_t Index : reachableInOrder(Ctx, F)) {
+      SymRef R(Index);
+      SymOp Op = Ctx.op(R);
+      if (Ctx.width(R) != Width ||
+          (!Ctx.isVar(R) && !Ctx.isConst(R) && Op != SymOp::Not &&
+           Op != SymOp::And && Op != SymOp::Or && Op != SymOp::Xor) ||
+          (Ctx.isConst(R) && !Ctx.constValue(R).isZero() &&
+           !Ctx.constValue(R).isAllOnes())) {
+        IndependentBits = false;
+        break;
+      }
+    }
+    if (IndependentBits) {
+      // These operators act independently on every bit. Each bit can hold a
+      // different complete corner assignment, so one ordinary word evaluation
+      // computes Width table entries. Arithmetic and nonuniform literals keep
+      // the scalar evaluator below; no cross-bit operation is packed.
+      SymEvalPlan Plan(Ctx, F);
+      const auto Vars = Plan.vars();
+      llvm::SmallVector<unsigned, 8> Positions;
+      for (uint32_t Id : Vars) {
+        auto It = llvm::find(AtomIds, Id);
+        Positions.push_back(static_cast<unsigned>(It - AtomIds.begin()));
+      }
+      auto Slot = [&](uint32_t Id) {
+        return std::lower_bound(Vars.begin(), Vars.end(), Id) - Vars.begin();
+      };
+      TruthTable Table = TruthTable::zero(NumAtoms);
+      llvm::SmallVector<uint64_t, 8> Narrow(Vars.size(), 0);
+      llvm::SmallVector<llvm::APInt, 8> Wide;
+      if (!Plan.fitsU64())
+        Wide.assign(Vars.size(), llvm::APInt(Width, 0));
+      for (size_t Begin = 0; Begin < *Corners;) {
+        const size_t Count = std::min<size_t>(Width, *Corners - Begin);
+        for (size_t I = 0; I != Vars.size(); ++I) {
+          if (Plan.fitsU64())
+            Narrow[I] = 0;
+          else
+            Wide[I].clearAllBits();
+          if (Positions[I] == NumAtoms)
+            continue;
+          for (size_t Bit = 0; Bit != Count; ++Bit)
+            if (((Begin + Bit) >> Positions[I]) & 1) {
+              if (Plan.fitsU64())
+                Narrow[I] |= uint64_t(1) << Bit;
+              else
+                Wide[I].setBit(static_cast<unsigned>(Bit));
+            }
+        }
+        if (Plan.fitsU64()) {
+          const auto Value =
+              Plan.evalU64With([&](uint32_t Id) { return Narrow[Slot(Id)]; });
+          for (size_t Bit = 0; Bit != Count; ++Bit)
+            Table.setValue(Begin + Bit, (Value >> Bit) & 1);
+        } else {
+          const auto Value =
+              Plan.evalWith([&](uint32_t Id) { return &Wide[Slot(Id)]; });
+          for (size_t Bit = 0; Bit != Count; ++Bit)
+            Table.setValue(Begin + Bit, Value[Bit]);
+        }
+        Begin += Count;
+      }
+      return Table;
+    }
+  }
   CornerEvaluator Evaluator(Ctx, F, AtomIds);
   TruthTable Table = TruthTable::zero(NumAtoms);
   for (size_t K = 0; K < *Corners; ++K) {
@@ -139,6 +215,49 @@ std::optional<TruthTable> bitwiseTable(const SymContext &Ctx, SymRef F,
       return std::nullopt;
   }
   return Table;
+}
+
+// The polynomial abstraction makes each factor a pure bitwise word over
+// independent inputs. Equal complete tables therefore prove equal full words,
+// and multiplication preserves that equality even for noninvertible scales.
+// This is a sufficient proof only; other identities use the coefficient proof.
+bool proveQuadraticCongruence(const SymContext &Ctx,
+                              llvm::ArrayRef<PolyTerm> Terms,
+                              llvm::ArrayRef<uint32_t> AtomIds,
+                              WorkBudget &Budget, size_t MaxBytes) {
+  if (AtomIds.size() < limits::kMinQuadraticCongruenceAtoms ||
+      Terms.size() != 2 || Terms[0].Factors.size() != 2 ||
+      Terms[1].Factors.size() != 2 || Terms[0].Coeff != -Terms[1].Coeff)
+    return false;
+  const auto Corners = cornerCount(AtomIds.size());
+  if (!Corners || *Corners > MaxBytes / 8)
+    return false;
+  size_t Storage = MaxBytes - 8 * *Corners;
+  size_t Work = 4 * *Corners;
+  for (const auto &Term : Terms)
+    for (SymRef Factor : Term.Factors) {
+      const size_t Nodes = Ctx.dagSize(Factor);
+      const size_t Words = (size_t(Ctx.width(Factor)) - 1) / 64 + 1;
+      const size_t NodeBytes = 128 + 2 * Words * sizeof(uint64_t);
+      if (Nodes > Storage / NodeBytes ||
+          Nodes > std::numeric_limits<size_t>::max() - Work)
+        return false;
+      Storage -= Nodes * NodeBytes;
+      Work += Nodes;
+    }
+  if (!Budget.canConsume(Work))
+    return false;
+  Budget.consume(Work);
+  llvm::SmallVector<TruthTable, 4> Tables;
+  for (const auto &Term : Terms)
+    for (SymRef Factor : Term.Factors) {
+      auto Table = bitwiseTable(Ctx, Factor, AtomIds);
+      if (!Table)
+        return false;
+      Tables.push_back(std::move(*Table));
+    }
+  return (Tables[0] == Tables[2] && Tables[1] == Tables[3]) ||
+         (Tables[0] == Tables[3] && Tables[1] == Tables[2]);
 }
 
 } // namespace
@@ -249,6 +368,19 @@ recoverQuadraticTerms(const SymContext &Ctx, llvm::ArrayRef<PolyTerm> Terms,
       auto Selected = selectedMinterms(*Table);
       Factors.try_emplace(F.index(), std::move(*Table), std::move(Selected));
     }
+  }
+  // A single term already supplies its complete rank-one product. Rebuilding
+  // every coefficient only rediscovers these same factors; retain their exact
+  // truth tables and coefficient. The caller independently proves the emitted
+  // polynomial after synthesizing the two bitwise factors.
+  if (Terms.size() == 1) {
+    if (!Budget.consume(2 * Corners))
+      return std::nullopt;
+    const auto &Term = Terms.front();
+    Determined = true;
+    return QuadraticProduct{Term.Coeff,
+                            {Factors.at(Term.Factors[0].index()).Table,
+                             Factors.at(Term.Factors[1].index()).Table}};
   }
   auto Zero = llvm::APInt(Width, 0);
   std::vector<llvm::APInt> Diagonal(Corners, Zero), RowA(Corners, Zero),
@@ -638,6 +770,8 @@ bool provePolynomialIdentity(SymContext &Ctx, SymRef Before, SymRef After,
       splitIntoTerms(Ctx, Abstract->Body);
   if (!Terms)
     return false;
+  if (proveQuadraticCongruence(Ctx, *Terms, AtomIds, Budget, MaxBytes))
+    return true;
   // Equal products cancel by their exact factor identities, before either is
   // expanded over minterms. Unchanged higher-degree residuals therefore do
   // not make an otherwise small difference proof exponential.

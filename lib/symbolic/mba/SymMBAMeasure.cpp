@@ -136,12 +136,30 @@ std::optional<SymRef> groupedForm(SymContext &Ctx,
   if (Groups.empty())
     return Ctx.mkZero(Ctx.width(Atoms[0]));
 
-  const BitwiseSynthesisLimits Synthesis = Limits.synthesis(TermBudget);
+  BitwiseSynthesisLimits Synthesis = Limits.synthesis(TermBudget);
+  const bool Independent = isIndependentWeightedSum(Weights);
+  if (Independent &&
+      llvm::all_of(Atoms, [&](SymRef R) { return Ctx.isVar(R); })) {
+    // The complete weights already give an exact sum of scaled variables.
+    // Bound selector construction by that available spelling, rather than by
+    // the much larger enclosing polynomial. A variable costs one leaf; a
+    // scaled variable costs at most a literal, a multiply and that leaf.
+    // This needs no speculative interning and keeps the established tie order.
+    size_t Cost = 0, Count = 0;
+    for (unsigned I = 0; I != NumAtoms; ++I) {
+      const auto &Coefficient = Weights[size_t(1) << I];
+      if (Coefficient.isZero())
+        continue;
+      Cost += Coefficient.isOne() ? 1 : 3;
+      ++Count;
+    }
+    Cost = Count ? Cost + Count - 1 : 1;
+    Synthesis.MaxCost = std::min(Synthesis.MaxCost, Cost);
+  }
   // Only the new cumulative search is skipped for independent weighted sums;
   // the grouped and conjunction candidates remain available, since this test
   // establishes a shape rather than a minimum expression cost.
-  if (Groups.size() > 1 && Groups.size() <= Holdable / 2 &&
-      !isIndependentWeightedSum(Weights)) {
+  if (Groups.size() > 1 && Groups.size() <= Holdable / 2 && !Independent) {
     TruthTable Nonzero = TruthTable::zero(NumAtoms);
     for (const auto &[Value, Table] : Groups)
       Nonzero |= Table;

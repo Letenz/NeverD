@@ -40,6 +40,9 @@ inline constexpr unsigned kMinQuadraticRowAtoms = 4;
 inline constexpr unsigned kMaxQuadraticRowAtoms = 8;
 inline constexpr std::size_t kMaxQuadraticRowTerms = 8;
 inline constexpr std::size_t kMinCompletedRegionCacheWork = 256;
+inline constexpr unsigned kMinQuadraticCongruenceAtoms = 4;
+inline constexpr unsigned kMinPackedPolynomialAtoms = 4;
+inline constexpr unsigned kMinPackedPolynomialWidth = 8;
 
 // lib/symbolic/mba/SymBitwise.cpp
 /// The most inputs the exhaustive search will ever tabulate.

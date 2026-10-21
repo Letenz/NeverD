@@ -479,6 +479,41 @@ def row_residual_corpus(width, count):
     return rows
 
 
+def mixed_frontier_corpus(width, count):
+    """Sparse mixed degrees through 144 with odd, nonlinear common powers."""
+    rng = random.Random(0x4D42413D + width)
+    words = ("((x+y)^z)", "((y*z)|w)", "((x+z)&(y|v))",
+             "((w+v)^x)", "((x*w)|y)")
+    common = ("((x+y)|1)", "((z*w)|1)", "((x^v)|1)")
+    axes = ("x", "z", "v")
+    rows = []
+    for index in range(count):
+        degree = (12, 36, 72, 108, 144)[index % 5]
+        blocks = 2 if index % 3 and degree <= 72 else 1
+        terms = []
+        for block in range(blocks):
+            current = degree - 3 * block
+            scale = (37, -11, 182, 1 << (width - 2))[(index + block) % 4]
+            prefix = [common[(i + block) % len(common)]
+                      for i in range(current - 3)]
+            choices = [(f"({words[(i + block) % len(words)]}&{axis})",
+                        f"({words[(i + block) % len(words)]}&~{axis})")
+                       for i, axis in enumerate(axes)]
+            for corner, factors in enumerate(itertools.product(*choices)):
+                if corner == 0 or (index % 2 and corner == 7):
+                    continue
+                coefficient = scale
+                if corner == 1:
+                    coefficient += 13 if index % 2 else 1 << (width - 1)
+                if corner == 4 and index % 3 == 2:
+                    coefficient -= 2 * scale
+                terms.append(f"({coefficient}*{'*'.join(prefix + list(factors))})")
+        rng.shuffle(terms)
+        rows.append("+".join(terms)
+                    + "+(x^y)+2*(x&y)+(z|w)+(z&w)+19*x*y*z")
+    return rows
+
+
 def check_semantics(expressions, results, width):
     """Independent modular evaluator; never execute parsed source as Python."""
     mask = (1 << width) - 1
@@ -573,7 +608,7 @@ def main():
         "--family",
         choices=("complement", "weighted", "bitwise", "interleaved", "quadratic",
                  "cubic", "higher", "perturbed", "completion", "residual", "deep-residual",
-                 "row-residual"),
+                 "row-residual", "mixed-frontier"),
         default="complement",
     )
     args = parser.parse_args()
@@ -602,6 +637,7 @@ def main():
                 "residual": residual_corpus,
                 "deep-residual": deep_residual_corpus,
                 "row-residual": row_residual_corpus,
+                "mixed-frontier": mixed_frontier_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")

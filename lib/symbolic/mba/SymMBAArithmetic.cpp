@@ -171,11 +171,26 @@ public:
     return true;
   }
 
+  bool isFlatProduct(SymRef R) {
+    if (Ctx.numOperands(R) <
+        limits::kSymMBAArithmeticNormalizeCtxNumOperandsRLimit)
+      return false;
+    for (SymRef Child : Ctx.operands(R)) {
+      if (!Resources.charge(1))
+        return false;
+      SymOp Op = Ctx.op(Child);
+      if (Op == SymOp::Add || Op == SymOp::Mul ||
+          (Op == SymOp::Not && ExpandComplements))
+        return false;
+    }
+    return true;
+  }
+
   const Polynomial *normalize(SymRef Root, unsigned *AtomCount = nullptr) {
     if (!Resources.array(Words, sizeof(uint64_t)))
       return nullptr;
     const bool ReuseMemo = !Memo.empty();
-    std::set<uint32_t> Reachable;
+    std::map<uint32_t, bool> Reachable;
     std::vector<SymRef> Pending;
     if (!Resources.charge(1, 128))
       return nullptr;
@@ -191,13 +206,20 @@ public:
         continue;
       if (!Resources.charge(1, 128))
         return nullptr;
-      Reachable.insert(R.index());
+      auto Position = Reachable.emplace(R.index(), false).first;
       if (Ctx.width(R) != Width)
         return nullptr;
       if (Ctx.op(R) != SymOp::Add && Ctx.op(R) != SymOp::Mul &&
           (Ctx.op(R) != SymOp::Not || !ExpandComplements))
         continue;
       llvm::ArrayRef<SymRef> Children = Ctx.operands(R);
+      // Flat products build their monomial directly from operand identities.
+      // A proof does not count atoms, so these leaves need neither separate
+      // memo entries nor repeated stack slots for every product occurrence.
+      if (!AtomCount && Ctx.op(R) == SymOp::Mul && isFlatProduct(R)) {
+        Position->second = true;
+        continue;
+      }
       if (!Resources.array(Children.size(), sizeof(SymRef)))
         return nullptr;
       Pending.insert(Pending.end(), Children.begin(), Children.end());
@@ -207,7 +229,7 @@ public:
     // operand. Opaque nodes deliberately stop the walk, even if their own
     // subexpressions contain arithmetic or have a different width.
     unsigned Atoms = 0;
-    for (uint32_t Index : Reachable) {
+    for (const auto &[Index, FlatProduct] : Reachable) {
       if (ReuseMemo && Memo.contains(Index)) {
         SymOp Op = Ctx.op(SymRef(Index));
         Atoms += !Ctx.isConst(SymRef(Index)) && Op != SymOp::Add &&
@@ -229,21 +251,9 @@ public:
         // Long flat products already name a sorted monomial. Read it once
         // instead of multiplying unit coefficients and merging one atom at
         // a time. Arithmetic children retain the general expansion below.
-        bool Flat = Ctx.numOperands(R) >=
-                    ::neverd::symbolic::detail::limits::
-                        kSymMBAArithmeticNormalizeCtxNumOperandsRLimit;
-        if (Flat)
-          for (SymRef Child : Ctx.operands(R)) {
-            if (!Resources.charge(1))
-              return nullptr;
-            SymOp Op = Ctx.op(Child);
-            if (Op == SymOp::Add || Op == SymOp::Mul ||
-                (Op == SymOp::Not && ExpandComplements)) {
-              Flat = false;
-              break;
-            }
-          }
-        if (Flat) {
+        // Proof traversal already checked this product's complete structure.
+        // Atom-counting walks retain their leaves and classify it here.
+        if (FlatProduct || (AtomCount && isFlatProduct(R))) {
           if (!Resources.array(Ctx.numOperands(R), sizeof(Factor)) ||
               !Resources.array(Words, sizeof(uint64_t)))
             return nullptr;
