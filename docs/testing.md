@@ -1055,6 +1055,10 @@ Thumb addresses, unregistered x86 veneers and section-symbol aliases.
 and rejects treating ordinary data/IAT slots as synthetic object callees.
 `NeverDWorkerCallSiteTypes` compiles and executes both C routes, including all
 five Win64 variadic integer arguments, and retains partial-stack-write refusal.
+`NeverDWorkerHeaderRecords` builds a program with the host compiler that reads
+`<netdb.h>`'s `struct addrinfo` and `struct servent` through a pointer
+`getaddrinfo` stores in a local and through `getservbyname`'s result, and
+requires C that names the members; a host without `<netdb.h>` skips it.
 `NeverDReturnContractTests` requires the shared no-return proof before an absent
 ordinary return can erase a function's result, including an external catch
 edge. Native pipeline CI executes the complete owner on each compiler.

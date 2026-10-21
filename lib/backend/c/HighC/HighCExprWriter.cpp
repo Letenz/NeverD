@@ -488,6 +488,11 @@ void HighCWriter::collectFrameRecordMembers(const HighFunc &Func,
   };
   std::map<int64_t, std::vector<Access>> Accesses;
   std::set<int64_t> Addresses;
+  // How often the function takes each address, and the record pointers the
+  // calls it passes one to store there (outParameterRecordPointer), null
+  // for another parameter.
+  std::map<int64_t, unsigned> AddressUses;
+  std::map<int64_t, std::vector<TypeRef>> OutPointers;
   // A va_start forwarder's va_list, register save area and overflow homes
   // are C's va_start's: recognizeVaStartForwarder proved nothing else uses
   // them, and no member holds them.
@@ -524,6 +529,14 @@ void HighCWriter::collectFrameRecordMembers(const HighFunc &Func,
               /*Read=*/true);
       return;
     }
+    if (E.Kind == ExprKind::Call)
+      for (size_t I = 0; I < E.Operands.size(); ++I)
+        if (const HighExpr *Operand = E.Operands[I].get()) {
+          const HighExpr *Inner = unwrapIntegerView(Operand);
+          if (const auto Disp =
+                  certifiedFrameStorageDisplacement(Inner ? *Inner : *Operand))
+            OutPointers[*Disp].push_back(outParameterRecordPointer(E, I));
+        }
     if (const auto Read = projectedSlotRead(E)) {
       NoteAccess(Read->first, Read->second, true, /*Read=*/true);
       return;
@@ -533,15 +546,19 @@ void HighCWriter::collectFrameRecordMembers(const HighFunc &Func,
         ProjectFrameAliasesIntoStorage)
       if (const auto Alias = FrameAliases.find(varName(E.Var));
           Alias != FrameAliases.end()) {
-        if (!VaStartArea(Alias->second))
+        if (!VaStartArea(Alias->second)) {
           Addresses.insert(Alias->second);
+          ++AddressUses[Alias->second];
+        }
         return;
       }
     if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi ||
         E.Kind == ExprKind::BinOp)
       if (const auto Disp = certifiedFrameStorageDisplacement(E)) {
-        if (!VaStartArea(*Disp))
+        if (!VaStartArea(*Disp)) {
           Addresses.insert(*Disp);
+          ++AddressUses[*Disp];
+        }
         return;
       }
     E.forEachChildExpr([&](const ExprPtr &Child) {
@@ -630,6 +647,7 @@ void HighCWriter::collectFrameRecordMembers(const HighFunc &Func,
   for (auto It = Accesses.begin(); It != Accesses.end();) {
     const int64_t Disp = It->first;
     int64_t End = Disp;
+    const auto Group = It;
     auto Next = It;
     for (; Next != Accesses.end() && Next->first < std::max(End, Disp + 1);
          ++Next)
@@ -680,6 +698,27 @@ void HighCWriter::collectFrameRecordMembers(const HighFunc &Func,
     if (const auto Debug = DebugTypes.find(Disp);
         Debug != DebugTypes.end() && (!Type || Debug->second->Size != Size))
       continue;
+    // A slot whose address goes only to calls that store a record's pointer
+    // there, as getaddrinfo's `struct addrinfo **res` does, and which the
+    // function itself only reads whole, holds that pointer: `addrinfo *`.
+    // A slot reused for anything else keeps its integer.
+    if (const auto Out = OutPointers.find(Disp);
+        Out != OutPointers.end() && Wide && Size == 8 && Type &&
+        Type->Kind == NdTypeKind::Int && std::next(Group) == Next &&
+        !DebugTypes.count(Disp) && AddressUses[Disp] == Out->second.size() &&
+        !(Opts.FrameVariables && Opts.FrameVariables->count(Disp)) &&
+        llvm::all_of(
+            AtStart,
+            [](const Access &A) { return A.Size == 8 && A.Plain && A.Read; }) &&
+        llvm::all_of(Out->second, [&](const TypeRef &Pointer) {
+          return Pointer && spellsRecordPointer(Pointer) &&
+                 Pointer->Pointee->SourceName ==
+                     Out->second.front()->Pointee->SourceName;
+        })) {
+      Type = Out->second.front();
+      if (!definesRecord(Type->Pointee))
+        wantRecord(Type->Pointee);
+    }
     Claim(Disp, std::move(Type), Size);
   }
   // A frame address the function takes outside every member names a byte
@@ -752,6 +791,46 @@ HighCWriter::frameRecordLvalue(int64_t Disp, const TypeRef &Ty) const {
   if (Alias.empty())
     return std::nullopt;
   return "*(" + Alias + " *)" + frameRecordPointer(Disp);
+}
+
+const HighCWriter::FrameRecordMember *
+HighCWriter::statedFrameRecordMember(const HighExpr &Addr,
+                                     uint16_t AccessSize) const {
+  const auto Disp = certifiedFrameStorageDisplacement(Addr);
+  if (!Disp)
+    return nullptr;
+  const auto It = FrameRecordMembers.find(*Disp);
+  if (It == FrameRecordMembers.end() || !It->second.Type ||
+      It->second.Type->Kind != NdTypeKind::Ptr ||
+      (AccessSize && AccessSize != It->second.Size))
+    return nullptr;
+  return &It->second;
+}
+
+TypeRef HighCWriter::outParameterRecordPointer(const HighExpr &Call,
+                                               size_t Index) const {
+  // `T **`, a pointer to a named record's pointer, which the callee stores.
+  auto FromFS = [&](const FunctionSym &FS) -> TypeRef {
+    const TypeRef Parameter = cDisplayType(expectedDebugCallArgType(FS, Index));
+    if (!Parameter || Parameter->Kind != NdTypeKind::Ptr)
+      return nullptr;
+    const TypeRef Pointer = Parameter->Pointee;
+    if (!Pointer || Pointer->Kind != NdTypeKind::Ptr || !Pointer->Pointee ||
+        Pointer->Pointee->Kind != NdTypeKind::Struct ||
+        Pointer->Pointee->IsEnum || Pointer->Pointee->SourceName.empty())
+      return nullptr;
+    return Pointer;
+  };
+  if (auto FS = debugFunctionCalled(Call))
+    if (TypeRef Pointer = FromFS(*FS))
+      return Pointer;
+  if (auto FS = debugCallee(Call))
+    if (TypeRef Pointer = FromFS(*FS))
+      return Pointer;
+  if (const auto It = DebugExternSigs.find(callIdentifier(Call));
+      It != DebugExternSigs.end())
+    return FromFS(It->second);
+  return nullptr;
 }
 
 std::string HighCWriter::frameRecordPointer(int64_t Disp) const {
@@ -3950,8 +4029,16 @@ HighCWriter::typedArgumentText(const HighExpr &E, const TypeRef &Expected,
     }
     if (auto Slot = namedFrameSlot(*Inner))
       return "&" + *Slot;
-    if (const auto Disp = certifiedFrameStorageDisplacement(*Inner))
+    if (const auto Disp = certifiedFrameStorageDisplacement(*Inner)) {
+      // A member holding the pointer the parameter's callee stores passes
+      // its address as the pointer to it the parameter takes.
+      if (const auto Member = FrameRecordMembers.find(*Disp);
+          Member != FrameRecordMembers.end() && Member->second.Type &&
+          Member->second.Type->Kind == NdTypeKind::Ptr &&
+          typeToC(NdType::makePtr(Member->second.Type)) == Parameter())
+        return frameRecordPointer(*Disp);
       return "(" + Parameter() + ")" + frameRecordPointer(*Disp);
+    }
     // An integer, such as a variable C declares as one or the integer
     // expression it forwards, converts to the pointer the parameter takes;
     // a pointer passes as it is.
@@ -4423,6 +4510,13 @@ TypeRef HighCWriter::declaredRecordPointee(const HighExpr &Base) const {
     if (auto It = CallResultTypes.find(CfName); It != CallResultTypes.end())
       if (TypeRef FromCall = RecordFrom(It->second))
         return FromCall;
+  // A local the unit declares as a record pointer, as one a call's record
+  // pointer argument types (`freeaddrinfo(v88)` an addrinfo cursor), reads
+  // its members as one; only its declaration says it is one (emitLocalDecls).
+  for (const std::string &Name : {FwdName, CfName})
+    if (auto It = DeclaredCTypes.find(Name); It != DeclaredCTypes.end())
+      if (TypeRef Declared = RecordFrom(It->second))
+        return Declared;
   if (auto It = ValueForward.find(FwdName);
       It != ValueForward.end() && It->second)
     if (TypeRef FromVal = declaredRecordPointee(*It->second))
@@ -5043,6 +5137,10 @@ std::optional<std::string>
 HighCWriter::typedMemberAccess(const HighExpr &Addr, uint16_t AccessSize,
                                bool EnterNestedAtZero,
                                NdAccessClass Class) const {
+  // A frame member holding a record's pointer reads as itself, the pointer.
+  if (const FrameRecordMember *Member =
+          statedFrameRecordMember(Addr, AccessSize))
+    return kFrameStorageName.str() + "." + Member->Name;
   if (const auto Disp = frameDisplacement(Addr))
     if (auto FrameMember = frameTypedMemberAccess(*Disp, AccessSize))
       return FrameMember;
@@ -5094,6 +5192,10 @@ HighCWriter::typedMemberAccess(const HighExpr &Addr, uint16_t AccessSize,
         }
       }
     }
+    // A local its call's result names prints by that name, as it does
+    // anywhere else (CallResultNames).
+    if (auto It = CallResultNames.find(BaseName); It != CallResultNames.end())
+      BaseName = It->second;
   } else if (Base->Kind == ExprKind::Load && !Base->Operands.empty() &&
              Base->Operands[0]) {
     if (Opts.VariableTypes && Base->Type)
@@ -5164,6 +5266,9 @@ TypeRef HighCWriter::loadedMemberType(const HighExpr &Load) const {
 
 TypeRef HighCWriter::typedMemberType(const HighExpr &Addr, uint16_t AccessSize,
                                      NdAccessClass Class) const {
+  if (const FrameRecordMember *Member =
+          statedFrameRecordMember(Addr, AccessSize))
+    return Member->Type;
   if (const auto Disp = frameDisplacement(Addr))
     if (TypeRef FrameTy = frameTypedMemberType(*Disp, AccessSize))
       return FrameTy;

@@ -941,7 +941,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
                                     : callResultPointerType(*Stmt.Val);
         if (DirectAddress)
           OS << "(" << typeToC(DeclaredType) << ")(" << ValueText << ")";
-        else if (PointerFromDeclaration &&
+        else if ((PointerFromDeclaration || PointerTypeFromCall) &&
                  ((ProjectedValueType &&
                    ProjectedValueType->Kind == NdTypeKind::Ptr &&
                    typeToC(cDisplayType(ProjectedValueType)) ==
