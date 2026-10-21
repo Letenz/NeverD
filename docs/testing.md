@@ -292,6 +292,17 @@ must finish within the unchanged 65,536-unit allowance.
 Partially factored quartic and sextic inputs exercise the form produced by
 source preprocessing, with full-width oracles through 257 bits, exhaustive
 three-bit partial-budget checks and an independent SMT proof.
+Subset-degree recovery checks every two-input cubic factor triple at all seven
+nonzero three-bit scales, including vanished mixed coefficients. Independently
+expanded fourth through eighth degrees also check the recovered factor supports
+at 2–257 bits. Refusal controls separate insufficient work/storage from an
+impossible support, and a nearby polynomial with the same support must still
+fail coefficient validation. Single cubic products retain their exact factors
+while the linear tail improves; independent word oracles and separate small-word
+Z3 checks cover the resulting expressions.
+Extremal-coefficient controls retain general expansion and handle cancelled
+leading terms. The slow fifth- and seventh-degree mixed tails have explicit
+work ceilings and independent full-word arithmetic oracles through 257 bits.
 Sixteen repeated small partitions check that exponential expansion is refused
 before consuming the budget needed to simplify their shared child.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
@@ -4070,6 +4081,15 @@ include non-byte widths and every one-hot input bit. Unsupported shapes fail
 before source emission.
 
 ## Structured C control and call checks
+
+`Win64SourceCallsKeepTheirDeclaredCarrierWidths` checks declared scalar carriers
+against whole-register scans. `NeverDWorkerCallSiteTypes` also checks explicit
+Win64 argument counts from zero through five, both C routes and partial-stack
+refusal. `RegisterJoinsRespectEntryValuesInEitherOrder` covers x64/AArch64 PHI
+order, entry widths, nested joins, exceptional inputs and missing predecessors.
+The joined-format SysV tests check compatible and conflicting formats, unknown
+paths, clobbers and independent entries on ELF and Mach-O. Their compiled C
+checks both paths with a full-width number and a real string pointer.
 
 `FoldedStoreArmsPublishTheirOutgoingPhiValues` executes a conditional with
 side-effecting store arms and a shared PHI at O0/O2. Folding the two arms into

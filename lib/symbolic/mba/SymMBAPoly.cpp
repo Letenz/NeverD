@@ -19,6 +19,7 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
 #include <iterator>
 #include <limits>
@@ -176,7 +177,7 @@ std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
                                            llvm::ArrayRef<PolyTerm> Terms,
                                            llvm::ArrayRef<uint32_t> AtomIds,
                                            uint32_t Width, WorkBudget &Budget,
-                                           bool Optional) {
+                                           bool Optional, bool SingleProduct) {
   const std::optional<size_t> CornerCount = cornerCount(AtomIds.size());
   if (!CornerCount)
     return std::nullopt;
@@ -203,13 +204,22 @@ std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
   // terms can otherwise fill a large hash table only for a later term to run
   // out of work. Keep the same term order and charge the work already passed
   // when a factor is invalid, matching the expansion below.
-  if (!Budget.unlimited()) {
+  const bool CheckExtremes =
+      SingleProduct && Corners <= 64 && !Terms.empty() && Terms.size() <= 128 &&
+      llvm::all_of(Terms, [&](const PolyTerm &Term) {
+        return Term.Factors.size() >= 2 && Term.Factors.size() <= 64 &&
+               Term.Factors.size() == Terms.front().Factors.size();
+      });
+  llvm::SmallVector<MintermIndex, 8> First, Last;
+  llvm::APInt FirstScale(Width, 0), LastScale(Width, 0);
+  if (!Budget.unlimited() || CheckExtremes) {
     size_t Pending = 0;
     for (const PolyTerm &Term : Terms) {
       if (Term.Factors.empty())
         continue;
       size_t ProductSize = 1;
       bool ZeroProduct = false;
+      llvm::SmallVector<MintermIndex, 8> Low, High;
       for (SymRef Factor : Term.Factors) {
         std::optional<TruthTable> Table = tableOf(Factor);
         if (!Table) {
@@ -223,6 +233,13 @@ std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
           ZeroProduct = true;
           continue;
         }
+        if (CheckExtremes) {
+          if (!Budget.consume(2))
+            return std::nullopt;
+          const uint64_t Bits = Table->packed();
+          Low.push_back(std::countr_zero(Bits));
+          High.push_back(63u - std::countl_zero(Bits));
+        }
         if (Choices > std::numeric_limits<size_t>::max() / ProductSize)
           ProductSize = std::numeric_limits<size_t>::max();
         else
@@ -230,6 +247,25 @@ std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
       }
       if (Term.Factors.size() < 2 || ZeroProduct)
         continue;
+      if (CheckExtremes) {
+        if (!Budget.consume(2 * Low.size() * (std::bit_width(Low.size()) + 2) +
+                            2 * ((size_t(Width) + 63) / 64)))
+          return std::nullopt;
+        llvm::sort(Low);
+        llvm::sort(High);
+        if (First.empty() || Low < First) {
+          First = Low;
+          FirstScale = Term.Coeff;
+        } else if (Low == First) {
+          FirstScale += Term.Coeff;
+        }
+        if (Last.empty() || Last < High) {
+          Last = High;
+          LastScale = Term.Coeff;
+        } else if (High == Last) {
+          LastScale += Term.Coeff;
+        }
+      }
       if (ProductSize > std::numeric_limits<size_t>::max() - Pending ||
           !Budget.canConsume(Pending + ProductSize)) {
         if (!Optional)
@@ -239,6 +275,13 @@ std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
       Pending += ProductSize;
     }
   }
+  // In a single product, the lexicographically first and last monomials each
+  // occur exactly once, so both coefficients are its scale. Sum equal extrema
+  // across terms; cancellation makes this check inconclusive. This optional
+  // synthesis rejection must never apply to the general difference verifier.
+  if (CheckExtremes && !FirstScale.isZero() && !LastScale.isZero() &&
+      FirstScale != LastScale)
+    return std::nullopt;
 
   llvm::SmallVector<llvm::SmallVector<MintermIndex, 8>, 4> Selected;
   for (const PolyTerm &Term : Terms) {

@@ -518,9 +518,12 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
         }
       }
     }
-    // A validated zero-argument binding is a complete result. An empty list
-    // must not select the unbound-call heuristic and acquire live registers.
-    if (Hinted.empty())
+    // A validated call-site declaration fixes every operand and its width.
+    // A register scan can see the whole register or unrelated setup past
+    // that declared list; neither may replace these bound operands.
+    // A zero-argument binding is also complete, without a heuristic scan.
+    if (Hinted.empty() ||
+        Call.SourceCallHint->CallKind == SourceCallTypeHint::Kind::Analyst)
       return Hinted;
   }
 
@@ -1476,7 +1479,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     // selector stubs must not replace `_cmd` with the const-0 overwrite
     // placeholder.
     if (Policy && Policy->MergeScannedArgs)
-      Policy->MergeScannedArgs(Ctx, Hinted);
+      Policy->MergeScannedArgs(Ctx, Hinted,
+                               Ops[CallIdx].SourceCallHint->Signature);
     return MatchOwnSignature(std::move(Hinted));
   }
   Args.clear();

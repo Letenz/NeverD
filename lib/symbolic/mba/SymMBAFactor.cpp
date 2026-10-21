@@ -273,18 +273,42 @@ SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       SymRef Completion;
       Seen.clear();
       std::map<unsigned, std::pair<llvm::APInt, unsigned>> Scales;
-      if (Charge(Terms.size() * Terms.size() * (WordBytes / 8), Terms.size()))
-        for (const auto &Term : Terms) {
-          const unsigned Degree = Term.Factors.size();
-          if (Degree < 4)
-            continue;
-          unsigned Count = llvm::count_if(Terms, [&](const PolyTerm &T) {
-            return T.Factors.size() == Degree && T.Coeff == Term.Coeff;
-          });
-          auto It = Scales.find(Degree);
-          if (It == Scales.end() || Count > It->second.second)
-            Scales.insert_or_assign(Degree, std::make_pair(Term.Coeff, Count));
+      struct Frequency {
+        unsigned Degree;
+        llvm::APInt Coefficient;
+        unsigned Count;
+      };
+      llvm::SmallVector<Frequency, 8> Frequencies;
+      for (const auto &Term : Terms) {
+        const unsigned Degree = Term.Factors.size();
+        if (Degree < 4)
+          continue;
+        bool Counted = false;
+        for (auto &Entry : Frequencies) {
+          if (!Charge(1 + WordBytes / 8))
+            return Best;
+          if (Entry.Degree == Degree && Entry.Coefficient == Term.Coeff) {
+            ++Entry.Count;
+            Counted = true;
+            break;
+          }
         }
+        if (!Counted) {
+          if (!Charge(1, 2))
+            return Best;
+          Frequencies.push_back({Degree, Term.Coeff, 1});
+        }
+      }
+      // Count each distinct scale once. Recounting the complete frontier for
+      // every term made a uniform 64-product expansion pay quadratically.
+      for (const auto &Entry : Frequencies) {
+        if (!Charge(1 + WordBytes / 8, 2))
+          return Best;
+        auto It = Scales.find(Entry.Degree);
+        if (It == Scales.end() || Entry.Count > It->second.second)
+          Scales.insert_or_assign(
+              Entry.Degree, std::make_pair(Entry.Coefficient, Entry.Count));
+      }
       for (const auto &Seed : Terms) {
         if (Seed.Factors.size() < 4 || Relations.size() < 2 ||
             Budget.exhausted() || !Scales.count(Seed.Factors.size()))
@@ -343,7 +367,10 @@ SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
             Expanded.push_back(Seed.Factors[I]);
           }
         }
-        if (!Fits || Axes < 2 ||
+        // Every relation doubles the Cartesian expansion. Refuse a complete
+        // unaffordable plan before copying prefixes that cannot be checked.
+        if (!Fits || Axes < 2 || Axes >= std::numeric_limits<size_t>::digits ||
+            (size_t(1) << Axes) > MaxTerms ||
             !ChargeOperands(SymOp::Mul, Folded, MaxEdges) ||
             !ChargeOperands(SymOp::Mul, Expanded, MaxEdges))
           continue;

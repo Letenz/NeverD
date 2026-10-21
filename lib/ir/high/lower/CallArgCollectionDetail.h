@@ -204,8 +204,8 @@ struct CallArgPolicy {
   /// calls.
   bool RecursiveCallsPassOwnSignature = false;
   /// Merge scanned arguments into those a source binding names.
-  void (*MergeScannedArgs)(CallArgContext &C,
-                           std::vector<ExprPtr> &Hinted) = nullptr;
+  void (*MergeScannedArgs)(CallArgContext &C, std::vector<ExprPtr> &Hinted,
+                           const SourceFunctionTypeHint &Signature) = nullptr;
 };
 
 /// The call-argument policy for code of \p A in a \p F image, or null.
