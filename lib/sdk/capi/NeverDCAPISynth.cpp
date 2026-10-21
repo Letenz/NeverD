@@ -72,7 +72,6 @@ static_assert(static_cast<int>(symbolic::SynthOutcome::ProofIncomplete) ==
 static_assert(static_cast<int>(symbolic::SynthOutcome::Synthesized) ==
               NEVERD_SYNTHESIS_REWRITTEN);
 
-
 #define FIELD_END(Type, Field)                                                 \
   (offsetof(Type, Field) + sizeof(static_cast<Type *>(nullptr)->Field))
 
