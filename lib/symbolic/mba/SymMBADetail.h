@@ -382,22 +382,36 @@ std::optional<QuadraticProduct>
 recoverQuadraticProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
                         uint32_t Width, WorkBudget &Budget, size_t MaxBytes);
 
+/// Infer factor supports from all subset degrees. Nullopt declines the bounded
+/// reconstruction; an empty vector disproves a single product. Nonempty support
+/// is a candidate only: all coefficients still need independent validation.
+std::optional<llvm::SmallVector<TruthTable, 4>>
+recoverProductSupport(const HigherCoefficients &Higher, unsigned Degree,
+                      unsigned NumAtoms, WorkBudget &Budget, size_t MaxBytes);
+
 struct CubicProduct {
   llvm::APInt Coefficient;
   llvm::SmallVector<TruthTable, 3> Factors;
 };
 
 /// Recover a cubic product with a common minterm and a scale of additive
-/// order at least four. Other products remain eligible for bounded search.
+/// order at least four. When Determined is set, this anchor uniquely fixes
+/// the factors (up to permutation): failure needs no exhaustive retry.
+/// Other products remain eligible for bounded search.
 std::optional<CubicProduct>
 recoverCubicProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
-                    uint32_t Width, WorkBudget &Budget, size_t MaxBytes);
+                    uint32_t Width, WorkBudget &Budget, size_t MaxBytes,
+                    bool *Determined = nullptr);
 
+/// Exact general expansion by default. SingleProduct additionally permits
+/// rejecting incompatible extremal coefficients during candidate synthesis;
+/// difference verifiers must leave it disabled.
 std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
                                            llvm::ArrayRef<PolyTerm> Terms,
                                            llvm::ArrayRef<uint32_t> AtomIds,
                                            uint32_t Width, WorkBudget &Budget,
-                                           bool Optional = false);
+                                           bool Optional = false,
+                                           bool SingleProduct = false);
 
 /// Walk every way of taking one minterm from each factor, handing each
 /// resulting monomial to \p Visit.  Stops early when \p Visit returns false.

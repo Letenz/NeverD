@@ -20,6 +20,8 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <map>
 #include <optional>
 #include <utility>
@@ -80,7 +82,8 @@ bool expandProduct(llvm::ArrayRef<TruthTable> Factors,
 template <typename FnT>
 void forEachProductMatch(const HigherCoefficients &Higher, unsigned Degree,
                          unsigned NumAtoms, uint32_t Width,
-                         size_t MaxCandidates, WorkBudget &Budget, FnT Visit) {
+                         size_t MaxCandidates, size_t MaxBytes,
+                         WorkBudget &Budget, FnT Visit) {
   const std::optional<size_t> Corners = cornerCount(NumAtoms);
   if (!Corners || Degree < 2)
     return;
@@ -96,16 +99,72 @@ void forEachProductMatch(const HigherCoefficients &Higher, unsigned Degree,
       Shared.set(M);
   }
 
+  if (Shared.isZero() && Degree <= 4) {
+    if (auto Support =
+            recoverProductSupport(Higher, Degree, NumAtoms, Budget, MaxBytes)) {
+      if (Support->empty())
+        return;
+      // Support recovery proposes the only factor supports. Check every
+      // coefficient, including modular zeros absent from the input, separately.
+      llvm::SmallVector<llvm::SmallVector<MintermIndex, 8>, 4> Choices;
+      const size_t EntryBytes = 128 + 2 * Degree * sizeof(MintermIndex);
+      size_t ProductSize = 1;
+      for (const auto &Factor : *Support) {
+        Choices.push_back(selectedMinterms(Factor));
+        if (Choices.back().empty() ||
+            ProductSize > MaxBytes / EntryBytes / Choices.back().size())
+          return;
+        ProductSize *= Choices.back().size();
+      }
+      if (!Budget.canConsume(ProductSize))
+        return;
+      std::unordered_map<Monomial, unsigned, MonomialHash> Counts;
+      forEachMonomial(Choices, Budget, [&](const Monomial &Key) {
+        ++Counts[Key];
+        return true;
+      });
+      if (Budget.exhausted())
+        return;
+      const llvm::APInt *Scale = nullptr;
+      for (const auto &[Key, Count] : Counts) {
+        if (!Budget.consume(Degree + 1))
+          return;
+        if (Count == 1) {
+          auto It = Higher.find(Key);
+          if (It == Higher.end())
+            return;
+          Scale = &It->second;
+          break;
+        }
+      }
+      if (!Scale)
+        return;
+      size_t Found = 0;
+      const size_t Words = (size_t(Width) - 1) / 64 + 1;
+      for (const auto &[Key, Count] : Counts) {
+        if (!Budget.consume(Degree + 1 + Words * Words))
+          return;
+        auto Expected = *Scale * llvm::APInt(Width, Count, false, true);
+        auto It = Higher.find(Key);
+        if (It == Higher.end() ? !Expected.isZero() : It->second != Expected)
+          return;
+        Found += It != Higher.end();
+      }
+      if (Found == Higher.size())
+        Visit(*Scale, *Support);
+      return;
+    }
+  }
   llvm::SmallVector<TruthTable, 64> Candidates;
   const TruthTable Free = Active & ~Shared;
-  if (Degree > 3) {
+  if (Degree >= 3) {
     // No candidate is visited until this list is complete. Do not construct
     // an unaffordable prefix only to discard it without testing a product.
     const size_t FreeBits = Free.count();
     if (FreeBits >= std::numeric_limits<size_t>::digits)
       return;
     const size_t Count = (size_t(1) << FreeBits) - unsigned(Shared.isZero());
-    if (Count > MaxCandidates || !Budget.canConsume(Count))
+    if (Degree > 3 && (Count > MaxCandidates || !Budget.canConsume(Count)))
       return;
 
     // An anchor fixes the scale. Its adjacent coefficients must be the scale
@@ -128,6 +187,25 @@ void forEachProductMatch(const HigherCoefficients &Higher, unsigned Degree,
     }
     if (Anchor) {
       const size_t Words = (size_t(Width) - 1) / 64 + 1;
+      const unsigned ScaleBits = Width - Scale->countr_zero();
+      const bool UniqueCounts =
+          ScaleBits >= 32 || Degree < (uint64_t(1) << ScaleBits);
+      // Pair constraints need unique membership counts and bounded arithmetic.
+      // Declining this optional pruning never grants a product match.
+      constexpr size_t CornerBytes =
+          2 * sizeof(MintermIndex) + sizeof(unsigned);
+      const size_t Scratch = 256 + 2 * size_t(Degree) * sizeof(MintermIndex) +
+                             4 * Words * sizeof(uint64_t);
+      const bool CheckPairs = Degree <= 64 && UniqueCounts &&
+                              Scratch <= MaxBytes &&
+                              *Corners <= (MaxBytes - Scratch) / CornerBytes &&
+                              Budget.canConsume(*Corners);
+      std::vector<unsigned> Membership;
+      if (CheckPairs) {
+        if (!Budget.consume(*Corners))
+          return;
+        Membership.assign(*Corners, Degree);
+      }
       for (size_t M = 0; M < *Corners; ++M) {
         if (!Active.at(M) || M == *Anchor)
           continue;
@@ -145,10 +223,54 @@ void forEachProductMatch(const HigherCoefficients &Higher, unsigned Degree,
           if (!Budget.consume(Words))
             return;
           Expected += *Scale;
-          Possible |= Expected == Value;
+          if (Expected == Value) {
+            Possible = true;
+            if (CheckPairs)
+              Membership[M] = N;
+          }
         }
         if (!Possible)
           return;
+      }
+      if (CheckPairs) {
+        // The a^(d-2)*m*n coefficient counts ordered placements in distinct
+        // factors: |m|*|n| - |m intersect n|. Intersection bounds reject an
+        // impossible product without enumerating its factor subsets. For m=n,
+        // unordered placements instead give choose(|m|, 2).
+        const auto Selected = selectedMinterms(Active);
+        for (size_t I = 0; I != Selected.size(); ++I) {
+          const auto M = Selected[I];
+          if (M == *Anchor)
+            continue;
+          for (size_t J = I; J != Selected.size(); ++J) {
+            const auto N = Selected[J];
+            if (N == *Anchor)
+              continue;
+            if (!Budget.consume(Degree + Words + 1))
+              return;
+            Monomial Key(Degree, *Anchor);
+            Key[Degree - 2] = M;
+            Key[Degree - 1] = N;
+            llvm::sort(Key);
+            auto It = Higher.find(Key);
+            const auto Value =
+                It == Higher.end() ? llvm::APInt(Width, 0) : It->second;
+            const unsigned A = Membership[M], B = Membership[N];
+            const unsigned Lower =
+                M == N ? A * (A - 1) / 2 : A * B - std::min(A, B);
+            const unsigned Upper =
+                M == N ? Lower : A * B - (A + B > Degree ? A + B - Degree : 0);
+            bool Possible = false;
+            for (unsigned Count = Lower; Count <= Upper; ++Count) {
+              if (!Budget.consume(Words))
+                return;
+              Possible |=
+                  *Scale * llvm::APInt(Width, Count, false, true) == Value;
+            }
+            if (!Possible)
+              return;
+          }
+        }
       }
       if (!productCoefficientsFitScale(Higher, Degree, *Scale, Budget))
         return;
@@ -231,6 +353,102 @@ void forEachProductMatch(const HigherCoefficients &Higher, unsigned Degree,
 }
 
 } // namespace
+
+std::optional<llvm::SmallVector<TruthTable, 4>>
+recoverProductSupport(const HigherCoefficients &Higher, unsigned Degree,
+                      unsigned NumAtoms, WorkBudget &Budget, size_t MaxBytes) {
+  const auto Corners = cornerCount(NumAtoms);
+  if (!Corners || Higher.empty() || Degree < 2 || Degree > 8 ||
+      *Corners > MaxBytes / 16 || !Budget.consume(*Corners))
+    return std::nullopt;
+  TruthTable Active = TruthTable::zero(NumAtoms);
+  for (const auto &[Key, Coefficient] : Higher) {
+    if (!Budget.consume(Degree + 1) || Key.size() != Degree ||
+        !llvm::is_sorted(Key) || Key.back() >= *Corners || Coefficient.isZero())
+      return std::nullopt;
+    for (auto M : Key)
+      Active.set(M);
+  }
+  const auto Selected = selectedMinterms(Active);
+  if (Selected.size() > 8)
+    return std::nullopt;
+  const size_t Subsets = size_t(1) << Selected.size();
+  const size_t PerTerm = (size_t(1) << Degree) + Degree * Selected.size();
+  const size_t TailWork = Subsets * (2 * Selected.size() + Degree + 2);
+  if (MaxBytes < 512 || *Corners > (MaxBytes - 512) / (Degree + 8))
+    return std::nullopt;
+  const size_t Scratch = 512 + *Corners * (Degree + 8);
+  if (Subsets >
+          (MaxBytes - Scratch) / (3 * sizeof(unsigned) + sizeof(int64_t)) ||
+      Higher.size() >
+          (std::numeric_limits<size_t>::max() - TailWork) / PerTerm ||
+      !Budget.canConsume(Higher.size() * PerTerm + TailWork))
+    return std::nullopt;
+
+  // The largest degree in variables from S counts factors intersecting S.
+  // A lexicographic vertex attaining it has multiplicity one, so modular
+  // cancellation cannot hide that degree, even for an even/high-bit scale.
+  std::vector<unsigned> Maximum(Subsets, 0), Sum(Subsets, 0), Mask(Subsets, 0);
+  for (const auto &[Key, Coefficient] : Higher) {
+    if (!Budget.consume(PerTerm))
+      return std::nullopt;
+    std::array<unsigned, 8> Counts{}, Positions{};
+    unsigned Used = 0;
+    for (size_t I = 0; I != Key.size(); ++I) {
+      if (I && Key[I] == Key[I - 1]) {
+        ++Counts[Used - 1];
+        continue;
+      }
+      Positions[Used] = llvm::lower_bound(Selected, Key[I]) - Selected.begin();
+      Counts[Used++] = 1;
+    }
+    // Only subsets of this monomial can contribute a new degree. A maximum
+    // subset transform below extends these observations to the full domain.
+    for (size_t S = 1; S != (size_t(1) << Used); ++S) {
+      const auto Bit = std::countr_zero(S);
+      const auto Rest = S & (S - 1);
+      Sum[S] = Sum[Rest] + Counts[Bit];
+      Mask[S] = Mask[Rest] | (1u << Positions[Bit]);
+      Maximum[Mask[S]] = std::max(Maximum[Mask[S]], Sum[S]);
+    }
+  }
+  if (!Budget.consume(TailWork))
+    return std::nullopt;
+  for (size_t Bit = 1; Bit < Subsets; Bit <<= 1)
+    for (size_t S = 0; S != Subsets; ++S)
+      if (S & Bit)
+        Maximum[S] = std::max(Maximum[S], Maximum[S ^ Bit]);
+  // d-rank(complement(S)) counts factors wholly contained in S. Boolean
+  // lattice inversion recovers how many factors have each exact support.
+  std::vector<int64_t> Multiplicity(Subsets);
+  for (size_t S = 0; S != Subsets; ++S)
+    Multiplicity[S] = Degree - Maximum[(Subsets - 1) ^ S];
+  for (size_t Bit = 1; Bit < Subsets; Bit <<= 1)
+    for (size_t S = 0; S != Subsets; ++S)
+      if (S & Bit)
+        Multiplicity[S] -= Multiplicity[S ^ Bit];
+  llvm::SmallVector<TruthTable, 4> Factors;
+  unsigned Total = 0;
+  for (size_t S = 0; S != Subsets; ++S) {
+    auto Count = Multiplicity[S];
+    if (Count < 0 || Count > Degree - Total || (!S && Count))
+      return Factors;
+    Total += Count;
+  }
+  if (Total != Degree)
+    return Factors;
+  for (size_t S = 1; S != Subsets; ++S) {
+    if (!Multiplicity[S])
+      continue;
+    auto Table = TruthTable::zero(NumAtoms);
+    for (size_t Bit = 0; Bit != Selected.size(); ++Bit)
+      if (S & (size_t(1) << Bit))
+        Table.set(Selected[Bit]);
+    for (int64_t I = 0; I != Multiplicity[S]; ++I)
+      Factors.push_back(Table);
+  }
+  return Factors;
+}
 
 bool productCoefficientsFitScale(const HigherCoefficients &Higher,
                                  unsigned Degree, const llvm::APInt &Scale,
@@ -379,7 +597,10 @@ recoverQuadraticProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
 
 std::optional<CubicProduct>
 recoverCubicProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
-                    uint32_t Width, WorkBudget &Budget, size_t MaxBytes) {
+                    uint32_t Width, WorkBudget &Budget, size_t MaxBytes,
+                    bool *Determined) {
+  if (Determined)
+    *Determined = false;
   const auto Corners = cornerCount(NumAtoms);
   const size_t Words = Width ? (size_t(Width) - 1) / 64 + 1 : 0;
   constexpr size_t Overhead = 512;
@@ -414,6 +635,9 @@ recoverCubicProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
   // Distinguishing membership counts 0..3 requires additive order >= four.
   if (!Anchor || (Scale + Scale).isZero())
     return std::nullopt;
+
+  if (Determined)
+    *Determined = true;
 
   auto coefficient = [&](MintermIndex A, MintermIndex B, MintermIndex C) {
     Monomial Key{A, B, C};
@@ -589,7 +813,7 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
     // An unchanged, already factored higher-degree component needs no factor
     // search. Preserve its exact coefficient and multiplicities while other
     // degrees improve. The caller still proves the complete recombination.
-    if (Degree > 3 && DegreeTerms.size() == 1) {
+    if (Degree >= 3 && DegreeTerms.size() == 1) {
       if (!Retain())
         return std::nullopt;
       continue;
@@ -607,7 +831,8 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
     for (uint32_t Id : DegreeIds)
       DegreeAtoms.push_back(Ctx.varRef(Id));
     auto Form = expandOverMinterms(Ctx, DegreeTerms, DegreeIds, Width, Budget,
-                                   /*Optional=*/Degree > 3);
+                                   /*Optional=*/Degree > 3,
+                                   /*SingleProduct=*/Degree > 3);
     if (!Form) {
       if (Degree > 3 && !Budget.exhausted() && Retain())
         continue;
@@ -651,20 +876,21 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
                                                  Budget, Opts.MaxTableBytes))
         Consider(Product->Coefficient, Product->Factors);
     } else if (Degree == 3) {
+      bool Determined = false;
       if (auto Product = recoverCubicProduct(Part, DegreeArity, Width, Budget,
-                                             Opts.MaxTableBytes))
+                                             Opts.MaxTableBytes, &Determined))
         Consider(Product->Coefficient, Product->Factors);
-      else
+      else if (!Determined)
         forEachProductMatch(Part, Degree, DegreeArity, Width, MaxCandidates,
-                            Budget, Consider);
+                            Opts.MaxTableBytes, Budget, Consider);
     } else {
       forEachProductMatch(Part, Degree, DegreeArity, Width, MaxCandidates,
-                          Budget, Consider);
+                          Opts.MaxTableBytes, Budget, Consider);
     }
     // Preserve an unrecovered higher degree exactly. Other degrees may still
     // improve; dropping the residual would silently change the expression.
     if (!Best.isValid()) {
-      if (Degree > 3 && !Budget.exhausted() && Retain())
+      if (Degree >= 3 && !Budget.exhausted() && Retain())
         continue;
       return std::nullopt;
     }

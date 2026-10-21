@@ -62,6 +62,71 @@ TEST(SymMBACubic, MatchesEveryTwoInputFactorTripleWithACommonMinterm) {
         }
 }
 
+TEST(SymMBACubic,
+     SubsetDegreesRecoverEveryTwoInputTripleIncludingModularZeros) {
+  for (unsigned A = 1; A != 16; ++A)
+    for (unsigned B = A; B != 16; ++B)
+      for (unsigned C = B; C != 16; ++C)
+        for (unsigned Scale = 1; Scale != 8; ++Scale) {
+          llvm::SmallVector<TruthTable, 3> Factors{table(2, A), table(2, B),
+                                                   table(2, C)};
+          auto H = expand(Factors, llvm::APInt(3, Scale));
+          detail::WorkBudget Budget(4096);
+          auto R = detail::recoverProductSupport(H, 3, 2, Budget, 65536);
+          ASSERT_TRUE(R) << A << " " << B << " " << C << " " << Scale;
+          ASSERT_EQ(R->size(), 3u);
+          // Compare the recovered factors themselves, independently of the
+          // reconstruction's subset transforms and coefficient validation.
+          std::vector<unsigned> Bits;
+          for (const auto &Factor : *R) {
+            unsigned Value = 0;
+            for (unsigned I = 0; I != 4; ++I)
+              Value |= unsigned(Factor.at(I)) << I;
+            Bits.push_back(Value);
+          }
+          llvm::sort(Bits);
+          EXPECT_EQ(Bits, (std::vector<unsigned>{A, B, C}));
+          EXPECT_LT(Budget.used(), 4096u);
+        }
+}
+
+TEST(SymMBACubic, SubsetDegreeRefusalIsDistinctFromAnImpossibleProduct) {
+  auto H =
+      expand({table(2, 3), table(2, 6), table(2, 12)}, llvm::APInt(257, 7));
+  detail::WorkBudget Full(4096);
+  auto R = detail::recoverProductSupport(H, 3, 2, Full, 65536);
+  ASSERT_TRUE(R);
+  ASSERT_EQ(R->size(), 3u);
+  for (size_t Work : {size_t(0), size_t(1), Full.used() - 1}) {
+    detail::WorkBudget Budget(Work);
+    EXPECT_FALSE(detail::recoverProductSupport(H, 3, 2, Budget, 65536));
+    EXPECT_LE(Budget.used(), Work);
+  }
+  for (size_t Bytes : {0u, 64u, 512u}) {
+    detail::WorkBudget Budget(4096);
+    EXPECT_FALSE(detail::recoverProductSupport(H, 3, 2, Budget, Bytes));
+  }
+  // a^3+b^3 has degree three in either variable and in their union. Three
+  // common factors would also contribute mixed monomials with odd scale.
+  detail::HigherCoefficients Bad;
+  Bad.emplace(detail::Monomial{0, 0, 0}, llvm::APInt(257, 1));
+  Bad.emplace(detail::Monomial{1, 1, 1}, llvm::APInt(257, 1));
+  detail::WorkBudget Budget(4096);
+  auto Proposed = detail::recoverProductSupport(Bad, 3, 2, Budget, 65536);
+  // Geometry alone may propose (a+b)^3: it is never coefficient proof.
+  ASSERT_TRUE(Proposed);
+  ASSERT_EQ(Proposed->size(), 3u);
+  EXPECT_NE(expand(*Proposed, llvm::APInt(257, 1)), Bad);
+  Bad.clear();
+  for (detail::Monomial Key : {detail::Monomial{0, 0, 1}, {1, 1, 2}, {2, 2, 3}})
+    Bad.emplace(Key, llvm::APInt(257, 1));
+  detail::WorkBudget ImpossibleBudget(4096);
+  auto Impossible =
+      detail::recoverProductSupport(Bad, 3, 2, ImpossibleBudget, 65536);
+  ASSERT_TRUE(Impossible);
+  EXPECT_TRUE(Impossible->empty());
+}
+
 TEST(SymMBACubic, RecoversWideScalesAndChecksBeyondTheAnchorSlice) {
   std::mt19937_64 Random(0x63756265);
   for (unsigned Width : {2u, 8u, 16u, 32u, 64u, 128u, 257u}) {
@@ -74,8 +139,11 @@ TEST(SymMBACubic, RecoversWideScalesAndChecksBeyondTheAnchorSlice) {
                               : llvm::APInt(Width, Random() | 1, false, true);
       auto H = expand(Factors, Scale);
       detail::WorkBudget Budget(65536);
-      auto R = detail::recoverCubicProduct(H, 3, Width, Budget, 65536);
+      bool Determined = false;
+      auto R =
+          detail::recoverCubicProduct(H, 3, Width, Budget, 65536, &Determined);
       ASSERT_TRUE(R) << Sample;
+      EXPECT_TRUE(Determined);
       EXPECT_EQ(expand(R->Factors, R->Coefficient), H);
       // Minterm zero is the anchor. Altering a coefficient away from it
       // leaves every membership decision unchanged, but must fail validation.
@@ -85,7 +153,10 @@ TEST(SymMBACubic, RecoversWideScalesAndChecksBeyondTheAnchorSlice) {
       if (It->second.isZero())
         H.erase(It);
       detail::WorkBudget BadBudget(65536);
-      EXPECT_FALSE(detail::recoverCubicProduct(H, 3, Width, BadBudget, 65536));
+      Determined = false;
+      EXPECT_FALSE(detail::recoverCubicProduct(H, 3, Width, BadBudget, 65536,
+                                               &Determined));
+      EXPECT_TRUE(Determined);
     }
   }
 }
@@ -118,6 +189,61 @@ TEST(SymMBACubic, RefusesIncompleteWorkStorageAndMalformedCoefficients) {
   Bad({0, 0, 0}, llvm::APInt(64, 7));
   Bad({0, 0, 0}, llvm::APInt(257, 0));
   Bad({0, 0, 0}, llvm::APInt::getSignMask(257));
+}
+
+TEST(SymMBACubic, PolynomialRejectsSupportOnlyMatchesAndRetainsSingleProducts) {
+  for (unsigned Width : {3u, 8u, 16u, 32u, 64u, 257u})
+    for (bool MissingMixedTerms : {false, true}) {
+      SymContext C;
+      auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+      auto A = C.mkAnd(X, Y), B = C.mkAnd(X, C.mkNot(Y));
+      auto Tail = C.mkAdd(C.mkXor(X, Y), C.mkMul(C.mkConst(Width, 2), A));
+      auto Nonlinear = MissingMixedTerms
+                           ? C.mkAdd(C.mkMul({A, A, A}), C.mkMul({B, B, B}))
+                           : C.mkMul({C.mkConst(Width, 39), A, B, Y});
+      auto Input = C.mkAdd(Nonlinear, Tail);
+      MBAOptions Options;
+      Options.VerifySamples = 0;
+      llvm::SmallVector<uint32_t, 2> Ids;
+      C.collectVars(Input, Ids);
+      llvm::SmallVector<SymRef, 2> Atoms;
+      for (auto Id : Ids)
+        Atoms.push_back(C.varRef(Id));
+      detail::WorkBudget Budget(65536);
+      auto R = detail::solvePolynomial(C, Input, Ids, Atoms, Options, Budget);
+      ASSERT_TRUE(R);
+      EXPECT_LT(Budget.used(), 16384u) << Width << " " << MissingMixedTerms;
+      EXPECT_LE(C.readabilityCost(*R),
+                C.readabilityCost(C.mkAdd({Nonlinear, X, Y})));
+      for (unsigned I = 0; I != 512; ++I) {
+        std::array<llvm::APInt, 2> Values{
+            llvm::APInt(Width, I, false, true),
+            llvm::APInt(Width, I * 193, false, true)};
+        auto Left = Values[0] & Values[1], Right = Values[0] & ~Values[1];
+        auto Want = Values[0] + Values[1];
+        Want += MissingMixedTerms ? Left * Left * Left + Right * Right * Right
+                                  : llvm::APInt(Width, 39, false, true) * Left *
+                                        Right * Values[1];
+        EXPECT_EQ(C.eval(Input, Values), Want);
+        EXPECT_EQ(C.eval(*R, Values), Want);
+      }
+    }
+}
+
+TEST(SymMBACubic, SupportNearMissHasIndependentSmallWordProofs) {
+  if (!solver::proofBackendAvailable(solver::ProofBackend::Z3))
+    GTEST_SKIP() << "Z3 unavailable";
+  for (unsigned Width : {2u, 3u}) {
+    SymContext C;
+    auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+    auto A = C.mkAnd(X, Y), B = C.mkAnd(X, C.mkNot(Y));
+    auto Input = C.mkAdd({C.mkMul({A, A, A}), C.mkMul({B, B, B}), C.mkXor(X, Y),
+                          C.mkMul(C.mkConst(Width, 2), A)});
+    auto R = simplifyMBADeep(C, Input);
+    ASSERT_NE(R.Expr, Input);
+    solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 5000);
+    EXPECT_EQ(Verifier(C, Input, R.Expr), SynthVerification::Equivalent);
+  }
 }
 
 struct Expansion {
