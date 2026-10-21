@@ -7213,17 +7213,18 @@ std::optional<va_t> HighCWriter::constAddress(const HighExpr &E) const {
 bool isImageDataAt(const BinaryImage &Img, va_t Addr) {
   if (Addr == 0 || Addr == InvalidVA)
     return false;
-  if (Img.findImportAt(Addr))
-    return false;
   const Segment *Seg = Img.getSegmentFor(Addr);
   if (!Seg || !Seg->isReadable())
     return false;
   // Instruction bytes are not data objects.  Read-only constants live in
   // .rdata / .rodata (readable, not writable, not executable), and where
   // the debug information places data among the code.
-  if (Seg->isExecutable() && !Seg->isWritable())
-    return isCodeSectionData(&Img, Addr);
-  return true;
+  if (Seg->isExecutable() && !Seg->isWritable() &&
+      !isCodeSectionData(&Img, Addr))
+    return false;
+  // An import's slot or stub is no data object either.  Asked last: a code
+  // address asks whether a function starts there, which reads the symbols.
+  return !Img.findImportAt(Addr);
 }
 
 bool HighCWriter::isImageDataAddress(va_t Addr) const {
