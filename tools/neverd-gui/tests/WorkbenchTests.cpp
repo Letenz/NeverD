@@ -60,6 +60,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QSaveFile>
 #include <QScopeGuard>
@@ -176,6 +177,7 @@ QPushButton *buttonNamed(QWidget *window, const QString &text) {
 /// Shows \p code's context menu at its cursor and hands it to \p use, which
 /// may trigger one of its entries; the menu then closes.
 void withCodeMenu(CodeText *code, const std::function<void(QMenu *)> &use) {
+  const QPointer<QWidget> window = code->window();
   QTimer probe;
   QObject::connect(&probe, &QTimer::timeout, &probe, [&] {
     auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
@@ -188,6 +190,14 @@ void withCodeMenu(CodeText *code, const std::function<void(QMenu *)> &use) {
   probe.start(5);
   emit code->contextMenuRequested(
       code->viewport()->mapToGlobal(QPoint(40, 40)));
+  // A programmatically closed popup has no native click to reactivate its
+  // owner on the offscreen platform. Continue in the same active workbench.
+  if (window && window->isVisible() &&
+      (!QApplication::activeWindow() ||
+       QApplication::activeWindow() == window)) {
+    window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(window));
+  }
 }
 
 class LoadDialogAcceptor {
@@ -1470,7 +1480,19 @@ private slots:
     assembly->navigate(function, false);
     QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
     assembly->focusContent();
-    QTRY_VERIFY(assembly->isAncestorOf(QApplication::focusWidget()));
+    QTRY_VERIFY2(
+        assembly->isAncestorOf(QApplication::focusWidget()),
+        qPrintable(
+            QStringLiteral("visible=%1 active=%2 focus=%3")
+                .arg(assembly->isVisible())
+                .arg(QApplication::activeWindow() ? QApplication::activeWindow()
+                                                        ->metaObject()
+                                                        ->className()
+                                                  : "none")
+                .arg(
+                    QApplication::focusWidget()
+                        ? QApplication::focusWidget()->metaObject()->className()
+                        : "none")));
     assembly->navigate(function + 2, false);
     QTRY_COMPARE(assembly->currentAddress(),
                  std::optional<Address>(function + 2));
@@ -4791,12 +4813,15 @@ private slots:
         dialog.findChildren<QPushButton *>(QStringLiteral("quickStartAction"));
     QCOMPARE(actions.size(), 3);
     for (const auto *action : actions)
-      QVERIFY2(action->width() >= action->sizeHint().width(),
-               qPrintable(QStringLiteral("%1: %2 < %3, side %4")
-                              .arg(action->text())
-                              .arg(action->width())
-                              .arg(action->sizeHint().width())
-                              .arg(action->parentWidget()->width())));
+      QVERIFY2(
+          action->width() >= action->sizeHint().width(),
+          qPrintable(QStringLiteral("%1: %2 < %3, side %4, font %5, dpi %6")
+                         .arg(action->text())
+                         .arg(action->width())
+                         .arg(action->sizeHint().width())
+                         .arg(action->parentWidget()->width())
+                         .arg(action->font().toString())
+                         .arg(action->logicalDpiX())));
     QVERIFY(actions.front()->parentWidget()->width() > 300);
   }
 

@@ -377,17 +377,20 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
 
 MainWindow::~MainWindow() {
   qApp->removeEventFilter(this);
-  // Child views are destroyed after this body, and their teardown releases
-  // queries and moves the focus; keep the resulting notifications away from
-  // this window.
+  // View teardown releases queries and moves the focus; keep the resulting
+  // notifications away from this window.
   disconnect(&session_, nullptr, this, nullptr);
   disconnect(&broker_, nullptr, this, nullptr);
   disconnect(qApp, &QApplication::focusChanged, this, nullptr);
-  // Docked windows are children of this window; closed and floating ones are
-  // not, and would keep their unique names registered after it is gone.
+  // Hiding can lay out child models. Their borrowed address space and the
+  // other window members must still exist while that happens.
+  hide();
+  for (auto *dialog : findChildren<QDialog *>(Qt::FindDirectChildrenOnly))
+    delete dialog;
+  // Destroy every dock while its views' borrowed state is alive, including
+  // closed and floating docks that are not children of this window.
   for (auto *dock : std::as_const(docks_))
-    if (!isAncestorOf(dock))
-      delete dock;
+    delete dock;
   docks_.clear();
   statusTimer_.stop();
   if (instance_ == this)
