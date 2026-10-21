@@ -4,6 +4,8 @@
 
 # Arquitectura de NeverD
 
+El cargador COFF separa las posiciones de epílogos V2 de las operaciones del prólogo. V2 restaura los registros guardados del marco principal según la posición exacta del epílogo declarado; la liberación de la pila queda fuera de esa región. Los rangos, tamaños y secuencias inválidos se rechazan antes de leer la pila. V1 conserva el reconocimiento por instrucciones. Todos los motores comparten las comprobaciones de pila y el manejo de excepciones.
+
 Esta guía describe los límites de producción que debe conocer quien contribuya
 para modificar NeverD con seguridad. Cubre deliberadamente solo el código
 propio de NeverD; los submódulos LLVM, Capstone y Unicorn mantienen su propia

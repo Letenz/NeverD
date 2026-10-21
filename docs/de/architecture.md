@@ -4,6 +4,8 @@
 
 # NeverD-Architektur
 
+Der COFF-Loader trennt V2-Epilogpositionen von Prologoperationen. V2 stellt anhand der gesicherten Register des primären Frames und der genauen Epilogposition wieder her; die Freigabe des Stackbereichs liegt davor. Ungültige Bereiche, Größen und Wiederherstellungsfolgen werden vor Stackzugriffen abgelehnt. V1 behält die Erkennung anhand von Instruktionen. Alle Backends teilen die Stackprüfung und Ausnahmebehandlung.
+
 Dieser Leitfaden beschreibt die Produktionsgrenzen, die Mitwirkende kennen
 müssen, um NeverD sicher zu ändern. Er behandelt bewusst nur NeverD-eigenen
 Code; die LLVM-, Capstone- und Unicorn-Submodule behalten ihre interne

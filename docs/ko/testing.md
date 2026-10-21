@@ -4,6 +4,8 @@
 
 # NeverD 테스트
 
+`DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
+
 `DriverMSRExecution.*`와 `DriverMSRDeclaration.*`는 가용 백엔드에서 명시적 MSR 값, 전체 너비 분할, 상태 보존, 반복 읽기, 정확한 명령 예산, 누락·잘못된 선언과 메모리 권한 부재를 검사합니다. `KernelMSRRead.*`는 미사용 선언의 의존성을 유지합니다. 원시 드라이버, 드라이버 에뮬레이션 및 커널 스냅샷 테스트를 실행합니다. 사용할 수 없는 WHP/HVF는 검증 통과가 아닌 건너뛰기입니다.
 
 NeverD 테스트는 표현 모양이 예상과 같은지, 바이너리 fixture의 전체 pipeline 경로가
@@ -1282,7 +1284,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 68개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 135개 작업 전체에서 WHP 결과 270개를 요구합니다. 기본 이미지 27개, WDK 이미지 68개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `5085 CPU + 270 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 126 driver environment checks + 116 driver API checks = 5795`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 135개 작업 전체에서 WHP 결과 270개를 요구합니다. 기본 이미지 27개, WDK 이미지 68개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `5085 CPU + 270 WHP + 32 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 126 driver environment checks + 116 driver API checks = 5802`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
 
 실제 WDK 목록은 `driver_device_queries.c`, `driver_file_objects.c`, `driver_file_handles.c`의 일반 및 CFG 버전도 빌드합니다. `DriverDeviceQueryTests.cpp`와 `DriverFileObjectTests.cpp`는 이식 가능한 호출자와 같은 검증으로 양쪽 계약, 기준 주소, 스케줄링 정책에서 참조 유지, 실패한 CREATE, 프로세스 신원, 마지막 핸들 CLEANUP 및 지연 CLOSE를 확인합니다. 세 계열 모두 네이티브 필수 검사에 포함되며 목록 검증은 `NEVERD_WDK_FIXTURE` 소스를 독립적으로 찾아 WDK 빌드 누락을 감지합니다.
 
