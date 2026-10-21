@@ -2828,6 +2828,17 @@ incomplete rather than supplying an unconstrained value or a negative dependency
 certificate. Validation debits the same shared graph work account on cold and
 cached queries; unsupported opcodes acquire no semantics from this check.
 
+The reaching-value graph distinguishes an opaque definition from an unresolved
+dependency, including an implicit caller-saved clobber. Copies, casts, partial
+register writes and predecessor joins retain that distinction. A stable
+occurrence can still prove equality with itself or supply unconstrained numeric
+bits, but cannot turn an incomplete dependency walk into a negative `MayDepend`
+certificate. A known producer beside an unknown input still establishes a
+positive dependency. Unresolved alternatives also keep the query incomplete;
+only separately authenticated producer occurrences can stand as direct roots.
+Closing an active cycle introduces no new source; the existing pending-walk
+owner still requires every incoming definition before its result can be reused.
+
 An immutable resolver graph may retain completed backward definition searches
 in a bounded, lazily allocated table. Exact block, use position, register view
 and target-register identity bind each entry. Value and affine-frame proofs

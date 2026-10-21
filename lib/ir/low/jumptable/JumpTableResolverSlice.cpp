@@ -1087,6 +1087,9 @@ enum class ResolverConstraintKind : uint8_t {
 struct ResolverValueExpr {
   enum class Kind : uint8_t {
     Root,
+    // One stable occurrence whose incoming dependency graph was not resolved.
+    // Its numeric bits remain unconstrained, but it cannot prove independence.
+    UnresolvedRoot,
     Constant,
     Zero,
     ZeroExtend,
@@ -1107,14 +1110,28 @@ struct ResolverValueExpr {
   ResolverConstraintKind ConstraintKind = ResolverConstraintKind::None;
   bool ContainsMerge = false;
   bool ContainsPredecessorMerge = false;
+  bool ContainsUnresolvedDependencies = false;
   std::optional<ResolverScalarModelOrigin> ScalarModelOrigin;
   ResolverValue Input;
   std::vector<ResolverValue> Inputs;
+
+  void includePropertiesOf(const ResolverValue &Value) {
+    if (!Value) {
+      ContainsUnresolvedDependencies = true;
+      return;
+    }
+    ContainsMerge |= Value->ContainsMerge;
+    ContainsPredecessorMerge |= Value->ContainsPredecessorMerge;
+    ContainsUnresolvedDependencies |= Value->ContainsUnresolvedDependencies;
+  }
 };
 
-static ResolverValue resolverRoot(uint16_t Size, std::string Root) {
+static ResolverValue resolverRoot(uint16_t Size, std::string Root,
+                                  bool Unresolved = false) {
   auto E = std::make_shared<ResolverValueExpr>();
-  E->K = ResolverValueExpr::Kind::Root;
+  E->K = Unresolved ? ResolverValueExpr::Kind::UnresolvedRoot
+                    : ResolverValueExpr::Kind::Root;
+  E->ContainsUnresolvedDependencies = Unresolved;
   E->Size = Size;
   E->Root = std::move(Root);
   return E;
@@ -1162,8 +1179,7 @@ static ResolverValue resolverConstraint(const ResolverValue &Input,
   E->Size = Input->Size;
   E->Constant = Constant & resolverWidthMask(Input->Size);
   E->ConstraintKind = Kind;
-  E->ContainsMerge = Input->ContainsMerge;
-  E->ContainsPredecessorMerge = Input->ContainsPredecessorMerge;
+  E->includePropertiesOf(Input);
   E->Input = Input;
   return E;
 }
@@ -1176,10 +1192,9 @@ static ResolverValue resolverMerge(uint16_t Size, std::string Root,
   E->K = ResolverValueExpr::Kind::Merge;
   E->ContainsMerge = true;
   E->ContainsPredecessorMerge =
-      Root.starts_with("PB:") || Root.starts_with("M:") ||
-      std::any_of(Inputs.begin(), Inputs.end(), [](const ResolverValue &Input) {
-        return Input && Input->ContainsPredecessorMerge;
-      });
+      Root.starts_with("PB:") || Root.starts_with("M:");
+  for (const auto &Input : Inputs)
+    E->includePropertiesOf(Input);
   E->Size = Size;
   E->Root = std::move(Root);
   E->Inputs = std::move(Inputs);
@@ -1194,14 +1209,8 @@ resolverTransform(uint16_t Size, std::string Root,
     return {};
   auto E = std::make_shared<ResolverValueExpr>();
   E->K = ResolverValueExpr::Kind::Transform;
-  E->ContainsMerge =
-      std::any_of(Inputs.begin(), Inputs.end(), [](const ResolverValue &Input) {
-        return Input && Input->ContainsMerge;
-      });
-  E->ContainsPredecessorMerge =
-      std::any_of(Inputs.begin(), Inputs.end(), [](const ResolverValue &Input) {
-        return Input && Input->ContainsPredecessorMerge;
-      });
+  for (const auto &Input : Inputs)
+    E->includePropertiesOf(Input);
   E->Size = Size;
   E->Root = std::move(Root);
   if (Opcode) {
@@ -1222,12 +1231,13 @@ static bool consumeResolverProduct(size_t Count, size_t Cost,
 
 template <typename ConsumeWorkFn>
 static ResolverValue budgetedResolverRoot(uint16_t Size, std::string_view Root,
-                                          ConsumeWorkFn &&ConsumeWork) {
+                                          ConsumeWorkFn &&ConsumeWork,
+                                          bool Unresolved = false) {
   // Pay the shared node/control-block lifetime and the retained Root buffer
   // before either allocation.  The caller has already paid to format Root.
   if (!consumeResolverProduct(Root.size(), 2, ConsumeWork) || !ConsumeWork(5))
     return {};
-  return resolverRoot(Size, std::string(Root));
+  return resolverRoot(Size, std::string(Root), Unresolved);
 }
 
 template <typename ConsumeWorkFn>
@@ -1265,7 +1275,8 @@ template <typename ConsumeWorkFn>
 static ResolverValue budgetedResolverMerge(uint16_t Size, std::string_view Root,
                                            std::vector<ResolverValue> &&Inputs,
                                            ConsumeWorkFn &&ConsumeWork) {
-  if (!consumeResolverProduct(Root.size(), 2, ConsumeWork) || !ConsumeWork(5))
+  if (!ConsumeWork(Inputs.size()) ||
+      !consumeResolverProduct(Root.size(), 2, ConsumeWork) || !ConsumeWork(5))
     return {};
   return resolverMerge(Size, std::string(Root), std::move(Inputs));
 }
@@ -1453,8 +1464,7 @@ resolverExtend(const ResolverValue &Input, uint16_t Size, bool Signed,
     E->K = Signed ? ResolverValueExpr::Kind::SignExtend
                   : ResolverValueExpr::Kind::ZeroExtend;
     E->Size = Size;
-    E->ContainsMerge = Node->ContainsMerge;
-    E->ContainsPredecessorMerge = Node->ContainsPredecessorMerge;
+    E->includePropertiesOf(Node);
     E->Input = Node;
     return remember(Node, std::move(E));
   };
@@ -1656,8 +1666,7 @@ resolverSlice(const ResolverValue &Input, uint16_t Offset, uint16_t Size,
     E->K = ResolverValueExpr::Kind::Slice;
     E->Size = Size;
     E->SliceOffset = CurrentOffset;
-    E->ContainsMerge = Node->ContainsMerge;
-    E->ContainsPredecessorMerge = Node->ContainsPredecessorMerge;
+    E->includePropertiesOf(Node);
     E->Input = Node;
     return remember(Node, CurrentOffset, std::move(E));
   };
@@ -5289,13 +5298,14 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     DefinedOccurrenceRootsPrepared = true;
     return true;
   };
-  auto namedResolverRoot =
-      [&](uint16_t Size, std::string_view Prefix,
-          std::initializer_list<uint64_t> Fields) -> ResolverValue {
+  auto namedResolverRoot = [&](uint16_t Size, std::string_view Prefix,
+                               std::initializer_list<uint64_t> Fields,
+                               bool Unresolved = false) -> ResolverValue {
     ResolverRootKey Root;
     return makeResolverRootKey(Root, Prefix, Fields, consumeEvidence,
                                &EvidenceBudgetExhausted)
-               ? budgetedResolverRoot(Size, Root.view(), consumeEvidence)
+               ? budgetedResolverRoot(Size, Root.view(), consumeEvidence,
+                                      Unresolved)
                : ResolverValue{};
   };
   auto namedResolverTransform = [&](uint16_t Size, std::string_view Prefix,
@@ -8053,13 +8063,19 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
             if (Input.Kind == ResolverResultKind::Value && Input.Value) {
               Dependencies.push_back(Input.Value);
             } else {
+              // A cycle closes an active walk whose other inputs are still
+              // visited; it supplies no new unknown source. Pending-walk
+              // ownership prevents reuse before that closure is complete.
+              // An invalid input (for example a call clobber) has no such
+              // dependency proof and must retain that failure through copies.
               const uint16_t InputSize = Def.Inputs[InputNo].Size != 0
                                              ? Def.Inputs[InputNo].Size
                                              : Def.Output.Size;
               ResolverValue Unknown =
                   namedResolverRoot(InputSize, "U",
                                     {Def.Addr, static_cast<uint64_t>(Def.Seq),
-                                     static_cast<uint64_t>(InputNo)});
+                                     static_cast<uint64_t>(InputNo)},
+                                    Input.Kind == ResolverResultKind::Invalid);
               if (!Unknown) {
                 Dependencies.clear();
                 break;
@@ -8157,7 +8173,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                 namedResolverRoot(Query.Size, "POLD",
                                   {Def.Addr, static_cast<uint64_t>(Def.Seq),
                                    static_cast<unsigned>(Query.Space),
-                                   Query.Container, Query.Begin, Query.Size});
+                                   Query.Container, Query.Begin, Query.Size},
+                                  Old.Kind == ResolverResultKind::Invalid);
             if (!OldRoot || !consumeEvidence()) {
               Result = resolverInvalid();
               break;
@@ -8184,7 +8201,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
             namedResolverRoot(Query.Size, "S",
                               {Def.Addr, static_cast<uint64_t>(Def.Seq),
                                static_cast<unsigned>(Query.Space),
-                               Query.Container, Query.Begin, Query.Size}));
+                               Query.Container, Query.Begin, Query.Size},
+                              /*Unresolved=*/true));
       }
       const std::optional<bool> Guarded = instructionIsGuarded(Def.Addr);
       if (!Guarded) {
@@ -8759,6 +8777,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       symbolic::SymRef Result;
       switch (Node->K) {
       case ResolverValueExpr::Kind::Root:
+      case ResolverValueExpr::Kind::UnresolvedRoot:
         Result = unknown(Node);
         break;
       case ResolverValueExpr::Kind::Constant:
@@ -9850,6 +9869,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         }
         continue;
       }
+      if (Query.Relation == JumpTableValueRelation::MayDepend &&
+          IndexValue.Value && IndexValue.Value->ContainsUnresolvedDependencies)
+        markIncomplete(QueryIndex);
       if (Query.Relation == JumpTableValueRelation::FrameMemoryMatches) {
         const size_t AlternativeIndex =
             static_cast<size_t>(&Anchor - Query.Alternatives.data());
@@ -10101,6 +10123,15 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       markIncomplete(QueryIndex, MatchBudgetExhausted && MatchBudget == 0 &&
                                      !EvidenceBudgetExhausted);
     }
+    // A known producer is sufficient to establish MayDepend even beside an
+    // unresolved input. A negative result must account for every input: an
+    // implicit call clobber cannot become independent merely because a COPY,
+    // cast or partial-register write wrapped it in a stable occurrence.
+    if (!Results[QueryIndex] &&
+        Query.Relation == JumpTableValueRelation::MayDepend &&
+        CandidateValue.Value &&
+        CandidateValue.Value->ContainsUnresolvedDependencies)
+      markIncomplete(QueryIndex);
   }
   // A shared allowance belongs to the complete query transaction.  Do not
   // expose an order-dependent successful prefix when graph/value/match or

@@ -231,6 +231,17 @@ struct ResolverGraphCacheTestAccess {
     return Queries;
   }
 
+  static void clobberPendingCycle(CFGBuilder &B, const BinaryImage &Image) {
+    auto &R = B.Insns.at(0x130);
+    LowOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Addr = R.Addr;
+    Call.addInput(NdVar::address(0x4000, Image.getPointerSize()));
+    R.Ops.insert(R.Ops.begin(), Call);
+    for (size_t I = 0; I != R.Ops.size(); ++I)
+      R.Ops[I].Seq = int(I);
+  }
+
   static Query seedPredecessorLane(CFGBuilder &B, const BinaryImage &Image,
                                    unsigned Length) {
     B.CurrentImg = &Image;
@@ -564,6 +575,82 @@ struct ResolverGraphCacheTestAccess {
     Q.UseSeq = 0;
     Q.Alternatives = {{Slice.Output, 0x100, Slice.Seq, true}};
     Q.AllowZeroExtension = true;
+    return Q;
+  }
+
+  enum class ClobberUse { Raw, Copy, Extend, Slice, Add, Partial };
+
+  static Query seedClobberedDependency(CFGBuilder &B, const BinaryImage &Image,
+                                       ClobberUse Use, bool KnownInput = false,
+                                       bool KnownFirst = false) {
+    B.CurrentImg = &Image;
+    B.CurrentFuncEntry = 0x100;
+    B.JumpTableProofContextComplete = true;
+    B.PersistentCFGRoots = {0x100};
+    const auto &TRI = getTargetRegInfo(Image.Arch);
+    const uint16_t Width = Image.getPointerSize();
+    const auto Lane =
+        NdVar::reg(TRI.integerParamRegs(Image.abiFormat())[1], Width);
+    const auto Anchor = NdVar::tmp(0x7000, Width);
+    auto Emit = [&](va_t Address, NdOp Opcode, NdVar Output,
+                    std::initializer_list<NdVar> Inputs) {
+      auto &R = B.Insns[Address];
+      R.Addr = Address;
+      R.Size = 1;
+      B.BlockStarts.insert(Address);
+      LowOp Op;
+      Op.Addr = Address;
+      Op.Seq = static_cast<int>(R.Ops.size());
+      Op.Opcode = Opcode;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      R.Ops.push_back(Op);
+    };
+    Emit(0x100, NdOp::COPY, Anchor, {NdVar::address(0x2000, Width)});
+    Emit(0x101, NdOp::CALL, NdVar::reg(TRI.IntReturnReg, Width),
+         {NdVar::address(0x4000, Width)});
+    NdVar Candidate = NdVar::tmp(0x7100, Width);
+    switch (Use) {
+    case ClobberUse::Raw:
+      Candidate = Lane;
+      break;
+    case ClobberUse::Copy:
+      Emit(0x102, NdOp::COPY, Candidate, {Lane});
+      break;
+    case ClobberUse::Extend:
+      Candidate.Size = Width * 2;
+      Emit(0x102, NdOp::INT_ZEXT, Candidate, {Lane});
+      break;
+    case ClobberUse::Slice:
+      Candidate.Size = 1;
+      Emit(0x102, NdOp::SUBBYTES, Candidate, {Lane, NdVar::scalar(0, 4)});
+      break;
+    case ClobberUse::Add: {
+      const auto Other = KnownInput ? Anchor : NdVar::scalar(7, Width);
+      Emit(0x102, NdOp::INT_ADD, Candidate,
+           KnownFirst ? std::initializer_list<NdVar>{Other, Lane}
+                      : std::initializer_list<NdVar>{Lane, Other});
+      break;
+    }
+    case ClobberUse::Partial:
+      Emit(0x102, NdOp::COPY, NdVar::reg(Lane.Offset, 1),
+           {NdVar::scalar(7, 1)});
+      Candidate = Lane;
+      break;
+    }
+    // Keep the fallthrough contiguous even for the untransformed control.
+    if (Use == ClobberUse::Raw)
+      Emit(0x102, NdOp::COPY, NdVar::tmp(0x7200, Width),
+           {NdVar::scalar(7, Width)});
+    Emit(0x103, NdOp::RETURN, {}, {Candidate});
+    B.Insns.at(0x103).IsRet = true;
+    Query Q;
+    Q.Candidate = Candidate;
+    Q.UseAddr = 0x103;
+    Q.UseSeq = 0;
+    Q.Alternatives = {{Anchor, 0x100, 0, true}};
+    Q.Relation = Relation::MayDepend;
     return Q;
   }
 
@@ -1287,6 +1374,123 @@ BinaryImage image() {
 void expectColdAnswer(CFGBuilder &B, const Access::Answer &Warm) {
   Access::clear(B);
   EXPECT_EQ(Access::query(B), Warm);
+}
+
+TEST(ResolverDependency, ImplicitCallClobberStaysIncompleteThroughTransports) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (auto Use : {Access::ClobberUse::Raw, Access::ClobberUse::Copy,
+                       Access::ClobberUse::Extend, Access::ClobberUse::Slice,
+                       Access::ClobberUse::Add, Access::ClobberUse::Partial})
+        for (bool Occurrence : {false, true}) {
+          SCOPED_TRACE(::testing::Message()
+                       << unsigned(Target) << " " << unsigned(Format) << " "
+                       << unsigned(Use) << " " << Occurrence);
+          auto Image = image();
+          Image.Arch = Target;
+          Image.Format = Format;
+          Image.Bits = Target == Arch::X64 || Target == Arch::AArch64
+                           ? Bitness::Bits64
+                           : Bitness::Bits32;
+          CFGBuilder B;
+          auto Q = Access::seedClobberedDependency(B, Image, Use);
+          Q.UseDefinedAlternativesAsOccurrenceRoots = Occurrence;
+          const auto Answer = Access::batch(B, {Q});
+          EXPECT_FALSE(Answer.Complete);
+          EXPECT_EQ(Answer.QueryComplete, (std::vector<bool>{false}));
+          EXPECT_EQ(Answer.Values, (std::vector<bool>{false}));
+          EXPECT_GT(Answer.Remaining, 0u);
+          EXPECT_EQ(Access::batch(B, {Q}), Answer);
+          Access::clear(B);
+          EXPECT_EQ(Access::batch(B, {Q}), Answer);
+        }
+}
+
+TEST(ResolverDependency, KnownProducerStillMatchesBesideAnUnknownInput) {
+  for (bool KnownFirst : {false, true})
+    for (bool Occurrence : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << KnownFirst << " " << Occurrence);
+      auto Image = image();
+      Image.Bits = Bitness::Bits64;
+      Image.Format = BinaryFormat::ELF;
+      CFGBuilder B;
+      auto Q = Access::seedClobberedDependency(
+          B, Image, Access::ClobberUse::Add, true, KnownFirst);
+      Q.UseDefinedAlternativesAsOccurrenceRoots = Occurrence;
+      const auto Answer = Access::batch(B, {Q});
+      EXPECT_TRUE(Answer.Complete);
+      EXPECT_EQ(Answer.QueryComplete, (std::vector<bool>{true}));
+      EXPECT_EQ(Answer.Values, (std::vector<bool>{true}));
+    }
+}
+
+TEST(ResolverDependency, UnknownInputsDoNotEraseExactTransformIdentity) {
+  for (auto Use : {Access::ClobberUse::Copy, Access::ClobberUse::Extend,
+                   Access::ClobberUse::Slice, Access::ClobberUse::Add,
+                   Access::ClobberUse::Partial}) {
+    SCOPED_TRACE(unsigned(Use));
+    auto Image = image();
+    Image.Bits = Bitness::Bits64;
+    Image.Format = BinaryFormat::ELF;
+    CFGBuilder B;
+    auto Q = Access::seedClobberedDependency(B, Image, Use);
+    Q.Relation = Access::Relation::MustEqual;
+    Q.Alternatives = {{Q.Candidate, Q.UseAddr, Q.UseSeq, false}};
+    const auto Answer = Access::batch(B, {Q});
+    EXPECT_TRUE(Answer.Complete);
+    EXPECT_EQ(Answer.Values, (std::vector<bool>{true}));
+  }
+}
+
+TEST(ResolverDependency, UnresolvedAlternativeCannotCertifyIndependence) {
+  for (auto Use : {Access::ClobberUse::Raw, Access::ClobberUse::Copy,
+                   Access::ClobberUse::Add, Access::ClobberUse::Partial}) {
+    SCOPED_TRACE(unsigned(Use));
+    auto Image = image();
+    Image.Bits = Bitness::Bits64;
+    Image.Format = BinaryFormat::ELF;
+    CFGBuilder B;
+    auto Q = Access::seedClobberedDependency(B, Image, Use);
+    Q.Alternatives = {{Q.Candidate, Q.UseAddr, Q.UseSeq, false}};
+    Q.Candidate = NdVar::address(0x3000, 8);
+    const auto Answer = Access::batch(B, {Q});
+    EXPECT_FALSE(Answer.Complete);
+    EXPECT_EQ(Answer.QueryComplete, (std::vector<bool>{false}));
+    EXPECT_EQ(Answer.Values, (std::vector<bool>{false}));
+  }
+}
+
+TEST(ResolverDependency, ClosedCyclesKeepTheirInputsWithoutInventingClobbers) {
+  for (bool Clobbered : {false, true})
+    for (bool Present : {false, true})
+      for (bool Reverse : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Clobbered << " " << Present << " " << Reverse);
+        auto Image = image();
+        Image.Bits = Bitness::Bits64;
+        Image.Format = BinaryFormat::ELF;
+        CFGBuilder B;
+        auto Queries = Access::seedPendingCycle(B, Image, false, true);
+        if (Clobbered)
+          Access::clobberPendingCycle(B, Image);
+        for (auto &Q : Queries) {
+          Q.Relation = Access::Relation::MayDepend;
+          Q.Alternatives = {
+              {NdVar::scalar(Present ? 1 : 7, 4), InvalidVA, -1, false}};
+        }
+        if (Reverse)
+          std::reverse(Queries.begin(), Queries.end());
+        const auto Answer = Access::batch(B, Queries);
+        EXPECT_EQ(Answer.Complete, Present || !Clobbered);
+        EXPECT_EQ(Answer.QueryComplete,
+                  std::vector<bool>(Queries.size(), Present || !Clobbered));
+        EXPECT_EQ(Answer.Values, std::vector<bool>(Queries.size(), Present));
+        EXPECT_GT(Answer.Remaining, 0u);
+        EXPECT_EQ(Access::batch(B, Queries), Answer);
+        Access::clear(B);
+        EXPECT_EQ(Access::batch(B, Queries), Answer);
+      }
 }
 
 TEST(ResolverLoadAddress, OpaqueLoadIdentityDoesNotRequireItsAddressValue) {
