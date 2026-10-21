@@ -969,7 +969,9 @@ SymRef solveOneRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   Rep.BudgetExhausted |= ArithmeticRep.BudgetExhausted;
   if (Solved == E && Rep.BudgetExhausted)
     Rep.Outcome = MBAOutcome::BudgetExhausted;
-  if (Solved != E && !Budget.exhausted()) {
+  if (Solved != E && Solved != Arithmetic && !Budget.exhausted()) {
+    // The arithmetic candidate already has a checked canonical polynomial.
+    // Normalize only a newly restored region, not that identical candidate.
     // Restoring hidden affine inputs can expose products of constants and
     // sums. Cancel their modular coefficients before publishing the spelling.
     SolveReport Restored;

@@ -310,6 +310,21 @@ The `deep-residual` family of `benchmark_symbolic_masks.py` adds sparse
 24/32/48/64-degree products, disturbed coefficients, interleaved blocks and
 opaque arithmetic words. Use `--count 32` to cover each degree at all four
 standard widths; the unchanged per-query allowance is 65,536 work units.
+`SymMBAResidualBudget` runs in the symbolic and quadratic test targets. It
+checks bulk extraction of 64 shared factors through 257 bits, exact and
+one-short work limits, storage refusal, and delayed polynomial multiplication.
+A sparse degree-32 regression retains a shorter completed candidate when
+later search exhausts its budget; its independent word oracle evaluates the
+closed product minus missing corners and a coefficient disturbance. Run these
+with `NeverDHighSymSimplifyTests`, `NeverDSymSimplifyGuardTests`,
+`NeverDMBASourceTests` and the worker source-synthesis test to check the common
+CLI and GUI optimization path.
+Interleaved residual tests cover the completed-product traversal boundary at
+15/16/17 factors, plus products through degree 64 and 257-bit words. They keep
+nonzero odd-factor assignments, reject leaked temporary inputs, and require
+the previously exhausted 32-bit two-block case to finish within its allowance.
+`SymParseLexer` checks every punctuation pair at end of input and before an
+identifier, plus unknown bytes and exact diagnostics for malformed operators.
 Sixteen repeated small partitions check that exponential expansion is refused
 before consuming the budget needed to simplify their shared child.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
@@ -9687,3 +9702,7 @@ Unsupported CPU transports are platform skips, not successful qualification.
 `AbsoluteMemoryFactsTests.inc` checks written absolute targets across nodes, conflicting joins, partial and unknown alias writes, and proved stack separation in both byte orders with chaining enabled or disabled. Independent byte execution checks retained effects; missing exclusions and short budgets must refuse. `SymStorePreservation.Absolute*` and `SymState.AbsoluteProjections*` check absolute/symbolic coexistence, upper addresses, pure bounded projections, post-write unknown epochs and transactional refusal. Run `NeverDInterpreterSpecializationTests`, `NeverDSymbolicIntegerIntrinsicTests` and `NeverDSymMemoryKnowledgeTests`, then the native independence and LowIR refinement suites.
 
 Absolute-memory regressions cover bounded contiguous and sparse batches, complete write/cell containment, and concrete aliases at both frame and exclusion boundaries. Ordered and reversed range unions must preserve the same cells, discard gaps and leave state unchanged when preservation runs one work unit short.
+
+## Finite ordinary RAM read regression tests
+
+`LowIRReadTrace.*` checks shared inputs, both byte orders, changed addresses/widths/order/counts, every branch, partial overlap with prior frame writes, undefined producers, independent repeated reads, exact/short budgets and loop refusal. `OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` checks original native independence, native-to-LowIR refinement and a changed-pointer rejection. Run `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDPEFixedImageTests` and `NeverDInterpreterSpecializationTests`. These proofs do not by themselves qualify compiled C or a concrete CPU backend.

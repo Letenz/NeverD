@@ -2088,3 +2088,7 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `AbsoluteMemoryFactsTests.inc` 覆盖绝对地址目标跨节点传递、冲突汇合、部分重叠及未知别名写入，以及两种字节序和启用/禁用串接时的栈分离证明。独立字节执行器检查保留的副作用；缺少排除范围或预算不足时必须拒绝。`SymStorePreservation.Absolute*` 与 `SymState.AbsoluteProjections*` 检查绝对/符号区域共存、高地址、纯只读有界投影、写入后的未知值世代和事务性拒绝。运行 `NeverDInterpreterSpecializationTests`、`NeverDSymbolicIntegerIntrinsicTests`、`NeverDSymMemoryKnowledgeTests`，随后运行原生独立性与 LowIR 精化测试。
 
 绝对内存回归覆盖有界的连续与稀疏批次、完整写入及单元的包含关系，以及帧边界和排除边界两端的具体别名反例。有序和逆序区间并集必须保留相同单元、丢弃间隙，并在保留预算少一个工作单位时保持状态不变。
+
+## 有限普通 RAM 读取回归测试
+
+`LowIRReadTrace.*` 检查共享输入、两种字节序、地址/宽度/顺序/次数变化、全部分支、与先前帧写入的部分重叠、未定义值、重复读取的独立性、精确及不足预算和循环拒绝。`OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` 检查原始机器码独立性、机器码到 LowIR 的精化以及指针改变时的拒绝。运行 `NeverDLowIRRefinementTests`、`NeverDLowIRUndefinedIndependenceTests`、`NeverDOriginalBinaryUndefinedIndependenceTests`、`NeverDPEFixedImageTests` 和 `NeverDInterpreterSpecializationTests`。这些证明本身不认证编译后的 C 或具体 CPU 后端。

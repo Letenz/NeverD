@@ -31,6 +31,7 @@ extern char **environ;
 #endif
 
 namespace {
+#ifndef _WIN32
 using neverd::transport::Json;
 
 void require(bool Condition, const std::string &Message) {
@@ -38,7 +39,6 @@ void require(bool Condition, const std::string &Message) {
     throw std::runtime_error(Message);
 }
 
-#ifndef _WIN32
 class Process {
   int Input = -1, Output = -1, Errors = -1;
   pid_t PID = -1;
@@ -183,7 +183,7 @@ void session(const std::string &Binary, const std::string &Input) {
           "initialize");
   Server.send({{"jsonrpc", "2.0"}, {"method", "notifications/initialized"}});
   Server.send(request(2, "tools/list"));
-  require(Server.receive()["result"]["tools"].size() == 12, "twelve tools");
+  require(Server.receive()["result"]["tools"].size() == 13, "thirteen tools");
 
   const auto Metadata = neverd::transport::parseJson(
       text(call(Server, 3, "project_metadata", Json::object())));
@@ -210,6 +210,12 @@ void session(const std::string &Binary, const std::string &Input) {
   require(Disassembly["isError"] == false &&
               text(Disassembly).find('\n') != std::string::npos,
           "disassembly: " + text(Disassembly));
+  // The usage text below is in this executable.
+  const auto Found = neverd::transport::parseJson(
+      text(call(Server, 10, "search",
+                {{"kind", "text"}, {"pattern", "usage: neverd-mcp"}})));
+  require(Found["columns"][1] == "context" && !Found["rows"].empty(),
+          "a text search: " + Found.dump());
   const auto Unknown = call(Server, 8, "read_decompilation",
                             {{"address", "no_such_function_anywhere"}});
   require(Unknown["isError"] == true, "an unknown name is an error");

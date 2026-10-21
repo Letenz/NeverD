@@ -44,7 +44,7 @@ struct LowIRIndependenceFrame {
   symbolic::SymRegisterRange RootRegister;
   /// Accessible, nonwrapping bytes relative to the entry root: [Begin, End).
   /// This is an explicit nonfaulting environment contract, not an alias fact
-  /// inferred from executing one input. Only this mutable region is supported.
+  /// inferred from executing one input. Writes are confined to this region.
   int64_t Begin = 0;
   int64_t End = 0;
   /// The whole accessible frame must be disjoint from every excluded absolute
@@ -90,6 +90,18 @@ struct LowIRNativePreservationCertificate {
   std::string ExecutionDigest;
 };
 
+enum class LowIRExternalReadModel : uint8_t {
+  None,
+  /// Finite proofs only. Non-frame ordinary RAM reads retain their address,
+  /// width and order. Each occurrence shares a fresh input between executions;
+  /// prior frame writes override overlapping bytes without a nonalias premise.
+  /// Repeated reads need not agree, conservatively including every ordinary
+  /// nonfaulting execution. This supplies no MMIO, atomic, concurrent-writer
+  /// or external-store semantics. Even immutable non-frame reads must remain
+  /// in the candidate trace; deleting or folding them is not certified.
+  OrderedOrdinaryRAMV1,
+};
+
 struct LowIRIndependenceContract {
   /// Native-only opt-in. Initializes canonical shared entry flags and always
   /// observes final system flags, independently of ReturnRegisters and frame
@@ -133,6 +145,10 @@ struct LowIRIndependenceContract {
   /// including induction, refuses an AllUndefinedChoices request. Static
   /// LowIR cannot establish architectural effects omitted from its input.
   std::optional<LowIRNativePreservationRequirement> NativePreservedState;
+  /// Requires Frame and an explicit ordinary, nonfaulting RAM execution
+  /// domain. Neither observed addresses nor file-backed writable bytes become
+  /// constants or disjointness premises. Loop APIs reject this model.
+  LowIRExternalReadModel ExternalReads = LowIRExternalReadModel::None;
 };
 
 struct LowIRIndependenceLimits {

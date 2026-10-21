@@ -31,8 +31,9 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
   target_link_libraries(neverd-mcp-tests PRIVATE neverd_mcp_protocol)
   add_test(NAME NeverDMCP COMMAND neverd-mcp-tests)
   set_tests_properties(NeverDMCP PROPERTIES TIMEOUT 60 LABELS "mcp")
-  if(NEVERD_WORKER_REAL_ENGINE_TESTS)
-    # The process client inspects its own native image through the real SDK.
+  # The process test reads real decompilation: a build against a mock
+  # engine, such as the workbench's CI fixture, leaves it out.
+  if(NOT DEFINED NEVERD_WORKER_REAL_ENGINE_TESTS OR NEVERD_WORKER_REAL_ENGINE_TESTS)
     add_executable(neverd-mcp-process-tests tests/ProcessTests.cpp)
     target_link_libraries(neverd-mcp-process-tests PRIVATE neverd_tool_json)
     add_dependencies(neverd-mcp-process-tests neverd-mcp)

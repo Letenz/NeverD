@@ -43,8 +43,11 @@ Tools: `project_metadata`, `list_functions`, `read_disassembly`,
 `list_imports`, `find_string_references` (the instructions and functions
 that use strings matching a filter, in one call), `find_call_paths` (call
 paths between functions or imports through waypoints, shortest first, as a
-path finder shows them) and `list_call_tree` (what a function calls, or what
-calls it, to a depth). `list_strings` and `list_imports` take a `filter`;
+path finder shows them), `list_call_tree` (what a function calls, or what
+calls it, to a depth) and `search` (hexadecimal bytes, text, or an
+instruction's immediate value, in address order: 64 matches unless `limit`
+says otherwise, continued from `next_address`; a match in code names its
+function, and an immediate its instruction). `list_strings` and `list_imports` take a `filter`;
 `list_strings` cuts texts to `text_limit` bytes, 200 unless asked otherwise,
 with an ellipsis. Wherever a tool takes an `address`, a name the workbench
 shows, an import's name or a label also works; it is resolved first.

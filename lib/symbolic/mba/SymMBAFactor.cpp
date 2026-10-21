@@ -536,26 +536,28 @@ SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
             for (unsigned J : Positions)
               Used[J] = true;
             Folded.push_back(Chosen->Reduced);
-            Expanded.push_back(Chosen->Sum);
             ++Axes;
           } else {
             Used[I] = true;
             Folded.push_back(Seed.Factors[I]);
-            Expanded.push_back(Seed.Factors[I]);
           }
         }
         // Every relation doubles the Cartesian expansion. Refuse a complete
         // unaffordable plan before copying prefixes that cannot be checked.
         if (!Fits || Axes < 2 || Axes >= std::numeric_limits<size_t>::digits ||
             (size_t(1) << Axes) > MaxTerms ||
-            !ChargeOperands(SymOp::Mul, Folded, MaxEdges) ||
-            !ChargeOperands(SymOp::Mul, Expanded, MaxEdges))
+            !ChargeOperands(SymOp::Mul, Folded, MaxEdges))
           continue;
         Folded.push_back(Ctx.mkConst(*Scale));
-        Expanded.push_back(Ctx.mkConst(*Scale));
         SymRef Product = Ctx.mkMul(Folded);
         if (!Seen.insert(Product.index()).second)
           continue;
+        // Duplicate folded products need no distribution spelling.
+        for (const auto &Step : Steps)
+          Expanded.push_back(Step.first ? Step.first->Sum : Step.second);
+        if (!ChargeOperands(SymOp::Mul, Expanded, MaxEdges))
+          continue;
+        Expanded.push_back(Ctx.mkConst(*Scale));
         Product = foldProductParity(Ctx, Product, Budget, Storage);
         std::map<Monomial, llvm::APInt> Differences;
         auto Accumulate = [&](Monomial Key, const llvm::APInt &Coefficient) {

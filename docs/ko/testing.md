@@ -2113,3 +2113,7 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `AbsoluteMemoryFactsTests.inc`는 노드 간 절대 대상, 합류 충돌, 부분 중첩과 미지의 별칭 쓰기, 두 바이트 순서 및 연결 활성화/비활성화에서 스택 분리를 검사한다. 독립 바이트 실행기가 효과를 확인하며 제외 범위 누락과 예산 부족은 거부해야 한다. `SymStorePreservation.Absolute*`와 `SymState.AbsoluteProjections*`는 영역 공존, 높은 주소, 순수한 유한 투영, 미지 세대 및 원자적 거부를 검사한다. `NeverDInterpreterSpecializationTests`, `NeverDSymbolicIntegerIntrinsicTests`, `NeverDSymMemoryKnowledgeTests` 실행 후 네이티브 독립성과 LowIR 정제 모음을 실행한다.
 
 절대 메모리 회귀 테스트는 제한된 연속 및 희소 배치, 전체 쓰기와 셀의 포함 관계, 프레임 및 제외 경계 양끝의 구체적인 별칭 반례를 다룹니다. 정렬 및 역순 범위 합집합은 같은 셀을 보존하고 간격을 폐기하며 보존 예산이 작업 단위 하나만큼 부족하면 상태를 변경하지 않아야 합니다.
+
+## 유한 일반 RAM 읽기 회귀 테스트
+
+`LowIRReadTrace.*`는 공유 입력, 양쪽 바이트 순서, 주소·폭·순서·횟수 변경, 모든 분기, 이전 프레임 쓰기와 부분 중첩, 미정의 값, 반복 읽기의 독립성, 정확하거나 부족한 예산 및 루프 거부를 검사합니다. `OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs`는 원본 기계어 독립성, 기계어에서 LowIR로의 정제와 포인터 변경 거부를 검사합니다. `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDPEFixedImageTests`, `NeverDInterpreterSpecializationTests`를 실행합니다. 이 증명만으로 컴파일된 C나 구체적 CPU 백엔드를 인증하지는 않습니다.

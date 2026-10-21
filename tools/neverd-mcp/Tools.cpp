@@ -16,8 +16,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
-#include <mutex>
-#include <regex>
 #include <set>
 
 namespace neverd::binmcp {
@@ -38,14 +36,15 @@ Tool tool(const char *Name, const char *Operation, const char *Description,
   // A revision guards the continuation of a page against analysis that
   // publishes a newer one meanwhile.
   if (Properties.contains("offset"))
-    Properties["expected_revision"] = {{"type", "string"}, {"maxLength", 128}};
+    Properties["expected_revision"] = {{"type", "string"}};
+  Json Schema{{"type", "object"},
+              {"properties", std::move(Properties)},
+              {"additionalProperties", false}};
+  if (!Required.empty())
+    Schema["required"] = std::move(Required);
   Json Listed{{"name", Name},
               {"description", Description},
-              {"inputSchema",
-               {{"type", "object"},
-                {"properties", std::move(Properties)},
-                {"required", std::move(Required)},
-                {"additionalProperties", false}}},
+              {"inputSchema", std::move(Schema)},
               {"annotations",
                {{"readOnlyHint", true},
                 {"destructiveHint", false},
@@ -55,11 +54,9 @@ Tool tool(const char *Name, const char *Operation, const char *Description,
 }
 
 // An exact hexadecimal address, or a name a function, import or label goes
-// by.
+// by: the "address" format, which validate() checks.
 Json address() {
-  return {{"type", "string"},
-          {"maxLength", 512},
-          {"pattern", "^(0x[0-9a-fA-F]{1,16}|(?!0[xX]).+)$"}};
+  return {{"type", "string"}, {"maxLength", 512}, {"format", "address"}};
 }
 
 /// A bounded page, with what else the tool takes.
@@ -148,6 +145,17 @@ std::vector<Tool> catalog() {
             {"data_refs", Flag},
             {"exclude", nodes()}},
            {"function"}),
+      tool("search", "search",
+           "Find hex bytes (\"48 89 e5\"), text or an immediate operand "
+           "(\"0x40000000\"), in address order; from=next_address "
+           "continues.",
+           {{"kind",
+             {{"type", "string"}, {"enum", {"bytes", "text", "immediate"}}}},
+            {"pattern", {{"type", "string"}, {"minLength", 1}}},
+            {"from", {{"type", "string"}}},
+            {"limit", integer(1, 512)},
+            {"case_sensitive", Flag}},
+           {"kind", "pattern"}),
   };
 }
 
@@ -191,17 +199,17 @@ bool within(const Json &Value, std::int64_t Minimum, std::int64_t Maximum) {
   return Minimum <= Number && Number <= Maximum;
 }
 
-/// Whether \p Text matches the schema's ECMAScript \p Pattern, as a client
-/// that checks the schema decides.
-bool matches(const std::string &Text, const std::string &Pattern) {
-  static std::mutex Lock;
-  static std::map<std::string, std::regex> Compiled;
-  std::lock_guard Guard(Lock);
-  auto It = Compiled.find(Pattern);
-  if (It == Compiled.end())
-    It = Compiled.emplace(Pattern, std::regex(Pattern, std::regex::ECMAScript))
-             .first;
-  return std::regex_match(Text, It->second);
+/// Whether \p Text names an address: exactly 0x and 1-16 hexadecimal
+/// digits, or a name, which neither starts with 0x nor holds a line break.
+bool namesAddress(std::string_view Text) {
+  if (hexAddress(Text))
+    return true;
+  const bool Hex =
+      Text.size() >= 2 && Text[0] == '0' && (Text[1] == 'x' || Text[1] == 'X');
+  return !Text.empty() && !Hex &&
+         Text.find_first_of("\r\n") == std::string_view::npos &&
+         Text.find("\xE2\x80\xA8") == std::string_view::npos &&
+         Text.find("\xE2\x80\xA9") == std::string_view::npos;
 }
 
 bool fits(const Json &Value, const Json &Rule) {
@@ -231,9 +239,8 @@ bool fits(const Json &Value, const Json &Rule) {
       Enum != Rule.end() &&
       std::find(Enum->begin(), Enum->end(), Value) == Enum->end())
     return false;
-  if (const auto Pattern = Rule.find("pattern");
-      Pattern != Rule.end() &&
-      !matches(Text, Pattern->get_ref<const std::string &>()))
+  if (const auto Format = Rule.find("format");
+      Format != Rule.end() && *Format == "address" && !namesAddress(Text))
     return false;
   return true;
 }
@@ -495,6 +502,30 @@ Ordered cfg(const Json &Payload, Ordered Out) {
   return Out;
 }
 
+Ordered search(const Json &Payload, Ordered Out, const std::string &Kind) {
+  copy(Payload, Out, {"complete", "next_address", "coverage"});
+  // A text match shows the text it is in; a code match, its function, and
+  // for an immediate its instruction.
+  const bool Text = Kind == "text", Immediate = Kind == "immediate";
+  Out["columns"] = Text ? Ordered::array({"address", "context"})
+                   : Immediate
+                       ? Ordered::array({"address", "function", "instruction"})
+                       : Ordered::array({"address", "function"});
+  Ordered Rows = Ordered::array();
+  if (const auto &Items = member(Payload, "items"); Items.is_array())
+    for (const auto &Item : Items) {
+      Ordered Row = Ordered::array({column(Item, "address")});
+      for (const char *Field : Text ? std::vector{"context"}
+                               : Immediate
+                                   ? std::vector{"function", "instruction"}
+                                   : std::vector{"function"})
+        Row.push_back(column(Item, Field));
+      Rows.push_back(std::move(Row));
+    }
+  Out["rows"] = std::move(Rows);
+  return Out;
+}
+
 std::string lower(std::string Text) {
   std::transform(Text.begin(), Text.end(), Text.begin(), [](unsigned char C) {
     return static_cast<char>(C >= 'A' && C <= 'Z' ? C - 'A' + 'a' : C);
@@ -641,9 +672,10 @@ void validate(const Json &Arguments, const Json &Schema) {
   for (const auto &Item : Arguments.items())
     if (!Properties.contains(Item.key()))
       throw RpcError{-32602, "Unknown or missing tool argument"};
-  for (const auto &Name : Schema.at("required"))
-    if (!Arguments.contains(Name.get_ref<const std::string &>()))
-      throw RpcError{-32602, "Unknown or missing tool argument"};
+  if (const auto Required = Schema.find("required"); Required != Schema.end())
+    for (const auto &Name : *Required)
+      if (!Arguments.contains(Name.get_ref<const std::string &>()))
+        throw RpcError{-32602, "Unknown or missing tool argument"};
   for (const auto &Item : Arguments.items())
     if (!fits(Item.value(), Properties.at(Item.key())))
       throw RpcError{-32602, "Invalid argument: " + Item.key()};
@@ -704,6 +736,12 @@ std::pair<std::string, bool> compactResult(const std::string &Operation,
     return {callPaths(Payload, std::move(Out)), false};
   if (Operation == "call_tree")
     return {callTree(Payload, std::move(Out)), false};
+  if (Operation == "search") {
+    const auto &Kind = member(Arguments, "kind");
+    return {encode(search(Payload, std::move(Out),
+                          Kind.is_string() ? Kind.get<std::string>() : "")),
+            false};
+  }
   // Worker transport and session fields an agent never acts on.
   for (const auto &[Key, Value] : Payload.items())
     if (Key != "type" && Key != "protocol_major" && Key != "request_id" &&
