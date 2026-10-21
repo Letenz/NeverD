@@ -534,6 +534,8 @@ JSON レポートは `stop_reason`、null を取り得る `nt_status` と `nt_su
 
 COFF ローダーは V2 のエピローグ位置をプロローグ操作から分離します。V2 は主フレームの保存レジスターと宣言範囲内の正確な位置から復元し、スタック領域の解放はその範囲外です。不正な範囲、サイズ、復元列はスタック読み取り前に拒否します。V1 は命令による認識を維持し、全バックエンドが同じスタック検証と例外処理を共有します。
 
+V2 のエピローグを定義するのは先頭の連続した `UWOP_EPILOG` だけです。後続のマーカーは 2 スロットを消費し、状態の復元やプロローグのオフセット順序には影響しません。途中で切れたペアは不正として拒否します。
+
 ネイティブ x64 KVM/WHP は実際の `#XM` を `X64SIMDException` 経由でドライバーの C SEH に渡します。ハードウェア例外の `CONTEXT` は XMM0–15 と MXCSR を保持します。フィルター、例外アンワインド中の finally、選択されたハンドラーは MXCSR `0x1f80` と DF クリアで実行されます。負のフィルターは XMM と最上位の `CONTEXT.MxCsr` を変更して元の命令を再試行できます。後者にはゲスト CPU のマスクを適用し、`FltSave.MxCsr` はカーネル復元に使用しません。モデル API の例外は整数/制御レコードを維持し、x87/AVX コンテキスト変更は引き続き拒否します。
 
 C SEH のスコープは終端を含まない半開区間です。有効な `__C_specific_handler` の着地点が保護区間内にある場合もあります。[LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) は区間終端に `EndLabel + 1` を出力します。Windows OS モデルは元の端点を保持し、再配置後も実行可能性、所属関数、継続先の一致を独立に検証します。`KernelSEHContinuationCases.def` は元のフィクスチャの配置を保持し、`ScopeEndLabelMayOverlapTheHandlerLandingPad` は定数ハンドラーとフィルターを検査します。関連テストは終端の除外と、不正な対象を拒否してもディスパッチ状態を消費せず再試行できることを確認します。これらの純粋なモデル検査は Unicorn を無効にした `NeverDNativeDriverTests` でも実行されます。

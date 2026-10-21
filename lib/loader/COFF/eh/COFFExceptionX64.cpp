@@ -118,14 +118,6 @@ bool decodeV1V2Operations(ExceptionFunction &F, const uint8_t *Codes,
     uint8_t Slots = 1;
     UnwindOperationKind Kind = UnwindOperationKind::Opaque;
 
-    if (CodeOffset > F.PrologueSize ||
-        (PreviousCodeOffset && CodeOffset > *PreviousCodeOffset)) {
-      diagnose(F, ExceptionParseStatus::Malformed,
-               "invalid x64 unwind-code ordering or prologue offset");
-      return false;
-    }
-    PreviousCodeOffset = CodeOffset;
-
     auto RequireSlots = [&](uint8_t Required) {
       if (Required > Count - I) {
         diagnose(F, ExceptionParseStatus::Malformed,
@@ -135,6 +127,24 @@ bool decodeV1V2Operations(ExceptionFunction &F, const uint8_t *Codes,
       Slots = Required;
       return true;
     };
+
+    if (F.UnwindVersion == 2 && Opcode == UOP_Epilog) {
+      // Only the leading marker sequence describes epilogue positions.
+      // Prologue unwind skips later markers with their following slot;
+      // neither slot participates in prologue offset ordering.
+      if (!RequireSlots(2))
+        return false;
+      I += Slots;
+      continue;
+    }
+
+    if (CodeOffset > F.PrologueSize ||
+        (PreviousCodeOffset && CodeOffset > *PreviousCodeOffset)) {
+      diagnose(F, ExceptionParseStatus::Malformed,
+               "invalid x64 unwind-code ordering or prologue offset");
+      return false;
+    }
+    PreviousCodeOffset = CodeOffset;
 
     switch (Opcode) {
     case UOP_PushNonVol:
@@ -175,11 +185,6 @@ bool decodeV1V2Operations(ExceptionFunction &F, const uint8_t *Codes,
         return false;
       break;
     case UOP_Epilog:
-      if (F.UnwindVersion == 2) {
-        diagnose(F, ExceptionParseStatus::Malformed,
-                 "x64 v2 epilogue code follows prologue operations");
-        return false;
-      }
       diagnose(F, ExceptionParseStatus::Partial,
                "reserved x64 v1 unwind opcode 6");
       break;

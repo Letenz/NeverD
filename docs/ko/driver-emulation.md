@@ -529,6 +529,8 @@ JSON 보고서는 `stop_reason`, null이 가능한 `nt_status`와 `nt_success`, 
 
 COFF 로더는 V2 에필로그 위치를 프롤로그 연산과 분리합니다. V2는 주 프레임의 저장 레지스터와 선언된 에필로그 안의 정확한 위치를 기준으로 복원하며 스택 공간 해제는 그 범위 밖입니다. 잘못된 범위, 크기 또는 복원 순서는 스택 읽기 전에 거부합니다. V1은 명령 기반 인식을 유지하며 모든 백엔드가 스택 검사와 예외 처리를 공유합니다.
 
+V2 에필로그는 선두의 연속된 `UWOP_EPILOG`만 정의합니다. 뒤따르는 마커는 두 슬롯을 건너뛰며 상태 복원이나 프롤로그 오프셋 순서에 영향을 주지 않습니다. 잘린 슬롯 쌍은 여전히 잘못된 형식으로 거부합니다.
+
 네이티브 x64 KVM/WHP는 실제 `#XM`을 `X64SIMDException`을 통해 드라이버 C SEH로 전달합니다. 하드웨어 오류의 `CONTEXT`는 XMM0–15와 MXCSR를 보존합니다. 필터, 예외 언와인드 finally 콜백과 선택된 핸들러는 MXCSR `0x1f80`, DF 해제 상태에서 실행됩니다. 음수 필터는 XMM과 최상위 `CONTEXT.MxCsr`를 수정한 후 원래 명령을 재시도할 수 있습니다. 후자에는 게스트 CPU 마스크가 적용되며 `FltSave.MxCsr`는 커널 복원을 제어하지 않습니다. 모델 API 예외는 정수/제어 레코드를 유지하며 x87/AVX 컨텍스트 수정은 계속 거부됩니다.
 
 C SEH 범위는 끝 주소를 포함하지 않는 반개방 구간입니다. 유효한 `__C_specific_handler` 착지점이 보호 구간 안에 있을 수 있습니다. [LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608)은 구간 끝에 `EndLabel + 1`을 기록합니다. Windows OS 모델은 원래 경계를 유지하며 재배치 후에도 실행 가능 여부, 소유 함수, 후속 실행 주소의 일치를 각각 검증합니다. `KernelSEHContinuationCases.def`는 원본 픽스처 배치를 보존하고 `ScopeEndLabelMayOverlapTheHandlerLandingPad`는 상수 처리기와 필터를 검사합니다. 관련 테스트는 끝 주소 제외와 잘못된 대상 거부 후 디스패치 상태를 소비하지 않고 재시도할 수 있음을 확인합니다. 이 순수 모델 검사는 Unicorn을 비활성화한 `NeverDNativeDriverTests`에서도 실행됩니다.
