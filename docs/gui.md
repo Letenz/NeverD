@@ -601,9 +601,11 @@ window Ctrl+F finds text, where IDA's disassembly goes to the next error.
 
 `scripts/compare_gui_with_ida.py --ida <installation>` checks the table against
 an IDA installation and reports, menu by menu, which of IDA's commands the
-workbench has, plans and lacks. Against IDA 9.4 on 2026-10-09, all 89 rows
-matched IDA's configuration, and the workbench had 83 of the 255 commands in
-IDA's main menus, with 59 more planned.
+workbench has, plans and lacks. Against IDA 9.5 on 2026-10-21, all 116 rows
+matched IDA's configuration, and the workbench had 103 of the 255 commands in
+IDA's main menus, with 38 more planned. IDA 9.5 calls the commands of the
+workbench's Copy (Ctrl+C) and Create C file (Ctrl+F5) `CopyListingAsText` and
+`hx:BatchDecompile`, where 9.4 called them `EditCopy` and `hx:CreateCFile`.
 
 **Edit → Copy** (Ctrl+C) copies from the window that has the keyboard focus:
 the selected lines of a disassembly, pseudocode or IR window (the current line
