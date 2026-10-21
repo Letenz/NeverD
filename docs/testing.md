@@ -6041,6 +6041,15 @@ Self/forward edges, a 129-action chain and record-budget overflow refuse.
 Independent generated-state tests bind both a dense 4,096-state table and a
 two-state table projected from 4,096 source states, rejecting omitted actions
 and changed outer edges.
+`RegistrationTryLevel.DirectCxxAllocatingProbeKeepsItsFrameAndCall` checks
+72 allocation/save/publication/entry combinations, including unaligned and
+maximum bounded allocations, hotpatch entries and a preceding guessed owner.
+The source and MedIR calls must remain present and incomplete source state
+must not acquire a physical native frame binding.
+`AllocatingProbeRequiresCurrentInstructionsAndStorage` changes all 43 helper
+bytes individually and checks altered calls, allocation bounds, writable,
+truncated or ambiguous mappings, fixups, architecture/format and invalid call
+addresses. A valid helper cannot rescue an altered frame or publication.
 `RegistrationTryLevel.CxxEAXHelper*` separately checks shared C++ prologue
 descriptions, including every instruction byte, parent identity, storage and
 fixups. Allocation zero retains the overwritten EBX save, and unaligned

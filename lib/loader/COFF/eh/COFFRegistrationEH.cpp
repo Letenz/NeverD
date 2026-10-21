@@ -9,6 +9,7 @@
 #include "COFFRegistrationEHDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/loader/COFF/COFFStackProbe.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -171,6 +172,13 @@ std::optional<size_t> directCxxCookiePublication(const BinaryImage &Img,
   } else if (Cursor + 6 <= Size && P[Cursor] == 0x81 && P[Cursor + 1] == 0xec) {
     Allocation = readLE<int32_t>(P + Cursor + 2);
     Cursor += 6;
+  } else if (Cursor + 10 <= Size && P[Cursor] == 0xb8) {
+    const auto Probe = getCheckedX86AllocatingStackProbeCall(
+        Img, Site.Range.Begin + Cursor + 5);
+    if (!Probe || Probe->Helper.overlaps(Site.Range))
+      return std::nullopt;
+    Allocation = Probe->AllocationBytes;
+    Cursor += 10;
   }
   if (Allocation < 0 || Allocation > limits::kMaxSourceCallBorrowedBytes)
     return std::nullopt;
@@ -201,6 +209,13 @@ std::optional<size_t> directCxxCookiePublication(const BinaryImage &Img,
       getX86RegistrationChainStoreSize(Img, Site.Range.Begin + Cursor);
   if (!Store || *Store > Size - Cursor ||
       (*Store == 7 && P[Cursor + 2] != 0x05))
+    return std::nullopt;
+  // The handler immediate and cookie address are the only absolute operands.
+  // Neither a writable prefix nor a fixup over the allocation/branch can
+  // supply a stable physical frame description.
+  if (!readImmutablePE32CodeBytes(
+          Img, Site.Range.Begin, Cursor + *Store,
+          {Site.Range.Begin + 6, Site.Range.Begin + Cursor - 10}))
     return std::nullopt;
   return Cursor;
 }
@@ -265,6 +280,38 @@ void proveDirectRegistrationLayout(const BinaryImage &Img,
 }
 
 } // namespace
+
+std::optional<registration_detail::PhysicalRegistrationEntry>
+registration_detail::directCxxCookieInstallEntry(const BinaryImage &Img,
+                                                 const InstallSite &Source) {
+  if (Img.Arch != Arch::X86 || Img.Bits != Bitness::Bits32 ||
+      Img.Format != BinaryFormat::COFF || !Source.Identity.CxxFuncInfoVA ||
+      Source.TryLevel != -1 || Source.InstallVA < 10)
+    return std::nullopt;
+  auto Site = Source;
+  Site.Range.Begin = Site.InstallVA - 10;
+  if (!Source.Range.contains(Site.Range.Begin))
+    return std::nullopt;
+  // Preserve an existing hotpatch entry. Bytes preceding an independently
+  // recovered prefix do not establish an additional instruction boundary.
+  if (Site.Range.Begin >= 2 && Source.Range.Begin == Site.Range.Begin - 2)
+    if (const auto *P = Img.readVA(Source.Range.Begin, 2);
+        P && P[0] == 0x8b && P[1] == 0xff)
+      Site.Range.Begin = Source.Range.Begin;
+  RegistrationChainInfo Chain;
+  Chain.SeededTryLevel = Source.TryLevel;
+  proveDirectRegistrationLayout(Img, Site, Chain);
+  // A complete cookie publication, not merely the preceding FS head read,
+  // establishes this local ownership boundary. Layout uses the same proof.
+  if (Chain.RegistrationOffset != -12 || Chain.TryLevelOffset != -4 ||
+      Chain.ChainInstallVA <= Source.InstallVA + 7)
+    return std::nullopt;
+  std::optional<va_t> ReturningCall;
+  const va_t Allocation = Source.InstallVA + 7;
+  if (const auto *P = Img.readVA(Allocation, 1); P && P[0] == 0xb8)
+    ReturningCall = Allocation + 5;
+  return PhysicalRegistrationEntry{Site.Range.Begin, ReturningCall};
+}
 
 void parseX86RegistrationExceptions(BinaryImage &Img) {
   if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF)

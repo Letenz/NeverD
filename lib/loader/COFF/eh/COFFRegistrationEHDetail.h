@@ -332,6 +332,12 @@ struct InstallSite {
 std::optional<va_t> alignedCxxInstallEntry(const BinaryImage &Img,
                                            const InstallSite &Site);
 
+/// Reuse the full fixed C++ layout proof to recover a cookie-publishing entry
+/// inside a guessed owner. A checked allocating probe retains its returning
+/// instruction boundary, without an ordinary callee or native frame ABI.
+std::optional<PhysicalRegistrationEntry>
+directCxxCookieInstallEntry(const BinaryImage &Img, const InstallSite &Site);
+
 bool proveFixedCxxRegistrationLayout(const BinaryImage &Img,
                                      const InstallSite &Site,
                                      RegistrationChainInfo &Chain);

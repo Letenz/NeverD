@@ -1893,6 +1893,16 @@ or poisoned operations. It shares the frame proof's bounded work budget.
 ESI-based relays bind their base and saved entry EBP to each parent after cache
 lookup, again during caller ABI replay and during LLVM emission. LowIR owns
 the saved frame lifetime and object borrow proof.
+`getCheckedX86AllocatingStackProbeCall` authenticates an immutable PE32
+allocation constant, direct call and complete allocating page-probe helper.
+The fixed C++ installation proof uses its preserved EBP and below-node stores
+to identify a cookie-publishing frame. Entry recovery reuses that full layout
+proof before separating the frame from a preceding guessed owner. The exact
+handler/cookie operands may carry HIGHLOW fixups; allocation, call displacement
+and helper instructions may not. This description supplies no ordinary callee
+ABI or source lifetime proof. The original CALL remains in LowIR and MedIR,
+including page reads, faults, underflow clamping and return-PC movement;
+native reconstruction remains unavailable without their physical projection.
 `getCheckedX86CxxPrologueCall` shares the loader's exact EAX-handler helper
 decoder with entry discovery. It authenticates the current caller, allocation,
 helper, FuncInfo dispatch and any SafeSEH membership, then describes ordered

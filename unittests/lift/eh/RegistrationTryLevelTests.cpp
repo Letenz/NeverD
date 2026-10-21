@@ -34,6 +34,7 @@
 #include "neverd/loader/COFF/COFFException.h"
 #include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
+#include "neverd/loader/COFF/COFFStackProbe.h"
 #include "neverd/loader/ExceptionInfo.h"
 #include "neverd/loader/FunctionDiscovery.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -3813,95 +3814,127 @@ TEST(RegistrationTryLevel, CxxSharedEpilogueRequiresTheLiveCallAndSaves) {
   }
 }
 
-TEST(RegistrationTryLevel, DirectCxxStackGuardPreservesTheRegistrationNode) {
-  auto makeImage = [&](unsigned Allocation, unsigned Saves, bool AlternateXor,
-                       bool AlternateStore, unsigned Mutation,
-                       bool Hotpatch = false) {
-    auto Img = makeCxxContinuationImage();
-    constexpr uint32_t Cookie = kRData + 0xf0;
-    Img.DynInfo.SecurityCookieRVA = Cookie - kBase;
-    std::vector<uint8_t> Prefix = {0x55, 0x8b, 0xec, 0x6a, 0xff, 0x68};
-    if (Hotpatch)
-      Prefix.insert(Prefix.begin(), {0x8b, 0xff});
-    emit32(Prefix, kPersonality);
-    Prefix.insert(Prefix.end(), {0x64, 0xa1, 0, 0, 0, 0, 0x50});
-    if (Allocation || Mutation == 10 || Mutation == 11) {
-      if (Allocation < 128 && Mutation != 10 && Mutation != 11)
-        Prefix.insert(Prefix.end(), {0x83, 0xec, uint8_t(Allocation)});
-      else {
-        Prefix.insert(Prefix.end(), {0x81, 0xec});
-        emit32(Prefix, Mutation == 10 ? uint32_t(-4)
-                       : Mutation == 11
-                           ? limits::kMaxSourceCallBorrowedBytes + 1
-                           : Allocation);
-      }
+std::pair<BinaryImage, va_t>
+makeDirectCxxStackGuardImage(unsigned Allocation, unsigned Saves,
+                             bool AlternateXor, bool AlternateStore,
+                             unsigned Mutation = 0, bool Hotpatch = false,
+                             bool Probe = false, bool PriorOwner = false) {
+  auto Img = makeCxxContinuationImage();
+  constexpr uint32_t Cookie = kRData + 0xf0;
+  Img.DynInfo.SecurityCookieRVA = Cookie - kBase;
+  std::vector<uint8_t> Prefix = {0x55, 0x8b, 0xec, 0x6a, 0xff, 0x68};
+  if (Hotpatch)
+    Prefix.insert(Prefix.begin(), {0x8b, 0xff});
+  emit32(Prefix, kPersonality);
+  Prefix.insert(Prefix.end(), {0x64, 0xa1, 0, 0, 0, 0, 0x50});
+  if (Probe) {
+    Prefix.push_back(0xb8);
+    emit32(Prefix, Allocation);
+    Prefix.push_back(0xe8);
+    emit32(Prefix, 0x200 - (Prefix.size() + 4));
+  } else if (Allocation || Mutation == 10 || Mutation == 11) {
+    if (Allocation < 128 && Mutation != 10 && Mutation != 11)
+      Prefix.insert(Prefix.end(), {0x83, 0xec, uint8_t(Allocation)});
+    else {
+      Prefix.insert(Prefix.end(), {0x81, 0xec});
+      emit32(Prefix, Mutation == 10   ? uint32_t(-4)
+                     : Mutation == 11 ? limits::kMaxSourceCallBorrowedBytes + 1
+                                      : Allocation);
     }
-    const uint8_t Saved[] = {0x53, 0x56, 0x57};
-    for (unsigned I = 0; I != 3; ++I)
-      if (Saves & (1u << I))
-        Prefix.push_back(Saved[I]);
-    if (Mutation == 8)
-      Prefix.insert(Prefix.end(), {0x53, 0x53});
-    if (Mutation == 9)
-      Prefix.push_back(0x90);
-    Prefix.push_back(0xa1);
-    emit32(Prefix, Mutation == 2 ? Cookie + 4 : Cookie);
-    Prefix.push_back(AlternateXor ? 0x33 : 0x31);
-    Prefix.push_back(Mutation == 3 ? (AlternateXor ? 0xc4 : 0xe0)
-                                   : (AlternateXor ? 0xc5 : 0xe8));
-    Prefix.push_back(Mutation == 4 ? 0x51 : 0x50);
+  }
+  const uint8_t Saved[] = {0x53, 0x56, 0x57};
+  for (unsigned I = 0; I != 3; ++I)
+    if (Saves & (1u << I))
+      Prefix.push_back(Saved[I]);
+  if (Mutation == 8)
+    Prefix.insert(Prefix.end(), {0x53, 0x53});
+  if (Mutation == 9)
+    Prefix.push_back(0x90);
+  Prefix.push_back(0xa1);
+  emit32(Prefix, Mutation == 2 ? Cookie + 4 : Cookie);
+  Prefix.push_back(AlternateXor ? 0x33 : 0x31);
+  Prefix.push_back(Mutation == 3 ? (AlternateXor ? 0xc4 : 0xe0)
+                                 : (AlternateXor ? 0xc5 : 0xe8));
+  Prefix.push_back(Mutation == 4 ? 0x51 : 0x50);
+  Prefix.insert(Prefix.end(),
+                {0x8d, 0x45, uint8_t(Mutation == 5 ? 0xf8 : 0xf4)});
+  const va_t Publication = kText + Prefix.size();
+  if (AlternateStore)
     Prefix.insert(Prefix.end(),
-                  {0x8d, 0x45, uint8_t(Mutation == 5 ? 0xf8 : 0xf4)});
-    const va_t Publication = kText + Prefix.size();
-    if (AlternateStore)
-      Prefix.insert(Prefix.end(),
-                    {0x64, 0x89, uint8_t(Mutation == 7 ? 0x0d : 0x05)});
-    else
-      Prefix.insert(Prefix.end(), {0x64, uint8_t(Mutation == 7 ? 0xa2 : 0xa3)});
-    emit32(Prefix, Mutation == 6 ? 4 : 0);
-    // Ordinary body allocation starts after publication and leaves the
-    // original node and pushed guard word in place.
-    Prefix.insert(Prefix.end(), {0x83, 0xec, 0x10});
-    emitFrameStore(Prefix, -4, 0);
-    emitFrameStore(Prefix, -4, -1);
-    Prefix.push_back(0xe9);
-    emit32(Prefix, 0x80 - (Prefix.size() + 4));
-    EXPECT_LT(Prefix.size(), 0x80u);
-    auto &Text = Img.Segments[0];
-    std::fill(Text.Data.begin(), Text.Data.begin() + 0x80, 0xcc);
-    std::copy(Prefix.begin(), Prefix.end(), Text.Data.begin());
-    if (Mutation == 13)
-      Text.Data[4] = 0;
-    if (Mutation == 14)
-      Text.Data[2] = 0xc4;
-    if (Mutation == 1)
-      Img.DynInfo.SecurityCookieRVA = 0;
-    if (Mutation == 15)
-      Img.DynInfo.SecurityCookieRVA = UINT32_MAX;
-    // Reconstruct the C++ identity from the actual personality thunk and
-    // FuncInfo bytes, rather than carrying over the helper's metadata.
-    Text.Data.resize(0x110, 0xcc);
+                  {0x64, 0x89, uint8_t(Mutation == 7 ? 0x0d : 0x05)});
+  else
+    Prefix.insert(Prefix.end(), {0x64, uint8_t(Mutation == 7 ? 0xa2 : 0xa3)});
+  emit32(Prefix, Mutation == 6 ? 4 : 0);
+  // Ordinary body allocation starts after publication and leaves the
+  // original node and pushed guard word in place.
+  Prefix.insert(Prefix.end(), {0x83, 0xec, 0x10});
+  emitFrameStore(Prefix, -4, 0);
+  emitFrameStore(Prefix, -4, -1);
+  Prefix.push_back(0xe9);
+  emit32(Prefix, 0x80 - (Prefix.size() + 4));
+  EXPECT_LT(Prefix.size(), 0x80u);
+  auto &Text = Img.Segments[0];
+  std::fill(Text.Data.begin(), Text.Data.begin() + 0x80, 0xcc);
+  std::copy(Prefix.begin(), Prefix.end(), Text.Data.begin());
+  if (Mutation == 13)
+    Text.Data[4] = 0;
+  if (Mutation == 14)
+    Text.Data[2] = 0xc4;
+  if (Mutation == 1)
+    Img.DynInfo.SecurityCookieRVA = 0;
+  if (Mutation == 15)
+    Img.DynInfo.SecurityCookieRVA = UINT32_MAX;
+  // Reconstruct the C++ identity from the actual personality thunk and
+  // FuncInfo bytes, rather than carrying over the helper's metadata.
+  Text.Data.resize(0x110, 0xcc);
+  Text.Size = Text.FileSz = Text.Data.size();
+  Img.Sections[0].Size = Img.Sections[0].FileSz = Text.Size;
+  Text.Data[0x100] = 0xb8;
+  writeLE<uint32_t>(Text.Data.data() + 0x101, kRData);
+  Text.Data[0x105] = 0xff;
+  Text.Data[0x106] = 0x25;
+  writeLE<uint32_t>(Text.Data.data() + 0x107, kRData + 0x90);
+  for (auto &Symbol : Img.Symbols)
+    if (Symbol.Addr == kPersonality)
+      Symbol.Name = "cxx_personality_thunk";
+  Img.Imports.push_back(
+      {"vcruntime140.dll", "__CxxFrameHandler3", 0, kRData + 0x90});
+  if (Probe) {
+    const std::vector<uint8_t> Helper = {
+        0x51, 0x8d, 0x4c, 0x24, 0x04, 0x2b, 0xc8, 0x1b, 0xc0, 0xf7, 0xd0,
+        0x23, 0xc8, 0x8b, 0xc4, 0x25, 0x00, 0xf0, 0xff, 0xff, 0x3b, 0xc8,
+        0x72, 0x0a, 0x8b, 0xc1, 0x59, 0x94, 0x8b, 0x00, 0x89, 0x04, 0x24,
+        0xc3, 0x2d, 0x00, 0x10, 0x00, 0x00, 0x85, 0x00, 0xeb, 0xe9};
+    Text.Data.resize(0x200, 0xcc);
+    Text.Data.insert(Text.Data.end(), Helper.begin(), Helper.end());
     Text.Size = Text.FileSz = Text.Data.size();
     Img.Sections[0].Size = Img.Sections[0].FileSz = Text.Size;
-    Text.Data[0x100] = 0xb8;
-    writeLE<uint32_t>(Text.Data.data() + 0x101, kRData);
-    Text.Data[0x105] = 0xff;
-    Text.Data[0x106] = 0x25;
-    writeLE<uint32_t>(Text.Data.data() + 0x107, kRData + 0x90);
+    Img.Symbols.push_back(Symbol::makeFunc(kText + 0x200));
+  }
+  if (Mutation == 12) {
+    Text.Data.resize(Publication - kText + 5);
+    Text.Size = Text.FileSz = Text.Data.size();
+    Img.Sections[0].Size = Img.Sections[0].FileSz = Text.Size;
+  }
+  if (PriorOwner) {
+    // A preceding guessed range must not own this complete installation.
+    Text.Data.insert(Text.Data.begin(), 0x20, 0xcc);
+    Text.Data.front() = 0xc3;
+    Text.VA -= 0x20;
+    Text.Size = Text.FileSz = Text.Data.size();
+    Img.Sections[0].VA = Text.VA;
+    Img.Sections[0].Size = Img.Sections[0].FileSz = Text.Size;
     for (auto &Symbol : Img.Symbols)
-      if (Symbol.Addr == kPersonality)
-        Symbol.Name = "cxx_personality_thunk";
-    Img.Imports.push_back(
-        {"vcruntime140.dll", "__CxxFrameHandler3", 0, kRData + 0x90});
-    if (Mutation == 12) {
-      Text.Data.resize(Publication - kText + 5);
-      Text.Size = Text.FileSz = Text.Data.size();
-      Img.Sections[0].Size = Img.Sections[0].FileSz = Text.Size;
-    }
-    Img.ExceptionMetadata = {};
-    coff_loader::parseX86RegistrationExceptions(Img);
-    return std::make_pair(std::move(Img), Publication);
-  };
+      if (Symbol.Addr == kText)
+        Symbol = Symbol::makeFunc(kText - 0x20);
+    Img.VerifiedFunctionEntries.clear();
+  }
+  Img.ExceptionMetadata = {};
+  coff_loader::parseX86RegistrationExceptions(Img);
+  return std::make_pair(std::move(Img), Publication);
+}
+
+TEST(RegistrationTryLevel, DirectCxxStackGuardPreservesTheRegistrationNode) {
   for (unsigned Allocation : {0u, 16u, 128u})
     for (unsigned Saves = 0; Saves != 8; ++Saves)
       for (bool Xor : {false, true})
@@ -3910,7 +3943,7 @@ TEST(RegistrationTryLevel, DirectCxxStackGuardPreservesTheRegistrationNode) {
                        std::to_string(Saves) + "/" + std::to_string(Xor) + "/" +
                        std::to_string(Store));
           const auto [Img, Publication] =
-              makeImage(Allocation, Saves, Xor, Store, 0);
+              makeDirectCxxStackGuardImage(Allocation, Saves, Xor, Store);
           const auto *EH = Img.ExceptionMetadata.findFunction(kText);
           ASSERT_NE(EH, nullptr);
           ASSERT_TRUE(EH->Registration);
@@ -3927,13 +3960,15 @@ TEST(RegistrationTryLevel, DirectCxxStackGuardPreservesTheRegistrationNode) {
   for (unsigned Mutation = 1; Mutation != 16; ++Mutation)
     for (bool Store : {false, true}) {
       SCOPED_TRACE(std::to_string(Mutation) + "/" + std::to_string(Store));
-      const auto [Img, Publication] = makeImage(16, 7, true, Store, Mutation);
+      const auto [Img, Publication] =
+          makeDirectCxxStackGuardImage(16, 7, true, Store, Mutation);
       const auto *EH = Img.ExceptionMetadata.findFunction(kText);
       EXPECT_FALSE(EH && EH->Registration &&
                    EH->Registration->cxxRuntimeFrameOffset());
     }
   for (bool Store : {false, true}) {
-    const auto [Img, Publication] = makeImage(16, 7, true, Store, 0, true);
+    const auto [Img, Publication] =
+        makeDirectCxxStackGuardImage(16, 7, true, Store, 0, true);
     const auto *EH = Img.ExceptionMetadata.findFunction(kText);
     ASSERT_NE(EH, nullptr);
     EXPECT_EQ(EH->CodeRange.Begin, kText);
@@ -3941,6 +3976,165 @@ TEST(RegistrationTryLevel, DirectCxxStackGuardPreservesTheRegistrationNode) {
     EXPECT_EQ(EH->Registration->RegistrationOffset, -12);
     EXPECT_EQ(EH->Registration->TryLevelOffset, -4);
     EXPECT_EQ(EH->Registration->ChainInstallVA, Publication);
+  }
+}
+
+TEST(RegistrationTryLevel, DirectCxxAllocatingProbeKeepsItsFrameAndCall) {
+  for (unsigned Allocation :
+       {0u, 1u, 16u, 128u, 0x12e0u, limits::kMaxSourceCallBorrowedBytes})
+    for (unsigned Saves : {0u, 7u})
+      for (bool Store : {false, true})
+        for (unsigned Owner = 0; Owner != 3; ++Owner) {
+          SCOPED_TRACE(::testing::Message() << Allocation << "/" << Saves << "/"
+                                            << Store << "/" << Owner);
+          const bool Hotpatch = Owner == 1;
+          const auto [Img, Publication] = makeDirectCxxStackGuardImage(
+              Allocation, Saves, true, Store, 0, Hotpatch, true, Owner == 2);
+          const auto *EH = Img.ExceptionMetadata.findFunction(kText);
+          ASSERT_NE(EH, nullptr);
+          ASSERT_EQ(EH->CodeRange.Begin, kText);
+          ASSERT_TRUE(EH->Registration);
+          EXPECT_EQ(EH->Registration->RegistrationOffset, -12);
+          EXPECT_EQ(EH->Registration->TryLevelOffset, -4);
+          EXPECT_EQ(EH->Registration->ChainInstallVA, Publication);
+          EXPECT_EQ(EH->Registration->cxxRuntimeFrameOffset(), 0);
+          const va_t CallVA = kText + 22 + (Hotpatch ? 2 : 0);
+          const auto Probe =
+              coff_loader::getCheckedX86AllocatingStackProbeCall(Img, CallVA);
+          ASSERT_TRUE(Probe);
+          EXPECT_EQ(Probe->Caller.Begin, CallVA - 5);
+          EXPECT_EQ(Probe->Caller.End, CallVA + 5);
+          EXPECT_EQ(Probe->CallVA, CallVA);
+          EXPECT_EQ(Probe->Helper.Begin, kText + 0x200);
+          EXPECT_EQ(Probe->Helper.End, kText + 0x22b);
+          EXPECT_EQ(Probe->AllocationBytes, Allocation);
+        }
+  auto [Img, Publication] =
+      makeDirectCxxStackGuardImage(0x12e0, 7, true, false, 0, false, true);
+  const auto Low = liftEntry(Img, kText);
+  unsigned Calls = 0;
+  for (const auto &Block : Low.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Addr == kText + 22 && Op.Opcode == NdOp::CALL) {
+        ++Calls;
+        ASSERT_EQ(Op.NumInputs, 1);
+        EXPECT_EQ(Op.Inputs[0], NdVar::cst(kText + 0x200, 4));
+      }
+  EXPECT_EQ(Calls, 1u);
+  ASSERT_TRUE(Low.RegistrationStates);
+  EXPECT_FALSE(Low.RegistrationStates->Complete);
+  LowToMedConverter Converter;
+  Converter.setBinaryImage(&Img);
+  const auto Med = Converter.convert(Low, Arch::X86, BinaryFormat::COFF);
+  Calls = 0;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Addr == kText + 22 && Op.Opcode == NdOp::CALL)
+        ++Calls;
+  EXPECT_EQ(Calls, 1u);
+  EXPECT_FALSE(Med.RegistrationPhysicalFrame);
+}
+
+TEST(RegistrationTryLevel,
+     AllocatingProbeRequiresCurrentInstructionsAndStorage) {
+  const auto [Original, Publication] =
+      makeDirectCxxStackGuardImage(0x12e0, 7, true, false, 0, false, true);
+  constexpr va_t CallVA = kText + 22;
+  auto CheckRejected = [&](BinaryImage Image) {
+    EXPECT_FALSE(
+        coff_loader::getCheckedX86AllocatingStackProbeCall(Image, CallVA));
+    Image.ExceptionMetadata = {};
+    coff_loader::parseX86RegistrationExceptions(Image);
+    const auto *EH = Image.ExceptionMetadata.findFunction(kText);
+    EXPECT_FALSE(EH && EH->Registration &&
+                 EH->Registration->cxxRuntimeFrameOffset());
+  };
+  for (unsigned Byte = 0; Byte != 43; ++Byte) {
+    SCOPED_TRACE(Byte);
+    auto Image = Original;
+    Image.Segments[0].Data[0x200 + Byte] ^= 1;
+    CheckRejected(std::move(Image));
+  }
+  for (unsigned Mutation = 0; Mutation != 19; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = Original;
+    auto &Text = Image.Segments[0];
+    switch (Mutation) {
+    case 0:
+      Text.Data[17] = 0xb9; // Allocation no longer enters EAX.
+      break;
+    case 1:
+      Text.Data[22] = 0xe9; // Tail jump has no continuation PC.
+      break;
+    case 2:
+      ++Text.Data[23]; // Enter the helper at an operand/interior instruction.
+      break;
+    case 3:
+      writeLE<uint32_t>(Text.Data.data() + 18, UINT32_MAX);
+      break;
+    case 4:
+      writeLE<uint32_t>(Text.Data.data() + 18,
+                        limits::kMaxSourceCallBorrowedBytes + 1);
+      break;
+    case 5:
+      Text.Flags = Text.Flags | SegmentFlags::Writable;
+      break;
+    case 6:
+      Image.Sections[0].Flags = Image.Sections[0].Flags | SegmentFlags::Writable;
+      break;
+    case 7:
+      Text.Data.pop_back();
+      break;
+    case 8:
+      --Text.FileSz;
+      break;
+    case 9:
+      --Image.Sections[0].FileSz;
+      break;
+    case 10:
+      Image.Segments.push_back(Text);
+      break;
+    case 11:
+      Image.Sections.push_back(Image.Sections[0]);
+      break;
+    case 12:
+      Image.BaseRelocations.push_back({CallVA - 4, 3});
+      break;
+    case 13:
+      Image.BaseRelocations.push_back({CallVA + 1, 3});
+      break;
+    case 14:
+      Image.BaseRelocations.push_back({kText + 0x210, 3});
+      break;
+    case 15:
+      Image.Format = BinaryFormat::ELF;
+      break;
+    case 16:
+      Image.Arch = Arch::X64;
+      break;
+    case 17:
+      Image.Bits = Bitness::Bits64;
+      break;
+    case 18:
+      Image.IsRelocatable = true;
+      break;
+    }
+    CheckRejected(std::move(Image));
+  }
+  for (va_t Call : {va_t(0), va_t(4), va_t(UINT32_MAX), CallVA - 1, CallVA + 1})
+    EXPECT_FALSE(
+        coff_loader::getCheckedX86AllocatingStackProbeCall(Original, Call));
+  // A valid probe still cannot authenticate a changed publication or node.
+  for (unsigned Mutation : {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 13u, 14u}) {
+    SCOPED_TRACE(Mutation);
+    const auto [Image, Store] = makeDirectCxxStackGuardImage(
+        0x12e0, 7, true, false, Mutation, false, true, true);
+    ASSERT_TRUE(
+        coff_loader::getCheckedX86AllocatingStackProbeCall(Image, CallVA));
+    const auto *EH = Image.ExceptionMetadata.findFunction(kText);
+    EXPECT_FALSE(EH && EH->Registration &&
+                 EH->Registration->cxxRuntimeFrameOffset());
+    EXPECT_FALSE(Image.VerifiedFunctionEntries.count(kText));
   }
 }
 

@@ -397,6 +397,13 @@ std::vector<InstallSite> findInstallSites(const BinaryImage &Img,
       auto Entry = directInstallEntry(Img, Site);
       if (!Entry)
         Entry = alignedCxxInstallEntry(Img, Site);
+      if (!Entry) {
+        Site.Range = *Range;
+        if (const auto CookieEntry = directCxxCookieInstallEntry(Img, Site)) {
+          Entry = CookieEntry->Address;
+          Site.ReturningEntryCall = CookieEntry->ReturningCall;
+        }
+      }
       if (Entry && Range->contains(*Entry)) {
         Range->Begin = *Entry;
         Site.HasPhysicalEntry = true;
