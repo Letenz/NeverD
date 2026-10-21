@@ -16,6 +16,7 @@ Before editing, read the [architecture guide](docs/architecture.md). Use the
 [testing guide](docs/testing.md) for suite selection and the
 [roadmap](docs/roadmap.md) for planned product work.
 
+<!-- i18n-section: prerequisites -->
 ## Prerequisites
 
 - Git with recursive submodule support
@@ -30,6 +31,7 @@ The recursive submodules provide NeverD's LLVM fork, Capstone fork, Unicorn,
 and signature data. Do not replace them with arbitrary system revisions when
 validating a change.
 
+<!-- i18n-section: clone -->
 ## Clone and initialize
 
 Development is integrated on `dev`, which is also the repository's default
@@ -49,6 +51,7 @@ git submodule sync --recursive
 git submodule update --init --recursive
 ```
 
+<!-- i18n-section: build -->
 ## Choose a build profile
 
 | Profile | Use it for | Important behavior |
@@ -85,6 +88,7 @@ python scripts/build.py build-debug --parallel
 Never report decode or lift throughput from a Debug build. Use Release for
 benchmarks, or RelWithDebInfo when profiling needs symbols.
 
+<!-- i18n-section: allocator -->
 ### Process allocator
 
 Linux, macOS and Windows MSVC/clang-cl builds enable `NEVERD_ENABLE_MIMALLOC`
@@ -138,6 +142,7 @@ the `install` target directly is rejected before compilation.
 See [allocator validation](docs/testing.md#allocator-validation) for smoke tests
 and performance comparison guidance.
 
+<!-- i18n-section: acceleration -->
 ### Performance libraries
 
 Normal builds enable Highway byte scanning, simdutf UTF-8 validation,
@@ -165,6 +170,7 @@ scheduler. Distribute its runtime DLL/shared library with enabled builds.
 See [acceleration validation](docs/testing.md#acceleration-libraries) for
 native tests, opt-out comparisons and the scheduler compatibility limits.
 
+<!-- i18n-section: prebuilt-llvm -->
 ### Prebuilt LLVM on macOS
 
 Apple Silicon contributors can avoid compiling the LLVM fork locally:
@@ -184,6 +190,7 @@ must use the default local LLVM build. Advanced overrides such as
 `NEVERD_LLVM_PREBUILT_TAG`, mirror URL, cache directory, and an explicit
 checksum are documented in `cmake/NeverDLLVMPrebuilt.cmake`.
 
+<!-- i18n-section: workflow -->
 ## Branch and pull-request workflow
 
 Start work from an up-to-date `dev` and use a focused topic branch:
@@ -199,6 +206,7 @@ reviewable: one coherent purpose, no generated build output, no unrelated
 formatting, and no submodule revision changes unless they are part of the
 proposal.
 
+<!-- i18n-section: code-style -->
 ## Code style
 
 C and C++ follow the [LLVM Coding Standards](https://llvm.org/docs/CodingStandards.html),
@@ -222,6 +230,7 @@ file's naming and decomposition patterns, keep platform-specific behavior at
 the relevant loader/lifter/backend boundary, and avoid exposing internal C++
 types through the pure C SDK.
 
+<!-- i18n-section: headers -->
 ### File and header layout
 
 - New C++ source and header files start with the LLVM-style filename/purpose
@@ -284,6 +293,7 @@ inline constexpr uint64_t kMaxUnsizedInstructions = 65536;
 #endif // NEVERD_SDK_LIMITS_H
 ```
 
+<!-- i18n-section: policy -->
 ### Limits, defaults and configuration ownership
 
 Give each policy one authoritative definition in its owning subsystem's
@@ -342,16 +352,23 @@ insufficient. A consolidation preserves types, values, comparison directions,
 sentinels and exhaustion/error behavior. Treat policy changes separately and
 run the affected checks from the [testing guide](docs/testing.md).
 
+<!-- i18n-section: artifacts -->
 ### Documentation and local artifacts
 
 Markdown should be concise and source-verifiable. Use relative links for files
 inside the repository, and update documentation in the same pull request when
 CLI behavior, public APIs, support claims, build flags, or test commands change.
 
+Synchronize every supported translation when changing this guide. Review each
+translation before updating its `i18n-source` SHA-256; retain matching sections,
+examples, API/options and link destinations. Run `python3 scripts/check_docs_i18n.py`
+to check documentation links and translation parity.
+
 Keep machine-local performance reports, raw traces and timing summaries in
 ignored build or benchmark-results directories. Commit reusable measurement
 tools and regression tests, not local benchmark reports or copied result tables.
 
+<!-- i18n-section: tests -->
 ## Run tests
 
 Run all registered tests through the aggregate target:
@@ -378,6 +395,9 @@ label-only transform suites, single-test regexes, fixture compilation, and
 Unicorn roundtrips. If a target is skipped because a cross-compiler or linker is
 missing, report that limitation; do not describe the skipped path as passing.
 
+<!-- i18n-section: python-sdk -->
+### Python plugin SDK
+
 For Python plugin SDK changes, run the pure-Python and drift suites before the
 native adapter tests:
 
@@ -396,6 +416,7 @@ Public C declarations, Python ABI signatures, package/CMake versions, and
 delivery workflow policy are one reviewed contract; update them in the same
 change. See the [Python plugin guide](docs/python-plugins.md).
 
+<!-- i18n-section: review -->
 ## Pull-request checklist
 
 Before requesting review:

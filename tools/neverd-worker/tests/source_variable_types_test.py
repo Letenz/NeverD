@@ -151,9 +151,8 @@ def run(executable, compiler=None):
         typed_call.write_bytes(binary.read_bytes())
         ok(owner, "open", {"path": str(typed_call), "analysis": False})
         ok(owner, "analyze")
-        # Discovery already lists the direct-call target, without a symbol.
-        functions = ok(owner, "functions", {"limit": 512})["items"]
-        assert any(int(item["address"], 16) == ENTRY + 21 for item in functions), functions
+        # Discovery finds the helper the entry calls.
+        assert ok(owner, "resolve", {"query": hex(ENTRY + 21)})["function_address"] == hex(ENTRY + 21)
         ok(owner, "local_types_declare", {"source":
             "struct QA_PREVIOUS { unsigned int OldState; unsigned int OldLength; unsigned int OldFlags; };"
             "struct QA_CHOSEN { unsigned int State; unsigned int Length; unsigned int Flags; };"})

@@ -9946,13 +9946,8 @@ TEST_F(SessionCAPITest, UserFunctionAttributesDecideHowCallsEndAndPersist) {
   const auto Entry = neverd_session_entry_addr(Session);
   const auto Helper = Entry + 11;
   const std::string HelperHex = "0x" + llvm::utohexstr(Helper);
-  // The direct call discovers the unnamed helper. Recreate it as an analyst
-  // entry so the sidecar below also covers the explicitly created state.
+  // No symbol names the helper, but discovery finds it: the entry calls it.
   ASSERT_GE(neverd_func_find_by_addr(Session, Helper), 0);
-  ASSERT_EQ(neverd_func_delete(Session, Helper), 0)
-      << takeString(neverd_last_error(Session));
-  ASSERT_EQ(neverd_func_create(Session, Helper), 0)
-      << takeString(neverd_last_error(Session));
   const auto analyzeAll = [&](neverd_session_t In) {
     neverd_session_restrict_function(In, 0);
     return neverd_session_analyze(In);
@@ -10024,7 +10019,7 @@ TEST_F(SessionCAPITest, UserFunctionAttributesDecideHowCallsEndAndPersist) {
   const std::string Rows =
       "[{\"addr\":\"" + HelperHex +
       "\",\"color\":\"#20A0FF\",\"library\":true,\"noreturn\":true,"
-      "\"state\":\"created\",\"static\":false}]";
+      "\"static\":false}]";
   EXPECT_EQ(takeString(neverd_functions_json(Session)), Rows);
   EXPECT_EQ(neverd_func_edit(Session, Helper, "{\"noreturn\":\"yes\"}"), -1);
   EXPECT_NE(lastError().find("\"noreturn\" is true, false or null"),

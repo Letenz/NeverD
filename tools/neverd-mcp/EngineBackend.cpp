@@ -33,8 +33,9 @@ EngineBackend::EngineBackend(const std::filesystem::path &Input)
   if (Error)
     Path = std::filesystem::absolute(Input);
   try {
-    // As the workbench opens a file, with each function's analysis prepared
-    // between requests, but never written back.
+    // Never written back. Each function's analysis is prepared between
+    // requests because this engine answers the decompiles itself; the
+    // workbench skips that, as its analysis replicas cannot reuse it.
     (void)Engine->executeResponse(
         "open", {{"path", utf8(Path)}, {"read_only", true}, {"warm", true}});
   } catch (const std::exception &Failure) {
