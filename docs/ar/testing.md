@@ -2153,3 +2153,9 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 ## اختبارات انحدار القراءات المنتهية من RAM العادية
 
 تتحقق `LowIRReadTrace.*` من المدخلات المشتركة وترتيبي البايتات وتغيير العنوان والعرض والترتيب والعدد وجميع الفروع والتداخل الجزئي مع كتابات الإطار السابقة والقيم غير المحددة واستقلال القراءات المتكررة والميزانيات الدقيقة والناقصة ورفض الحلقات. تتحقق `OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` من استقلال الشيفرة الأصلية والتنقيح من الشيفرة الأصلية إلى LowIR ورفض المؤشر المعدل. شغّل `NeverDLowIRRefinementTests` و`NeverDLowIRUndefinedIndependenceTests` و`NeverDOriginalBinaryUndefinedIndependenceTests` و`NeverDPEFixedImageTests` و`NeverDInterpreterSpecializationTests`. لا تؤهل هذه البراهين وحدها شيفرة C المترجمة أو خلفية CPU فعلية.
+
+## اختبارات انحدار الاستعلامات العددية الأصلية
+
+يغطي `NativeQueryTrace.*` الإجابات المستقلة والتوسعات الصفرية الأربعة وتغيير المحددات والعدد والترتيب والمحددات غير المعرّفة وتشابك القراءات وكل الفروع والحالة المحفوظة وتدقيق الترميز والتفاصيل والحزم غير الصالحة والميزانيات والبصمات ورفض الواجهات الثابتة والاستقرائية. يفحص `NativeScalarQueryDescriptor.*` حدود الوصف العامة وربط الإيصالات الفعلية.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.

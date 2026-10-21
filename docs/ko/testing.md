@@ -2117,3 +2117,9 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 ## 유한 일반 RAM 읽기 회귀 테스트
 
 `LowIRReadTrace.*`는 공유 입력, 양쪽 바이트 순서, 주소·폭·순서·횟수 변경, 모든 분기, 이전 프레임 쓰기와 부분 중첩, 미정의 값, 반복 읽기의 독립성, 정확하거나 부족한 예산 및 루프 거부를 검사합니다. `OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs`는 원본 기계어 독립성, 기계어에서 LowIR로의 정제와 포인터 변경 거부를 검사합니다. `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDPEFixedImageTests`, `NeverDInterpreterSpecializationTests`를 실행합니다. 이 증명만으로 컴파일된 C나 구체적 CPU 백엔드를 인증하지는 않습니다.
+
+## 네이티브 스칼라 질의 회귀 테스트
+
+`NativeQueryTrace.*`는 독립 결과, 네 가지 0 확장, 인자·횟수·순서 변경, 미정의 인자, 일반 읽기 교차, 모든 분기, 보존 상태, 인코딩·세부 감사, 잘못된 묶음, 예산, 다이제스트, 정적·귀납 거부를 검사합니다. `NativeScalarQueryDescriptor.*`는 공통 기술 제한과 실제 기록의 결합을 검사합니다.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.

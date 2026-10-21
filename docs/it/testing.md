@@ -2223,3 +2223,9 @@ Le regressioni della memoria assoluta coprono gruppi limitati contigui e sparsi,
 ## Regressioni delle letture finite dalla RAM ordinaria
 
 `LowIRReadTrace.*` verifica input condivisi, entrambi gli ordini dei byte, modifiche di indirizzo/ampiezza/ordine/conteggio, tutti i rami, sovrapposizioni parziali con scritture precedenti del frame, valori indefiniti, letture ripetute indipendenti, budget esatti/insufficienti e rifiuto dei cicli. `OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` verifica indipendenza nativa originale, raffinamento da codice nativo a LowIR e rifiuto di un puntatore modificato. Eseguire `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDPEFixedImageTests` e `NeverDInterpreterSpecializationTests`. Queste prove da sole non qualificano C compilato o un backend CPU concreto.
+
+## Regressioni delle interrogazioni scalari native
+
+`NativeQueryTrace.*` copre risposte indipendenti, quattro estensioni zero, mutazioni di selettori/numero/ordine, selettori indefiniti, letture intercalate, tutti i rami, stato preservato, audit di codifica/dettagli, gruppi errati, budget, impronte e rifiuti statici/induttivi. `NativeScalarQueryDescriptor.*` verifica limiti generici e vincolo delle ricevute effettive.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.

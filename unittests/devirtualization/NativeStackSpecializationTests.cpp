@@ -543,6 +543,27 @@ TEST(NativeStackSpecialization,
   }
 }
 
+TEST(NativeStackSpecialization,
+     AlignmentRetryDoesNotNominateAfterTerminalBudgetFailure) {
+  auto P = alignedSpillLoop(2);
+  P.add(0xff, {operation(NdOp::COPY, r(16), {c(7)}), branch(0x100)});
+  const auto Good = specializeInterpreter(P, {0xff}, registerCaseOptions());
+  ASSERT_TRUE(Good.complete()) << Good.Diagnostic;
+  ASSERT_GT(Good.ControlRefinements, 0u);
+  for (uint64_t Limit = 1; Limit < Good.EvaluatedOperations; ++Limit) {
+    auto Options = registerCaseOptions();
+    Options.MaxOperations = Limit;
+    const auto Result = specializeInterpreter(P, {0xff}, Options);
+    ASSERT_EQ(Result.Status, SpecializationStatus::BudgetExceeded)
+        << Limit << ": " << Result.Diagnostic;
+    EXPECT_TRUE(Result.Residual.Blocks.empty());
+    EXPECT_TRUE(Result.Origins.empty());
+    EXPECT_TRUE(Result.Reads.empty());
+    ASSERT_LE(Result.EvaluatedOperations, Limit + 1)
+        << Limit << ": " << Result.Diagnostic;
+  }
+}
+
 TEST(NativeStackSpecialization, OptionalWideMaskDoesNotForceStackPartition) {
   auto P = alignedSpillLoop(16);
   P.add(0xff, {operation(NdOp::INT_AND, r(0), {r(32), c(uint64_t{0} - 65536)}),

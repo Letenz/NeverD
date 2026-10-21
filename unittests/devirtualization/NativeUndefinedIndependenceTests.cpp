@@ -13,7 +13,9 @@
 
 #include "llvm/Support/Errc.h"
 
+#include <iterator>
 #include <map>
+#include <optional>
 
 using namespace neverd;
 using namespace neverd::analysis;
@@ -28,6 +30,12 @@ public:
   std::map<va_t, SpecializationInstruction> Instructions;
   std::map<va_t, unsigned> Fetches;
   std::map<va_t, uint8_t> ReadBytes;
+  std::optional<SpecializationScalarQuery> Query;
+
+  std::optional<SpecializationScalarQuery>
+  scalarQuery(llvm::ArrayRef<LowOp> Operations) override {
+    return Query;
+  }
 
   void prependLoad(va_t Address, va_t ReadAddress) {
     auto &Insn = Instructions.at(Address);
@@ -1258,5 +1266,124 @@ TEST(NativeTraceBlocks, InteriorLoopCutsStopBeforeGroupedInstructions) {
     EXPECT_EQ(Wrong.Proof.Status, LowIRRefinementStatus::Different)
         << Wrong.Proof.Diagnostic;
     EXPECT_FALSE(Wrong.Proof.Certificate);
+  }
+}
+
+namespace {
+// A synthetic provider contract tests the common descriptor protocol. These
+// bytes/operations are deliberately not an architectural decoding claim.
+NativeProvider scalarQueryProvider() {
+  NativeProvider P;
+  P.flags(false);
+  auto &I = P.Instructions.at(0x100);
+  I.Ops[0].Output = NdVar::reg(0, 8);
+  I.UndefinedEffects.OperationDigest = lowUndefinedOperationDigest(I.Ops);
+  SpecializationScalarQuery Q;
+  Q.Identity = "test.scalar";
+  Q.SemanticsVersion = 1;
+  Q.Selectors = {NdVar::scalar(7, 4)};
+  Q.ResultBits = {32};
+  Q.Bindings = {{NdVar::reg(0, 8), 0}};
+  P.Query = std::move(Q);
+  return P;
+}
+} // namespace
+
+TEST(NativeScalarQueryDescriptor, ActualDescriptorBindsTheProofDigest) {
+  auto C = contract();
+  C.ExternalQueries = LowIRExternalQueryModel::OrderedScalarV1;
+  C.ReturnRegisters = {{0, 8}};
+  auto P = scalarQueryProvider();
+  const auto Good = detail::checkNativeUndefinedIndependence(P, {0x100}, C, {});
+  ASSERT_TRUE(Good.Proof.proved()) << Good.Proof.Diagnostic;
+  ASSERT_EQ(Good.Proof.Certificate->ExternalQueryTransitions.size(), 1U);
+  using Mutation = void (*)(SpecializationScalarQuery &);
+  const Mutation Changes[]{
+      [](auto &Q) { Q.Identity = "test.other"; },
+      [](auto &Q) { ++Q.SemanticsVersion; },
+      [](auto &Q) { ++Q.Selectors[0].Offset; },
+      [](auto &Q) { Q.ResultBits[0] = 64; },
+      [](auto &Q) { Q.Bindings.push_back({NdVar::tmp(0x70, 8), 0}); }};
+  for (auto Change : Changes) {
+    auto Other = scalarQueryProvider();
+    Change(*Other.Query);
+    const auto R =
+        detail::checkNativeUndefinedIndependence(Other, {0x100}, C, {});
+    ASSERT_TRUE(R.Proof.proved()) << R.Proof.Diagnostic;
+    EXPECT_NE(R.Proof.Certificate->InputDigest,
+              Good.Proof.Certificate->InputDigest);
+    ASSERT_EQ(R.Proof.Certificate->ExternalQueryTransitions.size(), 1U);
+    EXPECT_NE(
+        R.Proof.Certificate->ExternalQueryTransitions[0].DescriptorDigest,
+        Good.Proof.Certificate->ExternalQueryTransitions[0].DescriptorDigest);
+    EXPECT_EQ(
+        R.Proof.Certificate->ExternalQueryTransitions[0].OperationDigest,
+        Good.Proof.Certificate->ExternalQueryTransitions[0].OperationDigest);
+  }
+}
+
+TEST(NativeScalarQueryDescriptor,
+     MalformedOrUnboundedDeclarationsNeverCertify) {
+  auto C = contract();
+  C.ExternalQueries = LowIRExternalQueryModel::OrderedScalarV1;
+  using Mutation = void (*)(SpecializationScalarQuery &);
+  const Mutation Changes[]{
+      [](auto &Q) { Q.Identity.clear(); },
+      [](auto &Q) { Q.Identity.assign(65, 'x'); },
+      [](auto &Q) { Q.SemanticsVersion = 0; },
+      [](auto &Q) { Q.Selectors.resize(9); },
+      [](auto &Q) { Q.Selectors[0] = NdVar::reg(0, 16); },
+      [](auto &Q) { Q.Selectors[0] = NdVar::tmp(0, 8); },
+      [](auto &Q) { Q.ResultBits.clear(); },
+      [](auto &Q) { Q.ResultBits.resize(9, 8); },
+      [](auto &Q) { Q.ResultBits[0] = 0; },
+      [](auto &Q) { Q.ResultBits[0] = 65; },
+      [](auto &Q) { Q.Bindings.clear(); },
+      [](auto &Q) { Q.Bindings.resize(17); },
+      [](auto &Q) { Q.Bindings[0].Result = 1; },
+      [](auto &Q) { Q.Bindings[0].Destination = NdVar::reg(0, 1); },
+      [](auto &Q) { Q.Bindings[0].Destination = NdVar::scalar(0, 8); },
+      [](auto &Q) { Q.Bindings[0].Destination = NdVar::reg(8, 8); },
+      [](auto &Q) { Q.Bindings.push_back({NdVar::reg(4, 4), 0}); },
+      [](auto &Q) {
+        Q.Bindings.push_back({NdVar::tmp(UINT64_MAX - 7, 8), 0});
+      }};
+  for (size_t I = 0; I != std::size(Changes); ++I) {
+    auto P = scalarQueryProvider();
+    Changes[I](*P.Query);
+    const auto R = detail::checkNativeUndefinedIndependence(P, {0x100}, C, {});
+    EXPECT_EQ(R.Proof.Status, LowIRIndependenceStatus::Invalid)
+        << I << ": " << R.Proof.Diagnostic;
+    EXPECT_FALSE(R.Proof.Certificate);
+  }
+}
+
+TEST(NativeScalarQueryDescriptor,
+     MetadataCeilingsHaveValidExactBoundaryControls) {
+  auto C = contract();
+  C.ExternalQueries = LowIRExternalQueryModel::OrderedScalarV1;
+  auto P = scalarQueryProvider();
+  auto &Q = *P.Query;
+  Q.Identity.assign(64, 'q');
+  Q.Selectors.assign(8, NdVar::scalar(7, 4));
+  Q.ResultBits.assign(8, 32);
+  for (unsigned I = 1; I != 16; ++I)
+    Q.Bindings.push_back({NdVar::tmp(0x100 + I * 8, 8), uint16_t(I % 8)});
+  const auto Good = detail::checkNativeUndefinedIndependence(P, {0x100}, C, {});
+  ASSERT_TRUE(Good.Proof.proved()) << Good.Proof.Diagnostic;
+  using Mutation = void (*)(SpecializationScalarQuery &);
+  const Mutation Changes[]{
+      [](auto &Q) { Q.Identity += 'q'; },
+      [](auto &Q) { Q.Selectors.push_back(NdVar::scalar(7, 4)); },
+      [](auto &Q) { Q.ResultBits.push_back(32); },
+      [](auto &Q) { Q.Bindings.push_back({NdVar::tmp(0x200, 8), 0}); }};
+  for (auto Change : Changes) {
+    auto Other = P;
+    Change(*Other.Query);
+    const auto R =
+        detail::checkNativeUndefinedIndependence(Other, {0x100}, C, {});
+    EXPECT_EQ(R.Proof.Status, LowIRIndependenceStatus::Invalid);
+    EXPECT_EQ(R.Proof.Diagnostic, "invalid scalar query descriptor");
+    EXPECT_FALSE(R.Proof.Certificate);
   }
 }

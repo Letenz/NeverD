@@ -1067,6 +1067,14 @@ Thumb addresses, unregistered x86 veneers and section-symbol aliases.
 and rejects treating ordinary data/IAT slots as synthetic object callees.
 `NeverDWorkerCallSiteTypes` compiles and executes both C routes, including all
 five Win64 variadic integer arguments, and retains partial-stack-write refusal.
+The engine's C is Clang's dialect (`__builtin_bit_cast`, calls through casts
+to a call site's own ABI, which GCC folds into the declared one), so a host
+without Clang skips it after the analysis checks, naming the routes it did not
+execute.
+`NeverDWorkerHeaderRecords` builds a program with the host compiler that reads
+`<netdb.h>`'s `struct addrinfo` and `struct servent` through a pointer
+`getaddrinfo` stores in a local and through `getservbyname`'s result, and
+requires C that names the members; a host without `<netdb.h>` skips it.
 `NeverDReturnContractTests` requires the shared no-return proof before an absent
 ordinary return can erase a function's result, including an external catch
 edge. Native pipeline CI executes the complete owner on each compiler.
@@ -9718,3 +9726,9 @@ Absolute-memory regressions cover bounded contiguous and sparse batches, complet
 ## Finite ordinary RAM read regression tests
 
 `LowIRReadTrace.*` checks shared inputs, both byte orders, changed addresses/widths/order/counts, every branch, partial overlap with prior frame writes, undefined producers, independent repeated reads, exact/short budgets and loop refusal. `OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` checks original native independence, native-to-LowIR refinement and a changed-pointer rejection. Run `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDPEFixedImageTests` and `NeverDInterpreterSpecializationTests`. These proofs do not by themselves qualify compiled C or a concrete CPU backend.
+
+## Native scalar query regression tests
+
+`NativeQueryTrace.*` covers independent query answers, all four zero extensions, selector/count/order mutations, undefined selectors, ordinary-read interleaving, every branch, unaffected state, strict byte/detail audits, malformed bundles, budgets, digest binding and static/inductive refusal. `NativeScalarQueryDescriptor.*` tests the generic descriptor limits and the actual receipt binding.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.

@@ -4494,6 +4494,11 @@ specializeInterpreter(SpecializationProvider &Provider,
                         std::move(Result), RawDomain);
     Result = Attempt.run();
     Result.DiscoveryVisits = Refinement.Visits;
+    // Precision hints can survive a frame-partition retry. They never revive
+    // a terminal failure or authorize more work after a budget is exhausted.
+    if (Result.Status == SpecializationStatus::BudgetExceeded ||
+        Result.Status == SpecializationStatus::InvalidInput)
+      return Result;
     if (Result.complete() && RawDomain) {
       if (auto Error = sealRawEnvironment(Result, RawDomain, Options)) {
         llvm::handleAllErrors(

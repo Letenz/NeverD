@@ -1398,8 +1398,12 @@ EmbeddedC renderEmbeddedC(const TypeLibrary &Library,
   }
   // The system's types are the program's too, which another language's
   // spelling of the unit defines.
-  for (const LocalType *Type : Theirs)
+  for (const LocalType *Type : Theirs) {
     Result.Types.push_back(Type->Name);
+    if (Type->Kind == TypeKind::Struct || Type->Kind == TypeKind::Union)
+      Result.HeaderRecords.emplace_back(Names.type(Type->Name),
+                                        Type->Kind == TypeKind::Union);
+  }
   // A function the system's headers declare by the name of a record they
   // define is an ordinary identifier the text declares (<sys/sysinfo.h>'s
   // sysinfo beside struct sysinfo, sigaction, flock): a unit spells the

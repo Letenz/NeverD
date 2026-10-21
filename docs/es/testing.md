@@ -2228,3 +2228,9 @@ Las regresiones de memoria absoluta cubren lotes acotados contiguos y dispersos,
 ## Regresiones de lecturas finitas de RAM ordinaria
 
 `LowIRReadTrace.*` comprueba entradas compartidas, ambos órdenes de bytes, cambios de dirección/anchura/orden/cantidad, todas las ramas, solapamientos parciales con escrituras previas del marco, valores indefinidos, lecturas repetidas independientes, presupuestos exactos/insuficientes y rechazo de bucles. `OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` comprueba independencia nativa original, refinamiento nativo a LowIR y rechazo de un puntero modificado. Ejecutar `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDPEFixedImageTests` y `NeverDInterpreterSpecializationTests`. Estas pruebas por sí solas no certifican C compilado ni un backend de CPU concreto.
+
+## Regresiones de consultas escalares nativas
+
+`NativeQueryTrace.*` cubre respuestas independientes, cuatro extensiones con cero, cambios de selectores/cantidad/orden, selectores indefinidos, lecturas intercaladas, todas las ramas, estado preservado, auditorías de codificación/detalles, grupos inválidos, presupuestos, huellas y rechazos estáticos/inductivos. `NativeScalarQueryDescriptor.*` comprueba límites genéricos y vinculación de recibos reales.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.

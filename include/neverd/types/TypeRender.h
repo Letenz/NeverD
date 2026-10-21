@@ -112,6 +112,9 @@ struct EmbeddedC {
   std::vector<std::pair<std::string, bool>> Records;
   /// The records Text only declares, which it points to, likewise.
   std::vector<std::pair<std::string, bool>> Declared;
+  /// The records Text has from the system's headers, which lay each out as
+  /// the program does with its members' names, likewise.
+  std::vector<std::pair<std::string, bool>> HeaderRecords;
   /// The ordinary identifiers Text declares, the names of typedefs and of
   /// enumerators, which the unit's own names step around.
   std::vector<std::string> Identifiers;

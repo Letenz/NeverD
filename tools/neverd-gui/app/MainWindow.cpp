@@ -78,6 +78,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QScopedValueRollback>
 #include <QSet>
 #include <QSettings>
@@ -1041,7 +1042,7 @@ std::optional<Address> MainWindow::currentAddress() const {
 }
 
 ChooserView *MainWindow::focusedChooser() const {
-  for (auto *widget = QApplication::focusWidget(); widget;
+  for (auto *widget = commandFocusWidget(); widget;
        widget = widget->parentWidget())
     if (auto *view = qobject_cast<ChooserView *>(widget))
       return view;
@@ -1049,7 +1050,7 @@ ChooserView *MainWindow::focusedChooser() const {
 }
 
 CodeView *MainWindow::focusedCodeView() const {
-  for (auto *widget = QApplication::focusWidget(); widget;
+  for (auto *widget = commandFocusWidget(); widget;
        widget = widget->parentWidget())
     if (auto *view = qobject_cast<CodeView *>(widget))
       return view;
@@ -3118,11 +3119,17 @@ void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
   session_.setStringOptions(names, page, length->value());
 }
 
+QWidget *MainWindow::commandFocusWidget() const {
+  if (contextMenuFocus_ && !QApplication::activeModalWidget())
+    return contextMenuFocus_;
+  return QApplication::focusWidget();
+}
+
 void MainWindow::copySelection() {
   // The view holding the focus copies its selection: any code view, a
   // chooser's rows, the hex view's bytes or a text field; the disassembly
   // otherwise.
-  for (QWidget *widget = QApplication::focusWidget(); widget;
+  for (QWidget *widget = commandFocusWidget(); widget;
        widget = widget->parentWidget()) {
     if (auto *field = qobject_cast<QLineEdit *>(widget)) {
       field->copy();
@@ -3371,6 +3378,19 @@ void MainWindow::runCommand(const QString &command, const QString &argument) {
 }
 
 void MainWindow::contextMenu(const QPoint &globalPosition) {
+  // A popup can take the keyboard focus before its action fires. Keep the
+  // invoking view as the command target; modal dialogs still use their own
+  // fields. Nested menus restore the enclosing menu's context.
+  const QPointer<MainWindow> window = this;
+  const QPointer<QWidget> previous = contextMenuFocus_;
+  const auto restore = qScopeGuard([window, previous] {
+    if (window) {
+      window->contextMenuFocus_ = previous;
+      window->updateActions();
+    }
+  });
+  auto *origin = qobject_cast<QWidget *>(sender());
+  contextMenuFocus_ = origin ? origin : commandFocusWidget();
   // The click moved the cursor: the commands act where it is now.
   updateActions();
   QMenu menu(this);

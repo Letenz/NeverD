@@ -1651,6 +1651,54 @@ TEST(HighControlFlowSemantics, SimplifierReportsInPlaceOperandChanges) {
   EXPECT_FALSE(simplifyAllExprs(F.Body));
 }
 
+TEST(HighControlFlowSemantics, SimplifierComparesASumByItsOtherTerm) {
+  // Compilers test for -1 as `x + 1 == 0`.  The sum wraps at its width, so
+  // its equality with a constant is its other term's with the difference,
+  // at every input.  The sum another comparison shares stays, and an
+  // ordered comparison, which the wrap would change, is not folded.
+  auto Sum =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(0), HighExpr::makeConst(1, 8));
+  auto Equal =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, Sum, HighExpr::makeConst(0, 8));
+  auto Ordered =
+      HighExpr::makeBinop(NdOp::INT_LESS, Sum, HighExpr::makeConst(5, 8));
+  auto NotEqual = HighExpr::makeBinop(
+      NdOp::INT_NOTEQUAL,
+      HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeConst(3, 8), local(0)),
+      HighExpr::makeConst(2, 8));
+  // Each comparison weighs in by a distinct factor: 4, 2 and 1.
+  const auto Weighed = [](ExprPtr Comparison, uint64_t Weight) {
+    return HighExpr::makeBinop(NdOp::INT_MULT, std::move(Comparison),
+                               HighExpr::makeConst(Weight, 8));
+  };
+  HighFunc F;
+  F.Body = {result(
+      0x1000,
+      HighExpr::makeBinop(
+          NdOp::INT_ADD, Weighed(Equal, 4),
+          HighExpr::makeBinop(NdOp::INT_ADD, Weighed(Ordered, 2), NotEqual)))};
+  const uint64_t Inputs[] = {0,
+                             1,
+                             5,
+                             0x7FFFFFFFFFFFFFFFull,
+                             0x8000000000000000ull,
+                             ~uint64_t(0),
+                             ~uint64_t(0) - 1};
+  std::vector<std::optional<uint64_t>> Before;
+  for (const uint64_t Input : Inputs)
+    Before.push_back(execute(F, Input));
+  ASSERT_TRUE(simplifyAllExprs(F.Body));
+  EXPECT_EQ(Equal->Operands[0]->Kind, ExprKind::Var);
+  EXPECT_EQ(Equal->Operands[1]->ConstVal, ~uint64_t(0));
+  EXPECT_EQ(NotEqual->Operands[0]->Kind, ExprKind::Var);
+  EXPECT_EQ(NotEqual->Operands[1]->ConstVal, ~uint64_t(0));
+  EXPECT_EQ(Ordered->Operands[0], Sum);
+  EXPECT_EQ(Sum->Op, NdOp::INT_ADD);
+  for (size_t I = 0; I < std::size(Inputs); ++I)
+    EXPECT_EQ(execute(F, Inputs[I]), Before[I]) << Inputs[I];
+  EXPECT_FALSE(simplifyAllExprs(F.Body));
+}
+
 TEST(HighControlFlowSemantics,
      RefusedOrderedMemorySimplificationIsNotProgress) {
   auto Load = HighExpr::makeLoad(local(0), NdType::makeInt(8));
