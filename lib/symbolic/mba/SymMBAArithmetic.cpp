@@ -152,6 +152,7 @@ public:
   const Polynomial *normalize(SymRef Root, unsigned *AtomCount = nullptr) {
     if (!Resources.array(Words, sizeof(uint64_t)))
       return nullptr;
+    const bool ReuseMemo = !Memo.empty();
     std::set<uint32_t> Reachable;
     std::vector<SymRef> Pending;
     if (!Resources.charge(1, 128))
@@ -164,7 +165,7 @@ public:
         return nullptr;
       if (Reachable.contains(R.index()))
         continue;
-      if (!AtomCount && Memo.contains(R.index()))
+      if (ReuseMemo && !AtomCount && Memo.contains(R.index()))
         continue;
       if (!Resources.charge(1, 128))
         return nullptr;
@@ -185,7 +186,7 @@ public:
     // subexpressions contain arithmetic or have a different width.
     unsigned Atoms = 0;
     for (uint32_t Index : Reachable) {
-      if (Memo.contains(Index)) {
+      if (ReuseMemo && Memo.contains(Index)) {
         SymOp Op = Ctx.op(SymRef(Index));
         Atoms += !Ctx.isConst(SymRef(Index)) && Op != SymOp::Add &&
                  Op != SymOp::Mul && (Op != SymOp::Not || !ExpandComplements);
