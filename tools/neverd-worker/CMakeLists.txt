@@ -147,11 +147,19 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
     if(NEVERD_WORKER_REAL_ENGINE_TESTS)
       # Generated C uses Clang C extensions, including scalar bit casts.
       # Match the native unit fixtures' frontend when the SDK is built by cl.
+      # GCC's C front end lacks them too; it remains the fallback only when
+      # no Clang is installed beside it.
       set(_neverd_worker_source_cc "${CMAKE_C_COMPILER}")
       if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
         find_program(_neverd_worker_source_clang NAMES clang
           HINTS "${LLVM_TOOLS_BINARY_DIR}" REQUIRED)
         set(_neverd_worker_source_cc "${_neverd_worker_source_clang}")
+      elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        find_program(_neverd_worker_source_clang NAMES clang
+          HINTS "${LLVM_TOOLS_BINARY_DIR}")
+        if(_neverd_worker_source_clang)
+          set(_neverd_worker_source_cc "${_neverd_worker_source_clang}")
+        endif()
       endif()
       add_test(NAME NeverDWorkerNativeMakeCode
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/make_code_test.py"

@@ -31,15 +31,14 @@ inline bool ordinary(const ExprPtr &E) {
 inline std::optional<LoadPlan> loadPlan(const ExprPtr &E, bool Bound,
                                         bool ObjectPointers) {
   if (!ordinary(E) || E->Kind != ExprKind::Load || E->Operands.size() != 1 ||
-      (ObjectPointers
-           ? (E->Type->Kind != NdTypeKind::Ptr &&
-              E->Type->Kind != NdTypeKind::Int) ||
-                 E->Type->Size != 8
-           : !((E->Type->Kind == NdTypeKind::Int &&
-                (E->Type->Size == 1 || E->Type->Size == 2 ||
-                 E->Type->Size == 4 || E->Type->Size == 8)) ||
-               (E->Type->Kind == NdTypeKind::Float &&
-                (E->Type->Size == 4 || E->Type->Size == 8)))))
+      (ObjectPointers ? (E->Type->Kind != NdTypeKind::Ptr &&
+                         E->Type->Kind != NdTypeKind::Int) ||
+                            E->Type->Size != 8
+                      : !((E->Type->Kind == NdTypeKind::Int &&
+                           (E->Type->Size == 1 || E->Type->Size == 2 ||
+                            E->Type->Size == 4 || E->Type->Size == 8)) ||
+                          (E->Type->Kind == NdTypeKind::Float &&
+                           (E->Type->Size == 4 || E->Type->Size == 8)))))
     return std::nullopt;
   const auto &Address = E->Operands[0];
   if (!ordinary(Address) || Address->Type->Size != 8 ||
@@ -75,8 +74,7 @@ inline std::optional<LoadPlan> loadPlan(const ExprPtr &E, bool Bound,
   // the emitted offset so the copied byte range starts at the first load,
   // including a load a few bytes before the original image constant.
   if (!ObjectPointers && P.Offset->Kind == ExprKind::BinOp &&
-      (P.Offset->Op == NdOp::INT_ADD ||
-       P.Offset->Op == NdOp::INT_SUB) &&
+      (P.Offset->Op == NdOp::INT_ADD || P.Offset->Op == NdOp::INT_SUB) &&
       P.Offset->Operands.size() == 2) {
     ExprPtr Indexed;
     uint64_t Bias = 0;
@@ -86,8 +84,7 @@ inline std::optional<LoadPlan> loadPlan(const ExprPtr &E, bool Bound,
       const auto &Constant = P.Offset->Operands[1 - Side];
       if (!ordinary(Candidate) || !ordinary(Constant) ||
           Candidate->Type->Kind != NdTypeKind::Int ||
-          Candidate->Type->Size != 8 ||
-          Constant->Kind != ExprKind::Const ||
+          Candidate->Type->Size != 8 || Constant->Kind != ExprKind::Const ||
           !Constant->Operands.empty() ||
           Constant->Type->Kind != NdTypeKind::Int ||
           Constant->Type->Size != 8 || Constant->ConstVal > 65536)
@@ -151,8 +148,8 @@ inline std::optional<LoadPlan> loadPlan(const ExprPtr &E, bool Bound,
 /// Pointer tables additionally require full-width slots; their object targets
 /// are validated by the Objective-C binder and publication gate.
 inline std::map<const HighExpr *, readonly_scalar_detail::LoadPlan>
-readOnlyLoadPlans(const HighFunc &Function, const BinaryImage &Image, bool Bound,
-                  bool ObjectPointers) {
+readOnlyLoadPlans(const HighFunc &Function, const BinaryImage &Image,
+                  bool Bound, bool ObjectPointers) {
   using namespace readonly_scalar_detail;
   struct Occurrence {
     ExprPtr Load;
@@ -218,7 +215,7 @@ readOnlyLoadPlans(const HighFunc &Function, const BinaryImage &Image, bool Bound
           continue;
         const auto Bytes = readImmutableImageBytes(Image, Slot, 8);
         Valid = Bytes && std::all_of(Bytes->begin(), Bytes->end(),
-                                    [](uint8_t Byte) { return Byte == 0; });
+                                     [](uint8_t Byte) { return Byte == 0; });
       }
     } else {
       const auto Bytes = readImmutableImageBytes(Image, P.Base, P.Extent);
@@ -567,8 +564,7 @@ inline std::set<const HighExpr *> readOnlyObjectPointerLoadConsumers(
         --Budget;
         const auto Dst = Local(S.Dst);
         const auto Src = Local(S.Val);
-        if (Dst && (S.Val.get() == Candidate ||
-                    (Src && Values.count(*Src))))
+        if (Dst && (S.Val.get() == Candidate || (Src && Values.count(*Src))))
           Changed |= Values.insert(*Dst).second;
       });
     }
@@ -584,9 +580,8 @@ inline std::set<const HighExpr *> readOnlyObjectPointerLoadConsumers(
           return;
         const bool DirectCopy =
             S.Kind == StmtKind::Assign && Root == S.Val && Local(S.Dst);
-        const bool DirectReturn =
-            Root == S.RetVal && Function.ReturnType &&
-            Function.ReturnType->Kind == NdTypeKind::Ptr;
+        const bool DirectReturn = Root == S.RetVal && Function.ReturnType &&
+                                  Function.ReturnType->Kind == NdTypeKind::Ptr;
         std::function<void(const ExprPtr &, const HighExpr *, size_t)> Visit;
         Visit = [&](const ExprPtr &E, const HighExpr *Parent, size_t Index) {
           if (!Valid || !E || !Budget)
@@ -604,8 +599,8 @@ inline std::set<const HighExpr *> readOnlyObjectPointerLoadConsumers(
               PointerArgument = Type && Type->Kind == NdTypeKind::Ptr;
             }
             Consumed |= (DirectReturn && E == Root) || PointerArgument;
-            if (!(DirectCopy && E == Root) &&
-                !(DirectReturn && E == Root) && !PointerArgument)
+            if (!(DirectCopy && E == Root) && !(DirectReturn && E == Root) &&
+                !PointerArgument)
               Valid = false;
             return;
           }
@@ -668,8 +663,7 @@ inline std::set<const HighExpr *>
 readOnlyObjectPointerSourceHelpers(const HighFunc &Function,
                                    const BinaryImage &Image) {
   const auto Plans = readOnlyObjectPointerLoadPlans(Function, Image, true);
-  const auto Consumers =
-      readOnlyObjectPointerLoadConsumers(Function, Plans);
+  const auto Consumers = readOnlyObjectPointerLoadConsumers(Function, Plans);
   std::set<const HighExpr *> Allowed, Escaped;
   size_t Budget = kSourceExpressionWork;
   walkStmts(Function.Body, [&](const HighStmt &S) {

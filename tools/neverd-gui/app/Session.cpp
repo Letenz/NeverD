@@ -277,6 +277,11 @@ void Session::receive(const QJsonObject &incoming) {
       openPending();
     }
   } else if (type == QLatin1String("heartbeat")) {
+    // A heartbeat the worker built before a reply that changed the project
+    // can arrive after that reply. Its background state, including discovery
+    // completion that releases the large-image replica gate, is not ours.
+    if (incoming.value("project_id").toString() != queries_.projectId())
+      return;
     const auto background = incoming.value("background").toObject();
     const auto state = background.value("state").toString();
     if (loaded_ && background.value("discovery_complete")

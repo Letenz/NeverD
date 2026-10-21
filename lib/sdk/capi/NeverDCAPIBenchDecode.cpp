@@ -65,8 +65,8 @@ const char *neverd_bench_decode(neverd_session_t Sess) {
   };
 
   std::vector<Span> Execs;
-  uint64_t ExecBytes = 0;   // total executable bytes in the image
-  uint64_t BenchBytes = 0;  // bytes actually fed to the timed passes
+  uint64_t ExecBytes = 0;  // total executable bytes in the image
+  uint64_t BenchBytes = 0; // bytes actually fed to the timed passes
   for (const auto &Seg : S->Img.Segments) {
     if (!Seg.isExecutable() || Seg.Data.empty())
       continue;
@@ -102,9 +102,9 @@ const char *neverd_bench_decode(neverd_session_t Sess) {
       if (BestNs == 0.0 || Ns < BestNs)
         BestNs = Ns;
       ++Reps;
-    } while (Reps < 100 && std::chrono::duration<double, std::milli>(
-                               Clock::now() - Overall)
-                                   .count() < 200.0);
+    } while (Reps < 100 &&
+             std::chrono::duration<double, std::milli>(Clock::now() - Overall)
+                     .count() < 200.0);
     return {Insns, BestNs};
   };
 
