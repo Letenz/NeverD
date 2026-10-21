@@ -253,7 +253,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
         continue;
       // Synchronous calls need one source dispatch state. A common resume
       // block may join catch states before its next state store or return.
-      if (State->Levels.size() > 1)
+      if (State->levels().size() > 1)
         return false;
       const auto *Effect = States.callFrameEffect(Op.Addr, Op.OriginSeq);
       llvm::CallInst *Call = nullptr;
@@ -395,9 +395,9 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   if (!CleanupParents)
     return false;
   for (const auto &Plan : Calls) {
-    if (!Plan.State->CanDispatch || Plan.State->Levels.empty())
+    if (!Plan.State->CanDispatch || Plan.State->levels().empty())
       continue;
-    const auto Level = Plan.State->Levels[0];
+    const auto Level = Plan.State->levels()[0];
     int32_t Walk = Level;
     while (Walk >= 0) {
       if (++Work > limits::kMaxRegistrationEHStateWork ||
@@ -656,7 +656,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       for (unsigned I = 1; I < Old->arg_size(); ++I)
         Args.push_back(Old->getArgOperand(I));
     const int32_t Level =
-        Plan.State->Levels.empty() ? -1 : Plan.State->Levels.front();
+        Plan.State->levels().empty() ? -1 : Plan.State->levels().front();
     auto *Unwind = Plan.State->CanDispatch ? UnwindAt(Level) : nullptr;
     llvm::SmallVector<llvm::OperandBundleDef, 1> Bundles;
     if (Plan.State->CallbackOnly)

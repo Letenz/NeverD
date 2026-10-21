@@ -40,6 +40,7 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
   if (Result.SEHInvocationExitsComplete)
     for (const auto &[Identity, Exit] : SEHExits)
       Result.SEHInvocationExits.push_back(Exit);
+  std::shared_ptr<const std::vector<int32_t>> UnknownLevels;
   for (size_t I = 0; I < Function.Blocks.size(); ++I) {
     const LowBlock &Block = Function.Blocks[I];
     std::set<int32_t> Levels;
@@ -68,12 +69,16 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
           State.Reached &&
           (State.Unknown || Facts.Invalid || (State.Callback && State.Parent) ||
            (State.Uninstalled && State.Installed));
-      const auto &ReachingLevels = Unproven ? AllLevels : State.Levels;
       auto ContextSearches = cxxSearches(State, Facts.Invalid);
-      if (!charge(ReachingLevels.size() + State.CxxCatchStacks.size() +
-                  ContextSearches.size() + 1))
+      if (!charge(State.CxxCatchStacks.size() + ContextSearches.size() + 1))
         break;
-      Levels.insert(ReachingLevels.begin(), ReachingLevels.end());
+      // Unknown already denotes the full domain. Keep the invocation's other
+      // facts separate without materializing that same set for this join.
+      if (!Unknown && !Unproven) {
+        if (!charge(State.Levels.size()))
+          break;
+        Levels.insert(State.Levels.begin(), State.Levels.end());
+      }
       Searches.insert(ContextSearches.begin(), ContextSearches.end());
       Reached |= State.Reached;
       Parent |= State.Parent;
@@ -108,25 +113,33 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
     const bool CallbackOnly = Callback && !Parent;
     if (!CallbackOnly && Unknown)
       Result.Complete = false;
-    if (Unknown)
-      Levels = AllLevels;
-    if (Exhausted || !charge(Levels.size() + Searches.size() + 1)) {
+    const size_t LevelWork =
+        Unknown ? (UnknownLevels ? 0 : AllLevels.size()) : Levels.size();
+    if (Exhausted || !charge(LevelWork + Searches.size() + 1)) {
       Result.Complete = false;
       Result.Blocks.clear();
       Result.Diagnostics.push_back(
           "registration-state output budget exhausted");
       return std::move(Result);
     }
+    std::vector<int32_t> ExplicitLevels;
+    if (Unknown) {
+      if (!UnknownLevels)
+        UnknownLevels = std::make_shared<const std::vector<int32_t>>(
+            AllLevels.begin(), AllLevels.end());
+    } else
+      ExplicitLevels.assign(Levels.begin(), Levels.end());
     Result.Blocks.push_back({Block.Id,
                              {Block.StartAddr, Block.EndAddr},
-                             {Levels.begin(), Levels.end()},
+                             std::move(ExplicitLevels),
                              Unknown,
                              CallbackOnly,
                              CanDispatch,
                              Minimum == INT32_MAX ? 0 : Minimum,
                              Reached,
                              {Searches.begin(), Searches.end()},
-                             {CatchStacks.begin(), CatchStacks.end()}});
+                             {CatchStacks.begin(), CatchStacks.end()},
+                             Unknown ? UnknownLevels : nullptr});
   }
   Result.RegistrationLifetimeComplete &= Result.CxxContinuationsComplete;
   if (!Result.SEHInvocationExitsComplete) {

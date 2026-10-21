@@ -1550,15 +1550,15 @@ TEST(RegistrationTryLevel, CxxEAXHelperOwnsItsDecodedStateTransitions) {
         for (const auto &State : States.Blocks) {
           if (State.Range.Begin == Body) {
             ++Matched;
-            EXPECT_EQ(State.Levels, (std::vector<int32_t>{-1}));
+            EXPECT_EQ(State.levels(), (std::vector<int32_t>{-1}));
           }
           if (State.Range.Begin == Body + 7) {
             ++Matched;
-            EXPECT_EQ(State.Levels, (std::vector<int32_t>{0}));
+            EXPECT_EQ(State.levels(), (std::vector<int32_t>{0}));
           }
           if (State.Range.Begin == Body + 14) {
             ++Matched;
-            EXPECT_EQ(State.Levels, (std::vector<int32_t>{-1}));
+            EXPECT_EQ(State.levels(), (std::vector<int32_t>{-1}));
           }
         }
         EXPECT_EQ(Matched, 3u);
@@ -2527,7 +2527,7 @@ TEST(RegistrationTryLevel, CxxRegisterStatesUseTheCompleteReachingValue) {
                          [&](const auto &S) { return S.Range.Begin == End; });
         ASSERT_NE(State, States.Blocks.end());
         EXPECT_FALSE(State->Unknown);
-        EXPECT_EQ(State->Levels, (std::vector<int32_t>{Level}));
+        EXPECT_EQ(State->levels(), (std::vector<int32_t>{Level}));
       }
 }
 
@@ -2568,7 +2568,7 @@ TEST(RegistrationTryLevel, CxxRegisterStatesDoNotRequireByteObservations) {
                    [&](const auto &S) { return S.Range.Begin == Store + 3; });
   ASSERT_NE(State, States.end());
   EXPECT_FALSE(State->Unknown);
-  EXPECT_EQ(State->Levels, (std::vector<int32_t>{0}));
+  EXPECT_EQ(State->levels(), (std::vector<int32_t>{0}));
 }
 
 TEST(RegistrationTryLevel, CxxRegisterStatesRequireTheirDecodedInstruction) {
@@ -2660,7 +2660,7 @@ TEST(RegistrationTryLevel, CxxBitwiseStatesRetireAtTheDecodedWrite) {
               [&](const auto &S) { return S.Range.Begin == Ends[I]; });
           ASSERT_NE(State, States.Blocks.end());
           EXPECT_FALSE(State->Unknown);
-          EXPECT_EQ(State->Levels, (std::vector<int32_t>{I ? -1 : Level}));
+          EXPECT_EQ(State->levels(), (std::vector<int32_t>{I ? -1 : Level}));
         }
       }
 }
@@ -2678,13 +2678,13 @@ TEST(RegistrationTryLevel, CxxBitwiseStatesRepairAJoinedValue) {
                    [&](const auto &S) { return S.Range.Begin == Ends[0] - 4; });
   ASSERT_NE(Before, States.Blocks.end());
   EXPECT_FALSE(Before->Unknown);
-  EXPECT_EQ(Before->Levels, (std::vector<int32_t>{-1, 0}));
+  EXPECT_EQ(Before->levels(), (std::vector<int32_t>{-1, 0}));
   const auto After =
       std::find_if(States.Blocks.begin(), States.Blocks.end(),
                    [&](const auto &S) { return S.Range.Begin == Ends[0]; });
   ASSERT_NE(After, States.Blocks.end());
   EXPECT_FALSE(After->Unknown);
-  EXPECT_EQ(After->Levels, (std::vector<int32_t>{0}));
+  EXPECT_EQ(After->levels(), (std::vector<int32_t>{0}));
 }
 
 TEST(RegistrationTryLevel, CxxBitwiseStatesFollowTheCheckedSharedPrologue) {
@@ -2718,7 +2718,8 @@ TEST(RegistrationTryLevel, CxxBitwiseStatesFollowTheCheckedSharedPrologue) {
             });
         ASSERT_NE(State, States.Blocks.end());
         EXPECT_FALSE(State->Unknown);
-        EXPECT_EQ(State->Levels, (std::vector<int32_t>{Offset == 4 ? 0 : -1}));
+        EXPECT_EQ(State->levels(),
+                  (std::vector<int32_t>{Offset == 4 ? 0 : -1}));
       }
     }
 }
@@ -2894,7 +2895,7 @@ TEST(RegistrationTryLevel, CxxSharedEpilogueRestoresTheProvedParentFrame) {
           ASSERT_NE(Exit, States.Blocks.end());
           EXPECT_TRUE(Exit->Reached);
           EXPECT_FALSE(Exit->Unknown);
-          EXPECT_TRUE(Exit->Levels.empty());
+          EXPECT_TRUE(Exit->levels().empty());
           EXPECT_TRUE(
               std::any_of(States.ChainAccesses.begin(),
                           States.ChainAccesses.end(), [&](const auto &Access) {
@@ -4566,7 +4567,7 @@ TEST(RegistrationTryLevel, DecodesCxxRuntimeContinuationWithoutAnUnknownRoot) {
   ASSERT_NE(Resume, nullptr);
   EXPECT_EQ(Resume->StartAddr, kText + 0xc0);
   EXPECT_FALSE(Func.OrdinaryModuleAnalysisRoots.count(Resume->StartAddr));
-  EXPECT_EQ(State.Blocks[Resume->Id].Levels, (std::vector<int32_t>{1}));
+  EXPECT_EQ(State.Blocks[Resume->Id].levels(), (std::vector<int32_t>{1}));
   EXPECT_FALSE(State.Blocks[Resume->Id].CallbackOnly);
 }
 
@@ -4860,7 +4861,7 @@ TEST(RegistrationTryLevel, UnionsBothReachingLevelsAtAJoin) {
     if (!Block.Range.contains(Join))
       continue;
     Found = true;
-    EXPECT_EQ(Block.Levels, (std::vector<int32_t>{-1, 0}));
+    EXPECT_EQ(Block.levels(), (std::vector<int32_t>{-1, 0}));
   }
   EXPECT_TRUE(Found);
   EXPECT_FALSE(registrationRangesWhere(
@@ -4887,7 +4888,7 @@ TEST(RegistrationTryLevel, ReplaysStateThroughALoopBackedge) {
   ASSERT_TRUE(Func.RegistrationStates);
   for (const RegistrationBlockState &Block : Func.RegistrationStates->Blocks)
     if (Block.Range.contains(Header))
-      EXPECT_EQ(Block.Levels, (std::vector<int32_t>{-1, 0}));
+      EXPECT_EQ(Block.levels(), (std::vector<int32_t>{-1, 0}));
 }
 
 TEST(RegistrationTryLevel, EntersAnInnerHandlerAtItsEnclosingLevel) {

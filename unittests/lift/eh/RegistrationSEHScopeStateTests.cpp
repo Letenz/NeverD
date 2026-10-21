@@ -210,7 +210,7 @@ TEST(RegistrationSEHDynamicScope, ProvesUnreachedSourceAddressExpressions) {
     // Static address binding grants no runtime state-transition receipt.
     EXPECT_TRUE(Bound->CallbackWrites.empty());
     EXPECT_TRUE(States.SEHStateStores.empty());
-    EXPECT_TRUE(States.Blocks.back().Levels.empty());
+    EXPECT_TRUE(States.Blocks.back().levels().empty());
   }
 }
 

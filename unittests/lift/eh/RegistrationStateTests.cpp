@@ -316,7 +316,7 @@ TEST(RegistrationState, RetainsBothStatesAtJoin) {
   EXPECT_FALSE(Result.SEHStateStoresComplete);
   EXPECT_TRUE(Result.SEHStateStores.empty());
   ASSERT_EQ(Result.Blocks.size(), 4u);
-  EXPECT_EQ(Result.Blocks[3].Levels, (std::vector<int32_t>{-1, 0}));
+  EXPECT_EQ(Result.Blocks[3].levels(), (std::vector<int32_t>{-1, 0}));
   EXPECT_FALSE(registrationRangesWhere(
       Result, [](int32_t Level) { return Level == 0; }));
 }
@@ -326,16 +326,16 @@ TEST(RegistrationState, ReplaysLoopBackedges) {
   F.Blocks[3].Succs = {1};
   auto Result = analyzeRegistrationStates(F);
   ASSERT_TRUE(Result.Complete);
-  EXPECT_TRUE(Result.Blocks[0].Levels.empty());
-  EXPECT_EQ(Result.Blocks[1].Levels, (std::vector<int32_t>{-1, 0}));
+  EXPECT_TRUE(Result.Blocks[0].levels().empty());
+  EXPECT_EQ(Result.Blocks[1].levels(), (std::vector<int32_t>{-1, 0}));
 }
 
 TEST(RegistrationState, DoesNotSeedBeforeTheRegistrationIsInstalled) {
   LowFunc F = makeBranchingFrame();
   auto Result = analyzeRegistrationStates(F);
   ASSERT_TRUE(Result.Complete);
-  EXPECT_TRUE(Result.Blocks[0].Levels.empty());
-  EXPECT_EQ(Result.Blocks[1].Levels, (std::vector<int32_t>{-1}));
+  EXPECT_TRUE(Result.Blocks[0].levels().empty());
+  EXPECT_EQ(Result.Blocks[1].levels(), (std::vector<int32_t>{-1}));
 }
 
 TEST(RegistrationState, MissingInstallationBoundaryCannotAuthorizeTheSeed) {
@@ -367,15 +367,15 @@ TEST(RegistrationState, DoesNotApplyStoresFromUnreachableBlocks) {
   F.Blocks[0].Succs = {1};
   auto Result = analyzeRegistrationStates(F);
   ASSERT_TRUE(Result.Complete);
-  EXPECT_TRUE(Result.Blocks[2].Levels.empty());
-  EXPECT_EQ(Result.Blocks[3].Levels, (std::vector<int32_t>{0}));
+  EXPECT_TRUE(Result.Blocks[2].levels().empty());
+  EXPECT_EQ(Result.Blocks[3].levels(), (std::vector<int32_t>{0}));
 }
 
 TEST(RegistrationState, KeepsTheIncomingLevelUntilTheStoreRetires) {
   LowFunc F = makeBranchingFrame();
   auto Result = analyzeRegistrationStates(F);
   ASSERT_TRUE(Result.Complete);
-  EXPECT_EQ(Result.Blocks[1].Levels, (std::vector<int32_t>{-1}));
+  EXPECT_EQ(Result.Blocks[1].levels(), (std::vector<int32_t>{-1}));
 }
 
 TEST(RegistrationState, InvalidInstructionBoundaryCannotAuthorizeAState) {
@@ -450,7 +450,7 @@ TEST(RegistrationState, NarrowCxxStoresPreserveEveryReachingHighByte) {
     auto Result = analyzeRegistrationStates(F);
     ASSERT_TRUE(Result.Complete) << unsigned(Width) << ' ' << First;
     ASSERT_EQ(Result.Blocks.size(), 5u);
-    EXPECT_EQ(Result.Blocks.back().Levels, Expected);
+    EXPECT_EQ(Result.Blocks.back().levels(), Expected);
     EXPECT_FALSE(Result.Blocks.back().Unknown);
   }
 }
@@ -670,7 +670,7 @@ TEST(RegistrationState, InitialActiveSEHScopeRetainsItsFrameSentinel) {
     const auto A = analyzeRegistrationStates(F, EH4 ? 0x4000 : 0);
     ASSERT_TRUE(A.Complete);
     ASSERT_EQ(A.Blocks.size(), F.Blocks.size());
-    EXPECT_EQ(A.Blocks.back().Levels, (std::vector<int32_t>{Outside, 0}));
+    EXPECT_EQ(A.Blocks.back().levels(), (std::vector<int32_t>{Outside, 0}));
     if (EH4)
       EXPECT_TRUE(A.SecurityCookiesComplete);
   }
@@ -687,7 +687,7 @@ TEST(RegistrationState, EmptySEHScopeTableKeepsItsOutsideState) {
     const auto A = analyzeRegistrationStates(F, EH4 ? 0x4000 : 0);
     ASSERT_TRUE(A.Complete);
     ASSERT_EQ(A.Blocks.size(), F.Blocks.size());
-    EXPECT_EQ(A.Blocks.back().Levels, (std::vector<int32_t>{Outside}));
+    EXPECT_EQ(A.Blocks.back().levels(), (std::vector<int32_t>{Outside}));
   }
 }
 
@@ -842,7 +842,7 @@ TEST(RegistrationState, SharedUnwindTailsKeepEachSourceLevelProof) {
 TEST(RegistrationState, UnknownUnwindStateVisitsEachSharedCallbackTail) {
   for (bool CheckCleanups : {false, true})
     for (bool ReverseBlocks : {false, true})
-      for (unsigned BodyBlocks : {0u, 256u}) {
+      for (unsigned BodyBlocks : {0u, 256u, 2048u}) {
         SCOPED_TRACE(::testing::Message()
                      << CheckCleanups << "/" << ReverseBlocks << "/"
                      << BodyBlocks);
@@ -873,7 +873,8 @@ TEST(RegistrationState, UnknownUnwindStateVisitsEachSharedCallbackTail) {
         // The unknown state can persist through a large ordinary body. Every
         // point contributes its own frame snapshot to the same callback roots;
         // the immutable unwind graph must not consume the budget again at each
-        // point. All published unknown levels still fit the existing budget.
+        // point. Publishing the same unknown domain must also stay bounded
+        // without dropping any possible level from an individual block.
         if (BodyBlocks) {
           F.Blocks[4].Succs = {7};
           for (unsigned I = 0; I != BodyBlocks; ++I) {
@@ -901,6 +902,9 @@ TEST(RegistrationState, UnknownUnwindStateVisitsEachSharedCallbackTail) {
         EXPECT_TRUE(A.CleanupFrameEffects.empty());
         EXPECT_TRUE(A.ChainAccesses.empty());
         ASSERT_EQ(A.Blocks.size(), F.Blocks.size());
+        std::vector<int32_t> AllLevels{-1};
+        for (uint32_t I = 0; I != Cxx.MaxState; ++I)
+          AllLevels.push_back(I);
         for (int ID : {5, 6, BodyBlocks ? int(6 + BodyBlocks) : 4}) {
           const auto Root =
               std::find_if(A.Blocks.begin(), A.Blocks.end(),
@@ -909,12 +913,45 @@ TEST(RegistrationState, UnknownUnwindStateVisitsEachSharedCallbackTail) {
           EXPECT_TRUE(Root->Reached);
           EXPECT_TRUE(Root->Unknown);
           EXPECT_EQ(Root->CallbackOnly, ID == 5 || ID == 6);
+          EXPECT_EQ(Root->levels(), AllLevels);
         }
         EXPECT_TRUE(std::none_of(
             A.Diagnostics.begin(), A.Diagnostics.end(), [](const auto &D) {
               return D.find("budget exhausted") != std::string::npos;
             }));
       }
+}
+
+TEST(RegistrationState, PublishedUnknownDomainsOwnTheirIndependentLifetimes) {
+  std::vector<RegistrationBlockState> Retained;
+  for (uint32_t Count : {2u, 9u}) {
+    auto F = makeNarrowCxxStateFrame(4, 0, 0, 0);
+    auto &Cxx = *F.ExceptionMetadata->Cxx;
+    Cxx.MaxState = Count;
+    Cxx.TryBlocks.clear();
+    Cxx.UnwindMap.clear();
+    for (uint32_t I = 0; I != Count; ++I)
+      Cxx.UnwindMap.push_back(
+          {int32_t(I) - 1, 0, CxxUnwindAction::ActionKind::None});
+    F.Blocks[3].Ops.back().Inputs[1] = NdVar::reg(x86reg::RAX, 4);
+    const auto A = analyzeRegistrationStates(F);
+    EXPECT_FALSE(A.Complete);
+    EXPECT_FALSE(A.RegistrationLifetimeComplete);
+    const auto Block =
+        llvm::find_if(A.Blocks, [](const auto &B) { return B.BlockId == 4; });
+    ASSERT_NE(Block, A.Blocks.end());
+    ASSERT_TRUE(Block->Unknown);
+    Retained.push_back(*Block);
+  }
+  // Both solvers, input functions and analysis results have been destroyed.
+  // A later analysis cannot change the earlier block's complete domain.
+  EXPECT_EQ(Retained[0].levels(), (std::vector<int32_t>{-1, 0, 1}));
+  EXPECT_EQ(Retained[1].levels(),
+            (std::vector<int32_t>{-1, 0, 1, 2, 3, 4, 5, 6, 7, 8}));
+  const auto Copy = Retained;
+  Retained.clear();
+  EXPECT_EQ(Copy[0].levels(), (std::vector<int32_t>{-1, 0, 1}));
+  EXPECT_EQ(Copy[1].levels().back(), 8);
 }
 
 TEST(RegistrationState, RejectsUnprovedCleanupObjectsAndContracts) {
@@ -1287,7 +1324,7 @@ TEST(RegistrationState, PrivateThrowStopsOrdinaryFlowAndKeepsCatchResumption) {
     ASSERT_EQ(A.CallFrameEffects.size(), 1u);
     EXPECT_TRUE(A.CallFrameEffects[0].DoesNotReturn);
     EXPECT_EQ(A.CallFrameEffects[0].EndAddress, 0x1105u);
-    EXPECT_TRUE(A.Blocks[2].Levels.empty());
+    EXPECT_TRUE(A.Blocks[2].levels().empty());
     EXPECT_TRUE(A.Blocks[0].Reached);
     EXPECT_FALSE(A.Blocks[2].Reached);
     EXPECT_TRUE(A.Blocks[5].Reached);
@@ -1533,10 +1570,10 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
     EXPECT_TRUE(A.CallFrameEffects.empty());
     if (Valid) {
       if (Mutation == 24) {
-        EXPECT_EQ(A.Blocks[2].Levels, (std::vector<int32_t>{-1, 0}));
+        EXPECT_EQ(A.Blocks[2].levels(), (std::vector<int32_t>{-1, 0}));
       } else {
-        EXPECT_EQ(A.Blocks[2].Levels.size(), 1u);
-        if (A.Blocks[2].Levels.size() != 1)
+        EXPECT_EQ(A.Blocks[2].levels().size(), 1u);
+        if (A.Blocks[2].levels().size() != 1)
           continue;
         const int32_t ExpectedLevel =
             Mutation == 28 ? 2
@@ -1544,7 +1581,7 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
                     Mutation == 23 || Mutation == 25 || Mutation == 26
                 ? 0
                 : -1;
-        EXPECT_EQ(A.Blocks[2].Levels.front(), ExpectedLevel);
+        EXPECT_EQ(A.Blocks[2].levels().front(), ExpectedLevel);
       }
       bool FoundSP = false;
       bool FoundFinallyWrite = false;
@@ -1683,7 +1720,7 @@ TEST(RegistrationState, OnlyCanonicalWaitPreservesLocalFinallyFrameEffects) {
       continue;
     EXPECT_TRUE(A.CallbackStatesComplete);
     EXPECT_TRUE(A.RegistrationLifetimeComplete);
-    ASSERT_EQ(A.Blocks[2].Levels, (std::vector<int32_t>{-1}));
+    ASSERT_EQ(A.Blocks[2].levels(), (std::vector<int32_t>{-1}));
     bool FoundSP = false, FoundEffect = false;
     for (const auto &Value : A.FrameValues) {
       if (Value.Address == 0x1020 && Value.OpSeq == SPSeq) {
@@ -1802,7 +1839,7 @@ TEST(RegistrationState, LocalFinallyOwnsOnlyItsAllocatedCallbackStack) {
     EXPECT_FALSE(A.CallFrameEffectsComplete);
     if (Mutation == 0) {
       EXPECT_TRUE(A.CallbackStatesComplete);
-      ASSERT_EQ(A.Blocks[2].Levels, std::vector<int32_t>{-1});
+      ASSERT_EQ(A.Blocks[2].levels(), std::vector<int32_t>{-1});
       const auto Written = llvm::find_if(A.FrameValues, [&](const auto &Value) {
         return Value.Address == 0x1020 && Value.OpSeq == ReadSeq;
       });
@@ -2307,7 +2344,7 @@ TEST(RegistrationState, UnlinkEndsTheLiveRegistration) {
   EXPECT_EQ(Result.ChainAccesses[2].Address, 0x1030u);
   EXPECT_EQ(Result.ChainAccesses[2].EndAddress, 0x1037u);
   EXPECT_EQ(Result.ChainAccesses[2].OpSeq, F.Blocks[3].Ops.back().Seq);
-  EXPECT_TRUE(Result.Blocks.back().Levels.empty());
+  EXPECT_TRUE(Result.Blocks.back().levels().empty());
   EXPECT_FALSE(Result.Blocks.back().CanDispatch);
 }
 
@@ -2427,7 +2464,7 @@ TEST(RegistrationState, FinallyCanDispatchToItsEnclosingScope) {
   ASSERT_TRUE(Result.Complete);
   EXPECT_TRUE(Result.Blocks[4].CallbackOnly);
   EXPECT_TRUE(Result.Blocks[4].CanDispatch);
-  EXPECT_EQ(Result.Blocks[4].Levels, (std::vector<int32_t>{0}));
+  EXPECT_EQ(Result.Blocks[4].levels(), (std::vector<int32_t>{0}));
   EXPECT_TRUE(Result.Blocks[5].CallbackOnly);
   EXPECT_FALSE(Result.Blocks[5].CanDispatch);
 }
@@ -2591,8 +2628,8 @@ TEST(RegistrationState, EmptyLevelsDoNotConflateUninstalledAndUnreachedFrames) {
   ASSERT_TRUE(A.Complete);
   ASSERT_EQ(A.Blocks.size(), F.Blocks.size());
   EXPECT_TRUE(A.Blocks[0].Reached);
-  EXPECT_TRUE(A.Blocks[0].Levels.empty());
+  EXPECT_TRUE(A.Blocks[0].levels().empty());
   EXPECT_FALSE(A.Blocks.back().Reached);
-  EXPECT_TRUE(A.Blocks.back().Levels.empty());
+  EXPECT_TRUE(A.Blocks.back().levels().empty());
   EXPECT_FALSE(A.Blocks.back().Unknown);
 }

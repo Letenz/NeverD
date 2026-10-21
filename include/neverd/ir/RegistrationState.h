@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <compare>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -43,7 +44,9 @@ struct RegistrationCxxSearch {
 struct RegistrationBlockState {
   int BlockId = -1;
   ExceptionAddressRange Range;
-  std::vector<int32_t> Levels;
+  /// Individually owned levels when SharedLevels is absent. Consumers use
+  /// levels() so an unknown domain need not be copied into every block.
+  std::vector<int32_t> ExplicitLevels;
   bool Unknown = false;
   /// Runtime-invoked filter/cleanup code has its own dispatch context. Its
   /// instructions must not be included in the parent's lexical try interval.
@@ -65,6 +68,14 @@ struct RegistrationBlockState {
   /// still keeps their frame facts separate. Native projection requires a
   /// unique stack and checks every ordinary and runtime continuation edge.
   std::vector<std::vector<std::pair<uint32_t, uint32_t>>> CxxCatchStacks;
+  /// Immutable storage owned by the published result, never borrowed from a
+  /// solver or loader. Sharing levels does not share frame, search or lifetime
+  /// facts and does not change Unknown or any native-admission requirement.
+  std::shared_ptr<const std::vector<int32_t>> SharedLevels;
+
+  const std::vector<int32_t> &levels() const {
+    return SharedLevels ? *SharedLevels : ExplicitLevels;
+  }
 };
 
 /// A PE32 C++ catch returns a continuation code pointer to the runtime. This
@@ -499,10 +510,10 @@ registrationRangesWhere(const RegistrationStateAnalysis &Analysis,
       continue;
     if (Block.Unknown)
       return std::nullopt;
-    if (Block.Levels.empty())
+    if (Block.levels().empty())
       continue;
-    const bool Included = Contains(Block.Levels.front());
-    for (int32_t Level : Block.Levels)
+    const bool Included = Contains(Block.levels().front());
+    for (int32_t Level : Block.levels())
       if (Contains(Level) != Included)
         return std::nullopt;
     if (Included)

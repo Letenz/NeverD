@@ -1417,6 +1417,14 @@ The COFF loader owns the checked SEH/FuncInfo records. LowIR's
 `analyzeRegistrationStates` owns reaching levels, callback roots and chain
 lifetime, including the untouched bytes of narrow state stores; HighIR and
 native LLVM lowering consume that same result.
+Published block states expose their complete level domain through
+`RegistrationBlockState::levels()`. Explicit domains use `ExplicitLevels`;
+unknown blocks can share one immutable, owning `SharedLevels` vector created
+by that solver run. Publication charges its construction once and every block
+reference separately. Frame facts, catch searches, callback identities and
+lifetime checks remain per block. Copies retain the domain after the solver
+and input function are destroyed. Sharing does not make an unknown state
+complete, remove an exceptional edge or change native admission.
 `X86CxxRuntimeABI` owns the shared PE32 provider selection for the FH3 cdecl
 dispatcher and the two-word stdcall throw entry: VCRUNTIME140,
 VCRUNTIME140D and MSVCR100. Both entry proofs still require their exact import

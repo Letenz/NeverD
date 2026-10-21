@@ -39,9 +39,10 @@ bool same(const RegistrationChainAccess &A, const RegistrationChainAccess &B) {
 
 bool same(const RegistrationBlockState &A, const RegistrationBlockState &B) {
   auto Key = [](const auto &S) {
-    return std::tie(S.BlockId, S.Range.Begin, S.Range.End, S.Levels, S.Unknown,
-                    S.CallbackOnly, S.CanDispatch, S.CxxMinimumTryLevel,
-                    S.Reached, S.CxxSearches, S.CxxCatchStacks);
+    return std::tie(S.BlockId, S.Range.Begin, S.Range.End, S.levels(),
+                    S.Unknown, S.CallbackOnly, S.CanDispatch,
+                    S.CxxMinimumTryLevel, S.Reached, S.CxxSearches,
+                    S.CxxCatchStacks);
   };
   return Key(A) == Key(B);
 }

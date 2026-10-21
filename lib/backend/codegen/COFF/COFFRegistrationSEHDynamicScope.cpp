@@ -50,10 +50,10 @@ validateDynamicSEHScope(const RegistrationBlockState &Source,
       After->size() != 2 || &After->front() != &Exit)
     return rejectIR("dynamic SEH scope changed its private state selector");
   const bool Inactive =
-      llvm::any_of(Source.Levels, [](int32_t L) { return L < 0; });
+      llvm::any_of(Source.levels(), [](int32_t L) { return L < 0; });
   if (SelectEntry->getNumCases() != Cases.size() ||
       SelectExit->getNumCases() != Cases.size() ||
-      Cases.size() + unsigned(Inactive) != Source.Levels.size())
+      Cases.size() + unsigned(Inactive) != Source.levels().size())
     return rejectIR("dynamic SEH scope has an incomplete state choice");
   if (Inactive) {
     if (SelectEntry->getDefaultDest() != Body ||
@@ -73,7 +73,7 @@ validateDynamicSEHScope(const RegistrationBlockState &Source,
   for (const auto &[State, Choice] : Cases) {
     const auto *Begin = Choice.Enter;
     const auto *End = Choice.Exit;
-    if (State < 0 || !llvm::is_contained(Source.Levels, State) || !Begin ||
+    if (State < 0 || !llvm::is_contained(Source.levels(), State) || !Begin ||
         !End || Begin->getParent()->size() != 2 ||
         Begin->getParent()->getSinglePredecessor() != Entry ||
         Begin->getNormalDest() != Body ||

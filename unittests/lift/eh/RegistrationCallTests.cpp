@@ -991,7 +991,7 @@ TEST(RegistrationCallABI, LocalUnwindSplitsCurrentMachineStateAtCall) {
       if (State.Range.Begin == Text.VA + 0x3c) {
         SawContinuation = true;
         if (Valid)
-          EXPECT_EQ(State.Levels, std::vector<int32_t>{-1});
+          EXPECT_EQ(State.levels(), std::vector<int32_t>{-1});
       }
     EXPECT_TRUE(SawContinuation);
   }

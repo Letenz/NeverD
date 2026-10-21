@@ -1820,7 +1820,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
                    << llvm::format_hex(State.Range.Begin, 10)
                    << " unknown=" << State.Unknown
                    << " callback=" << State.CallbackOnly << " levels=";
-      for (auto Level : State.Levels)
+      for (auto Level : State.levels())
         llvm::errs() << Level << ',';
       llvm::errs() << '\n';
     }
@@ -1874,7 +1874,7 @@ TEST(WindowsRegistrationNative, InputPE32PreservesItsCheckedSourceContract) {
   registration_test::checkSEHNullReadEdits(*Parent, Med, EH, Image);
   registration_test::checkDynamicSEHCallEdits(*Parent, EH, Image);
   if (llvm::any_of(Low.RegistrationStates->Blocks, [](const auto &B) {
-        return !B.CallbackOnly && B.Levels.size() > 1;
+        return !B.CallbackOnly && B.levels().size() > 1;
       }))
     registration_test::checkDynamicSEHScopeEdits(*Parent, EH, Image);
   auto RejectMutation = [&](llvm::StringRef Label, auto Mutate,
@@ -3212,7 +3212,7 @@ TEST(WindowsRegistrationNative,
     EH.CodeRange.End = 0x1050;
     Chain.Scopes = {{-1, 0, 0x1020, true}, {0, 0, 0x1040, true}};
     Chain.TryLevelStores.front().Level = 1;
-    States.Blocks[1].Levels = {1};
+    States.Blocks[1].ExplicitLevels = {1};
     States.Blocks[2].CanDispatch = true;
     F.Source.Blocks[2].EndAddr = States.Blocks[2].Range.End = 0x1025;
     auto AddBlock = [&](int Id, va_t Begin, va_t End, llvm::StringRef Name) {
@@ -3773,7 +3773,7 @@ TEST(WindowsRegistrationNative, AuthenticatesEveryEH4CookieFrameOffset) {
   F.Source.RegistrationStates->SecurityCookiesComplete = true;
   F.Source.RegistrationStates->SecurityCookieVA = 0x2500;
   for (auto &State : F.Source.RegistrationStates->Blocks)
-    for (auto &Level : State.Levels)
+    for (auto &Level : State.ExplicitLevels)
       if (Level == -1)
         Level = -2;
   ASSERT_TRUE(F.lower());
@@ -3817,7 +3817,7 @@ TEST(WindowsRegistrationNative, EH4GSUsesTheCompilerCookieAndFastcallChecker) {
   F.Source.RegistrationStates->SecurityCookiesComplete = true;
   F.Source.RegistrationStates->SecurityCookieVA = 0x2500;
   for (auto &State : F.Source.RegistrationStates->Blocks)
-    for (auto &Level : State.Levels)
+    for (auto &Level : State.ExplicitLevels)
       if (Level == -1)
         Level = -2;
   ASSERT_TRUE(F.lower());
@@ -3842,7 +3842,7 @@ TEST(WindowsRegistrationNative, BindsGeneratedParentsToTheSourceScopeGraph) {
   EH.CodeRange.End = 0x1050;
   EH.Registration->Scopes.push_back({0, 0x1020, 0x1040, false});
   EH.Registration->TryLevelStores.front().Level = 1;
-  F.Source.RegistrationStates->Blocks[1].Levels = {1};
+  F.Source.RegistrationStates->Blocks[1].ExplicitLevels = {1};
   F.Source.RegistrationStates->Blocks.push_back(
       {4, {0x1040, 0x1050}, {0}, false, false, true});
   MedBlock Handler;

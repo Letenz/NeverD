@@ -346,9 +346,9 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
     if (!StateByBlock.count(BlockId))
       return rejectIR("C++ call moved outside a reached source block");
     const auto &State = *StateByBlock.at(BlockId);
-    if (State.Levels.size() > 1)
+    if (State.levels().size() > 1)
       return rejectIR("C++ source call has ambiguous dispatch states");
-    const int32_t Level = State.Levels.empty() ? -1 : State.Levels[0];
+    const int32_t Level = State.levels().empty() ? -1 : State.levels()[0];
     const auto *Unwind = State.CanDispatch ? UnwindAt(Level) : nullptr;
     const auto &Contract = States.CalleeContracts[Effect.CalleeIndex];
     if (Unwind) {

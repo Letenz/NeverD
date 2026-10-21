@@ -243,7 +243,7 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
                                });
         if (It == Func.RegistrationStates->Blocks.end() || !It->CanDispatch)
           continue;
-        for (int32_t State : It->Levels) {
+        for (int32_t State : It->levels()) {
           if (!ChargeRegistrationEdge())
             break;
           int32_t Walk = State;
@@ -311,7 +311,7 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
                              });
       if (It == Func.RegistrationStates->Blocks.end() || !It->CanDispatch)
         continue;
-      for (int32_t Level : It->Levels) {
+      for (int32_t Level : It->levels()) {
         if (!ChargeRegistrationEdge())
           break;
         // The scope count bounds the walk even for manually supplied cycles.
