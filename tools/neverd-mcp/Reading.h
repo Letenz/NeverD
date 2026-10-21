@@ -17,11 +17,14 @@
 /// - a frame struct is declared on one line, and the members the engine names
 ///   by offset (var_mN, gapN) are written without the `stack_storage.` that
 ///   every access repeats;
-/// - consecutive declarations of one type become one declaration;
-/// - a value read or written at a constant offset into a byte-array global is
-///   named by its address, g_ADDR, and the legend declares each name's type.
-///   Only accesses through a typed dereference are named, and only where
-///   every access at that address has one type; address arithmetic is left as
+/// - each run of declarations becomes one declaration per type, a pointer
+///   type's names each with their own stars;
+/// - an address at a constant offset into a byte-array global, read or
+///   written through a typed dereference or taken as an integer, is named by
+///   its address, g_ADDR.  The legend declares each name with the type most of
+///   its accesses have; an access of another type keeps its cast, as
+///   `*(T *)&g_ADDR`, and an address that is only taken is declared a byte
+///   array.  The array's own pointer, and arithmetic on it, are left as
 ///   written.
 ///
 /// String and character literals and comments are never rewritten, and a

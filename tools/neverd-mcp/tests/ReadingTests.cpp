@@ -69,15 +69,32 @@ MCP_TEST(LiteralsAndCommentsKeepTheirText) {
           "a comment keeps its text");
 }
 
-MCP_TEST(AnAddressReadWithTwoTypesKeepsItsCasts) {
+MCP_TEST(AnAddressReadWithTwoTypesIsDeclaredWithTheCommonerOne) {
   const auto View =
       readingView("void f(void) {\n    t = *(int32_t "
                   "*)(uintptr_t)(&g_A000_bytes[4]);\n    u = *(uint32_t "
-                  "*)(uintptr_t)(&g_A000_bytes[4]);\n}\n");
-  require(contains(View.Text, "*(i32 *)(uptr)(&g_A000_bytes[4])") &&
-              contains(View.Text, "*(u32 *)(uptr)(&g_A000_bytes[4])"),
-          "both typed reads keep their casts");
-  require(!contains(View.Legend, "globals"), "no global is named");
+                  "*)(uintptr_t)(&g_A000_bytes[4]);\n    *(uint32_t "
+                  "*)(uintptr_t)(&g_A000_bytes[4]) = 2;\n}\n");
+  require(contains(View.Text, "    t = *(i32 *)&g_A004;\n    u = g_A004;\n"
+                              "    g_A004 = 2;\n"),
+          "the other type keeps its cast: " + View.Text);
+  require(contains(View.Legend, "globals: u32 g_A004"),
+          "the name has the commoner type: " + View.Legend);
+}
+
+MCP_TEST(AnAddressTakenAsAnIntegerIsNamed) {
+  const auto View = readingView(
+      "void f(void) {\n    p = (uintptr_t)&g_A000_bytes[8];\n    q = "
+      "(uintptr_t)(&g_A000_bytes[8]);\n    x = *(int64_t "
+      "*)(uintptr_t)(&g_A000_bytes[16]);\n    r = (uintptr_t)&g_A000_bytes[16];"
+      "\n    s = &g_A000_bytes[8] + 1;\n}\n");
+  require(contains(View.Text, "    p = (uptr)&g_A008;\n    q = (uptr)&g_A008;\n"
+                              "    x = g_A010;\n    r = (uptr)&g_A010;\n"),
+          "an address taken as an integer is named: " + View.Text);
+  require(contains(View.Text, "    s = &g_A000_bytes[8] + 1;\n"),
+          "pointer arithmetic on the array keeps its spelling");
+  require(contains(View.Legend, "globals: u8 g_A008[]; i64 g_A010"),
+          "an address only taken is a byte array: " + View.Legend);
 }
 
 MCP_TEST(NamesTheTextAlreadyUsesAreNotReused) {
@@ -109,4 +126,13 @@ MCP_TEST(OneWordStatementsAreNoDeclarations) {
               "void f(i32 x) {\n    for (;;) {\n        continue;\n        "
               "break;\n    }\n    x;\n    return;\n}\n",
           "a statement of one word is no type and name");
+}
+
+MCP_TEST(ARunOfDeclarationsMergesByTypeAndKeepsPointers) {
+  const auto View = readingView("void f(void) {\n    char* a;\n    int64_t "
+                                "b;\n    char* c;\n    int64_t d;\n    "
+                                "servent** e;\n    a = 0;\n    char* g;\n}\n");
+  require(contains(View.Text, "    char *a, *c;\n    i64 b, d;\n    servent** "
+                              "e;\n    a = 0;\n    char* g;\n"),
+          "each pointer name keeps its star: " + View.Text);
 }

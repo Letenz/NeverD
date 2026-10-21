@@ -312,6 +312,12 @@ void AnalysisPool::unsubscribeOwner(QObject *owner) {
 }
 
 void AnalysisPool::cancelReads(const QSet<QObject *> &keep) {
+  // A detached prefetch never completes. Stop treating the first lane's
+  // next read as preparation, or independent views would queue behind it.
+  if (!keep.contains(&preparationOwner_)) {
+    ++preparationSerial_;
+    preparing_ = false;
+  }
   for (auto &lane : lanes_)
     lane.service->queries().cancelReads(keep);
 }

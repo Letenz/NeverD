@@ -63,6 +63,10 @@ private:
   std::uint64_t SnapshotSerial = 0;
 
   Json callTool(const Tool &Selected, Json Arguments);
+  /// A search's page of matches, filled across an immediate search's
+  /// decoding steps, with each code match's function and an immediate's
+  /// instruction.
+  Json search(const Json &Arguments);
   /// The response that refused a name \p Arguments gives as its address, or
   /// nothing once the address is the one the name resolves to.
   std::optional<Json>

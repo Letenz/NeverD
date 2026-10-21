@@ -295,7 +295,8 @@ Json Server::callTool(const Tool &Selected, Json Arguments) {
         truthy(member(Arguments, "callers")) ? "callers" : "callees";
     Arguments.erase("function");
     Arguments.erase("callers");
-  }
+  } else if (Operation == "search" && !Arguments.contains("limit"))
+    Arguments["limit"] = DefaultSearchLimit;
   try {
     if (auto Refused = resolveAddress(Operation, Arguments, Revision))
       return textResult(
@@ -305,7 +306,9 @@ Json Server::callTool(const Tool &Selected, Json Arguments) {
     const bool Exact = truthy(member(Arguments, "exact"));
     Arguments.erase("prelude");
     Arguments.erase("exact");
-    auto Response = Session.query(Operation, Arguments, Revision);
+    auto Response = Operation == "search"
+                        ? search(Arguments)
+                        : Session.query(Operation, Arguments, Revision);
     const Json Lines =
         member(member(member(Response, "payload"), "prelude"), "lines");
     if (Operation == "decompile" && !Prelude && truthy(Lines) &&
@@ -329,6 +332,76 @@ Json Server::callTool(const Tool &Selected, Json Arguments) {
     return {{"content", Json::array({textContent(Failure.what())})},
             {"isError", true}};
   }
+}
+
+Json Server::search(const Json &Arguments) {
+  // An immediate search decodes the image in bounded steps: the same
+  // request takes the next step, and a request from next_address the page
+  // after a step's end.  The page is filled here, not by more calls.
+  const auto Page = [&](const Json &Request) {
+    auto Reply = Session.query("search", Request, std::nullopt);
+    for (unsigned Step = 0;
+         Step < 64 && succeeded(Reply) &&
+         truthy(member(member(Reply, "payload"), "building"));
+         ++Step)
+      Reply = Session.query("search", Request, std::nullopt);
+    return Reply;
+  };
+  auto Response = Page(Arguments);
+  const auto Limit = Arguments.at("limit").get<std::size_t>();
+  for (unsigned Step = 0; Step < 256 && succeeded(Response); ++Step) {
+    auto &Found = Response["payload"];
+    const auto &Next = member(Found, "next_address");
+    if (truthy(member(Found, "complete")) || !Next.is_string() ||
+        !member(Found, "items").is_array() || Found["items"].size() >= Limit)
+      break;
+    Json Request = Arguments;
+    Request["from"] = Next;
+    Request["limit"] = Limit - Found["items"].size();
+    auto More = Page(Request);
+    const auto &Rest = member(More, "payload");
+    if (!succeeded(More) || More["revision"] != Response["revision"] ||
+        !member(Rest, "items").is_array())
+      break;
+    for (const auto &Item : Rest["items"])
+      Found["items"].push_back(Item);
+    Found["complete"] = member(Rest, "complete");
+    Found["next_address"] = member(Rest, "next_address");
+    if (member(Rest, "coverage") == "partial")
+      Found["coverage"] = "partial";
+  }
+  if (!succeeded(Response) || member(Arguments, "kind") == "text" ||
+      !member(member(Response, "payload"), "items").is_array())
+    return Response;
+  // A code match names its function, and an immediate its instruction, at
+  // the revision the matches were found at.
+  const auto &Taken = member(Response, "revision");
+  const auto Revision = Taken.is_string()
+                            ? std::optional(Taken.get<std::string>())
+                            : std::nullopt;
+  const bool Immediate = member(Arguments, "kind") == "immediate";
+  for (auto &Item : Response["payload"]["items"]) {
+    const auto &Address = member(Item, "address");
+    if (!Address.is_string())
+      continue;
+    const auto Found = Session.query("resolve", {{"query", Address}}, Revision);
+    if (const auto &At = member(Found, "payload");
+        succeeded(Found) && truthy(member(At, "function_address")))
+      Item["function"] = member(At, "name");
+    if (!Immediate)
+      continue;
+    const auto Code =
+        Session.query("disasm", {{"address", Address}, {"limit", 1}}, Revision);
+    const auto &Lines = member(member(Code, "payload"), "items");
+    if (!succeeded(Code) || !Lines.is_array() || Lines.empty())
+      continue;
+    const auto &Mnemonic = member(Lines[0], "mnemonic");
+    const auto &Operands = member(Lines[0], "operands");
+    if (Mnemonic.is_string() && Operands.is_string())
+      Item["instruction"] =
+          Mnemonic.get<std::string>() + " " + Operands.get<std::string>();
+  }
+  return Response;
 }
 
 Json Server::textResult(std::string Text, bool IsError, const Json &Response,
