@@ -695,7 +695,7 @@ void propagateForwardedCallArities(
     std::map<va_t, std::vector<uint64_t>> &CalleeIntRegs,
     const std::set<va_t> &VectorArgumentCallees,
     const std::map<va_t, PointerVariableCallee> &PointerCallees,
-    const std::set<va_t> &UserPrototypeCallees,
+    const std::set<va_t> &PrototypeArgumentCallees,
     const RelocationSymbolIndex &RelocationSymbols) {
   if (Funcs.empty())
     return;
@@ -737,7 +737,7 @@ void propagateForwardedCallArities(
     Read.ConsumesVaList = valueAt(CalleeConsumesVaList, Key);
     Read.IntRegs = valueAt(CalleeIntRegs, Key);
     Read.VectorArguments = VectorArgumentCallees.count(Key) != 0;
-    Read.UserPrototype = UserPrototypeCallees.count(Key) != 0;
+    Read.PrototypeArguments = PrototypeArgumentCallees.count(Key) != 0;
     return Read;
   };
   // Whether the run holds what \p Read read under its key: readAt(Key) ==
@@ -758,7 +758,8 @@ void propagateForwardedCallArities(
            same(CalleeFPRegs, Read.FPRegs) &&
            same(CalleeIntRegs, Read.IntRegs) &&
            (VectorArgumentCallees.count(Key) != 0) == Read.VectorArguments &&
-           (UserPrototypeCallees.count(Key) != 0) == Read.UserPrototype &&
+           (PrototypeArgumentCallees.count(Key) != 0) ==
+               Read.PrototypeArguments &&
            same(FuncNames, Read.Name);
   };
   // What recovering a copy of Funcs[I] under the summaries gives, and the
@@ -791,7 +792,7 @@ void propagateForwardedCallArities(
                    &CalleeFPRegs, &CalleeHasSret, &CalleeIsVariadic,
                    &CalleeConsumesVaList, /*FrameLocalLeafCallees=*/nullptr,
                    &CalleeIntRegs, &VectorArgumentCallees, &PointerCallees,
-                   &UserPrototypeCallees, &RelocationSymbols,
+                   &PrototypeArgumentCallees, &RelocationSymbols,
                    Holder ? &Keys : nullptr);
     int MaxRegIdx = -1;
     int MaxIdx = -1;
@@ -1156,7 +1157,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
       CalleeRegArity, CalleeTotalArity, CalleeFPArity, CalleeFPReturnSize,
       CalleeFPRegs, CalleeHasSret, CalleeIsVariadic, CalleeConsumesVaList,
       CalleeIntRegs, VectorArgumentCallees, PointerCallees,
-      Result.CallUserPrototypes, RelocationSymbols);
+      Result.CallPrototypeArguments, RelocationSymbols);
 
   const auto FrameLocalLeafCallees =
       Convention && Convention->TargetSpillsSurviveLeafCalls
@@ -1168,7 +1169,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                    &CalleeFPRegs, &CalleeHasSret, &CalleeIsVariadic,
                    &CalleeConsumesVaList, &FrameLocalLeafCallees,
                    &CalleeIntRegs, &VectorArgumentCallees, &PointerCallees,
-                   &Result.CallUserPrototypes, &RelocationSymbols);
+                   &Result.CallPrototypeArguments, &RelocationSymbols);
   };
   for (MedFunc &F : Result.MedFuncs)
     recover(F);
@@ -1236,7 +1237,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                      &CalleeHasSret, &CalleeIsVariadic, &CalleeConsumesVaList,
                      /*FrameLocalLeafCallees=*/nullptr, &CalleeIntRegs2,
                      &VectorArgumentCallees, &PointerCallees,
-                     &Result.CallUserPrototypes, &RelocationSymbols);
+                     &Result.CallPrototypeArguments, &RelocationSymbols);
     }
   }
   // An omitted definition cannot give the emitter its parameter count.

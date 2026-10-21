@@ -780,6 +780,27 @@ integers and pointers, which take the next slots in every convention. A call
 in the same unit passes them, or zero where the call site determined none,
 as the callee never reads it.
 
+Header-declared integer record arguments use `SourceParameterPlacement` through
+`integerCallArguments`, both when recovering the call and when printing it.
+The type-library adapter preserves the record's alignment and complete scalar
+layout. The arity tables retain source parameter counts: a System V
+`fopencookie` reads two integer registers and four stack words, while an
+`hsearch_r` reads five registers. `CallPrototypeArguments` lets those layouts
+and user declarations override the tables throughout the pipeline, including
+omitted-callee memoization. HighC and LLVM-C reassemble the same pieces as bits,
+and ordinary parameters after a record retain their source parameter types.
+The explicit-user subset, `CallUserPrototypes`, separately decides precedence
+over automatic Darwin SDK source bindings; header record layouts retain them.
+Unsupported record carriers fail explicitly. This does not add ARM32 record
+placement or general mixed floating record-call support.
+
+HighC places outgoing x86 stack arguments relative to the actual call SP.
+After one stack PHI, complete pointer-width copies and checked constant
+adjustments can prove those relative distances even when its incoming paths
+have different entry-SP offsets. They establish no entry coordinate or alias
+extent. A tail jump also forwards its own stack slots past unused register
+positions; unknown required values remain unknown.
+
 A call through an import's slot or stub reaches a routine another module
 exports, which takes the prototype of the import's name: `resolveFunction`
 gives it at the slot or stub to the C backends, which declare and call it

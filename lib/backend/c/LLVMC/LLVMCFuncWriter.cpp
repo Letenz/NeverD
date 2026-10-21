@@ -28,6 +28,7 @@
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/LibCRecordArguments.h"
 #include "neverd/loader/ExceptionCommon.h"
 #include "neverd/loader/ExceptionEncoding.h"
 #include "neverd/loader/ExceptionPersonality.h"
@@ -3108,6 +3109,11 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
       Library.Prototype && !Library.Prototype->Variadic)
     return Clamp(Library.Prototype->ParamCount);
   if (auto FS = debugCallee(Call)) {
+    if (const auto Library = libraryCallee(Call);
+        Library && Library.Name == FS->Name)
+      if (const auto Layout = libc::recordCallArguments(
+              *FS, Opts.TheArch, Opts.Format, libcVariant()))
+        return Clamp(Layout->Positions);
     // A pointer-encoded class return may be a real RAX pointer rather than
     // an indirect result. With no debug parameters, live integer machine
     // arguments do not establish a hidden result address.
@@ -3203,9 +3209,18 @@ bool LLVMCWriter::isTrailingLiveInCopy(const llvm::Value *V) const {
 
 TypeRef LLVMCWriter::expectedCallArgType(const llvm::CallBase &Call,
                                          unsigned Index) const {
-  if (auto FS = debugCallee(Call))
+  if (auto FS = debugCallee(Call)) {
+    if (const auto Layout = libc::recordCallArguments(
+            *FS, Opts.TheArch, Opts.Format, libcVariant())) {
+      const auto Scalar =
+          libc::recordCallScalarParameter(*FS, *Layout, Index, libcVariant());
+      if (!Scalar)
+        return {};
+      Index = *Scalar;
+    }
     if (TypeRef Ty = cDisplayType(debugCallArgPointer(*FS, Index, Opts)))
       return Ty;
+  }
   std::string Name;
   if (const auto *Callee = Call.getCalledFunction()) {
     const std::string Raw = Callee->getName().str();

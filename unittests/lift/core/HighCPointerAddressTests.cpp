@@ -48104,6 +48104,9 @@ TEST(HighCPointerAddresses, SmallHeaderRecordsPassAsTheirRegisterBits) {
   // the argument is that integer's bits, which C does not convert to the
   // record itself.
   const auto Address = NdType::makeNamedRecord("in_addr", 4);
+  Address->Passing = NdRecordPassing::ByValue;
+  Address->Alignment = 4;
+  Address->ScalarLeaves = {{0, 4, false}};
   class InetDbg : public NullDebugContext {
   public:
     explicit InetDbg(TypeRef Address) : Address(std::move(Address)) {}
@@ -48152,7 +48155,7 @@ TEST(HighCPointerAddresses, SmallHeaderRecordsPassAsTheirRegisterBits) {
   };
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("inet_ntoa(__builtin_bit_cast("), std::string::npos)
+  EXPECT_NE(Source.find("inet_ntoa(({ struct in_addr "), std::string::npos)
       << Source;
   expectCSyntax(Source);
 }

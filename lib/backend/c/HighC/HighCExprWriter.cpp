@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../CRecordCall.h"
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
@@ -30,6 +31,7 @@
 #include "neverd/ir/intrinsics/X64Syscall.h"
 #include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/LibCRecordArguments.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/DataSymbolBinding.h"
 #include "neverd/loader/StringLiteralSymbols.h"
@@ -1525,6 +1527,11 @@ std::string HighCWriter::callIdentifier(const HighExpr &E) const {
         !Routine.empty()) {
       const size_t Arguments = E.Operands.size();
       const libc::LibCVariant Variant = Opts.libcVariant();
+      if (Dbg)
+        if (const auto Prototype = Dbg->resolvePrototype(Routine))
+          if (const auto Layout = libc::recordCallArguments(
+                  *Prototype, Opts.TheArch, Opts.Format, Variant))
+            return Arguments == Layout->Positions ? Routine : Name;
       if (const unsigned Fixed = libc::varArgFixedCount(Routine, Variant))
         return Arguments >= Fixed ? Routine : Name;
       if (const auto Arity = libc::libcArity(Routine, Variant);
@@ -2150,14 +2157,43 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   // So does a known external function's declaration.
   if (const auto Declared = plainDeclarationArity(E))
     PrintedArgs = std::max(PrintedArgs, *Declared);
+  const auto RecordCall =
+      !Defined && Callee && Name == Callee->Name && includesHeaderOf(Name)
+          ? libc::recordCallArguments(*Callee, Opts.TheArch, Opts.Format,
+                                      Opts.libcVariant())
+          : std::nullopt;
+  if (!Defined && Callee && Name == Callee->Name && includesHeaderOf(Name) &&
+      Callee->PrototypeFromCLibrary && !RecordCall &&
+      libc::hasRecordCallParameters(*Callee, Opts.libcVariant()))
+    throw std::runtime_error("The header's record call ABI is unsupported");
+  if (RecordCall)
+    PrintedArgs = RecordCall->Parameters.size();
   // The string an argument points to reads beside it, before the comma.
   std::string Note;
   for (size_t I = 0; I < PrintedArgs; ++I) {
     S += Note;
     if (I > 0)
       S += ", ";
+    if (RecordCall &&
+        (libc::isRecordCallParameter(*Callee, I, Opts.libcVariant()) ||
+         RecordCall->Parameters[I].Pieces.size() > 1)) {
+      const TypeRef &Type = Callee->Params[I].second;
+      const std::string Spelling =
+          libc::isRecordCallParameter(*Callee, I, Opts.libcVariant())
+              ? c_detail::recordCallType(Type, Opts)
+              : typeToC(Type);
+      S += c_detail::recordCallArgument(
+          Spelling, RecordCall->Parameters[I], [&](unsigned Index) {
+            if (Index >= E.Operands.size() || !E.Operands[Index])
+              throw std::runtime_error("A record call argument is incomplete");
+            return exprStr(*E.Operands[Index]);
+          });
+      continue;
+    }
     ExprPtr Missing;
-    const size_t Source = OperandIndex(I);
+    const size_t Source = RecordCall
+                              ? RecordCall->Parameters[I].Pieces[0].Argument
+                              : OperandIndex(I);
     const HighExpr *Op =
         Source < E.Operands.size() ? E.Operands[Source].get() : nullptr;
     if (!Op) {
@@ -3541,6 +3577,10 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
     return I < Have && isCtorDisplayOperand(E.Operands[I].get());
   };
   if (const auto Callee = debugCallee(E)) {
+    if (Callee->Name == Name && includesHeaderOf(Name))
+      if (const auto Layout = libc::recordCallArguments(
+              *Callee, Opts.TheArch, Opts.Format, Opts.libcVariant()))
+        return Layout->Positions;
     // The call passes the machine arguments of another signature, whatever
     // their count.
     if (!positionalDebugSignature(*Callee))
@@ -3591,6 +3631,15 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
 std::optional<libc::LibCArity>
 HighCWriter::knownArity(llvm::StringRef Symbol,
                         llvm::StringRef Identifier) const {
+  // A separately named import slot keeps its flat machine signature. The
+  // header's parameter count cannot declare that alias: a record may occupy
+  // two registers or several stack slots after unused register positions.
+  if (Dbg)
+    if (const auto Function = Dbg->resolvePrototype(
+            cNameOfSymbol(Symbol, Opts.Format, Opts.TheArch)))
+      if (const auto Layout = libc::recordCallArguments(
+              *Function, Opts.TheArch, Opts.Format, Opts.libcVariant()))
+        return libc::LibCArity{static_cast<int>(Layout->Positions)};
   if (auto Arity = libc::libcArityForSymbol(Symbol, Opts.libcVariant()))
     return Arity;
   if (auto Arity = libc::libcArity(Identifier, Opts.libcVariant()))

@@ -374,11 +374,12 @@ public:
     VariadicVectorCallees = Entries;
   }
   /// The imports, by the stub or slot a call names each by, whose prototype
-  /// the user declares (PipelineResult::CallUserPrototypes): a call to one
+  /// a user declaration or header record layout specifies
+  /// (PipelineResult::CallPrototypeArguments): a call to one
   /// passes what call-ABI recovery gave it, however many arguments a
   /// platform prototype or the arity tables give a routine of the name.
-  void setUserPrototypeCallees(const std::set<va_t> *Callees) {
-    UserPrototypeCallees = Callees;
+  void setPrototypeArgumentCallees(const std::set<va_t> *Callees) {
+    PrototypeArgumentCallees = Callees;
   }
 
   struct CallIndTarget {
@@ -640,7 +641,7 @@ private:
   const std::map<va_t, std::string> *ResolvedCalleeNames = nullptr;
   const std::map<va_t, std::string> *ImageFunctionNames = nullptr;
   const std::map<va_t, VariadicVectorCallee> *VariadicVectorCallees = nullptr;
-  const std::set<va_t> *UserPrototypeCallees = nullptr;
+  const std::set<va_t> *PrototypeArgumentCallees = nullptr;
   int NextHighTempId = 0;
   std::optional<MedVar> SwiftErrorEntryInput;
   int ExprRecurseDepth = 0;

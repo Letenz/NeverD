@@ -73,7 +73,7 @@ struct OmittedCalleeMemo {
     std::optional<bool> ConsumesVaList;
     std::optional<std::vector<uint64_t>> IntRegs;
     bool VectorArguments = false;
-    bool UserPrototype = false;
+    bool PrototypeArguments = false;
     bool operator==(const ProbeRead &) const = default;
   };
   /// What a forwarder probe of a body gives its callers: the recovered

@@ -237,11 +237,64 @@ private:
     // Local types are C's records, whose calls pass and return them as C
     // does: no constructor sends a small one through memory.
     Named->Passing = NdRecordPassing::ByValue;
+    const uint32_t Alignment = Library.alignOf(Record);
+    if (Alignment <= std::numeric_limits<uint16_t>::max())
+      Named->Alignment = static_cast<uint16_t>(Alignment);
     if (!Name.empty())
       Records[Name] = Named;
-    if (Record.Defined)
+    if (Record.Defined) {
       members(*Named, Record, 0, Depth);
+      unsigned Budget = 256;
+      bool Complete = true;
+      for (const auto &Field : Record.Members) {
+        if (!Field.Type || Field.isBitfield() || Field.BitOffset % 8 ||
+            !scalarLeaves(*Named, convert(*Field.Type, Depth + 1),
+                          Field.BitOffset / 8, Budget)) {
+          Complete = false;
+          break;
+        }
+      }
+      if (!Complete)
+        Named->ScalarLeaves.clear();
+    }
     return Named;
+  }
+
+  /// Preserve the type library's complete byte layout for ABI classification,
+  /// independently of display names. Bitfields and incomplete fields cannot
+  /// become a partial scalar layout that accidentally admits a record.
+  bool scalarLeaves(NdType &Into, const TypeRef &Part, uint64_t Offset,
+                    unsigned &Budget) {
+    if (!Part || !Part->Size || !Budget || Offset > Into.Size ||
+        Part->Size > Into.Size - Offset)
+      return false;
+    --Budget;
+    if (Part->Kind == NdTypeKind::Int || Part->Kind == NdTypeKind::Ptr ||
+        Part->Kind == NdTypeKind::Float || Part->IsEnum) {
+      Into.ScalarLeaves.push_back({static_cast<uint16_t>(Offset), Part->Size,
+                                   Part->Kind == NdTypeKind::Float});
+      return true;
+    }
+    if (Part->Kind == NdTypeKind::Array && Part->ElemType &&
+        Part->ArrayCount <= Budget) {
+      for (uint32_t I = 0; I < Part->ArrayCount; ++I)
+        if (!scalarLeaves(Into, Part->ElemType,
+                          Offset + uint64_t(I) * Part->ElemType->Size, Budget))
+          return false;
+      return Part->ArrayCount != 0;
+    }
+    if (Part->Kind != NdTypeKind::Struct || Part->ScalarLeaves.empty() ||
+        Part->ScalarLeaves.size() > Budget)
+      return false;
+    Budget -= static_cast<unsigned>(Part->ScalarLeaves.size());
+    for (const auto &Leaf : Part->ScalarLeaves) {
+      if (!Leaf.Size || Leaf.Offset > Part->Size ||
+          Leaf.Size > Part->Size - Leaf.Offset)
+        return false;
+      Into.ScalarLeaves.push_back({static_cast<uint16_t>(Offset + Leaf.Offset),
+                                   Leaf.Size, Leaf.Floating});
+    }
+    return true;
   }
 
   void members(NdType &Into, const types::RecordDef &Record, uint64_t Base,

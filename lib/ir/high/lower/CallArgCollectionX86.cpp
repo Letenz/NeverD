@@ -171,18 +171,22 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
       Scan.Convention && Scan.Convention->StackArgumentsFollowUsedRegisters
           ? Scan.FirstStackSlot
           : static_cast<int>(RegisterPositions);
+  bool ForwardedStackSlots = false;
   if (Scan.TailJump && Scan.OwnStackParam)
     for (int K = FirstStackPosition;
          K < Scan.CalleeStackArgs && K < static_cast<int>(Found.size()); ++K)
-      if (!Found[K])
+      if (!Found[K]) {
         Found[K] = Scan.OwnStackParam(K);
+        ForwardedStackSlots |= Found[K] != nullptr;
+      }
   // With positional slots a stack argument means every register argument is
   // passed, even the ones this block did not write (a pass-through of the
   // caller's own).  So does one placed past every register position: the
   // callee's parameters keep a place for each register it does not read
   // (detectStackParams).
   if (Scan.Convention &&
-      (Scan.Convention->PositionalArgumentSlots || PlacedByCallOffset) &&
+      (Scan.Convention->PositionalArgumentSlots || PlacedByCallOffset ||
+       ForwardedStackSlots) &&
       Scan.ReachingRegArg &&
       std::any_of(Found.begin() + std::min(RegisterPositions, Found.size()),
                   Found.end(), [](const ExprPtr &E) { return E != nullptr; }))

@@ -306,6 +306,7 @@ add_neverd_unittest(NeverDLiftTests
   ../loader/SwiftRuntimeSourceTests.cpp
   core/HighCPointerAddressTests.cpp
   core/SourceParameterPlacementTests.cpp
+  core/IntegerCallArgumentsTests.cpp
   core/HighCIntegerWidthTests.cpp
   core/HighCDemandedBytesTests.cpp
   core/CSourceDefinitionTests.cpp
@@ -1321,6 +1322,24 @@ add_neverd_unittest(NeverDSysVCallContractTests
 target_include_directories(NeverDSysVCallContractTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(NeverDSysVCallContractTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+
+add_neverd_unittest(NeverDIntegerCallArgumentsTests
+  core/IntegerCallArgumentsTests.cpp
+  LINK_COMPONENTS IR
+)
+target_include_directories(NeverDIntegerCallArgumentsTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+
+add_neverd_unittest(NeverDRecordCallContractTests
+  core/RecordCallContractTests.cpp
+  "${CMAKE_SOURCE_DIR}/lib/sdk/capi/LocalTypesDebugContext.cpp"
+  LINK_COMPONENTS BackendC BackendLLVM Pipeline Types
+)
+target_include_directories(NeverDRecordCallContractTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS}
+  "${CMAKE_SOURCE_DIR}/lib/sdk/capi")
+target_compile_definitions(NeverDRecordCallContractTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 
 add_neverd_unittest(NeverDAAPCS64CallContractTests

@@ -458,7 +458,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                     const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs,
                     const std::set<va_t> *VectorArgumentCallees,
                     const std::map<va_t, PointerVariableCallee> *PointerCallees,
-                    const std::set<va_t> *UserPrototypeCallees,
+                    const std::set<va_t> *PrototypeArgumentCallees,
                     const RelocationSymbolIndex *RelocationSymbols,
                     std::vector<va_t> *SummaryKeysRead) {
   Func.CallInfos.clear();
@@ -843,14 +843,14 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // declares, as its summary counts it, not what the tables give a
       // routine of its name: through its stub, its slot, or a variable that
       // points to it.
-      const bool UserPrototype =
-          IntegerSummary && UserPrototypeCallees &&
-          (UserPrototypeCallees->count(CI.TargetAddr) ||
-           (CallSlot && UserPrototypeCallees->count(*CallSlot)));
+      const bool PrototypeArguments =
+          IntegerSummary && PrototypeArgumentCallees &&
+          (PrototypeArgumentCallees->count(CI.TargetAddr) ||
+           (CallSlot && PrototypeArgumentCallees->count(*CallSlot)));
       std::optional<libc::LibCArity> ExternalArity;
-      if (!UserPrototype && (!CI.IsIndirect || IsIndirectImport))
+      if (!PrototypeArguments && (!CI.IsIndirect || IsIndirectImport))
         ExternalArity = libc::libcArityForSymbol(CI.TargetName, LibC);
-      else if (!UserPrototype && VariableCallee &&
+      else if (!PrototypeArguments && VariableCallee &&
                !VariableCallee->ImportName.empty())
         ExternalArity =
             libc::libcArityForSymbol(VariableCallee->ImportName, LibC);
@@ -862,7 +862,7 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       // its slot or through the thunk an import library links (MinGW's
       // `_NlsValidateLocale@8`).
       if (!ExternalArity &&
-          (IsIndirectImport || IsDirectImport || UserPrototype) &&
+          (IsIndirectImport || IsDirectImport || PrototypeArguments) &&
           IntegerSummary) {
         libc::LibCArity Declared;
         Declared.IntArgs =
@@ -940,6 +940,10 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
                             : std::min(ExternalArity->IntArgs,
                                        static_cast<int>(IntParamRegs.size()));
         CalleeArgs = ExternalArity->IntArgs;
+        if (PrototypeArguments) {
+          CalleeRegArgs = Op.CalleeRegisterArgs;
+          CalleeArgs = std::max<int>(Op.CalleeRegisterArgs, Op.CalleeStackArgs);
+        }
       }
       // An external routine whose floats the base AAPCS passes in the
       // integer registers takes each float in the next one (doubles, which
@@ -2360,6 +2364,18 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           Found[K] = MedVar();
           FromStackScan[K] = false;
         }
+        // A MEMORY-class record follows every register position on the stack
+        // without reading the registers between its scalar prefix and that
+        // stack run. Their flat operand positions are padding, not arguments.
+        // Where stack arguments follow the used registers (i386), those
+        // positions already hold stack arguments and must be retained.
+        if (PrototypeArguments)
+          for (int K = std::max(0, CalleeRegArgs);
+               K < ReachingStackBase && K < MaxArgs; ++K) {
+            FoundMask[K] = false;
+            Found[K] = MedVar();
+            FromStackScan[K] = false;
+          }
         const int Floats = CoreRegisterFloats ? 0 : ExternalArity->FpArgs;
         if (static_cast<int>(FoundFP.size()) > Floats)
           FoundFP.resize(std::max(0, Floats));
@@ -2455,7 +2471,10 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
       std::vector<int64_t> StackPartOffsets;
       for (int K = 0; K < AssembleEnd; ++K) {
         const bool Gap = !FoundMask[K];
-        if (Gap && !FillGaps) {
+        const bool UnreadRegisterPosition =
+            UseExternalArity && PrototypeArguments && CalleeRegArgs >= 0 &&
+            K >= CalleeRegArgs && K < StackArgBase && CalleeArgs > StackArgBase;
+        if (Gap && !FillGaps && !UnreadRegisterPosition) {
           // Indirect integer variadic (Darwin): stack arguments live in high
           // slots while the register prefix has interior gaps.  Pure-FP
           // indirect calls route overflow through FoundFP instead; do not skip

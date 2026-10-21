@@ -326,10 +326,13 @@ struct PipelineResult {
   /// selected functions need not call.  Null where the convention counts
   /// none.
   std::shared_ptr<const std::map<va_t, int>> OmittedCalleeArgumentCounts;
-  /// The imports, by the stub or slot a call names each by, whose prototype
-  /// the user declares and whose summary above it gives (userPrototype): a
-  /// call to one passes what it declares, however many arguments the arity
-  /// tables give a routine of the name.
+  /// The imports, by their stubs and slots, whose integer argument summary
+  /// a user declaration or header record layout gives. Their machine
+  /// positions override the arity tables, which count source parameters.
+  std::set<va_t> CallPrototypeArguments;
+  /// Explicit user declarations among CallPrototypeArguments. Source-call
+  /// binding uses this identity to override automatic Darwin SDK contracts;
+  /// a header record layout alone does not override those contracts.
   std::set<va_t> CallUserPrototypes;
   /// Entries of indirect-call dispatchers (`_guard_dispatch_icall`): a call to
   /// one passes the argument registers its caller set.
@@ -731,7 +734,7 @@ private:
       bool RecordSources = false,
       llvm::ArrayRef<sigs::LibraryRecognition> Recognitions = {},
       const DebugContext *Dbg = nullptr, const SourceViewOptions &View = {},
-      const std::set<va_t> *UserPrototypeCallees = nullptr);
+      const std::set<va_t> *PrototypeArgumentCallees = nullptr);
 
   /// Execute the common shard lifecycle. The emitter creates each module in
   /// its worker's context; only a complete linked module is returned in the

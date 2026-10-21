@@ -1,0 +1,299 @@
+//===- RecordCallContractTests.cpp - Header-declared record calls --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Compile real libc declarations into a linked ELF image, then execute both
+/// C emitters against an independent provider that observes every argument.
+///
+//===----------------------------------------------------------------------===//
+
+#include "LocalTypesDebugContext.h"
+#include "gtest/gtest.h"
+
+#include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/libc/LibCRecordArguments.h"
+#include "neverd/loader/Loader.h"
+#include "neverd/pipeline/Pipeline.h"
+
+#include "llvm/ADT/ScopeExit.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/Program.h"
+
+#include <fstream>
+
+using namespace neverd;
+
+namespace {
+class EmptyDebug final : public DebugContext {
+public:
+  std::optional<FunctionSym> resolveFunction(va_t) const override { return {}; }
+  std::optional<VariableSym> resolveVariable(va_t, int64_t) const override {
+    return {};
+  }
+  std::optional<TypeSym> resolveType(uint64_t) const override { return {}; }
+  std::optional<SourceLoc> sourceLocation(va_t) const override { return {}; }
+  std::vector<FunctionSym> allFunctions() const override { return {}; }
+  bool hasInfo() const override { return false; }
+};
+
+TEST(RecordCallContract, HeaderRecordsUseTheirTargetsMachinePositions) {
+  struct Target {
+    types::HeaderLibrary Header;
+    Arch Architecture;
+    BinaryFormat Format;
+    libc::LibCVariant Variant;
+  };
+  for (const auto &Target :
+       {Target{types::HeaderLibrary::LinuxX64, Arch::X64, BinaryFormat::ELF,
+               libc::LibCVariant::GNU},
+        Target{types::HeaderLibrary::LinuxX86, Arch::X86, BinaryFormat::ELF,
+               libc::LibCVariant::GNU},
+        Target{types::HeaderLibrary::LinuxARM64, Arch::AArch64,
+               BinaryFormat::ELF, libc::LibCVariant::GNU},
+        Target{types::HeaderLibrary::MuslX64, Arch::X64, BinaryFormat::ELF,
+               libc::LibCVariant::Musl},
+        Target{types::HeaderLibrary::MacOSX64, Arch::X64, BinaryFormat::MachO,
+               libc::LibCVariant::Darwin}}) {
+    SCOPED_TRACE(types::headerLibraryName(Target.Header).str());
+    const auto *Header = types::headerLibrary(Target.Header);
+    ASSERT_NE(Header, nullptr);
+    auto Types = std::make_shared<types::TypeLibrary>(Header->dataModel());
+    Types->setRecordABI(Header->recordABI());
+    types::mergeHeaderTypes(*Types, *Header);
+    EmptyDebug Empty;
+    sdk::LocalTypesDebugContext Debug(Empty, Types, {}, nullptr,
+                                      {Target.Header});
+    const auto Search = Debug.resolvePrototype("hsearch");
+    ASSERT_TRUE(Search);
+    const auto Entry = libc::recordCallArguments(*Search, Target.Architecture,
+                                                 Target.Format, Target.Variant);
+    ASSERT_TRUE(Entry);
+    EXPECT_EQ(Entry->Positions, 3u);
+    EXPECT_EQ(Entry->Registers, Target.Architecture == Arch::X86 ? 0u : 3u);
+    EXPECT_EQ(Entry->Parameters[1].Pieces[0].Argument, 2u);
+    if (const auto Cookie = Debug.resolvePrototype("fopencookie")) {
+      const auto Layout = libc::recordCallArguments(
+          *Cookie, Target.Architecture, Target.Format, Target.Variant);
+      ASSERT_TRUE(Layout);
+      const bool I386 = Target.Architecture == Arch::X86;
+      const bool Indirect = Target.Architecture == Arch::AArch64;
+      EXPECT_EQ(Layout->Positions, I386 ? 6u : Indirect ? 3u : 10u);
+      EXPECT_EQ(Layout->Registers, I386 ? 0u : Indirect ? 3u : 2u);
+      EXPECT_EQ(Layout->Parameters[2].Indirect, Indirect);
+    }
+  }
+}
+
+const char *Original = R"(
+#define _GNU_SOURCE 1
+#include <stdio.h>
+#include <stdint.h>
+#include <search.h>
+#include <arpa/inet.h>
+uintptr_t probe_cookie(void) {
+  cookie_io_functions_t io = {
+    (cookie_read_function_t *)(uintptr_t)0x1111222233334444ULL,
+    (cookie_write_function_t *)(uintptr_t)0x5555666677778888ULL,
+    (cookie_seek_function_t *)(uintptr_t)0x9999AAAABBBBCCCCULL,
+    (cookie_close_function_t *)(uintptr_t)0xDDDDEEEEFFFF0000ULL
+  };
+  return (uintptr_t)fopencookie((void *)(uintptr_t)0x1122334455667788ULL,
+                              (char *)(uintptr_t)0x13579BDF2468ACE0ULL, io);
+}
+int probe_entry(void) {
+  ENTRY item = {(char *)(uintptr_t)0x1021324354657687ULL,
+                (void *)(uintptr_t)0x98A9BACBDCEDFE0FULL};
+  return hsearch_r(item, ENTER, (ENTRY **)(uintptr_t)0x8877665544332211ULL,
+                   (struct hsearch_data *)(uintptr_t)0x1020304050607080ULL);
+}
+uintptr_t probe_search(void) {
+  ENTRY item = {(char *)(uintptr_t)0x1234567890ABCDEFULL,
+                (void *)(uintptr_t)0xFEDCBA0987654321ULL};
+  return (uintptr_t)hsearch(item, FIND);
+}
+uintptr_t probe_inet(void) {
+  struct in_addr address = {0x89ABCDEF};
+  return (uintptr_t)inet_ntoa(address);
+}
+)";
+
+// No supplied pointer is dereferenced or called. Every bit, including high
+// pointer bits, the action, and the pointers after ENTRY are observable.
+const char *Provider = R"(
+#include <stdio.h>
+#include <stdint.h>
+#include <search.h>
+#include <arpa/inet.h>
+FILE *fopencookie(void *cookie, const char *mode, cookie_io_functions_t io) {
+  return (uintptr_t)cookie == 0x1122334455667788ULL &&
+         (uintptr_t)mode == 0x13579BDF2468ACE0ULL &&
+         (uintptr_t)io.read == 0x1111222233334444ULL &&
+         (uintptr_t)io.write == 0x5555666677778888ULL &&
+         (uintptr_t)io.seek == 0x9999AAAABBBBCCCCULL &&
+         (uintptr_t)io.close == 0xDDDDEEEEFFFF0000ULL
+             ? (FILE *)(uintptr_t)0x12345678 : 0;
+}
+int hsearch_r(ENTRY item, ACTION action, ENTRY **out, struct hsearch_data *table) {
+  return (uintptr_t)item.key == 0x1021324354657687ULL &&
+         (uintptr_t)item.data == 0x98A9BACBDCEDFE0FULL && action == ENTER &&
+         (uintptr_t)out == 0x8877665544332211ULL &&
+         (uintptr_t)table == 0x1020304050607080ULL ? 37 : 0;
+}
+ENTRY *hsearch(ENTRY item, ACTION action) {
+  return (uintptr_t)item.key == 0x1234567890ABCDEFULL &&
+         (uintptr_t)item.data == 0xFEDCBA0987654321ULL && action == FIND
+             ? (ENTRY *)(uintptr_t)0x23456789 : 0;
+}
+char *inet_ntoa(struct in_addr address) {
+  return address.s_addr == 0x89ABCDEF ? (char *)(uintptr_t)0x3456789A : 0;
+}
+int main(void) {
+  return (uintptr_t)probe_cookie() == 0x12345678 && probe_entry() == 37 &&
+         (uintptr_t)probe_search() == 0x23456789 &&
+         (uintptr_t)probe_inet() == 0x3456789A ? 0 : 1;
+}
+)";
+
+void write(const std::string &Path, const std::string &Text) {
+  std::ofstream Stream(Path);
+  ASSERT_TRUE(Stream.good());
+  Stream << Text;
+}
+
+bool execute(llvm::StringRef Program, std::vector<llvm::StringRef> Arguments,
+             const std::string &ErrorPath) {
+  const std::optional<llvm::StringRef> Redirects[] = {std::nullopt,
+                                                      std::nullopt, ErrorPath};
+  std::string Error;
+  const int Status = llvm::sys::ExecuteAndWait(Program, Arguments, std::nullopt,
+                                               Redirects, 60, 0, &Error);
+  if (Status == 0)
+    return true;
+  const auto Log = llvm::MemoryBuffer::getFile(ErrorPath);
+  ADD_FAILURE() << Error << '\n'
+                << (Log ? (*Log)->getBuffer().str() : "") << '\n'
+                << "exit status " << Status;
+  return false;
+}
+
+TEST(RecordCallContract, LinkedLibCRecordsExecuteThroughBothCEmitters) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "Native glibc x86-64 headers and execution are required";
+#else
+  const std::string Compiler = NEVERD_TEST_CLANG;
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-record-call", Directory));
+  const auto Cleanup = llvm::make_scope_exit(
+      [&] { llvm::sys::fs::remove_directories(Directory); });
+  const std::string Root = Directory.str().str();
+  const std::string Input = Root + "/original.c",
+                    LibraryPath = Root + "/input.so",
+                    Generated = Root + "/generated.c",
+                    Oracle = Root + "/oracle.c", Product = Root + "/run",
+                    Errors = Root + "/errors.txt";
+  write(Input, Original);
+  write(Oracle,
+        std::string(
+            "#define _GNU_SOURCE 1\n#include <stdint.h>\n"
+            "uintptr_t probe_cookie(void); int probe_entry(void);\n"
+            "uintptr_t probe_search(void); uintptr_t probe_inet(void);\n") +
+            Provider);
+  const auto *Header = types::headerLibrary(types::HeaderLibrary::LinuxX64);
+  ASSERT_NE(Header, nullptr);
+  auto Types = std::make_shared<types::TypeLibrary>(Header->dataModel());
+  types::mergeHeaderTypes(*Types, *Header);
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    ASSERT_TRUE(execute(
+        Compiler,
+        {Compiler, "-std=gnu11", Optimization, Input, Oracle, "-o", Product},
+        Errors));
+    ASSERT_TRUE(execute(Product, {Product}, Errors));
+    ASSERT_TRUE(
+        execute(Compiler,
+                {Compiler, "-std=gnu11", Optimization, "-fPIC", "-shared",
+                 "-nostdlib", "-fuse-ld=lld", Input, "-o", LibraryPath},
+                Errors));
+    auto Reader = Loader::create(LibraryPath);
+    ASSERT_TRUE(bool(Reader));
+    auto Loaded = Reader->load(LibraryPath);
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    BinaryImage Image = std::move(*Loaded);
+    EmptyDebug Empty;
+    sdk::LocalTypesDebugContext Debug(Empty, Types, {}, &Image,
+                                      {types::HeaderLibrary::LinuxX64});
+    for (bool Restricted : {false, true}) {
+      SCOPED_TRACE(Restricted ? "selected functions" : "whole module");
+      for (bool LLVM : {false, true}) {
+        SCOPED_TRACE(LLVM ? "LLVM-C" : "HighC");
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = LLVM;
+        if (Restricted) {
+          for (const auto &Symbol : Image.Symbols)
+            if (llvm::StringRef(Symbol.Name).starts_with("probe_"))
+              Options.OnlyFunctionEntries.insert(Symbol.Addr);
+          ASSERT_EQ(Options.OnlyFunctionEntries.size(), 4u);
+        }
+        auto Result = Pipeline().run(Image, Context, Options, &Debug);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        EXPECT_FALSE(Result.CallPrototypeArguments.empty());
+        EXPECT_TRUE(Result.CallUserPrototypes.empty());
+        CEmitterOptions COptions;
+        COptions.TheArch = Image.Arch;
+        COptions.Format = Image.Format;
+        COptions.Image = &Image;
+        COptions.RecordDefinitions = [&](const std::vector<TypeRef> &Records) {
+          return Debug.definitions(Records);
+        };
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions,
+                                          &Debug, &Image));
+        } else {
+          ASSERT_TRUE(
+              HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+        }
+        write(Generated, Source + Provider);
+        for (const char *COptimization : {"-O0", "-O2"}) {
+          SCOPED_TRACE(COptimization);
+          // Whole modules retain separately named import-slot aliases for
+          // the SDK's image linker. Verify their complete declarations and
+          // calls; native provider linkage below exercises the selected
+          // functions, which call the actual header-declared routine names.
+          if (!Restricted) {
+            ASSERT_TRUE(
+                execute(Compiler,
+                        {Compiler, "-std=gnu11", COptimization, "-fsyntax-only",
+                         "-Werror=int-conversion",
+                         "-Werror=incompatible-pointer-types", Generated},
+                        Errors))
+                << Source;
+            continue;
+          }
+          ASSERT_TRUE(execute(
+              Compiler,
+              {Compiler, "-std=gnu11", COptimization,
+               "-fsanitize=address,undefined", "-Werror=int-conversion",
+               "-Werror=incompatible-pointer-types", Generated, "-o", Product},
+              Errors))
+              << Source;
+          ASSERT_TRUE(execute(Product, {Product}, Errors)) << Source;
+        }
+      }
+    }
+  }
+#endif
+}
+} // namespace
