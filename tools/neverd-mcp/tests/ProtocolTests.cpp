@@ -168,7 +168,10 @@ MCP_TEST(OnlyPagesTakeARevisionGuard) {
   FakeBackend Session;
   Server Service(Session);
   ready(Service);
-  for (const auto &Listed : Service.handle(request("tools/list"))["tools"]) {
+  // A copy: a loop over a member of handle()'s temporary would read it after
+  // the temporary is destroyed.
+  const auto Tools = Service.handle(request("tools/list"))["tools"];
+  for (const auto &Listed : Tools) {
     const auto &Properties = Listed["inputSchema"]["properties"];
     require(Properties.contains("expected_revision") ==
                 Properties.contains("offset"),

@@ -74,6 +74,13 @@ std::uint32_t frameLength(const unsigned char Header[4]) {
 struct AttachBackend::Channel {
 #ifdef _WIN32
   HANDLE Pipe = INVALID_HANDLE_VALUE;
+  /// Set when the session closes. Cancelling the pipe's I/O then would miss
+  /// a read the reader starts just after, which would wait on the workbench.
+  HANDLE Stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  ~Channel() {
+    if (Stop)
+      CloseHandle(Stop);
+  }
 #else
   int Socket = -1;
 #endif
@@ -90,6 +97,9 @@ struct AttachBackend::Channel {
   // The pipe is open for overlapped I/O: synchronous I/O on one handle is
   // serialized, so a pending read would hold every write back.
   bool transfer(bool Write, void *Data, std::size_t Size, std::size_t &Done) {
+    // Once the session closes no transfer starts, and one that waits ends.
+    if (WaitForSingleObject(Stop, 0) == WAIT_OBJECT_0)
+      return false;
     OVERLAPPED Pending{};
     Pending.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!Pending.hEvent)
@@ -97,8 +107,13 @@ struct AttachBackend::Channel {
     const auto Count = static_cast<DWORD>(Size);
     const BOOL Started = Write ? WriteFile(Pipe, Data, Count, nullptr, &Pending)
                                : ReadFile(Pipe, Data, Count, nullptr, &Pending);
+    const bool Waiting = !Started && GetLastError() == ERROR_IO_PENDING;
+    const HANDLE Events[] = {Pending.hEvent, Stop};
+    if (Waiting &&
+        WaitForMultipleObjects(2, Events, FALSE, INFINITE) != WAIT_OBJECT_0)
+      CancelIoEx(Pipe, &Pending);
     DWORD Moved = 0;
-    const bool Finished = (Started || GetLastError() == ERROR_IO_PENDING) &&
+    const bool Finished = (Started || Waiting) &&
                           GetOverlappedResult(Pipe, &Pending, &Moved, TRUE);
     CloseHandle(Pending.hEvent);
     Done = Moved;
@@ -192,8 +207,7 @@ struct AttachBackend::Channel {
         Ended = "NeverD session has ended";
     }
 #ifdef _WIN32
-    if (Pipe != INVALID_HANDLE_VALUE)
-      CancelIoEx(Pipe, nullptr);
+    SetEvent(Stop);
 #else
     if (Socket >= 0)
       ::shutdown(Socket, SHUT_RDWR);
@@ -238,6 +252,8 @@ AttachBackend::AttachBackend(const std::filesystem::path &Credentials,
     throw std::runtime_error("Malformed session credential file");
   const auto Endpoint = Saved["endpoint"].get<std::string>();
 #ifdef _WIN32
+  if (!Session->Stop)
+    throw std::runtime_error("Cannot connect to the shared session");
   const std::string Name = Endpoint.rfind("\\\\.\\pipe\\", 0) == 0
                                ? Endpoint
                                : "\\\\.\\pipe\\" + Endpoint;
