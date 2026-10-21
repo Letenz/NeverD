@@ -483,6 +483,18 @@ NEVERD_API const char *
 neverd_decompile_all_ex(neverd_session_t Sess, const char *InputPath,
                         neverd_output_language_t Language, int NoOpt,
                         int MaxFunctions);
+/// One translation unit of the native functions at \p Entries (\p Count of
+/// them, 1 to 65536), written as neverd_decompile_all_ex() writes the whole
+/// program: only they are lifted, each is defined once, and what they call
+/// and do not include is declared, with one set of includes, types and
+/// globals for all of them.  Pass a function and the functions it calls
+/// (neverd_call_tree_json's "bottom_up") for that function's file.  Entries
+/// the image holds no native code at fail the call; EVM and SBF images
+/// answer with their whole program.
+NEVERD_API const char *
+neverd_decompile_functions(neverd_session_t Sess, const char *InputPath,
+                           neverd_output_language_t Language,
+                           const neverd_va_t *Entries, int Count);
 /// Configure EVM analysis for subsequent session and high-level operations.
 NEVERD_API void neverd_evm_set_strict(neverd_session_t Sess, int Strict);
 NEVERD_API int neverd_evm_set_hardfork(neverd_session_t Sess,

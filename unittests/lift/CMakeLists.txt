@@ -1,3 +1,7 @@
+add_neverd_unittest(NeverDCOFFExceptionV2Tests
+  eh/COFFExceptionV2Tests.cpp
+  LINK_COMPONENTS Loader)
+
 add_neverd_unittest(NeverDDirectTailCallMetadataTests
   core/DirectTailCallMetadataTests.cpp
   LINK_COMPONENTS IRLow Lift
