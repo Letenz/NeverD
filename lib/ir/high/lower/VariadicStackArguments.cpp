@@ -62,6 +62,56 @@ bool viewReadFrom(const MedFunc &Func, const MedBlock &Block,
   return false;
 }
 
+/// Whether \p Phi joins, directly or through other joins, an unavailable
+/// register value. A function taking only a narrower view as its parameter
+/// never materializes the whole register's incoming value.
+bool joinsIncomingValue(const MedFunc &Func, const PhiNode &Phi) {
+  std::map<std::pair<int, int>, const PhiNode *> Joins;
+  std::set<std::pair<int, int>> SetValues;
+  for (const auto &Block : Func.Blocks) {
+    for (const auto &P : Block.Phis)
+      Joins.emplace(std::make_pair(P.Output.Id, P.Output.SSAVer), &P);
+    // A version-zero write other than the entry's self-copy is a family's
+    // first write, not its incoming value.
+    for (const auto &Op : Block.Ops)
+      if (Op.Output.Kind == MedVar::Reg && Op.Output.SSAVer == 0 &&
+          !(Op.Opcode == NdOp::COPY && Op.NumInputs >= 1 &&
+            Op.Inputs[0] == Op.Output))
+        SetValues.emplace(Op.Output.Id, 0);
+  }
+  std::set<const PhiNode *> Seen{&Phi};
+  std::vector<const PhiNode *> Pending{&Phi};
+  const auto Unavailable = [&](const MedVar &Arg) {
+    if (Arg.Kind == MedVar::Unspecified)
+      return true;
+    if (Arg.Kind == MedVar::Reg && Arg.SSAVer == 0 &&
+        !SetValues.count({Arg.Id, 0}) &&
+        !std::any_of(
+            Func.Params.begin(), Func.Params.end(), [&](const MedVar &Param) {
+              return Param.RegOff == Arg.RegOff && Param.Size >= Arg.Size;
+            }))
+      return true;
+    const auto It = Joins.find({Arg.Id, Arg.SSAVer});
+    if (Arg.Kind == MedVar::Reg && It != Joins.end() &&
+        Seen.insert(It->second).second)
+      Pending.push_back(It->second);
+    return false;
+  };
+  while (!Pending.empty()) {
+    const PhiNode *Current = Pending.back();
+    Pending.pop_back();
+    if (Current->ExceptionalEntry && Unavailable(*Current->ExceptionalEntry))
+      return true;
+    if (Current->Args.empty() && !Current->ExceptionalEntry)
+      return true;
+    for (const auto &[Pred, Arg] : Current->Args) {
+      if (!blockOf(Func, Pred) || Unavailable(Arg))
+        return true;
+    }
+  }
+  return false;
+}
+
 } // namespace
 
 const PhiNode *registerPhi(const MedFunc &Func, const MedBlock &Block,
@@ -74,11 +124,31 @@ const PhiNode *registerPhi(const MedFunc &Func, const MedBlock &Block,
   for (const auto &Phi : Block.Phis)
     if (OnRegister(Phi) && (!Widest || Phi.Output.Size > Widest->Output.Size))
       Widest = &Phi;
+  // A zero-extending view's join holds only the low bytes of the whole
+  // register's, which holds them too.  It stands for the register only
+  // where the whole join takes the register's incoming value, which a
+  // function taking only the view as its parameter never materializes.
+  std::optional<bool> WidestJoinsIncoming;
+  const auto WideUnmaterialized = [&] {
+    if (!WidestJoinsIncoming)
+      WidestJoinsIncoming = joinsIncomingValue(Func, *Widest);
+    return *WidestJoinsIncoming;
+  };
+  const PhiNode *RequiredView = nullptr;
   for (const auto &Phi : Block.Phis)
-    if (OnRegister(Phi) && (Phi.Output.Size == Widest->Output.Size ||
-                            !TRI.writeZeroExtends(RegOff, Phi.Output.Size) ||
-                            viewReadFrom(Func, Block, Phi.Output)))
-      return &Phi;
+    if (OnRegister(Phi) && Phi.Output.Size < Widest->Output.Size &&
+        TRI.writeZeroExtends(RegOff, Phi.Output.Size) &&
+        viewReadFrom(Func, Block, Phi.Output) && WideUnmaterialized() &&
+        (!RequiredView || Phi.Output.Size > RequiredView->Output.Size))
+      RequiredView = &Phi;
+  for (const auto &Phi : Block.Phis)
+    if (OnRegister(Phi) &&
+        (Phi.Output.Size == Widest->Output.Size ||
+         !TRI.writeZeroExtends(RegOff, Phi.Output.Size) ||
+         (viewReadFrom(Func, Block, Phi.Output) && WideUnmaterialized())))
+      return Phi.Output.Size == Widest->Output.Size && RequiredView
+                 ? RequiredView
+                 : &Phi;
   return Widest;
 }
 

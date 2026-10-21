@@ -1,7 +1,9 @@
 #include "../../../lib/ir/high/lower/CompareTreeSwitch.h"
+#include "../../../lib/ir/high/lower/VariadicStackArguments.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/ir/SourceCallABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceFlow.h"
@@ -47,6 +49,95 @@ void eliminateUnusedValues(std::vector<HighStmt> &);
 void narrowUnreadRegisterBytes(HighFunc &, Arch Architecture = Arch::Unknown);
 } // namespace neverd
 using namespace neverd;
+
+TEST(HighControlFlowSemantics, Win64SourceCallsKeepTheirDeclaredCarrierWidths) {
+  // A whole-register scan sees RCX after a write to ECX. The source binding
+  // reads only the bytes its declaration names, including narrow fixed
+  // parameters. Replacing that operand with the whole scan loses its ABI.
+  for (const auto Kind :
+       {SourceCallTypeHint::Kind::Analyst, SourceCallTypeHint::Kind::Native})
+    for (uint16_t Bytes : {1, 2, 4, 8}) {
+      SCOPED_TRACE(static_cast<int>(Kind));
+      SCOPED_TRACE(Bytes);
+      const auto &TRI = getTargetRegInfo(Arch::X64);
+      const uint64_t RCX =
+          TRI.integerArgumentLayout(BinaryFormat::COFF).Registers[0];
+      MedVar Whole;
+      Whole.Kind = MedVar::Reg;
+      Whole.TheArch = Arch::X64;
+      Whole.Id = 1;
+      Whole.RegOff = RCX;
+      Whole.Size = 8;
+      Whole.SSAVer = 1;
+      MedVar Narrow = Whole;
+      Narrow.Id = 2;
+      Narrow.Size = Bytes;
+      MedVar Result = Whole;
+      Result.Id = 3;
+      Result.RegOff = TRI.IntReturnReg;
+
+      auto Hint = std::make_shared<SourceCallTypeHint>();
+      Hint->CallKind = SourceCallTypeHint::Kind::Analyst;
+      Hint->TargetAddress = 0x2000;
+      Hint->AnalystSite =
+          SourceCallOccurrenceKey{0x1008, 2, NdOp::CALL, 0x2000};
+      Hint->Signature.ReturnType = NdType::makeInt(8);
+      Hint->Signature.Parameters = {{"value", NdType::makeInt(Bytes)}};
+      std::string Diagnostic;
+      ASSERT_TRUE(assignAnalystCallABI(*Hint, Arch::X64, BinaryFormat::COFF,
+                                       Diagnostic))
+          << Diagnostic;
+      Hint->CallKind = Kind;
+
+      auto Op = [](NdOp Code, va_t Address, MedVar Output,
+                   std::initializer_list<MedVar> Inputs) {
+        MedOp O;
+        O.Opcode = Code;
+        O.Addr = Address;
+        O.Output = Output;
+        for (const auto &Input : Inputs)
+          O.addInput(Input);
+        return O;
+      };
+      const auto Value = MedVar::makeConst(7, 8);
+      MedBlock Block;
+      Block.Id = 0;
+      Block.StartAddr = 0x1000;
+      Block.EndAddr = 0x1010;
+      Block.Ops = {
+          Op(NdOp::COPY, 0x1000, Whole, {Value}),
+          Op(NdOp::SUBBYTES, 0x1004, Narrow, {Value, MedVar::makeConst(0, 4)}),
+          Op(NdOp::CALL, 0x1008, Result,
+             {MedVar::makeConst(0x2000, 8), Narrow}),
+          Op(NdOp::RETURN, 0x100c, {}, {Result})};
+      Block.Ops[1].OriginSeq = -1;
+      Block.Ops[2].SourceCallHint = Hint;
+      MedFunc Med;
+      Med.Entry = Block.StartAddr;
+      Med.Name = "typed_win64_call";
+      Med.ReturnType = Hint->Signature.ReturnType;
+      Med.Blocks = {Block};
+      BinaryImage Image;
+      Image.Arch = Arch::X64;
+      Image.Format = BinaryFormat::COFF;
+      MedToHighConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto High = Converter.convert(Med, Arch::X64);
+      unsigned Calls = 0;
+      walkStmts(High.Body, [&](const HighStmt &Statement) {
+        forEachExpr(Statement, [&](const ExprPtr &Expression) {
+          if (!Expression || Expression->Kind != ExprKind::Call ||
+              Expression->CallAddr != Hint->TargetAddress)
+            return;
+          ++Calls;
+          ASSERT_EQ(Expression->Operands.size(), 1u);
+          ASSERT_TRUE(Expression->Operands[0]->Type);
+          EXPECT_EQ(Expression->Operands[0]->Type->Size, Bytes);
+        });
+      });
+      EXPECT_EQ(Calls, 1u);
+    }
+}
 
 TEST(HighControlFlowSemantics, CalleeNameSnapshotKeepsLookupPrecedence) {
   BinaryImage Img;
@@ -8791,6 +8882,184 @@ TEST(HighControlFlowSemantics,
   ASSERT_GE(Found->Operands.size(), 2u);
   ASSERT_TRUE(Found->Operands[1] && Found->Operands[1]->Type);
   EXPECT_EQ(Found->Operands[1]->Type->Size, 8);
+}
+
+TEST(HighControlFlowSemantics, RegisterJoinsRespectEntryValuesInEitherOrder) {
+  for (auto Architecture : {Arch::X64, Arch::AArch64})
+    for (bool Reverse : {false, true})
+      for (unsigned Input : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(Reverse);
+        SCOPED_TRACE(Input);
+        const auto &TRI = getTargetRegInfo(Architecture);
+        auto Register = [&](int Id, int Version, uint16_t Bytes) {
+          MedVar V;
+          V.Kind = MedVar::Reg;
+          V.TheArch = Architecture;
+          V.Id = Id;
+          V.SSAVer = Version;
+          V.Size = Bytes;
+          V.RegOff = TRI.IntParamRegs[0];
+          return V;
+        };
+        MedFunc F;
+        F.Blocks.resize(3);
+        for (int I = 0; I < 3; ++I)
+          F.Blocks[I].Id = I;
+        F.Blocks[0].Succs = {1};
+        F.Blocks[1].Preds = {0, 2};
+        F.Blocks[1].Succs = {2};
+        F.Blocks[2].Preds = {1};
+        F.Blocks[2].Succs = {1};
+        PhiNode Low, Whole;
+        Low.Output = Register(10, 3, 4);
+        Low.Args = {{0, MedVar::makeConst(7, 4)}, {2, Low.Output}};
+        Whole.Output = Register(11, 3, 8);
+        Whole.Args = {{0, MedVar::makeConst(0x100000007, 8)},
+                      {2, Whole.Output}};
+        const bool Incoming = Input == 1 || Input == 2 || Input == 4 ||
+                              Input == 5 || Input == 6 || Input == 8;
+        if (Input == 1 || Input == 3 || Input == 7 || Input == 8)
+          Whole.Args[0].second = Register(11, 0, 8);
+        if (Input == 7 || Input == 8) {
+          auto Param = Register(11, 0, Input == 7 ? 8 : 4);
+          Param.Kind = MedVar::Param;
+          F.Params = {Param};
+        }
+        if (Input == 2)
+          Whole.Args[0].second = MedVar::makeUnspecified(8, Architecture);
+        if (Input == 3)
+          F.Blocks[0].Ops = {operation(NdOp::COPY, 0x1000, Register(11, 0, 8),
+                                       {MedVar::makeConst(0x100000007, 8)})};
+        if (Input == 4) {
+          PhiNode Nested;
+          Nested.Output = Register(11, 2, 8);
+          Nested.Args = {{1, Register(11, 0, 8)}};
+          F.Blocks[2].Phis = {Nested};
+          Whole.Args[1].second = Nested.Output;
+        }
+        if (Input == 5)
+          Whole.ExceptionalEntry = MedVar::makeUnspecified(8, Architecture);
+        if (Input == 6)
+          Whole.Args[0].first = 99;
+        auto &Join = F.Blocks[1];
+        Join.Phis = Reverse ? std::vector<PhiNode>{Whole, Low}
+                            : std::vector<PhiNode>{Low, Whole};
+        auto Read = Low.Output;
+        Read.Kind = MedVar::Temp;
+        Read.Id = 20;
+        Join.Ops = {operation(NdOp::COPY, 0x1100, Read, {Low.Output})};
+        const auto *Chosen =
+            detail::registerPhi(F, Join, TRI.IntParamRegs[0], TRI);
+        ASSERT_NE(Chosen, nullptr);
+        EXPECT_EQ(Chosen->Output.Size, Incoming ? 4 : 8);
+      }
+}
+
+TEST(HighControlFlowSemantics, ACallReadsTheWholeRegistersJoin) {
+  // sed's cross-jumped `__fprintf_chk` call: two paths load a format into
+  // RDX and jump to the shared call, whose block reads EDX first.  The join
+  // keeps a phi of EDX beside RDX's, and the call took the EDX phi for its
+  // argument, the format's low four bytes (`v45 = (int32_t)("%s%c")`).
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  auto Reg = [&](int Id, int Version, uint64_t RegOff, uint16_t Size) {
+    MedVar V;
+    V.Kind = MedVar::Reg;
+    V.TheArch = Arch::X64;
+    V.Id = Id;
+    V.SSAVer = Version;
+    V.Size = Size;
+    V.RegOff = RegOff;
+    return V;
+  };
+  const uint64_t Rdi = TRI.IntParamRegs[0], Rsi = TRI.IntParamRegs[1],
+                 Rdx = TRI.IntParamRegs[2];
+  MedFunc F;
+  F.Entry = 0x1000;
+  F.Name = "shared_format_call";
+  F.ReturnType = NdType::makeInt(8, false);
+  F.Blocks.resize(4);
+  F.Blocks[0].Id = 0;
+  F.Blocks[0].StartAddr = 0x1000;
+  F.Blocks[0].EndAddr = 0x1004;
+  F.Blocks[0].Succs = {1, 2};
+  F.Blocks[0].Ops = {
+      operation(NdOp::COND_BR, 0x1000, {},
+                {MedVar::makeConst(0x1020, 8), Reg(10, 0, Rdi, 1)})};
+  for (int I : {1, 2}) {
+    MedBlock &B = F.Blocks[I];
+    B.Id = I;
+    B.StartAddr = 0x1000 + 0x10 * I;
+    B.EndAddr = B.StartAddr + 0x10;
+    B.Preds = {0};
+    B.Succs = {3};
+    const MedVar Format = MedVar::makeConst(0x4000 + 0x10 * I, 8);
+    MedOp Sync = operation(NdOp::SUBBYTES, B.StartAddr + 4, Reg(31, I, Rdx, 4),
+                           {Format, MedVar::makeConst(0, 4)});
+    Sync.OriginSeq = -1;
+    B.Ops = {operation(NdOp::COPY, B.StartAddr, Reg(30, I, Rdx, 8), {Format}),
+             Sync,
+             operation(NdOp::BRANCH, B.StartAddr + 8, {},
+                       {MedVar::makeConst(0x1030, 8)})};
+  }
+  MedBlock &Join = F.Blocks[3];
+  Join.Id = 3;
+  Join.StartAddr = 0x1030;
+  Join.EndAddr = 0x1040;
+  Join.Preds = {1, 2};
+  PhiNode Low, Whole;
+  Low.Output = Reg(31, 3, Rdx, 4);
+  Low.Args = {{1, Reg(31, 1, Rdx, 4)}, {2, Reg(31, 2, Rdx, 4)}};
+  Whole.Output = Reg(30, 3, Rdx, 8);
+  Whole.Args = {{1, Reg(30, 1, Rdx, 8)}, {2, Reg(30, 2, Rdx, 8)}};
+  Join.Phis = {Low, Whole};
+  MedVar Sum;
+  Sum.Kind = MedVar::Temp;
+  Sum.TheArch = Arch::X64;
+  Sum.Id = 50;
+  Sum.SSAVer = 1;
+  Sum.Size = 4;
+  MedVar Result = Reg(20, 1, TRI.IntReturnReg, 8);
+  MedOp Call =
+      operation(NdOp::CALL, 0x1038, Result, {MedVar::makeConst(0x3000, 8)});
+  Call.CalleeRegisterArgs = 3;
+  Call.CalleeStackArgs = 0;
+  Join.Ops = {
+      operation(NdOp::INT_ADD, 0x1030, Sum,
+                {Reg(31, 3, Rdx, 4), MedVar::makeConst(1, 4)}),
+      operation(NdOp::STORE, 0x1032, {}, {MedVar::makeConst(0x5000, 8), Sum}),
+      operation(NdOp::COPY, 0x1034, Reg(40, 1, Rdi, 8),
+                {MedVar::makeConst(0, 8)}),
+      operation(NdOp::COPY, 0x1036, Reg(41, 1, Rsi, 8),
+                {MedVar::makeConst(2, 8)}),
+      Call,
+      operation(NdOp::RETURN, 0x103C, {}, {Result})};
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  // The callee is variadic like `__fprintf_chk`: a call passes its named
+  // parameters as they reach it.
+  const std::map<va_t, VariadicVectorCallee> Variadic{{0x3000, {0, 3}}};
+  MedToHighConverter Converter;
+  Converter.setBinaryImage(&Img);
+  Converter.setVariadicVectorCallees(&Variadic);
+  const auto High = Converter.convert(F, Arch::X64);
+  const HighExpr *Found = nullptr;
+  walkStmts(High.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      std::function<void(const HighExpr &)> Walk = [&](const HighExpr &N) {
+        if (N.Kind == ExprKind::Call && N.CallAddr == 0x3000)
+          Found = &N;
+        N.forEachChildExpr([&](const ExprPtr &C) { Walk(*C); });
+      };
+      if (E)
+        Walk(*E);
+    });
+  });
+  ASSERT_NE(Found, nullptr);
+  ASSERT_GE(Found->Operands.size(), 3u);
+  ASSERT_TRUE(Found->Operands[2] && Found->Operands[2]->Type);
+  EXPECT_EQ(Found->Operands[2]->Type->Size, 8);
 }
 
 TEST(HighControlFlowSemantics,
