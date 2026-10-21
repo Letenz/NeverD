@@ -666,16 +666,9 @@ bool provePolynomialIdentity(SymContext &Ctx, SymRef Before, SymRef After,
       Terms->push_back(std::move(Term));
     }
   }
-  if (Terms->size() > MaxBytes / (4 * sizeof(PolyTerm)) ||
-      !Budget.consume(Terms->size()))
+  if (!Budget.consume(Terms->size()))
     return false;
-  std::map<unsigned, llvm::SmallVector<PolyTerm, 8>> ByDegree;
-  for (auto &Term : *Terms)
-    // Constants and linear terms share the linear minterm table: the sum of
-    // all minterms is the all-ones word, so their weights can cancel.
-    ByDegree[std::max<size_t>(1, Term.Factors.size())].push_back(
-        std::move(Term));
-  for (auto &[Degree, DegreeTerms] : ByDegree) {
+  auto CheckGroup = [&](llvm::SmallVectorImpl<PolyTerm> &DegreeTerms) {
     // Prove each homogeneous difference independently. Removing a common
     // multiset is sufficient: a zero quotient stays zero after multiplication,
     // including zero divisors. No modular division or cancellation assumption
@@ -693,11 +686,32 @@ bool provePolynomialIdentity(SymContext &Ctx, SymRef Before, SymRef After,
         }
     auto Form = expandOverMinterms(Ctx, DegreeTerms, Inputs,
                                    Ctx.width(Abstract->Body), Budget);
-    if (!Form || !Form->Higher.empty() ||
-        !llvm::all_of(Form->Linear,
-                      [](const llvm::APInt &C) { return C.isZero(); }))
+    return Form && Form->Higher.empty() &&
+           llvm::all_of(Form->Linear,
+                        [](const llvm::APInt &C) { return C.isZero(); });
+  };
+  // Constants and linear terms share the linear minterm table: the sum of
+  // all minterms is the all-ones word, so their weights can cancel.
+  auto Group = [](const PolyTerm &Term) {
+    return std::max<size_t>(1, Term.Factors.size());
+  };
+  if (Terms->empty())
+    return true;
+  if (llvm::all_of(*Terms, [&](const PolyTerm &Term) {
+        return Group(Term) == Group(Terms->front());
+      }))
+    return CheckGroup(*Terms);
+  // Include each group's inline capacity and map node, even when that group
+  // contains only one term. A homogeneous proof needs no partition copies.
+  constexpr size_t EntryBytes = 12 * sizeof(PolyTerm) + 128;
+  if (Terms->size() > MaxBytes / EntryBytes)
+    return false;
+  std::map<unsigned, llvm::SmallVector<PolyTerm, 8>> ByDegree;
+  for (auto &Term : *Terms)
+    ByDegree[Group(Term)].push_back(std::move(Term));
+  for (auto &[Degree, DegreeTerms] : ByDegree)
+    if (!CheckGroup(DegreeTerms))
       return false;
-  }
   return true;
 }
 

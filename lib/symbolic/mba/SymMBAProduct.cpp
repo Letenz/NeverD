@@ -792,22 +792,38 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
     auto Common =
         extractPolynomialCofactor(DegreeTerms, Budget, Opts.MaxTableBytes);
     unsigned Degree = SourceDegree - Common.size();
-    auto Attach = [&](SymRef Part) {
-      if (Common.empty())
-        return Part;
-      if (Ctx.op(Part) == SymOp::Add) {
-        llvm::SmallVector<SymRef, 8> Terms(Ctx.operands(Part));
-        llvm::SmallVector<SymRef, 8> Summands;
-        for (SymRef Term : Terms) {
-          llvm::SmallVector<SymRef, 8> Factors(Common);
-          Factors.push_back(Term);
-          Summands.push_back(Ctx.mkMul(Factors));
-        }
-        return Ctx.mkAdd(Summands);
+    auto Append = [&](SymRef Part) {
+      if (Common.empty()) {
+        Parts.push_back(Part);
+        return true;
       }
-      llvm::SmallVector<SymRef, 8> Factors(Common);
-      Factors.push_back(Part);
-      return Ctx.mkMul(Factors);
+      const auto Terms = Ctx.op(Part) == SymOp::Add
+                             ? Ctx.operands(Part)
+                             : llvm::ArrayRef<SymRef>(Part);
+      const size_t MaxSlots = Opts.MaxTableBytes / (4 * sizeof(SymRef));
+      size_t Slots = Terms.size();
+      if (Slots > MaxSlots)
+        return false;
+      for (SymRef Term : Terms) {
+        const size_t Count =
+            Common.size() +
+            (Ctx.op(Term) == SymOp::Mul ? Ctx.numOperands(Term) : 1);
+        if (Count > MaxSlots - Slots)
+          return false;
+        Slots += Count;
+      }
+      if (!Budget.consume(Slots))
+        return false;
+      // Own the sum's operands before interning can move the arena. Charge
+      // the restored common edges as well as the small quotient's own edges.
+      llvm::SmallVector<SymRef, 8> Owned(Terms), Summands;
+      for (SymRef Term : Owned) {
+        llvm::SmallVector<SymRef, 8> Factors(Common);
+        Factors.push_back(Term);
+        Summands.push_back(Ctx.mkMul(Factors));
+      }
+      Parts.push_back(Ctx.mkAdd(Summands));
+      return true;
     };
     auto Retain = [&]() {
       const size_t MaxSlots = Opts.MaxTableBytes / (2 * sizeof(SymRef));
@@ -815,9 +831,9 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
       if (Slots > MaxSlots)
         return false;
       for (const auto &Term : DegreeTerms) {
-        if (Term.Factors.size() > MaxSlots - Slots)
+        if (Term.Factors.size() + Common.size() > MaxSlots - Slots)
           return false;
-        Slots += Term.Factors.size();
+        Slots += Term.Factors.size() + Common.size();
       }
       if (!Budget.consume(Slots))
         return false;
@@ -825,10 +841,11 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
       for (const auto &Term : DegreeTerms) {
         llvm::SmallVector<SymRef, 8> Factors(Term.Factors.begin(),
                                              Term.Factors.end());
+        Factors.append(Common);
         Factors.push_back(Ctx.mkConst(Term.Coeff));
         Summands.push_back(Ctx.mkMul(Factors));
       }
-      Parts.push_back(Attach(Ctx.mkAdd(Summands)));
+      Parts.push_back(Ctx.mkAdd(Summands));
       return true;
     };
     // An unchanged, already factored higher-degree component needs no factor
@@ -905,7 +922,8 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
         Consider(Product->Coefficient, Product->Factors);
         if (!Best.isValid())
           return std::nullopt;
-        Parts.push_back(Attach(Best));
+        if (!Append(Best))
+          return std::nullopt;
         continue;
       }
       if (Determined && SourceDegree >= 3 && !Budget.exhausted() && Retain())
@@ -928,7 +946,8 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
       SymRef Best = cheapestOf(Ctx, Forms);
       if (!Best.isValid())
         return std::nullopt;
-      Parts.push_back(Attach(Best));
+      if (!Append(Best))
+        return std::nullopt;
       continue;
     }
     // Exact cancellation can remove a degree altogether.
@@ -961,7 +980,8 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
         continue;
       return std::nullopt;
     }
-    Parts.push_back(Attach(Best));
+    if (!Append(Best))
+      return std::nullopt;
   }
 
   Parts.push_back(Remainder);
