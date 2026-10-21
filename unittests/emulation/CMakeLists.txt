@@ -739,7 +739,7 @@ foreach(_driver_name success failure unknown fault loop devices readonly privile
 endforeach()
 # The loader fixture deliberately retains relocations and a compiler-inserted
 # stack protector. The WDM fixture covers the complete synchronous lifecycle.
-foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_registry_values driver_registry_keys driver_async driver_dispatcher driver_context_limits driver_preemptive driver_thread_priority driver_loader_view driver_bugcheck driver_version_query driver_physical_ranges driver_va_shadow_query driver_strings driver_identity driver_time_fields driver_interlocked driver_slist driver_cstrings driver_cstring_writes driver_crt_strings driver_lookaside driver_fast_mutex driver_eresource driver_objects driver_device_queries driver_file_handles driver_file_objects driver_file_queries driver_file_transfers driver_processors driver_int64_strings driver_filesystem_provider driver_registry_objects driver_namespace driver_data driver_qspinlock driver_rundown)
+foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl driver_registry driver_registry_values driver_registry_keys driver_async driver_dispatcher driver_context_limits driver_preemptive driver_thread_priority driver_loader_view driver_bugcheck driver_version_query driver_physical_ranges driver_va_shadow_query driver_process_peb driver_strings driver_identity driver_time_fields driver_interlocked driver_slist driver_cstrings driver_cstring_writes driver_crt_strings driver_lookaside driver_fast_mutex driver_eresource driver_objects driver_device_queries driver_file_handles driver_file_objects driver_file_queries driver_file_transfers driver_processors driver_int64_strings driver_filesystem_provider driver_registry_objects driver_namespace driver_data driver_qspinlock driver_rundown)
   set(_driver_object "${_driver_fixture_dir}/${_driver_name}.obj")
   set(_driver_image "${_driver_fixture_dir}/${_driver_name}.sys")
   if(_driver_name STREQUAL "loader")
@@ -864,6 +864,33 @@ add_custom_command(OUTPUT "${_driver_context_image}" "${_driver_context_object}"
     "${_driver_import_lib}"
   VERBATIM)
 list(APPEND _driver_outputs "${_driver_context_image}")
+set(_driver_seh_v2_image "${_driver_fixture_dir}/driver_seh_v2.sys")
+set(_driver_seh_v2_object "${_driver_fixture_dir}/driver_seh_v2.obj")
+set(_driver_seh_v2_assembly "${_driver_fixture_dir}/driver_seh_v2_asm.obj")
+set(_driver_seh_v2_import "${_driver_fixture_dir}/driver_seh_v2.lib")
+add_custom_command(OUTPUT "${_driver_seh_v2_image}" "${_driver_seh_v2_object}"
+    "${_driver_seh_v2_assembly}" "${_driver_seh_v2_import}"
+  COMMAND "${NEVERD_DRIVER_LLD_LINK}" /lib /machine:x64
+    "/def:${CMAKE_CURRENT_SOURCE_DIR}/fixtures/driver_seh_v2.def"
+    "/out:${_driver_seh_v2_import}"
+  COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"
+    --target=x86_64-pc-windows-msvc -std=c11 -ffreestanding
+    -fno-stack-protector -fms-extensions -fexceptions -O1 -c
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/driver_seh_v2.c"
+    -o "${_driver_seh_v2_object}"
+  COMMAND "${NEVERD_TEST_CLANG_EXECUTABLE}"
+    --target=x86_64-pc-windows-msvc -c
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/driver_seh_v2.S"
+    -o "${_driver_seh_v2_assembly}"
+  COMMAND "${NEVERD_DRIVER_LLD_LINK}" /machine:x64 /entry:DriverEntry
+    /subsystem:native /driver /dll /nodefaultlib /dynamicbase /timestamp:0
+    /base:0x180000000 "/out:${_driver_seh_v2_image}"
+    "${_driver_seh_v2_object}" "${_driver_seh_v2_assembly}"
+    "${_driver_seh_v2_import}"
+  DEPENDS fixtures/driver_seh_v2.c fixtures/driver_seh_v2.S
+    fixtures/driver_seh_v2.def
+  VERBATIM)
+list(APPEND _driver_outputs "${_driver_seh_v2_image}")
 add_custom_target(NeverDDriverFixtures DEPENDS ${_driver_outputs})
 
 # Microsoft kit files are optional external validation inputs. Never assume a
@@ -1557,6 +1584,8 @@ add_neverd_unittest(NeverDNativeDriverTests
   DriverTimestampTests.cpp
   DriverCPUIDTests.cpp
   DriverMSRReadTests.cpp
+  DriverProcessPebTests.cpp
+  DriverSEHV2Tests.cpp
   DriverLoaderViewTests.cpp
   DriverBugCheckTests.cpp
   DriverVersionQueryTests.cpp
@@ -1592,6 +1621,7 @@ add_neverd_unittest(NeverDKernelSnapshotTests
   KernelLoaderViewTests.cpp
   KernelResidentQueryTests.cpp
   KernelMSRReadTests.cpp
+  KernelProcessPebTests.cpp
   KernelBugCheckTests.cpp
   KernelVersionQueryTests.cpp
   KernelPhysicalInventoryTests.cpp

@@ -4,6 +4,8 @@
 
 # 测试 NeverD
 
+`DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
+
 `DriverMSRExecution.*` 与 `DriverMSRDeclaration.*` 在可用后端上检查显式 MSR 输入、全宽拆分、状态保留、重复读取、精确指令预算、缺失/无效声明及不授予内存权限。`KernelMSRRead.*` 检查未使用声明仍保留依赖。运行原生驱动、驱动模拟和内核快照测试组；不可用的 WHP/HVF 记为跳过，不算原生验证。
 
 NeverD 的测试回答三个不同问题：表示形状是否符合预期、完整 pipeline 路径能否
@@ -1216,7 +1218,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 68 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 135 个负载产生 270 项 WHP 结果：27 个内建映像、68 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5085 CPU + 270 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 116 driver environment checks + 116 driver API checks = 5785`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 135 个负载产生 270 项 WHP 结果：27 个内建映像、68 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5085 CPU + 270 WHP + 32 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 126 driver environment checks + 116 driver API checks = 5802`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 真实 WDK 清单也构建 `driver_device_queries.c`、`driver_file_objects.c` 和 `driver_file_handles.c` 的普通及 CFG 版本。`DriverDeviceQueryTests.cpp` 与 `DriverFileObjectTests.cpp` 复用便携调用方的断言，在两种契约、基址和调度策略下检查保留引用后的删除、失败 CREATE、进程身份、最后句柄 CLEANUP 和延迟 CLOSE。三组均列入原生必测项；清单验证独立发现含 `NEVERD_WDK_FIXTURE` 的源码，防止双模式源码遗漏 WDK 构建。
 

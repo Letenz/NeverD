@@ -423,6 +423,10 @@ static int realMain(int Argc, char *Argv[]) {
     return runXrefs(Sess);
   if (CallGraphCmd)
     return runCallGraph(Sess);
+  if (PathsCmd)
+    return runPaths(Sess);
+  if (CallTreeCmd)
+    return runCallTree(Sess);
   if (BookmarksCmd)
     return runBookmarks();
   if (AnnotateCmd)

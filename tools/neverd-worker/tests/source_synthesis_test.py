@@ -153,11 +153,13 @@ def cubic_elf(degree=3, perturbed=False, missing=False):
                 code += bytes.fromhex(
                     "4189f3 41f7d3 4421d9" if invert_c else "21f1")
                 code += bytes.fromhex("440fafd1")
-                for factor in (
+                tails = (
                     "4189fb 4121f3",  # r11d = x & y
                     "4189fb 4131d3",  # r11d = x ^ z
                     "4189f3 4131d3",  # r11d = y ^ z
-                )[:degree - 3]:
+                )
+                for index in range(degree - 3):
+                    factor = tails[index % len(tails)]
                     code += bytes.fromhex(factor + " 450fafd3")
                 if perturbed and not (invert_a or invert_b or invert_c):
                     code += bytes.fromhex("456bd203")  # r10d *= 3
@@ -266,6 +268,11 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             complements = len(re.findall(r"\^\s*-1\b", text))
             assert text.count("&") <= 8, text
             assert text.count("^") - complements <= 3, text
+        elif kind in ("missing-degree12", "missing-degree24"):
+            complements = len(re.findall(r"\^\s*-1\b", text))
+            limit = 12 if kind == "missing-degree12" else 24
+            assert text.count("&") <= limit, text
+            assert text.count("^") - complements <= limit, text
         elif kind in ("perturbed-quartic", "perturbed-sextic",
                       "missing-quartic", "missing-sextic"):
             # Keep the changed original product, but eliminate the remaining
@@ -298,7 +305,8 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                     elif kind in ("partitioned", "mixed", "cubic", "quartic",
                                   "sextic", "perturbed-quartic",
                                   "perturbed-sextic", "missing-quartic",
-                                  "missing-sextic", "missing-cubic"):
+                                  "missing-sextic", "missing-cubic",
+                                  "missing-degree12", "missing-degree24"):
                         assert ordinary.count("&") >= 4, ordinary
                     else:
                         assert ">>" in ordinary, ordinary
@@ -380,6 +388,15 @@ if __name__ == "__main__":
              "37U*(x^y)*(y|z)*(x|z)*(x&y)*(x^z)*(y^z)"
              "-37U*((x^y)&z)*((y|z)&x)*((x|z)&y)*(x&y)*(x^z)*(y^z)"
              "+x+y+(x&0x80000000U)"),
+            ("missing-degree12", cubic_elf(degree=12, missing=True),
+             "(37U*(x^y)*(y|z)*(x|z)"
+             "-37U*((x^y)&z)*((y|z)&x)*((x|z)&y))"
+             "*(x&y)*(x^z)*(y^z)*(x&y)*(x^z)*(y^z)*(x&y)*(x^z)*(y^z)"
+             "+x+y+(x&0x80000000U)"),
+            ("missing-degree24", cubic_elf(degree=24, missing=True),
+             "(37U*(x^y)*(y|z)*(x|z)"
+             "-37U*((x^y)&z)*((y|z)&x)*((x|z)&y))"
+             + "*(x&y)*(x^z)*(y^z)" * 7 + "+x+y+(x&0x80000000U)"),
         ):
             run_fixture(options.worker, options.cli, options.compiler, kind,
                         image, expected)

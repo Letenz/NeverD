@@ -4,6 +4,8 @@
 
 # NeverD Architecture
 
+The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend.
+
 PE GuardCFFunctionTable parsing belongs to the COFF loader. Its complete,
 immutable table supplies address-taken function identities, without asserting
 an ABI, a supported body or runtime CFG admission. The low-level detector owns
@@ -1115,7 +1117,7 @@ difference proof still govern replacement. Larger domains keep bounded search.
 Anchored searches also use necessary pair-membership coefficient bounds when
 the modular scale distinguishes membership counts. Ambiguous scales retain
 the original search; these bounds never authorize a replacement.
-Before a higher-degree single-product search expands its tensor, unequal
+Before a cubic or higher-degree single-product search expands its tensor, unequal
 nonzero lexicographic extremal coefficients can reject it: each extremal
 monomial of a product occurs exactly once and fixes the same scale. Equal
 extrema from separate terms are summed; cancellation declines this check.
@@ -1129,6 +1131,49 @@ exact identity, not on expanding them as `-1-x`. Equal scales and repeated
 factors remain exact, and identical proved quotients share a charged local
 cache. A bounded frontier and cumulative work/storage admission preserve the
 best completed root on refusal.
+Long cofactor keys use a commutative fingerprint to select comparisons, then
+compare every retained factor and its multiplicity before grouping. Only
+shared keys are materialized, in the original lexicographic order; short keys
+keep direct construction. Hash equality supplies no semantic evidence, and
+all comparisons, buckets and retained groups share the existing budgets.
+Small frontiers of long residuals instead intersect term pairs and enumerate
+only their shared keys. Exact multiplicities and the same lexicographic group
+order are retained. Cartesian completion materializes each complete corner
+once, avoiding repeated copies of invariant tails in intermediate prefixes.
+Large distribution proofs can cancel identical summands and extract a common
+nonconstant factor from both sides before normalizing the quotients. Proving
+quotient equality is sufficient even when the common word can be zero; no
+modular division or invertibility assumption is used. Every retained scale and
+coefficient difference still participates in the independent equality check.
+The shared expression builder inserts a nonconstant operand into an existing
+canonical product's sorted factors, preserving its leading coefficient and
+multiplicities. It snapshots operands before interning can relocate the arena.
+Both parsing and source expression reconstruction avoid re-flattening and
+re-sorting every growing product prefix; the resulting canonical node is
+unchanged. Canonical flat products and coefficient changes retain the same
+fast path when no unary shift fold can apply. Sum collection reuses an original
+scaled addend only while its coefficient is unchanged; merging another addend
+invalidates that reuse before modular cancellation or reconstruction.
+Arithmetic normalization reads flat monomials directly and skips multiplication
+by unit coefficients. Completed polynomials can be reused only within one
+normalizer with a fixed context, width and complement policy. Candidate emission
+cannot mutate these tables; new roots still require normalization and complete
+coefficient equality. Returned references remain local to that normalizer, and
+later independent verifiers start with fresh state.
+Already allocated monomial keys and coefficients move into polynomial tables;
+copying callers retain separate storage charges. This avoids allocating the
+same product entry twice without sharing mutable proof state.
+The product valuation proof enumerates the complete low-bit domain of up to
+six independent opaque inputs. Bitwise operators, addition and multiplication
+supply exact parity; every even factor contributes a trailing zero. Bit-sliced
+counters preserve repeated-factor correlations across all assignments. A
+product is zero only when these guaranteed zeros and its literal coefficient
+cover the full word width. The proof admits at most 64 factors, 128 reachable
+nodes and eight observable low bits, under the existing work/storage budget.
+Early sum pruning requires every long product to vanish, preserving incomplete
+factor bases. Generated products and residuals can use the proof after their
+complete distribution is established. No additional CLI or GUI switch is
+required: both source routes use the shared symbolic core.
 Different coefficients can expose the same quotient after splitting off exact
 modular differences. The search prefers a coefficient repeated at the same degree
 as its common scale; every difference stays attached to its original factors. The quotient

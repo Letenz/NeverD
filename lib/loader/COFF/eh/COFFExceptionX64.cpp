@@ -11,6 +11,7 @@
 
 #include "llvm/Support/Win64EH.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -42,9 +43,72 @@ UnwindOperation makeV1Operation(UnwindOperationKind Kind, uint8_t CodeOffset,
   return Op;
 }
 
+bool decodeV2Epilogs(ExceptionFunction &F, const uint8_t *Codes, uint8_t Count,
+                     size_t &Index) {
+  if (!Count || (Codes[1] & 0x0f) != UOP_Epilog)
+    return true;
+  const uint8_t Size = Codes[0];
+  const uint8_t Flags = Codes[1] >> 4;
+  if (!Size || Flags > 1) {
+    diagnose(F, ExceptionParseStatus::Malformed,
+             "invalid x64 v2 epilogue header");
+    return false;
+  }
+  const auto Add = [&](uint32_t Distance) {
+    const uint64_t FunctionSize = F.CodeRange.size();
+    if (Distance < Size || Distance > FunctionSize ||
+        FunctionSize - Distance < F.PrologueSize) {
+      diagnose(F, ExceptionParseStatus::Malformed,
+               "x64 v2 epilogue exceeds the function body");
+      return false;
+    }
+    UnwindEpilog Epilog;
+    Epilog.StartOffset = FunctionSize - Distance;
+    // The encoded size includes the first byte of the terminator, even when
+    // that instruction is longer. Stack deallocation precedes this region.
+    Epilog.LastInstructionOffset = Size - 1;
+    F.Epilogs.push_back(std::move(Epilog));
+    return true;
+  };
+  if (Flags && !Add(Size))
+    return false;
+  bool Padding = false;
+  for (Index = 1; Index < Count && (Codes[2 * Index + 1] & 0x0f) == UOP_Epilog;
+       ++Index) {
+    if (Padding) {
+      diagnose(F, ExceptionParseStatus::Malformed,
+               "x64 v2 epilogue follows padding");
+      return false;
+    }
+    const uint32_t Distance =
+        Codes[2 * Index] | (uint32_t(Codes[2 * Index + 1] >> 4) << 8);
+    Padding = Distance == 0;
+    if (!Padding && !Add(Distance))
+      return false;
+  }
+  if (Index % 2 || F.Epilogs.empty()) {
+    diagnose(F, ExceptionParseStatus::Malformed,
+             "incomplete x64 v2 epilogue code pairs");
+    return false;
+  }
+  std::sort(F.Epilogs.begin(), F.Epilogs.end(),
+            [](const UnwindEpilog &A, const UnwindEpilog &B) {
+              return A.StartOffset < B.StartOffset;
+            });
+  for (size_t I = 1; I < F.Epilogs.size(); ++I)
+    if (F.Epilogs[I].StartOffset - F.Epilogs[I - 1].StartOffset < Size) {
+      diagnose(F, ExceptionParseStatus::Malformed,
+               "overlapping x64 v2 epilogues");
+      return false;
+    }
+  return true;
+}
+
 bool decodeV1V2Operations(ExceptionFunction &F, const uint8_t *Codes,
                           uint8_t Count) {
   size_t I = 0;
+  if (F.UnwindVersion == 2 && !decodeV2Epilogs(F, Codes, Count, I))
+    return false;
   std::optional<uint8_t> PreviousCodeOffset;
   while (I < Count) {
     const uint8_t *Slot = Codes + I * 2;
@@ -54,10 +118,8 @@ bool decodeV1V2Operations(ExceptionFunction &F, const uint8_t *Codes,
     uint8_t Slots = 1;
     UnwindOperationKind Kind = UnwindOperationKind::Opaque;
 
-    const bool IsV2Epilog = F.UnwindVersion == 2 && Opcode == UOP_Epilog;
-    if ((!IsV2Epilog && CodeOffset > F.PrologueSize) ||
-        (F.UnwindVersion == 1 && PreviousCodeOffset &&
-         CodeOffset > *PreviousCodeOffset)) {
+    if (CodeOffset > F.PrologueSize ||
+        (PreviousCodeOffset && CodeOffset > *PreviousCodeOffset)) {
       diagnose(F, ExceptionParseStatus::Malformed,
                "invalid x64 unwind-code ordering or prologue offset");
       return false;
@@ -113,18 +175,19 @@ bool decodeV1V2Operations(ExceptionFunction &F, const uint8_t *Codes,
         return false;
       break;
     case UOP_Epilog:
-      if (F.UnwindVersion == 2)
-        Kind = UnwindOperationKind::Epilog;
-      else
-        diagnose(F, ExceptionParseStatus::Partial,
-                 "reserved x64 v1 unwind opcode 6");
+      if (F.UnwindVersion == 2) {
+        diagnose(F, ExceptionParseStatus::Malformed,
+                 "x64 v2 epilogue code follows prologue operations");
+        return false;
+      }
+      diagnose(F, ExceptionParseStatus::Partial,
+               "reserved x64 v1 unwind opcode 6");
       break;
     case UOP_SpareCode:
-      if (F.UnwindVersion == 2)
-        Kind = UnwindOperationKind::Spare;
-      else
-        diagnose(F, ExceptionParseStatus::Partial,
-                 "reserved x64 v1 unwind opcode 7");
+      diagnose(F, ExceptionParseStatus::Partial,
+               "reserved x64 unwind opcode 7");
+      if (F.UnwindVersion == 2 && !RequireSlots(3))
+        return false;
       break;
     case UOP_SaveXMM128:
       Kind = UnwindOperationKind::SaveXMM128;
@@ -168,10 +231,6 @@ bool decodeV1V2Operations(ExceptionFunction &F, const uint8_t *Codes,
     case UOP_SaveNonVolBig:
       Op.Register = OpInfo;
       Op.StackOffset = readLE<uint32_t>(Slot + 2);
-      break;
-    case UOP_Epilog:
-      if (F.UnwindVersion == 2)
-        Op.StackOffset = (uint32_t(OpInfo) << 8) | CodeOffset;
       break;
     case UOP_SaveXMM128:
       Op.Register = OpInfo;

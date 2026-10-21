@@ -152,6 +152,14 @@ struct DriverMSRRead {
   uint64_t Value = 0;
 };
 
+/// A stable PsGetProcessPeb reply for an already modeled process identity.
+/// The numeric value creates neither a process nor readable guest storage.
+/// In particular, an omitted declaration does not mean a null PEB.
+struct DriverProcessPeb {
+  uint32_t ProcessID = 0;
+  uint64_t Value = 0;
+};
+
 /// Explicit class-196 system-information result for checked-x64 execution.
 /// Reports the declared low fourteen flags without implementing a hardware
 /// mitigation or inferring native host state. Reserved bits must be zero.
@@ -194,6 +202,9 @@ struct DriverOptions {
   /// Explicit MSR replies. Omission refuses reads; declarations retain an
   /// unreconstructed environment dependency even if unused. WRMSR is denied.
   std::vector<DriverMSRRead> MSRReads;
+  /// Explicit process environment inputs for checked-x64 execution. Even
+  /// unused entries retain an unreconstructed environment dependency.
+  std::vector<DriverProcessPeb> ProcessPebs;
   uint64_t TimeoutMilliseconds = profile::DefaultTimeoutMilliseconds;
   std::string ServiceName = profile::DefaultServiceName;
   /// Zero selects the preferred PE image base.

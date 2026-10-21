@@ -52,6 +52,8 @@ NEVERD_KERNEL_IRQL_API(IoGetRequestorProcess, Dispatch)
 NEVERD_KERNEL_IRQL_API(IoGetCurrentProcess, Any)
 NEVERD_KERNEL_IRQL_API(PsGetCurrentProcessId, Any)
 NEVERD_KERNEL_IRQL_API(PsGetProcessId, Any)
+// Conservative ceiling for the explicitly declared process environment view.
+NEVERD_KERNEL_IRQL_API(PsGetProcessPeb, Passive)
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/ntddk/nf-ntddk-psgetcurrentthread
 // The 19041.6456 kernel exports PsGetCurrentProcess as the IoGetCurrentProcess
 // routine (RVA 0x2bbc90) and PsGetCurrentThread as KeGetCurrentThread

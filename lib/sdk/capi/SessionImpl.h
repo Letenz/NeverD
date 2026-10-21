@@ -77,6 +77,7 @@ namespace sdk {
 void preserveAnalystStackObjects(llvm::Module &);
 
 struct LLVMFunctionView;
+struct CallReferenceGraph;
 
 struct FuncInfo {
   va_t Entry;
@@ -398,6 +399,9 @@ struct Session {
     std::unordered_map<std::string, std::vector<va_t>> Exported;
   };
   std::optional<FunctionNameIndex> NameIndex;
+  /// The function graph the direct references of the listed functions make
+  /// (NeverDCAPICallPaths.cpp), read from the list at a revision.
+  std::shared_ptr<const CallReferenceGraph> CallGraph;
   /// The first function listed under \p Name, else the first listed at an
   /// address the image exports under it, taking the exports in order: a
   /// linker that folds identical functions exports several names for one.

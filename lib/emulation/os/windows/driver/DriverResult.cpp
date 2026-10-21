@@ -14,6 +14,7 @@
 #include "DriverLoaderViewJSON.h"
 #include "DriverMSR.h"
 #include "DriverPhysicalInventoryJSON.h"
+#include "DriverProcessPeb.h"
 #include "DriverSchedulingJSON.h"
 #include "DriverVaShadowQueryJSON.h"
 #include "DriverVersionQueryJSON.h"
@@ -767,6 +768,8 @@ std::string driverResultJSON(const DriverResult &Result) {
       {field::TraceMemoryWrites, Result.Configuration.TraceMemoryWrites},
       {field::CPUID, driver_cpuid::toJSON(Result.Configuration.CPUID)},
       {field::MSRReads, driver_msr::toJSON(Result.Configuration.MSRReads)},
+      {field::ProcessPebs,
+       driver_process_peb::toJSON(Result.Configuration.ProcessPebs)},
       {field::TimeoutMilliseconds, Result.Configuration.TimeoutMilliseconds},
       {field::LoadAddress, Address(Result.Configuration.LoadAddress)},
       {field::Unload, Result.Configuration.Unload},
