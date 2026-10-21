@@ -1882,7 +1882,11 @@ action supplies its callback root once: its `ToState` and frame input do not
 depend on the originating level. Complete cleanup-effect proofs retain every
 originating level separately. Once that proof fails, no cleanup effects can be
 published, and already visited suffixes need no further traversal. Unknown
-states and all reachable callback roots remain conservative.
+states can then share a bounded index of the immutable callback target/state
+pairs present in the LowIR graph. Each dispatch still transfers its own frame
+snapshot; source frames and cleanup effects are never cached by that index.
+Known-state paths keep their exact unwind walks. Unknown states, all reachable
+callback roots and the existing output-work limit remain conservative.
 `getCheckedX86RegistrationLeafCalleeABI` uses the same affine transfer for
 callee-private stack and borrowed ECX object domains, with separate spill
 storage. Its exact object/image footprints describe a returning leaf; a caller

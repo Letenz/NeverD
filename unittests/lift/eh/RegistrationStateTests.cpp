@@ -841,58 +841,80 @@ TEST(RegistrationState, SharedUnwindTailsKeepEachSourceLevelProof) {
 
 TEST(RegistrationState, UnknownUnwindStateVisitsEachSharedCallbackTail) {
   for (bool CheckCleanups : {false, true})
-    for (bool ReverseBlocks : {false, true}) {
-      SCOPED_TRACE(::testing::Message()
-                   << CheckCleanups << "/" << ReverseBlocks);
-      auto F = makeNarrowCxxStateFrame(4, 0, 0, 0);
-      auto &Cxx = *F.ExceptionMetadata->Cxx;
-      Cxx.MaxState = limits::kMaxRegistrationEHRecords;
-      Cxx.UnwindMap.clear();
-      for (uint32_t I = 0; I != Cxx.MaxState; ++I)
-        Cxx.UnwindMap.push_back(
-            {int32_t(I) - 1, 0, CxxUnwindAction::ActionKind::None});
-      // Distinct callback roots occur in suffixes shared by many levels.
-      Cxx.UnwindMap[0].ActionVA = 0x1800;
-      Cxx.UnwindMap[0].Kind = CxxUnwindAction::ActionKind::Direct;
-      Cxx.UnwindMap[2048].ActionVA = 0x1810;
-      Cxx.UnwindMap[2048].Kind = CxxUnwindAction::ActionKind::Direct;
-      // This unproved state value must remain unknown. Its conservative
-      // callback roots are still required, without enumerating every shared
-      // unwind suffix once per possible originating level.
-      F.Blocks[3].Ops.back().Inputs[1] = NdVar::reg(x86reg::RAX, 4);
-      for (unsigned I = 0; I != 2; ++I) {
-        LowBlock Callback;
-        Callback.Id = 5 + I;
-        Callback.StartAddr = 0x1800 + I * 0x10;
-        Callback.EndAddr = Callback.StartAddr + 1;
-        Callback.InstructionBoundaries.push_back({Callback.StartAddr, 1});
-        F.Blocks.push_back(std::move(Callback));
+    for (bool ReverseBlocks : {false, true})
+      for (unsigned BodyBlocks : {0u, 256u}) {
+        SCOPED_TRACE(::testing::Message()
+                     << CheckCleanups << "/" << ReverseBlocks << "/"
+                     << BodyBlocks);
+        auto F = makeNarrowCxxStateFrame(4, 0, 0, 0);
+        auto &Cxx = *F.ExceptionMetadata->Cxx;
+        Cxx.MaxState = limits::kMaxRegistrationEHRecords;
+        Cxx.UnwindMap.clear();
+        for (uint32_t I = 0; I != Cxx.MaxState; ++I)
+          Cxx.UnwindMap.push_back(
+              {int32_t(I) - 1, 0, CxxUnwindAction::ActionKind::None});
+        // Distinct callback roots occur in suffixes shared by many levels.
+        Cxx.UnwindMap[0].ActionVA = 0x1800;
+        Cxx.UnwindMap[0].Kind = CxxUnwindAction::ActionKind::Direct;
+        Cxx.UnwindMap[2048].ActionVA = 0x1810;
+        Cxx.UnwindMap[2048].Kind = CxxUnwindAction::ActionKind::Direct;
+        // This unproved state value must remain unknown. Its conservative
+        // callback roots are still required, without enumerating every shared
+        // unwind suffix once per possible originating level.
+        F.Blocks[3].Ops.back().Inputs[1] = NdVar::reg(x86reg::RAX, 4);
+        for (unsigned I = 0; I != 2; ++I) {
+          LowBlock Callback;
+          Callback.Id = 5 + I;
+          Callback.StartAddr = 0x1800 + I * 0x10;
+          Callback.EndAddr = Callback.StartAddr + 1;
+          Callback.InstructionBoundaries.push_back({Callback.StartAddr, 1});
+          F.Blocks.push_back(std::move(Callback));
+        }
+        // The unknown state can persist through a large ordinary body. Every
+        // point contributes its own frame snapshot to the same callback roots;
+        // the immutable unwind graph must not consume the budget again at each
+        // point. All published unknown levels still fit the existing budget.
+        if (BodyBlocks) {
+          F.Blocks[4].Succs = {7};
+          for (unsigned I = 0; I != BodyBlocks; ++I) {
+            LowBlock Body;
+            Body.Id = 7 + I;
+            Body.StartAddr = 0x3000 + I * 4;
+            Body.EndAddr = Body.StartAddr + 1;
+            Body.InstructionBoundaries.push_back({Body.StartAddr, 1});
+            emitOp(Body, Body.StartAddr, NdOp::COPY, NdVar::reg(x86reg::RAX, 4),
+                   {NdVar::cst(I, 4)});
+            if (I + 1 != BodyBlocks)
+              Body.Succs = {Body.Id + 1};
+            F.Blocks.push_back(std::move(Body));
+          }
+          F.ExceptionMetadata->CodeRange.End = F.Blocks.back().EndAddr;
+        }
+        if (ReverseBlocks)
+          std::reverse(F.Blocks.begin(), F.Blocks.end());
+        const std::vector<RegistrationCleanupFrameContract> Cleanups;
+        const auto A = analyzeRegistrationStates(
+            F, 0, 0, nullptr, CheckCleanups ? &Cleanups : nullptr);
+        EXPECT_FALSE(A.Complete);
+        EXPECT_FALSE(A.RegistrationLifetimeComplete);
+        EXPECT_FALSE(A.CleanupFrameEffectsComplete);
+        EXPECT_TRUE(A.CleanupFrameEffects.empty());
+        EXPECT_TRUE(A.ChainAccesses.empty());
+        ASSERT_EQ(A.Blocks.size(), F.Blocks.size());
+        for (int ID : {5, 6, BodyBlocks ? int(6 + BodyBlocks) : 4}) {
+          const auto Root =
+              std::find_if(A.Blocks.begin(), A.Blocks.end(),
+                           [ID](const auto &B) { return B.BlockId == ID; });
+          ASSERT_NE(Root, A.Blocks.end());
+          EXPECT_TRUE(Root->Reached);
+          EXPECT_TRUE(Root->Unknown);
+          EXPECT_EQ(Root->CallbackOnly, ID == 5 || ID == 6);
+        }
+        EXPECT_TRUE(std::none_of(
+            A.Diagnostics.begin(), A.Diagnostics.end(), [](const auto &D) {
+              return D.find("budget exhausted") != std::string::npos;
+            }));
       }
-      if (ReverseBlocks)
-        std::reverse(F.Blocks.begin(), F.Blocks.end());
-      const std::vector<RegistrationCleanupFrameContract> Cleanups;
-      const auto A = analyzeRegistrationStates(
-          F, 0, 0, nullptr, CheckCleanups ? &Cleanups : nullptr);
-      EXPECT_FALSE(A.Complete);
-      EXPECT_FALSE(A.RegistrationLifetimeComplete);
-      EXPECT_FALSE(A.CleanupFrameEffectsComplete);
-      EXPECT_TRUE(A.CleanupFrameEffects.empty());
-      EXPECT_TRUE(A.ChainAccesses.empty());
-      ASSERT_EQ(A.Blocks.size(), F.Blocks.size());
-      for (int ID : {5, 6}) {
-        const auto Root =
-            std::find_if(A.Blocks.begin(), A.Blocks.end(),
-                         [ID](const auto &B) { return B.BlockId == ID; });
-        ASSERT_NE(Root, A.Blocks.end());
-        EXPECT_TRUE(Root->Reached);
-        EXPECT_TRUE(Root->Unknown);
-        EXPECT_TRUE(Root->CallbackOnly);
-      }
-      EXPECT_TRUE(std::none_of(
-          A.Diagnostics.begin(), A.Diagnostics.end(), [](const auto &D) {
-            return D.find("budget exhausted") != std::string::npos;
-          }));
-    }
 }
 
 TEST(RegistrationState, RejectsUnprovedCleanupObjectsAndContracts) {

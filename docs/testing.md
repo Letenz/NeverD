@@ -6042,8 +6042,10 @@ lifetimes, a 128-action depth boundary and long empty transition chains.
 record overflow and exhausted cumulative work. `RegistrationState` checks
 that shared unwind suffixes retain separate complete source-level effects.
 Its unknown-state case reaches both callback roots through a 4,096-state graph
-without exhausting the unchanged budget, in either block order and with or
-without cleanup contracts. Incomplete state and cleanup proofs stay rejected.
+through both a short body and 256 additional ordinary blocks, without
+exhausting the unchanged budget. Both block orders and runs with or without
+cleanup contracts retain the final ordinary block and every callback root.
+Incomplete state and cleanup proofs stay rejected.
 Self/forward edges, a 129-action chain and record-budget overflow refuse.
 Independent generated-state tests bind both a dense 4,096-state table and a
 two-state table projected from 4,096 source states, rejecting omitted actions

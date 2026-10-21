@@ -393,6 +393,7 @@ private:
   bool conditionalReturn(const Domain &State, const LowOp &Op);
   bool conditionalCall(const FrameState &State, const LowOp &Op);
   void dispatchBlock(size_t I, const Domain &Before, const BlockFacts &Facts);
+  bool dispatchUnknownCxxCleanups(const Domain &Before);
   void queueSEHScopes(const Domain &Before, bool Invalid);
   void flushSEHScopes();
   void dispatchSEHScopes(const Domain &Before, bool Invalid,
@@ -502,6 +503,9 @@ private:
       JumpCaptureOccurrences;
   std::set<va_t> ModifiedCallbackCaptures;
   std::map<uint32_t, uint32_t> CleanupIndices;
+  // Only immutable target/state pairs are shared across unknown dispatches.
+  // Each source still supplies its own frame to every callback transfer.
+  std::optional<std::vector<std::pair<va_t, int32_t>>> UnknownCxxCleanupRoots;
   bool CompleteCalls;
   bool CompleteCleanups;
   bool CompleteCatchObjects;
