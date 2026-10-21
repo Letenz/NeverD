@@ -33,11 +33,14 @@ target_link_libraries(neverd_worker_format PUBLIC neverd_worker_protocol)
 # Header-only tables shared with the engine, such as the wide characters.
 target_include_directories(neverd_worker_format PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
 target_link_libraries(neverd_worker_graph PUBLIC neverd_worker_protocol)
-add_executable(neverd-worker main.cpp Engine.cpp Listing.cpp StringReferences.cpp TextFold.cpp ProjectHistory.cpp Contributions.cpp)
-target_compile_features(neverd-worker PRIVATE cxx_std_20)
-target_include_directories(neverd-worker PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
+# The engine the worker serves, which neverd-mcp also runs in its own process.
+add_library(neverd_worker_engine STATIC Engine.cpp Listing.cpp StringReferences.cpp TextFold.cpp ProjectHistory.cpp Contributions.cpp)
+target_compile_features(neverd_worker_engine PUBLIC cxx_std_20)
+target_include_directories(neverd_worker_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
 # The C ABI is the only engine dependency. Never add LLVM to this target.
-target_link_libraries(neverd-worker PRIVATE neverd_worker_graph neverd_worker_format neverd_tool_web neverd_shared Threads::Threads ${CMAKE_DL_LIBS})
+target_link_libraries(neverd_worker_engine PUBLIC neverd_worker_graph neverd_worker_format neverd_tool_web neverd_shared Threads::Threads ${CMAKE_DL_LIBS})
+add_executable(neverd-worker main.cpp)
+target_link_libraries(neverd-worker PRIVATE neverd_worker_engine)
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/NeverDWorkerAllocator.cmake")
 neverd_worker_allocator(neverd-worker)
 set_target_properties(neverd-worker PROPERTIES
