@@ -76,6 +76,10 @@ target_compile_definitions(NeverDX87CallGraphTests PRIVATE
   TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
   TEST_OBJ_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 
+add_neverd_unittest(NeverDX86FunctionDiscoveryTests
+  x86_32/X86_32_FunctionDiscoveryTests.cpp
+  LINK_COMPONENTS Pipeline)
+
 add_neverd_unittest(NeverDPEProgramExportsTests
   format/PEProgramExportsTests.cpp
   LINK_COMPONENTS Loader

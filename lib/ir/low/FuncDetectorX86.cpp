@@ -478,11 +478,12 @@ bool readsX86TableAmongCode(const BinaryImage &Img, va_t Addr, va_t Next) {
 /// decides whether an address reached \p How is the function's code to walk
 /// on.  The walk never enters a callee.  Returns whether the code has an
 /// indirect jump the walk cannot follow, through which a computed goto may
-/// reach any of the function's labels.
+/// reach any of the function's labels. Optionally records complete decoded
+/// instruction spans; overlapping paths must be checked before using them.
 template <typename TakeFn>
 bool walkX86OwnCode(const BinaryImage &Img, Decoder &Dec, va_t Entry, va_t End,
                     llvm::ArrayRef<va_t> Cases, std::set<va_t> &Visited,
-                    TakeFn Take) {
+                    TakeFn Take, std::map<va_t, va_t> *DecodedSpans = nullptr) {
   bool Computed = false;
   std::vector<std::pair<va_t, X86Reach>> Work{{Entry, X86Reach::Inside}};
   for (va_t Case : Cases)
@@ -505,9 +506,20 @@ bool walkX86OwnCode(const BinaryImage &Img, Decoder &Dec, va_t Entry, va_t End,
       continue;
     DecodedInsn DI;
     const int Size = Dec.decodeOneLight(Bytes.data(), Bytes.size(), Addr, DI);
-    if (Size <= 0 || !DI.Raw || !DI.Raw->detail)
+    if (Size <= 0 || !DI.Raw || !DI.Raw->detail ||
+        static_cast<va_t>(Size) > End - Addr ||
+        !Img.hasExecutableCodeOwnerRange(Addr, Size))
       continue;
     const va_t Next = Addr + static_cast<va_t>(Size);
+    const auto Data = Img.DataInCode.lower_bound(Addr);
+    const auto Slot = Img.CodePtrRelocSlots.lower_bound(Addr);
+    if ((Data != Img.DataInCode.end() && *Data < Next) ||
+        (Slot != Img.CodePtrRelocSlots.end() && *Slot < Next) ||
+        (Slot != Img.CodePtrRelocSlots.begin() &&
+         Addr - *std::prev(Slot) < Img.getPointerSize()))
+      continue;
+    if (DecodedSpans)
+      DecodedSpans->emplace(Addr, Next);
     const cs_x86 &X86 = DI.Raw->detail->x86;
     const bool Direct = X86.op_count >= 1 && X86.operands[0].type == X86_OP_IMM;
     const va_t Target =
@@ -585,11 +597,15 @@ std::set<va_t> FuncDetector::rejectX86InteriorEntries(
   for (va_t Owner : Owners) {
     const auto It = Cases.find(Owner);
     std::set<va_t> Visited;
-    walkX86OwnCode(
+    std::set<va_t> Reached;
+    std::map<va_t, va_t> DecodedSpans;
+    const bool Computed = walkX86OwnCode(
         Img, Dec, Owner, ownerOf(Owner)->second,
         It == Cases.end() ? llvm::ArrayRef<va_t>()
                           : llvm::ArrayRef<va_t>(It->second),
-        Visited, [&](va_t Addr, X86Reach How, llvm::ArrayRef<uint8_t> Bytes) {
+        Visited,
+        [&](va_t Addr, X86Reach How, llvm::ArrayRef<uint8_t> Bytes) {
+          Reached.insert(Addr);
           if (Addr == Owner || !Candidates.count(Addr))
             return true;
           // Only a jump can be a tail call, and a frame prologue right after
@@ -599,7 +615,27 @@ std::set<va_t> FuncDetector::rejectX86InteriorEntries(
             return false;
           Interior.insert(Addr);
           return true;
-        });
+        },
+        &DecodedSpans);
+    // An unresolved computed transfer may enter an overlapping instruction
+    // stream that the walk has not observed.
+    if (Computed)
+      continue;
+    // Prologue and padding scans can also start in an instruction's operand.
+    // Reject such guesses only when this owner's reachable decoding is
+    // unambiguous. A jump into the operand, including one Take stopped at,
+    // or any overlapping decode prevents that span from disproving an entry.
+    va_t PreviousEnd = 0;
+    for (const auto &[Addr, Next] : DecodedSpans) {
+      const bool OverlapsBefore = PreviousEnd > Addr;
+      PreviousEnd = std::max(PreviousEnd, Next);
+      const auto Other = Reached.upper_bound(Addr);
+      if (OverlapsBefore || (Other != Reached.end() && *Other < Next))
+        continue;
+      for (auto Candidate = Candidates.upper_bound(Addr);
+           Candidate != Candidates.end() && *Candidate < Next; ++Candidate)
+        Interior.insert(*Candidate);
+    }
   }
   Dec.setDetail(KeptDetail);
   Dec.setText(KeptText);

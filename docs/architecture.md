@@ -31,6 +31,12 @@ substitute for a rejected parent. Failures retain the entry's audit disposition
 and first decode or unsupported-instruction address; source views can still
 return their partial analysis.
 
+PE32 discovery rejects heuristic entries inside the operand bytes of reachable,
+complete instructions. The owning entry's control-flow walk supplies this
+evidence; overlapping paths, data and section boundaries invalidate it.
+Independent symbols, exports, direct calls and relocated pointers retain their
+separate authority.
+
 The COFF CFG reader also requires unique, complete file-backed storage for the
 target's minimum instruction unit. The table must be immutable, while target
 code may be writable or execute-only. Import-thunk decoding requires the full

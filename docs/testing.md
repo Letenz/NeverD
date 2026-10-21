@@ -8428,6 +8428,12 @@ builder recovers all three. It fails without the run bound or the label rule.
 `X86_32_FunctionDiscovery.CallbackStoredByARelocatedImmediateIsAFunction`
 stores a callback with `mov [ecx+0x10], offset cb` and recovers the callback
 as a function of its own.
+`NeverDX86FunctionDiscoveryTests` runs the complete PE32 discovery suite.
+Its operand-entry cases reject aligned prologue and padding guesses inside
+reachable instructions while preserving independent symbols, exports, calls
+and relocated pointers. Unreached bytes, overlapping instruction paths,
+unresolved computed jumps, cross-section decoding and data markers cannot
+disprove an entry.
 `X86_32_FunctionDiscovery.SwitchTableAmongCodeLiftsPastTheMirrorLimit` lifts
 such a switch from a `.text` larger than the LLVM emitter mirrors as one
 global; it refuses the table's address without the table-base witness or the
