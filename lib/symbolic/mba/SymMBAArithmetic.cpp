@@ -229,7 +229,9 @@ public:
         // Long flat products already name a sorted monomial. Read it once
         // instead of multiplying unit coefficients and merging one atom at
         // a time. Arithmetic children retain the general expansion below.
-        bool Flat = Ctx.numOperands(R) >= 6;
+        bool Flat = Ctx.numOperands(R) >=
+                    ::neverd::symbolic::detail::limits::
+                        kSymMBAArithmeticNormalizeCtxNumOperandsRLimit;
         if (Flat)
           for (SymRef Child : Ctx.operands(R)) {
             if (!Resources.charge(1))
@@ -710,8 +712,13 @@ std::pair<SymRef, SymRef>
 reduceDistributionProof(SymContext &Ctx, SymRef Before, SymRef After,
                         ArithmeticResources &Resources) {
   const auto Original = std::make_pair(Before, After);
-  constexpr size_t MaxTerms = 128, MaxEdges = 4096;
-  if (Ctx.op(Before) != SymOp::Add || Ctx.numOperands(Before) < 6 ||
+  constexpr size_t
+      MaxTerms = ::neverd::symbolic::detail::limits::kSymMBAArithmeticMaxTerms,
+      MaxEdges = ::neverd::symbolic::detail::limits::kSymMBAArithmeticMaxEdges;
+  if (Ctx.op(Before) != SymOp::Add ||
+      Ctx.numOperands(Before) <
+          ::neverd::symbolic::detail::limits::
+              kSymMBAArithmeticReduceDistributionProofCtxNumOperandsBeforeLimit ||
       Ctx.numOperands(Before) > MaxTerms ||
       (Ctx.op(After) == SymOp::Add && Ctx.numOperands(After) > MaxTerms))
     return Original;
@@ -802,7 +809,13 @@ SymRef solveNestedProductCofactors(SymContext &Ctx, SymRef E,
   bool HasProductSum = false;
   auto FrontierSize = [&](auto &&Self, SymRef R, unsigned Depth,
                           bool ProductOperand) -> unsigned {
-    if (++Visits > 2048 || Depth > 32 || !Resources.charge(1))
+    if (++Visits >
+            ::neverd::symbolic::detail::limits::
+                kSymMBAArithmeticSolveNestedProductCofactorsFrontierSizeVisitsLimit ||
+        Depth >
+            ::neverd::symbolic::detail::limits::
+                kSymMBAArithmeticSolveNestedProductCofactorsFrontierSizeDepthLimit ||
+        !Resources.charge(1))
       return 0;
     const SymOp Op = Ctx.op(R);
     if (Op != SymOp::Add && Op != SymOp::Mul)
@@ -816,7 +829,12 @@ SymRef solveNestedProductCofactors(SymContext &Ctx, SymRef E,
               2)
         HasProductSum = true;
       unsigned N = Self(Self, Child, Depth + 1, Op == SymOp::Mul);
-      if (!N || (Op == SymOp::Add ? N > 128 - Terms : N > 128 / Terms))
+      if (!N || (Op == SymOp::Add ? N > ::neverd::symbolic::detail::limits::
+                                                kMaxNestedProductFrontierTerms -
+                                            Terms
+                                  : N > ::neverd::symbolic::detail::limits::
+                                                kMaxNestedProductFrontierTerms /
+                                            Terms))
         return 0;
       Terms = Op == SymOp::Add ? Terms + N : Terms * N;
     }
@@ -826,14 +844,20 @@ SymRef solveNestedProductCofactors(SymContext &Ctx, SymRef E,
     return E;
   ArithmeticNormalizer Normalizer(Ctx, Resources, Ctx.width(E), false);
   auto Original = Normalizer.normalize(E);
-  if (!Original || Original->size() > 128)
+  if (!Original ||
+      Original->size() >
+          ::neverd::symbolic::detail::limits::
+              kSymMBAArithmeticSolveNestedProductCofactorsOriginalSizeLimit)
     return E;
   auto HigherAtoms = [&](const Polynomial &P, std::set<uint32_t> &Atoms) {
     size_t Edges = 0, Higher = 0;
     for (const auto &[Key, Coefficient] : P) {
       size_t Degree = 0;
       for (const auto &[Id, Power] : Key) {
-        if (Power > 2048 - Edges || !Resources.charge(1, 128))
+        if (Power > ::neverd::symbolic::detail::limits::
+                            kMaxNestedCofactorPowerEdges -
+                        Edges ||
+            !Resources.charge(1, 128))
           return size_t(0);
         Edges += Power;
         Degree += Power;
@@ -858,7 +882,9 @@ SymRef solveNestedProductCofactors(SymContext &Ctx, SymRef E,
   for (uint32_t Id : Atoms) {
     SymRef View(Id);
     if (Ctx.op(View) != SymOp::And || Ctx.numOperands(View) < 2 ||
-        Ctx.numOperands(View) > 16)
+        Ctx.numOperands(View) >
+            ::neverd::symbolic::detail::limits::
+                kSymMBAArithmeticSolveNestedProductCofactorsCtxNumOperandsViewLimit)
       continue;
     if (!Resources.array(Ctx.numOperands(View), sizeof(SymRef)))
       return E;
@@ -899,7 +925,10 @@ SymRef solveNestedProductCofactors(SymContext &Ctx, SymRef E,
     return E;
   auto Distributed = Normalizer.normalize(Ctx.mkAdd(Terms));
   Atoms.clear();
-  if (!Distributed || Distributed->size() > 128 ||
+  if (!Distributed ||
+      Distributed->size() >
+          ::neverd::symbolic::detail::limits::
+              kSymMBAArithmeticSolveNestedProductCofactorsDistributedSizeLimit ||
       HigherAtoms(*Distributed, Atoms) < 6)
     return E;
   auto Expanded = Normalizer.expanded(*Distributed);

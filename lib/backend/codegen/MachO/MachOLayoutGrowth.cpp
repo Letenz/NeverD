@@ -11,6 +11,7 @@
 
 #include "MachOStrictLayout.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/codegen/MachO/MachOCompactUnwindPatch.h"
 #include "neverd/backend/codegen/MachO/MachOExceptionPatch.h"
 #include "neverd/backend/codegen/MachO/MachOPatch.h"
@@ -32,7 +33,10 @@ llvm::Expected<uint64_t> moveTextSection(std::vector<uint8_t> &Binary, Arch A,
                                          llvm::ArrayRef<uint8_t> Content,
                                          uint64_t Capacity) {
   using namespace llvm::MachO;
-  if (!Capacity || Capacity > 64 * 1024 * 1024 || Content.size() > Capacity)
+  if (!Capacity ||
+      Capacity > ::neverd::limits::backend::
+                     kMachOLayoutGrowthMoveTextSectionCapacityLimit ||
+      Content.size() > Capacity)
     return fail("metadata capacity exceeds its checked limit");
   // Newly mapped header-prefix capacity can host metadata without moving
   // code/data VAs or extending TEXT across an intervening DATA segment.
@@ -194,7 +198,9 @@ llvm::Expected<uint64_t> declareMachOTextMetadata(std::vector<uint8_t> &Binary,
                                                   Arch A, llvm::StringRef Name,
                                                   uint64_t Size) {
   using namespace llvm::MachO;
-  if (Name.empty() || Name.size() > 16 || !Size || Size > 32 * 1024 * 1024)
+  if (Name.empty() || Name.size() > 16 || !Size ||
+      Size > ::neverd::limits::backend::
+                 kMachOLayoutGrowthDeclareMachOTextMetadataSizeLimit)
     return fail("invalid metadata section request");
   auto B = Binary;
   auto Header = reserveMachOHeaderStorage(
@@ -373,7 +379,11 @@ llvm::Expected<bool> reserveMachOSourceUnwind(std::vector<uint8_t> &Binary,
                                               Arch A,
                                               uint64_t AdditionalEHBytes,
                                               uint64_t AdditionalFunctions) {
-  if (AdditionalEHBytes > 32 * 1024 * 1024 || AdditionalFunctions > 65536)
+  if (AdditionalEHBytes >
+          ::neverd::limits::backend::
+              kMachOLayoutGrowthReserveMachOSourceUnwindAdditionalEHBytesLimit ||
+      AdditionalFunctions >
+          ::neverd::limits::backend::kMaxMachOAdditionalUnwindFunctions)
     return fail("unwind request exceeds supported bounds");
   auto Candidate = Binary;
   auto Compact = findMachOCompactUnwindRegion(Candidate);
@@ -542,8 +552,13 @@ reserveMachONativePatchStorage(std::vector<uint8_t> &Binary, Arch A,
     (void)S;
     ++Symbols;
   }
-  if (Frames > 32 * 1024 * 1024 || CallbackCount > 65536 ||
-      ImportFunctionCount > 4096)
+  if (Frames > ::neverd::limits::backend::kMaxMachONativePatchFrames ||
+      CallbackCount >
+          ::neverd::limits::backend::
+              kMachOLayoutGrowthReserveMachONativePatchStorageCallbackCountLimit ||
+      ImportFunctionCount >
+          ::neverd::limits::backend::
+              kMachOLayoutGrowthReserveMachONativePatchStorageImportFunctionCountLimit)
     return fail("layout request exceeds native metadata limits");
   return reserveMachOSourceUnwind(
       Binary, A,

@@ -1,6 +1,8 @@
 //===- SourceVariableFlow.cpp - Bounded source-local lifetime proofs ------===//
 #include "neverd/ir/SourceVariableFlow.h"
 
+#include "neverd/ir/Limits.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <deque>
@@ -9,8 +11,6 @@
 using namespace neverd;
 
 namespace {
-constexpr size_t MaxNodes = 20000;
-constexpr size_t MaxWork = 2000000;
 bool contains(const std::vector<unsigned> &Values, unsigned Value) {
   return std::find(Values.begin(), Values.end(), Value) != Values.end();
 }
@@ -24,7 +24,8 @@ struct Graph {
       Error = Flow.Refusal;
       return;
     }
-    if (Flow.Nodes.empty() || Flow.Nodes.size() > MaxNodes ||
+    if (Flow.Nodes.empty() ||
+        Flow.Nodes.size() > ::neverd::limits::ir::kSourceVariableFlowMaxNodes ||
         Flow.Entry >= Flow.Nodes.size()) {
       Error = "The source control-flow graph is unavailable or exceeds the "
               "edit budget";
@@ -35,7 +36,8 @@ struct Graph {
     size_t Edges = 0;
     for (size_t N = 0; N < Flow.Nodes.size(); ++N) {
       for (size_t Next : Flow.Nodes[N].Successors) {
-        if (Next >= Flow.Nodes.size() || ++Edges > 4 * MaxNodes) {
+        if (Next >= Flow.Nodes.size() ||
+            ++Edges > 4 * ::neverd::limits::ir::kSourceVariableFlowMaxNodes) {
           Error = "The source control-flow graph is incomplete";
           return;
         }
@@ -108,7 +110,7 @@ std::string neverd::canMapSourceVariables(const SourceVariableFlow &Flow,
     for (size_t N = 0; N < Flow.Nodes.size(); ++N) {
       if (!G.Reachable[N])
         continue;
-      if (++Work > MaxWork)
+      if (++Work > ::neverd::limits::ir::kSourceVariableFlowMaxWork)
         return "The variable definition proof exceeded its budget";
       unsigned Before = N == Flow.Entry ? Entry : 3;
       for (size_t P : G.Predecessors[N])
@@ -134,7 +136,7 @@ std::string neverd::canMapSourceVariables(const SourceVariableFlow &Flow,
     for (size_t N = Flow.Nodes.size(); N-- > 0;) {
       if (!G.Reachable[N])
         continue;
-      if (++Work > MaxWork)
+      if (++Work > ::neverd::limits::ir::kSourceVariableFlowMaxWork)
         return "The variable liveness proof exceeded its budget";
       unsigned After = 0;
       for (size_t Next : Flow.Nodes[N].Successors)
@@ -193,11 +195,14 @@ SourceVariableSplit neverd::splitSourceVariable(const SourceVariableFlow &Flow,
   const unsigned Count = Definitions.size();
   if (Count < 2)
     return Fail("This value has only one complete definition");
-  if (Count > 512)
+  if (Count > ::neverd::limits::ir::
+                  kSourceVariableFlowNeverdSplitSourceVariableCountLimit)
     return Fail(
         "The variable has too many definitions for an interactive split");
   const size_t Words = (Count + 1 + 63) / 64;
-  if (Words * Flow.Nodes.size() > 4 * 1024 * 1024)
+  if (Words * Flow.Nodes.size() >
+      ::neverd::limits::ir::
+          kSourceVariableFlowNeverdSplitSourceVariableWordsFlowNodesSizeLimit)
     return Fail("The reaching-definition proof exceeds its memory budget");
   using Bits = std::vector<uint64_t>;
   std::vector<Bits> Out(Flow.Nodes.size(), Bits(Words));
@@ -219,7 +224,7 @@ SourceVariableSplit neverd::splitSourceVariable(const SourceVariableFlow &Flow,
     const size_t N = Pending.front();
     Pending.pop_front();
     Queued[N] = false;
-    if (++Work > MaxWork)
+    if (++Work > ::neverd::limits::ir::kSourceVariableFlowMaxWork)
       return Fail("The reaching-definition proof exceeded its work budget");
     Bits Next = Incoming(N);
     if (Result.Definitions[N] != SourceVariableSplit::None) {

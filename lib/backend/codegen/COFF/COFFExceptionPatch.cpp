@@ -9,6 +9,7 @@
 #include "COFFNativeEHProvenance.h"
 
 #include "neverd/backend/ExceptionRewriteContract.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/codegen/COFF/COFFFH4Encoding.h"
@@ -62,7 +63,6 @@ namespace {
 
 constexpr uint64_t X64RuntimeFunctionSize = 3 * sizeof(uint32_t);
 constexpr uint64_t ARMRuntimeFunctionSize = 2 * sizeof(uint32_t);
-constexpr uint32_t MaxGeneratedLanguageRecords = 1u << 16;
 constexpr uint32_t FH3MagicNumber3 = 0x19930522u;
 constexpr size_t FH3FuncInfoSize = 10 * sizeof(uint32_t);
 constexpr size_t FH3TryBlockSize = 5 * sizeof(uint32_t);
@@ -93,7 +93,8 @@ llvm::Expected<coff_fh4::FuncInfoLayout> parseGeneratedFH4Layout(
           return patchError("generated C++ EH4 bytes are not mapped");
         return llvm::ArrayRef<uint8_t>(Bytes, Size);
       },
-      {/*MaxRecords=*/MaxGeneratedLanguageRecords,
+      {/*MaxRecords=*/::neverd::limits::backend::
+           kCOFFExceptionPatchMaxGeneratedLanguageRecords,
        /*MaxBytes=*/1u << 20});
 }
 
@@ -1590,7 +1591,8 @@ validateGeneratedARMCatchAllTable(const RuntimeEntry &Entry, Arch TargetArch,
     return patchError("generated " + Architecture +
                       " SEH scope count is truncated");
   const uint32_t Count = readLE<uint32_t>(CountBytes);
-  if (Count == 0 || Count > MaxGeneratedLanguageRecords)
+  if (Count == 0 || Count > ::neverd::limits::backend::
+                                kCOFFExceptionPatchMaxGeneratedLanguageRecords)
     return patchError("generated " + Architecture +
                       " SEH scope count is invalid");
 
@@ -2931,7 +2933,9 @@ llvm::Expected<COFFExceptionDirectoryUpdate> prepareCOFFExceptionDirectory(
                              uint32_t RootOwnerRVA, uint32_t ContainerRVA,
                              uint32_t FirstRVA, uint32_t Count,
                              uint32_t Stride) -> llvm::Error {
-    if (Stride == 0 || Count > MaxGeneratedLanguageRecords ||
+    if (Stride == 0 ||
+        Count > ::neverd::limits::backend::
+                    kCOFFExceptionPatchMaxGeneratedLanguageRecords ||
         uint64_t(FirstRVA) + uint64_t(Count) * Stride >
             std::numeric_limits<uint32_t>::max())
       return patchError("generated EH semantic table has an invalid extent");
@@ -2959,7 +2963,8 @@ llvm::Expected<COFFExceptionDirectoryUpdate> prepareCOFFExceptionDirectory(
                                              sizeof(uint32_t))
         return patchError("generated SEH scope table is truncated");
       const uint32_t ScopeCount = readLE<uint32_t>(Header);
-      if (ScopeCount > MaxGeneratedLanguageRecords)
+      if (ScopeCount > ::neverd::limits::backend::
+                           kCOFFExceptionPatchMaxGeneratedLanguageRecords)
         return patchError("generated SEH scope table has too many rows");
       const size_t ScopeTableSize =
           sizeof(uint32_t) + size_t(ScopeCount) * 4 * sizeof(uint32_t);
@@ -3044,9 +3049,15 @@ llvm::Expected<COFFExceptionDirectoryUpdate> prepareCOFFExceptionDirectory(
         readLE<uint32_t>(FuncInfo + 5 * sizeof(uint32_t));
     const uint32_t IPMapRVA = readLE<uint32_t>(FuncInfo + 6 * sizeof(uint32_t));
     if (MaxState < 0 ||
-        static_cast<uint32_t>(MaxState) > MaxGeneratedLanguageRecords ||
-        NumTryBlocks == 0 || NumTryBlocks > MaxGeneratedLanguageRecords ||
-        NumIPStates == 0 || NumIPStates > MaxGeneratedLanguageRecords ||
+        static_cast<uint32_t>(MaxState) >
+            ::neverd::limits::backend::
+                kCOFFExceptionPatchMaxGeneratedLanguageRecords ||
+        NumTryBlocks == 0 ||
+        NumTryBlocks > ::neverd::limits::backend::
+                           kCOFFExceptionPatchMaxGeneratedLanguageRecords ||
+        NumIPStates == 0 ||
+        NumIPStates > ::neverd::limits::backend::
+                          kCOFFExceptionPatchMaxGeneratedLanguageRecords ||
         uint64_t(TryMapRVA) + uint64_t(NumTryBlocks) * FH3TryBlockSize >
             std::numeric_limits<uint32_t>::max())
       return patchError("generated C++ try map has an invalid extent");
@@ -3081,7 +3092,9 @@ llvm::Expected<COFFExceptionDirectoryUpdate> prepareCOFFExceptionDirectory(
       const uint32_t NumCatches = readLE<uint32_t>(Try + 3 * sizeof(uint32_t));
       const uint32_t HandlerMapRVA =
           readLE<uint32_t>(Try + 4 * sizeof(uint32_t));
-      if (NumCatches == 0 || NumCatches > MaxGeneratedLanguageRecords)
+      if (NumCatches == 0 ||
+          NumCatches > ::neverd::limits::backend::
+                           kCOFFExceptionPatchMaxGeneratedLanguageRecords)
         return patchError("generated C++ handler map has an invalid row count");
       if (llvm::Error Err = ValidateStateMap(
               HandlerMapRVA, NumCatches, FH3HandlerTypeSize, "C++ handler map"))

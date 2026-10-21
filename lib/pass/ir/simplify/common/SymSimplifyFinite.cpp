@@ -7,6 +7,7 @@
 
 #include "SymSimplifyDetail.h"
 
+#include "neverd/pass/Limits.h"
 #include "neverd/pass/ir/simplify/SymSimplifyPass.h"
 
 #include "llvm/Analysis/ConstantFolding.h"
@@ -100,7 +101,9 @@ std::optional<TwoValues> atomicValues(llvm::Value *V, WorkBudget &Budget) {
   if (Op->getOpcode() == llvm::Instruction::And) {
     llvm::SmallVector<llvm::Value *, 8> Work{V};
     unsigned Visited = 0;
-    while (!Work.empty() && Visited++ < 8) {
+    while (!Work.empty() &&
+           Visited++ < ::neverd::limits::pass::
+                           kSymSimplifyFiniteAtomicValuesVisitedLimit) {
       if (!Budget.spend(1 + Width / 64))
         return std::nullopt;
       auto *Term = Work.pop_back_val();
@@ -148,7 +151,9 @@ std::optional<TwoValues> anchorValues(llvm::Value *V, WorkBudget &Budget) {
   // Merge edges only copy selected values. Bound every producer before
   // admitting the union, including backedges; conditions remain dependencies
   // of the original SSA anchor and are checked by seed's stability walk.
-  constexpr unsigned MaxNodes = 32, MaxEdges = 64;
+  constexpr unsigned
+      MaxNodes = ::neverd::limits::pass::kSymSimplifyFiniteAnchorValuesMaxNodes,
+      MaxEdges = ::neverd::limits::pass::kSymSimplifyFiniteMaxEdges;
   llvm::SmallVector<llvm::Value *, MaxNodes> Nodes{V};
   llvm::DenseMap<llvm::Value *, unsigned> Indices{{V, 0}};
   llvm::SmallVector<std::pair<unsigned, unsigned>, MaxEdges> Edges;

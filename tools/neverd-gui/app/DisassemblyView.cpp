@@ -1,5 +1,6 @@
 #include "DisassemblyView.h"
 
+#include "../ResourceLimits.h"
 #include "AddressSpace.h"
 #include "GraphView.h"
 #include "ListingView.h"
@@ -13,7 +14,6 @@
 
 namespace neverd::gui {
 namespace {
-constexpr std::size_t MaxHistory = 512;
 constexpr int FileOffsetDigits = 8;
 } // namespace
 
@@ -133,7 +133,7 @@ void DisassemblyView::remember(Address address) {
     history_.resize(historyIndex_ + 1);
   if (history_.empty() || history_.back() != address)
     history_.push_back(address);
-  if (history_.size() > MaxHistory)
+  if (history_.size() > ::neverd::limits::gui::kDisassemblyViewMaxHistory)
     history_.erase(history_.begin());
   historyIndex_ = history_.size() - 1;
   emit historyChanged();

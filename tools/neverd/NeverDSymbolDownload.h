@@ -35,7 +35,8 @@ struct TransferResult {
 };
 
 /// GET \p URL into \p File, following redirects and within the transfer
-/// limits of SymbolDownloadABI.def.  One transport is built per platform.
+/// limits of common/symbols/SymbolDownloadABI.def.  One transport is built per
+/// platform.
 TransferResult fetchURL(const std::string &URL,
                         const std::filesystem::path &File,
                         const TransferProgress &Progress);

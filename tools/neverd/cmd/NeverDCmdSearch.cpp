@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../NeverDCLI.h"
+#include "../ResourceLimits.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Format.h"
@@ -45,7 +46,8 @@ cl::opt<bool> SearchBackward("backward",
 int runSearch(neverd_session_t Sess) {
   if (!SearchImmediate.empty()) {
     if (!SearchHex.empty() || !SearchText.empty() || SearchMaxResults < 1 ||
-        SearchMaxResults > 4096) {
+        SearchMaxResults >
+            ::neverd::limits::cli::kNeverDCmdSearchRunSearchMaxResultsLimit) {
       WithColor::error()
           << "--immediate requires one pattern and --max-results in 1..4096\n";
       return 1;

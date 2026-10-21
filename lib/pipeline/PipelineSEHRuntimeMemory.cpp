@@ -14,6 +14,7 @@
 #include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ReadOnlyBytes.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/Support/MathExtras.h"
@@ -188,7 +189,9 @@ collectLowSEHRuntimeMemory(const BinaryImage &Image,
           Memory.WritableImageRanges.back().End == Begin)
         Memory.WritableImageRanges.back().End = Limit;
       else {
-        if (Memory.WritableImageRanges.size() == 256)
+        if (Memory.WritableImageRanges.size() ==
+            ::neverd::limits::pipeline::
+                kPipelineSEHRuntimeMemoryCollectLowSEHRuntimeMemoryWritableImageRangesSizeLimit)
           return {};
         Memory.WritableImageRanges.push_back({Begin, Limit});
       }

@@ -59,6 +59,7 @@
 #ifndef NEVERD_SYMBOLIC_SYMMBA_H
 #define NEVERD_SYMBOLIC_SYMMBA_H
 
+#include "neverd/symbolic/Limits.h"
 #include "neverd/symbolic/SymExpr.h"
 
 #include <cstddef>
@@ -242,7 +243,10 @@ struct MBAResult {
 /// persistent entry count independently of per-query measurement storage.
 class MBARewriteCache {
 public:
-  explicit MBARewriteCache(const SymContext &Context, size_t Capacity = 65536)
+  explicit MBARewriteCache(
+      const SymContext &Context,
+      size_t Capacity =
+          ::neverd::limits::symbolic::kSymMBAMBARewriteCacheCapacity)
       : Owner(&Context), Capacity(Capacity) {}
   MBARewriteCache(const MBARewriteCache &) = delete;
   MBARewriteCache &operator=(const MBARewriteCache &) = delete;

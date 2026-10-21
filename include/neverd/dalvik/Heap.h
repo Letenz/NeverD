@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #pragma once
 
+#include "neverd/dalvik/Limits.h"
 #include "neverd/dalvik/Model.h"
 
 #include <memory>
@@ -29,8 +30,9 @@ struct Object {
 };
 class Heap {
 public:
-  explicit Heap(uint64_t byte_limit = 8 * 1024 * 1024,
-                uint32_t object_limit = 4096);
+  explicit Heap(
+      uint64_t byte_limit = ::neverd::limits::dalvik::kHeapByteLimit,
+      uint32_t object_limit = ::neverd::limits::dalvik::kHeapObjectLimit);
   // Returns null on the finite model budget; this is not a claim about a real
   // Java VM's allocation failure or collection policy. extra accounts for maps.
   std::shared_ptr<Object> allocate(Object::Kind kind, std::string_view name,

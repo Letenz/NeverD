@@ -9,6 +9,8 @@
 //===----------------------------------------------------------------------===//
 #include "AndroidFramework.h"
 
+#include "neverd/dalvik/Limits.h"
+
 #include <algorithm>
 #include <set>
 
@@ -39,7 +41,8 @@ void validateAndroidClassLookupFailures(
     const AndroidApplicationSnapshot &input) {
   using Loader = AndroidApplicationSnapshot::ClassLookupFailure::Loader;
   auto loader_state = androidApplicationLoaderState(input);
-  if (input.class_lookup_failures.size() > 256)
+  if (input.class_lookup_failures.size() >
+      ::neverd::limits::dalvik::kMaxAndroidApplicationClassLookupFailures)
     throw Error("Android class lookup failure inventory exceeds its budget");
   std::set<std::pair<Loader, std::string>> seen;
   for (const auto &failure : input.class_lookup_failures) {
@@ -49,7 +52,8 @@ void validateAndroidClassLookupFailures(
       throw Error("invalid Android class lookup failure loader");
     const auto &name = failure.binary_name;
     bool first = true;
-    if (name.empty() || name.size() > 1024)
+    if (name.empty() ||
+        name.size() > ::neverd::limits::dalvik::kMaxAndroidClassNameBytes)
       throw Error("invalid Android class lookup failure binary name");
     for (unsigned char byte : name) {
       if (byte == '.' && !first) {
@@ -65,7 +69,8 @@ void validateAndroidClassLookupFailures(
     if (first || !seen.emplace(failure.loader, name).second)
       throw Error("duplicate or invalid Android class lookup failure");
     if (failure.message) {
-      if (failure.message->size() > 4096)
+      if (failure.message->size() >
+          ::neverd::limits::dalvik::kMaxAndroidLookupMessageBytes)
         throw Error("Android class lookup failure message exceeds its budget");
       (void)javaStringBytes(*failure.message);
     }
@@ -164,14 +169,17 @@ AndroidFramework::AndroidFramework(
   if (snapshot->package_name) {
     const auto &name = *snapshot->package_name;
     if (snapshot->phase != Phase::Application || name.empty() ||
-        name.size() > 1024 || name.find('\0') != std::string::npos)
+        name.size() > ::neverd::limits::dalvik::kMaxAndroidClassNameBytes ||
+        name.find('\0') != std::string::npos)
       throw Error("invalid Android application package snapshot");
     (void)javaStringBytes(name);
   }
   if (snapshot->files_directory) {
     auto &path = *snapshot->files_directory;
     if (snapshot->phase != Phase::Application || path.empty() ||
-        path.front() != '/' || path.size() > 4095 ||
+        path.front() != '/' ||
+        path.size() >
+            ::neverd::limits::dalvik::kMaxAndroidSharedLibraryPathBytes ||
         path.find('\0') != std::string::npos)
       throw Error("invalid Android files directory snapshot");
     (void)javaStringBytes(path);
@@ -438,7 +446,7 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
       if (!name)
         throw Stop{{ExecutionStop::Thrown, 0, "java/lang/NullPointerException",
                     "null Android class name"}};
-      if (name->Length > 1024)
+      if (name->Length > ::neverd::limits::dalvik::kMaxAndroidClassNameBytes)
         return unsupported("Android class name exceeds the lookup budget");
       std::string text;
       for (size_t i = 0; i < name->Bytes.size(); i += 2) {

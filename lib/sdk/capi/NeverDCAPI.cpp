@@ -805,7 +805,8 @@ const char *neverd_session_inspect_pdb_json(neverd_session_t Sess,
                          {"path", pathToUTF8(PdbPath)},
                          {"name_count", static_cast<int64_t>(Count)},
                          {"names", std::move(Names)}});
-  if (Text.size() > 32 * 1024 * 1024) {
+  if (Text.size() >
+      ::neverd::sdk::kNeverDCAPINeverdSessionInspectPdbJsonTextSizeLimit) {
     S->setError("PDB name import exceeds the 32 MiB response budget");
     return nullptr;
   }

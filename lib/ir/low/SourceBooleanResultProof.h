@@ -3,6 +3,7 @@
 
 #include "SourceBooleanResultContract.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/IntrinsicTermination.h"
@@ -33,7 +34,6 @@ struct SourceBooleanResultCertificate {
 
 namespace source_boolean_result_detail {
 using Bits = std::map<uint64_t, uint8_t>;
-constexpr size_t MaxFacts = 4096;
 
 inline uint8_t lookup(const Bits &Values, uint64_t Byte) {
   const auto It = Values.find(Byte);
@@ -102,7 +102,7 @@ struct Transfer {
   const TargetRegInfo &TRI = getTargetRegInfo(Arch::AArch64);
   std::set<uint64_t> ArchitectureBytes;
   std::set<uint64_t> Preserved;
-  size_t Remaining = 262144;
+  size_t Remaining = ::neverd::limits::ir::kSourceBooleanResultProofRemaining;
 
   Transfer(const std::map<SourceCallOccurrenceKey,
                           SourceBooleanOtherCallContract> &Calls,
@@ -475,8 +475,14 @@ struct Transfer {
           }
         }
       }
-      if (Registers.size() > MaxFacts || Temps.size() > MaxFacts ||
-          DefinedTemps.size() > MaxFacts || LiteralTemps.size() > MaxFacts)
+      if (Registers.size() >
+              ::neverd::limits::ir::kSourceBooleanResultProofMaxFacts ||
+          Temps.size() >
+              ::neverd::limits::ir::kSourceBooleanResultProofMaxFacts ||
+          DefinedTemps.size() >
+              ::neverd::limits::ir::kSourceBooleanResultProofMaxFacts ||
+          LiteralTemps.size() >
+              ::neverd::limits::ir::kSourceBooleanResultProofMaxFacts)
         return false;
     }
     return true;
@@ -505,8 +511,14 @@ proveSourceBooleanResultNormalization(
   std::string Error;
   const auto SelectedInputs = sourceBooleanInputParameters(SelectedContract);
   if (!SelectedInputs || Architecture != Arch::AArch64 || Function.Entry % 4 ||
-      Function.Blocks.empty() || Function.Blocks.size() > 256 ||
-      Calls.size() > 8192 || EntrySignature.Architecture != Architecture ||
+      Function.Blocks.empty() ||
+      Function.Blocks.size() >
+          ::neverd::limits::ir::
+              kSourceBooleanResultProofProveSourceBooleanResultNormalizationFunctionBlocksSizeLimit ||
+      Calls.size() >
+          ::neverd::limits::ir::
+              kSourceBooleanResultProofProveSourceBooleanResultNormalizationCallsSizeLimit ||
+      EntrySignature.Architecture != Architecture ||
       !validateSourceABI(EntrySignature, Error) ||
       EntrySignature.ReturnLocation.Kind ==
           SourceABICarrierKind::IndirectResultPointer ||
@@ -572,16 +584,21 @@ proveSourceBooleanResultNormalization(
     if (B.Id < 0 || !Ids.emplace(B.Id, I).second ||
         !Starts.emplace(B.StartAddr, I).second || B.StartAddr % 4 ||
         B.EndAddr <= B.StartAddr || (B.EndAddr - B.StartAddr) % 4 ||
-        B.EndAddr - B.StartAddr > 32768 || B.Ops.empty() ||
-        !B.ExceptionalPreds.empty() || !B.ExceptionalSuccs.empty())
+        B.EndAddr - B.StartAddr >
+            ::neverd::limits::ir::kMaxBooleanProofBlockBytes ||
+        B.Ops.empty() || !B.ExceptionalPreds.empty() ||
+        !B.ExceptionalSuccs.empty())
       return std::nullopt;
     if (B.StartAddr == Function.Entry)
       Entry = I;
     std::set<va_t> Instructions;
     va_t Previous = B.StartAddr;
     for (const auto &Op : B.Ops) {
-      if (++Count > 8192 || Op.Addr < Previous || Op.Addr < B.StartAddr ||
-          Op.Addr >= B.EndAddr || Op.Addr % 4 || Op.Opcode == NdOp::INDIR_BR)
+      if (++Count >
+              ::neverd::limits::ir::
+                  kSourceBooleanResultProofProveSourceBooleanResultNormalizationCountLimit ||
+          Op.Addr < Previous || Op.Addr < B.StartAddr || Op.Addr >= B.EndAddr ||
+          Op.Addr % 4 || Op.Opcode == NdOp::INDIR_BR)
         return std::nullopt;
       Previous = Op.Addr;
       Instructions.insert(Op.Addr);
@@ -672,7 +689,8 @@ proveSourceBooleanResultNormalization(
       auto Joined = Incoming[Next].value_or(Bits{});
       for (const auto &[Byte, Mask] : Output)
         Joined[Byte] |= Mask;
-      if (Joined.size() > MaxFacts)
+      if (Joined.size() >
+          ::neverd::limits::ir::kSourceBooleanResultProofMaxFacts)
         return std::nullopt;
       if (!Incoming[Next] || Joined != *Incoming[Next]) {
         Incoming[Next] = std::move(Joined);
@@ -686,4 +704,12 @@ proveSourceBooleanResultNormalization(
   return SourceBooleanResultCertificate{&Function, Selected};
 }
 } // namespace neverd
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd {
+namespace source_boolean_result_detail {
+inline constexpr size_t MaxFacts =
+    ::neverd::limits::ir::kSourceBooleanResultProofMaxFacts;
+}
+} // namespace neverd
+
 #endif

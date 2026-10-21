@@ -6,6 +6,8 @@
 
 #include "SymExprCompare.h"
 
+#include "neverd/symbolic/Limits.h"
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -13,27 +15,26 @@
 namespace neverd::symbolic::detail {
 namespace {
 
-constexpr unsigned MaxNodes = 32;
-constexpr unsigned MaxEdges = 64;
-constexpr unsigned MaxTerms = 8;
-
 struct Term {
   llvm::SmallVector<SymRef, 4> Factors;
   llvm::APInt Coefficient;
 };
-using Form = llvm::SmallVector<Term, MaxTerms>;
+using Form =
+    llvm::SmallVector<Term,
+                      ::neverd::limits::symbolic::kSymExprCompareMaxTerms>;
 
 /// Read-only, capped traversal. The Boolean table classifies a sign network;
 /// the independent coefficient check establishes its subtraction relation.
 class SignMatcher {
   const SymContext &Ctx;
   uint32_t Width;
-  llvm::SmallVector<SymRef, MaxNodes> Nodes;
+  llvm::SmallVector<SymRef, ::neverd::limits::symbolic::kSymExprCompareMaxNodes>
+      Nodes;
   llvm::SmallVector<SymRef, 3> Leaves;
   unsigned Edges = 0;
 
   bool chargeEdges(size_t Count) {
-    if (Count > MaxEdges - Edges)
+    if (Count > ::neverd::limits::symbolic::kSymExprCompareMaxEdges - Edges)
       return false;
     Edges += Count;
     return true;
@@ -48,7 +49,8 @@ class SignMatcher {
       Coefficient *= Ctx.constValue(R);
     } else if (Ctx.op(R) == SymOp::Mul) {
       auto Ops = Ctx.operands(R);
-      if (Ops.size() > MaxTerms || !chargeEdges(Ops.size()))
+      if (Ops.size() > ::neverd::limits::symbolic::kSymExprCompareMaxTerms ||
+          !chargeEdges(Ops.size()))
         return false;
       for (SymRef Factor : Ops) {
         if (Ctx.isConst(Factor))
@@ -64,14 +66,15 @@ class SignMatcher {
         Ctx.op(Factors[0]) == SymOp::Add)
       return addSum(F, Factors[0]);
     F.push_back({std::move(Factors), std::move(Coefficient)});
-    return F.size() <= MaxTerms;
+    return F.size() <= ::neverd::limits::symbolic::kSymExprCompareMaxTerms;
   }
 
   bool addSum(Form &F, SymRef R) {
     if (Ctx.op(R) != SymOp::Add)
       return addTerm(F, R);
     auto Ops = Ctx.operands(R);
-    if (Ops.size() > MaxTerms || !chargeEdges(Ops.size()))
+    if (Ops.size() > ::neverd::limits::symbolic::kSymExprCompareMaxTerms ||
+        !chargeEdges(Ops.size()))
       return false;
     for (SymRef Term : Ops)
       if (!addTerm(F, Term))
@@ -109,12 +112,15 @@ public:
   explicit SignMatcher(const SymContext &C, uint32_t W) : Ctx(C), Width(W) {}
 
   bool collect(llvm::ArrayRef<SymRef> Roots) {
-    llvm::SmallVector<SymRef, MaxNodes> Work(Roots.begin(), Roots.end());
+    llvm::SmallVector<SymRef,
+                      ::neverd::limits::symbolic::kSymExprCompareMaxNodes>
+        Work(Roots.begin(), Roots.end());
     while (!Work.empty()) {
       SymRef R = Work.pop_back_val();
       if (std::find(Nodes.begin(), Nodes.end(), R) != Nodes.end())
         continue;
-      if (Nodes.size() == MaxNodes || Ctx.width(R) != Width)
+      if (Nodes.size() == ::neverd::limits::symbolic::kSymExprCompareMaxNodes ||
+          Ctx.width(R) != Width)
         return false;
       Nodes.push_back(R);
       if (Ctx.isConst(R))
@@ -150,7 +156,9 @@ public:
     if (!collect(Roots))
       return std::nullopt;
 
-    llvm::SmallVector<uint8_t, MaxNodes> Values;
+    llvm::SmallVector<uint8_t,
+                      ::neverd::limits::symbolic::kSymExprCompareMaxNodes>
+        Values;
     const auto valueOf = [&](SymRef R) {
       return Values[std::lower_bound(Nodes.begin(), Nodes.end(), R) -
                     Nodes.begin()];
@@ -299,11 +307,13 @@ SymRef recoverObservedComparison(SymContext &Ctx, SymOp Op,
                                  llvm::ArrayRef<SymRef> Operands,
                                  const llvm::APInt &Constant) {
   const uint32_t OutputWidth = Constant.getBitWidth();
-  if (Operands.size() < 2 || Operands.size() > MaxTerms ||
+  if (Operands.size() < 2 ||
+      Operands.size() > ::neverd::limits::symbolic::kSymExprCompareMaxTerms ||
       (OutputWidth != 1 && Op != SymOp::Xor) ||
       (!Constant.isZero() && !Constant.isOne()))
     return {};
-  llvm::SmallVector<SymRef, MaxTerms> Roots;
+  llvm::SmallVector<SymRef, ::neverd::limits::symbolic::kSymExprCompareMaxTerms>
+      Roots;
   for (SymRef R : Operands) {
     SymRef Word = observedWord(Ctx, R);
     if (!Word || (!Roots.empty() && Ctx.width(Word) != Ctx.width(Roots[0])))

@@ -9,6 +9,7 @@
 #include "RegistrationFrameEffects.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/ReadOnlyBytes.h"
@@ -412,8 +413,10 @@ public:
       return std::nullopt;
     if (auto It = Cache.find(Target); It != Cache.end())
       return It->second;
-    if (Depth == 32 || Cache.size() == 256 || Target > UINT32_MAX ||
-        !Image.isCodeAddress(Target))
+    if (Depth == ::neverd::limits::ir::kMaxReturningStackProofDepth ||
+        Cache.size() ==
+            ::neverd::limits::ir::kRegistrationCalleeStackProveCacheSizeLimit ||
+        Target > UINT32_MAX || !Image.isCodeAddress(Target))
       return std::nullopt;
     if (Target <= UINT32_MAX - 6 && chargeCalleeWork(Work, 6)) {
       const auto Bytes =
@@ -539,7 +542,9 @@ RegistrationCallCalleeIndex::stackContracts(const LowFunc &Function) {
       if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
           Op.NumInputs == 1 && Op.Inputs[0].isConst() && Op.Inputs[0].Size == 4)
         Targets.emplace(Op.Inputs[0].Offset, Op.Opcode == NdOp::INDIR_CALL);
-      if (Targets.size() > 256)
+      if (Targets.size() >
+          ::neverd::limits::ir::
+              kRegistrationCalleeStackRegistrationCallCalleeIndexStackContractsTargetsSizeLimit)
         return std::nullopt;
     }
   // One graph and immutable-instruction cache for all interior callback

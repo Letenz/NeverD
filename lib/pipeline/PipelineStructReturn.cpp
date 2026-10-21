@@ -17,6 +17,7 @@
 #include "neverd/ir/med/MedReturnArguments.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/SymbolDecoration.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -220,7 +221,10 @@ static bool returnsWholeVector(const MedFunc &MF, const TargetRegInfo &TRI,
   // value -- a real vector -- rather than a zero-extended <=8-byte
   // scalar (an `INT_ZEXT Qn <- Dn` HFA element / scalar FP).
   auto isWideVec = [&](MedVar V) -> bool {
-    for (int Depth = 0; Depth < 8; ++Depth) {
+    for (int Depth = 0;
+         Depth < ::neverd::limits::pipeline::
+                     kPipelineStructReturnsWholeVectorIsWideVecDepthLimit;
+         ++Depth) {
       if (V.Kind == MedVar::Const)
         return false;
       auto It = Defs.find({V.Id, V.SSAVer});

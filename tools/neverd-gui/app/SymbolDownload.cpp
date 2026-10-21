@@ -10,6 +10,8 @@
 
 #include "SymbolDownload.h"
 
+#include "../ResourceLimits.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -27,20 +29,10 @@
 
 namespace neverd::gui {
 namespace {
-constexpr qint64 MaxBytes = 2LL * 1024 * 1024 * 1024;
-constexpr int IdleTimeoutMs = 30000;
-constexpr int DownloadTimeoutMs = 10 * 60 * 1000;
-constexpr int MaxRedirects = 5;
-constexpr qint64 ReadBufferBytes = 256 * 1024;
-constexpr qint64 ReadChunkBytes = 64 * 1024;
 constexpr int HttpOk = 200;
 constexpr int HttpNotFound = 404;
 /// The first status a server sends for its own failure.
 constexpr int HttpServerError = 500;
-/// A transfer the network or the server broke is tried again this many
-/// times, after a pause that grows with each.
-constexpr int TransferRetries = 2;
-constexpr int RetryPauseMs = 750;
 /// Whether a transfer that ended with \p error and \p status broke on the
 /// network or in the server, which the next try may not meet, rather than
 /// with an answer that will not change.
@@ -89,7 +81,7 @@ void SymbolDownload::start(const QJsonArray &servers, const QString &file) {
   error_.clear();
   notFound_ = true;
   running_ = true;
-  deadline_.start(DownloadTimeoutMs);
+  deadline_.start(::neverd::limits::gui::kSymbolDownloadDownloadTimeoutMs);
   next();
 }
 
@@ -160,16 +152,20 @@ void SymbolDownload::request(bool compressed) {
   QNetworkRequest request(url);
   request.setRawHeader("User-Agent", "NeverD-Symbols/1.0");
   request.setRawHeader("Accept-Encoding", "identity");
-  request.setTransferTimeout(IdleTimeoutMs);
-  request.setMaximumRedirectsAllowed(MaxRedirects);
+  request.setTransferTimeout(
+      ::neverd::limits::gui::kSymbolDownloadIdleTimeoutMs);
+  request.setMaximumRedirectsAllowed(
+      ::neverd::limits::gui::kSymbolDownloadMaxRedirects);
   request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                        QNetworkRequest::NoLessSafeRedirectPolicy);
   reply_ = network_->get(request);
-  reply_->setReadBufferSize(ReadBufferBytes);
+  reply_->setReadBufferSize(
+      ::neverd::limits::gui::kSymbolDownloadReadBufferBytes);
   connect(reply_, &QNetworkReply::readyRead, this, &SymbolDownload::consume);
   connect(reply_, &QNetworkReply::downloadProgress, this,
           [this](qint64 received, qint64 total) {
-            if (received > MaxBytes || total > MaxBytes) {
+            if (received > ::neverd::limits::gui::kSymbolDownloadMaxBytes ||
+                total > ::neverd::limits::gui::kSymbolDownloadMaxBytes) {
               fail(tr("The symbol file exceeds the 2 GiB download limit."));
               return;
             }
@@ -187,11 +183,12 @@ void SymbolDownload::consume() {
     return;
   }
   while (reply_->bytesAvailable()) {
-    const auto data = reply_->read(ReadChunkBytes);
+    const auto data =
+        reply_->read(::neverd::limits::gui::kSymbolDownloadReadChunkBytes);
     if (data.isEmpty())
       break;
     received_ += data.size();
-    if (received_ > MaxBytes) {
+    if (received_ > ::neverd::limits::gui::kSymbolDownloadMaxBytes) {
       fail(tr("The symbol file exceeds the 2 GiB download limit."));
       return;
     }
@@ -227,9 +224,10 @@ void SymbolDownload::finish() {
   }
   notFound_ = false;
   if (error != QNetworkReply::NoError && transient(error, status) &&
-      retries_ < TransferRetries) {
+      retries_ < ::neverd::limits::gui::kSymbolDownloadTransferRetries) {
     file_.reset();
-    retry_.start(RetryPauseMs * ++retries_);
+    retry_.start(::neverd::limits::gui::kSymbolDownloadRetryPauseMs *
+                 ++retries_);
     return;
   }
   if (error != QNetworkReply::NoError || status != HttpOk) {
@@ -274,7 +272,8 @@ void SymbolDownload::expand() {
   const auto entry = cabinet.read(16 + 241);
   const int terminator = entry.indexOf('\0', 16);
   if (entry.size() < 17 || terminator < 0 ||
-      qFromLittleEndian<quint32>(entry.constData()) > MaxBytes ||
+      qFromLittleEndian<quint32>(entry.constData()) >
+          ::neverd::limits::gui::kSymbolDownloadMaxBytes ||
       QString::fromLatin1(entry.mid(16, terminator - 16))
           .compare(fileName_, Qt::CaseInsensitive)) {
     skip(tr("The compressed symbol file is invalid."));
@@ -302,7 +301,8 @@ void SymbolDownload::expand() {
             const auto path = expanded_->filePath(fileName_);
             const QFileInfo info(path);
             if (code || status != QProcess::NormalExit || !info.isFile() ||
-                info.size() <= 0 || info.size() > MaxBytes) {
+                info.size() <= 0 ||
+                info.size() > ::neverd::limits::gui::kSymbolDownloadMaxBytes) {
               skip(tr("Could not expand the compressed symbol file."));
               return;
             }

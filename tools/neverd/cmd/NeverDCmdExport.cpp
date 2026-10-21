@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../NeverDCLI.h"
+#include "../ResourceLimits.h"
 
 #include "neverd/Common.h"
 
@@ -146,7 +147,7 @@ int runExport(neverd_session_t Sess) {
     } else if (ExportFmt == FmtSwiftMethods) {
       uint64_t Bytes = 0;
       if (sys::fs::file_size(ExportSourceSignatures, Bytes) ||
-          Bytes > 32 * 1024 * 1024) {
+          Bytes > ::neverd::limits::cli::kNeverDCmdExportRunExportBytesLimit) {
         WithColor::error() << "Swift signature file is unreadable or exceeds "
                               "its byte budget\n";
         return 1;

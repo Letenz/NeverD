@@ -11,6 +11,8 @@
 #ifndef NEVERD_MODULES_MODULEOPTIONS_H
 #define NEVERD_MODULES_MODULEOPTIONS_H
 
+#include "neverd/modules/Limits.h"
+
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
@@ -21,13 +23,6 @@
 #include <vector>
 
 namespace neverd::modules {
-
-namespace input_limit {
-#define NEVERD_MODULE_INPUT_LIMIT(Name, CName, Value)                          \
-  inline constexpr uint64_t Name = Value;
-#include "neverd/modules/ModuleInputLimits.def"
-#undef NEVERD_MODULE_INPUT_LIMIT
-} // namespace input_limit
 
 enum class LoadPolicy { Eager, Lazy };
 enum class DebugKind { PDB, DWARF, Map };

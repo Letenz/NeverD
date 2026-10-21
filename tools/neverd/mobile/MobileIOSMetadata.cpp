@@ -1,3 +1,4 @@
+#include "../ResourceLimits.h"
 #include "MobileIOSInternal.h"
 
 #include "neverd/loader/BinaryImage.h"
@@ -75,8 +76,11 @@ std::string_view symbolName(const Bytes &bytes, uint64_t strings,
                             Budget &budget) {
   if (index >= string_size)
     throw Error("Mach-O symbol string index is out of bounds");
-  auto name = bytes.d.substr(strings + index,
-                             std::min<uint64_t>(16384, string_size - index));
+  auto name = bytes.d.substr(
+      strings + index,
+      std::min<uint64_t>(
+          ::neverd::limits::cli::kMobileIOSMetadataSymbolNameNameMinArgument1,
+          string_size - index));
   auto end = name.find('\0');
   // Account for repeated references to long strings without allocating copies.
   // Each search is bounded even when the name is malformed.
@@ -173,7 +177,7 @@ Selection thin(std::string_view bytes, Budget &budget) {
   if (s.architecture.empty() || bool(s.cpu_type & 0x1000000) != wide)
     throw Error("unsupported Mach-O CPU type");
   auto filetype = b.get(12, 4), n = b.get(16, 4), size = b.get(20, 4);
-  if (n > 100000 || n > size / 8)
+  if (n > ::neverd::limits::cli::kMaxIOSLoadCommands || n > size / 8)
     throw Error("invalid Mach-O load-command count");
   b.range(header, size);
   uint64_t p = header, end = header + size, total_sections = 0,
@@ -197,7 +201,8 @@ Selection thin(std::string_view bytes, Budget &budget) {
            off = b.get(p + 24 + 2 * s.pointer_size, s.pointer_size),
            fsz = b.get(p + 24 + 3 * s.pointer_size, s.pointer_size);
       auto count = b.get(p + (wide ? 64 : 48), 4);
-      if (count > 100000 - total_sections || count > (len - base) / secsize)
+      if (count > ::neverd::limits::cli::kMaxIOSSections - total_sections ||
+          count > (len - base) / secsize)
         throw Error("invalid Mach-O section count");
       total_sections += count;
       b.range(off, fsz);
@@ -326,7 +331,8 @@ Selection selectSlice(std::string_view bytes, std::string_view architecture,
        wide = magic == 0xcafebabf || magic == 0xbfbafeca;
   auto count = b.get(4, 4, little);
   auto entry = wide ? 32u : 20u;
-  if (!count || count > 64)
+  if (!count ||
+      count > ::neverd::limits::cli::kMobileIOSMetadataSelectSliceCountLimit)
     throw Error("invalid Mach-O universal slice count");
   b.range(8, count * entry);
   std::vector<Selection> slices;
@@ -467,7 +473,9 @@ Object swiftMetadata(const BinaryImage &image, Budget &budget) {
     auto name = llvm::StringRef(raw_name.data(), raw_name.size()).ltrim('_');
     if (name.starts_with("$s") || name.starts_with("$S") ||
         name.starts_with("T0")) {
-      if (raw_name.size() >= 16384)
+      if (raw_name.size() >=
+          ::neverd::limits::cli::
+              kMobileIOSMetadataSwiftMetadataAddSymbolT0RawNameSizeLimit)
         throw Error("oversized Swift symbol name");
       // Charge before constructing strings or JSON nodes. Six bytes per input
       // byte covers JSON escaping and UTF-8 replacement; fixed overhead covers
@@ -501,7 +509,9 @@ Object swiftMetadata(const BinaryImage &image, Budget &budget) {
     uint64_t cursor = wide ? 32 : 28;
     auto command_count = raw.get(16, 4), command_bytes = raw.get(20, 4);
     raw.range(cursor, command_bytes);
-    if (command_count > 100000 || command_count > command_bytes / 8)
+    if (command_count > ::neverd::limits::cli::
+                            kMobileIOSMetadataSwiftMetadataCommandCountLimit ||
+        command_count > command_bytes / 8)
       throw Error("invalid Swift symbol load-command inventory");
     auto command_end = cursor + command_bytes;
     bool found = false;
@@ -552,7 +562,10 @@ Object swiftMetadata(const BinaryImage &image, Budget &budget) {
   if (section) {
     if ((section->Type & 255) == 1 || (section->Type & 255) == 12 ||
         (section->Type & 255) == 18 || section->Size % 4 ||
-        section->Size / 4 > 100000 || !image.readVA(section->VA, section->Size))
+        section->Size / 4 >
+            ::neverd::limits::cli::
+                kMobileIOSMetadataSwiftMetadataSectionSize4Limit ||
+        !image.readVA(section->VA, section->Size))
       throw Error("invalid or non-file-backed Swift type-reference section");
     status = "recovered";
     auto read = [&](uint64_t address, unsigned width) {
@@ -603,7 +616,9 @@ Object swiftMetadata(const BinaryImage &image, Budget &budget) {
             relative(descriptor + 8, int32_t(read(descriptor + 8, 4)));
         std::string name;
         bool terminated = false;
-        for (unsigned i = 0; i < 16384; ++i) {
+        for (unsigned i = 0;
+             i < ::neverd::limits::cli::kMobileIOSMetadataSwiftMetadataILimit;
+             ++i) {
           if (i > UINT64_MAX - name_address)
             throw Error("Swift name address overflows");
           auto byte = read(name_address + i, 1);

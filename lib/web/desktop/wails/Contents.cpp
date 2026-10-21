@@ -12,6 +12,8 @@
 
 #include "Reader.h"
 
+#include "neverd/web/Limits.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SHA256.h"
 
@@ -60,7 +62,8 @@ void verifyContents(Reader &R) {
       PreviousEnd = Key.first + Key.second;
     llvm::SHA256 Hash;
     llvm::SHA256 ToolchainHash;
-    const bool Streaming = Key.second > 1024;
+    const bool Streaming =
+        Key.second > ::neverd::limits::web::kWailsStreamingThresholdBytes;
     if (Streaming)
       ToolchainHash.update(llvm::StringRef("\1", 1));
     const auto Content = R.Input.Content.slice(Key.first, Key.second);

@@ -15,7 +15,9 @@ namespace swift_consumed_input_detail {
 inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
                            const BinaryImage &Image, size_t &Budget,
                            unsigned Depth = 0) {
-  if (!Expected || !Actual || !Budget || Depth >= 64)
+  if (!Expected || !Actual || !Budget ||
+      Depth >= ::neverd::sdk::
+                   kSourceSwiftConsumedInputProjectionSameExpressionDepthLimit)
     return false;
   --Budget;
   HighExpr E = *Expected, A = *Actual;
@@ -138,7 +140,9 @@ public:
     if (Hints.empty())
       return !Marked; // An ordinary generic call has no new input permission.
     if (Hints.size() != 1 || Current->Low->Blocks.size() != 1 ||
-        Current->Low->DecodedInstructionCount > 256)
+        Current->Low->DecodedInstructionCount >
+            ::neverd::sdk::
+                kSourceSwiftConsumedInputProjectionValidCurrentLowDecodedInstructionCountLimit)
       return false;
     unsigned Calls = 0;
     for (const auto &Op : Current->Low->Blocks.front().Ops)

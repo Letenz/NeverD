@@ -6,6 +6,7 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedLibraryRecognition.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/sigs/SignatureDB.h"
 
@@ -58,7 +59,10 @@ std::optional<uint64_t> returnedEntryRegister(const MedFunc &Function) {
     for (const auto &P : B.Phis)
       Defs[key(P.Output)] = nullptr;
     for (const auto &O : B.Ops) {
-      if (++Count > 4096 || O.NumInputs > O.Inputs.size())
+      if (++Count >
+              ::neverd::limits::pipeline::
+                  kPipelineLibraryRecognitionReturnedEntryRegisterCountLimit ||
+          O.NumInputs > O.Inputs.size())
         return std::nullopt;
       if (O.Dead || !O.Output.Size)
         continue;
@@ -85,8 +89,11 @@ std::optional<uint64_t> returnedEntryRegister(const MedFunc &Function) {
         if (At == Defs.end())
           break;
         const auto *D = At->second;
-        if (++Depth > 64 || !D || D->Opcode != NdOp::COPY ||
-            D->NumInputs != 1 || D->Inputs[0].Size != 8)
+        if (++Depth >
+                ::neverd::limits::pipeline::
+                    kPipelineLibraryRecognitionReturnedEntryRegisterDepthLimit ||
+            !D || D->Opcode != NdOp::COPY || D->NumInputs != 1 ||
+            D->Inputs[0].Size != 8)
           return std::nullopt;
         V = D->Inputs[0];
       }
@@ -220,7 +227,8 @@ void Pipeline::recognizeLibraries(const BinaryImage &Img,
       Byte.Isolated = EntireBody && !Byte.Occurrences.empty();
       Evidence.Matches.push_back(std::move(Byte));
     }
-    size_t ConflictWork = 250000;
+    size_t ConflictWork =
+        ::neverd::limits::pipeline::kPipelineLibraryRecognitionConflictWork;
     if (!sigs::finalizeLibraryRecognitions(Evidence.Matches, ConflictWork))
       Result.LibraryRecognitionBudgetExhausted.insert(Function.Entry);
     llvm::append_range(Result.LibraryRecognitions, std::move(Evidence.Matches));
@@ -242,11 +250,15 @@ void Pipeline::recognizeLibraries(const BinaryImage &Img,
     Whole.erase(Entry);
   for (const auto &F : Result.MedFuncs) {
     std::vector<sigs::LibraryRecognition> Calls;
-    size_t Work = 250000;
+    size_t Work = ::neverd::limits::pipeline::
+        kPipelineLibraryRecognitionPipelineRecognizeLibrariesWork;
     bool Exhausted = false;
     for (const auto &B : F.Blocks)
       for (const auto &O : B.Ops) {
-        if (!Work || Calls.size() >= 128) {
+        if (!Work ||
+            Calls.size() >=
+                ::neverd::limits::pipeline::
+                    kPipelineLibraryRecognitionPipelineRecognizeLibrariesCallsSizeLimit) {
           Exhausted = true;
           break;
         }

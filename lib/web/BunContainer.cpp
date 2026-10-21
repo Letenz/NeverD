@@ -11,6 +11,8 @@
 
 #include "BunContainer.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 #include <optional>
 
@@ -40,7 +42,9 @@ Container elf(const Reader &R) {
     throw Error("bun_unsupported_container");
   const auto PN = number(H, 56, 2), SN = number(H, 60, 2);
   const auto NamesIndex = number(H, 62, 2);
-  if (!PN || PN > 1024 || !SN || SN > 4096 || !NamesIndex || NamesIndex >= SN)
+  if (!PN || PN > ::neverd::limits::web::kMaxBunProgramHeaders || !SN ||
+      SN > ::neverd::limits::web::kMaxBunSections || !NamesIndex ||
+      NamesIndex >= SN)
     throw Error("bun_unsupported_elf_tables");
   const Range PH{number(H, 32, 8), PN * 56};
   const Range SH{number(H, 40, 8), SN * 64};
@@ -157,7 +161,7 @@ Range graph(const Reader &R, Range Section, Range Storage) {
     throw Error("bun_invalid_graph_header");
   // These writers zero page/file padding. Never treat padding as graph bytes.
   const Range Padding{Section.end(), Storage.end() - Section.end()};
-  if (Padding.Size > 65536)
+  if (Padding.Size > ::neverd::limits::web::kBunContainerGraphPaddingSizeLimit)
     throw Error("bun_invalid_section_padding");
   const auto Bytes = R.read(Padding);
   if (std::any_of(Bytes.begin(), Bytes.end(), [](char C) { return C != 0; }))
@@ -290,7 +294,9 @@ Container macho(const Reader &R) {
       number(H, 28, 4))
     throw Error("bun_unsupported_container");
   const auto Count = number(H, 16, 4), Size = number(H, 20, 4);
-  if (!Count || Count > 4096 || Size > 1024 * 1024 || Size < Count * 8)
+  if (!Count || Count > ::neverd::limits::web::kBunContainerMachoCountLimit ||
+      Size > ::neverd::limits::web::kBunContainerMachoSizeLimit ||
+      Size < Count * 8)
     throw Error("bun_unsupported_macho_commands");
   const auto Commands = R.read({32, Size});
   const Range Headers{0, 32 + Size};
@@ -313,10 +319,13 @@ Container macho(const Reader &R) {
       machoCommand(Command, C, R.Bytes.size(), References, Platforms);
       continue;
     }
-    if (Length < 72 || Segments.size() >= 1024)
+    if (Length < 72 ||
+        Segments.size() >=
+            ::neverd::limits::web::kBunContainerMachoSegmentsSizeLimit)
       throw Error("bun_invalid_macho_segment");
     const auto N = number(C, 64, 4);
-    if (N > 4096 - Sections || Length != 72 + N * 80)
+    if (N > ::neverd::limits::web::kMaxBunSections - Sections ||
+        Length != 72 + N * 80)
       throw Error("bun_invalid_macho_sections");
     Sections += N;
     Mapping M{{number(C, 40, 8), number(C, 48, 8)},
@@ -397,9 +406,10 @@ Container pe(const Reader &R) {
   const auto CPU = number(H, 4, 2), Count = number(H, 6, 2);
   const auto OptSize = number(H, 20, 2), Flags = number(H, 22, 2);
   if (number(H, 0, 4) != 0x4550 || (CPU != 0x8664 && CPU != 0xaa64) ||
-      !(Flags & 2) || (Flags & 0x2000) || OptSize < 240 || OptSize > 4096)
+      !(Flags & 2) || (Flags & 0x2000) || OptSize < 240 ||
+      OptSize > ::neverd::limits::web::kBunContainerPeOptSizeLimit)
     throw Error("bun_unsupported_container");
-  if (!Count || Count > 96)
+  if (!Count || Count > ::neverd::limits::web::kBunContainerPeCountLimit)
     throw Error("bun_unsupported_pe_sections");
   const auto O = R.read({PE + 24, OptSize});
   if (number(O, 0, 2) != 0x20b)

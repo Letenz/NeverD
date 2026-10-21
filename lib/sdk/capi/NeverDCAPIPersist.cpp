@@ -1081,9 +1081,11 @@ std::optional<Session::DataItem> parseDataItem(const Session &S, va_t Addr,
   } else if (*Kind == "array") {
     const auto Width = Row.getInteger("element_size");
     const auto Count = Row.getInteger("count");
-    if (!Width || !Count || *Width < 1 || *Width > 65536 || *Count < 1 ||
-        *Count > 1048576 ||
-        uint64_t(*Width) * uint64_t(*Count) > 64 * 1024 * 1024) {
+    if (!Width || !Count || *Width < 1 ||
+        *Width > ::neverd::sdk::kMaxDataItemArrayElementBytes || *Count < 1 ||
+        *Count > ::neverd::sdk::kMaxDataItemArrayElements ||
+        uint64_t(*Width) * uint64_t(*Count) >
+            ::neverd::sdk::kMaxDataItemArrayBytes) {
       Error =
           "An array needs a bounded element width and count (at most 64 MiB)";
       return {};
@@ -1093,7 +1095,10 @@ std::optional<Session::DataItem> parseDataItem(const Session &S, va_t Addr,
     Item.Size = Item.ElementSize * Item.Count;
     Item.Type = Row.getString("type").value_or("").str();
     if ((Row.get("type") && !Row.getString("type")) ||
-        (Size && uint64_t(*Size) != Item.Size) || Item.Type.size() > 512 ||
+        (Size && uint64_t(*Size) != Item.Size) ||
+        Item.Type.size() >
+            ::neverd::sdk::
+                kNeverDCAPIPersistParseDataItemArrayTypeItemTypeSizeLimit ||
         (Item.Type.empty() && Item.ElementSize != 1 && Item.ElementSize != 2 &&
          Item.ElementSize != 4 && Item.ElementSize != 8)) {
       Error = "Array extent must match its element layout and count";
@@ -1101,8 +1106,8 @@ std::optional<Session::DataItem> parseDataItem(const Session &S, va_t Addr,
     }
   } else if (*Kind == "alignment") {
     const auto Align = Row.getInteger("alignment");
-    if (!Align || *Align < 2 || *Align > 1048576 || (*Align & (*Align - 1)) ||
-        !Size || *Size < 1 || *Size > *Align ||
+    if (!Align || *Align < 2 || *Align > ::neverd::sdk::kMaxDataItemAlignment ||
+        (*Align & (*Align - 1)) || !Size || *Size < 1 || *Size > *Align ||
         Addr > UINT64_MAX - uint64_t(*Size) || (Addr + *Size) % *Align) {
       Error = "Alignment needs a bounded power of two and a span ending on its "
               "boundary";

@@ -55,11 +55,11 @@ inline void collectSourceBodyDiagnostics(
   if (!Func.SourceTypeHint || !sameHint(*Func.SourceTypeHint, Hint) ||
       !equalSourceTypes(Func.ReturnType, Hint.ReturnType) ||
       Func.Params.size() != Hint.Parameters.size() ||
-      Hint.Parameters.size() > 64)
+      Hint.Parameters.size() > ::neverd::sdk::kMaxSourceProjectionParameters)
     Diagnostics.add(
         SourceProjectionIssue::Signature,
         "method source signature disagrees with its runtime type hint");
-  if (Hint.Parameters.size() > 64)
+  if (Hint.Parameters.size() > ::neverd::sdk::kMaxSourceProjectionParameters)
     Diagnostics.Complete = false;
   if (hasIndirectSourceParameters(Hint))
     Diagnostics.add(SourceProjectionIssue::ABI,
@@ -72,8 +72,9 @@ inline void collectSourceBodyDiagnostics(
        Hint.Parameters.size() < 2 || Hint.Parameters.size() > 8))
     Diagnostics.add(SourceProjectionIssue::ABI,
                     "method has no explicit source ABI binding");
-  for (size_t Index = 0; Index < std::min({Func.Params.size(),
-                                           Hint.Parameters.size(), size_t{64}});
+  for (size_t Index = 0;
+       Index < std::min({Func.Params.size(), Hint.Parameters.size(),
+                         ::neverd::sdk::kMaxSourceProjectionParametersSize});
        ++Index) {
     const auto &Parameter = Func.Params[Index];
     if (Parameter.Name != Hint.Parameters[Index].Name ||
@@ -141,7 +142,7 @@ inline void collectSourceBodyDiagnostics(
   while (!Statements.empty()) {
     const auto [Statement, Depth] = Statements.back();
     Statements.pop_back();
-    if (Depth > 200) {
+    if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth) {
       Diagnostics.Complete = false;
       Diagnostics.add(
           SourceProjectionIssue::Budget,
@@ -190,7 +191,7 @@ inline void collectSourceBodyDiagnostics(
   while (!Expressions.empty()) {
     const auto [Expression, Depth, Address] = Expressions.back();
     Expressions.pop_back();
-    if (Depth > 200) {
+    if (Depth > ::neverd::sdk::kMaxSourceProjectionDepth) {
       Diagnostics.Complete = false;
       Diagnostics.add(
           SourceProjectionIssue::Budget,

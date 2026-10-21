@@ -3,6 +3,8 @@
 
 #include "ObjCSuperGetterSources.h"
 
+#include "neverd/sdk/Limits.h"
+
 namespace neverd::sdk {
 namespace objc_forwarded_initializer_detail {
 using namespace objc_super_getter_detail;
@@ -41,7 +43,9 @@ inline const LowFunc *completeCallerLow(const PipelineResult &Result,
       !Audit->DecodeFailures.empty() ||
       !Audit->UnsupportedInstructions.empty() ||
       !Audit->TruncatedPaths.empty() || Low->Blocks.empty() ||
-      Low->Blocks.size() > 8)
+      Low->Blocks.size() >
+          ::neverd::sdk::
+              kObjCForwardedInitializerSourcesCompleteCallerLowLowBlocksSizeLimit)
     return nullptr;
   size_t Decoded = 0;
   const LowBlock *Entry = nullptr;
@@ -49,7 +53,9 @@ inline const LowFunc *completeCallerLow(const PipelineResult &Result,
     Decoded += Block.InstructionBoundaries.size();
     if (!Block.Preds.empty() || !Block.Succs.empty() ||
         !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty() ||
-        Block.Ops.size() > 256)
+        Block.Ops.size() >
+            ::neverd::sdk::
+                kObjCForwardedInitializerSourcesCompleteCallerLowBlockOpsSizeLimit)
       return nullptr;
     if (Block.StartAddr == Root) {
       if (Entry)

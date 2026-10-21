@@ -17,6 +17,7 @@
 #include "SymExprCompare.h"
 #include "SymExprMask.h"
 
+#include "neverd/symbolic/Limits.h"
 #include "neverd/symbolic/SymExpr.h"
 
 #include <algorithm>
@@ -60,9 +61,13 @@ SymRef removeDiscardedShiftTerms(SymContext &C, SymRef A, unsigned Amount) {
   const auto Op = C.op(A);
   const unsigned Width = C.width(A);
   if ((Op != SymOp::And && Op != SymOp::Or && Op != SymOp::Xor) ||
-      Width > 128 || C.numOperands(A) > 8)
+      Width > ::neverd::limits::symbolic::kMaxDiscardedShiftWidth ||
+      C.numOperands(A) >
+          ::neverd::limits::symbolic::
+              kSymExprLogicRemoveDiscardedShiftTermsCNumOperandsALimit)
     return A;
-  unsigned Work = 256;
+  unsigned Work =
+      ::neverd::limits::symbolic::kSymExprLogicRemoveDiscardedShiftTermsWork;
   llvm::SmallVector<SymRef, 8> Kept;
   for (auto Child : C.operands(A)) {
     bool Neutral = true;
@@ -277,7 +282,7 @@ SymRef SymContext::mkOr(llvm::ArrayRef<SymRef> Ops) {
 
   // The XOR of values contained in X cannot set any bit outside X. This
   // includes X ^ (X & Y), without reasoning about the arithmetic inside X.
-  unsigned SubsetWork = 256;
+  unsigned SubsetWork = ::neverd::limits::symbolic::kSymExprLogicSubsetWork;
   const auto CoveredXor = [&](SymRef Value) {
     if (op(Value) != SymOp::Xor)
       return false;

@@ -11,6 +11,8 @@
 
 #include "Protocol.h"
 
+#include "ResourceLimits.h"
+
 #include <charconv>
 
 namespace neverd::worker {
@@ -43,16 +45,27 @@ void validateRequest(const Json &request) {
       *version != 1)
     throw Error("incompatible_protocol",
                 "This worker requires protocol major version 1");
-  if (stringField(request, "request_id", {}, 128).empty())
+  if (stringField(
+          request, "request_id", {},
+          ::neverd::limits::worker::kProtocolValidateRequestIdStringFieldMax)
+          .empty())
     throw Error("invalid_request", "A nonempty request_id string is required");
-  if (stringField(request, "operation", {}, 64).empty())
+  if (stringField(request, "operation", {},
+                  ::neverd::limits::worker::
+                      kProtocolValidateRequestOperationStringFieldMax)
+          .empty())
     throw Error("invalid_request", "An operation string is required");
   if (request.contains("payload") && !request["payload"].is_object())
     throw Error("invalid_request", "payload must be an object");
   if (request.contains("expected_revision"))
-    (void)stringField(request, "expected_revision", {}, 32);
+    (void)stringField(
+        request, "expected_revision", {},
+        ::neverd::limits::worker::
+            kProtocolValidateRequestExpectedRevisionStringFieldMax);
   if (request.contains("project_id"))
-    (void)stringField(request, "project_id", {}, 128);
+    (void)stringField(request, "project_id", {},
+                      ::neverd::limits::worker::
+                          kProtocolValidateRequestProjectIdStringFieldMax);
 }
 
 std::uint32_t frameSize(const unsigned char *header) {

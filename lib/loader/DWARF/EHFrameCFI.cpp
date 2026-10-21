@@ -14,6 +14,7 @@
 
 #include "EHFrameDetail.h"
 
+#include "neverd/loader/Limits.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/BinaryFormat/Dwarf.h"
@@ -25,14 +26,7 @@
 #define DEBUG_TYPE "neverd-dwarf-eh"
 
 namespace neverd::dwarf_eh {
-namespace {
-
-/// Largest call-frame instruction expression block accepted.  A DWARF
-/// expression describing a CFA rule is a handful of bytes in practice; a
-/// length beyond this is a corrupt or hostile record, not a real rule.
-constexpr uint64_t kMaxExpressionBytes = 64 * 1024;
-
-} // namespace
+namespace {} // namespace
 
 namespace detail {
 
@@ -261,7 +255,8 @@ bool decodeCFIProgram(const uint8_t *Buf, size_t Size, size_t Cursor,
       uint64_t Length = 0;
       if (!readULEB128(Buf, End, Cursor, Length))
         return fail("truncated DWARF def_cfa_expression length");
-      if (Length > kMaxExpressionBytes || !rangeInBounds(Cursor, Length, End))
+      if (Length > ::neverd::limits::loader::kEHFrameCFIMaxExpressionBytes ||
+          !rangeInBounds(Cursor, Length, End))
         return fail("invalid DWARF def_cfa_expression block");
       Insn.Kind = CFIOpKind::DefCFAExpression;
       Insn.Expression.assign(Buf + Cursor, Buf + Cursor + Length);
@@ -274,7 +269,8 @@ bool decodeCFIProgram(const uint8_t *Buf, size_t Size, size_t Cursor,
       if (!readULEB128(Buf, End, Cursor, Reg) ||
           !readULEB128(Buf, End, Cursor, Length))
         return fail("truncated DWARF expression operands");
-      if (Length > kMaxExpressionBytes || !rangeInBounds(Cursor, Length, End))
+      if (Length > ::neverd::limits::loader::kEHFrameCFIMaxExpressionBytes ||
+          !rangeInBounds(Cursor, Length, End))
         return fail("invalid DWARF expression block");
       Insn.Kind = Low == DW_CFA_expression ? CFIOpKind::Expression
                                            : CFIOpKind::ValExpression;

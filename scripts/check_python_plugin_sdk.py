@@ -10,6 +10,11 @@ import re
 import sys
 from typing import Iterable
 
+if __package__:
+    from .generate_python_plugin_limits import check as check_generated_limits
+else:
+    from generate_python_plugin_limits import check as check_generated_limits
+
 
 ROOT = Path(__file__).resolve().parents[1]
 C_API_HEADER = ROOT / "include" / "neverd" / "sdk" / "NeverDCAPI.h"
@@ -974,6 +979,7 @@ def check_workflows(errors: list[str]) -> None:
 
 def audit_repository(*, include_workflows: bool = True) -> list[str]:
     errors: list[str] = []
+    errors.extend(check_generated_limits(ROOT))
     check_abi(errors)
     check_bytecode_decoder_abi(errors)
     check_plugin_enums(errors)

@@ -44,4 +44,23 @@ NEVERD_SIGS_LIMIT(ParallelIndexModules, 16384)
 // this many.
 NEVERD_SIGS_LIMIT(MatchBlockEntries, 16)
 
+// Reader admission and recognition work ceilings.
+NEVERD_SIGS_LIMIT(LibraryByteRecognitionMaxEligibilityChecks,
+                  std::size_t{2000000})
+NEVERD_SIGS_LIMIT(LibraryFeatureMaxFileBytes, std::size_t{8 * 1024 * 1024})
+NEVERD_SIGS_LIMIT(LibraryFeatureMaxRules, std::size_t{256})
+NEVERD_SIGS_LIMIT(LibraryFeatureMaxNodes, std::size_t{128})
+NEVERD_SIGS_LIMIT(LibraryFeatureIdentifierTextSizeLimit, 128)
+NEVERD_SIGS_LIMIT(LibraryFeatureStringSSizeLimit, 16384)
+NEVERD_SIGS_LIMIT(LibraryFeatureJsonKeysSizeLimit, 64)
+NEVERD_SIGS_LIMIT(LibraryFeatureReadRulesWitnessesSizeLimit, 256)
+NEVERD_SIGS_LIMIT(
+    LibraryFeatureNeverdSigsReadLibraryFeaturePackLayoutsSizeLimit, 64)
+NEVERD_SIGS_LIMIT(
+    LibraryFeatureNeverdSigsReadLibraryFeaturePackDerivedSizeLimit, 64)
+NEVERD_SIGS_LIMIT(
+    LibraryRecognitionNeverdSigsFinalizeLibraryRecognitionsMatchesSizeLimit,
+    128)
+NEVERD_SIGS_LIMIT(SignatureDBLoadFeatureDirectoryFilesSizeLimit, 64)
+
 #undef NEVERD_SIGS_LIMIT

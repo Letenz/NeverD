@@ -24,6 +24,7 @@
 #include "../pass/HighFlowGraph.h"
 
 #include "neverd/Common.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/LanguageRuntime.h"
 
@@ -54,10 +55,6 @@ void note(const char *Why, va_t Where) {
     std::fprintf(stderr, "itanium-handlers 0x%llx: %s\n",
                  static_cast<unsigned long long>(Where), Why);
 }
-
-/// Statements a pad may run before this gives up on it: a pad is a few
-/// blocks, and copying it once per clause stays well within this.
-constexpr unsigned kMaxPadStatements = 4096;
 
 using Position = std::pair<const std::vector<HighStmt> *, size_t>;
 
@@ -97,7 +94,9 @@ bool endsPath(const HighStmt &S) {
 
 /// \p E with integer views peeled: the selector is compared through them.
 const HighExpr *peelViews(const HighExpr *E) {
-  for (unsigned Depth = 0; E && Depth < 8; ++Depth) {
+  for (unsigned Depth = 0;
+       E && Depth < ::neverd::limits::ir::kItaniumHandlersPeelViewsDepthLimit;
+       ++Depth) {
     const bool View = !E->Operands.empty() && E->Operands[0] &&
                       (E->Kind == ExprKind::Cast ||
                        (E->Kind == ExprKind::UnaryOp &&
@@ -120,7 +119,10 @@ bool isVariable(const HighExpr *E) {
 /// \p E as a base and a constant displacement from it.
 std::pair<const HighExpr *, int64_t> baseAndOffset(const HighExpr *E) {
   int64_t Offset = 0;
-  for (unsigned Depth = 0; E && Depth < 8; ++Depth) {
+  for (unsigned Depth = 0;
+       E &&
+       Depth < ::neverd::limits::ir::kItaniumHandlersBaseAndOffsetDepthLimit;
+       ++Depth) {
     E = peelViews(E);
     if (!E || E->Kind != ExprKind::BinOp || E->Operands.size() != 2 ||
         (E->Op != NdOp::INT_ADD && E->Op != NdOp::INT_SUB))
@@ -308,7 +310,7 @@ private:
   /// The value of \p E on this run when it depends on nothing but constants
   /// and the selector.
   std::optional<int64_t> evaluate(const HighExpr *E, unsigned Depth = 0) {
-    if (!E || Depth > 16)
+    if (!E || Depth > ::neverd::limits::ir::kItaniumHandlersEvaluateDepthLimit)
       return std::nullopt;
     if (isSelector(E))
       return Selector;
@@ -361,7 +363,7 @@ private:
 
   /// \p E with the selector's copies spelled as the selector's value.
   ExprPtr rewrite(const ExprPtr &E, unsigned Depth = 0) {
-    if (!E || Depth > 64)
+    if (!E || Depth > ::neverd::limits::ir::kItaniumHandlersRewriteDepthLimit)
       return E;
     if ((isVariable(E.get()) || E->Kind == ExprKind::Load) &&
         isSelector(E.get())) {
@@ -464,7 +466,7 @@ private:
                 std::vector<HighStmt> &Out, bool Structured) {
     for (size_t J = I; J < L.size(); ++J) {
       const HighStmt &S = L[J];
-      if (++Steps > kMaxPadStatements) {
+      if (++Steps > ::neverd::limits::ir::kItaniumHandlersMaxPadStatements) {
         fail("pad too long");
         return true;
       }
@@ -636,7 +638,8 @@ const HighExpr *runtimeCall(const HighStmt &S, llvm::StringRef Routine) {
 }
 
 bool readsVariable(const HighExpr *E, const MedVar &V, unsigned Depth = 0) {
-  if (!E || Depth > 64)
+  if (!E ||
+      Depth > ::neverd::limits::ir::kItaniumHandlersReadsVariableDepthLimit)
     return false;
   if (isVariable(E) && E->Var == V)
     return true;
@@ -648,7 +651,9 @@ bool readsVariable(const HighExpr *E, const MedVar &V, unsigned Depth = 0) {
 }
 
 bool readsExceptionState(const HighExpr *E, unsigned Depth = 0) {
-  if (!E || Depth > 64)
+  if (!E ||
+      Depth >
+          ::neverd::limits::ir::kItaniumHandlersReadsExceptionStateDepthLimit)
     return false;
   if (isVariable(E) &&
       (E->Var.Kind == MedVar::EHException || E->Var.Kind == MedVar::EHSelector))
@@ -664,7 +669,8 @@ bool readsExceptionState(const HighExpr *E, unsigned Depth = 0) {
 /// change.
 bool readsMemoryAt(const HighExpr *E, const HighExpr &Address, uint16_t Bytes,
                    unsigned Depth = 0) {
-  if (!E || Depth > 64)
+  if (!E ||
+      Depth > ::neverd::limits::ir::kItaniumHandlersReadsMemoryAtDepthLimit)
     return false;
   if (E->Kind == ExprKind::Load && !E->Operands.empty() && E->Operands[0] &&
       !apart(*E->Operands[0], bytesOf(E), Address, Bytes))
@@ -879,7 +885,8 @@ struct ExceptionTrack {
   bool readBy(const std::vector<HighStmt> &Stmts) const {
     std::function<bool(const HighExpr *, unsigned)> ReadsSpill =
         [&](const HighExpr *E, unsigned Depth) {
-          if (!E || Depth > 64)
+          if (!E || Depth > ::neverd::limits::ir::
+                                kItaniumHandlersReadByReadsSpillDepthLimit)
             return false;
           if (E->Kind == ExprKind::Load && !E->Operands.empty() &&
               E->Operands[0] &&
@@ -1165,7 +1172,9 @@ void dropSelectorSpills(std::vector<HighStmt> &Body,
   bool Read = false;
   std::function<void(const HighExpr *, unsigned)> Visit = [&](const HighExpr *E,
                                                               unsigned Depth) {
-    if (!E || Read || Depth > 64)
+    if (!E || Read ||
+        Depth > ::neverd::limits::ir::
+                    kItaniumHandlersDropSelectorSpillsVisitDepthLimit)
       return;
     if (E->Kind == ExprKind::Load && !E->Operands.empty() && E->Operands[0]) {
       const HighExpr *Base = baseAndOffset(E->Operands[0].get()).first;
@@ -1324,7 +1333,7 @@ void forEachCallSite(const HighExpr *E, llvm::function_ref<void(va_t)> Fn,
                      unsigned Depth = 0) {
   if (!E)
     return;
-  if (Depth > 64) {
+  if (Depth > ::neverd::limits::ir::kItaniumHandlersForEachCallSiteDepthLimit) {
     Fn(0);
     return;
   }

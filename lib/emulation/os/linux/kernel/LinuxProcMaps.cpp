@@ -8,6 +8,8 @@
 /// bit comes from the stopped address space; unmapping retires labels.
 #include "LinuxMemory.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include <algorithm>
 
 namespace neverd::emulation::linux_model {
@@ -137,7 +139,8 @@ LinuxMemory::procMappings() const {
                  M.Address < GuardEnd - PageSize)
           M.Path = "[stack]";
       }
-      if (Out.size() == 65536)
+      if (Out.size() == ::neverd::limits::emulation::
+                            kLinuxProcMapsLinuxMemoryProcMappingsOutSizeLimit)
         return failure("live proc mapping observation budget exhausted");
       Out.push_back(std::move(M));
     }

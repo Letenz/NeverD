@@ -1,3 +1,4 @@
+#include "../ResourceLimits.h"
 #include "MobileIOSInternal.h"
 
 #include "neverd/backend/c/FloatingPointContract.h"
@@ -357,7 +358,8 @@ size_t backendDiagnosticSize(const Object &native, const Object &runtime,
   } else if (native.get("reason") && (!reason || !reason->empty()))
     return 0;
   auto diagnostics = native.getArray("diagnostics");
-  if (!diagnostics || diagnostics->size() > 8)
+  if (!diagnostics ||
+      diagnostics->size() > ::neverd::limits::cli::kMaxObjCTypeDiagnostics)
     return 0;
   for (const auto &value : *diagnostics) {
     auto text = value.getAsString();
@@ -670,7 +672,7 @@ std::vector<std::string> layout(const Object &c,
   }
   std::vector<std::tuple<int64_t, unsigned, std::string, std::string>> fields;
   const auto &ivars = array(c, "ivars");
-  if (ivars.size() > 100000)
+  if (ivars.size() > ::neverd::limits::cli::kMobileIOSObjCLayoutIvarsSizeLimit)
     throw Error("oversized ivar inventory");
   for (const auto &v : ivars) {
     const auto &i = object(v, "ivar");
@@ -1053,7 +1055,8 @@ Rendered render(const Object &native, const Object &runtime,
         continue;
       const auto &f = *definitionsByName.at(current);
       for (size_t i = f.start; i <= f.bc; ++i) {
-        if (++comparisonWork > 1000000)
+        if (++comparisonWork >
+            ::neverd::limits::cli::kMobileIOSObjCRenderComparisonWorkLimit)
           throw Error("shared function comparison exceeds work budget");
         if (!t[i].kind && definitionsByName.count(t[i].text) &&
             !reachable.count(t[i].text))
@@ -1223,7 +1226,7 @@ std::vector<std::string> objcTypes(std::string_view e) {
       {':', "SEL"},
       {'*', "char *"}};
   std::vector<std::string> out;
-  if (e.size() > 4096)
+  if (e.size() > ::neverd::limits::cli::kMobileIOSObjCObjcTypesESizeLimit)
     return out;
   size_t p = 0;
   while (p < e.size()) {
@@ -1591,7 +1594,8 @@ SourceResult objcSources(const Object &batch, const Object &metadata,
   }
   size_t diagnostic_bytes = 256 * 1024;
   for (const auto &[key, match] : encountered) {
-    if (diagnostic_bytes < 512)
+    if (diagnostic_bytes <
+        ::neverd::limits::cli::kMobileIOSObjCObjcSourcesDiagnosticBytesLimit)
       break;
     budget.tick();
     auto &row = *coverage[match.row].getAsObject();

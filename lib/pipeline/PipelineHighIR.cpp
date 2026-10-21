@@ -26,6 +26,7 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/SymbolDecoration.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/Parallel.h"
 
@@ -295,8 +296,8 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
       Local.setObservationReset({});
       std::map<const HighExpr *, std::vector<size_t>> SourceIndex;
       bool SourceOverflow = false;
-      constexpr size_t SourceWorkBudget = 250000;
-      size_t SourceWork = SourceWorkBudget;
+      size_t SourceWork =
+          ::neverd::limits::pipeline::kPipelineHighIRSourceWorkBudget;
       std::vector<const sigs::LibraryRecognition *> SourceRegions;
       for (const auto &R : Result.LibraryRecognitions)
         if (R.Function == MF.Entry && R.Isolated &&
@@ -307,7 +308,9 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
                         std::optional<StmtKind> StatementKind = std::nullopt) {
         if (SourceOverflow)
           return;
-        if (Sources[FI].size() >= 100000) {
+        if (Sources[FI].size() >=
+            ::neverd::limits::pipeline::
+                kPipelineHighIRPipelineRebuildHighIRAppendSourcesFISizeLimit) {
           Sources[FI].clear();
           SourceIndex.clear();
           SourceOverflow = true;
@@ -371,7 +374,8 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
         Sources[FI].clear();
         SourceIndex.clear();
         SourceOverflow = false;
-        SourceWork = SourceWorkBudget;
+        SourceWork =
+            ::neverd::limits::pipeline::kPipelineHighIRSourceWorkBudget;
       });
       if (RecognizedFunctions.contains(MF.Entry)) {
         Local.setExpressionObserver(

@@ -7,6 +7,7 @@
 #ifndef NEVERD_IR_LOW_JUMPTABLE_RESOLVERMEMORYDEFINITIONCACHE_H
 #define NEVERD_IR_LOW_JUMPTABLE_RESOLVERMEMORYDEFINITIONCACHE_H
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/LowIR.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -51,7 +52,8 @@ class ResolverMemoryDefinitionCache {
     int Before = 0;
     int Position = -1;
   };
-  static constexpr size_t Capacity = 1024;
+  static constexpr size_t Capacity =
+      ::neverd::limits::ir::kResolverMemoryDefinitionCacheCapacity;
   using Table = std::array<Entry, Capacity>;
   static_assert(sizeof(Table) <= 12 * 1024);
   std::unique_ptr<Table> Entries;

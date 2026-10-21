@@ -25,11 +25,11 @@ namespace {
 
 #define NEVERD_CURL_VALUE(Name, Value) constexpr long Name = Value;
 #define NEVERD_SYMBOL_LIMIT(Name, Value) constexpr long long Name = Value;
-#include "SymbolDownloadABI.def"
+#include "../common/symbols/SymbolDownloadABI.def"
 
 constexpr const char *CurlLibraries[] = {
 #define NEVERD_CURL_LIBRARY(Name) Name,
-#include "SymbolDownloadABI.def"
+#include "../common/symbols/SymbolDownloadABI.def"
 };
 
 /// libcurl's handle and file offset types, as its headers declare them.

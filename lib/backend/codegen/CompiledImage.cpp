@@ -12,6 +12,7 @@
 #include "X86/CompiledSEHStateWrites.h"
 
 #include "neverd/ArchSupport.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/codegen/PatchStorage.h"
@@ -872,7 +873,11 @@ static CompiledImage compileImageForPatchImpl(
   llvm::mc_rewrite::RewriteResult Final;
   std::vector<CapturedFixupReference> FinalFixups;
   bool Converged = false;
-  for (int Iter = 0; Iter < 8 && !Converged; ++Iter) {
+  for (int Iter = 0;
+       Iter < ::neverd::limits::backend::
+                  kCompiledImageCompileImageForPatchImplIterLimit &&
+       !Converged;
+       ++Iter) {
     llvm::mc_rewrite::RewriteOptions PassN;
     PassN.Model.TextVA = BaseVA;
     PassN.Model.ImageBaseVA = ImageBaseVA;

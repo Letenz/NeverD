@@ -9,6 +9,8 @@
 
 #include "ProofNode.h"
 
+#include "neverd/analysis/Limits.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Hashing.h"
@@ -304,7 +306,8 @@ inline std::optional<Prepared> prepareCanonical(SymContext &C, SymRef Domain,
       Goal.index() >= OriginalSize || C.width(Domain) != 1 ||
       C.width(Goal) != 1 || OriginalSize > L.MaxNodes || !L.MaxWidth)
     return std::nullopt;
-  Budget B(std::min<uint64_t>(L.MaxWork, 4194304));
+  Budget B(std::min<uint64_t>(
+      L.MaxWork, ::neverd::limits::analysis::kMaxConditionalImplicationWork));
   const unsigned WidthLimit = std::min(L.MaxWidth, 256U);
   std::vector<SymRef> Work{Domain, Goal}, Refs;
   llvm::DenseSet<uint32_t> Seen;
@@ -317,8 +320,10 @@ inline std::optional<Prepared> prepareCanonical(SymContext &C, SymRef Domain,
       return std::nullopt;
     if (!Seen.insert(R.index()).second)
       continue;
-    if (Seen.size() > std::min(L.MaxReachableNodes, 262144U) || !C.width(R) ||
-        C.width(R) > WidthLimit)
+    if (Seen.size() > std::min(L.MaxReachableNodes,
+                               ::neverd::limits::analysis::
+                                   kMaxConditionalImplicationReachableNodes) ||
+        !C.width(R) || C.width(R) > WidthLimit)
       return std::nullopt;
     const auto Args = C.operands(R);
     if (!B.charge(Args.size()) || !detail::validProofNode(C, R))
@@ -346,7 +351,10 @@ inline std::optional<Prepared> prepareCanonical(SymContext &C, SymRef Domain,
   auto Facts = conjuncts(C, Domain, B);
   if (!Facts)
     return std::nullopt;
-  Closure U(Nodes, std::min<uint64_t>(L.MaxWork, 4194304));
+  Closure U(Nodes,
+            std::min<uint64_t>(
+                L.MaxWork,
+                ::neverd::limits::analysis::kMaxConditionalImplicationWork));
   for (unsigned I = 0; I != Nodes.size(); ++I) {
     if (Nodes[I].Op == SymOp::Const) {
       if (!U.Work.charge((Nodes[I].Width + 63) / 64))
@@ -363,7 +371,9 @@ inline std::optional<Prepared> prepareCanonical(SymContext &C, SymRef Domain,
     if (!U.Work.Active || U.Contradiction)
       break;
   }
-  for (unsigned Pass = 0; Pass != 16 && U.Work.Active && !U.Contradiction;
+  for (unsigned Pass = 0;
+       Pass != ::neverd::limits::analysis::kMaxConditionalClosurePasses &&
+       U.Work.Active && !U.Contradiction;
        ++Pass) {
     const auto Before = U.Unions;
     std::unordered_map<Signature, unsigned, SignatureHash> Table;
@@ -381,7 +391,8 @@ inline std::optional<Prepared> prepareCanonical(SymContext &C, SymRef Domain,
   P.DomainContradiction = U.Contradiction;
   // A separate bounded read-only walk consumes the already sound partial
   // closure. Exhaustion does not invent further equivalences.
-  Budget R(std::min<uint64_t>(L.MaxWork, 4194304));
+  Budget R(std::min<uint64_t>(
+      L.MaxWork, ::neverd::limits::analysis::kMaxConditionalImplicationWork));
   for (unsigned I = 0; I != Nodes.size(); ++I) {
     if (!R.charge(1 + Nodes[I].Args.size()))
       return std::nullopt;
@@ -470,7 +481,8 @@ inline std::optional<Prepared> prepare(SymContext &C, SymRef Domain,
       Goal.index() >= OriginalSize || C.width(Domain) != 1 ||
       C.width(Goal) != 1 || OriginalSize > L.MaxNodes)
     return std::nullopt;
-  Budget Work(std::min<uint64_t>(L.MaxWork, 4194304));
+  Budget Work(std::min<uint64_t>(
+      L.MaxWork, ::neverd::limits::analysis::kMaxConditionalImplicationWork));
   std::vector<SymRef> Pending{Domain, Goal}, Refs;
   llvm::DenseSet<uint32_t> Seen;
   while (!Pending.empty()) {
@@ -482,8 +494,10 @@ inline std::optional<Prepared> prepare(SymContext &C, SymRef Domain,
       return std::nullopt;
     if (!Seen.insert(At.index()).second)
       continue;
-    if (Seen.size() > std::min(L.MaxReachableNodes, 262144U) || !C.width(At) ||
-        C.width(At) > std::min(L.MaxWidth, 256U))
+    if (Seen.size() > std::min(L.MaxReachableNodes,
+                               ::neverd::limits::analysis::
+                                   kMaxConditionalImplicationReachableNodes) ||
+        !C.width(At) || C.width(At) > std::min(L.MaxWidth, 256U))
       return std::nullopt;
     const auto Args = C.operands(At);
     if (!Work.charge(Args.size()) || !detail::validProofNode(C, At))
@@ -531,13 +545,16 @@ inline std::optional<Prepared> prepare(SymContext &C, SymRef Domain,
 inline std::unique_ptr<solver::BitVectorSolver>
 encode(SymContext &C, const Prepared &P, const solver::SolverOptions &Options,
        const Limits &L = {}) {
-  Budget Work(std::min<uint64_t>(L.MaxWork, 4194304));
+  Budget Work(std::min<uint64_t>(
+      L.MaxWork, ::neverd::limits::analysis::kMaxConditionalImplicationWork));
   std::vector<std::pair<unsigned, SymRef>> Ordered;
   for (auto F : P.Constraints) {
     std::vector<SymRef> Pending{F};
     llvm::DenseSet<uint32_t> Seen;
     unsigned Cost = 0;
-    while (!Pending.empty() && Cost < 4096) {
+    while (!Pending.empty() && Cost <
+                                   ::neverd::limits::analysis::
+                                       kMaxConditionalImplicationEncodingCost) {
       if (!Work.charge())
         return nullptr;
       ++Cost;
@@ -546,7 +563,8 @@ encode(SymContext &C, const Prepared &P, const solver::SolverOptions &Options,
       if (!Seen.insert(At.index()).second)
         continue;
       for (auto A : C.operands(At)) {
-        if (++Cost >= 4096)
+        if (++Cost >=
+            ::neverd::limits::analysis::kMaxConditionalImplicationEncodingCost)
           break;
         if (!Work.charge())
           return nullptr;
@@ -582,7 +600,11 @@ inline Result proveWithEncoding(SymContext &C, const Prepared &P,
   std::vector<std::pair<unsigned, unsigned>> Pending{
       {0, unsigned(P.Terms.size())}};
   while (!Pending.empty()) {
-    if (Out.Queries >= std::min(L.MaxQueries, 16384U) ||
+    if (Out.Queries >=
+            std::min(
+                L.MaxQueries,
+                ::neverd::limits::analysis::
+                    kConditionalImplicationProveWithEncodingMinArgument2) ||
         C.numNodes() > L.MaxNodes)
       return Out;
     const auto [Begin, Count] = Pending.back();
@@ -650,11 +672,18 @@ public:
     if (P.SourceContext != &C || P.SourceDomain != Domain ||
         C.numNodes() > L.MaxNodes || P.Original.size() != P.Images.size() ||
         P.NormalizationOriginal.size() != P.NormalizationImages.size() ||
-        P.Original.size() > std::min(L.MaxReachableNodes, 262144U) ||
-        P.NormalizationOriginal.size() > std::min(L.MaxReachableNodes, 262144U))
+        P.Original.size() >
+            std::min(L.MaxReachableNodes,
+                     ::neverd::limits::analysis::
+                         kMaxConditionalImplicationReachableNodes) ||
+        P.NormalizationOriginal.size() >
+            std::min(L.MaxReachableNodes,
+                     ::neverd::limits::analysis::
+                         kMaxConditionalImplicationReachableNodes))
       return nullptr;
     auto Out = std::unique_ptr<CachedDomain>(new CachedDomain(C, Domain, L));
-    Budget Work(std::min<uint64_t>(L.MaxWork, 4194304));
+    Budget Work(std::min<uint64_t>(
+        L.MaxWork, ::neverd::limits::analysis::kMaxConditionalImplicationWork));
     const auto Valid = [&](SymRef Ref) {
       return Ref && Ref.index() < C.numNodes() && C.width(Ref) &&
              C.width(Ref) <= std::min(L.MaxWidth, 256U);
@@ -684,7 +713,9 @@ public:
         C.width(Goal) != 1 || C.numNodes() > Bound.MaxNodes)
       return std::nullopt;
     const auto OriginalSize = C.numNodes();
-    Budget Work(std::min<uint64_t>(Bound.MaxWork, 4194304));
+    Budget Work(std::min<uint64_t>(
+        Bound.MaxWork,
+        ::neverd::limits::analysis::kMaxConditionalImplicationWork));
     std::vector<SymRef> Pending{Goal}, Refs;
     llvm::DenseSet<uint32_t> Seen;
     while (!Pending.empty()) {
@@ -696,7 +727,10 @@ public:
         return std::nullopt;
       if (!Seen.insert(At.index()).second)
         continue;
-      if (Seen.size() > std::min(Bound.MaxReachableNodes, 262144U) ||
+      if (Seen.size() >
+              std::min(Bound.MaxReachableNodes,
+                       ::neverd::limits::analysis::
+                           kMaxConditionalImplicationReachableNodes) ||
           !C.width(At) || C.width(At) > std::min(Bound.MaxWidth, 256U))
         return std::nullopt;
       Refs.push_back(At);

@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/c/pass/HighC/HighCPasses.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -213,7 +214,9 @@ void analyzeUnusedAssigns(HighCAnalysisState &State, const HighFunc &Func,
                           VarNameFn VarFn, CallArgLimitFn ArgLimit) {
   bool Changed = true;
   unsigned Guard = 0;
-  while (Changed && Guard++ < 8) {
+  while (Changed && Guard++ <
+                        ::neverd::limits::backend::
+                            kHighCVoidAnalysisAnalyzeUnusedAssignsGuardLimit) {
     Changed = false;
     std::map<std::string, TypeRef> Used;
     walkStmts(Func.Body, [&](const HighStmt &S) {

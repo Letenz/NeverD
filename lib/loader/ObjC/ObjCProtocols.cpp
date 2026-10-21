@@ -5,6 +5,7 @@
 #include "ObjCRuntimeData.h"
 
 #include "neverd/ir/SourceABI.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 
 #include <algorithm>
@@ -13,20 +14,20 @@
 
 namespace neverd::objc {
 namespace {
-constexpr size_t MaxRecords = 65536;
 
 class ProtocolReader {
   BinaryImage &Image;
   RuntimeData Data;
   ImportStorageSlotCollection Imports;
-  size_t MethodsRemaining = MaxRecords;
-  size_t EdgesRemaining = MaxRecords;
+  size_t MethodsRemaining = ::neverd::limits::loader::kObjCProtocolsMaxRecords;
+  size_t EdgesRemaining = ::neverd::limits::loader::kObjCProtocolsMaxRecords;
   std::map<va_t, ObjCProtocol> Protocols;
   std::vector<va_t> Work;
 
   void diagnostic(llvm::StringRef Message) {
     auto &Messages = Image.ObjCMetadataDiagnostics;
-    if (Messages.size() < 64 &&
+    if (Messages.size() < ::neverd::limits::loader::
+                              kObjCProtocolsDiagnosticMessagesSizeLimit &&
         std::find(Messages.begin(), Messages.end(), Message) == Messages.end())
       Messages.push_back(Message.str());
   }
@@ -34,7 +35,8 @@ class ProtocolReader {
   bool enqueue(va_t Address) {
     if (Protocols.count(Address))
       return true;
-    if (Protocols.size() >= MaxRecords) {
+    if (Protocols.size() >=
+        ::neverd::limits::loader::kObjCProtocolsMaxRecords) {
       diagnostic("Objective-C protocol count exceeds the parsing budget");
       return false;
     }
@@ -122,7 +124,9 @@ class ProtocolReader {
       return;
     }
     const auto Size = Data.u32(Address + 64);
-    if (!Size || *Size < 72 || *Size > 4096 || !Data.bytes(Address, *Size)) {
+    if (!Size || *Size < 72 ||
+        *Size > ::neverd::limits::loader::kObjCProtocolsReadSizeLimit ||
+        !Data.bytes(Address, *Size)) {
       diagnostic("Invalid Objective-C protocol record size");
       return;
     }
@@ -204,7 +208,7 @@ public:
       : Image(Image), Data(Image), Imports(Image.collectImportStorageSlots()) {}
 
   void run() {
-    size_t RootsRemaining = MaxRecords;
+    size_t RootsRemaining = ::neverd::limits::loader::kObjCProtocolsMaxRecords;
     for (const auto &Section : Image.Sections) {
       if (Section.Name != "__objc_protolist" &&
           Section.Name != "__objc_protorefs")

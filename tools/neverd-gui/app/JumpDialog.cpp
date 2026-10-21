@@ -1,5 +1,6 @@
 #include "JumpDialog.h"
 
+#include "../ResourceLimits.h"
 #include "Address.h"
 #include "Icons.h"
 #include "ItemViewActivation.h"
@@ -20,9 +21,6 @@
 namespace neverd::gui {
 namespace {
 constexpr char HistoryKey[] = "jump/history";
-constexpr int MaxHistory = 25;
-constexpr int MaxMatches = 200;
-constexpr int SearchDebounceMs = 90;
 constexpr int AddressRole = Qt::UserRole;
 } // namespace
 
@@ -33,7 +31,7 @@ void JumpDialog::remember(const QString &text) {
   auto history = settings.value(HistoryKey).toStringList();
   history.removeAll(text);
   history.prepend(text);
-  while (history.size() > MaxHistory)
+  while (history.size() > ::neverd::limits::gui::kJumpDialogMaxHistory)
     history.removeLast();
   settings.setValue(HistoryKey, history);
 }
@@ -65,7 +63,7 @@ JumpDialog::JumpDialog(Session &session, QWidget *parent)
   connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
   connect(matches_, &QListWidget::itemActivated, this, [this] { accept(); });
   debounce_.setSingleShot(true);
-  debounce_.setInterval(SearchDebounceMs);
+  debounce_.setInterval(::neverd::limits::gui::kJumpDialogSearchDebounceMs);
   connect(&debounce_, &QTimer::timeout, this, &JumpDialog::search);
   connect(input_, &QLineEdit::textChanged, this, [this] {
     matches_->clearSelection();
@@ -87,7 +85,10 @@ void JumpDialog::search() {
     return;
   session_.read(
       QStringLiteral("names"),
-      {{"filter", text}, {"limit", MaxMatches}, {"sort", "name"}}, this,
+      {{"filter", text},
+       {"limit", ::neverd::limits::gui::kJumpDialogMaxMatches},
+       {"sort", "name"}},
+      this,
       [this, serial, text](const QJsonObject &payload) {
         if (serial != serial_)
           return;

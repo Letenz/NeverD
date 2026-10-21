@@ -4,6 +4,7 @@
 
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ObjC/ObjCConstantStrings.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
@@ -25,7 +26,8 @@ std::optional<SourceRegisterCopy> leaf(const BinaryImage &Image, va_t Entry) {
   std::array<RegisterValue, 29> Sources;
   for (unsigned I = 0; I < Sources.size(); ++I)
     Sources[I] = {RegisterValue::EntryRegister, I * 8};
-  for (unsigned I = 0; I <= 16; ++I) {
+  for (unsigned I = 0;
+       I <= ::neverd::limits::loader::kSourceRegisterCopyLeafILimit; ++I) {
     const auto Bytes = readImmutableCodeBytes(Image, Entry + 4 * I, 4);
     if (!Bytes)
       return std::nullopt;

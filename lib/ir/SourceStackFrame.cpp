@@ -1,5 +1,6 @@
 #include "neverd/ir/SourceStackFrame.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 
 #include <deque>
@@ -7,7 +8,6 @@
 
 namespace neverd {
 namespace {
-constexpr int64_t MaxFrame = 1 << 20;
 using Key = std::pair<VnodeSpace, uint64_t>;
 using State = std::map<Key, int64_t>;
 bool terminal(NdOp Op) {
@@ -26,7 +26,10 @@ std::optional<int64_t> constant(NdVar V, uint16_t Width) {
   return Width == 8 ? static_cast<int64_t>(V.Offset)
                     : static_cast<int32_t>(V.Offset);
 }
-bool bounded(int64_t N) { return N >= -MaxFrame && N <= MaxFrame; }
+bool bounded(int64_t N) {
+  return N >= -::neverd::limits::ir::kSourceStackFrameMaxFrame &&
+         N <= ::neverd::limits::ir::kSourceStackFrameMaxFrame;
+}
 void transfer(State &S, const LowOp &Op, uint16_t Width) {
   std::optional<int64_t> Result;
   if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1)
@@ -91,8 +94,15 @@ StackFrameAnalysis analyzeSourceStackFrame(const LowFunc &F, Arch Architecture,
     Out.Error = "Exact stack correction currently requires x64 or AArch64";
     return Out;
   }
-  if (F.Blocks.size() > 4096 || Policy.Points.size() > 256 ||
-      Policy.Variables.size() > 256) {
+  if (F.Blocks.size() >
+          ::neverd::limits::ir::
+              kSourceStackFrameAnalyzeSourceStackFrameFBlocksSizeLimit ||
+      Policy.Points.size() >
+          ::neverd::limits::ir::
+              kSourceStackFrameAnalyzeSourceStackFramePolicyPointsSizeLimit ||
+      Policy.Variables.size() >
+          ::neverd::limits::ir::
+              kSourceStackFrameAnalyzeSourceStackFramePolicyVariablesSizeLimit) {
     Out.Error = "Stack-frame analysis budget exceeded";
     return Out;
   }
@@ -104,7 +114,9 @@ StackFrameAnalysis analyzeSourceStackFrame(const LowFunc &F, Arch Architecture,
   size_t OperationCount = 0;
   for (const auto &B : F.Blocks) {
     OperationCount += B.Ops.size();
-    if (OperationCount > 200000) {
+    if (OperationCount >
+        ::neverd::limits::ir::
+            kSourceStackFrameAnalyzeSourceStackFrameOperationCountLimit) {
       Out.Error = "Stack-frame operation budget exceeded";
       return Out;
     }
@@ -151,7 +163,9 @@ StackFrameAnalysis analyzeSourceStackFrame(const LowFunc &F, Arch Architecture,
             offset(S, NdVar::reg(TRI.StackPointer, Width), Width);
       do {
         const auto &Op = B.Ops[I];
-        if (++Work > 1000000) {
+        if (++Work >
+            ::neverd::limits::ir::
+                kSourceStackFrameAnalyzeSourceStackFrameRunRunWorkLimit) {
           Out.Error = "Stack-frame analysis work budget exceeded";
           return S;
         }

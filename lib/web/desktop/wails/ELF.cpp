@@ -12,6 +12,8 @@
 
 #include "Reader.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 
 namespace neverd::web::wails_detail {
@@ -22,7 +24,7 @@ void admitELF(Reader &R) {
       number(H, 20, 4) != 1 || number(H, 52, 2) != 64 || number(H, 54, 2) != 56)
     throw Error("wails_unsupported_container");
   const auto Count = number(H, 56, 2);
-  if (!Count || Count > 1024)
+  if (!Count || Count > ::neverd::limits::web::kELFAdmitELFCountLimit)
     throw Error("wails_native_table_budget_exceeded");
   const Range PH{number(H, 32, 8), Count * 56};
   if (PH.Offset < 64)

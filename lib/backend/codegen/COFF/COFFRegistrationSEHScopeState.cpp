@@ -7,6 +7,7 @@
 #include "COFFRegistrationSEHDynamicScope.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/X86RegistrationSEHStateStore.h"
 
@@ -83,7 +84,10 @@ bindDynamicSEHState(const MedFunc &Source, const RegistrationFrame &Frame,
   std::function<std::optional<int64_t>(const MedVar &, bool, unsigned)>
       Resolve = [&](const MedVar &Value, bool Address,
                     unsigned Depth) -> std::optional<int64_t> {
-    if (++Work > limits::kMaxRegistrationEHStateWork || Depth > 32)
+    if (++Work > limits::kMaxRegistrationEHStateWork ||
+        Depth >
+            ::neverd::limits::backend::
+                kCOFFRegistrationSEHScopeStateBindDynamicSEHStateResolveDepthLimit)
       return std::nullopt;
     if (Value.isConst())
       return Address ? std::nullopt

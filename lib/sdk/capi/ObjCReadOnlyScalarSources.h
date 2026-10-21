@@ -87,7 +87,10 @@ inline std::optional<LoadPlan> loadPlan(const ExprPtr &E, bool Bound,
           Candidate->Type->Size != 8 || Constant->Kind != ExprKind::Const ||
           !Constant->Operands.empty() ||
           Constant->Type->Kind != NdTypeKind::Int ||
-          Constant->Type->Size != 8 || Constant->ConstVal > 65536)
+          Constant->Type->Size != 8 ||
+          Constant->ConstVal >
+              ::neverd::sdk::
+                  kObjCReadOnlyScalarSourcesLoadPlanConstantConstValLimit)
         continue;
       Indexed = Candidate;
       Bias = Constant->ConstVal;
@@ -121,7 +124,10 @@ inline std::optional<LoadPlan> loadPlan(const ExprPtr &E, bool Bound,
         return std::nullopt;
       P.Stride = uint64_t{1} << Scale->ConstVal;
     } else {
-      if (Scale->Type->Size != 8 || !Scale->ConstVal || Scale->ConstVal > 65536)
+      if (Scale->Type->Size != 8 || !Scale->ConstVal ||
+          Scale->ConstVal >
+              ::neverd::sdk::
+                  kObjCReadOnlyScalarSourcesLoadPlanScaleConstValLimit)
         return std::nullopt;
       P.Stride = Scale->ConstVal;
     }
@@ -172,7 +178,9 @@ readOnlyLoadPlans(const HighFunc &Function, const BinaryImage &Image,
         if (!E || !Seen.insert(E.get()).second)
           continue;
         if (auto P = loadPlan(E, Bound, ObjectPointers)) {
-          if (Queries.size() == 128) {
+          if (Queries.size() ==
+              ::neverd::sdk::
+                  kObjCReadOnlyScalarSourcesReadOnlyLoadPlansQueriesSizeLimit) {
             Budget = 0;
             return;
           }
@@ -193,13 +201,19 @@ readOnlyLoadPlans(const HighFunc &Function, const BinaryImage &Image,
     const auto Upper = Bounds[I];
     // Bound both the scalar inventory and the byte copy; sparse strides do
     // not permit unbounded reads or source helper growth.
-    if (!Upper || *Upper >= 4096 || *Upper >= P.SignLimit ||
-        *Upper > (65536 - Load->Type->Size) / P.Stride) {
+    if (!Upper || *Upper >= ::neverd::sdk::kMaxReadOnlyScalarEntries ||
+        *Upper >= P.SignLimit ||
+        *Upper > (::neverd::sdk::kMaxReadOnlyScalarBytes - Load->Type->Size) /
+                     P.Stride) {
       Rejected.insert(Load.get());
       continue;
     }
     const auto Extent = uint32_t(*Upper * P.Stride + Load->Type->Size);
-    if (Bound && (P.Extent < Extent || P.Extent > 65536)) {
+    if (Bound &&
+        (P.Extent < Extent ||
+         P.Extent >
+             ::neverd::sdk::
+                 kObjCReadOnlyScalarSourcesReadOnlyLoadPlansPExtentLimit)) {
       Rejected.insert(Load.get());
       continue;
     }
@@ -276,12 +290,16 @@ inline ReadOnlyLoopBytePlans readOnlyLoopBytePlans(const HighFunc &Function,
   const auto Constant = [](const ExprPtr &Original) -> std::optional<uint64_t> {
     auto E = Original;
     uint64_t SignLimit = UINT64_MAX;
-    for (unsigned Depth = 0;
-         Depth < 4 && E &&
-         (E->Kind == ExprKind::Cast ||
-          (E->Kind == ExprKind::UnaryOp && E->Op == NdOp::INT_ZEXT)) &&
-         E->Operands.size() == 1;
-         ++Depth) {
+    for (
+        unsigned Depth = 0;
+        Depth <
+            ::neverd::sdk::
+                kObjCReadOnlyScalarSourcesReadOnlyLoopBytePlansConstantDepthLimit &&
+        E &&
+        (E->Kind == ExprKind::Cast ||
+         (E->Kind == ExprKind::UnaryOp && E->Op == NdOp::INT_ZEXT)) &&
+        E->Operands.size() == 1;
+        ++Depth) {
       if (!readonly_scalar_detail::ordinary(E) ||
           E->Type->Kind != NdTypeKind::Int || !E->Operands[0] ||
           !E->Operands[0]->Type ||
@@ -320,7 +338,10 @@ inline ReadOnlyLoopBytePlans readOnlyLoopBytePlans(const HighFunc &Function,
   size_t Budget = kSourceExpressionWork;
   std::function<void(const std::vector<HighStmt> &, unsigned)> Inspect;
   Inspect = [&](const std::vector<HighStmt> &Body, unsigned Depth) {
-    if (!Budget || Depth > 200 || Body.size() > 100000)
+    if (!Budget || Depth > ::neverd::sdk::kMaxSourceProjectionDepth ||
+        Body.size() >
+            ::neverd::sdk::
+                kObjCReadOnlyScalarSourcesReadOnlyLoopBytePlansInspectBodySizeLimit)
       return;
     for (size_t I = 2; I < Body.size() && Budget; ++I) {
       --Budget;
@@ -337,7 +358,11 @@ inline ReadOnlyLoopBytePlans readOnlyLoopBytePlans(const HighFunc &Function,
         continue;
       const auto Iterations = Constant(CountInit.Val);
       const auto Start = Constant(PointerInit.Val);
-      if (!Iterations || *Iterations == 0 || *Iterations > 1365 || !Start)
+      if (!Iterations || *Iterations == 0 ||
+          *Iterations >
+              ::neverd::sdk::
+                  kObjCReadOnlyScalarSourcesReadOnlyLoopBytePlansInspectIterationsLimit ||
+          !Start)
         continue;
       const auto &Steps = Loop.Body;
       const size_t End = Steps.size();

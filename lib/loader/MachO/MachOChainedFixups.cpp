@@ -6,6 +6,7 @@
 
 #include "MachODyldFixups.h"
 
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -309,7 +310,10 @@ void parseChainedFixupsRebases(const uint8_t *BasePtr, size_t FileSize,
         continue;
       va_t ChainVA = TextVMAddr + ChainOffset;
       // Bounded chain walk; a malformed `next` cannot loop forever.
-      for (uint32_t Guard = 0; Guard < (1u << 22); ++Guard) {
+      for (uint32_t Guard = 0;
+           Guard < ::neverd::limits::loader::
+                       kMachOChainedFixupsParseChainedFixupsRebasesGuardLimit;
+           ++Guard) {
         const uint8_t *Loc = Img.readVA(ChainVA, sizeof(uint64_t));
         if (!Loc)
           break;

@@ -6,6 +6,8 @@
 
 #include "neverd/evm/bytecode/EVMMetadata.h"
 
+#include "neverd/evm/Limits.h"
+
 #include <array>
 #include <utility>
 
@@ -46,13 +48,6 @@ inline constexpr uint8_t kTwoByteLength = 25;
 inline constexpr uint8_t kFalse = 20;
 inline constexpr uint8_t kTrue = 21;
 
-/// The most items one container may declare, and the most containers one value
-/// may nest. A footer is a handful of small items inside at most a sequence, a
-/// map, and a version array; these bounds only keep a corrupt count from naming
-/// a huge container and a hostile one from recursing.
-inline constexpr uint64_t kMaxItems = 32;
-inline constexpr unsigned kMaxDepth = 4;
-
 class Reader {
 public:
   explicit Reader(llvm::ArrayRef<uint8_t> Bytes) : Bytes(Bytes) {}
@@ -62,7 +57,7 @@ public:
 
   /// Read one value, which must be one of the kinds a trailer may hold.
   std::optional<MetadataValue> readValue(unsigned Depth = 0) {
-    if (Depth > kMaxDepth)
+    if (Depth > ::neverd::limits::evm::kEVMMetadataMaxDepth)
       return fail();
     const auto Head = readHead();
     if (!Head)
@@ -91,7 +86,7 @@ public:
       return Value;
     }
     case MajorType::Array: {
-      if (Argument > kMaxItems)
+      if (Argument > ::neverd::limits::evm::kEVMMetadataMaxItems)
         return fail();
       Value.Kind = MetadataValueKind::Array;
       Value.Elements.reserve(static_cast<size_t>(Argument));
@@ -104,7 +99,7 @@ public:
       return Value;
     }
     case MajorType::Map: {
-      if (Argument > kMaxItems)
+      if (Argument > ::neverd::limits::evm::kEVMMetadataMaxItems)
         return fail();
       Value.Kind = MetadataValueKind::Map;
       Value.Keys.reserve(static_cast<size_t>(Argument));

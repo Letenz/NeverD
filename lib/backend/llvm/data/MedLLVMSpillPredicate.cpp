@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Common.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/object/SectionNames.h"
@@ -221,7 +222,10 @@ bool MedLLVMEmitter::frameAccessesProvenDisjoint(const MedVar &A,
       affineStepTo = [&](const MedVar &Start, const MedVar &Root,
                          std::set<AddressProvenanceVarKey> Seen)
       -> std::optional<int64_t> {
-    if (Seen.size() >= 64 || Start.isConst() || !charge())
+    if (Seen.size() >=
+            ::neverd::limits::backend::
+                kMedLLVMSpillPredicateMedLLVMEmitterFrameAccessesProvenDisjointAffineStepToSeenSizeLimit ||
+        Start.isConst() || !charge())
       return std::nullopt;
     if (sameValue(Start, Root))
       return int64_t{0};
@@ -303,7 +307,10 @@ bool MedLLVMEmitter::frameAccessesProvenDisjoint(const MedVar &A,
 
     MedVar Condition = Branch.Inputs[1];
     bool Inverted = false;
-    for (unsigned Guard = 0; Guard < 8; ++Guard) {
+    for (unsigned Guard = 0;
+         Guard < ::neverd::limits::backend::
+                     kMedLLVMSpillPredicateRecurrenceEdgeExcludesGuardLimit;
+         ++Guard) {
       const MedOp *Def = lookupDef(Condition);
       if (!Def || Def->NumInputs < 1)
         break;
@@ -676,7 +683,8 @@ bool MedLLVMEmitter::frameAccessesProvenDisjoint(const MedVar &A,
       [&](const MedVar &Address) -> std::optional<FrameOffsetRange> {
     MedVar Pointer = Address;
     int64_t AddressDelta = 0;
-    for (unsigned Depth = 0; Depth != 64; ++Depth) {
+    for (unsigned Depth = 0;
+         Depth != ::neverd::limits::backend::kMaxSpillPredicateDepth; ++Depth) {
       if (!charge())
         return std::nullopt;
       if (lookupPhi(Pointer))
@@ -793,7 +801,9 @@ bool MedLLVMEmitter::frameAccessesProvenDisjoint(const MedVar &A,
       std::set<AddressProvenanceVarKey> Seen;
       std::function<void(const MedVar &, unsigned)> findSeeds =
           [&](const MedVar &Value, unsigned Depth) {
-            if (!charge() || Depth == 64 || Value.isConst() ||
+            if (!charge() ||
+                Depth == ::neverd::limits::backend::kMaxSpillPredicateDepth ||
+                Value.isConst() ||
                 !Seen.insert(addressProvenanceVarKey(Value)).second)
               return;
             const MedOp *Def = lookupDef(Value);
@@ -817,7 +827,9 @@ bool MedLLVMEmitter::frameAccessesProvenDisjoint(const MedVar &A,
               eval = [&](const MedVar &Value,
                          unsigned Depth) -> std::optional<uint64_t> {
             auto WidthMask = maskForSize(Value.Size);
-            if (!charge() || Depth == 64 || !WidthMask)
+            if (!charge() ||
+                Depth == ::neverd::limits::backend::kMaxSpillPredicateDepth ||
+                !WidthMask)
               return std::nullopt;
             if (sameValue(Value, Seed))
               return Binding;
@@ -872,7 +884,9 @@ bool MedLLVMEmitter::frameAccessesProvenDisjoint(const MedVar &A,
                                                         unsigned)>
               frame = [&](const MedVar &Value,
                           unsigned Depth) -> std::optional<FrameOffsetRange> {
-            if (!charge() || Depth == 64 || Value.isConst())
+            if (!charge() ||
+                Depth == ::neverd::limits::backend::kMaxSpillPredicateDepth ||
+                Value.isConst())
               return std::nullopt;
             if (auto Exact = exactSlot(Value))
               return FrameOffsetRange{Exact->first, Exact->second,
@@ -909,7 +923,9 @@ bool MedLLVMEmitter::frameAccessesProvenDisjoint(const MedVar &A,
           auto Initial = frame(InitialPointer, 0);
           const uint64_t Decrement = static_cast<uint64_t>(-*Step);
           if (!Count || !Initial || *Count == 0 || *Count % Decrement != 0 ||
-              *Count / Decrement > 4096) {
+              *Count / Decrement >
+                  ::neverd::limits::backend::
+                      kMedLLVMSpillPredicateMedLLVMEmitterFrameAccessesProvenDisjointCorrelatedRangeCountDecrementLimit) {
             Complete = false;
             break;
           }
@@ -1256,10 +1272,14 @@ bool MedLLVMEmitter::frameReloadHasAllPathInitializer(const MedOp &Load) const {
     const auto Stored = canonicalFrameSlotKey(Op.Inputs[0]);
     if (!Stored || Stored->first != Slot->first)
       return 0;
-    // Frame offsets are small; reject any range whose bounds would not fit.
-    constexpr int64_t Limit = int64_t{1} << 40;
-    if (Stored->second <= -Limit || Stored->second >= Limit ||
-        Slot->second <= -Limit || Slot->second >= Limit)
+    if (Stored->second <=
+            -::neverd::limits::backend::kMedLLVMSpillPredicateCoverageLimit ||
+        Stored->second >=
+            ::neverd::limits::backend::kMedLLVMSpillPredicateCoverageLimit ||
+        Slot->second <=
+            -::neverd::limits::backend::kMedLLVMSpillPredicateCoverageLimit ||
+        Slot->second >=
+            ::neverd::limits::backend::kMedLLVMSpillPredicateCoverageLimit)
       return 0;
     const int64_t Begin = std::max(Stored->second, Slot->second);
     const int64_t End = std::min(Stored->second + Op.Inputs[1].Size,

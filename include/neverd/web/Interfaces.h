@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceBindings.h"
 #include "neverd/web/SourceValues.h"
 
@@ -28,13 +29,6 @@ inline constexpr std::string_view InterfaceCorrelationProfile =
     "absolute-http-method-origin-path-v1";
 inline constexpr std::string_view InterfaceRedactionPolicy =
     "passive-interface-metadata-v1";
-inline constexpr uint64_t MaxHARBytes = 8 * 1024 * 1024;
-inline constexpr uint64_t MaxInterfaceRecords = 4096;
-inline constexpr uint64_t MaxInterfaceFields = 32768;
-inline constexpr uint64_t MaxInterfaceURLBytes = 16384;
-inline constexpr uint64_t MaxInterfacePrivateBytes = 2 * 1024 * 1024;
-inline constexpr uint64_t MaxInterfaceSteps = 2000000;
-inline constexpr uint64_t MaxInterfacePairs = 32768;
 
 /// Only fixed classifications/counts may be serialized. Origin and Path are
 /// private comparison material; they can contain personal data or secrets.

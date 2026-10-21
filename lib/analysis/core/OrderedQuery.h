@@ -8,6 +8,7 @@
 #ifndef NEVERD_ANALYSIS_ORDEREDQUERY_H
 #define NEVERD_ANALYSIS_ORDEREDQUERY_H
 
+#include "neverd/analysis/Limits.h"
 #include "neverd/solver/BitVectorSolver.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -23,7 +24,9 @@ inline bool isOriginalQueryConjunct(const symbolic::SymContext &Ctx,
       Ctx.op(Predicate) != symbolic::SymOp::And)
     return false;
   // Optional ordering must not introduce a traversal proportional to the DAG.
-  if (Ctx.numOperands(Predicate) > 64)
+  if (Ctx.numOperands(Predicate) >
+      ::neverd::limits::analysis::
+          kOrderedQueryIsOriginalQueryConjunctCtxNumOperandsPredicateLimit)
     return false;
   for (const auto Operand : Ctx.operands(Predicate))
     if (Operand == First)

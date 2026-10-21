@@ -1,5 +1,6 @@
 #include "neverd/ir/SourceCallABI.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -67,7 +68,9 @@ bool neverd::assignAnalystCallABI(SourceCallTypeHint &Hint, Arch Architecture,
       !Signature.ReturnType ||
       (Signature.ReturnType->Kind != NdTypeKind::Void &&
        !scalar(Signature.ReturnType)) ||
-      Signature.Parameters.size() > 32)
+      Signature.Parameters.size() >
+          ::neverd::limits::ir::
+              kSourceCallABINeverdAssignAnalystCallABISignatureParametersSizeLimit)
     return refuse(
         Error, "Call-site types support scalar/pointer x64 and AArch64 C ABIs; "
                "Windows ARM64 and aggregate results need separate ABI support");
@@ -155,7 +158,9 @@ bool neverd::sourceCallVariadicStateDefined(const LowFunc &Function,
                                    : std::optional<uint64_t>(It->second);
     };
     for (const auto &Op : Block.Ops) {
-      if (++Work > 20000)
+      if (++Work >
+          ::neverd::limits::ir::
+              kSourceCallABINeverdSourceCallVariadicStateDefinedWorkLimit)
         return refuse(Error,
                       "The variadic vector-count proof exceeded its budget");
       if (const auto Site = sourceCallOccurrenceKey(Op);
@@ -222,7 +227,9 @@ bool neverd::sourceCallStackArgumentsDefined(const LowFunc &Function,
                                    : std::optional<int64_t>(It->second);
     };
     for (const auto &Op : Block.Ops) {
-      if (++Work > 20000)
+      if (++Work >
+          ::neverd::limits::ir::
+              kSourceCallABINeverdSourceCallStackArgumentsDefinedWorkLimit)
         return refuse(Error,
                       "The outgoing stack argument proof exceeded its budget");
       if (const auto Site = sourceCallOccurrenceKey(Op);
@@ -321,7 +328,9 @@ bool neverd::sourceCallArgumentsDefined(const MedFunc &Function,
   for (const auto &Block : Function.Blocks) {
     for (const auto &Phi : Block.Phis) {
       GraphWork += 1 + Phi.Args.size();
-      if (GraphWork > 20000)
+      if (GraphWork >
+          ::neverd::limits::ir::
+              kSourceCallABINeverdSourceCallArgumentsDefinedGraphWorkLimit)
         return refuse(Error,
                       "The call-site carrier proof exceeded its graph budget");
       auto &Inputs = Definitions[key(Phi.Output)];
@@ -332,7 +341,9 @@ bool neverd::sourceCallArgumentsDefined(const MedFunc &Function,
     }
     for (const auto &Op : Block.Ops) {
       GraphWork += 1 + Op.NumInputs;
-      if (GraphWork > 20000)
+      if (GraphWork >
+          ::neverd::limits::ir::
+              kSourceCallABINeverdSourceCallArgumentsDefinedGraphWorkLimit)
         return refuse(Error,
                       "The call-site carrier proof exceeded its graph budget");
       if (Op.SourceCallHint && Op.SourceCallHint->AnalystSite == Site) {
@@ -360,7 +371,10 @@ bool neverd::sourceCallArgumentsDefined(const MedFunc &Function,
   size_t Work = 0;
   std::string Missing;
   std::function<bool(const MedVar &)> Defined = [&](const MedVar &V) {
-    if (++Work > 20000 || V.Kind == MedVar::Unspecified) {
+    if (++Work >
+            ::neverd::limits::ir::
+                kSourceCallABINeverdSourceCallArgumentsDefinedDefinedWorkLimit ||
+        V.Kind == MedVar::Unspecified) {
       Missing = V.display();
       return false;
     }

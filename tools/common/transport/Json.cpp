@@ -11,6 +11,8 @@
 
 #include "Json.h"
 
+#include "ResourceLimits.h"
+
 #if NEVERD_USE_SIMDJSON
 #include "simdjson.h"
 #endif
@@ -200,7 +202,7 @@ Json parseJson(std::string_view Text, std::size_t MaxBytes) {
     } else if (C == '"')
       Quoted = true;
     else if (C == '[' || C == '{') {
-      if (++Depth > 64)
+      if (++Depth > ::neverd::limits::transport::kJsonParseJsonDepthLimit)
         throw Error("invalid_frame", "JSON nesting exceeds 64 levels");
     } else if ((C == ']' || C == '}') && Depth)
       --Depth;

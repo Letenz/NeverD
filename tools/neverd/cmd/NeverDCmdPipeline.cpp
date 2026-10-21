@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../NeverDCLI.h"
+#include "../ResourceLimits.h"
 #include "NeverDSanitizerPublicationCLI.h"
 
 #include "llvm/ADT/SmallString.h"
@@ -142,7 +143,10 @@ std::optional<std::string> validateSourcePatchArguments() {
     return "--artifact must be ir or object";
   if (PatchCompileMode != "normal" && PatchCompileMode != "dyncode")
     return "--compile-mode must be normal or dyncode";
-  if (PatchCompilerTimeout == 0 || PatchCompilerTimeout > 3600)
+  if (PatchCompilerTimeout == 0 ||
+      PatchCompilerTimeout >
+          ::neverd::limits::cli::
+              kNeverDCmdPipelineValidateSourcePatchArgumentsPatchCompilerTimeoutLimit)
     return "--compiler-timeout must be between 1 and 3600 seconds";
   return std::nullopt;
 }
@@ -712,14 +716,18 @@ int runDecompile(neverd_session_t Sess) {
   if (HasStackFrame) {
     uint64_t Size = 0;
     const auto EC = sys::fs::file_size(StackFrameFile.getValue(), Size);
-    if (EC || Size > 128 * 1024) {
+    if (EC ||
+        Size > ::neverd::limits::cli::kNeverDCmdPipelineRunDecompileSizeLimit) {
       WithColor::error() << "cannot read --stack-frame: "
                          << (EC ? EC.message() : "policy exceeds 128 KiB")
                          << '\n';
       return 1;
     }
     auto Buffer = MemoryBuffer::getFile(StackFrameFile.getValue());
-    if (!Buffer || (*Buffer)->getBufferSize() > 128 * 1024) {
+    if (!Buffer ||
+        (*Buffer)->getBufferSize() >
+            ::neverd::limits::cli::
+                kNeverDCmdPipelineRunDecompileBufferGetBufferSizeLimit) {
       WithColor::error() << "cannot read bounded --stack-frame policy\n";
       return 1;
     }
@@ -996,7 +1004,8 @@ int runDecompile(neverd_session_t Sess) {
           return 1;
         }
         const size_t Size = StringRef(Raw).size();
-        if (Size > 64 * 1024 * 1024 - Bytes) {
+        if (Size >
+            ::neverd::limits::cli::kMaxPipelineAggregateSourceBytes - Bytes) {
           neverd_free_string(Raw);
           WithColor::error()
               << "JSON source view exceeds the 64 MiB output budget\n";

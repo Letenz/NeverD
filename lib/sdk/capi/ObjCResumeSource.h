@@ -29,9 +29,14 @@ proveObjCResumeOnlySource(const BinaryImage &Image, const HighFunc &Function) {
       EH.ObjC->Runtime != ObjCRuntimeKind::AppleNonFragile ||
       EH.ObjC->UsesFragileSetjmp || EH.ObjC->UsesMSVCTables ||
       EH.CodeRange.End < 4 || EH.CodeRange.End - 4 <= Function.Entry ||
-      EH.CodeRange.End - 4 - Function.Entry > 16384 ||
+      EH.CodeRange.End - 4 - Function.Entry >
+          ::neverd::sdk::
+              kObjCResumeSourceProveObjCResumeOnlySourceEHCodeRangeEnd4FunctionEntryLimit ||
       (Function.Entry | EH.CodeRange.End) % 4 ||
-      EH.Itanium->CallSites.empty() || EH.Itanium->CallSites.size() > 129)
+      EH.Itanium->CallSites.empty() ||
+      EH.Itanium->CallSites.size() >
+          ::neverd::sdk::
+              kObjCResumeSourceProveObjCResumeOnlySourceEHItaniumCallSitesSizeLimit)
     return std::nullopt;
   const va_t Pad = EH.CodeRange.End - 4;
   const va_t Resume = objcSynchronizedBranchTarget(Image, Pad);

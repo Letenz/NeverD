@@ -12,6 +12,7 @@
 #include "neverd/debug/DWARFLoader.h"
 
 #include "neverd/debug/CompressedSections.h"
+#include "neverd/debug/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/support/FilePath.h"
@@ -767,7 +768,10 @@ DWARFDebugContext::Impl::recordParameter(llvm::DWARFDie Die, va_t Entry) const {
   llvm::DWARFDie Type = declaredTypeDie(Die);
   bool Pointer = false;
   unsigned Depth = 0;
-  for (; Type && Depth < 32; ++Depth) {
+  for (; Type &&
+         Depth < ::neverd::limits::debug::
+                     kDWARFLoaderDWARFDebugContextImplRecordParameterDepthLimit;
+       ++Depth) {
     const auto Tag = Type.getTag();
     if (Tag == llvm::dwarf::DW_TAG_pointer_type) {
       if (Pointer || !Type.getDwarfUnit() ||
@@ -790,7 +794,8 @@ DWARFDebugContext::Impl::recordParameter(llvm::DWARFDie Die, va_t Entry) const {
       return std::nullopt;
     Type = Type.getAttributeValueAsReferencedDie(Next.Value);
   }
-  if (!Pointer || !Type || Depth == 32 ||
+  if (!Pointer || !Type ||
+      Depth == ::neverd::limits::debug::kMaxDWARFUnwrapDepth ||
       (Type.getTag() != llvm::dwarf::DW_TAG_structure_type &&
        Type.getTag() != llvm::dwarf::DW_TAG_class_type))
     return std::nullopt;
@@ -803,7 +808,10 @@ DWARFDebugContext::Impl::recordParameter(llvm::DWARFDie Die, va_t Entry) const {
   std::string Qualified;
   llvm::raw_string_ostream NameOS(Qualified);
   llvm::dumpTypeQualifiedName(Type, NameOS);
-  if (Qualified.empty() || Qualified.size() > 4096)
+  if (Qualified.empty() ||
+      Qualified.size() >
+          ::neverd::limits::debug::
+              kDWARFLoaderDWARFDebugContextImplRecordParameterQualifiedSizeLimit)
     return std::nullopt;
 
   auto Locations = Die.getLocations(llvm::dwarf::DW_AT_location);
@@ -859,15 +867,6 @@ DWARFDebugContext::Impl::recordParameter(llvm::DWARFDie Die, va_t Entry) const {
 }
 
 namespace {
-/// Records and arrays nested deeper than this are not laid out.
-constexpr int kMaxLayoutDepth = 16;
-/// More scalars than a layout lists: no convention passes a value with more
-/// in registers, nor reads its scalars to place it.
-constexpr size_t kMaxLayoutLeaves = 64;
-/// More elements than an array's layout is computed for.
-constexpr uint64_t kMaxLayoutElements = uint64_t(1) << 32;
-/// No scalar's size implies a larger alignment.
-constexpr uint64_t kMaxScalarAlignment = 16;
 
 /// The size and alignment of a value the debug information describes; the
 /// alignment is 0 where the layout does not say it.
@@ -884,8 +883,9 @@ struct ValueLayout {
   bool LeavesKnown = true;
 
   void add(uint64_t Offset, uint64_t Size, bool Floating) {
-    if (!LeavesKnown || Leaves.size() >= kMaxLayoutLeaves || !Size ||
-        Offset + Size > UINT16_MAX) {
+    if (!LeavesKnown ||
+        Leaves.size() >= ::neverd::limits::debug::kDWARFLoaderMaxLayoutLeaves ||
+        !Size || Offset + Size > UINT16_MAX) {
       LeavesKnown = false;
       return;
     }
@@ -894,10 +894,13 @@ struct ValueLayout {
   }
 };
 
+// A scalar size does not imply an alignment above the native scalar ABI.
+constexpr uint64_t MaxScalarAlignment = 16;
+
 /// The alignment a scalar of \p Bytes has, or 0 when its size does not say
 /// (the 12 bytes of an i386 long double).
 uint64_t scalarAlignment(uint64_t Bytes) {
-  return Bytes && Bytes <= kMaxScalarAlignment && llvm::isPowerOf2_64(Bytes)
+  return Bytes && Bytes <= MaxScalarAlignment && llvm::isPowerOf2_64(Bytes)
              ? Bytes
              : 0;
 }
@@ -954,10 +957,11 @@ std::optional<uint64_t> arrayElements(llvm::DWARFDie Array) {
         return std::nullopt;
       Extent = *Last - *First + 1;
     }
-    if (static_cast<uint64_t>(Extent) > kMaxLayoutElements)
+    if (static_cast<uint64_t>(Extent) >
+        ::neverd::limits::debug::kDWARFLoaderMaxLayoutElements)
       return std::nullopt;
     Count *= static_cast<uint64_t>(Extent);
-    if (Count > kMaxLayoutElements)
+    if (Count > ::neverd::limits::debug::kDWARFLoaderMaxLayoutElements)
       return std::nullopt;
   }
   return Count;
@@ -1068,7 +1072,8 @@ std::optional<ValueShape> layOutRecord(llvm::DWARFDie Record, uint64_t Base,
 /// described.
 std::optional<ValueShape> layOut(llvm::DWARFDie Type, uint64_t Base, int Depth,
                                  ValueLayout &Layout) {
-  if (!Type.isValid() || Depth > kMaxLayoutDepth) {
+  if (!Type.isValid() ||
+      Depth > ::neverd::limits::debug::kDWARFLoaderMaxLayoutDepth) {
     Layout.LeavesKnown = false;
     return std::nullopt;
   }
@@ -1145,7 +1150,8 @@ std::optional<ValueShape> layOut(llvm::DWARFDie Type, uint64_t Base, int Depth,
         (Bytes && *Bytes != *Count * Shape->Bytes))
       break;
     if (!Element.LeavesKnown ||
-        *Count * Element.Leaves.size() > kMaxLayoutLeaves)
+        *Count * Element.Leaves.size() >
+            ::neverd::limits::debug::kDWARFLoaderMaxLayoutLeaves)
       Layout.LeavesKnown = false;
     for (uint64_t I = 0; Layout.LeavesKnown && I < *Count; ++I)
       for (const NdScalarLeaf &Leaf : Element.Leaves)
@@ -1165,7 +1171,10 @@ std::optional<ValueShape> layOut(llvm::DWARFDie Type, uint64_t Base, int Depth,
 
 /// The DIE \p Type names through its typedefs and qualifiers.
 llvm::DWARFDie unqualifiedType(llvm::DWARFDie Type) {
-  for (int Depth = 0; Type.isValid() && Depth <= kMaxLayoutDepth; ++Depth) {
+  for (int Depth = 0;
+       Type.isValid() &&
+       Depth <= ::neverd::limits::debug::kDWARFLoaderMaxLayoutDepth;
+       ++Depth) {
     switch (Type.getTag()) {
     case llvm::dwarf::DW_TAG_typedef:
     case llvm::dwarf::DW_TAG_const_type:
@@ -1252,7 +1261,9 @@ bool platformConvention(llvm::DWARFDie Die) {
 
 TypeRef DWARFDebugContext::Impl::convertDwarfType(llvm::DWARFDie Die,
                                                   int Depth) {
-  if (!Die.isValid() || Depth > 16)
+  if (!Die.isValid() ||
+      Depth > ::neverd::limits::debug::
+                  kDWARFLoaderDWARFDebugContextImplConvertDwarfTypeDepthLimit)
     return NdType::makeInt(4);
 
   auto Tag = Die.getTag();
@@ -1388,7 +1399,10 @@ DWARFDebugContext::Impl::resolveDeclaredType(llvm::DWARFDie Die) const {
   std::vector<llvm::DWARFDie> Active;
   std::function<Resolution(llvm::DWARFDie, unsigned)> Resolve =
       [&](llvm::DWARFDie Current, unsigned Depth) -> Resolution {
-    if (!Current.isValid() || Depth > 32)
+    if (!Current.isValid() ||
+        Depth >
+            ::neverd::limits::debug::
+                kDWARFLoaderDWARFDebugContextImplResolveDeclaredTypeResolveDepthLimit)
       return {Resolution::Status::Malformed, {}};
     if (std::find(Active.begin(), Active.end(), Current) != Active.end())
       return {Resolution::Status::Malformed, {}};
@@ -1477,7 +1491,10 @@ AuthenticatedReturnValueState
 DWARFDebugContext::Impl::classifyReturnValue(llvm::DWARFDie Die,
                                              int Depth) const {
   using Kind = AuthenticatedReturnKind;
-  if (!Die.isValid() || Depth > 16)
+  if (!Die.isValid() ||
+      Depth >
+          ::neverd::limits::debug::
+              kDWARFLoaderDWARFDebugContextImplClassifyReturnValueDepthLimit)
     return {};
 
   const auto byteSize = [&](bool PointerDefault) -> std::optional<uint16_t> {
@@ -1919,7 +1936,10 @@ void DWARFDebugContext::Impl::parseCompileUnits(
   // Each worker owns its object/context and output; sharing just the mapped
   // bytes avoids racing those caches. Small images stay on the calling thread.
   const unsigned Workers =
-      !Compressed && Units >= 8 && ObjectData.getBufferSize() >= 256 * 1024
+      !Compressed && Units >= 8 &&
+              ObjectData.getBufferSize() >=
+                  ::neverd::limits::debug::
+                      kDWARFLoaderDWARFDebugContextImplParseCompileUnitsWorkersObjectDataGetBufferSizeLimit
           ? static_cast<unsigned>(
                 std::min<size_t>(workerThreadCount(), Units / 4))
           : 1;

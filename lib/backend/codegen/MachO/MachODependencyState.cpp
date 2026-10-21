@@ -12,6 +12,7 @@
 #include "MachOExportLayout.h"
 #include "MachOStrictLayout.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/codegen/MachO/MachOLayoutGrowth.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 
@@ -708,7 +709,10 @@ llvm::Error completeMachOChainedSegmentTable(std::vector<uint8_t> &Binary,
   const unsigned OldCount = readLE<uint32_t>(Old.data() + H.starts_offset);
   if (OldCount == Count)
     return llvm::Error::success();
-  if (OldCount > Count || !Linkedit || !Count || Count > 65536)
+  if (OldCount > Count || !Linkedit || !Count ||
+      Count >
+          ::neverd::limits::backend::
+              kMachODependencyStateCompleteMachOChainedSegmentTableCountLimit)
     return fail("invalid final segment inventory");
   // New code/data segments precede terminal LINKEDIT; all existing nonzero
   // entries were independently authenticated against their exact segment VA.

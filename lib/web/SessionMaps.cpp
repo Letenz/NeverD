@@ -11,6 +11,8 @@
 
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 
 namespace neverd::web {
@@ -72,7 +74,8 @@ std::string summary(const SourceMap &Map, uint64_t Revision) {
 }
 
 uint64_t pageEnd(uint64_t Size, uint64_t Offset, uint64_t Limit) {
-  if (!Limit || Limit > 512 || Offset > Size)
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > Size)
     throw Error("invalid_page");
   return std::min(Size, Offset + Limit);
 }
@@ -141,8 +144,10 @@ std::string Session::analyzeSourceMap(std::string_view ExpectedRevision,
   for (const auto &[ID, Map] : State->Maps)
     if (Map.ArtifactID == ArtifactID)
       return summary(Map, State->Revision);
-  if (State->Maps.size() >= 4 ||
-      State->CachedMapSegments > 200000 - MaxSourceMapSegments)
+  if (State->Maps.size() >= ::neverd::limits::web::kMaxCachedSourceMaps ||
+      State->CachedMapSegments >
+          ::neverd::limits::web::kMaxCachedSourceMapSegments -
+              MaxSourceMapSegments)
     throw Error("source_map_cache_budget_exceeded");
   const BunExtraction *Embedding = nullptr;
   const BunModule *Module = nullptr;
@@ -248,7 +253,8 @@ std::string Session::lookupSourceMap(std::string_view ExpectedRevision,
   const TextCoordinates Coordinates(Bytes);
   const auto Position = Coordinates.position(ByteOffset);
   const auto Anchors = sourceMapAnchors(Map, Position);
-  if (Anchors.size() > 512)
+  if (Anchors.size() >
+      ::neverd::limits::web::kSessionMapsSessionLookupSourceMapAnchorsSizeLimit)
     throw Error("source_map_candidate_budget_exceeded");
   llvm::json::Array Items;
   std::map<uint64_t, std::unique_ptr<TextCoordinates>> OriginalCoordinates;

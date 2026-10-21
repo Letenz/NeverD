@@ -36,7 +36,9 @@ std::vector<std::string> electronSourceSelection(std::string_view Options) {
   Result.reserve(IDs.size());
   for (const auto &Item : IDs) {
     const auto ID = Item.getAsString();
-    if (!ID || ID->empty() || ID->size() > 64)
+    if (!ID || ID->empty() ||
+        ID->size() > ::neverd::limits::web::
+                         kElectronSelectionElectronSourceSelectionIDSizeLimit)
       throw Error("invalid_electron_ipc_options");
     Result.push_back(ID->str());
   }

@@ -6,6 +6,7 @@
 
 #include "CSourceRecorder.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/ir/high/HighIR.h"
 
@@ -59,7 +60,8 @@ void CSourceRecorder::prepareHighSources() {
   std::map<std::pair<va_t, va_t>, std::set<sigs::LibraryOccurrence>> Stores;
   std::set<std::pair<va_t, va_t>> AmbiguousStores;
   std::set<Key> Ambiguous;
-  size_t Work = 250000;
+  size_t Work = ::neverd::limits::backend::
+      kCSourceRecorderCSourceRecorderPrepareHighSourcesWork;
   for (const auto &Source : *Map.HighSources) {
     if (recordsInstructions() && Source.Kind != HighSourceKind::Expression &&
         Source.StatementKind)
@@ -110,7 +112,8 @@ void CSourceRecorder::prepareHighSources() {
       std::set<sigs::LibraryOccurrence> Covered;
       std::set<const HighExpr *> Seen;
       std::vector<const HighExpr *> Pending{Expr.get()};
-      size_t Budget = 4096;
+      size_t Budget = ::neverd::limits::backend::
+          kCSourceRecorderCSourceRecorderPrepareHighSourcesBudget;
       while (!Pending.empty() && Budget) {
         if (!Work) {
           HighRegions.clear();
@@ -157,7 +160,8 @@ void CSourceRecorder::prepareLLVMSources(const LLVMSourceMap &Sources) {
     if (auto *Function = llvm::dyn_cast_or_null<llvm::Function>(Handle))
       LLVMFunctions.emplace(Function, Entry);
   std::set<const llvm::Value *> Ambiguous;
-  size_t Work = 250000;
+  size_t Work = ::neverd::limits::backend::
+      kCSourceRecorderCSourceRecorderPrepareLLVMSourcesWork;
   for (const auto &Observation : Sources.Observations) {
     auto *Instruction =
         llvm::dyn_cast_or_null<llvm::Instruction>(Observation.Value);

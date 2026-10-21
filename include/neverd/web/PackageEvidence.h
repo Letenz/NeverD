@@ -12,15 +12,12 @@
 #pragma once
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Limits.h"
 
 namespace neverd::web {
 
 inline constexpr std::string_view PackageEvidenceProfile =
     "offline-package-metadata-descriptor-v1";
-inline constexpr uint64_t MaxPackageEvidenceInputBytes = 1024 * 1024;
-inline constexpr uint64_t MaxPackageEvidenceRetainedBytes = 8 * 1024 * 1024;
-inline constexpr uint64_t MaxPackageEvidenceSteps = 8000000;
-inline constexpr uint64_t MaxPackageEvidenceDescriptors = 20;
 
 struct PackageEvidenceTime {
   std::string Value, OrderKey;

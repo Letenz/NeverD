@@ -13,6 +13,7 @@
 #include "HighDCEDetail.h"
 #include "HighFrameAddress.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 
@@ -27,9 +28,6 @@
 namespace neverd {
 namespace {
 
-constexpr size_t kMaxForwardValueNodes = 1024;
-constexpr size_t kMaxForwardExpansionNodes = 4096;
-constexpr size_t kFrameWalkBudget = 100000;
 using LocalIdentity = HighSourceLocalIdentity;
 using FrameAliases = std::map<LocalIdentity, ExprPtr>;
 
@@ -163,7 +161,9 @@ bool safeFrameValue(const ExprPtr &Root, std::set<LocalIdentity> &Dependencies,
     size_t Cost = 1;
     for (const auto &Child : E->Operands) {
       const size_t ChildCost = Costs.at(Child.get());
-      if (ChildCost > kMaxForwardValueNodes - Cost)
+      if (ChildCost >
+          ::neverd::limits::ir::kHighFrameStoreForwardingMaxForwardValueNodes -
+              Cost)
         return false;
       Cost += ChildCost;
     }
@@ -324,7 +324,9 @@ ExprPtr replaceFrameLoads(const ExprPtr &Root,
     bool Changed = false;
     for (const auto &Child : E->Operands) {
       const auto &R = Rebuilt.at(Child.get());
-      if (R.Cost > kMaxForwardExpansionNodes - Result.Cost ||
+      if (R.Cost > ::neverd::limits::ir::
+                           kHighFrameStoreForwardingMaxForwardExpansionNodes -
+                       Result.Cost ||
           R.Expansion > ExpansionBudget - Result.Expansion)
         return Root;
       Result.Cost += R.Cost;
@@ -390,7 +392,8 @@ void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture) {
   if (Architecture == Arch::Unknown)
     return;
   const uint16_t PointerBytes = getTargetRegInfo(Architecture).PointerSize;
-  size_t Budget = kFrameWalkBudget;
+  size_t Budget =
+      ::neverd::limits::ir::kHighFrameStoreForwardingFrameWalkBudget;
   if ((PointerBytes != 4 && PointerBytes != 8) ||
       !isStraightLinePrivateFrameFunction(Func, Architecture, Budget))
     return;
@@ -409,7 +412,8 @@ void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture) {
     return It == Aliases.end() ? nullptr : It->second;
   };
 
-  size_t ExpansionBudget = kFrameWalkBudget;
+  size_t ExpansionBudget =
+      ::neverd::limits::ir::kHighFrameStoreForwardingFrameWalkBudget;
   std::map<int64_t, StoredFrameValue> Stores;
   for (HighStmt &Stmt : Func.Body) {
     if (!Budget)

@@ -7,6 +7,7 @@
 #define NEVERD_PIPELINE_BYTECODERECOVERY_H
 
 #include "neverd/analysis/BytecodeDecoder.h"
+#include "neverd/pipeline/Limits.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
@@ -16,7 +17,6 @@
 #include <string>
 
 namespace neverd {
-inline constexpr uint64_t BytecodeRecoveryInputLimit = 64 * 1024 * 1024;
 
 struct BytecodeRecoveryResult {
   uint64_t Functions = 0;

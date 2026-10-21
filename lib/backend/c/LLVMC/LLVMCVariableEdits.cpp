@@ -1,5 +1,6 @@
 #include "LLVMCVariableEdits.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/ir/SourceVariableFlow.h"
 
 #include "llvm/Analysis/ValueTracking.h"
@@ -48,7 +49,8 @@ struct Projection {
   explicit Projection(llvm::Function &Function) : Function(Function) {
     for (auto &Block : Function)
       for (auto &I : Block) {
-        if (Nodes.size() == 20000) {
+        if (Nodes.size() == ::neverd::limits::backend::
+                                kLLVMCVariableEditsProjectionNodesSizeLimit) {
           Flow.Refusal = "The function exceeds the variable edit budget";
           return;
         }
@@ -62,7 +64,9 @@ struct Projection {
         Nodes[&I] = Flow.Nodes.size();
         Flow.Nodes.emplace_back();
       }
-    if (Nodes.size() > 20000 || Function.empty()) {
+    if (Nodes.size() > ::neverd::limits::backend::
+                           kLLVMCVariableEditsProjectionNodesSizeLimit ||
+        Function.empty()) {
       Flow.Refusal = "The function exceeds the variable edit budget";
       return;
     }
@@ -134,7 +138,8 @@ struct Projection {
     for (unsigned V = 0; V < Slots.size(); ++V) {
       const auto &S = Slots[V];
       for (unsigned U = 0; U < V; ++U) {
-        if (++ProofWork > 2000000) {
+        if (++ProofWork > ::neverd::limits::backend::
+                              kLLVMCVariableEditsProjectionProofWorkLimit) {
           Flow.Refusal = "The storage alias proof exceeded its budget";
           return;
         }
@@ -156,12 +161,14 @@ struct Projection {
         Work.pop_back();
         if (!Seen.insert(P).second)
           continue;
-        if (Seen.size() > 20000) {
+        if (Seen.size() > ::neverd::limits::backend::
+                              kLLVMCVariableEditsProjectionSeenSizeLimit) {
           refuse(V, "The address-use proof exceeded its budget");
           break;
         }
         for (const auto *User : P->users()) {
-          if (++ProofWork > 2000000) {
+          if (++ProofWork > ::neverd::limits::backend::
+                                kLLVMCVariableEditsProjectionProofWorkLimit) {
             Flow.Refusal = "The storage alias proof exceeded its budget";
             return;
           }

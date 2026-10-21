@@ -18,6 +18,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedDispatchSlots.h"
@@ -458,7 +459,10 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
   std::function<std::optional<int64_t>(const MedVar &, const MedVar &, int)>
       affineDeltaTo = [&](const MedVar &Start, const MedVar &Target,
                           int Depth) -> std::optional<int64_t> {
-    if (Start.isConst() || Start.Size < PointerSize || Depth > 64 ||
+    if (Start.isConst() || Start.Size < PointerSize ||
+        Depth >
+            ::neverd::limits::backend::
+                kMedLLVMFrameResolveMedLLVMEmitterCanonicalFrameSlotKeyAffineDeltaToDepthLimit ||
         !consumeNode())
       return std::nullopt;
     if (sameExactValue(Start, Target))

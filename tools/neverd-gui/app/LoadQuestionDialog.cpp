@@ -6,6 +6,8 @@
 
 #include "LoadQuestionDialog.h"
 
+#include "../Config.h"
+
 #include <QCoreApplication>
 #include <QDialogButtonBox>
 #include <QFontMetrics>
@@ -16,14 +18,6 @@
 
 namespace neverd::gui {
 namespace {
-
-// The width of the PDB question, which these sit beside.
-constexpr int DialogWidth = 480;
-/// The dialog's margins, the space between its lines and before its
-/// buttons, on the 4-pixel grid.
-constexpr int Margin = 16;
-constexpr int LineSpacing = 4;
-constexpr int GroupSpacing = 8;
 
 QLabel *line(QWidget *parent, const QString &name) {
   auto *label = new QLabel(parent);
@@ -39,10 +33,15 @@ LoadQuestionDialog::LoadQuestionDialog(const QString &name, const Text &text,
     : QDialog(parent), wholeDetail_(text.detail), elide_(text.elide) {
   setObjectName(name);
   setWindowTitle(text.title);
-  setFixedWidth(DialogWidth);
+  setFixedWidth(::neverd::limits::gui_config::kLoadQuestionDialogDialogWidth);
   auto *layout = new QVBoxLayout(this);
-  layout->setContentsMargins(Margin, Margin, Margin, Margin);
-  layout->setSpacing(LineSpacing);
+  layout->setContentsMargins(
+      ::neverd::limits::gui_config::kLoadQuestionDialogMargin,
+      ::neverd::limits::gui_config::kLoadQuestionDialogMargin,
+      ::neverd::limits::gui_config::kLoadQuestionDialogMargin,
+      ::neverd::limits::gui_config::kLoadQuestionDialogMargin);
+  layout->setSpacing(
+      ::neverd::limits::gui_config::kLoadQuestionDialogLineSpacing);
 
   auto *question = line(this, QStringLiteral("question"));
   question->setWordWrap(true);
@@ -64,7 +63,8 @@ LoadQuestionDialog::LoadQuestionDialog(const QString &name, const Text &text,
     note->setToolTip(text.noteToolTip);
     layout->addWidget(note);
   }
-  layout->addSpacing(GroupSpacing);
+  layout->addSpacing(
+      ::neverd::limits::gui_config::kLoadQuestionDialogGroupSpacing);
 
   auto *buttons = new QDialogButtonBox(this);
   buttons->setCenterButtons(true);

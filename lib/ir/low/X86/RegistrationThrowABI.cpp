@@ -10,6 +10,7 @@
 #include "RegistrationABIPrivate.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/loader/BinaryImage.h"
@@ -62,7 +63,9 @@ getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target,
       const auto Import = getCheckedX86RegistrationThrowImportABI(
           Image, Op.Inputs[0].Offset, &Work);
       if (!Import) {
-        if (Initializers.size() == 256)
+        if (Initializers.size() ==
+            ::neverd::limits::ir::
+                kRegistrationThrowABIGetCheckedX86RegistrationThrowCalleeABIInitializersSizeLimit)
           return std::nullopt;
         auto Initializer = getCheckedX86RegistrationInitializerCalleeABI(
             Image, Op.Inputs[0].Offset, &Work);

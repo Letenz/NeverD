@@ -4,6 +4,7 @@
 #include "../../../loader/Swift/SwiftErrorSourceProjection.h"
 #include "../../../loader/Swift/SwiftMangledValueConstructorABI.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/SourceCallABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -377,7 +378,10 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
       std::optional<int64_t> Bias = 0;
       if (HasStack && TargetArch == Arch::X64)
         Bias = sourceCallReturnAddressBias(Image, TargetArch, Op.Addr);
-      if (!Bias || Parameters.size() > 64) {
+      if (!Bias ||
+          Parameters.size() >
+              ::neverd::limits::ir::
+                  kLowToMedSourceCallsLowToMedConverterBindSourceCallsParametersSizeLimit) {
         Ops.push_back(std::move(Op));
         continue;
       }

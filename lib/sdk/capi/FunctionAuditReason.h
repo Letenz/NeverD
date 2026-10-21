@@ -8,6 +8,7 @@
 #define NEVERD_SDK_CAPI_FUNCTIONAUDITREASON_H
 
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -24,9 +25,10 @@ inline std::string functionAuditReason(const PipelineFunctionAudit &Audit) {
     if (Addrs.empty())
       return;
     Reason += std::string("; ") + What + " at";
-    for (size_t I = 0; I < Addrs.size() && I < 4; ++I)
+    for (size_t I = 0;
+         I < Addrs.size() && I < kFunctionAuditAddressPreviewCount; ++I)
       Reason += " 0x" + llvm::utohexstr(Addrs[I]);
-    if (Addrs.size() > 4)
+    if (Addrs.size() > ::neverd::sdk::kFunctionAuditAddressPreviewCount)
       Reason += " ...";
   };
   std::vector<va_t> Unsupported;

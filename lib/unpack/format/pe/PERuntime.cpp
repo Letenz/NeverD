@@ -6,6 +6,8 @@
 //===----------------------------------------------------------------------===//
 #include "PEImage.h"
 
+#include "neverd/unpack/Limits.h"
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MathExtras.h"
@@ -202,7 +204,7 @@ llvm::Expected<RebuiltImage> appendRuntime(RebuiltImage Out,
       return failure("runtime TLS callbacks precede the image");
     uint64_t At = TLS.AddressOfCallBacks - Main.preferredBase();
     for (uint64_t I = 0;; ++I) {
-      if (I == 4096)
+      if (I == ::neverd::limits::unpack::kMaxRuntimeTLSCallbacks)
         return failure("runtime TLS callback limit exceeded");
       auto Value = record<llvm::support::ulittle64_t>(Main, At + I * 8);
       if (!Value)

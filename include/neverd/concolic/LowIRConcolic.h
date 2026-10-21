@@ -14,6 +14,7 @@
 #ifndef NEVERD_CONCOLIC_LOWIRCONCOLIC_H
 #define NEVERD_CONCOLIC_LOWIRCONCOLIC_H
 
+#include "neverd/concolic/Limits.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/solver/BitVectorSolver.h"
 #include "neverd/symbolic/SymExplore.h"
@@ -89,9 +90,12 @@ const char *concolicFlipStatusName(ConcolicFlipStatus Status);
 
 inline solver::SolverOptions defaultLowIRConcolicSolverOptions() {
   solver::SolverOptions Options;
-  Options.Sat.MaxConflicts = uint64_t{1} << 18;
-  Options.Sat.MaxPropagations = uint64_t{1} << 24;
-  Options.Sat.MaxWatchVisits = uint64_t{1} << 26;
+  Options.Sat.MaxConflicts = ::neverd::limits::concolic::
+      kLowIRConcolicDefaultLowIRConcolicSolverOptionsMaxConflicts;
+  Options.Sat.MaxPropagations = ::neverd::limits::concolic::
+      kLowIRConcolicDefaultLowIRConcolicSolverOptionsMaxPropagations;
+  Options.Sat.MaxWatchVisits = ::neverd::limits::concolic::
+      kLowIRConcolicDefaultLowIRConcolicSolverOptionsMaxWatchVisits;
   return Options;
 }
 

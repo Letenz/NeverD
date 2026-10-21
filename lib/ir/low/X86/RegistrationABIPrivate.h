@@ -9,6 +9,7 @@
 
 #include "RegistrationFrame.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/RegistrationABI.h"
 
 #include <algorithm>
@@ -93,9 +94,6 @@ struct InitializerFrame {
 using InitializerCalls =
     std::map<std::pair<va_t, int>, RegistrationInitializerCalleeABI>;
 
-constexpr unsigned kMaxInitializerGraphDepth = 32;
-constexpr size_t kMaxInitializerGraphNodes = 256;
-
 /// A fresh invocation owns this bounded, cycle-rejecting constructor graph.
 /// The cache includes failures and never crosses an image or proof budget.
 struct InitializerContext {
@@ -109,9 +107,6 @@ checkedInitializerCalleeABI(const BinaryImage &Image, va_t Target, size_t &Work,
 
 using ObjectCallbackCalls =
     std::map<std::pair<va_t, int>, RegistrationLeafCalleeABI>;
-
-constexpr unsigned kMaxObjectCallbackDepth = 32;
-constexpr size_t kMaxObjectCallbackNodes = 256;
 
 /// A separate object graph never inherits constructor return-this or
 /// initialization authority. Failures and in-progress nodes are memoized.
@@ -153,6 +148,18 @@ std::optional<RegistrationLeafCalleeABI> checkedLeafCalleeABI(
     ObjectCallbackContext *Callbacks = nullptr,
     uint32_t CallbackStackPopBytes = 0);
 
+} // namespace neverd::registration_abi
+
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::registration_abi {
+inline constexpr unsigned kMaxInitializerGraphDepth =
+    ::neverd::limits::ir::kRegistrationABIPrivateMaxInitializerGraphDepth;
+inline constexpr size_t kMaxInitializerGraphNodes =
+    ::neverd::limits::ir::kRegistrationABIPrivateMaxInitializerGraphNodes;
+inline constexpr unsigned kMaxObjectCallbackDepth =
+    ::neverd::limits::ir::kRegistrationABIPrivateMaxObjectCallbackDepth;
+inline constexpr size_t kMaxObjectCallbackNodes =
+    ::neverd::limits::ir::kRegistrationABIPrivateMaxObjectCallbackNodes;
 } // namespace neverd::registration_abi
 
 #endif // NEVERD_IR_LOW_X86_REGISTRATIONABIPRIVATE_H

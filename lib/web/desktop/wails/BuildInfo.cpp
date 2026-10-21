@@ -12,6 +12,8 @@
 
 #include "Reader.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 
 namespace neverd::web::wails_detail {
@@ -37,7 +39,8 @@ std::string inlineString(Reader &R, uint64_t &At, Range Owner) {
       throw Error("wails_invalid_build_info");
     Shift += 7;
   }
-  if (Size > 256 * 1024 || !contains(Owner, {At, Size}))
+  if (Size > ::neverd::limits::web::kBuildInfoInlineStringSizeLimit ||
+      !contains(Owner, {At, Size}))
     throw Error("wails_build_info_budget_exceeded");
   const auto S = R.read({At, Size});
   At += Size;

@@ -39,6 +39,7 @@
 #include "neverd/loader/FunctionNames.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/loader/SymbolDecoration.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/Parallel.h"
@@ -822,12 +823,6 @@ bool collectLowAddressUses(
       Facts.Roots.insert(FallbackRoots.begin(), FallbackRoots.end());
   };
 
-  // Keep finite exact alternatives for slot-precise LOAD/STORE decisions.
-  // Larger joins widen to the durable owner-summary lattice above.
-  constexpr size_t kMaxExactAddressAlternatives = 16;
-  // Frame offsets widen the same way; without a bound a frame-walking loop
-  // adds one offset per fixpoint round.
-  constexpr size_t kMaxFrameOffsetAlternatives = 64;
   for (size_t FuncIndex = 0; FuncIndex < Funcs.size(); ++FuncIndex) {
     const LowFunc &Func = Funcs[FuncIndex];
     const size_t BlockCount = Func.Blocks.size();
@@ -925,7 +920,9 @@ bool collectLowAddressUses(
       Into.Imprecise |= From.Imprecise;
       Into.ExactValuesWidened |= From.ExactValuesWidened;
       if (Into.ExactValuesWidened ||
-          Into.ExactValues.size() > kMaxExactAddressAlternatives) {
+          Into.ExactValues.size() >
+              ::neverd::limits::pipeline::
+                  kPipelineLowIRMaxExactAddressAlternatives) {
         Into.ExactValues.clear();
         Into.ExactValuesWidened = true;
         Into.Imprecise = true;
@@ -933,7 +930,9 @@ bool collectLowAddressUses(
       Into.FrameOffsetsWidened |= From.FrameOffsetsWidened;
       if (!Into.FrameOffsets.empty() &&
           (Into.FrameOffsetsWidened ||
-           Into.FrameOffsets.size() > kMaxFrameOffsetAlternatives)) {
+           Into.FrameOffsets.size() >
+               ::neverd::limits::pipeline::
+                   kPipelineLowIRMaxFrameOffsetAlternatives)) {
         Into.FrameOffsets = {0};
         Into.FrameOffsetsWidened = true;
         Into.MayBeNonFrame = true;
@@ -1692,8 +1691,9 @@ bool collectLowAddressUses(
                   return false;
                 Cursor = AfterShadow;
               }
-              constexpr size_t kMaxOutgoingStackCells = 64;
-              for (size_t CellIndex = 0; CellIndex < kMaxOutgoingStackCells;
+              for (size_t CellIndex = 0;
+                   CellIndex < ::neverd::limits::pipeline::
+                                   kPipelineLowIRMaxOutgoingStackCells;
                    ++CellIndex) {
                 const ModuleAddressFacts *Cell = nullptr;
                 uint16_t CellSize = 0;
@@ -3229,7 +3229,8 @@ public:
 
 private:
   // Joined effects take a few kilobytes a function: room for a kernel's.
-  static constexpr size_t MaxBytes = size_t(256) << 20;
+  static constexpr size_t MaxBytes =
+      ::neverd::limits::pipeline::kPipelineLowIRMaxBytes;
   struct Item {
     va_t Entry;
     std::shared_ptr<const CalleeFacts> Facts;
@@ -3974,10 +3975,12 @@ void computeCallRegisterEffects(
     // order, and the next breadth-first frontier is still discovered only
     // after this one finishes. Retain at most 32 bodies and four active CFG
     // builders; a serial run keeps its smaller eight-body working set.
-    const size_t BatchSize = workerThreadCount() > 1 ? 32 : 8;
-    // Table/stack proofs can dominate bodies only a few KiB long, so medium
-    // batches can also use independent decoders; tiny batches stay serial.
-    constexpr uint64_t MinParallelBytes = 4096;
+    const size_t BatchSize =
+        workerThreadCount() > 1
+            ? ::neverd::limits::pipeline::
+                  kPipelineLowIRComputeCallRegisterEffectsBatchSizeSelected
+            : ::neverd::limits::pipeline::
+                  kPipelineLowIRComputeCallRegisterEffectsBatchSizeDefault;
     for (size_t Begin = 0; Begin < Pending.size(); Begin += BatchSize) {
       const size_t Count = std::min(BatchSize, Pending.size() - Begin);
       std::vector<LowFunc> Bodies(Count);
@@ -4019,7 +4022,9 @@ void computeCallRegisterEffects(
               Bodies[I] = BuildCallee(*ExtraDec, Entry);
             }
           },
-          Bytes >= MinParallelBytes ? 2 : limits::kMinParallelIRWorkItems,
+          Bytes >= ::neverd::limits::pipeline::kPipelineLowIRMinParallelBytes
+              ? 2
+              : limits::kMinParallelIRWorkItems,
           /*MaxThreads=*/4);
       if (!Initialized.load(std::memory_order_relaxed))
         return;
@@ -4627,19 +4632,12 @@ void Pipeline::buildLowIR(
                                        ? std::min(workerThreadCount(), 4u)
                                        : 1;
 
-  // Decode cost tracks a function's instruction count, which is unknown before
-  // the recursive-descent build runs.  Candidates are address-sorted, so the
-  // byte gap to the next entry is a cheap upper-bound proxy for a function's
-  // size; scheduling the largest gaps first keeps one giant function from
-  // being claimed last and serializing the tail.  The gap is clamped so an
-  // outsized cross-segment gap (data between the last function and the segment
-  // end) does not distort the ordering — it is only a scheduling hint and never
-  // affects the decoded result.
-  constexpr uint64_t kMaxDecodeWeight = 1ull << 20;
-  std::vector<uint64_t> Weight(Total, kMaxDecodeWeight);
+  std::vector<uint64_t> Weight(
+      Total, ::neverd::limits::pipeline::kPipelineLowIRMaxDecodeWeight);
   for (size_t I = 0; I + 1 < Total; ++I) {
     uint64_t Gap = Candidates[I + 1].first - Candidates[I].first;
-    Weight[I] = std::min(Gap, kMaxDecodeWeight);
+    Weight[I] = std::min(
+        Gap, ::neverd::limits::pipeline::kPipelineLowIRMaxDecodeWeight);
   }
 
   // Registration stack proofs repeat the same fresh query for one callee from

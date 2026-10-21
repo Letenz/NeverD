@@ -24,6 +24,7 @@
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/MedNoReturn.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/sbf/emit/SBFLLVMEmitter.h"
 
@@ -112,7 +113,8 @@ private:
       OS << "[neverd-pipeline-stage] invocation=" << Invocation
          << " stage=" << name() << " event=" << Event
          << " elapsed_ms=" << Elapsed << '\n';
-      if (Line.size() <= 192) {
+      if (Line.size() <=
+          ::neverd::limits::pipeline::kPipelineRecordLineSizeLimit) {
         llvm::raw_fd_ostream Sink(2, /*shouldClose=*/false,
                                   /*unbuffered=*/true);
         llvm::scope_exit ClearError([&Sink]() noexcept { Sink.clear_error(); });
@@ -134,7 +136,9 @@ public:
       // stage pairs, including one of the mutually exclusive final branches.
       static std::atomic<unsigned> Used{0};
       unsigned Count = Used.load(std::memory_order_relaxed);
-      while (Count < 32) {
+      while (
+          Count <
+          ::neverd::limits::pipeline::kPipelineNativePipelineTraceCountLimit) {
         if (Used.compare_exchange_strong(Count, Count + 1,
                                          std::memory_order_relaxed)) {
           Invocation = Count + 1;

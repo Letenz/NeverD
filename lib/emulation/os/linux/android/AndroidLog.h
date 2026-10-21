@@ -9,14 +9,21 @@
 #define NEVERD_EMULATION_ANDROIDLOG_H
 
 #include "neverd/emulation/AndroidNative.h"
+#include "neverd/emulation/Limits.h"
 
 #include "llvm/Support/Error.h"
 
 namespace neverd::emulation::android_model {
 inline constexpr unsigned LogPayloadLimit = 4068;
-inline constexpr unsigned LogRecordLimit = 4096;
-inline constexpr unsigned LogSnapshotLimit = 1024 * 1024;
 llvm::Error
 validateLogRecords(const std::optional<std::vector<NativeLogRecord>> &Records);
 } // namespace neverd::emulation::android_model
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::emulation::android_model {
+inline constexpr unsigned LogRecordLimit =
+    ::neverd::limits::emulation::kAndroidLogLogRecordLimit;
+inline constexpr unsigned LogSnapshotLimit =
+    ::neverd::limits::emulation::kAndroidLogLogSnapshotLimit;
+} // namespace neverd::emulation::android_model
+
 #endif

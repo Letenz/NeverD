@@ -9,6 +9,7 @@
 #include "AndroidInternal.h"
 
 #include "neverd/dalvik/Runtime.h"
+#include "neverd/emulation/Limits.h"
 
 namespace neverd::emulation::android_model {
 llvm::Error Bionic::initializeDex() {
@@ -33,7 +34,9 @@ llvm::Error Bionic::initializeDex() {
     return failure("DEX images require JNI and at most 16 explicit images");
   uint64_t Total = 0;
   for (const auto &Image : Native.DexImages) {
-    if (Image.empty() || Image.size() > 1024 * 1024 - Total)
+    if (Image.empty() ||
+        Image.size() >
+            ::neverd::limits::emulation::kMaxAndroidDexInputBytes - Total)
       return failure("DEX image input exceeds the 1 MiB budget");
     Total += Image.size();
     if (Image.size() < 8 || Image[7] != 0 ||
@@ -75,8 +78,11 @@ llvm::Error Bionic::initializeDex() {
     if (Native.JNIClassLookupFailures.size() > jni_abi::ReferenceLimit)
       return failure("JNI class lookup failure inventory exceeds its budget");
     for (const auto &[Name, Exception] : Native.JNIClassLookupFailures) {
-      if (Name.empty() || Name.size() > 1024 || Name.front() == '/' ||
-          Name.back() == '/' || Name.find("//") != std::string::npos ||
+      if (Name.empty() ||
+          Name.size() > ::neverd::limits::emulation::
+                            kAndroidDexBionicInitializeDexNameSizeLimit ||
+          Name.front() == '/' || Name.back() == '/' ||
+          Name.find("//") != std::string::npos ||
           Name.find_first_of(".;[\0", 0, 4) != std::string::npos ||
           (Exception != "java/lang/ClassNotFoundException" &&
            Exception != "java/lang/NoClassDefFoundError"))

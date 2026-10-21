@@ -1,3 +1,5 @@
+#include "Config.h"
+#include "ResourceLimits.h"
 #include "app/DialogReturnKey.h"
 #include "app/DisassemblyView.h"
 #include "app/Docking.h"
@@ -37,13 +39,6 @@ namespace {
 constexpr char GeometryKey[] = "ui/geometry2";
 constexpr int CaptureDelayMs = 6000;
 constexpr int SmokeDelayMs = 1500;
-constexpr int DefaultWidth = 1600;
-constexpr int DefaultHeight = 1000;
-/// The share of the screen a window opens at without a remembered geometry:
-/// below the 80% of its area at which GNOME maximizes a new window, whose
-/// edges then no longer resize it.
-constexpr int DefaultWidthPercent = 75;
-constexpr int DefaultHeightPercent = 80;
 
 void restoreGeometry(MainWindow &window) {
   const auto geometry = QSettings().value(GeometryKey).toByteArray();
@@ -51,8 +46,14 @@ void restoreGeometry(MainWindow &window) {
     return;
   const QRect available = window.screen()->availableGeometry();
   const QSize size(
-      std::min(DefaultWidth, available.width() * DefaultWidthPercent / 100),
-      std::min(DefaultHeight, available.height() * DefaultHeightPercent / 100));
+      std::min(::neverd::limits::gui_config::kMainDefaultWidth,
+               available.width() *
+                   ::neverd::limits::gui_config::kMainDefaultWidthPercent /
+                   100),
+      std::min(::neverd::limits::gui_config::kMainDefaultHeight,
+               available.height() *
+                   ::neverd::limits::gui_config::kMainDefaultHeightPercent /
+                   100));
   window.resize(size);
   window.move(available.center() - QPoint(size.width() / 2, size.height() / 2));
 }
@@ -112,7 +113,9 @@ int main(int argc, char **argv) {
       {QStringLiteral("startup-benchmark-timeout"),
        QStringLiteral("Startup benchmark deadline from main entry in "
                       "milliseconds"),
-       QStringLiteral("milliseconds"), QStringLiteral("30000")});
+       QStringLiteral("milliseconds"),
+       QString::number(::neverd::limits::gui::
+                           kDefaultStartupBenchmarkTimeoutMilliseconds)});
   parser.addOption(
       {QStringLiteral("interaction-benchmark"),
        QStringLiteral("Scroll, jump, open graphs and pseudocode in the opened "
@@ -121,7 +124,9 @@ int main(int argc, char **argv) {
   parser.addOption(
       {QStringLiteral("interaction-benchmark-timeout"),
        QStringLiteral("Interaction benchmark deadline in milliseconds"),
-       QStringLiteral("milliseconds"), QStringLiteral("600000")});
+       QStringLiteral("milliseconds"),
+       QString::number(::neverd::limits::gui::
+                           kDefaultInteractionBenchmarkTimeoutMilliseconds)});
 #ifdef NEVERD_GUI_TEST_PROBES
   parser.addOption(
       {QStringLiteral("widgets-test"),
@@ -177,7 +182,11 @@ int main(int argc, char **argv) {
     const auto timeout =
         parser.value(QStringLiteral("startup-benchmark-timeout"))
             .toInt(&validTimeout);
-    if (!validTimeout || timeout < 100 || timeout > 300000) {
+    if (!validTimeout ||
+        timeout <
+            ::neverd::limits::gui::kStartupMinBenchmarkTimeoutMilliseconds ||
+        timeout >
+            ::neverd::limits::gui::kStartupMaxBenchmarkTimeoutMilliseconds) {
       qCritical("Startup benchmark timeout must be 100-300000 milliseconds");
       return 2;
     }
@@ -221,7 +230,12 @@ int main(int argc, char **argv) {
     const auto timeout =
         parser.value(QStringLiteral("interaction-benchmark-timeout"))
             .toInt(&validTimeout);
-    if (!validTimeout || timeout < 1000 || timeout > 3600000 || !openingFile) {
+    if (!validTimeout ||
+        timeout < ::neverd::limits::gui::
+                      kInteractionMinBenchmarkTimeoutMilliseconds ||
+        timeout > ::neverd::limits::gui::
+                      kInteractionMaxBenchmarkTimeoutMilliseconds ||
+        !openingFile) {
       qCritical("The interaction benchmark needs an input file and a timeout "
                 "of 1000-3600000 milliseconds");
       return 2;

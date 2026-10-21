@@ -7,6 +7,7 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 #include "neverd/loader/SymbolSpelling.h"
 
@@ -43,15 +44,15 @@ std::string implementationName(const ObjCClass &Class, llvm::StringRef Category,
     return Name;
   return "objc_imp_" + llvm::utohexstr(IMP);
 }
-constexpr size_t MaxRecords = 65536;
-constexpr size_t MaxString = 4096;
 
 class RuntimeReader {
   BinaryImage &Img;
-  size_t Remaining = MaxRecords;
+  size_t Remaining = ::neverd::limits::loader::kObjCMethodsMaxRecords;
 
   void diagnostic(llvm::StringRef Message) {
-    if (Img.ObjCMetadataDiagnostics.size() < 64 &&
+    if (Img.ObjCMetadataDiagnostics.size() <
+            ::neverd::limits::loader::
+                kObjCMethodsDiagnosticImgObjCMetadataDiagnosticsSizeLimit &&
         std::find(Img.ObjCMetadataDiagnostics.begin(),
                   Img.ObjCMetadataDiagnostics.end(),
                   Message) == Img.ObjCMetadataDiagnostics.end())
@@ -100,7 +101,8 @@ class RuntimeReader {
 
   std::optional<std::string> string(va_t VA) {
     std::string Result;
-    for (size_t I = 0; I < MaxString; ++I) {
+    for (size_t I = 0; I < ::neverd::limits::loader::kObjCMethodsMaxString;
+         ++I) {
       if (VA > InvalidVA - I)
         return std::nullopt;
       const auto *P = bytes(VA + I, 1);
@@ -302,7 +304,7 @@ class RuntimeReader {
         return;
       }
       if (Classes.insert(*ClassPointer).second) {
-        if (Classes.size() > MaxRecords) {
+        if (Classes.size() > ::neverd::limits::loader::kObjCMethodsMaxRecords) {
           diagnostic("Objective-C class count exceeds the parsing budget");
           return;
         }
@@ -353,7 +355,8 @@ public:
     for (const Section &Sec : Img.Sections) {
       if (Sec.Name != "__objc_classlist" && Sec.Name != "__objc_nlclslist")
         continue;
-      if (Sec.Size % 8 || Sec.Size / 8 > MaxRecords ||
+      if (Sec.Size % 8 ||
+          Sec.Size / 8 > ::neverd::limits::loader::kObjCMethodsMaxRecords ||
           Img.getSectionFor(Sec.VA) != &Sec || !bytes(Sec.VA, Sec.Size)) {
         diagnostic("Invalid or non-file-backed Objective-C class list");
         continue;
@@ -361,7 +364,8 @@ public:
       for (size_t I = 0; I < Sec.Size / 8; ++I) {
         auto Class = pointer(Sec.VA + I * 8);
         if (Class && *Class && Classes.insert(*Class).second) {
-          if (Classes.size() > MaxRecords) {
+          if (Classes.size() >
+              ::neverd::limits::loader::kObjCMethodsMaxRecords) {
             diagnostic("Objective-C class count exceeds the parsing budget");
             break;
           }
@@ -377,7 +381,8 @@ public:
     for (const Section &Sec : Img.Sections) {
       if (Sec.Name != "__objc_catlist" && Sec.Name != "__objc_nlcatlist")
         continue;
-      if (Sec.Size % 8 || Sec.Size / 8 > MaxRecords ||
+      if (Sec.Size % 8 ||
+          Sec.Size / 8 > ::neverd::limits::loader::kObjCMethodsMaxRecords ||
           Img.getSectionFor(Sec.VA) != &Sec || !Data.bytes(Sec.VA, Sec.Size)) {
         diagnostic("Invalid or non-file-backed Objective-C category list");
         continue;
@@ -390,7 +395,8 @@ public:
         }
         if (!Categories.insert(*Category).second)
           continue;
-        if (Categories.size() > MaxRecords) {
+        if (Categories.size() >
+            ::neverd::limits::loader::kObjCMethodsMaxRecords) {
           diagnostic("Objective-C category count exceeds the parsing budget");
           break;
         }

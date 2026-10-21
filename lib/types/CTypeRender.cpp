@@ -16,6 +16,7 @@
 #include "TypeRenderShared.h"
 
 #include "neverd/types/HeaderLibrary.h"
+#include "neverd/types/Limits.h"
 #include "neverd/types/TypeLayout.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -432,7 +433,8 @@ std::string CWriter::memberAlignment(const TypeExpr &Type) {
     return {};
   // What the member holds, through arrays and typedefs.
   const TypeExpr *Held = &Type;
-  for (unsigned Hop = 0; Held && Hop < 64; ++Hop) {
+  for (unsigned Hop = 0;
+       Held && Hop < ::neverd::limits::types::kMaxCTypeDefinitionHops; ++Hop) {
     if (Held->Kind == TypeExprKind::Array) {
       Held = Held->Element.get();
       continue;
@@ -464,7 +466,8 @@ const LocalType *CWriter::unknownElement(const LocalType &Type) const {
     return nullptr;
   const TypeExpr *Held = Type.Target.get();
   bool Array = false;
-  for (unsigned Hop = 0; Held && Hop < 64; ++Hop) {
+  for (unsigned Hop = 0;
+       Held && Hop < ::neverd::limits::types::kMaxCTypeDefinitionHops; ++Hop) {
     if (Held->Kind == TypeExprKind::Array) {
       Array = true;
       Held = Held->Element.get();
@@ -487,7 +490,9 @@ bool CWriter::holdsLooseScalars(const RecordDef &Record) const {
     // What the member holds: through arrays and typedefs, and the records
     // in place it holds.
     const TypeExpr *Held = Field.Type.get();
-    for (unsigned Hop = 0; Held && Hop < 64; ++Hop) {
+    for (unsigned Hop = 0;
+         Held && Hop < ::neverd::limits::types::kMaxCTypeDefinitionHops;
+         ++Hop) {
       if (Held->Kind == TypeExprKind::Array) {
         Held = Held->Element.get();
         continue;
@@ -1198,7 +1203,8 @@ const LocalType *typedefRecord(const TypeLibrary &Library,
                                const LocalType &Type) {
   const LocalType *At = &Type;
   for (unsigned Depth = 0;
-       Depth < 16 && At->Kind == TypeKind::Typedef && At->Target &&
+       Depth < ::neverd::limits::types::kCTypeRenderTypedefRecordDepthLimit &&
+       At->Kind == TypeKind::Typedef && At->Target &&
        At->Target->Kind == TypeExprKind::Named;
        ++Depth) {
     const LocalType *Next = Library.find(At->Target->Name);

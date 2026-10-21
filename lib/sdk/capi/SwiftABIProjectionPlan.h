@@ -4,6 +4,7 @@
 #include "SwiftSourceIdentity.h"
 
 #include "neverd/ir/SourceABI.h"
+#include "neverd/sdk/Limits.h"
 
 #include <map>
 #include <set>
@@ -42,7 +43,8 @@ inline void number(std::string &Key, uint64_t Value) {
   Key += ':';
 }
 inline void type(std::string &Key, const TypeRef &Type, unsigned Depth = 0) {
-  if (!Type || Depth > 16 || (Depth == 0 && !equalSourceTypes(Type, Type)))
+  if (!Type || Depth > ::neverd::sdk::kSwiftABIProjectionPlanTypeDepthLimit ||
+      (Depth == 0 && !equalSourceTypes(Type, Type)))
     throw std::invalid_argument("Swift ABI projection has an invalid type");
   number(Key, static_cast<unsigned>(Type->Kind));
   number(Key, Type->Size);

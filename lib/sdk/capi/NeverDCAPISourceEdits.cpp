@@ -92,7 +92,10 @@ std::string neverd::sdk::highVariableSnapshot(const HighFunc &Function,
   };
   size_t Statements = 0;
   walkStmts(Function.Body, [&](const HighStmt &Stmt) {
-    if (!Complete || ++Statements > 100000) {
+    if (!Complete ||
+        ++Statements >
+            ::neverd::sdk::
+                kNeverDCAPISourceEditsNeverdSdkHighVariableSnapshotStatementsLimit) {
       Complete = false;
       return;
     }
@@ -191,7 +194,9 @@ const char *neverd_source_type_json(neverd_session_t Sess,
     return nullptr;
   }
   const llvm::StringRef RequestText = Request ? Request : "{}";
-  if (RequestText.size() > 32 * 1024) {
+  if (RequestText.size() >
+      ::neverd::sdk::
+          kNeverDCAPISourceEditsNeverdSourceTypeJsonRequestTextSizeLimit) {
     S->setError("source type request exceeds 32 KiB");
     return nullptr;
   }

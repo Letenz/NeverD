@@ -7,6 +7,7 @@
 #ifndef NEVERD_ANALYSIS_LOWIRREFINEMENT_H
 #define NEVERD_ANALYSIS_LOWIRREFINEMENT_H
 
+#include "neverd/analysis/Limits.h"
 #include "neverd/analysis/LowIRUndefinedIndependence.h"
 
 #include "llvm/Support/Error.h"
@@ -179,11 +180,12 @@ struct LowIRLoopCutpointPair {
 /// observation checks. MaxMetadata bounds the total input cuts, bindings,
 /// expressions, assignments, ranking components and requested pairs before
 /// construction allocates copies, including both sides' guard entries.
-llvm::Expected<LowIRLoopRefinementPlan>
-pairLowIRLoopRefinementPlans(const LowIRLoopRefinementPlan &Original,
-                             const LowIRLoopRefinementPlan &Candidate,
-                             llvm::ArrayRef<LowIRLoopCutpointPair> Pairings,
-                             uint64_t MaxMetadata = 65536);
+llvm::Expected<LowIRLoopRefinementPlan> pairLowIRLoopRefinementPlans(
+    const LowIRLoopRefinementPlan &Original,
+    const LowIRLoopRefinementPlan &Candidate,
+    llvm::ArrayRef<LowIRLoopCutpointPair> Pairings,
+    uint64_t MaxMetadata =
+        ::neverd::limits::analysis::kLowIRRefinementMaxMetadata);
 
 enum class LowIRLoopInferenceStatus : uint8_t {
   Inferred,

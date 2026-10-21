@@ -70,7 +70,8 @@ inline bool sameHint(const SourceCallTypeHint &A, const SourceCallTypeHint &B,
 inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
                            size_t &Budget, unsigned Depth = 0,
                            bool BlockAddresses = false) {
-  if (!Expected || !Actual || !Budget || Depth >= 64)
+  if (!Expected || !Actual || !Budget ||
+      Depth >= ::neverd::sdk::kObjCByValueCopySourcesSameExpressionDepthLimit)
     return false;
   --Budget;
   HighExpr E = *Expected, A = *Actual;
@@ -141,8 +142,12 @@ replayCurrentFunction(const BinaryImage &Image, const PipelineResult &Result,
       continue;
     const auto I = Bodies.find(Entry);
     if (I == Bodies.end() || !I->second->hasCompleteLiftCoverage() ||
-        I->second->DecodedInstructionCount > 1024 ||
-        Options.OnlyFunctionEntries.size() > 32)
+        I->second->DecodedInstructionCount >
+            ::neverd::sdk::
+                kObjCByValueCopySourcesReplayCurrentFunctionISecondDecodedInstructionCountLimit ||
+        Options.OnlyFunctionEntries.size() >
+            ::neverd::sdk::
+                kObjCByValueCopySourcesReplayCurrentFunctionOptionsOnlyFunctionEntriesSizeLimit)
       return std::nullopt;
     for (const auto &B : I->second->Blocks)
       for (const auto &Op : B.Ops)
@@ -154,7 +159,8 @@ replayCurrentFunction(const BinaryImage &Image, const PipelineResult &Result,
   llvm::LLVMContext Context;
   PipelineResult Fresh;
   bool Complete = false;
-  for (unsigned Round = 0; Round != 16; ++Round) {
+  for (unsigned Round = 0; Round != ::neverd::sdk::kMaxObjCByValueCopyRounds;
+       ++Round) {
     Fresh = Pipeline().run(Image, Context, Options);
     if (!Fresh.Success)
       return std::nullopt;

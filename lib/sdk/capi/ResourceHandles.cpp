@@ -11,6 +11,8 @@
 
 #include "ResourceHandles.h"
 
+#include "neverd/sdk/Limits.h"
+
 #include "llvm/Support/JSON.h"
 
 #include <algorithm>
@@ -99,7 +101,9 @@ void reportError(const char **Error, llvm::StringRef Text) noexcept {
     return;
   if (!llvm::json::isUTF8(Text))
     Text = "resource operation failed; diagnostic contains invalid UTF-8";
-  auto Length = std::min<size_t>(Text.size(), 65536);
+  auto Length = std::min<size_t>(
+      Text.size(),
+      ::neverd::sdk::kResourceHandlesReportErrorLengthMinArgument2);
   if (Length < Text.size())
     while (Length && (static_cast<unsigned char>(Text[Length]) & 0xC0) == 0x80)
       --Length;

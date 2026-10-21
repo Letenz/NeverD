@@ -12,6 +12,7 @@
 
 #include "LLVMCFrameAliases.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/c/pass/LLVMC/LLVMCPasses.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -261,7 +262,10 @@ void analyzeDeadFrameStores(LLVMCAnalysisState &State, llvm::Function &Fn) {
   }
   bool Grew = true;
   unsigned Guard = 0;
-  while (Grew && Guard++ < 8) {
+  while (Grew &&
+         Guard++ <
+             ::neverd::limits::backend::
+                 kLLVMCDeadStoreAnalysisAnalyzeDeadFrameStoresGuardLimit) {
     Grew = false;
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {

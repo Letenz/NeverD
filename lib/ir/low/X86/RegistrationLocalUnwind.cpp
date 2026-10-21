@@ -9,6 +9,7 @@
 
 #include "RegistrationABIPrivate.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ReadOnlyBytes.h"
@@ -63,7 +64,9 @@ RegistrationCallCalleeIndex::localUnwindContracts(const LowFunc &Function) {
           std::make_pair(Op.Inputs[0].Offset, Op.Opcode == NdOp::INDIR_CALL);
       if (!Seen.insert(Identity).second)
         continue;
-      if (Seen.size() > 256)
+      if (Seen.size() >
+          ::neverd::limits::ir::
+              kRegistrationLocalUnwindRegistrationCallCalleeIndexLocalUnwindContractsSeenSizeLimit)
         return std::nullopt;
       if (const auto Contract = getCheckedX86LocalUnwindContract(
               Image, Identity.first, Identity.second))

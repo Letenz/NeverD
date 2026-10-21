@@ -6,6 +6,8 @@
 
 #include "KernelModel.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include <algorithm>
 #include <array>
 #include <tuple>
@@ -16,8 +18,6 @@ namespace {
 // remain opaque; this model does not execute bug checks or produce dump data.
 constexpr uint64_t RecordSize = 48;
 constexpr uint64_t StateOffset = 44;
-constexpr size_t RecordLimit = 64;
-constexpr unsigned ComponentLimit = 256;
 uint64_t pageBase(uint64_t Address) {
   return Address & ~(profile::PageSize - 1);
 }
@@ -126,7 +126,8 @@ KernelModel::registerBugCheckCallback(uint64_t Record, uint64_t Callback,
   if (*State != 0)
     return callbackError("bug-check registration has unknown record state");
   if (Existing == BugCheckRecords.end() &&
-      BugCheckRecords.size() >= RecordLimit)
+      BugCheckRecords.size() >=
+          ::neverd::limits::emulation::kKernelModelBugCheckRecordLimit)
     return callbackError("bug-check record identity limit exceeded");
   if (Reason < 2 || Reason > 7)
     return callbackError("unsupported bug-check callback reason");
@@ -138,7 +139,9 @@ KernelModel::registerBugCheckCallback(uint64_t Record, uint64_t Callback,
   // This bounded initial check is a model restriction, not a native read
   // effect or a promise that the caller's component storage stays alive.
   bool Terminated = false;
-  for (unsigned I = 0; I < ComponentLimit; ++I) {
+  for (unsigned I = 0;
+       I < ::neverd::limits::emulation::kKernelModelBugCheckComponentLimit;
+       ++I) {
     if (!Component || Component > UINT64_MAX - I)
       return callbackError("invalid bug-check component pointer");
     if (auto E = validateGuestAccess(Component + I, 1, false))

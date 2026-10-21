@@ -20,6 +20,7 @@
 #include "JumpTableResolverDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 
@@ -151,33 +152,21 @@ static size_t orderedEvidenceLookupWork(size_t Count) {
   return Work;
 }
 
-// Keep attacker-controlled work in independent accounts so an intentionally
-// expensive proposal scan cannot consume the memory needed for final all-path
-// replay.  Phase caps overlap, but every charge also debits one shared public
-// 4096-unit invocation ceiling; this lets a large real proposal borrow unused
-// direct/replay capacity without increasing total work.  The
-// exact structural relation in JumpTableResolverSlice also has a per-batch
-// symbolization ceiling, while its CFG snapshot, value reconstruction and
-// every expression visit debit the same candidate-wide aggregate account as
-// target/address roles and mask-domain recovery.
-static constexpr size_t kModuloProposalWork = 3072;
-static constexpr size_t kModuloStructuralRetentionWork = 1536;
-static constexpr size_t kModuloDirectWork = 512;
-static constexpr size_t kModuloReplayWork = 1024;
-static_assert(kModuloProposalWork <= limits::kMaxJumpTableEvidenceWork);
-static_assert(kModuloStructuralRetentionWork <=
+static_assert(
+    ::neverd::limits::ir::kJumpTableResolverBoundsModuloProposalWork <=
+    limits::kMaxJumpTableEvidenceWork);
+static_assert(::neverd::limits::ir::
+                  kJumpTableResolverBoundsModuloStructuralRetentionWork <=
               limits::kMaxJumpTableEvidenceWork);
-static_assert(kModuloDirectWork <= limits::kMaxJumpTableEvidenceWork);
-static_assert(kModuloReplayWork <= limits::kMaxJumpTableEvidenceWork);
+static_assert(::neverd::limits::ir::kJumpTableResolverBoundsModuloDirectWork <=
+              limits::kMaxJumpTableEvidenceWork);
+static_assert(::neverd::limits::ir::kJumpTableResolverBoundsModuloReplayWork <=
+              limits::kMaxJumpTableEvidenceWork);
 
-// Proposal discovery is an under-approximation: retain at most this
-// instruction-prefix worth of ops, prepaid before each append.  Candidate
-// scanning charges the same ops a second time; the remaining quarter covers
-// compact instruction-span records and bounded reaching-definition/evaluator
-// visits.  Structural authentication retains its own independent account, and
-// final all-path replay keeps the full 1024-unit reserve below.
-static constexpr size_t kMaxRetainedModuloProposalOps = 512;
-static_assert(kMaxRetainedModuloProposalOps * 2 <= kModuloProposalWork);
+static_assert(
+    ::neverd::limits::ir::kJumpTableResolverBoundsMaxRetainedModuloProposalOps *
+        2 <=
+    ::neverd::limits::ir::kJumpTableResolverBoundsModuloProposalWork);
 
 static constexpr std::optional<size_t>
 moduloDomainEvidenceWork(uint32_t Bound, size_t ProducerCount,
@@ -213,8 +202,10 @@ moduloDomainEvidenceWork(uint32_t Bound, size_t ProducerCount,
 constexpr std::optional<size_t> Modulo140ReplayWork =
     moduloDomainEvidenceWork(140, 1, 1, true);
 static_assert(Modulo140ReplayWork && *Modulo140ReplayWork == 570);
-static_assert(Modulo140ReplayWork &&
-              *Modulo140ReplayWork + 140 + 2 <= kModuloReplayWork);
+static_assert(
+    Modulo140ReplayWork &&
+    *Modulo140ReplayWork + 140 + 2 <=
+        ::neverd::limits::ir::kJumpTableResolverBoundsModuloReplayWork);
 constexpr std::optional<size_t> Modulo2048BootstrapWork =
     moduloDomainEvidenceWork(2048, 1, 1, false);
 static_assert(Modulo2048BootstrapWork &&
@@ -1715,7 +1706,10 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
           // A long physical run may still use only a small exact selector
           // domain. The query must prove this ceiling before enumerating it;
           // a feasible value outside the ceiling rejects the entire proof.
-          const uint32_t QueryCapacity = std::min(CandidateCapacity, 64u);
+          const uint32_t QueryCapacity = std::min(
+              CandidateCapacity,
+              ::neverd::limits::ir::
+                  kJumpTableResolverBoundsCFGBuilderInferBoundsFromMaskWithAbsoluteProofExactFiniteCoordinatesForTargetsQueryCapacityMinArgument2);
           if (OccurrenceBranches &&
               OccurrenceBranches->size() != Occurrences.size()) {
             if (IncompleteIndexDomain)
@@ -5642,7 +5636,9 @@ bool CFGBuilder::inferBoundsFromModulo(
        (RequiredProducerBound < limits::kMinJumpTableEntries ||
         RequiredProducerBound > limits::kMaxJumpTableEntries ||
         RequiredProducers->empty() ||
-        RequiredProducers->size() > kMaxRetainedModuloProposalOps ||
+        RequiredProducers->size() >
+            ::neverd::limits::ir::
+                kJumpTableResolverBoundsMaxRetainedModuloProposalOps ||
         (Info.PhysicalCapacity != 0 &&
          RequiredProducerBound > Info.PhysicalCapacity) ||
         std::any_of(RequiredProducers->begin(), RequiredProducers->end(),
@@ -5711,18 +5707,19 @@ bool CFGBuilder::inferBoundsFromModulo(
   // candidate-wide account.  Replaying modulo evidence across candidates or
   // final-root stages therefore cannot refresh four unmetered 4096-unit pools.
   size_t LocalAggregateEvidenceBudget = limits::kMaxJumpTableEvidenceWork;
-  ModuloEvidenceBudget ProposalBudget(kModuloProposalWork,
-                                      &LocalAggregateEvidenceBudget,
-                                      AggregateEvidenceBudget);
-  ModuloEvidenceBudget StructuralBudget(kModuloStructuralRetentionWork,
-                                        &LocalAggregateEvidenceBudget,
-                                        AggregateEvidenceBudget);
-  ModuloEvidenceBudget DirectBudget(kModuloDirectWork,
-                                    &LocalAggregateEvidenceBudget,
-                                    AggregateEvidenceBudget);
-  ModuloEvidenceBudget ReplayBudget(kModuloReplayWork,
-                                    &LocalAggregateEvidenceBudget,
-                                    AggregateEvidenceBudget);
+  ModuloEvidenceBudget ProposalBudget(
+      ::neverd::limits::ir::kJumpTableResolverBoundsModuloProposalWork,
+      &LocalAggregateEvidenceBudget, AggregateEvidenceBudget);
+  ModuloEvidenceBudget StructuralBudget(
+      ::neverd::limits::ir::
+          kJumpTableResolverBoundsModuloStructuralRetentionWork,
+      &LocalAggregateEvidenceBudget, AggregateEvidenceBudget);
+  ModuloEvidenceBudget DirectBudget(
+      ::neverd::limits::ir::kJumpTableResolverBoundsModuloDirectWork,
+      &LocalAggregateEvidenceBudget, AggregateEvidenceBudget);
+  ModuloEvidenceBudget ReplayBudget(
+      ::neverd::limits::ir::kJumpTableResolverBoundsModuloReplayWork,
+      &LocalAggregateEvidenceBudget, AggregateEvidenceBudget);
   bool Succeeded = false;
   bool ExplicitlyIncomplete = false;
   struct ModuloIncompleteOnExit {
@@ -5857,8 +5854,12 @@ bool CFGBuilder::inferBoundsFromModulo(
     }
     const size_t InstructionOps = Instruction.Ops.size();
     if (InstructionOps >
-        kMaxRetainedModuloProposalOps -
-            std::min(Ops.size(), kMaxRetainedModuloProposalOps)) {
+        ::neverd::limits::ir::
+                kJumpTableResolverBoundsMaxRetainedModuloProposalOps -
+            std::min(
+                Ops.size(),
+                ::neverd::limits::ir::
+                    kJumpTableResolverBoundsMaxRetainedModuloProposalOps)) {
       return false;
     }
     // Retain one compact instruction span beside the flattened LowOps.  This

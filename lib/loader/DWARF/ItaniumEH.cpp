@@ -10,6 +10,7 @@
 #include "neverd/loader/DWARF/LSDA.h"
 #include "neverd/loader/ELF/ELFImageMetadata.h"
 #include "neverd/loader/LanguageRuntime.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/DwarfEH.h"
@@ -192,12 +193,12 @@ void appendIndexedELFFrames(const BinaryImage &Img, const FrameSection &Sec,
   }
   if (!Header)
     return;
-  constexpr uint64_t MaxIndex = 32 * 1024 * 1024;
-  constexpr uint64_t MaxDecode = 64 * 1024 * 1024;
   const auto Size = Header->FileSize;
   const auto VA = Header->VirtualAddress;
   const uint8_t *Bytes =
-      Size >= 4 && Size <= MaxIndex ? Img.readVA(VA, Size) : nullptr;
+      Size >= 4 && Size <= ::neverd::limits::loader::kItaniumEHMaxIndex
+          ? Img.readVA(VA, Size)
+          : nullptr;
   if (!Bytes || Bytes[0] != 1) {
     Malformed("invalid runtime DWARF frame index");
     return;
@@ -221,7 +222,7 @@ void appendIndexedELFFrames(const BinaryImage &Img, const FrameSection &Sec,
   std::map<va_t, size_t> Known;
   for (size_t I = 0; I < Frames.FDEs.size(); ++I)
     Known.emplace(Sec.VA + Frames.FDEs[I].SectionOffset, I);
-  uint64_t Budget = MaxDecode;
+  uint64_t Budget = ::neverd::limits::loader::kItaniumEHMaxDecode;
   va_t Previous = 0;
   for (uint64_t I = 0; I < Count; ++I) {
     va_t Start = 0, FDEVA = 0;

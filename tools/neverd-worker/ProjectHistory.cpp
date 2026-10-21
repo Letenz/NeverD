@@ -1,6 +1,7 @@
 #include "ProjectHistory.h"
 
 #include "CodeEdits.h"
+#include "ResourceLimits.h"
 
 #include "neverd/support/ProjectFiles.h"
 
@@ -11,12 +12,6 @@
 namespace neverd::worker {
 namespace fs = std::filesystem;
 namespace {
-// The history and the recovery journal are the user's own records and stay
-// compact; the edit tables are the project's shared state, indented for
-// version control (sidecarText), and each file has its own bound.
-constexpr std::size_t MaxHistoryBytes = 8 * 1024 * 1024;
-constexpr std::size_t MaxJournalBytes = 24 * 1024 * 1024;
-constexpr std::size_t MaxStateFileBytes = 16 * 1024 * 1024;
 std::string compactText(const Json &value) {
   return value.dump(-1, ' ', false, Json::error_handler_t::replace);
 }
@@ -51,7 +46,9 @@ Json rowsToFile(std::string_view table, Json rows) {
       row.erase("addr");
   return rows;
 }
-Json read(const fs::path &path, std::size_t limit = MaxHistoryBytes) {
+Json read(const fs::path &path,
+          std::size_t limit =
+              ::neverd::limits::worker::kProjectHistoryMaxHistoryBytes) {
   std::error_code ec;
   if (!fs::exists(path, ec))
     return nullptr;
@@ -87,17 +84,26 @@ void validateRow(std::string_view table, const Json &row) {
   } else if (table == "annotations") {
     if (!row.contains("text"))
       throw Error("history_invalid", "Annotation text is missing");
-    (void)stringField(row, "text", {}, 65536);
+    (void)stringField(
+        row, "text", {},
+        ::neverd::limits::worker::kProjectHistoryValidateRowTextStringFieldMax);
   } else if (table == "renames") {
     if (!row.contains("original") || !row.contains("renamed"))
       throw Error("history_invalid", "Rename text is missing");
-    (void)stringField(row, "original", {}, 4096);
-    (void)stringField(row, "renamed", {}, 4096);
+    (void)stringField(row, "original", {},
+                      ::neverd::limits::worker::
+                          kProjectHistoryValidateRowOriginalStringFieldMax);
+    (void)stringField(row, "renamed", {},
+                      ::neverd::limits::worker::
+                          kProjectHistoryValidateRowRenamedStringFieldMax);
   } else if (table == "functions") {
     // A row edits whether a function starts there, what it is, or both.
     bool edits = false;
     if (row.contains("state")) {
-      const auto state = stringField(row, "state", {}, 16);
+      const auto state =
+          stringField(row, "state", {},
+                      ::neverd::limits::worker::
+                          kProjectHistoryValidateRowStateStringFieldMax);
       if (state != "created" && state != "deleted")
         throw Error("history_invalid", "Function edit state is invalid");
       edits = true;
@@ -135,51 +141,65 @@ void validateRow(std::string_view table, const Json &row) {
     // engine reads each again as it loads the types.
     if (row.contains("forget")) {
       const auto &names = row.at("forget");
-      if (!names.is_array() || names.empty() || names.size() > 4096)
+      if (!names.is_array() || names.empty() ||
+          names.size() > ::neverd::limits::worker::
+                             kProjectHistoryValidateRowNamesSizeLimit)
         throw Error("history_invalid", "Type removal is invalid");
       for (const auto &name : names)
         if (!name.is_string() || name.get_ref<const std::string &>().empty() ||
-            name.get_ref<const std::string &>().size() > 4096)
+            name.get_ref<const std::string &>().size() >
+                ::neverd::limits::worker::
+                    kProjectHistoryValidateRowNameGetRefConstStdStringSizeLimit)
           throw Error("history_invalid", "Type removal is invalid");
     } else {
       if (!row.contains("language") || !row.contains("source"))
         throw Error("history_invalid", "Type declaration is incomplete");
-      (void)stringField(row, "language", {}, 16);
-      (void)stringField(row, "source", {}, 4u << 20);
+      (void)stringField(row, "language", {},
+                        ::neverd::limits::worker::
+                            kProjectHistoryValidateRowLanguageStringFieldMax);
+      (void)stringField(row, "source", {},
+                        ::neverd::limits::worker::
+                            kProjectHistoryValidateRowSourceStringFieldMax);
     }
   } else if (table == "items") {
     // The engine checks a data item against the image when it loads one.
-    (void)stringField(row, "kind", {}, 32);
+    (void)stringField(
+        row, "kind", {},
+        ::neverd::limits::worker::kProjectHistoryValidateRowKindStringFieldMax);
     if (!row.contains("size") || !row.at("size").is_number_unsigned() ||
         row.at("size").get<std::uint64_t>() == 0)
       throw Error("history_invalid", "Data item size is invalid");
     if (row.contains("encoding"))
-      (void)stringField(row, "encoding", {}, 64);
+      (void)stringField(row, "encoding", {},
+                        ::neverd::limits::worker::
+                            kProjectHistoryValidateRowEncodingStringFieldMax);
   } else {
     // The engine checks each operand's base when it loads the formats.
     if (!row.contains("operands") || !row.at("operands").is_array() ||
-        row.at("operands").size() > 8)
+        row.at("operands").size() >
+            ::neverd::limits::worker::kMaxOperandHistoryValues)
       throw Error("history_invalid", "Operand formats are invalid");
     for (const auto &operand : row.at("operands")) {
       if (!operand.is_object() || !operand.contains("operand") ||
           !operand.at("operand").is_number_unsigned() ||
           operand.at("operand").get<std::uint64_t>() > 7)
         throw Error("history_invalid", "Operand index is invalid");
-      (void)stringField(operand, "base", {}, 16);
+      (void)stringField(operand, "base", {},
+                        ::neverd::limits::worker::
+                            kProjectHistoryValidateRowBaseStringFieldMax);
       for (const char *flag : {"negate", "invert"})
         if (operand.contains(flag) && !operand.at(flag).is_boolean())
           throw Error("history_invalid", "Operand format flag is invalid");
       // A structure offset's type and delta.
       if (operand.contains("type"))
-        (void)stringField(operand, "type", {}, 512);
+        (void)stringField(operand, "type", {},
+                          ::neverd::limits::worker::
+                              kProjectHistoryValidateRowTypeTypeStringFieldMax);
       if (operand.contains("delta") && !operand.at("delta").is_number_integer())
         throw Error("history_invalid", "Operand structure delta is invalid");
     }
   }
 }
-
-/// The most rows besides its own one history command may change.
-constexpr std::size_t MaxCommandRows = 64;
 
 void validateChange(std::string_view kind, const char *table,
                     const Json &change) {
@@ -190,9 +210,14 @@ void validateChange(std::string_view kind, const char *table,
     const auto &value = change[field];
     if (kind == "annotation") {
       if (!value.is_string() ||
-          value.get_ref<const std::string &>().size() > 65536)
+          value.get_ref<const std::string &>().size() >
+              ::neverd::limits::worker::
+                  kProjectHistoryValidateChangeAnnotationValueGetRefConstStdStringSizeLimit)
         throw Error("history_invalid", "Annotation history value is invalid");
-      (void)stringField(change, field, {}, 65536);
+      (void)stringField(
+          change, field, {},
+          ::neverd::limits::worker::
+              kProjectHistoryValidateChangeAnnotationFieldStringFieldMax);
     } else if (!value.is_null()) {
       if (!value.is_object() || !value.contains("addr"))
         throw Error("history_invalid", "History row value is invalid");
@@ -206,7 +231,10 @@ void validateChange(std::string_view kind, const char *table,
 }
 
 void validateCommand(const Json &command) {
-  const auto kind = stringField(command, "kind", {}, 32);
+  const auto kind =
+      stringField(command, "kind", {},
+                  ::neverd::limits::worker::
+                      kProjectHistoryValidateCommandKindKindStringFieldMax);
   const char *table = ProjectHistory::tableOfKind(kind);
   if (!table)
     throw Error("history_invalid", "Unsupported history command kind");
@@ -214,7 +242,8 @@ void validateCommand(const Json &command) {
   if (!command.contains("rows"))
     return;
   const auto &rows = command["rows"];
-  if (kind == "annotation" || !rows.is_array() || rows.size() > MaxCommandRows)
+  if (kind == "annotation" || !rows.is_array() ||
+      rows.size() > ::neverd::limits::worker::kProjectHistoryMaxCommandRows)
     throw Error("history_invalid", "History command rows are invalid");
   for (const auto &row : rows) {
     if (!row.is_object())
@@ -314,7 +343,9 @@ ProjectHistory::ProjectHistory(fs::path binary, std::string sourceHash,
       return;
     }
     commands_ = previousDocument_.at("commands");
-    if (!commands_.is_array() || commands_.size() > 128)
+    if (!commands_.is_array() ||
+        commands_.size() > ::neverd::limits::worker::
+                               kProjectHistoryProjectHistoryCommandsSizeLimit)
       throw Error("history_invalid", "History command count is invalid");
     cursor_ = sizeField(previousDocument_, "cursor", 0, commands_.size());
     for (const auto &command : commands_)
@@ -328,7 +359,8 @@ Json ProjectHistory::diskState() const {
   Json state = Json::object();
 #define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
   if (auto rows =                                                              \
-          read(sidecar(binary_, project_files::File::Id), MaxStateFileBytes);  \
+          read(sidecar(binary_, project_files::File::Id),                      \
+               ::neverd::limits::worker::kProjectHistoryMaxStateFileBytes);    \
       rows.is_null())                                                          \
     state[Table] = Json::array();                                              \
   else                                                                         \
@@ -347,7 +379,7 @@ void ProjectHistory::writeSidecars(const Json &state) const {
 void ProjectHistory::checkSidecarBudgets(const Json &state) {
 #define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
   if (sidecarText(rowsToFile(Table, state.at(Table))).size() >                 \
-      MaxStateFileBytes)                                                       \
+      ::neverd::limits::worker::kProjectHistoryMaxStateFileBytes)              \
     throw Error("history_budget_exceeded", "A user state file exceeds 16 "     \
                                            "MiB");
 #include "UserStateTables.def"
@@ -406,8 +438,10 @@ void ProjectHistory::stage(Json command) {
                   commands_.end());
   commands_.push_back(std::move(command));
   ++cursor_;
-  while (commands_.size() > 128 ||
-         compactText(commands_).size() > MaxHistoryBytes / 2) {
+  while (commands_.size() >
+             ::neverd::limits::worker::kProjectHistoryStageCommandsSizeLimit ||
+         compactText(commands_).size() >
+             ::neverd::limits::worker::kProjectHistoryMaxHistoryBytes / 2) {
     commands_.erase(commands_.begin());
     --cursor_;
   }
@@ -447,7 +481,9 @@ void ProjectHistory::persist(const Json &state) {
         "Input changed while the Session was open; reopen it before editing");
   if (!interruptedWrite_.is_null()) {
     if (!recoveryPending(binary_) ||
-        read(journalPath_, MaxJournalBytes) != interruptedWrite_)
+        read(journalPath_,
+             ::neverd::limits::worker::kProjectHistoryMaxJournalBytes) !=
+            interruptedWrite_)
       throw Error(
           "recovery_required",
           "The interrupted transaction changed; reopen to inspect recovery");
@@ -473,7 +509,8 @@ void ProjectHistory::persist(const Json &state) {
                                  "worker; reload and inspect before editing");
   const auto after = normalizedState(state);
   const auto nextDocument = document(after);
-  if (compactText(nextDocument).size() > MaxHistoryBytes)
+  if (compactText(nextDocument).size() >
+      ::neverd::limits::worker::kProjectHistoryMaxHistoryBytes)
     throw Error("history_budget_exceeded",
                 "Persisted user history exceeds 8 MiB");
   const Json journal{{"schema_version", 1},
@@ -482,7 +519,8 @@ void ProjectHistory::persist(const Json &state) {
                      {"after", after},
                      {"before_history", previousDocument_},
                      {"after_history", nextDocument}};
-  if (compactText(journal).size() > MaxJournalBytes)
+  if (compactText(journal).size() >
+      ::neverd::limits::worker::kProjectHistoryMaxJournalBytes)
     throw Error("history_budget_exceeded", "Recovery journal exceeds 24 MiB");
   checkSidecarBudgets(after);
   if (const auto error = project_files::prepare(binary_))
@@ -511,7 +549,8 @@ void ProjectHistory::recover() {
   if (readOnly_)
     throw Error("recovery_required", "A pending user-edit transaction requires "
                                      "a writable worker to recover");
-  const auto journal = read(journalPath_, MaxJournalBytes);
+  const auto journal = read(
+      journalPath_, ::neverd::limits::worker::kProjectHistoryMaxJournalBytes);
   if (!journal.is_object() || journal.value("schema_version", 0) != 1 ||
       journal.value("source_sha256", "") != hash_)
     throw Error("input_changed", "Recovery journal does not match this input; "
@@ -537,8 +576,11 @@ void ProjectHistory::recover() {
       throw Error("history_invalid",
                   "Recovery history does not describe its target state");
     const auto &commands = history.at("commands");
-    if (!commands.is_array() || commands.size() > 128 ||
-        compactText(history).size() > MaxHistoryBytes)
+    if (!commands.is_array() ||
+        commands.size() >
+            ::neverd::limits::worker::kProjectHistoryRecoverCommandsSizeLimit ||
+        compactText(history).size() >
+            ::neverd::limits::worker::kProjectHistoryMaxHistoryBytes)
       throw Error("history_invalid",
                   "Recovery history exceeds its command or byte budget");
     (void)sizeField(history, "cursor", 0, commands.size());

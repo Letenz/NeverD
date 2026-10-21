@@ -1,5 +1,7 @@
 #include "HexView.h"
 
+#include "../Config.h"
+#include "../ResourceLimits.h"
 #include "AddressSpace.h"
 #include "Session.h"
 #include "Theme.h"
@@ -20,12 +22,11 @@
 namespace neverd::gui {
 namespace {
 constexpr int BytesPerRow = 16;
-constexpr int ChunkBytes = 4096;
-constexpr int MaxChunks = 256;
 /// The most bytes one copy takes: half the chunk cache, so that its bytes
 /// stay loaded until the copy completes.
-constexpr Address MaxCopyBytes = Address(MaxChunks / 2) * ChunkBytes;
-constexpr int Margin = 6;
+constexpr Address MaxCopyBytes =
+    Address(::neverd::limits::gui::kHexViewMaxChunks / 2) *
+    ::neverd::limits::gui::kHexViewChunkBytes;
 // Columns: address, two spaces, 16 hex bytes ("xx " each, extra space after
 // eight), two spaces, 16 characters.
 constexpr int HexGroup = 8;
@@ -34,7 +35,7 @@ constexpr char TextEncodingKey[] = "hex/textEncoding";
 constexpr char HiddenByte = '.';
 
 Address chunkBase(Address address) {
-  return address & ~Address(ChunkBytes - 1);
+  return address & ~Address(::neverd::limits::gui::kHexViewChunkBytes - 1);
 }
 } // namespace
 
@@ -211,7 +212,7 @@ void HexView::request(Address key) const {
     return;
   // Reading stops at the first unmapped byte, so a chunk ends with its
   // region: bytes past a gap belong to the next region's chunk.
-  Address end = chunkBase(key) + ChunkBytes;
+  Address end = chunkBase(key) + ::neverd::limits::gui::kHexViewChunkBytes;
   if (const auto *region = space_.regionOf(key))
     end = std::min(end, region->end);
   const Address base = key;
@@ -238,7 +239,8 @@ void HexView::request(Address key) const {
                                            : cell.toString());
         self->chunks_.insert(base, chunk);
         self->order_.push_front(base);
-        while (int(self->order_.size()) > MaxChunks) {
+        while (int(self->order_.size()) >
+               ::neverd::limits::gui::kHexViewMaxChunks) {
           self->chunks_.remove(self->order_.back());
           self->order_.pop_back();
         }
@@ -311,7 +313,8 @@ void HexView::paintEvent(QPaintEvent *) {
     return;
   painter.setFont(theme.codeFont());
   const int digits = session_.bitness() == 64 ? 16 : 8;
-  const qreal hexLeft = Margin + (digits + 2) * charWidth_;
+  const qreal hexLeft =
+      ::neverd::limits::gui_config::kHexViewMargin + (digits + 2) * charWidth_;
   const qreal asciiLeft = hexLeft + (BytesPerRow * 3 + 2) * charWidth_;
   const qint64 first = verticalScrollBar()->value();
   const auto Selected = selection();
@@ -321,8 +324,9 @@ void HexView::paintEvent(QPaintEvent *) {
       break;
     const int y = i * lineHeight_;
     painter.setPen(theme.color(ColorRole::HexAddress));
-    painter.drawText(QPointF(Margin, y + ascent_),
-                     displayAddress(*rowAddress, digits));
+    painter.drawText(
+        QPointF(::neverd::limits::gui_config::kHexViewMargin, y + ascent_),
+        displayAddress(*rowAddress, digits));
     const auto isCurrent = [&](Address address) {
       return current_ && address >= *current_ &&
              address < *current_ + Address(currentSize_);
@@ -433,7 +437,8 @@ void HexView::keyPressEvent(QKeyEvent *event) {
 
 std::optional<Address> HexView::addressAt(const QPointF &position) const {
   const int digits = session_.bitness() == 64 ? 16 : 8;
-  const qreal hexLeft = Margin + (digits + 2) * charWidth_;
+  const qreal hexLeft =
+      ::neverd::limits::gui_config::kHexViewMargin + (digits + 2) * charWidth_;
   const qreal asciiLeft = hexLeft + (BytesPerRow * 3 + 2) * charWidth_;
   const int rowIndex = int(position.y()) / std::max(1, lineHeight_);
   const auto rowAddress = addressOfRow(verticalScrollBar()->value() + rowIndex);
@@ -532,7 +537,8 @@ void HexView::completeCopy() {
         return;
       }
       for (Address key = chunkKey(address); key <= last;
-           key = chunkKey(chunkBase(key) + ChunkBytes))
+           key = chunkKey(chunkBase(key) +
+                          ::neverd::limits::gui::kHexViewChunkBytes))
         if (!chunks_.contains(key))
           request(key);
       return;

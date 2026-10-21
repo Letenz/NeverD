@@ -2,6 +2,7 @@
 //-------===//
 #include "neverd/ir/high/HighVariableEdits.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceVariableFlow.h"
 #include "neverd/ir/SourceVariableIdentity.h"
 #include "neverd/ir/high/HighSourceFlow.h"
@@ -21,7 +22,8 @@ bool scalar(const TypeRef &Type) {
           (Type->Kind == NdTypeKind::Struct && Type->IsEnum));
 }
 std::string typeKey(const TypeRef &Type, unsigned Depth = 0) {
-  if (!Type || Depth > 8)
+  if (!Type ||
+      Depth > ::neverd::limits::ir::kHighVariableEditsTypeKeyDepthLimit)
     return "unknown";
   std::string Key = std::to_string(unsigned(Type->Kind)) + ":" +
                     std::to_string(Type->Size) + ":" +
@@ -56,7 +58,10 @@ struct Projection {
   explicit Projection(const HighFunc &Function)
       : Function(Function), Control(buildHighSourceFlowGraph(Function)) {
     if (!Control.Diagnostics.Complete || !Control.Diagnostics.Items.empty() ||
-        Control.Nodes.size() > 20000 || Function.StructuredExceptionRegions ||
+        Control.Nodes.size() >
+            ::neverd::limits::ir::
+                kHighVariableEditsProjectionControlNodesSizeLimit ||
+        Function.StructuredExceptionRegions ||
         Function.UnstructuredExceptionRegions) {
       Flow.Refusal = "Variable associations require complete ordinary control "
                      "flow without exception entries";
@@ -111,7 +116,9 @@ struct Projection {
                       Values->end());
       }
     }
-    if (Flow.Variables.size() > 8192) {
+    if (Flow.Variables.size() >
+        ::neverd::limits::ir::
+            kHighVariableEditsProjectionFlowVariablesSizeLimit) {
       Flow.Refusal = "Too many source values for an interactive association";
       return;
     }
@@ -123,7 +130,8 @@ struct Projection {
                     "indexed address");
         for (unsigned B = 0; B < A; ++B)
           if (Variables[B].Slot) {
-            if (++ProofWork > 2000000) {
+            if (++ProofWork > ::neverd::limits::ir::
+                                  kHighVariableEditsProjectionProofWorkLimit) {
               Flow.Refusal = "The storage alias proof exceeded its budget";
               return;
             }
@@ -169,7 +177,8 @@ struct Projection {
   }
   std::optional<int64_t> displacement(const ExprPtr &E,
                                       unsigned Depth = 0) const {
-    if (!E || Depth > 32)
+    if (!E ||
+        Depth > ::neverd::limits::ir::kHighVariableEditsDisplacementDepthLimit)
       return {};
     if ((E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) &&
         highSourceFrameBase(Function, E->Var))
@@ -202,8 +211,8 @@ struct Projection {
     return *Base + Delta;
   }
   bool frame(const ExprPtr &E, unsigned Depth = 0) const {
-    if (!E || Depth > 64)
-      return Depth > 64;
+    if (!E || Depth > ::neverd::limits::ir::kHighVariableEditsFrameDepthLimit)
+      return Depth > ::neverd::limits::ir::kHighVariableEditsFrameDepthLimit;
     if (E->Kind == ExprKind::Load)
       return false;
     if ((E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) &&
@@ -265,7 +274,8 @@ struct Projection {
   void read(const ExprPtr &E, size_t N, unsigned Depth = 0) {
     if (!E)
       return;
-    if (++Visits > 1000000 || Depth > 200) {
+    if (++Visits > ::neverd::limits::ir::kHighVariableEditsReadVisitsLimit ||
+        Depth > ::neverd::limits::ir::kHighVariableEditsReadDepthLimit) {
       Flow.Refusal = "The source expression edit budget was exceeded";
       return;
     }
@@ -289,7 +299,10 @@ struct Projection {
           [&](const ExprPtr &C, unsigned Level) {
             if (!C)
               return;
-            if (++EscapeVisits > 100000 || Level > 200) {
+            if (++EscapeVisits >
+                    ::neverd::limits::ir::
+                        kHighVariableEditsReadEscapeEscapeVisitsLimit ||
+                Level > ::neverd::limits::ir::kMaxVariableEditNesting) {
               Flow.Refusal = "The address escape proof exceeded its budget";
               return;
             }
@@ -339,7 +352,11 @@ struct Projection {
       unsigned UnknownVisits = 0;
       std::function<bool(const ExprPtr &, unsigned)> Unknown =
           [&](const ExprPtr &E, unsigned Depth) {
-            if (++UnknownVisits > 100000 || Depth > 200)
+            if (++UnknownVisits >
+                    ::neverd::limits::ir::
+                        kHighVariableEditsStatementUnknownUnknownVisitsLimit ||
+                Depth > ::neverd::limits::ir::
+                            kHighVariableEditsStatementUnknownDepthLimit)
               return true;
             if (!E)
               return true;

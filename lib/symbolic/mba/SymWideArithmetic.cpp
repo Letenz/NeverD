@@ -6,6 +6,8 @@
 
 #include "neverd/symbolic/SymWideArithmetic.h"
 
+#include "Limits.h"
+
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -139,7 +141,10 @@ SymRef recoverSplitWordArithmetic(SymContext &Ctx, SymRef Expr,
   // Mixed assignments cheaply reject nonlinear coincidences at the basis
   // points. Only the caller's complete equivalence proof accepts a rewrite.
   uint64_t Seed = 0x9e3779b97f4a7c15ULL;
-  for (unsigned Sample = 0; Sample < 8; ++Sample) {
+  for (unsigned Sample = 0;
+       Sample < ::neverd::symbolic::detail::limits::
+                    kSymWideArithmeticRecoverSplitWordArithmeticSampleLimit;
+       ++Sample) {
     for (SymRef Input : Inputs) {
       Seed = Seed * 6364136223846793005ULL + 1;
       Values[Ctx.varId(Input)] = llvm::APInt(Width, Sample ? Seed : ~0ULL);

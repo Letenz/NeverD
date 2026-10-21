@@ -11,14 +11,13 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/SourceBindings.h"
 
 namespace neverd::web {
 
 inline constexpr std::string_view JavaScriptClientFeatureProfile =
     "javascript-client-syntax-features-v1";
-inline constexpr uint64_t MaxJavaScriptClientFeatureSteps = 2000000;
-inline constexpr uint64_t MaxJavaScriptClientFeatureRecords = 1024;
 
 enum class SourceFeatureDomain { Tool, Configuration, Permission, MCP, Hook };
 enum class SourceFeaturePattern {

@@ -192,7 +192,9 @@ void Composer::append(PackageFinding F) {
         &F.SourceID, &F.NodeID, &F.DeclarationArtifactID, &F.DeclarationHash})
     if (!ID->empty())
       requireIdentity(*ID);
-  if (F.RelatedIDs.size() > 32 || (F.HasSourceSpan && F.Start > F.End))
+  if (F.RelatedIDs.size() >
+          ::neverd::limits::web::kComposerAppendFRelatedIDsSizeLimit ||
+      (F.HasSourceSpan && F.Start > F.End))
     throw Error("package_assessment_record_mismatch");
   for (const auto &ID : F.RelatedIDs)
     requireIdentity(ID);

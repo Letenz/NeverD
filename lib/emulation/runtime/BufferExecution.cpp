@@ -12,6 +12,7 @@
 
 #include "neverd/emulation/ExecutionReport.h"
 #include "neverd/emulation/ExecutionRunFactory.h"
+#include "neverd/emulation/Limits.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -59,7 +60,8 @@ llvm::Expected<BufferInput> decode(llvm::StringRef JSON) {
     *Field = *N;
   }
   const auto *A = O->getArray("regions");
-  if (!A || A->empty() || A->size() > 256)
+  if (!A || A->empty() ||
+      A->size() > ::neverd::limits::emulation::kBufferExecutionDecodeASizeLimit)
     return invalid("buffer regions must contain 1..256 explicit RAM regions");
   uint64_t Total = 0;
   for (const auto &Row : *A) {

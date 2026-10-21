@@ -12,6 +12,7 @@
 
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/safety/EntryInputPolicy.h"
+#include "neverd/safety/Limits.h"
 #include "neverd/safety/SinkScanner.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -206,7 +207,8 @@ private:
   std::vector<IndexedSourceOutput> IndexedSourceOutputs;
   std::vector<IndexedSourceOutput> IndexedPointeeOutputs;
 
-  static constexpr unsigned MaxProofSteps = 4096;
+  static constexpr unsigned MaxProofSteps =
+      ::neverd::limits::safety::kArgSlicerMaxProofSteps;
 
   bool requiresPathValidationImpl(const MedVar &V, unsigned Depth,
                                   llvm::DenseSet<ValueKey> &Active,
@@ -216,7 +218,9 @@ private:
     const ValueKey Key = keyOf(V);
     if (Defs.AmbiguousDef.contains(Key))
       return true;
-    if (Depth > 64 || Remaining == 0 || !Active.insert(Key).second)
+    if (Depth > ::neverd::limits::safety::
+                    kArgSlicerRequiresPathValidationImplDepthLimit ||
+        Remaining == 0 || !Active.insert(Key).second)
       return true;
     struct PopActive {
       llvm::DenseSet<ValueKey> &Set;
@@ -333,7 +337,8 @@ private:
   // Signed offset of a pointer from the incoming stack pointer, or nullopt.
   std::optional<int64_t> stackOffset(const MedVar &V, int Depth,
                                      llvm::DenseSet<ValueKey> &Seen) const {
-    if (!In.StackRegsKnown || V.isConst() || Depth > 48)
+    if (!In.StackRegsKnown || V.isConst() ||
+        Depth > ::neverd::limits::safety::kArgSlicerStackOffsetDepthLimit)
       return std::nullopt;
     const ValueKey Key = keyOf(V);
     if (Defs.AmbiguousDef.contains(Key) || Defs.CallDefined.contains(Key))
@@ -434,7 +439,9 @@ private:
       Cache[Key] = true;
       return true;
     }
-    if (Depth > 64 || Remaining == 0 || !Active.insert(Key).second) {
+    if (Depth > ::neverd::limits::safety::
+                    kArgSlicerMayBeStackAddressImplDepthLimit ||
+        Remaining == 0 || !Active.insert(Key).second) {
       Incomplete = true;
       return true;
     }
@@ -621,7 +628,9 @@ private:
   std::optional<uint64_t>
   forwardPointeeOffset(const MedVar &Base, const MedVar &Current, int Depth,
                        llvm::DenseSet<ValueKey> &Seen) const {
-    if (Base.Size == 0 || Current.Size != Base.Size || Depth > 48)
+    if (Base.Size == 0 || Current.Size != Base.Size ||
+        Depth >
+            ::neverd::limits::safety::kArgSlicerForwardPointeeOffsetDepthLimit)
       return std::nullopt;
     if (isExactValue(Base, Current))
       return uint64_t(0);
@@ -835,8 +844,8 @@ private:
       return std::nullopt;
     if (auto It = UpperBoundCache.find(Key); It != UpperBoundCache.end())
       return It->second;
-    if (Depth > 64 || UpperBoundProofBudget == 0 ||
-        !UpperBoundActive.insert(Key).second) {
+    if (Depth > ::neverd::limits::safety::kArgSlicerUpperBoundDepthLimit ||
+        UpperBoundProofBudget == 0 || !UpperBoundActive.insert(Key).second) {
       UpperBoundProofIncomplete = true;
       return std::nullopt;
     }
@@ -1029,7 +1038,8 @@ private:
       return ArgFlow::Unknown;
     if (auto It = ClassificationCache.find(K); It != ClassificationCache.end())
       return It->second;
-    if (Depth > 64 || ClassificationProofBudget == 0 ||
+    if (Depth > ::neverd::limits::safety::kArgSlicerClassifyDepthLimit ||
+        ClassificationProofBudget == 0 ||
         !ClassificationActive.insert(K).second) {
       ClassificationProofIncomplete = true;
       return ArgFlow::Unknown;

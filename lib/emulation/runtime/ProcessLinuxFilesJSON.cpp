@@ -8,6 +8,7 @@
 #include "../os/linux/kernel/LinuxFiles.h"
 #include "ProcessJSONInteger.h"
 
+#include "neverd/emulation/Limits.h"
 #include "neverd/emulation/ProcessReportFields.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -28,9 +29,14 @@ ioctlTrace(const llvm::json::Value &Value) {
   const auto *Rows = O ? O->getArray(field::IoctlTraceRequests) : nullptr;
   auto Events = O ? O->getInteger(field::IoctlTraceEventLimit) : std::nullopt;
   auto Bytes = O ? O->getInteger(field::IoctlTraceByteLimit) : std::nullopt;
-  if (!O || O->size() != 3 || !Rows || Rows->size() > 64 || !Events ||
-      *Events <= 0 || *Events > 4096 || !Bytes || *Bytes <= 0 ||
-      *Bytes > 1048576)
+  if (!O || O->size() != 3 || !Rows ||
+      Rows->size() > ::neverd::limits::emulation::
+                         kProcessLinuxFilesJSONIoctlTraceRowsSizeLimit ||
+      !Events || *Events <= 0 ||
+      *Events > ::neverd::limits::emulation::kMaxIoctlTraceEvents || !Bytes ||
+      *Bytes <= 0 ||
+      *Bytes > ::neverd::limits::emulation::
+                   kProcessLinuxFilesJSONIoctlTraceBytesLimit)
     return invalid(field::IoctlTrace);
   LinuxIoctlTraceOptions Out;
   Out.EventLimit = *Events;

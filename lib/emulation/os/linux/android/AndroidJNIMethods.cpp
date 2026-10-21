@@ -10,6 +10,7 @@
 #include "AndroidArguments.h"
 
 #include "neverd/dalvik/Library.h"
+#include "neverd/emulation/Limits.h"
 
 #include "llvm/Support/Endian.h"
 
@@ -181,7 +182,8 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
       std::find(Types.begin(), Types.end(), 'D') != Types.end())
     return unsupportedImport(Call);
   std::vector<uint64_t> Values;
-  uint64_t Remaining = 4096;
+  uint64_t Remaining =
+      ::neverd::limits::emulation::kAndroidJNIMethodsBionicJniMethodsRemaining;
   ArgumentReader Arguments(*this, Call, First, Remaining);
   if (Form == 1 && !Types.empty())
     if (auto E = Arguments.initializeVAList(A[First]))

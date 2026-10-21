@@ -1,6 +1,7 @@
 //===- MobileCommon.cpp - Native mobile filesystem and budgets ------------===//
 #include "MobileCommon.h"
 
+#include "../ResourceLimits.h"
 #include "MobileFile.h"
 
 #include "llvm/ADT/StringRef.h"
@@ -181,8 +182,9 @@ void OutputFile::write(std::string_view bytes) {
   size_t cursor = 0;
   while (cursor < bytes.size()) {
     DWORD written = 0;
-    DWORD count =
-        static_cast<DWORD>(std::min<size_t>(65536, bytes.size() - cursor));
+    DWORD count = static_cast<DWORD>(std::min<size_t>(
+        ::neverd::limits::cli::kMobileCommonOutputFileWriteCountMinArgument1,
+        bytes.size() - cursor));
     if (!WriteFile(reinterpret_cast<HANDLE>(handle), bytes.data() + cursor,
                    count, &written, nullptr) ||
         !written) {
@@ -193,8 +195,11 @@ void OutputFile::write(std::string_view bytes) {
 #else
   size_t cursor = 0;
   while (cursor < bytes.size()) {
-    auto written = ::write(static_cast<int>(handle), bytes.data() + cursor,
-                           std::min<size_t>(65536, bytes.size() - cursor));
+    auto written = ::write(
+        static_cast<int>(handle), bytes.data() + cursor,
+        std::min<size_t>(::neverd::limits::cli::
+                             kMobileCommonOutputFileWriteWrittenMinArgument1,
+                         bytes.size() - cursor));
     if (written < 0 && errno == EINTR)
       continue;
     if (written <= 0) {

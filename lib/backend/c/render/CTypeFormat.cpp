@@ -14,6 +14,7 @@
 #include "../CIdentifier.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/libc/LibCNames.h"
@@ -182,7 +183,6 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
   // small integer in an image loaded at zero lands there.
   if (!Img->hasObjectDataProvenance(Addr))
     return std::nullopt;
-  constexpr unsigned kMaxLit = 64;
   const auto Escape = appendLiteralCharacter;
   const uint64_t Off = Addr - Seg->VA;
   if (Off >= Seg->Data.size())
@@ -222,7 +222,9 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
   if (!Narrow && Remain >= 2 && Base[1] == 0) {
     std::string Body;
     unsigned N = 0;
-    for (size_t I = 0; I + 1 < Remain && N < kMaxLit; I += 2, ++N) {
+    for (size_t I = 0;
+         I + 1 < Remain && N < ::neverd::limits::backend::kCTypeFormatMaxLit;
+         I += 2, ++N) {
       const uint16_t Unit = readLE<uint16_t>(Base + I);
       if (Unit == 0) {
         if (!HasStableBytes(I + 2))
@@ -238,7 +240,9 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
   }
   std::string Body;
   unsigned N = 0;
-  for (size_t I = 0; I < Remain && N < kMaxLit; ++I, ++N) {
+  for (size_t I = 0;
+       I < Remain && N < ::neverd::limits::backend::kCTypeFormatMaxLit;
+       ++I, ++N) {
     const uint8_t Ch = Base[I];
     if (Ch == 0) {
       if (!HasStableBytes(I + 1))
@@ -326,13 +330,11 @@ std::string quotedStringText(strings::Encoding Kind, llvm::StringRef Text) {
         !Name.empty())
       Comment += Name.str() + " ";
   Comment += '"';
-  // Characters shown before the text is cut; UTF-8 continuation bytes
-  // belong to the character before them.
-  constexpr unsigned MaxCharacters = 64;
   unsigned Characters = 0;
   for (size_t I = 0; I < Text.size(); ++I) {
     const unsigned char Ch = Text[I];
-    if ((Ch & 0xC0) != 0x80 && Characters++ == MaxCharacters) {
+    if ((Ch & 0xC0) != 0x80 &&
+        Characters++ == ::neverd::limits::backend::kCTypeFormatMaxCharacters) {
       Comment += "\xE2\x80\xA6"; // U+2026, the ellipsis, in UTF-8
       break;
     }
@@ -408,9 +410,6 @@ readableDataBytes(const BinaryImage *Img, va_t Addr, size_t Window) {
       std::min<size_t>(Window, Seg->Data.size() - static_cast<size_t>(Off)));
 }
 
-/// A string that does not end within this many bytes is not read.
-constexpr size_t StringWindow = 4096;
-
 /// Writes the characters of a C string literal in UTF-8 source text.
 class CLiteralWriter {
 public:
@@ -477,7 +476,8 @@ private:
 
 std::optional<std::string> imageStringComment(const BinaryImage *Img,
                                               va_t Addr) {
-  const auto Bytes = readableDataBytes(Img, Addr, StringWindow);
+  const auto Bytes = readableDataBytes(
+      Img, Addr, ::neverd::limits::backend::kCTypeFormatStringWindow);
   if (!Bytes)
     return std::nullopt;
   const auto First = stringAtStart(*Bytes, strings::ScanOptions());
@@ -489,7 +489,8 @@ std::optional<std::string> imageStringComment(const BinaryImage *Img,
 std::optional<ImageCString> imageCString(const BinaryImage *Img, va_t Addr) {
   if (Img && (Img->findImportAt(Addr) || !terminatesStrings(*Img)))
     return std::nullopt;
-  const auto Bytes = readableDataBytes(Img, Addr, StringWindow);
+  const auto Bytes = readableDataBytes(
+      Img, Addr, ::neverd::limits::backend::kCTypeFormatStringWindow);
   if (!Bytes)
     return std::nullopt;
   // The literal stands for the bytes, so a short string reads too.
@@ -631,7 +632,8 @@ std::string declarationToC(const TypeRef &Ty, llvm::StringRef Declarator) {
   }
   if (!containsFunction(Ty))
     return typeToC(Ty) + (Declarator.empty() ? "" : " " + Declarator.str());
-  unsigned Remaining = 4096;
+  unsigned Remaining =
+      ::neverd::limits::backend::kCTypeFormatDeclarationToCRemaining;
   if (!spellsAsDeclarator(Ty, 0, Remaining))
     throw std::invalid_argument("C callback type has no supported signature");
   if (Ty->Kind == NdTypeKind::Ptr) {

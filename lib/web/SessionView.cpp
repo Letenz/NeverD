@@ -11,6 +11,8 @@
 
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 #include <limits>
 
@@ -136,7 +138,8 @@ std::string Session::sourceViewRecords(std::string_view Revision,
     V = &*State->PendingSourceView;
   if (!V)
     throw Error("unknown_source_view");
-  if (!Limit || Limit > 512 || Offset > V->Segments.size())
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > V->Segments.size())
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(V->Segments.size(), Offset + Limit);
   const auto &Bindings = State->Bindings.at(V->SourceID);

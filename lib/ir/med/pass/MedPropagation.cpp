@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedConstantPropagation.h"
@@ -77,7 +78,8 @@ void LowToMedConverter::propagate(MedFunc &Func) {
   // Copy propagation: if def is COPY from another var, replace uses
   bool Changed = true;
   int Iters = 0;
-  while (Changed && Iters++ < 10) {
+  while (Changed &&
+         Iters++ < ::neverd::limits::ir::kMaxMedCopyPropagationRounds) {
     Changed = false;
     for (auto &Blk : Func.Blocks) {
       for (auto &Op : Blk.Ops) {
@@ -119,7 +121,8 @@ void LowToMedConverter::propagate(MedFunc &Func) {
   // Constant folding: fold binary ops of two constants
   Changed = true;
   Iters = 0;
-  while (Changed && Iters++ < 5) {
+  while (Changed &&
+         Iters++ < ::neverd::limits::ir::kMaxMedFoldPropagationRounds) {
     Changed = false;
     Defs.clear();
     for (auto &Blk : Func.Blocks) {

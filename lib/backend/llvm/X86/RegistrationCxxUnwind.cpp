@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/X86RegistrationCxxUnwind.h"
 #include "neverd/loader/ExceptionInfo.h"
 
@@ -13,8 +14,14 @@
 namespace neverd {
 std::optional<std::vector<X86RegistrationCxxUnwindTarget>>
 projectX86RegistrationCxxUnwind(const CxxExceptionInfo &Cxx) {
-  if (Cxx.UnwindMap.size() > 128 || Cxx.TryBlocks.empty() ||
-      Cxx.TryBlocks.size() > 64 || !Cxx.hasValidStateGraph())
+  if (Cxx.UnwindMap.size() >
+          ::neverd::limits::backend::
+              kRegistrationCxxUnwindProjectX86RegistrationCxxUnwindMapSizeLimit ||
+      Cxx.TryBlocks.empty() ||
+      Cxx.TryBlocks.size() >
+          ::neverd::limits::backend::
+              kRegistrationCxxUnwindProjectX86RegistrationCxxUnwindCxxTryBlocksSizeLimit ||
+      !Cxx.hasValidStateGraph())
     return std::nullopt;
   using Target = X86RegistrationCxxUnwindTarget;
   std::map<int32_t, uint32_t> Tries;

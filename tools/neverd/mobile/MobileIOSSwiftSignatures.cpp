@@ -1,3 +1,4 @@
+#include "../ResourceLimits.h"
 #include "MobileIOSInternal.h"
 
 #include "llvm/Demangle/SwiftDemangle.h"
@@ -89,7 +90,7 @@ Context context(const Node &n) {
   throw Error("unsupported Swift declaration context");
 }
 Object type(const Node &n, unsigned pointer_size, unsigned depth = 0) {
-  if (depth > 8)
+  if (depth > ::neverd::limits::cli::kMobileIOSSwiftSignaturesTypeDepthLimit)
     throw Error("Swift pointer type is too deep");
   if (n.Kind == "Type")
     return type(one(n), pointer_size, depth);
@@ -214,8 +215,11 @@ Object swiftSignature(std::string_view entry, std::string_view mangled,
              {"status", "unsupported"},
              {"classification", "unknown"}};
   try {
-    if (ptr != 8 || mangled.size() > 8000 || !swiftName(mangled) ||
-        !hexAddress(entry))
+    if (ptr != 8 ||
+        mangled.size() >
+            ::neverd::limits::cli::
+                kMobileIOSSwiftSignaturesSwiftSignatureMangledSizeLimit ||
+        !swiftName(mangled) || !hexAddress(entry))
       throw Error("invalid Swift symbol identity or unsupported pointer size");
     auto demangled = llvm::swiftDemangle(mangled);
     if (!demangled.Root)

@@ -8,6 +8,8 @@
 
 #include "BytecodeStateSourceContract.h"
 
+#include "neverd/pipeline/Limits.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Errc.h"
 
@@ -36,7 +38,8 @@ llvm::Expected<StateSourceSlot> slot(const llvm::json::Value &V) {
   if (!O || !keys(*O, {"offset", "bytes"}))
     return invalid("invalid state slot");
   auto Offset = O->getInteger("offset"), Bytes = O->getInteger("bytes");
-  if (!Offset || !Bytes || *Offset < 0 || *Offset > 65536 ||
+  if (!Offset || !Bytes || *Offset < 0 ||
+      *Offset > ::neverd::limits::pipeline::kMaxBytecodeSourceStateOffset ||
       (*Bytes != 1 && *Bytes != 2 && *Bytes != 4 && *Bytes != 8))
     return invalid("invalid slot offset or width");
   return StateSourceSlot{unsigned(*Offset), unsigned(*Bytes)};
@@ -69,7 +72,10 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
     return invalid("explicit isolation/status assertions and matching "
                    "state_bytes are required");
   auto *Gateways = Root->getArray("gateways");
-  if (!Gateways || Gateways->size() > 256)
+  if (!Gateways ||
+      Gateways->size() >
+          ::neverd::limits::pipeline::
+              kBytecodeStateSourceContractReadBytecodeStateSourceContractGatewaysSizeLimit)
     return invalid("invalid gateways array");
   StateSourceContract Result;
   Result.StateBytes = StateBytes;
@@ -95,7 +101,11 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
       if (!Base)
         return Base.takeError();
       auto Hex = *Image->getString("bytes");
-      if (Hex.empty() || Hex.size() > 131072 || Hex.size() % 2 ||
+      if (Hex.empty() ||
+          Hex.size() >
+              ::neverd::limits::pipeline::
+                  kBytecodeStateSourceContractReadBytecodeStateSourceContractHexSizeLimit ||
+          Hex.size() % 2 ||
           !llvm::all_of(Hex, [](char C) { return llvm::isHexDigit(C); }))
         return invalid("invalid image hex bytes");
       StateSourceImage I;
@@ -152,8 +162,12 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
       *Destination = *S;
     }
     if (O->getArray("arguments")->size() > 16 ||
-        O->getArray("writes")->size() > 128 ||
-        O->getArray("imports")->size() > 4096)
+        O->getArray("writes")->size() >
+            ::neverd::limits::pipeline::
+                kBytecodeStateSourceContractReadBytecodeStateSourceContractOGetArrayWritesSizeLimit ||
+        O->getArray("imports")->size() >
+            ::neverd::limits::pipeline::
+                kBytecodeStateSourceContractReadBytecodeStateSourceContractOGetArrayImportsSizeLimit)
       return invalid("gateway description exceeds work limit");
     for (const auto &A : *O->getArray("arguments")) {
       auto S = slot(A);
@@ -209,7 +223,10 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
     }
     if (auto *Value = O->get("excluded_arguments")) {
       auto *Exclusions = Value->getAsArray();
-      if (!Exclusions || Exclusions->size() > 64)
+      if (!Exclusions ||
+          Exclusions->size() >
+              ::neverd::limits::pipeline::
+                  kBytecodeStateSourceContractReadBytecodeStateSourceContractExclusionsSizeLimit)
         return invalid("invalid argument exclusions");
       for (const auto &Value : *Exclusions) {
         auto *Exclusion = Value.getAsObject();
@@ -262,7 +279,8 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
         if (!Source || !keys(*Source, {"image", "offset"}) ||
             !number(*Source, "image") || !number(*Source, "offset") ||
             *number(*Source, "image") >= Result.Images.size() ||
-            *number(*Source, "offset") > 65536)
+            *number(*Source, "offset") >
+                ::neverd::limits::pipeline::kMaxBytecodeSourceStateOffset)
           return invalid("invalid imported pointer source");
         Native.PointerSource =
             StateSourcePointerSource{unsigned(*number(*Source, "image")),

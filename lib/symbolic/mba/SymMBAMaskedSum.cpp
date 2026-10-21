@@ -6,6 +6,7 @@
 /// \file
 /// Normalize and independently certify weighted bitwise views of opaque words.
 
+#include "Limits.h"
 #include "SymMBADetail.h"
 
 #include <map>
@@ -75,7 +76,8 @@ std::optional<BitwiseView> collectView(SymContext &Ctx, SymRef R,
   const size_t Words = (size_t(Width) + 63) / 64;
   BitwiseView View{R, llvm::APInt(Width, 0), llvm::APInt::getAllOnes(Width)};
   for (unsigned Depth = 0; isLiteralView(Ctx, View.Carrier); ++Depth) {
-    if (Depth == 64 || !Resources.charge(1 + Words, 64 + 2 * Words * 8))
+    if (Depth == ::neverd::symbolic::detail::limits::kMaxMaskedSumViewDepth ||
+        !Resources.charge(1 + Words, 64 + 2 * Words * 8))
       return std::nullopt;
     const auto Op = Ctx.op(View.Carrier);
     if (Op == SymOp::Not) {
@@ -113,8 +115,8 @@ checkBitwiseView(const SymContext &Ctx, SymRef R, SymRef Carrier,
                  MaskResources &Resources, unsigned Depth = 0) {
   const unsigned Width = Ctx.width(Carrier);
   const size_t Words = (size_t(Width) + 63) / 64;
-  if (Depth == 64 || Ctx.width(R) != Width ||
-      !Resources.charge(1 + Words, 64 + 2 * Words * 8))
+  if (Depth == ::neverd::symbolic::detail::limits::kMaxMaskedSumViewDepth ||
+      Ctx.width(R) != Width || !Resources.charge(1 + Words, 64 + 2 * Words * 8))
     return std::nullopt;
   if (R == Carrier)
     return std::pair(llvm::APInt(Width, 0), llvm::APInt::getAllOnes(Width));
@@ -307,7 +309,10 @@ bool proveMaskedSumIdentity(const SymContext &Ctx, SymRef Before, SymRef After,
 
 SymRef solveWeightedMasks(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                           WorkBudget &Budget, SolveReport &Rep) {
-  if (Ctx.op(E) != SymOp::Add || Opts.MaxTableBytes < 4096)
+  if (Ctx.op(E) != SymOp::Add ||
+      Opts.MaxTableBytes <
+          ::neverd::symbolic::detail::limits::
+              kSymMBAMaskedSumSolveWeightedMasksOptsMaxTableBytesLimit)
     return E;
   const auto Summands = Ctx.operands(E);
   if (!Budget.canConsume(Summands.size()))
@@ -330,7 +335,10 @@ SymRef solveWeightedMasks(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     }
     if (!isLiteralView(Ctx, Term))
       continue;
-    for (unsigned Depth = 0; isLiteralView(Ctx, Term) && Depth != 64; ++Depth) {
+    for (unsigned Depth = 0;
+         isLiteralView(Ctx, Term) &&
+         Depth != ::neverd::symbolic::detail::limits::kMaxMaskedSumViewDepth;
+         ++Depth) {
       if (!Budget.consume())
         return E;
       Term = Ctx.operand(Term, Ctx.op(Term) == SymOp::Not ? 0 : 1);

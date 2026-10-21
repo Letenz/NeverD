@@ -15,7 +15,9 @@ find_package(Threads REQUIRED)
 # would resolve <stdio.h> to a Stdio.h.
 add_library(neverd_mcp_protocol STATIC Backend.cpp Reading.cpp Server.cpp StdioTransport.cpp Tools.cpp)
 target_compile_features(neverd_mcp_protocol PUBLIC cxx_std_20)
-target_include_directories(neverd_mcp_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(neverd_mcp_protocol PUBLIC
+  "${CMAKE_CURRENT_SOURCE_DIR}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
 target_link_libraries(neverd_mcp_protocol PUBLIC neverd_tool_json Threads::Threads)
 add_executable(neverd-mcp Main.cpp EngineBackend.cpp)
 target_link_libraries(neverd-mcp PRIVATE neverd_mcp_protocol neverd_worker_engine)

@@ -4,6 +4,7 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/Support/ConvertUTF.h"
@@ -74,7 +75,8 @@ std::optional<SwiftLiteralString> swiftLiteralString(const BinaryImage &Image,
   const uint64_t Flags = CountAndFlags & ~CountMask;
   const uint64_t Count = CountAndFlags & CountMask;
   if ((Flags != LiteralFlags && Flags != ASCIILiteralFlags) || !Count ||
-      Count >= 1024 * 1024 ||
+      Count >= ::neverd::limits::loader::
+                   kSwiftStringCallsSwiftLiteralStringCountLimit ||
       (Storage & UINT64_C(0xf000000000000000)) !=
           SwiftLiteralString::ImmortalTag)
     return std::nullopt;
@@ -121,7 +123,9 @@ swiftStaticStringLiteral(const BinaryImage &Image, uint64_t Data,
   // StaticString.swift stores either an immutable UTF-8 pointer (low bit 0)
   // or a Unicode scalar (low bit 1); bit 1 records known ASCII contents.
   // https://github.com/swiftlang/swift/blob/swift-6.1.2-RELEASE/stdlib/public/core/StaticString.swift
-  if ((Flags != 0 && Flags != 2) || ByteCount > 1024 * 1024)
+  if ((Flags != 0 && Flags != 2) ||
+      ByteCount > ::neverd::limits::loader::
+                      kSwiftStringCallsSwiftStaticStringLiteralByteCountLimit)
     return std::nullopt;
   const auto Bytes = readImmutableImageBytes(Image, Data, ByteCount);
   if (!Bytes ||

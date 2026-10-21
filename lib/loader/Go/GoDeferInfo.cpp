@@ -6,6 +6,8 @@
 
 #include "GoRuntimeDetail.h"
 
+#include "neverd/loader/Limits.h"
+
 #include <algorithm>
 #include <iterator>
 #include <optional>
@@ -20,11 +22,6 @@ constexpr GoOpenCodedDeferLayout kOpenCodedDeferLayouts[] = {
     GoOpenCodedDeferLayout::Enumerated,
     GoOpenCodedDeferLayout::LegacyEnumerated,
 };
-
-/// Bound on the argument list a Go 1.14-era deferred call could carry.  The
-/// count is only read to be skipped, so this exists to stop a misread record
-/// from turning into a long walk.
-constexpr uint32_t MaxLegacyDeferArguments = 64;
 
 } // namespace
 
@@ -124,7 +121,9 @@ readOpenCodedDeferInfo(const ImageReader &R, va_t RecordVA,
     if (!IsLegacy)
       continue;
     std::optional<uint32_t> ArgCount = R.uvarint(Cursor);
-    if (!ArgCount || *ArgCount > MaxLegacyDeferArguments)
+    if (!ArgCount ||
+        *ArgCount >
+            ::neverd::limits::loader::kGoDeferInfoMaxLegacyDeferArguments)
       return std::nullopt;
     // Each argument is where it is stored, how wide it is, and where the call
     // wants it.  None of that describes the frame being unwound, so it is

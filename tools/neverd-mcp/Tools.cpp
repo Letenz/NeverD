@@ -12,6 +12,7 @@
 #include "Tools.h"
 
 #include "Reading.h"
+#include "ResourceLimits.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -56,25 +57,38 @@ Tool tool(const char *Name, const char *Operation, const char *Description,
 // An exact hexadecimal address, or a name a function, import or label goes
 // by: the "address" format, which validate() checks.
 Json address() {
-  return {{"type", "string"}, {"maxLength", 512}, {"format", "address"}};
+  return {{"type", "string"},
+          {"maxLength", ::neverd::limits::mcp::kToolsAddressMaxLength},
+          {"format", "address"}};
 }
 
 /// A bounded page, with what else the tool takes.
 Json page(Json Properties = Json::object()) {
-  Json Page{{"offset", integer(0, 2147483647)}, {"limit", integer(1, 512)}};
+  Json Page{
+      {"offset", integer(0, 2147483647)},
+      {"limit",
+       integer(1, ::neverd::limits::mcp::kToolsPagePageLimitIntegerMaximum)}};
   Page.update(Properties);
   return Page;
 }
 
-const Json Filter{{"type", "string"}, {"maxLength", 256}};
+const Json Filter{{"type", "string"},
+                  {"maxLength", ::neverd::limits::mcp::kToolsFilterMaxLength}};
 // A function or import by name, or by exact hexadecimal address.
-const Json Node{{"type", "string"}, {"minLength", 1}, {"maxLength", 512}};
+const Json Node{{"type", "string"},
+                {"minLength", 1},
+                {"maxLength", ::neverd::limits::mcp::kToolsNodeMaxLength}};
 const Json Flag{{"type", "boolean"}};
 
-Json nodes() { return {{"type", "array"}, {"items", Node}, {"maxItems", 32}}; }
+Json nodes() {
+  return {{"type", "array"},
+          {"items", Node},
+          {"maxItems", ::neverd::limits::mcp::kToolsNodesMaxItems}};
+}
 
 std::vector<Tool> catalog() {
-  const auto Depth = integer(1, 64);
+  const auto Depth =
+      integer(1, ::neverd::limits::mcp::kToolsCatalogDepthIntegerMaximum);
   return {
       tool("project_metadata", "metadata",
            "Read metadata for the explicitly opened NeverD input."),
@@ -83,26 +97,37 @@ std::vector<Tool> catalog() {
            page({{"filter", Filter}})),
       tool("read_disassembly", "disasm",
            "Read an instruction window at an address (0x... or a name).",
-           {{"address", address()}, {"limit", integer(1, 512)}}, {"address"}),
-      tool("read_decompilation", "decompile",
-           "Read one function's pseudocode (\"source\": its own language; or "
-           "C, Rust, Go) or IR. Starts at the definition; prelude=true adds "
-           "the includes and declarations that make it compile. C is "
-           "abbreviated as the header's legend says; exact=true gives the "
-           "engine's spelling.",
-           page({{"limit", integer(1, 2048)},
-                 {"address", address()},
-                 {"prelude", Flag},
-                 {"exact", Flag},
-                 {"representation",
-                  {{"type", "string"},
-                   {"enum",
-                    {"source", "c", "rust", "go", "llvmc", "low", "med", "high",
-                     "llvm"}}}}}),
+           {{"address", address()},
+            {"limit",
+             integer(1, ::neverd::limits::mcp::
+                            kToolsCatalogReadDisassemblyLimitIntegerMaximum)}},
            {"address"}),
+      tool(
+          "read_decompilation", "decompile",
+          "Read one function's pseudocode (\"source\": its own language; or "
+          "C, Rust, Go) or IR. Starts at the definition; prelude=true adds "
+          "the includes and declarations that make it compile. C is "
+          "abbreviated as the header's legend says; exact=true gives the "
+          "engine's spelling.",
+          page({{"limit",
+                 integer(
+                     1, ::neverd::limits::mcp::
+                            kToolsCatalogReadDecompilationLimitIntegerMaximum)},
+                {"address", address()},
+                {"prelude", Flag},
+                {"exact", Flag},
+                {"representation",
+                 {{"type", "string"},
+                  {"enum",
+                   {"source", "c", "rust", "go", "llvmc", "low", "med", "high",
+                    "llvm"}}}}}),
+          {"address"}),
       tool("read_bytes", "bytes",
            "Read up to 4096 mapped bytes at a virtual address.",
-           {{"address", address()}, {"size", integer(1, 4096)}}, {"address"}),
+           {{"address", address()},
+            {"size", integer(1, ::neverd::limits::mcp::
+                                    kToolsCatalogReadBytesSizeIntegerMaximum)}},
+           {"address"}),
       tool(
           "list_xrefs", "xrefs",
           "Read references associated with a virtual address.",
@@ -113,7 +138,12 @@ std::vector<Tool> catalog() {
            "Read a bounded string page; filter matches text or address. Long "
            "texts are cut to text_limit bytes (default 200) with an "
            "ellipsis.",
-           page({{"filter", Filter}, {"text_limit", integer(1, 1024)}})),
+           page({{"filter", Filter},
+                 {"text_limit",
+                  integer(
+                      1,
+                      ::neverd::limits::mcp::
+                          kToolsCatalogListStringsTextLimitIntegerMaximum)}})),
       tool("read_cfg", "cfg", "Read the control-flow graph for one function.",
            {{"address", address()}}, {"address"}),
       tool("list_imports", "imports",
@@ -134,7 +164,9 @@ std::vector<Tool> catalog() {
             {"max_depth", Depth},
             {"shortest_only", Flag},
             {"data_refs", Flag},
-            {"max_paths", integer(1, 200)}},
+            {"max_paths",
+             integer(1, ::neverd::limits::mcp::
+                            kToolsCatalogFindCallPathsMaxPathsIntegerMaximum)}},
            {"from", "to"}),
       tool("list_call_tree", "call_tree",
            "What a function (name or 0x address) calls, or with callers what "
@@ -145,17 +177,21 @@ std::vector<Tool> catalog() {
             {"data_refs", Flag},
             {"exclude", nodes()}},
            {"function"}),
-      tool("search", "search",
-           "Find hex bytes (\"48 89 e5\"), text or an immediate operand "
-           "(\"0x40000000\"), in address order; from=next_address "
-           "continues.",
-           {{"kind",
-             {{"type", "string"}, {"enum", {"bytes", "text", "immediate"}}}},
-            {"pattern", {{"type", "string"}, {"minLength", 1}}},
-            {"from", {{"type", "string"}}},
-            {"limit", integer(1, 512)},
-            {"case_sensitive", Flag}},
-           {"kind", "pattern"}),
+      tool(
+          "search", "search",
+          "Find hex bytes (\"48 89 e5\"), text or an immediate operand "
+          "(\"0x40000000\"), in address order; from=next_address "
+          "continues.",
+          {{"kind",
+            {{"type", "string"}, {"enum", {"bytes", "text", "immediate"}}}},
+           {"pattern", {{"type", "string"}, {"minLength", 1}}},
+           {"from", {{"type", "string"}}},
+           {"limit",
+            integer(
+                1,
+                ::neverd::limits::mcp::kToolsCatalogSearchLimitIntegerMaximum)},
+           {"case_sensitive", Flag}},
+          {"kind", "pattern"}),
   };
 }
 

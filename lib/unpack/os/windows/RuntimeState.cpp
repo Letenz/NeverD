@@ -9,6 +9,7 @@
 #include "RuntimeSource.h"
 
 #include "neverd/emulation/WindowsProcessState.h"
+#include "neverd/unpack/Limits.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
@@ -27,8 +28,6 @@ namespace {
 using emulation::WindowsProcessState;
 constexpr uint64_t ReservationAlignment = 65536;
 constexpr uint64_t PageSize = 4096;
-constexpr uint64_t MaxBacking = 32 * 1024 * 1024;
-constexpr uint64_t MaxBindings = 16384;
 struct Region {
   uint64_t Address, Size;
 };
@@ -45,7 +44,9 @@ std::string string(llvm::StringRef V) {
   return S + '"';
 }
 bool validName(llvm::StringRef S) {
-  return !S.empty() && S.size() <= 4096 &&
+  return !S.empty() &&
+         S.size() <=
+             ::neverd::limits::unpack::kRuntimeStateValidNameSSizeLimit &&
          llvm::all_of(S.bytes(), [](uint8_t C) { return C >= 32 && C < 127; });
 }
 llvm::Expected<std::vector<Region>> regions(llvm::ArrayRef<Region> Input) {
@@ -59,7 +60,8 @@ llvm::Expected<std::vector<Region>> regions(llvm::ArrayRef<Region> Input) {
     for (uint64_t P = llvm::alignDown(R.Address, ReservationAlignment); P < End;
          P += ReservationAlignment) {
       Pages.insert(P);
-      if (Pages.size() > MaxBacking / ReservationAlignment)
+      if (Pages.size() > ::neverd::limits::unpack::kRuntimeStateMaxBacking /
+                             ReservationAlignment)
         return failure("native state reservation limit exceeded");
     }
   }
@@ -160,9 +162,22 @@ llvm::Expected<RebuiltImage> restoreRuntime(const InputImage &Input,
       S.HasUnownedThreadSlots || !S.ThreadSlots.empty())
     return failure("native state retains an unsupported handle, mapping, "
                    "exception or TLS owner");
-  if (S.Allocations.size() > 8192 || S.PrivateHeaps.size() > 4096 ||
-      S.CriticalSections.size() > 4096 || S.FiberSlots.size() > 64 ||
-      S.VirtualAllocations.size() > 8192 || C.Exports.size() > MaxBindings)
+  if (S.Allocations.size() >
+          ::neverd::limits::unpack::
+              kRuntimeStateRestoreRuntimeSAllocationsSizeLimit ||
+      S.PrivateHeaps.size() >
+          ::neverd::limits::unpack::
+              kRuntimeStateRestoreRuntimeSPrivateHeapsSizeLimit ||
+      S.CriticalSections.size() >
+          ::neverd::limits::unpack::
+              kRuntimeStateRestoreRuntimeSCriticalSectionsSizeLimit ||
+      S.FiberSlots.size() >
+          ::neverd::limits::unpack::
+              kRuntimeStateRestoreRuntimeSFiberSlotsSizeLimit ||
+      S.VirtualAllocations.size() >
+          ::neverd::limits::unpack::
+              kRuntimeStateRestoreRuntimeSVirtualAllocationsSizeLimit ||
+      C.Exports.size() > ::neverd::limits::unpack::kRuntimeStateMaxBindings)
     return failure("native state object inventory limit exceeded");
   uint64_t RuntimeRVA = 0;
   for (const auto &R : Rebuilt.Sections) {
@@ -212,7 +227,8 @@ llvm::Expected<RebuiltImage> restoreRuntime(const InputImage &Input,
   std::vector<uint8_t> Payload;
   for (const auto &B : S.Allocations) {
     if (B.Address % PageSize || B.Bytes.empty() || B.Bytes.size() % PageSize ||
-        B.Bytes.size() > MaxBacking - Payload.size() ||
+        B.Bytes.size() > ::neverd::limits::unpack::kRuntimeStateMaxBacking -
+                             Payload.size() ||
         B.RequestedSize > B.Bytes.size() || !Heaps.contains(B.Heap) ||
         B.Address < PreviousEnd || B.Bytes.size() > UINT64_MAX - B.Address)
       return failure("native heap inventory has invalid ownership or backing");
@@ -239,7 +255,8 @@ llvm::Expected<RebuiltImage> restoreRuntime(const InputImage &Input,
       if (P.Address < End || P.Address % PageSize || P.Bytes.empty() ||
           P.Bytes.size() % PageSize || P.Address > V.Address + V.Size ||
           P.Bytes.size() > V.Address + V.Size - P.Address ||
-          P.Bytes.size() > MaxBacking - Payload.size() ||
+          P.Bytes.size() > ::neverd::limits::unpack::kRuntimeStateMaxBacking -
+                               Payload.size() ||
           (P.Permissions & emulation::GuestPermissionMask) != P.Permissions ||
           !(P.Permissions & emulation::UserAccessible))
         return failure("native virtual page ownership is invalid");
@@ -317,7 +334,8 @@ llvm::Expected<RebuiltImage> restoreRuntime(const InputImage &Input,
     return VirtualRegions.takeError();
   All.insert(All.end(), VirtualRegions->begin(), VirtualRegions->end());
   // Reserve space for the compiled runtime as well as the source image.
-  All.push_back({C.Base, RuntimeRVA + MaxBacking});
+  All.push_back(
+      {C.Base, RuntimeRVA + ::neverd::limits::unpack::kRuntimeStateMaxBacking});
   llvm::sort(
       All, [](const auto &A, const auto &B) { return A.Address < B.Address; });
   PreviousEnd = 0;
@@ -357,7 +375,8 @@ llvm::Expected<RebuiltImage> restoreRuntime(const InputImage &Input,
     });
   };
   for (const auto &Lock : S.CriticalSections) {
-    if (!Owned(Lock.Address, 40) || Lock.Recursion > 1048576)
+    if (!Owned(Lock.Address, 40) ||
+        Lock.Recursion > ::neverd::limits::unpack::kMaxCriticalSectionRecursion)
       return failure(
           "native critical section has unsupported backing or recursion");
     Criticals.push_back({integer(Lock.Address), integer(Lock.Recursion)});
@@ -384,7 +403,7 @@ llvm::Expected<RebuiltImage> restoreRuntime(const InputImage &Input,
   auto Code = compile(Header, C.Base + RuntimeRVA);
   if (!Code)
     return Code.takeError();
-  if (Code->size() > MaxBacking)
+  if (Code->size() > ::neverd::limits::unpack::kRuntimeStateMaxBacking)
     return failure("compiled native runtime exceeds the materialization limit");
   return pe::appendRuntime(std::move(Rebuilt), *Code);
 }

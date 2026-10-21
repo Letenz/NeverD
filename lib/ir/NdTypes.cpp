@@ -11,6 +11,8 @@
 
 #include "neverd/ir/NdTypes.h"
 
+#include "neverd/ir/Limits.h"
+
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -48,7 +50,7 @@ namespace {
 bool layout(const NdType &T, uint16_t &Size, uint16_t &Alignment,
             std::vector<uint16_t> &Offsets, unsigned Depth, unsigned &Budget,
             bool Constructing = false) {
-  if (!Budget || Depth > 16)
+  if (!Budget || Depth > ::neverd::limits::ir::kNdTypesLayoutDepthLimit)
     return false;
   --Budget;
   if (T.Kind != NdTypeKind::Struct) {
@@ -60,7 +62,8 @@ bool layout(const NdType &T, uint16_t &Size, uint16_t &Alignment,
     Size = Alignment = T.Size;
     return Scalar;
   }
-  if (T.Fields.empty() || T.Fields.size() > 64)
+  if (T.Fields.empty() ||
+      T.Fields.size() > ::neverd::limits::ir::kNdTypesLayoutTFieldsSizeLimit)
     return false;
   uint32_t End = 0;
   Alignment = 1;
@@ -73,7 +76,7 @@ bool layout(const NdType &T, uint16_t &Size, uint16_t &Alignment,
     End = (End + Align - 1) & -uint32_t(Align);
     Offsets.push_back(static_cast<uint16_t>(End));
     End += Bytes;
-    if (End > 4096)
+    if (End > ::neverd::limits::ir::kMaxNaturalStructBytes)
       return false;
   }
   Size = static_cast<uint16_t>((End + Alignment - 1) & -uint32_t(Alignment));
@@ -87,7 +90,7 @@ NdType::makeStruct(std::vector<std::shared_ptr<NdType>> Fields) {
   auto T = std::make_shared<NdType>();
   T->Kind = NdTypeKind::Struct;
   T->Fields = std::move(Fields);
-  unsigned Budget = 4096;
+  unsigned Budget = ::neverd::limits::ir::kNdTypesNdTypeMakeStructBudget;
   if (!layout(*T, T->Size, T->Alignment, T->FieldOffsets, 0, Budget, true))
     return nullptr;
   return T;
@@ -131,7 +134,7 @@ std::string NdType::str() const {
     return Pointee ? Pointee->str() + "*" : "void*";
   case NdTypeKind::Struct: {
     // Validate before recursive printing, including cycles and stale offsets.
-    unsigned Budget = 4096;
+    unsigned Budget = ::neverd::limits::ir::kNdTypesNdTypeStrBudget;
     uint16_t Bytes, Align;
     std::vector<uint16_t> Offsets;
     if (!layout(*this, Bytes, Align, Offsets, 0, Budget))

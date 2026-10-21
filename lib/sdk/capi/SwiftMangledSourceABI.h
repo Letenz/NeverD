@@ -369,7 +369,10 @@ swiftMangledArrayStringValueInitializerSourceABI(
       !Image.isCodeAddress(Entry) || Low.Entry != Entry ||
       Low.Blocks.size() != 1 || Low.Blocks[0].StartAddr != Entry ||
       !Low.Blocks[0].Preds.empty() || !Low.Blocks[0].Succs.empty() ||
-      Low.Blocks[0].Ops.empty() || Low.Blocks[0].Ops.size() > 4096)
+      Low.Blocks[0].Ops.empty() ||
+      Low.Blocks[0].Ops.size() >
+          ::neverd::sdk::
+              kSwiftMangledSourceABISwiftMangledArrayStringValueInitializerSourceABILowBlocks0OpsSizeLimit)
     return std::nullopt;
   const auto &TRI = getTargetRegInfo(Image.Arch);
   const auto Register = TRI.IntReturnReg;

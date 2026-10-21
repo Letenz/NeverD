@@ -19,6 +19,7 @@
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/SymbolDecoration.h"
+#include "neverd/pipeline/Limits.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -47,7 +48,8 @@ std::optional<va_t> resolveCallTargetVA(const MedFunc &MF,
                                         int Depth = 0) {
   if (V.isConst())
     return V.ConstVal;
-  if (Depth > 8)
+  if (Depth > ::neverd::limits::pipeline::
+                  kPipelineWideIntReturnResolveCallTargetVADepthLimit)
     return std::nullopt;
 
   const MedOp *Def = nullptr;

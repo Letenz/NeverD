@@ -99,7 +99,9 @@ messageCalls(const BinaryImage &Image, const LowFunc &Low, const MedFunc &Med,
           objcImmutableSelectorStubSourceCallHint(Image, *K->StaticTarget);
       if (!H || !plainMessageHint(*H))
         continue;
-      if (Expected.size() >= 32 ||
+      if (Expected.size() >=
+              ::neverd::sdk::
+                  kSourceSwiftValueConstructorProjectionMessageCallsExpectedSizeLimit ||
           !Expected.emplace(K->Instruction, Site{*K, *H}).second)
         return std::nullopt;
     }
@@ -193,7 +195,10 @@ inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
                            const std::set<const HighExpr *> &ExpectedMessages,
                            const std::set<const HighExpr *> &ActualMessages,
                            unsigned Depth = 0) {
-  if (!Expected || !Actual || !Budget || Depth >= 64)
+  if (!Expected || !Actual || !Budget ||
+      Depth >=
+          ::neverd::sdk::
+              kSourceSwiftValueConstructorProjectionSameExpressionDepthLimit)
     return false;
   --Budget;
   HighExpr E = *Expected, A = *Actual;
@@ -316,8 +321,12 @@ public:
         continue;
       auto I = Bodies.find(Entry);
       if (I == Bodies.end() || !I->second->hasCompleteLiftCoverage() ||
-          I->second->DecodedInstructionCount > 1024 ||
-          Options.OnlyFunctionEntries.size() > 32)
+          I->second->DecodedInstructionCount >
+              ::neverd::sdk::
+                  kSourceSwiftValueConstructorProjectionValidISecondDecodedInstructionCountLimit ||
+          Options.OnlyFunctionEntries.size() >
+              ::neverd::sdk::
+                  kSourceSwiftValueConstructorProjectionValidOptionsOnlyFunctionEntriesSizeLimit)
         return false;
       for (const auto &B : I->second->Blocks)
         for (const auto &O : B.Ops)
@@ -329,7 +338,8 @@ public:
     llvm::LLVMContext Context;
     PipelineResult Fresh;
     bool Complete = false;
-    for (unsigned Round = 0; Round != 16; ++Round) {
+    for (unsigned Round = 0;
+         Round != ::neverd::sdk::kMaxSwiftValueConstructorRounds; ++Round) {
       Fresh = Pipeline().run(Image, Context, Options);
       if (!Fresh.Success)
         return false;

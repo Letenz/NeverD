@@ -12,6 +12,8 @@
 
 #include "ResolverLaneView.h"
 
+#include "neverd/ir/Limits.h"
+
 #include "llvm/ADT/ArrayRef.h"
 
 #include <algorithm>
@@ -37,7 +39,8 @@ class ResolverDefinitionCache {
     uint16_t Size = 0;
     VnodeSpace Space = VnodeSpace::CONST;
   };
-  static constexpr size_t Capacity = 4096;
+  static constexpr size_t Capacity =
+      ::neverd::limits::ir::kResolverDefinitionCacheCapacity;
   using Table = std::array<Entry, Capacity>;
   static_assert(sizeof(Table) <= 128 * 1024);
   std::unique_ptr<Table> Entries;

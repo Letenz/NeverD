@@ -24,6 +24,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/solver/SymSynthVerifier.h"
@@ -50,34 +51,10 @@ namespace {
 
 namespace sym = neverd::symbolic;
 
-/// A leaf or one already-canonical operator cannot become shorter.  Four nodes
-/// is the first useful case: `~x + 1` is four and simplifies to `-x`.
-constexpr size_t kMinInterestingNodes = 4;
-
-/// How much a rewrite has to save before it is worth making.
-///
-/// The cost is the rendered tree rather than the shared graph, so one unit is a
-/// real operator removed from the decompiled expression.  Requiring a strict
-/// improvement prevents canonical-form churn without hiding compact identities
-/// such as `~x + 1`.
-constexpr size_t kMinGain = 1;
-
-/// Widest expression this pass hands the engine, in bits.
-///
-/// The engine itself has no width ceiling — its literals are arbitrary
-/// precision, and a 256-bit word is measured exactly like a 32-bit one — so
-/// the only reason to have one here is that HighIR records a size for every
-/// type, including a struct and an array.  An aggregate is not a machine word,
-/// and measuring one would allocate values of its size at every corner to
-/// learn nothing.  Past the widest word a machine or a virtual machine
-/// actually has, a size is therefore read the way an unreadable one already
-/// is: the expression is preserved rather than measured.
-constexpr uint32_t kMaxWidth = 1024;
-
 /// The width a HighIR size stands for, or zero when it is not one to measure.
 uint32_t widthFromBytes(uint16_t Bytes) {
   const auto Bits = static_cast<uint32_t>(Bytes) * 8;
-  return Bits <= kMaxWidth ? Bits : 0;
+  return Bits <= ::neverd::limits::ir::kHighSymSimplifyMaxWidth ? Bits : 0;
 }
 
 /// The value a HighIR literal certainly denotes at \p Width, or nothing when
@@ -1067,7 +1044,8 @@ bool hasOnlyScalarLiteralInputs(const ExprPtr &Root,
                                 const AvailableDefinitions &Definitions) {
   std::vector<ExprPtr> Work{Root};
   HighExprSet Seen;
-  size_t Budget = 4096;
+  size_t Budget =
+      ::neverd::limits::ir::kHighSymSimplifyHasOnlyScalarLiteralInputsBudget;
   while (!Work.empty()) {
     ExprPtr Current = Work.back();
     Work.pop_back();
@@ -1108,7 +1086,9 @@ void simplifyOne(ExprPtr &E, const AvailableDefinitions &Definitions) {
 
   const std::optional<size_t> BeforeCost = expressionCost(E);
   if (!BeforeCost ||
-      (*BeforeCost < kMinInterestingNodes && Definitions.empty()))
+      (*BeforeCost <
+           ::neverd::limits::ir::kHighSymSimplifyMinInterestingNodes &&
+       Definitions.empty()))
     return;
 
   sym::SymContext Ctx;
@@ -1123,7 +1103,7 @@ void simplifyOne(ExprPtr &E, const AvailableDefinitions &Definitions) {
   // callers explicitly simplifying an obfuscated MBA retain the solver's
   // larger default budget. Exhausted regions remain unchanged.
   sym::MBAOptions Options;
-  Options.MaxWork = size_t(1) << 16;
+  Options.MaxWork = ::neverd::limits::ir::kHighSymSimplifySimplifyOneMaxWork;
   sym::MBAResult Result = sym::simplifyMBADeep(Ctx, Before, Options);
   if (Result.Changed && Result.Evidence != sym::MBAEvidence::Derivation)
     return;
@@ -1167,7 +1147,9 @@ void simplifyOne(ExprPtr &E, const AvailableDefinitions &Definitions) {
         Candidate != Before &&
         Ctx.readabilityCost(Candidate) < Ctx.readabilityCost(Before);
     if (!AfterCost ||
-        (*BeforeCost < *AfterCost + kMinGain && !ShorterExpandedDefinition))
+        (*BeforeCost <
+             *AfterCost + ::neverd::limits::ir::kHighSymSimplifyMinGain &&
+         !ShorterExpandedDefinition))
       return false;
     E = std::move(After);
     return true;
@@ -1280,7 +1262,8 @@ std::optional<std::set<LocalIdentity>>
 definitionInputs(const ExprPtr &Value, const AvailableDefinitions &Definitions,
                  const std::set<LocalIdentity> &Escaped) {
   const auto Cost = expressionCost(Value);
-  if (!Cost || *Cost > 4096)
+  if (!Cost ||
+      *Cost > ::neverd::limits::ir::kHighSymSimplifyDefinitionInputsCostLimit)
     return std::nullopt;
   std::set<LocalIdentity> Inputs;
   std::vector<ExprPtr> Work{Value};
@@ -1301,7 +1284,8 @@ definitionInputs(const ExprPtr &Value, const AvailableDefinitions &Definitions,
       if (It != Definitions.end())
         Inputs.insert(It->second.Dependencies.begin(),
                       It->second.Dependencies.end());
-      if (Inputs.size() > 256)
+      if (Inputs.size() >
+          ::neverd::limits::ir::kHighSymSimplifyDefinitionInputsSizeLimit)
         return std::nullopt;
     }
     Work.insert(Work.end(), E->Operands.begin(), E->Operands.end());
@@ -1420,7 +1404,10 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
       Pure &= Cost.has_value();
       // Scheduling estimates never expand the rendered tree or overflow on a
       // compact DAG whose rendered size has saturated expressionCost().
-      Weight += std::min<size_t>(Cost.value_or(1), 4096);
+      Weight += std::min<size_t>(
+          Cost.value_or(1),
+          ::neverd::limits::ir::
+              kHighSymSimplifyStatementRegionsClassifyWeightMinArgument2);
     });
     return StatementProperties{
         !Straight || !Pure || Entries.count(S.Addr) ||
@@ -1469,8 +1456,10 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
         ++It;
     }
     if (Inputs && !Inputs->count(Key) && !Escaped.count(Key) &&
-        Definitions.size() < 256 && S.Val && S.Val->Type &&
-        S.Val->Type->Kind == NdTypeKind::Int &&
+        Definitions.size() <
+            ::neverd::limits::ir::
+                kHighSymSimplifyStatementRegionsSimplifyDefinitionsSizeLimit &&
+        S.Val && S.Val->Type && S.Val->Type->Kind == NdTypeKind::Int &&
         S.Val->Type->Size == S.Dst->Type->Size) {
       // A same-width assignment keeps the word's bits even when the emitted
       // local has the other signedness. Retain the conversion explicitly so
@@ -1502,8 +1491,12 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
   // the original one-scope-at-a-time path. In particular, do not build task
   // metadata for the common small function selected in the GUI.
   if (MaxThreads > 1)
-    MaxThreads = std::min({MaxThreads, workerThreadCount(), 4u});
-  if (MaxThreads <= 1 || StatementCount < 1024) {
+    MaxThreads = std::min({MaxThreads, workerThreadCount(),
+                           ::neverd::limits::ir::kMaxHighSymbolicWorkers});
+  if (MaxThreads <= 1 ||
+      StatementCount <
+          ::neverd::limits::ir::
+              kHighSymSimplifyStatementRegionsStatementCountLimit) {
     while (!Scopes.empty()) {
       auto *Scope = Scopes.back();
       Scopes.pop_back();
@@ -1539,7 +1532,10 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
         return;
       Segments.push_back({Begin, Statements.size()});
       Weights.push_back(Weight);
-      TotalWeight = std::min<uint64_t>(4096, TotalWeight + Weight);
+      TotalWeight = std::min<uint64_t>(
+          ::neverd::limits::ir::
+              kHighSymSimplifyStatementRegionsFinishTotalWeightMinArgument1,
+          TotalWeight + Weight);
       Begin = Statements.size();
       Weight = 0;
     };
@@ -1568,7 +1564,7 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
   // Every task owns distinct statement fields and its own definitions and
   // symbolic contexts. Shared input expressions/types are read-only;
   // simplifyRegions rebuilds changed nodes instead of mutating their DAG.
-  if (TotalWeight < 4096) {
+  if (TotalWeight < ::neverd::limits::ir::kMinParallelHighSymbolicWeight) {
     for (size_t I = 0; I < Segments.size(); ++I)
       Process(I);
   } else {

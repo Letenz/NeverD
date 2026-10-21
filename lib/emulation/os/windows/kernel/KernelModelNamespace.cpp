@@ -10,6 +10,8 @@
 #include "KernelModel.h"
 #include "WindowsKernelLayout.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include "llvm/Support/Endian.h"
 
 #include <algorithm>
@@ -156,7 +158,9 @@ llvm::Expected<KernelModel::ObjectLookup>
 KernelModel::lookupNamedObject(llvm::StringRef Name, uint64_t Root,
                                uint32_t Attributes, bool OpenLink,
                                bool ParseDevice, unsigned LinkDepth) {
-  if (LinkDepth >= 16)
+  if (LinkDepth >=
+      ::neverd::limits::emulation::
+          kKernelModelNamespaceKernelModelLookupNamedObjectLinkDepthLimit)
     return namespaceError("symbolic-link traversal exceeds its bounded depth");
   std::string Path = Name.str();
   const bool Fold = Attributes & ObjectCaseInsensitive;

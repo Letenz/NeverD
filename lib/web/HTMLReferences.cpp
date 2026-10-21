@@ -11,6 +11,7 @@
 
 #include "neverd/web/Error.h"
 #include "neverd/web/HTML.h"
+#include "neverd/web/Limits.h"
 
 #include <algorithm>
 #include <iterator>
@@ -106,7 +107,9 @@ std::string decodeHTMLAttribute(std::string_view Bytes, uint64_t &Steps,
       continue;
     }
     size_t End = I;
-    while (End < Bytes.size() && End - I < 32 &&
+    while (End < Bytes.size() &&
+           End - I < ::neverd::limits::web::
+                         kHTMLReferencesDecodeHTMLAttributeEndILimit &&
            (alpha(Bytes[End]) || digit(Bytes[End]))) {
       Step();
       ++End;

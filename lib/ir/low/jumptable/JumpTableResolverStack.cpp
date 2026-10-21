@@ -18,6 +18,7 @@
 #include "JumpTableResolverDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/libc/LibCNames.h"
@@ -1007,7 +1008,9 @@ va_t CFGBuilder::resolveStackMaterializedTableSource(
                   *SourceValues) -> std::optional<va_t> {
     if (!chargeEvidence())
       return std::nullopt;
-    if (Depth > 4)
+    if (Depth >
+        ::neverd::limits::ir::
+            kJumpTableResolverStackCFGBuilderResolveStackMaterializedTableSourceTraceValToConstSrcDepthLimit)
       return std::nullopt;
     int LdD = -1;
     {

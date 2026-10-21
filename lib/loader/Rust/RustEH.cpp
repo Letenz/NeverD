@@ -8,6 +8,7 @@
 
 #include "neverd/loader/DirectBranch.h"
 #include "neverd/loader/LanguageRuntime.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -28,12 +29,6 @@ namespace {
 /// the literal string the identity: the CRT matches type descriptors by
 /// comparing these names rather than by pointer.
 constexpr llvm::StringLiteral RustPanicTypeName("rust_panic");
-
-/// Upper bound on the bytes of one function body the panic-site scan reads.
-/// A Rust binary statically links its whole dependency graph, so the scan runs
-/// over every function in the image and needs a bound that a pathological
-/// record cannot escape.
-constexpr size_t MaxScannedFunctionBytes = 1u << 20;
 
 //===----------------------------------------------------------------------===//
 // Panic runtime entry points
@@ -210,11 +205,8 @@ std::string readTypeDescriptorName(const BinaryImage &Img, va_t DescriptorVA) {
   if (DescriptorVA > InvalidVA - 2 * PointerSize)
     return {};
   const va_t NameVA = DescriptorVA + 2 * PointerSize;
-  // A type descriptor name is a short identifier; a longer read would only
-  // walk off into whatever follows the record.
-  constexpr size_t MaxNameBytes = 256;
   std::string Name;
-  for (size_t I = 0; I < MaxNameBytes; ++I) {
+  for (size_t I = 0; I < ::neverd::limits::loader::kRustEHMaxNameBytes; ++I) {
     if (I > InvalidVA - NameVA)
       return {};
     const uint8_t *Byte = Img.readVA(NameVA + I, 1);
@@ -297,7 +289,7 @@ void collectPanicSites(
     const llvm::DenseMap<va_t, std::pair<RustPanicKind, std::string>> &Targets,
     RustFunctionEH &EH) {
   if (Targets.empty() || !Range.isValid() ||
-      Range.size() > MaxScannedFunctionBytes)
+      Range.size() > ::neverd::limits::loader::kRustEHMaxScannedFunctionBytes)
     return;
   const size_t Size = static_cast<size_t>(Range.size());
   const uint8_t *Code = Img.readVA(Range.Begin, Size);

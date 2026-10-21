@@ -13,6 +13,8 @@
 #include "Internal.h"
 #include "platform/WindowsFile.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 #include <cerrno>
 #include <filesystem>
@@ -203,7 +205,9 @@ Snapshot capture(std::string_view Path, const Limits &Budget) {
       Budget.MaxEntries > Limits::HardEntries || !Budget.MaxDepth ||
       Budget.MaxDepth > Limits::HardDepth)
     throw Error("invalid_limit");
-  if (Path.empty() || Path.size() > 32768 || Path.find('\0') != Path.npos)
+  if (Path.empty() ||
+      Path.size() > ::neverd::limits::web::kInputRootCapturePathSizeLimit ||
+      Path.find('\0') != Path.npos)
     throw Error("invalid_path");
 #ifdef _WIN32
   auto Input = win::openRoot(Path);

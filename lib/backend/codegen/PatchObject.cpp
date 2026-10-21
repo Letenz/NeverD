@@ -6,6 +6,7 @@
 
 #include "neverd/backend/codegen/PatchObject.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/codegen/DwarfEHFrame.h"
 #include "neverd/backend/codegen/ELF/ELFARMEHABIPatch.h"
 #include "neverd/backend/codegen/ELF/ELFExceptionPatch.h"
@@ -37,7 +38,6 @@
 namespace neverd {
 namespace {
 using SectionKind = llvm::mc_rewrite::RewriteSectionKind;
-constexpr uint64_t MaxImageSize = 64 * 1024 * 1024;
 
 llvm::Error fail(const llvm::Twine &Detail) {
   return llvm::createStringError(llvm::errc::not_supported,
@@ -245,7 +245,9 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
   auto Sections = File->sections();
   if (!Sections)
     return Sections.takeError();
-  if (Sections->empty() || Sections->size() > 65536)
+  if (Sections->empty() ||
+      Sections->size() >
+          ::neverd::limits::backend::kPatchObjectReadELFObjectSectionsSizeLimit)
     return fail("invalid section count");
   ObjectImage Result;
   Result.Storage.InputKind = RewriteInputKind::ReplacementObject;
@@ -331,10 +333,13 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
         ((Flags & llvm::ELF::SHF_WRITE) && (Flags & llvm::ELF::SHF_EXECINSTR)))
       return fail("unsupported allocated section or permissions: " + *Name);
     const uint64_t Alignment = std::max<uint64_t>(Section.sh_addralign, 1);
-    if (!llvm::isPowerOf2_64(Alignment) || Alignment > 1024 * 1024 ||
-        Section.sh_size > MaxImageSize || Name->empty())
+    if (!llvm::isPowerOf2_64(Alignment) ||
+        Alignment > ::neverd::limits::backend::kMaxPatchObjectAlignment ||
+        Section.sh_size > ::neverd::limits::backend::kPatchObjectMaxImageSize ||
+        Name->empty())
       return fail("invalid allocated section: " + *Name);
-    if (Section.sh_size > MaxImageSize - AllocatedBytes)
+    if (Section.sh_size >
+        ::neverd::limits::backend::kPatchObjectMaxImageSize - AllocatedBytes)
       return fail("total allocated storage exceeds the profile limit");
     AllocatedBytes += Section.sh_size;
     if (*Name == ".got.source")
@@ -379,7 +384,8 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
   auto Names = File->getStringTableForSymtab((*Sections)[*Symtab]);
   if (!Names)
     return Names.takeError();
-  if (Symbols->size() > 1024 * 1024)
+  if (Symbols->size() >
+      ::neverd::limits::backend::kPatchObjectReadELFObjectSymbolsSizeLimit)
     return fail("excessive symbol count");
   std::map<uint32_t, unsigned> FunctionCounts;
   for (const auto &Symbol : *Symbols) {
@@ -588,7 +594,8 @@ llvm::Error placeObject(ObjectImage &Object, const BinaryImage &Original,
                         uint64_t BaseVA, uint64_t OriginalUnwindSize) {
   auto &Image = Object.Storage;
   Image.BaseVA = BaseVA;
-  if (!BaseVA || BaseVA > UINT64_MAX - MaxImageSize)
+  if (!BaseVA ||
+      BaseVA > UINT64_MAX - ::neverd::limits::backend::kPatchObjectMaxImageSize)
     return fail("invalid placement base");
   if (Object.NeedsGOTBase) {
     CompiledSection GOT;
@@ -602,8 +609,10 @@ llvm::Error placeObject(ObjectImage &Object, const BinaryImage &Original,
   uint64_t Cursor = BaseVA;
   auto Place = [&](CompiledSection &Section) -> llvm::Error {
     Cursor = llvm::alignTo(Cursor, Section.Alignment);
-    if (Cursor < BaseVA || Cursor - BaseVA > MaxImageSize ||
-        Section.Size > MaxImageSize - (Cursor - BaseVA))
+    if (Cursor < BaseVA ||
+        Cursor - BaseVA > ::neverd::limits::backend::kPatchObjectMaxImageSize ||
+        Section.Size > ::neverd::limits::backend::kPatchObjectMaxImageSize -
+                           (Cursor - BaseVA))
       return fail("object placement exceeds the profile limit");
     Section.VA = Cursor;
     Section.Offset = Cursor - BaseVA;
@@ -629,7 +638,9 @@ llvm::Error placeObject(ObjectImage &Object, const BinaryImage &Original,
                        Section.Type == llvm::ELF::SHT_REL)
                      Reserve += Section.Size;
                  });
-  if (Reserve > MaxImageSize || Object.MetadataOffset > MaxImageSize - Reserve)
+  if (Reserve > ::neverd::limits::backend::kPatchObjectMaxImageSize ||
+      Object.MetadataOffset >
+          ::neverd::limits::backend::kPatchObjectMaxImageSize - Reserve)
     return fail("object metadata exceeds the profile limit");
   Cursor = BaseVA + Object.MetadataOffset + Reserve;
   const bool HasWritable = std::any_of(
@@ -645,7 +656,7 @@ llvm::Error placeObject(ObjectImage &Object, const BinaryImage &Original,
         Section.Kind == SectionKind::UninitializedData)
       if (auto Error = Place(Section))
         return Error;
-  if (Cursor - BaseVA > MaxImageSize)
+  if (Cursor - BaseVA > ::neverd::limits::backend::kPatchObjectMaxImageSize)
     return fail("object image is too large");
   Image.Bytes.resize(Cursor - BaseVA, 0);
   for (auto &Section : Image.Sections) {
@@ -1152,7 +1163,8 @@ validateDynCodePatchImage(const DynCodePatchEvidence &Evidence,
       Compiled.InputKind != RewriteInputKind::ReplacementObject ||
       Mappings.size() != 1 || Mappings.front().Symbol.empty() ||
       !Bindings.empty() || Evidence.Payload.empty() ||
-      Evidence.Payload.size() > MaxImageSize)
+      Evidence.Payload.size() >
+          ::neverd::limits::backend::kPatchObjectMaxImageSize)
     return fail("hosted DynCode requires one explicit x64/ARM64 entry, "
                 "a bounded payload and no original bindings");
   auto Parsed = llvm::json::parse(Evidence.Audit);

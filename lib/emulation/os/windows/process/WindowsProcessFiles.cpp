@@ -6,6 +6,7 @@
 #include "WindowsProcessModules.h"
 
 #include "neverd/emulation/CPU.h"
+#include "neverd/emulation/Limits.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
@@ -1370,7 +1371,9 @@ Services::toolhelp(const Service &S, const NativeCallEvent &Event) {
   auto Size = CPU.readInteger(A[1], DWordSize);
   if (!Size)
     return Size.takeError();
-  if (*Size < ThreadEntrySize || *Size > 0x1000)
+  if (*Size < ThreadEntrySize ||
+      *Size > ::neverd::limits::emulation::
+                  kWindowsProcessFilesServicesToolhelpSizeLimit)
     return Refuse(llvm::utohexstr(*Size));
   if (S.Kind == API::Thread32Next) {
     if (!Found->second)

@@ -11,6 +11,7 @@
 
 #include "neverd/dalvik/Runtime.h"
 #include "neverd/emulation/AndroidNative.h"
+#include "neverd/emulation/Limits.h"
 
 #include "llvm/ADT/StringRef.h"
 
@@ -34,9 +35,12 @@ inline constexpr uint64_t Base = 0x7020000000;
 inline constexpr uint64_t VMTable = Base + 64, EnvTable = Base + 256;
 inline constexpr uint64_t Environments = Base + 4096, ArenaSize = 8192;
 inline constexpr uint64_t ReferenceBase = Base + 65536;
-inline constexpr unsigned EnvSlots = 233, AttachmentLimit = 512;
-inline constexpr unsigned ReferenceLimit = 4096, ObjectLimit = 4096;
-inline constexpr unsigned NativeFrameLimit = 64;
+inline constexpr unsigned
+    EnvSlots = 233,
+    AttachmentLimit = ::neverd::limits::emulation::kAndroidJNIAttachmentLimit;
+inline constexpr unsigned
+    ReferenceLimit = ::neverd::limits::emulation::kAndroidJNIReferenceLimit,
+    ObjectLimit = ::neverd::limits::emulation::kAndroidJNIObjectLimit;
 inline constexpr uint32_t Version = 0x00010006;
 } // namespace jni_abi
 
@@ -73,4 +77,12 @@ struct JNIState {
   uint64_t NextEnvironment = 0, NextReference = 1, NextFrame = 1;
 };
 } // namespace neverd::emulation::android_model
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::emulation::android_model {
+namespace jni_abi {
+inline constexpr unsigned NativeFrameLimit =
+    ::neverd::limits::emulation::kAndroidJNINativeFrameLimit;
+}
+} // namespace neverd::emulation::android_model
+
 #endif

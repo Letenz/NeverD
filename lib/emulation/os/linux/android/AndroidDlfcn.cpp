@@ -6,6 +6,7 @@
 #include "AndroidInternal.h"
 
 #include "neverd/emulation/CPU.h"
+#include "neverd/emulation/Limits.h"
 
 #include "llvm/Support/Endian.h"
 
@@ -19,7 +20,8 @@ BionicResult Bionic::linkerError(llvm::StringRef Message,
   // A fixed guest buffer, separate from errno, TLS ABI slots and constructor
   // argv/envp. A later error may replace its contents; dlerror consumes it
   // once.
-  if (Message.size() >= 1024)
+  if (Message.size() >= ::neverd::limits::emulation::
+                            kAndroidDlfcnBionicLinkerErrorMessageSizeLimit)
     return failure(diagnostic::LinkerErrorLimit);
   std::vector<uint8_t> Bytes(Message.bytes_begin(), Message.bytes_end());
   Bytes.push_back(0);
@@ -66,7 +68,8 @@ BionicResult Bionic::openLibrary(NativeCallEvent &Call) {
   auto Library = string(A[0]);
   if (!Library)
     return Library.takeError();
-  if (Library->size() > 1024)
+  if (Library->size() >
+      ::neverd::limits::emulation::kAndroidDlfcnBionicOpenLibrarySizeLimit)
     return failure(diagnostic::LibraryNameLimit);
   Call.Library = *Library;
   // API 28 LP64 accepts any combination of these bits, including zero
@@ -101,7 +104,8 @@ BionicResult Bionic::lookupSymbol(NativeCallEvent &Call) {
   auto Symbol = string(A[1]);
   if (!Symbol)
     return Symbol.takeError();
-  if (Symbol->size() > 1024)
+  if (Symbol->size() >
+      ::neverd::limits::emulation::kAndroidDlfcnBionicLookupSymbolSizeLimit)
     return failure(diagnostic::SymbolNameLimit);
   Call.Symbol = *Symbol;
   if (!A[0]) {

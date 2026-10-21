@@ -22,6 +22,7 @@
 #include "neverd/loader/LanguageEHGo.h"
 #include "neverd/loader/LanguageEHObjC.h"
 #include "neverd/loader/LanguageEHRust.h"
+#include "neverd/loader/Limits.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -244,12 +245,18 @@ struct ExceptionInfo {
     const uint64_t Window =
         MaxCodeSize == 0
             ? 0
-            : std::min<uint64_t>(MaxCodeSize, uint64_t{2} * 1024 * 1024);
+            : std::min<uint64_t>(
+                  MaxCodeSize,
+                  ::neverd::limits::loader::
+                      kExceptionTableFindFunctionWindowMinArgument2);
     const va_t WalkFloor = Window != 0 && Address >= Window
                                ? Address - static_cast<va_t>(Window)
                                : 0;
     unsigned Nest = 0;
-    for (size_t N = Lo; N > 0 && Nest < 16;) {
+    for (size_t N = Lo;
+         N > 0 &&
+         Nest <
+             ::neverd::limits::loader::kExceptionTableFindFunctionNestLimit;) {
       const size_t I = FunctionIndex[--N];
       if (I >= Functions.size())
         continue;

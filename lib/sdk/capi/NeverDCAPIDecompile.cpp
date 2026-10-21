@@ -945,7 +945,9 @@ void writeSourcePage(llvm::raw_ostream &OS, neverd_session_t Sess, va_t Entry,
   }
   (void)S.synchronizeFunctions();
   llvm::StringRef Full(Spelled);
-  if (Full.size() > 32 * 1024 * 1024 || !llvm::json::isUTF8(Full))
+  if (Full.size() >
+          ::neverd::sdk::kNeverDCAPIDecompileWriteSourcePageFullSizeLimit ||
+      !llvm::json::isUTF8(Full))
     throw std::length_error("source view exceeds the UTF-8/32 MiB budget");
   // Use the same canonical LowIR instruction/sequence gate as Low/Med pages.
   // Neither a HighStmt address nor a surviving LLVM handle alone proves that
@@ -1131,7 +1133,9 @@ void writeSourcePage(llvm::raw_ostream &OS, neverd_session_t Sess, va_t Entry,
       for (const auto &Block : Low->Blocks)
         for (const auto &Op : Block.Ops)
           if (const auto Site = sourceCallOccurrenceKey(Op);
-              Site && ++Count <= 4096)
+              Site &&
+              ++Count <=
+                  ::neverd::sdk::kNeverDCAPIDecompileWriteSourcePageCountLimit)
             J.object([&] {
               J.attribute("id", sourceCallId(*Site));
               J.attribute("instruction", vaHex(Site->Instruction));
@@ -1450,7 +1454,9 @@ SourceViewOptions readSourceOptions(llvm::StringRef Text,
   }
   const auto *Passes = Object->getArray("llvm_passes");
   if (Options.LLVM == SourceViewOptions::LLVMOptimization::Custom) {
-    if (!Passes || Passes->size() > 4)
+    if (!Passes ||
+        Passes->size() >
+            ::neverd::sdk::kNeverDCAPIDecompileReadSourceOptionsPassesSizeLimit)
       throw std::invalid_argument("custom requires at most four llvm_passes");
     Options.Passes = 0;
     for (const auto &Value : *Passes) {
@@ -1626,7 +1632,8 @@ const char *neverd_ir_view_ex_json(neverd_session_t Sess, neverd_va_t FuncEntry,
     const llvm::StringRef Stage = Representation ? Representation : "";
     if ((Stage != "c" && Stage != "llvmc" && Stage != "source" &&
          !sourceDialectFromKey(Stage)) ||
-        Limit == 0 || Limit > 2048 ||
+        Limit == 0 ||
+        Limit > ::neverd::sdk::kNeverDCAPIDecompileNeverdIrViewExJsonLimit ||
         Offset > static_cast<size_t>(std::numeric_limits<int64_t>::max()))
       throw std::invalid_argument("invalid source view or paging bounds");
     const auto Options =
@@ -1653,7 +1660,8 @@ const char *neverd_ir_view_json(neverd_session_t Sess, neverd_va_t FuncEntry,
     return nullptr;
   S->clearError();
   try {
-    if (!Representation || Limit == 0 || Limit > 2048 ||
+    if (!Representation || Limit == 0 ||
+        Limit > ::neverd::sdk::kNeverDCAPIDecompileNeverdIrViewJsonLimit ||
         Offset > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
       S->setError("invalid IR view representation or paging bounds");
       return nullptr;

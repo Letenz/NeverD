@@ -8,6 +8,7 @@
 #define NEVERD_LIB_SAFETY_STACKSLOTFLOW_H
 
 #include "neverd/ir/med/MedIR.h"
+#include "neverd/safety/Limits.h"
 
 #include <algorithm>
 #include <functional>
@@ -219,7 +220,8 @@ template <typename FindOp, typename FindPhi>
 bool aliasesWholeFrame(const MedVar &Root, uint64_t StackPointerReg,
                        uint64_t FramePointerReg, FindOp OpFor, FindPhi PhiFor) {
   std::vector<MedVar> Active;
-  unsigned Remaining = 4096;
+  unsigned Remaining =
+      ::neverd::limits::safety::kStackSlotFlowAliasesWholeFrameRemaining;
   std::function<bool(const MedVar &)> Prove = [&](const MedVar &Current) {
     if (Current.isConst())
       return false;

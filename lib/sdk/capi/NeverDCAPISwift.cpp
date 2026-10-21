@@ -41,7 +41,8 @@ const char *neverd_swift_methods_json(neverd_session_t Sess,
       throw std::invalid_argument("Swift source export requires a loaded "
                                   "64-bit Mach-O and signature JSON");
     llvm::StringRef Input(SignaturesJson);
-    if (Input.size() > 32 * 1024 * 1024)
+    if (Input.size() >
+        ::neverd::sdk::kNeverDCAPISwiftNeverdSwiftMethodsJsonInputSizeLimit)
       throw std::invalid_argument(
           "Swift signature input exceeds its byte budget");
     auto Parsed = llvm::json::parse(Input);

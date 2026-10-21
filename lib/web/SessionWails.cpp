@@ -11,6 +11,8 @@
 
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web {
 namespace {
 llvm::json::Object summary(const WailsExtraction &E, uint64_t Revision) {
@@ -93,7 +95,8 @@ std::string Session::wailsRecords(std::string_view Revision,
   const auto Count = Kind == "tables"    ? E.Tables.size()
                      : Kind == "members" ? E.Members.size()
                                          : throw Error("invalid_record_kind");
-  if (!Limit || Limit > 128 || Offset > Count)
+  if (!Limit || Limit > ::neverd::limits::web::kSessionWailsRecordsLimit ||
+      Offset > Count)
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(Count, Offset + Limit);
   llvm::json::Array Items;

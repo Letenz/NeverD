@@ -1,5 +1,6 @@
 // Typed Dalvik verification and standalone Java source generation.
 // This is a native translation of NeverD's first-party Dalvik source engine.
+#include "../ResourceLimits.h"
 #include "MobileDalvik.h"
 #include "MobileDalvikSignature.h"
 
@@ -757,7 +758,9 @@ struct LocalProjection {
       Strings Seen;
       while (Ancestor) {
         B.tick();
-        if (!Seen.insert(Ancestor->name).second || Seen.size() > 128)
+        if (!Seen.insert(Ancestor->name).second ||
+            Seen.size() > ::neverd::limits::cli::
+                              kMobileDalvikJavaLocalProjectionSeenSizeLimit)
           fail(C, "invalid enclosing class chain");
         auto Start = Ancestor->name.rfind('/');
         Start = Start == std::string::npos ? 1 : Start + 1;
@@ -895,7 +898,7 @@ void Body::validateShape() {
       fail("invalid method code boundaries");
   if (method.code_end <= code.back().pc)
     fail("invalid method code boundaries");
-  if (method.registers > 1024)
+  if (method.registers > ::neverd::limits::cli::kMaxDalvikJavaRegisters)
     fail("register frame exceeds the bounded Java projection limit");
   if (method.incomingWords() > method.registers)
     fail("incoming arguments exceed the register frame");
@@ -2053,7 +2056,8 @@ llvm::json::Object recoverJava(const ClassMap &Classes, Budget &B) {
       B.tick();
       if (!Seen.insert(*Current).second)
         javaError("recursive nested-class ownership");
-      if (Seen.size() > 128)
+      if (Seen.size() >
+          ::neverd::limits::cli::kMobileDalvikJavaRecoverJavaSeenSizeLimit)
         javaError("nested-class ownership exceeds the source depth limit");
       const auto &Parent = Classes.at(*Current);
       Current = Parent.enclosing_method

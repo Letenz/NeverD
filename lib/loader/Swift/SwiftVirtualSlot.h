@@ -5,6 +5,7 @@
 #include "SwiftFunctionSymbols.h"
 
 #include "neverd/ir/SourceABI.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/Demangle/SwiftDemangle.h"
@@ -22,7 +23,8 @@ inline bool isVoidClassVirtualSlot(const BinaryImage &Image,
                                    llvm::StringRef ExpectedClass = {}) {
   const va_t Metadata = Method.ClassAddress;
   objc::RuntimeData Data(Image);
-  if (!Metadata || Metadata % 8 || Slot % 8 || Slot < 80 || Slot > 4096 ||
+  if (!Metadata || Metadata % 8 || Slot % 8 || Slot < 80 ||
+      Slot > ::neverd::limits::loader::kMaxSwiftVirtualSlotOffset ||
       Metadata > InvalidVA - 4104 || !Data.supportsPlainObjectPointers() ||
       !Data.bytes(Metadata, 80))
     return false;
@@ -45,13 +47,18 @@ inline bool isVoidClassVirtualSlot(const BinaryImage &Image,
   // resilient-superclass prefix. An override table follows the vtable and
   // does not change the offsets of this class's own method declarations.
   if ((Flags & 0x80000000u) == 0 || (Flags & ~0xc0000050u) != 0 ||
-      (Flags & 0xffffu) != 0x50u || Word(24) > 512 || Word(28) > 512 ||
+      (Flags & 0xffffu) != 0x50u ||
+      Word(24) > ::neverd::limits::loader::kMaxSwiftClassMetadataWords ||
+      Word(28) > ::neverd::limits::loader::kMaxSwiftClassMetadataWords ||
       uint64_t(Word(24)) * 8 != *AddressPoint ||
       uint64_t(Word(24) + Word(28)) * 8 != *ClassSize)
     return false;
   const uint32_t Start = Word(44), Count = Word(48);
-  if (!Count || Count > 512 || Start > Word(28) || Count > Word(28) - Start ||
-      Slot / 8 < Start || Slot / 8 - Start >= Count ||
+  if (!Count ||
+      Count > ::neverd::limits::loader::
+                  kSwiftVirtualSlotIsVoidClassVirtualSlotCountLimit ||
+      Start > Word(28) || Count > Word(28) - Start || Slot / 8 < Start ||
+      Slot / 8 - Start >= Count ||
       !readImmutableImageBytes(Image, *Descriptor, 52 + uint64_t(Count) * 8))
     return false;
   const auto Relative = [](va_t Field, uint32_t Bits) -> std::optional<va_t> {
@@ -106,11 +113,11 @@ inline bool isVoidClassVirtualSlot(const BinaryImage &Image,
   if (!Mangled.starts_with("$s"))
     return false;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = ::neverd::limits::loader::kSwiftIdentityInputBytes;
+  Options.MaxNodes = ::neverd::limits::loader::kSwiftIdentityNodes;
+  Options.MaxDepth = ::neverd::limits::loader::kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = ::neverd::limits::loader::kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = ::neverd::limits::loader::kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Mangled.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Count) {

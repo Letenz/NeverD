@@ -22,7 +22,9 @@ if(NEVERD_BUILD_MCP_STARTUP_PROBE)
   file(SHA256 "${_neverd_mcp_header}" _neverd_mcp_header_sha)
   qt_add_executable(neverd-mcp-startup-probe mcp_startup_probe.cpp "${_neverd_mcp_source}")
   set_target_properties(neverd-mcp-startup-probe PROPERTIES WIN32_EXECUTABLE FALSE)
-  target_include_directories(neverd-mcp-startup-probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../mcp")
+  target_include_directories(neverd-mcp-startup-probe PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../mcp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../include")
   target_link_libraries(neverd-mcp-startup-probe PRIVATE Qt6::Core Qt6::Network)
   target_compile_definitions(neverd-mcp-startup-probe PRIVATE
     MCP_PROBE_CPP_SHA256="${_neverd_mcp_cpp_sha}"

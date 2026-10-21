@@ -8,6 +8,7 @@
 
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/LanguageRuntime.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
 
@@ -21,17 +22,6 @@
 
 namespace neverd::coff_loader::registration_detail {
 namespace {
-
-/// How far back from an install site the prologue may be searched for the
-/// `push` operands.  A frame installs at most a try level, a table pointer,
-/// and a handler.
-constexpr unsigned MaxInstallPushes = 4;
-
-/// How far back from a chain-head read the operands of the install may be
-/// found.  The record is built immediately before the link, so a window this
-/// size covers the widest prologue any of the three shapes below emits while
-/// staying far short of the previous function.
-constexpr size_t MaxInstallWindow = 64;
 
 /// Recognize a read of the `FS:[0]` chain head.  A frame must read the head
 /// before it can link a record in front of it, which makes the read the one
@@ -90,7 +80,10 @@ std::vector<InstallOperand> collectInstallOperands(const Segment &Seg,
   std::vector<InstallOperand> Operands;
   const uint8_t *Data = Seg.Data.data();
   const size_t Start =
-      Offset > MaxInstallWindow ? Offset - MaxInstallWindow : 0;
+      Offset > ::neverd::limits::loader::kCOFFRegistrationEHScanMaxInstallWindow
+          ? Offset - ::neverd::limits::loader::
+                         kCOFFRegistrationEHScanMaxInstallWindow
+          : 0;
   for (size_t I = Start; I < Offset; ++I) {
     size_t ImmOffset = 0;
     if (Data[I] == 0x68) {
@@ -124,7 +117,10 @@ std::vector<InstallOperand> collectInstallOperands(const Segment &Seg,
 std::optional<int32_t> findSeededTryLevel(const Segment &Seg, size_t Offset) {
   const uint8_t *Data = Seg.Data.data();
   const size_t Start =
-      Offset > MaxInstallWindow ? Offset - MaxInstallWindow : 0;
+      Offset > ::neverd::limits::loader::kCOFFRegistrationEHScanMaxInstallWindow
+          ? Offset - ::neverd::limits::loader::
+                         kCOFFRegistrationEHScanMaxInstallWindow
+          : 0;
   std::optional<int32_t> Level;
   for (size_t I = Start; I < Offset; ++I) {
     // push imm8
@@ -224,7 +220,8 @@ resolvePrologueHelperCallers(const BinaryImage &Img,
       std::optional<va_t> Target =
           addSignedOffset(CallVA + 5, readLE<int32_t>(Data + I + 1));
       if (!Target || *Target > Helper.InstallVA ||
-          Helper.InstallVA - *Target > MaxInstallWindow)
+          Helper.InstallVA - *Target >
+              ::neverd::limits::loader::kCOFFRegistrationEHScanMaxInstallWindow)
         continue;
       if (!Helper.Range.contains(*Target))
         continue;

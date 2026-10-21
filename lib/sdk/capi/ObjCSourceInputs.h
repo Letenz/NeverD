@@ -16,14 +16,19 @@ namespace neverd::sdk {
 inline HighFunc
 snapshotObjCEntryInputs(const HighFunc &Function, const BinaryImage &Image,
                         const std::map<va_t, const HighFunc *> &Functions) {
-  if (Function.Body.size() > 256 || Function.StructuredExceptionRegions ||
+  if (Function.Body.size() >
+          ::neverd::sdk::
+              kObjCSourceInputsSnapshotObjCEntryInputsFunctionBodySizeLimit ||
+      Function.StructuredExceptionRegions ||
       Function.UnstructuredExceptionRegions)
     return Function;
   int NextId = 0;
   size_t Budget = kSourceValueWork;
   const auto Scan = [&](auto &&Self, const ExprPtr &Value,
                         unsigned Depth) -> bool {
-    if (!Value || !Budget || Depth > 32)
+    if (!Value || !Budget ||
+        Depth > ::neverd::sdk::
+                    kObjCSourceInputsSnapshotObjCEntryInputsScanScanDepthLimit)
       return false;
     --Budget;
     if (Value->Kind == ExprKind::Var || Value->Kind == ExprKind::Phi)

@@ -16,6 +16,7 @@
 #define NEVERD_SOLVER_SYMSYNTHVERIFIER_H
 
 #include "neverd/solver/BitVectorSolver.h"
+#include "neverd/solver/Limits.h"
 #include "neverd/symbolic/SymSynth.h"
 
 #include <cstdint>
@@ -62,9 +63,10 @@ struct SymSynthProofReport {
 /// only grow while it is in use.
 class SymSynthVerifier {
 public:
-  explicit SymSynthVerifier(SolverOptions Options = {},
-                            ProofBackend Backend = ProofBackend::BuiltIn,
-                            uint32_t TimeoutMs = 1000);
+  explicit SymSynthVerifier(
+      SolverOptions Options = {}, ProofBackend Backend = ProofBackend::BuiltIn,
+      uint32_t TimeoutMs =
+          ::neverd::limits::solver::kSymSynthVerifierTimeoutMs);
   ~SymSynthVerifier();
 
   /// Verify one candidate.  The legacy synthesis result has no invalid-query

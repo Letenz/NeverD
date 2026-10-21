@@ -18,6 +18,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/Support/Compiler.h"
@@ -105,7 +106,9 @@ public:
     size_t Work = 0;
     for (va_t Start : OriginalStarts) {
       std::vector<va_t> Seen{Start};
-      for (unsigned Depth = 0; Depth != 8; ++Depth) {
+      for (unsigned Depth = 0;
+           Depth != ::neverd::limits::loader::kMaxRegistrationNullArgumentDepth;
+           ++Depth) {
         if (++Work > limits::kMaxRegistrationEHStateWork ||
             Start > uint64_t(UINT32_MAX) - 4)
           break;

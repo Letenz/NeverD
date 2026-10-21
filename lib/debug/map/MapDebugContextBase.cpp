@@ -13,6 +13,7 @@
 
 #include "MapParsers.h"
 
+#include "neverd/debug/Limits.h"
 #include "neverd/debug/MapFile.h"
 
 #include "llvm/ADT/SmallVector.h"
@@ -56,7 +57,9 @@ std::optional<SourceLoc> MapDebugContextBase::sourceLocation(va_t Addr) const {
   if (It == SourceLocations.begin())
     return std::nullopt;
   --It;
-  if (It->first == Addr || (Addr - It->first) < 256)
+  if (It->first == Addr ||
+      (Addr - It->first) <
+          ::neverd::limits::debug::kMaxNearestMapSymbolDistance)
     return It->second;
   return std::nullopt;
 }
@@ -119,7 +122,7 @@ void MapDebugContextBase::inferFunctionSizes() {
     if (Next == Functions.end())
       break;
     uint64_t Gap = Next->first - It->first;
-    if (Gap > 0 && Gap <= 16 * 1024 * 1024)
+    if (Gap > 0 && Gap <= ::neverd::limits::debug::kMaxMapFunctionGapBytes)
       It->second.Size = Gap;
   }
 }

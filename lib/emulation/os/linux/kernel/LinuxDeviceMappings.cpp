@@ -5,6 +5,8 @@
 //===----------------------------------------------------------------------===//
 #include "LinuxMemory.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include <algorithm>
 
 namespace neverd::emulation::linux_model {
@@ -214,14 +216,10 @@ LinuxMemory::mapDevice(const ProcessServiceEvent &Event,
   if (!Size || *Size > Limit)
     return std::optional<uint64_t>(uint64_t(0) - NoMemory);
   if (Device && Device->Binder && Owner) {
-    // Binder buffers are per open, read-only to the process, and
-    // kernel-written.
-    // Match the driver's maximum receive arena. Oversized requests still need
-    // VMA truncation semantics and remain outside this bounded profile.
-    constexpr uint64_t BinderArenaLimit = 4 * 1024 * 1024;
     if (Offset || PageSize != DeviceMappingPageSize ||
-        *Size > BinderArenaLimit || (Flags != 2 && Flags != (2 | 0x4000)) ||
-        Protection != ProtRead)
+        *Size >
+            ::neverd::limits::emulation::kLinuxDeviceMappingsBinderArenaLimit ||
+        (Flags != 2 && Flags != (2 | 0x4000)) || Protection != ProtRead)
       return Unsupported();
     if (!Owner->BinderMapping.Bytes.empty())
       return std::optional<uint64_t>(uint64_t(0) - 16); // EBUSY

@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "neverd/debug/Limits.h"
 #include "neverd/debug/PDBLoader.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/FilePath.h"
@@ -282,7 +283,7 @@ struct TypeStore {
   uint16_t PtrSize = 4;
 
   TypeRef resolve(uint32_t Index, int Depth = 0) const {
-    if (Depth > 32)
+    if (Depth > ::neverd::limits::debug::kPDB20LoaderResolveDepthLimit)
       return {};
     if (Index < llvm::codeview::TypeIndex::FirstNonSimpleIndex)
       return primitiveType(Index, PtrSize);

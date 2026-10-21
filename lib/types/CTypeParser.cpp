@@ -13,6 +13,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "neverd/types/Limits.h"
 #include "neverd/types/TypeParse.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -281,7 +282,8 @@ private:
   /// A word, or the tokens of the macro it names.
   void expand(Token Word, std::vector<Token> &Tokens, unsigned Depth) {
     auto Found = Macros.find(Word.Text);
-    if (Found == Macros.end() || Depth > 16) {
+    if (Found == Macros.end() ||
+        Depth > ::neverd::limits::types::kCTypeParserExpandDepthLimit) {
       Tokens.push_back(std::move(Word));
       return;
     }
@@ -861,7 +863,9 @@ private:
     if (!Type)
       return {BuiltinClass::Void, 0};
     const TypeExpr *At = Type.get();
-    for (unsigned Depth = 0; Depth < 16 && At->Kind == TypeExprKind::Named;
+    for (unsigned Depth = 0;
+         Depth < ::neverd::limits::types::kCTypeParserPassingDepthLimit &&
+         At->Kind == TypeExprKind::Named;
          ++Depth) {
       const LocalType *Local = Library.find(At->Name);
       if (!Local || Local->Kind != TypeKind::Typedef || !Local->Target)

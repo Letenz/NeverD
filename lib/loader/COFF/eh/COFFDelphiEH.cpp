@@ -6,8 +6,9 @@
 
 #include "neverd/loader/COFF/COFFDelphiEH.h"
 
-#include "neverd/support/BinaryEncoding.h"
 #include "neverd/loader/LanguageRuntime.h"
+#include "neverd/loader/Limits.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringExtras.h"
@@ -44,16 +45,9 @@ constexpr DelphiVmtLayout VmtLayouts[] = {
     /*Delphi 2009 and later*/ {88, 56, 52, 48},
 };
 
-/// Bound on one `except on` arm table.  Delphi allows any number of arms, but
-/// a count beyond this is a mis-identified descriptor rather than a program.
-constexpr uint32_t MaxOnExceptionArms = 256;
 /// Longest class name accepted from a VMT.  Delphi's is a `ShortString`, so
 /// 255 is the encoding's own limit.
 constexpr uint8_t MaxClassNameLength = 255;
-/// Largest instance size accepted while validating a VMT.
-constexpr uint32_t MaxInstanceSize = 1u << 24;
-/// Bound on the number of frames recovered from one image.
-constexpr size_t MaxDelphiFrames = 1u << 18;
 
 template <typename T>
 std::optional<T> readScalar(const BinaryImage &Img, va_t Address) {
@@ -209,7 +203,8 @@ const DelphiVmtLayout *classVmtLayout(const BinaryImage &Img, va_t VmtVA) {
       continue;
     auto InstanceSize =
         readScalar<uint32_t>(Img, VmtVA - Layout.InstanceSizeBack);
-    if (!InstanceSize || *InstanceSize == 0 || *InstanceSize > MaxInstanceSize)
+    if (!InstanceSize || *InstanceSize == 0 ||
+        *InstanceSize > ::neverd::limits::loader::kCOFFDelphiEHMaxInstanceSize)
       continue;
     // `vmtParent` is null only for `TObject`; anything else names a VMT slot.
     auto Parent = readScalar<uint32_t>(Img, VmtVA - Layout.ParentBack);
@@ -272,7 +267,8 @@ bool readOnExceptionTable(const BinaryImage &Img, va_t PayloadVA,
                           const ExceptionAddressRange &Function,
                           std::vector<DelphiOnExceptionEntry> &Arms) {
   auto Count = readScalar<uint32_t>(Img, PayloadVA);
-  if (!Count || *Count == 0 || *Count > MaxOnExceptionArms)
+  if (!Count || *Count == 0 ||
+      *Count > ::neverd::limits::loader::kCOFFDelphiEHMaxOnExceptionArms)
     return false;
   std::vector<DelphiOnExceptionEntry> Decoded;
   Decoded.reserve(*Count);
@@ -430,7 +426,8 @@ std::vector<PendingFrame> collectFrames(const BinaryImage &Img,
       std::optional<DelphiInstall> Install = matchInstall(Seg, I);
       if (!Install)
         continue;
-      if (Frames.size() >= MaxDelphiFrames)
+      if (Frames.size() >=
+          ::neverd::limits::loader::kCOFFDelphiEHMaxDelphiFrames)
         return Frames;
 
       const ExceptionAddressRange Function =
@@ -585,10 +582,6 @@ namespace {
 /// the whole run of them doubles; `vmtSelfPtr` lands at -176 rather than -88.
 constexpr DelphiVmtLayout VmtLayoutX64{176, 112, 104, 96};
 
-/// Bound on one `TExcData`.  A Delphi function can nest any number of scopes,
-/// but a count past this says the handler data was not a `TExcData`.
-constexpr uint32_t MaxDelphiScopes = 4096;
-
 /// `TableOffset` values below this are discriminants rather than addresses.
 constexpr uint32_t FirstDescriptorTableOffset = 3;
 
@@ -602,7 +595,9 @@ bool isClassVMT64(const BinaryImage &Img, va_t VmtVA) {
     return false;
   auto InstanceSize =
       readScalar<uint32_t>(Img, VmtVA - VmtLayoutX64.InstanceSizeBack);
-  return InstanceSize && *InstanceSize != 0 && *InstanceSize <= MaxInstanceSize;
+  return InstanceSize && *InstanceSize != 0 &&
+         *InstanceSize <=
+             ::neverd::limits::loader::kCOFFDelphiEHMaxInstanceSize;
 }
 
 std::string readClassName64(const BinaryImage &Img, va_t VmtVA) {
@@ -634,7 +629,8 @@ bool readScopeDescriptor(const BinaryImage &Img, va_t DescriptorVA,
                          std::vector<DelphiOnExceptionEntry> &Arms) {
   auto Count = readScalar<int32_t>(Img, DescriptorVA);
   if (!Count || *Count <= 0 ||
-      static_cast<uint32_t>(*Count) > MaxOnExceptionArms)
+      static_cast<uint32_t>(*Count) >
+          ::neverd::limits::loader::kCOFFDelphiEHMaxOnExceptionArms)
     return false;
   std::vector<DelphiOnExceptionEntry> Decoded;
   Decoded.reserve(static_cast<size_t>(*Count));
@@ -681,7 +677,8 @@ bool parseDelphiScopeTable(const BinaryImage &Img, ExceptionFunction &F,
     return false;
   auto Count = readScalar<int32_t>(Img, F.HandlerDataVA);
   if (!Count || *Count <= 0 ||
-      static_cast<uint32_t>(*Count) > MaxDelphiScopes) {
+      static_cast<uint32_t>(*Count) >
+          ::neverd::limits::loader::kCOFFDelphiEHMaxDelphiScopes) {
     Diagnostic = "scope count is not a plausible TExcData count";
     return false;
   }
@@ -718,9 +715,9 @@ bool parseDelphiScopeTable(const BinaryImage &Img, ExceptionFunction &F,
     }
 
     if (*TableOffset < FirstDescriptorTableOffset) {
-      Scope.Kind = *TableOffset == 0     ? DelphiScopeKind::Finally
-                   : *TableOffset == 1   ? DelphiScopeKind::SafecallCatch
-                                         : DelphiScopeKind::CatchAll;
+      Scope.Kind = *TableOffset == 0   ? DelphiScopeKind::Finally
+                   : *TableOffset == 1 ? DelphiScopeKind::SafecallCatch
+                                       : DelphiScopeKind::CatchAll;
       Scope.TargetVA = Img.rvaToVA(*TargetRVA);
       if (*TargetRVA == 0 || !isExecutableAddress(Img, Scope.TargetVA)) {
         Diagnostic = "scope " + std::to_string(I) +

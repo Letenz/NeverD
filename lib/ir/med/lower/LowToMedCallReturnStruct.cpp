@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
@@ -42,8 +43,10 @@ bool keepsUpperBytesOfWrite(const std::vector<MedOp> &Ops, size_t At) {
       (Keep.Inputs[1].ConstVal & 0xFF) != 0 || Keep.Inputs[1].ConstVal == 0)
     return false;
   const uint64_t Register = Keep.Inputs[0].RegOff;
-  constexpr size_t Window = 4;
-  for (size_t K = At + 1; K < Ops.size() && K <= At + Window; ++K) {
+  for (size_t K = At + 1;
+       K < Ops.size() &&
+       K <= At + ::neverd::limits::ir::kLowToMedCallReturnStructWindow;
+       ++K) {
     const MedOp &Merge = Ops[K];
     if (Merge.Opcode != NdOp::INT_OR || Merge.NumInputs != 2 ||
         (!sameValue(Merge.Inputs[0], Keep.Output) &&
@@ -51,7 +54,10 @@ bool keepsUpperBytesOfWrite(const std::vector<MedOp> &Ops, size_t At) {
       continue;
     if (Merge.Output.Kind == MedVar::Reg && Merge.Output.RegOff == Register)
       return true;
-    for (size_t M = K + 1; M < Ops.size() && M <= K + Window; ++M)
+    for (size_t M = K + 1;
+         M < Ops.size() &&
+         M <= K + ::neverd::limits::ir::kLowToMedCallReturnStructWindow;
+         ++M)
       if (Ops[M].Opcode == NdOp::COPY && Ops[M].NumInputs >= 1 &&
           Ops[M].Output.Kind == MedVar::Reg &&
           Ops[M].Output.RegOff == Register &&

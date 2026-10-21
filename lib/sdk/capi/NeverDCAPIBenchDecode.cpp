@@ -102,9 +102,10 @@ const char *neverd_bench_decode(neverd_session_t Sess) {
       if (BestNs == 0.0 || Ns < BestNs)
         BestNs = Ns;
       ++Reps;
-    } while (Reps < 100 &&
+    } while (Reps < ::neverd::sdk::kDecodeBenchmarkMaxRepetitions &&
              std::chrono::duration<double, std::milli>(Clock::now() - Overall)
-                     .count() < 200.0);
+                     .count() <
+                 ::neverd::sdk::kDecodeBenchmarkDurationMilliseconds);
     return {Insns, BestNs};
   };
 

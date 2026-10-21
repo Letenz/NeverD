@@ -10,6 +10,7 @@
 
 #include "RegistrationABIPrivate.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ReadOnlyBytes.h"
@@ -103,7 +104,12 @@ RegistrationCallCalleeIndex::sehControlContracts(const LowFunc &Function) {
         va_t Next = C.EndAddress;
         std::set<va_t> Seen;
         std::vector<RegistrationSEHControlContract> Path;
-        while (Next != Resume && Seen.size() < 64 && Seen.insert(Next).second) {
+        while (
+            Next != Resume &&
+            Seen.size() <
+                ::neverd::limits::ir::
+                    kRegistrationSEHControlRegistrationCallCalleeIndexSehControlContractsSeenSizeLimit &&
+            Seen.insert(Next).second) {
           if (!registration_abi::chargeCalleeWork(Work, 6))
             return std::nullopt;
           if (!Function.ExceptionMetadata->CodeRange.contains(Next))

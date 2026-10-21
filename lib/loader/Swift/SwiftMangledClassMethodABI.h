@@ -4,6 +4,7 @@
 #include "SwiftFunctionSymbols.h"
 
 #include "neverd/ir/SourceABI.h"
+#include "neverd/loader/Limits.h"
 
 #include "llvm/Demangle/SwiftDemangle.h"
 
@@ -36,11 +37,11 @@ swiftMangledObjCObjectPairVoidMethodDeclaration(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = ::neverd::limits::loader::kSwiftIdentityInputBytes;
+  Options.MaxNodes = ::neverd::limits::loader::kSwiftIdentityNodes;
+  Options.MaxDepth = ::neverd::limits::loader::kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = ::neverd::limits::loader::kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = ::neverd::limits::loader::kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -137,11 +138,11 @@ swiftMangledZeroArgClassMethodDeclaration(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = ::neverd::limits::loader::kSwiftIdentityInputBytes;
+  Options.MaxNodes = ::neverd::limits::loader::kSwiftIdentityNodes;
+  Options.MaxDepth = ::neverd::limits::loader::kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = ::neverd::limits::loader::kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = ::neverd::limits::loader::kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -233,11 +234,11 @@ swiftMangledCGContextCGRectClassMethodDeclaration(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = ::neverd::limits::loader::kSwiftIdentityInputBytes;
+  Options.MaxNodes = ::neverd::limits::loader::kSwiftIdentityNodes;
+  Options.MaxDepth = ::neverd::limits::loader::kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = ::neverd::limits::loader::kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = ::neverd::limits::loader::kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
@@ -345,11 +346,11 @@ swiftMangledCGPointClassMethodDeclaration(
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = ::neverd::limits::loader::kSwiftIdentityInputBytes;
+  Options.MaxNodes = ::neverd::limits::loader::kSwiftIdentityNodes;
+  Options.MaxDepth = ::neverd::limits::loader::kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = ::neverd::limits::loader::kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = ::neverd::limits::loader::kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {

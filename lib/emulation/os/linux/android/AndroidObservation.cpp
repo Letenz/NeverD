@@ -9,12 +9,18 @@
 
 #include "AndroidInternal.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include <set>
 
 namespace neverd::emulation::android_model {
 llvm::Error
 validateExecutionObservation(const NativeExecutionObservationOptions &Options) {
-  if (Options.PCs.empty() || Options.PCs.size() > 64 || !Options.Limit)
+  if (Options.PCs.empty() ||
+      Options.PCs.size() >
+          ::neverd::limits::emulation::
+              kAndroidObservationValidateExecutionObservationOptionsPCsSizeLimit ||
+      !Options.Limit)
     return failure(diagnostic::ObservationOptions);
   std::set<uint64_t> Unique;
   for (uint64_t PC : Options.PCs)

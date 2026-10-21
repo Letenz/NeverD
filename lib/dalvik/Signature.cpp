@@ -8,6 +8,8 @@
 //===----------------------------------------------------------------------===//
 #include "neverd/dalvik/Signature.h"
 
+#include "neverd/dalvik/Limits.h"
+
 #include <algorithm>
 #include <functional>
 
@@ -107,7 +109,7 @@ class Parser {
     return values;
   }
   GenericTypeId type(bool reference, bool allow_void, unsigned depth = 0) {
-    if (depth > 64)
+    if (depth > ::neverd::limits::dalvik::kSignatureTypeDepthLimit)
       fail("type nesting exceeds limit");
     GenericType value;
     value.offset = position;
@@ -297,7 +299,7 @@ class Validator {
                     const Scope &scope, const std::string &context,
                     unsigned depth = 0) {
     budget.tick();
-    if (depth > 512)
+    if (depth > ::neverd::limits::dalvik::kSignatureEraseDepthLimit)
       invalid(context, "erasure dependency depth exceeds limit");
     auto &node = signature.types.at(id);
     if (!node.erasure.empty()) {
@@ -361,7 +363,7 @@ class Validator {
                 const Substitutions &substitutions, const std::string &context,
                 unsigned depth) {
     budget.tick();
-    if (depth > 64)
+    if (depth > ::neverd::limits::dalvik::kSignatureSameTypeDepthLimit)
       invalid(context, "generic bound comparison exceeds depth limit");
     expected = substitute(expected, substitutions, context);
     erase(*actual.signature, actual.id, *actual.scope, context);
@@ -400,7 +402,7 @@ class Validator {
                  const Substitutions &substitutions, const std::string &context,
                  unsigned depth = 0) {
     budget.tick();
-    if (depth > 64)
+    if (depth > ::neverd::limits::dalvik::kSignatureSatisfiesDepthLimit)
       invalid(context, "generic bound proof exceeds depth limit");
     expected = substitute(expected, substitutions, context);
     if (sameType(actual, expected, {}, context, depth))
@@ -454,7 +456,8 @@ class Validator {
         return true;
       if (!seen.insert(name).second)
         continue;
-      if (seen.size() > 1024)
+      if (seen.size() >
+          ::neverd::limits::dalvik::kSignatureSatisfiesSeenSizeLimit)
         invalid(context, "generic bound ancestry exceeds limit");
       auto found = classes.find(name);
       if (found == classes.end())
@@ -571,7 +574,9 @@ class Validator {
     auto found = class_scopes.find(name);
     if (found != class_scopes.end())
       return found->second;
-    if (pending_classes.size() >= 64 || !pending_classes.insert(name).second)
+    if (pending_classes.size() >=
+            ::neverd::limits::dalvik::kSignaturePendingClassesSizeLimit ||
+        !pending_classes.insert(name).second)
       invalid(name, "enclosing generic scope is cyclic or too deep");
     const auto &cls = classes.at(name);
     Scope scope;
@@ -601,7 +606,9 @@ class Validator {
           current == "Ljava/lang/RuntimeException;" ||
           current == "Ljava/lang/Error;")
         return;
-      if (seen.size() >= 64 || !seen.insert(current).second)
+      if (seen.size() >=
+              ::neverd::limits::dalvik::kSignatureThrowableSeenSizeLimit ||
+          !seen.insert(current).second)
         invalid(context, "throws hierarchy is cyclic or too deep");
       auto found = classes.find(current);
       if (found == classes.end() || !found->second.superclass ||

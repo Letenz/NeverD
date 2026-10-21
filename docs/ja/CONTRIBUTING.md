@@ -1,6 +1,6 @@
 **Languages**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](CONTRIBUTING.md) | [한국어](../ko/CONTRIBUTING.md) | [Français](../fr/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 284ec1bcba3c77596f6b244b241b3088a37a9ba9238092e0b96b76d0661f84a5 -->
+<!-- i18n-source: 0e93112bfc87bdf7cfa9e280f8b7a9155214ae36187f32d8dd473c6f17fd92d3 -->
 
 # NeverD への貢献
 
@@ -258,6 +258,8 @@ inline constexpr uint64_t kMaxUnsizedInstructions = 65536;
 <!-- i18n-section: policy -->
 ### 上限、既定値、設定の責任範囲
 
+インクルード検索パスに直接追加するツールディレクトリでは `ResourceLimits.h` を使用します。大文字小文字を区別しないファイルシステムでは、ローカルの `Limits.h` がシステムの `<limits.h>` を隠す可能性があります。
+
 ポリシーは呼び出し元が一つでも、所属サブシステムの limits/configuration ヘッダーを唯一の定義元に
 します。I/O、再帰/グラフ、作業/反復予算、ヒューリスティック閾値、キャッシュ、ページ/バッチ、再試行、
 タイムアウトが対象です。`constexpr`、マクロ、直書き比較、`min`/`clamp`、初期化子、既定引数も含みます。
@@ -270,7 +272,7 @@ inline constexpr uint64_t kMaxUnsizedInstructions = 65536;
 | SDK | [`include/neverd/sdk/Limits.h`](../../include/neverd/sdk/Limits.h) |
 | Web | [`include/neverd/web/Limits.h`](../../include/neverd/web/Limits.h) または既存の専用定義 |
 | その他のライブラリ | 既存ヘッダー/定義表、なければ所属層の専用 `Limits.h` |
-| CLI、worker、GUI のみ | ツール内 `Limits.h`/`Config.h`。コアは依存しない |
+| CLI、worker、GUI のみ | ツール内 `ResourceLimits.h`/`Config.h`。コアは依存しない |
 | 呼び出し元の選択設定 | 所属 `Config.h`、`*Options.h`、`*Configuration.h` モデル |
 
 軽量ヘッダーで目的別にまとめ、既存 `*Limits.def`/設定表を再利用し自己完結 C++ ビューを公開します。

@@ -6,6 +6,8 @@
 /// \file Strict original-byte decoding of supported Mach-O pointer fixups.
 #include "neverd/loader/MachO/MachOProgramLinking.h"
 
+#include "neverd/loader/Limits.h"
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Object/MachO.h"
@@ -42,7 +44,9 @@ public:
   Reader(llvm::ArrayRef<uint8_t> Bytes, uint64_t Limit,
          llvm::function_ref<llvm::Error()> CheckPreparation)
       : Bytes(Bytes), Limit(Limit),
-        RecordLimit(std::min<uint64_t>(65536, Bytes.size() / 8)),
+        RecordLimit(std::min<uint64_t>(
+            ::neverd::limits::loader::kMachOProgramLinkingReaderMinArgument1,
+            Bytes.size() / 8)),
         CheckPreparation(CheckPreparation) {}
   llvm::Error check() { return CheckPreparation(); }
   llvm::Error charge(uint64_t Count) {
@@ -648,7 +652,11 @@ llvm::Error Reader::exports(llvm::ArrayRef<uint8_t> Data) {
       if (!Edge)
         return Edge.takeError();
       if (!Prefixes.insert(uint8_t(Edge->front())).second ||
-          Node.Name.size() > 4096 || Edge->size() > 4096 - Node.Name.size())
+          Node.Name.size() >
+              ::neverd::limits::loader::
+                  kMachOProgramLinkingReaderExportsNodeNameSizeLimit ||
+          Edge->size() > ::neverd::limits::loader::kMaxMachOExportNameBytes -
+                             Node.Name.size())
         return failure("ambiguous or excessive export name");
       P += Edge->size() + 1;
       auto Offset = uleb(P, End);

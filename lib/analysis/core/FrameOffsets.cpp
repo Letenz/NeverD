@@ -8,6 +8,7 @@
 
 #include "ControlDiscovery.h"
 
+#include "neverd/analysis/Limits.h"
 #include "neverd/symbolic/SymMBA.h"
 
 #include <algorithm>
@@ -171,7 +172,8 @@ static FrameOffset proveFrameOffsetImpl(
     return {FrameOffsetStatus::Infeasible};
   if (const auto Offset = frameRelativeOffset(Ctx, Value, Root))
     return {FrameOffsetStatus::Exact, *Offset};
-  unsigned Remaining = 16;
+  unsigned Remaining =
+      ::neverd::limits::analysis::kFrameOffsetsProveFrameOffsetImplRemaining;
   const auto Remainder = relativeRemainder(Ctx, Value, Root, Remaining);
   const SymRef Difference = Remainder ? *Remainder : Ctx.mkSub(Value, Root);
   if (Ctx.numNodes() > MaxSymbolicNodes)

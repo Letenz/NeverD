@@ -17,6 +17,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/RegistrationFrameAddress.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/backend/llvm/X86RegistrationLayout.h"
@@ -158,7 +159,10 @@ llvm::Error validateFramePrivacy(
       LocateImpl;
   Locate = [&](const llvm::Value *Value,
                unsigned Depth) -> std::optional<Cell> {
-    if (++Work > limits::kMaxRegistrationEHStateWork || Depth > 128) {
+    if (++Work > limits::kMaxRegistrationEHStateWork ||
+        Depth >
+            ::neverd::limits::backend::
+                kCOFFRegistrationFrameProofValidateFramePrivacyLocateDepthLimit) {
       Exhausted = true;
       return std::nullopt;
     }
@@ -174,7 +178,10 @@ llvm::Error validateFramePrivacy(
   };
   LocateImpl = [&](const llvm::Value *Value,
                    unsigned Depth) -> std::optional<Cell> {
-    if (++Work > limits::kMaxRegistrationEHStateWork || Depth > 128) {
+    if (++Work > limits::kMaxRegistrationEHStateWork ||
+        Depth >
+            ::neverd::limits::backend::
+                kCOFFRegistrationFrameProofValidateFramePrivacyLocateImplDepthLimit) {
       Exhausted = true;
       return std::nullopt;
     }

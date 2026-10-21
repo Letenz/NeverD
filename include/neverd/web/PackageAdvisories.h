@@ -11,18 +11,13 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/PackageEvidence.h"
 #include "neverd/web/Packages.h"
 
 namespace neverd::web {
 
 inline constexpr std::string_view PackageAdvisoryProfile = "npm-osv-1.9.1-v1";
-inline constexpr uint64_t MaxPackageAdvisoryEntries = 1024;
-inline constexpr uint64_t MaxPackageAdvisorySelectors = 8192;
-inline constexpr uint64_t MaxPackageAdvisorySeverities = 1024;
-inline constexpr uint64_t MaxPackageAdvisoryImports = 16;
-inline constexpr uint64_t MaxPackageAdvisoryMatches = 8192;
-inline constexpr uint64_t MaxCachedPackageAdvisoryMatches = 2;
 
 // All supplied strings below are private declarations. Publication uses fixed
 // categories, admitted timestamps and opaque artifact/record anchors only.

@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/codegen/MachO/MachOCompactUnwindPatch.h"
 #include "neverd/backend/codegen/MachO/MachOExceptionPatch.h"
 #include "neverd/backend/codegen/MachO/MachOLayoutGrowth.h"
@@ -27,7 +28,6 @@ namespace neverd {
 namespace {
 using Kind = llvm::mc_rewrite::RewriteSectionKind;
 using namespace llvm::MachO;
-constexpr uint64_t MaxStorage = 64 * 1024 * 1024;
 llvm::Error fail(const llvm::Twine &Message) {
   return llvm::createStringError(llvm::errc::not_supported,
                                  "Mach-O patch object: " + Message);
@@ -146,7 +146,8 @@ llvm::Expected<NativeMachO> readObject(llvm::StringRef Bytes,
         Type != S_CSTRING_LITERALS && Type != S_4BYTE_LITERALS &&
         Type != S_8BYTE_LITERALS && Type != S_16BYTE_LITERALS && !Indirect)
       return fail("unsupported native section kind: " + *Name);
-    if (S.getSize() > MaxStorage - Total)
+    if (S.getSize() >
+        ::neverd::limits::backend::kMachOPatchObjectMaxStorage - Total)
       return fail("native storage exceeds profile limit");
     Total += S.getSize();
     CompiledSection Item;
@@ -474,15 +475,18 @@ llvm::Error place(NativeMachO &Object, uint64_t Base,
     for (auto &S : Image.Sections)
       if (S.IsAllocated && S.IsInImage && S.Kind == Group) {
         Cursor = llvm::alignTo(Cursor, S.Alignment);
-        if (Cursor < Base || Cursor - Base > MaxStorage ||
-            S.Size > MaxStorage - (Cursor - Base))
+        if (Cursor < Base ||
+            Cursor - Base >
+                ::neverd::limits::backend::kMachOPatchObjectMaxStorage ||
+            S.Size > ::neverd::limits::backend::kMachOPatchObjectMaxStorage -
+                         (Cursor - Base))
           return fail("native placement overflows");
         S.VA = Cursor;
         S.Offset = Cursor - Base;
         Cursor += S.Size;
       }
   }
-  if (Cursor - Base > MaxStorage)
+  if (Cursor - Base > ::neverd::limits::backend::kMachOPatchObjectMaxStorage)
     return fail("native placement exceeds limit");
   Image.Bytes.resize(Cursor - Base, 0);
   for (auto &S : Image.Sections)

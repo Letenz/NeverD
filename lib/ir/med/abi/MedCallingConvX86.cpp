@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
@@ -125,7 +126,8 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
     // comfort- ably exceed ~3 * (slots + saves); the walk is acyclic (PHI
     // cycles are cut by VisitedPhi), so a generous bound only guards against
     // runaway recursion.
-    if (Depth > 4096)
+    if (Depth > ::neverd::limits::ir::
+                    kMedCallingConvX86DetectCdeclStackParamsTraceOffDepthLimit)
       return std::nullopt;
     const MedOp *Def = findDef(V);
     if (!Def) {

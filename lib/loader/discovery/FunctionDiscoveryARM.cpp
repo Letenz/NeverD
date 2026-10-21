@@ -15,6 +15,7 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/ELF/ELFLoaderUtils.h"
 #include "neverd/loader/FunctionDiscovery.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/support/ARMTrap.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
@@ -833,7 +834,8 @@ struct ARMModeDiscovery::State {
         Format(Image.Format == BinaryFormat::MachO ? "macho" : "elf"),
         Disassembled(DisassembledCount) {}
 
-  static constexpr size_t kMaxDiscoveredInstructions = 4'000'000;
+  static constexpr size_t kMaxDiscoveredInstructions =
+      ::neverd::limits::loader::kFunctionDiscoveryARMMaxDiscoveredInstructions;
 
   bool isNoReturn(va_t Target) const {
     if (const auto It = VeneerDefinitions.find(Target);

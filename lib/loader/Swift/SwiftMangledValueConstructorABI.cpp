@@ -3,6 +3,7 @@
 #include "../MachO/ImmutableNativeFrame.h"
 #include "SwiftFunctionSymbols.h"
 
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -20,9 +21,12 @@ bool text(const Node &N, llvm::StringRef Kind, llvm::StringRef Value) {
 }
 bool identifier(const Node &N, llvm::StringRef Kind) {
   return N.Kind == Kind && N.Text && !N.Text->empty() &&
-         N.Text->size() <= 128 && !N.Index && N.Children.empty() &&
-         llvm::all_of(*N.Text,
-                      [](char C) { return llvm::isAlnum(C) || C == '_'; });
+         N.Text->size() <=
+             ::neverd::limits::loader::
+                 kSwiftMangledValueConstructorABIIdentifierNTextSizeLimit &&
+         !N.Index && N.Children.empty() && llvm::all_of(*N.Text, [](char C) {
+           return llvm::isAlnum(C) || C == '_';
+         });
 }
 bool nominal(const Node &N, llvm::StringRef Kind, llvm::StringRef Module,
              llvm::StringRef Name) {
@@ -83,11 +87,11 @@ swiftMangledFixedRecordConstructorDeclaration(const BinaryImage &Image,
   if (!Name.starts_with("$s"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = ::neverd::limits::loader::kSwiftIdentityInputBytes;
+  Options.MaxNodes = ::neverd::limits::loader::kSwiftIdentityNodes;
+  Options.MaxDepth = ::neverd::limits::loader::kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = ::neverd::limits::loader::kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = ::neverd::limits::loader::kSwiftIdentityOperations;
   const auto Parsed = llvm::swiftDemangle(Name, Options);
   if (!Parsed.Root || !Parsed.Error.empty() ||
       !shape(*Parsed.Root, "Global", 1) ||
@@ -186,9 +190,12 @@ swiftFixedRecordConstructorEntryABI(const BinaryImage &Image,
     return std::nullopt;
   const auto Declaration =
       swiftMangledFixedRecordConstructorDeclaration(Image, Function.Entry);
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::loader::
+      kSwiftMangledValueConstructorABISwiftFixedRecordConstructorEntryABIBudget;
   if (!Declaration || !Function.hasCompleteLiftCoverage() ||
-      Function.DecodedInstructionCount > 256 ||
+      Function.DecodedInstructionCount >
+          ::neverd::limits::loader::
+              kSwiftMangledValueConstructorABISwiftFixedRecordConstructorEntryABIFunctionDecodedInstructionCountLimit ||
       !immutableNativeFrameMachineMatches(Image, Function, Budget))
     return std::nullopt;
   return Declaration->Signature;
@@ -199,7 +206,8 @@ std::map<va_t, SourceCallTypeHint> buildSwiftFixedRecordConstructorCallHints(
     const std::map<va_t, SourceFunctionTypeHint> &CalleeABIs,
     const std::map<va_t, const LowFunc *> &CalleeBodies) {
   std::map<va_t, SourceCallTypeHint> Hints;
-  size_t Budget = 262144;
+  size_t Budget = ::neverd::limits::loader::
+      kSwiftMangledValueConstructorABIBuildSwiftFixedRecordConstructorCallHintsBudget;
   bool Checked = false;
   std::set<va_t> Seen;
   for (const auto &Block : Caller.Blocks)
@@ -222,12 +230,17 @@ std::map<va_t, SourceCallTypeHint> buildSwiftFixedRecordConstructorCallHints(
         continue;
       if (!Checked) {
         if (!Caller.hasCompleteLiftCoverage() ||
-            Caller.DecodedInstructionCount > 1024 ||
+            Caller.DecodedInstructionCount >
+                ::neverd::limits::loader::
+                    kSwiftMangledValueConstructorABIBuildSwiftFixedRecordConstructorCallHintsCallerDecodedInstructionCountLimit ||
             !immutableNativeFrameMachineMatches(Image, Caller, Budget))
           return {};
         Checked = true;
       }
-      if (Hints.size() >= 32 || !Seen.insert(Site->Instruction).second)
+      if (Hints.size() >=
+              ::neverd::limits::loader::
+                  kSwiftMangledValueConstructorABIBuildSwiftFixedRecordConstructorCallHintsSizeLimit ||
+          !Seen.insert(Site->Instruction).second)
         return {};
       SourceCallTypeHint H;
       H.Signature = *Current;

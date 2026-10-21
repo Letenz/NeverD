@@ -11,6 +11,8 @@
 
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 #include <limits>
 
@@ -126,7 +128,9 @@ std::string Session::streamRecords(std::string_view Revision,
   if (Found == State->StreamCaptures.end())
     throw Error("stream_capture_not_committed");
   const auto &C = Found->second;
-  if (!Limit || Limit > 128 || Offset > C.Records.size())
+  if (!Limit ||
+      Limit > ::neverd::limits::web::kSessionStreamsSessionStreamRecordsLimit ||
+      Offset > C.Records.size())
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(C.Records.size(), Offset + Limit);
   llvm::json::Array Items;

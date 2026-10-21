@@ -14,6 +14,7 @@
 
 #include "../NeverDCLI.h"
 #include "../NeverDCLIFunctions.h"
+#include "../ResourceLimits.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Format.h"
@@ -29,11 +30,6 @@ using namespace llvm;
 
 namespace neverd::cli {
 namespace {
-
-/// Functions one neverd_code_refs_json call decodes, and slots one
-/// neverd_pointer_refs_json call reads.
-constexpr int ReferencePageFunctions = 1024;
-constexpr int ReferencePageSlots = 65536;
 
 struct Reference {
   uint64_t From = 0;
@@ -96,12 +92,16 @@ int runDirectXrefs(neverd_session_t Sess, neverd_va_t Target) {
   bool Failed = false;
   for (std::optional<uint64_t> Cursor = 0; Cursor && !Failed;)
     Cursor = collectPage(
-        neverd_code_refs_json(Sess, *Cursor, ReferencePageFunctions),
+        neverd_code_refs_json(
+            Sess, *Cursor,
+            ::neverd::limits::cli::kNeverDCmdXrefsReferencePageFunctions),
         "next_entry", Target, Refs, Failed);
   for (std::optional<uint64_t> Cursor = 0; Cursor && !Failed;)
-    Cursor =
-        collectPage(neverd_pointer_refs_json(Sess, *Cursor, ReferencePageSlots),
-                    "next_slot", Target, Refs, Failed);
+    Cursor = collectPage(
+        neverd_pointer_refs_json(
+            Sess, *Cursor,
+            ::neverd::limits::cli::kNeverDCmdXrefsReferencePageSlots),
+        "next_slot", Target, Refs, Failed);
   if (Failed) {
     WithColor::error() << takeLastError(Sess) << "\n";
     return 1;

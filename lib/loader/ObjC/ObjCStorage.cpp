@@ -1,6 +1,7 @@
 #include "../MachO/DarwinRuntimeImport.h"
 #include "ObjCRuntimeData.h"
 
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ObjC/ObjCMethods.h"
 
 #include <algorithm>
@@ -10,11 +11,10 @@
 namespace neverd {
 namespace {
 
-constexpr uint64_t MaxRecords = 65536;
-
 void diagnostic(BinaryImage &Image, llvm::StringRef Message) {
   auto &Diagnostics = Image.ObjCMetadataDiagnostics;
-  if (Diagnostics.size() < 64 &&
+  if (Diagnostics.size() <
+          ::neverd::limits::loader::kObjCStorageDiagnosticsSizeLimit &&
       std::find(Diagnostics.begin(), Diagnostics.end(), Message) ==
           Diagnostics.end())
     Diagnostics.push_back(Message.str());
@@ -36,7 +36,9 @@ bool readIvars(ObjCClass &Class, const objc::RuntimeData &Data,
     return true;
   auto EntrySize = Data.u32(*List);
   auto Count = *List <= InvalidVA - 4 ? Data.u32(*List + 4) : std::nullopt;
-  if (!EntrySize || !Count || *EntrySize < 32 || *EntrySize > 4096 ||
+  if (!EntrySize || !Count || *EntrySize < 32 ||
+      *EntrySize >
+          ::neverd::limits::loader::kObjCStorageReadIvarsEntrySizeLimit ||
       *Count > Remaining ||
       !Data.bytes(*List, 8 + uint64_t(*EntrySize) * *Count))
     return false;
@@ -146,7 +148,7 @@ void parseObjCStorage(BinaryImage &Image) {
       Image.IsRelocatable)
     return;
   objc::RuntimeData Data(Image);
-  uint64_t Remaining = MaxRecords;
+  uint64_t Remaining = ::neverd::limits::loader::kObjCStorageMaxRecords;
   std::set<va_t> Conflicts;
   auto Publish = [&](ObjCSourceReference Reference) {
     if (Conflicts.count(Reference.Address))

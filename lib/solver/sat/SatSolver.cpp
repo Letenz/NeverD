@@ -27,6 +27,7 @@
 
 #include "SatDetail.h"
 
+#include "neverd/solver/Limits.h"
 #include "neverd/solver/SatTypes.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -294,9 +295,9 @@ SatResult SatEngine::solve(llvm::ArrayRef<SatLit> Assumptions) {
   // Keep learned clauses in proportion to the formula, never fewer than a
   // floor: on a small formula a fraction of it rounds to nothing, and the
   // search would then throw away everything it derived.
-  MaxLearnt = std::max(static_cast<double>(Clauses.size()) *
-                           std::max(Opts.LearnedFraction, 0.0),
-                       64.0);
+  MaxLearnt = std::max(
+      static_cast<double>(Clauses.size()) * std::max(Opts.LearnedFraction, 0.0),
+      ::neverd::limits::solver::kSatSolverSatEngineSolveMaxLearntMaxArgument2);
 
   SatResult R = SatResult::Unknown;
   for (uint64_t Restart = 0; R == SatResult::Unknown; ++Restart) {

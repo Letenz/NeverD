@@ -7,6 +7,7 @@
 #include "neverd/solver/SymSynthVerifier.h"
 
 #include "neverd/solver/BitVectorSolver.h"
+#include "neverd/solver/Limits.h"
 #include "neverd/solver/SatTypes.h"
 #include "neverd/solver/Z3Solver.h"
 #include "neverd/symbolic/SymExpr.h"
@@ -41,11 +42,11 @@ bool isValidRef(const symbolic::SymContext &Ctx, symbolic::SymRef R) {
 void cancelCommonAddends(symbolic::SymContext &Ctx, symbolic::SymRef &A,
                          symbolic::SymRef &B) {
   using namespace symbolic;
-  constexpr size_t MaxTerms = 64;
   auto count = [&](SymRef R) {
     return Ctx.op(R) == SymOp::Add ? Ctx.numOperands(R) : size_t(1);
   };
-  if (count(A) > MaxTerms || count(B) > MaxTerms)
+  if (count(A) > ::neverd::limits::solver::kSymSynthVerifierMaxTerms ||
+      count(B) > ::neverd::limits::solver::kSymSynthVerifierMaxTerms)
     return;
   auto terms = [&](SymRef R) {
     llvm::SmallVector<SymRef, 8> Result;

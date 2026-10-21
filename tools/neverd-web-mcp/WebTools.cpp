@@ -11,13 +11,17 @@
 
 #include "WebTools.h"
 
+#include "ResourceLimits.h"
+
 namespace neverd::mcp {
 namespace {
 std::vector<std::string> validateInputs(std::vector<std::string> Inputs) {
   if (Inputs.size() > MaxInputs)
     throw std::invalid_argument("Too many configured inputs");
   for (const auto &Path : Inputs)
-    if (Path.empty() || Path.size() > 32768 ||
+    if (Path.empty() ||
+        Path.size() >
+            ::neverd::limits::web_mcp::kWebToolsValidateInputsPathSizeLimit ||
         Path.find('\0') != std::string::npos)
       throw std::invalid_argument("Invalid configured input");
   return Inputs;

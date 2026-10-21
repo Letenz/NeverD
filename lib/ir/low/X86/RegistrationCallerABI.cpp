@@ -8,6 +8,7 @@
 #include "RegistrationJumpRuntime.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/loader/BinaryImage.h"
@@ -224,7 +225,9 @@ bool hasRegistrationCallFrameABI(
         }
       }
       Targets.insert(Op.Inputs[0].Offset);
-      if (Targets.size() > 256)
+      if (Targets.size() >
+          ::neverd::limits::ir::
+              kRegistrationCallerABIHasRegistrationCallFrameABITargetsSizeLimit)
         return false;
     }
   }
@@ -251,7 +254,9 @@ bool hasRegistrationCallFrameABI(
     Pending.pop_front();
     if (!Examined.insert(Target).second)
       continue;
-    if (Examined.size() > 256)
+    if (Examined.size() >
+        ::neverd::limits::ir::
+            kRegistrationCallerABIHasRegistrationCallFrameABIExaminedSizeLimit)
       return false;
     bool OutlinedFinally = false;
     if (Function.ExceptionMetadata && Function.ExceptionMetadata->Registration)
@@ -356,7 +361,9 @@ bool hasRegistrationCallFrameABI(
             if (Next == Scope.FilterVA || Next == Scope.HandlerVA)
               return false;
         Pending.push_back(Next);
-        if (Pending.size() > 256)
+        if (Pending.size() >
+            ::neverd::limits::ir::
+                kRegistrationCallerABIHasRegistrationCallFrameABIPendingSizeLimit)
           return false;
       }
   }

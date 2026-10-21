@@ -6,17 +6,15 @@
 
 #include "SourceParameterPlacementDetail.h"
 
+#include "neverd/ir/Limits.h"
+
 #include <algorithm>
 #include <functional>
 
 using namespace neverd;
 using namespace neverd::source_placement;
 
-namespace {
-/// More scalars than any value a convention passes in registers holds: a
-/// value with more is placed by its size alone or not at all.
-constexpr unsigned kMaxScalarLeaves = 64;
-} // namespace
+namespace {} // namespace
 
 bool source_placement::isIntegerScalar(const TypeRef &Type) {
   if (!Type || !Type->Size)
@@ -36,7 +34,8 @@ bool source_placement::isRecord(const TypeRef &Type) {
 std::optional<std::vector<NdScalarLeaf>>
 source_placement::scalarLeaves(const TypeRef &Type) {
   std::vector<NdScalarLeaf> Leaves;
-  unsigned Budget = kMaxScalarLeaves;
+  unsigned Budget =
+      ::neverd::limits::ir::kSourceParameterPlacementMaxScalarLeaves;
   std::function<bool(const TypeRef &, uint64_t)> Add = [&](const TypeRef &Part,
                                                            uint64_t Base) {
     if (!Part || !Budget || Base + Part->Size > UINT16_MAX)
@@ -49,7 +48,8 @@ source_placement::scalarLeaves(const TypeRef &Type) {
     }
     if (Part->Kind == NdTypeKind::Array) {
       if (!Part->ElemType || !Part->ElemType->Size ||
-          Part->ArrayCount > kMaxScalarLeaves)
+          Part->ArrayCount >
+              ::neverd::limits::ir::kSourceParameterPlacementMaxScalarLeaves)
         return false;
       for (uint32_t I = 0; I < Part->ArrayCount; ++I)
         if (!Add(Part->ElemType, Base + uint64_t(I) * Part->ElemType->Size))
@@ -67,7 +67,8 @@ source_placement::scalarLeaves(const TypeRef &Type) {
       return true;
     }
     if (Part->ScalarLeaves.empty() ||
-        Leaves.size() + Part->ScalarLeaves.size() > kMaxScalarLeaves)
+        Leaves.size() + Part->ScalarLeaves.size() >
+            ::neverd::limits::ir::kSourceParameterPlacementMaxScalarLeaves)
       return false;
     for (const NdScalarLeaf &Leaf : Part->ScalarLeaves) {
       if (Leaf.Offset + Leaf.Size > Part->Size)

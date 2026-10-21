@@ -42,7 +42,10 @@ sentinelPrivateStackLoads(const HighFunc &Function, const HighExpr &Call,
   };
   const auto Read = [&](auto &&Self, const ExprPtr &Value,
                         unsigned Depth) -> bool {
-    if (!Value || !Budget || Depth > 64 ||
+    if (!Value || !Budget ||
+        Depth >
+            ::neverd::sdk::
+                kObjCSentinelStackSentinelPrivateStackLoadsReadReadDepthLimit ||
         Value->IntrinsicId != Intrinsic::None ||
         !Value->IntrinsicOutputs.empty() ||
         Value->MemoryOrdering != NdMemoryOrdering::None ||

@@ -12,6 +12,8 @@
 #include "SessionInternal.h"
 #include "rewrite/Export.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 
 namespace neverd::web {
@@ -176,7 +178,8 @@ std::string Session::sourceRewriteRecords(std::string_view Revision,
   if (Found == State->SourceRewrites.end())
     throw Error("unknown_source_rewrite");
   const auto &A = Found->second;
-  if (!Limit || Limit > 512 || Offset > A.Records.size())
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > A.Records.size())
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(A.Records.size(), Offset + Limit);
   llvm::json::Array Items;

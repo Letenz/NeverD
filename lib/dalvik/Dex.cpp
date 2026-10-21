@@ -6,9 +6,10 @@
 /// \file
 /// Shared Dalvik dex implementation.
 //===----------------------------------------------------------------------===//
-#include "neverd/dalvik/Model.h"
 #include "neverd/dalvik/Access.h"
 #include "neverd/dalvik/Identity.h"
+#include "neverd/dalvik/Limits.h"
+#include "neverd/dalvik/Model.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
@@ -45,7 +46,8 @@ uint32_t targetPC(uint32_t pc, int64_t delta) {
 // Share deadline checkpoints across bounded operations, including nested
 // readers and short methods. Every operation still debits its work immediately.
 void boundedWork(Budget &budget, unsigned &steps, uint64_t count = 1) {
-  if (count > 128 || ++steps >= 128) {
+  if (count > ::neverd::limits::dalvik::kDexBoundedWorkCountLimit ||
+      ++steps >= ::neverd::limits::dalvik::kDexBoundedWorkStepsLimit) {
     budget.tick(count);
     steps = 0;
   } else
@@ -67,7 +69,8 @@ struct Cursor {
     // Check the first read, then at most 128 bounded scalar reads apart
     // across this DEX's cursors, including nested readers.
     // Larger reads always check; work limits still apply to every read.
-    if (size > 16 || ++small_reads >= 128) {
+    if (size > 16 ||
+        ++small_reads >= ::neverd::limits::dalvik::kDexTakeSmallReadsLimit) {
       budget.tick(1 + size / 16);
       small_reads = 0;
     } else
@@ -551,7 +554,7 @@ class Dex {
     if (query_retained && bytes >= 16) {
       // Small copies are bounded by the surrounding scalar/instruction loop's
       // checkpoints. Large copies always check before allocating or copying.
-      if (bytes < 2048)
+      if (bytes < ::neverd::limits::dalvik::kDexQueryCopyWorkBytesLimit)
         budget.consumeWork(bytes / 16);
       else
         budget.tick(bytes / 16);
@@ -801,7 +804,7 @@ class Dex {
       bad("invalid map offset");
     auto map = cursor(map_off);
     unsigned count = map.u32();
-    if (!count || count > 32)
+    if (!count || count > ::neverd::limits::dalvik::kDexHeaderCountLimit)
       bad("invalid section map size");
     const std::map<unsigned, unsigned> fixed{{0, 112}, {1, 4}, {2, 4},
                                              {3, 12},  {4, 8}, {5, 8},
@@ -869,7 +872,9 @@ class Dex {
     while (true) {
       // ASCII consumes one UTF-16 unit per byte. Keep the same byte-work
       // charge while checking the deadline at bounded run boundaries.
-      size_t limit = std::min<size_t>(4096, reader.end - reader.pos);
+      size_t limit =
+          std::min<size_t>(::neverd::limits::dalvik::kDexMutf8LimitMinArgument1,
+                           reader.end - reader.pos);
       if (budget.remaining < limit)
         limit = size_t(budget.remaining);
       if (expected - result.units.size() < limit)
@@ -1072,7 +1077,7 @@ class Dex {
     }
   }
   Encoded encoded(Cursor &reader, unsigned depth = 0) {
-    if (depth > 64)
+    if (depth > ::neverd::limits::dalvik::kDexEncodedDepthLimit)
       bad("encoded value nesting exceeds limit");
     unsigned tag = reader.u8(), kind = tag & 31, arg = tag >> 5;
     Encoded result;
@@ -1136,7 +1141,7 @@ class Dex {
     bad("unknown encoded value");
   }
   Annotation annotation(Cursor &reader, unsigned depth = 0) {
-    if (depth > 64)
+    if (depth > ::neverd::limits::dalvik::kDexAnnotationDepthLimit)
       bad("annotation nesting exceeds limit");
     auto name = type(uint64_t(reader.leb()));
     if (!name.starts_with('L'))
@@ -1634,7 +1639,9 @@ class Dex {
     Instructions result;
     auto &[code, flow, lengths] = result;
     const auto &specs = opcodes();
-    const size_t initial = std::min<size_t>(words.size(), 32);
+    const size_t initial = std::min<size_t>(
+        words.size(),
+        ::neverd::limits::dalvik::kDexInstructionsInitialMinArgument2);
     if (query_retained)
       queryReserve(flow, initial, true);
     else

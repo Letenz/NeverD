@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "ResourceLimits.h"
 #include "Server.h"
 
 #include <vector>
@@ -21,8 +22,8 @@ struct Field {
   std::string Name;
   Kind Type = Kind::String;
   bool Required = true;
-  std::size_t Maximum = 64;
-  std::size_t Minimum = 1;
+  std::size_t Maximum = ::neverd::limits::web_mcp::kCatalogMaximum;
+  std::size_t Minimum = ::neverd::limits::web_mcp::kCatalogMinimum;
   Json Choices = Json::array();
 };
 

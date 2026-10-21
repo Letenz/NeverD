@@ -6,6 +6,7 @@
 
 #include "PathfinderView.h"
 
+#include "../ResourceLimits.h"
 #include "AddressSpace.h"
 #include "ChooserView.h"
 #include "Icons.h"
@@ -52,10 +53,6 @@ constexpr int IndexRole = Qt::UserRole + 3;
 constexpr char DataRefsKey[] = "pathfinder/dataRefs";
 constexpr char ShortestOnlyKey[] = "pathfinder/shortestOnly";
 constexpr char MaxDepthKey[] = "pathfinder/maxDepth";
-// The engine's bounds (neverd_call_paths_json).
-constexpr int DefaultMaxDepth = 16, MaxDepth = 64, MaxWaypoints = 64;
-/// How long a change settles before the search runs again.
-constexpr int SearchDelayMs = 150;
 
 std::optional<Address> rowAddress(const QTreeWidgetItem *item, int role) {
   const QVariant value = item ? item->data(0, role) : QVariant();
@@ -185,9 +182,12 @@ PathfinderView::PathfinderView(Session &session, const AddressSpace &space,
   auto *depthLabel = new QLabel(tr("Maximum depth:"), optionsPanel_);
   maxDepth_ = new QSpinBox(optionsPanel_);
   maxDepth_->setObjectName(QStringLiteral("pathfinderMaxDepth"));
-  maxDepth_->setRange(1, MaxDepth);
+  maxDepth_->setRange(1, ::neverd::limits::gui::kMaxPathfinderDepth);
   maxDepth_->setValue(std::clamp(
-      settings.value(MaxDepthKey, DefaultMaxDepth).toInt(), 1, MaxDepth));
+      settings
+          .value(MaxDepthKey, ::neverd::limits::gui::kDefaultPathfinderDepth)
+          .toInt(),
+      1, ::neverd::limits::gui::kMaxPathfinderDepth));
   depthLabel->setBuddy(maxDepth_);
   optionsLayout->addWidget(dataRefs_);
   optionsLayout->addWidget(shortestOnly_);
@@ -284,7 +284,7 @@ PathfinderView::PathfinderView(Session &session, const AddressSpace &space,
             &PathfinderView::updateButtons);
 
   debounce_.setSingleShot(true);
-  debounce_.setInterval(SearchDelayMs);
+  debounce_.setInterval(::neverd::limits::gui::kPathfinderSearchDelayMs);
   connect(&debounce_, &QTimer::timeout, this, &PathfinderView::search);
   connect(&session_, &Session::opened, this, [this] { showStatus(); });
   // Renames, new functions and their references change the paths.
@@ -352,11 +352,12 @@ void PathfinderView::add(Address node, const Node &described, Role role,
   } else {
     QVector<Address> waypoints = restart ? QVector<Address>() : waypoints_;
     // A function is a waypoint once, as in IDA.
-    if (waypoints.contains(node) || waypoints.size() >= MaxWaypoints) {
-      error_ =
-          waypoints.contains(node)
-              ? tr("%1 is a waypoint already.").arg(label(node))
-              : tr("A path takes at most %n waypoints.", nullptr, MaxWaypoints);
+    if (waypoints.contains(node) ||
+        waypoints.size() >= ::neverd::limits::gui::kMaxPathfinderWaypoints) {
+      error_ = waypoints.contains(node)
+                   ? tr("%1 is a waypoint already.").arg(label(node))
+                   : tr("A path takes at most %n waypoints.", nullptr,
+                        ::neverd::limits::gui::kMaxPathfinderWaypoints);
       showStatus();
       return;
     }
@@ -765,7 +766,8 @@ void PathfinderView::contextMenu(const QPoint &point) {
                    tr("Promote to waypoint"), this,
                    [this, node = *node, segment] {
                      if (waypoints_.contains(node) ||
-                         waypoints_.size() >= MaxWaypoints)
+                         waypoints_.size() >=
+                             ::neverd::limits::gui::kMaxPathfinderWaypoints)
                        return;
                      QVector<Address> waypoints = waypoints_;
                      waypoints.insert(segment + 1, node);
@@ -837,8 +839,8 @@ QJsonObject PathfinderView::state() const {
 void PathfinderView::restoreState(const QJsonObject &state) {
   exclusions_ = addressVector(state.value(QStringLiteral("exclude")));
   waypoints_ = addressVector(state.value(QStringLiteral("waypoints")));
-  if (waypoints_.size() > MaxWaypoints)
-    waypoints_.resize(MaxWaypoints);
+  if (waypoints_.size() > ::neverd::limits::gui::kMaxPathfinderWaypoints)
+    waypoints_.resize(::neverd::limits::gui::kMaxPathfinderWaypoints);
   segments_ = {};
   error_.clear();
   showExclusions();

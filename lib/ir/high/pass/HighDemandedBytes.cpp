@@ -20,6 +20,7 @@
 
 #include "HighDCEDetail.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/intrinsics/X86VectorLaneReads.h"
 
@@ -38,10 +39,6 @@ namespace {
 
 /// One bit per byte of a value; a value wider than 64 bytes demands all.
 using ByteMask = uint64_t;
-
-constexpr size_t kVisitBudget = 2000000;
-/// How deep a constant mask's concatenations and copies may nest.
-constexpr unsigned kMaxConstantMaskDepth = 16;
 
 ByteMask allBytes(uint16_t Bytes) {
   return Bytes == 0 || Bytes >= 64 ? ~ByteMask{0} : (ByteMask{1} << Bytes) - 1;
@@ -131,7 +128,7 @@ public:
 private:
   HighFunc &Func;
   Arch Architecture;
-  size_t Budget = kVisitBudget;
+  size_t Budget = ::neverd::limits::ir::kHighDemandedBytesVisitBudget;
   std::unordered_map<const HighExpr *, ByteMask> NodeDemand;
   VarKeyMap<ByteMask> VarDemand;
   VarKeyMap<std::vector<const HighExpr *>> Definitions;
@@ -167,7 +164,7 @@ private:
   /// `vmov.i32 q9, #0xff`).
   std::optional<ByteMask> constantNonzeroBytes(const HighExpr &E,
                                                unsigned Depth) const {
-    if (Depth > kMaxConstantMaskDepth)
+    if (Depth > ::neverd::limits::ir::kHighDemandedBytesMaxConstantMaskDepth)
       return std::nullopt;
     if (E.Kind == ExprKind::Const)
       return nonzeroBytes(E.ConstVal, exprBytes(E));
@@ -492,7 +489,7 @@ private:
       Out.push_back(Count.ConstVal);
       return true;
     }
-    if (Depth > 4)
+    if (Depth > ::neverd::limits::ir::kHighDemandedBytesShiftAmountsDepthLimit)
       return false;
     // A conversion of one keeps its value within the converted width.
     if ((Count.Kind == ExprKind::Cast ||

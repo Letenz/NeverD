@@ -13,6 +13,7 @@
 
 #include "../NeverDCLI.h"
 
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/ProjectFiles.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -699,7 +700,8 @@ Expected<json::Object> itemRow(neverd_session_t Sess, uint64_t Addr) {
                         {"type", ItemType.getValue()}};
   if (!ItemAlignment.empty()) {
     const uint64_t Boundary = ItemBoundary;
-    if (Boundary < 2 || Boundary > 1048576 || (Boundary & (Boundary - 1)))
+    if (Boundary < 2 || Boundary > ::neverd::sdk::kMaxDataItemAlignment ||
+        (Boundary & (Boundary - 1)))
       return createStringError(inconvertibleErrorCode(),
                                "alignment boundary must be a power of two "
                                "from 2 to 1048576");

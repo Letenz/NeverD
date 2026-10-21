@@ -1,5 +1,6 @@
 #include "Session.h"
 
+#include "../ResourceLimits.h"
 #include "ProjectDatabase.h"
 #include "SettingsKeys.h"
 
@@ -20,11 +21,9 @@
 
 namespace neverd::gui {
 namespace {
-constexpr int CacheMiB = 256;
 constexpr char StringEncodingsKey[] = "strings/encodings";
 constexpr char StringPreferredKey[] = "strings/preferred";
 constexpr char StringMinLengthKey[] = "strings/minLength";
-constexpr int MaxRecentFiles = 10;
 /// The project's record of the user's answers about its debug information:
 /// the PDB, DWARF or MAP file to load, or {"mode":"none"} for one declined,
 /// and {"mode":"none"} for a declined symbol table.
@@ -151,7 +150,7 @@ Session::Session(QString workerPath, QObject *parent)
     : QObject(parent), queries_(&client_), analysis_(queries_, workerPath),
       workerPath_(std::move(workerPath)),
       sessionEpoch_(queries_.sessionEpoch()) {
-  queries_.setCacheBudgetMiB(CacheMiB);
+  queries_.setCacheBudgetMiB(::neverd::limits::gui::kSessionCacheMiB);
   connect(&analysis_, &AnalysisPool::diagnostic, this,
           [this](const QString &text) { emit message(text, 0); });
   connect(&client_, &EngineClient::message, this, &Session::receive);
@@ -199,7 +198,8 @@ Session::Session(QString workerPath, QObject *parent)
   // A change on disk settles before the project takes it: git and editors
   // write several files, some by replacing them.
   projectSync_.setSingleShot(true);
-  projectSync_.setInterval(300);
+  projectSync_.setInterval(
+      ::neverd::limits::gui::kSessionSessionSetIntervalMilliseconds);
   connect(&projectSync_, &QTimer::timeout, this, &Session::syncProject);
   connect(&projectWatcher_, &QFileSystemWatcher::directoryChanged,
           &projectSync_, qOverload<>(&QTimer::start));
@@ -671,7 +671,7 @@ void Session::sendOpen(const QString &requested, const QString &path,
         auto recent = store.value(settings::RecentFiles).toStringList();
         recent.removeAll(requested);
         recent.prepend(requested);
-        while (recent.size() > MaxRecentFiles)
+        while (recent.size() > ::neverd::limits::gui::kSessionMaxRecentFiles)
           recent.removeLast();
         store.setValue(settings::RecentFiles, recent);
         // When each was last opened, for the quick start.
@@ -745,10 +745,16 @@ void Session::sendOpen(const QString &requested, const QString &path,
             arch == QLatin1String("x86") || arch == QLatin1String("x86_64") ||
             arch == QLatin1String("arm") || arch == QLatin1String("arm64") ||
             arch == QLatin1String("aarch64");
-        const bool large = functionCount_ > 65536 ||
-                           QFileInfo(filePath_).size() > 64 * 1024 * 1024;
+        const bool large =
+            functionCount_ > ::neverd::limits::gui::
+                                 kSessionSendOpenLargeFunctionCountLimit ||
+            QFileInfo(filePath_).size() >
+                ::neverd::limits::gui::
+                    kSessionSendOpenLargeQFileInfoFilePathSizeLimit;
         analysis_.setSnapshotBlocked(options.analysis && native && large);
-        if (options.analysis && native && !large && functionCount_ >= 4096)
+        if (options.analysis && native && !large &&
+            functionCount_ >=
+                ::neverd::limits::gui::kSessionSendOpenFunctionCountLimit)
           analysis_.prefetchSource(entryAddress());
         emit opened();
         emit stateChanged();

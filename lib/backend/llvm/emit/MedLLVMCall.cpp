@@ -12,6 +12,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/backend/LLVMValueProvenance.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMName.h"
@@ -118,7 +119,10 @@ llvm::GlobalValue *constantCallIdentity(llvm::Value *Value,
   // signature before emitting the call. Otherwise the generic register
   // signature can survive as an opaque-pointer call with extra parameters
   // even after LLVM folds the pointer to the function itself.
-  for (unsigned Depth = 0; Value && Depth != 8; ++Depth) {
+  for (unsigned Depth = 0;
+       Value &&
+       Depth != ::neverd::limits::backend::kMaxConstantCallIdentityDepth;
+       ++Depth) {
     if (auto *Global = llvm::dyn_cast<llvm::GlobalValue>(Value))
       return Global;
     if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(Value)) {

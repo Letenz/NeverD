@@ -12,6 +12,7 @@
 #include "ExecutionTask.h"
 
 #include "neverd/dalvik/Library.h"
+#include "neverd/dalvik/Limits.h"
 
 #include <bit>
 #include <limits>
@@ -552,7 +553,9 @@ struct Runtime::State::Engine {
            "explicit initializer invocation");
     co_await initialize(method.reference.owner, depth);
     if (has(method.access, "native")) {
-      if (depth >= 64 || remaining_stack < 256)
+      if (depth >= ::neverd::limits::dalvik::kRuntimeRunNativeDepthLimit ||
+          remaining_stack <
+              ::neverd::limits::dalvik::kRuntimeRunNativeRemainingStackLimit)
         halt(ExecutionStop::StackLimit, method, 0,
              "DEX native frame budget exhausted");
       if (args.size() != method.reference.parameters.size() + !is_static)
@@ -593,7 +596,8 @@ struct Runtime::State::Engine {
     }
     const uint64_t bytes = uint64_t(method.registers) * sizeof(Register) +
                            method.instructions.size() * 64 + 256;
-    if (depth >= 64 || bytes > remaining_stack)
+    if (depth >= ::neverd::limits::dalvik::kRuntimeRunDepthLimit ||
+        bytes > remaining_stack)
       halt(ExecutionStop::StackLimit, method, 0, "DEX frame budget exhausted");
     remaining_stack -= bytes;
     struct RestoreStack {
@@ -1005,7 +1009,9 @@ struct Runtime::State::Engine {
             bool resolved = callee != nullptr;
             auto declaration = *reference;
             for (unsigned n = 0;
-                 !resolved && !declaration.owner.empty() && n < 64; ++n) {
+                 !resolved && !declaration.owner.empty() &&
+                 n < ::neverd::limits::dalvik::kMaxRuntimeMethodHierarchyDepth;
+                 ++n) {
               resolved = libraryMethod(declaration, false) != nullptr;
               declaration.owner = program.parent(declaration.owner);
             }
@@ -1040,7 +1046,11 @@ struct Runtime::State::Engine {
               // Resolve the finite platform base only after supplied virtual
               // overrides.
               auto owner = selected.owner;
-              for (unsigned i = 0; !owner.empty() && i < 64 && !library; ++i) {
+              for (unsigned i = 0; !owner.empty() &&
+                                   i < ::neverd::limits::dalvik::
+                                           kMaxRuntimeMethodHierarchyDepth &&
+                                   !library;
+                   ++i) {
                 selected.owner = owner;
                 library = libraryMethod(selected, false);
                 owner = program.parent(owner);
@@ -1209,7 +1219,10 @@ Runtime::State::start(std::function<ExecutionTask(Engine &)> entry,
                       uint64_t owner) {
   if (stopped)
     return *stopped;
-  if (!admit || executions.size() >= 64 || next_execution == UINT64_MAX) {
+  if (!admit ||
+      executions.size() >=
+          ::neverd::limits::dalvik::kRuntimeStateStartExecutionsSizeLimit ||
+      next_execution == UINT64_MAX) {
     stopped = ExecutionResult{
         ExecutionStop::StackLimit, 0, {}, "Java invocation budget exhausted"};
     return *stopped;
@@ -1342,7 +1355,9 @@ bool Program::assignable(std::string_view source,
 const Field *Program::findField(const FieldRef &reference,
                                 bool is_static) const {
   auto name = reference.owner;
-  for (unsigned depth = 0; depth < 64; ++depth) {
+  for (unsigned depth = 0;
+       depth < ::neverd::limits::dalvik::kRuntimeProgramFindFieldDepthLimit;
+       ++depth) {
     const auto *klass = findClass(name);
     if (!klass)
       break;
@@ -1363,7 +1378,10 @@ const Method *Program::findMethod(const MethodRef &reference,
   std::function<const Method *(std::string_view, unsigned)> find =
       [&](std::string_view name, unsigned depth) -> const Method * {
     const auto *klass = findClass(name);
-    if (!klass || depth >= 64 || !seen.insert(klass->name).second)
+    if (!klass ||
+        depth >= ::neverd::limits::dalvik::
+                     kRuntimeProgramFindMethodFindFindDepthLimit ||
+        !seen.insert(klass->name).second)
       return nullptr;
     for (const auto &method : klass->methods)
       if (method.reference.name == reference.name &&
@@ -1390,7 +1408,9 @@ const Method *Program::virtualMethod(const MethodRef &reference,
   if (!assignable(receiver, reference.owner))
     return nullptr;
   auto name = std::string(receiver);
-  for (unsigned depth = 0; depth < 64; ++depth) {
+  for (unsigned depth = 0;
+       depth < ::neverd::limits::dalvik::kRuntimeProgramVirtualMethodDepthLimit;
+       ++depth) {
     const auto *klass = findClass(name);
     if (!klass)
       break;
@@ -1423,7 +1443,9 @@ Program::unsupportedClass(std::string_view name) const {
         return std::nullopt;
       return "class is not supplied by DEX";
     }
-    if (depth >= 64 || !visiting.insert(klass->name).second)
+    if (depth >= ::neverd::limits::dalvik::
+                     kRuntimeProgramUnsupportedClassCheckDepthLimit ||
+        !visiting.insert(klass->name).second)
       return "DEX cyclic or excessively deep hierarchy";
     if (!klass->superclass)
       return "DEX class has no superclass";

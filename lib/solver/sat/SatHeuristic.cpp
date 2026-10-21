@@ -24,6 +24,7 @@
 
 #include "SatDetail.h"
 
+#include "neverd/solver/Limits.h"
 #include "neverd/solver/SatTypes.h"
 
 #include <algorithm>
@@ -34,12 +35,7 @@ namespace neverd::solver::detail {
 
 namespace {
 
-/// Activities are rescaled rather than allowed to overflow.  Scaling every
-/// activity by the same factor leaves their order — which is all the heap
-/// reads — untouched.
-constexpr double kVarActivityCeiling = 1e100;
 constexpr double kVarActivityScale = 1e-100;
-constexpr float kClauseActivityCeiling = 1e20f;
 constexpr float kClauseActivityScale = 1e-20f;
 
 } // namespace
@@ -175,7 +171,7 @@ SatLit SatEngine::pickBranchLit() {
 
 void SatEngine::bumpVarActivity(SatVar V) {
   Activity[V] += VarInc;
-  if (Activity[V] > kVarActivityCeiling) {
+  if (Activity[V] > ::neverd::limits::solver::kSatHeuristicVarActivityCeiling) {
     for (double &A : Activity)
       A *= kVarActivityScale;
     VarInc *= kVarActivityScale;
@@ -187,7 +183,7 @@ void SatEngine::bumpClauseActivity(ClauseRef Ref) {
   ClauseView C = clause(Ref);
   float Updated = C.activity() + static_cast<float>(ClauseInc);
   C.setActivity(Updated);
-  if (Updated <= kClauseActivityCeiling)
+  if (Updated <= ::neverd::limits::solver::kSatHeuristicClauseActivityCeiling)
     return;
 
   for (ClauseRef Other : Learnt) {

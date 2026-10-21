@@ -1,5 +1,7 @@
 #include "LoadFileDialog.h"
 
+#include "../Config.h"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
@@ -20,9 +22,6 @@
 
 namespace neverd::gui {
 namespace {
-
-// Room for the file's path and the processors' names.
-constexpr int DialogWidth = 560;
 
 struct ProcessorFamily {
   const char *id, *name;
@@ -53,7 +52,7 @@ LoadFileDialog::LoadFileDialog(const QString &path, const QJsonArray &rows,
                                QWidget *parent)
     : QDialog(parent), path_(path), rows_(rows) {
   setWindowTitle(tr("Load a new file"));
-  setMinimumWidth(DialogWidth);
+  setMinimumWidth(::neverd::limits::gui_config::kLoadFileDialogDialogWidth);
   auto *layout = new QVBoxLayout(this);
 
   // The loaders that read the file, as the engine lists them.

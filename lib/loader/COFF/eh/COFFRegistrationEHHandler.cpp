@@ -9,6 +9,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/LanguageRuntime.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/support/ISAEncoding.h"
 
 #include <algorithm>
@@ -62,7 +63,8 @@ bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA) {
   if (Img.Arch != Arch::X86 || Img.Format != BinaryFormat::COFF)
     return false;
   std::set<va_t> Seen;
-  for (unsigned Hop = 0; Hop != 4; ++Hop) {
+  for (unsigned Hop = 0;
+       Hop != ::neverd::limits::loader::kMaxRegistrationHandlerHops; ++Hop) {
     if (!Seen.insert(HandlerVA).second)
       return false;
     const auto *Code = Img.readVA(HandlerVA, 5);
@@ -97,9 +99,6 @@ bool isCheckedX86SEH3Personality(const BinaryImage &Img, va_t HandlerVA) {
 
 namespace neverd::coff_loader::registration_detail {
 namespace {
-
-/// Bound on veneer/thunk chasing when naming a handler.
-constexpr unsigned MaxHandlerThunkHops = 4;
 
 /// Follow one `jmp rel32` / `jmp [iat]` veneer and name what it reaches.
 /// Returns an empty string when \p Address is not a veneer or its destination
@@ -144,13 +143,10 @@ std::string resolveVeneerTargetName(const BinaryImage &Img, va_t Address) {
 /// address appears.
 bool decodeCxxHandlerThunk(const BinaryImage &Img, va_t HandlerVA,
                            HandlerIdentity &Identity) {
-  // The `mov`/`jmp` pair is the tail of the thunk, not necessarily its first
-  // instruction: a /GS build prefixes a cookie check, and an /hotpatch or /Gy
-  // build prefixes padding.  Scanning for the pair, and requiring the `jmp` to
-  // sit immediately after the `mov`, keeps both variants readable without
-  // accepting an unrelated `mov eax, imm32` somewhere in a real function.
-  constexpr size_t MaxThunkBytes = 64;
-  for (size_t Offset = 0; Offset < MaxThunkBytes; ++Offset) {
+  for (size_t Offset = 0;
+       Offset <
+       ::neverd::limits::loader::kCOFFRegistrationEHHandlerMaxThunkBytes;
+       ++Offset) {
     const va_t Cursor = HandlerVA + Offset;
     auto Opcode = readScalar<uint8_t>(Img, Cursor);
     if (!Opcode)
@@ -243,16 +239,16 @@ bool decodeCxxHandlerThunk(const BinaryImage &Img, va_t HandlerVA,
 /// both facts the image states about itself rather than shapes guessed from
 /// bytes.
 bool isExceptHandler4Wrapper(const BinaryImage &Img, va_t HandlerVA) {
-  // Longest wrapper MSVC emits is well inside this; scanning further would
-  // start reading whatever routine follows it.
-  constexpr size_t MaxWrapperBytes = 96;
   const va_t CookieVA = Img.DynInfo.SecurityCookieRVA == 0
                             ? 0
                             : Img.Base + Img.DynInfo.SecurityCookieRVA;
   bool ForwardsToCommon = false;
   bool UsesSecurityCookie = false;
 
-  for (size_t Offset = 0; Offset < MaxWrapperBytes; ++Offset) {
+  for (size_t Offset = 0;
+       Offset <
+       ::neverd::limits::loader::kCOFFRegistrationEHHandlerMaxWrapperBytes;
+       ++Offset) {
     const va_t VA = HandlerVA + Offset;
     auto Opcode = readScalar<uint8_t>(Img, VA);
     if (!Opcode)
@@ -301,7 +297,10 @@ HandlerIdentity identifyHandler(const BinaryImage &Img, va_t HandlerVA) {
   HandlerIdentity Identity;
   va_t Cursor = HandlerVA;
   std::vector<va_t> Seen;
-  for (unsigned Hop = 0; Hop < MaxHandlerThunkHops; ++Hop) {
+  for (unsigned Hop = 0;
+       Hop <
+       ::neverd::limits::loader::kCOFFRegistrationEHHandlerMaxHandlerThunkHops;
+       ++Hop) {
     if (std::find(Seen.begin(), Seen.end(), Cursor) != Seen.end())
       break;
     Seen.push_back(Cursor);

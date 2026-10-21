@@ -1,5 +1,7 @@
 #include "MainWindow.h"
 
+#include "../Config.h"
+#include "../ResourceLimits.h"
 #include "ChooserView.h"
 #include "CodeView.h"
 #include "ConnectionsDialog.h"
@@ -112,23 +114,21 @@ constexpr char OpcodeBytesKey[] = "listing/opcodeBytes";
 constexpr char SynchronizeCodeKey[] = "code/synchronize";
 constexpr char AnalysisIndicatorKey[] = "analysis/indicator";
 constexpr char BinaryProcessorKey[] = "load/binaryProcessor";
-// String search defaults and bounds (the worker's string_options).
-constexpr int DefaultStringMinLength = 4;
-constexpr int MaxStringMinLength = 1024;
 constexpr char DocumentationUrl[] =
     "https://github.com/NeverSight/NeverD/blob/dev/docs/gui.md";
-constexpr int FunctionsWidth = 380;
-constexpr int OutputHeight = 190;
 // Default proportions of the side and bottom windows, clamped in pixels.
 constexpr double FunctionsShare = 0.21;
-constexpr int MinimumFunctionsWidth = 240, MaximumFunctionsWidth = 420;
+constexpr int
+    MinimumFunctionsWidth =
+        ::neverd::limits::gui_config::kMainWindowMinimumFunctionsWidth,
+    MaximumFunctionsWidth =
+        ::neverd::limits::gui_config::kMainWindowMaximumFunctionsWidth;
 constexpr double OutputShare = 0.19;
-constexpr int MinimumOutputHeight = 120, MaximumOutputHeight = 260;
-constexpr int OverviewHeight = 170;
+constexpr int MinimumOutputHeight =
+                  ::neverd::limits::gui_config::kMainWindowMinimumOutputHeight,
+              MaximumOutputHeight =
+                  ::neverd::limits::gui_config::kMainWindowMaximumOutputHeight;
 constexpr int StatusRefreshMs = 30000;
-constexpr int MaxOpcodeBytes = 12;
-// Input dialogs leave room for a full name, comment or expression.
-constexpr int InputDialogWidth = 420;
 
 // Dock identifiers; titles follow the classic window names.
 constexpr char FunctionsDock[] = "functions";
@@ -360,7 +360,8 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
   }
   if (event->type() == QEvent::Show)
     if (auto *input = qobject_cast<QInputDialog *>(object))
-      input->setMinimumWidth(InputDialogWidth);
+      input->setMinimumWidth(
+          ::neverd::limits::gui_config::kMainWindowInputDialogWidth);
   if (auto *code = qobject_cast<CodeView *>(object)) {
     // Reopening resumes this pane's interrupted function, independently of
     // the assembly cursor. Hidden panes do not keep analysis jobs running.
@@ -874,8 +875,10 @@ void MainWindow::initializeLayout() {
 void MainWindow::applyDefaultLayout() {
   auto *disassembly = docks_.value(DisassemblyDock);
   addDockWidget(disassembly, KDDockWidgets::Location_OnTop);
-  addDockWidget(docks_.value(FunctionsDock), KDDockWidgets::Location_OnLeft,
-                nullptr, InitialOption(QSize(FunctionsWidth, 0)));
+  addDockWidget(
+      docks_.value(FunctionsDock), KDDockWidgets::Location_OnLeft, nullptr,
+      InitialOption(
+          QSize(::neverd::limits::gui_config::kMainWindowFunctionsWidth, 0)));
   disassembly->addDockWidgetAsTab(docks_.value(HexDock));
   disassembly->addDockWidgetAsTab(
       docks_.value(chooserDockId(ChooserKind::Imports)));
@@ -883,7 +886,9 @@ void MainWindow::applyDefaultLayout() {
       docks_.value(chooserDockId(ChooserKind::Exports)));
   disassembly->setAsCurrentTab();
   addDockWidget(docks_.value(OutputDock), KDDockWidgets::Location_OnBottom,
-                nullptr, InitialOption(QSize(0, OutputHeight)));
+                nullptr,
+                InitialOption(QSize(
+                    0, ::neverd::limits::gui_config::kMainWindowOutputHeight)));
   defaultSizesPending_ = true;
   if (isVisible())
     applyDefaultSizes();
@@ -918,11 +923,16 @@ void MainWindow::showOverview() {
   // Under the functions window, as in the classic graph layout.
   auto *functions = docks_.value(FunctionsDock);
   if (functions->isOpen() && !functions->isFloating())
-    addDockWidget(dock, KDDockWidgets::Location_OnBottom, functions,
-                  InitialOption(QSize(0, OverviewHeight)));
+    addDockWidget(
+        dock, KDDockWidgets::Location_OnBottom, functions,
+        InitialOption(
+            QSize(0, ::neverd::limits::gui_config::kMainWindowOverviewHeight)));
   else
-    addDockWidget(dock, KDDockWidgets::Location_OnLeft, nullptr,
-                  InitialOption(QSize(FunctionsWidth, OverviewHeight)));
+    addDockWidget(
+        dock, KDDockWidgets::Location_OnLeft, nullptr,
+        InitialOption(
+            QSize(::neverd::limits::gui_config::kMainWindowFunctionsWidth,
+                  ::neverd::limits::gui_config::kMainWindowOverviewHeight)));
   dock->open();
 }
 
@@ -2240,10 +2250,8 @@ void MainWindow::loadHeader() {
       tr("C and C++ headers (*.h *.hh *.hpp *.hxx);;All files (*)"));
   if (path.isEmpty() || !session_.loaded())
     return;
-  // As much as one declaration of the editor takes.
-  constexpr qint64 MaxHeaderBytes = 4 << 20;
   QFile file(path);
-  if (file.size() > MaxHeaderBytes) {
+  if (file.size() > ::neverd::limits::gui::kMainWindowMaxHeaderBytes) {
     QMessageBox::warning(
         this, tr("Parse C header file"),
         tr("%1 is larger than 4 MiB.").arg(QDir::toNativeSeparators(path)));
@@ -2758,8 +2766,10 @@ void MainWindow::searchBinary(const QString &kind, bool again) {
                 currentAddress().value_or(0) != from)
               return;
             if (payload.value("building").toBool()) {
-              QTimer::singleShot(1, this,
-                                 [keep, wrapped] { (*keep)(wrapped); });
+              QTimer::singleShot(
+                  ::neverd::limits::gui::
+                      kMainWindowSearchBinaryBeginSearchRequestSearchSubscriptionSingleShotMilliseconds,
+                  this, [keep, wrapped] { (*keep)(wrapped); });
               return;
             }
             if (payload.value("coverage").toString() == "partial")
@@ -3015,7 +3025,7 @@ void MainWindow::showOptions() {
   dialog.setWindowTitle(tr("General options"));
   auto *form = new QFormLayout(&dialog);
   auto *bytes = new QSpinBox(&dialog);
-  bytes->setRange(0, MaxOpcodeBytes);
+  bytes->setRange(0, ::neverd::limits::gui::kMainWindowMaxOpcodeBytes);
   bytes->setValue(disassembly_->listing()->opcodeBytes());
   form->addRow(tr("Number of opcode bytes:"), bytes);
   auto *theme = new QComboBox(&dialog);
@@ -3124,8 +3134,10 @@ void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
     preferred->hide();
   }
   auto *length = new QSpinBox(&dialog);
-  length->setRange(1, MaxStringMinLength);
-  length->setValue(current.value("min_length").toInt(DefaultStringMinLength));
+  length->setRange(1, ::neverd::limits::gui::kMainWindowMaxStringMinLength);
+  length->setValue(
+      current.value("min_length")
+          .toInt(::neverd::limits::gui::kMainWindowDefaultStringMinLength));
   length->setToolTip(
       tr("Display columns: a wide East Asian character counts two"));
   form->addRow(tr("Minimum length:"), length);
@@ -3708,17 +3720,19 @@ void MainWindow::editDataPresentation(const QString &kind) {
   type->setObjectName("dataPresentationType");
   auto *width = new QSpinBox(&dialog);
   width->setObjectName("arrayElementSize");
-  width->setRange(1, 65536);
-  width->setValue(1);
+  width->setRange(1, ::neverd::limits::gui::kMaxArrayElementBytes);
+  width->setValue(::neverd::limits::gui_config::kDefaultArrayElementBytes);
   auto *count = new QSpinBox(&dialog);
   count->setObjectName("arrayCount");
-  count->setRange(1, 1048576);
-  count->setValue(16);
+  count->setRange(1, ::neverd::limits::gui::kMaxArrayElements);
+  count->setValue(::neverd::limits::gui_config::kDefaultArrayElements);
   auto *alignment = new QComboBox(&dialog);
   alignment->setObjectName("dataAlignment");
-  for (int value = 2; value <= 1048576; value *= 2)
+  for (int value = 2; value <= ::neverd::limits::gui::kMaxDataAlignment;
+       value *= 2)
     alignment->addItem(QString::number(value), value);
-  alignment->setCurrentIndex(3);
+  alignment->setCurrentIndex(
+      alignment->findData(::neverd::limits::gui_config::kDefaultDataAlignment));
   auto *flags = new QCheckBox(
       tr("Combine bit flags; preserve unknown bits numerically"), &dialog);
   flags->setObjectName("enumFlags");

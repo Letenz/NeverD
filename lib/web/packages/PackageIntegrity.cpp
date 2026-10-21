@@ -37,7 +37,8 @@ Declaration parse(std::string_view Value, bool Git) {
     D.Status = "git_commit_declared_unverified";
     return D;
   }
-  if (Value.size() > 65536) {
+  if (Value.size() >
+      ::neverd::limits::web::kPackageIntegrityParseValueSizeLimit) {
     D.Status = "integrity_declaration_budget_exceeded";
     return D;
   }
@@ -48,7 +49,7 @@ Declaration parse(std::string_view Value, bool Git) {
     if (Start == std::string_view::npos)
       break;
     Value.remove_prefix(Start);
-    if (++Tokens > 256) {
+    if (++Tokens > ::neverd::limits::web::kPackageIntegrityParseTokensLimit) {
       D.Status = "integrity_declaration_budget_exceeded";
       return D;
     }

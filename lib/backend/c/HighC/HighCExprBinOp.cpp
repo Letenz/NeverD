@@ -13,6 +13,7 @@
 #include "HighCWriter.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 
 #include "llvm/Support/ErrorHandling.h"
 
@@ -121,7 +122,8 @@ std::optional<std::pair<uint16_t, bool>> literalType(llvm::StringRef Text) {
 bool countBelow(const HighExpr &Count, uint64_t Limit, unsigned Depth = 0) {
   if (Count.Kind == ExprKind::Const)
     return Count.ConstVal < Limit;
-  if (Depth > 8 || !Count.Type || Count.Type->Kind != NdTypeKind::Int ||
+  if (Depth > ::neverd::limits::backend::kHighCExprBinOpCountBelowDepthLimit ||
+      !Count.Type || Count.Type->Kind != NdTypeKind::Int ||
       Count.Type->Size == 0)
     return false;
   // A value below Limit keeps it in any width that holds Limit - 1.
@@ -290,7 +292,11 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
   };
   auto PeelZeroView = [&](const HighExpr *E) -> const HighExpr * {
     unsigned Depth = 0;
-    while (E && Depth++ < 6) {
+    while (
+        E &&
+        Depth++ <
+            ::neverd::limits::backend::
+                kHighCExprBinOpHighCWriterRenderBinOpOperandsPeelZeroViewDepthLimit) {
       E = forwardedExpr(E);
       E = unwrapIntegerView(E);
       if (!E || E->Kind != ExprKind::BinOp || IsCompareOp(E->Op) ||
@@ -1104,7 +1110,11 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     auto PeelView = [&](const ExprPtr &Op) -> const HighExpr * {
       const HighExpr *Cur = Op.get();
       unsigned Depth = 0;
-      while (Cur && Depth++ < 8) {
+      while (
+          Cur &&
+          Depth++ <
+              ::neverd::limits::backend::
+                  kHighCExprBinOpHighCWriterRenderBinOpOperandsPeelViewDepthLimit) {
         const HighExpr *Inner = nullptr;
         if ((Cur->Kind == ExprKind::Cast || Cur->Kind == ExprKind::BitCast) &&
             !Cur->Operands.empty())
@@ -1136,7 +1146,10 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     const HighExpr *R = PeelView(E.Operands[1]);
     auto DisplayInt = [&](auto &&Self, const HighExpr *Op,
                           unsigned Depth) -> TypeRef {
-      if (!Op || Depth > 6)
+      if (!Op ||
+          Depth >
+              ::neverd::limits::backend::
+                  kHighCExprBinOpHighCWriterRenderBinOpOperandsDisplayIntDepthLimit)
         return {};
       if ((Op->Kind == ExprKind::Cast || Op->Kind == ExprKind::BitCast ||
            (Op->Kind == ExprKind::UnaryOp &&

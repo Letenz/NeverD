@@ -102,7 +102,9 @@ const char *neverd_register_flow_json(neverd_session_t Sess, neverd_va_t Entry,
       for (const auto &Boundary : B.InstructionBoundaries)
         Modes[Boundary.Address] = Boundary.Mode;
       for (const auto &O : B.Ops) {
-        if (++Count > 200000)
+        if (++Count >
+            ::neverd::sdk::
+                kNeverDCAPIRegisterFlowNeverdRegisterFlowJsonCountLimit)
           throw std::invalid_argument(
               "Register-flow operation budget exceeded");
         Instructions[O.Addr].push_back(O);

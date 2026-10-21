@@ -1,5 +1,6 @@
 #pragma once
 #include "Protocol.h"
+#include "ResourceLimits.h"
 
 #include "neverd/sdk/NeverDCAPISession.h"
 
@@ -111,7 +112,8 @@ private:
   /// The graphs shown last, the newest first: returning to one neither
   /// analyzes its function again nor lays it out.
   std::list<LaidOutGraph> graphs_;
-  static constexpr std::size_t MaxGraphs = 64;
+  static constexpr std::size_t MaxGraphs =
+      ::neverd::limits::worker::kEngineMaxGraphs;
   std::unique_ptr<Listing> listing_;
   // The function whose restricted pipeline the session currently holds.
   std::optional<std::uint64_t> preparedFunction_;

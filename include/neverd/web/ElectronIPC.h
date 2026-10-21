@@ -12,6 +12,7 @@
 #pragma once
 
 #include "neverd/web/Electron.h"
+#include "neverd/web/Limits.h"
 
 #include <array>
 #include <span>
@@ -19,10 +20,6 @@
 namespace neverd::web {
 inline constexpr std::string_view ElectronIPCProfile =
     "electron-scoped-channel-candidates-v1";
-inline constexpr uint64_t MaxElectronIPCSources = 16;
-inline constexpr uint64_t MaxElectronIPCEndpoints = 10000;
-inline constexpr uint64_t MaxElectronIPCUnits = 1024 * 1024;
-inline constexpr uint64_t MaxElectronIPCSteps = 2000000;
 inline constexpr std::array<std::string_view, 8> ElectronIPCKinds = {
     "ipc_main_handle",   "ipc_renderer_invoke",  "ipc_main_listen",
     "ipc_renderer_send", "ipc_webcontents_send", "ipc_renderer_listen",

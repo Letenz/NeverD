@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_EMULATION_OS_LINUX_LINUXKGSL_H
 #define NEVERD_EMULATION_OS_LINUX_LINUXKGSL_H
+#include "neverd/emulation/Limits.h"
 #include "neverd/emulation/LinuxDeviceOptions.h"
 
 #include <optional>
@@ -34,8 +35,6 @@ inline bool isObjectRequest(uint32_t Request) {
 inline constexpr uint64_t GPUReadOnly = 0x01000000;
 inline constexpr uint64_t Force32Bit = 0x100000000ULL;
 inline constexpr uint64_t AlignmentMask = 0x00ff0000;
-inline constexpr uint64_t MaximumAllocation = 32768;
-inline constexpr uint64_t MaximumAllocations = 64;
 /// Deterministic GPU VA policy, excluding explicit legacy device ranges.
 inline std::optional<uint64_t>
 allocationAddress(const LinuxDeviceOptions &Device, uint64_t Start,
@@ -62,7 +61,6 @@ allocationAddress(const LinuxDeviceOptions &Device, uint64_t Start,
   }
 }
 inline constexpr uint32_t SlotBytes = 40;
-inline constexpr uint32_t MaximumContexts = 1024;
 inline constexpr uint32_t CreateFlags = 0x12; // PREAMBLE | NO_GMEM_ALLOC
 inline constexpr uint32_t ReturnedFlags =
     0x8052; // per-context TS, medium priority
@@ -81,4 +79,14 @@ inline const LinuxDeviceMapping *memstore(const LinuxDeviceOptions &Device) {
   return nullptr;
 }
 } // namespace neverd::emulation::linux_model::kgsl
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::emulation::linux_model::kgsl {
+inline constexpr uint64_t MaximumAllocation =
+    ::neverd::limits::emulation::kLinuxKGSLMaximumAllocation;
+inline constexpr uint64_t MaximumAllocations =
+    ::neverd::limits::emulation::kLinuxKGSLMaximumAllocations;
+inline constexpr uint32_t MaximumContexts =
+    ::neverd::limits::emulation::kLinuxKGSLMaximumContexts;
+} // namespace neverd::emulation::linux_model::kgsl
+
 #endif

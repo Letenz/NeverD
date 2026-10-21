@@ -20,6 +20,7 @@
 #include "JumpTableResolverDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 
@@ -326,7 +327,10 @@ CFGBuilder::readTableEntries(const BinaryImage &Img, const JumpTableInfo &Info,
     Limit = limits::kMaxJumpTableEntries;
 
   std::vector<va_t> Targets;
-  Targets.reserve(std::min(Limit, 64u));
+  Targets.reserve(std::min(
+      Limit,
+      ::neverd::limits::ir::
+          kJumpTableResolverTargetsCFGBuilderReadTableEntriesMinArgument2));
   size_t Off = static_cast<size_t>(Info.BaseAddr - Seg->VA);
   va_t PrevTarget = InvalidVA;
   int DuplicateRun = 0;

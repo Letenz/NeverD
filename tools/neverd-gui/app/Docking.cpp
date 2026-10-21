@@ -1,5 +1,6 @@
 #include "Docking.h"
 
+#include "../Config.h"
 #include "Theme.h"
 
 #include <QCursor>
@@ -25,13 +26,6 @@
 
 namespace neverd::gui {
 namespace {
-// Docked windows are one hairline apart.  A separator's grab area spreads
-// over both neighbors, like the sashes of Visual Studio Code; an odd width
-// centers it on the hairline.
-constexpr int SeparatorLineWidth = 1;
-constexpr int SeparatorGrabWidth = 5;
-// The bar a hovered or dragged separator shows, centered on the hairline.
-constexpr qreal SeparatorHighlightWidth = 3;
 // A pointer that only crosses a separator does not light it up.
 constexpr int SeparatorHoverDelayMs = 300;
 constexpr int SeparatorFadeInMs = 150;
@@ -84,15 +78,25 @@ protected:
       return;
     QColor accent = theme.chrome(QStringLiteral("DockSeparatorHover"));
     accent.setAlphaF(accent.alphaF() * highlight_);
-    const qreal start = inset + (line - SeparatorHighlightWidth) / 2;
+    const qreal start =
+        inset +
+        (line - ::neverd::limits::gui_config::kDockingSeparatorHighlightWidth) /
+            2;
     const QRectF bar =
-        horizontal() ? QRectF(0, start, width(), SeparatorHighlightWidth)
-                     : QRectF(start, 0, SeparatorHighlightWidth, height());
+        horizontal()
+            ? QRectF(
+                  0, start, width(),
+                  ::neverd::limits::gui_config::kDockingSeparatorHighlightWidth)
+            : QRectF(
+                  start, 0,
+                  ::neverd::limits::gui_config::kDockingSeparatorHighlightWidth,
+                  height());
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setPen(Qt::NoPen);
     painter.setBrush(accent);
-    painter.drawRoundedRect(bar, SeparatorHighlightWidth / 2,
-                            SeparatorHighlightWidth / 2);
+    painter.drawRoundedRect(
+        bar, ::neverd::limits::gui_config::kDockingSeparatorHighlightWidth / 2,
+        ::neverd::limits::gui_config::kDockingSeparatorHighlightWidth / 2);
   }
 
   void enterEvent(QEnterEvent *event) override {
@@ -289,8 +293,10 @@ void configureDocking() {
                   KDDockWidgets::Config::Flag_TitleBarIsFocusable |
                   KDDockWidgets::Config::Flag_DoubleClickMaximizes);
   // Setting the thickness resets the spacing too, so it comes first.
-  config.setSeparatorThickness(SeparatorGrabWidth);
-  config.setLayoutSpacing(SeparatorLineWidth);
+  config.setSeparatorThickness(
+      ::neverd::limits::gui_config::kDockingSeparatorGrabWidth);
+  config.setLayoutSpacing(
+      ::neverd::limits::gui_config::kDockingSeparatorLineWidth);
   config.setViewFactory(new DockViewFactory);
 }
 

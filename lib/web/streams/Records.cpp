@@ -13,6 +13,7 @@
 #include "StreamInternal.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 #include "neverd/web/ProtocolMethods.h"
 
 #include <algorithm>
@@ -118,7 +119,9 @@ bool integralNumber(std::string_view S) {
     if (Exp.front() == '-' || Exp.front() == '+')
       Exp.remove_prefix(1);
     for (char C : Exp)
-      Exponent = std::min<int64_t>(100000, Exponent * 10 + C - '0');
+      Exponent = std::min<int64_t>(
+          ::neverd::limits::web::kRecordsIntegralNumberExponentMinArgument1,
+          Exponent * 10 + C - '0');
     if (Negative)
       Exponent = -Exponent;
   }

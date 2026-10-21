@@ -9,6 +9,7 @@
 #include "COFFRegistrationEHDetail.h"
 
 #include "neverd/Limits.h"
+#include "neverd/loader/Limits.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -48,7 +49,10 @@ va_t findNextTableAddress(const std::vector<va_t> &Sorted, va_t TableVA) {
 std::optional<size_t> directEH4Publication(const BinaryImage &Img,
                                            const InstallSite &Site,
                                            const RegistrationChainInfo &Chain) {
-  const size_t Size = std::min<uint64_t>(Site.Range.size(), 128);
+  const size_t Size = std::min<uint64_t>(
+      Site.Range.size(),
+      ::neverd::limits::loader::
+          kCOFFRegistrationEHDirectEH4PublicationSizeMinArgument2);
   const uint8_t *P = Img.readVA(Site.Range.Begin, Size);
   if (Img.Base > UINT32_MAX ||
       Img.DynInfo.SecurityCookieRVA > UINT32_MAX - Img.Base)

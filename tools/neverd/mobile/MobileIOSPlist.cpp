@@ -1,3 +1,4 @@
+#include "../ResourceLimits.h"
 #include "MobileIOSInternal.h"
 
 #include "llvm/Support/ConvertUTF.h"
@@ -38,7 +39,9 @@ class Plist {
   void allocation(uint64_t bytes) {
     // A binary plist can refer to the same collection repeatedly. Bound its
     // expanded value graph, not merely its compact on-disk object table.
-    auto limit = std::min<uint64_t>(budget.limits.max_bytes, 64 * 1024 * 1024);
+    auto limit = std::min<uint64_t>(
+        budget.limits.max_bytes,
+        ::neverd::limits::cli::kMobileIOSPlistAllocationLimitMinArgument2);
     if (bytes > limit - decoded_bytes)
       throw Error("expanded Info.plist exceeds its decoded byte budget");
     decoded_bytes += bytes;
@@ -58,7 +61,8 @@ class Plist {
   Value binary(uint64_t id, unsigned depth) {
     budget.tick();
     allocation(128);
-    if (depth > 128 || id >= objects || !active.insert(id).second)
+    if (depth > ::neverd::limits::cli::kMobileIOSPlistBinaryDepthLimit ||
+        id >= objects || !active.insert(id).second)
       throw Error("cyclic or oversized binary plist object graph");
     struct Pop {
       std::set<uint64_t> &s;
@@ -133,7 +137,7 @@ class Plist {
       return s;
     }
     if (kind == 0xa || kind == 0xd) {
-      if (count > 100000 ||
+      if (count > ::neverd::limits::cli::kMobileIOSPlistBinaryCountLimit ||
           count > offset_table / ref_size / (kind == 0xd ? 2 : 1))
         throw Error("oversized binary plist collection");
       range(p, count * ref_size * (kind == 0xd ? 2 : 1));
@@ -255,7 +259,7 @@ class Plist {
   Value xml(unsigned depth) {
     budget.tick();
     allocation(128);
-    if (depth > 128)
+    if (depth > ::neverd::limits::cli::kMobileIOSPlistXmlDepthLimit)
       throw Error("plist nesting exceeds 128 levels");
     auto [name, empty] = tag();
     if (name == "dict") {
@@ -287,7 +291,8 @@ class Plist {
           pos += 8;
           return a;
         }
-        if (a.size() >= 100000)
+        if (a.size() >=
+            ::neverd::limits::cli::kMobileIOSPlistXmlArrayASizeLimit)
           throw Error("oversized plist array");
         a.push_back(xml(depth + 1));
       }
@@ -318,7 +323,7 @@ class Plist {
 public:
   Plist(std::string_view d, Budget &b) : data(d), budget(b) {}
   Object parse() {
-    if (data.size() > 16 * 1024 * 1024)
+    if (data.size() > ::neverd::limits::cli::kMobileIOSPlistParseDataSizeLimit)
       throw Error("Info.plist exceeds 16 MiB");
     Value root(nullptr);
     if (data.starts_with("bplist00")) {
@@ -330,8 +335,9 @@ public:
       objects = get(t + 8, 8);
       auto top = get(t + 16, 8);
       offset_table = get(t + 24, 8);
-      if (!objects || objects > 100000 || !offset_size || offset_size > 8 ||
-          !ref_size || ref_size > 8 || offset_table < 8 || offset_table > t ||
+      if (!objects || objects > ::neverd::limits::cli::kMaxPlistObjects ||
+          !offset_size || offset_size > 8 || !ref_size || ref_size > 8 ||
+          offset_table < 8 || offset_table > t ||
           objects > (t - offset_table) / offset_size)
         throw Error("invalid binary plist trailer");
       root = binary(top, 0);

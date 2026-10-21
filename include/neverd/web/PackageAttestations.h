@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/PackageEvidence.h"
 #include "neverd/web/PackageIntegrity.h"
 
@@ -21,13 +22,6 @@ namespace neverd::web {
 
 inline constexpr std::string_view PackageAttestationProfile =
     "offline-package-attestation-metadata-v1";
-inline constexpr uint64_t MaxPackageAttestationImports = 4;
-inline constexpr uint64_t MaxPackageAttestationSubjects = 64;
-inline constexpr uint64_t MaxPackageAttestationDigests = 256;
-inline constexpr uint64_t MaxPackageAttestationSignatures = 64;
-inline constexpr uint64_t MaxPackageAttestationPayloadBytes = 512 * 1024;
-inline constexpr uint64_t MaxPackageAttestationSignatureBytes = 16 * 1024;
-inline constexpr uint64_t MaxPackageAttestationDigestMatches = 4;
 
 // Supplied names, URIs, digests, payloads and signatures are private model
 // fields. Public records expose fixed states and original evidence anchors.

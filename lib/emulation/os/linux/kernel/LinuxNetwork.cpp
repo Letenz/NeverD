@@ -10,6 +10,8 @@
 
 #include "LinuxFiles.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include "llvm/Support/Endian.h"
 
 #include <algorithm>
@@ -22,7 +24,8 @@ bool connectError(uint32_t Error) {
 }
 llvm::Error receiveEvents(llvm::ArrayRef<LinuxNetworkReceive> Events,
                           uint64_t SentLimit, bool Datagram, uint64_t &Bytes) {
-  if (Events.size() > 4096)
+  if (Events.size() >
+      ::neverd::limits::emulation::kLinuxNetworkReceiveEventsSizeLimit)
     return failure("offline network has too many receive events");
   uint64_t Previous = 0, PreviousTime = 0;
   for (const auto &E : Events) {
@@ -82,13 +85,20 @@ uint16_t networkAddressFamily(llvm::ArrayRef<uint8_t> Address) {
   return 0;
 }
 llvm::Error validateNetworkOptions(const LinuxNetworkOptions &Options) {
-  if (Options.Connections.size() + Options.DatagramConnections.size() > 256)
+  if (Options.Connections.size() + Options.DatagramConnections.size() >
+      ::neverd::limits::emulation::
+          kLinuxNetworkValidateNetworkOptionsConnectionsSizeOptionsDatagramConnectionsSizeLimit)
     return failure("offline network has too many connection attempts");
   uint64_t Bytes = 0;
   for (const auto &C : Options.Connections) {
     if (!networkAddressFamily(C.Peer) || !connectError(C.ConnectErrno) ||
-        !C.MaxSend || C.MaxSend > 65536 || !C.MaxReceive ||
-        C.MaxReceive > 65536 ||
+        !C.MaxSend ||
+        C.MaxSend > ::neverd::limits::emulation::
+                        kLinuxNetworkValidateNetworkOptionsCMaxSendLimit ||
+        !C.MaxReceive ||
+        C.MaxReceive >
+            ::neverd::limits::emulation::
+                kLinuxNetworkValidateNetworkOptionsCMaxReceiveLimit ||
         (C.ConnectErrno && (!C.ExpectedSend.empty() || !C.Receive.empty() ||
                             C.ReceiveEOF || !C.ReceiveEvents.empty())) ||
         (!C.Receive.empty() && !C.ReceiveEvents.empty()))
@@ -104,12 +114,15 @@ llvm::Error validateNetworkOptions(const LinuxNetworkOptions &Options) {
     if (auto E =
             receiveEvents(C.ReceiveEvents, C.ExpectedSend.size(), false, Bytes))
       return E;
-    if (Bytes > 1024 * 1024)
+    if (Bytes > ::neverd::limits::emulation::
+                    kLinuxNetworkValidateNetworkOptionsBytesLimit)
       return failure("offline network stream byte limit exceeded");
   }
   for (const auto &C : Options.DatagramConnections) {
     if (!networkAddressFamily(C.Peer) || !connectError(C.ConnectErrno) ||
-        C.ExpectedSend.size() > 4096 ||
+        C.ExpectedSend.size() >
+            ::neverd::limits::emulation::
+                kLinuxNetworkValidateNetworkOptionsCExpectedSendSizeLimit ||
         (C.ConnectErrno &&
          (!C.ExpectedSend.empty() || !C.ReceiveEvents.empty())))
       return failure("invalid offline UDP connection contract");
@@ -129,7 +142,8 @@ llvm::Error validateNetworkOptions(const LinuxNetworkOptions &Options) {
     if (auto E =
             receiveEvents(C.ReceiveEvents, C.ExpectedSend.size(), true, Bytes))
       return E;
-    if (Bytes > 1024 * 1024)
+    if (Bytes > ::neverd::limits::emulation::
+                    kLinuxNetworkValidateNetworkOptionsBytesLimit)
       return failure("offline network byte limit exceeded");
   }
   return llvm::Error::success();
@@ -208,7 +222,7 @@ LinuxFiles::network(ServiceKind Kind, const ProcessServiceEvent &Event,
         return Reply(uint64_t(0) - 33); // EDOM
       // Whole seconds avoid inventing the guest kernel's HZ and rounding.
       // Keep negative seconds distinct from zero (immediate vs infinite).
-      if (Usec || Sec > 86400)
+      if (Usec || Sec > ::neverd::limits::emulation::kMaxNetworkTimeoutSeconds)
         return unsupported(
             Result, "socket timeout requires whole seconds up to one day");
       Seconds = Sec;
@@ -252,7 +266,8 @@ LinuxFiles::network(ServiceKind Kind, const ProcessServiceEvent &Event,
       return unsupported(Result,
                          "asynchronous TCP connection completion is unmodeled");
     const uint32_t Size = A[2];
-    if (Size < 2 || Size > 128)
+    if (Size < 2 || Size > ::neverd::limits::emulation::
+                               kLinuxNetworkLinuxFilesNetworkSizeLimit)
       return Reply(uint64_t(0) - InvalidArgument);
     if (A[1] > Layout.UserLimit || Size > Layout.UserLimit - A[1])
       return Reply(uint64_t(0) - BadAddress);

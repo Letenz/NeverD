@@ -12,6 +12,8 @@
 
 #include "SourceContext.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web::interfaces {
 namespace {
 bool constructor(SourceContext &C, uint32_t I) {
@@ -79,7 +81,7 @@ void header(SourceContext &C, SourceInterface &R) {
   if (const auto *Text = C.constant(R.HeaderNameNode)) {
     // Recognized field names are short ASCII strings. A larger name cannot
     // enter the allowlist and need not be copied or published.
-    if (Text->size() > 64)
+    if (Text->size() > ::neverd::limits::web::kSourceXHRHeaderTextSizeLimit)
       R.HeaderKind = "other";
     else if (const auto UTF8 = C.utf8(*Text))
       R.HeaderKind = interfaceHeaderKind(*UTF8);

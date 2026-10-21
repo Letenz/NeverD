@@ -8,6 +8,7 @@ import json
 from typing import Any, Callable, Literal, Mapping, Sequence, cast
 
 from . import abi
+from ._limits import MAX_BYTECODE_RECOVERY_INPUT_BYTES
 from .api import NeverDError
 from .ffi import HostAPI
 
@@ -105,8 +106,8 @@ def recover_bytecode_with_decoder(
 
 def _json_bytes(value: Any, label: str) -> bytes:
     text = json.dumps(value, allow_nan=False, separators=(",", ":")).encode("utf-8")
-    if len(text) > 64 * 1024 * 1024:
-        raise ValueError(f"{label} exceeds the 64 MiB limit")
+    if len(text) > MAX_BYTECODE_RECOVERY_INPUT_BYTES:
+        raise ValueError(f"{label} exceeds the {MAX_BYTECODE_RECOVERY_INPUT_BYTES // (1024 * 1024)} MiB limit")
     return text
 
 
@@ -128,8 +129,8 @@ def _recover(
 ) -> BytecodeRecoveryResult:
     if not isinstance(code, bytes):
         raise TypeError("code must be bytes")
-    if len(code) > 64 * 1024 * 1024:
-        raise ValueError("code exceeds the 64 MiB limit")
+    if len(code) > MAX_BYTECODE_RECOVERY_INPUT_BYTES:
+        raise ValueError(f"code exceeds the {MAX_BYTECODE_RECOVERY_INPUT_BYTES // (1024 * 1024)} MiB limit")
     if type(with_context) is not bool:
         raise TypeError("with_context must be a boolean")
     request_fields: dict[str, Any] = {

@@ -1,5 +1,6 @@
 #include "Engine.h"
 #include "Protocol.h"
+#include "ResourceLimits.h"
 #include "WebEngine.h"
 
 #include <atomic>
@@ -314,7 +315,8 @@ Json hello() {
 }
 
 /// How long requests must pause before background work starts.
-constexpr auto IdleGracePeriod = std::chrono::milliseconds(150);
+constexpr auto IdleGracePeriod = std::chrono::milliseconds(
+    ::neverd::limits::worker::kMainIdleGracePeriodMilliseconds);
 
 void executeLoop(State &state, Transport &transport) {
   try {
@@ -358,9 +360,11 @@ void executeLoop(State &state, Transport &transport) {
               return state.stopping || !state.queue.empty();
             });
           } else if (!advanced)
-            state.changed.wait_for(lock, std::chrono::milliseconds(10), [&] {
-              return state.stopping || !state.queue.empty();
-            });
+            state.changed.wait_for(
+                lock,
+                std::chrono::milliseconds(
+                    ::neverd::limits::worker::kMainExecuteLoopMilliseconds),
+                [&] { return state.stopping || !state.queue.empty(); });
         }
         state.changed.wait(
             lock, [&] { return state.stopping || !state.queue.empty(); });
@@ -485,8 +489,11 @@ int main(int argc, char **argv) {
     std::thread heartbeat([&] {
       std::unique_lock lock(state.mutex);
       while (!state.finished) {
-        if (state.changed.wait_for(lock, std::chrono::seconds(1),
-                                   [&] { return state.finished; }))
+        if (state.changed.wait_for(
+                lock,
+                std::chrono::seconds(
+                    ::neverd::limits::worker::kMainMainHeartbeatSeconds),
+                [&] { return state.finished; }))
           break;
         const auto message = heartbeatMessage(state);
         lock.unlock();
@@ -521,7 +528,10 @@ int main(int argc, char **argv) {
             lock.unlock();
             transport.send(result);
           } else if (op == "cancel") {
-            const auto target = stringField(payload, "request_id", {}, 128);
+            const auto target = stringField(
+                payload, "request_id", {},
+                ::neverd::limits::worker::
+                    kMainMainHelloCancelTargetRequestIdStringFieldMax);
             if (target.empty())
               throw Error("invalid_request",
                           "cancel requires payload.request_id");
@@ -585,7 +595,9 @@ int main(int argc, char **argv) {
           if (value.is_object())
             for (const auto *key : {"request_id", "operation"})
               if (value.contains(key) && value[key].is_string() &&
-                  value[key].get_ref<const std::string &>().size() <= 128)
+                  value[key].get_ref<const std::string &>().size() <=
+                      ::neverd::limits::worker::
+                          kMainMainValueKeyGetRefConstStdStringSizeLimit)
                 safe[key] = value[key];
           transport.send(failure(safe, revision, project, error));
         }

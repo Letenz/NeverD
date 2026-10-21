@@ -1,5 +1,6 @@
 #include "WorkbenchStyle.h"
 
+#include "../Config.h"
 #include "Icons.h"
 
 #include <QAbstractButton>
@@ -21,8 +22,6 @@ namespace neverd::gui {
 namespace {
 /// The object name of Qt's file dialog places pane.
 constexpr char FileDialogPlaces[] = "sidebar";
-/// The size of icons drawn on the 16 pixel grid of IconSet.def.
-constexpr int SmallIconSize = 16;
 
 bool drawsMnemonics(const QWidget *widget) {
   return qobject_cast<const QMenuBar *>(widget) ||
@@ -110,7 +109,9 @@ void WorkbenchStyle::polish(QWidget *widget) {
   if (auto *places = qobject_cast<QAbstractItemView *>(widget);
       places && places->objectName() == QLatin1String(FileDialogPlaces) &&
       qobject_cast<QFileDialog *>(places->window()))
-    places->setIconSize(QSize(SmallIconSize, SmallIconSize));
+    places->setIconSize(
+        QSize(::neverd::limits::gui_config::kWorkbenchStyleSmallIconSize,
+              ::neverd::limits::gui_config::kWorkbenchStyleSmallIconSize));
 }
 
 void WorkbenchStyle::polish(QApplication *application) {

@@ -1,5 +1,7 @@
 #include "SetTypeDialog.h"
 
+#include "../Config.h"
+#include "../ResourceLimits.h"
 #include "Icons.h"
 #include "Session.h"
 #include "Theme.h"
@@ -23,11 +25,6 @@
 namespace neverd::gui {
 namespace {
 
-/// How long typing pauses before the text is read, or names completed.
-constexpr int CheckDebounceMs = 150;
-constexpr int CompleteDebounceMs = 80;
-/// How many local types a completion offers.
-constexpr int CompletionLimit = 20;
 constexpr char GeometrySetting[] = "setType/geometry";
 
 /// Where a problem the engine words as "line:column: message" is.
@@ -128,10 +125,11 @@ SetTypeDialog::SetTypeDialog(Session &session, Address function,
           &SetTypeDialog::insertCompletion);
 
   checkTimer_.setSingleShot(true);
-  checkTimer_.setInterval(CheckDebounceMs);
+  checkTimer_.setInterval(::neverd::limits::gui::kSetTypeDialogCheckDebounceMs);
   connect(&checkTimer_, &QTimer::timeout, this, &SetTypeDialog::check);
   completeTimer_.setSingleShot(true);
-  completeTimer_.setInterval(CompleteDebounceMs);
+  completeTimer_.setInterval(
+      ::neverd::limits::gui::kSetTypeDialogCompleteDebounceMs);
   connect(&completeTimer_, &QTimer::timeout, this, &SetTypeDialog::complete);
   connect(field_, &QLineEdit::textEdited, this, [this] {
     apply_->setEnabled(false);
@@ -347,7 +345,10 @@ void SetTypeDialog::complete() {
   }
   session_.read(
       QStringLiteral("local_types_fit"),
-      {{"text", word}, {"records", false}, {"limit", CompletionLimit}}, this,
+      {{"text", word},
+       {"records", false},
+       {"limit", ::neverd::limits::gui::kSetTypeDialogCompletionLimit}},
+      this,
       [this, serial](const QJsonObject &reply) { completed(serial, reply); },
       [this](const QString &, const QString &) {
         completer_->popup()->hide();
@@ -377,8 +378,9 @@ void SetTypeDialog::completed(quint64 serial, const QJsonObject &reply) {
     return;
   }
   // The list opens under the word it completes.
-  const int width =
-      std::max(320, completer_->popup()->sizeHintForColumn(0) + 32);
+  const int width = std::max(
+      ::neverd::limits::gui_config::kSetTypeDialogCompletedWidthMaxArgument1,
+      completer_->popup()->sizeHintForColumn(0) + 32);
   const int x = std::clamp(QFontMetrics(field_->font())
                                .horizontalAdvance(field_->text().left(begin)),
                            0, std::max(0, field_->width() - width));

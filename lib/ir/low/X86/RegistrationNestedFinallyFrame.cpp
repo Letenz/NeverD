@@ -9,6 +9,7 @@
 #include "RegistrationStateSolver.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/lift/X86Regs.h"
 
 namespace neverd::registration_state {
@@ -20,7 +21,10 @@ bool RegistrationStateSolver::runSEHNestedFinallyFrame(
     SEHHandlerOutcomes *Selected) {
   const auto SP =
       State.Registers[x86reg::RSP / x86reg::GeneralRegStride].CallbackAddress;
-  if (Depth >= 16 || !State.CallbackEntry || State.SEHFilterEntry || !SP ||
+  if (Depth >=
+          ::neverd::limits::ir::
+              kRegistrationNestedFinallyFrameRegistrationStateSolverRunSEHNestedFinallyFrameDepthLimit ||
+      !State.CallbackEntry || State.SEHFilterEntry || !SP ||
       SP->Entry != State.CallbackEntry || SP->Offset > 0 ||
       SP->Offset < -int64_t(limits::kMaxSourceCallBorrowedBytes) ||
       State.Registers[x86reg::RBP / x86reg::GeneralRegStride].Offset != 0 ||

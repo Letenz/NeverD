@@ -12,6 +12,7 @@
 #include "ELF/ELFSourceDependencies.h"
 #include "MachO/MachOSourceDependencies.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/codegen/COFF/COFFLayoutGrowth.h"
 #include "neverd/loader/Loader.h"
 #include "neverd/object/PELayout.h"
@@ -61,7 +62,9 @@ appendCOFFImports(const BinaryImage &Original,
     const uint64_t Size = ImportDirectory->Size;
     const auto *Old = Original.readVA(
         Original.Base + ImportDirectory->RelativeVirtualAddress, Size);
-    if (!Old || Size < 20 || Size > 16 * 1024 * 1024)
+    if (!Old || Size < 20 ||
+        Size > ::neverd::limits::backend::
+                   kSourcePatchDependenciesAppendCOFFImportsSizeLimit)
       return fail("original import descriptors are not bounded");
     bool Terminated = false;
     for (uint64_t I = 0; rangeInBounds(I, 20, Size); I += 20) {
@@ -175,13 +178,22 @@ appendCOFFImports(const BinaryImage &Original,
 llvm::Expected<SourcePatchDependencies>
 prepareSourcePatchDependencies(const BinaryImage &Original,
                                llvm::ArrayRef<SourcePatchDependency> Requests) {
-  if (Requests.empty() || Requests.size() > 4096)
+  if (Requests.empty() ||
+      Requests.size() >
+          ::neverd::limits::backend::
+              kSourcePatchDependenciesPrepareSourcePatchDependenciesRequestsSizeLimit)
     return fail("expected between 1 and 4096 explicit imports");
   SourcePatchDependencies Result;
   std::set<std::string> Names;
   for (const auto &Request : Requests) {
-    if (Request.Library.empty() || Request.Library.size() > 4096 ||
-        Request.Symbol.empty() || Request.Symbol.size() > 4096 ||
+    if (Request.Library.empty() ||
+        Request.Library.size() >
+            ::neverd::limits::backend::
+                kSourcePatchDependenciesPrepareSourcePatchDependenciesRequestLibrarySizeLimit ||
+        Request.Symbol.empty() ||
+        Request.Symbol.size() >
+            ::neverd::limits::backend::
+                kSourcePatchDependenciesPrepareSourcePatchDependenciesRequestSymbolSizeLimit ||
         llvm::StringRef(Request.Library).contains('\0') ||
         llvm::StringRef(Request.Symbol).contains('\0') ||
         (Request.Kind != SourcePatchDependencyKind::Function &&

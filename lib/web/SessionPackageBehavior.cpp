@@ -13,6 +13,8 @@
 #include "SessionInternal.h"
 #include "packages/behavior/Publication.h"
 
+#include "neverd/web/Limits.h"
+
 #include <algorithm>
 
 namespace neverd::web {
@@ -150,7 +152,8 @@ std::string Session::packageBehaviorRecords(std::string_view Revision,
   const auto Total = Kind == "sources"   ? A.Sources.size()
                      : Kind == "records" ? A.RecordCount
                                          : throw Error("invalid_record_kind");
-  if (!Limit || Limit > 512 || Offset > Total)
+  if (!Limit || Limit > ::neverd::limits::web::kMaxSessionPageRows ||
+      Offset > Total)
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(Total, Offset + Limit);
   llvm::json::Array Items;

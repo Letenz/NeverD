@@ -1,5 +1,6 @@
 //===- MobileIOSInternal.h - Native mobile source recovery helpers --------===//
 #pragma once
+#include "../ResourceLimits.h"
 #include "MobileCommon.h"
 
 #include <algorithm>
@@ -13,9 +14,6 @@ namespace neverd::mobile::ios {
 using Object = llvm::json::Object;
 using Array = llvm::json::Array;
 using Value = llvm::json::Value;
-// Internal same-executable protocol. Control files are temporary workspace
-// artifacts; published output accounting is carried explicitly without renewal.
-inline constexpr uint64_t WorkerRequestByteLimit = 4096;
 inline constexpr std::string_view WorkerRequestPath =
     "artifacts/ios-worker-request.json";
 inline constexpr std::string_view WorkerResultPath =
@@ -115,3 +113,9 @@ SwiftResult swiftSources(const Options &options, const fs::path &staging,
                          unsigned pointer_size, Budget &budget,
                          const SwiftBatchExporter &exporter = {});
 } // namespace neverd::mobile::ios
+
+// Preserve interface spellings; resource values are defined by Limits.h.
+namespace neverd::mobile::ios {
+inline constexpr uint64_t WorkerRequestByteLimit =
+    ::neverd::limits::cli::kMobileIOSInternalWorkerRequestByteLimit;
+}

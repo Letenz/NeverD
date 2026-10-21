@@ -5,13 +5,17 @@
 //===----------------------------------------------------------------------===//
 #include "AndroidInternal.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include <set>
 
 namespace neverd::emulation::android_model {
 llvm::Error validateAuxiliaryVector(const AndroidNativeOptions &Options) {
   if (!Options.AuxiliaryVector)
     return llvm::Error::success();
-  if (Options.AuxiliaryVector->size() > 128)
+  if (Options.AuxiliaryVector->size() >
+      ::neverd::limits::emulation::
+          kAndroidAuxvValidateAuxiliaryVectorOptionsAuxiliaryVectorSizeLimit)
     return failure(diagnostic::AuxiliaryVectorInput);
   std::set<uint64_t> Types;
   for (const auto &Entry : *Options.AuxiliaryVector)

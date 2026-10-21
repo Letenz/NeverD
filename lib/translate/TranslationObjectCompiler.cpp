@@ -4,6 +4,7 @@
 
 #include "TranslationCacheIdentity.h"
 
+#include "neverd/translate/Limits.h"
 #include "neverd/translate/RuntimeABI.h"
 #include "neverd/translate/RuntimeHelpers.h"
 #include "neverd/translate/RuntimeSymbolRegistry.h"
@@ -754,7 +755,8 @@ TranslationSemanticPolicyV1 TranslationSemanticPolicyV1::bounded() {
   TranslationSemanticPolicyV1 Policy;
   Policy.Simplify = SymSimplifyOptions();
   Policy.Simplify.Provider = ProofProvider::BuiltInSolver;
-  Policy.MaxRounds = 8;
+  Policy.MaxRounds = ::neverd::limits::translate::
+      kTranslationObjectCompilerTranslationSemanticPolicyV1BoundedMaxRounds;
   return Policy;
 }
 

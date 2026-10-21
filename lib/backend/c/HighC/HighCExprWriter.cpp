@@ -19,6 +19,7 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/DataAccessWidths.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -1278,7 +1279,11 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
     auto SameScalar = [&](const HighExpr *A, const HighExpr *B) {
       auto Peel = [&](const HighExpr *E) {
         unsigned Depth = 0;
-        while (E && Depth++ < 6) {
+        while (
+            E &&
+            Depth++ <
+                ::neverd::limits::backend::
+                    kHighCExprWriterHighCWriterRenderUnaryOpSameScalarPeelDepthLimit) {
           const HighExpr *Fwd = forwardedExpr(E);
           if (Fwd && (Fwd->Kind == ExprKind::Var || Fwd->Kind == ExprKind::Phi))
             E = Fwd;
@@ -1704,7 +1709,11 @@ const HighFunc *HighCWriter::calledDefinition(const HighExpr &E) const {
 }
 
 bool HighCWriter::vaStartUnknownOperand(const HighExpr *Op) const {
-  for (unsigned Depth = 0; Op && Depth < 8; ++Depth) {
+  for (unsigned Depth = 0;
+       Op && Depth <
+                 ::neverd::limits::backend::
+                     kHighCExprWriterHighCWriterVaStartUnknownOperandDepthLimit;
+       ++Depth) {
     if (isUnknownCallOperand(Op))
       return true;
     const bool LowBytes = Op->Kind == ExprKind::BinOp &&
@@ -3092,7 +3101,10 @@ void HighCWriter::collectUnknownOnlyNames(const HighFunc &Func) {
   }
   bool Changed = true;
   unsigned Guard = 0;
-  while (Changed && Guard++ < 8) {
+  while (Changed &&
+         Guard++ <
+             ::neverd::limits::backend::
+                 kHighCExprWriterHighCWriterCollectUnknownOnlyNamesGuardLimit) {
     Changed = false;
     std::set<std::string> HasUnknown;
     std::set<std::string> HasKnown;
@@ -3130,7 +3142,10 @@ void HighCWriter::collectCtorSourceNames(const HighFunc &Func) {
   CtorSourceNames.clear();
   bool Changed = true;
   unsigned Guard = 0;
-  while (Changed && Guard++ < 8) {
+  while (Changed &&
+         Guard++ <
+             ::neverd::limits::backend::
+                 kHighCExprWriterHighCWriterCollectCtorSourceNamesGuardLimit) {
     Changed = false;
     walkStmts(Func.Body, [&](const HighStmt &S) {
       if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val)
@@ -3485,7 +3500,11 @@ const HighExpr *HighCWriter::typedCallResult(const HighExpr *E) const {
 
 bool HighCWriter::isCtorSourceExpr(const HighExpr *Op) const {
   auto Rec = [&](auto &&Self, const HighExpr *E, unsigned Depth) -> bool {
-    if (!E || Depth > 8 || isUnknownCallOperand(E))
+    if (!E ||
+        Depth >
+            ::neverd::limits::backend::
+                kHighCExprWriterHighCWriterIsCtorSourceExprRecRecDepthLimit ||
+        isUnknownCallOperand(E))
       return false;
     const HighExpr *Inner = unwrapIntegerView(E);
     if (!Inner)
@@ -5439,7 +5458,9 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
   const HighExpr *Cur = peelIntegerViewOps(&E);
   unsigned Depth = 0;
   const HighExpr *Base = Cur;
-  while (Cur && Depth < 2) {
+  while (Cur &&
+         Depth < ::neverd::limits::backend::
+                     kHighCExprWriterHighCWriterIndirectCalleeStrDepthLimit) {
     if (Cur->Kind != ExprKind::Load || Cur->Operands.empty() ||
         !Cur->Operands[0] || Cur->MemoryOrdering != NdMemoryOrdering::None ||
         Cur->MemoryAddressSpace != NdMemoryAddressSpace::Default)
@@ -7824,7 +7845,11 @@ std::string HighCWriter::condStrImpl(const HighExpr &E) {
       // `x && !(x < 0)` is the signed `test; jle` split. Print `x > 0`.
       auto ScalarOf = [&](const HighExpr *E) -> const HighExpr * {
         unsigned Depth = 0;
-        while (E && Depth++ < 6) {
+        while (
+            E &&
+            Depth++ <
+                ::neverd::limits::backend::
+                    kHighCExprWriterHighCWriterCondStrImplScalarOfDepthLimit) {
           E = forwardedExpr(E);
           E = unwrapIntegerView(E);
           if (!E)
@@ -7948,7 +7973,11 @@ HighCWriter::preferGreaterIfElseCond(const HighExpr &E) {
     return std::nullopt;
   auto Peel = [&](const HighExpr *S) -> const HighExpr * {
     unsigned Depth = 0;
-    while (S && Depth++ < 6) {
+    while (
+        S &&
+        Depth++ <
+            ::neverd::limits::backend::
+                kHighCExprWriterHighCWriterPreferGreaterIfElseCondPeelPeelDepthLimit) {
       S = forwardedExpr(S);
       S = unwrapIntegerView(S);
       if (!S || S->Kind != ExprKind::BinOp || S->Operands.size() != 2)
@@ -8049,7 +8078,10 @@ std::string HighCWriter::invertCondStrImpl(const HighExpr &E) {
   };
   const auto LooksBool = [&](auto &&Self, const HighExpr *Op,
                              unsigned Depth) -> bool {
-    if (!Op || Depth > 8)
+    if (!Op ||
+        Depth >
+            ::neverd::limits::backend::
+                kHighCExprWriterHighCWriterInvertCondStrImplLooksBoolDepthLimit)
       return false;
     Op = forwardedExpr(Op);
     Op = unwrapIntegerView(Op);
@@ -8071,7 +8103,11 @@ std::string HighCWriter::invertCondStrImpl(const HighExpr &E) {
       Cur->Operands[0] && Cur->Operands[1]) {
     auto PeelScalar = [&](const HighExpr *S) -> const HighExpr * {
       unsigned Depth = 0;
-      while (S && Depth++ < 6) {
+      while (
+          S &&
+          Depth++ <
+              ::neverd::limits::backend::
+                  kHighCExprWriterHighCWriterInvertCondStrImplPeelScalarDepthLimit) {
         S = forwardedExpr(S);
         S = unwrapIntegerView(S);
         if (!S || S->Kind != ExprKind::BinOp || S->Operands.size() != 2)

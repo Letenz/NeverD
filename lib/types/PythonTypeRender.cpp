@@ -19,6 +19,8 @@
 
 #include "TypeRenderShared.h"
 
+#include "neverd/types/Limits.h"
+
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
@@ -317,7 +319,10 @@ void PythonWriter::typedefinition(const LocalType &Type,
     return;
   // A typedef of a function type is one too, which no value is.
   const TypeExpr *Target = Type.Target.get();
-  for (unsigned Hop = 0; Target && Hop < 64; ++Hop) {
+  for (unsigned Hop = 0;
+       Target && Hop < ::neverd::limits::types::
+                           kPythonTypeRenderPythonWriterTypedefinitionHopLimit;
+       ++Hop) {
     if (Target->Kind == TypeExprKind::Function && Target->Function) {
       Out += "# " + Name + " is the function type " +
              C.declare(*makeFunction(Target->Function)) +

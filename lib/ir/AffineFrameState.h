@@ -7,6 +7,8 @@
 #ifndef NEVERD_IR_AFFINEFRAMESTATE_H
 #define NEVERD_IR_AFFINEFRAMESTATE_H
 
+#include "neverd/ir/Limits.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -59,7 +61,8 @@ public:
   };
 
   /// The largest alignment that defines an anchor.
-  static constexpr uint64_t MaxAlignment = uint64_t{1} << 16;
+  static constexpr uint64_t MaxAlignment =
+      ::neverd::limits::ir::kAffineFrameStateMaxAlignment;
 
   explicit AffineFrameState(llvm::function_ref<bool(size_t)> Consume)
       : Consume(Consume) {}

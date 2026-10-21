@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/codegen/COFF/COFFExceptionPatch.h"
 #include "neverd/backend/codegen/COFF/COFFSourceImage.h"
 #include "neverd/backend/codegen/PatchObject.h"
@@ -24,7 +25,6 @@
 namespace neverd {
 namespace {
 using Kind = llvm::mc_rewrite::RewriteSectionKind;
-constexpr uint64_t MaxStorage = 64 * 1024 * 1024;
 llvm::Error fail(const llvm::Twine &Message) {
   return llvm::createStringError(llvm::errc::not_supported,
                                  "COFF patch object: " + Message);
@@ -69,7 +69,8 @@ llvm::Expected<NativeCOFF> readObject(llvm::StringRef Bytes,
   if ((*File)->getMachine() != Machine || (*File)->getDOSHeader() ||
       ((*File)->getCOFFHeader() &&
        (*File)->getCOFFHeader()->SizeOfOptionalHeader) ||
-      (*File)->getNumberOfSymbols() > 1024 * 1024)
+      (*File)->getNumberOfSymbols() >
+          ::neverd::limits::backend::kMaxCOFFPatchObjectSymbols)
     return fail("expected a matching native relocatable COFF object");
   NativeCOFF Result;
   auto &Image = Result.Image;
@@ -109,7 +110,7 @@ llvm::Expected<NativeCOFF> readObject(llvm::StringRef Bytes,
         (Zero && !Writable) ||
         (!Code && !(Flags & (llvm::COFF::IMAGE_SCN_CNT_INITIALIZED_DATA |
                              llvm::COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA))) ||
-        Size > MaxStorage - Total)
+        Size > ::neverd::limits::backend::kCOFFPatchObjectMaxStorage - Total)
       return fail("invalid allocated section permissions or size: " + *Name);
     Total += Size;
     CompiledSection Item;
@@ -222,8 +223,11 @@ llvm::Error place(NativeCOFF &Object, uint64_t Base, uint64_t Alignment) {
     for (auto &S : Image.Sections)
       if (S.Kind == Group) {
         Cursor = llvm::alignTo(Cursor, S.Alignment);
-        if (Cursor < Base || Cursor - Base > MaxStorage ||
-            S.Size > MaxStorage - (Cursor - Base))
+        if (Cursor < Base ||
+            Cursor - Base >
+                ::neverd::limits::backend::kCOFFPatchObjectMaxStorage ||
+            S.Size > ::neverd::limits::backend::kCOFFPatchObjectMaxStorage -
+                         (Cursor - Base))
           return fail("object placement overflows");
         S.VA = Cursor;
         S.Offset = Cursor - Base;

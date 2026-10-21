@@ -6,6 +6,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ObjC/ObjCBlocks.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 #include "neverd/loader/Swift/SwiftMetadata.h"
@@ -261,7 +262,9 @@ bool hasEmbeddedDDLogFileInfoElement(const BinaryImage &Image,
       Receiver.Origin != ObjCReceiverTypeHint::OriginKind::MethodEntry ||
       Receiver.ClassName != "DDLogFileManagerDefault" ||
       Receiver.IsClassMethod || Receiver.Steps.empty() ||
-      Receiver.Steps.size() > 2 ||
+      Receiver.Steps.size() >
+          ::neverd::limits::loader::
+              kObjCSourceDeclarationsHasEmbeddedDDLogFileInfoElementSortedLogFileInfosDDLogFileManagerDefaultReceiverStepsSizeLimit ||
       Receiver.Steps.front().TheKind !=
           ObjCReceiverTypeHint::TypeStep::Kind::MessageResult ||
       Receiver.Steps.front().Selector != "sortedLogFileInfos")
@@ -1735,7 +1738,9 @@ bool validReceiverRoot(const BinaryImage &Image,
                      ObjCReceiverTypeHint::OriginKind::NativeSwiftSelf &&
                  Alternative.Alternatives.empty() &&
                  !Alternative.BlockCaptureOffset &&
-                 Alternative.Steps.size() + Receiver.Steps.size() <= 8;
+                 Alternative.Steps.size() + Receiver.Steps.size() <=
+                     ::neverd::limits::loader::
+                         kObjCSourceDeclarationsValidReceiverRootAlternativeStepsSizeReceiverStepsSizeLimit;
         }))
       return false;
     return std::is_sorted(Receiver.Alternatives.begin(),
@@ -1818,9 +1823,13 @@ const ObjCIvar *receiverIvar(const BinaryImage &Image, std::string ClassName,
                              bool RequireObject = true) {
   const ObjCIvar *Result = nullptr;
   std::set<std::string> Visited;
-  size_t Remaining = 4096;
+  size_t Remaining =
+      ::neverd::limits::loader::kObjCSourceDeclarationsReceiverIvarRemaining;
   while (!ClassName.empty()) {
-    if (Visited.size() >= 64 || !Visited.insert(ClassName).second)
+    if (Visited.size() >=
+            ::neverd::limits::loader::
+                kObjCSourceDeclarationsReceiverIvarVisitedSizeLimit ||
+        !Visited.insert(ClassName).second)
       return nullptr;
     const ObjCClass *Class = nullptr;
     for (const auto &Candidate : Image.ObjCClasses)
@@ -1905,7 +1914,10 @@ bool receiverProtocolKnown(const BinaryImage &Image, llvm::StringRef Name) {
 
 std::optional<ReceiverType> receiverType(const BinaryImage &Image,
                                          const ObjCReceiverTypeHint &Receiver) {
-  if (Receiver.Steps.size() > 8 || !validReceiverRoot(Image, Receiver))
+  if (Receiver.Steps.size() >
+          ::neverd::limits::loader::
+              kObjCSourceDeclarationsReceiverTypeReceiverStepsSizeLimit ||
+      !validReceiverRoot(Image, Receiver))
     return std::nullopt;
   ReceiverType Result{Receiver.ClassName, Receiver.IsClassMethod,
                       Receiver.Origin !=
@@ -1998,7 +2010,10 @@ std::optional<ObjCReceiverTypeHint>
 fieldReceiver(const BinaryImage &Image, const ObjCReceiverTypeHint &Receiver,
               uint64_t Key, bool BySlot) {
   const auto Type = receiverType(Image, Receiver);
-  if (!Type || Type->IsClassMethod || Receiver.Steps.size() >= 8 ||
+  if (!Type || Type->IsClassMethod ||
+      Receiver.Steps.size() >=
+          ::neverd::limits::loader::
+              kObjCSourceDeclarationsFieldReceiverStepsSizeLimit ||
       (!BySlot && Key > UINT32_MAX))
     return std::nullopt;
   const auto *Ivar = receiverIvar(Image, Type->ClassName, Key, BySlot);
@@ -2130,7 +2145,10 @@ ObjCReceiverDeclaration receiverDeclaration(const BinaryImage &Image,
   using Owner = std::pair<bool, std::string>;
   std::set<Owner> Active, Visited;
   auto Visit = [&](auto &&Self, const Owner &Key) -> bool {
-    if (Active.count(Key) || Visited.size() + Active.size() >= 256)
+    if (Active.count(Key) ||
+        Visited.size() + Active.size() >=
+            ::neverd::limits::loader::
+                kObjCSourceDeclarationsReceiverDeclarationVisitVisitedSizeActiveSizeLimit)
       return false;
     if (Visited.count(Key))
       return true;
@@ -2301,7 +2319,10 @@ ObjCReceiverDeclaration receiverDeclaration(const BinaryImage &Image,
         if (Class.SuperclassName == Name)
           Children.push_back(Class.Name);
       for (const auto &Child : Children) {
-        if (Child.empty() || Classes.size() >= 256)
+        if (Child.empty() ||
+            Classes.size() >=
+                ::neverd::limits::loader::
+                    kObjCSourceDeclarationsReceiverDeclarationClassesSizeLimit)
           return {true, std::nullopt};
         if (Classes.insert(Child).second)
           Work.push_back(Child);
@@ -2418,7 +2439,10 @@ std::optional<ObjCReceiverTypeHint>
 objcReceiverCallResultTypeHint(const BinaryImage &Image,
                                const ObjCReceiverTypeHint &Receiver,
                                llvm::StringRef Selector) {
-  if (Receiver.Steps.size() >= 8 || Selector.empty())
+  if (Receiver.Steps.size() >=
+          ::neverd::limits::loader::
+              kObjCSourceDeclarationsObjcReceiverCallResultTypeHintReceiverStepsSizeLimit ||
+      Selector.empty())
     return std::nullopt;
   const auto Declaration =
       objcReceiverSourceTypeHint(Image, Selector, Receiver);
@@ -2471,7 +2495,11 @@ objcBlockParameterContract(const BinaryImage &Image,
   auto DerivesFrom = [&](llvm::StringRef ClassName, llvm::StringRef Base) {
     std::set<std::string> Visited;
     std::string Current = ClassName.str();
-    while (!Current.empty() && Visited.size() < 256) {
+    while (
+        !Current.empty() &&
+        Visited.size() <
+            ::neverd::limits::loader::
+                kObjCSourceDeclarationsObjcBlockParameterContractDerivesFromVisitedSizeLimit) {
       if (Current == Base)
         return true;
       if (!Visited.insert(Current).second)

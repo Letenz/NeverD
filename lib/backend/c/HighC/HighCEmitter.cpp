@@ -22,6 +22,7 @@
 #include "../render/X86FPStateHelpers.h"
 #include "HighCWriter.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/c/FloatingPointContract.h"
 #include "neverd/ir/high/CxxObjectActions.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
@@ -143,8 +144,6 @@ constexpr uint64_t ImageWordsPerLine = 8;
 /// most, and from how many a string's line ends after a NUL or a newline.
 constexpr uint64_t ImageLineChars = 96;
 constexpr uint64_t ImageStringBreakChars = 48;
-/// The longest string C promises to translate (C11 5.2.4.1).
-constexpr uint64_t ImageStringMaxBytes = 4095;
 
 /// A byte as an element of a list of image bytes: text as its character, a
 /// zero as 0, and any other byte in hexadecimal.
@@ -3919,7 +3918,8 @@ void HighCWriter::writeBackingBytes(const ImageBacking &Backing) {
   // take strings of 4095 characters, and stores a NUL after them, so the
   // array needs a byte to spare (C++ and GCC's
   // -Wunterminated-string-initialization require it).
-  if (Used <= ImageStringMaxBytes && Used < Bytes.size()) {
+  if (Used <= ::neverd::limits::backend::kHighCEmitterImageStringMaxBytes &&
+      Used < Bytes.size()) {
     std::string Escaped;
     std::vector<size_t> Ends(Used);
     for (size_t I = 0; I < Used; ++I) {

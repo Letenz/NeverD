@@ -14,6 +14,8 @@
 #include "Internal.h"
 #include "SourceModel.h"
 
+#include "neverd/web/Limits.h"
+
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ConvertUTF.h"
 
@@ -352,7 +354,7 @@ struct Resolver {
   }
   Path node(uint32_t I, unsigned Depth = 0) {
     step();
-    if (Depth > 64)
+    if (Depth > ::neverd::limits::web::kSourcePathsNodeDepthLimit)
       throw Error("source_path_budget_exceeded");
     if (I == None)
       return refuse("missing_path_expression");
@@ -437,7 +439,9 @@ struct Resolver {
         V.SourceID != S.ID || O.BindingID != B.ID || O.ModuleID != M.ID ||
         M.BindingID != B.ID || B.Bindings.size() > 2 * sourceLimits(S).Nodes ||
         B.Declarations.size() > 2 * sourceLimits(S).Nodes ||
-        B.References.size() > sourceLimits(S).Nodes || Requested.size() > 10000)
+        B.References.size() > sourceLimits(S).Nodes ||
+        Requested.size() >
+            ::neverd::limits::web::kSourcePathsRunRequestedSizeLimit)
       throw Error("invalid_source_path_inputs");
     if (O.Status != "partial" || O.Nodes.size() != S.Nodes.size() ||
         V.Nodes.size() != S.Nodes.size())
@@ -530,7 +534,8 @@ SourcePaths analyzeSourcePaths(const SourceAnalysis &S,
                      Context.ManifestID, Context.SourceMemberPath,
                      Context.ApplicationDirectory, CapturedPathProfile});
   std::vector<uint32_t> Selection;
-  if (Requested.size() <= 10000) {
+  if (Requested.size() <=
+      ::neverd::limits::web::kSourcePathsAnalyzeSourcePathsRequestedSizeLimit) {
     Selection.assign(Requested.begin(), Requested.end());
     std::sort(Selection.begin(), Selection.end());
     Selection.erase(std::unique(Selection.begin(), Selection.end()),
@@ -542,7 +547,8 @@ SourcePaths analyzeSourcePaths(const SourceAnalysis &S,
     R.A.ID = identity("source-path-selection", Fields);
   }
   try {
-    if (Requested.size() > 10000)
+    if (Requested.size() >
+        ::neverd::limits::web::kSourcePathsAnalyzeSourcePathsRequestedSizeLimit)
       throw Error("invalid_source_path_inputs");
     R.run(Selection);
   } catch (const Error &E) {

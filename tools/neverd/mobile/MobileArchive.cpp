@@ -1,4 +1,5 @@
 //===- MobileArchive.cpp - Bounded native ZIP extraction ------------------===//
+#include "../ResourceLimits.h"
 #include "MobileCommon.h"
 #include "MobileFile.h"
 
@@ -148,9 +149,11 @@ void extractEntry(Archive &archive, const Entry &entry,
       throw Error("stored ZIP entry size disagrees");
     while (read < entry.compressed) {
       budget.check();
-      auto bytes =
-          archive.read(entry.start + read,
-                       std::min<uint64_t>(65536, entry.compressed - read));
+      auto bytes = archive.read(
+          entry.start + read,
+          std::min<uint64_t>(::neverd::limits::cli::
+                                 kMobileArchiveExtractEntryBytesMinArgument1,
+                             entry.compressed - read));
       read += bytes.size();
       write(bytes);
     }
@@ -168,9 +171,11 @@ void extractEntry(Archive &archive, const Entry &entry,
     while (status != Z_STREAM_END) {
       budget.check();
       if (!stream.avail_in && read < entry.compressed) {
-        input =
-            archive.read(entry.start + read,
-                         std::min<uint64_t>(65536, entry.compressed - read));
+        input = archive.read(
+            entry.start + read,
+            std::min<uint64_t>(::neverd::limits::cli::
+                                   kMobileArchiveExtractEntryInputMinArgument1,
+                               entry.compressed - read));
         read += input.size();
         stream.next_in = reinterpret_cast<Bytef *>(input.data());
         stream.avail_in = static_cast<uInt>(input.size());
@@ -200,7 +205,10 @@ readDirectory(Archive &archive, Budget &budget,
               bool filesystem_output) {
   const auto &limits = budget.limits;
   uint64_t footer_start =
-      archive.size - std::min<uint64_t>(archive.size, 65557);
+      archive.size -
+      std::min<uint64_t>(
+          archive.size, ::neverd::limits::cli::
+                            kMobileArchiveReadDirectoryFooterStartMinArgument2);
   auto footer = archive.read(footer_start, archive.size - footer_start);
   size_t eocd = std::string::npos;
   if (footer.size() >= 22) {
@@ -236,7 +244,9 @@ readDirectory(Archive &archive, Budget &budget,
     uint64_t offset = integer(locator, 8, 8);
     auto record = archive.read(offset, 56);
     uint64_t length = integer(record, 4, 8);
-    if (integer(record, 0, 4) != 0x06064b50 || length < 44 ||
+    if (integer(record, 0, 4) != 0x06064b50 ||
+        length <
+            ::neverd::limits::cli::kMobileArchiveReadDirectoryLengthLimit ||
         offset > directory_end_limit - 20 ||
         directory_end_limit - 20 - offset < 12 ||
         length != directory_end_limit - 20 - offset - 12 ||
@@ -276,7 +286,9 @@ readDirectory(Archive &archive, Budget &budget,
   for (uint64_t i = 0; i < entries_count; ++i) {
     budget.tick();
     if (cursor > directory + directory_size ||
-        directory + directory_size - cursor < 46)
+        directory + directory_size - cursor <
+            ::neverd::limits::cli::
+                kMobileArchiveReadDirectoryDirectorySizeCursorLimit)
       throw Error("truncated ZIP central directory");
     auto header = archive.read(cursor, 46);
     if (integer(header, 0, 4) != 0x02014b50)

@@ -32,7 +32,10 @@ struct BodyProof {
   }
   template <class Match>
   bool resolve(const ExprPtr &E, const Match &Leaf, unsigned Depth = 0) {
-    if (!Budget || Depth >= 64 || !word(E))
+    if (!Budget ||
+        Depth >=
+            ::neverd::sdk::kObjCNativeSwiftReceiverSourcesResolveDepthLimit ||
+        !word(E))
       return false;
     --Budget;
     if (E->Kind == ExprKind::Cast && E->Operands.size() == 1 &&
@@ -55,7 +58,8 @@ struct BodyProof {
   }
   bool receiver(const ExprPtr &E, const ObjCReceiverTypeHint &Root,
                 size_t Steps, unsigned Depth = 0) {
-    if (Depth >= 64)
+    if (Depth >=
+        ::neverd::sdk::kObjCNativeSwiftReceiverSourcesReceiverDepthLimit)
       return false;
     return resolve(
         E,
@@ -116,7 +120,9 @@ struct BodyProof {
   }
   bool sameArgument(const ExprPtr &E, const ExprPtr &A, BodyProof &Actual,
                     unsigned Depth = 0, bool FollowDefinitions = true) {
-    if (!E || !A || !Budget || Depth >= 64)
+    if (!E || !A || !Budget ||
+        Depth >= ::neverd::sdk::
+                     kObjCNativeSwiftReceiverSourcesSameArgumentDepthLimit)
       return false;
     --Budget;
     HighExpr Left = *E, Right = *A;

@@ -16,6 +16,7 @@
 
 #include "EHFrameDetail.h"
 
+#include "neverd/loader/Limits.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/DwarfEH.h"
 
@@ -43,11 +44,6 @@ using namespace dweh;
 
 namespace {
 
-/// Largest augmentation string accepted.  The defined characters are a short
-/// fixed set, so anything longer indicates the string is not NUL terminated
-/// inside the entry.
-constexpr size_t kMaxAugmentationLength = 32;
-
 /// Parse one CIE body.  \p Cursor points just past the CIE id field.
 bool parseCIE(const uint8_t *Buf, size_t Size, size_t Cursor, size_t End,
               va_t BufVA, const PointerBases &Bases, unsigned PtrSize,
@@ -71,7 +67,8 @@ bool parseCIE(const uint8_t *Buf, size_t Size, size_t Cursor, size_t End,
     ++Cursor;
   if (Cursor >= End)
     return fail("unterminated DWARF CIE augmentation string");
-  if (Cursor - AugStart > kMaxAugmentationLength)
+  if (Cursor - AugStart >
+      ::neverd::limits::loader::kEHFrameMaxAugmentationLength)
     return fail("DWARF CIE augmentation string is implausibly long");
   CIE.Augmentation.assign(reinterpret_cast<const char *>(Buf + AugStart),
                           Cursor - AugStart);

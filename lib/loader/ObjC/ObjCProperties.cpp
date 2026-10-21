@@ -3,6 +3,7 @@
 #include "ObjCRuntimeData.h"
 
 #include "neverd/ir/SourceABI.h"
+#include "neverd/loader/Limits.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -14,7 +15,8 @@ namespace neverd::objc {
 namespace {
 void diagnostic(BinaryImage &Image, llvm::StringRef Message) {
   auto &Messages = Image.ObjCMetadataDiagnostics;
-  if (Messages.size() < 64 &&
+  if (Messages.size() < ::neverd::limits::loader::
+                            kObjCPropertiesDiagnosticMessagesSizeLimit &&
       std::find(Messages.begin(), Messages.end(), Message) == Messages.end())
     Messages.push_back(Message.str());
 }

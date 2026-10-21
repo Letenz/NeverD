@@ -11,6 +11,7 @@
 #include "MedLLVMRegistrationCallResult.h"
 
 #include "neverd/Limits.h"
+#include "neverd/backend/Limits.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -38,7 +39,10 @@ unusedRegistrationCallResultPlan(
   };
   std::function<bool(llvm::Value &, unsigned)> Visit = [&](llvm::Value &Value,
                                                            unsigned Depth) {
-    if (!Charge(1 + Value.getNumUses()) || Depth > 64)
+    if (!Charge(1 + Value.getNumUses()) ||
+        Depth >
+            ::neverd::limits::backend::
+                kMedLLVMRegistrationCallResultUnusedRegistrationCallResultPlanVisitDepthLimit)
       return false;
     if (!Seen.insert(&Value).second)
       return true;

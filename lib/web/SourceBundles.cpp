@@ -15,6 +15,7 @@
 
 #include "neverd/web/Artifact.h"
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 
 #include <algorithm>
 #include <cmath>
@@ -176,7 +177,9 @@ class Recovery {
   }
   void diagnostic(const char *Code, uint32_t I) {
     ++Result.DiagnosticCount;
-    if (Result.Diagnostics.size() < 32)
+    if (Result.Diagnostics.size() <
+        ::neverd::limits::web::
+            kSourceBundlesDiagnosticResultDiagnosticsSizeLimit)
       Result.Diagnostics.push_back(
           {Code, I == None ? -1 : int64_t(node(I).Start)});
   }

@@ -14,6 +14,7 @@
 #ifndef NEVERD_IR_LOW_IMPORTEDMEMORYCOPY_H
 #define NEVERD_IR_LOW_IMPORTEDMEMORYCOPY_H
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/libc/LibCNames.h"
@@ -74,7 +75,9 @@ importedMemoryCopyRead(const BinaryImage &Image, const InstructionMap &Insns,
   if (It == Insns.end() || It->second.Size != 4 || !It->second.IsCall ||
       It->second.IsInstructionGuard || It->second.IsRet ||
       It->second.IsOpaqueTerminator || It->second.IsResumableTerminator ||
-      It->second.Ops.size() > 32 || Call.Addr > InvalidVA - 4)
+      It->second.Ops.size() >
+          ::neverd::limits::ir::kImportedMemoryCopyReadItSecondOpsSizeLimit ||
+      Call.Addr > InvalidVA - 4)
     return std::nullopt;
   bool FoundCall = false;
   for (const LowOp &Op : It->second.Ops) {
@@ -101,7 +104,8 @@ importedMemoryCopyRead(const BinaryImage &Image, const InstructionMap &Insns,
         Record.Addr + Record.Size != Next || Record.IsInstructionGuard ||
         Record.IsBranch || Record.IsCall || Record.IsRet ||
         Record.IsOpaqueTerminator || Record.IsResumableTerminator ||
-        Record.Ops.size() > 32)
+        Record.Ops.size() >
+            ::neverd::limits::ir::kImportedMemoryCopyReadRecordOpsSizeLimit)
       return std::nullopt;
     Next = Record.Addr;
     for (auto Op = Record.Ops.rbegin(); Op != Record.Ops.rend(); ++Op) {

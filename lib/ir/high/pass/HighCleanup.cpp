@@ -14,6 +14,7 @@
 #include "HighDCEDetail.h"
 #include "HighFrameAddress.h"
 
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 
@@ -139,7 +140,7 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
   auto IsLRReg = [&TRI](const MedVar &V) -> bool {
     return V.Kind == MedVar::Reg && TRI.isLinkRegister(V.RegOff);
   };
-  size_t FrameBudget = 100000;
+  size_t FrameBudget = ::neverd::limits::ir::kHighCleanupFrameBudget;
   // A register's entry value is a version no statement assigns.  A view's
   // first definition is version 0 as well (`BX = (uint16_t)EBX` before a
   // `movw %bx` store into a local), and that value is the function's own.

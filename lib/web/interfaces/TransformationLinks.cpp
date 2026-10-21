@@ -11,6 +11,8 @@
 
 #include "RelationContext.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web::interface_relations {
 namespace {
 std::u16string spelling(Context &C, uint32_t Node, uint32_t Depth = 0) {
@@ -95,7 +97,8 @@ void transformationLinks(Context &C, uint32_t Node) {
       continue;
     auto At = Node;
     uint32_t Depth = 0;
-    while (At != None && Depth <= 64) {
+    while (At != None &&
+           Depth <= ::neverd::limits::web::kTransformationLinksDepthLimit) {
       C.step();
       const auto &AtNode = C.S.Nodes[At];
       if (At != Node && (AtNode.Kind == "FunctionExpression" ||

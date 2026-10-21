@@ -11,6 +11,7 @@
 
 #include "Admission.h"
 
+#include "neverd/web/Limits.h"
 #include "neverd/web/PackageEvidence.h"
 
 #include <array>
@@ -21,7 +22,8 @@ PackageEvidenceTime packageEvidenceTime(std::string_view Text) {
   PackageEvidenceTime T;
   if (Text.empty())
     return T;
-  if (Text.size() > 128) {
+  if (Text.size() >
+      ::neverd::limits::web::kDescriptorPackageEvidenceTimeTextSizeLimit) {
     T.Status = "invalid_timestamp";
     return T;
   }

@@ -1,5 +1,7 @@
 #include "CodeView.h"
 
+#include "../Config.h"
+#include "../ResourceLimits.h"
 #include "Icons.h"
 #include "Session.h"
 #include "SettingsKeys.h"
@@ -37,8 +39,6 @@
 
 namespace neverd::gui {
 namespace {
-constexpr int PageLines = 256;
-constexpr int Margin = 6;
 constexpr int WheelLines = 3;
 
 /// The goto label \p line defines and the block address it names: HighC
@@ -681,7 +681,7 @@ void CodeText::request(int offset, quint64 serial) {
        {"representation", representation_},
        {"source_options", sourceOptions_},
        {"offset", offset},
-       {"limit", PageLines}},
+       {"limit", ::neverd::limits::gui::kCodeViewPageLines}},
       this,
       [this, offset, serial](const QJsonObject &payload) {
         if (serial != serial_)
@@ -1111,8 +1111,10 @@ QString CodeText::regionAt(const QPoint &position) const {
 
 QString CodeText::blockAt(const QPoint &position) const {
   const int line = lineAt(position.y());
-  const int left = Margin + int((gutterChars_ + 0.5) * charWidth_);
-  const int right = Margin + int((gutterChars_ + 2) * charWidth_);
+  const int left = ::neverd::limits::gui_config::kCodeViewMargin +
+                   int((gutterChars_ + 0.5) * charWidth_);
+  const int right = ::neverd::limits::gui_config::kCodeViewMargin +
+                    int((gutterChars_ + 2) * charWidth_);
   return line >= 0 && line < lines_.size() && position.x() >= left &&
                  position.x() < right
              ? lines_[line].block
@@ -1448,8 +1450,8 @@ void CodeText::highlightLine(Line &line, bool &inComment) const {
 }
 
 int CodeText::textLeft() const {
-  return Margin + int((gutterChars_ + 2) * charWidth_) -
-         horizontalScrollBar()->value();
+  return ::neverd::limits::gui_config::kCodeViewMargin +
+         int((gutterChars_ + 2) * charWidth_) - horizontalScrollBar()->value();
 }
 
 int CodeText::lineAt(int y) const {
@@ -1486,7 +1488,8 @@ void CodeText::paintEvent(QPaintEvent *) {
       painter.fillRect(row, theme.color(ColorRole::ListingCurrentLine));
     else if (marked_.contains(i) || lines_[i].folded)
       painter.fillRect(row, theme.color(ColorRole::CodeFold));
-    const int gutterRight = Margin + int((gutterChars_ + 2) * charWidth_);
+    const int gutterRight = ::neverd::limits::gui_config::kCodeViewMargin +
+                            int((gutterChars_ + 2) * charWidth_);
     painter.save();
     painter.setClipRect(QRect(
         gutterRight, y, std::max(0, area.width() - gutterRight), lineHeight_));
@@ -1520,12 +1523,13 @@ void CodeText::paintEvent(QPaintEvent *) {
     }
     painter.restore();
     painter.setPen(theme.color(ColorRole::CodeLineNumber));
-    painter.drawText(
-        QRect(Margin, y, int(gutterChars_ * charWidth_), lineHeight_),
-        Qt::AlignRight | Qt::AlignVCenter,
-        QString::number(lines_[i].sourceLine + 1));
+    painter.drawText(QRect(::neverd::limits::gui_config::kCodeViewMargin, y,
+                           int(gutterChars_ * charWidth_), lineHeight_),
+                     Qt::AlignRight | Qt::AlignVCenter,
+                     QString::number(lines_[i].sourceLine + 1));
     if (!lines_[i].block.isEmpty()) {
-      const qreal x = Margin + (gutterChars_ + 1.25) * charWidth_;
+      const qreal x = ::neverd::limits::gui_config::kCodeViewMargin +
+                      (gutterChars_ + 1.25) * charWidth_;
       const qreal middle = y + lineHeight_ / 2.0;
       const qreal radius = std::min(charWidth_ * 0.35, lineHeight_ * 0.22);
       painter.save();

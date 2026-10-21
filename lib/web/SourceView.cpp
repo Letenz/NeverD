@@ -16,6 +16,7 @@
 
 #include "neverd/web/Artifact.h"
 #include "neverd/web/Error.h"
+#include "neverd/web/Limits.h"
 
 #include <algorithm>
 #include <charconv>
@@ -42,7 +43,7 @@ bool layout(std::string_view Bytes) {
 }
 
 std::string policyID(const std::vector<SourceReviewRange> &Ranges) {
-  if (Ranges.size() > 64)
+  if (Ranges.size() > ::neverd::limits::web::kSourceViewPolicyIDRangesSizeLimit)
     throw Error("invalid_source_view_policy");
   std::string Canonical;
   uint64_t End = 0;
@@ -73,7 +74,7 @@ SourceViewPolicy sourceViewPolicy(std::string_view Options) {
         throw Error("invalid_source_view_policy");
     if (const auto *Ranges = O->get("reviewed_ranges")) {
       const auto *A = Ranges->getAsArray();
-      if (!A || A->size() > 64)
+      if (!A || A->size() > ::neverd::limits::web::kSourceViewPolicyASizeLimit)
         throw Error("invalid_source_view_policy");
       if (!A->empty() && O->getBoolean("locally_reviewed") != true)
         throw Error("source_view_local_review_required");

@@ -7,6 +7,8 @@
 /// Guest-owned forward and inverse fixed-zone calendar conversion.
 #include "AndroidInternal.h"
 
+#include "neverd/emulation/Limits.h"
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Endian.h"
 
@@ -87,9 +89,10 @@ llvm::Error validateCalendar(const AndroidNativeOptions &Options) {
     return llvm::Error::success();
   const auto &Z = *Options.FixedTimeZone;
   if (Z.OffsetSeconds < -86400 || Z.OffsetSeconds > 86400 || Z.Name.empty() ||
-      Z.Name.size() > 32 || !llvm::all_of(Z.Name, [](unsigned char C) {
-        return C >= 33 && C <= 126;
-      }))
+      Z.Name.size() > ::neverd::limits::emulation::
+                          kAndroidCalendarValidateCalendarZNameSizeLimit ||
+      !llvm::all_of(Z.Name,
+                    [](unsigned char C) { return C >= 33 && C <= 126; }))
     return failure(diagnostic::CalendarZoneInput);
   return llvm::Error::success();
 }

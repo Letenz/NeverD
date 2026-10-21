@@ -24,6 +24,7 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/ObjC/ObjCFormattedCalls.h"
+#include "neverd/pipeline/Limits.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 
@@ -34,25 +35,21 @@
 
 namespace neverd::pipeline_detail {
 namespace {
-/// The distinct constants a register may hold where paths join, as the scan
-/// follows them into a block, and the rounds it joins a function's blocks
-/// for before it gives up: a cross-jumped call's format comes from a few
-/// paths.
-constexpr size_t kMaxJoinedFormatConstants = 4;
-constexpr size_t kMaxFormatJoinRounds = 8;
 
 /// The C string at \p Address, when the program cannot change it: in memory
 /// it reads but neither writes nor executes.
 std::optional<std::vector<uint16_t>> constantFormat(const BinaryImage &Img,
                                                     va_t Address) {
-  constexpr uint32_t MaxUnits = 65536;
   const Segment *Seg = Img.getSegmentFor(Address);
   const Section *Sec = Img.getSectionFor(Address);
   if (!Address || !Seg || !Seg->isReadable() || Seg->isWritable() ||
       (Sec ? Sec->isWritable() || Sec->isExecutable() : Seg->isExecutable()))
     return std::nullopt;
   std::vector<uint16_t> Units;
-  for (uint32_t I = 0; I < MaxUnits && Address <= InvalidVA - I; ++I) {
+  for (uint32_t I = 0;
+       I < ::neverd::limits::pipeline::kPipelineFormattedCallsMaxUnits &&
+       Address <= InvalidVA - I;
+       ++I) {
     const uint8_t *Byte = Img.readVA(Address + I, 1);
     if (!Byte)
       return std::nullopt;
@@ -363,7 +360,10 @@ void collectFormattedCalls(const BinaryImage &Img,
         const auto L = Leaves.find(J->first);
         if (L != Leaves.end())
           J->second.insert(L->second.begin(), L->second.end());
-        if (L == Leaves.end() || J->second.size() > kMaxJoinedFormatConstants)
+        if (L == Leaves.end() ||
+            J->second.size() >
+                ::neverd::limits::pipeline::
+                    kPipelineFormattedCallsMaxJoinedFormatConstants)
           J = Joined.erase(J);
         else
           ++J;
@@ -372,7 +372,11 @@ void collectFormattedCalls(const BinaryImage &Img,
     return Joined;
   };
   bool Stable = false;
-  for (size_t Round = 0; Round < kMaxFormatJoinRounds && !Stable; ++Round) {
+  for (size_t Round = 0;
+       Round < ::neverd::limits::pipeline::
+                   kPipelineFormattedCallsMaxFormatJoinRounds &&
+       !Stable;
+       ++Round) {
     Stable = true;
     for (size_t I = 0; I < Blocks.size(); ++I) {
       FamilyConstants Leaves = scanBlock(Img, Blocks[I], In(I));

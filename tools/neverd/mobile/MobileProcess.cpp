@@ -5,6 +5,7 @@
 #define _GNU_SOURCE
 #endif
 #endif
+#include "../ResourceLimits.h"
 #include "MobileCommon.h"
 
 #include <algorithm>
@@ -260,7 +261,8 @@ public:
       throw Error("backend diagnostic output exceeded 16 MiB");
   }
   std::string tail() {
-    size_t Size = static_cast<size_t>(std::min<uint64_t>(Written, 4096));
+    size_t Size = static_cast<size_t>(std::min<uint64_t>(
+        Written, ::neverd::limits::cli::kMobileProcessTailSizeMinArgument2));
     std::string Result(Size, '\0');
 #ifdef _WIN32
     LARGE_INTEGER Offset;
@@ -374,7 +376,8 @@ bool containsOnlyExitedProcesses(pid_t Leader) {
   int Query[] = {CTL_KERN, KERN_PROC, KERN_PROC_PGRP, Leader};
   size_t Bytes = 0;
   if (::sysctl(Query, 4, nullptr, &Bytes, nullptr, 0) || !Bytes ||
-      Bytes > 16 * 1024 * 1024)
+      Bytes > ::neverd::limits::cli::
+                  kMobileProcessContainsOnlyExitedProcessesBytesLimit)
     return false;
   std::vector<kinfo_proc> Processes((Bytes + sizeof(kinfo_proc) - 1) /
                                     sizeof(kinfo_proc));
@@ -553,7 +556,8 @@ public:
     if (EOFSeen)
       return true;
     std::array<char, 65536> Buffer;
-    for (unsigned Reads = 0; Reads < 16; ++Reads) {
+    for (unsigned Reads = 0;
+         Reads < ::neverd::limits::cli::kMaxMobilePipeDrainReads; ++Reads) {
       ssize_t Size = ::read(Reader.get(), Buffer.data(), Buffer.size());
       if (Size > 0) {
         Output.append(Buffer.data(), static_cast<size_t>(Size));
@@ -574,7 +578,8 @@ public:
   int64_t status() const { return ExitStatus; }
   void pause() {
     if (EOFSeen) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      std::this_thread::sleep_for(std::chrono::milliseconds(
+          ::neverd::limits::cli::kMobileProcessPauseMilliseconds));
       return;
     }
     pollfd FD{Reader.get(), POLLIN, 0};
@@ -687,7 +692,8 @@ public:
       if (!Command.empty())
         Command += L' ';
       Command += quote(wide(Arg));
-      if (Command.size() >= 32767)
+      if (Command.size() >=
+          ::neverd::limits::cli::kMobileProcessChildCommandSizeLimit)
         throw Error("backend command exceeds Windows command-line limits");
     }
     std::vector<wchar_t> Block;
@@ -800,7 +806,8 @@ public:
     if (EOFSeen)
       return true;
     std::array<char, 65536> Buffer;
-    for (unsigned Reads = 0; Reads < 16; ++Reads) {
+    for (unsigned Reads = 0;
+         Reads < ::neverd::limits::cli::kMaxMobilePipeDrainReads; ++Reads) {
       DWORD Available = 0;
       if (!PeekNamedPipe(Reader.get(), nullptr, 0, nullptr, &Available,
                          nullptr)) {
@@ -861,12 +868,16 @@ void runTool(const std::vector<std::string> &Args, const fs::path &LogPath,
       if (Process.exited()) {
         // Descendants must be stopped before inspecting final files.
         Process.stop();
-        auto DrainDeadline =
-            std::min(Deadline, Clock::now() + std::chrono::seconds(1));
+        auto DrainDeadline = std::min(
+            Deadline,
+            Clock::now() + std::chrono::seconds(
+                               ::neverd::limits::cli::
+                                   kMobileProcessRunToolDrainDeadlineSeconds));
         while (!Process.drain(Output)) {
           if (Clock::now() >= DrainDeadline)
             throw Error("backend descendants did not close their output pipe");
-          std::this_thread::sleep_for(std::chrono::milliseconds(5));
+          std::this_thread::sleep_for(std::chrono::milliseconds(
+              ::neverd::limits::cli::kMobileProcessRunToolMilliseconds));
         }
         scanWorkspace(Workspace, Work, false, Deadline, Timeout);
         break;
@@ -874,7 +885,10 @@ void runTool(const std::vector<std::string> &Args, const fs::path &LogPath,
       checkDeadline(Deadline, Timeout);
       if (!Workspace.empty() && Clock::now() >= NextScan) {
         scanWorkspace(Workspace, Work, true, Deadline, Timeout);
-        NextScan = Clock::now() + std::chrono::milliseconds(250);
+        NextScan =
+            Clock::now() + std::chrono::milliseconds(
+                               ::neverd::limits::cli::
+                                   kMobileProcessRunToolNextScanMilliseconds);
       }
       Process.pause();
     }

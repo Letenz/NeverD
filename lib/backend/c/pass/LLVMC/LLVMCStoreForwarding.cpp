@@ -13,6 +13,7 @@
 
 #include "LLVMCFrameAliases.h"
 
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/c/pass/LLVMC/LLVMCPasses.h"
 
 #include "llvm/IR/CFG.h"
@@ -121,7 +122,8 @@ void analyzeStoreForwarding(LLVMCAnalysisState &State, llvm::Function &Fn) {
 
       std::map<const llvm::LoadInst *, const llvm::Value *> Forwarded;
       for (const auto &[LI, Read] : Reads) {
-        unsigned Budget = 1024;
+        unsigned Budget = ::neverd::limits::backend::
+            kLLVMCStoreForwardingAnalyzeStoreForwardingBudget;
         std::set<const llvm::BasicBlock *> Active;
         std::function<const llvm::Value *(const llvm::BasicBlock *,
                                           const llvm::Instruction *)>

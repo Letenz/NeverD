@@ -113,8 +113,10 @@ const char *neverd_search_bytes(neverd_session_t Sess, const unsigned char *Pat,
   auto *S = toSession(Sess);
   if (!S->Loaded || !Pat || PatLen <= 0)
     return dupStr("[]");
-  auto Page = searchPage(*S, {Pat, size_t(PatLen)}, true, false, {}, false,
-                         MaxResults > 0 ? size_t(MaxResults) : 256);
+  auto Page = searchPage(
+      *S, {Pat, size_t(PatLen)}, true, false, {}, false,
+      MaxResults > 0 ? size_t(MaxResults)
+                     : static_cast<int>(::neverd::sdk::kDefaultSearchResults));
   return dupStr(jsonToString(std::move(Page["items"])));
 }
 
@@ -127,7 +129,8 @@ const char *neverd_search_string(neverd_session_t Sess, const char *Pattern,
       *S,
       {reinterpret_cast<const unsigned char *>(Pattern), std::strlen(Pattern)},
       CaseSensitive != 0, true, {}, false,
-      MaxResults > 0 ? size_t(MaxResults) : 256);
+      MaxResults > 0 ? size_t(MaxResults)
+                     : static_cast<int>(::neverd::sdk::kDefaultSearchResults));
   return dupStr(jsonToString(std::move(Page["items"])));
 }
 

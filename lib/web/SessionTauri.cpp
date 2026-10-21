@@ -11,6 +11,8 @@
 
 #include "SessionInternal.h"
 
+#include "neverd/web/Limits.h"
+
 namespace neverd::web {
 namespace {
 llvm::json::Object summary(const TauriExtraction &E, uint64_t Revision) {
@@ -97,7 +99,8 @@ std::string Session::tauriRecords(std::string_view Revision,
   if (Found == State->TauriExtractions.end())
     throw Error("unknown_tauri_extraction");
   const auto &E = Found->second;
-  if (!Limit || Limit > 128 || Offset > E.Members.size())
+  if (!Limit || Limit > ::neverd::limits::web::kSessionTauriRecordsLimit ||
+      Offset > E.Members.size())
     throw Error("invalid_page");
   const auto End = std::min<uint64_t>(E.Members.size(), Offset + Limit);
   llvm::json::Array Items;

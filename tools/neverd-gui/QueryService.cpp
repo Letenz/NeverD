@@ -1,5 +1,7 @@
 #include "QueryService.h"
 
+#include "ResourceLimits.h"
+
 #include <QCache>
 #include <QElapsedTimer>
 #include <QJsonArray>
@@ -101,7 +103,7 @@ bool command(const QString &operation) {
 // Sort object keys only. Strings (including symbols and 64-bit addresses),
 // numbers, array order and absent defaults keep their exact request meaning.
 QJsonValue canonical(const QJsonValue &value, int depth, bool &valid) {
-  if (depth > 64) {
+  if (depth > ::neverd::limits::gui::kQueryServiceCanonicalDepthLimit) {
     valid = false;
     return {};
   }
@@ -208,12 +210,16 @@ struct QueryService::State {
 
   State(QueryService *service, Sender send, Limits budget)
       : q(service), sender(std::move(send)), limits(budget),
-        cache(std::clamp(budget.cacheBytes, 0, 1024 * 1024 * 1024)) {
+        cache(std::clamp(
+            budget.cacheBytes, 0,
+            ::neverd::limits::gui::kQueryServiceStateClampArgument3)) {
     limits.maxJobs = std::max<qsizetype>(1, limits.maxJobs);
     limits.maxSubscriptions = std::max<qsizetype>(1, limits.maxSubscriptions);
     limits.maxQueuedBytes = std::max<qsizetype>(1, limits.maxQueuedBytes);
-    limits.maxRequestBytes =
-        std::clamp<qsizetype>(limits.maxRequestBytes, 1, 8 * 1024 * 1024);
+    limits.maxRequestBytes = std::clamp<qsizetype>(
+        limits.maxRequestBytes, 1,
+        ::neverd::limits::gui::
+            kQueryServiceStateLimitsMaxRequestBytesClampArgument3);
   }
 
   bool pending() const { return !jobs.isEmpty() || !subscriptions.isEmpty(); }
@@ -795,7 +801,11 @@ void QueryService::listingChanged() {
   state_->cache.clear();
 }
 void QueryService::setCacheBudgetMiB(int mebibytes) {
-  state_->cache.setMaxCost(std::clamp(mebibytes, 16, 1024) * 1024 * 1024);
+  state_->cache.setMaxCost(
+      std::clamp(
+          mebibytes, 16,
+          ::neverd::limits::gui::kQueryServiceSetCacheBudgetMiBClampArgument3) *
+      1024 * 1024);
 }
 void QueryService::receive(const QJsonObject &response) {
   state_->receive(response);

@@ -7,6 +7,7 @@
 #include "RegistrationStateSolver.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/lift/X86Regs.h"
 
 #include <algorithm>
@@ -16,7 +17,9 @@ namespace neverd::registration_state {
 
 bool RegistrationStateSolver::initializeContracts() {
   if (LocalUnwinds) {
-    if (LocalUnwinds->size() > 256)
+    if (LocalUnwinds->size() >
+        ::neverd::limits::ir::
+            kRegistrationStateContractsRegistrationStateSolverInitializeContractsLocalUnwindsSizeLimit)
       return false;
     for (const auto &Call : *LocalUnwinds) {
       if (!charge(1) || !Call.Target || Call.Target > UINT32_MAX ||
@@ -37,7 +40,9 @@ bool RegistrationStateSolver::initializeContracts() {
     }
   }
   if (Stacks) {
-    if (Stacks->size() > 256)
+    if (Stacks->size() >
+        ::neverd::limits::ir::
+            kRegistrationStateContractsRegistrationStateSolverInitializeContractsStacksSizeLimit)
       return false;
     for (const auto &Stack : *Stacks)
       if (!charge(1) || !Stack.Target || Stack.Target > UINT32_MAX ||
@@ -51,7 +56,9 @@ bool RegistrationStateSolver::initializeContracts() {
       }
   }
   if (CheckCalls) {
-    if (Callees->size() > 256) {
+    if (Callees->size() >
+        ::neverd::limits::ir::
+            kRegistrationStateContractsRegistrationStateSolverInitializeContractsCalleesSizeLimit) {
       Result.Diagnostics.push_back("registration callee count exceeds budget");
       return false;
     }
