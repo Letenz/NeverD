@@ -62,19 +62,55 @@ TEST(COFFExceptionParser, V2BodyMayHaveNoEpilogueAndOperandsAreNotMarkers) {
   }
 }
 
+TEST(COFFExceptionParser,
+     V2NonleadingEpiloguePairsDoNotRestoreOrDefineRegions) {
+  for (bool HasEpilogue : {false, true}) {
+    for (bool BetweenOperations : {false, true}) {
+      SCOPED_TRACE(HasEpilogue);
+      SCOPED_TRACE(BetweenOperations);
+      BinaryImage Img = makeX64ExceptionImage();
+      std::vector<uint8_t> Bytes = {2, 5, uint8_t(HasEpilogue ? 6 : 4), 0};
+      if (HasEpilogue)
+        Bytes.insert(Bytes.end(), {1, 0x16, 0, 6});
+      Bytes.insert(Bytes.end(), {5, 0x32}); // Allocate 32 bytes.
+      if (!BetweenOperations)
+        Bytes.insert(Bytes.end(), {1, 0x30}); // Push rbx.
+      // Neither the offset nor the flags describe a prologue operation.
+      // The next slot is ignored payload, even with an unknown opcode.
+      Bytes.insert(Bytes.end(), {0xfe, 0xf6, 0xa5, 0xff});
+      if (BetweenOperations)
+        Bytes.insert(Bytes.end(), {1, 0x30});
+      std::copy(Bytes.begin(), Bytes.end(), Img.Segments[1].Data.begin());
+      const auto F = coff_loader::decodeX64ExceptionFunction(
+          Img, Img.Base, 0x2000, 0x1000, 0x1040, 0x3000);
+      ASSERT_EQ(F.ParseStatus, ExceptionParseStatus::Complete);
+      EXPECT_EQ(F.Epilogs.size(), HasEpilogue ? 1u : 0u);
+      ASSERT_EQ(F.UnwindOperations.size(), 2u);
+      EXPECT_EQ(F.UnwindOperations[0].Kind, UnwindOperationKind::AllocateSmall);
+      EXPECT_EQ(F.UnwindOperations[0].CodeOffset, 5u);
+      EXPECT_EQ(F.UnwindOperations[1].Kind,
+                UnwindOperationKind::PushNonVolatile);
+      EXPECT_EQ(F.UnwindOperations[1].CodeOffset, 1u);
+      EXPECT_EQ(F.NativeUnwindBytes, Bytes);
+    }
+  }
+}
+
 TEST(COFFExceptionParser, RejectsMalformedV2EpiloguesAndPrologueOrdering) {
   const std::vector<std::vector<uint8_t>> Cases = {
-      {0, 0x16, 0, 6},                    // Zero length.
-      {1, 0x26, 0, 6},                    // Reserved header flags.
-      {1, 0x16},                          // Unpaired epilogue slot.
-      {1, 6, 0, 6},                       // No actual epilogue.
-      {4, 6, 3, 6},                       // Region extends past function end.
-      {4, 6, 1, 0x16},                    // Distance exceeds function size.
-      {4, 6, 0x3c, 6},                    // Region overlaps prologue.
-      {4, 0x16, 4, 6},                    // Duplicate region.
-      {4, 0x16, 5, 6},                    // Overlapping regions.
-      {1, 0x16, 0, 6, 8, 6, 0, 6},        // Offset after padding.
-      {4, 0x32, 1, 6},                    // Marker after real operation.
+      {0, 0x16, 0, 6},             // Zero length.
+      {1, 0x26, 0, 6},             // Reserved header flags.
+      {1, 0x16},                   // Unpaired epilogue slot.
+      {1, 6, 0, 6},                // No actual epilogue.
+      {4, 6, 3, 6},                // Region extends past function end.
+      {4, 6, 1, 0x16},             // Distance exceeds function size.
+      {4, 6, 0x3c, 6},             // Region overlaps prologue.
+      {4, 0x16, 4, 6},             // Duplicate region.
+      {4, 0x16, 5, 6},             // Overlapping regions.
+      {1, 0x16, 0, 6, 8, 6, 0, 6}, // Offset after padding.
+      {4, 0x32, 1, 6},             // Truncated nonleading marker pair.
+      {1, 0x30, 0xfe, 0xf6, 0xa5, 0xff, 4,
+       0x32},                             // Ordering across an ignored pair.
       {1, 0x16, 0, 6, 1, 0x30, 4, 0x32}}; // Increasing prologue offsets.
   for (const auto &Codes : Cases) {
     SCOPED_TRACE(testing::PrintToString(Codes));
