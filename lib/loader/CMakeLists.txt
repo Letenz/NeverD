@@ -18,6 +18,8 @@ add_neverd_component_library(NeverDLoader
   COFF/COFFObjectExterns.cpp
   COFF/COFFObjectView.cpp
   COFF/PEImports.cpp
+  COFF/PEHeaderMapping.cpp
+  COFF/PEHeaderInitialization.cpp
   COFF/PEFixedImage.cpp
   COFF/PEProgramExports.cpp
   COFF/RichHeader.cpp

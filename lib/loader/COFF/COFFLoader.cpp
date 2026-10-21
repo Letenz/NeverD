@@ -16,6 +16,7 @@
 
 #include "COFFObjectExterns.h"
 #include "COFFObjectView.h"
+#include "PEHeaderMapping.h"
 
 #include "neverd/Limits.h"
 #include "neverd/loader/COFF/COFFDelphiEH.h"
@@ -279,6 +280,16 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
     if (Img.LoadOnlyFunctionEntries.empty() && !Contents.empty())
       Sec.Data.assign(Contents.begin(), Contents.end());
     Img.Sections.push_back(std::move(Sec));
+  }
+
+  if (!IsRelocatable) {
+    const auto Bytes = llvm::arrayRefFromStringRef(Buffer.getBuffer());
+    auto Headers = coff_loader::getPEHeaderMapping(Bytes);
+    if (Headers)
+      coff_loader::appendPEHeaderMapping(Img, *Headers, Bytes);
+    else
+      Img.addLoadDiagnostic("pe.headers_unmapped",
+                            llvm::toString(Headers.takeError()));
   }
 
   // The undefined and common symbols of an object take addresses past every

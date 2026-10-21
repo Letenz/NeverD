@@ -467,6 +467,8 @@ struct BinaryImage {
   /// emitter rebuilds such a table with `ptrtoint(@recompiled_data)` fields so
   /// the pointers survive relinking (the data analogue of CodePtrRelocSlots),
   /// instead of leaving the stale original VAs that would read unmapped memory.
+  /// Linked PE header mappings also record their format-owned ImageBase field
+  /// here. It remains distinct from the file's explicit BaseRelocations.
   std::set<uint64_t> DataPtrRelocSlots;
   /// Data-pointer slot -> address inside the relocation symbol's owning
   /// section/segment.  Slot bytes alone cannot disambiguate a one-past target

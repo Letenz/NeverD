@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../loader/PEHeaderFixture.h"
 #include "NeverDLiftFixture.h"
 #include "gtest/gtest.h"
 
@@ -11,6 +12,7 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -72,6 +74,117 @@ protected:
     }
   }
 };
+
+TEST_F(NativePointerRelocationBoundary,
+       PEHeaderImageBaseRetainsItsMirroredStorageIdentity) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "header mirror code generation requires Clang";
+  for (const auto [Is64, Machine] :
+       {std::pair{false, uint16_t(llvm::COFF::IMAGE_FILE_MACHINE_I386)},
+        {true, uint16_t(llvm::COFF::IMAGE_FILE_MACHINE_AMD64)},
+        {false, uint16_t(llvm::COFF::IMAGE_FILE_MACHINE_ARMNT)},
+        {true, uint16_t(llvm::COFF::IMAGE_FILE_MACHINE_ARM64)}}) {
+    SCOPED_TRACE(Machine);
+    auto Bytes = test::peHeaderImage(Is64, Machine);
+    const auto PE = locatePEHeaders(reinterpret_cast<uint8_t *>(Bytes.data()),
+                                    Bytes.size());
+    reinterpret_cast<llvm::object::coff_section *>(PE.SectionTable)
+        ->VirtualSize = 16;
+    const unsigned Width = Is64 ? 8 : 4;
+    const uint64_t Base = getPEImageBase(PE);
+    const size_t Size = getPESizeOfHeaders(PE);
+    const size_t BaseOffset =
+        PE.OptionalHeader - reinterpret_cast<uint8_t *>(Bytes.data()) +
+        (Is64 ? offsetof(llvm::object::pe32plus_header, ImageBase)
+              : offsetof(llvm::object::pe32_header, ImageBase));
+    auto Loaded = COFFLoader().loadBuffer(
+        llvm::MemoryBufferRef(Bytes, "header-mirror.exe"));
+    ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    std::vector<MedFunc> Functions;
+    for (bool LoadBase : {false, true}) {
+      MedFunc F;
+      F.Entry = Base + 0x1000 + 4 * LoadBase;
+      F.Name = LoadBase ? "header_base" : "header_address";
+      F.ReturnType = NdType::makeInt(Width);
+      MedBlock B;
+      B.Id = 0;
+      B.StartAddr = F.Entry;
+      B.EndAddr = F.Entry + 4;
+      auto Value = MedVar::makeConst(Base, Width,
+                                     ConstantAddressProvenance::DataAddress);
+      if (LoadBase) {
+        Value = {};
+        Value.Size = Width;
+        Value.Kind = MedVar::Temp;
+        Value.TheArch = Loaded->Arch;
+        Value.Id = 1;
+        Value.SSAVer = 1;
+        MedOp Load;
+        Load.Opcode = NdOp::LOAD;
+        Load.Addr = F.Entry;
+        Load.Output = Value;
+        Load.addInput(MedVar::makeConst(
+            Base + BaseOffset, Width, ConstantAddressProvenance::DataAddress));
+        B.Ops.push_back(Load);
+      }
+      MedOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = F.Entry;
+      Return.addInput(Value);
+      B.Ops.push_back(Return);
+      F.Blocks.push_back(std::move(B));
+      Functions.push_back(std::move(F));
+    }
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit(Functions, Context, "pe-header-mirror",
+                              Loaded->Arch, {}, &*Loaded, BinaryFormat::COFF);
+    ASSERT_NE(Module, nullptr);
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    const fs::path IR = tmpFile("pe-header-mirror.ll");
+    const fs::path Object = tmpFile("pe-header-mirror.obj");
+    std::error_code EC;
+    llvm::raw_fd_ostream OS(IR.string(), EC);
+    ASSERT_FALSE(EC);
+    Module->print(OS, nullptr);
+    OS.close();
+    const auto Compiled =
+        exec(NEVERD_TEST_CLANG, {"--target=" + Module->getTargetTriple().str(),
+                                 "-c", IR.string(), "-o", Object.string()});
+    ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+#if defined(__linux__) && defined(__x86_64__)
+    if (Loaded->Arch != Arch::X64)
+      continue;
+    // This executes authored data-access functions only. The no-argument
+    // integer returns agree between the target and host ABIs. Check every
+    // original header byte except the field that must name this new storage.
+    const fs::path Harness = tmpFile("pe-header-mirror.c");
+    const fs::path Program = tmpFile("pe-header-mirror");
+    std::ofstream C(Harness);
+    C << "extern unsigned long long header_address(void), header_base(void);\n"
+         "static const unsigned char expected[] = {";
+    for (size_t I = 0; I != Size; ++I)
+      C << unsigned(static_cast<uint8_t>(Bytes[I])) << ',';
+    C << "};\nint main(void) {\n"
+         "const unsigned char *p = (void *)header_address();\n"
+         "if (header_base() != (unsigned long long)p) return 1;\n"
+         "for (unsigned i=0; i<sizeof(expected); ++i)\n"
+         "if ((i<"
+      << BaseOffset << " || i>=" << BaseOffset + Width
+      << ") && p[i]!=expected[i]) return 2;\nreturn 0; }\n";
+    C.close();
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      const auto Linked =
+          exec(NEVERD_TEST_CLANG,
+               {"--target=x86_64-unknown-linux-gnu", Optimization, IR.string(),
+                Harness.string(), "-o", Program.string()});
+      ASSERT_EQ(Linked.exitCode, 0) << Linked.err;
+      const auto Ran = exec(Program.string(), {});
+      EXPECT_EQ(Ran.exitCode, 0) << Ran.err << Optimization;
+    }
+#endif
+  }
+}
 
 TEST_F(NativePointerRelocationBoundary,
        TargetAggregateLayoutCompilesAcrossArchitecturesAndFormats) {

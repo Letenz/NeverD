@@ -25,3 +25,8 @@ add_neverd_unittest(NeverDReadOnlyBytesTests
   ReadOnlyBytesTests.cpp
   LINK_COMPONENTS Loader Support
 )
+
+add_neverd_unittest(NeverDPEHeaderMappingTests
+  PEHeaderMappingTests.cpp
+  LINK_COMPONENTS Loader Support
+)
