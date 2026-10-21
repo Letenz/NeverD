@@ -337,6 +337,18 @@ closed product minus missing corners and a coefficient disturbance. Run these
 with `NeverDHighSymSimplifyTests`, `NeverDSymSimplifyGuardTests`,
 `NeverDMBASourceTests` and the worker source-synthesis test to check the common
 CLI and GUI optimization path.
+`SymMBAQuadraticRows` checks direct coefficient-row recovery against independent
+matrices at 1–257 bits, including noninvertible scales, canceled inputs,
+perturbations outside the proposal rows, exact/short work and storage refusal.
+Common-power tests require a separately proved low-degree quotient; repeated
+normalized monomials retain their modular coefficients and multiplicities.
+The worker source-synthesis test also executes a missing-corner degree-48
+fixture through both source backends, CLI whole/function requests and GUI
+worker requests, with optimization toggles kept independent.
+Use `--family row-residual --count 24` for additional degree-8/16/32/64/96
+products with overlapping quadratic quotients, opaque arithmetic inputs,
+coefficient disturbances and canceled summands. Keep the existing families as
+controls when measuring candidate reuse or changes to polynomial search.
 Interleaved residual tests cover the completed-product traversal boundary at
 15/16/17 factors, plus products through degree 64 and 257-bit words. They keep
 nonzero odd-factor assignments, reject leaked temporary inputs, and require

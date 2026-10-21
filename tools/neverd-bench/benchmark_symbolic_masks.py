@@ -448,6 +448,37 @@ def deep_residual_corpus(width, count):
     return residual_corpus(width, count, deep=True)
 
 
+def row_residual_corpus(width, count):
+    """Degree 8..96 products with wide, overlapping quadratic quotients."""
+    rng = random.Random(0x4D42413C + width)
+    words = ("((x+y)^z)", "((y*z)|w)", "((x+z)&(y|v))", "(~x|v)")
+    common = ("(x|y)", "~(x&z)", "((x+y)|1)", "((y*z)|w|1)")
+    rows = []
+    for index in range(count):
+        degree = (8, 16, 32, 64, 96)[index % 5]
+        a, b, c, d = words[index % 4:] + words[:index % 4]
+        pairs = [(f"({a}&x)", f"({b}&z)"),
+                 (f"({a}&~x)", f"({b}&z)"),
+                 (f"({a}&x)", f"({b}&~z)"),
+                 (f"({a}&~x)", f"({b}&~z)")]
+        if index % 3:
+            pairs[-1] = (f"({c}&~x)", f"({d}|z)")
+        scale = (37, -11, 182, 1 << (width - 2))[index % 4]
+        prefix = [common[i % len(common)] for i in range(degree - 2)]
+        terms = []
+        for number, pair in enumerate(pairs):
+            coefficient = scale
+            if number == 2 and index % 2:
+                coefficient += 13 if index % 4 == 1 else 1 << (width - 1)
+            terms.append(f"({coefficient}*{'*'.join(prefix + list(pair))})")
+        if index % 4 == 2:
+            terms += [f"(17*{'*'.join(prefix)}*{c}*{d})",
+                      f"(-17*{'*'.join(prefix)}*{c}*{d})"]
+        rng.shuffle(terms)
+        rows.append("+".join(terms) + "+(x^y)+2*(x&y)+19*x*y*z")
+    return rows
+
+
 def check_semantics(expressions, results, width):
     """Independent modular evaluator; never execute parsed source as Python."""
     mask = (1 << width) - 1
@@ -541,7 +572,8 @@ def main():
     parser.add_argument(
         "--family",
         choices=("complement", "weighted", "bitwise", "interleaved", "quadratic",
-                 "cubic", "higher", "perturbed", "completion", "residual", "deep-residual"),
+                 "cubic", "higher", "perturbed", "completion", "residual", "deep-residual",
+                 "row-residual"),
         default="complement",
     )
     args = parser.parse_args()
@@ -569,6 +601,7 @@ def main():
                 "completion": completion_corpus,
                 "residual": residual_corpus,
                 "deep-residual": deep_residual_corpus,
+                "row-residual": row_residual_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")

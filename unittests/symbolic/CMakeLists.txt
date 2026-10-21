@@ -36,6 +36,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymMBABitwiseViewTests.cpp
   SymMBAMultiCarrierTests.cpp
   SymMBAQuadraticTests.cpp
+  SymMBAQuadraticRowTests.cpp
   SymMBACubicTests.cpp
   SymMBAHigherProductTests.cpp
   SymMBAResidualBudgetTests.cpp
@@ -103,6 +104,7 @@ add_neverd_unittest(NeverDSymMBAWeightedMaskTests
 
 add_neverd_unittest(NeverDSymMBAQuadraticTests
   SymMBAQuadraticTests.cpp
+  SymMBAQuadraticRowTests.cpp
   SymMBACubicTests.cpp
   SymMBAHigherProductTests.cpp
   SymMBAResidualBudgetTests.cpp
