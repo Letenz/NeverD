@@ -173,32 +173,138 @@ SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     // Try linear quotients first, then quadratic ones only when a pass makes
     // no progress. Neither requires expanding the shared higher product.
     std::map<Monomial, llvm::SmallVector<unsigned, 2>> Groups;
+    struct Omission {
+      unsigned Term, First, Second;
+      llvm::SmallVector<unsigned, 2> Indices;
+    };
+    llvm::SmallVector<Omission, 16> Omissions;
+    std::map<uint64_t, llvm::SmallVector<unsigned, 1>> Buckets;
+    auto Hash = [](uint32_t Id) {
+      uint64_t H = uint64_t(Id) + 0x9e3779b97f4a7c15ULL;
+      H = (H ^ (H >> 30)) * 0xbf58476d1ce4e5b9ULL;
+      H = (H ^ (H >> 27)) * 0x94d049bb133111ebULL;
+      return H ^ (H >> 31);
+    };
     bool Complete = true;
     for (unsigned T = 0; T != Terms.size() && Complete; ++T) {
       const auto &Factors = Terms[T].Factors;
       if (Factors.size() < 4)
         continue;
+      // Short keys cost less to copy than to fingerprint and compare again.
+      if (Factors.size() < 12) {
+        for (unsigned I = 0; I != Factors.size() && Complete; ++I) {
+          if (I && Factors[I] == Factors[I - 1])
+            continue;
+          for (unsigned J = Omitted == 1 ? I : I + 1; J != Factors.size();
+               ++J) {
+            if (J > I + 1 && Factors[J] == Factors[J - 1])
+              continue;
+            if (!Charge(Factors.size(), Factors.size() + 2)) {
+              Complete = false;
+              break;
+            }
+            Monomial Key;
+            for (unsigned K = 0; K != Factors.size(); ++K)
+              if (K != I && (Omitted == 1 || K != J))
+                Key.push_back(Factors[K].index());
+            Groups[std::move(Key)].push_back(T);
+            if (Omitted == 1)
+              break;
+          }
+        }
+        continue;
+      }
+      if (!Charge(3 * Factors.size(), Factors.size())) {
+        Complete = false;
+        break;
+      }
+      llvm::SmallVector<uint64_t, 16> Hashes;
+      uint64_t Fingerprint = 0;
+      for (SymRef Factor : Factors) {
+        Hashes.push_back(Hash(Factor.index()));
+        Fingerprint += Hashes.back();
+      }
       for (unsigned I = 0; I != Factors.size(); ++I) {
         if (I && Factors[I] == Factors[I - 1])
           continue;
         for (unsigned J = Omitted == 1 ? I : I + 1; J != Factors.size(); ++J) {
           if (J > I + 1 && Factors[J] == Factors[J - 1])
             continue;
-          if (!Charge(Factors.size(), Factors.size() + 2)) {
+          if (!Charge(3, 4)) {
             Complete = false;
             break;
           }
-          Monomial Key;
-          for (unsigned K = 0; K != Factors.size(); ++K)
-            if (K != I && (Omitted == 1 || K != J))
-              Key.push_back(Factors[K].index());
-          Groups[std::move(Key)].push_back(T);
+          const auto Key =
+              Fingerprint - Hashes[I] - (Omitted == 2 ? Hashes[J] : 0);
+          auto &Bucket = Buckets[Key];
+          unsigned Match = Omissions.size();
+          for (unsigned Index : Bucket) {
+            const auto &Previous = Omissions[Index];
+            const auto &Other = Terms[Previous.Term].Factors;
+            if (!Charge(1)) {
+              Complete = false;
+              break;
+            }
+            if (Factors.size() != Other.size())
+              continue;
+            // Fingerprints only select comparisons. Compare the entire
+            // retained multiset before sharing a group, even on a collision.
+            if (!Charge(Factors.size())) {
+              Complete = false;
+              break;
+            }
+            unsigned A = 0, B = 0;
+            bool Equal = true;
+            while (A != Factors.size()) {
+              if (A == I || (Omitted == 2 && A == J)) {
+                ++A;
+                continue;
+              }
+              while (B == Previous.First ||
+                     (Omitted == 2 && B == Previous.Second))
+                ++B;
+              if (Factors[A++] != Other[B++]) {
+                Equal = false;
+                break;
+              }
+            }
+            if (Equal) {
+              Match = Index;
+              break;
+            }
+          }
+          if (!Complete)
+            break;
+          if (Match == Omissions.size()) {
+            Bucket.push_back(Match);
+            Omissions.push_back({T, I, J, {T}});
+          } else if (Omissions[Match].Indices.back() != T) {
+            Omissions[Match].Indices.push_back(T);
+          }
           if (Omitted == 1)
             break;
         }
         if (!Complete)
           break;
       }
+    }
+    // Singleton omissions cannot supply a relation or a cofactor rewrite.
+    // Materialize only shared keys, preserving the former lexicographic order.
+    for (auto &Entry : Omissions) {
+      if (!Complete)
+        break;
+      if (Entry.Indices.size() < 2)
+        continue;
+      const auto &Factors = Terms[Entry.Term].Factors;
+      if (!Charge(Factors.size(), Factors.size() + 2)) {
+        Complete = false;
+        break;
+      }
+      Monomial Key;
+      for (unsigned K = 0; K != Factors.size(); ++K)
+        if (K != Entry.First && (Omitted == 1 || K != Entry.Second))
+          Key.push_back(Factors[K].index());
+      Groups.emplace(std::move(Key), std::move(Entry.Indices));
     }
     // Reserve the complete reconstruction before any group can commit.
     if (!Complete || !Charge(Terms.size() + Edges, Terms.size() + Edges))
