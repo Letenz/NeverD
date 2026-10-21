@@ -4,10 +4,12 @@ Keep repository-wide instructions small. Read the documentation that matches the
 
 - Use `docs/architecture.md` when changing component boundaries or shared pipeline ownership.
 - Use `docs/testing.md` to choose build profiles, targets, labels, and semantic test coverage.
-- Use `CONTRIBUTING.md` for public API, dependency, attribution, formatting, and pull-request conventions.
+- Use `CONTRIBUTING.md` for code style, header layout, limits/configuration ownership, public API, dependency, attribution, and pull-request conventions.
 - Use `docs/roadmap.md` only when prioritizing or scoping planned product work.
 
 NeverD is semantics-first. Unsupported instructions and malformed inputs must fail clearly; do not silently guess semantics or replace unsupported behavior with a `NOP`. Put a semantic decision in one authoritative layer and keep loaders, architectures, and emitters consistent with it.
+
+For C/C++ changes, follow [Code style](CONTRIBUTING.md#code-style). Use the standard header layout and the owning limits/configuration definition for policy values, including literals in guards and defaults. Reuse that authority across adapters and bindings.
 
 The local build and test fixtures are disposable and have no production access. Run the smallest check that can disprove the change, fix failures caused by the requested work, and rerun affected checks without asking after each step. Broaden testing when the change crosses a shared semantic boundary, affects an architecture or binary format, or is being prepared for review; report unavailable tools and skipped coverage as limitations.
 

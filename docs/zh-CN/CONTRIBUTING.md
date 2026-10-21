@@ -109,7 +109,10 @@ git switch -c docs/contributor-guide
 
 ## 代码风格
 
-C 和 C++ 遵循 LLVM 编码约定，以 `.clang-format` 作为仓库的格式权威。
+C 和 C++ 遵循 [LLVM Coding Standards](https://llvm.org/docs/CodingStandards.html)，
+以 [`.clang-format`](../../.clang-format) 作为仓库的格式权威，
+[`.editorconfig`](../../.editorconfig) 负责编码、换行和空白约定。
+C++ 语言版本以 NeverD 的 `CMakeLists.txt` 为准，不直接沿用上游风格文档的版本。
 只格式化你修改的文件：
 
 ```bash
@@ -117,9 +120,86 @@ clang-format -i path/to/changed.cpp path/to/changed.h
 git diff --check
 ```
 
+CI 的格式化工具版本固定在
+[`scripts/check_clang_format.py`](../../scripts/check_clang_format.py) 中；
+复现 CI 结果时使用相同版本。格式检查不会判断头文件归属，也不会识别策略裸数字。
+
 不要为一个局部修复执行全仓库格式化。遵循周边文件的命名和拆分方式，将平台特定
 行为保留在对应的 loader、lifter 或 backend 边界内，并避免通过纯 C SDK 暴露
 内部 C++ 类型。
+
+### 源文件与头文件布局
+
+- 新建 C++ 源文件和头文件使用 LLVM 风格的“文件名/用途”横幅、`NeverD Decompiler`
+  和 Doxygen `\file` 说明，可参照 `lib/debug/PDBLoader.cpp`。保留已有版权和许可声明。
+- 自包含头文件使用 `.h`，显式包含所需依赖；实现文件首先包含对应的接口头文件。
+  其余 include 由 `.clang-format` 排序：同目录私有头、`neverd/` 公共头、
+  引号形式的 LLVM/Capstone 头，最后是尖括号形式的头。不得依赖偶然的包含顺序
+  或传递包含来补足依赖。
+- 新头文件统一使用由路径推导的 `NEVERD_..._H` include guard。例如
+  `neverd/sdk/Limits.h` 对应 `NEVERD_SDK_LIMITS_H`；私有和工具头需包含足够的
+  目录信息，避免重名。末尾使用带 guard 名的 `#endif` 注释。明确整理旧头文件
+  时采用同一布局，不顺带改动无关头文件。
+- 共享库接口放在 `include/neverd/<component>/`，实现私有头放在所属的 `lib/`
+  或 `tools/` 源文件旁。放进 include 目录不等于成为稳定的公共 C SDK API。
+  保持依赖无环，核心模型和 reader 不依赖 session 状态或传输适配层；模块算法由
+  所属目录负责，CLI、SDK、worker 不另行复制语义判断。参见
+  [架构文档](architecture.md)。
+- 使用所属模块的命名空间和有意义的名称。新 C++ 类型和字段使用 `UpperCamelCase`，
+  函数使用 `lowerCamelCase`，命名策略常量沿用 NeverD 的 `kUpperCamelCase`。
+  扩展既有接口时保持周边命名方式，并保留公共 C/Python 合同和既有 STL 风格接口的
+  拼写。头文件不得加入命名空间级的 `using namespace` 指令。
+- 有意多次展开的表沿用 `.def`/`.inc` 约定，并说明宏合同；它们不是独立 `.h`
+  接口，不添加会阻止重复展开的 guard。生成头文件应修改其生成器。
+
+独立策略头文件的完整模板见[英文规范](../../CONTRIBUTING.md#file-and-header-layout)。
+
+### Limits、默认值与配置归属
+
+每个策略值必须在所属模块的 limits/configuration 头文件中有唯一权威定义，
+即使当前只有一个调用点。范围包括输入/输出上限、递归和图遍历边界、工作量和
+迭代预算、启发式阈值、缓存保留、分页/批次、重试和超时。规则同时适用于命名
+`constexpr`、宏、裸数字比较、`min`/`clamp` 参数、构造/字段初始化和默认参数。
+
+新增文件前先选择已有归属：
+
+| 策略归属 | 定义位置 |
+| --- | --- |
+| 共享 core/pipeline | [`include/neverd/Limits.h`](../../include/neverd/Limits.h) |
+| SDK | [`include/neverd/sdk/Limits.h`](../../include/neverd/sdk/Limits.h) |
+| Web | [`include/neverd/web/Limits.h`](../../include/neverd/web/Limits.h) 或已有专门的 limits/configuration 定义 |
+| 其他库模块 | 已有策略头或定义表；没有时在所属层新增职责明确的 `Limits.h` |
+| CLI、worker、GUI 自有策略 | 工具内的 `Limits.h` 或 `Config.h`；core 不得反向依赖工具头 |
+| 调用方可选设置 | 所属的 `Config.h`、`*Options.h` 或 `*Configuration.h` 模型 |
+
+策略头保持轻量，按用途分组。已有 `*Limits.def` 或配置表负责某组值时复用它，
+并通过自包含头暴露 C++ 视图。不要在 `Limits.h`、`Constants.h`、`Config.h` 中
+分别定义同一策略。共享 core 策略不放进 SDK/工具头，也不将无关模块的策略全部
+塞进根 `Limits.h`。
+
+C++ 标量策略常量使用带明确类型的 `inline constexpr`，保留所属模块既有命名空间，
+例如 `neverd::limits`、`neverd::sdk`。名称表达用途和单位，例如 `kMaxSourceBytes`、
+`kDefaultPageRows`、`kRetryDelayMilliseconds`；注明零值/哨兵语义和特殊上限的依据。
+默认值和硬上限含义不同时分别命名。Options 模型可直接拥有字段默认值，调用方应
+使用该模型、默认值工厂或同一命名常量；有关联的默认值和上限应从共同定义推导，
+不要重复填写裸数字。
+
+适配层、持久化校验、CLI/GUI/worker 和 Python/MCP 绑定复用对应的权威定义；
+schema 上限和包含限值的诊断信息也从同一值派生。
+跨语言合同值从既有定义表或生成绑定派生；不适合生成时加入漂移检查，并保持纯 C
+头文件的兼容性。前端预览/分页限制可以有意比引擎上限更严格，但需独立命名并明确
+归属。不能只因数值相同就合并两个策略。
+
+二进制布局、ABI/协议/指令常量、整数可表示范围，以及绑定具体证明算法的计费项，
+保留在其语义模型中。状态初始化、索引运算、分配提示和独立测试输入不自动视为
+策略。测试用于验证边界时，不得将独立的预期值改成它要验证的实现常量。
+
+审查时同时检查定义和裸数字使用，包括跨行保护、循环、宏、默认值、计时器和绑定；
+逐一核实新增或改动策略的归属和含义，只搜索 `Max*` 不够。集中定义时保留类型、
+数值、比较方向、哨兵含义及预算耗尽/错误行为。策略调整与整理分开处理，并按
+[测试指南](testing.md)运行受影响检查。
+
+### 文档与本机产物
 
 Markdown 应简洁且可从源码核实。仓库内部文件使用相对链接；当 CLI 行为、公共
 API、支持声明、构建选项或测试命令发生变化时，在同一个拉取请求中更新文档。
@@ -159,6 +239,8 @@ ctest --test-dir build-release --build-config Release \
 - 保持严格提升：不支持的指令不得静默变为猜测操作或 `NOP`。
 - 行为变更应增加语义覆盖，而不只是文本 IR 快照。
 - 差异中不得包含无关清理、生成文件或本地构建产物。
+- 检查[头文件与策略归属规范](#代码风格)，包括裸数字保护/默认值以及绑定漂移；
+  仅通过格式化检查还不够。
 - 当行为、支持范围、选项、命令或测试所有权变化时，更新公共文档和贡献者文档。
 
 对不应以公开拉取请求开始的安全敏感报告，请遵循
