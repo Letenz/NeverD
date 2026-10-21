@@ -5031,8 +5031,9 @@ operations connect those answers to the original placeholders, while the
 original zero extensions clear the four destination registers' upper halves.
 This permits neither host-CPU assumptions nor repeated-query correlation.
 Runtime-derived pointers keep unknown provenance. The retained read preserves
-the original instruction's observable ordering; source and native proof
-consumers continue to reject this unaudited runtime contract.
+the original instruction's observable ordering. Source consumers and default
+native proofs still refuse it; finite native proofs can separately opt into
+the audited scalar-query contract described below.
 
 Canonical x64 `RDMSR` additionally requires the explicit
 `KernelX64NoFaultV1` profile. The x64 owner authenticates its complete six-operation
@@ -9285,3 +9286,9 @@ A complete frame write contained in the declared nonwrapping bounds is disjoint 
 ## Finite ordinary RAM read proofs
 
 `LowIRUndefinedIndependence` owns the opt-in `OrderedOrdinaryRAMV1` contract for finite proofs. Each non-frame read shares an input by occurrence; complete path coverage and address, width and order agreement remain proof obligations. Exact byte-address comparisons apply prior frame writes, including possible aliases. Repeated reads conservatively use independent inputs, and even immutable reads must remain in the candidate trace. Writes stay inside the declared frame. The contract explicitly requires ordinary nonfaulting RAM; it supplies no observed-address constants, nonalias facts, MMIO, atomic or concurrent-writer semantics. Loop proof and inference reject this model. Existing observation/node limits bound the added work, and certificates bind the model while default contracts keep their digest. This adds no concrete backend capability.
+
+## Finite native scalar query proofs
+
+`OrderedScalarV1` explicitly enables finite native independence and native-to-LowIR refinement for architecture-described queries. Core owns shared defined inputs, complete terminal coverage and equality of identity, version, selectors, result widths, count and order, including order relative to ordinary RAM reads. Repeated queries use independent answers; selector independence is proved before writing any result. Descriptor shape, observation and node limits bound the work. Actual descriptor and operation digests bind each executed receipt and both proof inputs; disabled contracts keep their prior digest. Static APIs without a native provider and all inductive proof/inference APIs refuse the model.
+
+The x64 adapter admits only the complete canonical `CPUID` bundle; the lifter independently audits its exact bare encoding, defined outputs and closed opaque-bank preservation. EAX/ECX select four 32-bit results and all four destination upper halves are cleared. The original query event remains observable. This supplies no host values, CPU feature profile or repeated-query correlation. CPUID's `IA32_BIOS_SIGN_ID` update is outside `LegacyIntegerOpaqueV1`; retaining the event does not assert MSR preservation. [Intel SDM, CPUID](https://cdrdv2-public.intel.com/868140/253666-089-sdm-vol-2a.pdf). RDTSC/RDMSR, source wrapping, exact LLVM proofs and concrete backends gain no new capability.

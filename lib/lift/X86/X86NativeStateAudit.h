@@ -14,6 +14,22 @@
 
 namespace neverd::nativestateaudit {
 
+inline bool cpuQueryForm(const cs_insn *Insn, Arch Target) {
+  if (!Insn || !Insn->detail || Target != Arch::X64 ||
+      Insn->id != X86_INS_CPUID || Insn->size != 2 || Insn->bytes[0] != 0x0f ||
+      Insn->bytes[1] != 0xa2)
+    return false;
+  const auto &X = Insn->detail->x86;
+  return !X.prefix[0] && !X.prefix[1] && !X.prefix[2] && !X.prefix[3] &&
+         X.opcode[0] == 0x0f && X.opcode[1] == 0xa2 && !X.opcode[2] &&
+         !X.opcode[3] && !X.rex && X.addr_size == 8 && !X.modrm && !X.sib &&
+         !X.disp && !X.encoding.modrm_offset && !X.encoding.disp_offset &&
+         !X.encoding.disp_size && !X.encoding.imm_offset &&
+         !X.encoding.imm_size && !X.op_count && !X.avx_sae &&
+         X.avx_rm == X86_AVX_RM_INVALID && X.avx_cc == X86_AVX_CC_INVALID &&
+         !X.eflags;
+}
+
 inline bool swapgsForm(const cs_insn *Insn, Arch Target) {
   if (!Insn || !Insn->detail || Target != Arch::X64 ||
       Insn->id != X86_INS_SWAPGS || Insn->size != 3 || Insn->bytes[0] != 0x0f ||
@@ -30,12 +46,14 @@ inline bool swapgsForm(const cs_insn *Insn, Arch Target) {
          X.avx_cc == X86_AVX_CC_INVALID && !X.eflags;
 }
 
-// Intel SDM Vol. 2, MOVS/REP, LDMXCSR and SWAPGS: these forms introduce no
-// undefined output bits. This does not certify nonfaulting execution, the MXCSR
-// writable mask, a repeated transfer's count/direction, or opaque-state
+// Intel SDM Vol. 2, MOVS/REP, LDMXCSR, SWAPGS and CPUID: these forms introduce
+// no undefined output bits. This does not certify nonfaulting execution, the
+// MXCSR writable mask, a repeated transfer's count/direction, or opaque-state
 // preservation. Their existing semantic owners retain those separate
 // obligations.
 inline bool form(const cs_insn *Insn, Arch Target) {
+  if (Insn->id == X86_INS_CPUID)
+    return cpuQueryForm(Insn, Target);
   if (Insn->id == X86_INS_SWAPGS)
     return swapgsForm(Insn, Target);
   const auto &X = Insn->detail->x86;

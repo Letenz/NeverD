@@ -442,6 +442,11 @@ public:
     return Result;
   }
 
+  std::optional<SpecializationScalarQuery>
+  scalarQuery(llvm::ArrayRef<LowOp> Operations) override {
+    return x64::describeCPUQuery(Operations);
+  }
+
   std::optional<SpecializationImmutableRead>
   immutableRead(va_t Address, uint16_t Bytes) override {
     if (!FixedPEDiagnostic.empty() || !Bytes || Address > InvalidVA - Bytes)
