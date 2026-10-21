@@ -975,6 +975,94 @@
         <source>Set call type...</source>
         <translation>Задать тип вызова...</translation>
     </message>
+    <message>
+        <source>Change stack pointer...</source>
+        <translation>Изменить указатель стека...</translation>
+    </message>
+    <message>
+        <source>Correct the entry-relative SP after this instruction</source>
+        <translation>Исправить SP после этой инструкции относительно входа</translation>
+    </message>
+    <message>
+        <source>Define a bounded array of typed elements</source>
+        <translation>Определить ограниченный массив типизированных элементов</translation>
+    </message>
+    <message>
+        <source>Enum operand...</source>
+        <translation>Операнд перечисления...</translation>
+    </message>
+    <message>
+        <source>Immediate...</source>
+        <translation>Непосредственное значение...</translation>
+    </message>
+    <message>
+        <source>Inspect and correct local stack variables</source>
+        <translation>Просмотреть и исправить локальные переменные стека</translation>
+    </message>
+    <message>
+        <source>Inspect the proven static value before this instruction</source>
+        <translation>Просмотреть доказанное статическое значение перед этой инструкцией</translation>
+    </message>
+    <message>
+        <source>List reaching physical register definitions</source>
+        <translation>Показать определения физических регистров, достигающие этой точки</translation>
+    </message>
+    <message>
+        <source>List uses of the register value after this instruction</source>
+        <translation>Показать использования значения регистра после этой инструкции</translation>
+    </message>
+    <message>
+        <source>Make alignment...</source>
+        <translation>Создать выравнивание...</translation>
+    </message>
+    <message>
+        <source>Make array...</source>
+        <translation>Создать массив...</translation>
+    </message>
+    <message>
+        <source>Mark padding ending on an alignment boundary</source>
+        <translation>Отметить заполнение, заканчивающееся на границе выравнивания</translation>
+    </message>
+    <message>
+        <source>Name a proven stack operand without changing its address</source>
+        <translation>Задать имя доказанному операнду стека, не меняя его адрес</translation>
+    </message>
+    <message>
+        <source>Next immediate</source>
+        <translation>Следующее непосредственное значение</translation>
+    </message>
+    <message>
+        <source>Register definitions...</source>
+        <translation>Определения регистра...</translation>
+    </message>
+    <message>
+        <source>Register uses...</source>
+        <translation>Использования регистра...</translation>
+    </message>
+    <message>
+        <source>Repeat the immediate search</source>
+        <translation>Повторить поиск непосредственного значения</translation>
+    </message>
+    <message>
+        <source>Search decoded executable instructions for an immediate</source>
+        <translation>Найти непосредственное значение в декодированных исполняемых инструкциях</translation>
+    </message>
+    <message>
+        <source>Show an immediate as enumeration members or flags</source>
+        <translation>Показать непосредственное значение как элементы перечисления или флаги</translation>
+    </message>
+    <message>
+        <source>Stack variable operand...</source>
+        <translation>Операнд переменной стека...</translation>
+    </message>
+    <message>
+        <source>Stack variables...</source>
+        <translation>Переменные стека...</translation>
+    </message>
+    <message>
+        <source>Static register value...</source>
+        <translation>Статическое значение регистра...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2611,6 +2699,146 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>indirect call</source>
         <translation>косвенный вызов</translation>
+    </message>
+    <message>
+        <source>. Reset the obsolete corrections before editing.</source>
+        <translation>. Сбросьте устаревшие исправления перед редактированием.</translation>
+    </message>
+    <message>
+        <source>Absolute offset after instruction, relative to entry SP</source>
+        <translation>Абсолютное смещение после инструкции относительно SP на входе</translation>
+    </message>
+    <message>
+        <source>Address: %1</source>
+        <translation>Адрес: %1</translation>
+    </message>
+    <message>
+        <source>Alignment boundary (the marked span ends on this boundary):</source>
+        <translation>Граница выравнивания (отмеченный диапазон заканчивается на этой границе):</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Байты</translation>
+    </message>
+    <message>
+        <source>C type (optional)</source>
+        <translation>Тип C (необязательно)</translation>
+    </message>
+    <message>
+        <source>Change stack pointer</source>
+        <translation>Изменить указатель стека</translation>
+    </message>
+    <message>
+        <source>Combine bit flags; preserve unknown bits numerically</source>
+        <translation>Объединить битовые флаги; сохранить неизвестные биты численно</translation>
+    </message>
+    <message>
+        <source>Definitions and static values are before the instruction; uses start after it.</source>
+        <translation>Определения и статические значения относятся к состоянию до инструкции; использования начинаются после неё.</translation>
+    </message>
+    <message>
+        <source>Element count (complete initialized span, at most 64 MiB):</source>
+        <translation>Число элементов (полный инициализированный диапазон, не более 64 MiB):</translation>
+    </message>
+    <message>
+        <source>Element size in bytes:</source>
+        <translation>Размер элемента в байтах:</translation>
+    </message>
+    <message>
+        <source>Enter a signed SP offset within one MiB</source>
+        <translation>Введите смещение SP со знаком в пределах одного MiB</translation>
+    </message>
+    <message>
+        <source>Entry offset</source>
+        <translation>Смещение на входе</translation>
+    </message>
+    <message>
+        <source>Enum operand</source>
+        <translation>Операнд перечисления</translation>
+    </message>
+    <message>
+        <source>Enumeration declared in Local Types:</source>
+        <translation>Перечисление, объявленное в локальных типах:</translation>
+    </message>
+    <message>
+        <source>Immediate search</source>
+        <translation>Поиск непосредственного значения</translation>
+    </message>
+    <message>
+        <source>Immediate search has undecoded ranges; results cover decoded executable ranges only.</source>
+        <translation>Поиск содержит недекодированные диапазоны; результаты охватывают только декодированные исполняемые диапазоны.</translation>
+    </message>
+    <message>
+        <source>Instruction: %1; SP before: %2; SP after: %3</source>
+        <translation>Инструкция: %1; SP до: %2; SP после: %3</translation>
+    </message>
+    <message>
+        <source>Integer (decimal or 0x hex; negative allowed):</source>
+        <translation>Целое число (десятичное или шестнадцатеричное с 0x; допустимы отрицательные):</translation>
+    </message>
+    <message>
+        <source>Invalid stack slot offset or width</source>
+        <translation>Недопустимое смещение или ширина слота стека</translation>
+    </message>
+    <message>
+        <source>Local type name (optional; its layout must match the element size):</source>
+        <translation>Имя локального типа (необязательно; его структура должна соответствовать размеру элемента):</translation>
+    </message>
+    <message>
+        <source>Make alignment</source>
+        <translation>Создать выравнивание</translation>
+    </message>
+    <message>
+        <source>Make array</source>
+        <translation>Создать массив</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Имя</translation>
+    </message>
+    <message>
+        <source>Net SP change made by this instruction</source>
+        <translation>Итоговое изменение SP этой инструкцией</translation>
+    </message>
+    <message>
+        <source>No exact local stack access is available here. Repair unknown SP first.</source>
+        <translation>Здесь нет точного обращения к локальному стеку. Сначала исправьте неизвестный SP.</translation>
+    </message>
+    <message>
+        <source>No register flow sites within this function.</source>
+        <translation>В этой функции нет точек потока данных регистров.</translation>
+    </message>
+    <message>
+        <source>Offsets are relative to SP at function entry. Corrections apply to source analysis. Reset restores automatic analysis. Naming physical stack storage pauses LLVM optimizations for that function's C view.</source>
+        <translation>Смещения задаются относительно SP на входе в функцию. Исправления применяются к анализу исходного кода. Сброс восстанавливает автоматический анализ. Именование физической памяти стека приостанавливает оптимизации LLVM для представления этой функции на C.</translation>
+    </message>
+    <message>
+        <source>Physical register</source>
+        <translation>Физический регистр</translation>
+    </message>
+    <message>
+        <source>Select a retained non-branch instruction in the disassembly</source>
+        <translation>Выберите в дизассемблере сохранённую инструкцию, не являющуюся переходом</translation>
+    </message>
+    <message>
+        <source>Stack variables</source>
+        <translation>Переменные стека</translation>
+    </message>
+    <message>
+        <source>Static register value</source>
+        <translation>Статическое значение регистра</translation>
+    </message>
+    <message>
+        <source>This instruction has no retained physical register operands.</source>
+        <translation>У этой инструкции нет сохранённых операндов физических регистров.</translation>
+    </message>
+    <message>
+        <source>Unknown: </source>
+        <translation>Неизвестно: </translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <translation>неизвестно</translation>
     </message>
 </context>
 <context>

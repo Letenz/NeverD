@@ -975,6 +975,94 @@
         <source>Set call type...</source>
         <translation>設定呼叫型別...</translation>
     </message>
+    <message>
+        <source>Change stack pointer...</source>
+        <translation>變更堆疊指標...</translation>
+    </message>
+    <message>
+        <source>Correct the entry-relative SP after this instruction</source>
+        <translation>修正此指令執行後相對於入口的 SP</translation>
+    </message>
+    <message>
+        <source>Define a bounded array of typed elements</source>
+        <translation>定義元素型別明確且大小有界的陣列</translation>
+    </message>
+    <message>
+        <source>Enum operand...</source>
+        <translation>列舉運算元...</translation>
+    </message>
+    <message>
+        <source>Immediate...</source>
+        <translation>立即值...</translation>
+    </message>
+    <message>
+        <source>Inspect and correct local stack variables</source>
+        <translation>檢查並修正區域堆疊變數</translation>
+    </message>
+    <message>
+        <source>Inspect the proven static value before this instruction</source>
+        <translation>檢查此指令執行前已確認的靜態值</translation>
+    </message>
+    <message>
+        <source>List reaching physical register definitions</source>
+        <translation>列出到達此處的實體暫存器定義</translation>
+    </message>
+    <message>
+        <source>List uses of the register value after this instruction</source>
+        <translation>列出此指令執行後暫存器值的使用位置</translation>
+    </message>
+    <message>
+        <source>Make alignment...</source>
+        <translation>建立對齊...</translation>
+    </message>
+    <message>
+        <source>Make array...</source>
+        <translation>建立陣列...</translation>
+    </message>
+    <message>
+        <source>Mark padding ending on an alignment boundary</source>
+        <translation>標記結束於對齊邊界的填補區</translation>
+    </message>
+    <message>
+        <source>Name a proven stack operand without changing its address</source>
+        <translation>為已確認的堆疊運算元命名，不變更其位址</translation>
+    </message>
+    <message>
+        <source>Next immediate</source>
+        <translation>下一個立即值</translation>
+    </message>
+    <message>
+        <source>Register definitions...</source>
+        <translation>暫存器定義...</translation>
+    </message>
+    <message>
+        <source>Register uses...</source>
+        <translation>暫存器使用位置...</translation>
+    </message>
+    <message>
+        <source>Repeat the immediate search</source>
+        <translation>重複立即值搜尋</translation>
+    </message>
+    <message>
+        <source>Search decoded executable instructions for an immediate</source>
+        <translation>在已解碼的可執行指令中搜尋立即值</translation>
+    </message>
+    <message>
+        <source>Show an immediate as enumeration members or flags</source>
+        <translation>將立即值顯示為列舉成員或旗標</translation>
+    </message>
+    <message>
+        <source>Stack variable operand...</source>
+        <translation>堆疊變數運算元...</translation>
+    </message>
+    <message>
+        <source>Stack variables...</source>
+        <translation>堆疊變數...</translation>
+    </message>
+    <message>
+        <source>Static register value...</source>
+        <translation>暫存器靜態值...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2599,6 +2687,146 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>indirect call</source>
         <translation>間接呼叫</translation>
+    </message>
+    <message>
+        <source>. Reset the obsolete corrections before editing.</source>
+        <translation>。請在編輯前重設過時的修正。</translation>
+    </message>
+    <message>
+        <source>Absolute offset after instruction, relative to entry SP</source>
+        <translation>指令執行後相對於入口 SP 的絕對位移</translation>
+    </message>
+    <message>
+        <source>Address: %1</source>
+        <translation>位址：%1</translation>
+    </message>
+    <message>
+        <source>Alignment boundary (the marked span ends on this boundary):</source>
+        <translation>對齊邊界（標記範圍結束於此邊界）：</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>位元組</translation>
+    </message>
+    <message>
+        <source>C type (optional)</source>
+        <translation>C 型別（選用）</translation>
+    </message>
+    <message>
+        <source>Change stack pointer</source>
+        <translation>變更堆疊指標</translation>
+    </message>
+    <message>
+        <source>Combine bit flags; preserve unknown bits numerically</source>
+        <translation>組合位元旗標；以數值形式保留未知位元</translation>
+    </message>
+    <message>
+        <source>Definitions and static values are before the instruction; uses start after it.</source>
+        <translation>定義與靜態值位於指令執行前；使用位置從執行後開始。</translation>
+    </message>
+    <message>
+        <source>Element count (complete initialized span, at most 64 MiB):</source>
+        <translation>元素數量（完整的已初始化範圍，最多 64 MiB）：</translation>
+    </message>
+    <message>
+        <source>Element size in bytes:</source>
+        <translation>元素大小（位元組）：</translation>
+    </message>
+    <message>
+        <source>Enter a signed SP offset within one MiB</source>
+        <translation>輸入範圍在一 MiB 內的帶正負號 SP 位移</translation>
+    </message>
+    <message>
+        <source>Entry offset</source>
+        <translation>入口位移</translation>
+    </message>
+    <message>
+        <source>Enum operand</source>
+        <translation>列舉運算元</translation>
+    </message>
+    <message>
+        <source>Enumeration declared in Local Types:</source>
+        <translation>在區域型別中宣告的列舉：</translation>
+    </message>
+    <message>
+        <source>Immediate search</source>
+        <translation>立即值搜尋</translation>
+    </message>
+    <message>
+        <source>Immediate search has undecoded ranges; results cover decoded executable ranges only.</source>
+        <translation>立即值搜尋存在未解碼範圍；結果僅涵蓋已解碼的可執行範圍。</translation>
+    </message>
+    <message>
+        <source>Instruction: %1; SP before: %2; SP after: %3</source>
+        <translation>指令：%1；執行前 SP：%2；執行後 SP：%3</translation>
+    </message>
+    <message>
+        <source>Integer (decimal or 0x hex; negative allowed):</source>
+        <translation>整數（十進位或 0x 十六進位；允許負數）：</translation>
+    </message>
+    <message>
+        <source>Invalid stack slot offset or width</source>
+        <translation>堆疊槽位移或寬度無效</translation>
+    </message>
+    <message>
+        <source>Local type name (optional; its layout must match the element size):</source>
+        <translation>區域型別名稱（選用；其配置必須與元素大小相符）：</translation>
+    </message>
+    <message>
+        <source>Make alignment</source>
+        <translation>建立對齊</translation>
+    </message>
+    <message>
+        <source>Make array</source>
+        <translation>建立陣列</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名稱</translation>
+    </message>
+    <message>
+        <source>Net SP change made by this instruction</source>
+        <translation>此指令造成的 SP 淨變化</translation>
+    </message>
+    <message>
+        <source>No exact local stack access is available here. Repair unknown SP first.</source>
+        <translation>此處沒有精確的區域堆疊存取。請先修正未知的 SP。</translation>
+    </message>
+    <message>
+        <source>No register flow sites within this function.</source>
+        <translation>此函式中沒有暫存器資料流位置。</translation>
+    </message>
+    <message>
+        <source>Offsets are relative to SP at function entry. Corrections apply to source analysis. Reset restores automatic analysis. Naming physical stack storage pauses LLVM optimizations for that function's C view.</source>
+        <translation>位移相對於函式入口處的 SP。修正套用於原始碼分析。重設可恢復自動分析。為實體堆疊儲存空間命名會暫停此函式 C 檢視的 LLVM 最佳化。</translation>
+    </message>
+    <message>
+        <source>Physical register</source>
+        <translation>實體暫存器</translation>
+    </message>
+    <message>
+        <source>Select a retained non-branch instruction in the disassembly</source>
+        <translation>在反組譯中選取一條保留的非分支指令</translation>
+    </message>
+    <message>
+        <source>Stack variables</source>
+        <translation>堆疊變數</translation>
+    </message>
+    <message>
+        <source>Static register value</source>
+        <translation>暫存器靜態值</translation>
+    </message>
+    <message>
+        <source>This instruction has no retained physical register operands.</source>
+        <translation>此指令沒有保留的實體暫存器運算元。</translation>
+    </message>
+    <message>
+        <source>Unknown: </source>
+        <translation>未知： </translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <translation>未知</translation>
     </message>
 </context>
 <context>

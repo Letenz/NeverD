@@ -975,6 +975,94 @@
         <source>Set call type...</source>
         <translation>设置调用类型...</translation>
     </message>
+    <message>
+        <source>Change stack pointer...</source>
+        <translation>更改栈指针...</translation>
+    </message>
+    <message>
+        <source>Correct the entry-relative SP after this instruction</source>
+        <translation>修正该指令执行后相对于入口的 SP</translation>
+    </message>
+    <message>
+        <source>Define a bounded array of typed elements</source>
+        <translation>定义元素类型明确且大小有界的数组</translation>
+    </message>
+    <message>
+        <source>Enum operand...</source>
+        <translation>枚举操作数...</translation>
+    </message>
+    <message>
+        <source>Immediate...</source>
+        <translation>立即数...</translation>
+    </message>
+    <message>
+        <source>Inspect and correct local stack variables</source>
+        <translation>检查并修正局部栈变量</translation>
+    </message>
+    <message>
+        <source>Inspect the proven static value before this instruction</source>
+        <translation>检查该指令执行前已确认的静态值</translation>
+    </message>
+    <message>
+        <source>List reaching physical register definitions</source>
+        <translation>列出到达此处的物理寄存器定义</translation>
+    </message>
+    <message>
+        <source>List uses of the register value after this instruction</source>
+        <translation>列出该指令执行后寄存器值的使用位置</translation>
+    </message>
+    <message>
+        <source>Make alignment...</source>
+        <translation>创建对齐...</translation>
+    </message>
+    <message>
+        <source>Make array...</source>
+        <translation>创建数组...</translation>
+    </message>
+    <message>
+        <source>Mark padding ending on an alignment boundary</source>
+        <translation>标记结束于对齐边界的填充区</translation>
+    </message>
+    <message>
+        <source>Name a proven stack operand without changing its address</source>
+        <translation>为已确认的栈操作数命名，不改变其地址</translation>
+    </message>
+    <message>
+        <source>Next immediate</source>
+        <translation>下一个立即数</translation>
+    </message>
+    <message>
+        <source>Register definitions...</source>
+        <translation>寄存器定义...</translation>
+    </message>
+    <message>
+        <source>Register uses...</source>
+        <translation>寄存器使用位置...</translation>
+    </message>
+    <message>
+        <source>Repeat the immediate search</source>
+        <translation>重复立即数搜索</translation>
+    </message>
+    <message>
+        <source>Search decoded executable instructions for an immediate</source>
+        <translation>在已解码的可执行指令中搜索立即数</translation>
+    </message>
+    <message>
+        <source>Show an immediate as enumeration members or flags</source>
+        <translation>将立即数显示为枚举成员或标志</translation>
+    </message>
+    <message>
+        <source>Stack variable operand...</source>
+        <translation>栈变量操作数...</translation>
+    </message>
+    <message>
+        <source>Stack variables...</source>
+        <translation>栈变量...</translation>
+    </message>
+    <message>
+        <source>Static register value...</source>
+        <translation>寄存器静态值...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2599,6 +2687,146 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>indirect call</source>
         <translation>间接调用</translation>
+    </message>
+    <message>
+        <source>. Reset the obsolete corrections before editing.</source>
+        <translation>。请在编辑前重置过时的修正。</translation>
+    </message>
+    <message>
+        <source>Absolute offset after instruction, relative to entry SP</source>
+        <translation>指令执行后相对于入口 SP 的绝对偏移</translation>
+    </message>
+    <message>
+        <source>Address: %1</source>
+        <translation>地址：%1</translation>
+    </message>
+    <message>
+        <source>Alignment boundary (the marked span ends on this boundary):</source>
+        <translation>对齐边界（标记范围结束于此边界）：</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>字节</translation>
+    </message>
+    <message>
+        <source>C type (optional)</source>
+        <translation>C 类型（可选）</translation>
+    </message>
+    <message>
+        <source>Change stack pointer</source>
+        <translation>更改栈指针</translation>
+    </message>
+    <message>
+        <source>Combine bit flags; preserve unknown bits numerically</source>
+        <translation>组合位标志；以数值形式保留未知位</translation>
+    </message>
+    <message>
+        <source>Definitions and static values are before the instruction; uses start after it.</source>
+        <translation>定义和静态值位于指令执行前；使用位置从执行后开始。</translation>
+    </message>
+    <message>
+        <source>Element count (complete initialized span, at most 64 MiB):</source>
+        <translation>元素数量（完整的已初始化范围，最多 64 MiB）：</translation>
+    </message>
+    <message>
+        <source>Element size in bytes:</source>
+        <translation>元素大小（字节）：</translation>
+    </message>
+    <message>
+        <source>Enter a signed SP offset within one MiB</source>
+        <translation>输入范围在一 MiB 内的有符号 SP 偏移</translation>
+    </message>
+    <message>
+        <source>Entry offset</source>
+        <translation>入口偏移</translation>
+    </message>
+    <message>
+        <source>Enum operand</source>
+        <translation>枚举操作数</translation>
+    </message>
+    <message>
+        <source>Enumeration declared in Local Types:</source>
+        <translation>在局部类型中声明的枚举：</translation>
+    </message>
+    <message>
+        <source>Immediate search</source>
+        <translation>立即数搜索</translation>
+    </message>
+    <message>
+        <source>Immediate search has undecoded ranges; results cover decoded executable ranges only.</source>
+        <translation>立即数搜索存在未解码范围；结果仅覆盖已解码的可执行范围。</translation>
+    </message>
+    <message>
+        <source>Instruction: %1; SP before: %2; SP after: %3</source>
+        <translation>指令：%1；执行前 SP：%2；执行后 SP：%3</translation>
+    </message>
+    <message>
+        <source>Integer (decimal or 0x hex; negative allowed):</source>
+        <translation>整数（十进制或 0x 十六进制；允许负数）：</translation>
+    </message>
+    <message>
+        <source>Invalid stack slot offset or width</source>
+        <translation>栈槽偏移或宽度无效</translation>
+    </message>
+    <message>
+        <source>Local type name (optional; its layout must match the element size):</source>
+        <translation>局部类型名称（可选；其布局必须与元素大小匹配）：</translation>
+    </message>
+    <message>
+        <source>Make alignment</source>
+        <translation>创建对齐</translation>
+    </message>
+    <message>
+        <source>Make array</source>
+        <translation>创建数组</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名称</translation>
+    </message>
+    <message>
+        <source>Net SP change made by this instruction</source>
+        <translation>该指令导致的 SP 净变化</translation>
+    </message>
+    <message>
+        <source>No exact local stack access is available here. Repair unknown SP first.</source>
+        <translation>此处没有精确的局部栈访问。请先修正未知的 SP。</translation>
+    </message>
+    <message>
+        <source>No register flow sites within this function.</source>
+        <translation>此函数中没有寄存器数据流位置。</translation>
+    </message>
+    <message>
+        <source>Offsets are relative to SP at function entry. Corrections apply to source analysis. Reset restores automatic analysis. Naming physical stack storage pauses LLVM optimizations for that function's C view.</source>
+        <translation>偏移相对于函数入口处的 SP。修正应用于源代码分析。重置可恢复自动分析。为物理栈存储命名会暂停该函数 C 视图的 LLVM 优化。</translation>
+    </message>
+    <message>
+        <source>Physical register</source>
+        <translation>物理寄存器</translation>
+    </message>
+    <message>
+        <source>Select a retained non-branch instruction in the disassembly</source>
+        <translation>在反汇编中选择一条保留的非分支指令</translation>
+    </message>
+    <message>
+        <source>Stack variables</source>
+        <translation>栈变量</translation>
+    </message>
+    <message>
+        <source>Static register value</source>
+        <translation>寄存器静态值</translation>
+    </message>
+    <message>
+        <source>This instruction has no retained physical register operands.</source>
+        <translation>此指令没有保留的物理寄存器操作数。</translation>
+    </message>
+    <message>
+        <source>Unknown: </source>
+        <translation>未知： </translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <translation>未知</translation>
     </message>
 </context>
 <context>
