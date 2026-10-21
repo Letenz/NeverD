@@ -1045,14 +1045,16 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   // obfuscated uses. The proof is complete even for opaque arithmetic words;
   // the normal walk still simplifies their children and any remaining terms.
   SolveReport WholeRep;
-  SymRef WalkRoot = solveWeightedMasks(Ctx, E, Opts, Budget, WholeRep);
+  size_t ValuationStorage = Opts.MaxTableBytes;
+  SymRef Prepared = foldProductValuations(Ctx, E, Budget, ValuationStorage);
+  SymRef WalkRoot = solveWeightedMasks(Ctx, Prepared, Opts, Budget, WholeRep);
   bool ProductCofactors = false;
-  if (WalkRoot == E) {
-    WalkRoot = solveProductCofactors(Ctx, E, Opts, Budget, WholeRep);
-    ProductCofactors = WalkRoot != E;
+  if (WalkRoot == Prepared) {
+    WalkRoot = solveProductCofactors(Ctx, Prepared, Opts, Budget, WholeRep);
+    ProductCofactors = WalkRoot != Prepared;
   }
-  if (WalkRoot == E)
-    WalkRoot = solveExpandedProducts(Ctx, E, Opts, Budget, WholeRep);
+  if (WalkRoot == Prepared)
+    WalkRoot = solveExpandedProducts(Ctx, Prepared, Opts, Budget, WholeRep);
   SymRef WholeAlternative = WalkRoot;
   if (WalkRoot != E && !Budget.exhausted()) {
     // Preserve enclosing common factors before child readings can hide them.
