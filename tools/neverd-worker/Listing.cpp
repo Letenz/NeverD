@@ -524,6 +524,7 @@ struct Listing::Impl {
   FunctionChunksFunction functionChunks = nullptr;
   PointerRefsFunction pointerRefs = nullptr;
   DiscoverFunctionsFunction discoverFunctions = nullptr;
+  DiscoverFunctionsFunction discoverFunctionsStep = nullptr;
   PointerAtFunction pointerAtQuery = nullptr;
   DataSymbolsFunction dataSymbols = nullptr;
   StringsExFunction stringsEx = nullptr;
@@ -572,6 +573,8 @@ struct Listing::Impl {
   std::unordered_map<std::string, EncodingInfo> stringEncodings;
   /// Whether the engine's function detector has run for this image.
   bool discovered = false;
+  bool allowSteppedDiscovery = false;
+  bool discoveryListingPending = false;
   OperandDialect dialect = OperandDialect::Generic;
   bool wide = true, elf = false, macho = false;
   unsigned addressDigits = 16, pointerSize = 8;
@@ -665,6 +668,8 @@ struct Listing::Impl {
     pointerRefs = engineSymbol<PointerRefsFunction>("neverd_pointer_refs_json");
     discoverFunctions = engineSymbol<DiscoverFunctionsFunction>(
         "neverd_session_discover_functions");
+    discoverFunctionsStep = engineSymbol<DiscoverFunctionsFunction>(
+        "neverd_session_discover_functions_step");
     pointerAtQuery = engineSymbol<PointerAtFunction>("neverd_pointer_at");
     stringsEx = engineSymbol<StringsExFunction>("neverd_strings_ex_json");
     stringsPage = engineSymbol<StringsPageFunction>("neverd_strings_page_json");
@@ -705,8 +710,10 @@ struct Listing::Impl {
     if (discovered)
       return;
     discovered = true;
-    if (discoverFunctions)
-      (void)discoverFunctions(session);
+    if (discoverFunctions && discoverFunctions(session) < 0) {
+      indexState = IndexState::Unavailable;
+      indexError = takeString(neverd_last_error(session));
+    }
   }
 
   void build() {
@@ -714,6 +721,7 @@ struct Listing::Impl {
     if (built && count == builtFunctionCount) {
       if (namesStale)
         rebuildNames(count);
+      discoveryListingPending = false;
       return;
     }
     built = true;
@@ -736,6 +744,7 @@ struct Listing::Impl {
     decodedOrder.clear();
     alignCache.clear();
     applyDisplayNames();
+    discoveryListingPending = false;
   }
 
   /// Read the names and the user's items again over what the last build
@@ -3895,33 +3904,60 @@ std::optional<std::string> Listing::pdbDataName(std::uint64_t address) {
   return std::nullopt;
 }
 
+void Listing::setSteppedDiscovery(bool enabled) {
+  impl_->allowSteppedDiscovery = enabled;
+}
+
 bool Listing::hasIdleWork() const {
   return (impl_->discoverFunctions && !impl_->discovered) ||
+         impl_->discoveryListingPending ||
          impl_->indexState == Impl::IndexState::Idle ||
          impl_->indexState == Impl::IndexState::Building;
 }
 
-void Listing::idleStep() {
+bool Listing::idleStep() {
   // Function discovery comes first, so the reference index covers its
   // functions.
   if (!impl_->discovered) {
-    impl_->discover();
-    impl_->build();
-    return;
+    if (impl_->allowSteppedDiscovery && impl_->discoverFunctionsStep) {
+      const auto status = impl_->discoverFunctionsStep(impl_->session);
+      if (!status)
+        return false;
+      impl_->discovered = true;
+      if (status < 0) {
+        impl_->indexState = Impl::IndexState::Unavailable;
+        impl_->indexError = takeString(neverd_last_error(impl_->session));
+        return true;
+      }
+    } else {
+      impl_->discover();
+      if (impl_->indexState == Impl::IndexState::Unavailable)
+        return true;
+    }
+    // Publish discovery completion before rebuilding the derived listing.
+    // A client waiting for the discovery snapshot to be released can now
+    // submit its analysis snapshot without queuing behind that rebuild.
+    impl_->discoveryListingPending = true;
+    return true;
   }
   impl_->build();
   impl_->indexStep();
+  return true;
 }
 
 Json Listing::indexState() const {
-  return {{"state", impl_->indexStateName()},
-          {"done", impl_->indexDone},
-          {"total", impl_->indexTotal},
-          {"references", impl_->indexState == Impl::IndexState::Ready
-                             ? impl_->references.size()
-                             : 0},
-          {"generation", std::to_string(impl_->generation)},
-          {"functions", impl_->ownFunctions()}};
+  Json state = {{"state", impl_->indexStateName()},
+                {"discovery_complete", impl_->discovered},
+                {"done", impl_->indexDone},
+                {"total", impl_->indexTotal},
+                {"references", impl_->indexState == Impl::IndexState::Ready
+                                   ? impl_->references.size()
+                                   : 0},
+                {"generation", std::to_string(impl_->generation)},
+                {"functions", impl_->ownFunctions()}};
+  if (!impl_->indexError.empty())
+    state["error"] = impl_->indexError;
+  return state;
 }
 
 Json Listing::page(const Json &payload) {

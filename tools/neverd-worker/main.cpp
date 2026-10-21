@@ -145,6 +145,27 @@ struct State {
   }
 };
 
+/// Caller holds state.mutex, so both periodic and readiness notifications
+/// describe one published executor state with the same protocol envelope.
+Json heartbeatMessage(const State &state) {
+  return {
+      {"protocol_major", 1},
+      {"type", "heartbeat"},
+      {"revision", state.revision},
+      {"project_id", state.projectId},
+      {"web",
+       {{"revision", state.webRevision}, {"project_id", state.webProjectId}}},
+      {"active_request_id",
+       state.active ? state.active->value["request_id"] : Json(nullptr)},
+      {"cancellation_requested", state.active && state.active->cancelled},
+      {"background", state.background}};
+}
+
+bool discoveryComplete(const Json &background) {
+  return background.is_object() &&
+         background.value("discovery_complete", false);
+}
+
 Json response(const Json &request, const std::string &revision,
               const std::string &project, const std::string &status,
               Json payload = Json::object()) {
@@ -309,14 +330,34 @@ void executeLoop(State &state, Transport &transport) {
             return state.stopping || !state.queue.empty();
           });
         while (!state.stopping && state.queue.empty() && engine.hasIdleWork()) {
+          const bool wasDiscovered = discoveryComplete(state.background);
           lock.unlock();
+          bool advanced = true;
           try {
-            engine.idleStep();
+            advanced = engine.idleStep();
           } catch (const std::exception &) {
             // A failed step leaves its error in the published state.
           }
           lock.lock();
           state.background = engine.backgroundState();
+          if (!wasDiscovered && discoveryComplete(state.background)) {
+            // Large-image clients wait for discovery publication before
+            // starting a replica. Notify them now, then admit their request
+            // before starting a potentially expensive derived-list rebuild.
+            // The same idle grace wakes immediately when a request arrives.
+            const auto message = heartbeatMessage(state);
+            lock.unlock();
+            const bool sent = transport.send(message);
+            lock.lock();
+            if (!sent)
+              throw Error("transport_closed", "Cannot publish discovery state");
+            state.changed.wait_for(lock, IdleGracePeriod, [&] {
+              return state.stopping || !state.queue.empty();
+            });
+          } else if (!advanced)
+            state.changed.wait_for(lock, std::chrono::milliseconds(10), [&] {
+              return state.stopping || !state.queue.empty();
+            });
         }
         state.changed.wait(
             lock, [&] { return state.stopping || !state.queue.empty(); });
@@ -444,18 +485,7 @@ int main(int argc, char **argv) {
         if (state.changed.wait_for(lock, std::chrono::seconds(1),
                                    [&] { return state.finished; }))
           break;
-        Json message = {
-            {"protocol_major", 1},
-            {"type", "heartbeat"},
-            {"revision", state.revision},
-            {"project_id", state.projectId},
-            {"web",
-             {{"revision", state.webRevision},
-              {"project_id", state.webProjectId}}},
-            {"active_request_id",
-             state.active ? state.active->value["request_id"] : Json(nullptr)},
-            {"cancellation_requested", state.active && state.active->cancelled},
-            {"background", state.background}};
+        const auto message = heartbeatMessage(state);
         lock.unlock();
         transport.send(message);
         lock.lock();

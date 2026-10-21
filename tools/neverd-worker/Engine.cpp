@@ -1376,6 +1376,7 @@ void Engine::prepareFunction(std::uint64_t address,
 }
 Listing &Engine::newListing() {
   listing_ = std::make_unique<Listing>(session_);
+  listing_->setSteppedDiscovery(steppedDiscovery_);
   listing_->setStringOptions(stringOptions_);
   listing_->setPdbDisplayNames(pdbDisplayNames_);
   const bool frames =
@@ -1399,15 +1400,15 @@ bool Engine::hasIdleWork() const {
   return listing_->hasIdleWork() || warmState_ == WarmState::Pending ||
          warmState_ == WarmState::Running;
 }
-void Engine::idleStep() {
+bool Engine::idleStep() {
   if (!hasIdleWork())
-    return;
+    return false;
   // The listing and its reference index come first; preparing functions
   // only shortens later decompiles.
   if (listing_->hasIdleWork())
-    listing_->idleStep();
-  else
-    warmStep();
+    return listing_->idleStep();
+  warmStep();
+  return true;
 }
 void Engine::restartWarming() {
   warmState_ = warmFunctions_ ? WarmState::Pending : WarmState::Off;
@@ -2066,7 +2067,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     const auto path = fs::canonical(utf8Path(pathText), ec);
     if (ec || !fs::is_regular_file(path, ec))
       throw Error("load_failed", "Input is not an accessible regular file");
-    for (const char *flag : {"read_only", "debug_info", "analysis", "warm"})
+    for (const char *flag :
+         {"read_only", "debug_info", "analysis", "warm", "step_discovery"})
       if (p.contains(flag) && !p[flag].is_boolean())
         throw Error("invalid_request", std::string(flag) + " must be boolean");
     if (p.contains("pdb") && !p.at("pdb").is_object())
@@ -2249,6 +2251,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     symbolsInput_ = symbolsDeclined ? Json{{"mode", "none"}} : Json(nullptr);
     pdbDisplayNames_ = Json::array();
     backgroundAnalysis_ = p.value("analysis", true);
+    steppedDiscovery_ = backgroundAnalysis_ && p.value("step_discovery", false);
     // Preparing functions is the last step of idle-time analysis.
     warmFunctions_ = backgroundAnalysis_ && p.value("warm", false);
     restartWarming();

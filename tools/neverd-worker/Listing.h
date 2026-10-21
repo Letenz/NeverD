@@ -119,9 +119,13 @@ public:
   /// names, slots, comments and references join the listing.
   void loadSwitches();
 
+  /// Opt in only when the client coordinates the snapshot's memory lifetime.
+  void setSteppedDiscovery(bool enabled);
   bool hasIdleWork() const;
-  /// Advance the reference index by one bounded step.
-  void idleStep();
+  /// Advance discovery/reference indexing. False while an owned discovery
+  /// snapshot is computing, so the executor can wait for interactive reads.
+  /// Completion is a separate step from rebuilding the derived listing.
+  bool idleStep();
   /// {state, done, total, generation} of the reference index.
   Json indexState() const;
   /// Changes whenever published listing text can change.

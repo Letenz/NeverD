@@ -79,6 +79,17 @@ bound their own cached pages.
 
 Every second the worker sends
 `{type:"heartbeat",protocol_major:1,project_id,revision,active_request_id:string|null,cancellation_requested:bool}`.
+The same heartbeat envelope is also sent immediately when background function
+discovery completes, including a failed discovery whose diagnostic is published
+as `background.state:"unavailable"`. `background.discovery_complete` states
+that the SDK discovery result has been consumed; it does not promise that the
+derived listing or reference index has been rebuilt. The executor admits
+requests for up to its existing 150 ms idle grace at that transition, waking
+as soon as one arrives, before continuing derived background work.
+Stepped SDK discovery is opt-in through `open.step_discovery:true`; it defaults
+to false so older clients do not acquire an extra image snapshot. Only clients
+that coordinate large-image replica startup with `discovery_complete` should
+enable it. SDKs without the optional polling export retain synchronous discovery.
 Heartbeat is liveness, not percent progress. `cancel` takes
 `{request_id:"target"}`. A queued target returns `cancelled` and the cancel reply
 has `{accepted:true,stopped:true,state:"stopped",requires_restart:false}`.
@@ -828,16 +839,23 @@ slots, including ELF `GLOB_DAT` entries from `neverd_import_slots_json`, are
 named `<import>_ptr` on ELF. Code text from the engine (C and IR) keeps the
 engine's spellings.
 
-Heartbeats carry `background:{state,done,total,references,generation,functions}`
+Heartbeats carry
+`background:{state,done,total,references,generation,functions,discovery_complete}`
 for the work the worker does while idle. It first lets the engine add the
-functions its detector finds without lifting
-(`neverd_session_discover_functions`); `functions` is the listed function count,
+functions its detector finds without lifting, polling
+`neverd_session_discover_functions_step` between foreground requests. Discovery
+owns one image snapshot and publishes its result on the executor; the owner
+continues serving reads while that snapshot computes. Older engines use the
+synchronous `neverd_session_discover_functions` fallback.
+`discovery_complete` lets clients defer large analysis replica startups until
+that snapshot is released. `functions` is the listed function count,
 which clients compare to refresh function lists. It then builds the reference
 index: `pending`, `building`, `ready` or `unavailable`. Its generation changes
 when finished references can add labels and cross-reference comments to listing
 text; clients refresh visible lines then. Function-level analysis runs only for
 the function a decompile, CFG or IR request names; `analyze` remains the
-explicit whole-program pipeline.
+explicit whole-program pipeline. Discovery failures carry `error` and an
+`unavailable` state rather than claiming a complete reference index.
 
 With `open`'s `warm:true`, the worker then prepares functions in entry order,
 a few per idle step, building the control-flow graphs their first decompile
