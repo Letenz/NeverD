@@ -1032,4 +1032,39 @@ TEST(SymExpr, AWordWiderThanSixtyFourBitsIsOrdinary) {
   EXPECT_EQ(SymEvalPlan(Ctx, E).eval(V), -Big);
 }
 
+TEST(SymExpr, IncrementalProductsKeepCanonicalCoefficientsAndRepeatedFactors) {
+  for (unsigned Width : {1u, 3u, 8u, 32u, 64u, 128u, 257u})
+    for (uint64_t Coefficient : {0u, 1u, 6u, 37u}) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Coefficient);
+      SymContext C;
+      auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+      auto Z = C.mkVar("z", Width);
+      auto Scale = C.mkConst(Width, Coefficient);
+      llvm::SmallVector<SymRef, 64> Factors{Scale};
+      auto Left = Scale, Right = Scale;
+      for (unsigned I = 0; I != 64; ++I) {
+        auto Factor = I % 3 == 0 ? Z : I % 3 == 1 ? X : C.mkNot(Y);
+        Factors.push_back(Factor);
+        Left = C.mkMul(Left, Factor);
+        Right = C.mkMul(Factor, Right);
+        EXPECT_EQ(Left, Right);
+        EXPECT_EQ(Left, C.mkMul(Factors));
+      }
+      std::vector<llvm::APInt> Values{llvm::APInt(Width, 3, false, true),
+                                      llvm::APInt(Width, 2, false, true),
+                                      llvm::APInt(Width, 5, false, true)};
+      auto Want = llvm::APInt(Width, Coefficient, false, true);
+      for (unsigned I = 0; I != 64; ++I)
+        Want *= I % 3 == 0 ? Values[2] : I % 3 == 1 ? Values[0] : ~Values[1];
+      EXPECT_EQ(C.eval(Left, Values), Want);
+      // A new literal still combines with the existing coefficient, including
+      // modular zero and wide constants; merging two products stays canonical.
+      auto Extra = C.mkConst(llvm::APInt::getSignMask(Width));
+      Factors.push_back(Extra);
+      EXPECT_EQ(C.mkMul(Left, Extra), C.mkMul(Factors));
+      EXPECT_EQ(C.mkMul(Left, C.mkMul(X, Z)), C.mkMul({Left, X, Z}));
+    }
+}
+
 } // namespace

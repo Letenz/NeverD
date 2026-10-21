@@ -711,9 +711,9 @@ llvm::APInt holedOracle(llvm::ArrayRef<llvm::APInt> Values, unsigned Degree,
          (Disturbed ? Difference : llvm::APInt(Width, 0));
 }
 
-TEST(SymMBAHigherProduct, CompletesMissingCornersThroughThirtyTwoFactors) {
+TEST(SymMBAHigherProduct, CompletesMissingCornersThroughSixtyFourFactors) {
   for (unsigned Width : {8u, 16u, 32u, 64u, 128u, 257u})
-    for (unsigned Degree : {4u, 8u, 12u, 16u, 24u, 32u}) {
+    for (unsigned Degree : {4u, 8u, 12u, 16u, 24u, 32u, 48u, 64u}) {
       SCOPED_TRACE(Width);
       SCOPED_TRACE(Degree);
       SymContext C;
@@ -992,6 +992,101 @@ TEST(SymMBAHigherProduct, DeclinesExponentialFrontiersBeforeTheDeepWalk) {
         EXPECT_EQ(C.eval(R.Expr, Values), Want);
       }
     }
+}
+
+} // namespace
+
+namespace {
+
+TEST(SymMBAHigherProduct, CorrelatedEvenFactorsProveModularZero) {
+  for (unsigned Width : {8u, 16u, 32u, 64u, 128u, 257u})
+    for (bool Arithmetic : {false, true}) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Arithmetic);
+      SymContext C;
+      auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+      auto A = Arithmetic ? C.mkAdd(X, Y) : C.mkXor(X, Y);
+      auto B = Arithmetic ? C.mkNot(C.mkXor(X, Y)) : C.mkAnd(X, Y);
+      auto Scale = llvm::APInt::getOneBitSet(Width, Width - 4);
+      auto Input = C.mkMul({C.mkConst(Scale), A, A, A, A, B, B, B, B});
+      size_t Storage = MBAOptions{}.MaxTableBytes;
+      detail::WorkBudget Full(65536);
+      auto Output = detail::foldProductValuations(C, Input, Full, Storage);
+      ASSERT_TRUE(C.isConstZero(Output));
+      EXPECT_LT(Full.used(), 256u);
+      for (size_t Work : {size_t(0), size_t(1), Full.used() - 1, Full.used()}) {
+        detail::WorkBudget Budget(Work);
+        size_t Bytes = MBAOptions{}.MaxTableBytes;
+        auto Actual = detail::foldProductValuations(C, Input, Budget, Bytes);
+        EXPECT_EQ(Actual, Work == Full.used() ? Output : Input);
+        EXPECT_LE(Budget.used(), Work);
+      }
+      size_t NoStorage = 0;
+      detail::WorkBudget Refused(65536);
+      EXPECT_EQ(detail::foldProductValuations(C, Input, Refused, NoStorage),
+                Input);
+      std::mt19937_64 Random(0x56414c55);
+      for (unsigned I = 0; I != 256; ++I) {
+        std::array<llvm::APInt, 2> Values;
+        for (auto &Value : Values) {
+          Value = llvm::APInt(Width, 0);
+          for (unsigned Bit = 0; Bit < Width; Bit += 64)
+            Value |= llvm::APInt(Width, Random(), false, true).shl(Bit);
+        }
+        auto Left = Arithmetic ? Values[0] + Values[1] : Values[0] ^ Values[1];
+        auto Right =
+            Arithmetic ? ~(Values[0] ^ Values[1]) : Values[0] & Values[1];
+        auto Want = Scale;
+        for (unsigned J = 0; J != 4; ++J)
+          Want *= Left * Right;
+        EXPECT_TRUE(Want.isZero());
+        EXPECT_EQ(C.eval(Input, Values), Want);
+        EXPECT_EQ(C.eval(Output, Values), Want);
+      }
+    }
+}
+
+TEST(SymMBAHigherProduct, ParityCountsRetainCarriesAndOpaqueInputLimits) {
+  for (unsigned Width : {8u, 32u, 64u, 257u}) {
+    SymContext C;
+    auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+    auto A = C.mkXor(X, Y), B = C.mkAnd(X, Y);
+    auto Scale = llvm::APInt::getOneBitSet(Width, Width - 5);
+    auto Input = C.mkMul({C.mkConst(Scale), A, A, A, A, B, B, B, B});
+    size_t Storage = MBAOptions{}.MaxTableBytes;
+    detail::WorkBudget Budget(65536);
+    EXPECT_EQ(detail::foldProductValuations(C, Input, Budget, Storage), Input);
+    std::array<llvm::APInt, 2> Values{llvm::APInt(Width, 1),
+                                      llvm::APInt(Width, 3)};
+    EXPECT_EQ(C.eval(Input, Values), llvm::APInt::getSignMask(Width));
+
+    llvm::SmallVector<SymRef, 16> Factors{
+        C.mkConst(llvm::APInt::getSignMask(Width)), X, C.mkNot(X)};
+    for (unsigned I = 0; I != 7; ++I)
+      Factors.push_back(C.mkVar("opaque" + std::to_string(I), Width));
+    auto WideDomain = C.mkMul(Factors);
+    EXPECT_EQ(detail::foldProductValuations(C, WideDomain, Budget, Storage),
+              WideDomain);
+  }
+}
+
+TEST(SymMBAHigherProduct, ProductZeroProofHasIndependentFullWidthSMTCheck) {
+  if (!solver::proofBackendAvailable(solver::ProofBackend::Z3))
+    GTEST_SKIP() << "Z3 unavailable";
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    SymContext C;
+    auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+    auto A = C.mkAdd(X, Y), B = C.mkNot(C.mkXor(X, Y));
+    auto Input =
+        C.mkMul({C.mkConst(llvm::APInt::getOneBitSet(Width, Width - 4)), A, A,
+                 A, A, B, B, B, B});
+    size_t Storage = MBAOptions{}.MaxTableBytes;
+    detail::WorkBudget Budget(65536);
+    auto Output = detail::foldProductValuations(C, Input, Budget, Storage);
+    ASSERT_TRUE(C.isConstZero(Output));
+    solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 5000);
+    EXPECT_EQ(Verifier(C, Input, Output), SynthVerification::Equivalent);
+  }
 }
 
 } // namespace
