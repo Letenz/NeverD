@@ -2252,6 +2252,190 @@ TEST(RegistrationTryLevel, CxxEAXHelperRequiresClosedPrecedingBody) {
   }
 }
 
+TEST(RegistrationTryLevel, CxxEAXHelperRefutesOnlyReachedInteriorGuesses) {
+  for (bool Wide : {false, true})
+    for (unsigned Root : {0u, 1u, 2u})
+      for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+        SCOPED_TRACE(::testing::Message()
+                     << Wide << "/" << Root << "/" << Mutation);
+        auto Image = makeCxxEAXHelperImage(Wide, 0);
+        auto &Text = Image.Segments.front().Data;
+        // The padding guess is in a real CALL's displacement. It cannot
+        // decode a closed preceding body, although that CALL independently
+        // reaches the complete C++ prologue at +0x20.
+        Text[0] = 0xe8;
+        writeLE<uint32_t>(Text.data() + 1, 0x20 - 5);
+        Text[5] = 0xc3;
+        Image.Entry = kText;
+        Symbol Guess = Symbol::makeFunc(kText + 2, 0);
+        Guess.IsBoundaryGuess = true;
+        Image.Symbols.push_back(Guess);
+        if (Root == 1) {
+          // A separate immutable entry reaches the CALL through a call edge.
+          Segment Source;
+          Source.VA = kText + 0x2000;
+          Source.FileOff = 0x2000;
+          Source.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+          Source.Data = {0xe8};
+          emit32(Source.Data, kText - (Source.VA + 5));
+          Source.Data.push_back(0xc3);
+          Source.Size = Source.FileSz = Source.Data.size();
+          Section Code;
+          Code.VA = Source.VA;
+          Code.FileOff = Source.FileOff;
+          Code.Size = Code.FileSz = Source.Size;
+          Code.Flags = Source.Flags;
+          Image.Entry = Source.VA;
+          Image.Segments.push_back(std::move(Source));
+          Image.Sections.push_back(std::move(Code));
+        } else if (Root == 2) {
+          // No image entry reaches it. The independently accepted second
+          // physical C++ entry calls the same ordinary source function.
+          Image.Entry = 0;
+          const size_t Call = 0x50 + (Wide ? 15 : 12);
+          Text[Call] = 0xe8;
+          writeLE<uint32_t>(Text.data() + Call + 1, uint32_t(-Call - 5));
+          Text[Call + 5] = 0xc3;
+        }
+        // Reacquire after adding the separate segment.
+        auto &Bytes = Image.Segments.front().Data;
+        switch (Mutation) {
+        case 1:
+          Image.Symbols.back().IsBoundaryGuess = false;
+          break;
+        case 2:
+          Image.Symbols.back().Addr = kText + 0x10;
+          break;
+        case 3:
+          writeLE<uint32_t>(Bytes.data() + 1, 0x50 - 5);
+          break;
+        case 4:
+          // A CALL-looking immediate is not an instruction edge.
+          Bytes[0] = 0xb8;
+          Bytes[1] = 0xe8;
+          writeLE<uint32_t>(Bytes.data() + 2, 0x20 - 6);
+          Bytes[6] = 0xc3;
+          Image.Symbols.back().Addr = kText + 3;
+          break;
+        case 5:
+          // Keep this away from the separately authenticated entry-jump
+          // forwarding protocol: only an ordinary interior branch exists.
+          Bytes[0] = 0x90;
+          Bytes[1] = 0xe9;
+          writeLE<uint32_t>(Bytes.data() + 2, 0x20 - 6);
+          Bytes[6] = 0xc3;
+          Image.Symbols.back().Addr = kText + 3;
+          break;
+        case 6:
+          Image.BaseRelocations.push_back({kText + 1, 3});
+          break;
+        case 7:
+          Image.BaseRelocations.push_back({kText, 3});
+          break;
+        case 8:
+          Bytes[0] =
+              0xc3; // The later candidate and CALL bytes are unreachable.
+          break;
+        case 9:
+          Bytes[0x20 + (Wide ? 5 : 2)] = 0xb9;
+          break;
+        default:
+          break;
+        }
+        Image.ExceptionMetadata = {};
+        coff_loader::parseX86RegistrationExceptions(Image);
+        const auto *EH = Image.ExceptionMetadata.findFunction(kText + 0x20);
+        if (Mutation) {
+          EXPECT_TRUE(!EH || EH->CodeRange.Begin != kText + 0x20);
+          continue;
+        }
+        ASSERT_TRUE(EH);
+        EXPECT_EQ(EH->CodeRange.Begin, kText + 0x20);
+        EXPECT_TRUE(coff_loader::getCheckedX86CxxPrologueCall(Image, *EH));
+        ASSERT_TRUE(EH->Registration);
+        EXPECT_EQ(EH->Registration->RegistrationOffset, -12);
+        EXPECT_EQ(EH->Registration->TryLevelOffset, -4);
+        EXPECT_FALSE(Image.VerifiedFunctionEntries.count(kText + 0x20));
+      }
+}
+
+TEST(RegistrationTryLevel, CxxEAXCallBoundaryRequiresImmutableSourceStorage) {
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = makeCxxEAXHelperImage(false, 0);
+    // The source entry lives after the candidate, so a code-storage mutation
+    // can affect only the witness and leave the exact helper protocol intact.
+    auto &Text = Image.Segments.front();
+    Text.Data[0] = 0xe8;
+    writeLE<uint32_t>(Text.Data.data() + 1, 0x20 - 5);
+    Text.Data[5] = 0xc3;
+    Symbol Guess = Symbol::makeFunc(kText + 2, 0);
+    Guess.IsBoundaryGuess = true;
+    Image.Symbols.push_back(Guess);
+    Segment Source;
+    Source.VA = kText + 0x2000;
+    Source.FileOff = 0x2000;
+    Source.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Source.Data = {0xe8};
+    emit32(Source.Data, kText - (Source.VA + 5));
+    Source.Data.push_back(0xc3);
+    Source.Size = Source.FileSz = Source.Data.size();
+    Section Code;
+    Code.VA = Source.VA;
+    Code.FileOff = Source.FileOff;
+    Code.Size = Code.FileSz = Source.Size;
+    Code.Flags = Source.Flags;
+    Image.Entry = Source.VA;
+    if (Mutation == 0)
+      Source.Flags = Source.Flags | SegmentFlags::Writable;
+    if (Mutation == 1)
+      Source.FileSz = 4;
+    if (Mutation == 2)
+      Image.BaseRelocations.push_back({Source.VA + 1, 3});
+    if (Mutation == 3)
+      Image.Segments.push_back(Source);
+    if (Mutation == 4)
+      ++Code.FileOff;
+    Image.Segments.push_back(std::move(Source));
+    Image.Sections.push_back(std::move(Code));
+    Image.ExceptionMetadata = {};
+    coff_loader::parseX86RegistrationExceptions(Image);
+    const auto *EH = Image.ExceptionMetadata.findFunction(kText + 0x20);
+    EXPECT_TRUE(!EH || EH->CodeRange.Begin != kText + 0x20);
+  }
+}
+
+TEST(RegistrationTryLevel, CxxEAXCallBoundaryChecksIndirectCallAddressFixups) {
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = makeCxxEAXHelperImage(false, 0);
+    auto &Text = Image.Segments.front().Data;
+    Text[0] = 0xff;
+    Text[1] = Mutation == 5 ? 0x25 : 0x15;
+    writeLE<uint32_t>(Text.data() + 2, kRData + 0x90);
+    Text[6] = 0xe8;
+    writeLE<uint32_t>(Text.data() + 7, 0x20 - 11);
+    Text[11] = 0xc3;
+    Image.Entry = kText;
+    Symbol Guess = Symbol::makeFunc(kText + 8, 0);
+    Guess.IsBoundaryGuess = true;
+    Image.Symbols.push_back(Guess);
+    Image.BaseRelocations.push_back({kText + 2, 3});
+    if (Mutation == 1)
+      Image.BaseRelocations.push_back({kText + 7, 3});
+    if (Mutation == 2)
+      Image.BaseRelocations.back().Type = 10;
+    if (Mutation == 3)
+      Image.BaseRelocations.push_back(Image.BaseRelocations.back());
+    if (Mutation == 4)
+      Image.BaseRelocations.back().Address = kText;
+    Image.ExceptionMetadata = {};
+    coff_loader::parseX86RegistrationExceptions(Image);
+    const auto *EH = Image.ExceptionMetadata.findFunction(kText + 0x20);
+    EXPECT_EQ(EH && EH->CodeRange.Begin == kText + 0x20, Mutation == 0);
+  }
+}
+
 TEST(RegistrationTryLevel, CxxEAXHelperChecksFixupsAndSafeSEH) {
   for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
     SCOPED_TRACE(Mutation);

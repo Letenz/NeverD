@@ -6059,7 +6059,19 @@ truncated or ambiguous mappings, fixups, architecture/format and invalid call
 addresses. A valid helper cannot rescue an altered frame or publication.
 `RegistrationTryLevel.CxxEAXHelper*` separately checks shared C++ prologue
 descriptions, including every instruction byte, parent identity, storage and
-fixups. Allocation zero retains the overwritten EBX save, and unaligned
+fixups. `CxxEAXHelperRefutesOnlyReachedInteriorGuesses` checks short/wide
+prologues reached from an image entry, a separate calling entry and a previously
+authenticated physical frame. Stated boundaries, noninterior guesses,
+unreachable or immediate-embedded CALL bytes, ordinary branches, source fixups
+and changed protocols cannot supply the fallback. The separate source-storage
+test rejects writable, truncated, overlapping or mismapped witnesses.
+Indirect CALL address tests admit exact IAT HIGHLOW operands while rejecting
+relocated direct-call displacements and indirect-jump continuations.
+`NeverDReadOnlyBytesTests` compares ordinary and indexed storage queries across
+29 fixup/mapping cases, including unordered and duplicate records, wide fields
+starting before the span, exact nonoverlap boundaries and conflicting slots.
+Cold and repeated query tests pin exhaustion at the exact shared work limit.
+Allocation zero retains the overwritten EBX save, and unaligned
 allocation retains partial overlap. Run
 `check_windows_registration_prologue.py --test-binary <NeverDRegistrationEHTests>
 --runtime-libs <native-msvc-library-directory> --output <directory>` for 24

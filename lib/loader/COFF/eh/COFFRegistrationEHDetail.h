@@ -71,6 +71,14 @@ checkedRegistrationRangeEnd(const BinaryImage &Img,
                             const ExceptionAddressRange &Range,
                             const std::vector<va_t> &Roots, size_t &Work);
 
+/// Recover only candidates reached by a decoded direct call, whose preceding
+/// padding guess is independently inside a decoded instruction. Paths start
+/// at the image entry or already authenticated physical registration entries.
+/// This proves structural boundaries, not a callee ABI or native frame.
+std::set<va_t> checkedRegistrationCallBoundaries(
+    const BinaryImage &Img, const std::set<va_t> &PhysicalEntries,
+    const std::map<va_t, va_t> &Candidates, size_t &Work);
+
 template <typename T>
 std::optional<T> readScalar(const BinaryImage &Img, va_t Address) {
   const uint8_t *P = Img.readVA(Address, sizeof(T));
@@ -221,6 +229,8 @@ public:
     return Range;
   }
 
+  bool isBoundaryGuess(va_t Address) const { return Guesses.count(Address); }
+
 private:
   std::vector<va_t> Starts;
   std::set<va_t> Guesses;
@@ -354,10 +364,9 @@ void expandPrologueHelpers(const BinaryImage &Img,
                            std::vector<InstallSite> &Sites);
 /// Shared C++ prologues receive the per-function handler in EAX. These source
 /// observations do not establish frame coordinates or physical call effects.
-std::vector<InstallSite>
-findCxxEAXPrologueCallers(const BinaryImage &Img,
-                          const FunctionRangeMap &Functions,
-                          const SafeSEHTable &SafeSEH);
+std::vector<InstallSite> findCxxEAXPrologueCallers(
+    const BinaryImage &Img, const FunctionRangeMap &Functions,
+    const SafeSEHTable &SafeSEH, const std::set<va_t> &PhysicalEntries);
 
 uint32_t decodeScopeRecords(const BinaryImage &Img, va_t ArrayVA, va_t Limit,
                             bool IsEH4,

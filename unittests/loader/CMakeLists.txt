@@ -20,3 +20,8 @@ add_neverd_unittest(NeverDStaticSymbolTableTests
   StaticSymbolTableTests.cpp
   LINK_COMPONENTS Loader Support
 )
+
+add_neverd_unittest(NeverDReadOnlyBytesTests
+  ReadOnlyBytesTests.cpp
+  LINK_COMPONENTS Loader Support
+)

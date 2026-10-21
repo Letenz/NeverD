@@ -164,11 +164,12 @@ getCheckedX86CxxPrologueCall(const BinaryImage &Img,
 }
 
 namespace registration_detail {
-std::vector<InstallSite>
-findCxxEAXPrologueCallers(const BinaryImage &Img,
-                          const FunctionRangeMap &Functions,
-                          const SafeSEHTable &SafeSEH) {
+std::vector<InstallSite> findCxxEAXPrologueCallers(
+    const BinaryImage &Img, const FunctionRangeMap &Functions,
+    const SafeSEHTable &SafeSEH, const std::set<va_t> &PhysicalEntries) {
   std::vector<InstallSite> Sites;
+  std::vector<InstallSite> Deferred;
+  std::map<va_t, va_t> PrecedingGuesses;
   HelperCache Helpers;
   std::set<va_t> Entries;
   size_t BoundaryWork = 0;
@@ -205,12 +206,26 @@ findCxxEAXPrologueCallers(const BinaryImage &Img,
       const auto Next = Entries.upper_bound(CallVA);
       if (Next != Entries.begin())
         Range->Begin = std::max(Range->Begin, *std::prev(Next));
-      if (*Entry < Range->Begin ||
-          (Range->Begin < *Entry &&
-           !checkedRegistrationRangeEnd(Img, {Range->Begin, *Entry},
-                                        {Range->Begin}, BoundaryWork)) ||
-          !Entries.insert(*Entry).second)
+      if (*Entry < Range->Begin || Entries.count(*Entry) ||
+          PrecedingGuesses.count(*Entry))
         continue;
+      const bool Closed =
+          Range->Begin == *Entry ||
+          checkedRegistrationRangeEnd(Img, {Range->Begin, *Entry},
+                                      {Range->Begin}, BoundaryWork);
+      if (!Closed) {
+        // A stated entry remains authoritative. A padding guess needs both
+        // an instruction-interior refutation and an independently reached
+        // direct call to this complete helper protocol.
+        if (!Functions.isBoundaryGuess(Range->Begin) ||
+            std::any_of(Img.Symbols.begin(), Img.Symbols.end(),
+                        [&](const auto &S) {
+                          return S.IsFunc && S.Addr == Range->Begin &&
+                                 !S.IsBoundaryGuess;
+                        }))
+          continue;
+        PrecedingGuesses.emplace(*Entry, Range->Begin);
+      }
       Range->Begin = *Entry;
       InstallSite Site;
       Site.Range = *Range;
@@ -220,8 +235,21 @@ findCxxEAXPrologueCallers(const BinaryImage &Img,
       Site.HandlerVA = Handler;
       Site.TryLevel = -1;
       Site.Identity = std::move(Identity);
-      Sites.push_back(std::move(Site));
+      if (Closed) {
+        Entries.insert(*Entry);
+        Sites.push_back(std::move(Site));
+      } else
+        Deferred.push_back(std::move(Site));
     }
+  }
+  if (!Deferred.empty()) {
+    auto Roots = PhysicalEntries;
+    Roots.insert(Entries.begin(), Entries.end());
+    const auto Recovered = checkedRegistrationCallBoundaries(
+        Img, Roots, PrecedingGuesses, BoundaryWork);
+    for (auto &Site : Deferred)
+      if (Recovered.count(Site.Range.Begin))
+        Sites.push_back(std::move(Site));
   }
   std::sort(Sites.begin(), Sites.end(), [](const auto &A, const auto &B) {
     return A.Range.Begin < B.Range.Begin;
