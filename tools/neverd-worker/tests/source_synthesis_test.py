@@ -268,7 +268,8 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             complements = len(re.findall(r"\^\s*-1\b", text))
             assert text.count("&") <= 8, text
             assert text.count("^") - complements <= 3, text
-        elif kind in ("missing-degree12", "missing-degree24", "missing-degree48"):
+        elif kind in ("missing-degree12", "missing-degree24", "missing-degree48",
+                      "missing-degree96"):
             complements = len(re.findall(r"\^\s*-1\b", text))
             limit = int(kind.removeprefix("missing-degree"))
             assert text.count("&") <= limit, text
@@ -307,7 +308,7 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                                   "perturbed-sextic", "missing-quartic",
                                   "missing-sextic", "missing-cubic",
                                   "missing-degree12", "missing-degree24",
-                                  "missing-degree48"):
+                                  "missing-degree48", "missing-degree96"):
                         assert ordinary.count("&") >= 4, ordinary
                     else:
                         assert ">>" in ordinary, ordinary
@@ -402,6 +403,10 @@ if __name__ == "__main__":
              "(37U*(x^y)*(y|z)*(x|z)"
              "-37U*((x^y)&z)*((y|z)&x)*((x|z)&y))"
              + "*(x&y)*(x^z)*(y^z)" * 15 + "+x+y+(x&0x80000000U)"),
+            ("missing-degree96", cubic_elf(degree=96, missing=True),
+             "(37U*(x^y)*(y|z)*(x|z)"
+             "-37U*((x^y)&z)*((y|z)&x)*((x|z)&y))"
+             + "*(x&y)*(x^z)*(y^z)" * 31 + "+x+y+(x&0x80000000U)"),
         ):
             run_fixture(options.worker, options.cli, options.compiler, kind,
                         image, expected)

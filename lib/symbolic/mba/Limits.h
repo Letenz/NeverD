@@ -39,6 +39,8 @@ inline constexpr unsigned kMinQuadraticRowAtoms = 4;
 inline constexpr unsigned kMaxQuadraticRowAtoms = 8;
 inline constexpr std::size_t kMaxQuadraticRowTerms = 8;
 inline constexpr std::size_t kMinCompletedRegionCacheWork = 256;
+inline constexpr unsigned kMinQuadraticCongruenceAtoms = 4;
+inline constexpr unsigned kMinFlatArithmeticOperands = 6;
 
 } // namespace neverd::symbolic::detail::limits
 

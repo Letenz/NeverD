@@ -171,6 +171,20 @@ public:
     return true;
   }
 
+  bool isFlatProduct(SymRef R) {
+    if (Ctx.numOperands(R) < limits::kMinFlatArithmeticOperands)
+      return false;
+    for (SymRef Child : Ctx.operands(R)) {
+      if (!Resources.charge(1))
+        return false;
+      SymOp Op = Ctx.op(Child);
+      if (Op == SymOp::Add || Op == SymOp::Mul ||
+          (Op == SymOp::Not && ExpandComplements))
+        return false;
+    }
+    return true;
+  }
+
   const Polynomial *normalize(SymRef Root, unsigned *AtomCount = nullptr) {
     if (!Resources.array(Words, sizeof(uint64_t)))
       return nullptr;
@@ -198,6 +212,11 @@ public:
           (Ctx.op(R) != SymOp::Not || !ExpandComplements))
         continue;
       llvm::ArrayRef<SymRef> Children = Ctx.operands(R);
+      // Flat products build their monomial directly from operand identities.
+      // A proof does not count atoms, so these leaves need neither separate
+      // memo entries nor repeated stack slots for every product occurrence.
+      if (!AtomCount && Ctx.op(R) == SymOp::Mul && isFlatProduct(R))
+        continue;
       if (!Resources.array(Children.size(), sizeof(SymRef)))
         return nullptr;
       Pending.insert(Pending.end(), Children.begin(), Children.end());
@@ -229,19 +248,7 @@ public:
         // Long flat products already name a sorted monomial. Read it once
         // instead of multiplying unit coefficients and merging one atom at
         // a time. Arithmetic children retain the general expansion below.
-        bool Flat = Ctx.numOperands(R) >= 6;
-        if (Flat)
-          for (SymRef Child : Ctx.operands(R)) {
-            if (!Resources.charge(1))
-              return nullptr;
-            SymOp Op = Ctx.op(Child);
-            if (Op == SymOp::Add || Op == SymOp::Mul ||
-                (Op == SymOp::Not && ExpandComplements)) {
-              Flat = false;
-              break;
-            }
-          }
-        if (Flat) {
+        if (isFlatProduct(R)) {
           if (!Resources.array(Ctx.numOperands(R), sizeof(Factor)) ||
               !Resources.array(Words, sizeof(uint64_t)))
             return nullptr;

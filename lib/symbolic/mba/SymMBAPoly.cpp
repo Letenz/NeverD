@@ -141,6 +141,49 @@ std::optional<TruthTable> bitwiseTable(const SymContext &Ctx, SymRef F,
   return Table;
 }
 
+// The polynomial abstraction makes each factor a pure bitwise word over
+// independent inputs. Equal complete tables therefore prove equal full words,
+// and multiplication preserves that equality even for noninvertible scales.
+// This is a sufficient proof only; other identities use the coefficient proof.
+bool proveQuadraticCongruence(const SymContext &Ctx,
+                              llvm::ArrayRef<PolyTerm> Terms,
+                              llvm::ArrayRef<uint32_t> AtomIds,
+                              WorkBudget &Budget, size_t MaxBytes) {
+  if (AtomIds.size() < limits::kMinQuadraticCongruenceAtoms ||
+      Terms.size() != 2 || Terms[0].Factors.size() != 2 ||
+      Terms[1].Factors.size() != 2 || Terms[0].Coeff != -Terms[1].Coeff)
+    return false;
+  const auto Corners = cornerCount(AtomIds.size());
+  if (!Corners || *Corners > MaxBytes / 8)
+    return false;
+  size_t Storage = MaxBytes - 8 * *Corners;
+  size_t Work = 4 * *Corners;
+  for (const auto &Term : Terms)
+    for (SymRef Factor : Term.Factors) {
+      const size_t Nodes = Ctx.dagSize(Factor);
+      const size_t Words = (size_t(Ctx.width(Factor)) - 1) / 64 + 1;
+      const size_t NodeBytes = 128 + 2 * Words * sizeof(uint64_t);
+      if (Nodes > Storage / NodeBytes ||
+          Nodes > std::numeric_limits<size_t>::max() - Work)
+        return false;
+      Storage -= Nodes * NodeBytes;
+      Work += Nodes;
+    }
+  if (!Budget.canConsume(Work))
+    return false;
+  Budget.consume(Work);
+  llvm::SmallVector<TruthTable, 4> Tables;
+  for (const auto &Term : Terms)
+    for (SymRef Factor : Term.Factors) {
+      auto Table = bitwiseTable(Ctx, Factor, AtomIds);
+      if (!Table)
+        return false;
+      Tables.push_back(std::move(*Table));
+    }
+  return (Tables[0] == Tables[2] && Tables[1] == Tables[3]) ||
+         (Tables[0] == Tables[3] && Tables[1] == Tables[2]);
+}
+
 } // namespace
 
 std::optional<llvm::SmallVector<PolyTerm, 8>>
@@ -249,6 +292,19 @@ recoverQuadraticTerms(const SymContext &Ctx, llvm::ArrayRef<PolyTerm> Terms,
       auto Selected = selectedMinterms(*Table);
       Factors.try_emplace(F.index(), std::move(*Table), std::move(Selected));
     }
+  }
+  // A single term already supplies its complete rank-one product. Rebuilding
+  // every coefficient only rediscovers these same factors; retain their exact
+  // truth tables and coefficient. The caller independently proves the emitted
+  // polynomial after synthesizing the two bitwise factors.
+  if (Terms.size() == 1) {
+    if (!Budget.consume(2 * Corners))
+      return std::nullopt;
+    const auto &Term = Terms.front();
+    Determined = true;
+    return QuadraticProduct{Term.Coeff,
+                            {Factors.at(Term.Factors[0].index()).Table,
+                             Factors.at(Term.Factors[1].index()).Table}};
   }
   auto Zero = llvm::APInt(Width, 0);
   std::vector<llvm::APInt> Diagonal(Corners, Zero), RowA(Corners, Zero),
@@ -632,6 +688,8 @@ bool provePolynomialIdentity(SymContext &Ctx, SymRef Before, SymRef After,
       splitIntoTerms(Ctx, Abstract->Body);
   if (!Terms)
     return false;
+  if (proveQuadraticCongruence(Ctx, *Terms, AtomIds, Budget, MaxBytes))
+    return true;
   // Equal products cancel by their exact factor identities, before either is
   // expanded over minterms. Unchanged higher-degree residuals therefore do
   // not make an otherwise small difference proof exponential.
