@@ -2712,6 +2712,19 @@ Exact guard-occurrence queries use the expanded CFG value-reconstruction depth
 limit. Guard syntax collection and materialization keep their separate, smaller
 expression limit. This lets a shallow guard cross a longer predecessor graph
 without treating depth exhaustion as a completed proof or skipping replay.
+A guard operand reloaded from memory may nominate the nearest literal STORE
+in its block. The shared value resolver must prove that exact literal reaches
+the exact operand use before guard materialization accepts it. Lexical
+proximity supplies no memory, frame or constant-value authority.
+Direct and reloaded guard constants reject address provenance and address
+owners: a relocation's small source value is not a numeric bound after relinking.
+Within one block, the value resolver can forward an equal-width literal STORE
+to a LOAD through the same unchanged full guest pointer, including complete
+address copies and zero-extension into the internal VA width. The first
+intervening writer, atomic, call, intrinsic or control transfer ends that
+search. Predicated stores and changed pointer lanes refuse it. This local
+identity does not require a function-entry SP offset and supplies no private
+frame, cross-block memory or authenticated-writer permission.
 A failed optional consumer audit grants no relocation-root suppression. With
 its shared evidence budget intact, the resolver retains every root and replays
 the mandatory selector, address and target proofs under that stronger context.

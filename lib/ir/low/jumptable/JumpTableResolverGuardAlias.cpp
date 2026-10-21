@@ -672,6 +672,8 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
     size_t DefQuery = std::numeric_limits<size_t>::max();
     size_t ExtendedLaneQuery = std::numeric_limits<size_t>::max();
     bool IndexQueryUsesDefinition = false;
+    size_t LiteralQuery = std::numeric_limits<size_t>::max();
+    NdVar Literal;
   };
   using BuildKey = std::tuple<uint8_t, uint64_t, uint16_t, va_t, int>;
   std::map<BuildKey, GuardSyntaxPtr> SyntaxMemo;
@@ -690,6 +692,16 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
   std::vector<std::pair<GuardSyntaxPtr, JumpTableValueQuery>>
       ExtendedLaneQueries;
   std::vector<std::pair<GuardSyntaxPtr, bool>> GuardRoots;
+
+  // GuardExpr constants are numeric values after relinking. An address with
+  // the same source bits cannot supply a numeric range, even when its exact
+  // store/reload identity is known.
+  auto isGuardLiteral = [](const NdVar &Value) {
+    return Value.isConst() &&
+           (Value.Provenance == ConstantAddressProvenance::Unknown ||
+            Value.Provenance == ConstantAddressProvenance::Scalar) &&
+           Value.AddressOwnerVA == InvalidVA;
+  };
 
   auto supportedGuardOpcode = [](NdOp Opcode) {
     switch (Opcode) {
@@ -1233,6 +1245,8 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
       if (V.Size == 0 || V.Size > sizeof(uint64_t))
         return {};
       if (V.isConst()) {
+        if (!isGuardLiteral(V))
+          return {};
         if (V.Offset < 64)
           ProposedJoinedBound = std::max(ProposedJoinedBound, V.Offset + 1);
         if (!consumeGuardBuildWork())
@@ -1327,8 +1341,39 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
             Def.Seq >= GuardSplit->Seq)
           return Finish(Node);
       }
-      if (!supportedGuardOpcode(Def.Opcode))
+      if (!supportedGuardOpcode(Def.Opcode)) {
+        // A nearby literal STORE is a proposal, not the value of this LOAD.
+        // Ask the shared all-path memory/value resolver to authenticate the
+        // literal at this exact use before materializing it in the guard.
+        // One nearest-writer proposal bounds speculative work; an intervening
+        // alias, call, partial write or independent root grants no shortcut.
+        if (Def.Opcode == NdOp::LOAD &&
+            Def.MemoryOrdering == NdMemoryOrdering::None &&
+            Def.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+          for (int J = DefIndex - 1; J >= 0; --J) {
+            if (!consumeGuardBuildWork())
+              return Finish({});
+            const LowOp &Writer = Ops[J];
+            if (Writer.Opcode != NdOp::STORE)
+              continue;
+            if (Writer.NumInputs == 2 && isGuardLiteral(Writer.Inputs[1]) &&
+                Writer.Inputs[1].Size == V.Size &&
+                Writer.MemoryOrdering == NdMemoryOrdering::None &&
+                Writer.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+              if (!consumeGuardBuildWork(2))
+                return Finish({});
+              Node->LiteralQuery = ProofQueries.size();
+              Node->Literal = Writer.Inputs[1];
+              ProofQueries.push_back({V,
+                                      UseAddr,
+                                      UseSeq,
+                                      {{Node->Literal, InvalidVA, -1, false}}});
+            }
+            break;
+          }
+        }
         return Finish(Node);
+      }
       if (!consumeGuardBuildWork(/*query + one alternative=*/2))
         return Finish({});
       const bool DefinedLane = Def.Output.Size != V.Size;
@@ -1557,6 +1602,16 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
       Expr->ContainsIndex = true;
       return Finish(Expr);
     }
+    const bool LiteralQueryPresent =
+        Node->LiteralQuery < ProofResults.size() &&
+        Node->LiteralQuery < ProofQueryComplete.size();
+    const bool LiteralQueryComplete =
+        LiteralQueryPresent && ProofQueryComplete[Node->LiteralQuery];
+    if (LiteralQueryComplete && ProofResults[Node->LiteralQuery]) {
+      Expr->K = GuardExpr::Kind::Constant;
+      Expr->Constant = Node->Literal.Offset;
+      return Finish(Expr);
+    }
     // The lexical def is only syntax.  Its exact output must be the value
     // reaching this exact use in the shared lane-aware resolver; an EAX/W
     // write therefore blocks a stale older RAX/X definition here.  When only
@@ -1566,7 +1621,8 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
     if (!Node->HasDef || !Node->InputsComplete) {
       if (!IndexQueryComplete ||
           (Node->IndexQueryUsesDefinition && !DefQueryComplete) ||
-          (ExtendedLanePresent && !ExtendedLaneComplete))
+          (ExtendedLanePresent && !ExtendedLaneComplete) ||
+          (LiteralQueryPresent && !LiteralQueryComplete))
         SawIncompleteProofQuery = true;
       return Finish({});
     }

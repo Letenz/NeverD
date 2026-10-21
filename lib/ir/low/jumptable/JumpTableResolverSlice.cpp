@@ -7792,6 +7792,107 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       } else if (Def.Opcode == NdOp::LOAD && Def.NumInputs >= 1) {
         const NdVar &Address =
             Def.NumInputs >= 2 ? Def.Inputs[1] : Def.Inputs[0];
+        // An exact store and reload in this block can agree without a
+        // function-entry frame coordinate. Keep the first memory barrier and
+        // prove that both operands use the same unchanged full guest pointer.
+        auto localAddressCarrier =
+            [&](NdVar Value, int Before,
+                va_t Address) -> std::optional<std::pair<NdVar, int>> {
+          for (unsigned N = 0; N < limits::kMaxQuasiCopyDepth; ++N) {
+            if (!consumeEvidence())
+              return std::nullopt;
+            if (Value.isReg())
+              return Value.Size == CurrentImg->getPointerSize()
+                         ? std::optional(std::pair{Value, Before})
+                         : std::nullopt;
+            if (!Value.isTemp())
+              return std::nullopt;
+            int Writer = -1;
+            for (int K = Before - 1; K >= 0 && B.Ops[K].Addr == Address; --K) {
+              if (!consumeEvidence())
+                return std::nullopt;
+              const auto &Output = B.Ops[K].Output;
+              if (Output.Space == Value.Space &&
+                  Output.Offset == Value.Offset) {
+                Writer = K;
+                break;
+              }
+            }
+            if (Writer < 0)
+              return std::nullopt;
+            const LowOp &Transport = B.Ops[Writer];
+            const bool Copy = Transport.Opcode == NdOp::COPY &&
+                              Transport.NumInputs == 1 &&
+                              Transport.Output.Size == Value.Size &&
+                              Transport.Inputs[0].Size == Value.Size;
+            const bool Widen =
+                Transport.Opcode == NdOp::INT_ZEXT &&
+                Transport.NumInputs == 1 &&
+                Transport.Output.Size == Value.Size &&
+                Value.Size <= sizeof(va_t) &&
+                Transport.Inputs[0].Size == CurrentImg->getPointerSize() &&
+                Value.Size > Transport.Inputs[0].Size;
+            if (!Copy && !Widen)
+              return std::nullopt;
+            Value = Transport.Inputs[0];
+            Before = Writer;
+          }
+          return std::nullopt;
+        };
+        if (!ActiveFrameMemoryQuery && Def.Output.Size <= sizeof(uint64_t) &&
+            Def.MemoryOrdering == NdMemoryOrdering::None &&
+            Def.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+          for (int J = I - 1; J >= 0; --J) {
+            if (!consumeEvidence())
+              break;
+            const LowOp &Writer = B.Ops[J];
+            if (Writer.MemoryOrdering != NdMemoryOrdering::None ||
+                Writer.Opcode == NdOp::CALL ||
+                Writer.Opcode == NdOp::INDIR_CALL ||
+                Writer.Opcode == NdOp::INTRINSIC ||
+                Writer.Opcode == NdOp::ATOMIC_XCHG ||
+                Writer.Opcode == NdOp::ATOMIC_ADD ||
+                Writer.Opcode == NdOp::ATOMIC_CMPXCHG ||
+                Writer.Opcode == NdOp::COND_BR ||
+                Writer.Opcode == NdOp::BRANCH ||
+                Writer.Opcode == NdOp::INDIR_BR ||
+                Writer.Opcode == NdOp::RETURN)
+              break;
+            if (Writer.Opcode != NdOp::STORE)
+              continue;
+            const auto Memory = lowMemoryOperands(Writer);
+            if (!Memory.Complete || !Memory.StoredValue->isConst() ||
+                Memory.AccessSize != Def.Output.Size ||
+                Writer.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+              break;
+            const auto StoreGuard = instructionIsGuarded(Writer.Addr);
+            if (!StoreGuard || *StoreGuard)
+              break;
+            const auto StoredAt =
+                localAddressCarrier(*Memory.Address, J, Writer.Addr);
+            const auto LoadedAt = localAddressCarrier(Address, I, Def.Addr);
+            if (!StoredAt || !LoadedAt ||
+                StoredAt->first.Space != LoadedAt->first.Space ||
+                StoredAt->first.Offset != LoadedAt->first.Offset ||
+                StoredAt->first.Size != LoadedAt->first.Size)
+              break;
+            const auto Carrier = viewOf(StoredAt->first);
+            bool Unchanged = Carrier.Valid;
+            for (int K = std::min(StoredAt->second, LoadedAt->second);
+                 Unchanged && K < std::max(StoredAt->second, LoadedAt->second);
+                 ++K) {
+              if (!consumeEvidence()) {
+                Unchanged = false;
+                break;
+              }
+              if (sameContainer(Carrier, viewOf(B.Ops[K].Output)))
+                Unchanged = false;
+            }
+            if (Unchanged)
+              Full = constantValue(*Memory.StoredValue).Value;
+            break;
+          }
+        }
         uint64_t SlotBase = InvalidVA;
         int64_t SlotOffset = 0;
         // Canonical frame addresses have their own point-sensitive proof.
@@ -7800,6 +7901,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         // also reconstructs unrelated loop predicates and can exhaust the
         // candidate's evidence budget before reaching its dominating spill.
         const bool HasFrameSlot =
+            !Full &&
             canonicalFrameSlotKey(Block, I - 1, Address, SlotBase, SlotOffset);
         // Only literal recovery or an earlier compatible load needs the
         // generic address value. A barrier or the end of the search can rule
@@ -7813,7 +7915,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
           }
           return AddressValue.Kind == ResolverResultKind::Value;
         };
-        if (!HasFrameSlot && supportsRelocatedLiteral(Def.Output.Size)) {
+        if (!Full && !HasFrameSlot &&
+            supportsRelocatedLiteral(Def.Output.Size)) {
           resolveLoadAddress();
           if (AddressValue.Kind == ResolverResultKind::Value &&
               AddressValue.Value &&

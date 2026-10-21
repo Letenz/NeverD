@@ -3252,6 +3252,15 @@ unbounded upper bits, call clobbers and exhausted budgets must not borrow the
 earlier bound. The fourth physical slot is deliberately outside that bound.
 An unrelated deep return expression exercises incomplete escape auditing:
 the proven table survives only with every relocation root retained.
+`ReloadedGuard*` covers x86/x64 bounds loaded by PUSH/POP, an additional
+register copy and a changed literal. A bounded dynamic SP adjustment before
+the store retains the local reload proof. Overwrites, partial stores, other
+slots, calls, atomics, independent roots, changed SP lanes and exhausted budgets
+cannot borrow the earlier constant.
+`PUSH`/`POP` and direct-register relocations with the same bits as the scalar
+bound must not become numeric guard constants. On Linux x64, original machine
+code and generated LLVM execute the same independently checked selections at
+O0/O2, with both pipeline optimization modes.
 
 `LowToMedSelectorOccurrence.*` checks distinct SSA selectors for copied
 instruction addresses on x64 and AArch64 across ELF, Mach-O and COFF. Changing
