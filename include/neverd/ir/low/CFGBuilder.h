@@ -1229,8 +1229,10 @@ private:
   /// when a branch leaves a value on the stack and an arm net-changes the
   /// depth, the other arm is lifted with the wrong TOP.  A no-op (per-block
   /// offset 0) for straight-line / stack-balanced code, so only the mistracked
-  /// cases move.
-  void fixupFpuStack(LowFunc &Func);
+  /// cases move. Root seeds consume the final CFG's exact relocation ownership
+  /// so table-only labels cannot become independent x87 entries again.
+  void fixupFpuStack(LowFunc &Func,
+                     const std::set<va_t> &SuppressedRelocationRoots);
   /// Prove termination without computing unused floating return values.
   /// Local x87 state consumers retain the ordinary normalized CFG build.
   /// Only the internal no-return index may consume this reduced projection.

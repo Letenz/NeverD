@@ -14,6 +14,8 @@
 #include "neverd/ir/low/InternalNoReturn.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/loader/COFF/COFFLoaderUtils.h"
+#include "neverd/loader/PointerRelocation.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/Parallel.h"
 
@@ -357,6 +359,50 @@ BinaryImage x87ExamineImage(Arch A, BinaryFormat Format,
   Sym.Name = "examine_value";
   Image.Symbols.push_back(Sym);
   Image.KnownCodeRanges.emplace_back(Image.Entry, Image.Entry + Bytes.size());
+  return Image;
+}
+
+BinaryImage x87SwitchImage(Arch A) {
+  // A linked PE switch with relocated pointers embedded after the code.
+  // All ordinary paths enter with an empty x87 stack and define ST0.
+  std::vector<uint8_t> Bytes{0x8b, 0x44, 0x24,
+                             4, // mov eax, [sp+4]
+                             0x83, 0xf8, 2,
+                             0x77, 0x19, // cmp eax, 2; ja 1022
+                             0xff, 0x24, uint8_t(A == Arch::X86 ? 0x85 : 0xc5),
+                             0x40, 0x10, 0,
+                             0, // jmp [ax*ptrsize+1040]
+                             0xdb, 0x44, 0x24,
+                             8,    0xeb, 0x0e, // 1010: fild; jmp 1024
+                             0xdb, 0x44, 0x24,
+                             12,   0xeb, 8, // 1016: fild; jmp 1024
+                             0xdb, 0x44, 0x24,
+                             16,   0xeb, 2, // 101c: fild; jmp 1024
+                             0xd9, 0xee,    // 1022: fldz
+                             0xd9, 0xe5, 0xdf,
+                             0xe0, 0xdd, 0xd8, // fxam; fnstsw ax; pop
+                             0x25, 0,    0x47,
+                             0,    0,    0xc3}; // and eax, 4700; ret
+  auto Image = x87ExamineImage(A, BinaryFormat::COFF, Bytes);
+  Image.IsRelocatable = false;
+  auto &Text = Image.Segments.front();
+  Text.Data.resize(0x40, 0xcc);
+  std::vector<AbsolutePointerRelocation> Relocations;
+  for (va_t Target : {0x1010, 0x1016, 0x101c}) {
+    const va_t Slot = Text.VA + Text.Data.size();
+    for (unsigned I = 0; I < Image.getPointerSize(); ++I)
+      Text.Data.push_back(uint8_t(Target >> (8 * I)));
+    Relocations.push_back({Slot, Target, InvalidVA});
+  }
+  Text.Size = Text.FileSz = Text.Data.size();
+  if (A == Arch::X86)
+    Relocations.push_back({0x100c, 0x1040, InvalidVA});
+  recordAbsolutePointerRelocations(Image, Relocations);
+  coff_loader::recordRelocatedPointerRunsInCode(Image);
+  if (A == Arch::X64) {
+    Image.DataAddressRelocOperands[0x100c] = {0x1040, 0x1040, 4, 0x1000};
+    Image.RelocDataAddrs.insert(0x1040);
+  }
   return Image;
 }
 
@@ -783,6 +829,197 @@ TEST(X87Examine, TagProofSurvivesBranchesPopsAndExplicitInvalidation) {
           EXPECT_EQ(Examine, 1u);
         }
       }
+}
+
+TEST(X87Examine, OwnedSwitchLabelsInheritStateButIndependentRootsDoNot) {
+  for (Arch A : {Arch::X86, Arch::X64})
+    for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+      SCOPED_TRACE(static_cast<int>(A));
+      SCOPED_TRACE(Mutation);
+      auto Image = x87SwitchImage(A);
+      ASSERT_TRUE(Image.CodeRefTargets.count(0x1010));
+      ASSERT_TRUE(Image.CodePtrRelocSlots.count(0x1040));
+      std::set<va_t> Protected;
+      if (Mutation == 1) {
+        // A separate relocated pointer keeps the label independently live.
+        Segment Data;
+        Data.Name = ".rdata";
+        Data.VA = 0x2000;
+        Data.Size = Data.FileSz = Image.getPointerSize();
+        Data.Flags = SegmentFlags::Readable;
+        Data.Data.resize(Data.Size);
+        Data.Data[0] = Data.Data[1] = 0x10;
+        Image.Segments.push_back(std::move(Data));
+        recordAbsolutePointerRelocation(Image, 0x2000, 0x1010);
+      } else if (Mutation == 2) {
+        Protected.insert(0x1040);
+      } else if (Mutation == 3) {
+        // A bare target union without exact slot ownership cannot be erased.
+        Image.CodeRefTargets.insert(0x1024);
+      } else if (Mutation == 4) {
+        // Another reachable instruction takes this same case's address.
+        auto &Text = Image.Segments.front();
+        Text.Data.insert(Text.Data.begin(), 16, 0x90);
+        Text.VA -= 16;
+        Text.Size = Text.FileSz = Text.Data.size();
+        const std::vector<uint8_t> Prefix =
+            A == Arch::X86
+                ? std::vector<uint8_t>{0xba, 0x10, 0x10, 0, 0, 0xeb, 9}
+                : std::vector<uint8_t>{0x48, 0x8d, 0x15, 0x19, 0,
+                                       0,    0,    0xeb, 7};
+        std::copy(Prefix.begin(), Prefix.end(), Text.Data.begin());
+        Image.Entry = Text.VA;
+        Image.Symbols.front().Addr = Image.Entry;
+        Image.Symbols.front().Size += 16;
+        Image.KnownCodeRanges.front().first = Image.Entry;
+        for (auto &[Slot, Field] : Image.DataAddressRelocOperands)
+          Field.TargetOwnerVA = Text.VA;
+        for (auto &[Slot, Field] : Image.CodeAddressRelocOperands)
+          Field.TargetOwnerVA = Text.VA;
+        if (A == Arch::X86)
+          Image.CodeAddressRelocOperands[Image.Entry + 1] = {0x1010, 0x1010, 4,
+                                                             Text.VA};
+      } else if (Mutation == 5) {
+        Image.CodeRefTargets.insert(0x1014);
+      } else if (Mutation == 6) {
+        ExceptionFunction EH;
+        EH.CodeRange = {Image.Entry, 0x1030};
+        EH.Encoding = ExceptionEncoding::DwarfFDE;
+        EH.Personality = ExceptionPersonality::GxxPersonalityV0;
+        EH.Itanium.emplace();
+        ItaniumCallSite Site;
+        Site.GuardedRange = {Image.Entry, Image.Entry + 4};
+        Site.LandingPadVA = 0x1010;
+        EH.Itanium->CallSites.push_back(Site);
+        Image.ExceptionMetadata.Functions.push_back(std::move(EH));
+        Image.ExceptionMetadata.rebuildIndex();
+      }
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Image));
+      CFGBuilder Builder;
+      const std::set<va_t> Entries{Image.Entry};
+      Builder.setKnownFuncEntries(&Entries);
+      Builder.setProtectedJumpTableRelocationSlots(&Protected);
+      const auto Low = Builder.build(Image, Dec, Image.Entry, "x87_switch");
+      std::string Dump;
+      llvm::raw_string_ostream Stream(Dump);
+      Pipeline::dumpLowIR({Low}, Stream);
+      ASSERT_EQ(Low.JumpTables.size(), 1u) << Dump;
+      EXPECT_EQ(Low.hasCompleteInstructionLift(),
+                A == Arch::X64 || Mutation == 0)
+          << Dump;
+      if (Mutation == 0 || Mutation == 4)
+        EXPECT_EQ(Low.ModuleAnalysisRoots.count(0x1010),
+                  Mutation == 4 && A == Arch::X64);
+      if (A == Arch::X64) {
+        unsigned Captures = 0;
+        for (const auto &B : Low.Blocks)
+          for (const auto &Op : B.Ops)
+            Captures +=
+                Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                Op.Inputs[0].isConst() &&
+                Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextBegin);
+        EXPECT_EQ(Captures, Mutation == 0 ? 1u : 2u);
+      }
+    }
+}
+
+TEST_F(X86_32_X87FPU, RelocatedSwitchMatchesNativeIntegerLoadClassification) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "requires Linux x86-64 and native i386 execution";
+#else
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "requires Clang's x86 targets";
+  const auto NativePath = tmpFile("x87-switch-native.s");
+  std::ofstream(NativePath) << R"(
+.intel_syntax noprefix
+.text
+.globl native_examine
+native_examine:
+  mov eax, [esp+4]
+  cmp eax, 2
+  ja .Ldefault
+  jmp dword ptr [.Ltable+eax*4]
+.Lfirst:
+  fild dword ptr [esp+8]
+  jmp .Lexamine
+.Lsecond:
+  fild dword ptr [esp+12]
+  jmp .Lexamine
+.Lthird:
+  fild dword ptr [esp+16]
+  jmp .Lexamine
+.Ldefault:
+  fldz
+.Lexamine:
+  fxam
+  fnstsw ax
+  fstp st(0)
+  and eax, 0x4700
+  ret
+.Ltable:
+  .long .Lfirst, .Lsecond, .Lthird
+.globl _start
+_start:
+  fninit
+  call test_main
+  mov ebx, eax
+  mov eax, 1
+  int 0x80
+.section .note.GNU-stack,"",@progbits
+)";
+  const auto HarnessPath = tmpFile("x87-switch-harness.c");
+  std::ofstream(HarnessPath) << R"(
+extern unsigned native_examine(unsigned, int, int, int);
+extern unsigned examine_value(unsigned, int, int, int);
+int test_main(void) {
+  static const int values[] = {0, 1, -1, 2147483647, (-2147483647-1), 16777217};
+  static const unsigned selectors[] = {0, 1, 2, 3, 0xffffffffu};
+  for (unsigned s = 0; s != 5; ++s)
+    for (unsigned i = 0; i != 6; ++i) {
+      const int a = values[i], b = values[(i+1)%6], c = values[(i+2)%6];
+      const unsigned expected = native_examine(selectors[s], a, b, c);
+      if (examine_value(selectors[s], a, b, c) != expected) return 1+s*6+i;
+    }
+  return 0;
+}
+)";
+  for (bool NoOpt : {false, true}) {
+    SCOPED_TRACE(NoOpt);
+    auto Image = x87SwitchImage(Arch::X86);
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.LiftMode = true;
+    Options.NoOpt = NoOpt;
+    Options.OnlyFunctionEntries = {Image.Entry};
+    auto Result = Pipeline().run(Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    ASSERT_TRUE(Result.LlvmModule);
+    ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+    std::string IR;
+    llvm::raw_string_ostream Stream(IR);
+    neverd::test::printHostCompilerFixture(*Result.LlvmModule, Stream);
+    const auto IRPath = tmpFile("x87-switch.ll");
+    std::ofstream(IRPath) << IR;
+    for (const std::string Opt : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Opt);
+      const auto Binary = tmpFile("x87-switch-exec");
+      const auto Build = exec(
+          NEVERD_TEST_CLANG,
+          {"--target=i386-linux-gnu", Opt, "-msse2", "-ffreestanding",
+           "-fuse-ld=lld", "-nostdlib", "-static", "-no-pie", IRPath.string(),
+           HarnessPath.string(), NativePath.string(), "-o", Binary.string()});
+      ASSERT_TRUE(Build.ok()) << Build.err << IR;
+      const auto Run = exec(Binary.string(), {});
+      EXPECT_EQ(Run.exitCode, 0) << Run.err << IR;
+      const auto Object = tmpFile("x87-switch.obj");
+      const auto COFF = exec(NEVERD_TEST_CLANG,
+                             {"--target=i686-pc-windows-msvc", Opt, "-msse2",
+                              "-c", IRPath.string(), "-o", Object.string()});
+      EXPECT_TRUE(COFF.ok()) << COFF.err << IR;
+    }
+  }
+#endif
 }
 
 TEST_F(X86_32_X87FPU, ExamineClassificationMatchesNativeExtendedEncodings) {

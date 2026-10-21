@@ -4674,6 +4674,16 @@ APFloat semantics and preserves floating state independently of that machine
 instruction admission. General x87 TOP/tag/status and fault ordering remain
 outside this projection.
 
+Both typed x87 tag seeds and owned-context captures consume the final CFG's
+source-counted relocation-root suppression. A switch label whose every
+relocation source belongs to an active table inherits its predecessors' state,
+even if the loader's additive `CodeRefTargets` union still contains it.
+Independent address-taking instructions, unconsumed or protected slots,
+exception landings and other roots inside a block retain their independent
+entry semantics. Inline absolute sources qualify suppression only after their
+targets are decoded; they never seed otherwise unreachable table arms. The x87
+pass does not repeat table-ownership analysis.
+
 `ir/X86FPState.h` owns x86 numerical/state contracts. Legacy
 ADD/SUB/MUL/DIV in SS/SD forms import MXCSR, compute one explicit aggregate
 containing raw result bits and outgoing MXCSR, and commit that state. SUBBYTES

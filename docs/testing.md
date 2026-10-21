@@ -1435,6 +1435,15 @@ patch cases retain an explicit adapter refusal. The sign suite distinguishes
 unconsumed entry reads from consumers requiring a native entry adapter.
 Run `NeverDX87CallGraphTests` and the x87 integer-load, sign,
 conversion, parameter and function-admission suites when changing this boundary.
+`X87Examine.OwnedSwitchLabelsInheritStateButIndependentRootsDoNot` checks
+relocated in-code switch tables with FILD/FXAM on PE32 and owned x64 contexts.
+Additional relocation sources, protected slots, independent address-taking
+instructions, bare target references, interior roots and exception landings
+must retain independent entry state.
+`RelocatedSwitchMatchesNativeIntegerLoadClassification` compares an independent
+i386 assembly switch with LLVM output in default/NoOpt pipelines at O0/O2,
+including zero, signed limits, negative values and default selectors. It also
+compiles the generated modules to PE32 objects.
 `X87ImportCall` checks PE32 CRT register-stack calls through direct stubs, IAT
 slots and loaded targets, including missing or surplus inputs, unsupported
 providers and calling conventions, no-return bypasses, source refusals, and

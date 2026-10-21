@@ -441,6 +441,40 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
   detail::mergeRelativeRelocationRootSources(RelativeRelocationRootSourceCache,
                                              BlockStarts,
                                              FinalRelocationRootSources);
+  auto SuppressionRelocationRootSources = FinalRelocationRootSources;
+  // Inline absolute tables do not seed discovery: their enclosing executable
+  // range may belong to another function. Once their targets are decoded,
+  // however, retain every source for final ownership arbitration. Otherwise a
+  // table-only CodeRefTarget survives in downstream entry-state analysis even
+  // though this CFG has consumed its exact slots. These extra sources only
+  // qualify suppression; they must not seed otherwise unreachable table arms.
+  if (CurrentImg && CurrentFuncRange) {
+    std::map<va_t, std::set<va_t>> AbsoluteSources;
+    if (!AbsoluteRelocationRoots ||
+        !AbsoluteRelocationRoots->collectSources(
+            *CurrentImg, CurrentFuncRange->first, CurrentFuncRange->second,
+            AbsoluteSources)) {
+      const detail::AbsoluteRelocationRootIndex LocalIndex(*CurrentImg);
+      LocalIndex.collectSources(*CurrentImg, CurrentFuncRange->first,
+                                CurrentFuncRange->second, AbsoluteSources);
+    }
+    for (const auto &[Target, Sources] : AbsoluteSources) {
+      if (!Insns.count(Target))
+        continue;
+      for (va_t Slot : Sources)
+        if (CurrentImg->hasExecutableCodeOwnerAt(Slot, ExecutableCodeOwners))
+          SuppressionRelocationRootSources[Target].insert(Slot);
+    }
+    // An actual address operand is a separate source even when an inline
+    // table also points at its target. Loader reclassification has removed
+    // proved inline table fields from this operand inventory.
+    for (const auto &[Slot, Field] : CurrentImg->CodeAddressRelocOperands) {
+      const va_t Target = normalizeCodeAddress(Field.TargetVA, CurrentImg->Arch,
+                                               CurrentImg->Mode);
+      if (Insns.count(Target))
+        SuppressionRelocationRootSources[Target].insert(Slot);
+    }
+  }
 
   struct EffectiveCFGView {
     std::set<va_t> ReachableInsns;
@@ -506,7 +540,7 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
       }
     }
 
-    for (const auto &[Root, Sources] : FinalRelocationRootSources) {
+    for (const auto &[Root, Sources] : SuppressionRelocationRootSources) {
       if (DurableCFGRoots.count(Root) || Sources.empty())
         continue;
       if (std::all_of(Sources.begin(), Sources.end(), [&](va_t Slot) {
@@ -761,7 +795,7 @@ void CFGBuilder::rebuildBlocks(LowFunc &Func) {
   }
   linkExceptionalSuccessors(Func);
   extractJumpTables(Func);
-  fixupFpuStack(Func);
+  fixupFpuStack(Func, FinalView.SuppressedRelocationRoots);
 }
 
 //===----------------------------------------------------------------------===//

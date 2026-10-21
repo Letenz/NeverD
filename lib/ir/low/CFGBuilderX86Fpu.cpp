@@ -1979,11 +1979,31 @@ void CFGBuilder::recordSkippedFpuFixup(const LowFunc &Func) {
   }
 }
 
-void CFGBuilder::fixupFpuStack(LowFunc &Func) {
+void CFGBuilder::fixupFpuStack(
+    LowFunc &Func, const std::set<va_t> &SuppressedRelocationRoots) {
   if (SkipX87StackFixup) {
     recordSkippedFpuFixup(Func);
     return;
   }
+  const auto IsRoot = [&](const LowBlock &Block) {
+    const auto RootWithin = [&](const std::set<va_t> &Roots,
+                                bool ApplySuppression) {
+      for (auto It = Roots.lower_bound(Block.StartAddr);
+           It != Roots.end() && (*It == Block.StartAddr || *It < Block.EndAddr);
+           ++It)
+        if (!ApplySuppression || !SuppressedRelocationRoots.count(*It))
+          return true;
+      return false;
+    };
+    // The image-wide target union retains addresses originally recorded for
+    // relocated table slots. Only the final CFG can prove all such sources
+    // consumed. Independent address-taking instructions and exception roots
+    // remain authoritative even when a table also names the same label.
+    return Block.StartAddr == Func.Entry || Block.Preds.empty() ||
+           !Block.ExceptionalPreds.empty() ||
+           RootWithin(Func.ModuleAnalysisRoots, false) ||
+           (CurrentImg && RootWithin(CurrentImg->CodeRefTargets, true));
+  };
   // Neither native-context ownership nor a no-return annotation supplies
   // the PE32 CRT argument contract. These paths bypass typed stack fixup.
   if (CurrentImg)
@@ -2096,12 +2116,6 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
       }
       const NdVar Handle = NdVar::tmp(Next, 8);
       Func.FunctionTemporaries.push_back({Next, 8});
-      const auto IsRoot = [&](const LowBlock &B) {
-        return B.StartAddr == Func.Entry || B.Preds.empty() ||
-               !B.ExceptionalPreds.empty() ||
-               Func.ModuleAnalysisRoots.count(B.StartAddr) ||
-               CurrentImg->CodeRefTargets.count(B.StartAddr);
-      };
       std::set<int> RecapturedRoots;
       for (const auto &B : Func.Blocks)
         if (B.StartAddr != Func.Entry && IsRoot(B))
@@ -2583,11 +2597,6 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
                       uint8_t(All.Payload & ~Generated[I].Payload)};
     }
     for (const LowBlock &Block : Func.Blocks) {
-      auto rootWithin = [&](const std::set<va_t> &Roots) {
-        auto It = Roots.lower_bound(Block.StartAddr);
-        return It != Roots.end() &&
-               (*It == Block.StartAddr || *It < Block.EndAddr);
-      };
       // An ordinary call boundary has empty tags but no defined payloads.
       // A checked consumer additionally owns its incoming ST0 parameter;
       // its graph forbids accesses below it and callers prove scratch space.
@@ -2595,10 +2604,7 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
       // Other roots, including exception landings, keep an unknown state.
       const bool CallBoundary =
           Block.StartAddr == Func.Entry && Block.ExceptionalPreds.empty();
-      if (Block.StartAddr == Func.Entry || Block.Preds.empty() ||
-          !Block.ExceptionalPreds.empty() ||
-          rootWithin(Func.ModuleAnalysisRoots) ||
-          rootWithin(CurrentImg->CodeRefTargets))
+      if (IsRoot(Block))
         seed(Block.Id, !CallBoundary              ? Tags{}
                        : Func.ConsumesX87Argument ? Tags{1, 0xfe, 1}
                                                   : Tags{0, 0xff, 0});
