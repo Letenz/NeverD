@@ -988,7 +988,7 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
       return true;
     if (!valueIsOpaqueRuntimeOffset(Offset))
       return false;
-    // The complete address audit below must still establish one immutable
+    // The complete address audit below must still establish one complete
     // run and a uniform symbolized model for every selectable base.
     SawOpaqueRuntimeOffset = true;
     return true;
@@ -1578,10 +1578,10 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
     bool CompleteMirror =
         !SawRawOriginalBase && SawSymbolizedBase && CycleEpoch == 0;
     for (const auto &Base : Bases) {
-      const auto Owner = immutablePointerMirrorRun(Base.VA);
+      const auto Owner = completePointerMirrorRun(Base.VA);
       const auto ExactOwner = Base.OwnerVA == InvalidVA
                                   ? Owner
-                                  : immutablePointerMirrorRun(Base.OwnerVA);
+                                  : completePointerMirrorRun(Base.OwnerVA);
       if (!Owner || ExactOwner != Owner || (Run && *Run != *Owner)) {
         CompleteMirror = false;
         break;

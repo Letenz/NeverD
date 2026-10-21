@@ -771,9 +771,10 @@ private:
   /// `mirror + (node - runStart)`.
   bool addrInCodePtrMirrorRun(uint64_t VA) const;
 
-  /// The immutable complete-run mirror owning this data address, if any.
-  /// A per-object embedding or mutable mirror supplies no such certificate.
-  std::optional<uint64_t> immutablePointerMirrorRun(uint64_t VA) const;
+  /// The complete pointer mirror owning this data address, if any. Mutable
+  /// runs require every byte of the segment in the same canonical global;
+  /// neither a per-object embedding nor an incomplete image qualifies.
+  std::optional<uint64_t> completePointerMirrorRun(uint64_t VA) const;
 
   /// If \p AddrVar provably indexes a single writable data segment, return that
   /// segment's start VA; std::nullopt otherwise (no writable base, or the
@@ -1046,7 +1047,7 @@ private:
   bool valueIsGuardedScalarOffset(const MedVar &V) const;
   /// An expression of unchanged runtime words and numeric operands. This
   /// establishes neither an index bound nor a callable slot domain. An address
-  /// consumer additionally needs a complete immutable mirror and one uniform
+  /// consumer additionally needs a complete pointer mirror and one uniform
   /// symbolized address model before using it as an unbounded offset.
   bool valueIsOpaqueRuntimeOffset(const MedVar &V) const;
   /// A runtime word read with no frame or relocatable image address dependency.

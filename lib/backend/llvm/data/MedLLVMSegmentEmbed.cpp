@@ -498,12 +498,25 @@ void MedLLVMEmitter::readOnlyAfterRelocRun(const Segment *Seg,
 }
 
 std::optional<uint64_t>
-MedLLVMEmitter::immutablePointerMirrorRun(uint64_t VA) const {
-  if (!addrInCodePtrMirrorRun(VA) || !isMaterializableReadOnlyDataAddress(VA))
+MedLLVMEmitter::completePointerMirrorRun(uint64_t VA) const {
+  if (!addrInCodePtrMirrorRun(VA))
     return std::nullopt;
   const Segment *Seg = Img->getSegmentFor(VA);
-  if (!isReadOnlyAfterReloc(Seg))
-    return std::nullopt;
+  if (isReadOnlyAfterReloc(Seg)) {
+    if (!isMaterializableReadOnlyDataAddress(VA))
+      return std::nullopt;
+  } else {
+    // A writable segment with pointer slots already has one mutable mirror:
+    // direct addresses, selected addresses and STOREs share the same global.
+    // Its on-image bytes (including loader-authenticated zero fill) must cover
+    // the entire memory extent before an unbounded offset may retain it.
+    if (!Seg || !Seg->isReadable() || !Seg->isWritable() ||
+        Seg->isExecutable() || Seg->Size == 0 ||
+        Seg->Data.size() != Seg->Size ||
+        Seg->Size > std::numeric_limits<uint64_t>::max() - Seg->VA ||
+        !canResolveGlobalDataConstant(VA))
+      return std::nullopt;
+  }
   uint64_t RunStart = 0, RunEnd = 0;
   readOnlyAfterRelocRun(Seg, RunStart, RunEnd);
   return VA >= RunStart && VA < RunEnd ? std::optional<uint64_t>(RunStart)

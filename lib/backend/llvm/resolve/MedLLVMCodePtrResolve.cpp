@@ -2151,7 +2151,7 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
           // its emitted pointer plus unchanged runtime bits; do not rebase an
           // unbounded raw address or grant callable identity to the LOAD.
           return Pointer.Model == AddressModel::Symbolized &&
-                 immutablePointerMirrorRun(Pointer.Segment) ==
+                 completePointerMirrorRun(Pointer.Segment) ==
                      std::optional<uint64_t>(Pointer.Segment) &&
                  valueIsOpaqueRuntimeOffset(Offset);
         };

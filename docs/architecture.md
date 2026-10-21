@@ -7559,7 +7559,7 @@ For an immutable scalar byte table, a small fixed addition or subtraction in the
 
 An immutable scalar table indexed by an unbounded runtime value, such as a field an object holds (`table[obj->field]`), has a proven base but no provable index bound, so the scalar-offset proof rejects the offset. When the literal-table audit has reached exactly one read-only base, and no pointer merge, PHI, frame reload or mutable base, the LLVM backend reads the table through its region's read-only run mirror at the table's own offset plus the runtime index (`tryResolveRuntimeIndexedReadOnlyTable`). The mirror keeps the region's byte layout, so an in-region index reads the original element and an out-of-region one is the program's own undefined behaviour, as for a pointer table's run redirect. The offset proof itself is unchanged: a loaded index is still a stable offset only under a dominating guard or a low-bit mask (`RuntimeScalarBoundsBelongToTheScaledDefinition`).
 
-A selection between computed addresses in one immutable pointer-mirror run may
+A selection between computed addresses in one complete pointer-mirror run may
 retain an unbounded runtime offset without changing the scalar-offset proof.
 Every feasible arm must preserve its complete pointer and use the same
 symbolized address model. The shared runtime-source audit follows nested
@@ -7568,11 +7568,14 @@ reloads through every reaching store. It excludes image-derived words, hidden
 mapped bases, uninitialized or escaped stack storage and incomplete or cyclic
 value graphs. Load-address dependencies stay visible through every nesting
 level, and this proof grants neither a scalar bound nor a callable domain.
-The container audit requires the complete immutable run, including any exact
-relocation owner. Such an address keeps its emitted arithmetic and selection,
-with no raw-VA rebasing. A raw or mixed model, truncated pointer, mutable run or
-per-object embedding cannot acquire this permission. Indirect calls still need
-their independent complete callable-slot domain, and pointer recurrences retain
+The container audit requires the complete run, including any exact relocation
+owner. A mutable segment qualifies only when all its memory bytes are present,
+including any loader-authenticated zero fill, and direct accesses, selected
+accesses and stores share its canonical writable pointer mirror. Such an address
+keeps its emitted arithmetic and selection, with no raw-VA rebasing. A raw or
+mixed model, truncated pointer, incomplete storage or per-object embedding cannot
+acquire this permission. Indirect calls still need their independent complete
+callable-slot domain, and pointer recurrences retain
 their separate initialization and step proofs.
 
 Jump-table recovery emits transfers to ordinary successor blocks instead of rebuilding their statements through a separate path. Each block keeps one lowering owner, including shared cases, default targets and loop entries. Dispatch-edge PHI copies execute before the corresponding transfer, with parallel snapshots preserved; incomplete edge bindings remain explicit failures.

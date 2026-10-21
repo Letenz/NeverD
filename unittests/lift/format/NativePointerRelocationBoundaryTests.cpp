@@ -1003,6 +1003,140 @@ int main(void) {
 }
 
 TEST_F(NativePointerRelocationBoundary,
+       RuntimeIndexedMutableMirrorsKeepDirectAndSelectedStoresAliased) {
+#if !defined(__x86_64__) || defined(__APPLE__) || defined(_WIN32)
+  GTEST_SKIP() << "native execution requires an x86-64 ELF host";
+#else
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "native fixture requires Clang's GNU-style driver";
+  const fs::path Source = tmpFile("mutable-runtime-mirror.s");
+  const fs::path Object = tmpFile("mutable-runtime-mirror.o");
+  const fs::path Harness = tmpFile("mutable-runtime-mirror-main.c");
+  const fs::path Original = tmpFile("mutable-runtime-mirror-original");
+  const fs::path IR = tmpFile("mutable-runtime-mirror.ll");
+  const fs::path Rebuilt = tmpFile("mutable-runtime-mirror-rebuilt");
+  {
+    std::ofstream OS(Source);
+    ASSERT_TRUE(OS);
+    OS << R"(
+.text
+.globl selected_read
+.type selected_read,@function
+selected_read:
+  mov (%rdi), %rax
+  test %rsi, %rsi
+  jz 1f
+  lea table_a(%rip), %rcx
+  lea (%rcx,%rax,8), %rax
+  jmp 2f
+1:
+  lea table_b(%rip), %rcx
+  lea (%rcx,%rax,8), %rax
+2:
+  mov (%rax), %rax
+  ret
+.size selected_read,.-selected_read
+.globl selected_write
+.type selected_write,@function
+selected_write:
+  mov (%rdi), %rax
+  lea table_a(%rip), %rcx
+  lea (%rcx,%rax,8), %rcx
+  lea table_b(%rip), %r8
+  lea (%r8,%rax,8), %r8
+  test %rsi, %rsi
+  cmovz %r8, %rcx
+  mov %rdx, (%rcx)
+  mov %rdx, %rax
+  ret
+.size selected_write,.-selected_write
+.globl direct_read
+.type direct_read,@function
+direct_read:
+  mov table_a+16(%rip), %rax
+  add table_b+16(%rip), %rax
+  ret
+.size direct_read,.-direct_read
+.globl direct_write
+.type direct_write,@function
+direct_write:
+  mov %rdi, table_a+16(%rip)
+  mov %rsi, table_b+16(%rip)
+  mov %rdi, %rax
+  ret
+.size direct_write,.-direct_write
+.data
+.p2align 3
+table_a: .quad 11,23,47,89
+table_b: .quad 101,211,433,877
+mirror_owner: .quad table_a
+.section .note.GNU-stack,"",@progbits
+)";
+  }
+  {
+    std::ofstream OS(Harness);
+    ASSERT_TRUE(OS);
+    OS << R"(
+#include <stdint.h>
+extern uint64_t selected_read(const uint64_t *, uint64_t);
+extern uint64_t selected_write(const uint64_t *, uint64_t, uint64_t);
+extern uint64_t direct_read(void);
+extern uint64_t direct_write(uint64_t,uint64_t);
+int main(void) {
+ uint64_t a[]={11,23,47,89}, b[]={101,211,433,877};
+ const uint64_t choices[]={0,1,UINT64_MAX,UINT64_C(1)<<63};
+ for(unsigned round=0;round!=16;++round) {
+  for(uint64_t i=0;i!=4;++i) for(unsigned c=0;c!=4;++c) {
+   if(selected_read(&i,choices[c])!=(choices[c]?a[i]:b[i])) return 1;
+   uint64_t n=(UINT64_C(0x1234567812345678) ^ (i+31*round+5*c));
+   if(selected_write(&i,choices[c],n)!=n) return 2;
+   (choices[c]?a:b)[i]=n;
+   if(selected_read(&i,choices[c])!=n) return 3;
+   if(direct_read()!=a[2]+b[2]) return 4;
+  }
+  a[2]=round+3;b[2]=round+517;
+  if(direct_write(a[2],b[2])!=a[2]) return 5;
+  uint64_t i=2;
+  if(selected_read(&i,1)!=a[2] || selected_read(&i,0)!=b[2]) return 6;
+ }
+ return 0;
+}
+)";
+  }
+  auto Compile =
+      exec(NEVERD_TEST_CLANG, {"-c", Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+  Compile =
+      exec(NEVERD_TEST_CLANG, {"-fPIE", "-pie", Object.string(),
+                               Harness.string(), "-o", Original.string()});
+  ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+  auto Native = exec(Original.string(), {});
+  ASSERT_EQ(Native.exitCode, 0) << Native.err;
+  auto Lifted = liftToLLVMIRUnopt(Object);
+  ASSERT_EQ(Lifted.exitCode, 0) << Lifted.err;
+  EXPECT_NE(Lifted.out.find("@__nd_codeptr_"), std::string::npos);
+  const size_t Start = Lifted.out.find("; ModuleID");
+  ASSERT_NE(Start, std::string::npos);
+  {
+    std::ofstream OS(IR);
+    ASSERT_TRUE(OS);
+    OS << std::string_view(Lifted.out).substr(Start);
+  }
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    Compile =
+        exec(NEVERD_TEST_CLANG, {Optimization, "-fPIE", "-pie", IR.string(),
+                                 Harness.string(), "-o", Rebuilt.string()});
+    ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+    for (unsigned Attempt = 0; Attempt != 5; ++Attempt) {
+      auto Run = exec(Rebuilt.string(), {});
+      EXPECT_EQ(Run.exitCode, 0) << Run.err;
+    }
+  }
+#endif
+}
+
+TEST_F(NativePointerRelocationBoundary,
        MachOObjectAbsoluteCodePointerRelocationSurvivesLift) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "cross-target Mach-O fixtures require Clang's GNU-style "
