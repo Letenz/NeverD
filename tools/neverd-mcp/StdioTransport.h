@@ -1,4 +1,4 @@
-//===- Stdio.h - MCP newline transport --------------------------*- C++ -*-===//
+//===- StdioTransport.h - MCP newline transport -----------------*- C++ -*-===//
 //
 // NeverD Decompiler
 //
