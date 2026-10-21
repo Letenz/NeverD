@@ -956,6 +956,9 @@ to a disposable project, edit the real output through native widgets, and
 verify persistence. `NEVERD_CODE_NAV_CAPTURE_DIR` saves window captures.
 Run `neverd-gui-tests` directly with the native Qt platform to exercise native
 widgets; CTest sets the controller's platform to `offscreen`.
+On Windows, point `QT_QPA_FONTDIR` at `%WINDIR%/Fonts` for offscreen runs,
+as desktop CI does. That plugin uses FreeType and needs an explicit font
+directory to measure translated text with real glyphs.
 
 `NeverDWorkerCLIDataPresentation` checks CLI/GUI array, alignment and enum
 parity against a real engine: identical sidecars, listing display, native IR
