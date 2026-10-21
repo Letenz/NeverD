@@ -1001,6 +1001,9 @@ before input or policy mutation; image pointers alone do not establish validity.
 Function selection also retains decoded image data-access widths. Their exact
 ordered function address/size inventory is checked after synchronization;
 changed extents rebuild the widths and discard source using the former names.
+Publishing only a recovered extent preserves current function-name derivation
+and lookup indexes, since the names and their list positions stay unchanged.
+Names, exports and list changes retain their ordinary invalidation guards.
 Image reloads, function edits, analysis-policy and signature changes retire
 these facts. Navigation still discards the preceding output IR and source.
 

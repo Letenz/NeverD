@@ -782,6 +782,8 @@ IR, same-address image replacement, failed reload, function edits, target
 policy, signature matching and feature changes between selections. Run these
 with `NeverDPipelineOutcomeTests` and `NeverDSessionCAPITests`; the no-return,
 x87 and jump-table suites cover their shared proof consumers.
+`SessionCAPITest.RecoveredExtentsKeepFunctionNamesAndLaterRenames` checks public
+size publication, name lookup and a later analyst rename after navigation.
 `PipelineOutcome.Warm*` checks that idle preparation leaves selected runs
 unchanged, keeps a cache built for other entries, and stops at the cache bound
 without evicting. `NeverDWorkerWarmFunctions` checks the worker's `warm` open

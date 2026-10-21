@@ -7678,6 +7678,44 @@ TEST_F(SessionCAPITest, SelectedRunsPublishOnlyFunctionsTheListLacks) {
   EXPECT_EQ(Listed(), Before);
 }
 
+TEST_F(SessionCAPITest, RecoveredExtentsKeepFunctionNamesAndLaterRenames) {
+  const auto Path = write("extent-names.elf", makeAnalysisCacheELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Entry = seedAnalysisCacheSymbols(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  for (auto &Symbol : State.Img.Symbols)
+    if (Symbol.IsFunc)
+      Symbol.Size = 0;
+  neverd::sdk::SessionTestAccess::resetFunctions(State);
+  const int Count = neverd_func_count(Session);
+  for (unsigned Offset : {0u, 0x10u, 0x40u}) {
+    const auto Address = Entry + Offset;
+    const int Before = neverd_func_find_by_addr(Session, Address);
+    ASSERT_GE(Before, 0);
+    EXPECT_EQ(neverd_func_size(Session, Before), 0u);
+    const auto Name = takeString(neverd_func_name(Session, Before));
+    ASSERT_FALSE(Name.empty());
+    EXPECT_EQ(neverd_func_entry(
+                  Session, neverd_func_find_by_name(Session, Name.c_str())),
+              Address);
+    ASSERT_EQ(neverd_prepare_function(Session, Address), 1)
+        << takeString(neverd_last_error(Session));
+    EXPECT_EQ(neverd_func_count(Session), Count);
+    const int After = neverd_func_find_by_name(Session, Name.c_str());
+    ASSERT_GE(After, 0);
+    EXPECT_EQ(neverd_func_entry(Session, After), Address);
+    EXPECT_EQ(neverd_func_size(Session, After), 6u);
+  }
+  const int First = neverd_func_find_by_addr(Session, Entry);
+  const auto Former = takeString(neverd_func_name(Session, First));
+  ASSERT_EQ(neverd_rename_func(Session, Former.c_str(), "reviewed_extent"), 0);
+  EXPECT_EQ(neverd_func_find_by_name(Session, Former.c_str()), -1);
+  const int Renamed = neverd_func_find_by_name(Session, "reviewed_extent");
+  ASSERT_GE(Renamed, 0);
+  EXPECT_EQ(neverd_func_entry(Session, Renamed), Entry);
+  EXPECT_EQ(neverd_func_size(Session, Renamed), 6u);
+}
+
 TEST_F(SessionCAPITest, SelectionsKeepTheFunctionListARebuildWouldMake) {
   using neverd::sdk::SessionTestAccess;
   const auto Path = write("kept-list.elf", makeAnalysisCacheELF(false));
