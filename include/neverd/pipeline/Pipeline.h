@@ -136,6 +136,9 @@ struct PipelineOptions {
   /// Native source views may postpone HighIR projection after shared ABI and
   /// return recovery. Patch/lift, VM routes and DumpHigh retain eager behavior.
   bool DeferHighIR = false;
+  /// A native view of the control-flow graphs alone may postpone everything
+  /// after LowIR as well (resumeMedIR), under the same restrictions.
+  bool DeferMedIR = false;
   bool PatchMode = false;
   bool LiftMode = false;
   /// LLVM-to-C uses the LLVM route without authorizing source-only rewrites
@@ -346,6 +349,8 @@ struct PipelineResult {
   std::vector<HighFunc> HighFuncs;
   /// Shared source MedIR is ready; HighIR projection has not been requested.
   bool HighIRDeferred = false;
+  /// LowIR is ready; MedIR and everything after it have not been requested.
+  bool MedIRDeferred = false;
   std::vector<sigs::LibraryRecognition> LibraryRecognitions;
   /// Includes analyzed functions with no match, for cheap identity queries.
   std::map<va_t, std::vector<size_t>> LibraryRecognitionsByFunction;
@@ -430,6 +435,11 @@ public:
   /// through the same completion boundary as eager HighIR conversion.
   bool resumeHighIR(const BinaryImage &Img, const PipelineOptions &Opts,
                     PipelineResult &Result, DebugContext *Dbg = nullptr);
+  /// Continue a run that deferred MedIR from its LowIR, as the run would
+  /// have: MedIR and the shared source analysis, then HighIR unless \p Opts
+  /// defers it.  \p Opts are the run's own, apart from the deferrals.
+  bool resumeMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
+                   PipelineResult &Result, DebugContext *Dbg = nullptr);
 
   /// Run the HelloWorldPass on a module.  Wraps PassBuilder/AnalysisManager
   /// setup so callers avoid instantiating LLVM PassManager templates (which
@@ -753,6 +763,10 @@ private:
   /// Shared source call/return recovery before either HighIR or LLVM emission.
   void prepareSourceMedIR(const BinaryImage &Img, PipelineResult &Result,
                           DebugContext *Dbg);
+  /// prepareSourceMedIR for a run that defers HighIR, which then succeeds;
+  /// a failure is the run's error.
+  void prepareDeferredSource(const BinaryImage &Img, PipelineResult &Result,
+                             DebugContext *Dbg);
 
   /// Phase 3: convert MedIR -> HighIR in parallel.
   void buildHighIR(const BinaryImage &Img, const PipelineOptions &Opts,

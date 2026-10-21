@@ -8274,17 +8274,46 @@ TEST_F(SessionCAPITest,
       EXPECT_NE(State.findLowFunc(Entry + 0x10), nullptr);
     }
     // The CFG API can be the first analysis request without explicit view
-    // preparation, and a later HighIR view must still finish the projection.
+    // preparation. It reads LowIR alone, and a later HighIR view must still
+    // finish the analysis and the projection.
     neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
     EXPECT_EQ(takeString(neverd_cfg_json(Session, Entry)), AnalysisViews[2]);
-    EXPECT_TRUE(State.PipeResult.HighIRDeferred);
+    EXPECT_TRUE(State.PipeResult.MedIRDeferred);
+    EXPECT_TRUE(State.PipeResult.MedFuncs.empty());
     EXPECT_TRUE(State.PipeResult.HighFuncs.empty());
     const auto *Low = State.findLowFunc(Entry);
     ASSERT_FALSE(takeString(neverd_ir_high(Session, Entry)).empty());
+    EXPECT_FALSE(State.PipeResult.MedIRDeferred);
     EXPECT_FALSE(State.PipeResult.HighIRDeferred);
     EXPECT_FALSE(State.PipeResult.HighFuncs.empty());
     EXPECT_EQ(State.findLowFunc(Entry), Low);
     EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
+
+    // The graph's own view prepares the same LowIR. Every deeper view of
+    // the selection continues that run and reads what a full run gives.
+    neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
+    ASSERT_EQ(neverd_prepare_function_view(Session, Entry, "cfg"), 1);
+    EXPECT_TRUE(State.PipeResult.MedIRDeferred);
+    EXPECT_TRUE(State.PipeResult.MedFuncs.empty());
+    const auto *Graphed = State.findLowFunc(Entry);
+    ASSERT_NE(Graphed, nullptr);
+    EXPECT_EQ(takeString(neverd_cfg_json(Session, Entry)), AnalysisViews[2]);
+    EXPECT_TRUE(State.PipeResult.MedIRDeferred);
+    EXPECT_EQ(analysisViews(), AnalysisViews);
+    EXPECT_FALSE(State.PipeResult.MedIRDeferred);
+    EXPECT_TRUE(State.PipeResult.HighIRDeferred);
+    EXPECT_EQ(State.findLowFunc(Entry), Graphed);
+    EXPECT_EQ(takeString(neverd_ir_llvm(Session, Entry)), IR);
+    EXPECT_EQ(takeString(neverd_decompile_llvm(Session, Entry)), LLVM);
+    EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
+    EXPECT_FALSE(State.PipeResult.HighIRDeferred);
+    // A source view straight after the graph's continues it to HighIR too.
+    neverd::sdk::SessionTestAccess::selectFunction(State, Entry);
+    ASSERT_EQ(neverd_prepare_function_view(Session, Entry, "cfg"), 1);
+    EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
+    EXPECT_FALSE(State.PipeResult.MedIRDeferred);
+    EXPECT_FALSE(State.PipeResult.HighIRDeferred);
+    EXPECT_EQ(analysisViews(), AnalysisViews);
   }
 }
 

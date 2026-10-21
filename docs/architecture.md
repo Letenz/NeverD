@@ -1347,11 +1347,16 @@ slots promoted to SSA only. It preserves the lifted control flow without the
 LLVMC optimization pipeline; the module cache distinguishes these inspection
 modules from optimized source modules. Native CFG, ABI and exception recovery
 still precede emission. EVM and SBF keep their own LLVM emission paths.
-Native LowIR, MedIR, CFG and LLVM views postpone HighIR construction after the
+Native LowIR, MedIR and LLVM views postpone HighIR construction after the
 shared source MedIR call/return recovery. A later HighIR or HighC request resumes
 only that projection through the ordinary HighIR completion boundary; it does
-not relift instructions or mutate the MedIR retained by LLVM emission. Opening
-the worker's native CFG therefore does not build discarded pseudocode.
+not relift instructions or mutate the MedIR retained by LLVM emission. The CFG
+(`neverd_cfg_json`, the `cfg` function view and the worker's graphs) reads the
+selected function's LowIR alone, so its run also postpones MedIR and the source
+analysis (`Pipeline::resumeMedIR`). Any other view of the same selection
+resumes that run from its LowIR, through the stages and options a straight run
+takes; a graph therefore neither builds discarded pseudocode nor the callee
+signatures only source recovery reads.
 
 The LLVM IR view of a function (`neverd_ir_llvm`, and the `llvm` pages of
 `neverd_ir_view_json`) is that function moved into a module of its own, as

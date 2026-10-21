@@ -308,7 +308,7 @@ static std::string emissionFailure(const std::exception &Error) {
 }
 
 static int prepareFunction(neverd_session_t Sess, neverd_va_t FuncEntry,
-                           bool NeedHighIR) {
+                           Session::PipelineDepth Depth) {
   auto *S = toSession(Sess);
   if (!S)
     return 0;
@@ -346,13 +346,20 @@ static int prepareFunction(neverd_session_t Sess, neverd_va_t FuncEntry,
              !S->OnlyFunctionEntries.count(FuncEntry)) {
       S->selectFunction(FuncEntry);
     }
-    return S->ensurePipeline(NeedHighIR) ? 1 : 0;
+    return S->ensurePipeline(Depth) ? 1 : 0;
   } catch (const std::exception &Error) {
     S->setError(std::string("function analysis failed: ") + Error.what());
   } catch (...) {
     S->setError("unexpected function analysis failure");
   }
   return 0;
+}
+
+static int prepareFunction(neverd_session_t Sess, neverd_va_t FuncEntry,
+                           bool NeedHighIR) {
+  return prepareFunction(Sess, FuncEntry,
+                         NeedHighIR ? Session::PipelineDepth::HighIR
+                                    : Session::PipelineDepth::Analysis);
 }
 
 const char *neverd_warm_functions_json(neverd_session_t Sess,
@@ -441,14 +448,20 @@ int neverd_prepare_function_view(neverd_session_t Sess, neverd_va_t FuncEntry,
   if (!S)
     return 0;
   const llvm::StringRef Stage = Representation ? Representation : "";
-  if (Stage != "low" && Stage != "med" && Stage != "high" && Stage != "llvm" &&
-      Stage != "llvmc" && Stage != "source" && !sourceDialectFromKey(Stage)) {
+  if (Stage != "cfg" && Stage != "low" && Stage != "med" && Stage != "high" &&
+      Stage != "llvm" && Stage != "llvmc" && Stage != "source" &&
+      !sourceDialectFromKey(Stage)) {
     S->setError("invalid function view");
     return 0;
   }
+  // The control-flow graph reads LowIR alone; the other IR views share the
+  // analysis the source views take before HighIR.
   return prepareFunction(Sess, FuncEntry,
-                         /*NeedHighIR=*/Stage != "low" && Stage != "med" &&
-                             Stage != "llvm" && Stage != "llvmc");
+                         Stage == "cfg" ? Session::PipelineDepth::LowIR
+                         : Stage == "low" || Stage == "med" ||
+                                 Stage == "llvm" || Stage == "llvmc"
+                             ? Session::PipelineDepth::Analysis
+                             : Session::PipelineDepth::HighIR);
 }
 
 static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,

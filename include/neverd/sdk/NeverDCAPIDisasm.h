@@ -181,7 +181,9 @@ NEVERD_API int neverd_prepare_function(neverd_session_t Sess,
 /// Prepare the requested view with the same entry and recovery checks.
 /// Native "low", "med", "llvm" and "llvmc" postpone HighIR construction,
 /// preserving shared CFG/ABI/exception analysis. A later source or "high" view
-/// completes HighIR on demand.
+/// completes HighIR on demand. Native "cfg" prepares the control-flow graphs
+/// alone (neverd_cfg_json); any other view of the function continues that
+/// analysis on demand.
 /// Other valid representations keep ordinary preparation; unknown names fail.
 /// Returns 1 on success or 0 with neverd_last_error on failure.
 NEVERD_API int neverd_prepare_function_view(neverd_session_t Sess,
