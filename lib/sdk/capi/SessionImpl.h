@@ -57,6 +57,7 @@
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -348,6 +349,22 @@ struct Session {
   /// The job owns its image; it never borrows Session state. Stale jobs stay
   /// here until ready, so an edit neither waits nor accumulates retired jobs.
   std::optional<FunctionDiscoveryJob> FunctionDiscovery;
+  /// Drop a finished job of an earlier function list, its result and failure
+  /// alike, whatever the current image is. A running one stays: an async
+  /// future joins its task on destruction.
+  void retireStaleDiscovery() {
+    if (!FunctionDiscovery ||
+        FunctionDiscovery->Revision == FunctionListRevision ||
+        FunctionDiscovery->Result.wait_for(std::chrono::seconds(0)) !=
+            std::future_status::ready)
+      return;
+    auto Job = std::move(*FunctionDiscovery);
+    FunctionDiscovery.reset();
+    try {
+      (void)Job.Result.get();
+    } catch (...) {
+    }
+  }
   std::set<va_t> OnlyFunctionEntries;
   /// Whole-program source simplifies symbolically
   /// (neverd_session_set_source_symbolic).

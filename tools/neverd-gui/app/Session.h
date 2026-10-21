@@ -60,11 +60,16 @@ struct LoadOptions {
   QJsonObject symbols;
 };
 
+struct SessionTestAccess;
+
 /// The project's writable worker and a bounded read-only analysis pool.
 /// Browsing and edits keep the owner dispatcher while expensive views use a
 /// verified replica. Save/Discard/Cancel transitions belong to the owner.
 class Session final : public QObject {
   Q_OBJECT
+  // Same-build test seam (tests/SessionTestAccess.h).
+  friend struct SessionTestAccess;
+
 public:
   explicit Session(QString workerPath, QObject *parent = nullptr);
   ~Session() override;

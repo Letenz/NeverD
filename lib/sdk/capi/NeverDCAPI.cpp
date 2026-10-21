@@ -388,6 +388,8 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.DiscoveredFunctions.reset();
   S.ImageStrings.reset();
   S.resetFunctionsFromImage();
+  // The previous image's discovery, if it has finished, is not this one's.
+  S.retireStaleDiscovery();
 
   if (!MemoryBytes) {
     neverd_annotations_load(Sess);
@@ -1012,6 +1014,7 @@ int neverd_session_discover_functions(neverd_session_t Sess) {
     return -1;
   }
   try {
+    S->retireStaleDiscovery();
     if (nativeDiscovery(*S) && !S->DiscoveredFunctions) {
       if (!takeDiscoveryJob(*S, true))
         publishDiscovery(*S, detectFunctions(S->Img));
@@ -1038,6 +1041,9 @@ int neverd_session_discover_functions_step(neverd_session_t Sess) {
     return -1;
   }
   try {
+    // Before the early answer: an image without native discovery, or with it
+    // done, must not keep an earlier image's finished job.
+    S->retireStaleDiscovery();
     if (!nativeDiscovery(*S) || S->DiscoveredFunctions)
       return 1;
     if (takeDiscoveryJob(*S, false))

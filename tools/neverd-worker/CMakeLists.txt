@@ -148,7 +148,7 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
       # Generated C uses Clang C extensions, including scalar bit casts.
       # Match the native unit fixtures' frontend when the SDK is built by cl.
       # GCC's C front end lacks them too; it remains the fallback only when
-      # no Clang is installed beside it.
+      # no Clang is installed beside it, and tests needing Clang then skip.
       set(_neverd_worker_source_cc "${CMAKE_C_COMPILER}")
       if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
         find_program(_neverd_worker_source_clang NAMES clang
@@ -204,7 +204,7 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
       set_tests_properties(NeverDWorkerHeaderRecords PROPERTIES TIMEOUT 180 SKIP_RETURN_CODE 77)
       add_test(NAME NeverDWorkerCallSiteTypes
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/call_site_types_test.py" $<TARGET_FILE:neverd-worker> --cc "${_neverd_worker_source_cc}")
-      set_tests_properties(NeverDWorkerCallSiteTypes PROPERTIES TIMEOUT 180)
+      set_tests_properties(NeverDWorkerCallSiteTypes PROPERTIES TIMEOUT 180 SKIP_RETURN_CODE 77)
       add_test(NAME NeverDWorkerDwarfReference
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/dwarf_reference_test.py"
                 "$<TARGET_FILE:neverd-worker>")
