@@ -156,6 +156,11 @@ class McpProtocolTests(unittest.TestCase):
         self.assertEqual(json.loads(header), {"revision": "7", "address": "0x401000", "representation": "c",
                                               "offset": 0, "total_lines": 3, "complete": True})
         self.assertEqual(code, "int main(void) {\n    return 0;\n}\n")
+        # exact=true asks for the engine's spelling, which is the same here.
+        result = self.server.handle(request("tools/call", {"name": "read_decompilation",
+                                                           "arguments": {"address": "0x401000", "exact": True}}))
+        self.assertEqual(result["content"][0]["text"].split("\n", 1)[1], code)
+        self.assertNotIn("exact", self.backend.calls[-1][1])
         # The complete worker response stays available as a resource.
         contents = self.server.handle(request("resources/read", {"uri": "neverd://project/decompile?address=0x401000"}))
         self.assertEqual(len(json.loads(contents["contents"][0]["text"])["payload"]["rows"]), 50)

@@ -12,6 +12,7 @@ import sys
 import threading
 from urllib.parse import parse_qs, urlparse
 
+from reading import reading_view
 from transport import Backend
 
 PROTOCOL = "2025-11-25"
@@ -55,8 +56,10 @@ TOOLS = [
          {"address": ADDRESS, "limit": PAGE["limit"]}, ("address",)),
     tool("read_decompilation", "decompile",
          "Read one function's pseudocode (\"source\": its own language; or C, Rust, Go) or IR. Starts at the "
-         "definition; prelude=true adds the includes and declarations that make it compile.",
+         "definition; prelude=true adds the includes and declarations that make it compile. C is abbreviated "
+         "as the header's legend says; exact=true gives the engine's spelling.",
          {**PAGE, "limit": {"type": "integer", "minimum": 1, "maximum": 2048}, "address": ADDRESS, "prelude": FLAG,
+          "exact": FLAG,
           "representation": {"type": "string", "enum": [
              "source", "c", "rust", "go", "llvmc", "low", "med", "high", "llvm"]}}, ("address",)),
     tool("read_bytes", "bytes", "Read up to 4096 mapped bytes at a virtual address.",
@@ -220,13 +223,19 @@ def _disassembly(payload, out):
     return _code(out, "\n".join(lines))
 
 
-def _decompilation(payload, out):
+def _decompilation(payload, out, exact=False):
     out["address"] = payload.get("address")
     out["representation"] = payload.get("dialect") or payload.get("representation")
     for key in ("prelude_lines", "offset", "total_lines", "next_offset", "complete", "unread"):
         if payload.get(key) not in (None, [], ""):
             out[key] = payload[key]
-    return _code(out, payload.get("text", ""))
+    text = payload.get("text", "")
+    if not exact and out["representation"] == "c" and text:
+        # The same C in fewer tokens; reading.py lists every abbreviation.
+        text, legend = reading_view(text)
+        if legend:
+            out["legend"] = legend
+    return _code(out, text)
 
 
 def _cfg(payload, out):
@@ -315,6 +324,8 @@ def compact_result(operation, arguments, response):
         payload = {} if payload is None else {"value": payload}
     if operation == "xrefs":
         shaped = _xrefs(payload, out, arguments.get("direction", "to"))
+    elif operation == "decompile":
+        shaped = _decompilation(payload, out, arguments.get("exact", False))
     elif operation in SHAPERS:
         shaped = SHAPERS[operation](payload, out)
     else:
@@ -392,6 +403,7 @@ class Server:
                     entry = found.get("function_address") if selected["operation"] in ("decompile", "cfg") else None
                     arguments["address"] = entry or found.get("address")
                 prelude = arguments.pop("prelude", False)
+                exact = arguments.pop("exact", False)
                 result = self.backend.query(selected["operation"], arguments, revision)
                 lines = ((result.get("payload") or {}).get("prelude") or {}).get("lines") \
                     if selected["operation"] == "decompile" and isinstance(result, dict) else None
@@ -402,7 +414,7 @@ class Server:
                                                 result.get("revision"))
                     if isinstance(result.get("payload"), dict):
                         result["payload"]["prelude_lines"] = lines
-                text, is_error = compact_result(selected["operation"], arguments, result)
+                text, is_error = compact_result(selected["operation"], {**arguments, "exact": exact}, result)
                 return self.text_result(text, is_error, result)
             except (OSError, EOFError, ValueError, RuntimeError, TimeoutError) as error:
                 return {"content": [{"type": "text", "text": str(error)}], "isError": True}
