@@ -1,4 +1,4 @@
-//===- Stdio.cpp - MCP newline transport ----------------------------------===//
+//===- StdioTransport.cpp - MCP newline transport -------------------------===//
 //
 // NeverD Decompiler
 //
@@ -9,7 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "Stdio.h"
+#include "StdioTransport.h"
 
 #include "Server.h"
 

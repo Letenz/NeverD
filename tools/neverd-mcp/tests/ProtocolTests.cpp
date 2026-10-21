@@ -11,7 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Server.h"
-#include "Stdio.h"
+#include "StdioTransport.h"
 #include "Testing.h"
 
 #include <algorithm>
