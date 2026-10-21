@@ -346,6 +346,12 @@ factor tables, retain noninvertible scales, and reject arithmetic expressions
 that agree only on Boolean corners. Exact and one-short proof budgets remain
 covered. Flat-product traversal and normalization share the same admission
 rule; short products retain their required leaf normalization.
+Pure bitwise tables also check parallel corner evaluation at 8/9/63/64/65/257
+bits, permuted variable order and incomplete final words. Short known factors
+must retain a simpler linear tail under the same bounded allowance; independent
+word oracles cover the entire Boolean cube and arbitrary word values. Affine
+selector cost bounds require complete weights, with a changed nonsingleton
+corner and opaque inputs preventing an unjustified affine assumption.
 Common-power tests require a separately proved low-degree quotient; repeated
 normalized monomials retain their modular coefficients and multiplicities.
 The worker source-synthesis test also executes missing-corner degree-48/96

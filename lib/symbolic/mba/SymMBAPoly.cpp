@@ -129,6 +129,82 @@ std::optional<TruthTable> bitwiseTable(const SymContext &Ctx, SymRef F,
   const std::optional<size_t> Corners = cornerCount(NumAtoms);
   if (!Corners)
     return std::nullopt;
+  if (Ctx.isVar(F)) {
+    const auto It = llvm::find(AtomIds, Ctx.varId(F));
+    return It == AtomIds.end()
+               ? TruthTable::zero(NumAtoms)
+               : atomTruthTable(static_cast<unsigned>(It - AtomIds.begin()),
+                                NumAtoms);
+  }
+  const unsigned Width = Ctx.width(F);
+  if (NumAtoms >= limits::kMinPackedPolynomialAtoms &&
+      Width >= limits::kMinPackedPolynomialWidth) {
+    bool IndependentBits = true;
+    for (uint32_t Index : reachableInOrder(Ctx, F)) {
+      SymRef R(Index);
+      SymOp Op = Ctx.op(R);
+      if (Ctx.width(R) != Width ||
+          (!Ctx.isVar(R) && !Ctx.isConst(R) && Op != SymOp::Not &&
+           Op != SymOp::And && Op != SymOp::Or && Op != SymOp::Xor) ||
+          (Ctx.isConst(R) && !Ctx.constValue(R).isZero() &&
+           !Ctx.constValue(R).isAllOnes())) {
+        IndependentBits = false;
+        break;
+      }
+    }
+    if (IndependentBits) {
+      // These operators act independently on every bit. Each bit can hold a
+      // different complete corner assignment, so one ordinary word evaluation
+      // computes Width table entries. Arithmetic and nonuniform literals keep
+      // the scalar evaluator below; no cross-bit operation is packed.
+      SymEvalPlan Plan(Ctx, F);
+      const auto Vars = Plan.vars();
+      llvm::SmallVector<unsigned, 8> Positions;
+      for (uint32_t Id : Vars) {
+        auto It = llvm::find(AtomIds, Id);
+        Positions.push_back(static_cast<unsigned>(It - AtomIds.begin()));
+      }
+      auto Slot = [&](uint32_t Id) {
+        return std::lower_bound(Vars.begin(), Vars.end(), Id) - Vars.begin();
+      };
+      TruthTable Table = TruthTable::zero(NumAtoms);
+      llvm::SmallVector<uint64_t, 8> Narrow(Vars.size(), 0);
+      llvm::SmallVector<llvm::APInt, 8> Wide;
+      if (!Plan.fitsU64())
+        Wide.assign(Vars.size(), llvm::APInt(Width, 0));
+      for (size_t Begin = 0; Begin < *Corners;) {
+        const size_t Count = std::min<size_t>(Width, *Corners - Begin);
+        for (size_t I = 0; I != Vars.size(); ++I) {
+          if (Plan.fitsU64())
+            Narrow[I] = 0;
+          else
+            Wide[I].clearAllBits();
+          if (Positions[I] == NumAtoms)
+            continue;
+          for (size_t Bit = 0; Bit != Count; ++Bit)
+            if (((Begin + Bit) >> Positions[I]) & 1) {
+              if (Plan.fitsU64())
+                Narrow[I] |= uint64_t(1) << Bit;
+              else
+                Wide[I].setBit(static_cast<unsigned>(Bit));
+            }
+        }
+        if (Plan.fitsU64()) {
+          const auto Value =
+              Plan.evalU64With([&](uint32_t Id) { return Narrow[Slot(Id)]; });
+          for (size_t Bit = 0; Bit != Count; ++Bit)
+            Table.setValue(Begin + Bit, (Value >> Bit) & 1);
+        } else {
+          const auto Value =
+              Plan.evalWith([&](uint32_t Id) { return &Wide[Slot(Id)]; });
+          for (size_t Bit = 0; Bit != Count; ++Bit)
+            Table.setValue(Begin + Bit, Value[Bit]);
+        }
+        Begin += Count;
+      }
+      return Table;
+    }
+  }
   CornerEvaluator Evaluator(Ctx, F, AtomIds);
   TruthTable Table = TruthTable::zero(NumAtoms);
   for (size_t K = 0; K < *Corners; ++K) {

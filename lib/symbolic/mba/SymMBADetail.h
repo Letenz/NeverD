@@ -390,6 +390,7 @@ recoverQuadraticProduct(const HigherCoefficients &Higher, unsigned NumAtoms,
 
 /// Recover a quadratic product by reading coefficient rows directly from its
 /// terms. Determined distinguishes a disproved product from resource refusal.
+/// For a single term, success preserves its coefficient and factor-table order.
 std::optional<QuadraticProduct>
 recoverQuadraticTerms(const SymContext &Ctx, llvm::ArrayRef<PolyTerm> Terms,
                       llvm::ArrayRef<uint32_t> AtomIds, uint32_t Width,
