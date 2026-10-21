@@ -1869,6 +1869,12 @@ ordinary subgraph, while the checked
 RaiseException provider supplies its separate stdcall adjustment. These facts
 do not grant object borrows, memory-effect completeness or native EH authority;
 the existing call-frame and generated-code checks remain required.
+Exact, file-backed MSVCRT/MSVCR100 allocation, release and memory-copy/fill
+imports likewise supply only their cdecl returning-stack adjustment. Named
+PE32 scalar/array new/delete entries keep their exact decorated spelling.
+Direct IAT calls and authenticated jump veneers share the same provider and
+storage checks. Their allocation, deallocation, aliasing and callback effects
+remain outside this register-only proof.
 `getCheckedX86RegistrationLeafCalleeABI` uses the same affine transfer for
 callee-private stack and borrowed ECX object domains, with separate spill
 storage. Its exact object/image footprints describe a returning leaf; a caller

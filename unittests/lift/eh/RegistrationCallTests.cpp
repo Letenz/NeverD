@@ -13,6 +13,7 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include <algorithm>
@@ -223,6 +224,112 @@ TEST(RegistrationCallABI, StackCleanupIncludesCheckedNestedImportCleanup) {
     EXPECT_EQ(getCheckedX86CalleeStackPop(F.Image, Text.VA),
               Mutation == 0 ? std::optional<uint32_t>{0} : std::nullopt);
   }
+}
+
+TEST(RegistrationCallABI, CRTMemoryImportsProveOnlyReturningStackCleanup) {
+  struct Case {
+    const char *Name;
+    unsigned Arguments;
+  };
+  const Case Cases[] = {
+      {"malloc", 1},       {"calloc", 2},       {"realloc", 2},
+      {"free", 1},         {"memcpy", 3},       {"memmove", 3},
+      {"memset", 3},       {"??2@YAPAXI@Z", 1}, {"??_U@YAPAXI@Z", 1},
+      {"??3@YAXPAX@Z", 1}, {"??_V@YAXPAX@Z", 1}};
+  for (const auto &C : Cases)
+    for (bool ThroughStub : {false, true})
+      for (unsigned Mutation = 0; Mutation != 19; ++Mutation) {
+        SCOPED_TRACE(::testing::Message()
+                     << C.Name << ' ' << ThroughStub << ' ' << Mutation);
+        ThrowImage F;
+        auto &Text = F.Image.Segments[0];
+        Text.Data.clear();
+        for (unsigned I = 0; I != C.Arguments; ++I)
+          Text.Data.insert(Text.Data.end(), {0x6a, 0});
+        const size_t Call = Text.Data.size();
+        Text.Data.insert(Text.Data.end(),
+                         {0xff, 0x15, 0x30, 0x40, 0x40, 0, 0x83, 0xc4,
+                          uint8_t(C.Arguments * 4), 0xc3});
+        if (ThroughStub) {
+          Text.Data.resize(0x30, 0xcc);
+          Text.Data.insert(Text.Data.end(), {0xff, 0x25, 0x30, 0x40, 0x40, 0});
+          Text.Data[Call] = 0xe8;
+          writeLE<uint32_t>(Text.Data.data() + Call + 1,
+                            uint32_t(0x30 - Call - 5));
+          Text.Data[Call + 5] = 0x90;
+        }
+        Text.Size = Text.FileSz = Text.Data.size();
+        auto &Data = F.Image.Segments[2];
+        Data.FileSz = Data.Size;
+        Section Code;
+        Code.Name = ".text";
+        Code.VA = Text.VA;
+        Code.Size = Code.FileSz = Text.Size;
+        Code.Flags = Text.Flags;
+        Section Storage;
+        Storage.Name = ".data";
+        Storage.VA = Data.VA;
+        Storage.Size = Storage.FileSz = Data.Size;
+        Storage.Flags = Data.Flags;
+        F.Image.Sections = {Code, Storage};
+        F.Image.Imports[0].Name = C.Name;
+        F.Image.Imports[0].Module = "MSVCR100.dll";
+        ASSERT_TRUE(F.Image.recordImportStorageSlot(
+            ThrowImage::IATVA, C.Name, 0,
+            ImportStorageEvidence::ImportDirectory));
+        if (Mutation == 1)
+          F.Image.Imports[0].Module = "msvcrt.dll";
+        if (Mutation == 2)
+          F.Image.Imports[0].Module = "custom.dll";
+        if (Mutation == 3)
+          F.Image.Imports[0].Name += "_unchecked";
+        if (Mutation == 4)
+          F.Image.Imports[0].IsDelayImport = true;
+        if (Mutation == 5)
+          F.Image.ConflictingImportStorageSlots.insert(ThrowImage::IATVA);
+        if (Mutation == 6)
+          F.Image.ImportStorageSlots.at(ThrowImage::IATVA).Addend = 4;
+        if (Mutation == 7)
+          Data.FileSz = ThrowImage::IATVA - Data.VA + 3;
+        if (Mutation == 8) {
+          F.Image.Imports.push_back(F.Image.Imports[0]);
+          F.Image.Imports.back().Module = "custom.dll";
+        }
+        if (Mutation == 9)
+          Text.Data[Call + 8] += 4; // Caller cleanup must still balance.
+        if (Mutation == 10)
+          F.Image.Format = BinaryFormat::ELF;
+        if (Mutation == 11)
+          F.Image.Arch = Arch::X64;
+        if (Mutation == 12)
+          F.Image.Bits = Bitness::Bits64;
+        if (Mutation == 13)
+          F.Image.ImportStorageSlots.at(ThrowImage::IATVA).Name = "different";
+        if (Mutation == 14)
+          F.Image.Imports[0].IATAddr += 4;
+        if (Mutation == 15)
+          F.Image.Sections.pop_back();
+        if (Mutation == 16)
+          F.Image.Segments.push_back(Data);
+        if (Mutation == 17)
+          F.Image.ImportStorageSlots.at(ThrowImage::IATVA).Evidence =
+              ImportStorageEvidence::PointerTable;
+        if (Mutation == 18) {
+          F.Image.Imports[0].Name = "??3@YAXPEAX@Z"; // The x64 spelling.
+          F.Image.ImportStorageSlots.at(ThrowImage::IATVA).Name =
+              F.Image.Imports[0].Name;
+        }
+        if (Mutation < 2)
+          ASSERT_TRUE(isFileBackedPEImportSlot(F.Image, ThrowImage::IATVA));
+        EXPECT_EQ(getCheckedX86CalleeStackPop(F.Image, ThrowImage::TextVA),
+                  Mutation < 2 ? std::optional<uint32_t>{0} : std::nullopt);
+        // A returning ESP fact cannot authenticate allocation, deallocation,
+        // callbacks, global writes or a private caller/object memory borrow.
+        EXPECT_FALSE(getCheckedX86RegistrationObjectCalleeABI(
+            F.Image, ThrowImage::TextVA));
+        EXPECT_FALSE(getCheckedX86RegistrationInitializerCalleeABI(
+            F.Image, ThrowImage::TextVA));
+      }
 }
 
 TEST(RegistrationCallABI, NestedReturningStackProofIsBoundedAndNonCircular) {

@@ -5384,6 +5384,11 @@ alignment, disagreeing return pops, missing restoration, volatile anchors,
 memory-only saved pointers, far/tail returns, writable code, wrong targets and
 exhausted work. `StackCleanupIncludesCheckedNestedImportCleanup` verifies
 provider and exact-slot identity before a nested stdcall can balance its caller.
+`CRTMemoryImportsProveOnlyReturningStackCleanup` checks eleven legacy CRT
+imports through both IAT calls and jump veneers. Provider, name, delayed-import,
+conflicting-slot, addend, backing-byte, metadata, architecture and caller-cleanup
+mutations must refuse; every accepted stack fact still lacks an object or
+initializer memory contract.
 `NestedReturningStackProofIsBoundedAndNonCircular` checks multi-level callee
 cleanup, mismatched pops, recursive dependencies, the depth boundary and shared
 work exhaustion. It does not admit dispatcher-entered parent returns through
