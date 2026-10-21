@@ -824,6 +824,10 @@ public:
   int debugSymRichness(const FunctionSym &FS) const;
   static TypeRef cDisplayType(const TypeRef &Ty);
   std::optional<int64_t> frameDisplacement(const HighExpr &E) const;
+  /// Whether the \p Bytes bytes at \p A and those at \p B cannot overlap:
+  /// both lie in the frame, or both are constant addresses, that far apart.
+  bool disjointMemory(const HighExpr &A, const HighExpr &B,
+                      uint64_t Bytes) const;
   std::optional<int64_t>
   certifiedFrameStorageDisplacement(const HighExpr &E) const;
   /// Whether the alignment precondition \p Call always holds in C: its

@@ -600,10 +600,18 @@ MCP_TEST(SourcePagesStartAtTheDefinition) {
                         {"complete", true}}}}};
   auto [Header, Code] =
       code(call(Service, "read_decompilation", {{"address", "0x10"}}));
-  require(Session.Calls.back().Payload ==
+  // The first page did not hold the whole function, which is read after
+  // the definition, from its first line, to number its temporaries.
+  require(Session.Calls.size() == 3 &&
+              Session.Calls[1].Payload ==
                   Json{{"address", "0x10"}, {"offset", 2}} &&
-              Session.Calls.back().Revision == "2",
+              Session.Calls[1].Revision == "2",
           "the definition is read at its revision");
+  require(Session.Calls[2].Payload == Json{{"address", "0x10"},
+                                           {"offset", 0},
+                                           {"limit", MaxDecompilationLines}} &&
+              Session.Calls[2].Revision == "2",
+          "the whole function is read at the page's revision");
   require(Header["prelude_lines"] == 2, "the header counts the prelude");
   require(Code == "int f(void) {\n    return 0;\n}\n", "the definition");
   // With prelude=true, the page is the one the worker gives.
@@ -612,8 +620,40 @@ MCP_TEST(SourcePagesStartAtTheDefinition) {
   const auto Whole = code(call(Service, "read_decompilation",
                                {{"address", "0x10"}, {"prelude", true}}))
                          .second;
-  require(Session.Calls.size() == 1 && Whole.rfind("#include", 0) == 0,
+  require(Session.Calls.size() == 2 && Whole.rfind("#include", 0) == 0,
           "the prelude on request");
+}
+
+MCP_TEST(TemporariesReadAlikeOnEveryPage) {
+  FakeBackend Session;
+  Server Service(Session);
+  ready(Service);
+  const auto Page = [](const char *Text, int Offset, Json Next) {
+    return Json{{"status", "ok"},
+                {"revision", "3"},
+                {"payload",
+                 {{"address", "0x10"},
+                  {"dialect", "c"},
+                  {"text", Text},
+                  {"offset", Offset},
+                  {"total_lines", 4},
+                  {"next_offset", Next},
+                  {"complete", Next.is_null()}}}};
+  };
+  const char *Head = "int32_t f(void) {\n    int32_t t7_2;\n";
+  const char *Tail = "    t7_2 = 1;\n    return t7_2;\n}\n";
+  // The second page, then the whole function from its first line.
+  Session.Replies = {Page(Tail, 2, nullptr), Page(Head, 0, 2),
+                     Page(Tail, 2, nullptr)};
+  const auto [Header, Code] = code(call(Service, "read_decompilation",
+                                        {{"address", "0x10"}, {"offset", 2}}));
+  require(Code == "    t1 = 1;\n    return t1;\n}\n",
+          "the page numbers the temporary as the function does: " + Code);
+  require(Header["legend"].get<std::string>().find("tN") != std::string::npos,
+          "the legend says so");
+  require(Session.Calls.size() == 3 && Session.Calls[1].Revision == "3" &&
+              Session.Calls[2].Payload["offset"] == 2,
+          "the function is read page by page at the page's revision");
 }
 
 MCP_TEST(SnapshotCacheEvictionIsExplicit) {

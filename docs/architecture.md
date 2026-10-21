@@ -763,7 +763,14 @@ by a cached text, as a volatile read by its own name, keeps its conversion
 where a cast moves it between an integer and a pointer (`castOfText`).
 `rep movs` copies element by element in its direction, as `rep stos`
 stores; a shape the lifter does not emit is refused, since an intrinsic
-would take its operands in the constraints' order.
+would take its operands in the constraints' order. HighC prints a forward
+one over flat memory as `__builtin_memset` or `__builtin_memcpy` where that
+writes exactly its bytes: a fill whose value's bytes are alike, its count a
+number unless the elements are bytes, and a copy of a counted range between
+frame slots or constant addresses that cannot overlap, since an overlapping
+forward copy repeats what it already wrote. A store of what the statement
+before it loaded from the same address, as a stack probe's `or [rsp], 0`
+lifts, leaves memory as it was and prints nothing.
 Where a linker folded identical
 functions, one entry carries
 the names of each (`statedFunctionNamesAt`), and it takes the shown name's

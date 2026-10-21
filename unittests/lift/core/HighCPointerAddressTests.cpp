@@ -36487,7 +36487,8 @@ TEST(HighCPointerAddresses, CorpusBufferedCatchUsesParentFrameForIndex) {
   const size_t Catch = Source.find("catch (const ProbeError &e)");
   ASSERT_NE(Catch, std::string::npos) << Source;
   const auto Load = sourceLineContaining(Source, "__builtin_memcpy(&", Catch);
-  const auto Clear = sourceLineContaining(Source, "neverd_di =");
+  // The buffer clear, a forward REP STOSQ of zero, is memset of its bytes.
+  const auto Clear = sourceLineContaining(Source, "__builtin_memset(");
   ASSERT_NE(Store, Stores.end()) << Source;
   ASSERT_FALSE(Load.empty()) << Source;
   ASSERT_FALSE(Clear.empty()) << Source;
@@ -36539,7 +36540,8 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   const auto Store = llvm::find_if(Stores, [](const PortableStoreCall &S) {
     return S.Type == "uint8_t" && S.Value == "3";
   });
-  const auto Clear = sourceLineContaining(Source, "neverd_di =");
+  // The buffer clear, a forward REP STOSQ of zero, is memset of its bytes.
+  const auto Clear = sourceLineContaining(Source, "__builtin_memset(");
   // The update can remain compound C or be rendered as a load, add and store
   // of the member when the value passes through the SEH clause boundary.
   auto ExceptStore = sourceLineContaining(Source, "+= 20;");
@@ -44617,6 +44619,79 @@ TEST(HighCPointerAddresses, DirectionFlagIsClearOnEntry) {
             std::string::npos)
       << HighC;
   EXPECT_EQ(HighC.find("std"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, FlatFillsAndCopiesAreTheLibraryRoutines) {
+  // With DF clear, REP STOS of a value whose bytes are alike is memset of
+  // those bytes, and REP MOVS between frame ranges that cannot overlap is
+  // memcpy, on every target.  An overlapping forward copy repeats what it
+  // already wrote, which memcpy need not, and keeps the instruction.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Fill = {
+      0x48, 0x83, 0xec, 0x48,       // sub rsp, 0x48
+      0x31, 0xc0,                   // xor eax, eax
+      0xb9, 0x08, 0x00, 0x00, 0x00, // mov ecx, 8
+      0x48, 0x89, 0xe7,             // mov rdi, rsp
+      0xf3, 0x48, 0xab,             // rep stosq
+      0x48, 0x8b, 0x44, 0x24, 0x08, // mov rax, [rsp + 8]
+      0x48, 0x83, 0xc4, 0x48,       // add rsp, 0x48
+      0xc3};                        // ret
+  const auto Copy = [](uint8_t Source, uint8_t Destination) {
+    std::vector<uint8_t> Code = {
+        0x48, 0x81, 0xec, 0x88, 0x00, 0x00, 0x00, // sub rsp, 0x88
+        0x48, 0x8d, 0x74, 0x24, 0x00,             // lea rsi, [rsp + Source]
+        0x48, 0x8d, 0x7c, 0x24, 0x00,             // lea rdi, [rsp + Dest]
+        0xb9, 0x08, 0x00, 0x00, 0x00,             // mov ecx, 8
+        0xf3, 0x48, 0xa5,                         // rep movsq
+        0x48, 0x8b, 0x44, 0x24, 0x10,             // mov rax, [rsp + 0x10]
+        0x48, 0x81, 0xc4, 0x88, 0x00, 0x00, 0x00, // add rsp, 0x88
+        0xc3};                                    // ret
+    Code[11] = Source;
+    Code[16] = Destination;
+    return Code;
+  };
+  for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF}) {
+    SCOPED_TRACE(static_cast<int>(Format));
+    const auto Render = [&](std::vector<uint8_t> Code) {
+      BinaryImage Img = makeCodeFixture(Entry, std::move(Code));
+      Img.Format = Format;
+      return highcOnlyFunction(std::move(Img), Entry);
+    };
+    const std::string Filled = Render(Fill);
+    EXPECT_NE(Filled.find("__builtin_memset("), std::string::npos) << Filled;
+    EXPECT_NE(Filled.find(", 0, 0x40);"), std::string::npos) << Filled;
+    EXPECT_EQ(Filled.find("stosq"), std::string::npos) << Filled;
+    // 0x40 bytes from rsp + 0x48 to rsp + 0x8: adjacent, apart.
+    const std::string Copied = Render(Copy(0x48, 0x08));
+    EXPECT_NE(Copied.find("__builtin_memcpy("), std::string::npos) << Copied;
+    EXPECT_NE(Copied.find(", 0x40);"), std::string::npos) << Copied;
+    EXPECT_EQ(Copied.find("movsq"), std::string::npos) << Copied;
+    // From rsp + 0x10 to rsp + 0x18: the copy reads what it wrote.
+    const std::string Smeared = Render(Copy(0x10, 0x18));
+    EXPECT_NE(Smeared.find("movsq"), std::string::npos) << Smeared;
+  }
+}
+
+TEST(HighCPointerAddresses, StackProbesLeaveNoSelfAssignment) {
+  // A large frame's probe, `or qword [rsp], 0`, writes back the bytes it
+  // read: C has nothing to do there.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x48, 0x81, 0xec, 0x08, 0x10, 0x00, 0x00, // sub rsp, 0x1008
+      0x48, 0x83, 0x0c, 0x24, 0x00,             // or qword ptr [rsp], 0
+      0x48, 0x8b, 0x44, 0x24, 0x08,             // mov rax, [rsp + 8]
+      0x48, 0x81, 0xc4, 0x08, 0x10, 0x00, 0x00, // add rsp, 0x1008
+      0xc3};                                    // ret
+  for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF}) {
+    SCOPED_TRACE(static_cast<int>(Format));
+    BinaryImage Img = makeCodeFixture(Entry, Code);
+    Img.Format = Format;
+    const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+    ASSERT_NE(HighC.find("return"), std::string::npos) << HighC;
+    EXPECT_FALSE(
+        std::regex_search(HighC, std::regex(R"((^|[^\w.])([\w.]+) = \2;)")))
+        << HighC;
+  }
 }
 
 TEST(HighCPointerAddresses, RepeatedCpuidAndRdtscDoNotRedeclareLocals) {

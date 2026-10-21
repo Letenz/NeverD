@@ -40,6 +40,10 @@ namespace neverd {
 
 using IsAliveFn = std::function<bool(const MedVar &)>;
 using SameWidthUnsignedFn = std::function<bool(const HighExpr &, uint16_t)>;
+/// Whether the \p Bytes bytes at one address and those at another cannot
+/// overlap, as two addresses the writer places can be proved not to.
+using DisjointMemoryFn =
+    std::function<bool(const HighExpr &, const HighExpr &, uint64_t Bytes)>;
 
 struct MultiOutputRender {
   /// The output is compiled by GCC or Clang rather than MSVC, whose
@@ -184,12 +188,15 @@ bool x86UsesGnuIntrinsicHeader(Intrinsic Id);
 /// Render an x86 intrinsic that needs full typed-statement context, including
 /// architectural preconditions and implicit memory relative to FS/GS. Returns
 /// an empty string for an unsupported intrinsic. Recognized intrinsics with
-/// malformed architectural operands fail closed.
+/// malformed architectural operands fail closed.  A forward REP MOVS or STOS
+/// of flat memory prints as memcpy or memset where those write exactly its
+/// bytes; MOVS needs \p Disjoint to prove its source and destination apart.
 std::string renderX86SegmentedIntrinsicStatement(
     Arch TheArch, const HighExpr &Call, const HighExpr *PrimaryDst,
     std::function<std::string(const HighExpr &)> ExprFn,
     std::function<std::string(const MedVar &)> VarFn, IsAliveFn IsAlive = {},
-    SameWidthUnsignedFn SameWidthUnsigned = {}, bool MsvcIntrinsics = false);
+    SameWidthUnsignedFn SameWidthUnsigned = {}, bool MsvcIntrinsics = false,
+    DisjointMemoryFn Disjoint = {});
 
 /// Windows `int 0x29` / `__fastfail`.  True when \p E is that intrinsic.
 bool isX86FastFailCall(const HighExpr &E);

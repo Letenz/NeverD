@@ -315,6 +315,13 @@ std::string castOperand(const std::string &Text) {
   return Text;
 }
 
+/// \p Text, an integer, as the operand of a conversion to a pointer: through
+/// uintptr_t, which an address already converted to an integer is.
+std::string uintptrOperand(const std::string &Text) {
+  return c_memory::integerConversion(Text) ? Text
+                                           : "(uintptr_t)" + castOperand(Text);
+}
+
 /// Whether \p Text is a postfix expression whose last step reads a member:
 /// `p->next`, `(*(T *)&slot).opaque`, and not a cast of one
 /// (`(uint32_t)s.len`) or an operation on it.
@@ -2567,7 +2574,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
           Arg = "(" + Param + ")" + (WidensToPointer ? "(uintptr_t)" : "") +
                 castOperand(Arg);
       } else if (Op->Type && Op->Type->Kind == NdTypeKind::Ptr) {
-        Arg = "(" + Param + ")(uintptr_t)" + castOperand(Arg);
+        Arg = "(" + Param + ")" + uintptrOperand(Arg);
       }
     }
     // A standard function's function-pointer parameter takes the value
@@ -4045,7 +4052,7 @@ HighCWriter::typedArgumentText(const HighExpr &E, const TypeRef &Expected,
     auto AsPointer = [&](const HighExpr &Printed, std::string Text) {
       if (!printsAsInteger(Printed, Text))
         return Text;
-      return "(" + Parameter() + ")(uintptr_t)" + castOperand(Text);
+      return "(" + Parameter() + ")" + uintptrOperand(Text);
     };
     if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) {
       const std::string Name = copyForwardName(varName(Inner->Var));
@@ -5750,6 +5757,25 @@ const HighExpr *HighCWriter::truthTestedValue(const HighExpr *E) const {
     E = &Inner;
   }
   return E;
+}
+
+bool HighCWriter::disjointMemory(const HighExpr &A, const HighExpr &B,
+                                 uint64_t Bytes) const {
+  const auto Apart = [Bytes](uint64_t Low, uint64_t High) {
+    return High - Low >= Bytes;
+  };
+  if (const auto DA = frameDisplacement(A))
+    if (const auto DB = frameDisplacement(B))
+      return *DA <= *DB
+                 ? Apart(static_cast<uint64_t>(*DA), static_cast<uint64_t>(*DB))
+                 : Apart(static_cast<uint64_t>(*DB),
+                         static_cast<uint64_t>(*DA));
+  const HighExpr *CA = unwrapIntegerView(&A);
+  const HighExpr *CB = unwrapIntegerView(&B);
+  if (CA && CB && CA->Kind == ExprKind::Const && CB->Kind == ExprKind::Const)
+    return CA->ConstVal <= CB->ConstVal ? Apart(CA->ConstVal, CB->ConstVal)
+                                        : Apart(CB->ConstVal, CA->ConstVal);
+  return false;
 }
 
 std::optional<int64_t> HighCWriter::frameDisplacement(const HighExpr &E) const {

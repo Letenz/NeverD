@@ -16,7 +16,7 @@
 /// - intN_t/uintN_t/uintptr_t are written iN/uN/uptr;
 /// - a frame struct is declared on one line, and the members the engine names
 ///   by offset (var_mN, gapN) are written without the `stack_storage.` that
-///   every access repeats;
+///   every access repeats, a slot var_mN as sN;
 /// - each run of declarations becomes one declaration per type, a pointer
 ///   type's names each with their own stars;
 /// - an address at a constant offset into a byte-array global, read or
@@ -26,6 +26,10 @@
 ///   `*(T *)&g_ADDR`, and an address that is only taken is declared a byte
 ///   array.  The array's own pointer, and arithmetic on it, are left as
 ///   written.
+///
+/// - the temporaries the engine names by their values, tB_I, are numbered tN
+///   in the order the whole function first uses them, so every page of it
+///   spells them alike; a page is numbered only with its function's text.
 ///
 /// String and character literals and comments are never rewritten, and a
 /// short name is used only where the text does not already use it.
@@ -45,6 +49,8 @@ struct ReadingView {
   std::string Legend;
 };
 
-ReadingView readingView(std::string_view Text);
+/// The view of \p Text, a page of \p Function, the whole function's text,
+/// when that is given.
+ReadingView readingView(std::string_view Text, std::string_view Function = {});
 
 } // namespace neverd::binmcp

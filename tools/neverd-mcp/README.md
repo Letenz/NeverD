@@ -55,10 +55,13 @@ shows, an import's name or a label also works; it is resolved first.
 `prelude_lines` (includes, types and declarations that make the file compile)
 it left out; `prelude: true` returns them too. C reads in a lossless shorter
 spelling (`Reading.cpp`): fixed-width types as `i64`/`u32`/`uptr`, the stack
-frame on one line with its members named without `stack_storage.`, one
-declaration per type run, and typed accesses into byte-array globals named
-by address (`g_8A180`), each listed with its type in the header's `legend`;
-`exact: true` returns the engine's spelling.
+frame on one line with its members named without `stack_storage.` and each
+slot `var_mN` as `sN`, one
+declaration per type run, temporaries `tB_I` numbered `tN` in the order the
+whole function first names them, so every page of it reads them alike, and
+typed accesses into byte-array globals named by address (`g_8A180`), each
+listed with its type in the header's `legend`; `exact: true` returns the
+engine's spelling.
 
 Tool results are shaped for a model's context. They omit the worker's transport
 envelope and the presentation data the workbench maps code with (line anchors,

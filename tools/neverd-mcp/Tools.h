@@ -56,6 +56,10 @@ const std::vector<Tool> &workbenchTools();
 inline constexpr unsigned DefaultStringTextLimit = 200;
 /// Matches a search returns unless the caller asks otherwise.
 inline constexpr unsigned DefaultSearchLimit = 64;
+/// The lines a decompilation page holds at most, as the worker bounds it,
+/// and the pages read for one function's whole text.
+inline constexpr unsigned MaxDecompilationLines = 2048;
+inline constexpr unsigned MaxDecompilationPages = 512;
 
 /// Throws RpcError -32602 unless \p Arguments is an object that fits the
 /// tool's input schema.

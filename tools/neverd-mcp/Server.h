@@ -67,6 +67,14 @@ private:
   /// decoding steps, with each code match's function and an immediate's
   /// instruction.
   Json search(const Json &Arguments);
+  /// The whole text of the C function the decompilation page \p Response
+  /// is: the page, when it runs from the first line to the last.
+  static std::optional<std::string> pagedFunction(const Json &Response);
+  /// The whole text of the C function a decompilation page \p Response,
+  /// asked for with \p Arguments, is part of, read at the page's revision;
+  /// none for another representation or when it cannot be read.
+  std::optional<std::string> wholeFunction(const Json &Arguments,
+                                           const Json &Response);
   /// The response that refused a name \p Arguments gives as its address, or
   /// nothing once the address is the one the name resolves to.
   std::optional<Json>
