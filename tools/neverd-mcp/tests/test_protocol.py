@@ -186,6 +186,22 @@ class McpProtocolTests(unittest.TestCase):
         self.assertEqual(backend.messages.get_nowait()["request_id"], "next")
         self.assertIsInstance(backend.messages.get_nowait(), EOFError)
 
+    def test_load_progress_responses_do_not_replace_the_result(self):
+        backend = Backend.__new__(Backend)
+        backend.closed = False
+        backend.serial = 0
+        backend.timeout = 1
+        backend.input = io.BytesIO()
+        backend.messages = queue.Queue(maxsize=32)
+        for done in (0, 1):
+            backend.messages.put({"type": "response", "request_id": "1", "status": "progress",
+                                  "payload": {"phase": "image", "done": done, "total": 1, "detail": ""}})
+        backend.messages.put({"type": "response", "request_id": "1", "status": "ok", "payload": {"opened": True}})
+        result = backend.query("open", {"path": "/input", "read_only": True})
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["payload"], {"opened": True})
+        self.assertTrue(backend.messages.empty())
+
 
 if __name__ == "__main__":
     unittest.main()
