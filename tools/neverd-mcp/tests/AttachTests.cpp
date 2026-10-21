@@ -20,7 +20,12 @@
 #include <future>
 #include <thread>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -54,42 +59,93 @@ MCP_TEST(FramesAreBoundedAndRoundTrip) {
   }
 }
 
-#ifndef _WIN32
 namespace {
-void sendFrame(int Socket, const Json &Message) {
+#ifdef _WIN32
+/// The workbench's end of a shared session.
+using Connection = HANDLE;
+
+bool readAll(Connection Pipe, void *Into, std::size_t Size) {
+  auto *Bytes = static_cast<char *>(Into);
+  while (Size) {
+    DWORD Count = 0;
+    if (!ReadFile(Pipe, Bytes, static_cast<DWORD>(Size), &Count, nullptr) ||
+        !Count)
+      return false;
+    Bytes += Count;
+    Size -= Count;
+  }
+  return true;
+}
+
+bool writeAll(Connection Pipe, const void *From, std::size_t Size) {
+  DWORD Count = 0;
+  return WriteFile(Pipe, From, static_cast<DWORD>(Size), &Count, nullptr) &&
+         Count == Size;
+}
+#else
+using Connection = int;
+
+bool readAll(Connection Socket, void *Into, std::size_t Size) {
+  return ::recv(Socket, Into, Size, MSG_WAITALL) == static_cast<ssize_t>(Size);
+}
+
+bool writeAll(Connection Socket, const void *From, std::size_t Size) {
+  return ::write(Socket, From, Size) == static_cast<ssize_t>(Size);
+}
+#endif
+
+void sendFrame(Connection Peer, const Json &Message) {
   const auto Bytes = encodeFrame(Message);
-  require(::write(Socket, Bytes.data(), Bytes.size()) ==
-              static_cast<ssize_t>(Bytes.size()),
+  require(writeAll(Peer, Bytes.data(), Bytes.size()),
           "the workbench writes a frame");
 }
 
-Json receiveFrame(int Socket) {
+Json receiveFrame(Connection Peer) {
   unsigned char Header[4];
-  require(::recv(Socket, Header, 4, MSG_WAITALL) == 4, "a frame header");
+  require(readAll(Peer, Header, 4), "a frame header");
   std::string Body(frameLength(Header), '\0');
-  require(::recv(Socket, Body.data(), Body.size(), MSG_WAITALL) ==
-              static_cast<ssize_t>(Body.size()),
-          "a frame body");
+  require(readAll(Peer, Body.data(), Body.size()), "a frame body");
   return transport::parseJson(Body);
 }
 
-/// A workbench sharing its session on a local socket: it serves one
-/// connection with \p Serve and writes the credential file.
+/// A workbench sharing its session, on a local socket or a named pipe: it
+/// serves one connection with \p Serve and writes the credential file.
 class Workbench {
   std::filesystem::path Root;
-  int Listener = -1;
   std::atomic<bool> Accepted = false;
   std::thread Peer;
+#ifdef _WIN32
+  std::wstring Pipe;
+  HANDLE Listener = INVALID_HANDLE_VALUE;
+#else
+  int Listener = -1;
+#endif
 
 public:
   std::filesystem::path Credentials;
 
-  explicit Workbench(std::function<void(int)> Serve, mode_t Mode = 0600) {
+  explicit Workbench(std::function<void(Connection)> Serve,
+                     unsigned Mode = 0600) {
     static std::atomic<unsigned> Serial = 0;
-    Root = std::filesystem::temp_directory_path() /
-           ("neverd-mcp-attach-" + std::to_string(::getpid()) + "-" +
-            std::to_string(++Serial));
+#ifdef _WIN32
+    const auto Process = std::to_string(GetCurrentProcessId());
+#else
+    const auto Process = std::to_string(::getpid());
+#endif
+    const std::string Name =
+        "neverd-mcp-attach-" + Process + "-" + std::to_string(++Serial);
+    Root = std::filesystem::temp_directory_path() / Name;
     std::filesystem::create_directories(Root);
+#ifdef _WIN32
+    (void)Mode;
+    // The client adds the pipe namespace to a bare name.
+    const std::string Endpoint = Name;
+    Pipe = L"\\\\.\\pipe\\" + std::wstring(Name.begin(), Name.end());
+    Listener = CreateNamedPipeW(Pipe.c_str(), PIPE_ACCESS_DUPLEX,
+                                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                                1, 1 << 16, 1 << 16, 0, nullptr);
+    require(Listener != INVALID_HANDLE_VALUE, "the workbench listens");
+#else
     const auto Endpoint = (Root / "s").string();
     sockaddr_un Address{};
     Address.sun_family = AF_UNIX;
@@ -101,11 +157,27 @@ public:
                        sizeof(Address)) == 0 &&
                 ::listen(Listener, 1) == 0,
             "the workbench listens");
+#endif
     Credentials = Root / "credentials.json";
     std::ofstream(Credentials)
         << Json{{"endpoint", Endpoint}, {"token", "secret"}}.dump();
+#ifndef _WIN32
     ::chmod(Credentials.c_str(), Mode);
+#endif
     Peer = std::thread([this, Serve = std::move(Serve)] {
+#ifdef _WIN32
+      const bool Connected = ConnectNamedPipe(Listener, nullptr) ||
+                             GetLastError() == ERROR_PIPE_CONNECTED;
+      Accepted = true;
+      if (!Connected)
+        return;
+      try {
+        Serve(Listener);
+      } catch (const std::exception &) {
+        // The client went away; its own checks report what it saw.
+      }
+      DisconnectNamedPipe(Listener);
+#else
       const int Connection = ::accept(Listener, nullptr, nullptr);
       Accepted = true;
       if (Connection < 0)
@@ -116,12 +188,20 @@ public:
         // The client went away; its own checks report what it saw.
       }
       ::close(Connection);
+#endif
     });
   }
 
   ~Workbench() {
     if (!Accepted) {
       // Wake the accept that no client made.
+#ifdef _WIN32
+      const HANDLE Wake =
+          CreateFileW(Pipe.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                      OPEN_EXISTING, 0, nullptr);
+      if (Wake != INVALID_HANDLE_VALUE)
+        CloseHandle(Wake);
+#else
       sockaddr_un Address{};
       Address.sun_family = AF_UNIX;
       const auto Endpoint = (Root / "s").string();
@@ -130,16 +210,21 @@ public:
       (void)::connect(Wake, reinterpret_cast<sockaddr *>(&Address),
                       sizeof(Address));
       ::close(Wake);
+#endif
     }
     Peer.join();
+#ifdef _WIN32
+    CloseHandle(Listener);
+#else
     ::close(Listener);
+#endif
     std::error_code Ignored;
     std::filesystem::remove_all(Root, Ignored);
   }
 };
 
 /// The handshake a workbench answers an authenticated client with.
-void greet(int Socket) {
+void greet(Connection Socket) {
   const auto Auth = receiveFrame(Socket);
   require(Auth["operation"] == "authenticate" &&
               Auth["payload"]["token"] == "secret",
@@ -148,9 +233,9 @@ void greet(int Socket) {
 }
 
 /// Waits for the client to close its side.
-void drain(int Socket) {
+void drain(Connection Socket) {
   char Byte;
-  while (::read(Socket, &Byte, 1) > 0) {
+  while (readAll(Socket, &Byte, 1)) {
   }
 }
 
@@ -167,7 +252,7 @@ std::string failure(const std::function<void()> &Run) {
 MCP_TEST(IdleEventsAndLoadProgressDoNotReplaceTheResult) {
   std::promise<Json> Request;
   auto Seen = Request.get_future();
-  Workbench Peer([&](int Socket) {
+  Workbench Peer([&](Connection Socket) {
     greet(Socket);
     Request.set_value(receiveFrame(Socket));
     for (int I = 0; I < 100; ++I)
@@ -200,15 +285,17 @@ MCP_TEST(IdleEventsAndLoadProgressDoNotReplaceTheResult) {
           "the request: " + Sent.dump());
 }
 
+#ifndef _WIN32
 MCP_TEST(ACredentialFileOthersCanReadIsRefused) {
-  Workbench Peer([](int) {}, 0644);
+  Workbench Peer([](Connection) {}, 0644);
   require(failure([&] { AttachBackend Session(Peer.Credentials); }) ==
               "Session credential file must be private to its owner",
           "a readable credential file is refused");
 }
+#endif
 
 MCP_TEST(AnIncompatibleHandshakeIsRefused) {
-  Workbench Peer([](int Socket) {
+  Workbench Peer([](Connection Socket) {
     (void)receiveFrame(Socket);
     sendFrame(Socket, {{"protocol_major", 2}, {"type", "hello"}});
     drain(Socket);
@@ -219,7 +306,7 @@ MCP_TEST(AnIncompatibleHandshakeIsRefused) {
 }
 
 MCP_TEST(AFatalMessageOrATimeoutEndsTheSession) {
-  Workbench Fatal([](int Socket) {
+  Workbench Fatal([](Connection Socket) {
     greet(Socket);
     (void)receiveFrame(Socket);
     sendFrame(Socket, {{"type", "fatal"}, {"error", {{"code", "crashed"}}}});
@@ -230,7 +317,7 @@ MCP_TEST(AFatalMessageOrATimeoutEndsTheSession) {
   require(First.rfind("NeverD session failed: ", 0) == 0, First);
   require(failure([&] { Session.query("metadata", {}, {}); }) == First,
           "the session stays ended");
-  Workbench Silent([](int Socket) {
+  Workbench Silent([](Connection Socket) {
     greet(Socket);
     drain(Socket);
   });
@@ -242,4 +329,3 @@ MCP_TEST(AFatalMessageOrATimeoutEndsTheSession) {
               "NeverD session request timed out",
           "a timed-out session takes no further request");
 }
-#endif

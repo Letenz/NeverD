@@ -1599,13 +1599,10 @@ void HighCWriter::applyDebugCallSlotTypes(const HighFunc &Func) {
         continue;
       TypeRef Next = cDisplayType(Expected->Pointee);
       // A unit that defines the program's records reads members only of
-      // those it defines (prepareRecordDefinitions): the callee's record
-      // names no member of a local it does not define.
+      // those it holds complete (prepareRecordDefinitions), its own or a
+      // system header's: the callee's record names no member of another.
       if (Next && Next->Kind == NdTypeKind::Struct && !Next->IsEnum &&
-          !Next->SourceName.empty() && Opts.RecordDefinitions &&
-          Opts.EmitIncludes &&
-          !RecordDefinitions.Records.count(
-              cNamedTypeSpelling(Next->SourceName)))
+          !Next->SourceName.empty() && !definesRecord(Next))
         continue;
       if (Next && (!It->second.CallType ||
                    Next->FieldDisplayNames.size() >=

@@ -6,16 +6,13 @@
 .text
 .p2align 4
 .globl RaiseFromV2
-.seh_proc RaiseFromV2
-.seh_unwindversion 2
 RaiseFromV2:
   pushq %rbx
-  .seh_pushreg %rbx
+.Lv2_rbx_saved:
   pushq %r12
-  .seh_pushreg %r12
+.Lv2_r12_saved:
   subq $40, %rsp
-  .seh_stackalloc 40
-  .seh_endprologue
+.Lv2_prologue_end:
   movl $0x12345678, %ebx
   movl $0x76543210, %r12d
   testl %ecx, %ecx
@@ -23,25 +20,38 @@ RaiseFromV2:
   movl $0xc0000005, %ecx
   callq *__imp_ExRaiseStatus(%rip)
   nop
-  .seh_startepilogue
   addq $40, %rsp
-  .seh_unwindv2start
+.Lv2_first_epilogue:
   popq %r12
   popq %rbx
-  .seh_endepilogue
   retq
 .Lsecond:
   movl $0x80000002, %ecx
   callq *__imp_ExRaiseStatus(%rip)
   nop
-  .seh_startepilogue
   addq $40, %rsp
-  .seh_unwindv2start
+.Lv2_final_epilogue:
   popq %r12
   popq %rbx
-  .seh_endepilogue
   retq
-.seh_endproc
+.Lv2_end:
+
+// Encode the same V2 scopes as the newer .seh_unwindversion and epilogue
+// directives, keeping this independent fixture usable by older assemblers.
+.section .xdata,"dr"
+.p2align 2
+.Lv2_unwind:
+  .byte 2, .Lv2_prologue_end-RaiseFromV2, 5, 0
+  .byte .Lv2_end-.Lv2_final_epilogue, 0x16 // UWOP_EPILOG at function end
+  .byte .Lv2_end-.Lv2_first_epilogue, 0x06 // UWOP_EPILOG before function end
+  .byte .Lv2_prologue_end-RaiseFromV2, 0x42 // UWOP_ALLOC_SMALL: 40 bytes
+  .byte .Lv2_r12_saved-RaiseFromV2, 0xc0 // UWOP_PUSH_NONVOL: R12
+  .byte .Lv2_rbx_saved-RaiseFromV2, 0x30 // UWOP_PUSH_NONVOL: RBX
+.p2align 2
+
+.section .pdata,"dr"
+.p2align 2
+  .rva RaiseFromV2, .Lv2_end, .Lv2_unwind
 
 // An independently authored V2 table with nonleading paired markers. These
 // records are skipped during prologue unwind and do not define epilogue scopes.

@@ -637,6 +637,8 @@ LocalTypesDebugContext::definitions(const std::vector<TypeRef> &Records) const {
   Result.Text = Embedded.Text;
   for (const auto &[Name, Union] : Embedded.Records)
     Result.Records[Name] = Result.Tags[Name] = Union;
+  for (const auto &[Name, Union] : Embedded.HeaderRecords)
+    Result.HeaderRecords[Name] = Union;
   for (const auto &[Name, Union] : Embedded.Declared)
     Result.Tags[Name] = Union;
   Result.Identifiers = Embedded.Identifiers;
