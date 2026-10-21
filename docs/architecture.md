@@ -1109,7 +1109,7 @@ difference proof still govern replacement. Larger domains keep bounded search.
 Anchored searches also use necessary pair-membership coefficient bounds when
 the modular scale distinguishes membership counts. Ambiguous scales retain
 the original search; these bounds never authorize a replacement.
-Before a higher-degree single-product search expands its tensor, unequal
+Before a cubic or higher-degree single-product search expands its tensor, unequal
 nonzero lexicographic extremal coefficients can reject it: each extremal
 monomial of a product occurs exactly once and fixes the same scale. Equal
 extrema from separate terms are summed; cancellation declines this check.
@@ -1123,6 +1123,17 @@ exact identity, not on expanding them as `-1-x`. Equal scales and repeated
 factors remain exact, and identical proved quotients share a charged local
 cache. A bounded frontier and cumulative work/storage admission preserve the
 best completed root on refusal.
+Long cofactor keys use a commutative fingerprint to select comparisons, then
+compare every retained factor and its multiplicity before grouping. Only
+shared keys are materialized, in the original lexicographic order; short keys
+keep direct construction. Hash equality supplies no semantic evidence, and
+all comparisons, buckets and retained groups share the existing budgets.
+Arithmetic normalization reads flat monomials directly and skips multiplication
+by unit coefficients. Completed polynomials can be reused only within one
+normalizer with a fixed context, width and complement policy. Candidate emission
+cannot mutate these tables; new roots still require normalization and complete
+coefficient equality. Returned references remain local to that normalizer, and
+later independent verifiers start with fresh state.
 Different coefficients can expose the same quotient after splitting off exact
 modular differences. The search prefers a coefficient repeated at the same degree
 as its common scale; every difference stays attached to its original factors. The quotient

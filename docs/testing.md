@@ -255,7 +255,7 @@ bits, with an explicit skip when unavailable. Wider checks use independent
 word arithmetic. Independently enumerated modular products validate the
 necessary coefficient bounds, and unchanged sixteen-factor residuals must
 cancel before minterm expansion in the difference proof.
-Sparse coefficient differences additionally cover four through sixteen factors
+Sparse coefficient differences additionally cover four through thirty-two factors
 at 8–257 bits within 65,536 work units. Negative/even scales, vanished
 coefficients, high-bit differences and two independently disturbed terms use
 independent word arithmetic. Exhaustive three-bit assignments check partial
@@ -264,7 +264,7 @@ at 2/3 bits. Wider checks are algebraic and arithmetic coverage, not SMT claims.
 The highest-bit coefficient additionally checks arbitrary arithmetic factors at
 2–257 bits, neighboring coefficients that still observe carries, and separate
 full-width Z3 proofs at 8/16/32/64 bits for the product-parity transfer.
-Missing-corner completion covers four through sixteen factors at 8–257 bits,
+Missing-corner completion covers four through thirty-two factors at 8–257 bits,
 two missing corners, up to six independent partitions, opaque arithmetic words
 and high-bit coefficient changes. Independent word oracles and exhaustive
 three-bit assignments check completed and partial-budget results. Separate Z3
@@ -282,9 +282,14 @@ impossible support, and a nearby polynomial with the same support must still
 fail coefficient validation. Single cubic products retain their exact factors
 while the linear tail improves; independent word oracles and separate small-word
 Z3 checks cover the resulting expressions.
-Extremal-coefficient controls retain general expansion and handle cancelled
-leading terms. The slow fifth- and seventh-degree mixed tails have explicit
+Extremal-coefficient controls retain general cubic/quartic expansion and handle
+cancelled leading terms. The slow fifth- and seventh-degree mixed tails have explicit
 work ceilings and independent full-word arithmetic oracles through 257 bits.
+`SymMBAArithmetic.SharedFlatProductsKeepProofsIndependentAndBudgeted` checks
+repeated 24-factor tails at 2–257 bits, both complement policies, a changed
+constant, zero storage and the exact last proof-work unit. Independent modular
+arithmetic checks both expanded and factored forms. These tests also cover
+reuse of completed subexpressions without sharing incomplete normalization.
 Sixteen repeated small partitions check that exponential expansion is refused
 before consuming the budget needed to simplify their shared child.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
@@ -339,6 +344,10 @@ degrees with one to three missing corners, up to 64 distributed terms, opaque
 arithmetic factors, additional coefficient changes and mixed-degree residuals.
 Run all eight earlier families as controls. Report remaining refusals separately
 for the previous and newly added corpus; timing remains descriptive.
+Use `--family residual --count 64` for eighth through thirty-second degrees,
+two interleaved incomplete products, opaque arithmetic factors, three missing
+corners and multiple coefficient disturbances. Keep all nine earlier families
+as controls and retain separate refusal counts for this harder corpus.
 
 `tools/neverd-worker/tests/source_synthesis_test.py WORKER --cli CLI` checks the
 real source-option request used by the GUI and both CLI source emitters, for
@@ -359,6 +368,8 @@ the resulting difference must survive every enhanced CLI and worker output.
 The missing-corner variants omit that original product altogether. Their
 negative residual must survive both source emitters and single/whole-program
 requests; the remaining complemented partitions must still disappear.
+The twelfth-degree missing-corner fixture adds repeated tails in raw x64 code
+and checks the same worker option and both CLI source-request modes.
 With Clang available, each generated C output executes at O0/O2 against an
 independent arithmetic oracle on boundary and deterministic random inputs.
 

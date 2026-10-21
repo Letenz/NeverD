@@ -276,7 +276,7 @@ llvm::APInt disturbedOracle(llvm::ArrayRef<llvm::APInt> Values, unsigned Degree,
 
 TEST(SymMBAHigherProduct, SparseCoefficientDifferencesFinishBelowOriginalCap) {
   for (unsigned Width : {8u, 16u, 32u, 64u, 128u, 257u})
-    for (unsigned Degree : {4u, 6u, 8u, 12u, 16u}) {
+    for (unsigned Degree : {4u, 6u, 8u, 12u, 16u, 24u, 32u}) {
       SCOPED_TRACE(Width);
       SCOPED_TRACE(Degree);
       SymContext C;
@@ -560,33 +560,37 @@ TEST(SymMBAHigherProduct, CancelsExactResidualsBeforePolynomialProofExpansion) {
 }
 
 TEST(SymMBAHigherProduct, ExtremalScaleRejectionKeepsGeneralExpansionExact) {
-  for (unsigned Width : {3u, 8u, 32u, 64u, 257u}) {
-    SymContext C;
-    auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
-    llvm::SmallVector<uint32_t, 2> Ids;
-    C.collectVars(C.mkAdd(X, Y), Ids);
-    llvm::SmallVector<detail::PolyTerm, 3> Terms{
-        {llvm::APInt(Width, 1), {X, X, X, X}},
-        {llvm::APInt(Width, 3), {Y, Y, Y, Y}}};
-    detail::WorkBudget General(4096), Single(4096);
-    auto Form = detail::expandOverMinterms(C, Terms, Ids, Width, General);
-    ASSERT_TRUE(Form);
-    EXPECT_FALSE(detail::expandOverMinterms(C, Terms, Ids, Width, Single,
-                                            /*Optional=*/true,
-                                            /*SingleProduct=*/true));
-    EXPECT_LT(Single.used(), 1024u);
-    // Cancelling a leading coefficient makes the scale check inconclusive.
-    // It must still expand the surviving polynomial with its full scale.
-    Terms.push_back({llvm::APInt::getAllOnes(Width), {X, X, X, X}});
-    detail::WorkBudget Cancelled(4096), Unrestricted(4096);
-    auto Actual =
-        detail::expandOverMinterms(C, Terms, Ids, Width, Cancelled, true, true);
-    auto Expected =
-        detail::expandOverMinterms(C, Terms, Ids, Width, Unrestricted);
-    ASSERT_TRUE(Actual);
-    ASSERT_TRUE(Expected);
-    EXPECT_EQ(Actual->Higher, Expected->Higher);
-  }
+  for (unsigned Width : {3u, 8u, 32u, 64u, 257u})
+    for (unsigned Degree : {3u, 4u}) {
+      SymContext C;
+      auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+      llvm::SmallVector<uint32_t, 2> Ids;
+      C.collectVars(C.mkAdd(X, Y), Ids);
+      llvm::SmallVector<detail::PolyTerm, 3> Terms{
+          {llvm::APInt(Width, 1), {X, X, X, X}},
+          {llvm::APInt(Width, 3), {Y, Y, Y, Y}}};
+      for (auto &Term : Terms)
+        Term.Factors.resize(Degree);
+      detail::WorkBudget General(4096), Single(4096);
+      auto Form = detail::expandOverMinterms(C, Terms, Ids, Width, General);
+      ASSERT_TRUE(Form);
+      EXPECT_FALSE(detail::expandOverMinterms(C, Terms, Ids, Width, Single,
+                                              /*Optional=*/true,
+                                              /*SingleProduct=*/true));
+      EXPECT_LT(Single.used(), 1024u);
+      // Cancelling a leading coefficient makes the scale check inconclusive.
+      // It must still expand the surviving polynomial with its full scale.
+      Terms.push_back({llvm::APInt::getAllOnes(Width), {X, X, X, X}});
+      Terms.back().Factors.resize(Degree);
+      detail::WorkBudget Cancelled(4096), Unrestricted(4096);
+      auto Actual = detail::expandOverMinterms(C, Terms, Ids, Width, Cancelled,
+                                               true, true);
+      auto Expected =
+          detail::expandOverMinterms(C, Terms, Ids, Width, Unrestricted);
+      ASSERT_TRUE(Actual);
+      ASSERT_TRUE(Expected);
+      EXPECT_EQ(Actual->Higher, Expected->Higher);
+    }
 }
 
 TEST(SymMBAHigherProduct, AvoidsExpandingTheTwoSlowMixedDegreeTails) {
@@ -707,9 +711,9 @@ llvm::APInt holedOracle(llvm::ArrayRef<llvm::APInt> Values, unsigned Degree,
          (Disturbed ? Difference : llvm::APInt(Width, 0));
 }
 
-TEST(SymMBAHigherProduct, CompletesMissingCornersThroughSixteenFactors) {
+TEST(SymMBAHigherProduct, CompletesMissingCornersThroughThirtyTwoFactors) {
   for (unsigned Width : {8u, 16u, 32u, 64u, 128u, 257u})
-    for (unsigned Degree : {4u, 8u, 12u, 16u}) {
+    for (unsigned Degree : {4u, 8u, 12u, 16u, 24u, 32u}) {
       SCOPED_TRACE(Width);
       SCOPED_TRACE(Degree);
       SymContext C;
