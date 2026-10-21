@@ -1392,7 +1392,9 @@ private slots:
           menu->actions().contains(bench.action(ActionId::JumpPseudocode));
       cross->trigger();
     });
-    QCOMPARE(shown, QStringLiteral("Jump to disassembly\tTab"));
+    QCOMPARE(shown,
+             QStringLiteral("Jump to disassembly\t") +
+                 QKeySequence(Qt::Key_Tab).toString(QKeySequence::NativeText));
     QVERIFY(!jumpOffered);
     QTRY_VERIFY(assembly->isAncestorOf(QApplication::focusWidget()));
     QTRY_COMPARE(assembly->currentAddress(),
@@ -1608,7 +1610,14 @@ private slots:
     QVERIFY(code->allText().contains(QStringLiteral("v0 + 030; /* 8 */")));
   }
 
+  void codeTextSelectsLikeAnEditor_data() {
+    QTest::addColumn<bool>("popupTakesFocus");
+    QTest::newRow("mouse") << false;
+    QTest::newRow("popup-focus") << true;
+  }
+
   void codeTextSelectsLikeAnEditor() {
+    QFETCH(bool, popupTakesFocus);
     // Ctrl+A selects the whole function, a drag held below the text scrolls
     // and extends the selection past the first screen, and a right click
     // inside the selection keeps it for Copy, as in an editor.
@@ -1683,9 +1692,17 @@ private slots:
       clicker.stop();
       clicked = menu->actions().contains(copy) &&
                 menu->findChild<QAction *>(QStringLiteral("codeSelectAll"));
-      if (clicked)
-        QTest::mouseClick(menu, Qt::LeftButton, {},
-                          menu->actionGeometry(copy).center());
+      if (clicked) {
+        if (popupTakesFocus) {
+          // Native popups can take the focus before their action fires.
+          code->clearFocus();
+          QVERIFY(!code->hasFocus());
+          copy->trigger();
+        } else {
+          QTest::mouseClick(menu, Qt::LeftButton, {},
+                            menu->actionGeometry(copy).center());
+        }
+      }
       if (menu->isVisible())
         menu->close();
     });
@@ -5670,6 +5687,7 @@ private slots:
 
     QStringList listed;
     QString member;
+    bool pickerRan = false;
     auto *picker = new QTimer(&bench.session);
     connect(picker, &QTimer::timeout, picker, [&, picker] {
       auto *dialog =
@@ -5684,6 +5702,7 @@ private slots:
           dialog->findChild<QLineEdit *>(QStringLiteral("typePickerName"));
       if (!list || !search || !name || list->count() < 2 || !search->hasFocus())
         return;
+      pickerRan = true;
       picker->stop();
       picker->deleteLater();
       for (int row = 0; row < list->count(); ++row)
@@ -5694,7 +5713,47 @@ private slots:
       QTest::keyClick(search, Qt::Key_Return);
     });
     picker->start(10);
+    bool pickerTimedOut = false;
+    QString pickerState;
+    QTimer pickerDeadline;
+    pickerDeadline.setSingleShot(true);
+    connect(&pickerDeadline, &QTimer::timeout, this, [&] {
+      pickerTimedOut = true;
+      auto *dialog = QApplication::activeModalWidget();
+      auto *focus = QApplication::focusWidget();
+      pickerState =
+          QStringLiteral("modal=%1 active=%2 focus=%3")
+              .arg(dialog ? dialog->metaObject()->className() : "none")
+              .arg(dialog && dialog->isActiveWindow())
+              .arg(focus ? focus->objectName() : QStringLiteral("none"));
+      if (dialog) {
+        auto *list =
+            dialog->findChild<QListWidget *>(QStringLiteral("typePickerList"));
+        auto *summary =
+            dialog->findChild<QLabel *>(QStringLiteral("typePickerSummary"));
+        auto *search =
+            dialog->findChild<QLineEdit *>(QStringLiteral("typePickerSearch"));
+        auto *name =
+            dialog->findChild<QLineEdit *>(QStringLiteral("typePickerName"));
+        auto *apply =
+            dialog->findChild<QPushButton *>(QStringLiteral("typePickerApply"));
+        pickerState +=
+            QStringLiteral(" pickerRan=%1 rows=%2 row=%3 searchFocus=%4"
+                           " name=%5 apply=%6 summary=%7")
+                .arg(pickerRan)
+                .arg(list ? list->count() : -1)
+                .arg(list ? list->currentRow() : -1)
+                .arg(search && search->hasFocus())
+                .arg(name ? name->text() : QStringLiteral("missing"))
+                .arg(apply && apply->isEnabled())
+                .arg(summary ? summary->text() : QString());
+        dialog->close();
+      }
+    });
+    pickerDeadline.start(OpenTimeoutMs);
     bench.action(ActionId::EditConvertToStruct)->trigger();
+    pickerDeadline.stop();
+    QVERIFY2(!pickerTimedOut, qPrintable(pickerState));
     QTRY_COMPARE_WITH_TIMEOUT(
         listed,
         (QStringList{QStringLiteral("_DEVICE"), QStringLiteral("_LIST_ENTRY")}),
