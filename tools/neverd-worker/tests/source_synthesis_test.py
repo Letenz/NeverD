@@ -259,6 +259,13 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
         elif kind in ("quartic", "sextic"):
             assert text.count("&") <= 2, text
             assert text.count("^") <= (1 if kind == "quartic" else 3), text
+        elif kind == "missing-cubic":
+            # Retain the missing corner's exact residual, while collapsing
+            # the seven separately partitioned products. LLVM-to-C spells a
+            # word complement as XOR -1; count it separately from binary XOR.
+            complements = len(re.findall(r"\^\s*-1\b", text))
+            assert text.count("&") <= 8, text
+            assert text.count("^") - complements <= 3, text
         elif kind in ("perturbed-quartic", "perturbed-sextic",
                       "missing-quartic", "missing-sextic"):
             # Keep the changed original product, but eliminate the remaining
@@ -291,7 +298,7 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                     elif kind in ("partitioned", "mixed", "cubic", "quartic",
                                   "sextic", "perturbed-quartic",
                                   "perturbed-sextic", "missing-quartic",
-                                  "missing-sextic"):
+                                  "missing-sextic", "missing-cubic"):
                         assert ordinary.count("&") >= 4, ordinary
                     else:
                         assert ">>" in ordinary, ordinary
@@ -348,6 +355,10 @@ if __name__ == "__main__":
              "182U*(x^y)*(y|z)+37U*x*y*z+x+y"),
             ("cubic", cubic_elf(),
              "37U*(x^y)*(y|z)*(x|z)+x+y+(x&0x80000000U)"),
+            ("missing-cubic", cubic_elf(missing=True),
+             "37U*(x^y)*(y|z)*(x|z)"
+             "-37U*((x^y)&z)*((y|z)&x)*((x|z)&y)"
+             "+x+y+(x&0x80000000U)"),
             ("quartic", cubic_elf(degree=4),
              "37U*(x^y)*(y|z)*(x|z)*(x&y)+x+y+(x&0x80000000U)"),
             ("sextic", cubic_elf(degree=6),

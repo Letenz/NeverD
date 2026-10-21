@@ -274,6 +274,17 @@ must finish within the unchanged 65,536-unit allowance.
 Partially factored quartic and sextic inputs exercise the form produced by
 source preprocessing, with full-width oracles through 257 bits, exhaustive
 three-bit partial-budget checks and an independent SMT proof.
+Subset-degree recovery checks every two-input cubic factor triple at all seven
+nonzero three-bit scales, including vanished mixed coefficients. Independently
+expanded fourth through eighth degrees also check the recovered factor supports
+at 2–257 bits. Refusal controls separate insufficient work/storage from an
+impossible support, and a nearby polynomial with the same support must still
+fail coefficient validation. Single cubic products retain their exact factors
+while the linear tail improves; independent word oracles and separate small-word
+Z3 checks cover the resulting expressions.
+Extremal-coefficient controls retain general expansion and handle cancelled
+leading terms. The slow fifth- and seventh-degree mixed tails have explicit
+work ceilings and independent full-word arithmetic oracles through 257 bits.
 Sixteen repeated small partitions check that exponential expansion is refused
 before consuming the budget needed to simplify their shared child.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
