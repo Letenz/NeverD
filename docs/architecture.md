@@ -977,6 +977,12 @@ function that is not a symbol start adds its own entry to its run, which keys
 other facts. The cache keeps the latest such
 selection's facts beside the symbol inventory's, so passing through one
 leaves what the symbol starts share in place.
+Both kinds share the image's no-return-name, stack-probe, function-pointer,
+relocation-root and executable-owner indexes. The image, debug context, symbol
+inventory and exact verified entries bind that shared ownership. Each distinct
+candidate-entry set still owns its call proofs, graphs and body summaries;
+changing an unnamed selection cannot reuse another selection's boundaries.
+The shared lazy-name memo is cleared before every run, including a new selection.
 Reload, function edits, signature matching and analysis-policy changes retire
 the cache while its image/debug owners are alive. Feature generations are
 checked even after navigation cleared the preceding pipeline result. COFF
