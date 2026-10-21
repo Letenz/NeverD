@@ -13,6 +13,7 @@
 #include "JSONText.h"
 #include "SessionImpl.h"
 
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/StringScan.h"
 
 #include "llvm/Support/ConvertUTF.h"
@@ -27,8 +28,6 @@ using namespace neverd;
 using namespace neverd::sdk;
 
 namespace {
-
-constexpr int BytesPerLine = 16;
 
 /// What the text column shows at one byte: a character's text at its first
 /// byte, or a filler; Columns is the width it draws.
@@ -136,10 +135,11 @@ const char *neverd_hex_dump_ex(neverd_session_t Sess, neverd_va_t Addr,
     Cells = textCells(Bytes, *Encoding);
   std::string Out;
   llvm::raw_string_ostream OS(Out);
-  for (size_t Line = 0; Line < Mapped; Line += BytesPerLine) {
+  for (size_t Line = 0; Line < Mapped; Line += kHexDumpBytesPerLine) {
     OS << "0x" << llvm::utohexstr(Addr + Line) << "  ";
-    const size_t Count = std::min<size_t>(BytesPerLine, Bytes.size() - Line);
-    for (size_t J = 0; J < BytesPerLine; ++J) {
+    const size_t Count =
+        std::min<size_t>(kHexDumpBytesPerLine, Bytes.size() - Line);
+    for (size_t J = 0; J < kHexDumpBytesPerLine; ++J) {
       if (J >= Count)
         OS << "   ";
       else if (const auto Byte = Bytes[Line + J])

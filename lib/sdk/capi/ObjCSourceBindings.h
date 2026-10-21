@@ -31,6 +31,7 @@
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftStringCalls.h"
 #include "neverd/loader/Swift/SwiftVirtualCalls.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Demangle/SwiftDemangle.h"
@@ -390,7 +391,7 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
   if (Image.Arch != Arch::AArch64 || Function.FrameSize <= 0 ||
       Function.FrameSize > (1 << 24) || Call.Operands.size() <= FixedCount)
     return Proven;
-  size_t Budget = 1000000;
+  size_t Budget = kSourceEvaluationWork;
   VarKeyMap<unsigned> Counts;
   walkStmts(Function.Body, [&](const HighStmt &S) {
     if (S.Kind == StmtKind::Assign && S.Dst &&
@@ -595,7 +596,7 @@ inline std::set<const HighExpr *> provenPrivateFramePointerLoads(
           if (*At == Slot && Value && Value->Type && Value->Type->Size == 8 &&
               !F.Escaped && S.MemoryOrdering == NdMemoryOrdering::None &&
               S.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
-            size_t PointerBudget = 4096;
+            size_t PointerBudget = kSourceValueWork;
             std::set<VarKey> PointerActive;
             const bool Null =
                 Value->Kind == ExprKind::Const && !Value->ConstVal &&
@@ -662,7 +663,7 @@ inline std::set<const HighExpr *> provenFastEnumerationObjectLoads(
   if (Image.Arch != Arch::AArch64 || Function.FrameSize <= 0 ||
       Function.FrameSize > (1 << 24) || Call.Operands.size() <= FixedCount)
     return Proven;
-  size_t Budget = 1000000;
+  size_t Budget = kSourceEvaluationWork;
   VarKeyMap<unsigned> Counts;
   walkStmts(Function.Body, [&](const HighStmt &S) {
     if (S.Kind == StmtKind::Assign && S.Dst &&
@@ -1104,7 +1105,7 @@ provenBlockClassCaptureLoads(const HighFunc &Function, const BinaryImage &Image,
       Function.FrameSize > (1u << 24) || Function.FrameHeadroom > (1u << 24) ||
       Call.Operands.size() <= FixedCount)
     return Proven;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   const auto Context = [](const ExprPtr &E) {
     return E && E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Param &&
            E->Var.Id == 0 && E->Var.SSAVer == 0 && E->Var.RenameTag < 0 &&
@@ -1503,7 +1504,7 @@ inline TypeRef provenLocalizedFormatInteger64Type(
     const BinaryImage &Image) {
   if (Image.Arch != Arch::AArch64)
     return {};
-  size_t Budget = 4096;
+  size_t Budget = kSourceValueWork;
   std::set<VarKey> ActiveValues, ActiveAddresses;
   const auto LiteralAddress = [&](auto &&Self, const ExprPtr &E,
                                   unsigned Depth) -> std::optional<va_t> {
@@ -1916,11 +1917,11 @@ swiftSimpleDescriptorModule(llvm::StringRef Symbol,
                             llvm::StringRef DeclKind) {
   Symbol.consume_front("_");
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(Symbol, Options);
   const auto Shape = [](const llvm::SwiftDemangleNode &Node,
                         llvm::StringRef Kind, size_t Children) {
@@ -1969,11 +1970,11 @@ inline bool swiftNominalDescriptor(llvm::StringRef Symbol,
 inline bool swiftExportedNominalDescriptor(llvm::StringRef Symbol) {
   Symbol.consume_front("_");
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(Symbol, Options);
   const auto Shape = [](const llvm::SwiftDemangleNode &Node,
                         llvm::StringRef Kind, size_t Children) {
@@ -2014,11 +2015,11 @@ inline bool swiftProtocolDescriptor(llvm::StringRef Symbol) {
 
 inline bool swiftMangledType(llvm::StringRef Symbol) {
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(Symbol, Options);
   return Parsed.Root && Parsed.Error.empty() && Parsed.Root->Kind == "Global" &&
          !Parsed.Root->Text && !Parsed.Root->Index &&
@@ -2364,11 +2365,11 @@ inline std::optional<SourceCallTypeHint> swiftWitnessTableAddressHint(
       !llvm::StringRef(Table->Name).ends_with("WP"))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto Parsed =
       llvm::swiftDemangle(llvm::StringRef(Table->Name).drop_front(1), Options);
   if (!Parsed.Root || !Parsed.Error.empty() || Parsed.Root->Kind != "Global" ||
@@ -2445,7 +2446,7 @@ inline bool swiftSingletonDescriptorForwardedByNativeHelper(
     return false;
   std::set<const HighExpr *> Seen;
   size_t RuntimeCalls = 0;
-  size_t Budget = 4096;
+  size_t Budget = kSourceValueWork;
   bool Valid = true;
   walkStmts(Helper.Body, [&](const HighStmt &Statement) {
     forEachExpr(Statement, [&](const ExprPtr &Root) {
@@ -2813,9 +2814,8 @@ swiftPrivateDescriptorFieldPath(const BinaryImage &Image, va_t Descriptor,
   };
   // The caller authenticates the private symbol and complete type mangling.
   // A bounded scan supplies a path, never an address derived from image slide.
-  constexpr size_t MaxExports = 262144;
-  size_t FieldBudget = 65536;
-  if (Image.Exports.size() > MaxExports)
+  size_t FieldBudget = kSourceBindingFieldWork;
+  if (Image.Exports.size() > kMaxSourceBindingExports)
     return std::nullopt;
   for (const auto &Export : Image.Exports) {
     if (!llvm::StringRef(Export.Name).ends_with("CMn"))
@@ -2986,11 +2986,11 @@ inline bool swiftDescriptorTypeRecipeMatches(
       !OptionalPair && !OptionalTuple)
     return false;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   auto Parse = [&](llvm::StringRef Name) {
     Name.consume_front("_");
     return llvm::swiftDemangle(Name, Options);
@@ -3009,7 +3009,7 @@ inline bool swiftDescriptorTypeRecipeMatches(
       !Shape(Outer.Root->Children[0].Children[0], "Type", 1))
     return false;
   const auto &OuterType = Outer.Root->Children[0].Children[0];
-  size_t Budget = 4096;
+  size_t Budget = kSourceValueWork;
   const auto Same = [&](const auto &Self, const llvm::SwiftDemangleNode &A,
                         const llvm::SwiftDemangleNode &B,
                         unsigned Depth) -> bool {
@@ -3247,7 +3247,6 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
       overlapsPointerStorage(Image, *TypeReference, uint64_t(Length) + 1))
     return std::nullopt;
 
-  constexpr size_t MaxDescriptors = 8;
   size_t SymbolicReferences = 0;
   std::vector<SwiftTypeMetadataDescriptorReference> Descriptors;
   std::vector<SwiftTypeMetadataDescriptorReference> RegisteredTypes;
@@ -3261,7 +3260,7 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
       Rebuilt.push_back(static_cast<char>(TypeBytes[I++]));
       continue;
     }
-    if (Length - I < 5 || ++SymbolicReferences > MaxDescriptors)
+    if (Length - I < 5 || ++SymbolicReferences > kMaxSourceBindingDescriptors)
       return std::nullopt;
     const auto DescriptorAddress =
         swiftRelativeAddress(Image, *TypeReference + I + 1);
@@ -3323,11 +3322,11 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
       if (!Name.starts_with("$s") || !Name.ends_with("Mn"))
         return std::nullopt;
       llvm::SwiftDemangleOptions Options;
-      Options.MaxInputBytes = 8000;
-      Options.MaxNodes = 1024;
-      Options.MaxDepth = 64;
-      Options.MaxMemoryBytes = 1024 * 1024;
-      Options.MaxOperations = 100000;
+      Options.MaxInputBytes = kSwiftBindingInputBytes;
+      Options.MaxNodes = kSwiftBindingNodes;
+      Options.MaxDepth = kSwiftBindingDepth;
+      Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+      Options.MaxOperations = kSwiftBindingOperations;
       const auto Parsed = llvm::swiftDemangle(Name, Options);
       const auto Shape = [](const llvm::SwiftDemangleNode &N,
                             llvm::StringRef Kind) {
@@ -3584,7 +3583,7 @@ inline std::vector<std::pair<size_t, size_t>> swiftForwardedTypeMetadataPairs(
   };
   std::array<size_t, 8> Reads{}, PairedReads{};
   std::set<std::pair<size_t, size_t>> Pairs;
-  size_t Budget = 16384;
+  size_t Budget = kSourceBindingOccurrenceWork;
   bool Complete = true;
   const auto Read = [&](const MedVar &Var) {
     if (Var.Kind == MedVar::Param && Var.Id >= 0 &&
@@ -3701,11 +3700,11 @@ swiftExportedConformanceDescriptorName(const BinaryImage &Image,
   if (Exports != 1)
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto ParsedConformance = llvm::swiftDemangle(
       llvm::StringRef(Conformance->Name).drop_front(1), Options);
   const auto Shape = [](const llvm::SwiftDemangleNode &Node,
@@ -3756,11 +3755,11 @@ swiftLocalWitnessGlobals(const BinaryImage &Image, va_t ConformanceAddress,
   if (!Metadata || !Conformance)
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto ParsedConformance =
       llvm::swiftDemangle(llvm::StringRef(*Conformance).drop_front(1), Options);
   const auto ParsedMetadata = llvm::swiftDemangle(
@@ -4179,11 +4178,11 @@ inline bool swiftStaticOptionalURLBufferSymbol(llvm::StringRef Name) {
   if (!Name.ends_with("VSgvpZ"))
     return false;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(Name, Options);
   const auto Shape = [](const llvm::SwiftDemangleNode &Node,
                         llvm::StringRef Kind, size_t Children) {
@@ -4269,11 +4268,11 @@ swiftStaticOptionalURLBufferHint(const BinaryImage &Image, va_t Address) {
 inline bool swiftStaticStringStorageSymbol(llvm::StringRef Name) {
   Name.consume_front("_");
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(Name, Options);
   const auto Shape = [](const llvm::SwiftDemangleNode &Node,
                         llvm::StringRef Kind, size_t Children) {
@@ -4673,11 +4672,11 @@ swiftStaticStringStorageHint(const BinaryImage &Image, va_t Base) {
   llvm::StringRef Name(Storage->Name);
   Name.consume_front("_");
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(Name, Options);
   if (!Parsed.Root || !Parsed.Error.empty() || Parsed.Root->Kind != "Global" ||
       Parsed.Root->Text || Parsed.Root->Index ||
@@ -4787,11 +4786,11 @@ swiftStaticRootObjectStorage(const BinaryImage &Image, va_t Base) {
   llvm::StringRef Name(Storage->Name);
   Name.consume_front("_");
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 1024;
-  Options.MaxNodes = 128;
-  Options.MaxDepth = 24;
-  Options.MaxMemoryBytes = 65536;
-  Options.MaxOperations = 10000;
+  Options.MaxInputBytes = kSwiftIdentityInputBytes;
+  Options.MaxNodes = kSwiftIdentityNodes;
+  Options.MaxDepth = kSwiftIdentityDepth;
+  Options.MaxMemoryBytes = kSwiftIdentityMemoryBytes;
+  Options.MaxOperations = kSwiftIdentityOperations;
   const auto Tree = llvm::swiftDemangle(Name, Options);
   const auto Shape = [](const auto &Node, llvm::StringRef Kind, size_t Count) {
     return Node.Kind == Kind && !Node.Text && !Node.Index &&
@@ -5310,7 +5309,7 @@ kvoContextLocalAliases(const HighFunc &Function, const BinaryImage &Image,
       Def.Address = Value->ConstVal;
   });
   std::map<HighSourceLocalIdentity, unsigned> Reads, ComparedReads;
-  size_t Budget = 1000000;
+  size_t Budget = kSourceEvaluationWork;
   bool Complete = true;
   std::function<void(const ExprPtr &, const HighExpr *, size_t, unsigned)>
       Scan = [&](const ExprPtr &Value, const HighExpr *Parent, size_t Index,
@@ -5561,7 +5560,7 @@ inline std::optional<uint64_t> nativeScalarStorageArgumentExtent(
     const HighFunc &Function, size_t Parameter, bool AllowPointerValues,
     bool AllowStores = true,
     const std::map<va_t, const HighFunc *> *Functions = nullptr) {
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   std::set<std::pair<const HighFunc *, size_t>> Active;
   const auto Analyze = [&](const auto &Self, const HighFunc &Current,
                            size_t CurrentParameter,
@@ -5867,11 +5866,11 @@ swiftPrivateWitnessIdentity(const BinaryImage &Image, va_t Address,
   if (!ProtocolSymbol || !swiftProtocolDescriptor(*ProtocolSymbol))
     return std::nullopt;
   llvm::SwiftDemangleOptions Options;
-  Options.MaxInputBytes = 8000;
-  Options.MaxNodes = 1024;
-  Options.MaxDepth = 64;
-  Options.MaxMemoryBytes = 1024 * 1024;
-  Options.MaxOperations = 100000;
+  Options.MaxInputBytes = kSwiftBindingInputBytes;
+  Options.MaxNodes = kSwiftBindingNodes;
+  Options.MaxDepth = kSwiftBindingDepth;
+  Options.MaxMemoryBytes = kSwiftBindingMemoryBytes;
+  Options.MaxOperations = kSwiftBindingOperations;
   const auto Parsed = llvm::swiftDemangle(*ProtocolSymbol, Options);
   if (!Parsed.Root || !Parsed.Error.empty() ||
       !Shape(*Parsed.Root, "Global", 1) ||
@@ -6249,7 +6248,7 @@ inline MergedIvarOffsetPlans mergedIvarOffsetPlans(const HighFunc &Function,
   };
 
   std::vector<ExprPtr> Candidates;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   walkStmts(Function.Body, [&](const HighStmt &S) {
     forEachRhsExpr(S, [&](const ExprPtr &Root) {
       std::vector<ExprPtr> Pending{Root};
@@ -6285,7 +6284,7 @@ inline MergedIvarOffsetPlans mergedIvarOffsetPlans(const HighFunc &Function,
     if (!Current)
       continue;
     bool Valid = true;
-    size_t UsesBudget = 100000;
+    size_t UsesBudget = kSourceExpressionWork;
     const auto Related = [&](const Resolution &Other) {
       for (const auto &[Leaf, Reference] : Other.Leaves) {
         (void)Reference;
@@ -6354,7 +6353,7 @@ inline MergedIvarOffsetPlans mergedIvarOffsetPlans(const HighFunc &Function,
 }
 
 inline std::optional<uint64_t> swiftLiteralStorageWord(const ExprPtr &Value) {
-  size_t Budget = 256;
+  size_t Budget = kSourceBindingSmallWork;
   const auto Evaluate = [&](auto &&Self, const ExprPtr &Current,
                             unsigned Depth) -> std::optional<uint64_t> {
     if (!Current || Depth > 16 || !Budget || !Current->Type ||
@@ -6387,7 +6386,7 @@ inline std::optional<uint64_t> swiftLiteralStorageWord(const ExprPtr &Value) {
 inline bool containsBorrowedStorage(const ExprPtr &Value) {
   std::vector<const HighExpr *> Pending{Value.get()};
   std::set<const HighExpr *> Seen;
-  size_t Budget = 1000;
+  size_t Budget = kSourceBindingCallWork;
   while (!Pending.empty()) {
     if (!Budget--)
       return true;
@@ -6535,7 +6534,7 @@ inline std::optional<va_t> swiftWitnessUndefDescriptor(const HighFunc &Function,
   std::map<HighSourceLocalIdentity, std::vector<ExprPtr>> Definitions;
   std::set<HighSourceLocalIdentity> AddressTaken;
   std::set<const HighStmt *> Statements;
-  size_t Budget = 16384, Occurrences = 0;
+  size_t Budget = kSourceBindingOccurrenceWork, Occurrences = 0;
   bool Complete = true;
   const auto Scan = [&](auto &&Self, const ExprPtr &Value,
                         unsigned Depth) -> void {
@@ -6727,7 +6726,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
   using MetadataChoices = std::map<va_t, MetadataAlias>;
   std::map<MetadataLocal, MetadataChoices> MetadataPairCandidates;
   std::set<MetadataLocal> MetadataConflicts;
-  size_t MetadataScanBudget = 1000000;
+  size_t MetadataScanBudget = kSourceMetadataScanWork;
   bool MetadataScanComplete = true;
   const auto MetadataLocalAt =
       [&](const ExprPtr &Value) -> std::optional<MetadataLocal> {
@@ -6998,7 +6997,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
                                             Addresses->end());
             std::set<const HighExpr *> Leaves;
             std::set<VarKey> Active;
-            size_t TraceBudget = 4096;
+            size_t TraceBudget = kSourceValueWork;
             const auto Trace = [&](auto &&Self, const ExprPtr &Value,
                                    unsigned Depth) -> bool {
               if (!Value || !TraceBudget-- || Depth > 64)
@@ -7056,7 +7055,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
   // make a later argument borrow an earlier argument's binding.
   using CopyKey = std::tuple<ExprPtr, bool, bool, bool>;
   std::map<CopyKey, ExprPtr> Copies;
-  size_t Budget = 1000000;
+  size_t Budget = kSourceEvaluationWork;
   va_t StatementAddress = 0;
   auto Fail = [&](const char *Message, const HighExpr *Expression = nullptr) {
     if (Result.Limitation.empty())
@@ -7691,7 +7690,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       if (Stub && Stub->Format &&
           Expression->Operands.size() >= Stub->Format->FixedCount) {
         const auto Fixed = Stub->Format->FixedCount;
-        size_t PointerBudget = 4096;
+        size_t PointerBudget = kSourceValueWork;
         std::set<VarKey> ActivePointers;
         bool PointerTail = std::all_of(
             Expression->Operands.begin() + Fixed, Expression->Operands.end(),
@@ -7713,7 +7712,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
                 provenBlockClassCaptureLoads(Function, Image, FormatDefinitions,
                                              *Expression, Fixed)})
             ProvenLoads.insert(Group.begin(), Group.end());
-          PointerBudget = 4096;
+          PointerBudget = kSourceValueWork;
           ActivePointers.clear();
           PointerTail =
               !ProvenLoads.empty() &&
@@ -7735,7 +7734,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
           // scalar carriers agree with the format declaration below.
         } else if (!Expression->SourceCallHint ||
                    plainNativeBinding(*Expression->SourceCallHint)) {
-          size_t IntegerBudget = 4096;
+          size_t IntegerBudget = kSourceValueWork;
           std::set<VarKey> ActiveIntegers;
           std::vector<TypeRef> Types;
           for (size_t I = Fixed; I < Expression->Operands.size(); ++I) {
@@ -8767,7 +8766,7 @@ privateFrameArgumentOffset(const ExprPtr &Argument, const HighFunc &Function,
   if (!Argument || Function.FrameSize <= 0 ||
       (TRI.PointerSize != 4 && TRI.PointerSize != 8))
     return std::nullopt;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   VarKeyMap<unsigned> Definitions;
   walkStmts(Function.Body, [&](const HighStmt &Statement) {
     if (!Budget)
@@ -9536,7 +9535,7 @@ inline bool objcSourceCallBound(
              Statement.Dst->Kind == ExprKind::Phi))
           Definitions[varKey(Statement.Dst->Var)].push_back(Statement.Val);
       });
-    size_t ObjectBudget = 4096;
+    size_t ObjectBudget = kSourceValueWork;
     std::set<VarKey> ActiveObjects;
     const auto GlobalAddress = [&](auto &&Self, const ExprPtr &Value,
                                    size_t &Budget, std::set<VarKey> &Active,
@@ -9610,7 +9609,7 @@ inline bool objcSourceCallBound(
         return Value->SourceCallHint->TargetAddress;
       if (Value->Kind == ExprKind::Load && Value->Operands.size() == 1) {
         const auto &Address = Value->Operands.front();
-        size_t AddressBudget = 4096;
+        size_t AddressBudget = kSourceValueWork;
         std::set<VarKey> ActiveAddresses;
         if (const auto Storage = GlobalAddress(GlobalAddress, Address,
                                                AddressBudget, ActiveAddresses))
@@ -9666,7 +9665,7 @@ inline bool objcSourceCallBound(
                                  Query)
                            : std::map<const HighExpr *, va_t>{};
     enum class Identity { Object, Class, Selector };
-    size_t Budget = 4096;
+    size_t Budget = kSourceValueWork;
     std::set<VarKey> Active;
     const auto Matches = [&](auto &&Self, const ExprPtr &Value, va_t Address,
                              Identity Kind, unsigned Depth) -> bool {
@@ -9790,7 +9789,7 @@ inline bool objcSourceCallBound(
                 Definitions[varKey(Statement.Dst->Var)].push_back(
                     Statement.Val);
             });
-            size_t Budget = 4096;
+            size_t Budget = kSourceValueWork;
             std::set<VarKey> Active;
             std::optional<std::set<const HighExpr *>> FrameLoads;
             std::optional<std::set<const HighExpr *>> EnumLoads;
@@ -9816,7 +9815,7 @@ inline bool objcSourceCallBound(
                   FrameLoads = provenPrivateFramePointerLoads(
                       *ContainingFunction, Image, Definitions, Expression,
                       Format.FixedCount);
-                Budget = 4096;
+                Budget = kSourceValueWork;
                 Active.clear();
                 if (FrameLoads->empty() ||
                     !provenSourcePointerValue(Expression.Operands[I],
@@ -9826,7 +9825,7 @@ inline bool objcSourceCallBound(
                     EnumLoads = provenFastEnumerationObjectLoads(
                         *ContainingFunction, Image, Definitions, Expression,
                         Format.FixedCount);
-                  Budget = 4096;
+                  Budget = kSourceValueWork;
                   Active.clear();
                   if (EnumLoads->empty() ||
                       !provenSourcePointerValue(Expression.Operands[I],
@@ -9836,7 +9835,7 @@ inline bool objcSourceCallBound(
                       ClassLoads = provenBlockClassCaptureLoads(
                           *ContainingFunction, Image, Definitions, Expression,
                           Format.FixedCount);
-                    Budget = 4096;
+                    Budget = kSourceValueWork;
                     Active.clear();
                     if (ClassLoads->empty() ||
                         !provenSourcePointerValue(Expression.Operands[I],
@@ -9929,7 +9928,7 @@ inline bool objcSourceCallBound(
              Statement.Dst->Kind == ExprKind::Phi))
           Definitions[varKey(Statement.Dst->Var)].push_back(Statement.Val);
       });
-    size_t CandidateBudget = 4096;
+    size_t CandidateBudget = kSourceValueWork;
     std::set<VarKey> ActiveVariables;
     const auto MatchesCandidate = [&](auto &&Self, const ExprPtr &Value,
                                       unsigned Depth) -> bool {
@@ -10006,7 +10005,7 @@ inline bool objcSourceCallBound(
         const auto &Object = Expression.Operands[1];
         bool HasStaticRootStorage = false;
         std::vector<std::pair<ExprPtr, unsigned>> Pending{{Object, 0}};
-        unsigned Budget = 256;
+        unsigned Budget = kSourceBindingSmallWork;
         while (!Pending.empty()) {
           const auto [E, Depth] = Pending.back();
           Pending.pop_back();
@@ -10072,7 +10071,7 @@ inline bool objcSourceCallBound(
           BooleanDefinitions;
       std::set<HighSourceLocalIdentity> AddressTaken, ActiveBooleanVariables;
       std::optional<bool> BooleanFlowValid;
-      size_t BooleanBudget = 4096;
+      size_t BooleanBudget = kSourceValueWork;
       const auto PrepareBooleanFlow = [&]() {
         if (BooleanFlowValid)
           return *BooleanFlowValid;

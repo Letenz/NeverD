@@ -22,8 +22,8 @@ namespace neverd::gui {
 struct LoadOptions {
   /// Read the debug information that belongs to the input.
   bool debugInfo = true;
-  /// Analyze in idle time: function discovery, the reference index, and
-  /// preparing each function's analysis for its first decompile.
+  /// Analyze in idle time: function discovery and the reference index.
+  /// Expensive function views are prepared in separate analysis sessions.
   bool analysis = true;
   /// The loader the user chose for a file that names no format itself:
   /// "evm" for EVM bytecode, or "binary" as the fields below place it; empty
@@ -60,11 +60,16 @@ struct LoadOptions {
   QJsonObject symbols;
 };
 
+struct SessionTestAccess;
+
 /// The project's writable worker and a bounded read-only analysis pool.
 /// Browsing and edits keep the owner dispatcher while expensive views use a
 /// verified replica. Save/Discard/Cancel transitions belong to the owner.
 class Session final : public QObject {
   Q_OBJECT
+  // Same-build test seam (tests/SessionTestAccess.h).
+  friend struct SessionTestAccess;
+
 public:
   explicit Session(QString workerPath, QObject *parent = nullptr);
   ~Session() override;

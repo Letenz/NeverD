@@ -44,7 +44,7 @@ struct LowIRIndependenceFrame {
   symbolic::SymRegisterRange RootRegister;
   /// Accessible, nonwrapping bytes relative to the entry root: [Begin, End).
   /// This is an explicit nonfaulting environment contract, not an alias fact
-  /// inferred from executing one input. Only this mutable region is supported.
+  /// inferred from executing one input. Writes are confined to this region.
   int64_t Begin = 0;
   int64_t End = 0;
   /// The whole accessible frame must be disjoint from every excluded absolute
@@ -90,6 +90,28 @@ struct LowIRNativePreservationCertificate {
   std::string ExecutionDigest;
 };
 
+enum class LowIRExternalReadModel : uint8_t {
+  None,
+  /// Finite proofs only. Non-frame ordinary RAM reads retain their address,
+  /// width and order. Each occurrence shares a fresh input between executions;
+  /// prior frame writes override overlapping bytes without a nonalias premise.
+  /// Repeated reads need not agree, conservatively including every ordinary
+  /// nonfaulting execution. This supplies no MMIO, atomic, concurrent-writer
+  /// or external-store semantics. Even immutable non-frame reads must remain
+  /// in the candidate trace; deleting or folding them is not certified.
+  OrderedOrdinaryRAMV1,
+};
+
+enum class LowIRExternalQueryModel : uint8_t {
+  None,
+  /// Finite native proofs only. Architecture-described scalar queries retain
+  /// their identity, selectors, result widths, occurrence count and order,
+  /// including their order relative to ordinary RAM reads. Each occurrence
+  /// shares defined inputs between executions; repeated answers may differ.
+  /// This supplies no host values, feature profile or unlisted state contract.
+  OrderedScalarV1,
+};
+
 struct LowIRIndependenceContract {
   /// Native-only opt-in. Initializes canonical shared entry flags and always
   /// observes final system flags, independently of ReturnRegisters and frame
@@ -133,9 +155,23 @@ struct LowIRIndependenceContract {
   /// including induction, refuses an AllUndefinedChoices request. Static
   /// LowIR cannot establish architectural effects omitted from its input.
   std::optional<LowIRNativePreservationRequirement> NativePreservedState;
+  /// Requires Frame and an explicit ordinary, nonfaulting RAM execution
+  /// domain. Neither observed addresses nor file-backed writable bytes become
+  /// constants or disjointness premises. Loop APIs reject this model.
+  LowIRExternalReadModel ExternalReads = LowIRExternalReadModel::None;
+  /// Requires an architecture provider and ordinary, nonfaulting execution.
+  /// Static LowIR and loop APIs reject this model.
+  LowIRExternalQueryModel ExternalQueries = LowIRExternalQueryModel::None;
 };
 
 struct LowIRIndependenceLimits {
+  /// Scalar query metadata ceilings. Dynamic execution additionally consumes
+  /// MaxObservations and MaxSymbolicNodes, including every result binding.
+  static constexpr uint32_t kMaxScalarQueryIdentityBytes = 64;
+  static constexpr uint16_t kMaxScalarQuerySelectors = 8;
+  static constexpr uint16_t kMaxScalarQueryResults = 8;
+  static constexpr uint16_t kMaxScalarQueryBindings = 16;
+
   uint64_t MaxOperations = 65536;
   /// Bounds both input metadata and dynamically visited instructions, including
   /// instructions whose lifted operation spans are empty and frame exclusions.
@@ -227,6 +263,18 @@ struct LowIRNativeAuditBoundary {
   std::string OperationDigest;
 };
 
+/// Binds an executed architecture query declaration to its complete LowIR
+/// instruction. The descriptor digest includes selectors, result widths and
+/// destination bindings; it is integrity evidence, not caller authentication.
+struct LowIRExternalQueryTransition {
+  int BlockId = -1;
+  va_t InstructionAddress = 0;
+  std::string Identity;
+  uint32_t SemanticsVersion = 0;
+  std::string OperationDigest;
+  std::string DescriptorDigest;
+};
+
 struct LowIRIndependenceCertificate {
   LowIRIndependenceScope Scope = LowIRIndependenceScope::CompleteAcyclicLowIR;
   /// SHA256 of the checked operations, CFG, boundaries, sidecars, contract and
@@ -242,6 +290,7 @@ struct LowIRIndependenceCertificate {
   std::vector<LowIRNativeProfileProjection> NativeProfileProjections;
   std::vector<LowIRNativeAuditBoundary> NativeAuditBoundaries;
   std::optional<LowIRNativePreservationCertificate> NativePreservation;
+  std::vector<LowIRExternalQueryTransition> ExternalQueryTransitions;
 };
 
 struct LowIRIndependenceResult {

@@ -4,6 +4,10 @@
 
 # Architecture de NeverD
 
+Le chargeur COFF sépare les positions des épilogues V2 des opérations du prologue. V2 restaure les registres sauvegardés du cadre principal selon la position exacte dans l’épilogue déclaré ; la libération de la pile précède cette région. Les plages, tailles et séquences invalides sont refusées avant toute lecture de pile. V1 conserve la reconnaissance par instructions. Tous les moteurs partagent les contrôles de pile et le traitement des exceptions.
+
+Seule la séquence initiale de `UWOP_EPILOG` définit les épilogues V2. Les marqueurs suivants occupent deux emplacements sans restaurer l’état ni intervenir dans l’ordre des décalages du prologue ; une paire tronquée reste invalide.
+
 Ce guide décrit les frontières de production qu’un contributeur doit connaître
 pour modifier NeverD en toute sécurité. Il couvre volontairement uniquement le
 code appartenant à NeverD ; les sous-modules LLVM, Capstone et Unicorn gardent
@@ -1973,3 +1977,13 @@ Les alias réutilisent les propriétaires existants des threads/processus et des
 `SymStorePreservation` utilise une base vide pour la mémoire absolue courante ; toute autre base reste une valeur non constante de 64 bits du contexte. La banque réellement écrite ne peut pas être protégée. Avec `ProveStoreFrameSeparation`, la récupération prouve aussi que chaque cellule absolue courante est disjointe de toute l’écriture symbolique avant de la conserver. La projection ne transporte que les octets constants encore valides, les intersecte aux jonctions et les relie avec les faits de trame. Les octets absents, contradictoires ou invalidés restent inconnus. Aucun contenu initial, stockage immuable, accès valide ou non-alias global n’est ainsi accordé.
 
 Une écriture entièrement contenue dans les limites déclarées du cadre sans rebouclage est disjointe d’une cellule entièrement contenue dans un intervalle exclu existant. La récupération utilise directement cette implication ; une inclusion partielle exige toujours une preuve du solveur. Les plages d’une même banque forment une union. Les unions ordonnées sans rebouclage partagent un curseur borné de bytes et de plages ; les autres unions modulaires gardent leur sémantique d’appartenance.
+
+## Preuves finies de lectures en RAM ordinaire
+
+`LowIRUndefinedIndependence` porte le contrat optionnel `OrderedOrdinaryRAMV1` des preuves finies. Chaque lecture hors cadre partage une entrée par occurrence ; la couverture complète des chemins et l’accord des adresses, largeurs et ordres restent à prouver. Les comparaisons exactes des adresses de chaque octet appliquent les écritures antérieures du cadre, y compris les alias possibles. Les lectures répétées utilisent prudemment des entrées indépendantes ; même les lectures immuables doivent rester dans la trace candidate. Les écritures restent dans le cadre déclaré. Le contrat exige explicitement une RAM ordinaire sans faute et ne fournit ni constantes d’adresses observées, ni non-alias, ni sémantique MMIO, atomique ou d’écritures concurrentes. Les preuves et inférences de boucles refusent ce modèle. Les budgets existants d’observations et de nœuds limitent le travail ajouté. Les certificats lient le modèle ; le condensat des contrats par défaut reste inchangé. Aucune capacité de backend concret n’est ajoutée.
+
+## Preuves de requêtes scalaires natives finies
+
+`OrderedScalarV1` active explicitement les requêtes décrites par l’architecture pour l’indépendance native finie et le raffinement natif vers LowIR. Le core partage des entrées définies et vérifie la couverture complète ainsi que l’identité, la version, les sélecteurs, les largeurs, le nombre et l’ordre, y compris par rapport aux lectures RAM ordinaires. Les réponses répétées restent indépendantes ; les sélecteurs sont prouvés indépendants des valeurs indéfinies avant toute écriture. Taille des descriptions, observations et nœuds restent bornés. Les empreintes des descriptions et opérations réelles lient les reçus et les deux entrées de preuve ; le mode désactivé conserve son empreinte. Les API statiques sans provider natif et toutes les API inductives de preuve et d’inférence refusent ce modèle.
+
+L’adaptateur x64 accepte uniquement le groupe CPUID canonique complet. Le lifter audite séparément le codage sans préfixe, les sorties définies et la préservation des banques opaques fermées. EAX/ECX sélectionnent quatre résultats de 32 bits ; les moitiés hautes sont mises à zéro et l’événement reste observable. Aucune valeur hôte, profil CPU ou corrélation répétée n’est supposé. La mise à jour de `IA32_BIOS_SIGN_ID` est hors de `LegacyIntegerOpaqueV1` : aucun maintien des MSR n’est affirmé. RDTSC/RDMSR, enveloppes source, preuves LLVM exactes et backends concrets ne gagnent aucune capacité. Voir le lien Intel SDM de la version anglaise.

@@ -4,6 +4,8 @@
 #include "ObjCSynchronizedSource.h"
 #include "ObjCUnwindSource.h"
 
+#include "neverd/sdk/Limits.h"
+
 namespace neverd::sdk {
 
 struct ObjCResumeSourceProof {
@@ -126,7 +128,7 @@ inline bool omitProvenObjCResumeOnlyPad(HighFunc &Function,
   std::vector<std::pair<const HighStmt *, bool>> Pending;
   for (const auto &Statement : Function.Body)
     Pending.emplace_back(&Statement, false);
-  size_t Budget = 4096;
+  size_t Budget = kSourceValueWork;
   while (!Pending.empty()) {
     if (!Budget--)
       return false;

@@ -991,6 +991,42 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
     Changed = true;
   }
 
+  // (x + c) == k is x == k - c, and likewise !=: the sum wraps at its width
+  // and equality compares the bits, so the fold is exact where an ordered
+  // comparison's would not be.  `x + 1 == 0` is how a compiler tests for -1.
+  // The constant takes the sum's type, a signed one printing -1; the sum,
+  // which another expression may share, is left as it is.
+  if ((E->Op == NdOp::INT_EQUAL || E->Op == NdOp::INT_NOTEQUAL) &&
+      E->Operands[0]->Kind == ExprKind::BinOp &&
+      E->Operands[0]->Op == NdOp::INT_ADD &&
+      E->Operands[0]->Operands.size() == 2 &&
+      E->Operands[1]->Kind == ExprKind::Const &&
+      E->Operands[1]->Operands.empty() && E->Operands[0]->Type &&
+      E->Operands[0]->Type->Kind == NdTypeKind::Int) {
+    const ExprPtr Sum = E->Operands[0];
+    const unsigned Bytes = Sum->Type->Size;
+    const auto SameWidth = [&](const ExprPtr &Operand) {
+      return Operand && Operand->Type && Operand->Type->Size == Bytes;
+    };
+    for (unsigned Index = 0; Index < 2 && Bytes >= 1 && Bytes <= 8; ++Index) {
+      const ExprPtr &Addend = Sum->Operands[Index];
+      const ExprPtr &Value = Sum->Operands[1 - Index];
+      if (!Addend || Addend->Kind != ExprKind::Const ||
+          !Addend->Operands.empty() || !SameWidth(Addend) ||
+          !SameWidth(Value) || !SameWidth(E->Operands[1]))
+        continue;
+      const uint64_t Mask =
+          Bytes == 8 ? ~uint64_t(0) : (uint64_t(1) << (8 * Bytes)) - 1;
+      auto Folded = HighExpr::makeConst(
+          (E->Operands[1]->ConstVal - Addend->ConstVal) & Mask, Bytes);
+      Folded->Type = Sum->Type;
+      E->Operands[0] = Value;
+      E->Operands[1] = std::move(Folded);
+      Changed = true;
+      break;
+    }
+  }
+
   if (E->Op == NdOp::INT_ADD && E->Operands[1]->Kind == ExprKind::Const) {
     int64_t SignedVal = static_cast<int64_t>(E->Operands[1]->ConstVal);
     if (SignedVal < 0) {

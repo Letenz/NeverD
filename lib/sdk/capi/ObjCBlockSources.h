@@ -6,6 +6,7 @@
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/loader/ObjC/ObjCBlocks.h"
 #include "neverd/loader/ReadOnlyBytes.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
@@ -169,7 +170,7 @@ class Values {
   const BinaryImage &Image;
   const HighFunc &Function;
   const ImportStorageSlotCollection &Imports;
-  size_t EvaluationBudget = 1000000;
+  size_t EvaluationBudget = kSourceEvaluationWork;
   std::set<int64_t> FrameIdentityBytes;
   std::set<int64_t> InitializedFrameBytes;
 
@@ -691,7 +692,6 @@ void proveSourceFlow(const HighFunc &F, Facts Initial, Transfer Evaluate,
   const auto Graph = buildHighSourceFlowGraph(F);
   if (!Graph.Diagnostics.Complete || Graph.Nodes.empty())
     throw Invalid("block source has incomplete source control flow");
-  constexpr size_t MaxWork = 4000000, MaxFacts = 262144;
   size_t Work = 0, FactCount = 0;
   std::vector<std::optional<Facts>> Incoming(Graph.Nodes.size());
   std::vector<bool> Queued(Graph.Nodes.size());
@@ -700,7 +700,7 @@ void proveSourceFlow(const HighFunc &F, Facts Initial, Transfer Evaluate,
   FactCount = Incoming[Graph.Entry]->size();
   Queued[Graph.Entry] = true;
   auto Spend = [&](size_t Count) {
-    if (Count > MaxWork - Work)
+    if (Count > kMaxBlockSourceWork - Work)
       throw Invalid("block source exceeds its flow proof budget");
     Work += Count;
   };
@@ -719,7 +719,7 @@ void proveSourceFlow(const HighFunc &F, Facts Initial, Transfer Evaluate,
       if (!Input)
         Input = Output;
       FactCount = FactCount - Before + Input->size();
-      if (FactCount > MaxFacts)
+      if (FactCount > kMaxBlockSourceFacts)
         throw Invalid("block source exceeds its flow storage budget");
       if (Changed && !Queued[Next]) {
         Queued[Next] = true;
@@ -2208,7 +2208,7 @@ inline ObjCBlockSourceBindingResult bindObjCBlockSourceReferences(
       }
     }
     std::map<const HighExpr *, ExprPtr> Copies;
-    size_t Budget = 1000000;
+    size_t Budget = kSourceEvaluationWork;
     std::function<ExprPtr(const ExprPtr &, unsigned)> Copy;
     Copy = [&](const ExprPtr &Original, unsigned Depth) -> ExprPtr {
       if (!Original)

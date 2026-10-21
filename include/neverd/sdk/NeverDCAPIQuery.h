@@ -206,6 +206,53 @@ NEVERD_API const char *neverd_cfg_json(neverd_session_t Sess,
 /// published.
 NEVERD_API const char *neverd_callgraph_json(neverd_session_t Sess);
 
+/// Call paths between functions, read from each function's direct
+/// references (neverd_code_refs_json) without starting analysis.  Nodes are
+/// functions and imports; an import's veneer (a PLT entry, an import thunk)
+/// is the import.  A node calls, jumps to the entry of, or transfers through
+/// a slot holding another; with "data_refs" it also takes, reads or writes
+/// its address.  \p OptionsJson is an object: "waypoints" (2 to 64, each a
+/// "0x..." address of a function entry, an import's slot or veneer, or a
+/// function's or import's name), visited in order, one segment between each
+/// two; "exclude" (nodes no path passes, unless they are waypoints);
+/// "max_depth" (edges per segment, 1-64, default 16); "shortest_only"
+/// (bool); "data_refs" (bool); "max_paths" (0-1000, default 32) and
+/// "max_listed" (1-100000 nodes and edges per segment, default 4096).
+/// Returns {"segments":[{"from","to","shortest","node_count","edge_count",
+/// "nodes":["0x..."],"edges":[["from","to","kind","site"]],"paths":
+/// [["0x...",...]],"complete","reversed"?}],"unconnected":int,"nodes":
+/// [{"address","name","kind":"function"|"import","module"?,"library"?}],
+/// "max_depth","data_refs"}.  A segment's nodes are those on a path of at
+/// most "max_depth" edges (with "shortest_only", of "shortest" edges), in
+/// order of distance from "from"; "kind" is "call", "jump", "indirect" or
+/// "data"; "site" is the first instruction making the reference.  Paths are
+/// simple, shortest first.  Waypoints that connect only the other way round
+/// give that segment with "reversed":true; neither way, "shortest" is null
+/// and the segment counts in "unconnected".  "complete" is false when
+/// "max_listed" or "max_paths" cut a list, or path enumeration exceeded its
+/// step budget.  NULL with neverd_last_error() for malformed options, an
+/// unknown waypoint, or an EVM or SBF image.
+NEVERD_API const char *neverd_call_paths_json(neverd_session_t Sess,
+                                              const char *OptionsJson);
+
+/// The functions and imports one function reaches through the same graph
+/// as neverd_call_paths_json(), or the functions that reach it.
+/// \p OptionsJson is an object: "root" (required, as a waypoint is named);
+/// "direction" ("callees", the default, or "callers"); "max_depth" (1-64,
+/// default 1); "max_listed" (1-100000, default 4096); "data_refs"; "exclude";
+/// and "expand_library" (bool): imports, and unless it is true functions
+/// byte signatures name as library code, are listed but not expanded.
+/// Returns {"root","direction","max_depth","nodes":[{...,"depth"}],
+/// "edges":[["caller","callee","kind","site"]],"depth_limited","complete",
+/// "bottom_up"?}: nodes in breadth-first order, "depth_limited" when a node
+/// at "max_depth" has more, "complete" false when "max_listed" cut the
+/// list.  For callees, "bottom_up" lists the reached functions that expand
+/// with each one's callees before it and the root last: the order to
+/// decompile them in.  NULL with neverd_last_error() as for
+/// neverd_call_paths_json().
+NEVERD_API const char *neverd_call_tree_json(neverd_session_t Sess,
+                                             const char *OptionsJson);
+
 // ===--------------------------------------------------------------------===//
 // Address resolution
 // ===--------------------------------------------------------------------===//

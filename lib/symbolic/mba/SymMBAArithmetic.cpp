@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Limits.h"
 #include "SymMBADetail.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -72,6 +73,10 @@ class ArithmeticNormalizer {
   uint32_t Width;
   size_t Words;
   bool ExpandComplements;
+  // Completed polynomials belong to this one context, width and complement
+  // policy. std::map keeps returned references stable while later roots grow
+  // the memo. Candidate emission never writes these checked coefficients.
+  std::map<uint32_t, Polynomial> Memo;
 
 public:
   ArithmeticNormalizer(SymContext &Ctx, ArithmeticResources &Resources,
@@ -98,6 +103,27 @@ public:
         !Resources.array(Words, sizeof(uint64_t)))
       return false;
     To.emplace(Key, Coefficient);
+    return true;
+  }
+
+  // These keys and coefficients have already been allocated and charged by
+  // multiplication or flat-monomial construction. Transfer their ownership
+  // instead of allocating and copying the same polynomial entry again.
+  bool addOwned(Polynomial &To, Monomial Key, llvm::APInt Coefficient) {
+    if (!Resources.charge(1 + Key.size() + Words))
+      return false;
+    if (Coefficient.isZero())
+      return true;
+    auto It = To.lower_bound(Key);
+    if (It != To.end() && It->first == Key) {
+      It->second += Coefficient;
+      if (It->second.isZero())
+        To.erase(It);
+      return true;
+    }
+    if (!Resources.charge(1, 128))
+      return false;
+    To.emplace_hint(It, std::move(Key), std::move(Coefficient));
     return true;
   }
 
@@ -138,94 +164,155 @@ public:
             ++J;
           }
         }
-        if (!add(Out, Key, Coefficient))
+        if (!addOwned(Out, std::move(Key), std::move(Coefficient)))
           return false;
       }
     }
     return true;
   }
 
-  std::optional<Polynomial> normalize(SymRef Root,
-                                      unsigned *AtomCount = nullptr) {
+  const Polynomial *normalize(SymRef Root, unsigned *AtomCount = nullptr) {
     if (!Resources.array(Words, sizeof(uint64_t)))
-      return std::nullopt;
+      return nullptr;
+    const bool ReuseMemo = !Memo.empty();
     std::set<uint32_t> Reachable;
     std::vector<SymRef> Pending;
     if (!Resources.charge(1, 128))
-      return std::nullopt;
+      return nullptr;
     Pending.push_back(Root);
     while (!Pending.empty()) {
       SymRef R = Pending.back();
       Pending.pop_back();
       if (!Resources.charge(1))
-        return std::nullopt;
+        return nullptr;
       if (Reachable.contains(R.index()))
         continue;
+      if (ReuseMemo && !AtomCount && Memo.contains(R.index()))
+        continue;
       if (!Resources.charge(1, 128))
-        return std::nullopt;
+        return nullptr;
       Reachable.insert(R.index());
       if (Ctx.width(R) != Width)
-        return std::nullopt;
+        return nullptr;
       if (Ctx.op(R) != SymOp::Add && Ctx.op(R) != SymOp::Mul &&
           (Ctx.op(R) != SymOp::Not || !ExpandComplements))
         continue;
       llvm::ArrayRef<SymRef> Children = Ctx.operands(R);
       if (!Resources.array(Children.size(), sizeof(SymRef)))
-        return std::nullopt;
+        return nullptr;
       Pending.insert(Pending.end(), Children.begin(), Children.end());
     }
 
     // Node identities are topological: an interned node is newer than every
     // operand. Opaque nodes deliberately stop the walk, even if their own
     // subexpressions contain arithmetic or have a different width.
-    std::map<uint32_t, Polynomial> Memo;
     unsigned Atoms = 0;
     for (uint32_t Index : Reachable) {
+      if (ReuseMemo && Memo.contains(Index)) {
+        SymOp Op = Ctx.op(SymRef(Index));
+        Atoms += !Ctx.isConst(SymRef(Index)) && Op != SymOp::Add &&
+                 Op != SymOp::Mul && (Op != SymOp::Not || !ExpandComplements);
+        continue;
+      }
       if (!Resources.charge(1, 128))
-        return std::nullopt;
+        return nullptr;
       SymRef R(Index);
       Polynomial P;
       if (Ctx.isConst(R)) {
         if (!add(P, {}, Ctx.constValue(R)))
-          return std::nullopt;
+          return nullptr;
       } else if (Ctx.op(R) == SymOp::Add) {
         for (SymRef Child : Ctx.operands(R))
           if (!copy(Memo.at(Child.index()), P))
-            return std::nullopt;
+            return nullptr;
       } else if (Ctx.op(R) == SymOp::Mul) {
+        // Long flat products already name a sorted monomial. Read it once
+        // instead of multiplying unit coefficients and merging one atom at
+        // a time. Arithmetic children retain the general expansion below.
+        bool Flat = Ctx.numOperands(R) >= 6;
+        if (Flat)
+          for (SymRef Child : Ctx.operands(R)) {
+            if (!Resources.charge(1))
+              return nullptr;
+            SymOp Op = Ctx.op(Child);
+            if (Op == SymOp::Add || Op == SymOp::Mul ||
+                (Op == SymOp::Not && ExpandComplements)) {
+              Flat = false;
+              break;
+            }
+          }
+        if (Flat) {
+          if (!Resources.array(Ctx.numOperands(R), sizeof(Factor)) ||
+              !Resources.array(Words, sizeof(uint64_t)))
+            return nullptr;
+          Monomial Key;
+          Key.reserve(Ctx.numOperands(R));
+          llvm::APInt Coefficient(Width, 1);
+          for (SymRef Child : Ctx.operands(R)) {
+            if (Ctx.isConst(Child)) {
+              if (Words > std::numeric_limits<size_t>::max() / Words ||
+                  !Resources.charge(Words * Words))
+                return nullptr;
+              Coefficient *= Ctx.constValue(Child);
+            } else if (!Key.empty() && Key.back().first == Child.index()) {
+              if (Key.back().second == std::numeric_limits<uint32_t>::max())
+                return nullptr;
+              ++Key.back().second;
+            } else {
+              Key.emplace_back(Child.index(), 1);
+            }
+          }
+          if (!addOwned(P, std::move(Key), std::move(Coefficient)))
+            return nullptr;
+          Memo.emplace(Index, std::move(P));
+          continue;
+        }
         // Assemble monomial operands once. Repeatedly multiplying one more
         // atom copies the growing key at every step, making a flat product's
         // distribution proof quadratic in its number of factors.
         llvm::APInt Scale(Width, 1);
         std::map<uint32_t, uint32_t> Powers;
+        unsigned PolynomialOperands = 0;
         for (SymRef Child : Ctx.operands(R)) {
           const auto &Operand = Memo.at(Child.index());
           if (Operand.empty()) {
             Scale.clearAllBits();
             break;
           }
-          if (Operand.size() != 1)
+          if (Operand.size() != 1) {
+            ++PolynomialOperands;
             continue;
-          if (Words > std::numeric_limits<size_t>::max() / Words ||
-              !Resources.charge(Words * Words) ||
-              !Resources.array(Words, sizeof(uint64_t)))
-            return std::nullopt;
+          }
           const auto &[Key, Coefficient] = *Operand.begin();
-          Scale *= Coefficient;
+          if (!Resources.charge(Words))
+            return nullptr;
+          if (!Coefficient.isOne()) {
+            if (Words > std::numeric_limits<size_t>::max() / Words ||
+                !Resources.charge(Words * Words) ||
+                !Resources.array(Words, sizeof(uint64_t)))
+              return nullptr;
+            Scale *= Coefficient;
+          }
           for (const auto &[Id, Power] : Key) {
             if (!Resources.charge(1, 128))
-              return std::nullopt;
+              return nullptr;
             auto &Total = Powers[Id];
             if (Power > std::numeric_limits<uint32_t>::max() - Total)
-              return std::nullopt;
+              return nullptr;
             Total += Power;
           }
         }
         if (!Resources.array(Powers.size(), sizeof(Factor)))
-          return std::nullopt;
+          return nullptr;
         Monomial Key(Powers.begin(), Powers.end());
-        if (!add(P, Key, Scale))
-          return std::nullopt;
+        // Multiply the polynomial children before attaching a long common
+        // monomial. Its powers then need copying only once per final term.
+        // Keep the scale early so modular zero coefficients still prune work.
+        const bool DelayCommon =
+            Powers.size() >= limits::kMinDelayedCommonAtoms &&
+            PolynomialOperands >= limits::kMinDelayedPolynomialOperands;
+        if (!add(P, DelayCommon ? Monomial{} : Key, Scale))
+          return nullptr;
         for (SymRef Child : Ctx.operands(R)) {
           if (P.empty())
             break;
@@ -233,33 +320,40 @@ public:
             continue;
           Polynomial Next;
           if (!multiply(P, Memo.at(Child.index()), Next))
-            return std::nullopt;
+            return nullptr;
           P = std::move(Next);
           if (P.empty())
             break;
+        }
+        if (DelayCommon && !P.empty()) {
+          Polynomial Common, Next;
+          if (!add(Common, Key, llvm::APInt(Width, 1)) ||
+              !multiply(P, Common, Next))
+            return nullptr;
+          P = std::move(Next);
         }
       } else if (Ctx.op(R) == SymOp::Not && ExpandComplements) {
         // A word complement is exactly -1-X in the modular ring. Only
         // arithmetic paths reach this node: bitwise consumers remain opaque.
         if (!Resources.array(Words, sizeof(uint64_t)) ||
             !add(P, {}, llvm::APInt::getAllOnes(Width)))
-          return std::nullopt;
+          return nullptr;
         for (const auto &[Key, Coefficient] :
              Memo.at(Ctx.operand(R, 0).index())) {
           if (!Resources.array(Words, sizeof(uint64_t)) ||
               !add(P, Key, -Coefficient))
-            return std::nullopt;
+            return nullptr;
         }
       } else {
         ++Atoms;
         if (!add(P, {{Index, 1}}, llvm::APInt(Width, 1)))
-          return std::nullopt;
+          return nullptr;
       }
       Memo.emplace(Index, std::move(P));
     }
     if (AtomCount)
       *AtomCount = Atoms;
-    return std::move(Memo.at(Root.index()));
+    return &Memo.at(Root.index());
   }
 
   std::optional<SymRef> combine(SymOp Op, llvm::ArrayRef<SymRef> Terms) {
@@ -428,6 +522,21 @@ public:
         continue;
       }
 
+      // Extract an entire shared monomial together. Removing just one atom
+      // per frame repeatedly scans and copies the same long common powers.
+      Monomial Divisor;
+      if (Counts.at(BestId).first == F.P.size()) {
+        for (const auto &[Id, Count] : Counts)
+          if (Count.first == F.P.size()) {
+            if (!Resources.array(1, sizeof(Factor)))
+              return std::nullopt;
+            Divisor.emplace_back(Id, Count.second);
+          }
+      } else {
+        if (!Resources.array(1, sizeof(Factor)))
+          return std::nullopt;
+        Divisor.emplace_back(BestId, BestPower);
+      }
       Frame Next;
       for (const auto &[Key, Coefficient] : F.P) {
         auto It = std::lower_bound(Key.begin(), Key.end(), Factor{BestId, 0});
@@ -436,17 +545,22 @@ public:
             return std::nullopt;
           continue;
         }
-        if (!Resources.array(Key.size(), sizeof(Factor)))
+        if (!Resources.array(Key.size(), sizeof(Factor)) ||
+            !Resources.array(Words, sizeof(uint64_t)))
           return std::nullopt;
-        Monomial Quotient(Key);
-        const size_t Index = static_cast<size_t>(It - Key.begin());
-        Quotient[Index].second -= BestPower;
-        if (!Quotient[Index].second)
-          Quotient.erase(Quotient.begin() + Index);
-        if (!add(Next.P, Quotient, Coefficient))
+        Monomial Quotient;
+        Quotient.reserve(Key.size());
+        size_t I = 0;
+        for (auto [Id, Power] : Key) {
+          if (I != Divisor.size() && Divisor[I].first == Id)
+            Power -= Divisor[I++].second;
+          if (Power)
+            Quotient.emplace_back(Id, Power);
+        }
+        if (!addOwned(Next.P, std::move(Quotient), Coefficient))
           return std::nullopt;
       }
-      auto Common = term({{BestId, BestPower}}, llvm::APInt(Width, 1));
+      auto Common = term(Divisor, llvm::APInt(Width, 1));
       if (!Common || !Resources.charge(1, sizeof(Frame)))
         return std::nullopt;
       F.P.clear();
@@ -504,7 +618,7 @@ SymRef normalizeArithmetic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     return E;
   };
   unsigned Atoms = 0;
-  std::optional<Polynomial> Original = Normalizer.normalize(E, &Atoms);
+  const auto *Original = Normalizer.normalize(E, &Atoms);
   if (!Original)
     return Stop();
   auto Expanded = Normalizer.expanded(*Original);
@@ -523,7 +637,7 @@ SymRef normalizeArithmetic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
 
   // Re-expand the chosen spelling: factor selection and emission are not
   // trusted to preserve the polynomial merely because they produced it.
-  std::optional<Polynomial> Check = Normalizer.normalize(Best);
+  const auto *Check = Normalizer.normalize(Best);
   if (!Check)
     return Stop();
   if (*Check != *Original || !agreeOnSamples(Ctx, E, Best, Opts.VerifySamples))
@@ -556,6 +670,90 @@ bool hasRepeatedCoefficients(const SymContext &Ctx, SymRef E) {
     Seen |= Bit;
   }
   return false;
+}
+
+// Strip an identical nonconstant monomial from both sides of a large
+// distribution proof. This proves the sufficient identity between quotients;
+// it never divides a word or assumes that a modular coefficient is invertible.
+// Keeping complements opaque makes these factors formal polynomial atoms.
+std::pair<SymRef, SymRef>
+reduceDistributionProof(SymContext &Ctx, SymRef Before, SymRef After,
+                        ArithmeticResources &Resources) {
+  const auto Original = std::make_pair(Before, After);
+  constexpr size_t MaxTerms = 128, MaxEdges = 4096;
+  if (Ctx.op(Before) != SymOp::Add || Ctx.numOperands(Before) < 6 ||
+      Ctx.numOperands(Before) > MaxTerms ||
+      (Ctx.op(After) == SymOp::Add && Ctx.numOperands(After) > MaxTerms))
+    return Original;
+  size_t Count = Ctx.numOperands(Before) +
+                 (Ctx.op(After) == SymOp::Add ? Ctx.numOperands(After) : 1);
+  if (!Resources.array(Count * 4, sizeof(SymRef)))
+    return Original;
+  llvm::SmallVector<SymRef, 128> Left(Ctx.operands(Before));
+  llvm::SmallVector<SymRef, 128> Right;
+  if (Ctx.op(After) == SymOp::Add)
+    Right.append(Ctx.operands(After).begin(), Ctx.operands(After).end());
+  else
+    Right.push_back(After);
+  llvm::sort(Left);
+  llvm::sort(Right);
+  llvm::SmallVector<SymRef, 128> L, R;
+  std::set_difference(Left.begin(), Left.end(), Right.begin(), Right.end(),
+                      std::back_inserter(L));
+  std::set_difference(Right.begin(), Right.end(), Left.begin(), Left.end(),
+                      std::back_inserter(R));
+  if (L.empty() || R.empty())
+    return Original;
+  auto Factors = [&](SymRef Term) {
+    auto F = Ctx.operands(Term);
+    return Ctx.isConst(F.front()) ? F.drop_front() : F;
+  };
+  size_t Edges = 0;
+  llvm::SmallVector<SymRef, 32> Common, Next;
+  for (auto Terms : {llvm::ArrayRef<SymRef>(L), llvm::ArrayRef<SymRef>(R)})
+    for (SymRef Term : Terms) {
+      if (Ctx.op(Term) != SymOp::Mul)
+        return Original;
+      auto F = Factors(Term);
+      if (F.size() > MaxEdges - Edges)
+        return Original;
+      if (!Resources.array(F.size() * 3, sizeof(SymRef)))
+        return Original;
+      if (Edges == 0)
+        Common.append(F.begin(), F.end());
+      else {
+        Next.clear();
+        std::set_intersection(Common.begin(), Common.end(), F.begin(), F.end(),
+                              std::back_inserter(Next));
+        Common.swap(Next);
+      }
+      Edges += F.size();
+      if (Common.size() < 4)
+        return Original;
+    }
+  // Snapshot every quotient before a builder can relocate the operand pool.
+  if (!Resources.charge(Edges + Count, 128 * (L.size() + R.size())))
+    return Original;
+  llvm::SmallVector<llvm::SmallVector<SymRef, 16>, 8> Quotients;
+  for (auto Terms : {llvm::ArrayRef<SymRef>(L), llvm::ArrayRef<SymRef>(R)})
+    for (SymRef Term : Terms) {
+      auto F = Factors(Term);
+      Quotients.emplace_back();
+      auto &Q = Quotients.back();
+      auto First = Ctx.operand(Term, 0);
+      if (Ctx.isConst(First))
+        Q.push_back(First);
+      std::set_difference(F.begin(), F.end(), Common.begin(), Common.end(),
+                          std::back_inserter(Q));
+    }
+  Left.clear();
+  Right.clear();
+  for (size_t I = 0; I != Quotients.size(); ++I) {
+    auto &Q = Quotients[I];
+    SymRef Term = Q.empty() ? Ctx.mkOne(Ctx.width(Before)) : Ctx.mkMul(Q);
+    (I < L.size() ? Left : Right).push_back(Term);
+  }
+  return {Ctx.mkAdd(Left), Ctx.mkAdd(Right)};
 }
 
 } // namespace
@@ -700,6 +898,9 @@ bool proveArithmeticIdentity(SymContext &Ctx, SymRef Before, SymRef After,
       Ctx.width(Before) != Ctx.width(After))
     return false;
   ArithmeticResources Resources(Budget, MaxBytes);
+  if (!ExpandComplements)
+    std::tie(Before, After) =
+        reduceDistributionProof(Ctx, Before, After, Resources);
   ArithmeticNormalizer Normalizer(Ctx, Resources, Ctx.width(Before),
                                   ExpandComplements);
   auto Left = Normalizer.normalize(Before);

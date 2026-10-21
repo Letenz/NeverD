@@ -4,6 +4,7 @@ import argparse
 import json
 import struct
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from transport_test import Client
@@ -45,7 +46,31 @@ def request(view, call, declaration, actuals=()):
         "call_id": call["id"], "snapshot": view["call_snapshot"], "declaration": declaration,
         "variadic_types": list(actuals)}
 
+# The engine's C is Clang's dialect: it writes an exact floating-point
+# constant with __builtin_bit_cast, and calls a declared function through a
+# cast to its call site's own type, such as an ms_abi variadic one. GCC lacks
+# the builtin and folds such a cast into a call with the declared ABI, so its
+# runs would not test this output. Without Clang they are unexecuted
+# coverage, never a pass.
+UNEXECUTED = []
+_clang = {}
+
+def is_clang(root, compiler):
+    if compiler not in _clang:
+        probe = root / "clang-dialect.c"
+        probe.write_text("#ifndef __clang__\n#error not Clang\n#endif\nint probe;\n")
+        if Path(compiler).stem.lower() in ("cl", "clang-cl"):
+            command = [compiler, "/nologo", "/TC", "/c", str(probe), "/Fo:" + str(root / "clang-dialect.obj")]
+        else:
+            command = [compiler, "-c", str(probe), "-o", str(root / "clang-dialect.o")]
+        result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=60)
+        _clang[compiler] = result.returncode == 0
+    return _clang[compiler]
+
 def execute_source(root, text, route, compiler, harness=None):
+    if not is_clang(root, compiler):
+        UNEXECUTED.append(route)
+        return
     c_file, harness_file, program = root / (route + ".c"), root / (route + "-harness.c"), root / (route + ".exe")
     c_file.write_text(text)
     harness_file.write_text(harness or """
@@ -207,6 +232,33 @@ int main(void) { return start() != 7 || errors; }
                     for route in ("c", "llvmc"):
                         result = source(client, route, 0x140001000)
                         assert result["call_type_results"][0]["applied"] and "0x17" in result["text"], result
+                        if compiler:
+                            execute_source(root, result["text"], "win64-" + route, compiler, """
+#include <stdint.h>
+#include <stdarg.h>
+#if MS_ABI_CALL && !defined(_WIN32) && (defined(__x86_64__) || defined(__aarch64__))
+#define CALLEE_ABI __attribute__((ms_abi))
+#define va_list __builtin_ms_va_list
+#undef va_start
+#define va_start(ap, last) __builtin_ms_va_start(ap, last)
+#undef va_end
+#define va_end(ap) __builtin_ms_va_end(ap)
+#else
+#define CALLEE_ABI
+#endif
+extern START_RESULT start(void);
+static unsigned calls, errors;
+uint64_t CALLEE_ABI sub_140001040(uint32_t first, ...) {
+  const unsigned expected[] = { 11, 13, 17, 23 };
+  va_list ap; va_start(ap, first);
+  ++calls; errors += first != 7;
+  for (unsigned i = 0; i != 4; ++i)
+    errors += va_arg(ap, unsigned) != expected[i];
+  va_end(ap); return first;
+}
+int main(void) { return start() != 7 || calls != 1 || errors; }
+""".replace("START_RESULT", "int64_t" if route == "c" else "uint64_t")
+                               .replace("MS_ABI_CALL", "0" if route == "c" else "1"))
                     # A complete declaration also fixes the operand count.
                     # Other registers and stack bytes set at this call do
                     # not extend a shorter, explicitly declared signature.
@@ -218,10 +270,14 @@ int main(void) { return start() != 7 || errors; }
                         for route in ("c", "llvmc"):
                             result = source(client, route, 0x140001000)
                             assert result["call_type_results"][0]["applied"], result
+    if UNEXECUTED:
+        print("SKIP: %s is not Clang, whose dialect the engine's C uses; "
+              "not executed: %s" % (compiler, ", ".join(UNEXECUTED)))
+        return 77
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("worker")
     parser.add_argument("--cc")
     arguments = parser.parse_args()
-    run(arguments.worker, arguments.cc)
+    sys.exit(run(arguments.worker, arguments.cc))

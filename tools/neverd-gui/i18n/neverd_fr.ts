@@ -975,6 +975,94 @@
         <source>Set call type...</source>
         <translation>Définir le type d’appel...</translation>
     </message>
+    <message>
+        <source>Change stack pointer...</source>
+        <translation>Modifier le pointeur de pile...</translation>
+    </message>
+    <message>
+        <source>Correct the entry-relative SP after this instruction</source>
+        <translation>Corriger le SP après cette instruction, relativement à l’entrée</translation>
+    </message>
+    <message>
+        <source>Define a bounded array of typed elements</source>
+        <translation>Définir un tableau borné d’éléments typés</translation>
+    </message>
+    <message>
+        <source>Enum operand...</source>
+        <translation>Opérande d’énumération...</translation>
+    </message>
+    <message>
+        <source>Immediate...</source>
+        <translation>Valeur immédiate...</translation>
+    </message>
+    <message>
+        <source>Inspect and correct local stack variables</source>
+        <translation>Examiner et corriger les variables locales de pile</translation>
+    </message>
+    <message>
+        <source>Inspect the proven static value before this instruction</source>
+        <translation>Examiner la valeur statique prouvée avant cette instruction</translation>
+    </message>
+    <message>
+        <source>List reaching physical register definitions</source>
+        <translation>Lister les définitions de registres physiques atteignant ce point</translation>
+    </message>
+    <message>
+        <source>List uses of the register value after this instruction</source>
+        <translation>Lister les utilisations de la valeur du registre après cette instruction</translation>
+    </message>
+    <message>
+        <source>Make alignment...</source>
+        <translation>Créer un alignement...</translation>
+    </message>
+    <message>
+        <source>Make array...</source>
+        <translation>Créer un tableau...</translation>
+    </message>
+    <message>
+        <source>Mark padding ending on an alignment boundary</source>
+        <translation>Marquer le remplissage se terminant à une limite d’alignement</translation>
+    </message>
+    <message>
+        <source>Name a proven stack operand without changing its address</source>
+        <translation>Nommer un opérande de pile prouvé sans modifier son adresse</translation>
+    </message>
+    <message>
+        <source>Next immediate</source>
+        <translation>Valeur immédiate suivante</translation>
+    </message>
+    <message>
+        <source>Register definitions...</source>
+        <translation>Définitions de registre...</translation>
+    </message>
+    <message>
+        <source>Register uses...</source>
+        <translation>Utilisations du registre...</translation>
+    </message>
+    <message>
+        <source>Repeat the immediate search</source>
+        <translation>Répéter la recherche de valeur immédiate</translation>
+    </message>
+    <message>
+        <source>Search decoded executable instructions for an immediate</source>
+        <translation>Rechercher une valeur immédiate dans les instructions exécutables décodées</translation>
+    </message>
+    <message>
+        <source>Show an immediate as enumeration members or flags</source>
+        <translation>Afficher une valeur immédiate comme membres d’énumération ou indicateurs</translation>
+    </message>
+    <message>
+        <source>Stack variable operand...</source>
+        <translation>Opérande de variable de pile...</translation>
+    </message>
+    <message>
+        <source>Stack variables...</source>
+        <translation>Variables de pile...</translation>
+    </message>
+    <message>
+        <source>Static register value...</source>
+        <translation>Valeur statique du registre...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2605,6 +2693,146 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
     <message>
         <source>indirect call</source>
         <translation>appel indirect</translation>
+    </message>
+    <message>
+        <source>. Reset the obsolete corrections before editing.</source>
+        <translation>. Réinitialisez les corrections obsolètes avant de modifier.</translation>
+    </message>
+    <message>
+        <source>Absolute offset after instruction, relative to entry SP</source>
+        <translation>Décalage absolu après l’instruction, relatif au SP d’entrée</translation>
+    </message>
+    <message>
+        <source>Address: %1</source>
+        <translation>Adresse : %1</translation>
+    </message>
+    <message>
+        <source>Alignment boundary (the marked span ends on this boundary):</source>
+        <translation>Limite d’alignement (la plage marquée se termine à cette limite) :</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Octets</translation>
+    </message>
+    <message>
+        <source>C type (optional)</source>
+        <translation>Type C (facultatif)</translation>
+    </message>
+    <message>
+        <source>Change stack pointer</source>
+        <translation>Modifier le pointeur de pile</translation>
+    </message>
+    <message>
+        <source>Combine bit flags; preserve unknown bits numerically</source>
+        <translation>Combiner les indicateurs de bits ; conserver les bits inconnus sous forme numérique</translation>
+    </message>
+    <message>
+        <source>Definitions and static values are before the instruction; uses start after it.</source>
+        <translation>Les définitions et valeurs statiques précèdent l’instruction ; les utilisations commencent après.</translation>
+    </message>
+    <message>
+        <source>Element count (complete initialized span, at most 64 MiB):</source>
+        <translation>Nombre d’éléments (plage initialisée complète, au plus 64 MiB) :</translation>
+    </message>
+    <message>
+        <source>Element size in bytes:</source>
+        <translation>Taille d’un élément en octets :</translation>
+    </message>
+    <message>
+        <source>Enter a signed SP offset within one MiB</source>
+        <translation>Saisissez un décalage SP signé dans une limite d’un MiB</translation>
+    </message>
+    <message>
+        <source>Entry offset</source>
+        <translation>Décalage à l’entrée</translation>
+    </message>
+    <message>
+        <source>Enum operand</source>
+        <translation>Opérande d’énumération</translation>
+    </message>
+    <message>
+        <source>Enumeration declared in Local Types:</source>
+        <translation>Énumération déclarée dans les types locaux :</translation>
+    </message>
+    <message>
+        <source>Immediate search</source>
+        <translation>Recherche de valeur immédiate</translation>
+    </message>
+    <message>
+        <source>Immediate search has undecoded ranges; results cover decoded executable ranges only.</source>
+        <translation>La recherche contient des plages non décodées ; les résultats couvrent uniquement les plages exécutables décodées.</translation>
+    </message>
+    <message>
+        <source>Instruction: %1; SP before: %2; SP after: %3</source>
+        <translation>Instruction : %1 ; SP avant : %2 ; SP après : %3</translation>
+    </message>
+    <message>
+        <source>Integer (decimal or 0x hex; negative allowed):</source>
+        <translation>Entier (décimal ou hexadécimal avec 0x ; valeurs négatives autorisées) :</translation>
+    </message>
+    <message>
+        <source>Invalid stack slot offset or width</source>
+        <translation>Décalage ou largeur d’emplacement de pile invalide</translation>
+    </message>
+    <message>
+        <source>Local type name (optional; its layout must match the element size):</source>
+        <translation>Nom du type local (facultatif ; sa disposition doit correspondre à la taille de l’élément) :</translation>
+    </message>
+    <message>
+        <source>Make alignment</source>
+        <translation>Créer un alignement</translation>
+    </message>
+    <message>
+        <source>Make array</source>
+        <translation>Créer un tableau</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Nom</translation>
+    </message>
+    <message>
+        <source>Net SP change made by this instruction</source>
+        <translation>Variation nette de SP causée par cette instruction</translation>
+    </message>
+    <message>
+        <source>No exact local stack access is available here. Repair unknown SP first.</source>
+        <translation>Aucun accès local précis à la pile n’est disponible ici. Corrigez d’abord le SP inconnu.</translation>
+    </message>
+    <message>
+        <source>No register flow sites within this function.</source>
+        <translation>Aucun site de flux de registre dans cette fonction.</translation>
+    </message>
+    <message>
+        <source>Offsets are relative to SP at function entry. Corrections apply to source analysis. Reset restores automatic analysis. Naming physical stack storage pauses LLVM optimizations for that function's C view.</source>
+        <translation>Les décalages sont relatifs au SP à l’entrée de la fonction. Les corrections s’appliquent à l’analyse du source. La réinitialisation rétablit l’analyse automatique. Nommer le stockage physique de pile suspend les optimisations LLVM de la vue C de cette fonction.</translation>
+    </message>
+    <message>
+        <source>Physical register</source>
+        <translation>Registre physique</translation>
+    </message>
+    <message>
+        <source>Select a retained non-branch instruction in the disassembly</source>
+        <translation>Sélectionnez une instruction conservée autre qu’un branchement dans le désassemblage</translation>
+    </message>
+    <message>
+        <source>Stack variables</source>
+        <translation>Variables de pile</translation>
+    </message>
+    <message>
+        <source>Static register value</source>
+        <translation>Valeur statique du registre</translation>
+    </message>
+    <message>
+        <source>This instruction has no retained physical register operands.</source>
+        <translation>Cette instruction n’a aucun opérande de registre physique conservé.</translation>
+    </message>
+    <message>
+        <source>Unknown: </source>
+        <translation>Inconnu : </translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <translation>inconnu</translation>
     </message>
 </context>
 <context>

@@ -32,9 +32,9 @@ using neverd::worker::parseAddress;
 
 namespace project_files = neverd::project_files;
 /// A project file of the input at \p input, as the engine keeps it.
-static std::string projectFile(const std::string &input,
-                               project_files::File file) {
-  return project_files::path(input, file).string();
+static std::filesystem::path projectFile(const std::string &input,
+                                         project_files::File file) {
+  return project_files::path(std::filesystem::u8path(input), file);
 }
 
 namespace {
@@ -112,6 +112,8 @@ struct MockSession {
   /// The type libraries joined beyond the image's own and those left out.
   Json libraryChoice = {{"added", Json::array()}, {"removed", Json::array()}};
   std::vector<std::uint64_t> functions = listedFunctions({});
+  unsigned discoveryPolls = 0;
+  bool discoveryPublished = false, discoveryRebuild = false;
   neverd_load_progress_fn progress = nullptr;
   void *progressUser = nullptr;
   /// The loader the next load reads with, and the one the image was read
@@ -163,7 +165,7 @@ const char *copy(std::string value) {
   std::memcpy(result, value.c_str(), value.size() + 1);
   return result;
 }
-Json read(const std::string &path) {
+Json read(const std::filesystem::path &path) {
   std::ifstream input(path);
   if (!input)
     return Json::array();
@@ -191,7 +193,7 @@ constexpr char FixturePdbKey[] = "123456789ABCDEF0123456789ABCDEF01";
 constexpr char FixturePdbBytes[] = "matching fixture PDB";
 
 bool symbolsFixture(const std::filesystem::path &input) {
-  const auto name = input.filename().string();
+  const auto name = input.filename();
   return name == "symbols-missing.bin" || name == "symbols-local.bin";
 }
 
@@ -205,7 +207,7 @@ std::filesystem::path fixtureStorePdb(const std::filesystem::path &input) {
 /// dwarf-embedded.bin carries DWARF in its own sections; dwarf-split.bin
 /// has it in the .debug file beside it, when the test writes one.
 bool dwarfFixture(const std::filesystem::path &input) {
-  const auto name = input.filename().string();
+  const auto name = input.filename();
   return name == "dwarf-embedded.bin" || name == "dwarf-split.bin";
 }
 
@@ -404,7 +406,7 @@ int neverd_session_load(neverd_session_t s, const char *path) {
     return 0;
   }
   session(s)->path = path;
-  project_files::migrate(path);
+  project_files::migrate(std::filesystem::u8path(path));
   session(s)->loadedWith =
       session(s)->requestedLoad.is_null()
           ? read(projectFile(path, project_files::File::Load))
@@ -437,7 +439,7 @@ int neverd_session_is_loaded(neverd_session_t s) {
 }
 int neverd_apply_signature_file(neverd_session_t s, const char *path) {
   session(s)->error.clear();
-  if (!std::ifstream(path)) {
+  if (!std::ifstream(std::filesystem::u8path(path))) {
     session(s)->error = "mock signature file is missing";
     return -1;
   }
@@ -644,7 +646,8 @@ int neverd_session_load_pdb(neverd_session_t s, const char *path) {
 // Deterministic fixture-only identity. The real engine uses SHA-256; the
 // production real-engine test verifies that digest against Python hashlib.
 std::string fixtureDigest(neverd_session_t s) {
-  std::ifstream input(session(s)->path, std::ios::binary);
+  std::ifstream input(std::filesystem::u8path(session(s)->path),
+                      std::ios::binary);
   std::uint64_t value = 1469598103934665603ULL;
   char byte;
   while (input.get(byte)) {
@@ -664,11 +667,60 @@ const char *neverd_dashboard_json(neverd_session_t s) {
 int neverd_func_count(neverd_session_t s) {
   return static_cast<int>(session(s)->functions.size());
 }
-// The fixture's detector finds nothing the image does not list.
+// The ordering fixture publishes one new identity. Its first listing rebuild
+// waits for the test to release it, making request ordering observable without
+// comparing elapsed times on a loaded test host.
 int neverd_session_discover_functions(neverd_session_t s) {
+  auto &state = *session(s);
+  if (state.path.find("discovery-fail") != std::string::npos) {
+    state.error = "Fixture discovery failed";
+    return -1;
+  }
+#ifdef NEVERD_TEST_STEPPED_DISCOVERY
+  if (state.path.find("discovery-order") != std::string::npos &&
+      state.discoveryPolls == 0) {
+    state.error = "Stepped fixture was called synchronously";
+    return -1;
+  }
+#endif
+  if (state.path.find("discovery-order") != std::string::npos &&
+      !state.discoveryPublished) {
+    state.discoveryPublished = true;
+    state.functions.push_back(Base + CodeSize);
+  }
   return neverd_func_count(s);
 }
+#ifdef NEVERD_TEST_STEPPED_DISCOVERY
+NEVERD_API int neverd_session_discover_functions_step(neverd_session_t s) {
+  auto &state = *session(s);
+  if (state.path.find("discovery-sync-only") != std::string::npos) {
+    state.error = "Client did not opt in to snapshot ownership";
+    return -1;
+  }
+  if (state.path.find("discovery-fail") != std::string::npos) {
+    state.error = "Fixture discovery failed";
+    return -1;
+  }
+  if (state.path.find("discovery-order") != std::string::npos &&
+      !state.discoveryPolls++)
+    return 0;
+  neverd_session_discover_functions(s);
+  return 1;
+}
+#endif
 neverd_va_t neverd_func_entry(neverd_session_t s, int index) {
+  auto &state = *session(s);
+  if (index == 0 && state.discoveryPublished && !state.discoveryRebuild) {
+    state.discoveryRebuild = true;
+    std::ofstream(std::filesystem::u8path(state.path + ".rebuild"))
+        << "started";
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!std::filesystem::exists(
+               std::filesystem::u8path(state.path + ".continue")) &&
+           std::chrono::steady_clock::now() < deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
   const auto &functions = session(s)->functions;
   return index >= 0 && index < static_cast<int>(functions.size())
              ? functions[index]
@@ -1408,7 +1460,7 @@ int neverd_type_declarations_load(neverd_session_t s) {
   state.error.clear();
   Json declarations = Json::array();
   const auto file = neverd::project_files::path(
-      std::filesystem::path(state.path), neverd::project_files::File::Types);
+      std::filesystem::u8path(state.path), neverd::project_files::File::Types);
   if (std::filesystem::exists(file)) {
     std::ifstream input(file, std::ios::binary);
     declarations = Json::parse(input, nullptr, false);
@@ -1523,7 +1575,7 @@ int neverd_type_libraries_load(neverd_session_t s) {
   state.error.clear();
   Json choice = {{"added", Json::array()}, {"removed", Json::array()}};
   const auto file =
-      neverd::project_files::path(std::filesystem::path(state.path),
+      neverd::project_files::path(std::filesystem::u8path(state.path),
                                   neverd::project_files::File::TypeLibraries);
   if (std::filesystem::exists(file)) {
     std::ifstream input(file, std::ios::binary);

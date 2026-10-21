@@ -11,6 +11,7 @@
 #include "neverd/loader/MachO/ImmutableNativeCalls.h"
 #include "neverd/pipeline/NativeSourceHints.h"
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/sdk/Limits.h"
 
 #include <map>
 #include <optional>
@@ -25,7 +26,7 @@ struct NativeSourceDependencyEvidence {
     va_t Caller, Block, Instruction, Target;
     bool Indirect;
   };
-  static constexpr size_t MaxCalls = 1000000;
+  static constexpr size_t MaxCalls = kMaxNativeSourceDependencyCalls;
   std::vector<Call> Calls;
   std::set<va_t> Roots, MissingFunctions;
   bool InventoryComplete = true;

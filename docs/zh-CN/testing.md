@@ -4,6 +4,8 @@
 
 # 测试 NeverD
 
+`DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
+
 `DriverMSRExecution.*` 与 `DriverMSRDeclaration.*` 在可用后端上检查显式 MSR 输入、全宽拆分、状态保留、重复读取、精确指令预算、缺失/无效声明及不授予内存权限。`KernelMSRRead.*` 检查未使用声明仍保留依赖。运行原生驱动、驱动模拟和内核快照测试组；不可用的 WHP/HVF 记为跳过，不算原生验证。
 
 NeverD 的测试回答三个不同问题：表示形状是否符合预期、完整 pipeline 路径能否
@@ -1216,7 +1218,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 68 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 135 个负载产生 270 项 WHP 结果：27 个内建映像、68 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5085 CPU + 270 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 116 driver environment checks + 116 driver API checks = 5785`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 135 个负载产生 270 项 WHP 结果：27 个内建映像、68 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5085 CPU + 270 WHP + 32 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 126 driver environment checks + 116 driver API checks = 5802`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 真实 WDK 清单也构建 `driver_device_queries.c`、`driver_file_objects.c` 和 `driver_file_handles.c` 的普通及 CFG 版本。`DriverDeviceQueryTests.cpp` 与 `DriverFileObjectTests.cpp` 复用便携调用方的断言，在两种契约、基址和调度策略下检查保留引用后的删除、失败 CREATE、进程身份、最后句柄 CLEANUP 和延迟 CLOSE。三组均列入原生必测项；清单验证独立发现含 `NEVERD_WDK_FIXTURE` 的源码，防止双模式源码遗漏 WDK 构建。
 
@@ -2086,3 +2088,13 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `AbsoluteMemoryFactsTests.inc` 覆盖绝对地址目标跨节点传递、冲突汇合、部分重叠及未知别名写入，以及两种字节序和启用/禁用串接时的栈分离证明。独立字节执行器检查保留的副作用；缺少排除范围或预算不足时必须拒绝。`SymStorePreservation.Absolute*` 与 `SymState.AbsoluteProjections*` 检查绝对/符号区域共存、高地址、纯只读有界投影、写入后的未知值世代和事务性拒绝。运行 `NeverDInterpreterSpecializationTests`、`NeverDSymbolicIntegerIntrinsicTests`、`NeverDSymMemoryKnowledgeTests`，随后运行原生独立性与 LowIR 精化测试。
 
 绝对内存回归覆盖有界的连续与稀疏批次、完整写入及单元的包含关系，以及帧边界和排除边界两端的具体别名反例。有序和逆序区间并集必须保留相同单元、丢弃间隙，并在保留预算少一个工作单位时保持状态不变。
+
+## 有限普通 RAM 读取回归测试
+
+`LowIRReadTrace.*` 检查共享输入、两种字节序、地址/宽度/顺序/次数变化、全部分支、与先前帧写入的部分重叠、未定义值、重复读取的独立性、精确及不足预算和循环拒绝。`OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` 检查原始机器码独立性、机器码到 LowIR 的精化以及指针改变时的拒绝。运行 `NeverDLowIRRefinementTests`、`NeverDLowIRUndefinedIndependenceTests`、`NeverDOriginalBinaryUndefinedIndependenceTests`、`NeverDPEFixedImageTests` 和 `NeverDInterpreterSpecializationTests`。这些证明本身不认证编译后的 C 或具体 CPU 后端。
+
+## 原生标量查询回归测试
+
+`NativeQueryTrace.*` 覆盖独立查询结果、四个零扩展、参数/次数/顺序变异、未定义参数、与普通读取交错、全部分支、未受影响状态、严格编码/细节审计、损坏组合、预算、摘要绑定及静态/归纳拒绝。`NativeScalarQueryDescriptor.*` 验证通用描述限制和实际凭据绑定。
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.

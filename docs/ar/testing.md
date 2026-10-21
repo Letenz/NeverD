@@ -4,6 +4,8 @@
 
 # اختبار NeverD
 
+`DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
+
 تختبر `DriverMSRExecution.*` و`DriverMSRDeclaration.*` قيم MSR الصريحة وتقسيمها الكامل وحفظ الحالة والقراءة المتكررة والميزانيات الدقيقة والمدخلات الغائبة أو غير الصحيحة وعدم منح صلاحيات الذاكرة على الخلفيات المتاحة. تحفظ `KernelMSRRead.*` التبعيات غير المستخدمة. شغّل مجموعات برنامج التشغيل الأصلي والمحاكاة ولقطات النواة؛ يعد غياب WHP/HVF تخطياً لا تحققاً أصلياً.
 
 تجيب اختبارات NeverD عن ثلاثة أسئلة مختلفة: هل للتمثيل الشكل المتوقع، وهل يعمل
@@ -1314,7 +1316,7 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 
 عند ضبط `native_cpu_only=true`، يفعّل `native_driver_tests=true` اختبارات `NeverDNativeDriverTests` دون Unicorn. قبل التهيئة، يتحقق `build_wdk_driver_fixtures.py` من SHA-256 الكامل لحزم Microsoft الرسمية WDK/SDK 10.0.26100.6584 ويعيد بناء 68 صورة برنامج تشغيل عادية أو CFG أو DBG من المصادر الأصلية. يحدد `WDKDriverFixtures.def` هويات الحزم ومعاملات المترجم والرابط وربط عينات الاختبار. تبقى ملفات Microsoft غير المعدلة وتراخيصها في مجلدات البناء أو التخزين المؤقت المحلية؛ ولا يرفع CI إلا بيانات البناء الوصفية وسجلاته. يسجل البيان إصدارات الأدوات والأوامر وبصمات المصادر والترويسات وصور الخرج.
 
-يتطلب `NativeDriverTests.def` عدد 270 نتيجة WHP لجميع الأحمال الـ135 في `DriverBuiltinImages.def` و`DriverBackendParityCases.def`: عدد 27 صورة مدمجة و68 صورة WDK و40 سيناريو طلب، بالعناوين الأصلية والمعاد تموضعها. القائمة الإلزامية الكاملة هي `5085 CPU + 270 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 116 driver environment checks + 116 driver API checks = 5785`. تتضمن فحوص مجموعات الانتظار الـ30 ست عشرة حالة نموذج محمولة وأربع عشرة حالة أصلية لبرامج التشغيل. يحتفظ `run_native_cpu_ci.py --with-drivers` بالهويات الدقيقة وأدلة JUnit مع تعطيل Unicorn. يؤدي غياب أي عينة إلزامية أو تخطيها إلى فشل بوابة التحقق الاختيارية، بينما تبقى العينات الخارجية اختيارية للبناء العادي. تحافظ الصور الثابتة على رفض إعادة التموضع المتوقع. لم يتم التحقق بعد من التنفيذ الأصلي لضيوف ARM64.
+يتطلب `NativeDriverTests.def` عدد 270 نتيجة WHP لجميع الأحمال الـ135 في `DriverBuiltinImages.def` و`DriverBackendParityCases.def`: عدد 27 صورة مدمجة و68 صورة WDK و40 سيناريو طلب، بالعناوين الأصلية والمعاد تموضعها. القائمة الإلزامية الكاملة هي `5085 CPU + 270 WHP + 32 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 126 driver environment checks + 116 driver API checks = 5802`. تتضمن فحوص مجموعات الانتظار الـ30 ست عشرة حالة نموذج محمولة وأربع عشرة حالة أصلية لبرامج التشغيل. يحتفظ `run_native_cpu_ci.py --with-drivers` بالهويات الدقيقة وأدلة JUnit مع تعطيل Unicorn. يؤدي غياب أي عينة إلزامية أو تخطيها إلى فشل بوابة التحقق الاختيارية، بينما تبقى العينات الخارجية اختيارية للبناء العادي. تحافظ الصور الثابتة على رفض إعادة التموضع المتوقع. لم يتم التحقق بعد من التنفيذ الأصلي لضيوف ARM64.
 
 يبني فهرس WDK أيضًا `driver_device_queries.c` و`driver_file_objects.c` و`driver_file_handles.c` بصيغتي التشغيل العادية وCFG. تعيد `DriverDeviceQueryTests.cpp` و`DriverFileObjectTests.cpp` استخدام تحقق المتصلين المحمولين للمراجع المحتفظ بها وفشل CREATE وهوية العملية وCLEANUP لآخر مقبض وCLOSE المؤجل عبر العقدين والعنوانين وسياسات الجدولة. المجموعات الثلاث مطلوبة في الاختبارات الأصلية؛ ويكتشف تحقق الفهرس مصادر `NEVERD_WDK_FIXTURE` مستقلًا لكشف أي بناء WDK مفقود.
 
@@ -2147,3 +2149,13 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 تختبر `AbsoluteMemoryFactsTests.inc` الأهداف المطلقة بين العقد وتعارض الدمج والكتابات المتداخلة جزئيًا أو مجهولة العلاقة وفصل المكدس بترتيبي البايتات مع الوصل وبدونه. يتحقق منفذ بايتات مستقل من الآثار، ويجب رفض غياب الاستبعادات أو نقص الميزانية. تختبر `SymStorePreservation.Absolute*` و`SymState.AbsoluteProjections*` تعايش البنوك والعناوين العليا والإسقاط النقي المحدود والحقب المجهولة والرفض دون تعديل جزئي. شغّل `NeverDInterpreterSpecializationTests` و`NeverDSymbolicIntegerIntrinsicTests` و`NeverDSymMemoryKnowledgeTests` ثم اختبارات الاستقلال الأصلي وتنقيح LowIR.
 
 تغطي اختبارات الذاكرة المطلقة مجموعات محدودة متجاورة ومتفرقة، والاحتواء الكامل للكتابات والخلايا، وأمثلة تداخل ملموسة عند طرفي حدود الإطار والاستبعاد. يجب أن تحافظ اتحادات النطاقات المرتبة والمعكوسة على الخلايا نفسها، وتتخلى عن الفجوات، وتترك الحالة دون تغيير عند نقص وحدة عمل واحدة من ميزانية الحفظ.
+
+## اختبارات انحدار القراءات المنتهية من RAM العادية
+
+تتحقق `LowIRReadTrace.*` من المدخلات المشتركة وترتيبي البايتات وتغيير العنوان والعرض والترتيب والعدد وجميع الفروع والتداخل الجزئي مع كتابات الإطار السابقة والقيم غير المحددة واستقلال القراءات المتكررة والميزانيات الدقيقة والناقصة ورفض الحلقات. تتحقق `OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` من استقلال الشيفرة الأصلية والتنقيح من الشيفرة الأصلية إلى LowIR ورفض المؤشر المعدل. شغّل `NeverDLowIRRefinementTests` و`NeverDLowIRUndefinedIndependenceTests` و`NeverDOriginalBinaryUndefinedIndependenceTests` و`NeverDPEFixedImageTests` و`NeverDInterpreterSpecializationTests`. لا تؤهل هذه البراهين وحدها شيفرة C المترجمة أو خلفية CPU فعلية.
+
+## اختبارات انحدار الاستعلامات العددية الأصلية
+
+يغطي `NativeQueryTrace.*` الإجابات المستقلة والتوسعات الصفرية الأربعة وتغيير المحددات والعدد والترتيب والمحددات غير المعرّفة وتشابك القراءات وكل الفروع والحالة المحفوظة وتدقيق الترميز والتفاصيل والحزم غير الصالحة والميزانيات والبصمات ورفض الواجهات الثابتة والاستقرائية. يفحص `NativeScalarQueryDescriptor.*` حدود الوصف العامة وربط الإيصالات الفعلية.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.

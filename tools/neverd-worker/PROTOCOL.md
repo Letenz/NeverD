@@ -55,7 +55,10 @@ Responses:
 ```
 
 Statuses are `ok`, `error`, `cancelled`, and `budget_exceeded`. Error responses
-include `error:{code,message}`. Display messages are diagnostics; use stable
+include `error:{code,message}`. While a request loads an image, the worker may
+first send responses with the same `request_id` and `status:"progress"`, whose
+payload is `{phase,done,total,detail}`; they are not the request's result, and
+a client keeps waiting for one of the final statuses. Display messages are diagnostics; use stable
 `code` values for localization. A successful empty page differs from errors,
 unsupported representations and analysis failures. Every VA is a `0x`-prefixed
 lowercase hexadecimal string, including VAs above 2^53. Revisions and project IDs are opaque
@@ -79,6 +82,17 @@ bound their own cached pages.
 
 Every second the worker sends
 `{type:"heartbeat",protocol_major:1,project_id,revision,active_request_id:string|null,cancellation_requested:bool}`.
+The same heartbeat envelope is also sent immediately when background function
+discovery completes, including a failed discovery whose diagnostic is published
+as `background.state:"unavailable"`. `background.discovery_complete` states
+that the SDK discovery result has been consumed; it does not promise that the
+derived listing or reference index has been rebuilt. The executor admits
+requests for up to its existing 150 ms idle grace at that transition, waking
+as soon as one arrives, before continuing derived background work.
+Stepped SDK discovery is opt-in through `open.step_discovery:true`; it defaults
+to false so older clients do not acquire an extra image snapshot. Only clients
+that coordinate large-image replica startup with `discovery_complete` should
+enable it. SDKs without the optional polling export retain synchronous discovery.
 Heartbeat is liveness, not percent progress. `cancel` takes
 `{request_id:"target"}`. A queued target returns `cancelled` and the cancel reply
 has `{accepted:true,stopped:true,state:"stopped",requires_restart:false}`.
@@ -305,6 +319,8 @@ diagnostic; fixed-image authentication still requires its stricter evidence.
 | `cfg_summary` | `{address,metrics?}`. Builds one immutable graph snapshot on the executor; returns counts, bounds and an opaque `layout_revision`, without node/edge arrays. Up to 20000 nodes / 100000 edges. Optional `metrics:{char_width,line_height,padding,...}` size each node to its formatted listing rows; the layered layout routes edges around nodes. See viewport contract below. |
 | `cfg_viewport` | `{address,layout_revision,x,y,width,height,scale:1,node_offset:0,edge_offset:0}`. Queries the current snapshot's spatial indexes; returns at most 256 nodes and 512 edges. No engine call or relayout per pan. A missing/mismatched snapshot returns `stale_layout`. |
 | `xrefs` | `{address,direction:"to",offset,limit:128}`, limit 1–512. Direct references from each instruction's own lift, without whole-program analysis: rows `{address,from,to,kind,type,text,function,function_address?}` where `kind` is call/jump/cjump/read/write/offset and `type` its classic letter (p/j/r/w/o). "to" reads the parallel reference index, finishing it first when the background build has not; "from" decodes the one instruction. Engines without `neverd_code_refs_json` return `unsupported`. `{source:"ir"}` selects the previous IR-constant references instead: it triggers analysis, preserves engine `from/to,func,block/opcode` and adds `{address,function,kind:"IR constant reference"}`; EVM/SBF return `unsupported` there. |
+| `call_paths` | `{waypoints:[...],exclude?,max_depth?,shortest_only?,data_refs?,max_paths?,max_listed?}`: the engine's `neverd_call_paths_json` over the graph that functions' direct references make, without analysis. A waypoint or exclusion is a `0x` address, or a name: one the listing shows, such as a synthesized `main`, resolves to its address first, and the engine resolves its own function and import names. Returns the engine's `{segments,unconnected,nodes,max_depth,data_refs}` with addresses as the protocol spells them and functions under the names the workbench shows. A malformed request or unknown waypoint is `invalid_request`; an engine without the query, `unsupported`. Listed in `capabilities` when the engine has it. |
+| `call_tree` | `{root,direction:"callees"|"callers",max_depth?,max_listed?,data_refs?,exclude?,expand_library?}`: `neverd_call_tree_json` on the same graph, `root` resolved as a waypoint is. Returns `{root,direction,max_depth,nodes,edges,depth_limited,complete,bottom_up?}`, named as `call_paths` names them. |
 | `strings` | Standard page; the filter matches the text, the address or the type. Strings in the encodings and minimum length of `string_options` (engines without `neverd_strings_ex_json` find ASCII strings of at least 4 characters). Rows `{address,text,value,length,chars,encoding,type}`: `length` counts bytes without the terminator, `text` is UTF-8, `type` is `C` for ASCII or the encoding's listing spelling (`UTF-8`, `UTF-16LE`). Parsed and cached per revision. Sorting by `address`, `length`, `type` or `text` covers the complete filtered index in the requested direction. Optional `text_limit` (1–1024 UTF-8 bytes) returns a display preview with an ellipsis and `text_truncated:true` when shortened; sorting, filtering and byte length retain the full value. Without it, `text` remains complete. The GUI requests 400-byte previews to keep pages containing multi-megabyte literals within the frame budget. |
 | `string_encodings` | Available before opening a file. Returns `{items:[{name,spelling,unit,default,legacy?}]}`, the engine's string encodings; `legacy:true` marks a code page (GBK, Big5, Shift-JIS, Windows-1252, ...). Engines without `neverd_string_encodings_json` return `unsupported`. |
 | `string_options` | Available before opening a file. `{encodings?:[name],preferred?:name\|null,min_length?:1-1024}` replaces the options the listing and `strings` search with, increments revision and invalidates both. C strings that are not UTF-8 are read in every code page among the encodings; `preferred` names the code page that reads them first and so wins where others read them as text too, and is searched whether or not the encodings name it. Without it, a code page wins that reads a string in the scripts it is made for and that no code page for another script contests. `min_length` counts display columns, a wide East Asian character two. An unknown name is `unsupported_encoding` and a preferred encoding that is not a code page `invalid_request`. Without fields it only reads. Returns `{encodings,preferred,min_length}`. The options outlive the open file. |
@@ -828,16 +844,23 @@ slots, including ELF `GLOB_DAT` entries from `neverd_import_slots_json`, are
 named `<import>_ptr` on ELF. Code text from the engine (C and IR) keeps the
 engine's spellings.
 
-Heartbeats carry `background:{state,done,total,references,generation,functions}`
+Heartbeats carry
+`background:{state,done,total,references,generation,functions,discovery_complete}`
 for the work the worker does while idle. It first lets the engine add the
-functions its detector finds without lifting
-(`neverd_session_discover_functions`); `functions` is the listed function count,
+functions its detector finds without lifting, polling
+`neverd_session_discover_functions_step` between foreground requests. Discovery
+owns one image snapshot and publishes its result on the executor; the owner
+continues serving reads while that snapshot computes. Older engines use the
+synchronous `neverd_session_discover_functions` fallback.
+`discovery_complete` lets clients defer large analysis replica startups until
+that snapshot is released. `functions` is the listed function count,
 which clients compare to refresh function lists. It then builds the reference
 index: `pending`, `building`, `ready` or `unavailable`. Its generation changes
 when finished references can add labels and cross-reference comments to listing
 text; clients refresh visible lines then. Function-level analysis runs only for
 the function a decompile, CFG or IR request names; `analyze` remains the
-explicit whole-program pipeline.
+explicit whole-program pipeline. Discovery failures carry `error` and an
+`unavailable` state rather than claiming a complete reference index.
 
 With `open`'s `warm:true`, the worker then prepares functions in entry order,
 a few per idle step, building the control-flow graphs their first decompile

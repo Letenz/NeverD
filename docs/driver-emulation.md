@@ -1095,7 +1095,7 @@ hexadecimal string; the existing numeric `information` field remains available.
 
 `ExRaiseStatus` passes the low 32-bit NTSTATUS to the guest exception handler; `ExRaiseAccessViolation` and `ExRaiseDatatypeMisalignment` raise `STATUS_ACCESS_VIOLATION` and `STATUS_DATATYPE_MISALIGNMENT`. The profile follows the individual Microsoft DDI pages: ExRaiseStatus permits `APC_LEVEL`, while the two no-argument routines require `PASSIVE_LEVEL`. Some WDK SAL annotations permit APC_LEVEL for the wrappers; this profile retains the documented stricter limit. A raised call keeps `result: null` and records the code in `detail`; it never reports a successful API return.
 
-Exception delivery uses the image's decoded x64 version-one unwind tables and
+Exception delivery uses the image's decoded x64 V1/V2 unwind tables and
 `__C_specific_handler` scopes. Search executes real guest filters in table
 order: zero continues searching, a positive result selects the handler, and a
 negative result requests continuation. Constant `EXCEPTION_EXECUTE_HANDLER`
@@ -1105,6 +1105,10 @@ not run during search or when a filter resumes the faulting execution. Ordinary
 helper-frame unwinding restores saved nonvolatile general registers and stays
 within the original execution's stack. `GetExceptionCode()` observes the raised
 code, and handlers can raise into an enclosing supported scope.
+
+The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend. The encoding and Windows restoration rules are cross-checked against [LLVM 22.1.2](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.2/llvm/lib/MC/MCWin64EH.cpp) and [.NET 10 AMD64 unwinding](https://github.com/dotnet/runtime/blob/v10.0.0/src/coreclr/unwinder/amd64/unwinder.cpp).
+
+Only the leading `UWOP_EPILOG` sequence defines V2 epilogues. Later markers consume two slots without restoring state or affecting prologue offset ordering; a truncated pair remains malformed.
 
 C SEH ranges remain half-open. A valid `__C_specific_handler` landing pad may lie inside its protected range: [LLVM 20.1.8](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L600-L608) emits `EndLabel + 1` as the scope end. The Windows OS model preserves the raw endpoints and independently validates executable targets, function ownership and continuation identity, including after rebasing. `KernelSEHContinuationCases.def` retains the original fixture layout; `ScopeEndLabelMayOverlapTheHandlerLandingPad` checks constant handlers and filters. Companion tests preserve the exclusive end and reject invalid targets without consuming the dispatch state. These pure checks run in `NeverDNativeDriverTests` with Unicorn disabled.
 
@@ -1131,8 +1135,8 @@ Native x64 KVM/WHP delivers actual `#XM` faults to driver C SEH through `X64SIMD
 Nested filter exceptions retain a linked `EXCEPTION_RECORD` and revisit the
 suspended protected scopes; collided finally unwinding resumes after the
 already entered cleanup. The planner restores nonvolatile GPRs and full
-XMM6–XMM15 values, checks chained V1 records, and unwinds partial prologues.
-Canonical epilogues are decoded from current executable guest bytes: only
+XMM6–XMM15 values, checks chained V1/V2 records, and unwinds partial prologues.
+V1 canonical epilogues are decoded from current executable guest bytes: only
 remaining stack adjustments, nonvolatile pops and the return are simulated.
 C++ personalities and incomplete metadata still fail explicitly. An uncaught API or supported user-memory
 exception or integer division exception stops with `model_error`; other CPU memory, interrupt and
@@ -1424,3 +1428,5 @@ Kernel `memcpy_s` and `memmove_s` accept bounded accessible buffers with full-wi
 `MmCreateMdl` accepts three full-width arguments through DISPATCH_LEVEL. It allocates zeroed nonpaged descriptor storage or uses a wholly writable span in one live nonpaged pool allocation or the current execution stack. Length above ULONG_MAX returns NULL before storage access; empty and wrapping described addresses preserve raw metadata, but page building needs a valid nonempty range. The 16-bit descriptor extent must remain exact. Six fields are initialized in original order; other supplied bytes remain untouched. Pool-base descriptors support IoFreeMdl or pool free; interior/stack records retire with their containing owner. Active locks, owned mappings, user views and dependencies prevent retirement. Caller-storage IRP transfer, active-record reinitialization, stack-frame slot reuse and automatic partial-map teardown on IoFreeMdl remain unsupported.
 
 `MmAdvanceMdl` supports standalone probe-locked pool and user buffers with an owned system mapping, through DISPATCH_LEVEL. Its ULONG count ignores upper carrier bits; reaching or passing the end returns STATUS_INVALID_PARAMETER_2 without mutation. The fixed x64 profile advances the data window, rotates the complete retained PFN array and marks its tail with MDL_FREE_EXTRA_PTES. Unmap and unlock restore whole-page metadata and original PFN order before retiring the complete alias and original pin. Restoration keeps the current byte offset, which can differ from the original byte range; it grants no additional backing. The stale normalized MappedSystemVa field is retained after advanced unmap. Remapping then requires a new probe/lock cycle. IRP chains, partial dependencies, user views, DMA, image buffers, nonpaged-built descriptors and advancement without a system mapping remain unsupported. The ordinary metadata write preflight prevents partial changes on refused calls.
+
+`process_pebs` declares stable `PsGetProcessPeb` replies for existing model-owned process identities in `checked-x64-v1`, at `PASSIVE_LEVEL`. Each of at most 64 entries has exactly a nonzero 32-bit `process_id` and a hexadecimal 64-bit `value`; zero must be explicit, for example `[{"process_id":4,"value":"0x0"}]`. Duplicate identities fail. Omission leaves replies unknown; `[]` clears inherited declarations. The shared Windows model checks the exact process token on Unicorn/KVM/WHP/HVF. Values create no processes, memory mappings, PEB layout or native provenance. Even unused declarations retain an unreconstructed environment dependency.

@@ -41,6 +41,9 @@ struct CRecordDefinitions {
   /// The records Text defines, by the names the unit spells them by, and
   /// whether each is a union.
   std::map<std::string, bool> Records;
+  /// The records the unit has from the system's headers it includes, which
+  /// lay each out as the program does, with its members' names; likewise.
+  std::map<std::string, bool> HeaderRecords;
   /// Every record Text names or the unit asked for, defined or not, and
   /// whether each is a union, which the unit's own declarations of it say.
   std::map<std::string, bool> Tags;

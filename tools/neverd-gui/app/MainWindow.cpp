@@ -78,6 +78,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QScopedValueRollback>
 #include <QSet>
 #include <QSettings>
@@ -377,17 +378,20 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
 
 MainWindow::~MainWindow() {
   qApp->removeEventFilter(this);
-  // Child views are destroyed after this body, and their teardown releases
-  // queries and moves the focus; keep the resulting notifications away from
-  // this window.
+  // View teardown releases queries and moves the focus; keep the resulting
+  // notifications away from this window.
   disconnect(&session_, nullptr, this, nullptr);
   disconnect(&broker_, nullptr, this, nullptr);
   disconnect(qApp, &QApplication::focusChanged, this, nullptr);
-  // Docked windows are children of this window; closed and floating ones are
-  // not, and would keep their unique names registered after it is gone.
+  // Hiding can lay out child models. Their borrowed address space and the
+  // other window members must still exist while that happens.
+  hide();
+  for (auto *dialog : findChildren<QDialog *>(Qt::FindDirectChildrenOnly))
+    delete dialog;
+  // Destroy every dock while its views' borrowed state is alive, including
+  // closed and floating docks that are not children of this window.
   for (auto *dock : std::as_const(docks_))
-    if (!isAncestorOf(dock))
-      delete dock;
+    delete dock;
   docks_.clear();
   statusTimer_.stop();
   if (instance_ == this)
@@ -1038,7 +1042,7 @@ std::optional<Address> MainWindow::currentAddress() const {
 }
 
 ChooserView *MainWindow::focusedChooser() const {
-  for (auto *widget = QApplication::focusWidget(); widget;
+  for (auto *widget = commandFocusWidget(); widget;
        widget = widget->parentWidget())
     if (auto *view = qobject_cast<ChooserView *>(widget))
       return view;
@@ -1046,7 +1050,7 @@ ChooserView *MainWindow::focusedChooser() const {
 }
 
 CodeView *MainWindow::focusedCodeView() const {
-  for (auto *widget = QApplication::focusWidget(); widget;
+  for (auto *widget = commandFocusWidget(); widget;
        widget = widget->parentWidget())
     if (auto *view = qobject_cast<CodeView *>(widget))
       return view;
@@ -2672,7 +2676,6 @@ void MainWindow::searchBinary(const QString &kind, bool again) {
       return;
     last = text.trimmed();
   }
-  const auto from = currentAddress().value_or(0);
   const auto pattern = last;
   const bool backward = !searchDown_;
   const auto serial = ++searchSerial_, epoch = session_.epoch();
@@ -2681,68 +2684,86 @@ void MainWindow::searchBinary(const QString &kind, bool again) {
     session_.queries().unsubscribe(searchSubscription_);
   if (auto *results = choosers_.value(int(ChooserKind::SearchResults)))
     results->model().setLocalRows({});
-  auto request = std::make_shared<std::function<void(bool)>>();
-  const std::weak_ptr<std::function<void(bool)>> weak = request;
-  *request = [this, kind, pattern, from, backward, serial, epoch, revision,
-              weak](bool wrapped) {
-    auto keep = weak.lock();
-    if (!keep)
+  // A previous search can still be navigating to its first match. Use its
+  // settled cursor, just as the source view does, so that completion cannot
+  // invalidate the search the user has just accepted.
+  const auto beginSearch = [this, kind, pattern, backward, serial, epoch,
+                            revision] {
+    if (serial != searchSerial_ || epoch != session_.epoch() ||
+        revision != session_.revision() || !session_.loaded())
       return;
-    QJsonObject query{{"kind", kind},
-                      {"pattern", pattern},
-                      {"limit", 4096},
-                      {"backward", backward}};
-    if (!wrapped)
-      query["from"] = hexAddress(from);
-    searchSubscription_ = session_.read(
-        QStringLiteral("search"), query, this,
-        [this, kind, pattern, serial, epoch, revision, from, backward, wrapped,
-         keep](const QJsonObject &payload) {
-          if (serial != searchSerial_ || epoch != session_.epoch() ||
-              revision != session_.revision() || !session_.loaded() ||
-              currentAddress().value_or(0) != from)
-            return;
-          if (payload.value("building").toBool()) {
-            QTimer::singleShot(1, this, [keep, wrapped] { (*keep)(wrapped); });
-            return;
-          }
-          if (payload.value("coverage").toString() == "partial")
-            output_->append(tr("Immediate search has undecoded ranges; results "
-                               "cover decoded executable ranges only."),
-                            1);
-          const auto items = payload.value("items").toArray();
-          if (items.isEmpty() && !wrapped) {
-            (*keep)(true);
-            return;
-          }
-          if (items.isEmpty()) {
-            output_->append(tr("Search failed: %1 not found").arg(pattern), 1);
-            return;
-          }
-          auto *dock = chooserDock(ChooserKind::SearchResults);
-          choosers_.value(int(ChooserKind::SearchResults))
-              ->model()
-              .setLocalRows(items);
-          if (!dock->isOpen())
-            addDockWidget(dock, KDDockWidgets::Location_OnBottom,
-                          docks_.value(DisassemblyDock));
-          dock->open();
-          if (!payload.value("complete").toBool())
-            output_->append(
-                tr("Showing %1 matches; use Next to continue the search.")
-                    .arg(items.size()),
-                0);
-          // The worker already ordered and bounded the page from this cursor.
-          if (const auto address =
-                  addressValue(items.first().toObject().value("address")))
-            navigate(*address);
-        },
-        [this, serial, epoch](const QString &, const QString &message) {
-          if (serial == searchSerial_ && epoch == session_.epoch())
-            output_->append(message, 2);
-        });
+    const auto from = currentAddress().value_or(0);
+    auto request = std::make_shared<std::function<void(bool)>>();
+    const std::weak_ptr<std::function<void(bool)>> weak = request;
+    *request = [this, kind, pattern, from, backward, serial, epoch, revision,
+                weak](bool wrapped) {
+      auto keep = weak.lock();
+      if (!keep)
+        return;
+      QJsonObject query{{"kind", kind},
+                        {"pattern", pattern},
+                        {"limit", 4096},
+                        {"backward", backward}};
+      if (!wrapped)
+        query["from"] = hexAddress(from);
+      searchSubscription_ = session_.read(
+          QStringLiteral("search"), query, this,
+          [this, kind, pattern, serial, epoch, revision, from, backward,
+           wrapped, keep](const QJsonObject &payload) {
+            if (serial != searchSerial_ || epoch != session_.epoch() ||
+                revision != session_.revision() || !session_.loaded() ||
+                currentAddress().value_or(0) != from)
+              return;
+            if (payload.value("building").toBool()) {
+              QTimer::singleShot(1, this,
+                                 [keep, wrapped] { (*keep)(wrapped); });
+              return;
+            }
+            if (payload.value("coverage").toString() == "partial")
+              output_->append(
+                  tr("Immediate search has undecoded ranges; results "
+                     "cover decoded executable ranges only."),
+                  1);
+            const auto items = payload.value("items").toArray();
+            if (items.isEmpty() && !wrapped) {
+              (*keep)(true);
+              return;
+            }
+            if (items.isEmpty()) {
+              output_->append(tr("Search failed: %1 not found").arg(pattern),
+                              1);
+              return;
+            }
+            auto *dock = chooserDock(ChooserKind::SearchResults);
+            choosers_.value(int(ChooserKind::SearchResults))
+                ->model()
+                .setLocalRows(items);
+            if (!dock->isOpen())
+              addDockWidget(dock, KDDockWidgets::Location_OnBottom,
+                            docks_.value(DisassemblyDock));
+            dock->open();
+            if (!payload.value("complete").toBool())
+              output_->append(
+                  tr("Showing %1 matches; use Next to continue the search.")
+                      .arg(items.size()),
+                  0);
+            // The worker already ordered and bounded the page from this cursor.
+            if (const auto address =
+                    addressValue(items.first().toObject().value("address")))
+              navigate(*address);
+          },
+          [this, serial, epoch](const QString &, const QString &message) {
+            if (serial == searchSerial_ && epoch == session_.epoch())
+              output_->append(message, 2);
+          });
+    };
+    (*request)(false);
   };
-  (*request)(false);
+  if (disassembly_->listing()->jumpPending())
+    connect(disassembly_->listing(), &ListingView::jumpSettled, this,
+            beginSearch, Qt::SingleShotConnection);
+  else
+    beginSearch();
 }
 
 void MainWindow::queryRegister(const QString &kind) {
@@ -3098,11 +3119,17 @@ void MainWindow::stringOptionsDialog(const QJsonArray &encodings,
   session_.setStringOptions(names, page, length->value());
 }
 
+QWidget *MainWindow::commandFocusWidget() const {
+  if (contextMenuFocus_ && !QApplication::activeModalWidget())
+    return contextMenuFocus_;
+  return QApplication::focusWidget();
+}
+
 void MainWindow::copySelection() {
   // The view holding the focus copies its selection: any code view, a
   // chooser's rows, the hex view's bytes or a text field; the disassembly
   // otherwise.
-  for (QWidget *widget = QApplication::focusWidget(); widget;
+  for (QWidget *widget = commandFocusWidget(); widget;
        widget = widget->parentWidget()) {
     if (auto *field = qobject_cast<QLineEdit *>(widget)) {
       field->copy();
@@ -3351,6 +3378,19 @@ void MainWindow::runCommand(const QString &command, const QString &argument) {
 }
 
 void MainWindow::contextMenu(const QPoint &globalPosition) {
+  // A popup can take the keyboard focus before its action fires. Keep the
+  // invoking view as the command target; modal dialogs still use their own
+  // fields. Nested menus restore the enclosing menu's context.
+  const QPointer<MainWindow> window = this;
+  const QPointer<QWidget> previous = contextMenuFocus_;
+  const auto restore = qScopeGuard([window, previous] {
+    if (window) {
+      window->contextMenuFocus_ = previous;
+      window->updateActions();
+    }
+  });
+  auto *origin = qobject_cast<QWidget *>(sender());
+  contextMenuFocus_ = origin ? origin : commandFocusWidget();
   // The click moved the cursor: the commands act where it is now.
   updateActions();
   QMenu menu(this);

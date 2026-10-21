@@ -4,6 +4,10 @@
 
 # NeverD Architecture
 
+The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend.
+
+Only the leading `UWOP_EPILOG` sequence defines V2 epilogues. Later markers consume two slots without restoring state or affecting prologue offset ordering; a truncated pair remains malformed.
+
 PE GuardCFFunctionTable parsing belongs to the COFF loader. Its complete,
 immutable table supplies address-taken function identities, without asserting
 an ABI, a supported body or runtime CFG admission. The low-level detector owns
@@ -759,7 +763,14 @@ by a cached text, as a volatile read by its own name, keeps its conversion
 where a cast moves it between an integer and a pointer (`castOfText`).
 `rep movs` copies element by element in its direction, as `rep stos`
 stores; a shape the lifter does not emit is refused, since an intrinsic
-would take its operands in the constraints' order.
+would take its operands in the constraints' order. HighC prints a forward
+one over flat memory as `__builtin_memset` or `__builtin_memcpy` where that
+writes exactly its bytes: a fill whose value's bytes are alike, its count a
+number unless the elements are bytes, and a copy of a counted range between
+frame slots or constant addresses that cannot overlap, since an overlapping
+forward copy repeats what it already wrote. A store of what the statement
+before it loaded from the same address, as a stack probe's `or [rsp], 0`
+lifts, leaves memory as it was and prints nothing.
 Where a linker folded identical
 functions, one entry carries
 the names of each (`statedFunctionNamesAt`), and it takes the shown name's
@@ -843,7 +854,10 @@ writers read it, so that a caller returning what a `void` routine left in
 RAX returns nothing too. A routine never returns where its name says so, as
 the tables (`isNoReturnFunction`) or a `_Noreturn` prototype
 (`resolvePrototype`) do: an import, a symbol, or an export the image's own
-code calls (`NoReturnTargetIndex`). Function discovery reads no header, so
+code calls (`NoReturnTargetIndex`). Its cached and demand-loaded lookups share
+the image's executable-veneer admission, exact IAT precedence and first
+non-section symbol rule; unregistered x86 thunks and tagged Thumb entries
+resolve through the same veneer owner. Function discovery reads no header, so
 the tables hold every routine a header library declares `_Noreturn`, as the
 SDK's `ExitProcess`, and its decode probe stops at a call through the import
 slot of one, as the CFG builder does. A whole program's output
@@ -897,6 +911,9 @@ pass the first argument in the result register, so the bare `ret` beside the
 tail call of `if (b) return g(b); return a;` returns `a`. Whether the
 function returns a value at all stays with the return contracts
 (`settleReturnContracts`).
+An absent ordinary RETURN does not establish a void result. The shared
+no-return proof must also close exceptional paths; an external catch funclet
+can still supply the parent's value when its source body is attached later.
 
 A unit's member access names a member only where the access reads it
 (`NdType::displayFieldIndexAt`): a field of the access's width, a scalar's
@@ -971,6 +988,36 @@ Fork after initialization and dynamic SDK unloading are not supported by the
 retained backend; those embedding hosts must select the explicit native-thread
 baseline. Normal builds enable all four performance providers.
 
+The SDK exposes `neverd_session_discover_functions_step` for polling clients.
+Its single retained job owns a value snapshot of the image, including bytes
+and metadata, and never borrows or mutates the live session on its thread.
+Completion publishes both the discovered identities and the detector's
+verified-entry/code-reference facts on the session executor, only if the
+function-list revision still matches. The computation releases its image
+before the result waits for publication. A stale job is drained before another
+starts; edits/reload do not accumulate retired snapshots. Errors remain SDK
+diagnostics, and destruction joins the job before SDK code can unload.
+Explicit synchronous discovery can consume the same job and still returns
+only when discovery is complete. Worker polling waits for requests rather
+than busy-spinning while a snapshot is computing. Older SDKs retain the
+synchronous fallback.
+
+The worker polls stepped function discovery when the engine exports it;
+the client must also opt in through `open.step_discovery`. The default preserves
+synchronous discovery for older clients that do not coordinate image memory.
+Older engines retain synchronous discovery. Pending work yields to foreground
+requests without publishing a partial discovery result.
+
+Discovery completion is a worker scheduling boundary before the derived
+listing rebuild. The executor publishes an immediate heartbeat using the same
+state envelope as periodic liveness notifications, then waits for requests for
+at most its existing idle grace (waking on arrival). This lets a large-image
+GUI waiting for discovery publication export its analysis snapshot before
+further listing work. The GUI's large-image memory gate remains in force;
+completion does not claim reference-index readiness, and later listing reads
+still build from the published SDK functions. Errors publish an unavailable
+index without keeping replica startup blocked.
+
 Function preparation uses `neverd_prepare_function_view`, which shares the
 source route's ARM mode, exception-handler discovery and analysis-scope checks
 without emitting C. Source, IR and CFG views consume that prepared pipeline.
@@ -1005,6 +1052,19 @@ function that is not a symbol start adds its own entry to its run, which keys
 other facts. The cache keeps the latest such
 selection's facts beside the symbol inventory's, so passing through one
 leaves what the symbol starts share in place.
+The GUI owner no longer requests that pipeline warmup: source/CFG views use
+separate analysis sessions and cannot consume the owner's pipeline cache.
+With idle analysis enabled, native images with 4096–65536 functions and at most
+64 MiB of input instead prefetch one source entry in an analysis replica.
+Larger inputs prepare on demand, and fresh replicas wait for discovery to
+release its image snapshot. This bounds simultaneous image ownership while
+owner browsing reads continue. Foreground requests reuse that replica's image
+preparation; concurrent independent views retain the second lane. Prefetch is
+read-only and follows the existing revision, cancellation and replica reset
+rules. It overlaps computation with browsing, not a reduced analysis scope.
+The GUI opts in with `open.step_discovery`; older workers ignore that additive
+field. Clients without the same large-image memory gate keep the worker's
+synchronous-discovery default.
 Both kinds share the image's no-return-name, stack-probe, function-pointer,
 relocation-root and executable-owner indexes. The image, debug context, symbol
 inventory and exact verified entries bind that shared ownership. Each distinct
@@ -1026,6 +1086,14 @@ remain the same.
 Core callers opt in through `PipelineOptions::AnalysisCache` and must reset it
 before input or policy mutation; image pointers alone do not establish validity.
 
+Instruction-flow sweeps keep one `InstructionFlowScratch` per decoding worker.
+The workspace reuses only the temporary LowOp vector's storage: operations
+are cleared and the x87 state reset before every instruction, including after
+an unsupported lift. Returned references and transfer facts own their values.
+Disassembly pages own a workspace for that call; parallel access-width,
+reference and string-reference scans retire theirs with each worker. No TLS,
+session cache, new semantic shortcut or cross-instruction state is involved.
+
 Function selection also retains decoded image data-access widths. Their exact
 ordered function address/size inventory is checked after synchronization;
 changed extents rebuild the widths and discard source using the former names.
@@ -1034,6 +1102,13 @@ and lookup indexes, since the names and their list positions stay unchanged.
 Names, exports and list changes retain their ordinary invalidation guards.
 Image reloads, function edits, analysis-policy and signature changes retire
 these facts. Navigation still discards the preceding output IR and source.
+
+Reference and warmup pages share one address-ordered function index for each
+function-list revision. Page lookup is a lower bound plus the requested rows;
+it does not repeatedly sort the remaining image. Stateless access-width scans
+also order their inventory once per scan. Duplicate addresses select the
+first listed identity consistently, and list revisions/storage changes retire
+borrowed pointers before the next page.
 
 Each worker retains up to eight completed code documents under a 32 MiB
 conservative retained-size allowance. Exact function, representation, project
@@ -1130,7 +1205,7 @@ difference proof still govern replacement. Larger domains keep bounded search.
 Anchored searches also use necessary pair-membership coefficient bounds when
 the modular scale distinguishes membership counts. Ambiguous scales retain
 the original search; these bounds never authorize a replacement.
-Before a higher-degree single-product search expands its tensor, unequal
+Before a cubic or higher-degree single-product search expands its tensor, unequal
 nonzero lexicographic extremal coefficients can reject it: each extremal
 monomial of a product occurs exactly once and fixes the same scale. Equal
 extrema from separate terms are summed; cancellation declines this check.
@@ -1144,6 +1219,49 @@ exact identity, not on expanding them as `-1-x`. Equal scales and repeated
 factors remain exact, and identical proved quotients share a charged local
 cache. A bounded frontier and cumulative work/storage admission preserve the
 best completed root on refusal.
+Long cofactor keys use a commutative fingerprint to select comparisons, then
+compare every retained factor and its multiplicity before grouping. Only
+shared keys are materialized, in the original lexicographic order; short keys
+keep direct construction. Hash equality supplies no semantic evidence, and
+all comparisons, buckets and retained groups share the existing budgets.
+Small frontiers of long residuals instead intersect term pairs and enumerate
+only their shared keys. Exact multiplicities and the same lexicographic group
+order are retained. Cartesian completion materializes each complete corner
+once, avoiding repeated copies of invariant tails in intermediate prefixes.
+Large distribution proofs can cancel identical summands and extract a common
+nonconstant factor from both sides before normalizing the quotients. Proving
+quotient equality is sufficient even when the common word can be zero; no
+modular division or invertibility assumption is used. Every retained scale and
+coefficient difference still participates in the independent equality check.
+The shared expression builder inserts a nonconstant operand into an existing
+canonical product's sorted factors, preserving its leading coefficient and
+multiplicities. It snapshots operands before interning can relocate the arena.
+Both parsing and source expression reconstruction avoid re-flattening and
+re-sorting every growing product prefix; the resulting canonical node is
+unchanged. Canonical flat products and coefficient changes retain the same
+fast path when no unary shift fold can apply. Sum collection reuses an original
+scaled addend only while its coefficient is unchanged; merging another addend
+invalidates that reuse before modular cancellation or reconstruction.
+Arithmetic normalization reads flat monomials directly and skips multiplication
+by unit coefficients. Completed polynomials can be reused only within one
+normalizer with a fixed context, width and complement policy. Candidate emission
+cannot mutate these tables; new roots still require normalization and complete
+coefficient equality. Returned references remain local to that normalizer, and
+later independent verifiers start with fresh state.
+Already allocated monomial keys and coefficients move into polynomial tables;
+copying callers retain separate storage charges. This avoids allocating the
+same product entry twice without sharing mutable proof state.
+The product valuation proof enumerates the complete low-bit domain of up to
+six independent opaque inputs. Bitwise operators, addition and multiplication
+supply exact parity; every even factor contributes a trailing zero. Bit-sliced
+counters preserve repeated-factor correlations across all assignments. A
+product is zero only when these guaranteed zeros and its literal coefficient
+cover the full word width. The proof admits at most 64 factors, 128 reachable
+nodes and eight observable low bits, under the existing work/storage budget.
+Early sum pruning requires every long product to vanish, preserving incomplete
+factor bases. Generated products and residuals can use the proof after their
+complete distribution is established. No additional CLI or GUI switch is
+required: both source routes use the shared symbolic core.
 Different coefficients can expose the same quotient after splitting off exact
 modular differences. The search prefers a coefficient repeated at the same degree
 as its common scale; every difference stays attached to its original factors. The quotient
@@ -4941,8 +5059,9 @@ operations connect those answers to the original placeholders, while the
 original zero extensions clear the four destination registers' upper halves.
 This permits neither host-CPU assumptions nor repeated-query correlation.
 Runtime-derived pointers keep unknown provenance. The retained read preserves
-the original instruction's observable ordering; source and native proof
-consumers continue to reject this unaudited runtime contract.
+the original instruction's observable ordering. Source consumers and default
+native proofs still refuse it; finite native proofs can separately opt into
+the audited scalar-query contract described below.
 
 Canonical x64 `RDMSR` additionally requires the explicit
 `KernelX64NoFaultV1` profile. The x64 owner authenticates its complete six-operation
@@ -7481,6 +7600,12 @@ pointers). The layer places them past the object's sections in a writable
 there and data a symbol; a weak reference takes no address, since the null test
 its code makes is the program's.
 
+`ObjectExterns` also records each undefined callable identity in
+`BinaryImage::ObjectExternFunctionEntries`. CFG recovery uses that provenance
+for direct external tail calls in relocatable objects without admitting the
+extern storage as executable code. An IAT address or function symbol alone
+does not grant this exception.
+
 <a id="support-and-test-depth"></a>
 
 ### Support and test depth
@@ -9138,6 +9263,10 @@ into occurrence-specific call types. A policy that cannot prove every required
 carrier reports refusal instead of manufacturing operands or changing the
 original analysis.
 
+HighIR consumes the proved analyst call operands directly. Platform heuristics
+for incomplete imported-call signatures cannot replace those carriers with
+wider register values or append arguments beyond the selected declaration.
+
 Stack-frame policies use the same private source variant. `SourceStackFrame`
 owns bounded entry-relative offsets, full temporary lifetimes and admission
 of a single, non-reentered entry-SP carrier. SDK source emission checks every
@@ -9181,3 +9310,13 @@ loader success. See the [execution boundary](android-application-runtime.md#java
 `SymStorePreservation` uses an empty base for current absolute memory; a nonempty base still requires a nonconstant 64-bit value in the state context. The actual write bank cannot be declared protected. With `ProveStoreFrameSeparation`, recovery also proves each current absolute cell disjoint from the complete symbolic write before preserving it. Projection carries only surviving constant bytes, intersects them at joins and rebinds them together with frame facts. Missing, conflicting or invalidated bytes stay unknown. This grants neither an initial memory value nor immutable storage, access validity or a global nonalias premise.
 
 A complete frame write contained in the declared nonwrapping bounds is disjoint from a complete cell contained in an existing excluded interval. Recovery uses that implication directly; partial containment still requires a solver proof. Same-bank ranges form one union, and ordered nonwrapping unions share a bounded byte/range cursor. Other modular unions retain their original membership semantics.
+
+## Finite ordinary RAM read proofs
+
+`LowIRUndefinedIndependence` owns the opt-in `OrderedOrdinaryRAMV1` contract for finite proofs. Each non-frame read shares an input by occurrence; complete path coverage and address, width and order agreement remain proof obligations. Exact byte-address comparisons apply prior frame writes, including possible aliases. Repeated reads conservatively use independent inputs, and even immutable reads must remain in the candidate trace. Writes stay inside the declared frame. The contract explicitly requires ordinary nonfaulting RAM; it supplies no observed-address constants, nonalias facts, MMIO, atomic or concurrent-writer semantics. Loop proof and inference reject this model. Existing observation/node limits bound the added work, and certificates bind the model while default contracts keep their digest. This adds no concrete backend capability.
+
+## Finite native scalar query proofs
+
+`OrderedScalarV1` explicitly enables finite native independence and native-to-LowIR refinement for architecture-described queries. Core owns shared defined inputs, complete terminal coverage and equality of identity, version, selectors, result widths, count and order, including order relative to ordinary RAM reads. Repeated queries use independent answers; selector independence is proved before writing any result. Descriptor shape, observation and node limits bound the work. Actual descriptor and operation digests bind each executed receipt and both proof inputs; disabled contracts keep their prior digest. Static APIs without a native provider and all inductive proof/inference APIs refuse the model.
+
+The x64 adapter admits only the complete canonical `CPUID` bundle; the lifter independently audits its exact bare encoding, defined outputs and closed opaque-bank preservation. EAX/ECX select four 32-bit results and all four destination upper halves are cleared. The original query event remains observable. This supplies no host values, CPU feature profile or repeated-query correlation. CPUID's `IA32_BIOS_SIGN_ID` update is outside `LegacyIntegerOpaqueV1`; retaining the event does not assert MSR preservation. [Intel SDM, CPUID](https://cdrdv2-public.intel.com/868140/253666-089-sdm-vol-2a.pdf). RDTSC/RDMSR, source wrapping, exact LLVM proofs and concrete backends gain no new capability.

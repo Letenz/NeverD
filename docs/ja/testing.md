@@ -4,6 +4,8 @@
 
 # NeverD のテスト
 
+`DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
+
 `DriverMSRExecution.*` と `DriverMSRDeclaration.*` は明示した MSR 値、全幅分割、状態保持、反復読み取り、厳密な命令予算、不足・無効な宣言、メモリ権限が増えないことを利用可能なバックエンドで検査します。`KernelMSRRead.*` は未使用宣言の依存を保持します。ネイティブドライバ、ドライバエミュレーション、カーネルスナップショットのテストを実行します。利用不能な WHP/HVF はスキップであり認証ではありません。
 
 NeverD のテストは、表現が期待した形か、バイナリ fixture のパイプライン経路が
@@ -1292,7 +1294,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 68 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 135 ワークロードから 270 件の WHP 結果を要求します。内訳は組み込み 27、WDK 68 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5085 CPU + 270 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 116 driver environment checks + 116 driver API checks = 5785`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 135 ワークロードから 270 件の WHP 結果を要求します。内訳は組み込み 27、WDK 68 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5085 CPU + 270 WHP + 32 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 126 driver environment checks + 116 driver API checks = 5802`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
 
 実際の WDK インベントリは `driver_device_queries.c`、`driver_file_objects.c`、`driver_file_handles.c` の通常版と CFG 版もビルドします。`DriverDeviceQueryTests.cpp` と `DriverFileObjectTests.cpp` は可搬版と同じ検証で、両契約、基址、スケジュール方式の参照保持、失敗 CREATE、プロセス識別、最終ハンドル CLEANUP、遅延 CLOSE を確認します。3 系統はネイティブ必須項目であり、インベントリ検証は `NEVERD_WDK_FIXTURE` を持つソースを独立に探索し、WDK ビルドの欠落を検出します。
 
@@ -2121,3 +2123,13 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `AbsoluteMemoryFactsTests.inc` はノード間の絶対ターゲット、合流の競合、部分重複と未知の別名書き込み、両バイト順と連鎖の有無でのスタック分離を検査する。独立バイト実行器が効果を確認し、除外範囲の欠落と予算不足は拒否する。`SymStorePreservation.Absolute*` と `SymState.AbsoluteProjections*` は領域の共存、高位アドレス、純粋で有界な射影、未知世代とトランザクション的拒否を検査する。`NeverDInterpreterSpecializationTests`、`NeverDSymbolicIntegerIntrinsicTests`、`NeverDSymMemoryKnowledgeTests`、続いてネイティブ独立性とLowIR精緻化スイートを実行する。
 
 絶対メモリの回帰テストは、有界の連続・疎バッチ、書き込みとセルの完全な包含、フレーム境界と除外境界の両端での具体的な別名反例を検証します。順序付きと逆順の範囲和集合は同じセルを保持し、隙間を破棄し、保持予算が一作業単位不足した場合に状態を変更しない必要があります。
+
+## 有限の通常 RAM 読み取り回帰テスト
+
+`LowIRReadTrace.*` は共有入力、両バイト順、アドレス・幅・順序・回数の変更、全分岐、先行フレーム書き込みとの部分重複、未定義値、反復読み取りの独立性、正確な予算と不足時の拒否、ループ拒否を確認します。`OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` は元の機械語の独立性、機械語から LowIR への精緻化、ポインター変更の拒否を確認します。`NeverDLowIRRefinementTests`、`NeverDLowIRUndefinedIndependenceTests`、`NeverDOriginalBinaryUndefinedIndependenceTests`、`NeverDPEFixedImageTests`、`NeverDInterpreterSpecializationTests` を実行してください。これらの証明だけではコンパイル済み C や具体的 CPU バックエンドを認証しません。
+
+## ネイティブ・スカラー問い合わせの回帰テスト
+
+`NativeQueryTrace.*` は独立結果、四つのゼロ拡張、引数・回数・順序の変更、未定義引数、通常読み取りとの交錯、全分岐、非変更状態、符号化・詳細監査、不正操作列、予算、ダイジェスト、静的・帰納 API の拒否を検証します。`NativeScalarQueryDescriptor.*` は共通記述の制限と実際の記録の結合を検証します。
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.

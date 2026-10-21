@@ -142,6 +142,7 @@ EXPORTS
   ExGetPreviousMode
   PsGetCurrentThreadPreviousMode
   PsGetProcessId
+  PsGetProcessPeb
   PsGetCurrentProcess
   PsGetCurrentThread
   KeGetCurrentThread

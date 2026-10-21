@@ -44,6 +44,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -54,6 +55,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #ifndef _WIN32
 #include <csignal>
 #include <fcntl.h>
@@ -1986,6 +1988,238 @@ TEST_F(SessionCAPITest, DisassemblyStatesTheMemoryEachInstructionReaches) {
   EXPECT_EQ(Accesses, 3u) << Page;
 }
 
+// main calls a, c and d; a calls b; b calls c: main at the entry, a at
+// +0x10, b at +0x16, c at +0x1c and d at +0x22.
+constexpr char CallChainBytes[] =
+    "\xe8\x0b\x00\x00\x00"     // main+0x00: call a (main+0x10)
+    "\xe8\x12\x00\x00\x00"     // main+0x05: call c (main+0x1c)
+    "\xe8\x13\x00\x00\x00"     // main+0x0a: call d (main+0x22)
+    "\xc3"                     // main+0x0f: ret
+    "\xe8\x01\x00\x00\x00"     // a: call b (main+0x16)
+    "\xc3"                     //
+    "\xe8\x01\x00\x00\x00"     // b: call c
+    "\xc3"                     //
+    "\xb8\x07\x00\x00\x00\xc3" // c: mov eax, 7; ret
+    "\xc3";                    // d: ret
+// The bytes, NULs included, without the literal's terminator.
+constexpr std::string_view CallChainCode(CallChainBytes,
+                                         sizeof(CallChainBytes) - 1);
+constexpr uint64_t CallChainOffsets[] = {0x0, 0x10, 0x16, 0x1c, 0x22};
+
+TEST_F(SessionCAPITest, CallPathsFollowTheDirectReferencesBetweenFunctions) {
+  const auto Input = write("call-paths.elf",
+                           makeNativeELF(false, 0x400000, {}, CallChainCode));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  // The functions are stated rather than discovered: the graph, not
+  // function discovery, is what this test is about.
+  const uint64_t Main = neverd_session_entry_addr(Session);
+  for (const uint64_t Offset : CallChainOffsets)
+    if (neverd_func_find_by_addr(Session, Main + Offset) < 0)
+      ASSERT_EQ(neverd_func_create(Session, Main + Offset), 0)
+          << takeString(neverd_last_error(Session));
+  const auto Hex = [](uint64_t Address) {
+    return "0x" + llvm::utohexstr(Address);
+  };
+  const std::string M = Hex(Main), A = Hex(Main + 0x10), B = Hex(Main + 0x16),
+                    C = Hex(Main + 0x1c), D = Hex(Main + 0x22);
+  const auto Query = [&](auto Function, const std::string &Options) {
+    const auto Text = takeString(Function(Session, Options.c_str()));
+    auto Parsed = llvm::json::parse(Text);
+    EXPECT_TRUE(static_cast<bool>(Parsed)) << Options << " -> " << Text;
+    if (!Parsed) {
+      llvm::consumeError(Parsed.takeError());
+      return llvm::json::Object();
+    }
+    return std::move(*Parsed->getAsObject());
+  };
+  const auto Strings = [](const llvm::json::Array *Array) {
+    std::vector<std::string> Out;
+    if (Array)
+      for (const auto &Value : *Array)
+        Out.push_back(Value.getAsString().value_or("").str());
+    return Out;
+  };
+  const auto Paths = [&](const llvm::json::Object &Segment) {
+    std::vector<std::vector<std::string>> Out;
+    if (const auto *List = Segment.getArray("paths"))
+      for (const auto &Path : *List)
+        Out.push_back(Strings(Path.getAsArray()));
+    return Out;
+  };
+  const auto FirstSegment = [](const llvm::json::Object &Reply) {
+    const auto *Segments = Reply.getArray("segments");
+    return Segments && !Segments->empty() && (*Segments)[0].getAsObject()
+               ? *(*Segments)[0].getAsObject()
+               : llvm::json::Object();
+  };
+  using Path = std::vector<std::string>;
+
+  // Every path within the depth, shortest first.
+  auto Reply = Query(neverd_call_paths_json,
+                     "{\"waypoints\":[\"" + M + "\",\"" + C + "\"]}");
+  auto Segment = FirstSegment(Reply);
+  EXPECT_EQ(Segment.getInteger("shortest"), 1);
+  EXPECT_EQ(Segment.getInteger("node_count"), 4);
+  EXPECT_EQ(Paths(Segment), (std::vector<Path>{{M, C}, {M, A, B, C}}));
+  EXPECT_EQ(Segment.getBoolean("complete"), true);
+  EXPECT_EQ(Reply.getInteger("unconnected"), 0);
+
+  // Only the shortest, and around an excluded function.
+  Segment = FirstSegment(
+      Query(neverd_call_paths_json, "{\"waypoints\":[\"" + M + "\",\"" + C +
+                                        "\"],\"shortest_only\":true}"));
+  EXPECT_EQ(Paths(Segment), (std::vector<Path>{{M, C}}));
+  EXPECT_EQ(Segment.getInteger("node_count"), 2);
+  Segment = FirstSegment(
+      Query(neverd_call_paths_json, "{\"waypoints\":[\"" + M + "\",\"" + C +
+                                        "\"],\"exclude\":[\"" + A + "\"]}"));
+  EXPECT_EQ(Paths(Segment), (std::vector<Path>{{M, C}}));
+
+  // Waypoints in order, segment by segment.
+  Reply = Query(neverd_call_paths_json,
+                "{\"waypoints\":[\"" + M + "\",\"" + B + "\",\"" + C + "\"]}");
+  const auto *Segments = Reply.getArray("segments");
+  ASSERT_TRUE(Segments && Segments->size() == 2);
+  EXPECT_EQ(Paths(*(*Segments)[0].getAsObject()),
+            (std::vector<Path>{{M, A, B}}));
+  EXPECT_EQ(Paths(*(*Segments)[1].getAsObject()), (std::vector<Path>{{B, C}}));
+
+  // Waypoints that connect only the other way round, and ones that do not.
+  Segment = FirstSegment(Query(
+      neverd_call_paths_json, "{\"waypoints\":[\"" + C + "\",\"" + A + "\"]}"));
+  EXPECT_EQ(Segment.getBoolean("reversed"), true);
+  EXPECT_EQ(Paths(Segment), (std::vector<Path>{{A, B, C}}));
+  Reply = Query(neverd_call_paths_json,
+                "{\"waypoints\":[\"" + C + "\",\"" + D + "\"]}");
+  Segment = FirstSegment(Reply);
+  EXPECT_EQ(Reply.getInteger("unconnected"), 1);
+  EXPECT_TRUE(Segment.get("shortest") &&
+              Segment.get("shortest")->kind() == llvm::json::Value::Null);
+  EXPECT_TRUE(Paths(Segment).empty());
+
+  // The callees to a depth, in the order that decompiles callees first.
+  Reply = Query(neverd_call_tree_json, "{\"root\":\"" + M + "\"}");
+  EXPECT_EQ(Reply.getBoolean("depth_limited"), true);
+  std::vector<std::string> Listed;
+  if (const auto *Nodes = Reply.getArray("nodes"))
+    for (const auto &Node : *Nodes)
+      Listed.push_back(
+          Node.getAsObject()->getString("address").value_or("").str());
+  EXPECT_EQ(Listed, (std::vector<std::string>{M, A, C, D}));
+  Reply =
+      Query(neverd_call_tree_json, "{\"root\":\"" + M + "\",\"max_depth\":2}");
+  EXPECT_EQ(Reply.getBoolean("depth_limited"), false);
+  EXPECT_EQ(Strings(Reply.getArray("bottom_up")),
+            (std::vector<std::string>{C, B, A, D, M}));
+  // And the callers.
+  Reply = Query(neverd_call_tree_json, "{\"root\":\"" + C +
+                                           "\",\"direction\":\"callers\","
+                                           "\"max_depth\":2}");
+  std::map<std::string, int64_t> Depths;
+  if (const auto *Nodes = Reply.getArray("nodes"))
+    for (const auto &Node : *Nodes)
+      Depths[Node.getAsObject()->getString("address").value_or("").str()] =
+          Node.getAsObject()->getInteger("depth").value_or(-1);
+  EXPECT_EQ(Depths,
+            (std::map<std::string, int64_t>{{C, 0}, {M, 1}, {B, 1}, {A, 2}}));
+  EXPECT_FALSE(Reply.get("bottom_up"));
+
+  // Malformed requests fail with a reason rather than an empty answer.
+  for (const std::string Options :
+       {"{\"waypoints\":[\"" + M + "\"]}",
+        "{\"waypoints\":[\"" + M + "\",\"no_such_function\"]}",
+        "{\"waypoints\":[\"" + M + "\",\"" + C + "\"],\"max_depth\":0}",
+        "{\"waypoints\":[\"" + M + "\",\"" + C + "\"],\"surplus\":1}",
+        std::string("[]")}) {
+    EXPECT_EQ(neverd_call_paths_json(Session, Options.c_str()), nullptr)
+        << Options;
+    EXPECT_FALSE(takeString(neverd_last_error(Session)).empty()) << Options;
+  }
+  EXPECT_EQ(neverd_call_tree_json(Session, "{}"), nullptr);
+  EXPECT_FALSE(takeString(neverd_last_error(Session)).empty());
+}
+
+TEST_F(SessionCAPITest, DirectReferencesFollowAnUnsizedFunctionsJumps) {
+  // test eax, eax; je +1; ret; call x; ret; x: ret.  The call lies past the
+  // function's first return, where only the jump reaches it.
+  constexpr char Bytes[] = "\x85\xc0\x74\x01\xc3\xe8\x01\x00\x00\x00\xc3\xc3";
+  const auto Input =
+      write("unsized-jumps.elf",
+            makeNativeELF(false, 0x400000, {}, std::string_view(Bytes, 12)));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const uint64_t Entry = neverd_session_entry_addr(Session);
+  for (const uint64_t Offset : {0x0, 0xb})
+    if (neverd_func_find_by_addr(Session, Entry + Offset) < 0)
+      ASSERT_EQ(neverd_func_create(Session, Entry + Offset), 0)
+          << takeString(neverd_last_error(Session));
+  ASSERT_EQ(neverd_func_size(Session, neverd_func_find_by_addr(Session, Entry)),
+            0);
+  const auto Page = takeString(neverd_code_refs_json(Session, Entry, 1));
+  auto Parsed = llvm::json::parse(Page);
+  ASSERT_TRUE(static_cast<bool>(Parsed)) << Page;
+  std::vector<std::string> Rows;
+  for (const auto &Row : *Parsed->getAsObject()->getArray("refs")) {
+    const auto &Fields = *Row.getAsArray();
+    Rows.push_back(Fields[0].getAsString().value_or("").str() + " " +
+                   Fields[1].getAsString().value_or("").str() + " " +
+                   Fields[2].getAsString().value_or("").str());
+  }
+  const auto Hex = [](uint64_t Address) {
+    return "0x" + llvm::utohexstr(Address);
+  };
+  EXPECT_EQ(Rows, (std::vector<std::string>{
+                      Hex(Entry + 2) + " " + Hex(Entry + 5) + " cjump",
+                      Hex(Entry + 5) + " " + Hex(Entry + 0xb) + " call"}))
+      << Page;
+}
+
+TEST_F(SessionCAPITest, DecompileFunctionsWritesOneUnitOfTheSelection) {
+  const auto Input = write("call-chain.elf",
+                           makeNativeELF(false, 0x400000, {}, CallChainCode));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const uint64_t Main = neverd_session_entry_addr(Session);
+  for (const uint64_t Offset : CallChainOffsets)
+    if (neverd_func_find_by_addr(Session, Main + Offset) < 0)
+      ASSERT_EQ(neverd_func_create(Session, Main + Offset), 0)
+          << takeString(neverd_last_error(Session));
+  const auto Name = [](uint64_t Address) {
+    return "sub_" + llvm::utohexstr(Address);
+  };
+  // a and b: both defined, what b calls declared, the rest absent.
+  const neverd_va_t Selected[] = {Main + 0x10, Main + 0x16};
+  const auto Text = takeString(neverd_decompile_functions(
+      Session, Input.c_str(), NEVERD_OUTPUT_C, Selected, 2));
+  ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+  const auto Defines = [&](uint64_t Address) {
+    for (llvm::StringRef Line : llvm::split(Text, '\n'))
+      if (!Line.starts_with(" ") && !Line.starts_with("extern ") &&
+          Line.contains(Name(Address) + "(") && Line.ends_with("{"))
+        return true;
+    return false;
+  };
+  EXPECT_TRUE(Defines(Main + 0x10)) << Text;
+  EXPECT_TRUE(Defines(Main + 0x16)) << Text;
+  EXPECT_FALSE(Defines(Main + 0x1c)) << Text;
+  EXPECT_NE(Text.find("extern int64_t " + Name(Main + 0x1c)), std::string::npos)
+      << Text;
+  EXPECT_EQ(Text.find(Name(Main) + "("), std::string::npos) << Text;
+  EXPECT_EQ(Text.find(Name(Main + 0x22) + "("), std::string::npos) << Text;
+
+  // An empty selection, or one outside the image's code, fails.
+  EXPECT_EQ(neverd_decompile_functions(Session, Input.c_str(), NEVERD_OUTPUT_C,
+                                       Selected, 0),
+            nullptr);
+  const neverd_va_t Outside[] = {0x10};
+  EXPECT_EQ(neverd_decompile_functions(Session, Input.c_str(), NEVERD_OUTPUT_C,
+                                       Outside, 1),
+            nullptr);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("no native code"),
+            std::string::npos);
+}
+
 // The code a data executable's entry runs, and where it and the data start.
 constexpr uint64_t DataELFBase = 0x400000;
 constexpr uint64_t DataELFEntry = DataELFBase + 0xb0;
@@ -2888,6 +3122,255 @@ void seedAccessWidthFunctions(neverd_session_t Session) {
   State.Img.Symbols = {neverd::Symbol::makeFunc(DataELFEntry, 8),
                        neverd::Symbol::makeFunc(DataELFEntry + 0x20, 8)};
   neverd::sdk::SessionTestAccess::resetFunctions(State);
+}
+
+TEST_F(SessionCAPITest, FunctionPagesReuseOneCompleteAddressOrder) {
+  auto &State = *neverd::sdk::toSession(Session);
+  State.Functions = {{50, 8, "last"},
+                     {0, 4, "zero"},
+                     {30, 8, "middle"},
+                     {10, 8, "first"},
+                     {30, 8, "alias"}};
+  State.functionListChanged();
+  using neverd::sdk::SessionTestAccess;
+  auto Page = SessionTestAccess::functionPage(State, 0, 2);
+  ASSERT_EQ(Page.Functions.size(), 2u);
+  EXPECT_EQ(Page.Functions[0]->Entry, 0u);
+  EXPECT_EQ(Page.Functions[1]->Entry, 10u);
+  ASSERT_EQ(Page.NextEntry, 30u);
+  ASSERT_TRUE(State.FunctionPages);
+  const auto *Order = State.FunctionPages->Ordered.data();
+  Page = SessionTestAccess::functionPage(State, *Page.NextEntry, 2);
+  ASSERT_EQ(Page.Functions.size(), 2u);
+  EXPECT_EQ(Page.Functions[0]->Entry, 30u);
+  EXPECT_EQ(Page.Functions[0]->Name, "middle");
+  EXPECT_EQ(Page.Functions[1]->Entry, 50u);
+  EXPECT_FALSE(Page.NextEntry);
+  EXPECT_EQ(State.FunctionPages->Ordered.data(), Order);
+  Page = SessionTestAccess::functionPage(State, 11, 0);
+  ASSERT_EQ(Page.Functions.size(), 1u);
+  EXPECT_EQ(Page.Functions[0]->Entry, 30u);
+  EXPECT_EQ(Page.NextEntry, 50u);
+  EXPECT_TRUE(
+      SessionTestAccess::functionPage(State, 51, 4096).Functions.empty());
+  // Same allocation and count, but a changed entry must rebuild the order.
+  State.Functions[0].Entry = 5;
+  State.functionListChanged();
+  Page = SessionTestAccess::functionPage(State, 0, 4096);
+  ASSERT_EQ(Page.Functions.size(), 4u);
+  EXPECT_EQ(Page.Functions[1]->Entry, 5u);
+  EXPECT_EQ(State.FunctionPages->Revision, State.FunctionListRevision);
+  // Vector replacement retires all borrowed pointers, including on reload.
+  State.Functions = {{100, 16, "replacement"}};
+  State.functionListChanged();
+  Page = SessionTestAccess::functionPage(State, 0, 2);
+  ASSERT_EQ(Page.Functions.size(), 1u);
+  EXPECT_EQ(Page.Functions.front()->Entry, 100u);
+  EXPECT_FALSE(Page.NextEntry);
+}
+
+TEST_F(SessionCAPITest, DiscoveryStepsPublishTheSynchronousFunctionsAndProofs) {
+  const auto Input = write("discovery-step.elf", accessWidthCacheELF());
+  std::unique_ptr<void, decltype(&neverd_session_destroy)> Other(
+      neverd_session_create(), neverd_session_destroy);
+  ASSERT_EQ(neverd_session_load(Other.get(), Input.c_str()), 1);
+  seedAccessWidthFunctions(Other.get());
+  ASSERT_GE(neverd_session_discover_functions(Other.get()), 0);
+  const auto &Expected = *neverd::sdk::toSession(Other.get());
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  seedAccessWidthFunctions(Session);
+  ASSERT_EQ(neverd_session_discover_functions_step(Session), 0);
+  // A poll starts work but never publishes a partial candidate inventory.
+  auto &State = *neverd::sdk::toSession(Session);
+  EXPECT_FALSE(State.DiscoveredFunctions);
+  EXPECT_EQ(takeString(neverd_session_file_path(Session)), Input);
+  EXPECT_EQ(neverd_func_count(Session), 2);
+  int Status = 0;
+  for (int I = 0; !Status && I < 10000; ++I) {
+    Status = neverd_session_discover_functions_step(Session);
+    if (!Status)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ASSERT_EQ(Status, 1) << takeString(neverd_last_error(Session));
+  EXPECT_EQ(State.Functions, Expected.Functions);
+  EXPECT_EQ(State.Img.VerifiedFunctionEntries,
+            Expected.Img.VerifiedFunctionEntries);
+  EXPECT_EQ(State.Img.CodeRefTargets, Expected.Img.CodeRefTargets);
+  EXPECT_FALSE(State.FunctionDiscovery);
+  // Synchronous callers can also finish an outstanding snapshot job.
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  seedAccessWidthFunctions(Session);
+  ASSERT_EQ(neverd_session_discover_functions_step(Session), 0);
+  EXPECT_GE(neverd_session_discover_functions(Session), 0);
+  EXPECT_EQ(State.Functions, Expected.Functions);
+  EXPECT_FALSE(State.FunctionDiscovery);
+}
+
+TEST_F(SessionCAPITest, DiscoveryStepsDiscardTheImageReplacedDuringAJob) {
+  EXPECT_EQ(neverd_session_discover_functions_step(Session), -1);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("no binary"),
+            std::string::npos);
+  const auto First = write("first.elf", makeNativeELF(false));
+  const auto Next = write("next.elf", makeNativeELF(true));
+  ASSERT_EQ(neverd_session_load(Session, First.c_str()), 1);
+  ASSERT_EQ(neverd_session_discover_functions_step(Session), 0);
+  ASSERT_EQ(neverd_session_load(Session, Next.c_str()), 1);
+  std::unique_ptr<void, decltype(&neverd_session_destroy)> Other(
+      neverd_session_create(), neverd_session_destroy);
+  ASSERT_EQ(neverd_session_load(Other.get(), Next.c_str()), 1);
+  ASSERT_GE(neverd_session_discover_functions(Other.get()), 0);
+  int Status = 0;
+  for (int I = 0; !Status && I < 10000; ++I) {
+    Status = neverd_session_discover_functions_step(Session);
+    if (!Status)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ASSERT_EQ(Status, 1) << takeString(neverd_last_error(Session));
+  const auto &State = *neverd::sdk::toSession(Session);
+  const auto &Expected = *neverd::sdk::toSession(Other.get());
+  EXPECT_EQ(State.Functions, Expected.Functions);
+  EXPECT_EQ(State.Img.VerifiedFunctionEntries,
+            Expected.Img.VerifiedFunctionEntries);
+}
+
+TEST_F(SessionCAPITest, DiscoveryStepsReportOnlyTheCurrentSnapshotsFailure) {
+  const auto Input = write("snapshot-failure.elf", makeNativeELF(false));
+  std::unique_ptr<void, decltype(&neverd_session_destroy)> Other(
+      neverd_session_create(), neverd_session_destroy);
+  ASSERT_EQ(neverd_session_load(Other.get(), Input.c_str()), 1);
+  ASSERT_GE(neverd_session_discover_functions(Other.get()), 0);
+  const auto &Expected = *neverd::sdk::toSession(Other.get());
+  auto &State = *neverd::sdk::toSession(Session);
+  // A finished job of \p Revision's list whose detector threw.
+  const auto FailedJob = [&](uint64_t Revision) {
+    std::promise<neverd::sdk::Session::FunctionDiscoveryResult> Failure;
+    Failure.set_exception(std::make_exception_ptr(
+        std::runtime_error("snapshot detector failed")));
+    State.FunctionDiscovery.emplace(neverd::sdk::Session::FunctionDiscoveryJob{
+        Revision, Failure.get_future()});
+  };
+  // A snapshot of an earlier list neither fails this image nor stands for
+  // its discovery: the poll starts this image's own snapshot.
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  FailedJob(State.FunctionListRevision - 1);
+  ASSERT_EQ(neverd_session_discover_functions_step(Session), 0)
+      << takeString(neverd_last_error(Session));
+  int Status = 0;
+  for (int I = 0; !Status && I < 10000; ++I) {
+    Status = neverd_session_discover_functions_step(Session);
+    if (!Status)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ASSERT_EQ(Status, 1) << takeString(neverd_last_error(Session));
+  EXPECT_EQ(State.Functions, Expected.Functions);
+  // Synchronous discovery drains such a job and discovers this image.
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  FailedJob(State.FunctionListRevision - 1);
+  EXPECT_GE(neverd_session_discover_functions(Session), 0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_EQ(State.Functions, Expected.Functions);
+  EXPECT_FALSE(State.FunctionDiscovery);
+  // The current list's own snapshot failing is still a failure.
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  FailedJob(State.FunctionListRevision);
+  EXPECT_EQ(neverd_session_discover_functions_step(Session), -1);
+  EXPECT_NE(takeString(neverd_last_error(Session))
+                .find("function discovery failed: snapshot detector failed"),
+            std::string::npos);
+  EXPECT_FALSE(State.FunctionDiscovery);
+  EXPECT_FALSE(State.DiscoveredFunctions);
+}
+
+TEST_F(SessionCAPITest, DiscoveryStepsRetireAnEarlierImagesFinishedJob) {
+  const auto Native = write("retired-native.elf", makeNativeELF(false));
+  const auto Contract = write("retired-contract.evm", "6001600055");
+  auto &State = *neverd::sdk::toSession(Session);
+  // A job the next load leaves running is not waited for. An image without
+  // native discovery still retires it once it has finished.
+  ASSERT_EQ(neverd_session_load(Session, Native.c_str()), 1);
+  std::promise<neverd::sdk::Session::FunctionDiscoveryResult> Running;
+  State.FunctionDiscovery.emplace(neverd::sdk::Session::FunctionDiscoveryJob{
+      State.FunctionListRevision, Running.get_future()});
+  ASSERT_EQ(neverd_session_load(Session, Contract.c_str()), 1);
+  ASSERT_TRUE(State.FunctionDiscovery);
+  EXPECT_EQ(neverd_session_discover_functions_step(Session), 1);
+  ASSERT_TRUE(State.FunctionDiscovery);
+  Running.set_value({});
+  EXPECT_EQ(neverd_session_discover_functions_step(Session), 1);
+  EXPECT_FALSE(State.FunctionDiscovery);
+  // A finished snapshot is retired by the load that replaces its image.
+  ASSERT_EQ(neverd_session_load(Session, Native.c_str()), 1);
+  ASSERT_EQ(neverd_session_discover_functions_step(Session), 0);
+  ASSERT_TRUE(State.FunctionDiscovery);
+  ASSERT_EQ(State.FunctionDiscovery->Result.wait_for(std::chrono::seconds(60)),
+            std::future_status::ready);
+  ASSERT_EQ(neverd_session_load(Session, Contract.c_str()), 1);
+  EXPECT_FALSE(State.FunctionDiscovery);
+  // So does synchronous discovery of an image without native discovery.
+  std::promise<neverd::sdk::Session::FunctionDiscoveryResult> Finished;
+  Finished.set_value({});
+  State.FunctionDiscovery.emplace(neverd::sdk::Session::FunctionDiscoveryJob{
+      State.FunctionListRevision - 1, Finished.get_future()});
+  EXPECT_GE(neverd_session_discover_functions(Session), 0);
+  EXPECT_FALSE(State.FunctionDiscovery);
+}
+
+TEST_F(SessionCAPITest,
+       InstructionFlowScratchDoesNotLeakAcrossInstructionsOrReads) {
+  // A read, NOP and return followed by a separate write, NOP and return.
+  // Reusing lift storage must not make either NOP/return repeat the access,
+  // or hide the conflicting widths the two functions state at the same data.
+  std::string Code(0x30, '\xcc');
+  for (const auto [Offset, Load] :
+       {std::pair{0u, true}, std::pair{0x20u, false}}) {
+    std::string Bytes =
+        Load ? std::string("\x48\x8b\x05", 3) : std::string("\x89\x05", 2);
+    const auto Delta = static_cast<uint32_t>(
+        DataELFData - (DataELFEntry + Offset + Bytes.size() + 4));
+    for (unsigned I = 0; I < 4; ++I)
+      Bytes += static_cast<char>(Delta >> (8 * I));
+    Bytes += std::string("\x90\xc3", 2);
+    Code.replace(Offset, Bytes.size(), Bytes);
+  }
+  const auto Input = write("scratch-accesses.elf",
+                           makeDataELF(std::string("hello world\0", 12), Code));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  auto &State = *neverd::sdk::toSession(Session);
+  State.Img.Symbols = {neverd::Symbol::makeFunc(DataELFEntry, 9),
+                       neverd::Symbol::makeFunc(DataELFEntry + 0x20, 8)};
+  neverd::sdk::SessionTestAccess::resetFunctions(State);
+  std::string Previous;
+  for (unsigned Repeat = 0; Repeat < 3; ++Repeat) {
+    const auto Text =
+        takeString(neverd_code_refs_json(Session, DataELFEntry, 2));
+    auto Parsed = llvm::json::parse(Text);
+    ASSERT_TRUE(static_cast<bool>(Parsed)) << Text;
+    const auto *Rows = Parsed->getAsObject()->getArray("refs");
+    ASSERT_TRUE(Rows && Rows->size() == 2) << Text;
+    for (unsigned I = 0; I < 2; ++I) {
+      const auto *Row = (*Rows)[I].getAsArray();
+      ASSERT_TRUE(Row && Row->size() == 4) << Text;
+      EXPECT_EQ(std::stoull((*Row)[0].getAsString()->str(), nullptr, 16),
+                DataELFEntry + (I ? 0x20 : 0));
+      EXPECT_EQ(std::stoull((*Row)[1].getAsString()->str(), nullptr, 16),
+                DataELFData);
+      EXPECT_EQ((*Row)[2].getAsString().value_or(""), I ? "write" : "read");
+      EXPECT_EQ((*Row)[3].getAsInteger().value_or(0), I ? 4 : 8);
+    }
+    if (Repeat)
+      EXPECT_EQ(Text, Previous);
+    Previous = Text;
+    const auto Strings =
+        takeString(neverd_string_refs_json(Session, nullptr, DataELFEntry, 2));
+    auto StringPage = llvm::json::parse(Strings);
+    ASSERT_TRUE(static_cast<bool>(StringPage)) << Strings;
+    const auto *StringRows = StringPage->getAsObject()->getArray("refs");
+    ASSERT_TRUE(StringRows && StringRows->size() == 2) << Strings;
+    const auto *Widths =
+        neverd::sdk::SessionTestAccess::dataAccessWidths(State);
+    ASSERT_TRUE(Widths);
+    EXPECT_EQ(Widths->at(DataELFData), 0u);
+  }
 }
 
 TEST_F(SessionCAPITest, WarmingScansTheDataAccessWidthsTheFirstViewReads) {
@@ -9497,9 +9980,8 @@ TEST_F(SessionCAPITest, UserFunctionAttributesDecideHowCallsEndAndPersist) {
   const auto Entry = neverd_session_entry_addr(Session);
   const auto Helper = Entry + 11;
   const std::string HelperHex = "0x" + llvm::utohexstr(Helper);
-  // No symbol names the helper; the user makes it a function first.
-  ASSERT_EQ(neverd_func_create(Session, Helper), 0)
-      << takeString(neverd_last_error(Session));
+  // No symbol names the helper, but discovery finds it: the entry calls it.
+  ASSERT_GE(neverd_func_find_by_addr(Session, Helper), 0);
   const auto analyzeAll = [&](neverd_session_t In) {
     neverd_session_restrict_function(In, 0);
     return neverd_session_analyze(In);
@@ -9571,7 +10053,7 @@ TEST_F(SessionCAPITest, UserFunctionAttributesDecideHowCallsEndAndPersist) {
   const std::string Rows =
       "[{\"addr\":\"" + HelperHex +
       "\",\"color\":\"#20A0FF\",\"library\":true,\"noreturn\":true,"
-      "\"state\":\"created\",\"static\":false}]";
+      "\"static\":false}]";
   EXPECT_EQ(takeString(neverd_functions_json(Session)), Rows);
   EXPECT_EQ(neverd_func_edit(Session, Helper, "{\"noreturn\":\"yes\"}"), -1);
   EXPECT_NE(lastError().find("\"noreturn\" is true, false or null"),

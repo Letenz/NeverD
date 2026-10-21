@@ -50,6 +50,16 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb-cursor0
           fi
+      - name: Configure Windows offscreen fonts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # The offscreen plugin uses FreeType, not the Windows font database.
+          $offscreenFontDir = Join-Path $env:WINDIR 'Fonts'
+          if (-not (Test-Path (Join-Path $offscreenFontDir 'segoeui.ttf'))) {
+            throw 'Windows system fonts are unavailable for offscreen tests'
+          }
+          "QT_QPA_FONTDIR=$offscreenFontDir" >> $env:GITHUB_ENV
       - name: Build test-only C ABI fixture
         shell: bash
         run: |
@@ -63,7 +73,7 @@ jobs:
             -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/Qt/6.8.3/${{ matrix.qt_dir }}" \
             -DNEVERD_ENGINE_LIBRARY="$GITHUB_WORKSPACE/build-fixture/bin/${{ matrix.library }}" \
             -DNEVERD_ENGINE_IMPLIB="$GITHUB_WORKSPACE/build-fixture/bin/neverd_fixture.lib" \
-            -DNEVERD_GUI_CI_DIAGNOSTICS=${{ runner.os == 'Windows' && 'ON' || 'OFF' }} \
+            -DNEVERD_GUI_CI_DIAGNOSTICS=${{ runner.os != 'Linux' && 'ON' || 'OFF' }} \
             -DNEVERD_WORKER_REAL_ENGINE_TESTS=OFF
           python scripts/build.py build-gui --parallel 3
           cp "build-fixture/bin/${{ matrix.library }}" build-gui/bin/
@@ -74,7 +84,7 @@ jobs:
         run: |
           python scripts/check_gui_i18n.py --check-sources
           python scripts/check_gui_icons.py
-          if [ '${{ runner.os }}' = Windows ]; then
+          if [ '${{ runner.os }}' != Linux ]; then
             mkdir -p build-gui/ci-diagnostics
             set +e
             ctest --test-dir build-gui --output-on-failure \
@@ -102,9 +112,9 @@ jobs:
           status=$?
           cat native-frame.txt
           exit "$status"
-      - name: Retain Windows GUI contract diagnostics
+      - name: Retain desktop GUI contract diagnostics
         id: gui_diagnostics
-        if: ${{ always() && runner.os == 'Windows' }}
+        if: ${{ always() && runner.os != 'Linux' }}
         shell: bash
         run: |
           python - <<'PY'
@@ -178,11 +188,11 @@ jobs:
               print("Incomplete GUI diagnostics; inspect the retained manifest.", file=sys.stderr)
               sys.exit(1)
           PY
-      - name: Upload Windows GUI contract diagnostics
-        if: ${{ always() && runner.os == 'Windows' && steps.gui_diagnostics.outputs.ready == 'true' }}
+      - name: Upload desktop GUI contract diagnostics
+        if: ${{ always() && runner.os != 'Linux' && steps.gui_diagnostics.outputs.ready == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: desktop-gui-windows-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          name: desktop-gui-${{ runner.os }}-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: build-gui-ci-diagnostics/
           if-no-files-found: error
           retention-days: 7

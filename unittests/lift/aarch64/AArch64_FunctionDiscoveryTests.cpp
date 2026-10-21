@@ -157,6 +157,8 @@ TEST(AArch64FunctionDiscovery, RejectsZeroSizedTypedFunctionStartWithBadCode) {
   Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
   Text.Data.assign(Text.Size, 0);
   writeLE<uint32_t>(Text.Data.data(), 0xD65F03C0u);
+  // Zero is the valid UDF #0 instruction, so use an unallocated encoding.
+  writeLE<uint32_t>(Text.Data.data() + (TypedStartVA - ImageVA), 0xFFFFFFFFu);
   Img.Segments.push_back(std::move(Text));
   Img.Sections.push_back(
       makeMachOSection("__text", ImageVA, 0x10, /*ContainsInstructions=*/true));

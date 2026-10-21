@@ -597,7 +597,10 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           [this](const HighExpr &E, uint16_t Width) {
             return isSameWidthUnsigned(E, Width);
           },
-          Opts.Format == BinaryFormat::COFF);
+          Opts.Format == BinaryFormat::COFF,
+          [this](const HighExpr &A, const HighExpr &B, uint64_t Bytes) {
+            return disjointMemory(A, B, Bytes);
+          });
       if (!Rendered.empty()) {
         writeCIndentedSnippet(OS, Rendered, Indent);
         break;
@@ -779,10 +782,14 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       if (Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
         if (auto VA = constAddress(*Stmt.Dst->Operands[0])) {
           if (auto Name = imageObjectName(*VA)) {
+            // An integer the object's type holds converts implicitly, as
+            // a store through any other path does (storedValueText).
+            const TypeRef Declared = assignedImageObjectType(*VA);
             emitIndent(Indent);
             OS << *Name << " = "
-               << assignedText(assignedImageObjectType(*VA), *Stmt.Val,
-                               exprStr(*Stmt.Val))
+               << assignedText(Declared, *Stmt.Val,
+                               implicitIntegerConversion(*Stmt.Val, Declared)
+                                   .value_or(exprStr(*Stmt.Val)))
                << ";\n";
             break;
           }
@@ -941,7 +948,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
                                     : callResultPointerType(*Stmt.Val);
         if (DirectAddress)
           OS << "(" << typeToC(DeclaredType) << ")(" << ValueText << ")";
-        else if (PointerFromDeclaration &&
+        else if ((PointerFromDeclaration || PointerTypeFromCall) &&
                  ((ProjectedValueType &&
                    ProjectedValueType->Kind == NdTypeKind::Ptr &&
                    typeToC(cDisplayType(ProjectedValueType)) ==
@@ -1243,9 +1250,15 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           OS << *Name << " = ";
           if (isUnknownCallOperand(Stmt.StoreVal.get()))
             OS << "0";
-          else
-            OS << assignedText(assignedImageObjectType(*VA), *Stmt.StoreVal,
-                               exprStr(*Stmt.StoreVal));
+          else {
+            // An integer the object's type holds converts implicitly, as a
+            // store through any other path does (storedValueText).
+            const TypeRef Declared = assignedImageObjectType(*VA);
+            OS << assignedText(
+                Declared, *Stmt.StoreVal,
+                implicitIntegerConversion(*Stmt.StoreVal, Declared)
+                    .value_or(exprStr(*Stmt.StoreVal)));
+          }
           OS << ";\n";
           break;
         }
@@ -1313,7 +1326,10 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           [this](const HighExpr &E, uint16_t Width) {
             return isSameWidthUnsigned(E, Width);
           },
-          Opts.Format == BinaryFormat::COFF);
+          Opts.Format == BinaryFormat::COFF,
+          [this](const HighExpr &A, const HighExpr &B, uint64_t Bytes) {
+            return disjointMemory(A, B, Bytes);
+          });
       if (!Rendered.empty()) {
         writeCIndentedSnippet(OS, Rendered, Indent);
         break;

@@ -5,6 +5,7 @@
 #include "ObjCNativeSourceCallCallees.h"
 
 #include "neverd/loader/MachO/ImmutableNativeCalls.h"
+#include "neverd/sdk/Limits.h"
 
 namespace neverd::sdk {
 inline bool objCImmutableNativeSourceCallBound(const HighExpr &Expression,
@@ -46,7 +47,7 @@ inline bool objCImmutableNativeSourceCallBound(const HighExpr &Expression,
   };
   if (!MatchesCurrent(*Expression.SourceCallHint))
     return false;
-  size_t Budget = 100000, Matches = 0;
+  size_t Budget = kSourceExpressionWork, Matches = 0;
   std::set<SourceCallOccurrenceKey> MedSites, Seen;
   for (const auto &Block : Caller->Med->Blocks)
     for (const auto &Op : Block.Ops) {

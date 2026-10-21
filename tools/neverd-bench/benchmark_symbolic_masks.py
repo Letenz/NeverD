@@ -400,6 +400,54 @@ def completion_corpus(width, count):
     return rows
 
 
+def residual_corpus(width, count, *, deep=False):
+    """Sparse products through degree 32, including two interleaved blocks."""
+    rng = random.Random((0x4D42413B if deep else 0x4D42413A) + width)
+    axes = ("z", "x", "y", "w", "v", "z")
+    words = ("(x^y)", "(y|z)", "(x|z)", "(x&y)", "(x^z)",
+             "(y^z)", "(x|y)", "~(x&z)")
+    opaque = ("((x+y)^z)", "((y*z)|w)", "((x+z)&(y|v))",
+              "(x&~y)", "(z|v)", "(y^w)", "~(x&z)", "(x|v)")
+    rows = []
+    for index in range(count):
+        degree = ((24, 32, 48, 64)[(index // 8) % 4] if deep
+                  else (8, 16, 24, 32)[(index // 16) % 4])
+        kind = index % 16
+        pieces = 3 + kind % (3 if deep else 4)
+        blocks = 2 if kind % 4 == 2 and (not deep or pieces <= 4) else 1
+        terms = []
+        for block in range(blocks):
+            basis = opaque if block or kind >= 8 else words
+            scale = (37, -11, 182, 1 << (width - 2))[(kind + block) % 4]
+            whole = [basis[(i + block) % len(basis)] for i in range(degree)]
+            choices = [
+                (f"({word}&{axes[i]})", f"({word}&~{axes[i]})")
+                if i < pieces else (word,)
+                for i, word in enumerate(whole)
+            ]
+            missing = {0, (1 << pieces) - 1, 3 + block}
+            for number, factors in enumerate(itertools.product(*choices)):
+                if number in missing:
+                    continue
+                coefficient = scale
+                if number == 1:
+                    coefficient += 13 if kind % 2 else 1 << (width - 1)
+                if number == 2 and kind % 3 == 0:
+                    coefficient -= 2 * scale
+                terms.append(f"({coefficient}*{'*'.join(factors)})")
+        rng.shuffle(terms)
+        expression = "+".join(terms) + "+(x^y)+2*(x&y)+19*x*y*z"
+        if kind % 4 == 1:
+            expression += "+23*" + "*".join(("x", "y") * (degree // 2))
+        rows.append(expression)
+    return rows
+
+
+def deep_residual_corpus(width, count):
+    """Sparse products through degree 64 with nonlinear opaque factor words."""
+    return residual_corpus(width, count, deep=True)
+
+
 def check_semantics(expressions, results, width):
     """Independent modular evaluator; never execute parsed source as Python."""
     mask = (1 << width) - 1
@@ -493,7 +541,7 @@ def main():
     parser.add_argument(
         "--family",
         choices=("complement", "weighted", "bitwise", "interleaved", "quadratic",
-                 "cubic", "higher", "perturbed", "completion"),
+                 "cubic", "higher", "perturbed", "completion", "residual", "deep-residual"),
         default="complement",
     )
     args = parser.parse_args()
@@ -519,6 +567,8 @@ def main():
                 "higher": higher_corpus,
                 "perturbed": perturbed_corpus,
                 "completion": completion_corpus,
+                "residual": residual_corpus,
+                "deep-residual": deep_residual_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")

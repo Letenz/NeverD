@@ -127,15 +127,14 @@ HighCWriter::declaredTypedef(const TypeRef &Type) const {
 }
 
 bool HighCWriter::memberOfDefinedRecord(const HighExpr &Addr) const {
-  if (RecordDefinitions.Records.empty())
+  if (RecordDefinitions.Records.empty() &&
+      RecordDefinitions.HeaderRecords.empty())
     return false;
   const auto Typed = typedPointerOffset(Addr);
   if (!Typed || !Typed->first)
     return false;
   const TypeRef Record = declaredRecordPointee(*Typed->first);
-  return Record && !Record->SourceName.empty() &&
-         RecordDefinitions.Records.count(
-             cNamedTypeSpelling(Record->SourceName));
+  return Record && !Record->SourceName.empty() && holdsRecord(Record);
 }
 
 void HighCWriter::writeSourceRecordDeclarations(
@@ -233,11 +232,17 @@ void HighCWriter::wantRecord(const TypeRef &Record) const {
     WantedRecords->push_back(Record);
 }
 
+bool HighCWriter::holdsRecord(const TypeRef &Record) const {
+  const std::string Name = cNamedTypeSpelling(Record->SourceName);
+  // A record of a system header the unit includes is complete there, with
+  // the program's members by their names (renderEmbeddedC).
+  return RecordDefinitions.Records.count(Name) ||
+         RecordDefinitions.HeaderRecords.count(Name);
+}
+
 bool HighCWriter::definesRecord(const TypeRef &Record) const {
   return !Opts.RecordDefinitions || !Opts.EmitIncludes ||
-         (Record && !Record->SourceName.empty() &&
-          RecordDefinitions.Records.count(
-              cNamedTypeSpelling(Record->SourceName)));
+         (Record && !Record->SourceName.empty() && holdsRecord(Record));
 }
 
 void HighCWriter::recordSourceNames(const std::vector<HighFunc> &Funcs) {

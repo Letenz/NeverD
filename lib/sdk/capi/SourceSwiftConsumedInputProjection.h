@@ -8,6 +8,7 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/loader/Swift/SwiftConsumedInputEffects.h"
 #include "neverd/pipeline/NativeSourceHints.h"
+#include "neverd/sdk/Limits.h"
 
 namespace neverd::sdk {
 namespace swift_consumed_input_detail {
@@ -69,7 +70,7 @@ inline bool sameBody(const HighFunc &Expected, const HighFunc &Actual,
   for (size_t I = 0; I < Expected.Params.size(); ++I)
     if (!equalSourceTypes(Expected.Params[I].Type, Actual.Params[I].Type))
       return false;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   return sameStraightLineSourceBody(
       Expected, Actual,
       [&](const ExprPtr &E, const ExprPtr &A) {
@@ -107,7 +108,7 @@ public:
   }
 
   bool valid(const HighFunc &Function) const {
-    size_t Budget = 100000;
+    size_t Budget = kSourceExpressionWork;
     bool Marked = false;
     std::vector<ExprPtr> Pending;
     walkStmts(Function.Body, [&](const HighStmt &S) {

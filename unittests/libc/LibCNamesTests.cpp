@@ -970,6 +970,12 @@ TEST(IsNoReturnTarget, ResolvesImportVeneerAndStaticSymbol) {
 
 TEST(IsNoReturnTarget, IndexPreservesFirstNamesAndImportPrecedence) {
   BinaryImage Img;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = 0x1000;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(Text.Size);
+  Img.Segments.push_back(std::move(Text));
   auto ImportAt = [&](va_t Address, const char *Name) {
     Import Imp;
     Imp.Name = Name;
@@ -1018,6 +1024,112 @@ TEST(IsNoReturnTarget, IndexPreservesFirstNamesAndImportPrecedence) {
     SCOPED_TRACE(Address);
     EXPECT_EQ(isNoReturnTarget(Img, Address), Expected);
     EXPECT_EQ(Index.contains(Img, Address), Expected);
+  }
+}
+
+TEST(IsNoReturnTarget, VeneerIndexUsesTheSameEntryAdmissionAsLiveLookup) {
+  for (Arch A : {Arch::X64, Arch::AArch64, Arch::ARM}) {
+    for (unsigned Case = 0; Case < 5; ++Case) {
+      SCOPED_TRACE(::testing::Message() << unsigned(A) << ':' << Case);
+      BinaryImage Img;
+      Img.Arch = A;
+      if (A == Arch::ARM)
+        Img.Mode = InstructionMode::Thumb;
+      Segment Text;
+      Text.VA = 0x1000;
+      Text.Size = 0x100;
+      Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+      Text.Data.resize(Text.Size);
+      if (Case != 1)
+        Img.Segments.push_back(std::move(Text));
+      Import Imp;
+      Imp.Name = "abort";
+      Imp.IATAddr = 0x3000;
+      Img.Imports.push_back(std::move(Imp));
+      const va_t Address = Case == 4 ? 0x1011 : 0x1010;
+      Img.ImportStubIndices[Address] = 0;
+      if (Case == 2)
+        Img.DataInCode.insert(Address);
+      if (Case == 3)
+        Img.ContinuationCodeStarts.insert(Address);
+      const NoReturnTargetIndex Index(Img);
+      for (va_t Target : {Address, Address | va_t(1)}) {
+        const bool Expected = Case == 0 || (Case == 4 && A == Arch::X64);
+        const bool TaggedThumb = A == Arch::ARM && Case == 0;
+        EXPECT_EQ(isNoReturnTarget(Img, Target),
+                  Expected && (Target == Address || TaggedThumb));
+        EXPECT_EQ(Index.contains(Img, Target), isNoReturnTarget(Img, Target));
+      }
+    }
+  }
+}
+
+TEST(IsNoReturnTarget, UnregisteredX86VeneersAndSectionAliasesMatchLiveLookup) {
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = 6;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data = {0xff, 0x25, 0xfa, 0x1f, 0, 0}; // jmp [rip + 0x1ffa]
+  Img.Segments.push_back(std::move(Text));
+  Import Imp;
+  Imp.Name = "abort";
+  Imp.IATAddr = 0x3000;
+  Img.Imports.push_back(Imp);
+  Symbol Section;
+  Section.Addr = 0x4000;
+  Section.Name = "abort";
+  Section.IsSection = true;
+  Img.Symbols.push_back(Section);
+  Section.Addr = 0x5000;
+  Section.Name = "warn";
+  Img.Symbols.push_back(Section);
+  Section.IsSection = false;
+  Section.Name = "abort";
+  Img.Symbols.push_back(Section);
+  for (bool Restricted : {false, true}) {
+    if (Restricted)
+      Img.LoadOnlyFunctionEntries.insert(0x1000);
+    const NoReturnTargetIndex Index(Img);
+    for (const auto &[Address, Expected] : {std::pair<va_t, bool>{0x1000, true},
+                                            {0x4000, false},
+                                            {0x5000, true}}) {
+      EXPECT_EQ(isNoReturnTarget(Img, Address), Expected);
+      EXPECT_EQ(Index.contains(Img, Address), Expected);
+      EXPECT_EQ(Index.contains(Img, Address), Expected);
+    }
+  }
+  // An exact IAT entry takes precedence over the decoded veneer at its VA.
+  Imp.Name = "warn";
+  Imp.IATAddr = 0x1000;
+  Img.Imports.push_back(Imp);
+  const NoReturnTargetIndex Index(Img);
+  EXPECT_FALSE(isNoReturnTarget(Img, 0x1000));
+  EXPECT_FALSE(Index.contains(Img, 0x1000));
+}
+
+TEST(IsNoReturnTarget, ExactIATNamesPrecedeOtherStorageBindings) {
+  for (bool NoReturn : {false, true}) {
+    BinaryImage Img;
+    Img.Arch = Arch::X64;
+    Img.Bits = Bitness::Bits64;
+    Segment Data;
+    Data.VA = 0x1000;
+    Data.Size = 8;
+    Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Data.Data.resize(Data.Size);
+    Img.Segments.push_back(std::move(Data));
+    Img.Imports.push_back({"runtime", NoReturn ? "abort" : "warn", 0, 0x1000});
+    Img.ImportPtrSlots[0x1000] = NoReturn ? "warn" : "abort";
+    ASSERT_TRUE(Img.isValidImportStorageSlot(0x1000, "abort"));
+    for (bool Restricted : {false, true}) {
+      if (Restricted)
+        Img.LoadOnlyFunctionEntries.insert(0x2000);
+      const NoReturnTargetIndex Index(Img);
+      EXPECT_EQ(isNoReturnTarget(Img, 0x1000), NoReturn);
+      EXPECT_EQ(Index.contains(Img, 0x1000), NoReturn);
+    }
   }
 }
 

@@ -530,7 +530,11 @@ JSON 報告區分 `stop_reason`、可為空值的 `nt_status` 和 `nt_success`�
 
 `ExRaiseStatus` 將 NTSTATUS 的低 32 位元傳給客體例外處理常式；`ExRaiseAccessViolation` 與 `ExRaiseDatatypeMisalignment` 分別引發 `STATUS_ACCESS_VIOLATION` 與 `STATUS_DATATYPE_MISALIGNMENT`。此設定依循 Microsoft 各函式的 DDI 文件：ExRaiseStatus 允許 `APC_LEVEL`，另兩個無參數常式則要求 `PASSIVE_LEVEL`。部分 WDK SAL 註記允許這兩個包裝常式使用 APC_LEVEL；此設定保留文件中較嚴格的限制。引發例外的呼叫維持 `result: null`，並在 `detail` 記錄例外碼；不會回報成功返回 API。
 
-例外傳遞使用映像已解碼的 x64 第一版展開表及 `__C_specific_handler` 範圍，執行真正的客體篩選函式、處理常式及展開期間的 `__finally`。篩選結果為零時繼續搜尋，正值選取處理常式，負值要求繼續執行；負值僅能恢復可捕捉的使用者 CPU 訪存例外，且只接受經驗證的 `CONTEXT_INTEGER | CONTEXT_CONTROL` 修改，其餘完整原始 CPU 狀態保持不變。支援一般輔助函式框架展開、已儲存的非揮發性通用暫存器還原、目前堆疊邊界及 `GetExceptionCode()`；正常流程與例外展開的 finally 都執行實際客體程式碼。篩選函式及 finally 繼承父執行的行程／執行緒身分與使用者存取權限，原本無權限的系統工作項不會因此取得權限。處理常式可再次引發例外至支援的外層範圍。支援篩選函式／finally 內巢狀與衝突展開、鏈結 V1 中繼資料、部分前置程式碼、標準尾聲及完整 XMM6–XMM15 還原。例外記錄保留鏈結，已進入的 finally 不會重複執行。C++ 處理機制與不完整中繼資料仍明確拒絕。未捕捉的 API 例外以 `model_error` 停止；其他不屬於可捕捉使用者訪存例外的 CPU 故障仍終止執行。 常數 `EXCEPTION_EXECUTE_HANDLER` 直接選取對應處理常式。只有選取處理常式後，展開才執行離開範圍的 finally；搜尋期間或篩選函式恢復原執行時不執行清理。每次篩選函式返回都驗證 `EXCEPTION_POINTERS`、例外記錄及不支援的 `CONTEXT` 欄位，修改它們會明確失敗。模型 API 引發的例外不能透過負篩選結果恢復。
+例外傳遞使用映像已解碼的 x64 V1/V2 展開表及 `__C_specific_handler` 範圍，執行真正的客體篩選函式、處理常式及展開期間的 `__finally`。篩選結果為零時繼續搜尋，正值選取處理常式，負值要求繼續執行；負值僅能恢復可捕捉的使用者 CPU 訪存例外，且只接受經驗證的 `CONTEXT_INTEGER | CONTEXT_CONTROL` 修改，其餘完整原始 CPU 狀態保持不變。支援一般輔助函式框架展開、已儲存的非揮發性通用暫存器還原、目前堆疊邊界及 `GetExceptionCode()`；正常流程與例外展開的 finally 都執行實際客體程式碼。篩選函式及 finally 繼承父執行的行程／執行緒身分與使用者存取權限，原本無權限的系統工作項不會因此取得權限。處理常式可再次引發例外至支援的外層範圍。支援篩選函式／finally 內巢狀與衝突展開、鏈結 V1 中繼資料、部分前置程式碼、標準尾聲及完整 XMM6–XMM15 還原。例外記錄保留鏈結，已進入的 finally 不會重複執行。C++ 處理機制與不完整中繼資料仍明確拒絕。未捕捉的 API 例外以 `model_error` 停止；其他不屬於可捕捉使用者訪存例外的 CPU 故障仍終止執行。 常數 `EXCEPTION_EXECUTE_HANDLER` 直接選取對應處理常式。只有選取處理常式後，展開才執行離開範圍的 finally；搜尋期間或篩選函式恢復原執行時不執行清理。每次篩選函式返回都驗證 `EXCEPTION_POINTERS`、例外記錄及不支援的 `CONTEXT` 欄位，修改它們會明確失敗。模型 API 引發的例外不能透過負篩選結果恢復。
+
+COFF 載入器將 V2 尾聲位置與序言操作分開。V2 依主框架儲存的暫存器及宣告尾聲內的準確位置還原，堆疊空間釋放位於該範圍之前。無效範圍、大小或還原序列會在讀取堆疊前報錯。V1 保留指令掃描；所有後端共用堆疊檢查及例外處理。
+
+只有開頭連續的 `UWOP_EPILOG` 定義 V2 尾聲。後續標記按兩個槽跳過，不還原狀態，也不參與序言偏移排序；截斷的槽對仍判為格式錯誤。
 
 原生 x64 KVM/WHP 透過 `X64SIMDException` 將實際 `#XM` 故障交給驅動程式 C SEH。硬體故障的 `CONTEXT` 保存 XMM0–15 與 MXCSR。篩選器、例外展開的 finally 回呼及選定處理器以 MXCSR `0x1f80`、清除 DF 的狀態執行。負篩選器可修改 XMM 與頂層 `CONTEXT.MxCsr`（依客體 CPU 遮罩截斷）後重試原指令；`FltSave.MxCsr` 不控制核心還原。模型 API 引發仍保留整數/控制記錄；x87/AVX 內容修改仍明確拒絕。
 
@@ -789,3 +793,5 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 `MmCreateMdl` 接受三個完整位寬參數，最高 DISPATCH_LEVEL。它配置清零的非分頁描述符儲存，或使用同一存活非分頁集區配置／目前執行堆疊內完整可寫的範圍。長度超過 ULONG_MAX 時在存取前傳回 NULL；零長度與位址回繞保留原始中繼資料，但建頁需要有效非空範圍，16 位元描述符大小必須精確。依原順序初始化六個欄位，其他呼叫者位元組不變。集區基底可用 IoFreeMdl 或集區釋放；內部及堆疊記錄隨所屬儲存回收。鎖、自有映射、使用者檢視和相依性阻止回收。轉交 IRP、重建活動記錄、堆疊槽重用及 IoFreeMdl 自動清理部分映射仍不支援。
 
 `MmAdvanceMdl` 支援獨立鎖頁且擁有系統映射的集區或使用者緩衝區，最高 DISPATCH_LEVEL。ULONG 忽略載體高位；到達或超過末端傳回 STATUS_INVALID_PARAMETER_2，不改變狀態。固定 x64 設定旋轉完整保留的 PFN 陣列並標記尾端。取消映射及解鎖先恢復整頁中繼資料與 PFN 順序，再釋放完整別名和原始鎖。恢復保留目前位移，不擴大後備權限；取消後保留歸一化的過期 MappedSystemVa，再映射必須重新探測鎖頁。IRP 鏈、部分相依性、使用者檢視、DMA、映像、非分頁直接建構與無系統映射仍不支援。
+
+`process_pebs` 在 `checked-x64-v1`、`PASSIVE_LEVEL` 下，為模型已擁有的程序身分宣告穩定的 `PsGetProcessPeb` 傳回值。最多 64 項，每項只能包含非零 32 位元 `process_id` 與十六進位 64 位元 `value`；零也必須明確宣告，例如 `[{"process_id":4,"value":"0x0"}]`。重複身分會被拒絕。省略表示結果未知，`[]` 清除繼承的宣告。Unicorn/KVM/WHP/HVF 共用 Windows 模型並驗證精確的程序物件。宣告不會建立程序、記憶體映射、PEB 配置或真實核心來源證明；未使用的宣告也保留未重建的環境相依性。

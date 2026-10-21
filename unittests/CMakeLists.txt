@@ -257,7 +257,8 @@ if(TARGET neverd_shared)
   if(WIN32)
     # The shared engine supplies SDK queries and the private mobile seam. The
     # test also uses LLVM's JSON parser; no GUI/worker links LLVM here.
-    target_link_libraries(NeverDSessionCAPITests PRIVATE LLVMSupport)
+    target_link_libraries(NeverDSessionCAPITests PRIVATE
+      LLVMSupport LLVMCore NeverDPipeline)
     # The private SessionImpl seam constructs NdType owners in this executable.
     # Its C++ destructor is deliberately outside the SDK's exported C ABI.
     target_sources(NeverDSessionCAPITests PRIVATE "${CMAKE_SOURCE_DIR}/lib/ir/NdTypes.cpp")

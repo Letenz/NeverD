@@ -4,6 +4,7 @@
 
 #include "neverd/ir/SourceCallABI.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/types/TypeParse.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -51,7 +52,8 @@ std::string neverd::sdk::sourceCallSnapshot(const LowFunc &Function) {
     for (auto Successor : Block.Succs)
       OS << ':' << Successor;
     for (const auto &Op : Block.Ops) {
-      if (++Work > 200000 || OS.tell() > 16 * 1024 * 1024)
+      if (++Work > kMaxCallSnapshotOperations ||
+          OS.tell() > kMaxCallSnapshotBytes)
         return {};
       OS << "O" << unsigned(Op.Opcode) << ':' << Op.Addr << ':' << Op.Seq << ':'
          << unsigned(Op.MemoryOrdering) << ':'
@@ -68,9 +70,10 @@ std::optional<SourceCallTypeHint>
 neverd::sdk::parseSourceCallType(Session &S, const SourceCallEdit &Edit,
                                  const SourceCallOccurrenceKey &Site,
                                  std::string &Error) {
-  if (Edit.Declaration.empty() || Edit.Declaration.size() > 4096 ||
+  if (Edit.Declaration.empty() ||
+      Edit.Declaration.size() > kMaxFunctionDeclarationBytes ||
       Edit.Declaration.find('\0') != std::string::npos ||
-      Edit.VariadicTypes.size() > 32) {
+      Edit.VariadicTypes.size() > kMaxCallVariadicTypes) {
     Error = "A call-site declaration must be bounded C text with at most 32 "
             "actual arguments";
     return {};
@@ -124,7 +127,7 @@ neverd::sdk::parseSourceCallType(Session &S, const SourceCallEdit &Edit,
     Hint.Signature.Parameters.push_back({P.Name, Type});
   }
   for (const auto &Text : Edit.VariadicTypes) {
-    if (Text.empty() || Text.size() > 4096 ||
+    if (Text.empty() || Text.size() > kMaxFunctionDeclarationBytes ||
         Text.find('\0') != std::string::npos) {
       Error = "Invalid actual variadic type";
       return {};

@@ -491,17 +491,22 @@ bool isNoReturnTarget(const BinaryImage &Img, va_t Target) {
   // The user's statement decides over every name.
   if (const auto Stated = Img.userNoReturnAt(Target))
     return *Stated;
-  if (const Import *Imp = Img.findImportAt(Target))
+  const Import *Imp = Img.findImportAt(Target);
+  if (Imp)
     if (isNoReturnFunction(Imp->Name))
       return true;
   // A pointer slot the loader binds to an import (an ELF GLOB_DAT or
   // JUMP_SLOT, a Mach-O bind): x86 calls through it as `call [slot]`.
-  const ImportStorageSlotCollection Storage =
-      Img.collectImportStorageSlot(Target);
-  if (auto It = Storage.Slots.find(Target);
-      It != Storage.Slots.end() && !Storage.Conflicts.count(Target) &&
-      It->second.Addend == 0 && isNoReturnFunction(It->second.Name))
-    return true;
+  // An exact IAT identity takes precedence over another storage spelling,
+  // including a conflicting no-return name, as in NoReturnTargetIndex.
+  if (!Imp || Imp->IATAddr != Target) {
+    const ImportStorageSlotCollection Storage =
+        Img.collectImportStorageSlot(Target);
+    if (auto It = Storage.Slots.find(Target);
+        It != Storage.Slots.end() && !Storage.Conflicts.count(Target) &&
+        It->second.Addend == 0 && isNoReturnFunction(It->second.Name))
+      return true;
+  }
   if (const Symbol *Sym = Img.findSymbolAt(Target))
     if (isNoReturnFunction(Sym->Name))
       return true;
@@ -523,13 +528,12 @@ NoReturnTargetIndex::NoReturnTargetIndex(const BinaryImage &Img,
   };
   // Preserve first-IAT precedence even when its name is empty or returning.
   // Only an address absent from the IAT map can use an exact stub spelling.
-  std::set<va_t> ImportAddresses;
   for (const Import &Imp : Img.Imports)
     if (ImportAddresses.insert(Imp.IATAddr).second && NoReturn(Imp.Name))
       Targets.insert(Imp.IATAddr);
   for (const auto &[Address, Index] : Img.ImportStubIndices)
     if (!ImportAddresses.count(Address) && Index < Img.Imports.size() &&
-        NoReturn(Img.Imports[Index].Name))
+        NoReturn(Img.Imports[Index].Name) && Img.findImportStubAt(Address))
       Targets.insert(Address);
   // Pointer slots the loader binds to imports, which x86 calls through as
   // `call [slot]`; an import directory entry for the same slot decides.
@@ -548,7 +552,8 @@ NoReturnTargetIndex::NoReturnTargetIndex(const BinaryImage &Img,
   if (SymbolsIndexed) {
     std::set<va_t> SymbolAddresses;
     for (const Symbol &Sym : Img.Symbols)
-      if (SymbolAddresses.insert(Sym.Addr).second && NoReturn(Sym.Name))
+      if (!Sym.IsSection && SymbolAddresses.insert(Sym.Addr).second &&
+          NoReturn(Sym.Name))
         Targets.insert(Sym.Addr);
     std::set<va_t> ExportAddresses;
     for (const Export &Exp : Img.Exports)
@@ -566,11 +571,20 @@ void NoReturnTargetIndex::clearMemoizedNames() {
 bool NoReturnTargetIndex::contains(const BinaryImage &Img, va_t Target) const {
   if (Image != &Img)
     return isNoReturnTarget(Img, Target);
+  if (Target == InvalidVA)
+    return false;
   if (const auto Stated = Img.userNoReturnAt(Target))
     return *Stated;
   if (Targets.count(Target))
     return true;
-  if (SymbolsIndexed || Target == InvalidVA)
+  // A restricted x86 load may not have registered this decoded veneer, and
+  // Thumb callers can use its mode-tagged spelling. Ask the same veneer owner
+  // as the live lookup, retaining exact IAT precedence and memoizing the work.
+  const bool ResolveImport =
+      !ImportAddresses.count(Target) &&
+      (Img.decodesImportThunks() ||
+       normalizeCodeAddress(Target, Img.Arch, Img.Mode) != Target);
+  if (SymbolsIndexed && !ResolveImport)
     return false;
   // The first symbol at Target decides, as in the whole-image walk; a name
   // the restricted load has not ingested comes from the resolver.
@@ -582,6 +596,11 @@ bool NoReturnTargetIndex::contains(const BinaryImage &Img, va_t Target) const {
     return isNoReturnFunction(Name) ||
            (Declared && !Name.empty() && Declared(Name));
   };
+  if (ResolveImport)
+    if (const Import *Imp = Img.findImportStubAt(Target))
+      It->second = NoReturn(Imp->Name);
+  if (SymbolsIndexed || It->second)
+    return It->second;
   if (const Symbol *Sym = Img.findSymbolAt(Target))
     It->second = NoReturn(Sym->Name);
   else if (ResolveName)

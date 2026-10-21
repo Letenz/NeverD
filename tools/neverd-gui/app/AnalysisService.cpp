@@ -24,6 +24,7 @@ AnalysisService::AnalysisService(QueryService &owner, QString workerPath,
     if (!active_.isEmpty())
       fail(QStringLiteral("analysis_failed"), tr("Analysis worker stopped."));
   });
+  queries_.resetReadContext(owner_.projectId(), owner_.revision());
 }
 
 AnalysisService::~AnalysisService() {
@@ -45,6 +46,7 @@ void AnalysisService::stopWorker() {
   wire_.clear();
   restore_.clear();
   ready_ = false;
+  startingReplica_ = false;
   snapshot_ = {};
   client_.stop();
 }
@@ -91,21 +93,38 @@ QString AnalysisService::send(const QString &operation,
       dispatch();
       return;
     }
-    snapshotRequest_ = owner_.subscribe(
-        {QStringLiteral("analysis_snapshot"), {}}, this,
-        [this, serial, id](const QJsonObject &response) {
-          if (serial != serial_ || active_ != id)
-            return;
-          snapshotRequest_ = 0;
-          if (response.value("status") != QLatin1String("ok")) {
-            finish(response);
-            return;
-          }
-          snapshot_ = response.value("payload").toObject();
-          client_.start(workerPath_);
-        });
+    requestSnapshot();
   });
   return id;
+}
+
+void AnalysisService::setSnapshotBlocked(bool blocked) {
+  snapshotBlocked_ = blocked;
+  if (!blocked)
+    requestSnapshot();
+}
+
+void AnalysisService::requestSnapshot() {
+  if (snapshotBlocked_ || startingReplica_ || ready_ || active_.isEmpty() ||
+      !handles(operation_))
+    return;
+  startingReplica_ = true;
+  const auto serial = serial_;
+  const auto id = active_;
+  snapshotRequest_ =
+      owner_.subscribe({QStringLiteral("analysis_snapshot"), {}}, this,
+                       [this, serial, id](const QJsonObject &response) {
+                         if (serial != serial_ || active_ != id)
+                           return;
+                         snapshotRequest_ = 0;
+                         if (response.value("status") != QLatin1String("ok")) {
+                           startingReplica_ = false;
+                           finish(response);
+                           return;
+                         }
+                         snapshot_ = response.value("payload").toObject();
+                         client_.start(workerPath_);
+                       });
 }
 
 void AnalysisService::receive(const QJsonObject &message) {
@@ -128,6 +147,7 @@ void AnalysisService::receive(const QJsonObject &message) {
   const auto id = message.value("request_id").toString();
   if (!restore_.isEmpty() && id == restore_) {
     restore_.clear();
+    startingReplica_ = false;
     if (message.value("status") != QLatin1String("ok")) {
       finish(message);
       client_.stop();
@@ -169,6 +189,7 @@ void AnalysisService::finish(QJsonObject response) {
 }
 
 void AnalysisService::fail(const QString &code, const QString &message) {
+  startingReplica_ = false;
   finish({{"status", "error"},
           {"error", QJsonObject{{"code", code}, {"message", message}}}});
 }
@@ -186,12 +207,40 @@ AnalysisPool::AnalysisPool(QueryService &owner, const QString &workerPath,
             &AnalysisPool::diagnostic);
   }
   connect(&owner, &QueryService::contextChanged, this, [this] {
+    ++preparationSerial_;
+    preparing_ = false;
     for (auto &lane : lanes_)
       lane.function.reset();
     for (const auto &binding : std::as_const(bindings_))
       disconnect(binding.destroyed);
     bindings_.clear();
   });
+}
+
+void AnalysisPool::prefetchSource(quint64 address) {
+  if (preparing_ || lanes_.front().service->queries().pendingReadCount() != 0)
+    return;
+  auto &lane = lanes_.front();
+  lane.function = address;
+  preparing_ = true;
+  const auto serial = ++preparationSerial_;
+  const QJsonObject payload{
+      {"address", QStringLiteral("0x") + QString::number(address, 16)},
+      {"representation", QStringLiteral("source")},
+      {"source_options", QJsonObject{}},
+      {"offset", 0},
+      {"limit", 1}};
+  lane.service->queries().subscribe({QStringLiteral("decompile"), payload},
+                                    &preparationOwner_,
+                                    [this, serial](const QJsonObject &) {
+                                      if (serial == preparationSerial_)
+                                        preparing_ = false;
+                                    });
+}
+
+void AnalysisPool::setSnapshotBlocked(bool blocked) {
+  for (auto &lane : lanes_)
+    lane.service->setSnapshotBlocked(blocked);
 }
 
 QueryService &AnalysisPool::queries(const QJsonObject &payload,
@@ -224,6 +273,11 @@ QueryService &AnalysisPool::queries(const QJsonObject &payload,
   for (size_t i = 0; i < lanes_.size(); ++i)
     if (lanes_[i].function == function)
       return bind(i);
+  // Reuse the in-flight image preparation instead of loading the same large
+  // image into another process. A second independent foreground read can
+  // still use the other lane once the first has queued behind preparation.
+  if (preparing_ && lanes_.front().service->queries().pendingReadCount() == 1)
+    return bind(0);
   // Reuse a loaded idle replica before starting another process. Only
   // independent work that overlaps needs the second worker and its memory.
   for (const bool ready : {true, false})
@@ -258,6 +312,12 @@ void AnalysisPool::unsubscribeOwner(QObject *owner) {
 }
 
 void AnalysisPool::cancelReads(const QSet<QObject *> &keep) {
+  // A detached prefetch never completes. Stop treating the first lane's
+  // next read as preparation, or independent views would queue behind it.
+  if (!keep.contains(&preparationOwner_)) {
+    ++preparationSerial_;
+    preparing_ = false;
+  }
   for (auto &lane : lanes_)
     lane.service->queries().cancelReads(keep);
 }

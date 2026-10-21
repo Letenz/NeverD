@@ -831,10 +831,10 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
     for (uint32_t Id : DegreeIds)
       DegreeAtoms.push_back(Ctx.varRef(Id));
     auto Form = expandOverMinterms(Ctx, DegreeTerms, DegreeIds, Width, Budget,
-                                   /*Optional=*/Degree > 3,
-                                   /*SingleProduct=*/Degree > 3);
+                                   /*Optional=*/Degree >= 3,
+                                   /*SingleProduct=*/Degree >= 3);
     if (!Form) {
-      if (Degree > 3 && !Budget.exhausted() && Retain())
+      if (Degree >= 3 && !Budget.exhausted() && Retain())
         continue;
       return std::nullopt;
     }

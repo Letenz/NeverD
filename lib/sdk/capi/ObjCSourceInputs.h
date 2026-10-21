@@ -4,6 +4,7 @@
 #include "ObjCSourceBindings.h"
 
 #include "neverd/ir/high/HighSourceInputs.h"
+#include "neverd/sdk/Limits.h"
 
 #include <limits>
 
@@ -19,7 +20,7 @@ snapshotObjCEntryInputs(const HighFunc &Function, const BinaryImage &Image,
       Function.UnstructuredExceptionRegions)
     return Function;
   int NextId = 0;
-  size_t Budget = 4096;
+  size_t Budget = kSourceValueWork;
   const auto Scan = [&](auto &&Self, const ExprPtr &Value,
                         unsigned Depth) -> bool {
     if (!Value || !Budget || Depth > 32)

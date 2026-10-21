@@ -4916,7 +4916,7 @@ std::string LLVMCWriter::indirectCalleeType(const llvm::CallBase &Call,
   case llvm::CallingConv::C:
     break;
   case llvm::CallingConv::Win64:
-    Convention = "__attribute__((ms_abi)) ";
+    Convention = Win64CallABI + " ";
     break;
   case llvm::CallingConv::X86_64_SysV:
     Convention = "__attribute__((sysv_abi)) ";
@@ -5020,9 +5020,8 @@ LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
     if (Hint->AnalystFixedCount >= 0)
       Params += ", ...";
     const std::string Convention =
-        Call.getCallingConv() == llvm::CallingConv::Win64
-            ? "__attribute__((ms_abi)) "
-            : "";
+        Call.getCallingConv() == llvm::CallingConv::Win64 ? Win64CallABI + " "
+                                                          : "";
     Type = declarationToC(cDisplayType(Hint->Signature.ReturnType),
                           "(" + Convention + "*)(" + Params + ")");
   }

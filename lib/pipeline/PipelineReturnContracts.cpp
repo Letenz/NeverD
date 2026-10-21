@@ -46,6 +46,7 @@
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/I386PicAddress.h"
 #include "neverd/ir/med/MedIR.h"
+#include "neverd/ir/med/MedNoReturn.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -673,9 +674,11 @@ private:
       std::set<ValueKey> Seen;
       classify(F, *Returned, Paths, Seen, 0);
     }
-    // A function that never returns hands nothing back.
+    // No ordinary RETURN is not a proof of no return: an external catch
+    // funclet can resume its parent and supply a value after attachment. Use
+    // the shared proof, which includes exceptional edges and missing handlers.
     if (Paths.empty())
-      return true;
+      return Func.DoesNotReturn || hasProvenNoReturnExit(Func, Img.Arch);
     const bool Read = callerReadsResult(Func);
     for (ReturnedValue &Path : Paths)
       if (Path == ReturnedValue::Incoming ||

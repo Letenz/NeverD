@@ -975,6 +975,94 @@
         <source>Set call type...</source>
         <translation>تعيين نوع الاستدعاء...</translation>
     </message>
+    <message>
+        <source>Change stack pointer...</source>
+        <translation>تغيير مؤشر المكدس...</translation>
+    </message>
+    <message>
+        <source>Correct the entry-relative SP after this instruction</source>
+        <translation>تصحيح SP بعد هذه التعليمة بالنسبة إلى نقطة الدخول</translation>
+    </message>
+    <message>
+        <source>Define a bounded array of typed elements</source>
+        <translation>تعريف مصفوفة محدودة من عناصر ذات أنواع محددة</translation>
+    </message>
+    <message>
+        <source>Enum operand...</source>
+        <translation>معامل تعداد...</translation>
+    </message>
+    <message>
+        <source>Immediate...</source>
+        <translation>قيمة فورية...</translation>
+    </message>
+    <message>
+        <source>Inspect and correct local stack variables</source>
+        <translation>فحص متغيرات المكدس المحلية وتصحيحها</translation>
+    </message>
+    <message>
+        <source>Inspect the proven static value before this instruction</source>
+        <translation>فحص القيمة الثابتة المثبتة قبل هذه التعليمة</translation>
+    </message>
+    <message>
+        <source>List reaching physical register definitions</source>
+        <translation>سرد تعريفات السجلات الفعلية التي تصل إلى هذا الموضع</translation>
+    </message>
+    <message>
+        <source>List uses of the register value after this instruction</source>
+        <translation>سرد استخدامات قيمة السجل بعد هذه التعليمة</translation>
+    </message>
+    <message>
+        <source>Make alignment...</source>
+        <translation>إنشاء محاذاة...</translation>
+    </message>
+    <message>
+        <source>Make array...</source>
+        <translation>إنشاء مصفوفة...</translation>
+    </message>
+    <message>
+        <source>Mark padding ending on an alignment boundary</source>
+        <translation>تحديد الحشو الذي ينتهي عند حد المحاذاة</translation>
+    </message>
+    <message>
+        <source>Name a proven stack operand without changing its address</source>
+        <translation>تسمية معامل مكدس مثبت دون تغيير عنوانه</translation>
+    </message>
+    <message>
+        <source>Next immediate</source>
+        <translation>القيمة الفورية التالية</translation>
+    </message>
+    <message>
+        <source>Register definitions...</source>
+        <translation>تعريفات السجل...</translation>
+    </message>
+    <message>
+        <source>Register uses...</source>
+        <translation>استخدامات السجل...</translation>
+    </message>
+    <message>
+        <source>Repeat the immediate search</source>
+        <translation>تكرار البحث عن القيمة الفورية</translation>
+    </message>
+    <message>
+        <source>Search decoded executable instructions for an immediate</source>
+        <translation>البحث عن قيمة فورية في التعليمات التنفيذية المفكوكة الترميز</translation>
+    </message>
+    <message>
+        <source>Show an immediate as enumeration members or flags</source>
+        <translation>عرض قيمة فورية كعناصر تعداد أو أعلام</translation>
+    </message>
+    <message>
+        <source>Stack variable operand...</source>
+        <translation>معامل متغير مكدس...</translation>
+    </message>
+    <message>
+        <source>Stack variables...</source>
+        <translation>متغيرات المكدس...</translation>
+    </message>
+    <message>
+        <source>Static register value...</source>
+        <translation>القيمة الثابتة للسجل...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2629,6 +2717,146 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>indirect call</source>
         <translation>استدعاء غير مباشر</translation>
+    </message>
+    <message>
+        <source>. Reset the obsolete corrections before editing.</source>
+        <translation>. أعد ضبط التصحيحات القديمة قبل التحرير.</translation>
+    </message>
+    <message>
+        <source>Absolute offset after instruction, relative to entry SP</source>
+        <translation>الإزاحة المطلقة بعد التعليمة بالنسبة إلى SP عند الدخول</translation>
+    </message>
+    <message>
+        <source>Address: %1</source>
+        <translation>العنوان: %1</translation>
+    </message>
+    <message>
+        <source>Alignment boundary (the marked span ends on this boundary):</source>
+        <translation>حد المحاذاة (ينتهي النطاق المحدد عند هذا الحد):</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>البايتات</translation>
+    </message>
+    <message>
+        <source>C type (optional)</source>
+        <translation>نوع C (اختياري)</translation>
+    </message>
+    <message>
+        <source>Change stack pointer</source>
+        <translation>تغيير مؤشر المكدس</translation>
+    </message>
+    <message>
+        <source>Combine bit flags; preserve unknown bits numerically</source>
+        <translation>دمج أعلام البتات مع إبقاء البتات المجهولة بقيمها الرقمية</translation>
+    </message>
+    <message>
+        <source>Definitions and static values are before the instruction; uses start after it.</source>
+        <translation>التعريفات والقيم الثابتة تسبق التعليمة؛ وتبدأ الاستخدامات بعدها.</translation>
+    </message>
+    <message>
+        <source>Element count (complete initialized span, at most 64 MiB):</source>
+        <translation>عدد العناصر (النطاق المهيأ بالكامل، بحد أقصى 64 MiB):</translation>
+    </message>
+    <message>
+        <source>Element size in bytes:</source>
+        <translation>حجم العنصر بالبايت:</translation>
+    </message>
+    <message>
+        <source>Enter a signed SP offset within one MiB</source>
+        <translation>أدخل إزاحة SP بإشارة ضمن MiB واحد</translation>
+    </message>
+    <message>
+        <source>Entry offset</source>
+        <translation>إزاحة الدخول</translation>
+    </message>
+    <message>
+        <source>Enum operand</source>
+        <translation>معامل تعداد</translation>
+    </message>
+    <message>
+        <source>Enumeration declared in Local Types:</source>
+        <translation>التعداد المعلن في الأنواع المحلية:</translation>
+    </message>
+    <message>
+        <source>Immediate search</source>
+        <translation>البحث عن قيمة فورية</translation>
+    </message>
+    <message>
+        <source>Immediate search has undecoded ranges; results cover decoded executable ranges only.</source>
+        <translation>يتضمن البحث نطاقات لم تُفك رموزها؛ وتغطي النتائج النطاقات التنفيذية المفكوكة الترميز فقط.</translation>
+    </message>
+    <message>
+        <source>Instruction: %1; SP before: %2; SP after: %3</source>
+        <translation>التعليمة: %1؛ SP قبلها: %2؛ SP بعدها: %3</translation>
+    </message>
+    <message>
+        <source>Integer (decimal or 0x hex; negative allowed):</source>
+        <translation>عدد صحيح (عشري أو سداسي عشري يبدأ بـ 0x؛ يسمح بالقيم السالبة):</translation>
+    </message>
+    <message>
+        <source>Invalid stack slot offset or width</source>
+        <translation>إزاحة خانة المكدس أو عرضها غير صالح</translation>
+    </message>
+    <message>
+        <source>Local type name (optional; its layout must match the element size):</source>
+        <translation>اسم النوع المحلي (اختياري؛ يجب أن يطابق تخطيطه حجم العنصر):</translation>
+    </message>
+    <message>
+        <source>Make alignment</source>
+        <translation>إنشاء محاذاة</translation>
+    </message>
+    <message>
+        <source>Make array</source>
+        <translation>إنشاء مصفوفة</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>الاسم</translation>
+    </message>
+    <message>
+        <source>Net SP change made by this instruction</source>
+        <translation>صافي تغير SP الناتج عن هذه التعليمة</translation>
+    </message>
+    <message>
+        <source>No exact local stack access is available here. Repair unknown SP first.</source>
+        <translation>لا يتوفر هنا وصول دقيق إلى المكدس المحلي. صحح أولاً SP المجهول.</translation>
+    </message>
+    <message>
+        <source>No register flow sites within this function.</source>
+        <translation>لا توجد مواضع لتدفق بيانات السجلات داخل هذه الدالة.</translation>
+    </message>
+    <message>
+        <source>Offsets are relative to SP at function entry. Corrections apply to source analysis. Reset restores automatic analysis. Naming physical stack storage pauses LLVM optimizations for that function's C view.</source>
+        <translation>الإزاحات نسبية إلى SP عند دخول الدالة. تُطبق التصحيحات على تحليل المصدر. تعيد إعادة الضبط التحليل التلقائي. تؤدي تسمية التخزين الفعلي في المكدس إلى إيقاف تحسينات LLVM مؤقتاً لعرض هذه الدالة بلغة C.</translation>
+    </message>
+    <message>
+        <source>Physical register</source>
+        <translation>سجل فعلي</translation>
+    </message>
+    <message>
+        <source>Select a retained non-branch instruction in the disassembly</source>
+        <translation>حدد في التفكيك تعليمة محتفظاً بها ليست تعليمة تفرع</translation>
+    </message>
+    <message>
+        <source>Stack variables</source>
+        <translation>متغيرات المكدس</translation>
+    </message>
+    <message>
+        <source>Static register value</source>
+        <translation>القيمة الثابتة للسجل</translation>
+    </message>
+    <message>
+        <source>This instruction has no retained physical register operands.</source>
+        <translation>لا تحتوي هذه التعليمة على معاملات سجلات فعلية محتفظ بها.</translation>
+    </message>
+    <message>
+        <source>Unknown: </source>
+        <translation>مجهول: </translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <translation>مجهول</translation>
     </message>
 </context>
 <context>

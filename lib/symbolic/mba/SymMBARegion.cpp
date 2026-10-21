@@ -22,9 +22,12 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cassert>
 #include <map>
 #include <optional>
+#include <set>
 
 namespace neverd::symbolic::detail {
 
@@ -648,6 +651,129 @@ SymRef solveIndependentTerms(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   return Rebuilt;
 }
 
+// Every even factor contributes at least one trailing zero to a product.
+// Enumerate the complete parity domain (up to six independent opaque inputs)
+// in parallel, then find whether every assignment supplies enough zeros.
+SymRef foldZeroProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                       size_t &Storage) {
+  if (Ctx.op(Root) != SymOp::Mul || Ctx.numOperands(Root) < 8 ||
+      Ctx.numOperands(Root) > 65 || Budget.exhausted())
+    return Root;
+  auto Factors = Ctx.operands(Root);
+  unsigned Needed = Ctx.width(Root);
+  if (Ctx.isConst(Factors.front())) {
+    const size_t Words = (size_t(Needed) + 63) / 64;
+    if (Needed <= 64) {
+      Needed -= std::countr_zero(Ctx.node(Factors.front()).Aux);
+    } else {
+      if (Words > Storage / 8 || !Budget.consume(Words))
+        return Root;
+      Storage -= Words * 8;
+      Needed -= Ctx.constValue(Factors.front()).countr_zero();
+    }
+    Factors = Factors.drop_front();
+  }
+  if (Needed > 8 || Needed > Factors.size())
+    return Root;
+  auto Charge = [&](size_t Work, size_t Bytes = 0) {
+    if (Bytes > Storage || !Budget.consume(Work))
+      return false;
+    Storage -= Bytes;
+    return true;
+  };
+  auto Transparent = [&](SymRef R) {
+    auto Op = Ctx.op(R);
+    return Op == SymOp::And || Op == SymOp::Or || Op == SymOp::Xor ||
+           Op == SymOp::Not || Op == SymOp::Add || Op == SymOp::Mul;
+  };
+  std::array<SymRef, 256> Pending;
+  size_t Top = Factors.size();
+  if (!Charge(Top, Top * sizeof(SymRef)))
+    return Root;
+  std::copy(Factors.begin(), Factors.end(), Pending.begin());
+  std::set<uint32_t> Nodes;
+  while (Top) {
+    auto R = Pending[--Top];
+    if (!Charge(1))
+      return Root;
+    if (Nodes.contains(R.index()))
+      continue;
+    if (Nodes.size() == 128 || !Charge(1, 128))
+      return Root;
+    Nodes.insert(R.index());
+    if (!Transparent(R))
+      continue;
+    auto Children = Ctx.operands(R);
+    if (Children.size() > Pending.size() - Top || !Charge(Children.size()))
+      return Root;
+    for (auto Child : Children)
+      Pending[Top++] = Child;
+  }
+  constexpr std::array<uint64_t, 6> Variables{
+      0xaaaaaaaaaaaaaaaaULL, 0xccccccccccccccccULL, 0xf0f0f0f0f0f0f0f0ULL,
+      0xff00ff00ff00ff00ULL, 0xffff0000ffff0000ULL, 0xffffffff00000000ULL};
+  std::map<uint32_t, uint64_t> Values;
+  unsigned Atoms = 0;
+  for (auto Id : Nodes) {
+    if (!Charge(1, 128))
+      return Root;
+    auto R = SymRef(Id);
+    uint64_t Value;
+    auto Op = Ctx.op(R);
+    if (Ctx.isConst(R)) {
+      const size_t Words = (size_t(Ctx.width(R)) + 63) / 64;
+      if (!Charge(Words, Words * sizeof(uint64_t)))
+        return Root;
+      Value = Ctx.constValue(R)[0] ? ~uint64_t(0) : 0;
+    } else if (!Transparent(R)) {
+      if (Atoms == Variables.size())
+        return Root;
+      Value = Variables[Atoms++];
+    } else if (Op == SymOp::Not) {
+      Value = ~Values.at(Ctx.operand(R, 0).index());
+    } else {
+      Value = (Op == SymOp::And || Op == SymOp::Mul) ? ~uint64_t(0) : 0;
+      for (auto Child : Ctx.operands(R)) {
+        if (!Charge(1))
+          return Root;
+        auto V = Values.at(Child.index());
+        if (Op == SymOp::And || Op == SymOp::Mul)
+          Value &= V;
+        else if (Op == SymOp::Or)
+          Value |= V;
+        else
+          Value ^= V; // Addition and XOR have identical parity.
+      }
+    }
+    Values.emplace(Id, Value);
+  }
+  // Bit-sliced counters count even factors for all 64 assignments together.
+  // Repeated factors count repeatedly; their parity is never made independent.
+  std::array<uint64_t, 7> Counts{};
+  for (auto Factor : Factors) {
+    uint64_t Carry = ~Values.at(Factor.index());
+    for (size_t I = 0; Carry && I != Counts.size(); ++I) {
+      if (!Charge(1))
+        return Root;
+      auto Next = Carry & Counts[I];
+      Counts[I] ^= Carry;
+      Carry = Next;
+    }
+  }
+  if (!Charge(Counts.size()))
+    return Root;
+  uint64_t Greater = 0, Equal = ~uint64_t(0);
+  for (unsigned I = Counts.size(); I-- != 0;) {
+    if (Needed & (1u << I))
+      Equal &= Counts[I];
+    else {
+      Greater |= Equal & Counts[I];
+      Equal &= ~Counts[I];
+    }
+  }
+  return (Greater | Equal) == ~uint64_t(0) ? Ctx.mkZero(Ctx.width(Root)) : Root;
+}
+
 } // namespace
 
 SymRef solveExpandedProducts(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
@@ -720,10 +846,50 @@ SymRef solveExpandedProducts(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   return Result;
 }
 
+SymRef foldProductValuations(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                             size_t &Storage) {
+  if (Ctx.op(Root) != SymOp::Add)
+    return foldZeroProduct(Ctx, Root, Budget, Storage);
+  const size_t N = Ctx.numOperands(Root);
+  if (N > 128 || N > Storage / (2 * sizeof(SymRef)))
+    return Root;
+  bool HasLongProduct = false;
+  for (auto Term : Ctx.operands(Root)) {
+    if (Ctx.op(Term) != SymOp::Mul || Ctx.numOperands(Term) < 8)
+      continue;
+    HasLongProduct = true;
+    auto First = Ctx.operand(Term, 0);
+    if (Ctx.width(Term) <= 64 &&
+        Ctx.width(Term) - (Ctx.isConst(First)
+                               ? std::countr_zero(Ctx.node(First).Aux)
+                               : 0) >
+            8)
+      return Root;
+  }
+  if (!HasLongProduct)
+    return Root;
+  if (!Budget.consume(N))
+    return Root;
+  Storage -= N * 2 * sizeof(SymRef);
+  llvm::SmallVector<SymRef, 16> Terms(Ctx.operands(Root));
+  bool Changed = false;
+  for (auto &Term : Terms) {
+    auto Value = foldZeroProduct(Ctx, Term, Budget, Storage);
+    Changed |= Value != Term;
+    if (Value == Term && Ctx.op(Term) == SymOp::Mul &&
+        Ctx.numOperands(Term) >= 8)
+      return Root;
+    Term = Value;
+  }
+  return Changed ? Ctx.mkAdd(Terms) : Root;
+}
+
 SymRef foldProductParity(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                          size_t &Storage) {
   if (Budget.exhausted() || !Budget.canConsume(1) || Storage < 128)
     return Root;
+  if (auto Zero = foldZeroProduct(Ctx, Root, Budget, Storage); Zero != Root)
+    return Zero;
   if (Ctx.op(Root) == SymOp::Mul && Ctx.numOperands(Root) >= 3 &&
       Ctx.numOperands(Root) <= 32 && Ctx.isConst(Ctx.operand(Root, 0))) {
     const SymRef Scale = Ctx.operand(Root, 0);
@@ -803,7 +969,9 @@ SymRef solveOneRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   Rep.BudgetExhausted |= ArithmeticRep.BudgetExhausted;
   if (Solved == E && Rep.BudgetExhausted)
     Rep.Outcome = MBAOutcome::BudgetExhausted;
-  if (Solved != E && !Budget.exhausted()) {
+  if (Solved != E && Solved != Arithmetic && !Budget.exhausted()) {
+    // The arithmetic candidate already has a checked canonical polynomial.
+    // Normalize only a newly restored region, not that identical candidate.
     // Restoring hidden affine inputs can expose products of constants and
     // sums. Cancel their modular coefficients before publishing the spelling.
     SolveReport Restored;

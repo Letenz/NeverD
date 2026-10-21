@@ -4,6 +4,10 @@
 
 # Architettura di NeverD
 
+Il loader COFF separa le posizioni degli epiloghi V2 dalle operazioni del prologo. V2 ripristina i registri salvati del frame principale in base alla posizione esatta nell’epilogo dichiarato; il rilascio dello stack precede tale regione. Intervalli, dimensioni e sequenze non validi vengono rifiutati prima delle letture dello stack. V1 mantiene il riconoscimento tramite istruzioni. Tutti i backend condividono i controlli dello stack e la gestione delle eccezioni.
+
+Solo la sequenza iniziale di `UWOP_EPILOG` definisce gli epiloghi V2. I marcatori successivi occupano due slot senza ripristinare lo stato né influire sull’ordine degli offset del prologo; le coppie troncate restano non valide.
+
 Questa guida descrive i confini di produzione che un contributor deve conoscere
 per modificare NeverD in sicurezza. Copre intenzionalmente solo il codice di
 NeverD; i sottomoduli LLVM, Capstone e Unicorn mantengono la propria
@@ -1963,3 +1967,13 @@ Gli alias riusano i proprietari di thread/processi e contesti anche durante il c
 `SymStorePreservation` usa una base vuota per la memoria assoluta corrente; le altre basi devono essere valori non costanti a 64 bit del contesto. Il banco effettivamente scritto non può essere protetto. Con `ProveStoreFrameSeparation`, il recupero prova anche che ogni cella assoluta corrente è disgiunta dall’intera scrittura simbolica prima di conservarla. La proiezione trasferisce solo byte costanti ancora validi, ne prende l’intersezione alle confluenze e li ricollega insieme ai fatti del frame. I byte mancanti, in conflitto o invalidati restano ignoti. Non si introducono valori iniziali, memoria immutabile, validità di accesso o assenza globale di alias.
 
 Una scrittura interamente contenuta nei limiti dichiarati del frame senza riavvolgimento è disgiunta da una cella interamente contenuta in un intervallo escluso esistente. Il recupero usa direttamente questa implicazione; il contenimento parziale richiede ancora una prova del solver. Gli intervalli dello stesso banco formano un’unione; le unioni ordinate senza riavvolgimento condividono un cursore limitato di byte e intervalli. Le altre unioni modulari mantengono la semantica di appartenenza originale.
+
+## Prove finite di letture dalla RAM ordinaria
+
+`LowIRUndefinedIndependence` gestisce il contratto opzionale `OrderedOrdinaryRAMV1` per prove finite. Ogni lettura fuori dal frame condivide un input per occorrenza; restano da provare la copertura completa dei percorsi e l’accordo su indirizzi, ampiezze e ordine. Confronti esatti degli indirizzi dei byte applicano le scritture precedenti del frame, inclusi possibili alias. Le letture ripetute usano conservativamente input indipendenti; anche le letture immutabili devono restare nella traccia candidata. Le scritture rimangono nel frame dichiarato. Il contratto richiede RAM ordinaria senza fault e non fornisce costanti di indirizzi osservati, fatti di non alias o semantica MMIO, atomica o di scrittori concorrenti. Prove e inferenza dei cicli rifiutano questo modello. I limiti esistenti di osservazioni e nodi vincolano il lavoro aggiunto. I certificati legano il modello, mentre i contratti predefiniti mantengono il digest. Non si aggiungono capacità ai backend concreti.
+
+## Prove finite di interrogazioni scalari native
+
+`OrderedScalarV1` abilita esplicitamente interrogazioni descritte dall’architettura per indipendenza nativa finita e raffinamento nativo verso LowIR. Core condivide input definiti e verifica copertura completa, identità, versione, selettori, larghezze, numero e ordine, anche rispetto alle letture RAM ordinarie. Le risposte ripetute restano indipendenti; l’indipendenza dei selettori viene provata prima di scrivere risultati. Descrizioni, osservazioni e nodi sono limitati. Le impronte delle descrizioni e operazioni effettive vincolano ricevute e input di entrambe le prove; disabilitare il modello conserva l’impronta precedente. Le API statiche senza provider nativo e tutte le API induttive di prova e inferenza lo rifiutano.
+
+x64 ammette solo il gruppo CPUID canonico completo. Il lifter verifica separatamente codifica senza prefissi, output definiti e conservazione del gruppo opaco chiuso. EAX/ECX selezionano quattro risultati da 32 bit; le metà alte vengono azzerate e l’evento originale rimane osservabile. Non si assumono valori host, profili CPU o correlazioni ripetute. L’aggiornamento di `IA32_BIOS_SIGN_ID` è esterno a `LegacyIntegerOpaqueV1`; non si afferma conservazione degli MSR. RDTSC/RDMSR, wrapper sorgente, prove LLVM esatte e backend concreti non acquisiscono capacità. Vedere il collegamento Intel SDM nella versione inglese.

@@ -975,6 +975,94 @@
         <source>Set call type...</source>
         <translation>호출 형식 설정...</translation>
     </message>
+    <message>
+        <source>Change stack pointer...</source>
+        <translation>스택 포인터 변경...</translation>
+    </message>
+    <message>
+        <source>Correct the entry-relative SP after this instruction</source>
+        <translation>이 명령어 실행 후의 SP를 진입점 기준으로 수정</translation>
+    </message>
+    <message>
+        <source>Define a bounded array of typed elements</source>
+        <translation>형식이 지정된 요소의 범위가 제한된 배열 정의</translation>
+    </message>
+    <message>
+        <source>Enum operand...</source>
+        <translation>열거형 피연산자...</translation>
+    </message>
+    <message>
+        <source>Immediate...</source>
+        <translation>즉시값...</translation>
+    </message>
+    <message>
+        <source>Inspect and correct local stack variables</source>
+        <translation>로컬 스택 변수 검사 및 수정</translation>
+    </message>
+    <message>
+        <source>Inspect the proven static value before this instruction</source>
+        <translation>이 명령어 실행 전의 입증된 정적 값 검사</translation>
+    </message>
+    <message>
+        <source>List reaching physical register definitions</source>
+        <translation>이 위치에 도달하는 물리 레지스터 정의 나열</translation>
+    </message>
+    <message>
+        <source>List uses of the register value after this instruction</source>
+        <translation>이 명령어 실행 후 레지스터 값의 사용 위치 나열</translation>
+    </message>
+    <message>
+        <source>Make alignment...</source>
+        <translation>정렬 만들기...</translation>
+    </message>
+    <message>
+        <source>Make array...</source>
+        <translation>배열 만들기...</translation>
+    </message>
+    <message>
+        <source>Mark padding ending on an alignment boundary</source>
+        <translation>정렬 경계에서 끝나는 패딩 표시</translation>
+    </message>
+    <message>
+        <source>Name a proven stack operand without changing its address</source>
+        <translation>입증된 스택 피연산자의 주소를 바꾸지 않고 이름 지정</translation>
+    </message>
+    <message>
+        <source>Next immediate</source>
+        <translation>다음 즉시값</translation>
+    </message>
+    <message>
+        <source>Register definitions...</source>
+        <translation>레지스터 정의...</translation>
+    </message>
+    <message>
+        <source>Register uses...</source>
+        <translation>레지스터 사용 위치...</translation>
+    </message>
+    <message>
+        <source>Repeat the immediate search</source>
+        <translation>즉시값 검색 반복</translation>
+    </message>
+    <message>
+        <source>Search decoded executable instructions for an immediate</source>
+        <translation>디코딩된 실행 가능 명령어에서 즉시값 검색</translation>
+    </message>
+    <message>
+        <source>Show an immediate as enumeration members or flags</source>
+        <translation>즉시값을 열거형 멤버 또는 플래그로 표시</translation>
+    </message>
+    <message>
+        <source>Stack variable operand...</source>
+        <translation>스택 변수 피연산자...</translation>
+    </message>
+    <message>
+        <source>Stack variables...</source>
+        <translation>스택 변수...</translation>
+    </message>
+    <message>
+        <source>Static register value...</source>
+        <translation>레지스터 정적 값...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2599,6 +2687,146 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>indirect call</source>
         <translation>간접 호출</translation>
+    </message>
+    <message>
+        <source>. Reset the obsolete corrections before editing.</source>
+        <translation>. 편집하기 전에 오래된 수정 사항을 초기화하세요.</translation>
+    </message>
+    <message>
+        <source>Absolute offset after instruction, relative to entry SP</source>
+        <translation>명령어 실행 후의 절대 오프셋(진입 시 SP 기준)</translation>
+    </message>
+    <message>
+        <source>Address: %1</source>
+        <translation>주소: %1</translation>
+    </message>
+    <message>
+        <source>Alignment boundary (the marked span ends on this boundary):</source>
+        <translation>정렬 경계(표시된 범위는 이 경계에서 끝남):</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>바이트</translation>
+    </message>
+    <message>
+        <source>C type (optional)</source>
+        <translation>C 형식(선택 사항)</translation>
+    </message>
+    <message>
+        <source>Change stack pointer</source>
+        <translation>스택 포인터 변경</translation>
+    </message>
+    <message>
+        <source>Combine bit flags; preserve unknown bits numerically</source>
+        <translation>비트 플래그를 조합하고 알 수 없는 비트는 숫자로 유지</translation>
+    </message>
+    <message>
+        <source>Definitions and static values are before the instruction; uses start after it.</source>
+        <translation>정의와 정적 값은 명령어 실행 전을 기준으로 하며, 사용 위치는 실행 후부터 시작합니다.</translation>
+    </message>
+    <message>
+        <source>Element count (complete initialized span, at most 64 MiB):</source>
+        <translation>요소 수(전체 초기화된 범위, 최대 64 MiB):</translation>
+    </message>
+    <message>
+        <source>Element size in bytes:</source>
+        <translation>요소 크기(바이트):</translation>
+    </message>
+    <message>
+        <source>Enter a signed SP offset within one MiB</source>
+        <translation>1 MiB 이내의 부호 있는 SP 오프셋 입력</translation>
+    </message>
+    <message>
+        <source>Entry offset</source>
+        <translation>진입 오프셋</translation>
+    </message>
+    <message>
+        <source>Enum operand</source>
+        <translation>열거형 피연산자</translation>
+    </message>
+    <message>
+        <source>Enumeration declared in Local Types:</source>
+        <translation>로컬 형식에 선언된 열거형:</translation>
+    </message>
+    <message>
+        <source>Immediate search</source>
+        <translation>즉시값 검색</translation>
+    </message>
+    <message>
+        <source>Immediate search has undecoded ranges; results cover decoded executable ranges only.</source>
+        <translation>즉시값 검색에 디코딩되지 않은 범위가 있습니다. 결과는 디코딩된 실행 가능 범위만 포함합니다.</translation>
+    </message>
+    <message>
+        <source>Instruction: %1; SP before: %2; SP after: %3</source>
+        <translation>명령어: %1, 실행 전 SP: %2, 실행 후 SP: %3</translation>
+    </message>
+    <message>
+        <source>Integer (decimal or 0x hex; negative allowed):</source>
+        <translation>정수(10진수 또는 0x 16진수, 음수 허용):</translation>
+    </message>
+    <message>
+        <source>Invalid stack slot offset or width</source>
+        <translation>잘못된 스택 슬롯 오프셋 또는 너비</translation>
+    </message>
+    <message>
+        <source>Local type name (optional; its layout must match the element size):</source>
+        <translation>로컬 형식 이름(선택 사항, 레이아웃이 요소 크기와 일치해야 함):</translation>
+    </message>
+    <message>
+        <source>Make alignment</source>
+        <translation>정렬 만들기</translation>
+    </message>
+    <message>
+        <source>Make array</source>
+        <translation>배열 만들기</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>이름</translation>
+    </message>
+    <message>
+        <source>Net SP change made by this instruction</source>
+        <translation>이 명령어로 인한 SP의 순변화</translation>
+    </message>
+    <message>
+        <source>No exact local stack access is available here. Repair unknown SP first.</source>
+        <translation>여기에는 정확한 로컬 스택 접근이 없습니다. 먼저 알 수 없는 SP를 수정하세요.</translation>
+    </message>
+    <message>
+        <source>No register flow sites within this function.</source>
+        <translation>이 함수 내에 레지스터 데이터 흐름 위치가 없습니다.</translation>
+    </message>
+    <message>
+        <source>Offsets are relative to SP at function entry. Corrections apply to source analysis. Reset restores automatic analysis. Naming physical stack storage pauses LLVM optimizations for that function's C view.</source>
+        <translation>오프셋은 함수 진입 시의 SP를 기준으로 합니다. 수정 사항은 소스 분석에 적용됩니다. 초기화하면 자동 분석으로 돌아갑니다. 물리 스택 저장소에 이름을 지정하면 이 함수의 C 뷰에서 LLVM 최적화가 일시 중지됩니다.</translation>
+    </message>
+    <message>
+        <source>Physical register</source>
+        <translation>물리 레지스터</translation>
+    </message>
+    <message>
+        <source>Select a retained non-branch instruction in the disassembly</source>
+        <translation>디스어셈블리에서 유지된 비분기 명령어 선택</translation>
+    </message>
+    <message>
+        <source>Stack variables</source>
+        <translation>스택 변수</translation>
+    </message>
+    <message>
+        <source>Static register value</source>
+        <translation>레지스터 정적 값</translation>
+    </message>
+    <message>
+        <source>This instruction has no retained physical register operands.</source>
+        <translation>이 명령어에는 유지된 물리 레지스터 피연산자가 없습니다.</translation>
+    </message>
+    <message>
+        <source>Unknown: </source>
+        <translation>알 수 없음: </translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <translation>알 수 없음</translation>
     </message>
 </context>
 <context>

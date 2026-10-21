@@ -168,6 +168,7 @@ void addExternSegment(
       Imp.Name = ImportName(Name);
       Imp.IATAddr = SlotVA;
       Img.Imports.push_back(std::move(Imp));
+      Img.ObjectExternFunctionEntries.insert(SlotVA);
     }
     // Another module states the size of what it defines; the object does
     // not, so the symbol has none.

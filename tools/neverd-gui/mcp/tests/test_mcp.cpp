@@ -173,8 +173,9 @@ private slots:
     for (const auto &mode : {QString("malformed"), QString("oversized")}) {
       McpConnectionManager manager;
       manager.connectStdio(TEST_PYTHON, {TEST_SERVER, mode});
-      QTRY_VERIFY(manager.status().contains(
-          mode == "malformed" ? "Invalid MCP" : "exceeds 8 MiB"));
+      QTRY_VERIFY2(manager.status().contains(
+                       mode == "malformed" ? "Invalid MCP" : "exceeds 8 MiB"),
+                   qPrintable(mode + ": " + manager.status()));
       QVERIFY(!manager.connected());
       QVERIFY(manager.tools().isEmpty());
       QVERIFY(manager.callHistory().isEmpty());

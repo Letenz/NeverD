@@ -313,11 +313,30 @@ NEVERD_ACTION(JumpMark,
               QT_TRANSLATE_NOOP("Actions", "Choose a bookmark to jump to"))
 
 // Search.
-NEVERD_ACTION(SearchImmediate, QT_TRANSLATE_NOOP("Actions", "Immediate..."), "Alt+I", "search_bytes", QT_TRANSLATE_NOOP("Actions", "Search decoded executable instructions for an immediate"))
-NEVERD_ACTION(SearchNextImmediate, QT_TRANSLATE_NOOP("Actions", "Next immediate"), "Ctrl+I", "search_next", QT_TRANSLATE_NOOP("Actions", "Repeat the immediate search"))
-NEVERD_VIEW_ACTION(FindRegisterDefinition, QT_TRANSLATE_NOOP("Actions", "Register definitions..."), "Shift+Alt+Up", "up", QT_TRANSLATE_NOOP("Actions", "List reaching physical register definitions"))
-NEVERD_VIEW_ACTION(FindRegisterUse, QT_TRANSLATE_NOOP("Actions", "Register uses..."), "Shift+Alt+Down", "down", QT_TRANSLATE_NOOP("Actions", "List uses of the register value after this instruction"))
-NEVERD_VIEW_ACTION(FindRegisterValue, QT_TRANSLATE_NOOP("Actions", "Static register value..."), "Shift+Alt+V", "calculator", QT_TRANSLATE_NOOP("Actions", "Inspect the proven static value before this instruction"))
+NEVERD_ACTION(SearchImmediate, QT_TRANSLATE_NOOP("Actions", "Immediate..."),
+              "Alt+I", "search_bytes",
+              QT_TRANSLATE_NOOP(
+                  "Actions",
+                  "Search decoded executable instructions for an immediate"))
+NEVERD_ACTION(SearchNextImmediate,
+              QT_TRANSLATE_NOOP("Actions", "Next immediate"), "Ctrl+I",
+              "search_next",
+              QT_TRANSLATE_NOOP("Actions", "Repeat the immediate search"))
+NEVERD_VIEW_ACTION(
+    FindRegisterDefinition,
+    QT_TRANSLATE_NOOP("Actions", "Register definitions..."), "Shift+Alt+Up",
+    "up",
+    QT_TRANSLATE_NOOP("Actions", "List reaching physical register definitions"))
+NEVERD_VIEW_ACTION(
+    FindRegisterUse, QT_TRANSLATE_NOOP("Actions", "Register uses..."),
+    "Shift+Alt+Down", "down",
+    QT_TRANSLATE_NOOP("Actions",
+                      "List uses of the register value after this instruction"))
+NEVERD_VIEW_ACTION(
+    FindRegisterValue, QT_TRANSLATE_NOOP("Actions", "Static register value..."),
+    "Shift+Alt+V", "calculator",
+    QT_TRANSLATE_NOOP(
+        "Actions", "Inspect the proven static value before this instruction"))
 NEVERD_ACTION(SearchText, QT_TRANSLATE_NOOP("Actions", "&Text..."), "Alt+T",
               "search_text",
               QT_TRANSLATE_NOOP("Actions", "Search the binary for text"))
@@ -504,12 +523,36 @@ NEVERD_ACTION(
     QT_TRANSLATE_NOOP("Actions",
                       "Restart the analysis process and reopen the binary"))
 
-NEVERD_ACTION(EditStackFrame, QT_TRANSLATE_NOOP("Actions", "Stack variables..."), "Ctrl+K", "functions", QT_TRANSLATE_NOOP("Actions", "Inspect and correct local stack variables"))
-NEVERD_ACTION(EditStackPointer, QT_TRANSLATE_NOOP("Actions", "Change stack pointer..."), "Alt+K", "functions", QT_TRANSLATE_NOOP("Actions", "Correct the entry-relative SP after this instruction"))
-NEVERD_ACTION(EditStackOperand, QT_TRANSLATE_NOOP("Actions", "Stack variable operand..."), "K", "functions", QT_TRANSLATE_NOOP("Actions", "Name a proven stack operand without changing its address"))
-NEVERD_ACTION(EditMakeArray, QT_TRANSLATE_NOOP("Actions", "Make array..."), "*", "data", QT_TRANSLATE_NOOP("Actions", "Define a bounded array of typed elements"))
-NEVERD_ACTION(EditMakeAlignment, QT_TRANSLATE_NOOP("Actions", "Make alignment..."), "L", "data", QT_TRANSLATE_NOOP("Actions", "Mark padding ending on an alignment boundary"))
-NEVERD_VIEW_ACTION(EditOperandEnum, QT_TRANSLATE_NOOP("Actions", "Enum operand..."), "M", "operand_struct", QT_TRANSLATE_NOOP("Actions", "Show an immediate as enumeration members or flags"))
+NEVERD_ACTION(EditStackFrame,
+              QT_TRANSLATE_NOOP("Actions", "Stack variables..."), "Ctrl+K",
+              "functions",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Inspect and correct local stack variables"))
+NEVERD_ACTION(
+    EditStackPointer, QT_TRANSLATE_NOOP("Actions", "Change stack pointer..."),
+    "Alt+K", "functions",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Correct the entry-relative SP after this instruction"))
+NEVERD_ACTION(EditStackOperand,
+              QT_TRANSLATE_NOOP("Actions", "Stack variable operand..."), "K",
+              "functions",
+              QT_TRANSLATE_NOOP(
+                  "Actions",
+                  "Name a proven stack operand without changing its address"))
+NEVERD_ACTION(EditMakeArray, QT_TRANSLATE_NOOP("Actions", "Make array..."), "*",
+              "data_item",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Define a bounded array of typed elements"))
+NEVERD_ACTION(EditMakeAlignment,
+              QT_TRANSLATE_NOOP("Actions", "Make alignment..."), "L",
+              "data_item",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Mark padding ending on an alignment boundary"))
+NEVERD_VIEW_ACTION(
+    EditOperandEnum, QT_TRANSLATE_NOOP("Actions", "Enum operand..."), "M",
+    "operand_struct",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Show an immediate as enumeration members or flags"))
 // Windows.
 NEVERD_ACTION(WindowsSaveDesktop, QT_TRANSLATE_NOOP("Actions", "&Save desktop"),
               "", "save",

@@ -6,6 +6,7 @@
 #include "ObjCSourceBindings.h"
 
 #include "neverd/loader/Swift/SwiftVirtualCalls.h"
+#include "neverd/sdk/Limits.h"
 
 namespace neverd::sdk {
 inline bool objCSwiftVirtualSourceCallBound(const HighExpr &Expression,
@@ -72,7 +73,7 @@ inline bool objCSwiftVirtualSourceCallBound(const HighExpr &Expression,
         if (!LowSites.emplace(Op.Addr, Op.Seq).second)
           return false;
   std::set<va_t> MedSites, Seen;
-  size_t Budget = 100000, Matches = 0;
+  size_t Budget = kSourceExpressionWork, Matches = 0;
   for (const auto &Block : Caller->Med->Blocks)
     for (const auto &Op : Block.Ops) {
       if (!Budget--)

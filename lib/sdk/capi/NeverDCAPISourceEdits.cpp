@@ -3,6 +3,7 @@
 #include "SessionImpl.h"
 #include "SourceEdits.h"
 
+#include "neverd/sdk/Limits.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"
 #include "neverd/types/TypeParse.h"
 
@@ -68,7 +69,8 @@ std::string neverd::sdk::highVariableSnapshot(const HighFunc &Function,
     OS << '#' << It->second;
     if (!Inserted)
       return;
-    if (Seen.size() > 100000 || OS.tell() > 16 * 1024 * 1024) {
+    if (Seen.size() > kMaxSourceExpressionSnapshotNodes ||
+        OS.tell() > kMaxSourceExpressionSnapshotBytes) {
       Complete = false;
       return;
     }
@@ -108,7 +110,8 @@ std::string neverd::sdk::highVariableSnapshot(const HighFunc &Function,
 TypeRef neverd::sdk::parseSourceVariableType(Session &S, llvm::StringRef Text,
                                              uint16_t Bytes,
                                              std::string &Error) {
-  if (Text.empty() || Text.size() > 4096 || Text.contains('\0')) {
+  if (Text.empty() || Text.size() > kMaxFunctionDeclarationBytes ||
+      Text.contains('\0')) {
     Error = "A variable type must contain between 1 and 4096 bytes";
     return nullptr;
   }

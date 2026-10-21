@@ -1,3 +1,7 @@
+add_neverd_unittest(NeverDCOFFExceptionV2Tests
+  eh/COFFExceptionV2Tests.cpp
+  LINK_COMPONENTS Loader)
+
 add_neverd_unittest(NeverDDirectTailCallMetadataTests
   core/DirectTailCallMetadataTests.cpp
   LINK_COMPONENTS IRLow Lift
@@ -1467,6 +1471,11 @@ add_neverd_unittest(NeverDWindowsEHMetadataEncoderTests
 
   LINK_COMPONENTS
   WindowsEHMetadata
+)
+
+add_neverd_unittest(NeverDReturnContractTests
+  core/ReturnContractTests.cpp
+  LINK_COMPONENTS Pipeline
 )
 
 add_neverd_unittest(NeverDNoReturnTests

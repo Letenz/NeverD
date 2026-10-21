@@ -296,6 +296,8 @@ struct LowIRRefinementCertificate {
   /// Covers original native executions under Witness, never arbitrary
   /// architecture-allowed undefined choices or candidate-native state.
   std::optional<LowIRNativePreservationCertificate> NativePreservation;
+  /// Original query declarations; candidate declarations bind CandidateDigest.
+  std::vector<LowIRExternalQueryTransition> ExternalQueryTransitions;
 };
 
 struct LowIRRefinementResult {

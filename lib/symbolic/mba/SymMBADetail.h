@@ -568,6 +568,9 @@ bool productCoefficientsFitScale(const HigherCoefficients &Higher,
                                  WorkBudget &Budget);
 
 /// Only the low product bit survives a highest-bit scale.
+SymRef foldProductValuations(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
+                             size_t &Storage);
+
 SymRef foldProductParity(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                          size_t &Storage);
 

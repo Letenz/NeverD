@@ -35,6 +35,7 @@
 #include <algorithm>
 #include <cctype>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -366,6 +367,90 @@ const char *stringElementType(Intrinsic Id) {
   }
 }
 
+/// The bytes one element of a MOVS or STOS copies or stores.
+unsigned stringElementBytes(Intrinsic Id) {
+  using I = Intrinsic;
+  switch (Id) {
+  case I::Movsb:
+  case I::Stosb:
+    return 1;
+  case I::Movsw:
+  case I::Stosw:
+    return 2;
+  case I::Movsd:
+  case I::Stosd:
+    return 4;
+  case I::Movsq:
+  case I::Stosq:
+    return 8;
+  default:
+    return 0;
+  }
+}
+
+/// A byte count or byte value as the code prints a number.
+std::string byteNumber(uint64_t Value) {
+  return Value < 10 ? std::to_string(Value) : "0x" + llvm::utohexstr(Value);
+}
+
+/// A forward MOVS or STOS of flat memory as the C library's copy or fill of
+/// the same bytes, or empty where C's routine would not write exactly what
+/// the instruction writes.  STOS stores one value repeatedly, which memset
+/// stores when every byte of it is the same; the count of a wider element
+/// must be a number, so that the bytes cannot wrap.  MOVS copies forward one
+/// element at a time, which memcpy does when the ranges are \p Disjoint: an
+/// overlapping copy repeats what it already wrote.  The registers the
+/// instruction leaves are separate IR values, which nothing here assigns.
+std::string renderFlatStringRoutine(
+    const HighExpr &Call,
+    const std::function<std::string(const HighExpr &)> &ExprFn,
+    const DisjointMemoryFn &Disjoint) {
+  const unsigned Element = stringElementBytes(Call.IntrinsicId);
+  const bool IsMovs = isMovs(Call.IntrinsicId);
+  if (!Element || (!IsMovs && !isStos(Call.IntrinsicId)))
+    return {};
+  const HighExpr &Count = *Call.Operands[IsMovs ? 2 : 1];
+  std::optional<uint64_t> Bytes;
+  if (Count.Kind == ExprKind::Const) {
+    // Past 2^63 bytes the instruction faults first.
+    if (Count.ConstVal > (uint64_t{1} << 63) / Element)
+      return {};
+    Bytes = Count.ConstVal * Element;
+  }
+  const auto Pointer = [&](const HighExpr &Address) {
+    return "(void *)" + c_memory::integerOperand(ExprFn(Address));
+  };
+  if (IsMovs) {
+    if (!Bytes || !Disjoint ||
+        !Disjoint(*Call.Operands[0], *Call.Operands[1], *Bytes))
+      return {};
+    return "__builtin_memcpy(" + Pointer(*Call.Operands[1]) + ", " +
+           Pointer(*Call.Operands[0]) + ", " + byteNumber(*Bytes) + ");\n";
+  }
+  const HighExpr &Value = *Call.Operands[2];
+  std::string Fill;
+  if (Value.Kind == ExprKind::Const) {
+    const uint64_t Byte = Value.ConstVal & 0xFF;
+    for (unsigned I = 1; I < Element; ++I)
+      if (((Value.ConstVal >> (8 * I)) & 0xFF) != Byte)
+        return {};
+    Fill = byteNumber(Byte);
+  } else if (Element == 1) {
+    Fill = "(uint8_t)" + c_memory::castOperand(ExprFn(Value));
+  } else {
+    return {};
+  }
+  std::string Size;
+  if (Bytes)
+    Size = byteNumber(*Bytes);
+  else if (Element == 1)
+    Size = "(uintptr_t)" + c_memory::castOperand(ExprFn(Count));
+  else
+    return {};
+  return "__builtin_memset(" + Pointer(*Call.Operands[0]) + ", " + Fill + ", " +
+         Size + ");\n";
+}
+
 bool isLods(Intrinsic Id) {
   return Id == Intrinsic::Lodsb || Id == Intrinsic::Lodsw ||
          Id == Intrinsic::Lodsd || Id == Intrinsic::Lodsq;
@@ -400,12 +485,11 @@ std::string assignPrimary(const HighExpr *Dst, const std::string &Value,
          ";\n";
 }
 
-std::string
-renderSegmentedString(Arch TheArch, const HighExpr &Call,
-                      const HighExpr *PrimaryDst,
-                      std::function<std::string(const HighExpr &)> ExprFn,
-                      std::function<std::string(const MedVar &)> VarFn,
-                      const IsAliveFn &IsAlive, bool MsvcIntrinsics) {
+std::string renderSegmentedString(
+    Arch TheArch, const HighExpr &Call, const HighExpr *PrimaryDst,
+    std::function<std::string(const HighExpr &)> ExprFn,
+    std::function<std::string(const MedVar &)> VarFn, const IsAliveFn &IsAlive,
+    bool MsvcIntrinsics, const DisjointMemoryFn &Disjoint) {
   const char *Segment = segmentPrefix(Call.MemoryAddressSpace);
   const char *Mnemonic = stringMnemonic(Call.IntrinsicId);
   if (!Mnemonic)
@@ -460,9 +544,13 @@ renderSegmentedString(Arch TheArch, const HighExpr &Call,
                        Call.Operands[3]->ConstVal == 0;
   const char *ElementType = stringElementType(Call.IntrinsicId);
   const char *Builtin = intrinsicCName(Call.IntrinsicId);
-  const bool UseBuiltin = MsvcIntrinsics && (IsMovs || IsStos) && Forward &&
-                          *Segment == '\0' && AddressPrefix.empty() &&
-                          ElementType && Builtin;
+  const bool Flat = Forward && *Segment == '\0' && AddressPrefix.empty();
+  if (Flat && (IsMovs || IsStos))
+    if (std::string Routine = renderFlatStringRoutine(Call, ExprFn, Disjoint);
+        !Routine.empty())
+      return Routine;
+  const bool UseBuiltin =
+      MsvcIntrinsics && (IsMovs || IsStos) && Flat && ElementType && Builtin;
 
   std::string Result = "do {\n";
   if (IsMovs || IsLods || IsCmps || IsOuts)
@@ -2016,7 +2104,8 @@ std::string renderX86SegmentedIntrinsicStatement(
     Arch TheArch, const HighExpr &Call, const HighExpr *PrimaryDst,
     std::function<std::string(const HighExpr &)> ExprFn,
     std::function<std::string(const MedVar &)> VarFn, IsAliveFn IsAlive,
-    SameWidthUnsignedFn SameWidthUnsigned, bool MsvcIntrinsics) {
+    SameWidthUnsignedFn SameWidthUnsigned, bool MsvcIntrinsics,
+    DisjointMemoryFn Disjoint) {
   if (Call.Kind != ExprKind::Call ||
       (TheArch != Arch::X86 && TheArch != Arch::X64))
     return {};
@@ -2037,7 +2126,8 @@ std::string renderX86SegmentedIntrinsicStatement(
       isScas(Call.IntrinsicId) || isOuts(Call.IntrinsicId) ||
       isIns(Call.IntrinsicId))
     return renderSegmentedString(TheArch, Call, PrimaryDst, std::move(ExprFn),
-                                 std::move(VarFn), IsAlive, MsvcIntrinsics);
+                                 std::move(VarFn), IsAlive, MsvcIntrinsics,
+                                 Disjoint);
   if (Call.IntrinsicId == Intrinsic::MaskedStoreB)
     return renderMaskedByteStore(Call, std::move(ExprFn));
   return renderSegmentedMaskedMemory(Call, PrimaryDst, std::move(ExprFn),

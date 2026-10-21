@@ -4,6 +4,10 @@
 
 # NeverD-Architektur
 
+Der COFF-Loader trennt V2-Epilogpositionen von Prologoperationen. V2 stellt anhand der gesicherten Register des primären Frames und der genauen Epilogposition wieder her; die Freigabe des Stackbereichs liegt davor. Ungültige Bereiche, Größen und Wiederherstellungsfolgen werden vor Stackzugriffen abgelehnt. V1 behält die Erkennung anhand von Instruktionen. Alle Backends teilen die Stackprüfung und Ausnahmebehandlung.
+
+Nur die anfängliche Folge von `UWOP_EPILOG` definiert V2-Epiloge. Spätere Marker belegen zwei Slots, ohne Zustand wiederherzustellen oder die Reihenfolge der Prolog-Offsets zu beeinflussen; unvollständige Paare bleiben ungültig.
+
 Dieser Leitfaden beschreibt die Produktionsgrenzen, die Mitwirkende kennen
 müssen, um NeverD sicher zu ändern. Er behandelt bewusst nur NeverD-eigenen
 Code; die LLVM-, Capstone- und Unicorn-Submodule behalten ihre interne
@@ -1967,3 +1971,13 @@ Die Aliase nutzen bestehende Besitzer von Threads/Prozessen und Ausführungskont
 `SymStorePreservation` bezeichnet mit einer leeren Basis den aktuellen absoluten Speicher; andere Basen müssen nichtkonstante 64-Bit-Werte des Zustandskontexts sein. Die tatsächlich beschriebene Bank darf nicht geschützt werden. Mit `ProveStoreFrameSeparation` beweist die Wiederherstellung vor der Erhaltung auch, dass jede aktuelle absolute Zelle den vollständigen symbolischen Schreibzugriff nicht überlappt. Die Projektion überträgt nur gültige konstante Bytes, bildet an Zusammenführungen die Schnittmenge und bindet sie gemeinsam mit Frame-Fakten neu. Fehlende, widersprüchliche oder ungültig gewordene Bytes bleiben unbekannt. Daraus folgen weder Anfangswerte, Unveränderlichkeit, Zugriffsrechte noch globale Aliasfreiheit.
 
 Ein vollständig in den deklarierten, nicht umlaufenden Frame-Grenzen liegender Schreibzugriff ist von einer vollständig in einem vorhandenen Ausschlussintervall liegenden Zelle getrennt. Die Wiederherstellung nutzt diese Folgerung direkt; teilweise Enthaltenheit erfordert weiterhin einen Solver-Beweis. Bereiche derselben Bank bilden eine Vereinigung. Geordnete, nicht umlaufende Vereinigungen verwenden einen begrenzten Byte-/Bereichscursor; andere modulare Vereinigungen behalten ihre bisherige Zugehörigkeitssemantik.
+
+## Endliche Beweise für gewöhnliche RAM-Lesezugriffe
+
+`LowIRUndefinedIndependence` verwaltet den optionalen Vertrag `OrderedOrdinaryRAMV1` für endliche Beweise. Jeder Lesezugriff außerhalb des Frames teilt eine Eingabe nach Auftretensreihenfolge; vollständige Pfadabdeckung sowie gleiche Adressen, Breiten und Reihenfolge bleiben Beweispflichten. Exakte Byte-Adressvergleiche berücksichtigen frühere Frame-Schreibzugriffe einschließlich möglicher Aliase. Wiederholte Lesezugriffe verwenden konservativ unabhängige Eingaben; auch unveränderliche Lesezugriffe müssen in der Kandidatenspur erhalten bleiben. Schreibzugriffe bleiben im deklarierten Frame. Der Vertrag verlangt ausdrücklich gewöhnlichen RAM ohne Zugriffsfehler; er liefert keine beobachteten Adresskonstanten, Nichtalias-Fakten oder Semantik für MMIO, atomare Operationen oder gleichzeitige Schreiber. Schleifenbeweise und Inferenz lehnen dieses Modell ab. Bestehende Beobachtungs- und Knotenbudgets begrenzen den Aufwand. Zertifikate binden das Modell, Standardverträge behalten ihren Digest. Konkrete Backends erhalten keine neue Fähigkeit.
+
+## Endliche native skalare Abfragebeweise
+
+`OrderedScalarV1` aktiviert architekturbeschriebene Abfragen für endliche native Unabhängigkeitsbeweise und native LowIR-Verfeinerung. Core teilt definierte Eingaben und prüft vollständige Endpfadabdeckung sowie Identität, Version, Selektoren, Ergebnisbreiten, Anzahl und Reihenfolge, auch relativ zu gewöhnlichen RAM-Lesezugriffen. Wiederholte Antworten bleiben unabhängig; Selektoren müssen vor jeder Ergebniszuweisung unabhängig von undefinierten Werten sein. Beschreibung, Beobachtungen und Knoten bleiben begrenzt. Digests der tatsächlichen Beschreibungen und Operationen binden Ausführungsbelege und beide Beweiseingaben; deaktivierte Verträge behalten ihren bisherigen Digest. Statische APIs ohne nativen Provider sowie alle induktiven Beweis- und Inferenz-APIs lehnen das Modell ab.
+
+Der x64-Adapter akzeptiert nur das vollständige kanonische CPUID-Bündel. Der Lifter auditiert präfixfreie Codierung, definierte Ausgaben und geschlossene opake Zustandserhaltung getrennt. EAX/ECX wählen vier 32-Bit-Ergebnisse; obere Registerhälften werden null und das ursprüngliche Ereignis bleibt beobachtbar. Hostwerte, CPU-Profile oder Korrelation wiederholter Antworten werden nicht angenommen. Die Aktualisierung von `IA32_BIOS_SIGN_ID` liegt außerhalb von `LegacyIntegerOpaqueV1`; MSR-Erhaltung wird nicht behauptet. RDTSC/RDMSR, Quelltext-Wrapper, exakte LLVM-Beweise und konkrete Backends werden nicht erweitert. Siehe Intel-SDM-Link der englischen Fassung.

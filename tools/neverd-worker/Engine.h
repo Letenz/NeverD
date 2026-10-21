@@ -44,7 +44,7 @@ public:
   bool analyzed() const { return analyzed_; }
   /// Background work (the reference index) runs between requests.
   bool hasIdleWork() const;
-  void idleStep();
+  bool idleStep();
   /// {state, done, total, generation} for heartbeats; null before a load.
   Json backgroundState() const;
   static std::string version();
@@ -92,6 +92,9 @@ public:
   /// Whether the engine loads a chosen DWARF file into an open image
   /// (dwarf_load).
   static bool loadsDwarfFiles();
+  /// Whether the engine finds call paths and call trees (call_paths,
+  /// call_tree).
+  static bool findsCallPaths();
 
 private:
   Json executeImpl(const std::string &operation, const Json &payload,
@@ -141,6 +144,8 @@ private:
   /// Whether idle time analyzes the open file: function discovery and the
   /// reference index.  A cross-reference request still builds the index.
   bool backgroundAnalysis_ = true;
+  /// Only clients coordinating analysis-replica memory opt in to SDK snapshots.
+  bool steppedDiscovery_ = false;
   /// Whether idle time then prepares each function's analysis
   /// (neverd_warm_functions_json), so that its first decompile reuses it.
   /// Any change to the project starts over: the engine may have dropped it.

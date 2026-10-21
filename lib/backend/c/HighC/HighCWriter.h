@@ -171,6 +171,9 @@ public:
   /// program's local types define the records a unit names
   /// (RecordDefinitions), and a record they leave out stays incomplete.
   bool definesRecord(const TypeRef &Record) const;
+  /// Whether the unit has \p Record, a named record, complete: from the
+  /// program's definitions or a system header it includes.
+  bool holdsRecord(const TypeRef &Record) const;
   /// The records the unit asks the local types for besides those its types
   /// name: those an earlier rendering's code read members of through others
   /// (HighCEmitter::emit).
@@ -821,6 +824,10 @@ public:
   int debugSymRichness(const FunctionSym &FS) const;
   static TypeRef cDisplayType(const TypeRef &Ty);
   std::optional<int64_t> frameDisplacement(const HighExpr &E) const;
+  /// Whether the \p Bytes bytes at \p A and those at \p B cannot overlap:
+  /// both lie in the frame, or both are constant addresses, that far apart.
+  bool disjointMemory(const HighExpr &A, const HighExpr &B,
+                      uint64_t Bytes) const;
   std::optional<int64_t>
   certifiedFrameStorageDisplacement(const HighExpr &E) const;
   /// Whether the alignment precondition \p Call always holds in C: its
@@ -1310,6 +1317,13 @@ public:
     uint64_t Size = 0;
   };
   std::map<int64_t, FrameRecordMember> FrameRecordMembers;
+  /// The member at \p Addr that holds a record's pointer an out-parameter
+  /// stores (collectFrameRecordMembers), read whole or at its address.
+  const FrameRecordMember *statedFrameRecordMember(const HighExpr &Addr,
+                                                   uint16_t AccessSize) const;
+  /// The pointer to a named record that a call's `T **` parameter \p Index
+  /// stores where it points; null for another parameter.
+  TypeRef outParameterRecordPointer(const HighExpr &Call, size_t Index) const;
   /// What each slot was named before frame storage replaced it.
   std::map<int64_t, std::string> FrameSlotNamesBeforeStorage;
   void collectFrameRecordMembers(const HighFunc &Func, uint64_t FrameBaseOffset,

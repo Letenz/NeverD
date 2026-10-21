@@ -145,10 +145,10 @@ if __name__ == "__main__":
 
 
 class HypervisorSigningTests(unittest.TestCase):
-    def test_final_recursive_signing_preserves_and_checks_worker_entitlements(self):
+    def test_final_recursive_signing_preserves_and_checks_engine_host_entitlements(self):
         with tempfile.TemporaryDirectory() as root:
             bundle = Path(root) / "NeverD.app"
-            paths = [bundle / name for name in ("Contents/MacOS/neverd-worker",
+            paths = [bundle / name for name in ("Contents/MacOS/neverd-mcp", "Contents/MacOS/neverd-worker",
                      "Contents/MacOS/neverd-gui", "Contents/Frameworks/libneverd.dylib")]
             for path in paths:
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -159,8 +159,8 @@ class HypervisorSigningTests(unittest.TestCase):
                       {"com.apple.security.hypervisor": True}).decode())):
                 PACKAGE.sign_bundle(bundle, entitlements)
             leaf_calls = [c.args for c in run.call_args_list if c.args[-1] in paths]
-            self.assertEqual(len(leaf_calls), 3)
-            self.assertEqual([c[-1] for c in leaf_calls if "--entitlements" in c], [paths[0]])
+            self.assertEqual(len(leaf_calls), 4)
+            self.assertEqual(sorted(c[-1] for c in leaf_calls if "--entitlements" in c), paths[:2])
             run.assert_any_call("codesign", "--force", "--deep", "--sign", "-",
                                 "--preserve-metadata=entitlements", bundle)
 

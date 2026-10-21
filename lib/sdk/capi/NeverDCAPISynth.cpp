@@ -9,6 +9,7 @@
 #include "SessionImpl.h"
 
 #include "neverd/pass/ir/simplify/SymSimplifyPass.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/solver/SymSynthVerifier.h"
 #include "neverd/symbolic/SymParse.h"
 #include "neverd/symbolic/SymSynth.h"
@@ -71,16 +72,6 @@ static_assert(static_cast<int>(symbolic::SynthOutcome::ProofIncomplete) ==
 static_assert(static_cast<int>(symbolic::SynthOutcome::Synthesized) ==
               NEVERD_SYNTHESIS_REWRITTEN);
 
-constexpr unsigned kDefaultWidth = 32;
-
-// Unlike Solver's C++ defaults, the public C surface is bounded unless the
-// caller explicitly asks for exhaustive work.  Powers of two make the three
-// independent ceilings predictable and leave ordinary 32-bit proofs ample
-// room without turning a zeroed options struct into an unbounded request.
-constexpr uint64_t kDefaultSolverMaxConflicts = uint64_t(1) << 18;
-constexpr uint64_t kDefaultSolverMaxPropagations = uint64_t(1) << 24;
-constexpr uint64_t kDefaultSolverMaxWatchVisits = uint64_t(1) << 26;
-
 #define FIELD_END(Type, Field)                                                 \
   (offsetof(Type, Field) + sizeof(static_cast<Type *>(nullptr)->Field))
 
@@ -94,12 +85,12 @@ uint64_t workCount(size_t Work) {
 }
 
 struct SynthesisConfig {
-  unsigned Width = kDefaultWidth;
+  unsigned Width = kDefaultSymbolicWidth;
   symbolic::SynthOptions Search;
   solver::SolverOptions Solver;
   symbolic::SymParseOptions Parse;
   solver::ProofBackend Backend = solver::ProofBackend::BuiltIn;
-  uint32_t TimeoutMs = 1000;
+  uint32_t TimeoutMs = kDefaultSynthesisTimeoutMs;
   std::string Error;
 };
 

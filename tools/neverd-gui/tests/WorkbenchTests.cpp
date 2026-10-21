@@ -19,6 +19,7 @@
 #include "ProjectDatabase.h"
 #include "QuickStartDialog.h"
 #include "Session.h"
+#include "SessionTestAccess.h"
 #include "SetTypeDialog.h"
 #include "SettingsKeys.h"
 #include "SymbolTablePromptDialog.h"
@@ -60,6 +61,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QSaveFile>
 #include <QScopeGuard>
@@ -176,6 +178,7 @@ QPushButton *buttonNamed(QWidget *window, const QString &text) {
 /// Shows \p code's context menu at its cursor and hands it to \p use, which
 /// may trigger one of its entries; the menu then closes.
 void withCodeMenu(CodeText *code, const std::function<void(QMenu *)> &use) {
+  const QPointer<QWidget> window = code->window();
   QTimer probe;
   QObject::connect(&probe, &QTimer::timeout, &probe, [&] {
     auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
@@ -188,6 +191,14 @@ void withCodeMenu(CodeText *code, const std::function<void(QMenu *)> &use) {
   probe.start(5);
   emit code->contextMenuRequested(
       code->viewport()->mapToGlobal(QPoint(40, 40)));
+  // A programmatically closed popup has no native click to reactivate its
+  // owner on the offscreen platform. Continue in the same active workbench.
+  if (window && window->isVisible() &&
+      (!QApplication::activeWindow() ||
+       QApplication::activeWindow() == window)) {
+    window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(window));
+  }
 }
 
 class LoadDialogAcceptor {
@@ -370,6 +381,44 @@ private slots:
         writeFixture(directory, QStringLiteral("search-second.bin")));
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     QCOMPARE(results()->model().total(), 0);
+  }
+
+  void searchDuringAJumpStartsWhereTheJumpLands() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("search-jump.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const auto results = [&]() -> ChooserView * {
+      for (auto *view : bench.window->findChildren<ChooserView *>())
+        if (view->model().kind() == ChooserKind::SearchResults)
+          return view;
+      return nullptr;
+    };
+    QTimer input;
+    connect(&input, &QTimer::timeout, &input, [&] {
+      if (auto *dialog =
+              qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {
+        dialog->setTextValue(QStringLiteral("string 42"));
+        dialog->accept();
+      }
+    });
+    input.start(5);
+    bench.action(ActionId::SearchText)->trigger();
+    input.stop();
+    QTRY_VERIFY_WITH_TIMEOUT(results() && results()->model().total() > 0,
+                             OpenTimeoutMs);
+    auto *listing = bench.window->disassembly()->listing();
+    QTRY_VERIFY_WITH_TIMEOUT(!listing->jumpPending(), OpenTimeoutMs);
+    // The listing answers this jump before the search: the search starts
+    // where the jump lands, and the landing does not drop its reply.
+    bench.window->disassembly()->navigate(Base + 3);
+    QVERIFY(listing->jumpPending());
+    bench.action(ActionId::SearchNextText)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(results()->model().total() > 0, OpenTimeoutMs);
+    // From the old cursor at the first match, Next would skip that match.
+    QCOMPARE(results()->model().addressAt(0),
+             std::optional<Address>(Base + 42));
   }
 
   void sortingLongStringsKeepsTheTableWithinTheTransportBudget() {
@@ -1382,7 +1431,9 @@ private slots:
           menu->actions().contains(bench.action(ActionId::JumpPseudocode));
       cross->trigger();
     });
-    QCOMPARE(shown, QStringLiteral("Jump to disassembly\tTab"));
+    QCOMPARE(shown,
+             QStringLiteral("Jump to disassembly\t") +
+                 QKeySequence(Qt::Key_Tab).toString(QKeySequence::NativeText));
     QVERIFY(!jumpOffered);
     QTRY_VERIFY(assembly->isAncestorOf(QApplication::focusWidget()));
     QTRY_COMPARE(assembly->currentAddress(),
@@ -1470,7 +1521,19 @@ private slots:
     assembly->navigate(function, false);
     QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(function));
     assembly->focusContent();
-    QTRY_VERIFY(assembly->isAncestorOf(QApplication::focusWidget()));
+    QTRY_VERIFY2(
+        assembly->isAncestorOf(QApplication::focusWidget()),
+        qPrintable(
+            QStringLiteral("visible=%1 active=%2 focus=%3")
+                .arg(assembly->isVisible())
+                .arg(QApplication::activeWindow() ? QApplication::activeWindow()
+                                                        ->metaObject()
+                                                        ->className()
+                                                  : "none")
+                .arg(
+                    QApplication::focusWidget()
+                        ? QApplication::focusWidget()->metaObject()->className()
+                        : "none")));
     assembly->navigate(function + 2, false);
     QTRY_COMPARE(assembly->currentAddress(),
                  std::optional<Address>(function + 2));
@@ -1586,7 +1649,14 @@ private slots:
     QVERIFY(code->allText().contains(QStringLiteral("v0 + 030; /* 8 */")));
   }
 
+  void codeTextSelectsLikeAnEditor_data() {
+    QTest::addColumn<bool>("popupTakesFocus");
+    QTest::newRow("mouse") << false;
+    QTest::newRow("popup-focus") << true;
+  }
+
   void codeTextSelectsLikeAnEditor() {
+    QFETCH(bool, popupTakesFocus);
     // Ctrl+A selects the whole function, a drag held below the text scrolls
     // and extends the selection past the first screen, and a right click
     // inside the selection keeps it for Copy, as in an editor.
@@ -1661,9 +1731,17 @@ private slots:
       clicker.stop();
       clicked = menu->actions().contains(copy) &&
                 menu->findChild<QAction *>(QStringLiteral("codeSelectAll"));
-      if (clicked)
-        QTest::mouseClick(menu, Qt::LeftButton, {},
-                          menu->actionGeometry(copy).center());
+      if (clicked) {
+        if (popupTakesFocus) {
+          // Native popups can take the focus before their action fires.
+          code->clearFocus();
+          QVERIFY(!code->hasFocus());
+          copy->trigger();
+        } else {
+          QTest::mouseClick(menu, Qt::LeftButton, {},
+                            menu->actionGeometry(copy).center());
+        }
+      }
       if (menu->isVisible())
         menu->close();
     });
@@ -2404,10 +2482,9 @@ private slots:
     QVERIFY(!firstFinished);
   }
 
-  void idleAnalysisPreparesFunctionsUnlessTurnedOff() {
-    // The load dialog's Analysis option also has the worker prepare each
-    // function for its first decompile in idle time; turned off, it
-    // prepares none.
+  void ownerDoesNotWarmPipelinesUsedOnlyByAnalysisReplicas() {
+    // Reference indexing still runs in the owner. Pipeline warmup there
+    // cannot accelerate a view prepared in a different analysis Session.
     QTemporaryDir directory;
     Session session(QString::fromLocal8Bit(TEST_WORKER));
     const auto preparation = [&] {
@@ -2419,14 +2496,220 @@ private slots:
     };
     session.open(writeFixture(directory, QStringLiteral("prepared.bin")));
     QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
-    QTRY_COMPARE_WITH_TIMEOUT(preparation(), QStringLiteral("complete"),
+    QTRY_COMPARE_WITH_TIMEOUT(preparation(), QStringLiteral("off"),
                               OpenTimeoutMs);
+    QJsonObject initialSnapshot;
+    session.read(
+        "analysis_snapshot", {}, this,
+        [&](const QJsonObject &payload) { initialSnapshot = payload; });
+    QTRY_VERIFY_WITH_TIMEOUT(initialSnapshot.contains("open"), OpenTimeoutMs);
+    QVERIFY(initialSnapshot.value("open")
+                .toObject()
+                .value("step_discovery")
+                .toBool());
     LoadOptions options;
     options.analysis = false;
     session.open(writeFixture(directory, QStringLiteral("unprepared.bin")),
                  options);
+    QTRY_COMPARE_WITH_TIMEOUT(session.fileName(),
+                              QStringLiteral("unprepared.bin"), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
     QTRY_COMPARE_WITH_TIMEOUT(preparation(), QStringLiteral("off"),
                               OpenTimeoutMs);
+    QJsonObject disabledSnapshot;
+    session.read(
+        "analysis_snapshot", {}, this,
+        [&](const QJsonObject &payload) { disabledSnapshot = payload; });
+    QTRY_VERIFY_WITH_TIMEOUT(disabledSnapshot.contains("open"), OpenTimeoutMs);
+    QVERIFY(!disabledSnapshot.value("open")
+                 .toObject()
+                 .value("step_discovery")
+                 .toBool());
+  }
+
+  void prefetchedSourceAndForegroundUseTheSameAnalysisReplica() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(
+        writeFixture(directory, QStringLiteral("pseudocode-parallel.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    AnalysisPool pool(session.queries(), QString::fromLocal8Bit(TEST_WORKER));
+    QStringList diagnostics;
+    connect(&pool, &AnalysisPool::diagnostic, this,
+            [&](const QString &text) { diagnostics.append(text); });
+    pool.prefetchSource(Base);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        diagnostics.join('\n').contains("fixture parallel decompile " +
+                                        hexAddress(Base) + " started"),
+        OpenTimeoutMs);
+    QObject owner;
+    const QJsonObject payload{{"address", hexAddress(Base + 32)},
+                              {"representation", "source"}};
+    auto &replica = pool.queries(payload, &owner);
+    QCOMPARE(&replica, &pool.externalQueries());
+    bool done = false;
+    replica.subscribe({"decompile", payload}, &owner,
+                      [&](const QJsonObject &response) {
+                        done = response.value("status") == QLatin1String("ok");
+                      });
+    QTRY_VERIFY_WITH_TIMEOUT(done, OpenTimeoutMs);
+    const auto preparations = diagnostics.size();
+    const QJsonObject cached{{"address", hexAddress(Base)},
+                             {"representation", "source"},
+                             {"source_options", QJsonObject{}},
+                             {"offset", 0},
+                             {"limit", 1}};
+    done = false;
+    pool.queries(cached, &owner)
+        .subscribe({"decompile", cached}, &owner,
+                   [&](const QJsonObject &response) {
+                     done = response.value("status") == QLatin1String("ok") &&
+                            !response.value("payload")
+                                 .toObject()
+                                 .value("text")
+                                 .toString()
+                                 .isEmpty();
+                   });
+    QTRY_VERIFY_WITH_TIMEOUT(done, OpenTimeoutMs);
+    QCOMPARE(diagnostics.size(), preparations);
+  }
+
+  void analysisReplicaWaitsWithoutBlockingOwnerReads_data() {
+    QTest::addColumn<bool>("cancel");
+    QTest::newRow("release") << false;
+    QTest::newRow("cancel-before-release") << true;
+  }
+
+  void analysisReplicaWaitsWithoutBlockingOwnerReads() {
+    QFETCH(bool, cancel);
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(writeFixture(directory, QStringLiteral("snapshot-wait.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    AnalysisPool pool(session.queries(), QString::fromLocal8Bit(TEST_WORKER));
+    pool.setSnapshotBlocked(true);
+    QStringList diagnostics;
+    connect(&pool, &AnalysisPool::diagnostic, this,
+            [&](const QString &text) { diagnostics.append(text); });
+    QObject owner;
+    const QJsonObject payload{{"address", hexAddress(Base)},
+                              {"representation", "source"}};
+    auto &replica = pool.queries(payload, &owner);
+    bool done = false;
+    replica.subscribe({"decompile", payload}, &owner,
+                      [&](const QJsonObject &response) {
+                        done = response.value("status") == QLatin1String("ok");
+                      });
+    // Round-trip a read through the writable owner while the analysis job is
+    // queued. No replica may start before discovery's snapshot is released.
+    bool ownerDone = false;
+    session.read("functions", {{"limit", 1}}, this,
+                 [&](const QJsonObject &) { ownerDone = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(ownerDone, OpenTimeoutMs);
+    QVERIFY(!done);
+    QVERIFY(diagnostics.isEmpty());
+    QCOMPARE(replica.pendingReadCount(), 1);
+    if (cancel) {
+      pool.unsubscribeOwner(&owner);
+      QTRY_COMPARE(replica.pendingReadCount(), 0);
+    }
+    pool.setSnapshotBlocked(false);
+    if (cancel) {
+      QTest::qWait(50);
+      QVERIFY(!done);
+      QVERIFY(diagnostics.isEmpty());
+    } else {
+      QTRY_VERIFY_WITH_TIMEOUT(done, OpenTimeoutMs);
+    }
+  }
+
+  void prefetchedSourceIsRetiredWhenTheProjectChanges() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(
+        writeFixture(directory, QStringLiteral("pseudocode-slow.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    AnalysisPool pool(session.queries(), QString::fromLocal8Bit(TEST_WORKER));
+    QStringList diagnostics;
+    connect(&pool, &AnalysisPool::diagnostic, this,
+            [&](const QString &text) { diagnostics.append(text); });
+    pool.prefetchSource(Base);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        diagnostics.join('\n').contains("fixture slow decompile started"),
+        OpenTimeoutMs);
+    session.open(writeFixture(directory, QStringLiteral("replacement.bin")));
+    QTRY_COMPARE_WITH_TIMEOUT(session.fileName(),
+                              QStringLiteral("replacement.bin"), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    QObject owner;
+    const QJsonObject payload{{"address", hexAddress(Base + 32)},
+                              {"representation", "source"}};
+    bool done = false;
+    pool.queries(payload, &owner)
+        .subscribe({"decompile", payload}, &owner,
+                   [&](const QJsonObject &response) {
+                     done = response.value("status") == QLatin1String("ok");
+                   });
+    QTRY_VERIFY_WITH_TIMEOUT(done, OpenTimeoutMs);
+    QCOMPARE(session.fileName(), QStringLiteral("replacement.bin"));
+  }
+
+  void cancelledPrefetchDoesNotHoldItsLane() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(
+        writeFixture(directory, QStringLiteral("pseudocode-slow.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    AnalysisPool pool(session.queries(), QString::fromLocal8Bit(TEST_WORKER));
+    QStringList diagnostics;
+    connect(&pool, &AnalysisPool::diagnostic, this,
+            [&](const QString &text) { diagnostics.append(text); });
+    pool.prefetchSource(Base);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        diagnostics.join('\n').contains("fixture slow decompile started"),
+        OpenTimeoutMs);
+    // Cancel retires the prefetch without completing it. A read queued on
+    // its lane afterwards is not that preparation: an independent view still
+    // takes the other lane instead of waiting behind it.
+    pool.cancelReads({});
+    QObject first, second;
+    const QJsonObject firstPayload{{"address", hexAddress(Base + 32)},
+                                   {"representation", "source"}};
+    auto &firstLane = pool.queries(firstPayload, &first);
+    firstLane.subscribe({"decompile", firstPayload}, &first,
+                        [](const QJsonObject &) {});
+    QCOMPARE(firstLane.pendingReadCount(), 1);
+    const QJsonObject secondPayload{{"address", hexAddress(Base + 64)},
+                                    {"representation", "source"}};
+    QVERIFY(&pool.queries(secondPayload, &second) != &firstLane);
+  }
+
+  void heartbeatsOfAnotherProjectLeaveTheSessionAlone() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(
+        writeFixture(directory, QStringLiteral("heartbeat-project.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    const auto heartbeat = [&](const QString &project) {
+      return QJsonObject{
+          {"type", "heartbeat"},
+          {"protocol_major", 1},
+          {"project_id", project},
+          {"revision", session.revision()},
+          {"background", QJsonObject{{"state", "replayed"},
+                                     {"functions", 4242},
+                                     {"generation", "replayed"},
+                                     {"discovery_complete", true}}}};
+    };
+    // The worker built this before the reply that opened the project, and
+    // sent it after: its state, discovery completion included, is not ours.
+    SessionTestAccess::receive(session,
+                               heartbeat(QStringLiteral("previous-project")));
+    QVERIFY(session.background().value("state") != QLatin1String("replayed"));
+    SessionTestAccess::receive(session,
+                               heartbeat(session.queries().projectId()));
+    QCOMPARE(session.background().value("state").toString(),
+             QStringLiteral("replayed"));
   }
 
   void analysisPagesKeepTheirReplicaWhenAnotherFunctionQueues() {
@@ -4060,6 +4343,14 @@ private slots:
     // without ever showing it.
     QFETCH(QString, choice);
     QFETCH(QString, button);
+    // The file-selection timer drives QFileDialog's widgets.
+    const bool nativeDialogsDisabled =
+        QCoreApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+    QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    const auto restoreDialogs = qScopeGuard([nativeDialogsDisabled] {
+      QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs,
+                                     nativeDialogsDisabled);
+    });
     QTemporaryDir directory;
     const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
     QSettings().setValue(settings::RecentFiles, QStringList{path});
@@ -4075,6 +4366,10 @@ private slots:
       if (auto *dialog =
               qobject_cast<QFileDialog *>(QApplication::activeModalWidget())) {
         dialog->selectFile(path);
+        // selectFile preserves the name while its editor has the focus.
+        if (auto *name =
+                dialog->findChild<QLineEdit *>(QStringLiteral("fileNameEdit")))
+          name->setText(path);
         // As pressing Open does; QFileDialog keeps its override protected.
         static_cast<QDialog *>(dialog)->accept();
       }
@@ -4104,8 +4399,32 @@ private slots:
         dialog->close();
     });
     answer.start(5);
+    bool startupTimedOut = false;
+    QString startupState;
+    QTimer deadline;
+    deadline.setSingleShot(true);
+    connect(&deadline, &QTimer::timeout, this, [&] {
+      startupTimedOut = true;
+      auto *modal = QApplication::activeModalWidget();
+      startupState = QStringLiteral("modal=%1 answered=%2")
+                         .arg(modal ? modal->metaObject()->className() : "none")
+                         .arg(answered);
+      if (auto *file = qobject_cast<QFileDialog *>(modal)) {
+        auto *name =
+            file->findChild<QLineEdit *>(QStringLiteral("fileNameEdit"));
+        startupState += QStringLiteral(" directory=%1 selected=%2 field=%3")
+                            .arg(file->directory().path(),
+                                 file->selectedFiles().join(QLatin1Char(';')),
+                                 name ? name->text() : QStringLiteral("none"));
+      }
+      if (modal)
+        modal->close();
+    });
+    deadline.start(OpenTimeoutMs);
     bench.window->scheduleQuickStart();
     QTRY_VERIFY_WITH_TIMEOUT(answered, 1000);
+    deadline.stop();
+    QVERIFY2(!startupTimedOut, qPrintable(startupState));
     QVERIFY(alone);
     QVERIFY(!QApplication::activeModalWidget());
     if (choice == QLatin1String("close")) {
@@ -4791,12 +5110,15 @@ private slots:
         dialog.findChildren<QPushButton *>(QStringLiteral("quickStartAction"));
     QCOMPARE(actions.size(), 3);
     for (const auto *action : actions)
-      QVERIFY2(action->width() >= action->sizeHint().width(),
-               qPrintable(QStringLiteral("%1: %2 < %3, side %4")
-                              .arg(action->text())
-                              .arg(action->width())
-                              .arg(action->sizeHint().width())
-                              .arg(action->parentWidget()->width())));
+      QVERIFY2(
+          action->width() >= action->sizeHint().width(),
+          qPrintable(QStringLiteral("%1: %2 < %3, side %4, font %5, dpi %6")
+                         .arg(action->text())
+                         .arg(action->width())
+                         .arg(action->sizeHint().width())
+                         .arg(action->parentWidget()->width())
+                         .arg(action->font().toString())
+                         .arg(action->logicalDpiX())));
     QVERIFY(actions.front()->parentWidget()->width() > 300);
   }
 
@@ -5498,6 +5820,7 @@ private slots:
 
     QStringList listed;
     QString member;
+    bool pickerRan = false;
     auto *picker = new QTimer(&bench.session);
     connect(picker, &QTimer::timeout, picker, [&, picker] {
       auto *dialog =
@@ -5512,6 +5835,7 @@ private slots:
           dialog->findChild<QLineEdit *>(QStringLiteral("typePickerName"));
       if (!list || !search || !name || list->count() < 2 || !search->hasFocus())
         return;
+      pickerRan = true;
       picker->stop();
       picker->deleteLater();
       for (int row = 0; row < list->count(); ++row)
@@ -5522,7 +5846,56 @@ private slots:
       QTest::keyClick(search, Qt::Key_Return);
     });
     picker->start(10);
+    bool pickerTimedOut = false;
+    QString pickerState;
+    int stage = 0;
+    QTimer pickerDeadline;
+    pickerDeadline.setSingleShot(true);
+    connect(&pickerDeadline, &QTimer::timeout, this, [&] {
+      pickerTimedOut = true;
+      auto *dialog = QApplication::activeModalWidget();
+      auto *focus = QApplication::focusWidget();
+      pickerState =
+          QStringLiteral("modal=%1 active=%2 focus=%3")
+              .arg(dialog ? dialog->metaObject()->className() : "none")
+              .arg(dialog && dialog->isActiveWindow())
+              .arg(focus ? focus->objectName() : QStringLiteral("none"));
+      if (dialog) {
+        auto *list =
+            dialog->findChild<QListWidget *>(QStringLiteral("typePickerList"));
+        auto *summary =
+            dialog->findChild<QLabel *>(QStringLiteral("typePickerSummary"));
+        auto *search =
+            dialog->findChild<QLineEdit *>(QStringLiteral("typePickerSearch"));
+        auto *name =
+            dialog->findChild<QLineEdit *>(QStringLiteral("typePickerName"));
+        auto *apply =
+            dialog->findChild<QPushButton *>(QStringLiteral("typePickerApply"));
+        pickerState +=
+            QStringLiteral(" pickerRan=%1 rows=%2 row=%3 searchFocus=%4"
+                           " name=%5 apply=%6 summary=%7")
+                .arg(pickerRan)
+                .arg(list ? list->count() : -1)
+                .arg(list ? list->currentRow() : -1)
+                .arg(search && search->hasFocus())
+                .arg(name ? name->text() : QStringLiteral("missing"))
+                .arg(apply && apply->isEnabled())
+                .arg(summary ? summary->text() : QString());
+        auto *field =
+            dialog->findChild<QLineEdit *>(QStringLiteral("setTypeField"));
+        auto *status =
+            dialog->findChild<QLabel *>(QStringLiteral("setTypeStatus"));
+        pickerState += QStringLiteral(" stage=%1 field=%2 status=%3")
+                           .arg(stage)
+                           .arg(field ? field->text() : QString())
+                           .arg(status ? status->text() : QString());
+        dialog->close();
+      }
+    });
+    pickerDeadline.start(OpenTimeoutMs);
     bench.action(ActionId::EditConvertToStruct)->trigger();
+    pickerDeadline.stop();
+    QVERIFY2(!pickerTimedOut, qPrintable(pickerState));
     QTRY_COMPARE_WITH_TIMEOUT(
         listed,
         (QStringList{QStringLiteral("_DEVICE"), QStringLiteral("_LIST_ENTRY")}),
@@ -5536,7 +5909,6 @@ private slots:
     QTRY_VERIFY(onParameter(QStringLiteral("arg1"), 1));
     QTRY_VERIFY(bench.action(ActionId::EditSetType)->isEnabled());
     QString subject, completed, refused;
-    int stage = 0;
     auto *typer = new QTimer(&bench.session);
     connect(typer, &QTimer::timeout, typer, [&, typer] {
       auto *dialog =
@@ -5592,7 +5964,10 @@ private slots:
       }
     });
     typer->start(10);
+    pickerDeadline.start(OpenTimeoutMs);
     bench.action(ActionId::EditSetType)->trigger();
+    pickerDeadline.stop();
+    QVERIFY2(!pickerTimedOut, qPrintable(pickerState));
     QTRY_VERIFY_WITH_TIMEOUT(code->allText().contains("_LIST_ENTRY *arg1"),
                              OpenTimeoutMs);
     QCOMPARE(subject, QStringLiteral(
@@ -5625,7 +6000,10 @@ private slots:
       reset->click();
     });
     resetter->start(10);
+    pickerDeadline.start(OpenTimeoutMs);
     bench.action(ActionId::EditSetType)->trigger();
+    pickerDeadline.stop();
+    QVERIFY2(!pickerTimedOut, qPrintable(pickerState));
     QTRY_VERIFY_WITH_TIMEOUT(code->allText().contains("void* arg0"),
                              OpenTimeoutMs);
     QCOMPARE(declaration, QStringLiteral("int64_t function_7(_DEVICE *Device, "
