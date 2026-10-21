@@ -210,6 +210,8 @@ extern llvm::cl::SubCommand BookmarksCmd;
 extern llvm::cl::SubCommand AnnotateCmd;
 extern llvm::cl::SubCommand DiffCmd;
 extern llvm::cl::SubCommand CallGraphCmd;
+extern llvm::cl::SubCommand PathsCmd;
+extern llvm::cl::SubCommand CallTreeCmd;
 extern llvm::cl::SubCommand RenameCmd;
 extern llvm::cl::SubCommand FunctionEditsCmd;
 extern llvm::cl::SubCommand ItemsCmd;
@@ -489,6 +491,17 @@ extern llvm::cl::opt<std::string> AnnotateRemove;
 extern llvm::cl::opt<ExportFormat> ExportFmt;
 extern llvm::cl::opt<std::string> ExportOutput;
 extern llvm::cl::opt<std::string> ExportFunc;
+extern llvm::cl::opt<std::string> PathsFrom;
+extern llvm::cl::opt<std::string> PathsTo;
+extern llvm::cl::list<std::string> PathsVia;
+extern llvm::cl::opt<bool> PathsShortest;
+extern llvm::cl::opt<unsigned> PathsMaxPaths;
+extern llvm::cl::list<std::string> GraphExclude;
+extern llvm::cl::opt<unsigned> GraphMaxDepth;
+extern llvm::cl::opt<bool> GraphDataRefs;
+extern llvm::cl::opt<std::string> CallTreeFunc;
+extern llvm::cl::opt<bool> CallTreeCallers;
+extern llvm::cl::opt<bool> CallTreeExpandLibrary;
 extern llvm::cl::opt<std::string> ExportSourceSignatures;
 
 // Rename.
@@ -700,6 +713,8 @@ int runHex(neverd_session_t Sess);
 int runCfg(neverd_session_t Sess);
 int runXrefs(neverd_session_t Sess);
 int runCallGraph(neverd_session_t Sess);
+int runPaths(neverd_session_t Sess);
+int runCallTree(neverd_session_t Sess);
 int runSymbolicExplore(neverd_session_t Sess);
 
 // NeverDCmdSafety.cpp — memory-safety audit and hunt over the lifted IR.

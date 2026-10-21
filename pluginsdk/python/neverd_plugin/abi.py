@@ -1866,6 +1866,18 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_call_paths_json",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_call_tree_json",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_resolve_addr",
     "const char *",
     ["neverd_session_t", "neverd_va_t"],
