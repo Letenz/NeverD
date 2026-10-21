@@ -2623,7 +2623,8 @@ template <typename ConsumeWorkFn>
 static ResolverResult
 mergeResolverResults(llvm::ArrayRef<ResolverResult> Incoming,
                      std::string_view MergeRoot, bool IgnoreTransparentCycles,
-                     ConsumeWorkFn &&ConsumeWork, bool *AnalysisIncomplete,
+                     const size_t *WorkBudget, ConsumeWorkFn &&ConsumeWork,
+                     bool *AnalysisIncomplete,
                      bool CompareAddressArithmetic = false) {
   bool WorkExhausted = false;
   auto consume = [&](size_t Amount = 1) {
@@ -2669,6 +2670,20 @@ mergeResolverResults(llvm::ArrayRef<ResolverResult> Incoming,
   if (SawCycle && !IgnoreTransparentCycles)
     return resolverInvalid();
   const ResolverValue &Common = *FirstValue;
+  // One value only needs its original self-comparison charge; it cannot use
+  // the child-comparison cache below.
+  if (ValueCount == 1)
+    return consume() ? resolverValue(Common) : resolverInvalid();
+  struct Comparison {
+    const ResolverValueExpr *A = nullptr;
+    const ResolverValueExpr *B = nullptr;
+    size_t Work = 0;
+    unsigned Depth = 0;
+  };
+  using ComparisonTable = std::array<Comparison, 128>;
+  static_assert(sizeof(ComparisonTable) <= 4096);
+  std::unique_ptr<ComparisonTable> Comparisons;
+  unsigned ComparedPairs = 0;
   auto Same = [&](auto &&Self, const ResolverValue &A, const ResolverValue &B,
                   unsigned Depth) -> bool {
     if (Depth > limits::kMaxJumpTableGuardExpressionDepth) {
@@ -2705,11 +2720,34 @@ mergeResolverResults(llvm::ArrayRef<ResolverResult> Incoming,
         A->ScalarModelOrigin != B->ScalarModelOrigin ||
         A->Inputs.size() != B->Inputs.size())
       return false;
+    // Inputs own these immutable nodes for this merge. Reuse only completed
+    // child equality at the same depth, after the ordinary node/root checks.
+    // Small merges keep the ordinary walk without allocating a table.
+    const bool Retain = WorkBudget && (Comparisons || ++ComparedPairs > 16);
+    size_t Slot = 0;
+    size_t WorkBefore = 0;
+    if (Retain) {
+      if (!Comparisons)
+        Comparisons = std::make_unique<ComparisonTable>();
+      Slot = ((reinterpret_cast<uintptr_t>(A.get()) >> 4) ^
+              (reinterpret_cast<uintptr_t>(B.get()) >> 3) ^
+              (uint64_t{Depth} * 2654435761U)) %
+             Comparisons->size();
+      const auto &Saved = (*Comparisons)[Slot];
+      // ConsumeWork debits WorkBudget. Replay the remaining child work,
+      // including on exhaustion; never renew the account.
+      if (Saved.A == A.get() && Saved.B == B.get() && Saved.Depth == Depth)
+        return consume(Saved.Work);
+      WorkBefore = *WorkBudget;
+    }
     if (!Self(Self, A->Input, B->Input, Depth + 1))
       return false;
     for (size_t I = 0; I < A->Inputs.size(); ++I)
       if (!Self(Self, A->Inputs[I], B->Inputs[I], Depth + 1))
         return false;
+    if (Retain && *WorkBudget <= WorkBefore)
+      (*Comparisons)[Slot] = {A.get(), B.get(), WorkBefore - *WorkBudget,
+                              Depth};
     return true;
   };
   if (std::all_of(Incoming.begin(), Incoming.end(),
@@ -7400,8 +7438,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
           break;
         }
         const std::array<ResolverResult, 2> MergeInputs = {Old, Result};
-        Result = mergeResolverResults(MergeInputs, {}, false, consumeEvidence,
-                                      &EvidenceBudgetExhausted);
+        Result =
+            mergeResolverResults(MergeInputs, {}, false, GraphWorkBudget,
+                                 consumeEvidence, &EvidenceBudgetExhausted);
       }
       break;
     }
@@ -7439,7 +7478,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                      consumeEvidence, &EvidenceBudgetExhausted)
                      ? mergeResolverResults(Incoming, MergeRoot.view(),
                                             /*IgnoreTransparentCycles=*/true,
-                                            consumeEvidence,
+                                            GraphWorkBudget, consumeEvidence,
                                             &EvidenceBudgetExhausted)
                      : resolverInvalid();
       }
@@ -7976,10 +8015,10 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
           }
           const std::array<ResolverResult, 2> MergeInputs = {TrueValue,
                                                              FalseValue};
-          ResolverResult Merged =
-              mergeResolverResults(MergeInputs, MergeRoot.view(),
-                                   /*IgnoreTransparentCycles=*/false,
-                                   consumeEvidence, &EvidenceBudgetExhausted);
+          ResolverResult Merged = mergeResolverResults(
+              MergeInputs, MergeRoot.view(),
+              /*IgnoreTransparentCycles=*/false, GraphWorkBudget,
+              consumeEvidence, &EvidenceBudgetExhausted);
           if (Merged.Kind == ResolverResultKind::Value)
             Full = Merged.Value;
         }
@@ -8087,7 +8126,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                   if (Addresses[1].Kind != ResolverResultKind::Value ||
                       mergeResolverResults(Addresses, /*MergeRoot=*/{},
                                            /*IgnoreTransparentCycles=*/false,
-                                           consumeEvidence,
+                                           GraphWorkBudget, consumeEvidence,
                                            &EvidenceBudgetExhausted,
                                            /*CompareAddressArithmetic=*/true)
                               .Kind != ResolverResultKind::Value)
@@ -8298,10 +8337,10 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
           break;
         }
         const std::array<ResolverResult, 2> MergeInputs = {Old, Result};
-        Result =
-            mergeResolverResults(MergeInputs, MergeRoot.view(),
-                                 /*IgnoreTransparentCycles=*/false,
-                                 consumeEvidence, &EvidenceBudgetExhausted);
+        Result = mergeResolverResults(MergeInputs, MergeRoot.view(),
+                                      /*IgnoreTransparentCycles=*/false,
+                                      GraphWorkBudget, consumeEvidence,
+                                      &EvidenceBudgetExhausted);
       }
       break;
     }
@@ -8395,7 +8434,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                                 consumeEvidence, &EvidenceBudgetExhausted)
                 ? mergeResolverResults(Incoming, MergeRoot.view(),
                                        /*IgnoreTransparentCycles=*/true,
-                                       consumeEvidence,
+                                       GraphWorkBudget, consumeEvidence,
                                        &EvidenceBudgetExhausted)
                 : resolverInvalid();
       }
