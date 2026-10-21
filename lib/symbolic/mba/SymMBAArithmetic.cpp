@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Limits.h"
 #include "SymMBADetail.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -308,9 +309,8 @@ public:
         // monomial. Its powers then need copying only once per final term.
         // Keep the scale early so modular zero coefficients still prune work.
         const bool DelayCommon =
-            Powers.size() >= ArithmeticProductLimits::MinCommonAtoms &&
-            PolynomialOperands >=
-                ArithmeticProductLimits::MinPolynomialOperands;
+            Powers.size() >= limits::kMinDelayedCommonAtoms &&
+            PolynomialOperands >= limits::kMinDelayedPolynomialOperands;
         if (!add(P, DelayCommon ? Monomial{} : Key, Scale))
           return nullptr;
         for (SymRef Child : Ctx.operands(R)) {

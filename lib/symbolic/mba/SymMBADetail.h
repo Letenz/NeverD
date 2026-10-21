@@ -49,20 +49,6 @@ namespace neverd::symbolic::detail {
 
 class WorkBudget;
 
-struct LinearTailLimits {
-  static constexpr size_t MaxTerms = 128, MaxNodes = 32;
-  static constexpr unsigned MinProducts = 1, MinDegree = 8, MaxInputs = 3;
-};
-
-struct CompletedProductLimits {
-  static constexpr size_t MinWalkDegree = 16, MaxTerms = 128;
-};
-
-struct ArithmeticProductLimits {
-  static constexpr size_t MinCommonAtoms = 4;
-  static constexpr unsigned MinPolynomialOperands = 2;
-};
-
 //===----------------------------------------------------------------------===//
 // Resolving the public dials
 //===----------------------------------------------------------------------===//

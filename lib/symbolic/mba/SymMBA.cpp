@@ -34,6 +34,7 @@
 
 #include "neverd/symbolic/SymMBA.h"
 
+#include "Limits.h"
 #include "SymMBADetail.h"
 
 #include "neverd/symbolic/SymKnownBits.h"
@@ -887,8 +888,8 @@ namespace {
 // This is a decomposition of the sum, not an independence assumption.
 SymRef simplifyLinearTail(SymContext &Ctx, SymRef Root, const MBAOptions &Opts,
                           WorkBudget &Budget, SolveReport &Rep) {
-  using Limits = LinearTailLimits;
-  if (Ctx.op(Root) != SymOp::Add || Ctx.numOperands(Root) > Limits::MaxTerms ||
+  if (Ctx.op(Root) != SymOp::Add ||
+      Ctx.numOperands(Root) > detail::limits::kMaxLinearTailTerms ||
       Budget.exhausted())
     return Root;
   unsigned Higher = 0, LinearCount = 0;
@@ -904,16 +905,17 @@ SymRef simplifyLinearTail(SymContext &Ctx, SymRef Root, const MBAOptions &Opts,
     if (Ctx.op(Body) == SymOp::Mul) {
       Higher +=
           Ctx.numOperands(Body) - unsigned(Ctx.isConst(Ctx.operand(Body, 0))) >=
-          Limits::MinDegree;
+          detail::limits::kMinLinearTailProductDegree;
     } else {
       const size_t Cost = Ctx.readabilityCost(Body);
-      if (Cost > Limits::MaxNodes - Nodes)
+      if (Cost > detail::limits::kMaxLinearTailNodes - Nodes)
         return Root;
       Nodes += Cost;
       ++LinearCount;
     }
   }
-  if (Higher < Limits::MinProducts || LinearCount < 2)
+  if (Higher < detail::limits::kMinLinearTailProducts ||
+      LinearCount < detail::limits::kMinLinearTailSummands)
     return Root;
   const size_t Count = Ctx.numOperands(Root);
   const size_t Words = (size_t(Ctx.width(Root)) - 1) / 64 + 1;
@@ -943,7 +945,7 @@ SymRef simplifyLinearTail(SymContext &Ctx, SymRef Root, const MBAOptions &Opts,
     if (Ctx.isVar(R)) {
       if (!llvm::is_contained(Inputs, R))
         Inputs.push_back(R);
-      if (Inputs.size() > Limits::MaxInputs)
+      if (Inputs.size() > detail::limits::kMaxLinearTailInputs)
         return Root;
       continue;
     }
@@ -1171,13 +1173,14 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     auto LongProduct = [&](SymRef R) {
       return Ctx.op(R) == SymOp::Mul &&
              Ctx.numOperands(R) - unsigned(Ctx.isConst(Ctx.operand(R, 0))) >=
-                 CompletedProductLimits::MinWalkDegree;
+                 detail::limits::kMinCompletedProductWalkDegree;
     };
     if (ProductCofactors &&
         readingScore(Ctx, WholeAlternative) < readingScore(Ctx, WalkRoot) &&
         (LongProduct(WalkRoot) ||
          (Ctx.op(WalkRoot) == SymOp::Add &&
-          Ctx.numOperands(WalkRoot) <= CompletedProductLimits::MaxTerms &&
+          Ctx.numOperands(WalkRoot) <=
+              detail::limits::kMaxCompletedProductTerms &&
           llvm::any_of(Ctx.operands(WalkRoot), LongProduct))))
       WalkRoot = WholeAlternative;
   }
