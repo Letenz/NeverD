@@ -25,8 +25,13 @@ namespace call_args_detail {
 namespace {
 
 bool preferScannedCallArg(const ExprPtr &Scanned, const ExprPtr &Hinted,
-                          size_t Slot) {
+                          size_t Slot, const TypeRef &Declared) {
   if (!Scanned || Scanned->Kind == ExprKind::Undef)
+    return false;
+  // The declaration fixes the carrier width. The hinted value may itself
+  // be stale (a 32-bit flag left in R8 before a pointer was restored there),
+  // so its type cannot decide whether the scan repaired that argument.
+  if (Scanned->Type && Declared && Scanned->Type->Size != Declared->Size)
     return false;
   if (!Hinted || Hinted->Kind == ExprKind::Undef)
     return true;
@@ -266,11 +271,15 @@ void fillUnwrittenParams(CallArgContext &C, size_t HintedCount, bool SelfCall,
 /// binding's CALL input was clobbered.  An IAT binding can also be short
 /// (`Concatenate` with only dest+a+na): keep recovered r9 / [rsp+20h] that
 /// sit past that prefix.
-void mergeScannedArgs(CallArgContext &C, std::vector<ExprPtr> &Hinted) {
+void mergeScannedArgs(CallArgContext &C, std::vector<ExprPtr> &Hinted,
+                      const SourceFunctionTypeHint &Signature) {
   const std::vector<ExprPtr> &Found = C.Found;
   for (size_t I = 0; I < Hinted.size(); ++I) {
     const ExprPtr Scanned = I < Found.size() ? Found[I] : ExprPtr{};
-    if (preferScannedCallArg(Scanned, Hinted[I], I))
+    const TypeRef Declared = I < Signature.Parameters.size()
+                                 ? Signature.Parameters[I].Type
+                                 : TypeRef{};
+    if (preferScannedCallArg(Scanned, Hinted[I], I, Declared))
       Hinted[I] = Scanned;
   }
   size_t End = Hinted.size();

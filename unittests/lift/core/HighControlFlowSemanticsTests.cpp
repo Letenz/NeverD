@@ -2,6 +2,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/ir/SourceCallABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceFlow.h"
@@ -47,6 +48,95 @@ void eliminateUnusedValues(std::vector<HighStmt> &);
 void narrowUnreadRegisterBytes(HighFunc &, Arch Architecture = Arch::Unknown);
 } // namespace neverd
 using namespace neverd;
+
+TEST(HighControlFlowSemantics, Win64SourceCallsKeepTheirDeclaredCarrierWidths) {
+  // A whole-register scan sees RCX after a write to ECX. The source binding
+  // reads only the bytes its declaration names, including narrow fixed
+  // parameters. Replacing that operand with the whole scan loses its ABI.
+  for (const auto Kind :
+       {SourceCallTypeHint::Kind::Analyst, SourceCallTypeHint::Kind::Native})
+    for (uint16_t Bytes : {1, 2, 4, 8}) {
+      SCOPED_TRACE(static_cast<int>(Kind));
+      SCOPED_TRACE(Bytes);
+      const auto &TRI = getTargetRegInfo(Arch::X64);
+      const uint64_t RCX =
+          TRI.integerArgumentLayout(BinaryFormat::COFF).Registers[0];
+      MedVar Whole;
+      Whole.Kind = MedVar::Reg;
+      Whole.TheArch = Arch::X64;
+      Whole.Id = 1;
+      Whole.RegOff = RCX;
+      Whole.Size = 8;
+      Whole.SSAVer = 1;
+      MedVar Narrow = Whole;
+      Narrow.Id = 2;
+      Narrow.Size = Bytes;
+      MedVar Result = Whole;
+      Result.Id = 3;
+      Result.RegOff = TRI.IntReturnReg;
+
+      auto Hint = std::make_shared<SourceCallTypeHint>();
+      Hint->CallKind = SourceCallTypeHint::Kind::Analyst;
+      Hint->TargetAddress = 0x2000;
+      Hint->AnalystSite =
+          SourceCallOccurrenceKey{0x1008, 2, NdOp::CALL, 0x2000};
+      Hint->Signature.ReturnType = NdType::makeInt(8);
+      Hint->Signature.Parameters = {{"value", NdType::makeInt(Bytes)}};
+      std::string Diagnostic;
+      ASSERT_TRUE(assignAnalystCallABI(*Hint, Arch::X64, BinaryFormat::COFF,
+                                       Diagnostic))
+          << Diagnostic;
+      Hint->CallKind = Kind;
+
+      auto Op = [](NdOp Code, va_t Address, MedVar Output,
+                   std::initializer_list<MedVar> Inputs) {
+        MedOp O;
+        O.Opcode = Code;
+        O.Addr = Address;
+        O.Output = Output;
+        for (const auto &Input : Inputs)
+          O.addInput(Input);
+        return O;
+      };
+      const auto Value = MedVar::makeConst(7, 8);
+      MedBlock Block;
+      Block.Id = 0;
+      Block.StartAddr = 0x1000;
+      Block.EndAddr = 0x1010;
+      Block.Ops = {
+          Op(NdOp::COPY, 0x1000, Whole, {Value}),
+          Op(NdOp::SUBBYTES, 0x1004, Narrow, {Value, MedVar::makeConst(0, 4)}),
+          Op(NdOp::CALL, 0x1008, Result,
+             {MedVar::makeConst(0x2000, 8), Narrow}),
+          Op(NdOp::RETURN, 0x100c, {}, {Result})};
+      Block.Ops[1].OriginSeq = -1;
+      Block.Ops[2].SourceCallHint = Hint;
+      MedFunc Med;
+      Med.Entry = Block.StartAddr;
+      Med.Name = "typed_win64_call";
+      Med.ReturnType = Hint->Signature.ReturnType;
+      Med.Blocks = {Block};
+      BinaryImage Image;
+      Image.Arch = Arch::X64;
+      Image.Format = BinaryFormat::COFF;
+      MedToHighConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto High = Converter.convert(Med, Arch::X64);
+      unsigned Calls = 0;
+      walkStmts(High.Body, [&](const HighStmt &Statement) {
+        forEachExpr(Statement, [&](const ExprPtr &Expression) {
+          if (!Expression || Expression->Kind != ExprKind::Call ||
+              Expression->CallAddr != Hint->TargetAddress)
+            return;
+          ++Calls;
+          ASSERT_EQ(Expression->Operands.size(), 1u);
+          ASSERT_TRUE(Expression->Operands[0]->Type);
+          EXPECT_EQ(Expression->Operands[0]->Type->Size, Bytes);
+        });
+      });
+      EXPECT_EQ(Calls, 1u);
+    }
+}
 
 TEST(HighControlFlowSemantics, CalleeNameSnapshotKeepsLookupPrecedence) {
   BinaryImage Img;
