@@ -44672,6 +44672,28 @@ TEST(HighCPointerAddresses, FlatFillsAndCopiesAreTheLibraryRoutines) {
   }
 }
 
+TEST(HighCPointerAddresses, StackProbesLeaveNoSelfAssignment) {
+  // A large frame's probe, `or qword [rsp], 0`, writes back the bytes it
+  // read: C has nothing to do there.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x48, 0x81, 0xec, 0x08, 0x10, 0x00, 0x00, // sub rsp, 0x1008
+      0x48, 0x83, 0x0c, 0x24, 0x00,             // or qword ptr [rsp], 0
+      0x48, 0x8b, 0x44, 0x24, 0x08,             // mov rax, [rsp + 8]
+      0x48, 0x81, 0xc4, 0x08, 0x10, 0x00, 0x00, // add rsp, 0x1008
+      0xc3};                                    // ret
+  for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF}) {
+    SCOPED_TRACE(static_cast<int>(Format));
+    BinaryImage Img = makeCodeFixture(Entry, Code);
+    Img.Format = Format;
+    const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+    ASSERT_NE(HighC.find("return"), std::string::npos) << HighC;
+    EXPECT_FALSE(
+        std::regex_search(HighC, std::regex(R"((^|[^\w.])([\w.]+) = \2;)")))
+        << HighC;
+  }
+}
+
 TEST(HighCPointerAddresses, RepeatedCpuidAndRdtscDoNotRedeclareLocals) {
   // KiDetectHardwareFeatures-style code runs CPUID and RDTSC more than once.
   // Each expansion declares its scratch local, so it needs its own scope.

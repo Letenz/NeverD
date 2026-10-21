@@ -247,6 +247,57 @@ static bool isSelfAssign(const HighStmt &S) {
   return VK(S.Dst->Var) == VK(S.Val->Var);
 }
 
+/// Whether \p E reads the local \p Key.
+static bool readsLocal(const HighExpr &E, const VarKey &Key, unsigned Depth) {
+  if (Depth > 64)
+    return true;
+  if (isLocalExpr(E) && VK(E.Var) == Key)
+    return true;
+  bool Reads = false;
+  E.forEachChildExpr([&](const ExprPtr &Child) {
+    Reads = Reads || (Child && readsLocal(*Child, Key, Depth + 1));
+  });
+  return Reads;
+}
+
+/// Whether \p Store writes back, unchanged, the bytes \p Load, the statement
+/// before it, read from the same address: `t = *(A); *(A) = t;`, as a stack
+/// probe (`or [rsp], 0`) lifts.  The address names the same bytes at both
+/// unless it reads t.  Atomic and non-default memory keeps the access.
+static bool restoresLoadedBytes(const HighStmt &Load, const HighStmt &Store) {
+  if (Load.Kind != StmtKind::Assign || !Load.Dst || !Load.Val ||
+      !isLocalExpr(*Load.Dst) || !Load.Dst->Type ||
+      Store.MemoryOrdering != NdMemoryOrdering::None ||
+      Store.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const HighExpr &Read = *Load.Val;
+  if (Read.Kind != ExprKind::Load || Read.Operands.size() != 1 ||
+      !Read.Operands[0] || !Read.Type ||
+      Read.Type->Size != Load.Dst->Type->Size ||
+      Read.MemoryOrdering != NdMemoryOrdering::None ||
+      Read.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const HighExpr *Address = nullptr, *Value = nullptr, *Written = nullptr;
+  if (Store.Kind == StmtKind::Store) {
+    Address = Store.StoreAddr.get();
+    Value = Written = Store.StoreVal.get();
+  } else if (Store.Kind == StmtKind::Assign && Store.Dst && Store.Val &&
+             Store.Dst->Kind == ExprKind::Load &&
+             Store.Dst->Operands.size() == 1 &&
+             Store.Dst->MemoryOrdering == NdMemoryOrdering::None &&
+             Store.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+    // An assignment to memory names its destination as a load of it.
+    Address = Store.Dst->Operands[0].get();
+    Value = Store.Val.get();
+    Written = Store.Dst.get();
+  }
+  const VarKey Loaded = VK(Load.Dst->Var);
+  return Address && Value && Written && Written->Type &&
+         Written->Type->Size == Read.Type->Size && isLocalExpr(*Value) &&
+         VK(Value->Var) == Loaded && !readsLocal(*Address, Loaded, 0) &&
+         Read.Operands[0]->structuralEq(*Address);
+}
+
 static std::unordered_set<va_t>
 referencedStatementEntries(const std::vector<HighStmt> &Stmts) {
   std::unordered_set<va_t> Entries;
@@ -272,6 +323,23 @@ static bool eliminateDeadAssigns(std::vector<HighStmt> &Stmts,
                                  const std::unordered_set<va_t> &Entries,
                                  const AssignmentEffects &Effects) {
   bool Changed = false;
+  // A store of what the statement before it read leaves memory as it was.
+  // The load holds the instruction's place; a store at its own branch entry
+  // leaves an empty block there.  The load is dead once nothing else reads
+  // its value.
+  for (size_t I = 1; I < Stmts.size(); ++I) {
+    if (!restoresLoadedBytes(Stmts[I - 1], Stmts[I]))
+      continue;
+    const va_t Entry = Stmts[I].Addr;
+    if (Entry != Stmts[I - 1].Addr && Entries.count(Entry)) {
+      Stmts[I] = HighStmt{};
+      Stmts[I].Kind = StmtKind::Block;
+      Stmts[I].Addr = Entry;
+    } else {
+      Stmts.erase(Stmts.begin() + I--);
+    }
+    Changed = true;
+  }
   if (!Entries.empty()) {
     for (size_t I = 0; I < Stmts.size();) {
       const size_t First = I++;
