@@ -826,7 +826,10 @@ writers read it, so that a caller returning what a `void` routine left in
 RAX returns nothing too. A routine never returns where its name says so, as
 the tables (`isNoReturnFunction`) or a `_Noreturn` prototype
 (`resolvePrototype`) do: an import, a symbol, or an export the image's own
-code calls (`NoReturnTargetIndex`). Function discovery reads no header, so
+code calls (`NoReturnTargetIndex`). Its cached and demand-loaded lookups share
+the image's executable-veneer admission, exact IAT precedence and first
+non-section symbol rule; unregistered x86 thunks and tagged Thumb entries
+resolve through the same veneer owner. Function discovery reads no header, so
 the tables hold every routine a header library declares `_Noreturn`, as the
 SDK's `ExitProcess`, and its decode probe stops at a call through the import
 slot of one, as the CFG builder does. A whole program's output
@@ -880,6 +883,9 @@ pass the first argument in the result register, so the bare `ret` beside the
 tail call of `if (b) return g(b); return a;` returns `a`. Whether the
 function returns a value at all stays with the return contracts
 (`settleReturnContracts`).
+An absent ordinary RETURN does not establish a void result. The shared
+no-return proof must also close exceptional paths; an external catch funclet
+can still supply the parent's value when its source body is attached later.
 
 A unit's member access names a member only where the access reads it
 (`NdType::displayFieldIndexAt`): a field of the access's width, a scalar's
@@ -7565,6 +7571,12 @@ pointers). The layer places them past the object's sections in a writable
 there and data a symbol; a weak reference takes no address, since the null test
 its code makes is the program's.
 
+`ObjectExterns` also records each undefined callable identity in
+`BinaryImage::ObjectExternFunctionEntries`. CFG recovery uses that provenance
+for direct external tail calls in relocatable objects without admitting the
+extern storage as executable code. An IAT address or function symbol alone
+does not grant this exception.
+
 <a id="support-and-test-depth"></a>
 
 ### Support and test depth
@@ -9221,6 +9233,10 @@ and validation remain strict by default; only the private source emitter opts
 into occurrence-specific call types. A policy that cannot prove every required
 carrier reports refusal instead of manufacturing operands or changing the
 original analysis.
+
+HighIR consumes the proved analyst call operands directly. Platform heuristics
+for incomplete imported-call signatures cannot replace those carriers with
+wider register values or append arguments beyond the selected declaration.
 
 Stack-frame policies use the same private source variant. `SourceStackFrame`
 owns bounded entry-relative offsets, full temporary lifetimes and admission

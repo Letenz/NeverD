@@ -1454,6 +1454,11 @@ add_neverd_unittest(NeverDWindowsEHMetadataEncoderTests
   WindowsEHMetadata
 )
 
+add_neverd_unittest(NeverDReturnContractTests
+  core/ReturnContractTests.cpp
+  LINK_COMPONENTS Pipeline
+)
+
 add_neverd_unittest(NeverDNoReturnTests
   core/MedNoReturnTests.cpp
   core/InternalNoReturnTests.cpp

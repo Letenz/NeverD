@@ -336,6 +336,12 @@ bool CFGBuilder::isTailCallTarget(va_t Target,
                                   bool IncludeBoundaryGuesses) const {
   if (Target == InvalidVA || Target == CurrentFuncEntry)
     return false;
+  // ObjectExterns owns undefined callable identities separately from executable
+  // veneers and IAT storage. A relocated direct branch to one is an external
+  // tail call even though no instruction bytes are allocated for that callee.
+  if (CurrentImg && CurrentImg->IsRelocatable &&
+      CurrentImg->ObjectExternFunctionEntries.count(Target))
+    return true;
   if (CurrentImg && !CurrentImg->isFunctionEntryCandidateAt(Target))
     return false;
   // A selected-function run may omit other function symbols from its work

@@ -568,6 +568,10 @@ struct BinaryImage {
   /// slot, historically a Mach-O stub); recording another executable spelling
   /// of the import must never repurpose that field.
   std::map<va_t, size_t> ImportStubIndices;
+  /// Callable identities synthesized for undefined functions of relocatable
+  /// objects by ObjectExterns. Their extern storage is not executable code or
+  /// an IAT pointer slot, but a relocated direct branch may tail-call them.
+  std::set<va_t> ObjectExternFunctionEntries;
   /// Half-open executable intervals occupied by linker/dynamic-loader import
   /// machinery whose individual entries may not be recoverable (ELF PLT
   /// families, Mach-O symbol stubs and stub helper).

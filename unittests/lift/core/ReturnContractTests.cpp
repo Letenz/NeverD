@@ -319,6 +319,23 @@ TEST(ReturnContracts, AFunctionThatNeverReturnsReturnsNoValue) {
             std::vector<bool>{true});
 }
 
+TEST(ReturnContracts, MissingOrdinaryReturnsDoNotEraseExceptionalResults) {
+  MedOp Throw = callTo(0x3000, 1);
+  Throw.DoesNotReturn = true;
+  MedFunc Parent = function(CalleeEntry, {block({seed(), Throw})});
+  // The catch body and its parent continuation are not ordinary blocks in
+  // this snapshot. Its physical no-return call can still dispatch to them.
+  Parent.Blocks.front().ExceptionalSuccs.push_back({-1});
+  EXPECT_EQ(settle({Parent}, BinaryFormat::COFF), std::vector<bool>{false});
+
+  MedFunc Unresolved = function(CalleeEntry, {block({seed()})});
+  EXPECT_EQ(settle({Unresolved}), std::vector<bool>{false});
+
+  // An independently proved termination still returns no value.
+  Parent.Blocks.front().ExceptionalSuccs.clear();
+  EXPECT_EQ(settle({Parent}, BinaryFormat::COFF), std::vector<bool>{true});
+}
+
 TEST(ReturnContracts, AWrapperOfADestructorReturnsNoValue) {
   // MSVC's destructor decoration declares no return type.  A function that
   // only hands back what the destructor left in RAX returns nothing; one

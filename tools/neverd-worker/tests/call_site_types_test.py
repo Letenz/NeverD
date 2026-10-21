@@ -207,6 +207,33 @@ int main(void) { return start() != 7 || errors; }
                     for route in ("c", "llvmc"):
                         result = source(client, route, 0x140001000)
                         assert result["call_type_results"][0]["applied"] and "0x17" in result["text"], result
+                        if compiler:
+                            execute_source(root, result["text"], "win64-" + route, compiler, """
+#include <stdint.h>
+#include <stdarg.h>
+#if MS_ABI_CALL && !defined(_WIN32) && (defined(__x86_64__) || defined(__aarch64__))
+#define CALLEE_ABI __attribute__((ms_abi))
+#define va_list __builtin_ms_va_list
+#undef va_start
+#define va_start(ap, last) __builtin_ms_va_start(ap, last)
+#undef va_end
+#define va_end(ap) __builtin_ms_va_end(ap)
+#else
+#define CALLEE_ABI
+#endif
+extern START_RESULT start(void);
+static unsigned calls, errors;
+uint64_t CALLEE_ABI sub_140001040(uint32_t first, ...) {
+  const unsigned expected[] = { 11, 13, 17, 23 };
+  va_list ap; va_start(ap, first);
+  ++calls; errors += first != 7;
+  for (unsigned i = 0; i != 4; ++i)
+    errors += va_arg(ap, unsigned) != expected[i];
+  va_end(ap); return first;
+}
+int main(void) { return start() != 7 || calls != 1 || errors; }
+""".replace("START_RESULT", "int64_t" if route == "c" else "uint64_t")
+                               .replace("MS_ABI_CALL", "0" if route == "c" else "1"))
                     # A complete declaration also fixes the operand count.
                     # Other registers and stack bytes set at this call do
                     # not extend a shorter, explicitly declared signature.

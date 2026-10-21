@@ -32,9 +32,9 @@ using neverd::worker::parseAddress;
 
 namespace project_files = neverd::project_files;
 /// A project file of the input at \p input, as the engine keeps it.
-static std::string projectFile(const std::string &input,
-                               project_files::File file) {
-  return project_files::path(input, file).string();
+static std::filesystem::path projectFile(const std::string &input,
+                                         project_files::File file) {
+  return project_files::path(std::filesystem::u8path(input), file);
 }
 
 namespace {
@@ -165,7 +165,7 @@ const char *copy(std::string value) {
   std::memcpy(result, value.c_str(), value.size() + 1);
   return result;
 }
-Json read(const std::string &path) {
+Json read(const std::filesystem::path &path) {
   std::ifstream input(path);
   if (!input)
     return Json::array();
@@ -193,7 +193,7 @@ constexpr char FixturePdbKey[] = "123456789ABCDEF0123456789ABCDEF01";
 constexpr char FixturePdbBytes[] = "matching fixture PDB";
 
 bool symbolsFixture(const std::filesystem::path &input) {
-  const auto name = input.filename().string();
+  const auto name = input.filename();
   return name == "symbols-missing.bin" || name == "symbols-local.bin";
 }
 
@@ -207,7 +207,7 @@ std::filesystem::path fixtureStorePdb(const std::filesystem::path &input) {
 /// dwarf-embedded.bin carries DWARF in its own sections; dwarf-split.bin
 /// has it in the .debug file beside it, when the test writes one.
 bool dwarfFixture(const std::filesystem::path &input) {
-  const auto name = input.filename().string();
+  const auto name = input.filename();
   return name == "dwarf-embedded.bin" || name == "dwarf-split.bin";
 }
 
@@ -406,7 +406,7 @@ int neverd_session_load(neverd_session_t s, const char *path) {
     return 0;
   }
   session(s)->path = path;
-  project_files::migrate(path);
+  project_files::migrate(std::filesystem::u8path(path));
   session(s)->loadedWith =
       session(s)->requestedLoad.is_null()
           ? read(projectFile(path, project_files::File::Load))
@@ -439,7 +439,7 @@ int neverd_session_is_loaded(neverd_session_t s) {
 }
 int neverd_apply_signature_file(neverd_session_t s, const char *path) {
   session(s)->error.clear();
-  if (!std::ifstream(path)) {
+  if (!std::ifstream(std::filesystem::u8path(path))) {
     session(s)->error = "mock signature file is missing";
     return -1;
   }
@@ -646,7 +646,8 @@ int neverd_session_load_pdb(neverd_session_t s, const char *path) {
 // Deterministic fixture-only identity. The real engine uses SHA-256; the
 // production real-engine test verifies that digest against Python hashlib.
 std::string fixtureDigest(neverd_session_t s) {
-  std::ifstream input(session(s)->path, std::ios::binary);
+  std::ifstream input(std::filesystem::u8path(session(s)->path),
+                      std::ios::binary);
   std::uint64_t value = 1469598103934665603ULL;
   char byte;
   while (input.get(byte)) {
@@ -1459,7 +1460,7 @@ int neverd_type_declarations_load(neverd_session_t s) {
   state.error.clear();
   Json declarations = Json::array();
   const auto file = neverd::project_files::path(
-      std::filesystem::path(state.path), neverd::project_files::File::Types);
+      std::filesystem::u8path(state.path), neverd::project_files::File::Types);
   if (std::filesystem::exists(file)) {
     std::ifstream input(file, std::ios::binary);
     declarations = Json::parse(input, nullptr, false);
@@ -1574,7 +1575,7 @@ int neverd_type_libraries_load(neverd_session_t s) {
   state.error.clear();
   Json choice = {{"added", Json::array()}, {"removed", Json::array()}};
   const auto file =
-      neverd::project_files::path(std::filesystem::path(state.path),
+      neverd::project_files::path(std::filesystem::u8path(state.path),
                                   neverd::project_files::File::TypeLibraries);
   if (std::filesystem::exists(file)) {
     std::ifstream input(file, std::ios::binary);

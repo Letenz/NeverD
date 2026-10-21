@@ -145,6 +145,14 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
     set_tests_properties(NeverDWorkerFunctionalRegressions PROPERTIES TIMEOUT 60)
     option(NEVERD_WORKER_REAL_ENGINE_TESTS "Run smoke tests against the real engine" ON)
     if(NEVERD_WORKER_REAL_ENGINE_TESTS)
+      # Generated C uses Clang C extensions, including scalar bit casts.
+      # Match the native unit fixtures' frontend when the SDK is built by cl.
+      set(_neverd_worker_source_cc "${CMAKE_C_COMPILER}")
+      if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+        find_program(_neverd_worker_source_clang NAMES clang
+          HINTS "${LLVM_TOOLS_BINARY_DIR}" REQUIRED)
+        set(_neverd_worker_source_cc "${_neverd_worker_source_clang}")
+      endif()
       add_test(NAME NeverDWorkerNativeMakeCode
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/make_code_test.py"
                 "$<TARGET_FILE:neverd-worker>" --real)
@@ -171,19 +179,19 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
       set_tests_properties(NeverDWorkerLocalTypes PROPERTIES TIMEOUT 90)
       add_test(NAME NeverDWorkerSourceVariableTypes
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/source_variable_types_test.py"
-                "$<TARGET_FILE:neverd-worker>" --cc "${CMAKE_C_COMPILER}")
+                "$<TARGET_FILE:neverd-worker>" --cc "${_neverd_worker_source_cc}")
       set_tests_properties(NeverDWorkerSourceVariableTypes PROPERTIES TIMEOUT 120)
       add_test(NAME NeverDWorkerSourceVariableEdits
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/source_variable_edits_test.py" $<TARGET_FILE:neverd-worker> --cc "${CMAKE_C_COMPILER}")
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/source_variable_edits_test.py" $<TARGET_FILE:neverd-worker> --cc "${_neverd_worker_source_cc}")
       set_tests_properties(NeverDWorkerSourceVariableEdits PROPERTIES TIMEOUT 120)
       add_test(NAME NeverDWorkerDataPresentation
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_presentation_test.py" $<TARGET_FILE:neverd-worker>)
         set_tests_properties(NeverDWorkerDataPresentation PROPERTIES TIMEOUT 90)
       add_test(NAME NeverDWorkerStackFrame
-          COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/stack_frame_test.py" $<TARGET_FILE:neverd-worker> --cc "${CMAKE_C_COMPILER}")
+          COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/stack_frame_test.py" $<TARGET_FILE:neverd-worker> --cc "${_neverd_worker_source_cc}")
       set_tests_properties(NeverDWorkerStackFrame PROPERTIES TIMEOUT 120)
       add_test(NAME NeverDWorkerCallSiteTypes
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/call_site_types_test.py" $<TARGET_FILE:neverd-worker> --cc "${CMAKE_C_COMPILER}")
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/call_site_types_test.py" $<TARGET_FILE:neverd-worker> --cc "${_neverd_worker_source_cc}")
       set_tests_properties(NeverDWorkerCallSiteTypes PROPERTIES TIMEOUT 180)
       add_test(NAME NeverDWorkerDwarfReference
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/dwarf_reference_test.py"
@@ -266,7 +274,7 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
         set_tests_properties(NeverDWorkerCLIInstructionFlow PROPERTIES TIMEOUT 120)
         add_test(NAME NeverDWorkerCLIStackFrame
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/stack_frame_cli_test.py"
-                  "$<TARGET_FILE:neverd-worker>" "${_neverd_worker_test_cli}" --cc "${CMAKE_C_COMPILER}")
+                  "$<TARGET_FILE:neverd-worker>" "${_neverd_worker_test_cli}" --cc "${_neverd_worker_source_cc}")
         set_tests_properties(NeverDWorkerCLIStackFrame PROPERTIES TIMEOUT 180)
         add_test(NAME NeverDWorkerCLIWriterLock
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_writer_lock_test.py"

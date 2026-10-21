@@ -1002,6 +1002,9 @@ to a disposable project, edit the real output through native widgets, and
 verify persistence. `NEVERD_CODE_NAV_CAPTURE_DIR` saves window captures.
 Run `neverd-gui-tests` directly with the native Qt platform to exercise native
 widgets; CTest sets the controller's platform to `offscreen`.
+On Windows, point `QT_QPA_FONTDIR` at `%WINDIR%/Fonts` for offscreen runs,
+as desktop CI does. That plugin uses FreeType and needs an explicit font
+directory to measure translated text with real glyphs.
 
 `NeverDWorkerCLIDataPresentation` checks CLI/GUI array, alignment and enum
 parity against a real engine: identical sidecars, listing display, native IR
@@ -1024,6 +1027,10 @@ stack slot/SP edits. It is registered only with
 `NEVERD_WORKER_REAL_ENGINE_TESTS=ON`; fixture SDK builds keep it disabled.
 `NeverDWorkerSourceVariableTypes` and `NeverDWorkerSourceVariableEdits` also
 compile and execute their generated C using the configured C compiler.
+When the SDK is built with MSVC, these worker execution fixtures use Clang,
+like the native unit fixtures, because generated C uses Clang C extensions.
+The same compiler selection applies to the worker stack-frame and call-site
+execution fixtures.
 Run these with `NeverDSourceVariableFlowTests`, `NeverDHighVariableEditsTests`
 and `NeverDLLVMVariableEditsTests`. The HighIR tests preserve instruction
 anchors for unchanged statements and refuse old store anchors when a split
@@ -1040,6 +1047,20 @@ recovery, lost storage, invalid options and output preservation. Build `neverd`,
 `ctest --test-dir build-release -R 'SourceStackFrame|Worker.*StackFrame' --output-on-failure`.
 
 ## Source dialects and DWARF ingestion
+
+`IsNoReturnTarget.*` checks cached/live lookup parity for exact IAT precedence,
+invalid veneer ownership, continuation/data boundaries, alignment, tagged
+Thumb addresses, unregistered x86 veneers and section-symbol aliases.
+`ObjectExterns.*` checks direct external tail calls across ELF, Mach-O and COFF
+and rejects treating ordinary data/IAT slots as synthetic object callees.
+`NeverDWorkerCallSiteTypes` compiles and executes both C routes, including all
+five Win64 variadic integer arguments, and retains partial-stack-write refusal.
+`NeverDReturnContractTests` requires the shared no-return proof before an absent
+ordinary return can erase a function's result, including an external catch
+edge. Native pipeline CI executes the complete owner on each compiler.
+Run these with pipeline, session and image-boundary suites after changing
+shared import or source-call ownership. Native platform skips retain their
+own runner requirements.
 
 The main CI matrix installs Rust 1.93.1 and Go 1.27.2, records their versions,
 and uses its built CLI to emit HighC and LLVMC for small x64/AArch64 ELF inputs.

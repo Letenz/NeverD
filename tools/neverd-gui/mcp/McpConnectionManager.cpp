@@ -19,7 +19,12 @@ McpConnectionManager::McpConnectionManager(QObject *parent) : QObject(parent) {
   connect(&process_, &QProcess::started, this,
           &McpConnectionManager::initialize);
   connect(&process_, &QProcess::readyReadStandardOutput, this, [this] {
-    input_ += process_.readAllStandardOutput();
+    const auto chunk = process_.readAllStandardOutput();
+    // A stopped console process may still have buffered stdout. The first
+    // protocol failure stays authoritative while those bytes are drained.
+    if (stopping_)
+      return;
+    input_ += chunk;
     if (input_.size() > MaxMessage) {
       failSource(QT_TR_NOOP("MCP message exceeds 8 MiB"));
       return;

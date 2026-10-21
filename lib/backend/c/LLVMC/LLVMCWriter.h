@@ -816,6 +816,7 @@ public:
   /// functions can nest the listing inside `#if 0` of the trap stub.
   bool EmitFunctionWrapper = true;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
+  std::string Win64CallABI;
   std::map<std::pair<Intrinsic, unsigned>, std::string> FPStateHelperNames;
   /// The helper each modeled supervisor call in the unit prints through.
   std::map<Intrinsic, std::string> SyscallHelperNames;

@@ -42112,7 +42112,11 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86FilterThunksPrintTheirValue) {
   const std::string Source = highcOnlyFunction(std::move(*Img), Entry);
   bool ReadsTheLocal = false;
   for (llvm::StringRef Line : llvm::split(Source, '\n'))
-    ReadsTheLocal |= Line.ends_with("__except (stack_storage.var_m20) {");
+    // The filter result is a signed 32-bit value; a uint32_t frame carrier
+    // needs the cast to retain EXCEPTION_CONTINUE_EXECUTION (-1).
+    ReadsTheLocal |=
+        Line.ends_with("__except (stack_storage.var_m20) {") ||
+        Line.ends_with("__except ((int32_t)stack_storage.var_m20) {");
   EXPECT_TRUE(ReadsTheLocal) << Source;
   // 0x4029BD is `mov eax, 1; ret`, 0x401683 the frame read.
   EXPECT_EQ(Source.find("sub_4029BD"), std::string::npos) << Source;

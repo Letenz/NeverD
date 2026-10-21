@@ -1014,12 +1014,16 @@ struct MachOPatchTransactionFixture {
 };
 
 MachOPatchTransactionFixture
-makeMachOPatchTransactionFixture(size_t CompactCapacity) {
+makeMachOPatchTransactionFixture(size_t CompactCapacity,
+                                 Arch Architecture = Arch::AArch64) {
   using namespace llvm::MachO;
 
   MachOPatchTransactionFixture Fixture;
   Fixture.OriginalCompact = makeRawOriginal(
-      {{kTransactionTextOff, macho_unwind::kARM64ModeFrame, std::nullopt}},
+      {{kTransactionTextOff,
+        Architecture == Arch::X64 ? macho_unwind::kX86_64ModeStackImmediate
+                                  : macho_unwind::kARM64ModeFrame,
+        std::nullopt}},
       kTransactionTextOff + kTransactionTextSize);
   if (CompactCapacity < Fixture.OriginalCompact.OriginalBytes.size() ||
       CompactCapacity > kTransactionTextSegmentSize - kTransactionUnwindOff) {
@@ -1043,8 +1047,10 @@ makeMachOPatchTransactionFixture(size_t CompactCapacity) {
 
   auto *Header = reinterpret_cast<mach_header_64 *>(Fixture.Binary.data());
   Header->magic = MH_MAGIC_64;
-  Header->cputype = CPU_TYPE_ARM64;
-  Header->cpusubtype = CPU_SUBTYPE_ARM64_ALL;
+  Header->cputype =
+      Architecture == Arch::X64 ? CPU_TYPE_X86_64 : CPU_TYPE_ARM64;
+  Header->cpusubtype = Architecture == Arch::X64 ? CPU_SUBTYPE_X86_64_ALL
+                                                 : CPU_SUBTYPE_ARM64_ALL;
   Header->filetype = MH_EXECUTE;
   Header->ncmds = 5;
   Header->sizeofcmds = CommandSize;
@@ -1145,9 +1151,15 @@ makeMachOPatchTransactionFixture(size_t CompactCapacity) {
   Dysymtab->indirectsymoff = kTransactionIndirectTableOff;
   Dysymtab->nindirectsyms = 2;
 
-  for (uint32_t Off = kTransactionTextOff;
-       Off < kTransactionTextOff + kTransactionTextSize; Off += 4)
-    llvm::support::endian::write32le(Fixture.Binary.data() + Off, 0xd503201f);
+  if (Architecture == Arch::X64) {
+    std::fill_n(Fixture.Binary.begin() + kTransactionTextOff,
+                kTransactionTextSize, 0x90);
+    Fixture.Binary[kTransactionTextOff + kTransactionTextSize - 1] = 0xc3;
+  } else {
+    for (uint32_t Off = kTransactionTextOff;
+         Off < kTransactionTextOff + kTransactionTextSize; Off += 4)
+      llvm::support::endian::write32le(Fixture.Binary.data() + Off, 0xd503201f);
+  }
   std::fill(Fixture.Binary.begin() + kTransactionUnwindOff,
             Fixture.Binary.begin() + kTransactionUnwindOff + CompactCapacity,
             0xa5);
@@ -1189,7 +1201,7 @@ makeMachOPatchTransactionFixture(size_t CompactCapacity) {
       INDIRECT_SYMBOL_LOCAL);
 
   Fixture.Image.Format = BinaryFormat::MachO;
-  Fixture.Image.Arch = Arch::AArch64;
+  Fixture.Image.Arch = Architecture;
   Fixture.Image.Bits = Bitness::Bits64;
   Fixture.Image.Base = kImageBase;
   Fixture.Image.Raw = Fixture.Binary;
@@ -4457,9 +4469,15 @@ TEST(MachOPatchTransaction,
 TEST(MachOPatchTransaction,
      PreservedExactNoOpPublishesNoInstalledOriginalEntries) {
   MachOPatchTransactionFixture Fixture =
-      makeMachOPatchTransactionFixture(/*CompactCapacity=*/0x2000);
+      makeMachOPatchTransactionFixture(/*CompactCapacity=*/0x2000, Arch::X64);
   ASSERT_FALSE(Fixture.Binary.empty());
+  // x64's five-byte branch overlaps a valid entry at +1. An ARM64 branch is
+  // one four-byte instruction and has no aligned interior entry to protect.
   Fixture.Image.VerifiedFunctionEntries.insert(kTransactionFunctionVA + 1);
+  ASSERT_TRUE(Fixture.Image.hasAuthenticatedFunctionEntryAt(
+      kTransactionFunctionVA + 1));
+  ASSERT_FALSE(
+      sourceEntryCanHostTrampoline(Fixture.Image, kTransactionFunctionVA));
 
   llvm::SmallString<128> InputPath;
   llvm::SmallString<128> OutputPath;
@@ -4476,7 +4494,7 @@ TEST(MachOPatchTransaction,
   MachOPatcher Patcher;
   Patcher.setImageContext(&Fixture.Image);
   PatchResult Result = Patcher.patch(
-      InputPath.str().str(), OutputPath.str().str(), *Module, Arch::AArch64);
+      InputPath.str().str(), OutputPath.str().str(), *Module, Arch::X64);
 
   ASSERT_TRUE(Result.Success);
   EXPECT_EQ(Result.TrampolineCount, 0u);

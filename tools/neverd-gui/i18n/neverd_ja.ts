@@ -975,6 +975,94 @@
         <source>Set call type...</source>
         <translation>呼び出しの型を設定...</translation>
     </message>
+    <message>
+        <source>Change stack pointer...</source>
+        <translation>スタックポインターを変更...</translation>
+    </message>
+    <message>
+        <source>Correct the entry-relative SP after this instruction</source>
+        <translation>この命令の実行後の SP を関数入口からの相対値で修正</translation>
+    </message>
+    <message>
+        <source>Define a bounded array of typed elements</source>
+        <translation>型付き要素の範囲が限定された配列を定義</translation>
+    </message>
+    <message>
+        <source>Enum operand...</source>
+        <translation>列挙型オペランド...</translation>
+    </message>
+    <message>
+        <source>Immediate...</source>
+        <translation>即値...</translation>
+    </message>
+    <message>
+        <source>Inspect and correct local stack variables</source>
+        <translation>ローカルスタック変数を確認して修正</translation>
+    </message>
+    <message>
+        <source>Inspect the proven static value before this instruction</source>
+        <translation>この命令の実行前に証明された静的値を確認</translation>
+    </message>
+    <message>
+        <source>List reaching physical register definitions</source>
+        <translation>この位置に到達する物理レジスターの定義を一覧表示</translation>
+    </message>
+    <message>
+        <source>List uses of the register value after this instruction</source>
+        <translation>この命令の実行後のレジスター値の使用箇所を一覧表示</translation>
+    </message>
+    <message>
+        <source>Make alignment...</source>
+        <translation>アラインメントを作成...</translation>
+    </message>
+    <message>
+        <source>Make array...</source>
+        <translation>配列を作成...</translation>
+    </message>
+    <message>
+        <source>Mark padding ending on an alignment boundary</source>
+        <translation>アラインメント境界で終わるパディングをマーク</translation>
+    </message>
+    <message>
+        <source>Name a proven stack operand without changing its address</source>
+        <translation>証明されたスタックオペランドにアドレスを変更せず名前を付ける</translation>
+    </message>
+    <message>
+        <source>Next immediate</source>
+        <translation>次の即値</translation>
+    </message>
+    <message>
+        <source>Register definitions...</source>
+        <translation>レジスターの定義...</translation>
+    </message>
+    <message>
+        <source>Register uses...</source>
+        <translation>レジスターの使用箇所...</translation>
+    </message>
+    <message>
+        <source>Repeat the immediate search</source>
+        <translation>即値の検索を繰り返す</translation>
+    </message>
+    <message>
+        <source>Search decoded executable instructions for an immediate</source>
+        <translation>デコード済みの実行可能命令から即値を検索</translation>
+    </message>
+    <message>
+        <source>Show an immediate as enumeration members or flags</source>
+        <translation>即値を列挙型のメンバーまたはフラグとして表示</translation>
+    </message>
+    <message>
+        <source>Stack variable operand...</source>
+        <translation>スタック変数オペランド...</translation>
+    </message>
+    <message>
+        <source>Stack variables...</source>
+        <translation>スタック変数...</translation>
+    </message>
+    <message>
+        <source>Static register value...</source>
+        <translation>レジスターの静的値...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2599,6 +2687,146 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>indirect call</source>
         <translation>間接呼び出し</translation>
+    </message>
+    <message>
+        <source>. Reset the obsolete corrections before editing.</source>
+        <translation>。編集する前に古い修正をリセットしてください。</translation>
+    </message>
+    <message>
+        <source>Absolute offset after instruction, relative to entry SP</source>
+        <translation>命令実行後の絶対オフセット（関数入口の SP を基準）</translation>
+    </message>
+    <message>
+        <source>Address: %1</source>
+        <translation>アドレス: %1</translation>
+    </message>
+    <message>
+        <source>Alignment boundary (the marked span ends on this boundary):</source>
+        <translation>アラインメント境界（マークする範囲はこの境界で終了）:</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>バイト</translation>
+    </message>
+    <message>
+        <source>C type (optional)</source>
+        <translation>C 型（任意）</translation>
+    </message>
+    <message>
+        <source>Change stack pointer</source>
+        <translation>スタックポインターを変更</translation>
+    </message>
+    <message>
+        <source>Combine bit flags; preserve unknown bits numerically</source>
+        <translation>ビットフラグを組み合わせ、不明なビットは数値として保持</translation>
+    </message>
+    <message>
+        <source>Definitions and static values are before the instruction; uses start after it.</source>
+        <translation>定義と静的値は命令実行前の状態、使用箇所は実行後からのものです。</translation>
+    </message>
+    <message>
+        <source>Element count (complete initialized span, at most 64 MiB):</source>
+        <translation>要素数（初期化済みの範囲全体、最大 64 MiB）:</translation>
+    </message>
+    <message>
+        <source>Element size in bytes:</source>
+        <translation>要素のサイズ（バイト）:</translation>
+    </message>
+    <message>
+        <source>Enter a signed SP offset within one MiB</source>
+        <translation>1 MiB 以内の符号付き SP オフセットを入力</translation>
+    </message>
+    <message>
+        <source>Entry offset</source>
+        <translation>入口オフセット</translation>
+    </message>
+    <message>
+        <source>Enum operand</source>
+        <translation>列挙型オペランド</translation>
+    </message>
+    <message>
+        <source>Enumeration declared in Local Types:</source>
+        <translation>ローカル型で宣言された列挙型:</translation>
+    </message>
+    <message>
+        <source>Immediate search</source>
+        <translation>即値の検索</translation>
+    </message>
+    <message>
+        <source>Immediate search has undecoded ranges; results cover decoded executable ranges only.</source>
+        <translation>即値の検索には未デコードの範囲があります。結果はデコード済みの実行可能範囲のみを対象とします。</translation>
+    </message>
+    <message>
+        <source>Instruction: %1; SP before: %2; SP after: %3</source>
+        <translation>命令: %1、実行前の SP: %2、実行後の SP: %3</translation>
+    </message>
+    <message>
+        <source>Integer (decimal or 0x hex; negative allowed):</source>
+        <translation>整数（10 進数または 0x 付きの 16 進数、負数可）:</translation>
+    </message>
+    <message>
+        <source>Invalid stack slot offset or width</source>
+        <translation>スタックスロットのオフセットまたは幅が無効です</translation>
+    </message>
+    <message>
+        <source>Local type name (optional; its layout must match the element size):</source>
+        <translation>ローカル型名（任意、レイアウトは要素サイズと一致する必要があります）:</translation>
+    </message>
+    <message>
+        <source>Make alignment</source>
+        <translation>アラインメントを作成</translation>
+    </message>
+    <message>
+        <source>Make array</source>
+        <translation>配列を作成</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名前</translation>
+    </message>
+    <message>
+        <source>Net SP change made by this instruction</source>
+        <translation>この命令による SP の正味の変化</translation>
+    </message>
+    <message>
+        <source>No exact local stack access is available here. Repair unknown SP first.</source>
+        <translation>この位置には正確なローカルスタックアクセスがありません。まず不明な SP を修正してください。</translation>
+    </message>
+    <message>
+        <source>No register flow sites within this function.</source>
+        <translation>この関数内にレジスターデータフローの箇所がありません。</translation>
+    </message>
+    <message>
+        <source>Offsets are relative to SP at function entry. Corrections apply to source analysis. Reset restores automatic analysis. Naming physical stack storage pauses LLVM optimizations for that function's C view.</source>
+        <translation>オフセットは関数入口の SP を基準とします。修正はソース解析に適用されます。リセットすると自動解析に戻ります。物理スタック領域に名前を付けると、この関数の C ビューで LLVM 最適化が一時停止します。</translation>
+    </message>
+    <message>
+        <source>Physical register</source>
+        <translation>物理レジスター</translation>
+    </message>
+    <message>
+        <source>Select a retained non-branch instruction in the disassembly</source>
+        <translation>逆アセンブリ内で保持されている非分岐命令を選択</translation>
+    </message>
+    <message>
+        <source>Stack variables</source>
+        <translation>スタック変数</translation>
+    </message>
+    <message>
+        <source>Static register value</source>
+        <translation>レジスターの静的値</translation>
+    </message>
+    <message>
+        <source>This instruction has no retained physical register operands.</source>
+        <translation>この命令には保持されている物理レジスターのオペランドがありません。</translation>
+    </message>
+    <message>
+        <source>Unknown: </source>
+        <translation>不明: </translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <translation>不明</translation>
     </message>
 </context>
 <context>

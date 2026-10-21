@@ -975,6 +975,94 @@
         <source>Set call type...</source>
         <translation>Set call type...</translation>
     </message>
+    <message>
+        <source>Change stack pointer...</source>
+        <translation>Change stack pointer...</translation>
+    </message>
+    <message>
+        <source>Correct the entry-relative SP after this instruction</source>
+        <translation>Correct the entry-relative SP after this instruction</translation>
+    </message>
+    <message>
+        <source>Define a bounded array of typed elements</source>
+        <translation>Define a bounded array of typed elements</translation>
+    </message>
+    <message>
+        <source>Enum operand...</source>
+        <translation>Enum operand...</translation>
+    </message>
+    <message>
+        <source>Immediate...</source>
+        <translation>Immediate...</translation>
+    </message>
+    <message>
+        <source>Inspect and correct local stack variables</source>
+        <translation>Inspect and correct local stack variables</translation>
+    </message>
+    <message>
+        <source>Inspect the proven static value before this instruction</source>
+        <translation>Inspect the proven static value before this instruction</translation>
+    </message>
+    <message>
+        <source>List reaching physical register definitions</source>
+        <translation>List reaching physical register definitions</translation>
+    </message>
+    <message>
+        <source>List uses of the register value after this instruction</source>
+        <translation>List uses of the register value after this instruction</translation>
+    </message>
+    <message>
+        <source>Make alignment...</source>
+        <translation>Make alignment...</translation>
+    </message>
+    <message>
+        <source>Make array...</source>
+        <translation>Make array...</translation>
+    </message>
+    <message>
+        <source>Mark padding ending on an alignment boundary</source>
+        <translation>Mark padding ending on an alignment boundary</translation>
+    </message>
+    <message>
+        <source>Name a proven stack operand without changing its address</source>
+        <translation>Name a proven stack operand without changing its address</translation>
+    </message>
+    <message>
+        <source>Next immediate</source>
+        <translation>Next immediate</translation>
+    </message>
+    <message>
+        <source>Register definitions...</source>
+        <translation>Register definitions...</translation>
+    </message>
+    <message>
+        <source>Register uses...</source>
+        <translation>Register uses...</translation>
+    </message>
+    <message>
+        <source>Repeat the immediate search</source>
+        <translation>Repeat the immediate search</translation>
+    </message>
+    <message>
+        <source>Search decoded executable instructions for an immediate</source>
+        <translation>Search decoded executable instructions for an immediate</translation>
+    </message>
+    <message>
+        <source>Show an immediate as enumeration members or flags</source>
+        <translation>Show an immediate as enumeration members or flags</translation>
+    </message>
+    <message>
+        <source>Stack variable operand...</source>
+        <translation>Stack variable operand...</translation>
+    </message>
+    <message>
+        <source>Stack variables...</source>
+        <translation>Stack variables...</translation>
+    </message>
+    <message>
+        <source>Static register value...</source>
+        <translation>Static register value...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2605,6 +2693,146 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
     <message>
         <source>indirect call</source>
         <translation>indirect call</translation>
+    </message>
+    <message>
+        <source>. Reset the obsolete corrections before editing.</source>
+        <translation>. Reset the obsolete corrections before editing.</translation>
+    </message>
+    <message>
+        <source>Absolute offset after instruction, relative to entry SP</source>
+        <translation>Absolute offset after instruction, relative to entry SP</translation>
+    </message>
+    <message>
+        <source>Address: %1</source>
+        <translation>Address: %1</translation>
+    </message>
+    <message>
+        <source>Alignment boundary (the marked span ends on this boundary):</source>
+        <translation>Alignment boundary (the marked span ends on this boundary):</translation>
+    </message>
+    <message>
+        <source>Bytes</source>
+        <translation>Bytes</translation>
+    </message>
+    <message>
+        <source>C type (optional)</source>
+        <translation>C type (optional)</translation>
+    </message>
+    <message>
+        <source>Change stack pointer</source>
+        <translation>Change stack pointer</translation>
+    </message>
+    <message>
+        <source>Combine bit flags; preserve unknown bits numerically</source>
+        <translation>Combine bit flags; preserve unknown bits numerically</translation>
+    </message>
+    <message>
+        <source>Definitions and static values are before the instruction; uses start after it.</source>
+        <translation>Definitions and static values are before the instruction; uses start after it.</translation>
+    </message>
+    <message>
+        <source>Element count (complete initialized span, at most 64 MiB):</source>
+        <translation>Element count (complete initialized span, at most 64 MiB):</translation>
+    </message>
+    <message>
+        <source>Element size in bytes:</source>
+        <translation>Element size in bytes:</translation>
+    </message>
+    <message>
+        <source>Enter a signed SP offset within one MiB</source>
+        <translation>Enter a signed SP offset within one MiB</translation>
+    </message>
+    <message>
+        <source>Entry offset</source>
+        <translation>Entry offset</translation>
+    </message>
+    <message>
+        <source>Enum operand</source>
+        <translation>Enum operand</translation>
+    </message>
+    <message>
+        <source>Enumeration declared in Local Types:</source>
+        <translation>Enumeration declared in Local Types:</translation>
+    </message>
+    <message>
+        <source>Immediate search</source>
+        <translation>Immediate search</translation>
+    </message>
+    <message>
+        <source>Immediate search has undecoded ranges; results cover decoded executable ranges only.</source>
+        <translation>Immediate search has undecoded ranges; results cover decoded executable ranges only.</translation>
+    </message>
+    <message>
+        <source>Instruction: %1; SP before: %2; SP after: %3</source>
+        <translation>Instruction: %1; SP before: %2; SP after: %3</translation>
+    </message>
+    <message>
+        <source>Integer (decimal or 0x hex; negative allowed):</source>
+        <translation>Integer (decimal or 0x hex; negative allowed):</translation>
+    </message>
+    <message>
+        <source>Invalid stack slot offset or width</source>
+        <translation>Invalid stack slot offset or width</translation>
+    </message>
+    <message>
+        <source>Local type name (optional; its layout must match the element size):</source>
+        <translation>Local type name (optional; its layout must match the element size):</translation>
+    </message>
+    <message>
+        <source>Make alignment</source>
+        <translation>Make alignment</translation>
+    </message>
+    <message>
+        <source>Make array</source>
+        <translation>Make array</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Name</translation>
+    </message>
+    <message>
+        <source>Net SP change made by this instruction</source>
+        <translation>Net SP change made by this instruction</translation>
+    </message>
+    <message>
+        <source>No exact local stack access is available here. Repair unknown SP first.</source>
+        <translation>No exact local stack access is available here. Repair unknown SP first.</translation>
+    </message>
+    <message>
+        <source>No register flow sites within this function.</source>
+        <translation>No register flow sites within this function.</translation>
+    </message>
+    <message>
+        <source>Offsets are relative to SP at function entry. Corrections apply to source analysis. Reset restores automatic analysis. Naming physical stack storage pauses LLVM optimizations for that function's C view.</source>
+        <translation>Offsets are relative to SP at function entry. Corrections apply to source analysis. Reset restores automatic analysis. Naming physical stack storage pauses LLVM optimizations for that function's C view.</translation>
+    </message>
+    <message>
+        <source>Physical register</source>
+        <translation>Physical register</translation>
+    </message>
+    <message>
+        <source>Select a retained non-branch instruction in the disassembly</source>
+        <translation>Select a retained non-branch instruction in the disassembly</translation>
+    </message>
+    <message>
+        <source>Stack variables</source>
+        <translation>Stack variables</translation>
+    </message>
+    <message>
+        <source>Static register value</source>
+        <translation>Static register value</translation>
+    </message>
+    <message>
+        <source>This instruction has no retained physical register operands.</source>
+        <translation>This instruction has no retained physical register operands.</translation>
+    </message>
+    <message>
+        <source>Unknown: </source>
+        <translation>Unknown: </translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <translation>unknown</translation>
     </message>
 </context>
 <context>
