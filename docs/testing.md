@@ -982,6 +982,17 @@ recovery, lost storage, invalid options and output preservation. Build `neverd`,
 
 ## Source dialects and DWARF ingestion
 
+`IsNoReturnTarget.*` checks cached/live lookup parity for exact IAT precedence,
+invalid veneer ownership, continuation/data boundaries, alignment, tagged
+Thumb addresses, unregistered x86 veneers and section-symbol aliases.
+`ObjectExterns.*` checks direct external tail calls across ELF, Mach-O and COFF
+and rejects treating ordinary data/IAT slots as synthetic object callees.
+`NeverDWorkerCallSiteTypes` compiles and executes both C routes, including all
+five Win64 variadic integer arguments, and retains partial-stack-write refusal.
+Run these with pipeline, session and image-boundary suites after changing
+shared import or source-call ownership. Native platform skips retain their
+own runner requirements.
+
 The main CI matrix installs Rust 1.93.1 and Go 1.27.2, records their versions,
 and uses its built CLI to emit HighC and LLVMC for small x64/AArch64 ELF inputs.
 This supplies the two optional dialect corpus/file checks without an external

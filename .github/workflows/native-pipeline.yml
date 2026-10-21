@@ -8,6 +8,10 @@ on:
       - '.github/workflows/native-pipeline.yml'
       - 'lib/ir/med/abi/**'
       - 'lib/ir/high/**'
+      - 'lib/libc/**'
+      - 'lib/loader/ObjectExterns.cpp'
+      - 'lib/ir/low/CFGBuilderInsn.cpp'
+      - 'unittests/libc/**'
       - 'unittests/lift/core/High*Tests.cpp'
       - 'lib/safety/StackSlotFlow.h'
       - 'unittests/lift/core/MedCallingConvTests.cpp'
@@ -41,6 +45,10 @@ on:
       - '.github/workflows/native-pipeline.yml'
       - 'lib/ir/med/abi/**'
       - 'lib/ir/high/**'
+      - 'lib/libc/**'
+      - 'lib/loader/ObjectExterns.cpp'
+      - 'lib/ir/low/CFGBuilderInsn.cpp'
+      - 'unittests/libc/**'
       - 'unittests/lift/core/High*Tests.cpp'
       - 'lib/safety/StackSlotFlow.h'
       - 'unittests/lift/core/MedCallingConvTests.cpp'
@@ -203,7 +211,7 @@ jobs:
         run: |
           python scripts/build.py build-abi --parallel 4 --target \
             neverd neverd-worker NeverDAllocatorTests NeverDSessionFunctionDiscoveryTests \
-            NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests \
+            NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests NeverDLibCTests \
             NeverDX86NativeStateAuditTests NeverDX86LegacyAlignedMoveTests \
             NeverDX86UndefinedEffectsTests \
             NeverDHighControlFlowTests NeverDAccelerationTests \
@@ -225,6 +233,7 @@ jobs:
           # The stderr descriptor checks are compiled only on their hosts.
           pipeline_minimum = 40 + (os.name != 'nt') + (sys.platform == 'linux')
           for owner, minimum in (('NeverDFPParameterMaskTests', 180),
+                                  ('NeverDLibCTests', 70),
                                   ('NeverDPipelineOutcomeTests', pipeline_minimum),
                                   ('NeverDX86NativeStateAuditTests', 8),
                                   ('NeverDX86LegacyAlignedMoveTests', 7),
@@ -276,6 +285,7 @@ jobs:
           names = ['NeverDAllocatorTests', 'NeverDWorkerNativeMapping',
                    'NeverDWorkerNativeMakeCode', 'NeverDWorkerPEBrowse',
                    'NeverDWorkerRealEngine', 'NeverDWorkerUnicodePaths',
+                   'NeverDWorkerCallSiteTypes',
                    'SessionFunctionDiscovery.NativeDiscoveryBeforeAnalysisPublishesRecoveredExtents',
                    'SessionFunctionDiscovery.NativeRecoveryKeepsKnownExtentsAndDeletedEntries']
           if os.name == 'nt':
@@ -308,7 +318,7 @@ jobs:
           cmake -S . -B build-abi -DNEVERD_ENABLE_TBB=OFF
           python scripts/build.py build-abi --parallel 4 --target \
             neverd neverd-worker NeverDAllocatorTests NeverDSessionFunctionDiscoveryTests \
-            NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests \
+            NeverDFPParameterMaskTests NeverDPipelineOutcomeTests NeverDSupportThreadTests NeverDLibCTests \
             NeverDX86NativeStateAuditTests NeverDX86LegacyAlignedMoveTests \
             NeverDX86UndefinedEffectsTests \
             NeverDHighControlFlowTests NeverDAccelerationTests \

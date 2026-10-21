@@ -5224,8 +5224,7 @@ TEST(HighControlFlowSemantics, SwitchCleanupPreservesContinuationPaths) {
 
 TEST(HighControlFlowSemantics,
      UnreachableCleanupDropsOnlyUnreferencedReturnsAfterSourceTraps) {
-  for (const auto Id : {Intrinsic::Ud2, Intrinsic::ArmHlt, Intrinsic::Brk,
-                        Intrinsic::Hlt_A64}) {
+  for (const auto Id : {Intrinsic::Ud2, Intrinsic::Brk, Intrinsic::Hlt_A64}) {
     HighStmt Trap;
     Trap.Kind = StmtKind::Call;
     Trap.Addr = 0x1000;
@@ -5243,15 +5242,18 @@ TEST(HighControlFlowSemantics,
         << "a branch may enter the return after the trap";
   }
 
-  HighStmt DebugTrap;
-  DebugTrap.Kind = StmtKind::Call;
-  DebugTrap.Addr = 0x1000;
-  DebugTrap.CallExpr = HighExpr::makeCall("debug_trap", 0, {});
-  DebugTrap.CallExpr->IntrinsicId = Intrinsic::Int3;
-  std::vector<HighStmt> Body{DebugTrap, result(0x1004, HighExpr::makeUndef(8))};
-  removeUnreachableCode(Body);
-  EXPECT_EQ(Body.size(), 2u)
-      << "a resumable debugger trap must retain its following return";
+  for (const auto Id : {Intrinsic::Int3, Intrinsic::ArmHlt}) {
+    HighStmt DebugTrap;
+    DebugTrap.Kind = StmtKind::Call;
+    DebugTrap.Addr = 0x1000;
+    DebugTrap.CallExpr = HighExpr::makeCall("debug_trap", 0, {});
+    DebugTrap.CallExpr->IntrinsicId = Id;
+    std::vector<HighStmt> Body{DebugTrap,
+                               result(0x1004, HighExpr::makeUndef(8))};
+    removeUnreachableCode(Body);
+    EXPECT_EQ(Body.size(), 2u)
+        << "a resumable debugger trap must retain its following return";
+  }
 }
 
 TEST(HighControlFlowSemantics,
@@ -6693,10 +6695,14 @@ void checkEnteredLoopExecution(const HighFunc &F,
         SourcePath,
         "-o",
         ExecutablePath};
+    // Cold Windows compiler/linker startup exceeded 30 seconds on the native
+    // runner. Keep a bounded tool deadline and retain its process diagnostic.
+    std::string CompileError;
     const int CompileResult = llvm::sys::ExecuteAndWait(
-        Compiler, Arguments, std::nullopt, Redirects, 30);
+        Compiler, Arguments, std::nullopt, Redirects, 90, 0, &CompileError);
     auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
     ASSERT_EQ(CompileResult, 0)
+        << Compiler << ": " << CompileError << "\n"
         << (Errors ? (*Errors)->getBuffer().str() : "no compiler diagnostic")
         << "\n"
         << Source;
