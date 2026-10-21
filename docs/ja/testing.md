@@ -2117,3 +2117,5 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 
 `AbsoluteMemoryFactsTests.inc` はノード間の絶対ターゲット、合流の競合、部分重複と未知の別名書き込み、両バイト順と連鎖の有無でのスタック分離を検査する。独立バイト実行器が効果を確認し、除外範囲の欠落と予算不足は拒否する。`SymStorePreservation.Absolute*` と `SymState.AbsoluteProjections*` は領域の共存、高位アドレス、純粋で有界な射影、未知世代とトランザクション的拒否を検査する。`NeverDInterpreterSpecializationTests`、`NeverDSymbolicIntegerIntrinsicTests`、`NeverDSymMemoryKnowledgeTests`、続いてネイティブ独立性とLowIR精緻化スイートを実行する。
+
+絶対メモリの回帰テストは、有界の連続・疎バッチ、書き込みとセルの完全な包含、フレーム境界と除外境界の両端での具体的な別名反例を検証します。順序付きと逆順の範囲和集合は同じセルを保持し、隙間を破棄し、保持予算が一作業単位不足した場合に状態を変更しない必要があります。

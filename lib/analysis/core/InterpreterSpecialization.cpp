@@ -2697,6 +2697,7 @@ bool Specializer::evaluate(int Id) {
       // arbitrary base. Keep that value unsafe through copies and frame spills.
       bool OutputUnsafe = EnvironmentRead || CompareExchange;
       bool ExactFrameAddress = false;
+      bool StoreWithinEntryFrame = false;
       bool ProvedFrameSeparation = false;
       std::optional<SymStorePreservation> StorePreservation;
       llvm::SmallVector<SymStorePreservationRange, 4> ProvedStoreRanges;
@@ -2720,6 +2721,19 @@ bool Specializer::evaluate(int Id) {
           return false;
         if (Displacement) {
           ExactFrameAddress = true;
+          if (Options.ProveStoreFrameSeparation &&
+              (Original.Opcode == NdOp::STORE || CompareExchange)) {
+            if (Result.EvaluatedOperations >= Options.MaxOperations)
+              return fail(SpecializationStatus::BudgetExceeded,
+                          "frame write containment budget exhausted");
+            ++Result.EvaluatedOperations;
+            const auto &Bounds = *Options.EntryFrameBounds;
+            const auto Begin = static_cast<int64_t>(*Displacement);
+            StoreWithinEntryFrame =
+                Begin >= Bounds.Begin && Begin < Bounds.End &&
+                Memory.AccessSize <= static_cast<uint64_t>(Bounds.End) -
+                                         static_cast<uint64_t>(Begin);
+          }
           State.write(SymSpace::Temporary, FrameAddressTemp,
                       Ctx.mkAdd(FrameRoot, Ctx.mkConst(64, *Displacement)));
           Evaluated.Inputs[Memory.Address - Original.Inputs] =
@@ -3118,32 +3132,69 @@ bool Specializer::evaluate(int Id) {
               ++Result.EvaluatedOperations;
               if (Begin > std::numeric_limits<int64_t>::max() - Bytes)
                 continue;
-              const auto Overlap = memoryExtentsOverlap(
-                  Ctx, Address, Memory.AccessSize,
-                  Ctx.mkConst(64, static_cast<uint64_t>(Begin)), Bytes);
-              if (Ctx.numNodes() > Options.MaxSymbolicNodes)
-                return fail(SpecializationStatus::BudgetExceeded,
-                            "absolute memory separation node budget exhausted");
-              const auto Domain =
-                  enumerate(Ctx, Exec.pathPredicate(), {Overlap}, 1);
-              if (Failed)
-                return false;
-              if (Domain.Status == FiniteValueStatus::Unknown)
-                return fail(SpecializationStatus::BudgetExceeded,
-                            "absolute memory separation proof exceeded its "
-                            "budget");
-              if (Domain.Status != FiniteValueStatus::Complete ||
-                  Domain.Tuples != std::vector<std::vector<uint64_t>>{{0}})
-                continue;
+              bool Disjoint = false;
+              if (StoreWithinEntryFrame)
+                for (const auto &Excluded :
+                     Options.EntryFrameBounds->ExcludedAddressRanges) {
+                  if (Result.EvaluatedOperations >= Options.MaxOperations)
+                    return fail(
+                        SpecializationStatus::BudgetExceeded,
+                        "absolute exclusion containment budget exhausted");
+                  ++Result.EvaluatedOperations;
+                  const auto First = static_cast<uint64_t>(Begin);
+                  if (First >= Excluded.Begin && First < Excluded.End &&
+                      Bytes <= Excluded.End - First) {
+                    // Both complete extents lie in regions already declared
+                    // disjoint by the nonwrapping entry-frame predicate.
+                    Disjoint = true;
+                    break;
+                  }
+                }
+              if (!Disjoint) {
+                const auto Overlap = memoryExtentsOverlap(
+                    Ctx, Address, Memory.AccessSize,
+                    Ctx.mkConst(64, static_cast<uint64_t>(Begin)), Bytes);
+                if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+                  return fail(
+                      SpecializationStatus::BudgetExceeded,
+                      "absolute memory separation node budget exhausted");
+                const auto Domain =
+                    enumerate(Ctx, Exec.pathPredicate(), {Overlap}, 1);
+                if (Failed)
+                  return false;
+                if (Domain.Status == FiniteValueStatus::Unknown)
+                  return fail(SpecializationStatus::BudgetExceeded,
+                              "absolute memory separation proof exceeded its "
+                              "budget");
+                if (Domain.Status != FiniteValueStatus::Complete ||
+                    Domain.Tuples != std::vector<std::vector<uint64_t>>{{0}})
+                  continue;
+              }
               if (!StorePreservation)
                 StorePreservation =
                     SymStorePreservation{{}, Begin, Begin + Bytes};
+              else if (!StorePreservation->Base) {
+                // One bank uses one range union, so preserving sparse cells
+                // does not rescan every byte for each independent region.
+                if (StorePreservation->End == Begin)
+                  StorePreservation->End += Bytes;
+                else if (!ProvedStoreRanges.empty() &&
+                         ProvedStoreRanges.back().End == Begin)
+                  ProvedStoreRanges.back().End += Bytes;
+                else
+                  ProvedStoreRanges.push_back({Begin, Begin + Bytes});
+              } else if (!ProvedAbsoluteRanges.empty() &&
+                         ProvedAbsoluteRanges.back().End == Begin)
+                ProvedAbsoluteRanges.back().End += Bytes;
               else
                 ProvedAbsoluteRanges.push_back({{}, Begin, Begin + Bytes});
             }
           }
-          if (StorePreservation)
+          if (StorePreservation) {
+            if (!StorePreservation->Base)
+              StorePreservation->AdditionalRanges = ProvedStoreRanges;
             StorePreservation->AdditionalRegions = ProvedAbsoluteRanges;
+          }
         }
       }
       if (FrameRoot) {

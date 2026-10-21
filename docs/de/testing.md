@@ -2233,3 +2233,5 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 
 `AbsoluteMemoryFactsTests.inc` prüft absolute Ziele über Knoten, widersprüchliche Zusammenführungen, teilweise und unbekannte Alias-Schreibzugriffe sowie Stack-Trennung für beide Bytefolgen mit und ohne Verkettung. Ein unabhängiger Byte-Executor prüft Effekte; fehlende Ausschlüsse und knappe Budgets müssen ablehnen. `SymStorePreservation.Absolute*` und `SymState.AbsoluteProjections*` prüfen koexistierende Banken, hohe Adressen, reine begrenzte Projektionen, unbekannte Epochen und transaktionale Ablehnung. `NeverDInterpreterSpecializationTests`, `NeverDSymbolicIntegerIntrinsicTests`, `NeverDSymMemoryKnowledgeTests` und danach native Unabhängigkeit sowie LowIR-Verfeinerung ausführen.
+
+Regressionen für absoluten Speicher prüfen begrenzte zusammenhängende und verstreute Gruppen, vollständige Schreib-/Zellgrenzen sowie konkrete Alias-Gegenbeispiele an beiden Frame- und Ausschlussgrenzen. Geordnete und umgekehrte Bereichsvereinigungen müssen dieselben Zellen erhalten, Lücken verwerfen und bei einer fehlenden Arbeitseinheit den Zustand unverändert lassen.

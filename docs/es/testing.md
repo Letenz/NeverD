@@ -2218,3 +2218,5 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 
 `AbsoluteMemoryFactsTests.inc` comprueba objetivos absolutos entre nodos, uniones contradictorias, escrituras con alias parciales o desconocidos y separación de pila en ambos órdenes de bytes, con o sin encadenamiento. Un ejecutor independiente verifica efectos; deben rechazarse exclusiones ausentes y presupuestos cortos. `SymStorePreservation.Absolute*` y `SymState.AbsoluteProjections*` cubren coexistencia, direcciones altas, proyecciones puras acotadas, épocas desconocidas y rechazo transaccional. Ejecutar `NeverDInterpreterSpecializationTests`, `NeverDSymbolicIntegerIntrinsicTests`, `NeverDSymMemoryKnowledgeTests` y después independencia nativa y refinamiento LowIR.
+
+Las regresiones de memoria absoluta cubren lotes acotados contiguos y dispersos, contención completa de escrituras y celdas, y alias concretos en ambos límites del marco y de las exclusiones. Las uniones ordenadas e invertidas deben conservar las mismas celdas, descartar los huecos y dejar el estado intacto si falta una unidad de trabajo para la preservación.

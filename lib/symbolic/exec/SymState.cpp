@@ -649,9 +649,17 @@ bool SymState::store(SymRef Addr, SymRef Value,
   // The old single-range path pays no new work.
   if (!Charge(Preservation.AdditionalRanges.size()))
     return false;
-  for (const auto &Range : Preservation.AdditionalRanges)
+  uint64_t PreviousLast = static_cast<uint64_t>(Preservation.End) - 1;
+  bool OrderedRanges =
+      static_cast<uint64_t>(Preservation.Begin) <= PreviousLast;
+  for (const auto &Range : Preservation.AdditionalRanges) {
     if (Range.Begin >= Range.End)
       return false;
+    const auto First = static_cast<uint64_t>(Range.Begin);
+    const auto Last = static_cast<uint64_t>(Range.End) - 1;
+    OrderedRanges &= First <= Last && PreviousLast < First;
+    PreviousLast = Last;
+  }
   if (!Charge(Preservation.AdditionalRegions.size()))
     return false;
   for (const auto &Region : Preservation.AdditionalRegions)
@@ -676,6 +684,30 @@ bool SymState::store(SymRef Addr, SymRef Value,
     }
     const uint64_t Begin = static_cast<uint64_t>(Lower);
     const uint64_t Size = static_cast<uint64_t>(Upper) - Begin;
+    // Already ordered, nonwrapping ranges and byte keys share one cursor.
+    // Other modular unions retain their original membership semantics.
+    if (!More.empty() && OrderedRanges) {
+      uint64_t First = Begin;
+      uint64_t Last = static_cast<uint64_t>(Upper) - 1;
+      size_t Next = 0;
+      for (const auto &[Offset, Byte] : Storage->Bytes) {
+        if (!Charge(1))
+          return false;
+        while (Offset > Last && Next != More.size()) {
+          if (!Charge(1))
+            return false;
+          const auto &Range = More[Next++];
+          First = static_cast<uint64_t>(Range.Begin);
+          Last = static_cast<uint64_t>(Range.End) - 1;
+        }
+        if (Offset >= First && Offset <= Last) {
+          if (!Charge(2))
+            return false;
+          Saved.push_back({Storage, Offset, Byte});
+        }
+      }
+      return true;
+    }
     for (const auto &[Offset, Byte] : Storage->Bytes) {
       if (!Charge(1))
         return false;
