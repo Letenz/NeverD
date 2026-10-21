@@ -66,8 +66,8 @@ struct AnalysisCacheWarmup {
 struct OmittedCalleeMemo;
 struct ImageImportCounts;
 
-/// Optional facts for consecutive restricted x64, AArch64 and ARM analyses
-/// of an unchanged image. Owns the indexes borrowed by bounded
+/// Optional facts for consecutive restricted x64, i386, AArch64 and ARM
+/// analyses of an unchanged image. Owns the indexes borrowed by bounded
 /// machine-graph/body caches, not output IR or caller-dependent summaries. The
 /// image and debug context must outlive the cache; reset it before changing
 /// either, including symbols, exception metadata, bytes or analysis policy.

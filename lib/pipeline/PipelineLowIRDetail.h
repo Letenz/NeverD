@@ -109,14 +109,14 @@ struct ImageImportCounts {
 };
 
 /// The analysis cache a run of \p Img under \p Opts shares with other runs:
-/// a restricted x64, AArch64 or ARM run's.  Other runs keep what they read
-/// to themselves.
+/// a restricted x64, i386, AArch64 or ARM run's.  Other runs keep what they
+/// read to themselves.
 inline PipelineAnalysisCache *sharedAnalysisCache(const BinaryImage &Img,
                                                   const PipelineOptions &Opts) {
   const bool Restricted =
       !Opts.OnlyFunctionEntries.empty() || Opts.MaxFunctions != 0;
-  return Restricted && (Img.Arch == Arch::X64 || Img.Arch == Arch::AArch64 ||
-                        Img.Arch == Arch::ARM)
+  return Restricted && (Img.Arch == Arch::X64 || Img.Arch == Arch::X86 ||
+                        Img.Arch == Arch::AArch64 || Img.Arch == Arch::ARM)
              ? Opts.AnalysisCache
              : nullptr;
 }

@@ -4502,8 +4502,9 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
           limits::kMaxRetainedNoReturnAnswers);
   };
   if (Img.Arch != Arch::X64) {
-    // AArch64 and ARM runs share those facts too (sharedAnalysisCache).
-    if (Img.Arch == Arch::AArch64 || Img.Arch == Arch::ARM)
+    // i386, AArch64 and ARM runs share those facts too (sharedAnalysisCache).
+    if (Img.Arch == Arch::X86 || Img.Arch == Arch::AArch64 ||
+        Img.Arch == Arch::ARM)
       symbolFacts(*Opts.AnalysisCache);
     // Where each call's setup gives its arguments, a restricted run reads
     // the signature bodies of the callees it leaves out.  Outside the

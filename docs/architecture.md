@@ -1026,7 +1026,7 @@ Older engines retain `neverd_prepare_function` and the decompiler-based
 preparation fallback. A failed switch
 clears the worker's prepared-entry marker before another view can reuse it.
 
-Consecutive restricted x64, AArch64 and ARM analyses may share a
+Consecutive restricted x64, i386, AArch64 and ARM analyses may share a
 session-owned `PipelineAnalysisCache`. It owns the immutable entry snapshots and no-return,
 relocation-root and executable-owner indexes borrowed by the bounded raw x87
 graph and machine-body caches. Each selection owns independent output IR,
