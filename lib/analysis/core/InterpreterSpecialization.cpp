@@ -101,6 +101,7 @@ struct Projection {
   /// modular displacement. No arbitrary expression escapes a node context.
   std::map<uint64_t, uint64_t> AffineRegisters;
   std::map<uint64_t, uint8_t> FrameBytes;
+  std::map<uint64_t, uint8_t> AbsoluteBytes;
   FrameFacts Frame;
   FrameOrigins Origins;
   ControlRelation Controls;
@@ -171,6 +172,8 @@ Projection project(SymState &State, SymRef Root,
   Result.Frame = Frame;
   for (const auto &Byte : State.constantScalarBytes())
     Result.Scalars.emplace(ByteKey{Byte.Space, Byte.Offset}, Byte.Value);
+  for (const auto &Byte : State.constantAbsoluteBytes())
+    Result.AbsoluteBytes.emplace(Byte.Offset, Byte.Value);
   if (Root) {
     for (uint64_t Offset : AffineCandidates)
       if (const auto Displacement = affineDisplacement(
@@ -186,20 +189,26 @@ void seed(SymContext &Ctx, SymState &State, SymRef Root,
           const Projection &Values) {
   for (const auto &[Key, Value] : Values.Scalars)
     State.write(Key.first, Key.second, Ctx.mkConst(8, Value));
-  if (!Root)
-    return;
-  for (const auto &[Register, Displacement] : Values.AffineRegisters)
-    State.write(SymSpace::Register, Register,
-                Ctx.mkAdd(Root, Ctx.mkConst(64, Displacement)));
-  // The node starts with no memory facts. All imported bytes have the same
-  // root, so using ordinary store() here cannot discard another imported
-  // region or bypass a guest alias invalidation from the predecessor.
-  for (const auto &[Offset, Value] : Values.FrameBytes)
-    State.store(Ctx.mkAdd(Root, Ctx.mkConst(64, Offset)),
-                Ctx.mkConst(8, Value));
-  for (const auto &[Offset, Displacement] : Values.Frame.AffineValues)
-    State.store(Ctx.mkAdd(Root, Ctx.mkConst(64, Offset)),
-                Ctx.mkAdd(Root, Ctx.mkConst(64, Displacement)));
+  if (Root) {
+    for (const auto &[Register, Displacement] : Values.AffineRegisters)
+      State.write(SymSpace::Register, Register,
+                  Ctx.mkAdd(Root, Ctx.mkConst(64, Displacement)));
+    // A complete affine value takes precedence over independently projected
+    // byte marginals. They can agree only under the incoming frame predicate,
+    // which has not been installed yet and is not a syntactic equality.
+    for (const auto &[Offset, Value] : Values.FrameBytes)
+      State.store(Ctx.mkAdd(Root, Ctx.mkConst(64, Offset)),
+                  Ctx.mkConst(8, Value));
+    for (const auto &[Offset, Displacement] : Values.Frame.AffineValues)
+      State.store(Ctx.mkAdd(Root, Ctx.mkConst(64, Offset)),
+                  Ctx.mkAdd(Root, Ctx.mkConst(64, Displacement)));
+  }
+  // These are current predecessor facts, intersected after all guest writes.
+  // Seed the absolute bank directly: a program STORE would invalidate frame
+  // facts, while replacing memory knowledge would retire the frame's unknown
+  // input identities used by control-state discovery.
+  for (const auto &[Offset, Value] : Values.AbsoluteBytes)
+    State.write(SymSpace::Memory, Offset, Ctx.mkConst(8, Value));
 }
 
 template <class Map> bool intersectMap(Map &Into, const Map &Incoming) {
@@ -308,6 +317,7 @@ bool intersect(Projection &Into, const Projection &Incoming,
   bool Changed = intersectMap(Into.Scalars, Incoming.Scalars);
   Changed |= intersectMap(Into.AffineRegisters, Incoming.AffineRegisters);
   Changed |= intersectMap(Into.FrameBytes, Incoming.FrameBytes);
+  Changed |= intersectMap(Into.AbsoluteBytes, Incoming.AbsoluteBytes);
   Changed |= intersectMap(Into.Frame.AffineValues, Incoming.Frame.AffineValues);
   Changed |=
       joinControls(Into.Controls, Incoming.Controls, TupleLimit, Widenings);
@@ -2687,9 +2697,11 @@ bool Specializer::evaluate(int Id) {
       // arbitrary base. Keep that value unsafe through copies and frame spills.
       bool OutputUnsafe = EnvironmentRead || CompareExchange;
       bool ExactFrameAddress = false;
+      bool StoreWithinEntryFrame = false;
       bool ProvedFrameSeparation = false;
       std::optional<SymStorePreservation> StorePreservation;
       llvm::SmallVector<SymStorePreservationRange, 4> ProvedStoreRanges;
+      llvm::SmallVector<SymStorePreservationRegion, 4> ProvedAbsoluteRanges;
       for (unsigned J = 0; J < Original.NumInputs; ++J)
         OutputUnsafe |= unsafeOrigin(Original.Inputs[J], Origins);
       if (FrameRoot && (!RuntimeMemory || Original.Opcode == NdOp::STORE) &&
@@ -2709,6 +2721,19 @@ bool Specializer::evaluate(int Id) {
           return false;
         if (Displacement) {
           ExactFrameAddress = true;
+          if (Options.ProveStoreFrameSeparation &&
+              (Original.Opcode == NdOp::STORE || CompareExchange)) {
+            if (Result.EvaluatedOperations >= Options.MaxOperations)
+              return fail(SpecializationStatus::BudgetExceeded,
+                          "frame write containment budget exhausted");
+            ++Result.EvaluatedOperations;
+            const auto &Bounds = *Options.EntryFrameBounds;
+            const auto Begin = static_cast<int64_t>(*Displacement);
+            StoreWithinEntryFrame =
+                Begin >= Bounds.Begin && Begin < Bounds.End &&
+                Memory.AccessSize <= static_cast<uint64_t>(Bounds.End) -
+                                         static_cast<uint64_t>(Begin);
+          }
           State.write(SymSpace::Temporary, FrameAddressTemp,
                       Ctx.mkAdd(FrameRoot, Ctx.mkConst(64, *Displacement)));
           Evaluated.Inputs[Memory.Address - Original.Inputs] =
@@ -3077,6 +3102,99 @@ bool Specializer::evaluate(int Id) {
           // An unknown write of external-origin bytes may change known frame
           // values, but cannot turn already-external bytes into root pointers.
           // SymState still invalidates their constant values independently.
+        }
+      }
+      // An ordinary symbolic store also havocs the absolute bank. Preserve
+      // only its current materialized cells whose complete byte footprints
+      // are proved disjoint from this particular write under this path.
+      if ((Original.Opcode == NdOp::STORE || CompareExchange) &&
+          Options.ProveStoreFrameSeparation) {
+        const auto Memory = lowMemoryOperands(Evaluated);
+        const auto Address = Exec.memoryAddressValue(Evaluated);
+        if (Ctx.width(Address) == 64 && !Ctx.isConst(Address)) {
+          uint64_t Work = Options.MaxOperations - Result.EvaluatedOperations;
+          const auto Ranges = State.materializedAbsoluteRanges(Work);
+          Result.EvaluatedOperations = Options.MaxOperations - Work;
+          if (!Ranges)
+            return fail(SpecializationStatus::BudgetExceeded,
+                        "absolute memory projection budget exhausted");
+          for (const auto &Range : *Ranges) {
+            uint64_t Offset = Range.Offset;
+            uint64_t Remaining = Range.Bytes;
+            while (Remaining) {
+              const unsigned Bytes = std::min<uint64_t>(Remaining, 8);
+              const int64_t Begin = static_cast<int64_t>(Offset);
+              Offset += Bytes;
+              Remaining -= Bytes;
+              if (Result.EvaluatedOperations >= Options.MaxOperations)
+                return fail(SpecializationStatus::BudgetExceeded,
+                            "absolute memory separation budget exhausted");
+              ++Result.EvaluatedOperations;
+              if (Begin > std::numeric_limits<int64_t>::max() - Bytes)
+                continue;
+              bool Disjoint = false;
+              if (StoreWithinEntryFrame)
+                for (const auto &Excluded :
+                     Options.EntryFrameBounds->ExcludedAddressRanges) {
+                  if (Result.EvaluatedOperations >= Options.MaxOperations)
+                    return fail(
+                        SpecializationStatus::BudgetExceeded,
+                        "absolute exclusion containment budget exhausted");
+                  ++Result.EvaluatedOperations;
+                  const auto First = static_cast<uint64_t>(Begin);
+                  if (First >= Excluded.Begin && First < Excluded.End &&
+                      Bytes <= Excluded.End - First) {
+                    // Both complete extents lie in regions already declared
+                    // disjoint by the nonwrapping entry-frame predicate.
+                    Disjoint = true;
+                    break;
+                  }
+                }
+              if (!Disjoint) {
+                const auto Overlap = memoryExtentsOverlap(
+                    Ctx, Address, Memory.AccessSize,
+                    Ctx.mkConst(64, static_cast<uint64_t>(Begin)), Bytes);
+                if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+                  return fail(
+                      SpecializationStatus::BudgetExceeded,
+                      "absolute memory separation node budget exhausted");
+                const auto Domain =
+                    enumerate(Ctx, Exec.pathPredicate(), {Overlap}, 1);
+                if (Failed)
+                  return false;
+                if (Domain.Status == FiniteValueStatus::Unknown)
+                  return fail(SpecializationStatus::BudgetExceeded,
+                              "absolute memory separation proof exceeded its "
+                              "budget");
+                if (Domain.Status != FiniteValueStatus::Complete ||
+                    Domain.Tuples != std::vector<std::vector<uint64_t>>{{0}})
+                  continue;
+              }
+              if (!StorePreservation)
+                StorePreservation =
+                    SymStorePreservation{{}, Begin, Begin + Bytes};
+              else if (!StorePreservation->Base) {
+                // One bank uses one range union, so preserving sparse cells
+                // does not rescan every byte for each independent region.
+                if (StorePreservation->End == Begin)
+                  StorePreservation->End += Bytes;
+                else if (!ProvedStoreRanges.empty() &&
+                         ProvedStoreRanges.back().End == Begin)
+                  ProvedStoreRanges.back().End += Bytes;
+                else
+                  ProvedStoreRanges.push_back({Begin, Begin + Bytes});
+              } else if (!ProvedAbsoluteRanges.empty() &&
+                         ProvedAbsoluteRanges.back().End == Begin)
+                ProvedAbsoluteRanges.back().End += Bytes;
+              else
+                ProvedAbsoluteRanges.push_back({{}, Begin, Begin + Bytes});
+            }
+          }
+          if (StorePreservation) {
+            if (!StorePreservation->Base)
+              StorePreservation->AdditionalRanges = ProvedStoreRanges;
+            StorePreservation->AdditionalRegions = ProvedAbsoluteRanges;
+          }
         }
       }
       if (FrameRoot) {
