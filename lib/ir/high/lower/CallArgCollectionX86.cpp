@@ -66,8 +66,9 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
   const bool ReservedArea =
       Scan.Convention && Scan.Convention->ReservedOutgoingArea;
   const bool SlotsByCallOffset =
-      Scan.TheArch == Arch::X64 && !ReservedArea && Scan.CallStackEntryOffset &&
-      Scan.EntryOffsetOf &&
+      Scan.TheArch == Arch::X64 && !ReservedArea &&
+      (Scan.CallStackOffsetOf ||
+       (Scan.CallStackEntryOffset && Scan.EntryOffsetOf)) &&
       Scan.CalleeStackArgs > static_cast<int>(RegisterPositions);
   const std::vector<ExprPtr> RegisterArgs = Found;
   // The slots a store of \p Width bytes fills from argument position
@@ -119,10 +120,14 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
     const int64_t StackSlots =
         Scan.CalleeStackArgs - static_cast<int64_t>(RegisterPositions);
     stores([&](const MedOp &Store) {
-      const std::optional<int64_t> Entry = Scan.EntryOffsetOf(Store.Inputs[0]);
-      if (!Entry || *Entry < *Scan.CallStackEntryOffset)
+      std::optional<int64_t> Above;
+      if (Scan.CallStackOffsetOf)
+        Above = Scan.CallStackOffsetOf(Store.Inputs[0]);
+      else if (const auto Entry = Scan.EntryOffsetOf(Store.Inputs[0]))
+        Above = *Entry - *Scan.CallStackEntryOffset;
+      if (!Above || *Above < 0)
         return true;
-      const int64_t Offset = *Entry - *Scan.CallStackEntryOffset;
+      const int64_t Offset = *Above;
       if (Offset % SlotBytes != 0 || Offset / SlotBytes >= StackSlots)
         return true;
       // A wider store, a 16-byte copy of a by-value record or a 10-byte x87

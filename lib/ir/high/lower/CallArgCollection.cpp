@@ -1187,7 +1187,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     if (!CurMed || !CallStackKnown)
       return std::nullopt;
     indexMedDefinitions();
-    return EntryStackOffsets->offsetFrom(Address, CallStack);
+    return EntryStackOffsets->callOffsetFrom(Address, CallStack);
   };
   Scan.CallStackOffsetOf = CallStackOffsetOf;
   // A stack slot below the stack pointer an address is made from, another

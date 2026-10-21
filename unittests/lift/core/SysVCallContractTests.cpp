@@ -585,6 +585,65 @@ int main(void) {
 )");
 }
 
+TEST(SysVCallContract, PushedArgumentsAfterAStackJoinKeepEverySlot) {
+  // The branch leaves RSP at different entry offsets. All five pushes after
+  // that join still have exact distances from the eventual call SP.
+  constexpr va_t Eleven = Text, Caller = Text + 0x60;
+  std::vector<uint8_t> Code(0xC0, 0xCC);
+  put(Code, Eleven,
+      {0x48, 0x8B, 0x44, 0x24, 0x08, // mov rax, [rsp+8]
+       0x48, 0x6B, 0xC0, 0x0A,       // imul rax, rax, 10
+       0x48, 0x03, 0x44, 0x24, 0x10, // add rax, [rsp+16]
+       0x48, 0x6B, 0xC0, 0x0A, 0x48, 0x03, 0x44, 0x24, 0x18, 0x48, 0x6B,
+       0xC0, 0x0A, 0x48, 0x03, 0x44, 0x24, 0x20, 0x48, 0x6B, 0xC0, 0x0A,
+       0x48, 0x03, 0x44, 0x24, 0x28, 0x48, 0x01, 0xF8, // add rax, rdi
+       0x48, 0x01, 0xF0,                               // add rax, rsi
+       0x48, 0x01, 0xD0,                               // add rax, rdx
+       0x48, 0x01, 0xC8,                               // add rax, rcx
+       0x4C, 0x01, 0xC0,                               // add rax, r8
+       0x4C, 0x01, 0xC8,                               // add rax, r9
+       0xC3});
+  std::vector<uint8_t> CallerCode = {
+      0x55, 0x48, 0x89, 0xE5,             // push rbp; mov rbp, rsp
+      0x85, 0xFF, 0x74, 0x06,             // test edi, edi; je other
+      0x48, 0x83, 0xEC, 0x08,             // sub rsp, 8
+      0xEB, 0x04,                         // jmp joined
+      0x48, 0x83, 0xEC, 0x18,             // other: sub rsp, 24
+      0x6A, 0x05, 0x6A, 0x04,             // joined: push 5; push 4
+      0x6A, 0x03, 0x6A, 0x02,             // push 3; push 2
+      0x6A, 0x01,                         // push 1
+      0xBE, 0x02, 0x00, 0x00, 0x00,       // mov esi, 2
+      0xBA, 0x03, 0x00, 0x00, 0x00,       // mov edx, 3
+      0xB9, 0x04, 0x00, 0x00, 0x00,       // mov ecx, 4
+      0x41, 0xB8, 0x05, 0x00, 0x00, 0x00, // mov r8d, 5
+      0x41, 0xB9, 0x06, 0x00, 0x00, 0x00, // mov r9d, 6
+      0xBF, 0x01, 0x00, 0x00, 0x00,       // mov edi, 1
+      0xE8};
+  for (uint8_t B : rel32(Caller + CallerCode.size() + 4, Eleven))
+    CallerCode.push_back(B);
+  for (uint8_t B : {0x48, 0x89, 0xEC, 0x5D, 0xC3}) // mov rsp, rbp; pop; ret
+    CallerCode.push_back(B);
+  put(Code, Caller, CallerCode);
+  for (BinaryFormat Format : {BinaryFormat::ELF, BinaryFormat::MachO}) {
+    SCOPED_TRACE(static_cast<unsigned>(Format));
+    BinaryImage Img =
+        makeImportImage(Code, {{Eleven, "eleven"}, {Caller, "caller"}}, {});
+    Img.Format = Format;
+    if (Format == BinaryFormat::MachO)
+      for (auto &Symbol : Img.Symbols)
+        Symbol.Name = "_" + Symbol.Name;
+    const std::string Source = liftEntries(Img, {Eleven, Caller});
+    const std::string Body = body(Source, "caller");
+    EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
+    compileAndRun(Source + R"(
+int main(void) {
+  return caller(0) == 12366 && caller(1) == 12366 && caller(-7) == 12366
+             ? 0 : 1;
+}
+)");
+  }
+}
+
 TEST(SysVCallContract, AFloatArgumentReachesAPrototypedImport) {
   // twice_sin(x) = 2 * sin(x + x): math.h declares sin's double parameter,
   // so the sum in xmm0 is its argument and x the function's own parameter.

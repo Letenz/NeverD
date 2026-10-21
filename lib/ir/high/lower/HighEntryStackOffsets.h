@@ -18,6 +18,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -73,6 +74,19 @@ public:
   /// produced (`and esp, -16`), below which no entry offset is known.
   std::optional<int64_t> offsetFrom(const MedVar &Value, const MedVar &Base) {
     const auto From = coordinate(Value), To = coordinate(Base);
+    if (!From || !To || From->first != To->first)
+      return std::nullopt;
+    return checkedAffineOffset(From->second, To->second, /*Subtract=*/true);
+  }
+
+  /// Call-SP-relative coordinates may remain known after an entry-relative
+  /// stack join becomes unknown. They never establish an entry coordinate.
+  std::optional<int64_t> callOffsetFrom(const MedVar &Value,
+                                        const MedVar &Base) {
+    if (const auto Offset = offsetFrom(Value, Base))
+      return Offset;
+    const auto From = coordinateAfterJoin(Value),
+               To = coordinateAfterJoin(Base);
     if (!From || !To || From->first != To->first)
       return std::nullopt;
     return checkedAffineOffset(From->second, To->second, /*Subtract=*/true);
@@ -178,6 +192,59 @@ private:
     const uint64_t Sign = uint64_t{1} << (Width * 8 - 1);
     return Bits & Sign ? -1 - static_cast<int64_t>((~Bits) & Mask(Width))
                        : static_cast<int64_t>(Bits);
+  }
+
+  /// A join's current SSA value is one exact anchor for operations after it,
+  /// even when its incoming paths have different entry-SP coordinates. Do not
+  /// walk through the join or assert that any incoming path has offset zero.
+  /// This proof only compares full-width constant adjustments after the same
+  /// join; entry coordinates and alias extents keep their complete proof.
+  std::optional<std::pair<View, int64_t>>
+  coordinateAfterJoin(MedVar Value) const {
+    std::vector<std::pair<int64_t, bool>> Steps;
+    std::set<View> Seen;
+    for (int Depth = 0; Depth <= limits::kCallArgStoreAddressDepth; ++Depth) {
+      if (!carrier(Value) || Value.Size != PointerSize ||
+          !Seen.insert(view(Value)).second)
+        return std::nullopt;
+      const auto Phi = Phis.find(identity(Value));
+      const auto Definition = Definitions.find(identity(Value));
+      if (Phi != Phis.end()) {
+        if (!Phi->second || Definition != Definitions.end() ||
+            !sameView(Value, Phi->second->Output) ||
+            Phi->second->ExceptionalEntry || Phi->second->Args.empty())
+          return std::nullopt;
+        int64_t Offset = 0;
+        for (auto It = Steps.rbegin(); It != Steps.rend(); ++It) {
+          const auto Next = checkedAffineOffset(Offset, It->first, It->second);
+          if (!Next)
+            return std::nullopt;
+          Offset = *Next;
+        }
+        return std::pair(view(Value), Offset);
+      }
+      const MedOp *Def =
+          Definition == Definitions.end() ? nullptr : Definition->second;
+      if (!Def || !sameView(Value, Def->Output) ||
+          Def->MemoryOrdering != NdMemoryOrdering::None ||
+          Def->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+          !Def->IntrinsicOutputs.empty() || Def->NumInputs == 0 ||
+          Def->Inputs[0].Size != PointerSize)
+        return std::nullopt;
+      if (Def->Opcode == NdOp::COPY && Def->NumInputs == 1) {
+        Value = Def->Inputs[0];
+        continue;
+      }
+      if ((Def->Opcode != NdOp::INT_ADD && Def->Opcode != NdOp::INT_SUB) ||
+          Def->NumInputs != 2)
+        return std::nullopt;
+      const auto Delta = delta(Def->Inputs[1], PointerSize);
+      if (!Delta)
+        return std::nullopt;
+      Steps.emplace_back(*Delta, Def->Opcode == NdOp::INT_SUB);
+      Value = Def->Inputs[0];
+    }
+    return std::nullopt;
   }
 
   size_t node(const MedVar &Value) {

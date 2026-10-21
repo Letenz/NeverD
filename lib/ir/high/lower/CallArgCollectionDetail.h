@@ -124,9 +124,9 @@ struct CallArgScan {
   /// is known.
   std::optional<int64_t> CallStackEntryOffset;
   /// The distance of an address above the stack pointer the call is made
-  /// with (i386), where both are exact offsets from the entry stack pointer
-  /// or from one realignment of it: a store there is in the slot at that
-  /// distance.
+  /// with, where both are exact offsets from the entry stack pointer, one
+  /// realignment, or the same current stack PHI. A store there occupies the
+  /// slot at that distance; an unknown entry coordinate is not zero.
   llvm::function_ref<std::optional<int64_t>(const MedVar &)> CallStackOffsetOf;
   /// Bytes the prologue moved the stack pointer below its entry value.
   int64_t FrameSize = 0;
