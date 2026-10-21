@@ -29,6 +29,7 @@
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/symbolic/SymExec.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SHA256.h"
 
@@ -75,7 +76,8 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
             llvm::ArrayRef<LowIRNativeFlagTransition> Flags = {},
             llvm::ArrayRef<LowIRNativeProfileProjection> Projections = {},
             llvm::ArrayRef<LowIRNativeAuditBoundary> AuditBoundaries = {},
-            const LowIRNativePreservationCertificate *Preservation = nullptr) {
+            const LowIRNativePreservationCertificate *Preservation = nullptr,
+            llvm::ArrayRef<LowIRExternalQueryTransition> Queries = {}) {
   llvm::SHA256 Hash;
   const auto Number = [&](uint64_t Value) {
     uint8_t Bytes[8];
@@ -288,6 +290,55 @@ inputDigest(const LowFunc &F, llvm::ArrayRef<LowIRUndefinedInstruction> Records,
     Hash.update("ordinary-ram-read-trace-v1");
     Number(static_cast<unsigned>(Contract.ExternalReads));
   }
+  if (Contract.ExternalQueries != LowIRExternalQueryModel::None) {
+    Hash.update("ordered-native-scalar-query-v1");
+    Number(static_cast<unsigned>(Contract.ExternalQueries));
+    Number(Queries.size());
+    for (const auto &Q : Queries) {
+      Number(static_cast<uint64_t>(Q.BlockId));
+      Number(Q.InstructionAddress);
+      Number(Q.Identity.size());
+      Hash.update(Q.Identity);
+      Number(Q.SemanticsVersion);
+      Number(Q.OperationDigest.size());
+      Hash.update(Q.OperationDigest);
+      Number(Q.DescriptorDigest.size());
+      Hash.update(Q.DescriptorDigest);
+    }
+  }
+  return llvm::toHex(Hash.final());
+}
+
+std::string scalarQueryDigest(const SpecializationScalarQuery &Query) {
+  llvm::SHA256 Hash;
+  Hash.update("neverd-scalar-query-descriptor-v1");
+  const auto Number = [&](uint64_t Value) {
+    uint8_t Bytes[8];
+    for (unsigned I = 0; I != 8; ++I)
+      Bytes[I] = static_cast<uint8_t>(Value >> (I * 8));
+    Hash.update(Bytes);
+  };
+  const auto Variable = [&](const NdVar &V) {
+    Number(static_cast<unsigned>(V.Space));
+    Number(V.Offset);
+    Number(V.Size);
+    Number(static_cast<unsigned>(V.Provenance));
+    Number(V.AddressOwnerVA);
+  };
+  Number(Query.Identity.size());
+  Hash.update(Query.Identity);
+  Number(Query.SemanticsVersion);
+  Number(Query.Selectors.size());
+  for (const auto &V : Query.Selectors)
+    Variable(V);
+  Number(Query.ResultBits.size());
+  for (uint16_t Bits : Query.ResultBits)
+    Number(Bits);
+  Number(Query.Bindings.size());
+  for (const auto &B : Query.Bindings) {
+    Variable(B.Destination);
+    Number(B.Result);
+  }
   return llvm::toHex(Hash.final());
 }
 
@@ -306,6 +357,14 @@ struct OrdinaryReadEvent {
   uint16_t Bytes;
 };
 
+struct ScalarQueryEvent {
+  std::string Identity;
+  uint32_t SemanticsVersion;
+  std::vector<SymRef> Selectors;
+  std::vector<uint16_t> ResultBits;
+  size_t OrdinaryReadOrdinal;
+};
+
 struct TerminalState {
   SymState State;
   SymRef Predicate, SystemFlags, ReturnOperand;
@@ -313,6 +372,7 @@ struct TerminalState {
   int Cutpoint = -1;
   std::set<uint64_t> DefinedFunctionTemporaries{};
   std::vector<OrdinaryReadEvent> ReadTrace{};
+  std::vector<ScalarQueryEvent> QueryTrace{};
 };
 
 struct LoopPrefix {
@@ -338,10 +398,12 @@ struct RefinementSession {
   std::string OriginalDigest, CandidateDigest;
   std::vector<LowIRUndefinedInstruction> OriginalInstructions;
   std::vector<LowIRNativeFlagTransition> Flags;
+  std::vector<LowIRExternalQueryTransition> Queries;
   std::vector<LowIRNativeProfileProjection> Projections;
   std::map<va_t, uint8_t> ImmutableBytes;
   uint64_t ReadEvidenceBytes = 0;
   std::vector<SymRef> OrdinaryReadInputs;
+  std::vector<std::vector<SymRef>> ScalarQueryInputs;
   const LowIRLoopRefinementPlan *LoopPlan = nullptr;
   std::optional<TerminalState> OriginalStart, CandidateStart;
   int StartingCutpoint = -1;
@@ -460,6 +522,7 @@ class Checker {
   LowFunc NativeTrace;
   std::vector<LowIRUndefinedInstruction> NativeRecords;
   std::vector<LowIRNativeFlagTransition> NativeFlagTransitions;
+  std::vector<LowIRExternalQueryTransition> ScalarQueryTransitions;
   std::vector<LowIRNativeProfileProjection> NativeProfileProjections;
   std::map<int, std::vector<int>> NativeTraceEdges;
   uint64_t OwnedNativeInputOperations = 0, OwnedNativeInputEffects = 0;
@@ -478,6 +541,8 @@ class Checker {
   SymContext &Ctx = OwnedContext;
   std::vector<SymRef> OwnedOrdinaryReadInputs;
   std::vector<SymRef> &OrdinaryReadInputs = OwnedOrdinaryReadInputs;
+  std::vector<std::vector<SymRef>> OwnedScalarQueryInputs;
+  std::vector<std::vector<SymRef>> &ScalarQueryInputs = OwnedScalarQueryInputs;
   // Exact query identities stay within this checker and its actual immutable
   // context. Retain only completed domains under the existing word ceiling.
   detail::FiniteQueryCache FrameProofs{Limits.MaxSymbolicNodes, Ctx};
@@ -527,6 +592,7 @@ class Checker {
     bool SkipCutpoint = false;
     std::set<uint64_t> DefinedFunctionTemporaries;
     std::vector<OrdinaryReadEvent> ReadTrace{};
+    std::vector<ScalarQueryEvent> QueryTrace{};
   };
   std::deque<Path> Pending;
 
@@ -1032,6 +1098,102 @@ class Checker {
         if (P && Function && Function->isFunctionTemporaryByte(V.Offset + I))
           P->DefinedFunctionTemporaries.insert(V.Offset + I);
       }
+  }
+
+  void scalarQuery(Path &P, const SpecializationScalarQuery &Q,
+                   llvm::ArrayRef<LowOp> Operations,
+                   const LowInstructionBoundary &Boundary,
+                   const LowInstructionUndefinedEffects &Effects,
+                   std::set<uint64_t> &Defined) {
+    if (Contract.ExternalQueries != LowIRExternalQueryModel::OrderedScalarV1)
+      fail(Status::Unsupported, "scalar query requires an explicit contract");
+    if (Boundary.Control != LowInstructionControl::None ||
+        Boundary.ControlFlags != LowInstructionControlFlag::None ||
+        !Effects.Effects.empty())
+      fail(Status::Unsupported,
+           "scalar query has unsupported control or effects");
+    if (Q.Identity.empty() ||
+        Q.Identity.size() >
+            LowIRIndependenceLimits::kMaxScalarQueryIdentityBytes ||
+        !Q.SemanticsVersion ||
+        Q.Selectors.size() >
+            LowIRIndependenceLimits::kMaxScalarQuerySelectors ||
+        Q.ResultBits.empty() ||
+        Q.ResultBits.size() > LowIRIndependenceLimits::kMaxScalarQueryResults ||
+        Q.Bindings.empty() ||
+        Q.Bindings.size() > LowIRIndependenceLimits::kMaxScalarQueryBindings)
+      fail(Status::Invalid, "invalid scalar query descriptor");
+    for (uint16_t Bits : Q.ResultBits)
+      if (!Bits || Bits > 64)
+        fail(Status::Invalid, "invalid scalar query result width");
+    for (size_t I = 0; I != Q.Bindings.size(); ++I) {
+      const auto &B = Q.Bindings[I];
+      const auto &V = B.Destination;
+      if ((!V.isReg() && !V.isTemp()) || !scalar(V) ||
+          B.Result >= Q.ResultBits.size() ||
+          Q.ResultBits[B.Result] > V.Size * 8)
+        fail(Status::Invalid, "invalid scalar query result binding");
+      for (size_t J = 0; J != I; ++J) {
+        const auto &Other = Q.Bindings[J].Destination;
+        if (V.Space == Other.Space &&
+            (V.Offset <= Other.Offset ? Other.Offset - V.Offset < V.Size
+                                      : V.Offset - Other.Offset < Other.Size))
+          fail(Status::Invalid, "overlapping scalar query result bindings");
+      }
+    }
+    if (llvm::none_of(Q.Bindings, [&](const auto &B) {
+          return B.Destination == Operations.front().Output;
+        }))
+      fail(Status::Invalid, "scalar query omits its primary output");
+    const auto Charge = [&] {
+      if (Result.Observations >= Limits.MaxObservations)
+        fail(Status::BudgetExceeded, "scalar query trace budget exhausted");
+      ++Result.Observations;
+    };
+    Charge();
+    ScalarQueryEvent Event{
+        Q.Identity, Q.SemanticsVersion, {}, Q.ResultBits, P.ReadTrace.size()};
+    SymExec Left(Ctx, P.Left), Right(Ctx, P.Right);
+    // Check every input before modifying any overlapping output. In
+    // particular, sharing an answer cannot hide an undefined selector.
+    for (const auto &Selector : Q.Selectors) {
+      if (!scalar(Selector))
+        fail(Status::Invalid, "invalid scalar query selector");
+      checkTemporary(Selector, Defined);
+      const auto L = Left.operandValue(Selector);
+      equal(P.Predicate, L, Right.operandValue(Selector),
+            "scalar query selector");
+      Event.Selectors.push_back(ordinary(L));
+    }
+    const auto Index = P.QueryTrace.size();
+    if (Index == ScalarQueryInputs.size())
+      ScalarQueryInputs.emplace_back();
+    if (Index >= ScalarQueryInputs.size())
+      fail(Status::Invalid, "invalid scalar query ordinal");
+    auto &Inputs = ScalarQueryInputs[Index];
+    for (size_t I = 0; I != Q.ResultBits.size(); ++I) {
+      Charge();
+      if (I == Inputs.size())
+        Inputs.push_back(Ctx.mkFreshVar(64, "scalar_query"));
+      nodes();
+    }
+    for (const auto &B : Q.Bindings) {
+      Charge();
+      auto Value = Ctx.mkExtract(Inputs[B.Result], 0, Q.ResultBits[B.Result]);
+      Value = Ctx.mkZExtOrTrunc(Value, B.Destination.Size * 8);
+      const auto Space =
+          B.Destination.isReg() ? SymSpace::Register : SymSpace::Temporary;
+      P.Left.write(Space, B.Destination.Offset, Value);
+      P.Right.write(Space, B.Destination.Offset, Value);
+      define(B.Destination, Defined, &P);
+      nodes();
+    }
+    // All feasible terminal pairs must still agree on the complete query
+    // trace. Each occurrence is independent, even for repeated selectors.
+    P.QueryTrace.push_back(std::move(Event));
+    ScalarQueryTransitions.push_back(
+        {Result.BlockId, Boundary.Address, Q.Identity, Q.SemanticsVersion,
+         lowUndefinedOperationDigest(Operations), scalarQueryDigest(Q)});
   }
 
   bool flagIntrinsic(Path &P, const LowOp &Original,
@@ -1969,6 +2131,12 @@ class Checker {
         fail(Status::Unsupported,
              "unsupported architectural undefined effects: " +
                  Description.Diagnostic);
+      const auto Operations =
+          llvm::ArrayRef(B.Ops).slice(Boundary.FirstOp, Boundary.OpCount);
+      std::optional<SpecializationScalarQuery> Query;
+      if (ReadProvider && !Operations.empty() &&
+          Operations.front().Opcode == NdOp::INTRINSIC)
+        Query = ReadProvider->scalarQuery(Operations);
       // Function-local storage starts unbound. Only bytes actually defined on
       // this path survive an instruction boundary; native lifter temporaries
       // retain their original instruction-local lifetime.
@@ -1997,6 +2165,12 @@ class Checker {
             Original.MemoryAddressSpace != NdMemoryAddressSpace::Default)
           fail(Status::Unsupported,
                "ordered or nondefault memory is unsupported");
+        if (I == 0 && Query) {
+          scalarQuery(P, *Query, Operations, Boundary, Description, Defined);
+          Apply(I + 1);
+          nodes();
+          continue;
+        }
         if (flagIntrinsic(P, Original, Description, Defined)) {
           define(Original.Output, Defined, &P);
           Apply(I + 1);
@@ -2134,7 +2308,7 @@ class Checker {
                  Original.NumInputs ? Left.branchTarget() : SymRef{},
                  std::move(P.Written), -1,
                  std::move(P.DefinedFunctionTemporaries),
-                 std::move(P.ReadTrace)});
+                 std::move(P.ReadTrace), std::move(P.QueryTrace)});
             ++(CandidateExecution ? Refinement->CandidatePathCount
                                   : Refinement->OriginalPathCount);
           }
@@ -2240,6 +2414,13 @@ class Checker {
                       Refinement->NativeFinite)) &&
         (!Refinement || (Refinement->NativeFinite && !Refinement->LoopPlan &&
                          Refinement->PrefixSearchCutpoint < 0));
+    if (Contract.ExternalQueries != LowIRExternalQueryModel::None) {
+      if (Contract.ExternalQueries != LowIRExternalQueryModel::OrderedScalarV1)
+        fail(Status::Invalid, "unknown scalar query contract");
+      if (!FiniteNative)
+        fail(Status::Unsupported,
+             "scalar query traces require a finite native proof provider");
+    }
     if (Contract.NativePreservedState) {
       if (!Native)
         fail(Status::Unsupported,
@@ -2885,6 +3066,24 @@ public:
                                          Original.Predicate)) ==
               solver::SatResult::Unsat)
             continue;
+          if (Original.QueryTrace.size() != Candidate.QueryTrace.size())
+            fail(Status::Dependent, "scalar query counts differ");
+          for (size_t I = 0; I != Original.QueryTrace.size(); ++I) {
+            const auto &A = Original.QueryTrace[I];
+            const auto &B = Candidate.QueryTrace[I];
+            if (A.Identity != B.Identity ||
+                A.SemanticsVersion != B.SemanticsVersion ||
+                A.ResultBits != B.ResultBits ||
+                A.Selectors.size() != B.Selectors.size() ||
+                A.OrdinaryReadOrdinal != B.OrdinaryReadOrdinal)
+              fail(Status::Dependent, "scalar query traces differ");
+            for (size_t J = 0; J != A.Selectors.size(); ++J) {
+              if (Ctx.width(A.Selectors[J]) != Ctx.width(B.Selectors[J]))
+                fail(Status::Dependent, "scalar query selector widths differ");
+              equal(Predicate, A.Selectors[J], B.Selectors[J],
+                    "ordered scalar query selector");
+            }
+          }
           if (Original.ReadTrace.size() != Candidate.ReadTrace.size())
             fail(Status::Dependent, "ordinary RAM read counts differ");
           for (size_t I = 0; I != Original.ReadTrace.size(); ++I) {
@@ -2983,6 +3182,8 @@ public:
         Ctx(Session ? Session->Context : OwnedContext),
         OrdinaryReadInputs(Session ? Session->OrdinaryReadInputs
                                    : OwnedOrdinaryReadInputs),
+        ScalarQueryInputs(Session ? Session->ScalarQueryInputs
+                                  : OwnedScalarQueryInputs),
         Refinement(Session), CandidateExecution(Candidate),
         ReadProvider(Reader), ScheduledPaths(Session ? Session->ScheduledPaths
                                                      : OwnedScheduledPaths) {}
@@ -3011,6 +3212,8 @@ public:
         Ctx(Session ? Session->Context : OwnedContext),
         OrdinaryReadInputs(Session ? Session->OrdinaryReadInputs
                                    : OwnedOrdinaryReadInputs),
+        ScalarQueryInputs(Session ? Session->ScalarQueryInputs
+                                  : OwnedScalarQueryInputs),
         Refinement(Session), ReadProvider(&P),
         ScheduledPaths(Session ? Session->ScheduledPaths
                                : OwnedScheduledPaths) {
@@ -3218,11 +3421,11 @@ public:
           }
           for (auto &B : NativeTrace.Blocks)
             B.Succs = NativeTraceEdges[B.Id];
-          const auto Digest =
-              inputDigest(NativeTrace, NativeRecords, Contract, Limits,
-                          NativeFlagTransitions, NativeProfileProjections,
-                          auditBoundaryReceipts(NativeAuditBoundaries),
-                          Preservation ? &*Preservation : nullptr);
+          const auto Digest = inputDigest(
+              NativeTrace, NativeRecords, Contract, Limits,
+              NativeFlagTransitions, NativeProfileProjections,
+              auditBoundaryReceipts(NativeAuditBoundaries),
+              Preservation ? &*Preservation : nullptr, ScalarQueryTransitions);
           Refinement->OriginalDigest = Digest;
           if (inductive()) {
             Refinement->OriginalSegmentDigests.push_back(Digest);
@@ -3231,6 +3434,9 @@ public:
           Refinement->OriginalInstructions.insert(
               Refinement->OriginalInstructions.end(), NativeRecords.begin(),
               NativeRecords.end());
+          Refinement->Queries.insert(Refinement->Queries.end(),
+                                     ScalarQueryTransitions.begin(),
+                                     ScalarQueryTransitions.end());
           Refinement->Flags.insert(Refinement->Flags.end(),
                                    NativeFlagTransitions.begin(),
                                    NativeFlagTransitions.end());
@@ -3242,7 +3448,8 @@ public:
             NativeResult->Instructions.push_back(Insn);
         } else if (CandidateExecution) {
           Refinement->CandidateDigest = inputDigest(
-              *Function, Records, Contract, Limits, NativeFlagTransitions);
+              *Function, Records, Contract, Limits, NativeFlagTransitions, {},
+              {}, nullptr, ScalarQueryTransitions);
           if (inductive())
             Refinement->CandidateSegmentDigests.push_back(
                 Refinement->CandidateDigest);
@@ -3260,14 +3467,16 @@ public:
             inputDigest(NativeTrace, NativeRecords, Contract, Limits,
                         NativeFlagTransitions, NativeProfileProjections,
                         auditBoundaryReceipts(NativeAuditBoundaries),
-                        Preservation ? &*Preservation : nullptr),
+                        Preservation ? &*Preservation : nullptr,
+                        ScalarQueryTransitions),
             std::move(NativeRecords),
             Contract,
             Limits,
             std::move(NativeFlagTransitions),
             std::move(NativeProfileProjections),
             auditBoundaryReceipts(NativeAuditBoundaries),
-            Preservation};
+            Preservation,
+            std::move(ScalarQueryTransitions)};
         for (auto &[Address, Insn] : NativeInstructions)
           NativeResult->Instructions.push_back(std::move(Insn));
       } else {
@@ -3372,6 +3581,7 @@ refinementResult(RefinementSession &Session,
   Certificate.OriginalInstructions = std::move(Session.OriginalInstructions);
   Certificate.Producers = std::move(Session.Producers);
   Certificate.NativeFlagTransitions = std::move(Session.Flags);
+  Certificate.ExternalQueryTransitions = std::move(Session.Queries);
   Certificate.NativeProfileProjections = std::move(Session.Projections);
   Certificate.NativeAuditBoundaries =
       auditBoundaryReceipts(Session.NativeAuditBoundaries);

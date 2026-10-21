@@ -132,6 +132,24 @@ struct SpecializationImmutableRead {
   std::string Evidence;
 };
 
+/// Architecture-owned meaning of one complete scalar query instruction.
+/// Selectors contain every modeled input; results are defined environment
+/// inputs, independent between occurrences. Bindings zero-extend a result to
+/// its scalar destination, including instruction-local output carriers. The
+/// original query remains observable; this does not make its effects ignorable
+/// or establish any state preservation outside the separate native audits.
+struct SpecializationScalarQuery {
+  struct Binding {
+    NdVar Destination;
+    uint16_t Result = 0;
+  };
+  std::string Identity;
+  uint32_t SemanticsVersion = 0;
+  std::vector<NdVar> Selectors;
+  std::vector<uint16_t> ResultBits;
+  std::vector<Binding> Bindings;
+};
+
 class SpecializationProvider {
 public:
   virtual ~SpecializationProvider() = default;
@@ -145,6 +163,13 @@ public:
   instruction(SpecializationCursor Cursor) = 0;
   virtual std::optional<SpecializationImmutableRead>
   immutableRead(va_t Address, uint16_t Bytes) {
+    return std::nullopt;
+  }
+  /// Describe only complete, supported LowIR query bundles. Candidate labels
+  /// are not native-byte evidence. Native decoding and effect/preservation
+  /// audits remain separate obligations on original instructions.
+  virtual std::optional<SpecializationScalarQuery>
+  scalarQuery(llvm::ArrayRef<LowOp> Operations) {
     return std::nullopt;
   }
 };

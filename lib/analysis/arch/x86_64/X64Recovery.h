@@ -79,6 +79,11 @@ std::optional<RuntimeRegisterRead> lowerRuntimeRegisterRead(
     const SpecializationInstruction &Instruction, NdVar Sample,
     std::optional<InterpreterMachineStateProfile> Profile = std::nullopt);
 
+/// Describe a complete canonical CPUID LowIR bundle. Candidate selectors may
+/// be folded scalars; this validates no native bytes or execution domain.
+std::optional<SpecializationScalarQuery>
+describeCPUQuery(llvm::ArrayRef<LowOp> Operations);
+
 bool isRetainedNativeTrap(const SpecializationInstruction &Insn);
 bool isCetDisabledProjection(const SpecializationInstruction &Insn);
 

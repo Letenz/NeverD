@@ -68,6 +68,7 @@ add_neverd_unittest(NeverDX86ScalarMoveAuditTests
 
 add_neverd_unittest(NeverDOriginalBinaryUndefinedIndependenceTests
   OriginalBinaryUndefinedIndependenceTests.cpp
+  NativeQueryTraceTests.cpp
   LINK_COMPONENTS BinaryInterpreterSpecialization
 )
 

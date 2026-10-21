@@ -12,11 +12,13 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/symbolic/SymState.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/SHA256.h"
 
 #include <algorithm>
+#include <array>
 #include <set>
 
 namespace neverd::analysis::x64 {
@@ -225,6 +227,12 @@ bool runtimeFlagsIntrinsic(
 
 namespace {
 
+constexpr uint64_t CPUQueryRegisters[]{x86reg::RAX, x86reg::RBX, x86reg::RCX,
+                                       x86reg::RDX};
+std::array<NdVar, 2> cpuQuerySelectors() {
+  return {NdVar::reg(x86reg::RAX, 4), NdVar::reg(x86reg::RCX, 4)};
+}
+
 bool runtimeReadBundle(const SpecializationInstruction &I, NdVar Sample,
                        uint8_t Encoding, size_t Count) {
   const auto &B = I.Origin;
@@ -240,7 +248,9 @@ bool runtimeReadBundle(const SpecializationInstruction &I, NdVar Sample,
       I.NativeStackControl != SpecializationNativeStackControl::None ||
       I.ProfileProjection != InterpreterProfileProjection::None ||
       I.Ops.size() != Count ||
-      I.UndefinedEffects.Coverage != LowUndefinedCoverage::Missing ||
+      I.UndefinedEffects.Coverage != (Encoding == 0xa2
+                                          ? LowUndefinedCoverage::Complete
+                                          : LowUndefinedCoverage::Missing) ||
       I.UndefinedEffects.OpCount != Count ||
       !I.UndefinedEffects.Effects.empty() ||
       I.UndefinedEffects.OperationDigest !=
@@ -257,35 +267,45 @@ bool runtimeReadBundle(const SpecializationInstruction &I, NdVar Sample,
 }
 
 std::optional<std::vector<NdVar>>
-runtimeReadOutputs(const SpecializationInstruction &I, NdVar Sample,
-                   uint8_t Encoding, Intrinsic Id,
-                   llvm::ArrayRef<uint64_t> Registers,
-                   llvm::ArrayRef<NdVar> Selectors) {
-  if (!runtimeReadBundle(I, Sample, Encoding, 1 + 2 * Registers.size()))
+runtimeReadOutputCarriers(llvm::ArrayRef<LowOp> Ops, Intrinsic Id,
+                          llvm::ArrayRef<uint64_t> Registers,
+                          llvm::ArrayRef<NdVar> Selectors, bool ExactSelectors,
+                          std::optional<NdVar> Sample = std::nullopt) {
+  if (Ops.size() != 1 + 2 * Registers.size())
     return std::nullopt;
-  const auto &Read = I.Ops[0];
+  const auto &Read = Ops[0];
   if (Read.Opcode != NdOp::INTRINSIC ||
       Read.NumInputs != 1 + Selectors.size() || !Read.Inputs[0].isConst() ||
       Read.Inputs[0].Size != 2 ||
       Read.Inputs[0].Offset != static_cast<uint64_t>(Id) ||
       Read.Output != NdVar::reg(x86reg::RAX, 8))
     return std::nullopt;
-  for (size_t N = 0; N < Selectors.size(); ++N)
-    if (Read.Inputs[N + 1] != Selectors[N])
+  for (size_t N = 0; N != Ops.size(); ++N)
+    if (Ops[N].Addr != Read.Addr || Ops[N].Seq != static_cast<int>(N) ||
+        Ops[N].MemoryOrdering != NdMemoryOrdering::None ||
+        Ops[N].MemoryAddressSpace != NdMemoryAddressSpace::Default)
       return std::nullopt;
+  for (size_t N = 0; N < Selectors.size(); ++N) {
+    const auto &V = Read.Inputs[N + 1];
+    if (V.Size != Selectors[N].Size ||
+        (!V.isReg() && !V.isTemp() && !V.isConst()) ||
+        (!V.isConst() && V.Offset > InvalidVA - (V.Size - 1)) ||
+        (ExactSelectors && V != Selectors[N]))
+      return std::nullopt;
+  }
   const auto Overlap = [](NdVar A, NdVar C) {
     return A.Offset <= C.Offset ? C.Offset - A.Offset < A.Size
                                 : A.Offset - C.Offset < C.Size;
   };
   std::vector<NdVar> Outputs;
   for (size_t N = 0; N < Registers.size(); ++N) {
-    const auto &Copy = I.Ops[1 + N];
-    const auto &Clear = I.Ops[1 + Registers.size() + N];
+    const auto &Copy = Ops[1 + N];
+    const auto &Clear = Ops[1 + Registers.size() + N];
     const auto Value = Copy.Inputs[0];
     if (Copy.Opcode != NdOp::COPY || Copy.NumInputs != 1 ||
         Copy.Output != NdVar::reg(Registers[N], 4) || !Value.isTemp() ||
         Value.Size != 4 || Value.Offset > InvalidVA - 3 ||
-        Overlap(Value, Sample) || Clear.Opcode != NdOp::INT_ZEXT ||
+        (Sample && Overlap(Value, *Sample)) || Clear.Opcode != NdOp::INT_ZEXT ||
         Clear.NumInputs != 1 || Clear.Output != NdVar::reg(Registers[N], 8) ||
         Clear.Inputs[0] != NdVar::reg(Registers[N], 4) ||
         llvm::any_of(Outputs,
@@ -294,6 +314,17 @@ runtimeReadOutputs(const SpecializationInstruction &I, NdVar Sample,
     Outputs.push_back(Value);
   }
   return Outputs;
+}
+
+std::optional<std::vector<NdVar>>
+runtimeReadOutputs(const SpecializationInstruction &I, NdVar Sample,
+                   uint8_t Encoding, Intrinsic Id,
+                   llvm::ArrayRef<uint64_t> Registers,
+                   llvm::ArrayRef<NdVar> Selectors) {
+  if (!runtimeReadBundle(I, Sample, Encoding, 1 + 2 * Registers.size()))
+    return std::nullopt;
+  return runtimeReadOutputCarriers(I.Ops, Id, Registers, Selectors, true,
+                                   Sample);
 }
 
 std::optional<RuntimeRegisterRead>
@@ -404,12 +435,9 @@ std::optional<RuntimeRegisterRead> lowerRuntimeRegisterRead(
   // halves. The original read remains, including both selectors and its
   // serialization effect. Independent answers overapproximate every CPU;
   // their values cannot authorize host-feature or repeated-query assumptions.
-  const uint64_t Registers[]{x86reg::RAX, x86reg::RBX, x86reg::RCX,
-                             x86reg::RDX};
-  const NdVar Selectors[]{NdVar::reg(x86reg::RAX, 4),
-                          NdVar::reg(x86reg::RCX, 4)};
-  const auto Outputs = runtimeReadOutputs(I, Sample, 0xa2, Intrinsic::Cpuid,
-                                          Registers, Selectors);
+  const auto Outputs =
+      runtimeReadOutputs(I, Sample, 0xa2, Intrinsic::Cpuid, CPUQueryRegisters,
+                         cpuQuerySelectors());
   if (!Outputs)
     return lowerRuntimeMsrRead(I, Sample, Profile);
   RuntimeRegisterRead Result;
@@ -433,6 +461,24 @@ std::optional<RuntimeRegisterRead> lowerRuntimeRegisterRead(
   Primary.addInput(Outputs->front());
   Result.Ops.push_back(Primary);
   return Result;
+}
+
+std::optional<SpecializationScalarQuery>
+describeCPUQuery(llvm::ArrayRef<LowOp> Operations) {
+  const auto Outputs =
+      runtimeReadOutputCarriers(Operations, Intrinsic::Cpuid, CPUQueryRegisters,
+                                cpuQuerySelectors(), false);
+  if (!Outputs)
+    return std::nullopt;
+  SpecializationScalarQuery Query;
+  Query.Identity = "x64.cpuid";
+  Query.SemanticsVersion = 1;
+  Query.Selectors = {Operations[0].Inputs[1], Operations[0].Inputs[2]};
+  Query.ResultBits.assign(4, 32);
+  for (uint16_t I = 0; I != Outputs->size(); ++I)
+    Query.Bindings.push_back({(*Outputs)[I], I});
+  Query.Bindings.push_back({Operations[0].Output, 0});
+  return Query;
 }
 
 // A retained trap has exact semantics even though its exception-state outputs

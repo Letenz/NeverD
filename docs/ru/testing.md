@@ -2195,3 +2195,9 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 ## Регрессии конечных чтений обычной RAM
 
 `LowIRReadTrace.*` проверяет общие входы, оба порядка байтов, изменения адреса/ширины/порядка/числа, все ветви, частичное перекрытие предыдущих записей кадра, неопределённые значения, независимые повторные чтения, точные/недостаточные бюджеты и отказ для циклов. `OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` проверяет независимость исходного машинного кода, уточнение машинного кода в LowIR и отказ при изменённом указателе. Запускайте `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDPEFixedImageTests` и `NeverDInterpreterSpecializationTests`. Одни эти доказательства не сертифицируют скомпилированный C или конкретный CPU-бэкенд.
+
+## Регрессии скалярных машинных запросов
+
+`NativeQueryTrace.*` проверяет независимые ответы, четыре нулевых расширения, изменения селекторов/числа/порядка, неопределённые селекторы, чередование чтений, все ветви, сохранённое состояние, аудит кодировки/деталей, неверные пакеты, бюджеты, хеши и отказ статических/индуктивных API. `NativeScalarQueryDescriptor.*` проверяет общие ограничения описаний и привязку фактических квитанций.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.

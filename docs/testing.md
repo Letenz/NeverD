@@ -9670,3 +9670,9 @@ Absolute-memory regressions cover bounded contiguous and sparse batches, complet
 ## Finite ordinary RAM read regression tests
 
 `LowIRReadTrace.*` checks shared inputs, both byte orders, changed addresses/widths/order/counts, every branch, partial overlap with prior frame writes, undefined producers, independent repeated reads, exact/short budgets and loop refusal. `OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` checks original native independence, native-to-LowIR refinement and a changed-pointer rejection. Run `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDPEFixedImageTests` and `NeverDInterpreterSpecializationTests`. These proofs do not by themselves qualify compiled C or a concrete CPU backend.
+
+## Native scalar query regression tests
+
+`NativeQueryTrace.*` covers independent query answers, all four zero extensions, selector/count/order mutations, undefined selectors, ordinary-read interleaving, every branch, unaffected state, strict byte/detail audits, malformed bundles, budgets, digest binding and static/inductive refusal. `NativeScalarQueryDescriptor.*` tests the generic descriptor limits and the actual receipt binding.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.

@@ -2242,3 +2242,9 @@ Les régressions de mémoire absolue couvrent des lots bornés contigus et dispe
 ## Régressions des lectures finies en RAM ordinaire
 
 `LowIRReadTrace.*` vérifie les entrées partagées, les deux ordres d’octets, les changements d’adresse/largeur/ordre/nombre, toutes les branches, les chevauchements partiels avec les écritures antérieures du cadre, les valeurs indéfinies, les lectures répétées indépendantes, les budgets exacts/insuffisants et le refus des boucles. `OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` vérifie l’indépendance native originale, le raffinement natif vers LowIR et le refus d’un pointeur modifié. Exécuter `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDPEFixedImageTests` et `NeverDInterpreterSpecializationTests`. Ces preuves seules ne qualifient ni le C compilé ni un backend CPU concret.
+
+## Régressions des requêtes scalaires natives
+
+`NativeQueryTrace.*` couvre réponses indépendantes, quatre extensions par zéro, mutations des sélecteurs/nombres/ordres, sélecteurs indéfinis, lectures entrelacées, toutes les branches, état préservé, audits de codage/détails, groupes malformés, budgets, empreintes et refus statiques/inductifs. `NativeScalarQueryDescriptor.*` vérifie les limites génériques et les reçus effectifs.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.

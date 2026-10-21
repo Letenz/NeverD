@@ -2127,3 +2127,9 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 ## 有限の通常 RAM 読み取り回帰テスト
 
 `LowIRReadTrace.*` は共有入力、両バイト順、アドレス・幅・順序・回数の変更、全分岐、先行フレーム書き込みとの部分重複、未定義値、反復読み取りの独立性、正確な予算と不足時の拒否、ループ拒否を確認します。`OriginalBinaryUndefinedIndependence.OrdinaryReadTracePreservesNativeMemoryInputs` は元の機械語の独立性、機械語から LowIR への精緻化、ポインター変更の拒否を確認します。`NeverDLowIRRefinementTests`、`NeverDLowIRUndefinedIndependenceTests`、`NeverDOriginalBinaryUndefinedIndependenceTests`、`NeverDPEFixedImageTests`、`NeverDInterpreterSpecializationTests` を実行してください。これらの証明だけではコンパイル済み C や具体的 CPU バックエンドを認証しません。
+
+## ネイティブ・スカラー問い合わせの回帰テスト
+
+`NativeQueryTrace.*` は独立結果、四つのゼロ拡張、引数・回数・順序の変更、未定義引数、通常読み取りとの交錯、全分岐、非変更状態、符号化・詳細監査、不正操作列、予算、ダイジェスト、静的・帰納 API の拒否を検証します。`NativeScalarQueryDescriptor.*` は共通記述の制限と実際の記録の結合を検証します。
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDInterpreterSpecializationTests`, `NeverDLowIRRefinementTests`, `NeverDLowIRUndefinedIndependenceTests`, `NeverDX86NativeStateAuditTests`, `NeverDX86LegacyGSRecoveryTests`, `NeverDPEFixedImageTests`.
