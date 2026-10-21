@@ -16,13 +16,10 @@
 #include "JSONText.h"
 #include "SessionImpl.h"
 
-#include "neverd/support/Parallel.h"
-
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/JSON.h"
 
 #include <algorithm>
-#include <atomic>
 #include <functional>
 #include <limits>
 #include <optional>
@@ -241,76 +238,26 @@ std::shared_ptr<const CallReferenceGraph> buildGraph(Session &S) {
     }
   };
 
-  // A function with a recorded extent decodes across it, as direct
-  // references do.
-  std::vector<size_t> Unsized;
+  // The bodies decode as direct references read them: across a recorded
+  // extent, else along the function's own jumps short of other entries.
+  std::vector<va_t> Entries;
+  Entries.reserve(Ordered.size());
+  for (const FuncInfo *F : Ordered)
+    Entries.push_back(F->Entry);
   for (size_t First = 0; First < Bodies.size();
        First += FunctionPage::MaxFunctionsPerPage) {
     FunctionPage Page;
-    std::vector<size_t> Indexes;
     const size_t Last = std::min<size_t>(
         Bodies.size(), First + FunctionPage::MaxFunctionsPerPage);
-    for (size_t I = First; I < Last; ++I) {
-      if (!Bodies[I]->Size) {
-        Unsized.push_back(I);
-        continue;
-      }
-      Page.Functions.push_back(Bodies[I]);
-      Indexes.push_back(I);
-    }
-    if (Page.Functions.empty())
-      continue;
+    Page.Functions.assign(Bodies.begin() + First, Bodies.begin() + Last);
+    Page.Entries = Entries;
     if (!decodeFunctions(
             Img, Page, [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
-              Collect(Indexes[Index], Dec, DI);
+              Collect(First + Index, Dec, DI);
             })) {
       S.setError("failed to initialize a decoder for the image");
       return nullptr;
     }
-  }
-  // One without a recorded extent is the code its own direct branches reach
-  // from its entry, short of another function's entry: decoding only up to
-  // its first terminator would miss the paths after the first return or
-  // jump.
-  constexpr uint64_t MaxBodyInstructions = 65536;
-  std::atomic<bool> DecoderFailed{false};
-  parallelForEach(Unsized.size(), [&](auto Claim, size_t Total) {
-    Decoder Local;
-    if (!Local.init(Img)) {
-      DecoderFailed = true;
-      return;
-    }
-    for (size_t Next = Claim(); Next < Total; Next = Claim()) {
-      const size_t Index = Unsized[Next];
-      const va_t Entry = Bodies[Index]->Entry;
-      std::unordered_set<va_t> Seen;
-      std::vector<va_t> Pending{Entry};
-      uint64_t Decoded = 0;
-      while (!Pending.empty() && Decoded < MaxBodyInstructions) {
-        const va_t Start = Pending.back();
-        Pending.pop_back();
-        (void)decodeNativeRange(
-            Img, Local, Start, 0, MaxBodyInstructions - Decoded,
-            [&](const DecodedInsn &DI, const uint8_t *, int) {
-              if ((DI.Addr != Entry && G->NodeAt.count(DI.Addr)) ||
-                  !Seen.insert(DI.Addr).second)
-                return false;
-              ++Decoded;
-              Collect(Index, Local, DI);
-              const InstructionFlow Flow =
-                  summarizeInstructionFlow(Img, Local, DI);
-              if ((Flow.Kind == "jump" || Flow.Kind == "cjump") &&
-                  Flow.Target != InvalidVA && !G->NodeAt.count(Flow.Target) &&
-                  !Seen.count(Flow.Target))
-                Pending.push_back(Flow.Target);
-              return !Local.isFunctionTerminator(DI);
-            });
-      }
-    }
-  });
-  if (DecoderFailed) {
-    S.setError("failed to initialize a decoder for the image");
-    return nullptr;
   }
 
   // One edge per ordered pair, with every kind of reference it stands for

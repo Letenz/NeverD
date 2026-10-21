@@ -2138,6 +2138,41 @@ TEST_F(SessionCAPITest, CallPathsFollowTheDirectReferencesBetweenFunctions) {
   EXPECT_FALSE(takeString(neverd_last_error(Session)).empty());
 }
 
+TEST_F(SessionCAPITest, DirectReferencesFollowAnUnsizedFunctionsJumps) {
+  // test eax, eax; je +1; ret; call x; ret; x: ret.  The call lies past the
+  // function's first return, where only the jump reaches it.
+  constexpr char Bytes[] = "\x85\xc0\x74\x01\xc3\xe8\x01\x00\x00\x00\xc3\xc3";
+  const auto Input =
+      write("unsized-jumps.elf",
+            makeNativeELF(false, 0x400000, {}, std::string_view(Bytes, 12)));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const uint64_t Entry = neverd_session_entry_addr(Session);
+  for (const uint64_t Offset : {0x0, 0xb})
+    if (neverd_func_find_by_addr(Session, Entry + Offset) < 0)
+      ASSERT_EQ(neverd_func_create(Session, Entry + Offset), 0)
+          << takeString(neverd_last_error(Session));
+  ASSERT_EQ(neverd_func_size(Session, neverd_func_find_by_addr(Session, Entry)),
+            0);
+  const auto Page = takeString(neverd_code_refs_json(Session, Entry, 1));
+  auto Parsed = llvm::json::parse(Page);
+  ASSERT_TRUE(static_cast<bool>(Parsed)) << Page;
+  std::vector<std::string> Rows;
+  for (const auto &Row : *Parsed->getAsObject()->getArray("refs")) {
+    const auto &Fields = *Row.getAsArray();
+    Rows.push_back(Fields[0].getAsString().value_or("").str() + " " +
+                   Fields[1].getAsString().value_or("").str() + " " +
+                   Fields[2].getAsString().value_or("").str());
+  }
+  const auto Hex = [](uint64_t Address) {
+    return "0x" + llvm::utohexstr(Address);
+  };
+  EXPECT_EQ(Rows, (std::vector<std::string>{
+                      Hex(Entry + 2) + " " + Hex(Entry + 5) + " cjump",
+                      Hex(Entry + 5) + " " + Hex(Entry + 0xb) + " call"}))
+      << Page;
+}
+
 TEST_F(SessionCAPITest, DecompileFunctionsWritesOneUnitOfTheSelection) {
   const auto Input = write("call-chain.elf",
                            makeNativeELF(false, 0x400000, {}, CallChainCode));
