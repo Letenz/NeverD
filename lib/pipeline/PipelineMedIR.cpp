@@ -290,6 +290,7 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
   COPY_SOURCE_FACT(FormattedCalls);
   COPY_SOURCE_FACT(OmittedCalleeArgumentCounts);
   COPY_SOURCE_FACT(OmittedCallees);
+  COPY_SOURCE_FACT(CallPrototypeArguments);
   COPY_SOURCE_FACT(CallUserPrototypes);
   COPY_SOURCE_FACT(CallFloatReturns);
 #undef COPY_SOURCE_FACT

@@ -10,6 +10,24 @@
 
 `DriverMSRExecution.*` and `DriverMSRDeclaration.*` check explicit MSR values, full-width splitting, preserved state, repeated reads, exact instruction limits, missing/invalid inputs, and lack of memory authority across available backends. `KernelMSRRead.*` retains unused-declaration dependencies. Run the native driver, driver emulation and kernel snapshot owners; unavailable WHP/HVF execution is a skip, not native qualification.
 
+`NeverDIntegerCallArgumentsTests` checks integer record carriers, unused
+register positions before memory arguments, register exhaustion, i386 slots,
+indirect copies and refusal of incomplete layouts. `NeverDRecordCallContractTests`
+checks the shipped glibc, musl and Darwin header layouts. On Linux x86-64 it
+compiles genuine libc declarations at O0/O2 and checks both C emitters at O0/O2:
+selected functions execute against an independent provider observing every
+record field and following parameter; whole modules are syntax-checked with
+their original import-slot aliases. Those aliases need the SDK's image linker
+for runtime binding. Other hosts explicitly skip the native glibc test.
+`LocalTypesDebugContext.RecordParametersRetainCompleteABILayout` checks alignment,
+scalar leaves and refusal to publish a partial bitfield layout.
+
+Run these with the System V, i386 and AAPCS64 call-contract tests and the source
+control-flow tests after changing this shared boundary. The stack-join
+regression executes generated C at O0/O2 for ELF and Mach-O; conflicting joins,
+narrowing and overflowing arithmetic retain negative coverage. ARM32 record
+placement and native non-x64 record-call execution remain unqualified.
+
 `AndroidSignals.Descriptor*` and `Receive*` check caught/ignored/blocked and
 terminating signals during original poll/epoll/pselect6 and TCP/UDP receive
 calls. Independent O0/O2 fixtures run across relocation packing and available

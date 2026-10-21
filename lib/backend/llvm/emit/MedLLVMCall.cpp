@@ -916,9 +916,10 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     std::string CalleeName = resolveCalleeName();
     // An import whose prototype the user declares passes what call-ABI
     // recovery gave it, which the tables do not count.
-    const bool UserPrototype = UserPrototypeCallees && CI &&
-                               UserPrototypeCallees->count(CI->TargetAddr);
-    if (!IndirectImportName.empty() && !UserPrototype) {
+    const bool PrototypeArguments =
+        PrototypeArgumentCallees && CI &&
+        PrototypeArgumentCallees->count(CI->TargetAddr);
+    if (!IndirectImportName.empty() && !PrototypeArguments) {
       const auto Arity = libc::libcArityForSymbol(CalleeName, TargetLibC);
       const unsigned Required =
           Arity ? Arity->IntArgs + Arity->FpArgs
@@ -1045,7 +1046,7 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       if (!Callee && !CalleeName.empty()) {
         // The user's prototype of an import is declared from its calls.
         std::optional<libc::LibCArity> Arity;
-        if (!UserPrototype)
+        if (!PrototypeArguments)
           Arity = libc::libcArityForSymbol(CalleeName, TargetLibC);
         // A known libc function whose RESULT is floating-point.  Three shapes
         // are modelled: (a) all-FP-args (sqrt/pow), (b) FP-first mixed int/FP

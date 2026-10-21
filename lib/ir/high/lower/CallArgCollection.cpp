@@ -375,7 +375,7 @@ unsigned MedToHighConverter::importFixedArgCount(size_t CallIdx,
   const va_t Key =
       Call.Inputs[0].isConst() ? Call.Inputs[0].ConstVal : ResolvedSlot;
   // One whose prototype the user declares reads what its summary counts.
-  if (Key && UserPrototypeCallees && UserPrototypeCallees->count(Key))
+  if (Key && PrototypeArgumentCallees && PrototypeArgumentCallees->count(Key))
     return static_cast<unsigned>(std::max<int>(0, Call.CalleeRegisterArgs));
   const std::string Import = Key ? importCalleeName(*Image, Key) : "";
   if (Import.empty())
@@ -1190,7 +1190,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     if (!CurMed || !CallStackKnown)
       return std::nullopt;
     indexMedDefinitions();
-    return EntryStackOffsets->offsetFrom(Address, CallStack);
+    return EntryStackOffsets->callOffsetFrom(Address, CallStack);
   };
   Scan.CallStackOffsetOf = CallStackOffsetOf;
   // A stack slot below the stack pointer an address is made from, another
@@ -1345,14 +1345,14 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     const MedOp &Call = Ops[CallIdx];
     // A call to an import whose prototype the user declares, through its
     // stub or its slot, passes what call-ABI recovery gave it.
-    if (UserPrototypeCallees) {
+    if (PrototypeArgumentCallees) {
       if (Call.NumInputs >= 1 && Call.Inputs[0].isConst() &&
-          UserPrototypeCallees->count(Call.Inputs[0].ConstVal))
+          PrototypeArgumentCallees->count(Call.Inputs[0].ConstVal))
         return Collected;
       if (CurMed)
         if (const MedCallInfo *Info =
                 CurMed->findCall(CurBlock.Id, static_cast<int>(CallIdx));
-            Info && UserPrototypeCallees->count(Info->TargetAddr))
+            Info && PrototypeArgumentCallees->count(Info->TargetAddr))
           return Collected;
     }
     std::string Name;

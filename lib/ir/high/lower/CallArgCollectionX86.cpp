@@ -66,8 +66,9 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
   const bool ReservedArea =
       Scan.Convention && Scan.Convention->ReservedOutgoingArea;
   const bool SlotsByCallOffset =
-      Scan.TheArch == Arch::X64 && !ReservedArea && Scan.CallStackEntryOffset &&
-      Scan.EntryOffsetOf &&
+      Scan.TheArch == Arch::X64 && !ReservedArea &&
+      (Scan.CallStackOffsetOf ||
+       (Scan.CallStackEntryOffset && Scan.EntryOffsetOf)) &&
       Scan.CalleeStackArgs > static_cast<int>(RegisterPositions);
   const std::vector<ExprPtr> RegisterArgs = Found;
   // The slots a store of \p Width bytes fills from argument position
@@ -119,10 +120,14 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
     const int64_t StackSlots =
         Scan.CalleeStackArgs - static_cast<int64_t>(RegisterPositions);
     stores([&](const MedOp &Store) {
-      const std::optional<int64_t> Entry = Scan.EntryOffsetOf(Store.Inputs[0]);
-      if (!Entry || *Entry < *Scan.CallStackEntryOffset)
+      std::optional<int64_t> Above;
+      if (Scan.CallStackOffsetOf)
+        Above = Scan.CallStackOffsetOf(Store.Inputs[0]);
+      else if (const auto Entry = Scan.EntryOffsetOf(Store.Inputs[0]))
+        Above = *Entry - *Scan.CallStackEntryOffset;
+      if (!Above || *Above < 0)
         return true;
-      const int64_t Offset = *Entry - *Scan.CallStackEntryOffset;
+      const int64_t Offset = *Above;
       if (Offset % SlotBytes != 0 || Offset / SlotBytes >= StackSlots)
         return true;
       // A wider store, a 16-byte copy of a by-value record or a 10-byte x87
@@ -166,18 +171,22 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
       Scan.Convention && Scan.Convention->StackArgumentsFollowUsedRegisters
           ? Scan.FirstStackSlot
           : static_cast<int>(RegisterPositions);
+  bool ForwardedStackSlots = false;
   if (Scan.TailJump && Scan.OwnStackParam)
     for (int K = FirstStackPosition;
          K < Scan.CalleeStackArgs && K < static_cast<int>(Found.size()); ++K)
-      if (!Found[K])
+      if (!Found[K]) {
         Found[K] = Scan.OwnStackParam(K);
+        ForwardedStackSlots |= Found[K] != nullptr;
+      }
   // With positional slots a stack argument means every register argument is
   // passed, even the ones this block did not write (a pass-through of the
   // caller's own).  So does one placed past every register position: the
   // callee's parameters keep a place for each register it does not read
   // (detectStackParams).
   if (Scan.Convention &&
-      (Scan.Convention->PositionalArgumentSlots || PlacedByCallOffset) &&
+      (Scan.Convention->PositionalArgumentSlots || PlacedByCallOffset ||
+       ForwardedStackSlots) &&
       Scan.ReachingRegArg &&
       std::any_of(Found.begin() + std::min(RegisterPositions, Found.size()),
                   Found.end(), [](const ExprPtr &E) { return E != nullptr; }))

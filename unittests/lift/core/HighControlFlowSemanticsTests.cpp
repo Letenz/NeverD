@@ -5364,6 +5364,7 @@ TEST(HighControlFlowSemantics, SwitchCleanupPreservesContinuationPaths) {
 TEST(HighControlFlowSemantics,
      UnreachableCleanupDropsOnlyUnreferencedReturnsAfterSourceTraps) {
   for (const auto Id : {Intrinsic::Ud2, Intrinsic::Brk, Intrinsic::Hlt_A64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Id));
     HighStmt Trap;
     Trap.Kind = StmtKind::Call;
     Trap.Addr = 0x1000;
@@ -5381,17 +5382,19 @@ TEST(HighControlFlowSemantics,
         << "a branch may enter the return after the trap";
   }
 
-  for (const auto Id : {Intrinsic::Int3, Intrinsic::ArmHlt}) {
-    HighStmt DebugTrap;
-    DebugTrap.Kind = StmtKind::Call;
-    DebugTrap.Addr = 0x1000;
-    DebugTrap.CallExpr = HighExpr::makeCall("debug_trap", 0, {});
-    DebugTrap.CallExpr->IntrinsicId = Id;
-    std::vector<HighStmt> Body{DebugTrap,
+  for (const auto Id : {Intrinsic::Int3, Intrinsic::ArmBkpt, Intrinsic::ArmHlt,
+                        Intrinsic::ArmUdf}) {
+    SCOPED_TRACE(static_cast<unsigned>(Id));
+    HighStmt Resumable;
+    Resumable.Kind = StmtKind::Call;
+    Resumable.Addr = 0x1000;
+    Resumable.CallExpr = HighExpr::makeCall("resumable_trap", 0, {});
+    Resumable.CallExpr->IntrinsicId = Id;
+    std::vector<HighStmt> Body{Resumable,
                                result(0x1004, HighExpr::makeUndef(8))};
     removeUnreachableCode(Body);
     EXPECT_EQ(Body.size(), 2u)
-        << "a resumable debugger trap must retain its following return";
+        << "a resumable trap must retain its following return";
   }
 }
 

@@ -220,6 +220,33 @@ TEST(LocalTypesDebugContext, TypesTheFunctionsByTheNamesTheyAreShownUnder) {
   EXPECT_EQ(Recognized->Params.size(), 2u);
 }
 
+TEST(LocalTypesDebugContext, RecordParametersRetainCompleteABILayout) {
+  using namespace neverd;
+  auto Library = std::make_shared<types::TypeLibrary>(types::DataModel::LP64);
+  ASSERT_TRUE(types::parseCTypes(R"(
+    typedef struct { char *key; void *data; } ENTRY;
+    typedef struct { unsigned int bits : 3; int value; } BITS;
+    void consume(ENTRY item, BITS flags);
+  )",
+                                 *Library)
+                  .ok());
+  NamesOnlyDebugContext Names;
+  sdk::LocalTypesDebugContext Context(Names, Library);
+  const auto Function = Context.resolvePrototype("consume");
+  ASSERT_TRUE(Function);
+  ASSERT_EQ(Function->Params.size(), 2u);
+  const auto &Entry = Function->Params[0].second;
+  ASSERT_TRUE(Entry);
+  EXPECT_EQ(Entry->Alignment, 8u);
+  ASSERT_EQ(Entry->ScalarLeaves.size(), 2u);
+  for (unsigned I = 0; I < 2; ++I) {
+    EXPECT_EQ(Entry->ScalarLeaves[I].Offset, I * 8u);
+    EXPECT_EQ(Entry->ScalarLeaves[I].Size, 8u);
+    EXPECT_FALSE(Entry->ScalarLeaves[I].Floating);
+  }
+  EXPECT_TRUE(Function->Params[1].second->ScalarLeaves.empty());
+}
+
 TEST(LocalTypesDebugContext, NamesTheHeaderLibraryAPrototypeComesFrom) {
   using namespace neverd;
   const types::TypeLibrary *Kernel =

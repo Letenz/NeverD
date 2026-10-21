@@ -286,7 +286,7 @@ void Pipeline::rebuildHighIR(const BinaryImage &Img,
     Local.setFuncNames(&AllFuncNames);
     Local.setResolvedCalleeNames(&ResolvedCalleeNames);
     Local.setVariadicVectorCallees(&VariadicVectorCallees);
-    Local.setUserPrototypeCallees(&Result.CallUserPrototypes);
+    Local.setPrototypeArgumentCallees(&Result.CallPrototypeArguments);
     for (size_t FI; (FI = Claim()) < N;) {
       const MedFunc &MF = Result.MedFuncs[FI];
       Local.setExpressionObserver({});

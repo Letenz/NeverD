@@ -92,11 +92,12 @@ public:
   /// lookups may run from every shard at once.
   void setDebugContext(const DebugContext *Context) { Dbg = Context; }
   /// The imports, by the stub or slot a call names each by, whose prototype
-  /// the user declares (PipelineResult::CallUserPrototypes): a call to one
+  /// a user declaration or header record layout specifies
+  /// (PipelineResult::CallPrototypeArguments): a call to one
   /// passes what call-ABI recovery gave it, however many arguments the
   /// arity tables give a routine of the name.
-  void setUserPrototypeCallees(const std::set<va_t> *Callees) {
-    UserPrototypeCallees = Callees;
+  void setPrototypeArgumentCallees(const std::set<va_t> *Callees) {
+    PrototypeArgumentCallees = Callees;
   }
   /// Emit \p Funcs into a fresh module in \p LCtx.
   ///
@@ -2202,7 +2203,7 @@ private:
   const MedFunc *CurMedFunc = nullptr;
   LLVMSourceMap *SourceMap = nullptr;
   const DebugContext *Dbg = nullptr;
-  const std::set<va_t> *UserPrototypeCallees = nullptr;
+  const std::set<va_t> *PrototypeArgumentCallees = nullptr;
   std::optional<MedVar> MutableReturnValue;
   std::map<const MedFunc *, MedMutableSourcePlan> MutableSourcePlans;
   std::map<std::pair<int, int>, llvm::AllocaInst *> VarAllocs;
