@@ -509,6 +509,30 @@ keeps the choice in `libraries.json`, outside undo history. `neverd types
 <input> --libraries` lists the same, and `--add-library` and
 `--remove-library` change the choice as Ins and Del do.
 
+**View → Open subviews → Pathfinder**, as IDA's, finds the call paths between
+functions. Shift+F9 (**Create a new path**) starts a path at the function
+under the cursor, in the disassembly, a pseudocode window or a row of
+Functions, Imports, Exports or Names, and Ctrl+Shift+F9 (**Add to the path**)
+adds the next as the last waypoint; the code windows' **Pathfinding** context
+menu and **View → Pathfinding** hold both. An address inside a function stands
+for the function, and an import's slot or thunk for the import. Once two
+waypoints are listed the search runs, and again whenever they, the exclusions
+or the options change: between each two the list shows the segment,
+`↓ N nodes (shortest: M)`, a direct reference or no path, and under it each
+path, shortest first, with the function or import every step reaches and the
+instruction that refers to it, where Enter goes. A function on a path can be
+promoted to a waypoint or excluded from every path; Ins chooses a waypoint
+among the functions and imports, Del removes one and Alt+Up or Alt+Down moves
+it. The **Exclusions** panel lists the functions no path passes, and
+**Options** follow data references too, keep only the shortest paths or bound
+a segment's depth (16 references by default, at most 64). The project keeps
+the waypoints and exclusions with the user's place, this machine the options.
+Where IDA opens a Pathfinder for each path, NeverD keeps one, which Shift+F9
+starts over. The engine reads the graph from each function's direct
+references without analysis (`neverd_call_paths_json`), so paths are found as
+soon as the image loads, and MCP's `find_call_paths` answers the same
+question.
+
 In a pseudocode, C or LLVM C window, X on a declared local variable or parameter
 lists its occurrences in the current function, with source line, column and
 code. The list uses the variable's identity from the complete loaded document,

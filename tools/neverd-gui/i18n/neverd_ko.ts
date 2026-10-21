@@ -472,6 +472,30 @@
         <translation>현재 항목에 대한 참조를 표시합니다</translation>
     </message>
     <message>
+        <source>Pathfinder</source>
+        <translation>경로 탐색기</translation>
+    </message>
+    <message>
+        <source>Find the call paths between functions</source>
+        <translation>함수 사이의 호출 경로를 찾습니다</translation>
+    </message>
+    <message>
+        <source>Create a new &amp;path</source>
+        <translation>새 경로 만들기(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Start a new call path at the function under the cursor</source>
+        <translation>커서 위치의 함수에서 새 호출 경로를 시작합니다</translation>
+    </message>
+    <message>
+        <source>&amp;Add to the path</source>
+        <translation>경로에 추가(&amp;A)</translation>
+    </message>
+    <message>
+        <source>Add the function under the cursor to the call path as its last waypoint</source>
+        <translation>커서 위치의 함수를 호출 경로의 마지막 경유지로 추가합니다</translation>
+    </message>
+    <message>
         <source>&amp;Bookmarks</source>
         <translation>책갈피(&amp;B)</translation>
     </message>
@@ -1402,6 +1426,10 @@
     <message>
         <source>&amp;Graphs</source>
         <translation>그래프(&amp;G)</translation>
+    </message>
+    <message>
+        <source>&amp;Pathfinding</source>
+        <translation>경로 탐색(&amp;P)</translation>
     </message>
     <message>
         <source>&amp;Toolbars</source>
@@ -2827,6 +2855,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>unknown</source>
         <translation>알 수 없음</translation>
+    </message>
+    <message>
+        <source>Pathfinder</source>
+        <translation>경로 탐색기</translation>
+    </message>
+    <message>
+        <source>Pathfinding</source>
+        <translation>경로 탐색</translation>
     </message>
 </context>
 <context>
@@ -4818,6 +4854,229 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>The type libraries could not be changed: %1</source>
         <translation>형식 라이브러리를 변경하지 못했습니다: %1</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PathfinderView</name>
+    <message>
+        <source>Add a waypoint</source>
+        <translation>경유지 추가</translation>
+    </message>
+    <message>
+        <source>Exclude a function</source>
+        <translation>함수 제외</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>제거</translation>
+    </message>
+    <message>
+        <source>Move the waypoint up</source>
+        <translation>경유지를 위로 이동</translation>
+    </message>
+    <message>
+        <source>Move the waypoint down</source>
+        <translation>경유지를 아래로 이동</translation>
+    </message>
+    <message>
+        <source>Clear the waypoints</source>
+        <translation>경유지 모두 지우기</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>함수</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>주소</translation>
+    </message>
+    <message>
+        <source>Reference</source>
+        <translation>참조</translation>
+    </message>
+    <message>
+        <source>Exclusions</source>
+        <translation>제외 목록</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>옵션</translation>
+    </message>
+    <message>
+        <source>Include data references</source>
+        <translation>데이터 참조 포함</translation>
+    </message>
+    <message>
+        <source>Shortest paths only</source>
+        <translation>최단 경로만</translation>
+    </message>
+    <message>
+        <source>Maximum depth:</source>
+        <translation>최대 깊이:</translation>
+    </message>
+    <message>
+        <source>Exclude a function...</source>
+        <translation>함수 제외...</translation>
+    </message>
+    <message>
+        <source>No function or import is at %1.</source>
+        <translation>%1에 함수나 임포트가 없습니다.</translation>
+    </message>
+    <message>
+        <source>%1 is a waypoint already.</source>
+        <translation>%1은(는) 이미 경유지입니다.</translation>
+    </message>
+    <message numerus="yes">
+        <source>A path takes at most %n waypoints.</source>
+        <translation>
+            <numerusform>경로에는 경유지를 최대 %n개까지 넣을 수 있습니다.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add a Waypoint</source>
+        <translation>경유지 추가</translation>
+    </message>
+    <message>
+        <source>Exclude a Function</source>
+        <translation>함수 제외</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>함수</translation>
+    </message>
+    <message>
+        <source>Imports</source>
+        <translation>임포트</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>추가</translation>
+    </message>
+    <message>
+        <source>Exclude</source>
+        <translation>제외</translation>
+    </message>
+    <message>
+        <source>The call paths could not be found: %1</source>
+        <translation>호출 경로를 찾을 수 없습니다: %1</translation>
+    </message>
+    <message>
+        <source>No path</source>
+        <translation>경로 없음</translation>
+    </message>
+    <message numerus="yes">
+        <source>Neither waypoint reaches the other in %n references.</source>
+        <translation>
+            <numerusform>두 경유지 모두 참조 %n개 이내로 서로에게 도달하지 않습니다.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Direct reference, the other way round</source>
+        <translation>직접 참조, 역방향</translation>
+    </message>
+    <message>
+        <source>Direct reference</source>
+        <translation>직접 참조</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n nodes (shortest: %1), the other way round</source>
+        <translation>
+            <numerusform>노드 %n개 (최단: %1), 역방향</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n nodes (shortest: %1)</source>
+        <translation>
+            <numerusform>노드 %n개 (최단: %1)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(more paths than listed)</source>
+        <translation>(목록보다 많은 경로가 있음)</translation>
+    </message>
+    <message>
+        <source>jump at %1</source>
+        <translation>%1의 점프</translation>
+    </message>
+    <message>
+        <source>call through a slot at %1</source>
+        <translation>%1의 포인터 경유 호출</translation>
+    </message>
+    <message>
+        <source>address taken at %1</source>
+        <translation>%1의 주소 참조</translation>
+    </message>
+    <message>
+        <source>call at %1</source>
+        <translation>%1의 호출</translation>
+    </message>
+    <message>
+        <source>Path %1: %2</source>
+        <translation>경로 %1: %2</translation>
+    </message>
+    <message>
+        <source>Exclusions (%1)</source>
+        <translation>제외 목록 (%1)</translation>
+    </message>
+    <message>
+        <source>Open a program to find the call paths between its functions.</source>
+        <translation>프로그램을 열면 그 함수 사이의 호출 경로를 찾을 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>This engine does not find call paths.</source>
+        <translation>이 엔진은 호출 경로를 찾지 못합니다.</translation>
+    </message>
+    <message>
+        <source>Add two waypoints or more to find the call paths between them: %1 adds the function under the cursor.</source>
+        <translation>경유지를 두 개 이상 추가하면 그 사이의 호출 경로를 찾습니다. %1 키로 커서 위치의 함수를 추가합니다.</translation>
+    </message>
+    <message>
+        <source>Finding call paths...</source>
+        <translation>호출 경로를 찾는 중...</translation>
+    </message>
+    <message>
+        <source>No path found.</source>
+        <translation>경로를 찾지 못했습니다.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n segments have no path.</source>
+        <translation>
+            <numerusform>구간 %n개 중 %1개에 경로가 없습니다.</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Found %n nodes on the paths.</source>
+        <translation>
+            <numerusform>경로에서 노드 %n개를 찾았습니다.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Not every path is listed: lower the maximum depth or exclude functions.</source>
+        <translation>모든 경로가 표시되지는 않았습니다. 최대 깊이를 낮추거나 함수를 제외하세요.</translation>
+    </message>
+    <message>
+        <source>Add a waypoint...</source>
+        <translation>경유지 추가...</translation>
+    </message>
+    <message>
+        <source>Promote to waypoint</source>
+        <translation>경유지로 승격</translation>
+    </message>
+    <message>
+        <source>Exclude from paths</source>
+        <translation>경로에서 제외</translation>
+    </message>
+    <message>
+        <source>Move up</source>
+        <translation>위로 이동</translation>
+    </message>
+    <message>
+        <source>Move down</source>
+        <translation>아래로 이동</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>복사</translation>
     </message>
 </context>
 </TS>

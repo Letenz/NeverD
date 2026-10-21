@@ -195,6 +195,11 @@ public:
   bool loadsDwarfFiles() const {
     return capabilities_.contains(QStringLiteral("dwarf_load"));
   }
+  /// Whether the worker finds the call paths between functions
+  /// (call_paths), which the Pathfinder lists.
+  bool findsCallPaths() const {
+    return capabilities_.contains(QStringLiteral("call_paths"));
+  }
   void loadPdb(const QJsonObject &selection);
   /// Load the MAP file \p selection names ({path,mode,stamp}) into the open
   /// image, after its PDB or DWARF, whose names outrank the MAP's.

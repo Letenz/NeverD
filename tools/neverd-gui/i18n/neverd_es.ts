@@ -472,6 +472,30 @@
         <translation>Mostrar las referencias al elemento actual</translation>
     </message>
     <message>
+        <source>Pathfinder</source>
+        <translation>Buscador de rutas</translation>
+    </message>
+    <message>
+        <source>Find the call paths between functions</source>
+        <translation>Buscar las rutas de llamadas entre funciones</translation>
+    </message>
+    <message>
+        <source>Create a new &amp;path</source>
+        <translation>Crear una &amp;ruta nueva</translation>
+    </message>
+    <message>
+        <source>Start a new call path at the function under the cursor</source>
+        <translation>Iniciar una nueva ruta de llamadas en la función bajo el cursor</translation>
+    </message>
+    <message>
+        <source>&amp;Add to the path</source>
+        <translation>&amp;Añadir a la ruta</translation>
+    </message>
+    <message>
+        <source>Add the function under the cursor to the call path as its last waypoint</source>
+        <translation>Añadir la función bajo el cursor a la ruta de llamadas como su último punto de paso</translation>
+    </message>
+    <message>
         <source>&amp;Bookmarks</source>
         <translation>&amp;Marcadores</translation>
     </message>
@@ -1402,6 +1426,10 @@
     <message>
         <source>&amp;Graphs</source>
         <translation>&amp;Grafos</translation>
+    </message>
+    <message>
+        <source>&amp;Pathfinding</source>
+        <translation>Bús&amp;queda de rutas</translation>
     </message>
     <message>
         <source>&amp;Toolbars</source>
@@ -2833,6 +2861,14 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>unknown</source>
         <translation>desconocido</translation>
+    </message>
+    <message>
+        <source>Pathfinder</source>
+        <translation>Buscador de rutas</translation>
+    </message>
+    <message>
+        <source>Pathfinding</source>
+        <translation>Búsqueda de rutas</translation>
     </message>
 </context>
 <context>
@@ -4846,6 +4882,235 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>The type libraries could not be changed: %1</source>
         <translation>No se pudieron cambiar las bibliotecas de tipos: %1</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PathfinderView</name>
+    <message>
+        <source>Add a waypoint</source>
+        <translation>Añadir un punto de paso</translation>
+    </message>
+    <message>
+        <source>Exclude a function</source>
+        <translation>Excluir una función</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>Quitar</translation>
+    </message>
+    <message>
+        <source>Move the waypoint up</source>
+        <translation>Subir el punto de paso</translation>
+    </message>
+    <message>
+        <source>Move the waypoint down</source>
+        <translation>Bajar el punto de paso</translation>
+    </message>
+    <message>
+        <source>Clear the waypoints</source>
+        <translation>Borrar los puntos de paso</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>Función</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>Dirección</translation>
+    </message>
+    <message>
+        <source>Reference</source>
+        <translation>Referencia</translation>
+    </message>
+    <message>
+        <source>Exclusions</source>
+        <translation>Exclusiones</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>Opciones</translation>
+    </message>
+    <message>
+        <source>Include data references</source>
+        <translation>Incluir referencias a datos</translation>
+    </message>
+    <message>
+        <source>Shortest paths only</source>
+        <translation>Solo las rutas más cortas</translation>
+    </message>
+    <message>
+        <source>Maximum depth:</source>
+        <translation>Profundidad máxima:</translation>
+    </message>
+    <message>
+        <source>Exclude a function...</source>
+        <translation>Excluir una función...</translation>
+    </message>
+    <message>
+        <source>No function or import is at %1.</source>
+        <translation>No hay ninguna función ni importación en %1.</translation>
+    </message>
+    <message>
+        <source>%1 is a waypoint already.</source>
+        <translation>%1 ya es un punto de paso.</translation>
+    </message>
+    <message numerus="yes">
+        <source>A path takes at most %n waypoints.</source>
+        <translation>
+            <numerusform>Una ruta admite como máximo %n punto de paso.</numerusform>
+            <numerusform>Una ruta admite como máximo %n puntos de paso.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add a Waypoint</source>
+        <translation>Añadir un punto de paso</translation>
+    </message>
+    <message>
+        <source>Exclude a Function</source>
+        <translation>Excluir una función</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>Funciones</translation>
+    </message>
+    <message>
+        <source>Imports</source>
+        <translation>Importaciones</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Añadir</translation>
+    </message>
+    <message>
+        <source>Exclude</source>
+        <translation>Excluir</translation>
+    </message>
+    <message>
+        <source>The call paths could not be found: %1</source>
+        <translation>No se pudieron buscar las rutas de llamadas: %1</translation>
+    </message>
+    <message>
+        <source>No path</source>
+        <translation>Sin ruta</translation>
+    </message>
+    <message numerus="yes">
+        <source>Neither waypoint reaches the other in %n references.</source>
+        <translation>
+            <numerusform>Ningún punto de paso alcanza al otro en %n referencia.</numerusform>
+            <numerusform>Ningún punto de paso alcanza al otro en %n referencias.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Direct reference, the other way round</source>
+        <translation>Referencia directa, en sentido inverso</translation>
+    </message>
+    <message>
+        <source>Direct reference</source>
+        <translation>Referencia directa</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n nodes (shortest: %1), the other way round</source>
+        <translation>
+            <numerusform>%n nodo (el más corto: %1), en sentido inverso</numerusform>
+            <numerusform>%n nodos (el más corto: %1), en sentido inverso</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n nodes (shortest: %1)</source>
+        <translation>
+            <numerusform>%n nodo (el más corto: %1)</numerusform>
+            <numerusform>%n nodos (el más corto: %1)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(more paths than listed)</source>
+        <translation>(hay más rutas que las listadas)</translation>
+    </message>
+    <message>
+        <source>jump at %1</source>
+        <translation>salto en %1</translation>
+    </message>
+    <message>
+        <source>call through a slot at %1</source>
+        <translation>llamada a través de un puntero en %1</translation>
+    </message>
+    <message>
+        <source>address taken at %1</source>
+        <translation>dirección tomada en %1</translation>
+    </message>
+    <message>
+        <source>call at %1</source>
+        <translation>llamada en %1</translation>
+    </message>
+    <message>
+        <source>Path %1: %2</source>
+        <translation>Ruta %1: %2</translation>
+    </message>
+    <message>
+        <source>Exclusions (%1)</source>
+        <translation>Exclusiones (%1)</translation>
+    </message>
+    <message>
+        <source>Open a program to find the call paths between its functions.</source>
+        <translation>Abra un programa para buscar las rutas de llamadas entre sus funciones.</translation>
+    </message>
+    <message>
+        <source>This engine does not find call paths.</source>
+        <translation>Este motor no busca rutas de llamadas.</translation>
+    </message>
+    <message>
+        <source>Add two waypoints or more to find the call paths between them: %1 adds the function under the cursor.</source>
+        <translation>Añada dos o más puntos de paso para buscar las rutas de llamadas entre ellos: %1 añade la función bajo el cursor.</translation>
+    </message>
+    <message>
+        <source>Finding call paths...</source>
+        <translation>Buscando rutas de llamadas...</translation>
+    </message>
+    <message>
+        <source>No path found.</source>
+        <translation>No se encontró ninguna ruta.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n segments have no path.</source>
+        <translation>
+            <numerusform>%1 de %n segmento sin ruta.</numerusform>
+            <numerusform>%1 de %n segmentos sin ruta.</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Found %n nodes on the paths.</source>
+        <translation>
+            <numerusform>Se encontró %n nodo en las rutas.</numerusform>
+            <numerusform>Se encontraron %n nodos en las rutas.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Not every path is listed: lower the maximum depth or exclude functions.</source>
+        <translation>No se listan todas las rutas: reduzca la profundidad máxima o excluya funciones.</translation>
+    </message>
+    <message>
+        <source>Add a waypoint...</source>
+        <translation>Añadir un punto de paso...</translation>
+    </message>
+    <message>
+        <source>Promote to waypoint</source>
+        <translation>Convertir en punto de paso</translation>
+    </message>
+    <message>
+        <source>Exclude from paths</source>
+        <translation>Excluir de las rutas</translation>
+    </message>
+    <message>
+        <source>Move up</source>
+        <translation>Subir</translation>
+    </message>
+    <message>
+        <source>Move down</source>
+        <translation>Bajar</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Copiar</translation>
     </message>
 </context>
 </TS>

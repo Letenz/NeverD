@@ -10,6 +10,7 @@
 
 #include <QHash>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QPointer>
 #include <QTimer>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
@@ -33,6 +34,7 @@ class CodeView;
 class DisassemblyView;
 class ExtensionsView;
 class LocalTypesView;
+class PathfinderView;
 class TypeLibrariesView;
 class GraphOverview;
 class HexView;
@@ -134,6 +136,12 @@ private:
   /// The code window receiving commands, including its open context menu.
   CodeView *focusedCodeView() const;
   std::optional<Address> currentFunction() const;
+  /// What Shift+F9 and Ctrl+Shift+F9 put on a call path: the function a
+  /// focused code window shows, a list window's row, else the disassembly's
+  /// location, which the Pathfinder takes as its function or import.
+  std::optional<Address> pathfinderTarget() const;
+  /// Open the Pathfinder below the views, raised.
+  PathfinderView *showPathfinder();
   /// Open a function in the code window used before the chooser took focus.
   void activateFunction(Address address);
   void navigate(Address address);
@@ -300,6 +308,9 @@ private:
   ExtensionsView *extensions_ = nullptr;
   LocalTypesView *localTypes_ = nullptr;
   TypeLibrariesView *typeLibraries_ = nullptr;
+  PathfinderView *pathfinder_ = nullptr;
+  /// The project's waypoints and exclusions for a Pathfinder not made yet.
+  QJsonObject pathfinderState_;
   ChooserView *functions_ = nullptr;
   QHash<QString, Dock *> docks_;
   QHash<int, ChooserView *> choosers_;

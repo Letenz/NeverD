@@ -83,7 +83,7 @@ QJsonObject withAbsolutePath(QJsonObject choice, const QDir &folder) {
 
 /// Read the project's own files beside \p input over what a database
 /// recorded: the bookmarks and debug files shared with the project, and the
-/// user's place and desktop in it.
+/// user's place, desktop and call path in it.
 void overlayProjectFiles(const QString &input,
                          QHash<QString, QByteArray> &state) {
   const auto compact = [](const QJsonDocument &document) {
@@ -110,7 +110,8 @@ void overlayProjectFiles(const QString &input,
           input, ProjectDatabase::WorkbenchSuffix);
       workbench && workbench->isObject())
     for (const char *key :
-         {ProjectDatabase::LocationState, ProjectDatabase::DesktopState}) {
+         {ProjectDatabase::LocationState, ProjectDatabase::DesktopState,
+          ProjectDatabase::PathfinderState}) {
       const auto value = workbench->object().value(QLatin1String(key));
       if (value.isObject())
         state.insert(QLatin1String(key),
@@ -978,11 +979,12 @@ void Session::saveDatabaseState() {
         emit message(tr("Could not update the database: %1").arg(error), 1);
     return;
   }
-  // A binary's project keeps its user's place and desktop beside it, in a
-  // file that is the user's own rather than the project's.
+  // A binary's project keeps its user's place, desktop and call path beside
+  // it, in a file that is the user's own rather than the project's.
   QJsonObject workbench;
   for (const char *key :
-       {ProjectDatabase::LocationState, ProjectDatabase::DesktopState}) {
+       {ProjectDatabase::LocationState, ProjectDatabase::DesktopState,
+        ProjectDatabase::PathfinderState}) {
     const auto value = QJsonDocument::fromJson(state.value(QLatin1String(key)));
     if (value.isObject())
       workbench.insert(QLatin1String(key), value.object());

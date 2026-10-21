@@ -12,10 +12,10 @@ namespace neverd::gui {
 
 /// A NeverD database (`.nddb`): one SQLite file holding the analyzed input,
 /// the project's sidecar state (comments, renames, types, bookmarks, edit
-/// history) and the workbench state (location, desktop).  It is the packed
-/// form of a project, written when the user packs one or saves a project
-/// opened from a database.  A binary's project otherwise is the JSON files
-/// beside it, which its edits update and version control can share.
+/// history) and the workbench state (location, desktop, call path).  It is
+/// the packed form of a project, written when the user packs one or saves a
+/// project opened from a database.  A binary's project otherwise is the JSON
+/// files beside it, which its edits update and version control can share.
 ///
 /// Every write is one SQLite transaction, so a database is never left half
 /// written.  The input is stored in independently compressed chunks that are
@@ -26,7 +26,8 @@ public:
   static constexpr char Extension[] = ".nddb";
   /// The project files the workbench itself keeps, by the keys a database
   /// names them (sidecarSuffixes): the bookmarks and the debug files chosen,
-  /// shared with the project, and the user's own place and desktop in it.
+  /// shared with the project, and the user's own place, desktop and call
+  /// path in it.
   static constexpr char BookmarksSuffix[] = ".neverd-bookmarks.json";
   static constexpr char DebugFilesSuffix[] = ".neverd-debug.json";
   static constexpr char WorkbenchSuffix[] = ".neverd-workbench.json";
@@ -34,6 +35,8 @@ public:
   static constexpr char LocationState[] = "location";
   static constexpr char BookmarksState[] = "bookmarks";
   static constexpr char DesktopState[] = "desktop";
+  /// The Pathfinder's waypoints and exclusions, kept with the user's place.
+  static constexpr char PathfinderState[] = "pathfinder";
   /// The SQLite application id in every database header: "NDDB" in ASCII,
   /// so NeverD and tools such as file(1) tell a database from other SQLite
   /// files whatever its name.
