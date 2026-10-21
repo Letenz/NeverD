@@ -361,6 +361,45 @@ def perturbed_corpus(width, count):
     return rows
 
 
+def completion_corpus(width, count):
+    """Missing corners in larger products, including opaque arithmetic words."""
+    rng = random.Random(0x4D424139 + width)
+    words = ("(x^y)", "(y|z)", "(x|z)", "(x&y)", "(x^z)", "(y^z)",
+             "(x|y)", "~(x&z)")
+    axes = ("z", "x", "y", "w", "v", "z")
+    rows = []
+    for index in range(count):
+        degree = (4, 8, 12, 16)[(index // 16) % 4]
+        kind = index % 16
+        pieces = min(degree, 3 + kind % 4)
+        scale = (1, 37, 182, -11, 1 << (width - 2))[kind % 5]
+        whole = list(words[i % len(words)] for i in range(degree))
+        if kind >= 8:
+            whole[:3] = ("((x+y)^z)", "((y*z)|x)", "((x+z)&(y|w))")
+        choices = [(f"({word}&{axes[i]})", f"({word}&~{axes[i]})")
+                   if i < pieces else (word,)
+                   for i, word in enumerate(whole)]
+        missing = {0}
+        if kind % 3 >= 1:
+            missing.add(1 << (pieces - 1))
+        if kind % 3 == 2:
+            missing.add((1 << pieces) - 1)
+        terms = []
+        for number, factors in enumerate(itertools.product(*choices)):
+            if number in missing:
+                continue
+            coefficient = scale
+            if number == 1 and kind % 2:
+                coefficient += (1 << (width - 1)) if kind % 4 == 1 else 13
+            terms.append(f"({coefficient}*{'*'.join(factors)})")
+        rng.shuffle(terms)
+        expression = "+".join(terms) + "+(x^y)+2*(x&y)+19*x*y*z"
+        if kind % 4 == 3:
+            expression += "+23*" + "*".join(("x", "y") * (degree // 2))
+        rows.append(expression)
+    return rows
+
+
 def check_semantics(expressions, results, width):
     """Independent modular evaluator; never execute parsed source as Python."""
     mask = (1 << width) - 1
@@ -454,7 +493,7 @@ def main():
     parser.add_argument(
         "--family",
         choices=("complement", "weighted", "bitwise", "interleaved", "quadratic",
-                 "cubic", "higher", "perturbed"),
+                 "cubic", "higher", "perturbed", "completion"),
         default="complement",
     )
     args = parser.parse_args()
@@ -479,6 +518,7 @@ def main():
                 "cubic": cubic_corpus,
                 "higher": higher_corpus,
                 "perturbed": perturbed_corpus,
+                "completion": completion_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")

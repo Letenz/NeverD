@@ -159,39 +159,9 @@ SymRef foldObservedWindow(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                           size_t &Storage) {
   if (Budget.exhausted() || !Budget.canConsume(1) || Storage < 128)
     return Root;
-  if (Ctx.op(Root) == SymOp::Mul && Ctx.numOperands(Root) >= 3 &&
-      Ctx.numOperands(Root) <= 32 && Ctx.isConst(Ctx.operand(Root, 0))) {
-    const SymRef Scale = Ctx.operand(Root, 0);
-    const unsigned Width = Ctx.width(Root);
-    const size_t Words = (size_t(Width) - 1) / 64 + 1;
-    bool ObservesLowBit = false;
-    if (Width <= 64) {
-      ObservesLowBit = Ctx.node(Scale).Aux == (uint64_t(1) << (Width - 1));
-    } else if (Words <= Storage / sizeof(uint64_t) && Budget.consume(Words)) {
-      Storage -= Words * sizeof(uint64_t);
-      ObservesLowBit = Ctx.constValue(Scale).isMinSignedValue();
-    }
-    if (ObservesLowBit) {
-      auto Factors = Ctx.operands(Root).drop_front();
-      size_t Edges = 0;
-      for (SymRef Factor : Factors) {
-        const size_t Count =
-            Ctx.op(Factor) == SymOp::And ? Ctx.numOperands(Factor) : 1;
-        if (Count > 128 - Edges)
-          return Root;
-        Edges += Count;
-      }
-      const size_t Bytes = 128 + 4 * sizeof(SymRef) * (Edges + Factors.size());
-      if (Bytes > Storage || !Budget.consume(1 + Edges + Factors.size()))
-        return Root;
-      Storage -= Bytes;
-      llvm::SmallVector<SymRef, 8> Inputs(Factors);
-      // Multiplication modulo two is Boolean AND. Scaling by 2^(Width-1)
-      // discards every other product bit, for arbitrary word-valued factors.
-      // A smaller power of two observes carries and does not admit this fold.
-      return Ctx.mkMul(Scale, Ctx.mkAnd(Inputs));
-    }
-  }
+  if (SymRef Parity = foldProductParity(Ctx, Root, Budget, Storage);
+      Parity != Root)
+    return Parity;
   if (Ctx.op(Root) == SymOp::Extract)
     return projectBitWindow(Ctx, Ctx.operand(Root, 0), Ctx.node(Root).Aux,
                             Ctx.width(Root), Budget, Storage);
