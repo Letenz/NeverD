@@ -7352,6 +7352,13 @@ with other unwind records. A padding guess is absorbed only when another
 function's decoded CFG owns it. Code admission grants no exception-rewrite
 authority; the format backend still checks that contract separately.
 
+The PE32 registration range map also retains the tail target of an exact
+`CALL rel32; JMP rel32` at the format-owned image entry. The prefix and target
+must have unique immutable instruction storage, without operand fixups, and
+the signed target calculation must stay in the PE32 address space. This is
+an ownership boundary only; ordinary function symbols do not acquire the
+same rule, and it grants no returning-call, callable ABI or frame proof.
+
 The pinned Capstone x86 decoder owns LOCK/MOV-to-CS encoding validity and UD1
 instruction extent and operand details. NeverD's detailed, lightweight and
 lifting decode routes consume that result, including REX2 forms. Illegal

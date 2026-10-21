@@ -18,6 +18,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/Support/Compiler.h"
@@ -117,6 +118,19 @@ public:
       if (!Sym.IsFunc || !isExecutableAddress(Img, Sym.Addr))
         continue;
       Starts.push_back(Sym.Addr);
+    }
+    // A PE32 image entry can call initialization before tail-jumping to its
+    // actual body. Retain that direct target as an ownership boundary even
+    // when a preceding padding guess cannot prove a closed function. This
+    // proves neither that the call returns nor a callable/frame contract.
+    if (const auto Prefix = readImmutablePE32CodeBytes(Img, Img.Entry, 10, {});
+        Prefix && (*Prefix)[0] == 0xe8 && (*Prefix)[5] == 0xe9) {
+      const auto Target =
+          addSignedOffset(Img.Entry + 10, readLE<int32_t>(Prefix->data() + 6));
+      if (Target && readImmutablePE32CodeBytes(Img, *Target, 1, {})) {
+        Starts.push_back(*Target);
+        Guesses.erase(*Target);
+      }
     }
     // An exact PE32 direct entry jump can name a regenerated frame whose
     // prologue lives in another section. Retain its target as a boundary;

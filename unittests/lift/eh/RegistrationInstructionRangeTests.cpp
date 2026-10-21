@@ -116,6 +116,63 @@ TEST(RegistrationInstructionRange,
   }
 }
 
+TEST(RegistrationInstructionRange,
+     ImageEntryCallAndTailJumpRetainsTheTargetBoundary) {
+  for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    // The image entry calls a helper, then transfers to an unnamed body.
+    // A padding guess before that body cannot own its registration record.
+    auto Image = codeImage({0xe8, 5, 0, 0, 0, 0xe9, 6, 0, 0, 0, 0xc3, 0xcc,
+                            0xcc, 0xcc, 0xcc, 0xcc, 0xc3});
+    constexpr va_t Target = 0x1010;
+    auto Guess = Symbol::makeFunc(0x100e);
+    Guess.IsBoundaryGuess = true;
+    Image.Symbols.push_back(Guess);
+    switch (Mutation) {
+    case 1: {
+      auto Ordinary = Symbol::makeFunc(Image.Entry);
+      Ordinary.Name = "ordinary_call_then_jump";
+      Image.Symbols.push_back(Ordinary);
+      Image.Entry = 0x100a;
+      break;
+    }
+    case 2:
+      Image.Segments.front().Flags =
+          Image.Segments.front().Flags | SegmentFlags::Writable;
+      break;
+    case 3:
+      Image.Sections.front().Flags =
+          Image.Sections.front().Flags | SegmentFlags::Writable;
+      break;
+    case 4:
+      Image.BaseRelocations.push_back({0x1001, 3});
+      break;
+    case 5:
+      Image.Segments.front().FileSz = 9;
+      break;
+    case 6:
+      Image.Segments.push_back(Image.Segments.front());
+      break;
+    case 7:
+      Image.Segments.front().Data[5] = 0x90;
+      break;
+    case 8:
+      Image.IsRelocatable = true;
+      break;
+    case 9:
+      Image.Segments.front().Data[6] = 0xf6;
+      Image.Segments.front().Data[7] = 0xef;
+      Image.Segments.front().Data[8] = 0xff;
+      Image.Segments.front().Data[9] = 0xff;
+      break;
+    }
+    const auto Range = FunctionRangeMap(Image).find(Image, Target, true);
+    ASSERT_TRUE(Range);
+    EXPECT_EQ(Range->Begin, Mutation == 0 ? Target : Guess.Addr);
+    EXPECT_FALSE(Image.hasAuthenticatedFunctionEntryAt(Target));
+  }
+}
+
 TEST(RegistrationInstructionRange, BodyExtentIncludesEveryRuntimeEntry) {
   // A direct helper follows the parent's return with no padding or symbol.
   // The disconnected callback is also an owner, but the called helper is not.

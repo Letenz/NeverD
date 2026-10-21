@@ -6509,6 +6509,9 @@ range and rejects gaps, overlap and chunks from the previous generation.
 `RegistrationInstructionRange.*` distinguishes instruction operands containing padding
 bytes from real entries after branches and calls, including loops, unreachable
 bytes, conflicting branch targets and overlapping instruction decodes.
+An image-entry `CALL; JMP` preserves its unnamed target's registration boundary;
+ordinary symbols, writable or overlapping storage, missing file bytes, fixups,
+relocatable objects and invalid transfers do not supply that authority.
 `RegistrationState.APossibleCalleeWriteCannotLaunderTheObjectPointer` checks
 that both partial and full-width may-writes preserve possible frame-pointer
 provenance until a definite replacement has been proved.
