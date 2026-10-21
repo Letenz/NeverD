@@ -3260,10 +3260,11 @@ private:
 /// computeCallRegisterEffects merges them into a run's FixedCallReads; with
 /// \p Converted, the calls themselves too.
 std::vector<std::pair<va_t, GPRReadWidths>>
-formattedCallReads(const BinaryImage &Img, llvm::ArrayRef<LowBlock> Blocks,
+formattedCallReads(const BinaryImage &Img, const CallRegisterBodyView &Body,
                    std::map<va_t, FormattedCall> *Converted) {
   std::map<va_t, FormattedCall> Calls;
-  pipeline_detail::collectFormattedCalls(Img, Blocks, Calls);
+  pipeline_detail::collectFormattedCalls(Img, Body.Blocks, Calls,
+                                         Body.HasIndependentRoots);
   std::vector<std::pair<va_t, GPRReadWidths>> Reads;
   Reads.reserve(Calls.size());
   for (auto &[Address, Call] : Calls) {
@@ -3871,10 +3872,10 @@ void computeCallRegisterEffects(
   // A call a constant format describes reads exactly what it names; the
   // functions MedIR converts also pass those arguments (FormattedCall).
   std::map<va_t, GPRReadWidths> FixedCallReads;
-  auto CollectFormattedCalls = [&](llvm::ArrayRef<LowBlock> Blocks,
+  auto CollectFormattedCalls = [&](const CallRegisterBodyView &Body,
                                    bool Converted) {
     auto Reads = pipeline_detail::formattedCallReads(
-        Img, Blocks, Converted ? &Result.FormattedCalls : nullptr);
+        Img, Body, Converted ? &Result.FormattedCalls : nullptr);
     pipeline_detail::mergeFixedCallReads(FixedCallReads, Reads);
     return Reads;
   };
@@ -3893,7 +3894,7 @@ void computeCallRegisterEffects(
     return ExtraCFG.build(Img, Dec, Entry, Img.getFunctionNameAt(Entry));
   };
   for (const LowFunc &LF : Result.LowFuncs) {
-    CollectFormattedCalls(LF.Blocks, /*Converted=*/true);
+    CollectFormattedCalls(CallRegisterBodyView(LF), /*Converted=*/true);
     auto Effect = std::make_shared<const LocalRegisterEffect>(
         localRegisterEffect(Img, LF, &NoReturnTargets, &FixedCallReads,
                             &Result.CallArgumentSources, &StackProbes));
@@ -4017,7 +4018,7 @@ void computeCallRegisterEffects(
         const CallRegisterBodyView Body =
             CachedBodies[I] ? CallRegisterBodyView(*CachedBodies[I])
                             : CallRegisterBodyView(Bodies[I]);
-        auto Reads = CollectFormattedCalls(Body.Blocks, /*Converted=*/false);
+        auto Reads = CollectFormattedCalls(Body, /*Converted=*/false);
         auto Facts = std::make_shared<pipeline_detail::CalleeFacts>();
         Facts->Effect =
             localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads,
@@ -4418,7 +4419,7 @@ void warmCalleeFacts(
                                           : CallRegisterBodyView(Built[I]);
     auto Callee = std::make_shared<pipeline_detail::CalleeFacts>();
     Callee->FormattedReads =
-        pipeline_detail::formattedCallReads(Img, Body.Blocks, nullptr);
+        pipeline_detail::formattedCallReads(Img, Body, nullptr);
     std::map<va_t, GPRReadWidths> FixedCallReads;
     pipeline_detail::mergeFixedCallReads(FixedCallReads,
                                          Callee->FormattedReads);
