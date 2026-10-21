@@ -54,6 +54,8 @@ const std::vector<Tool> &workbenchTools();
 /// Strings a listing shows before it cuts them, unless the caller asks
 /// otherwise.
 inline constexpr unsigned DefaultStringTextLimit = 200;
+/// Matches a search returns unless the caller asks otherwise.
+inline constexpr unsigned DefaultSearchLimit = 64;
 
 /// Throws RpcError -32602 unless \p Arguments is an object that fits the
 /// tool's input schema.

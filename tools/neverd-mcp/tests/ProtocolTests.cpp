@@ -147,7 +147,7 @@ MCP_TEST(HandshakeAndLifecycle) {
           "tools wait for initialization");
   ready(Service);
   const auto Tools = Service.handle(request("tools/list"))["tools"];
-  require(Tools.size() == 12, "twelve tools without a workbench");
+  require(Tools.size() == 13, "thirteen tools without a workbench");
   for (const auto &Listed : Tools) {
     require(!Listed.contains("operation"), "the operation is not listed");
     require(Listed["annotations"]["readOnlyHint"] == true, "tools only read");
@@ -234,7 +234,7 @@ MCP_TEST(GuiResourcesAndNavigationRequireAttachment) {
            request("resources/read",
                    {{"uri", "neverd://project/navigate?address=0x1"}}));
   const auto Tools = Attached.handle(request("tools/list"))["tools"];
-  require(Tools.size() == 15, "a workbench adds three tools");
+  require(Tools.size() == 16, "a workbench adds three tools");
   require(Tools.back()["annotations"]["readOnlyHint"] == false,
           "navigation is no read");
 }
@@ -788,4 +788,81 @@ MCP_TEST(ACancelledRequestIsNotAnswered) {
   require(Answer(2)["result"]["isError"] == false,
           "the running call is answered");
   require(Session.Queries == 1, "the cancelled call never ran");
+}
+
+MCP_TEST(SearchesNameTheCodeTheyFind) {
+  FakeBackend Session;
+  Server Service(Session);
+  ready(Service);
+  Session.Response = {
+      {"status", "ok"},
+      {"revision", "4"},
+      {"payload",
+       {{"complete", true},
+        {"next_address", nullptr},
+        {"items", Json::array({{{"address", "0x7004"},
+                                {"context", "proxy read too long"},
+                                {"segment", ".fini"},
+                                {"offset", 4}}})}}}};
+  auto Result =
+      call(Service, "search", {{"kind", "text"}, {"pattern", "proxy"}});
+  require(Session.Calls.back().Payload == Json{{"kind", "text"},
+                                               {"pattern", "proxy"},
+                                               {"limit", DefaultSearchLimit}},
+          "a search is bounded by default");
+  require(text(Result) ==
+              R"({"revision":"4","complete":true,"next_address":null,)"
+              R"("columns":["address","context"],)"
+              R"("rows":[["0x7004","proxy read too long"]]})",
+          "a text match shows its text: " + text(Result));
+  // An immediate search takes its steps and the page after a step's end,
+  // then names each match's function and instruction.
+  Session.Calls.clear();
+  Session.Replies = {
+      {{"status", "ok"}, {"revision", "4"}, {"payload", {{"building", true}}}},
+      {{"status", "ok"},
+       {"revision", "4"},
+       {"payload",
+        {{"building", false},
+         {"complete", false},
+         {"next_address", "0x2bd7"},
+         {"coverage", "partial"},
+         {"items", Json::array({{{"address", "0x2bd7"},
+                                 {"context", "Immediate 0x40000000"}}})}}}},
+      {{"status", "ok"},
+       {"revision", "4"},
+       {"payload",
+        {{"complete", true},
+         {"next_address", nullptr},
+         {"items", Json::array()}}}},
+      {{"status", "ok"},
+       {"revision", "4"},
+       {"payload", {{"function_address", "0x2a90"}, {"name", "main"}}}},
+      {{"status", "ok"},
+       {"revision", "4"},
+       {"payload",
+        {{"items", Json::array({{{"mnemonic", "mov"},
+                                 {"operands", "edx, 0x40000000"}}})}}}}};
+  Result =
+      call(Service, "search",
+           {{"kind", "immediate"}, {"pattern", "0x40000000"}, {"limit", 5}});
+  require(Session.Calls.size() == 5 && Session.Calls[1].Operation == "search" &&
+              Session.Calls[2].Payload["from"] == "0x2bd7" &&
+              Session.Calls[2].Payload["limit"] == 4 &&
+              Session.Calls[3].Operation == "resolve" &&
+              Session.Calls[4].Operation == "disasm" &&
+              Session.Calls[4].Revision == "4",
+          "the steps and the page after them, then the function and "
+          "instruction at that revision");
+  require(text(Result) ==
+              R"({"revision":"4","complete":true,"next_address":null,)"
+              R"("coverage":"partial",)"
+              R"("columns":["address","function","instruction"],)"
+              R"("rows":[["0x2bd7","main","mov edx, 0x40000000"]]})",
+          "an immediate shows its instruction: " + text(Result));
+  const Json Unbounded{{"kind", "bytes"}, {"pattern", "90"}, {"limit", 513}};
+  require(rpcError(Service,
+                   request("tools/call", {{"name", "search"},
+                                          {"arguments", Unbounded}})) == -32602,
+          "a search page is bounded");
 }
