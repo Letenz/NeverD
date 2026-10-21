@@ -5913,8 +5913,17 @@ private slots:
     connect(typer, &QTimer::timeout, typer, [&, typer] {
       auto *dialog =
           qobject_cast<SetTypeDialog *>(QApplication::activeModalWidget());
+      if (!dialog)
+        return;
+#ifdef Q_OS_MACOS
+      // On macOS the completion list takes the activation while it shows.
+      // The system hands it back to the dialog when the list closes; the
+      // offscreen platform does not.
+      if (stage == 2 && !dialog->isActiveWindow())
+        dialog->activateWindow();
+#endif
       // The completion list is a window of its own while it shows.
-      if (!dialog || (stage != 1 && !dialog->isActiveWindow()))
+      if (stage != 1 && !dialog->isActiveWindow())
         return;
       auto *field =
           dialog->findChild<QLineEdit *>(QStringLiteral("setTypeField"));
