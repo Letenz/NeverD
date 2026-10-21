@@ -2633,18 +2633,17 @@ mergeResolverResults(llvm::ArrayRef<ResolverResult> Incoming,
       *AnalysisIncomplete = true;
     return Available;
   };
-  std::vector<ResolverValue> Values;
   if (Incoming.size() > (std::numeric_limits<size_t>::max() - 2) / 2) {
     consume(std::numeric_limits<size_t>::max());
     return resolverInvalid();
   }
-  // Reserve the result vector transactionally.  The vector buffer lifetime
-  // and eventual element cleanup are paid before the first push; each actual
-  // retained shared value is charged separately below.
+  // Preserve the buffer and value lifetime charges even when the result
+  // reuses an incoming value. The caller owns the inputs throughout this
+  // call; only a new merge needs its own buffer and retained references.
   if (!consume(Incoming.size() * 2 + 2))
     return resolverInvalid();
-  Values.reserve(Incoming.size());
-  bool SawValue = false;
+  const ResolverValue *FirstValue = nullptr;
+  size_t ValueCount = 0;
   bool SawCycle = false;
   for (const ResolverResult &R : Incoming) {
     if (!consume())
@@ -2657,10 +2656,11 @@ mergeResolverResults(llvm::ArrayRef<ResolverResult> Incoming,
       return resolverInvalid();
     if (!consume())
       return resolverInvalid();
-    SawValue = true;
-    Values.push_back(R.Value);
+    if (!FirstValue)
+      FirstValue = &R.Value;
+    ++ValueCount;
   }
-  if (!SawValue)
+  if (!FirstValue)
     return resolverCycle();
   // A raw predecessor cycle is transparent only when the caller reached it
   // without crossing any overlapping definition.  Definitions propagate a
@@ -2668,7 +2668,7 @@ mergeResolverResults(llvm::ArrayRef<ResolverResult> Incoming,
   // erase a loop-carried SELECT/arithmetic/partial-lane update.
   if (SawCycle && !IgnoreTransparentCycles)
     return resolverInvalid();
-  const ResolverValue &Common = Values.front();
+  const ResolverValue &Common = *FirstValue;
   auto Same = [&](auto &&Self, const ResolverValue &A, const ResolverValue &B,
                   unsigned Depth) -> bool {
     if (Depth > limits::kMaxJumpTableGuardExpressionDepth) {
@@ -2712,20 +2712,29 @@ mergeResolverResults(llvm::ArrayRef<ResolverResult> Incoming,
         return false;
     return true;
   };
-  if (std::all_of(Values.begin(), Values.end(), [&](const ResolverValue &V) {
-        return Same(Same, Common, V, /*Depth=*/0);
-      }))
-    return resolverValue(std::move(Values.front()));
+  if (std::all_of(Incoming.begin(), Incoming.end(),
+                  [&](const ResolverResult &R) {
+                    return R.Kind == ResolverResultKind::Cycle ||
+                           Same(Same, Common, R.Value, /*Depth=*/0);
+                  }))
+    return resolverValue(Common);
   if (WorkExhausted)
     return resolverInvalid();
   if (MergeRoot.empty())
     return resolverInvalid();
   const uint16_t Size = Common ? Common->Size : 0;
-  if (!consume(Values.size()) || Size == 0 ||
-      std::any_of(Values.begin(), Values.end(), [&](const ResolverValue &V) {
-        return !V || V->Size != Size;
-      }))
+  if (!consume(ValueCount) || Size == 0 ||
+      std::any_of(Incoming.begin(), Incoming.end(),
+                  [&](const ResolverResult &R) {
+                    return R.Kind != ResolverResultKind::Cycle &&
+                           (!R.Value || R.Value->Size != Size);
+                  }))
     return resolverInvalid();
+  std::vector<ResolverValue> Values;
+  Values.reserve(Incoming.size());
+  for (const ResolverResult &R : Incoming)
+    if (R.Kind != ResolverResultKind::Cycle)
+      Values.push_back(R.Value);
   return resolverValue(
       budgetedResolverMerge(Size, MergeRoot, std::move(Values), consume));
 }
