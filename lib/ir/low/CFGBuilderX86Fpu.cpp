@@ -1070,7 +1070,7 @@ class X87CallEffectIndex {
     return 0;
   }
 
-  static bool modeledIntrinsic(const LowOp &Op) {
+  static bool modeledIntrinsic(const LowOp &Op, Arch Architecture) {
     if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
       return false;
     if (isArchitecturalNoReturn(Op))
@@ -1083,6 +1083,15 @@ class X87CallEffectIndex {
     // pushes. Environment restores, tag changes and unknown intrinsics have
     // additional state effects and cannot acquire a net-stack summary here.
     switch (static_cast<Intrinsic>(Op.Inputs[0].Offset)) {
+    case Intrinsic::X86RequireDivPrecondition:
+      // On its returning path the integer divide guard changes no x87
+      // state. Keep the guard itself: this grants only a normal-return stack
+      // effect, never permission to suppress a divide fault.
+      return Op.Inputs[0].Offset ==
+                 static_cast<uint64_t>(Intrinsic::X86RequireDivPrecondition) &&
+             intrinsicX86DivPreconditionShapeIsValid(
+                 Intrinsic::X86RequireDivPrecondition,
+                 x86DivPreconditionLowShape(Op, Architecture));
     case Intrinsic::X87ReadControl:
     case Intrinsic::X87WriteControl:
     case Intrinsic::X87LoadConstant:
@@ -1298,7 +1307,7 @@ class X87CallEffectIndex {
             G.UsesContext |= Op.NumInputs && Op.Inputs[0].isConst() &&
                              isX87ContextIntrinsic(
                                  static_cast<Intrinsic>(Op.Inputs[0].Offset));
-            S.Unknown |= !modeledIntrinsic(Op);
+            S.Unknown |= !modeledIntrinsic(Op, Image.Arch);
             S.ChangesControl |=
                 Op.NumInputs && Op.Inputs[0].isConst() &&
                 Op.Inputs[0].Offset ==

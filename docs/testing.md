@@ -1417,7 +1417,9 @@ x64 and Clang; x86-32 has contract checks only.
 ELF, COFF and Mach-O. Negative cases cover inconsistent returns, recursion,
 depth exhaustion, uninitialized/popped slots, resets, tag invalidation and
 opaque state restoration. Builder reuse after an image edit invalidates old
-proofs. `ImportCalleeTrace` additionally checks partial pointer writes and
+proofs. Signed and unsigned integer division in a floating-return leaf must
+retain its validated divide guard, floating return carrier and single-TOP
+caller loop. `ImportCalleeTrace` additionally checks partial pointer writes and
 instruction-local temporary identity on x86, x64 and AArch64.
 The consuming-helper cases require a separately transported binary80 argument,
 balanced caller loops, preserved lower ST entries and control words, and empty
@@ -1524,7 +1526,9 @@ original thread even when the caller supplies a parallel quota.
 machine bytes, generated LLVM, HighC and a separately generated C caller linked
 to native callees. Linux x64 hosts execute both i386 and x64, default/NoOpt
 pipelines and compiled O0/O2. Its binary80 sum retains bits below double
-precision, so a premature conversion cannot pass. These checks cover return
+precision, so a premature conversion cannot pass. DIV/IDIV leaves also execute
+through the same call/return paths without losing their x87 payload.
+These checks cover return
 transport and do not certify every x87 instruction, rounding mode or exception.
 
 `X87Examine` checks the all-path slot-tag and payload proof across x86/x64 in

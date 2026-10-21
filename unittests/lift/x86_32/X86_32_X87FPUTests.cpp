@@ -207,6 +207,17 @@ BinaryImage x87CallLoopImage(Arch Architecture, BinaryFormat Format,
     Leaf = {0xe8, 0xfb, 0xfe, 0xff, 0xff, 0xd9, 0xe8, 0xc3}; // recursion
   else if (Mutation == 13)
     Leaf = {0xd9, 0xe8, 0xd9, 0xfe, 0xc3}; // fld1; fsin; ret
+  else if (Mutation == 14 || Mutation == 15)
+    Leaf = {0xd9, 0xe8, // fld1
+            0xb8, 42,
+            0,    0,
+            0,    0x31,
+            0xd2, // edx:eax = 42
+            0xb9, 6,
+            0,    0,
+            0,                                           // ecx = 6
+            0xf7, uint8_t(Mutation == 14 ? 0xf1 : 0xf9), // div/idiv ecx
+            0xc3};
   if (Extended) {
     Leaf.clear();
     if (Architecture == Arch::X64)
@@ -1231,7 +1242,7 @@ TEST(X87CallStack, ProvesCrossBlockResultsBeforeExpandingLoopStates) {
   for (Arch Architecture : {Arch::X86, Arch::X64})
     for (BinaryFormat Format :
          {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
-      for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
+      for (unsigned Mutation = 0; Mutation != 16; ++Mutation) {
         SCOPED_TRACE(static_cast<int>(Architecture));
         SCOPED_TRACE(static_cast<int>(Format));
         SCOPED_TRACE(Mutation);
@@ -1243,10 +1254,26 @@ TEST(X87CallStack, ProvesCrossBlockResultsBeforeExpandingLoopStates) {
         Builder.setKnownFuncEntries(&Entries);
         LowFunc Low = Builder.build(Image, Dec, 0x1000, "x87_call_loop");
         ASSERT_TRUE(Low.hasCompleteInstructionLift());
+        if (Mutation == 14 || Mutation == 15) {
+          const LowFunc Leaf = Builder.build(Image, Dec, 0x1200, "x87_leaf");
+          ASSERT_TRUE(Leaf.hasCompleteInstructionLift());
+          unsigned Guards = 0;
+          for (const LowBlock &Block : Leaf.Blocks)
+            for (const LowOp &Op : Block.Ops)
+              if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                  Op.Inputs[0].Offset ==
+                      unsigned(Intrinsic::X86RequireDivPrecondition)) {
+                ++Guards;
+                EXPECT_TRUE(intrinsicX86DivPreconditionShapeIsValid(
+                    Intrinsic::X86RequireDivPrecondition,
+                    x86DivPreconditionLowShape(Op, Architecture)));
+              }
+          EXPECT_EQ(Guards, 1u);
+        }
         if (ownsX87(Image)) {
           expectOwnedCallTransport(Low);
           EXPECT_FALSE(hasX87CallDefinition(Low));
-          if (Mutation == 0 || Mutation == 13) {
+          if (Mutation == 0 || Mutation >= 13) {
             const auto Wrapper =
                 Builder.build(Image, Dec, 0x1100, "x87_forwarder");
             expectOwnedCallTransport(Wrapper);
@@ -1268,7 +1295,7 @@ TEST(X87CallStack, ProvesCrossBlockResultsBeforeExpandingLoopStates) {
           }
           continue;
         }
-        const bool Proven = Mutation == 0 || Mutation == 13;
+        const bool Proven = Mutation == 0 || Mutation >= 13;
         EXPECT_EQ(hasX87CallDefinition(Low), Proven);
         if (!Proven)
           continue;
@@ -3655,16 +3682,17 @@ TEST_F(X86_32_X87FPU, NativeAndLiftedCallLoopsReturnTheIndependentSum) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "requires Clang's x86 targets";
   for (Arch Architecture : {Arch::X86, Arch::X64})
-    for (bool Extended : {false, true})
+    for (unsigned Shape : {0u, 1u, 14u, 15u})
       for (bool NoOpt : {false, true}) {
+        const bool Extended = Shape == 1;
         SCOPED_TRACE(static_cast<int>(Architecture));
-        SCOPED_TRACE(Extended);
+        SCOPED_TRACE(Shape);
         SCOPED_TRACE(NoOpt);
         const std::string Target = Architecture == Arch::X86
                                        ? "--target=i386-linux-gnu"
                                        : "--target=x86_64-linux-gnu";
-        BinaryImage Image =
-            x87CallLoopImage(Architecture, BinaryFormat::ELF, 0, Extended);
+        BinaryImage Image = x87CallLoopImage(Architecture, BinaryFormat::ELF,
+                                             Extended ? 0 : Shape, Extended);
         llvm::LLVMContext Context;
         PipelineOptions Options;
         Options.EmitDumpOutput = false;

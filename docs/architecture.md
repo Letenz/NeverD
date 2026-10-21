@@ -4276,7 +4276,11 @@ relocation predicate for untagged constants; equal original VAs alone cannot
 establish equality between independently rebuilt objects.
 
 The x86 CFG builder proves local x87 call-stack effects before constructing
-TOP-state block copies. One LowIR analysis may share up to 128 immutable machine
+TOP-state block copies. A shape-checked integer DIV/IDIV precondition preserves
+x87 state on normal continuation. It remains in the emitted body and grants no
+permission to suppress divide faults; malformed guards and unknown state
+intrinsics still refuse the call summary.
+One LowIR analysis may share up to 128 immutable machine
 graphs or empty projection-refusal markers across its independent CFG builders,
 under an 8 MiB retained-payload allowance including the construction context.
 This bounds the shared cache, not active builders or their private graph
