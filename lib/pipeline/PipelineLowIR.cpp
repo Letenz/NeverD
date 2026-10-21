@@ -4479,24 +4479,52 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
                             DebugContext *Dbg, llvm::ArrayRef<va_t> Functions) {
   if (!Opts.AnalysisCache)
     return std::nullopt;
+  // The facts a selected-function run of a symbol start keeps (buildLowIR
+  // below), with what every run reads of the image's names, runtime routines
+  // and catch continuations, read here rather than in the first run.
+  const auto symbolFacts = [&](PipelineAnalysisCache &Cache) {
+    const auto Inventory =
+        PipelineAnalysisCache::SymbolInventory::of(Img, Cache);
+    const std::vector<va_t> &CandidateEntries = Inventory->Starts;
+    (void)Inventory->functionNames(Img);
+    (void)Inventory->runtimeRoutineCalls(Img);
+    (void)Inventory->fh4ContinuationCandidates(Img);
+    // Facts for another symbol inventory serve no later run.
+    if (!Cache.Facts ||
+        !Cache.Facts->matches(Img, Dbg, CandidateEntries, Inventory.get()))
+      Cache.Facts = std::make_shared<PipelineAnalysisCache::Impl>(
+          PipelineAnalysisCache::Impl::imageInputs(
+              Img, Dbg, Inventory, Cache.Facts, Cache.SelectionFacts),
+          std::set<va_t>(CandidateEntries.begin(), CandidateEntries.end()),
+          /*RetainBodies=*/true, /*SymbolEntries=*/true);
+    else
+      Cache.Facts->Callees.trimMemoizedProofs(
+          limits::kMaxRetainedNoReturnAnswers);
+  };
   if (Img.Arch != Arch::X64) {
+    // AArch64 and ARM runs share those facts too (sharedAnalysisCache).
+    if (Img.Arch == Arch::AArch64 || Img.Arch == Arch::ARM)
+      symbolFacts(*Opts.AnalysisCache);
     // Where each call's setup gives its arguments, a restricted run reads
     // the signature bodies of the callees it leaves out.  Outside the
     // regparm convention, the summaries their conversions read are the same
     // for every selection (computeCallRegisterEffects): the function-pointer
     // variables' routines and the counts of every import.  Read those of
-    // Functions as such a run reads them.
+    // Functions as such a run reads them.  An i386 run states the stack
+    // arguments of only the imports its own functions call, so a callee
+    // converted here reads none, as in a run that calls none of those; a
+    // run that calls one converts that callee again (readsHold).
     const CallArgumentConvention *Convention =
         callArgumentConvention(Img.Arch, Img.abiFormat());
-    if (!Convention || !Convention->ArgumentsFromCallSetup ||
-        Convention->RegparmOnlyForInternalCalls || Img.IsRelocatable)
+    if (!Convention || !Convention->ArgumentsFromCallSetup || Img.IsRelocatable)
       return std::nullopt;
     PipelineAnalysisCache &Cache = *Opts.AnalysisCache;
     const std::map<va_t, PointerVariableCallee> PointerCallees =
         collectPointerVariableCallees(Img);
     PipelineResult Summaries;
     Summaries.CallArgumentSources = callArgumentSourcesOf(PointerCallees);
-    if (Convention->ImportArgumentsFromPrototype)
+    if (Convention->ImportArgumentsFromPrototype &&
+        !Convention->RegparmOnlyForInternalCalls)
       Summaries.OmittedCalleeArgumentCounts =
           imageImportCounts(Img, Dbg, PointerCallees, &Cache.ImportCounts);
     if (!Cache.CalleeSignatures)
@@ -4507,25 +4535,7 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
   // The entries a selected-function run of a symbol start knows (buildLowIR
   // below): its own entry adds nothing to them, so its run shares this state.
   PipelineAnalysisCache &Cache = *Opts.AnalysisCache;
-  const auto Inventory = PipelineAnalysisCache::SymbolInventory::of(Img, Cache);
-  const std::vector<va_t> &CandidateEntries = Inventory->Starts;
-  // What every run reads of the image's names, runtime routines and catch
-  // continuations, read here rather than in the first run.
-  (void)Inventory->functionNames(Img);
-  (void)Inventory->runtimeRoutineCalls(Img);
-  (void)Inventory->fh4ContinuationCandidates(Img);
-  // Facts for another symbol inventory serve no later run.
-  if (!Cache.Facts ||
-      !Cache.Facts->matches(Img, Dbg, CandidateEntries, Inventory.get())) {
-    Cache.Facts = std::make_shared<PipelineAnalysisCache::Impl>(
-        PipelineAnalysisCache::Impl::imageInputs(
-            Img, Dbg, Inventory, Cache.Facts, Cache.SelectionFacts),
-        std::set<va_t>(CandidateEntries.begin(), CandidateEntries.end()),
-        /*RetainBodies=*/true, /*SymbolEntries=*/true);
-  } else {
-    Cache.Facts->Callees.trimMemoizedProofs(
-        limits::kMaxRetainedNoReturnAnswers);
-  }
+  symbolFacts(Cache);
   auto &Facts = *Cache.Facts;
   Facts.Inputs->Targets.clearMemoizedNames();
   const auto &Inputs = *Facts.Inputs;

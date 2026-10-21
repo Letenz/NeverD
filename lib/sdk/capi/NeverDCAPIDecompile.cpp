@@ -384,6 +384,8 @@ const char *neverd_warm_functions_json(neverd_session_t Sess,
       // The function list as the first selection reads it, built here, where
       // nothing waits, rather than in that selection.
       S->refreshFunctionList();
+      // So is the index its C view's names are resolved in.
+      (void)S->functionIndexNamed({});
       // The C view of the first function opened reads the widths of the
       // image's data accesses, which scanning every function finds.  Scan
       // them here, where nothing waits, as that view would; the session
