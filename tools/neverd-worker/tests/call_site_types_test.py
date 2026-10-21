@@ -211,7 +211,7 @@ int main(void) { return start() != 7 || errors; }
                             execute_source(root, result["text"], "win64-" + route, compiler, """
 #include <stdint.h>
 #include <stdarg.h>
-#if MS_ABI_CALL && !defined(_WIN32) && defined(__x86_64__)
+#if MS_ABI_CALL && !defined(_WIN32) && (defined(__x86_64__) || defined(__aarch64__))
 #define CALLEE_ABI __attribute__((ms_abi))
 #define va_list __builtin_ms_va_list
 #undef va_start
