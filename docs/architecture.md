@@ -2937,7 +2937,11 @@ owns the final publication decision.
 Module arbitration keeps input capacity, retained evidence and repeated work
 separate. The LowIR inventory admits at most 400000 operations; its queue still
 has 65536 debits, and block transfers share 1048576 operation debits across
-functions, fixed-point visits and final use recording. Address-occurrence
+functions, fixed-point visits and final use recording. A completed transfer is
+reused when its complete incoming state is unchanged; only a changed output
+schedules successors. The solver still saves changed incoming facts when a
+block kills them, because final use recording must observe those inputs.
+Address-occurrence
 screening uses the scan account. Retained anchors, field-index nodes and every
 source reference use the evidence account. One frozen field index preserves
 all matching contexts, including imprecise and conflicting sources; a missing

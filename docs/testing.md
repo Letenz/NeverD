@@ -3190,6 +3190,12 @@ fields and 5000 unrelated data pointers, followed by a table-exposing field.
 The controls retain a PC-relative container despite an out-of-range loader
 approximation, reject an unreadable last pointer, and refuse 65537 input records
 even when every target is disjoint.
+Stable-loop controls require reuse of completed transfers without enlarging
+the shared limits. Final recording and two independently converging functions
+can still exhaust the transfer balance. A backedge introduces a table pointer
+that a block consumes and then kills: unchanged outgoing facts must not hide
+that late write during final recording; killing the pointer before the store
+remains the negative control.
 Every exhaustion must protect the nonempty request set. Existing cross-target
 jump-table and returned-code tests exercise the shared collector's semantics.
 

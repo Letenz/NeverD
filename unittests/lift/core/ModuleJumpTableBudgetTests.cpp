@@ -699,15 +699,16 @@ TEST_F(ModuleJumpTableBudget, QueueAndRepeatedLongBlockWorkRemainBounded) {
 TEST_F(ModuleJumpTableBudget, FinalRecordingSpendsTheSameTransferAccount) {
   auto I = fixture();
   ASSERT_TRUE(I);
-  // Entry SP reaches a fixed point after three visits. A fourth transfer is
-  // needed to record uses; only that last pass exhausts the larger input.
-  for (size_t Ops : {size_t{220000}, size_t{300000}}) {
+  // Entry SP needs two distinct input transfers. The unchanged third input
+  // reuses its output, but recording still needs a complete third transfer.
+  // Only that final pass exhausts the larger input.
+  for (size_t Ops : {size_t{330000}, size_t{350000}}) {
     SCOPED_TRACE(Ops);
     LowFunc Loop = ordinaryPadding(Ops);
     Loop.Blocks.front().Preds = {0};
     Loop.Blocks.front().Succs = {0};
     I->Functions.push_back(std::move(Loop));
-    if (Ops == 220000) {
+    if (Ops == 330000) {
       const auto Result = pipeline_detail::arbitrateModuleJumpTablesForTesting(
           I->Image, I->Functions);
       EXPECT_TRUE(Result.AnalysisComplete);
@@ -718,15 +719,96 @@ TEST_F(ModuleJumpTableBudget, FinalRecordingSpendsTheSameTransferAccount) {
   }
 }
 
+TEST_F(ModuleJumpTableBudget, UnchangedIncomingFactsReuseACompletedTransfer) {
+  auto I = fixture();
+  ASSERT_TRUE(I);
+  const auto Baseline = pipeline_detail::arbitrateModuleJumpTablesForTesting(
+      I->Image, I->Functions);
+  ASSERT_TRUE(Baseline.AnalysisComplete);
+  LowFunc Loop = ordinaryPadding(300000);
+  Loop.Blocks.front().Preds = {0};
+  Loop.Blocks.front().Succs = {0};
+  I->Functions.push_back(std::move(Loop));
+  for (bool Reverse : {false, true}) {
+    SCOPED_TRACE(Reverse);
+    if (Reverse)
+      std::reverse(I->Functions.begin(), I->Functions.end());
+    const auto Result = pipeline_detail::arbitrateModuleJumpTablesForTesting(
+        I->Image, I->Functions);
+    ASSERT_TRUE(Result.AnalysisComplete);
+    EXPECT_EQ(Result.ProtectedRelocationSlots,
+              Baseline.ProtectedRelocationSlots);
+    EXPECT_EQ(Result.UnsafeBranches, Baseline.UnsafeBranches);
+    if (Reverse)
+      std::reverse(I->Functions.begin(), I->Functions.end());
+  }
+}
+
+TEST_F(ModuleJumpTableBudget, StableOutputStillRecordsTheLatestIncomingUse) {
+  for (bool KillBeforeStore : {false, true}) {
+    SCOPED_TRACE(KillBeforeStore);
+    auto I = fixture();
+    ASSERT_TRUE(I);
+    ASSERT_EQ(I->Functions.front().JumpTables.size(), 1u);
+    const auto &Table = I->Functions.front().JumpTables.front();
+    const va_t Branch = Table.InsnAddr;
+    const auto *Section = I->Image.getSectionFor(Table.BaseAddr);
+    ASSERT_NE(Section, nullptr);
+    const NdVar Pointer =
+        NdVar::reg(getTargetRegInfo(I->Image.Arch).IntReturnReg, 8);
+    LowOp Kill;
+    Kill.Opcode = NdOp::COPY;
+    Kill.Output = Pointer;
+    Kill.addInput(NdVar::cst(0, 8));
+    LowOp Source = Kill;
+    Source.Inputs[0] = NdVar::dataAddress(Table.BaseAddr, 8, Section->VA);
+    LowOp Store;
+    Store.Opcode = NdOp::STORE;
+    Store.addInput(Pointer);
+    Store.addInput(NdVar::cst(0, 8));
+
+    // This small LowIR cycle isolates the solver: the first visit has no
+    // table pointer. The backedge supplies the real fixture's table address;
+    // consuming and then killing it leaves exactly the same outgoing state.
+    LowFunc Loop = ordinaryPadding(0);
+    Loop.Blocks.resize(3);
+    Loop.ModuleAnalysisRoots = {Loop.Entry};
+    for (size_t Index = 0; Index < Loop.Blocks.size(); ++Index) {
+      auto &Block = Loop.Blocks[Index];
+      Block.Id = Index;
+      Block.StartAddr = Loop.Entry + Index * 16;
+      Block.EndAddr = Block.StartAddr + 16;
+    }
+    Loop.Blocks[0].Succs = {2};
+    Loop.Blocks[1].Preds = {2};
+    Loop.Blocks[1].Succs = {2};
+    Loop.Blocks[1].Ops = {Source};
+    Loop.Blocks[2].Preds = {0, 1};
+    Loop.Blocks[2].Succs = {1};
+    Loop.Blocks[2].Ops = KillBeforeStore ? std::vector<LowOp>{Kill, Store}
+                                         : std::vector<LowOp>{Store, Kill};
+    for (auto &Block : Loop.Blocks)
+      for (size_t Index = 0; Index < Block.Ops.size(); ++Index) {
+        Block.Ops[Index].Addr = Block.StartAddr + Index;
+        Block.Ops[Index].Seq = 0;
+      }
+    I->Functions.push_back(std::move(Loop));
+    const auto Result = pipeline_detail::arbitrateModuleJumpTablesForTesting(
+        I->Image, I->Functions);
+    ASSERT_TRUE(Result.AnalysisComplete);
+    EXPECT_EQ(Result.UnsafeBranches.count(Branch), KillBeforeStore ? 0u : 1u);
+  }
+}
+
 TEST_F(ModuleJumpTableBudget, FunctionsShareTheTransferAccount) {
   auto I = fixture();
   ASSERT_TRUE(I);
   std::vector<LowFunc> Loops;
   for (va_t Entry : {va_t{0x70000000}, va_t{0x71000000}}) {
-    LowFunc Loop = ordinaryPadding(150000);
+    LowFunc Loop = ordinaryPadding(180000);
     Loop.Entry = Entry;
     Loop.Blocks.front().StartAddr = Entry;
-    Loop.Blocks.front().EndAddr = Entry + 150000;
+    Loop.Blocks.front().EndAddr = Entry + 180000;
     Loop.Blocks.front().Preds = {0};
     Loop.Blocks.front().Succs = {0};
     I->Functions.push_back(Loop);

@@ -2141,16 +2141,22 @@ bool collectLowAddressUses(
       if (!mergePredecessors(Func.Blocks[BlockIndex], Input))
         return failCollect("merge-preds", FuncIndex,
                            Func.Blocks[BlockIndex].StartAddr);
+      // The graph and transfer rules are frozen for this solve. Identical
+      // incoming facts already have a complete output; final use recording
+      // remains a separate transfer below.
+      if (Processed[BlockIndex] && Input == InStates[BlockIndex])
+        continue;
       ModuleAddressState Output;
       if (!transfer(Func.Blocks[BlockIndex], Input, nullptr, Output))
         return failCollect("transfer-fixpoint", FuncIndex,
                            Func.Blocks[BlockIndex].StartAddr);
       const bool FirstVisit = !Processed[BlockIndex];
       Processed[BlockIndex] = true;
-      if (!FirstVisit && Input == InStates[BlockIndex] &&
-          Output == OutStates[BlockIndex])
-        continue;
+      // Recording needs the latest input even when this block kills every
+      // changed fact. Only a changed output can affect a successor.
       InStates[BlockIndex] = std::move(Input);
+      if (!FirstVisit && Output == OutStates[BlockIndex])
+        continue;
       OutStates[BlockIndex] = std::move(Output);
       auto queueSucc = [&](int SuccId) {
         auto Pos = PositionForId.find(SuccId);
