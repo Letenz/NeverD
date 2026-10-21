@@ -1534,6 +1534,12 @@ cl::opt<bool> CallTreeExpandLibrary("expand-library",
 cl::opt<std::string>
     ExportFunc("func", cl::desc("Function name or address (for decompile/ir)"),
                cl::init(""), cl::sub(ExportCmd), cl::sub(DecompileCmd));
+cl::opt<bool> DecompileCallees(
+    "callees",
+    cl::desc("With --func, also decompile every function it calls, directly "
+             "or not, into one C file; imports and library functions stay "
+             "declarations"),
+    cl::sub(DecompileCmd));
 
 //===----------------------------------------------------------------------===//
 // Rename-specific options

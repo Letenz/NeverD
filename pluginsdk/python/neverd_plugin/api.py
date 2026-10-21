@@ -1908,6 +1908,35 @@ class Session:
             raise NeverDError(self.last_error or "decompile-all failed")
         return value
 
+    def decompile_functions(
+        self,
+        path: os.PathLike[str] | str,
+        entries: Iterable[int],
+        *,
+        language: OutputLanguage | int = OutputLanguage.C,
+    ) -> str:
+        """One translation unit of the functions at ``entries``, as
+        ``decompile_all`` writes the whole program; pass a function and the
+        ``bottom_up`` list of its ``call_tree`` for its file."""
+
+        try:
+            output_language = OutputLanguage(language)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"unknown output language: {language!r}") from error
+        addresses = [_unsigned("entry", entry, 64) for entry in entries]
+        if not addresses:
+            raise ValueError("entries must name at least one function")
+        value = self._owned_string(
+            "neverd_decompile_functions",
+            _utf8_argument("input path", os.fspath(path), allow_empty=False),
+            int(output_language),
+            (ctypes.c_uint64 * len(addresses))(*addresses),
+            _c_int("entry count", len(addresses), minimum=1),
+        )
+        if value is None:
+            raise NeverDError(self.last_error or "decompile failed")
+        return value
+
     def set_evm(self, *, strict: bool = True, hardfork: str | None = None) -> None:
         self._call("neverd_evm_set_strict", int(_boolean("strict", strict)))
         if hardfork is not None:

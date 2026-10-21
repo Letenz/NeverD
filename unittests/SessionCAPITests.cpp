@@ -1986,28 +1986,33 @@ TEST_F(SessionCAPITest, DisassemblyStatesTheMemoryEachInstructionReaches) {
   EXPECT_EQ(Accesses, 3u) << Page;
 }
 
+// main calls a, c and d; a calls b; b calls c: main at the entry, a at
+// +0x10, b at +0x16, c at +0x1c and d at +0x22.
+constexpr char CallChainBytes[] =
+    "\xe8\x0b\x00\x00\x00"     // main+0x00: call a (main+0x10)
+    "\xe8\x12\x00\x00\x00"     // main+0x05: call c (main+0x1c)
+    "\xe8\x13\x00\x00\x00"     // main+0x0a: call d (main+0x22)
+    "\xc3"                     // main+0x0f: ret
+    "\xe8\x01\x00\x00\x00"     // a: call b (main+0x16)
+    "\xc3"                     //
+    "\xe8\x01\x00\x00\x00"     // b: call c
+    "\xc3"                     //
+    "\xb8\x07\x00\x00\x00\xc3" // c: mov eax, 7; ret
+    "\xc3";                    // d: ret
+// The bytes, NULs included, without the literal's terminator.
+constexpr std::string_view CallChainCode(CallChainBytes,
+                                         sizeof(CallChainBytes) - 1);
+constexpr uint64_t CallChainOffsets[] = {0x0, 0x10, 0x16, 0x1c, 0x22};
+
 TEST_F(SessionCAPITest, CallPathsFollowTheDirectReferencesBetweenFunctions) {
-  // main calls a, c and d; a calls b; b calls c.
-  using namespace std::string_view_literals;
-  const std::string_view Code =
-      "\xe8\x0b\x00\x00\x00"     // main+0x00: call a (main+0x10)
-      "\xe8\x12\x00\x00\x00"     // main+0x05: call c (main+0x1c)
-      "\xe8\x13\x00\x00\x00"     // main+0x0a: call d (main+0x22)
-      "\xc3"                     // main+0x0f: ret
-      "\xe8\x01\x00\x00\x00"     // a: call b (main+0x16)
-      "\xc3"                     //
-      "\xe8\x01\x00\x00\x00"     // b: call c
-      "\xc3"                     //
-      "\xb8\x07\x00\x00\x00\xc3" // c: mov eax, 7; ret
-      "\xc3"sv;                  // d: ret
-  const auto Input =
-      write("call-paths.elf", makeNativeELF(false, 0x400000, {}, Code));
+  const auto Input = write("call-paths.elf",
+                           makeNativeELF(false, 0x400000, {}, CallChainCode));
   ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
       << takeString(neverd_last_error(Session));
   // The functions are stated rather than discovered: the graph, not
   // function discovery, is what this test is about.
   const uint64_t Main = neverd_session_entry_addr(Session);
-  for (const uint64_t Offset : {0x0, 0x10, 0x16, 0x1c, 0x22})
+  for (const uint64_t Offset : CallChainOffsets)
     if (neverd_func_find_by_addr(Session, Main + Offset) < 0)
       ASSERT_EQ(neverd_func_create(Session, Main + Offset), 0)
           << takeString(neverd_last_error(Session));
@@ -2131,6 +2136,51 @@ TEST_F(SessionCAPITest, CallPathsFollowTheDirectReferencesBetweenFunctions) {
   }
   EXPECT_EQ(neverd_call_tree_json(Session, "{}"), nullptr);
   EXPECT_FALSE(takeString(neverd_last_error(Session)).empty());
+}
+
+TEST_F(SessionCAPITest, DecompileFunctionsWritesOneUnitOfTheSelection) {
+  const auto Input = write("call-chain.elf",
+                           makeNativeELF(false, 0x400000, {}, CallChainCode));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const uint64_t Main = neverd_session_entry_addr(Session);
+  for (const uint64_t Offset : CallChainOffsets)
+    if (neverd_func_find_by_addr(Session, Main + Offset) < 0)
+      ASSERT_EQ(neverd_func_create(Session, Main + Offset), 0)
+          << takeString(neverd_last_error(Session));
+  const auto Name = [](uint64_t Address) {
+    return "sub_" + llvm::utohexstr(Address);
+  };
+  // a and b: both defined, what b calls declared, the rest absent.
+  const neverd_va_t Selected[] = {Main + 0x10, Main + 0x16};
+  const auto Text = takeString(neverd_decompile_functions(
+      Session, Input.c_str(), NEVERD_OUTPUT_C, Selected, 2));
+  ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+  const auto Defines = [&](uint64_t Address) {
+    for (llvm::StringRef Line : llvm::split(Text, '\n'))
+      if (!Line.starts_with(" ") && !Line.starts_with("extern ") &&
+          Line.contains(Name(Address) + "(") && Line.ends_with("{"))
+        return true;
+    return false;
+  };
+  EXPECT_TRUE(Defines(Main + 0x10)) << Text;
+  EXPECT_TRUE(Defines(Main + 0x16)) << Text;
+  EXPECT_FALSE(Defines(Main + 0x1c)) << Text;
+  EXPECT_NE(Text.find("extern int64_t " + Name(Main + 0x1c)), std::string::npos)
+      << Text;
+  EXPECT_EQ(Text.find(Name(Main) + "("), std::string::npos) << Text;
+  EXPECT_EQ(Text.find(Name(Main + 0x22) + "("), std::string::npos) << Text;
+
+  // An empty selection, or one outside the image's code, fails.
+  EXPECT_EQ(neverd_decompile_functions(Session, Input.c_str(), NEVERD_OUTPUT_C,
+                                       Selected, 0),
+            nullptr);
+  const neverd_va_t Outside[] = {0x10};
+  EXPECT_EQ(neverd_decompile_functions(Session, Input.c_str(), NEVERD_OUTPUT_C,
+                                       Outside, 1),
+            nullptr);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("no native code"),
+            std::string::npos);
 }
 
 // The code a data executable's entry runs, and where it and the data start.
