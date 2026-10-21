@@ -4157,69 +4157,99 @@ void computeCallRegisterEffects(
 } // namespace
 
 struct PipelineAnalysisCache::Impl {
-  const BinaryImage *Image;
-  DebugContext *Debug;
+  /// These indexes read the image, not a selection's extra entry boundaries.
+  /// Keep them while replacing SelectionFacts for another unnamed function.
+  struct ImageInputs {
+    const BinaryImage *Image;
+    DebugContext *Debug;
+    const std::shared_ptr<const SymbolInventory> Inventory;
+    const std::set<uint64_t> VerifiedEntries;
+    libc::NoReturnTargetIndex Targets;
+    libc::StackProbeIndex StackProbes;
+    const std::map<va_t, PointerVariableCallee> PointerCallees;
+    detail::AbsoluteRelocationRootIndex Roots;
+    ExecutableCodeOwnerIndex Owners;
+
+    ImageInputs(const BinaryImage &Img, DebugContext *Dbg,
+                std::shared_ptr<const SymbolInventory> Inventory)
+        : Image(&Img), Debug(Dbg), Inventory(std::move(Inventory)),
+          VerifiedEntries(Img.VerifiedFunctionEntries),
+          Targets(
+              Img,
+              Dbg ? libc::NoReturnTargetIndex::NameResolver(
+                        [Dbg](va_t Addr) { return Dbg->functionName(Addr); })
+                  : libc::NoReturnTargetIndex::NameResolver(),
+              Dbg ? libc::NoReturnTargetIndex::DeclaredNoReturn(
+                        [Dbg, &Img](llvm::StringRef Name) {
+                          const std::optional<FunctionSym> Prototype =
+                              Dbg->resolvePrototype(cNameOfStatedName(
+                                  Name, Img.Format, Img.Arch));
+                          return Prototype && Prototype->NoReturn;
+                        })
+                  : libc::NoReturnTargetIndex::DeclaredNoReturn()),
+          StackProbes(Img), PointerCallees(collectPointerVariableCallees(Img)),
+          Roots(Img), Owners(Img) {}
+
+    bool matches(const BinaryImage &Img, DebugContext *Dbg,
+                 const SymbolInventory *CandidateInventory) const {
+      return Image == &Img && Debug == Dbg &&
+             Inventory.get() == CandidateInventory &&
+             VerifiedEntries == Img.VerifiedFunctionEntries;
+    }
+  };
+
+  static std::shared_ptr<ImageInputs>
+  imageInputs(const BinaryImage &Img, DebugContext *Dbg,
+              std::shared_ptr<const SymbolInventory> Inventory,
+              const std::shared_ptr<Impl> &SymbolFacts,
+              const std::shared_ptr<Impl> &SelectionFacts) {
+    for (const auto &Kept : {SymbolFacts, SelectionFacts})
+      if (Kept && Kept->Inputs->matches(Img, Dbg, Inventory.get()))
+        return Kept->Inputs;
+    return std::make_shared<ImageInputs>(Img, Dbg, std::move(Inventory));
+  }
+
+  const std::shared_ptr<ImageInputs> Inputs;
   /// The symbol inventory whose starts Entries are, if they are only those.
   const std::shared_ptr<const SymbolInventory> BuiltFrom;
   // Never changes, so the graph cache matches it by identity.
   const std::set<va_t> Entries;
-  std::set<uint64_t> VerifiedEntries;
-  libc::NoReturnTargetIndex Targets;
-  libc::StackProbeIndex StackProbes;
-  // Every run's call effects read them; they follow from the image alone.
-  const std::map<va_t, PointerVariableCallee> PointerCallees;
   mutable pipeline_detail::CalleeFactsCache CalleeFacts;
   /// Whether warming found no room for another body.  Later pages lift each
   /// function once, for its callee facts.
   bool BodiesFull = false;
-  detail::AbsoluteRelocationRootIndex Roots;
-  ExecutableCodeOwnerIndex Owners;
   InternalNoReturnIndex Callees;
   std::shared_ptr<X87CallGraphCache> Graphs;
 
-  /// Entries are the starts of \p BuiltFrom when it is given.
-  Impl(const BinaryImage &Img, DebugContext *Dbg, std::set<va_t> Entries,
-       bool RetainBodies,
-       std::shared_ptr<const SymbolInventory> BuiltFrom = nullptr)
-      : Image(&Img), Debug(Dbg), BuiltFrom(std::move(BuiltFrom)),
+  /// Entries are the inventory's starts when \p SymbolEntries is true.
+  Impl(std::shared_ptr<ImageInputs> Inputs, std::set<va_t> Entries,
+       bool RetainBodies, bool SymbolEntries)
+      : Inputs(std::move(Inputs)),
+        BuiltFrom(SymbolEntries ? this->Inputs->Inventory : nullptr),
         Entries(std::move(Entries)),
-        VerifiedEntries(Img.VerifiedFunctionEntries),
-        Targets(Img,
-                Dbg ? libc::NoReturnTargetIndex::NameResolver(
-                          [Dbg](va_t Addr) { return Dbg->functionName(Addr); })
-                    : libc::NoReturnTargetIndex::NameResolver(),
-                Dbg ? libc::NoReturnTargetIndex::DeclaredNoReturn(
-                          [Dbg, &Img](llvm::StringRef Name) {
-                            const std::optional<FunctionSym> Prototype =
-                                Dbg->resolvePrototype(cNameOfStatedName(
-                                    Name, Img.Format, Img.Arch));
-                            return Prototype && Prototype->NoReturn;
-                          })
-                    : libc::NoReturnTargetIndex::DeclaredNoReturn()),
-        StackProbes(Img), PointerCallees(collectPointerVariableCallees(Img)),
-        Roots(Img), Owners(Img),
-        Callees(Img, &this->Entries, &Targets, &Roots, &Owners),
-        Graphs(createX87CallGraphCache(&Callees, &Targets, RetainBodies,
+        Callees(*this->Inputs->Image, &this->Entries, &this->Inputs->Targets,
+                &this->Inputs->Roots, &this->Inputs->Owners),
+        Graphs(createX87CallGraphCache(&Callees, &this->Inputs->Targets,
+                                       RetainBodies,
                                        {limits::kMaxPipelineCallGraphEntries,
                                         limits::kMaxPipelineCallGraphBytes,
                                         limits::kMaxPipelineCallBodyBytes},
                                        &this->Entries)) {}
 
-  /// \p CandidateEntries is sorted and holds each entry once.  They are the
-  /// starts of \p Inventory when it is given.
+  /// \p CandidateEntries is sorted and holds each entry once. BuiltFrom
+  /// permits the identity shortcut only when these are the inventory's starts.
   bool matches(const BinaryImage &Img, DebugContext *Dbg,
                llvm::ArrayRef<va_t> CandidateEntries,
-               const SymbolInventory *Inventory = nullptr) const {
+               const SymbolInventory *Inventory) const {
     // Object identity is only a guard: the owner must retire this state on
     // reload/mutation. These two inventories can grow during const analysis,
     // and affect CFG boundaries, ownership and proof work charges.  Entries
     // read from the same inventory are its starts; a grown symbol table reads
     // another.
-    return Image == &Img && Debug == Dbg &&
-           ((Inventory && BuiltFrom.get() == Inventory) ||
+    return Inputs->matches(Img, Dbg, Inventory) &&
+           ((BuiltFrom.get() == Inventory) ||
             std::equal(Entries.begin(), Entries.end(), CandidateEntries.begin(),
-                       CandidateEntries.end())) &&
-           VerifiedEntries == Img.VerifiedFunctionEntries;
+                       CandidateEntries.end()));
   }
 };
 
@@ -4446,28 +4476,30 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
   if (!Cache.Facts ||
       !Cache.Facts->matches(Img, Dbg, CandidateEntries, Inventory.get())) {
     Cache.Facts = std::make_shared<PipelineAnalysisCache::Impl>(
-        Img, Dbg,
+        PipelineAnalysisCache::Impl::imageInputs(
+            Img, Dbg, Inventory, Cache.Facts, Cache.SelectionFacts),
         std::set<va_t>(CandidateEntries.begin(), CandidateEntries.end()),
-        /*RetainBodies=*/true, Inventory);
+        /*RetainBodies=*/true, /*SymbolEntries=*/true);
   } else {
     Cache.Facts->Callees.trimMemoizedProofs(
         limits::kMaxRetainedNoReturnAnswers);
-    Cache.Facts->Targets.clearMemoizedNames();
   }
   auto &Facts = *Cache.Facts;
+  Facts.Inputs->Targets.clearMemoizedNames();
+  const auto &Inputs = *Facts.Inputs;
   // Bodies and graphs serve the call proofs of the functions runs lift
   // themselves; a callee is read from its facts.  Once no body fits, a page
   // only lifts each function for its callee facts, once.
   CFGBuilder::CallGraphWarmup Warmup;
   if (!Facts.BodiesFull) {
     Warmup = CFGBuilder::warmCallGraphs(
-        Facts.Graphs, Img, Functions, &Facts.Entries, &Facts.Targets,
-        &Facts.Callees, &Facts.Roots, &Facts.Owners, workerThreadCount());
+        Facts.Graphs, Img, Functions, &Facts.Entries, &Inputs.Targets,
+        &Facts.Callees, &Inputs.Roots, &Inputs.Owners, workerThreadCount());
     Facts.BodiesFull = Warmup.Full;
   }
-  warmCalleeFacts(Img, Functions, Facts.Graphs, Facts.Entries, Facts.Targets,
-                  Facts.Callees, Facts.Roots, Facts.Owners, Facts.StackProbes,
-                  Facts.PointerCallees, Facts.CalleeFacts);
+  warmCalleeFacts(Img, Functions, Facts.Graphs, Facts.Entries, Inputs.Targets,
+                  Facts.Callees, Inputs.Roots, Inputs.Owners,
+                  Inputs.StackProbes, Inputs.PointerCallees, Facts.CalleeFacts);
   return AnalysisCacheWarmup{Warmup.Retained, Facts.BodiesFull};
 }
 
@@ -4530,25 +4562,25 @@ void Pipeline::buildLowIR(
   // facts, kept beside the symbol inventory's rather than in their place.
   std::shared_ptr<PipelineAnalysisCache::Impl> &Kept =
       AddsEntries ? Cache.SelectionFacts : Cache.Facts;
-  const PipelineAnalysisCache::SymbolInventory *Starts =
-      AddsEntries ? nullptr : Inventory.get();
-  if (!Kept || !Kept->matches(Img, Dbg, CandidateEntries, Starts))
+  if (!Kept || !Kept->matches(Img, Dbg, CandidateEntries, Inventory.get()))
     Kept = std::make_shared<PipelineAnalysisCache::Impl>(
-        Img, Dbg,
+        PipelineAnalysisCache::Impl::imageInputs(
+            Img, Dbg, Inventory, Cache.Facts, Cache.SelectionFacts),
         std::set<va_t>(CandidateEntries.begin(), CandidateEntries.end()),
-        Restricted, AddsEntries ? nullptr : Inventory);
+        Restricted, /*SymbolEntries=*/!AddsEntries);
   else {
     // Earlier runs' no-return answers hold for the same facts, and replaying
     // a retained body asks them again; the screening data behind them does
     // not accumulate.  Lazy names are resolved again each run.
     Kept->Callees.trimMemoizedProofs(limits::kMaxRetainedNoReturnAnswers);
-    Kept->Targets.clearMemoizedNames();
   }
   const auto &Facts = *Kept;
+  Facts.Inputs->Targets.clearMemoizedNames();
+  const auto &Inputs = *Facts.Inputs;
   const auto &FuncEntries = Facts.Entries;
-  const auto &NoReturnTargets = Facts.Targets;
-  const auto &AbsoluteRelocationRoots = Facts.Roots;
-  const auto *CodeOwnerIndex = &Facts.Owners;
+  const auto &NoReturnTargets = Inputs.Targets;
+  const auto &AbsoluteRelocationRoots = Inputs.Roots;
+  const auto *CodeOwnerIndex = &Inputs.Owners;
   const auto &NoReturnCallees = Facts.Callees;
   const auto &X87Graphs = Facts.Graphs;
   // A small selected-function batch runs inline. Give its independent call
@@ -5021,8 +5053,8 @@ void Pipeline::buildLowIR(
   }
 
   computeCallRegisterEffects(
-      Img, FuncEntries, NoReturnTargets, Facts.StackProbes, NoReturnCallees,
-      AbsoluteRelocationRoots, CodeOwnerIndex, X87Graphs, Facts.PointerCallees,
+      Img, FuncEntries, NoReturnTargets, Inputs.StackProbes, NoReturnCallees,
+      AbsoluteRelocationRoots, CodeOwnerIndex, X87Graphs, Inputs.PointerCallees,
       Facts.CalleeFacts, Dbg, Shared ? &Inventory->functionNames(Img) : nullptr,
       Shared ? &Inventory->ExportStarts : nullptr,
       Opts.AnalysisCache ? &Opts.AnalysisCache->ImportCounts : nullptr, Result);

@@ -264,6 +264,18 @@ at 2/3 bits. Wider checks are algebraic and arithmetic coverage, not SMT claims.
 The highest-bit coefficient additionally checks arbitrary arithmetic factors at
 2–257 bits, neighboring coefficients that still observe carries, and separate
 full-width Z3 proofs at 8/16/32/64 bits for the product-parity transfer.
+Missing-corner completion covers four through sixteen factors at 8–257 bits,
+two missing corners, up to six independent partitions, opaque arithmetic words
+and high-bit coefficient changes. Independent word oracles and exhaustive
+three-bit assignments check completed and partial-budget results. Separate Z3
+queries cover complete four-factor rewrites at 2/3 bits. A region without a
+linear tail must retain its original word width; generated parity quotients
+must finish within the unchanged 65,536-unit allowance.
+Partially factored quartic and sextic inputs exercise the form produced by
+source preprocessing, with full-width oracles through 257 bits, exhaustive
+three-bit partial-budget checks and an independent SMT proof.
+Sixteen repeated small partitions check that exponential expansion is refused
+before consuming the budget needed to simplify their shared child.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
 signed/unsigned overflow admission against all byte pairs, including unsafe
 neighboring masks. `NestedMaskedBoundsPreserveHiddenPoisonAndWideDomains`
@@ -311,6 +323,11 @@ Use `--family perturbed --count 64` for fourth, sixth, eighth and twelfth degree
 with one or two coefficient disturbances, modular zeros, high-bit differences,
 up to 32 distributed products and mixed-degree residuals. Retain all seven
 earlier families as controls and report any remaining budget refusals.
+Use `--family completion --count 64` for fourth, eighth, twelfth and sixteenth
+degrees with one to three missing corners, up to 64 distributed terms, opaque
+arithmetic factors, additional coefficient changes and mixed-degree residuals.
+Run all eight earlier families as controls. Report remaining refusals separately
+for the previous and newly added corpus; timing remains descriptive.
 
 `tools/neverd-worker/tests/source_synthesis_test.py WORKER --cli CLI` checks the
 real source-option request used by the GUI and both CLI source emitters, for
@@ -328,6 +345,9 @@ The fourth- and sixth-degree fixtures multiply additional factors in original
 x64 machine code, so a fixture compiler cannot simplify the input first.
 Their coefficient-disturbed variants multiply one original product by three;
 the resulting difference must survive every enhanced CLI and worker output.
+The missing-corner variants omit that original product altogether. Their
+negative residual must survive both source emitters and single/whole-program
+requests; the remaining complemented partitions must still disappear.
 With Clang available, each generated C output executes at O0/O2 against an
 independent arithmetic oracle on boundary and deterministic random inputs.
 
@@ -764,6 +784,8 @@ IR, same-address image replacement, failed reload, function edits, target
 policy, signature matching and feature changes between selections. Run these
 with `NeverDPipelineOutcomeTests` and `NeverDSessionCAPITests`; the no-return,
 x87 and jump-table suites cover their shared proof consumers.
+`SessionCAPITest.RecoveredExtentsKeepFunctionNamesAndLaterRenames` checks public
+size publication, name lookup and a later analyst rename after navigation.
 `PipelineOutcome.Warm*` checks that idle preparation leaves selected runs
 unchanged, keeps a cache built for other entries, and stops at the cache bound
 without evicting. `NeverDWorkerWarmFunctions` checks the worker's `warm` open

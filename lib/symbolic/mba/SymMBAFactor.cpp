@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <map>
+#include <set>
 
 namespace neverd::symbolic::detail {
 namespace {
@@ -67,10 +68,11 @@ SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                              WorkBudget &Budget, SolveReport &Rep) {
   // Bound this optional frontier before allocating or distributing enclosing
   // scales. Low-degree regions keep their existing reconstruction path.
-  constexpr size_t MaxTerms = 128, MaxEdges = 2048;
+  constexpr size_t MaxTerms = 128, MaxEdges = 2048, MinCompletionTerms = 6;
   std::array<SymRef, MaxTerms> Pending;
   size_t Top = 1, TermsSeen = 0, Edges = 0, Visits = 0;
   unsigned Higher = 0;
+  bool NestedSum = false;
   Pending[0] = E;
   while (Top) {
     SymRef R = Pending[--Top];
@@ -97,14 +99,19 @@ SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       return E;
     Edges += Factors.size();
     Higher += Factors.size() >= 4;
+    NestedSum |= llvm::any_of(
+        Factors, [&](SymRef F) { return Ctx.op(F) == SymOp::Add; });
   }
-  if (Higher < 2 || Budget.exhausted())
+  if (Budget.exhausted())
     return E;
+  if (Higher < 2)
+    return NestedSum ? solveNestedProductCofactors(Ctx, E, Opts, Budget, Rep)
+                     : E;
 
   size_t Storage = Opts.MaxTableBytes;
   const size_t WordBytes =
       ((size_t(Ctx.width(E)) - 1) / 64 + 1) * sizeof(uint64_t);
-  auto Charge = [&](size_t Work, size_t Slots) {
+  auto Charge = [&](size_t Work, size_t Slots = 0) {
     const size_t SlotBytes = 128 + 4 * WordBytes;
     if (Slots > Storage / SlotBytes || !Budget.consume(Work)) {
       Rep.BudgetExhausted = true;
@@ -158,6 +165,7 @@ SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   SymRef Current = E;
   std::map<uint32_t, std::pair<SymRef, unsigned>> QuotientCache;
   unsigned Omitted = 1;
+  std::array<bool, 2> TriedCompletion{};
   while (!Budget.exhausted()) {
     if (llvm::count_if(
             Terms, [](const PolyTerm &T) { return T.Factors.size() >= 4; }) < 2)
@@ -195,6 +203,250 @@ SymRef solveProductCofactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     // Reserve the complete reconstruction before any group can commit.
     if (!Complete || !Charge(Terms.size() + Edges, Terms.size() + Edges))
       break;
+
+    // Reconstruct a complete product in a proved local factor basis, keeping
+    // every missing or disturbed coefficient as an exact residual. Completing
+    // the whole Cartesian block avoids committing a temporarily larger partial
+    // transport when several independent partitions contain the same hole.
+    // Keep small frontiers on the cheaper local cofactor path.
+    if (!TriedCompletion[Omitted - 1] &&
+        llvm::count_if(Terms, [](const PolyTerm &T) {
+          return T.Factors.size() >= 4;
+        }) >= MinCompletionTerms) {
+      TriedCompletion[Omitted - 1] = true;
+      struct Relation {
+        SymRef Sum, Reduced;
+        std::array<llvm::SmallVector<SymRef, 2>, 2> Pieces;
+      };
+      llvm::SmallVector<Relation, 8> Relations;
+      std::set<uint32_t> Seen;
+      for (const auto &[Key, Indices] : Groups) {
+        if (Indices.size() != 2 || Budget.exhausted())
+          continue;
+        if (!Charge(2 * (Key.size() + Omitted + 1),
+                    2 * (Key.size() + Omitted + 3)))
+          break;
+        Relation Rel;
+        for (unsigned I = 0; I != 2; ++I) {
+          size_t K = 0;
+          for (SymRef Factor : Terms[Indices[I]].Factors)
+            if (K != Key.size() && Factor.index() == Key[K])
+              ++K;
+            else
+              Rel.Pieces[I].push_back(Factor);
+          assert(K == Key.size() && Rel.Pieces[I].size() == Omitted &&
+                 "completion relation must retain exact multiplicities");
+        }
+        auto Left = Ctx.mkMul(Rel.Pieces[0]), Right = Ctx.mkMul(Rel.Pieces[1]);
+        if (!ChargeOperands(SymOp::Add, {Left, Right}, MaxTerms))
+          break;
+        Rel.Sum = Ctx.mkAdd(Left, Right);
+        if (!Seen.insert(Rel.Sum.index()).second)
+          continue;
+        if (auto It = QuotientCache.find(Rel.Sum.index());
+            It != QuotientCache.end())
+          Rel.Reduced = It->second.first;
+        else {
+          SolveReport Local;
+          MBAOptions Inner = Opts;
+          Inner.MaxTableBytes = Storage;
+          Rel.Reduced = solveOneRegion(Ctx, Rel.Sum, Inner, Budget, Local);
+          Rep.BudgetExhausted |= Local.BudgetExhausted;
+          if (Rel.Reduced == Rel.Sum ||
+              Local.Evidence != MBAEvidence::Derivation)
+            continue;
+          QuotientCache.try_emplace(Rel.Sum.index(), Rel.Reduced,
+                                    Local.NumAtoms);
+          Rep.NumAtoms = std::max(Rep.NumAtoms, Local.NumAtoms);
+        }
+        Relations.push_back(std::move(Rel));
+      }
+      std::map<uint32_t, llvm::SmallVector<std::pair<unsigned, unsigned>, 2>>
+          Heads;
+      for (unsigned R = 0; R != Relations.size(); ++R)
+        for (unsigned Side = 0; Side != 2; ++Side) {
+          if (!Charge(1, 2))
+            break;
+          Heads[Relations[R].Pieces[Side].front().index()].emplace_back(R,
+                                                                        Side);
+        }
+      SymRef Completion;
+      Seen.clear();
+      std::map<unsigned, std::pair<llvm::APInt, unsigned>> Scales;
+      if (Charge(Terms.size() * Terms.size() * (WordBytes / 8), Terms.size()))
+        for (const auto &Term : Terms) {
+          const unsigned Degree = Term.Factors.size();
+          if (Degree < 4)
+            continue;
+          unsigned Count = llvm::count_if(Terms, [&](const PolyTerm &T) {
+            return T.Factors.size() == Degree && T.Coeff == Term.Coeff;
+          });
+          auto It = Scales.find(Degree);
+          if (It == Scales.end() || Count > It->second.second)
+            Scales.insert_or_assign(Degree, std::make_pair(Term.Coeff, Count));
+        }
+      for (const auto &Seed : Terms) {
+        if (Seed.Factors.size() < 4 || Relations.size() < 2 ||
+            Budget.exhausted() || !Scales.count(Seed.Factors.size()))
+          continue;
+        const llvm::APInt *Scale = &Scales.at(Seed.Factors.size()).first;
+        std::vector<bool> Used(Seed.Factors.size());
+        llvm::SmallVector<SymRef, 16> Folded, Expanded;
+        llvm::SmallVector<std::pair<const Relation *, SymRef>, 16> Steps;
+        bool Fits = true;
+        unsigned Axes = 0;
+        for (unsigned I = 0; I != Seed.Factors.size() && Fits; ++I) {
+          if (Used[I])
+            continue;
+          const Relation *Chosen = nullptr;
+          llvm::SmallVector<unsigned, 2> Positions;
+          if (!Charge(1)) {
+            Fits = false;
+            break;
+          }
+          if (auto It = Heads.find(Seed.Factors[I].index()); It != Heads.end())
+            for (auto [R, Side] : It->second) {
+              const auto &Rel = Relations[R];
+              const auto &Piece = Rel.Pieces[Side];
+              Positions.clear();
+              size_t K = 0;
+              for (unsigned J = I;
+                   J != Seed.Factors.size() && K != Piece.size(); ++J) {
+                if (!Charge(1)) {
+                  Fits = false;
+                  break;
+                }
+                if (!Used[J] && Seed.Factors[J] == Piece[K]) {
+                  Positions.push_back(J);
+                  ++K;
+                }
+              }
+              if (K == Piece.size()) {
+                Chosen = &Rel;
+                break;
+              }
+              if (!Fits)
+                break;
+            }
+          if (!Fits)
+            break;
+          Steps.emplace_back(Chosen, Seed.Factors[I]);
+          if (Chosen) {
+            for (unsigned J : Positions)
+              Used[J] = true;
+            Folded.push_back(Chosen->Reduced);
+            Expanded.push_back(Chosen->Sum);
+            ++Axes;
+          } else {
+            Used[I] = true;
+            Folded.push_back(Seed.Factors[I]);
+            Expanded.push_back(Seed.Factors[I]);
+          }
+        }
+        if (!Fits || Axes < 2 ||
+            !ChargeOperands(SymOp::Mul, Folded, MaxEdges) ||
+            !ChargeOperands(SymOp::Mul, Expanded, MaxEdges))
+          continue;
+        Folded.push_back(Ctx.mkConst(*Scale));
+        Expanded.push_back(Ctx.mkConst(*Scale));
+        SymRef Product = Ctx.mkMul(Folded);
+        if (!Seen.insert(Product.index()).second)
+          continue;
+        llvm::SmallVector<Monomial, 16> Products(1);
+        for (const auto &Step : Steps) {
+          const size_t Copies = Step.first ? 2 : 1;
+          if (Products.size() > MaxTerms / Copies ||
+              !Charge(Products.size() * Copies * (Seed.Factors.size() + 1),
+                      Products.size() * Copies * (Seed.Factors.size() + 2))) {
+            Fits = false;
+            break;
+          }
+          llvm::SmallVector<Monomial, 16> NextProducts;
+          for (const auto &Product : Products)
+            for (unsigned Side = 0; Side != Copies; ++Side) {
+              Monomial Next = Product;
+              if (Step.first)
+                for (SymRef F : Step.first->Pieces[Side])
+                  Next.push_back(F.index());
+              else
+                Next.push_back(Step.second.index());
+              NextProducts.push_back(std::move(Next));
+            }
+          Products = std::move(NextProducts);
+        }
+        if (!Fits)
+          break;
+        std::map<Monomial, llvm::APInt> Differences;
+        auto Accumulate = [&](Monomial Key, const llvm::APInt &Coefficient) {
+          if (!Charge(Key.size() + WordBytes / 8 + 1, Key.size() + 2))
+            return false;
+          llvm::sort(Key);
+          auto It =
+              Differences
+                  .try_emplace(std::move(Key), llvm::APInt(Ctx.width(E), 0))
+                  .first;
+          It->second += Coefficient;
+          return true;
+        };
+        for (const auto &Term : Terms) {
+          Monomial Key;
+          for (SymRef F : Term.Factors)
+            Key.push_back(F.index());
+          Fits &= Accumulate(std::move(Key), Term.Coeff);
+          if (!Fits)
+            break;
+        }
+        for (const auto &Key : Products) {
+          if (!Fits)
+            break;
+          Fits &= Accumulate(Key, -*Scale);
+        }
+        if (!Fits)
+          break;
+        llvm::SmallVector<SymRef, 16> Residuals;
+        for (const auto &[Key, Coefficient] : Differences) {
+          if (Coefficient.isZero())
+            continue;
+          PolyTerm Term{Coefficient, {}};
+          for (auto Id : Key)
+            Term.Factors.push_back(SymRef(Id));
+          Residuals.push_back(Write(Term));
+        }
+        llvm::SmallVector<SymRef, 16> DistributionResiduals(Residuals);
+        // Complete the original distribution first. Parity projection is an
+        // independent exact step and must not erase factors from that proof.
+        for (SymRef &Residual : Residuals)
+          Residual = foldProductParity(Ctx, Residual, Budget, Storage);
+        Residuals.push_back(Product);
+        if (!ChargeOperands(SymOp::Add, Residuals, MaxTerms))
+          continue;
+        SymRef Candidate = Ctx.mkAdd(Residuals);
+        if (readingScore(Ctx, Candidate) >= readingScore(Ctx, Current) ||
+            (Completion.isValid() &&
+             readingScore(Ctx, Candidate) >= readingScore(Ctx, Completion)))
+          continue;
+        DistributionResiduals.push_back(Ctx.mkMul(Expanded));
+        if (!ChargeOperands(SymOp::Add, DistributionResiduals, MaxTerms))
+          continue;
+        if (proveArithmeticIdentity(Ctx, Current,
+                                    Ctx.mkAdd(DistributionResiduals), Budget,
+                                    Storage, /*ExpandComplements=*/false))
+          Completion = Candidate;
+      }
+      if (Completion.isValid()) {
+        Current = Completion;
+        if (readingScore(Ctx, Current) < readingScore(Ctx, Best))
+          Best = Current;
+        Rep.Outcome = MBAOutcome::Rewritten;
+        Rep.Evidence = MBAEvidence::Derivation;
+        auto CompletedTerms = splitIntoTerms(Ctx, Current);
+        if (!CompletedTerms)
+          break;
+        Terms = std::move(*CompletedTerms);
+        Omitted = 1;
+        continue;
+      }
+    }
     std::vector<bool> Used(Terms.size(), false);
     llvm::SmallVector<PolyTerm, 8> Next;
     llvm::SmallVector<SymRef, 16> Distribution;
@@ -512,6 +764,11 @@ SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     // actual canonical flattening before any builder copies its operands.
     if (!ChargeOperands(SymOp::Add, Quotients, MaxTerms))
       continue;
+    // These quotients were created after the deep walk's original frontier.
+    // Apply its exact parity projection before searching an unobservable
+    // product. Keep the higher-product recovery's original factor basis.
+    for (SymRef &Part : Quotients)
+      Part = foldProductParity(Ctx, Part, Budget, Storage);
     SymRef Quotient = Ctx.mkAdd(Quotients);
     auto Consider = [&](SymRef Value, unsigned NumAtoms) {
       if (!ChargeOperands(SymOp::Mul, {Factor, Value}, MaxEdges))

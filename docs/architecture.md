@@ -977,6 +977,12 @@ function that is not a symbol start adds its own entry to its run, which keys
 other facts. The cache keeps the latest such
 selection's facts beside the symbol inventory's, so passing through one
 leaves what the symbol starts share in place.
+Both kinds share the image's no-return-name, stack-probe, function-pointer,
+relocation-root and executable-owner indexes. The image, debug context, symbol
+inventory and exact verified entries bind that shared ownership. Each distinct
+candidate-entry set still owns its call proofs, graphs and body summaries;
+changing an unnamed selection cannot reuse another selection's boundaries.
+The shared lazy-name memo is cleared before every run, including a new selection.
 Reload, function edits, signature matching and analysis-policy changes retire
 the cache while its image/debug owners are alive. Feature generations are
 checked even after navigation cleared the preceding pipeline result. COFF
@@ -995,6 +1001,9 @@ before input or policy mutation; image pointers alone do not establish validity.
 Function selection also retains decoded image data-access widths. Their exact
 ordered function address/size inventory is checked after synchronization;
 changed extents rebuild the widths and discard source using the former names.
+Publishing only a recovered extent preserves current function-name derivation
+and lookup indexes, since the names and their list positions stay unchanged.
+Names, exports and list changes retain their ordinary invalidation guards.
 Image reloads, function edits, analysis-policy and signature changes retire
 these facts. Navigation still discards the preceding output IR and source.
 
@@ -1098,11 +1107,34 @@ scales and coefficients that wrap to zero. A failed or larger candidate retains
 the original weighted-quotient opportunity. Recovered products also get an
 independently checked arithmetic factoring alternative with complements opaque,
 so repeated complemented factors need not expand into duplicate summands.
+Larger distributed blocks also get one bounded completion attempt for each
+quotient degree. Proved two-piece relations define a local factor basis;
+completing its Cartesian product exposes a single whole product plus exact
+modular coefficient differences, including negative terms for absent corners.
+The complete unreduced distribution is checked independently before composing
+the factor proofs. A coefficient is never inferred for a missing term: its
+difference is retained explicitly. Models share an indexed relation lookup and
+are expanded only once per canonical product. Small frontiers retain the local
+cofactor path. Work, cumulative storage, term and edge bounds cover proposal,
+residual construction and proof; only a shorter completed candidate is kept.
+If earlier arithmetic factoring hides that frontier, a bounded arithmetic
+normalization can restore it. A whole product word and one of its existing AND
+views supply the exact partition `W = (W & M) + (W & ~M)`; bitwise consumers
+stay opaque. At most six such words are split. Independent normalization checks
+the coefficients and repeated factors before and after distribution, and the
+same completion proof and budget apply. Larger intermediate forms are never
+published; this preserves recovery through source-emitter preprocessing.
+An allocation-free term-count guard rejects exponential syntactic frontiers
+before normalization, preserving the budget for ordinary child simplification.
 When a product is multiplied by `2^(width-1)`, only its lowest bit is observable.
 That product can therefore become a bitwise AND of its arbitrary word-valued
 factors. Smaller powers of two retain the multiplication because carries remain
 observable. This transfer shares the deep walk's work/storage limits and bounds
 the flattened operand frontier before constructing the AND.
+The same transfer applies to completed residuals and generated cubic-or-higher
+queries, including their immediate sum terms. Two-factor recovery quotients
+keep their original basis until the enclosing product is assembled; prematurely
+projecting them can hide a better whole-product reconstruction.
 Already factored higher components remain intact while other degrees improve.
 Unaffordable optional expansions leave work for the rest of the expression;
 an unrecovered degree is retained verbatim, never dropped. Exact opposing

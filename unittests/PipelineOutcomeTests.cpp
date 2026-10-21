@@ -328,6 +328,40 @@ TEST(PipelineOutcome, AnalysisCacheServesAArch64Selections) {
   }
 }
 
+BinaryImage arm32SelectionCacheImage() {
+  BinaryImage Image;
+  Image.Arch = Arch::ARM;
+  Image.Bits = Bitness::Bits32;
+  Image.Format = BinaryFormat::ELF;
+  Image.Entry = 0x1000;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = Image.Entry;
+  Text.Size = Text.FileSz = 0x2000;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0);
+  const auto Word = [&](va_t At, uint32_t Insn) {
+    for (unsigned I = 0; I != 4; ++I)
+      Text.Data[At - Text.VA + I] = static_cast<uint8_t>(Insn >> (I * 8));
+  };
+  // push {r4, lr}; bl To; pop {r4, pc}
+  const auto Wrapper = [&](va_t From, va_t To) {
+    Word(From, 0xe92d4010);
+    Word(From + 4, 0xeb000000 | static_cast<uint32_t>(((To - From - 12) >> 2) &
+                                                      0xffffff));
+    Word(From + 8, 0xe8bd8010);
+    Image.Symbols.push_back(Symbol::makeFunc(From, 12));
+  };
+  Wrapper(0x1000, 0x1800);
+  Wrapper(0x1100, 0x1800);
+  Wrapper(0x1800, 0x2000);
+  Word(0x2000, 0xe1a00001); // mov r0, r1
+  Word(0x2004, 0xe12fff1e); // bx lr
+  Image.Symbols.push_back(Symbol::makeFunc(0x2000, 8));
+  Image.Segments.push_back(std::move(Text));
+  return Image;
+}
+
 TEST(PipelineOutcome, AnalysisCacheBindsExactEntryInventories) {
   BinaryImage Image = selectionCacheImage(true);
   PipelineAnalysisCache Cache;
@@ -359,6 +393,57 @@ TEST(PipelineOutcome, AnalysisCacheBindsExactEntryInventories) {
   Check(0x1000, false, true);
   Image.VerifiedFunctionEntries.clear();
   Check(0x1000, false, true);
+}
+
+TEST(PipelineOutcome, AnalysisCacheKeepsUnnamedCallersIndependent) {
+  for (unsigned Count : {1u, 4u}) {
+    ScopedThreadCount Threads(Count);
+    for (Arch TheArch : {Arch::X64, Arch::AArch64, Arch::ARM}) {
+      SCOPED_TRACE(Count);
+      SCOPED_TRACE(static_cast<unsigned>(TheArch));
+      BinaryImage Image = TheArch == Arch::AArch64
+                              ? aarch64SelectionCacheImage()
+                          : TheArch == Arch::ARM ? arm32SelectionCacheImage()
+                                                 : selectionCacheImage(true);
+      // Neither caller has a symbol. Each adds a different boundary to the
+      // callee analysis, while the relocation/owner/name indexes read the same
+      // image. Keep those indexes alive through both kinds of selection.
+      std::erase_if(Image.Symbols, [](const Symbol &Sym) {
+        return Sym.Addr == 0x1000 || Sym.Addr == 0x1100;
+      });
+      PipelineAnalysisCache Cache;
+      const auto Check = [&](va_t Entry) {
+        PipelineResult Kept, Cold;
+        PipelineTestPeer::buildLowIR(Image, Kept, {Entry}, &Cache);
+        PipelineTestPeer::buildLowIR(Image, Cold, {Entry});
+        ASSERT_EQ(Kept.LowFuncs.size(), 1u);
+        EXPECT_TRUE(Kept.LowFuncs.front().hasCompleteInstructionLift());
+        expectSameSelection(Kept, Cold);
+        EXPECT_EQ(Kept.CallEntryArgumentCounts, Cold.CallEntryArgumentCounts);
+        EXPECT_EQ(Kept.CallArgumentSources, Cold.CallArgumentSources);
+      };
+      for (va_t Entry : {0x1000, 0x1100, 0x1800, 0x1000, 0x1100})
+        Check(Entry);
+      // A newly confirmed boundary invalidates both kinds, even when the
+      // symbol inventory is unchanged. Return to a former snapshot as well.
+      Image.VerifiedFunctionEntries.insert(0x1100);
+      Check(0x1000);
+      Check(0x1800);
+      Image.VerifiedFunctionEntries.clear();
+      Check(0x1100);
+      // A reset retires every index before the backing code changes.
+      Cache.reset();
+      if (TheArch == Arch::AArch64)
+        Image.Segments[0].Data[0x2002 - 0x1000] = 0x00; // mov x0, x0
+      else if (TheArch == Arch::ARM)
+        Image.Segments[0].Data[0x2000 - 0x1000] = 0x00; // mov r0, r0
+      else {
+        Image.Segments[0].Data[0x2000 - 0x1000] = 0x89; // mov eax, edi
+        Image.Segments[0].Data[0x2001 - 0x1000] = 0xf8;
+      }
+      Check(0x1000);
+    }
+  }
 }
 
 TEST(PipelineOutcome, AnalysisCacheResetObservesChangedCalleeBytes) {
