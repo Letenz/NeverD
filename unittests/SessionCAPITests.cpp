@@ -3122,6 +3122,51 @@ void seedAccessWidthFunctions(neverd_session_t Session) {
   neverd::sdk::SessionTestAccess::resetFunctions(State);
 }
 
+TEST_F(SessionCAPITest, FunctionPagesReuseOneCompleteAddressOrder) {
+  auto &State = *neverd::sdk::toSession(Session);
+  State.Functions = {{50, 8, "last"},
+                     {0, 4, "zero"},
+                     {30, 8, "middle"},
+                     {10, 8, "first"},
+                     {30, 8, "alias"}};
+  State.functionListChanged();
+  using neverd::sdk::SessionTestAccess;
+  auto Page = SessionTestAccess::functionPage(State, 0, 2);
+  ASSERT_EQ(Page.Functions.size(), 2u);
+  EXPECT_EQ(Page.Functions[0]->Entry, 0u);
+  EXPECT_EQ(Page.Functions[1]->Entry, 10u);
+  ASSERT_EQ(Page.NextEntry, 30u);
+  ASSERT_TRUE(State.FunctionPages);
+  const auto *Order = State.FunctionPages->Ordered.data();
+  Page = SessionTestAccess::functionPage(State, *Page.NextEntry, 2);
+  ASSERT_EQ(Page.Functions.size(), 2u);
+  EXPECT_EQ(Page.Functions[0]->Entry, 30u);
+  EXPECT_EQ(Page.Functions[0]->Name, "middle");
+  EXPECT_EQ(Page.Functions[1]->Entry, 50u);
+  EXPECT_FALSE(Page.NextEntry);
+  EXPECT_EQ(State.FunctionPages->Ordered.data(), Order);
+  Page = SessionTestAccess::functionPage(State, 11, 0);
+  ASSERT_EQ(Page.Functions.size(), 1u);
+  EXPECT_EQ(Page.Functions[0]->Entry, 30u);
+  EXPECT_EQ(Page.NextEntry, 50u);
+  EXPECT_TRUE(
+      SessionTestAccess::functionPage(State, 51, 4096).Functions.empty());
+  // Same allocation and count, but a changed entry must rebuild the order.
+  State.Functions[0].Entry = 5;
+  State.functionListChanged();
+  Page = SessionTestAccess::functionPage(State, 0, 4096);
+  ASSERT_EQ(Page.Functions.size(), 4u);
+  EXPECT_EQ(Page.Functions[1]->Entry, 5u);
+  EXPECT_EQ(State.FunctionPages->Revision, State.FunctionListRevision);
+  // Vector replacement retires all borrowed pointers, including on reload.
+  State.Functions = {{100, 16, "replacement"}};
+  State.functionListChanged();
+  Page = SessionTestAccess::functionPage(State, 0, 2);
+  ASSERT_EQ(Page.Functions.size(), 1u);
+  EXPECT_EQ(Page.Functions.front()->Entry, 100u);
+  EXPECT_FALSE(Page.NextEntry);
+}
+
 TEST_F(SessionCAPITest, WarmingScansTheDataAccessWidthsTheFirstViewReads) {
   const auto Input = write("widths.elf", accessWidthCacheELF());
   std::string Cold;

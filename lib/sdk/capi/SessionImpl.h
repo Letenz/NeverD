@@ -374,6 +374,15 @@ struct Session {
   /// Code that changes the list calls functionListChanged().
   uint64_t FunctionListRevision = 0;
   void functionListChanged() { ++FunctionListRevision; }
+  /// Address order belongs to the complete function-list revision, not to
+  /// one page. Reference scans and warmup can request thousands of pages.
+  struct FunctionPageIndex {
+    uint64_t Revision;
+    const FuncInfo *List;
+    size_t Count;
+    std::vector<const FuncInfo *> Ordered;
+  };
+  mutable std::optional<FunctionPageIndex> FunctionPages;
   /// What refreshFunctionNames last derived the names from.  From the same
   /// inputs it derives the names the list holds, so it keeps them: an image
   /// lists tens of thousands of functions.

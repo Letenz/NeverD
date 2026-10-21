@@ -287,41 +287,60 @@ std::optional<va_t> relocatedPointer(const BinaryImage &Img, va_t Slot) {
              : Target;
 }
 
-FunctionPage functionPage(const Session &S, va_t FirstEntry, int MaxFunctions) {
-  return functionPage(S.Functions, FirstEntry, MaxFunctions);
-}
-
-FunctionPage functionPage(llvm::ArrayRef<FuncInfo> Functions, va_t FirstEntry,
-                          int MaxFunctions) {
+namespace {
+std::vector<const FuncInfo *>
+orderedFunctions(llvm::ArrayRef<FuncInfo> Functions) {
   std::vector<const FuncInfo *> Ordered;
   Ordered.reserve(Functions.size());
   for (const FuncInfo &F : Functions)
-    if (F.Entry >= FirstEntry)
-      Ordered.push_back(&F);
-  std::sort(Ordered.begin(), Ordered.end(),
-            [](const FuncInfo *Left, const FuncInfo *Right) {
-              return Left->Entry < Right->Entry;
-            });
+    Ordered.push_back(&F);
+  const auto ByEntry = [](const FuncInfo *Left, const FuncInfo *Right) {
+    return Left->Entry < Right->Entry;
+  };
+  if (!std::is_sorted(Ordered.begin(), Ordered.end(), ByEntry))
+    std::stable_sort(Ordered.begin(), Ordered.end(), ByEntry);
   Ordered.erase(std::unique(Ordered.begin(), Ordered.end(),
                             [](const FuncInfo *Left, const FuncInfo *Right) {
                               return Left->Entry == Right->Entry;
                             }),
                 Ordered.end());
-  const size_t End = std::min(
-      Ordered.size(), static_cast<size_t>(std::clamp(
-                          MaxFunctions, 1, FunctionPage::MaxFunctionsPerPage)));
+  return Ordered;
+}
+
+FunctionPage pageFunctions(llvm::ArrayRef<const FuncInfo *> Ordered,
+                           va_t FirstEntry, int MaxFunctions) {
+  const auto First = std::lower_bound(
+      Ordered.begin(), Ordered.end(), FirstEntry,
+      [](const FuncInfo *F, va_t Entry) { return F->Entry < Entry; });
+  const size_t End =
+      std::min(static_cast<size_t>(Ordered.end() - First),
+               static_cast<size_t>(std::clamp(
+                   MaxFunctions, 1, FunctionPage::MaxFunctionsPerPage)));
   FunctionPage Page;
-  if (End < Ordered.size())
-    Page.NextEntry = Ordered[End]->Entry;
-  Ordered.resize(End);
-  Page.Functions = std::move(Ordered);
-  Page.Entries.reserve(Functions.size());
-  for (const FuncInfo &F : Functions)
-    Page.Entries.push_back(F.Entry);
-  llvm::sort(Page.Entries);
-  Page.Entries.erase(std::unique(Page.Entries.begin(), Page.Entries.end()),
-                     Page.Entries.end());
+  if (End < static_cast<size_t>(Ordered.end() - First))
+    Page.NextEntry = First[End]->Entry;
+  Page.Functions.assign(First, First + End);
+  // The order holds each entry once, ascending: every function's entry.
+  Page.Entries.reserve(Ordered.size());
+  for (const FuncInfo *F : Ordered)
+    Page.Entries.push_back(F->Entry);
   return Page;
+}
+} // namespace
+
+FunctionPage functionPage(const Session &S, va_t FirstEntry, int MaxFunctions) {
+  if (!S.FunctionPages || S.FunctionPages->Revision != S.FunctionListRevision ||
+      S.FunctionPages->List != S.Functions.data() ||
+      S.FunctionPages->Count != S.Functions.size())
+    S.FunctionPages = Session::FunctionPageIndex{
+        S.FunctionListRevision, S.Functions.data(), S.Functions.size(),
+        orderedFunctions(S.Functions)};
+  return pageFunctions(S.FunctionPages->Ordered, FirstEntry, MaxFunctions);
+}
+
+FunctionPage functionPage(llvm::ArrayRef<FuncInfo> Functions, va_t FirstEntry,
+                          int MaxFunctions) {
+  return pageFunctions(orderedFunctions(Functions), FirstEntry, MaxFunctions);
 }
 
 namespace {
@@ -436,9 +455,10 @@ std::optional<DataAccessWidths>
 collectDataAccessWidths(const BinaryImage &Img,
                         llvm::ArrayRef<FuncInfo> Functions) {
   std::vector<std::pair<va_t, unsigned>> Accesses;
+  const auto Ordered = orderedFunctions(Functions);
   for (std::optional<va_t> Cursor = va_t{0}; Cursor;) {
     const FunctionPage Page =
-        functionPage(Functions, *Cursor, FunctionPage::MaxFunctionsPerPage);
+        pageFunctions(Ordered, *Cursor, FunctionPage::MaxFunctionsPerPage);
     // Each function's accesses, which only the thread decoding it writes.
     std::vector<std::vector<std::pair<va_t, unsigned>>> Slots(
         Page.Functions.size());
@@ -469,13 +489,12 @@ DataAccessScan::update(const BinaryImage &Img,
   // its pages give the function's entry.
   std::vector<std::pair<va_t, uint64_t>> Next;
   std::vector<va_t> NextEntries;
-  for (std::optional<va_t> Cursor = va_t{0}; Cursor;) {
-    FunctionPage Page =
-        functionPage(Functions, *Cursor, FunctionPage::MaxFunctionsPerPage);
-    for (const FuncInfo *F : Page.Functions)
-      Next.emplace_back(F->Entry, F->Size);
-    NextEntries = std::move(Page.Entries);
-    Cursor = Page.NextEntry;
+  const auto Ordered = orderedFunctions(Functions);
+  Next.reserve(Ordered.size());
+  NextEntries.reserve(Ordered.size());
+  for (const FuncInfo *F : Ordered) {
+    Next.emplace_back(F->Entry, F->Size);
+    NextEntries.push_back(F->Entry);
   }
   // A function without a size reads up to the other functions' entries, so
   // with other entries what it read before cannot be read again to take it

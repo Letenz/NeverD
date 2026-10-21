@@ -47,4 +47,8 @@ std::optional<DataAccessWidths>
 SessionTestAccess::collectDataAccessWidths(Session &State) {
   return sdk::collectDataAccessWidths(State.Img, State.Functions);
 }
+FunctionPage SessionTestAccess::functionPage(const Session &State,
+                                             neverd_va_t First, int Limit) {
+  return sdk::functionPage(State, First, Limit);
+}
 } // namespace neverd::sdk

@@ -12,6 +12,7 @@
 
 namespace neverd::sdk {
 struct Session;
+struct FunctionPage;
 
 // Same-build test seam. Mutations that destroy engine objects run in the
 // shared library; this header is not installed with the public SDK.
@@ -28,5 +29,7 @@ struct SessionTestAccess {
   NEVERD_API static const DataAccessWidths *dataAccessWidths(Session &State);
   NEVERD_API static std::optional<DataAccessWidths>
   collectDataAccessWidths(Session &State);
+  NEVERD_API static FunctionPage functionPage(const Session &State,
+                                              neverd_va_t First, int Limit);
 };
 } // namespace neverd::sdk
