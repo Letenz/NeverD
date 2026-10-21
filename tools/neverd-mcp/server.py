@@ -22,6 +22,9 @@ ADDRESS = {"type": "string", "pattern": "^0x[0-9a-fA-F]{1,16}$"}
 PAGE = {"offset": {"type": "integer", "minimum": 0, "maximum": 2147483647},
         "limit": {"type": "integer", "minimum": 1, "maximum": 512}}
 REVISION = {"type": "string", "maxLength": 128}
+FILTER = {"type": "string", "maxLength": 256}
+# Strings a listing shows before it cuts them, unless the caller asks otherwise.
+DEFAULT_STRING_TEXT_LIMIT = 200
 
 
 def tool(name, operation, description, properties=None, required=()):
@@ -36,7 +39,7 @@ def tool(name, operation, description, properties=None, required=()):
 TOOLS = [
     tool("project_metadata", "metadata", "Read metadata for the explicitly opened NeverD input."),
     tool("list_functions", "functions", "Read a bounded function page; preserve revision across pages.",
-         {**PAGE, "filter": {"type": "string", "maxLength": 256}}),
+         {**PAGE, "filter": FILTER}),
     tool("read_disassembly", "disasm", "Read an instruction window at a virtual address.",
          {"address": ADDRESS, "limit": PAGE["limit"]}, ("address",)),
     tool("read_decompilation", "decompile",
@@ -48,8 +51,15 @@ TOOLS = [
          {"address": ADDRESS, "size": {"type": "integer", "minimum": 1, "maximum": 4096}}, ("address",)),
     tool("list_xrefs", "xrefs", "Read references associated with a virtual address.",
          {**PAGE, "address": ADDRESS, "direction": {"type": "string", "enum": ["to", "from"]}}, ("address",)),
-    tool("list_strings", "strings", "Read a bounded string page.", {**PAGE}),
+    tool("list_strings", "strings", "Read a bounded string page; filter matches text or address. Long texts are "
+         "cut to text_limit bytes (default 200) with an ellipsis.",
+         {**PAGE, "filter": FILTER, "text_limit": {"type": "integer", "minimum": 1, "maximum": 1024}}),
     tool("read_cfg", "cfg", "Read the control-flow graph for one function.", {"address": ADDRESS}, ("address",)),
+    tool("list_imports", "imports", "Read a bounded page of imported symbols; filter matches name or module.",
+         {**PAGE, "filter": FILTER}),
+    tool("find_string_references", "string_references",
+         "Find the instructions, and their functions, that use strings matching filter (text, function or address).",
+         {**PAGE, "filter": FILTER}),
 ]
 SELECTION = tool("current_selection", "selection", "Read the current selection in the attached GUI session.")
 NAVIGATION = [tool("navigate_gui", "navigate", "Navigate the attached GUI to an explicit virtual address.", {"address": ADDRESS}, ("address",)),
@@ -81,6 +91,141 @@ def validate(arguments, schema):
                 valid = valid and re.fullmatch(rule["pattern"], value) is not None
         if not valid:
             raise RpcError(-32602, "Invalid argument: " + key)
+
+
+# Model-facing results.  A tool returns what an agent reads: the worker's
+# envelope, the presentation data the workbench maps code with (rows,
+# variables, call sites, name spans) and repeated fields are left out, tables
+# become columns and rows, and code reads as text under a one-line JSON
+# header.  Resources keep the worker's complete JSON.
+
+# Worker transport and session fields an agent never acts on.
+ENVELOPE_FIELDS = ("type", "protocol_major", "request_id", "operation", "analysis_state", "project_id")
+# Project bookkeeping of the workbench in a metadata payload.
+METADATA_BOOKKEEPING = ("analysis_state", "dirty", "read_only", "load_options", "project")
+
+
+def _pruned(value):
+    """The value without null, empty-string, empty-list and empty-object members."""
+    if isinstance(value, dict):
+        kept = {key: _pruned(item) for key, item in value.items()}
+        return {key: item for key, item in kept.items() if item not in (None, "", [], {})}
+    if isinstance(value, list):
+        return [_pruned(item) for item in value]
+    return value
+
+
+def _page_fields(payload, out):
+    for key in ("total", "offset", "next_offset", "complete"):
+        if key in payload:
+            out[key] = payload[key]
+    return out
+
+
+def _table(payload, out, columns, row):
+    _page_fields(payload, out)
+    out["columns"] = columns
+    out["rows"] = [row(item) for item in payload.get("items", []) if isinstance(item, dict)]
+    return out
+
+
+def _code(header, text):
+    return json.dumps(header, ensure_ascii=False, separators=(",", ":")) + "\n" + text
+
+
+def _metadata(payload, out):
+    sha256 = (payload.get("project") or {}).get("input", {}).get("sha256")
+    out.update(_pruned({key: value for key, value in payload.items() if key not in METADATA_BOOKKEEPING}))
+    if sha256:
+        out["sha256"] = sha256
+    return out
+
+
+def _functions(payload, out):
+    return _table(payload, out, ["address", "name", "size", "flags"], lambda item: [
+        item.get("address"), item.get("name"), item.get("size"),
+        ",".join(flag for flag in ("library", "thunk", "exported") if item.get(flag))])
+
+
+def _strings(payload, out):
+    return _table(payload, out, ["address", "type", "length", "text"], lambda item: [
+        item.get("address"), item.get("type"), item.get("length"), item.get("text")])
+
+
+def _xrefs(payload, out, direction):
+    other = "to" if direction == "from" else "from"
+    return _table(payload, out, [other, "kind", "location"], lambda item: [
+        item.get(other, item.get("address")), item.get("kind"), item.get("text") or item.get("function")])
+
+
+def _imports(payload, out):
+    return _table(payload, out, ["address", "module", "name"], lambda item: [
+        item.get("address"), item.get("module"), item.get("name")])
+
+
+def _string_references(payload, out):
+    return _table(payload, out, ["address", "function", "kind", "text", "via"], lambda item: [
+        item.get("address"), item.get("function"), item.get("kind"), item.get("text"), item.get("via")])
+
+
+def _disassembly(payload, out):
+    lines = []
+    for item in payload.get("items", []):
+        line = f"{item.get('address')}  {item.get('mnemonic', '')} {item.get('operands', '')}".rstrip()
+        if item.get("comment"):
+            line += "  ; " + item["comment"]
+        lines.append(line)
+    out.update({key: payload[key] for key in ("address", "next_address", "complete") if key in payload})
+    return _code(out, "\n".join(lines))
+
+
+def _decompilation(payload, out):
+    out["address"] = payload.get("address")
+    out["representation"] = payload.get("dialect") or payload.get("representation")
+    for key in ("offset", "total_lines", "next_offset", "complete", "unread"):
+        if payload.get(key) not in (None, [], ""):
+            out[key] = payload[key]
+    return _code(out, payload.get("text", ""))
+
+
+def _cfg(payload, out):
+    out.update({key: payload[key] for key in ("name", "entry", "complete") if key in payload})
+    out["nodes"] = [[node.get("id"), node.get("start"), node.get("end"), node.get("insn_count"),
+                     [line.rstrip() for line in node.get("disasm", [])]] for node in payload.get("nodes", [])]
+    out["edges"] = [[edge.get("from"), edge.get("to"), edge.get("type")] for edge in payload.get("edges", [])]
+    out["node_columns"] = ["id", "start", "end", "insn_count", "disasm"]
+    return out
+
+
+SHAPERS = {
+    "metadata": _metadata, "functions": _functions, "strings": _strings, "imports": _imports,
+    "string_references": _string_references, "disasm": _disassembly, "decompile": _decompilation,
+    "cfg": _cfg,
+}
+
+
+def compact_result(operation, arguments, response):
+    """(text, is_error) an agent reads for one worker response."""
+    if not isinstance(response, dict):
+        return json.dumps(response), True
+    out = {"revision": response.get("revision")}
+    status = response.get("status")
+    if status not in ("ok", "success"):
+        out.update({"status": status, "error": response.get("error")})
+        return json.dumps(_pruned(out), ensure_ascii=False, separators=(",", ":")), True
+    payload = response.get("payload")
+    if not isinstance(payload, dict):
+        payload = {} if payload is None else {"value": payload}
+    if operation == "xrefs":
+        shaped = _xrefs(payload, out, arguments.get("direction", "to"))
+    elif operation in SHAPERS:
+        shaped = SHAPERS[operation](payload, out)
+    else:
+        out.update({key: value for key, value in payload.items() if key not in ENVELOPE_FIELDS})
+        shaped = out
+    if isinstance(shaped, str):
+        return shaped, False
+    return json.dumps(shaped, ensure_ascii=False, separators=(",", ":")), False
 
 
 class Server:
@@ -130,9 +275,12 @@ class Server:
             validate(arguments, selected["inputSchema"])
             arguments = dict(arguments)
             revision = arguments.pop("expected_revision", None)
+            if selected["operation"] == "strings":
+                arguments.setdefault("text_limit", DEFAULT_STRING_TEXT_LIMIT)
             try:
                 result = self.backend.query(selected["operation"], arguments, revision)
-                return self.tool_result(result)
+                text, is_error = compact_result(selected["operation"], arguments, result)
+                return self.text_result(text, is_error, result)
             except (OSError, EOFError, ValueError, RuntimeError, TimeoutError) as error:
                 return {"content": [{"type": "text", "text": str(error)}], "isError": True}
         if method == "resources/list":
@@ -143,7 +291,8 @@ class Server:
             if self.backend.attached:
                 resources.append({"uri": "neverd://gui/selection", "name": "GUI selection", "mimeType": "application/json"})
             for uri in self.result_resources:
-                resources.append({"uri": uri, "name": "Result snapshot " + uri.rsplit("/", 1)[-1], "mimeType": "application/json"})
+                resources.append({"uri": uri, "name": "Result snapshot " + uri.rsplit("/", 1)[-1],
+                                  "mimeType": self.result_resources[uri]["mime_type"]})
             return {"resources": resources}
         if method == "resources/templates/list":
             return {"resourceTemplates": [
@@ -158,30 +307,37 @@ class Server:
         raise RpcError(-32601, "Method not found")
 
     def tool_result(self, result):
+        """The worker's complete response as JSON, as resources return it."""
         encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
-        size = len(encoded.encode("utf-8"))
+        return self.text_result(encoded, result.get("status") not in ("ok", "success"), result,
+                                "application/json", "json-text")
+
+    def text_result(self, text, is_error, result, mime_type="text/plain", encoding="text"):
+        """The text inline, or a bounded snapshot link when it is too large to be."""
+        size = len(text.encode("utf-8"))
         if MAX_RESULT < size <= MAX_CACHED_RESULTS:
             while self.result_resources and (len(self.result_resources) >= 4 or self.cached_bytes + size > MAX_CACHED_RESULTS):
                 _, expired = self.result_resources.popitem(last=False)
                 self.cached_bytes -= expired["bytes"]
             self.result_serial += 1
             uri = "neverd://result/" + str(self.result_serial)
-            self.result_resources[uri] = {"text": encoded, "bytes": size,
+            self.result_resources[uri] = {"text": text, "bytes": size, "mime_type": mime_type, "encoding": encoding,
                                           "revision": result.get("revision"), "project_id": result.get("project_id")}
             self.cached_bytes += size
             reference = {"status": result.get("status"), "project_id": result.get("project_id"),
                          "revision": result.get("revision"), "resource_uri": uri,
-                         "total_characters": len(encoded), "inline_complete": False}
+                         "total_characters": len(text), "inline_complete": False}
             return {"content": [{"type": "resource_link", "uri": uri, "name": "NeverD result snapshot",
-                                 "mimeType": "application/json", "description": "Read this snapshot in character pages using offset and limit URI parameters."},
+                                 "mimeType": mime_type, "description": "Read this snapshot in character pages using offset and limit URI parameters."},
                                 {"type": "text", "text": json.dumps(reference)}],
-                    "structuredContent": reference, "isError": result.get("status") not in ("ok", "success")}
+                    "structuredContent": reference, "isError": is_error}
         if size > MAX_CACHED_RESULTS:
-            result = {"status": "budget_exceeded", "revision": result.get("revision"),
-                      "error": {"message": "Result exceeds MCP 8 MiB snapshot budget; request a smaller page/window."}}
-            encoded = json.dumps(result)
-        return {"content": [{"type": "text", "text": encoded}], "structuredContent": result,
-                "isError": result.get("status") not in ("ok", "success")}
+            text = json.dumps({"status": "budget_exceeded", "revision": result.get("revision"),
+                               "error": {"message": "Result exceeds MCP 8 MiB snapshot budget; request a smaller page/window."}})
+            is_error = True
+        # No structuredContent: no tool declares an output schema, and a copy
+        # of the text would double what a client may forward to its model.
+        return {"content": [{"type": "text", "text": text}], "isError": is_error}
 
     def read_resource(self, uri):
         if not isinstance(uri, str):
@@ -240,7 +396,7 @@ class Server:
             raise RpcError(-32602, "Result snapshot revision does not match")
         end = min(offset + limit, len(record["text"]))
         page = {"project_id": record["project_id"], "revision": record["revision"],
-                "encoding": "json-text", "offset": offset, "total_characters": len(record["text"]),
+                "encoding": record["encoding"], "offset": offset, "total_characters": len(record["text"]),
                 "text": record["text"][offset:end], "next_offset": end if end < len(record["text"]) else None,
                 "complete": end == len(record["text"])}
         return {"contents": [{"uri": uri, "mimeType": "application/json", "text": json.dumps(page, ensure_ascii=False)}]}

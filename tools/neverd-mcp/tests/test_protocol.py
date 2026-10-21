@@ -8,7 +8,8 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from server import MAX_CACHED_RESULTS, MAX_RESULT, PROTOCOL, RpcError, Server, serve
+from server import (DEFAULT_STRING_TEXT_LIMIT, MAX_CACHED_RESULTS, MAX_RESULT, PROTOCOL, RpcError, Server,
+                    compact_result, serve)
 from transport import Backend, MAX_FRAME, read_frame, write_frame
 
 
@@ -105,7 +106,7 @@ class McpProtocolTests(unittest.TestCase):
         self.backend.response = {"status": "ok", "revision": "42", "payload": {"text": "x" * MAX_CACHED_RESULTS}}
         result = self.server.handle(request("tools/call", {"name": "project_metadata"}))
         self.assertTrue(result["isError"])
-        self.assertEqual(result["structuredContent"]["status"], "budget_exceeded")
+        self.assertEqual(json.loads(result["content"][0]["text"])["status"], "budget_exceeded")
 
     def test_large_results_return_bounded_revision_stable_resource_pages(self):
         self.ready()
@@ -126,10 +127,48 @@ class McpProtocolTests(unittest.TestCase):
             if page["complete"]:
                 break
             offset = page["next_offset"]
-        self.assertEqual(json.loads("".join(chunks)), expected)
+        self.assertEqual("".join(chunks), compact_result("metadata", {}, expected)[0])
+        self.assertEqual(json.loads("".join(chunks))["revision"], "42")
         self.assertEqual(len(self.backend.calls), 1)
         with self.assertRaises(RpcError):
             self.server.handle(request("resources/read", {"uri": uri + "?expected_revision=43"}))
+
+    def test_tools_return_what_an_agent_reads(self):
+        self.ready()
+        self.backend.response = {"type": "response", "protocol_major": 1, "request_id": "9", "operation": "decompile",
+                                 "analysis_state": "complete", "project_id": "project-1", "revision": "7", "status": "ok",
+                                 "payload": {"address": "0x401000", "representation": "c", "dialect": "c",
+                                             "text": "int main(void) {\n    return 0;\n}\n", "offset": 0,
+                                             "total_lines": 3, "next_offset": None, "complete": True,
+                                             "rows": [{"line": 0, "address": "0x401000"}] * 50,
+                                             "source_variables": [{"name": "v"}] * 50,
+                                             "code_names": [{"begin_byte": 4}] * 50, "source_calls": []}}
+        result = self.server.handle(request("tools/call", {"name": "read_decompilation", "arguments": {"address": "0x401000"}}))
+        self.assertFalse(result["isError"])
+        self.assertNotIn("structuredContent", result)
+        header, code = result["content"][0]["text"].split("\n", 1)
+        self.assertEqual(json.loads(header), {"revision": "7", "address": "0x401000", "representation": "c",
+                                              "offset": 0, "total_lines": 3, "complete": True})
+        self.assertEqual(code, "int main(void) {\n    return 0;\n}\n")
+        # The complete worker response stays available as a resource.
+        contents = self.server.handle(request("resources/read", {"uri": "neverd://project/decompile?address=0x401000"}))
+        self.assertEqual(len(json.loads(contents["contents"][0]["text"])["payload"]["rows"]), 50)
+
+    def test_tables_are_columns_and_rows(self):
+        self.ready()
+        self.backend.response = {"status": "ok", "revision": "3", "payload": {"items": [
+            {"addr": "0x1000", "address": "0x1000", "name": "main", "display_name": "main", "engine_name": "sub_1000",
+             "linkage_name": "sub_1000", "name_origin": "synthesized", "size": 42, "library": False, "thunk": True,
+             "exported": True, "recognition_state": "disabled", "library_annotations": []}],
+            "total": 1, "offset": 0, "next_offset": None, "complete": True}}
+        result = self.server.handle(request("tools/call", {"name": "list_functions", "arguments": {"limit": 1}}))
+        self.assertEqual(json.loads(result["content"][0]["text"]), {
+            "revision": "3", "total": 1, "offset": 0, "next_offset": None, "complete": True,
+            "columns": ["address", "name", "size", "flags"], "rows": [["0x1000", "main", 42, "thunk,exported"]]})
+        self.server.handle(request("tools/call", {"name": "list_strings", "arguments": {"filter": "http"}}))
+        self.assertEqual(self.backend.calls[-1][:2], ("strings", {"filter": "http", "text_limit": DEFAULT_STRING_TEXT_LIMIT}))
+        self.server.handle(request("tools/call", {"name": "find_string_references", "arguments": {"filter": "passw"}}))
+        self.assertEqual(self.backend.calls[-1][:2], ("string_references", {"filter": "passw"}))
 
     def test_snapshot_cache_eviction_is_explicit(self):
         self.ready()
