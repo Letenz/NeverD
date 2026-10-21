@@ -306,6 +306,9 @@ Json hello() {
   }
   if (Engine::loadsDwarfFiles())
     result["capabilities"].push_back("dwarf_load");
+  if (Engine::findsCallPaths())
+    for (const char *operation : {"call_paths", "call_tree"})
+      result["capabilities"].push_back(operation);
   result["web"] = WebEngine::capabilities();
   return result;
 }

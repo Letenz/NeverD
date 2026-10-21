@@ -106,8 +106,10 @@ NEVERD_API const char *neverd_disasm_json_ex(neverd_session_t Sess,
 /// are at or above \p FirstEntry, in ascending entry order, from the same
 /// LowIR lift as NEVERD_DISASM_FLOW.  The address cursor stays valid when lazy
 /// analysis adds a function to the list between calls.  A function with a
-/// known size is decoded across its whole extent; one without a size stops at
-/// its first function terminator.  Returns
+/// known size is decoded across its whole extent; one without a size is the
+/// code its own direct jumps reach from its entry, short of another listed
+/// function's entry (on 32-bit ARM, up to its first function terminator).
+/// Returns
 /// {"refs":[["from","to","kind"],...],"next_entry":"0x..."|null,
 /// "function_count":int}, where kind is "call", "jump", "cjump", "read",
 /// "write" or "offset", or "icall"/"ijump" for a call or jump through a pointer

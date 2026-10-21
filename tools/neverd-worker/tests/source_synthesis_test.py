@@ -268,10 +268,11 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             complements = len(re.findall(r"\^\s*-1\b", text))
             assert text.count("&") <= 8, text
             assert text.count("^") - complements <= 3, text
-        elif kind == "missing-degree12":
+        elif kind in ("missing-degree12", "missing-degree24"):
             complements = len(re.findall(r"\^\s*-1\b", text))
-            assert text.count("&") <= 12, text
-            assert text.count("^") - complements <= 12, text
+            limit = 12 if kind == "missing-degree12" else 24
+            assert text.count("&") <= limit, text
+            assert text.count("^") - complements <= limit, text
         elif kind in ("perturbed-quartic", "perturbed-sextic",
                       "missing-quartic", "missing-sextic"):
             # Keep the changed original product, but eliminate the remaining
@@ -305,7 +306,7 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                                   "sextic", "perturbed-quartic",
                                   "perturbed-sextic", "missing-quartic",
                                   "missing-sextic", "missing-cubic",
-                                  "missing-degree12"):
+                                  "missing-degree12", "missing-degree24"):
                         assert ordinary.count("&") >= 4, ordinary
                     else:
                         assert ">>" in ordinary, ordinary
@@ -392,6 +393,10 @@ if __name__ == "__main__":
              "-37U*((x^y)&z)*((y|z)&x)*((x|z)&y))"
              "*(x&y)*(x^z)*(y^z)*(x&y)*(x^z)*(y^z)*(x&y)*(x^z)*(y^z)"
              "+x+y+(x&0x80000000U)"),
+            ("missing-degree24", cubic_elf(degree=24, missing=True),
+             "(37U*(x^y)*(y|z)*(x|z)"
+             "-37U*((x^y)&z)*((y|z)&x)*((x|z)&y))"
+             + "*(x&y)*(x^z)*(y^z)" * 7 + "+x+y+(x&0x80000000U)"),
         ):
             run_fixture(options.worker, options.cli, options.compiler, kind,
                         image, expected)

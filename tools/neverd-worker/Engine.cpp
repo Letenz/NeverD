@@ -305,6 +305,30 @@ SessionJsonFunction headersFunction() {
       engineSymbol<SessionJsonFunction>("neverd_headers_json");
   return function;
 }
+/// neverd_call_paths_json and neverd_call_tree_json, which an older engine
+/// lacks.
+using GraphQueryFunction = const char *(*)(neverd_session_t, const char *);
+GraphQueryFunction callPathsFunction() {
+  static const auto function =
+      engineSymbol<GraphQueryFunction>("neverd_call_paths_json");
+  return function;
+}
+GraphQueryFunction callTreeFunction() {
+  static const auto function =
+      engineSymbol<GraphQueryFunction>("neverd_call_tree_json");
+  return function;
+}
+/// Every "0x..." string in \p value spelled as the protocol spells addresses.
+void lowercaseAddresses(Json &value) {
+  if (value.is_string()) {
+    auto text = value.get<std::string>();
+    if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
+      value = hexAddress(parseAddress(text));
+  } else if (value.is_array() || value.is_object()) {
+    for (auto &item : value)
+      lowercaseAddresses(item);
+  }
+}
 /// Engine code text under workbench function names: every identifier token
 /// that is an engine name with a display alias, outside string and character
 /// literals.  \p shift receives (old byte offset, delta) for each edit.
@@ -661,6 +685,9 @@ bool Engine::statesFunctionAttributes() {
 }
 bool Engine::keepsDataItems() { return static_cast<bool>(dataItems()); }
 bool Engine::identifiesFiles() { return identifyFunction() != nullptr; }
+bool Engine::findsCallPaths() {
+  return callPathsFunction() && callTreeFunction();
+}
 bool Engine::loadsPdbFiles() {
   using Inspect = const char *(*)(neverd_session_t, const char *);
   using Load = int (*)(neverd_session_t, const char *);
@@ -3595,6 +3622,44 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                    {"state_changed", true}});
     dirty_ = false;
     return metadata();
+  }
+  if (operation == "call_paths" || operation == "call_tree") {
+    const auto query =
+        operation == "call_paths" ? callPathsFunction() : callTreeFunction();
+    if (!query)
+      throw Error("unsupported", "This engine does not publish call paths");
+    // A name the listing shows, such as a synthesized main, is an address
+    // to the engine; the engine resolves its own names and imports' names.
+    auto options = p.is_object() ? p : Json::object();
+    const auto resolveNode = [&](Json &node) {
+      if (!node.is_string())
+        return;
+      const auto text = node.get<std::string>();
+      if (text.starts_with("0x") || text.starts_with("0X"))
+        return;
+      if (const auto address = listing().resolveName(text))
+        node = hexAddress(*address);
+    };
+    for (const char *key : {"waypoints", "exclude"})
+      if (auto it = options.find(key); it != options.end() && it->is_array())
+        for (auto &node : *it)
+          resolveNode(node);
+    if (auto it = options.find("root"); it != options.end())
+      resolveNode(*it);
+    const char *raw = query(session_, options.dump().c_str());
+    if (!raw)
+      throw Error("invalid_request", error());
+    auto result = backendJson(raw, false);
+    lowercaseAddresses(result);
+    // Functions under the names the workbench shows them by.
+    const auto &aliases = listing().functionAliases();
+    if (auto it = result.find("nodes"); it != result.end() && it->is_array())
+      for (auto &node : *it)
+        if (node.value("kind", "") == "function")
+          if (const auto alias = aliases.find(node.value("name", ""));
+              alias != aliases.end())
+            node["name"] = alias->second;
+    return result;
   }
   if (operation != "disasm" && operation != "bytes" &&
       operation != "annotation_set" && operation != "rename" &&

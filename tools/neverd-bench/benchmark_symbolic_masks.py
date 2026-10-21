@@ -400,9 +400,9 @@ def completion_corpus(width, count):
     return rows
 
 
-def residual_corpus(width, count):
+def residual_corpus(width, count, *, deep=False):
     """Sparse products through degree 32, including two interleaved blocks."""
-    rng = random.Random(0x4D42413A + width)
+    rng = random.Random((0x4D42413B if deep else 0x4D42413A) + width)
     axes = ("z", "x", "y", "w", "v", "z")
     words = ("(x^y)", "(y|z)", "(x|z)", "(x&y)", "(x^z)",
              "(y^z)", "(x|y)", "~(x&z)")
@@ -410,10 +410,11 @@ def residual_corpus(width, count):
               "(x&~y)", "(z|v)", "(y^w)", "~(x&z)", "(x|v)")
     rows = []
     for index in range(count):
-        degree = (8, 16, 24, 32)[(index // 16) % 4]
+        degree = ((24, 32, 48, 64)[(index // 8) % 4] if deep
+                  else (8, 16, 24, 32)[(index // 16) % 4])
         kind = index % 16
-        pieces = 3 + kind % 4
-        blocks = 2 if kind % 4 == 2 else 1
+        pieces = 3 + kind % (3 if deep else 4)
+        blocks = 2 if kind % 4 == 2 and (not deep or pieces <= 4) else 1
         terms = []
         for block in range(blocks):
             basis = opaque if block or kind >= 8 else words
@@ -440,6 +441,11 @@ def residual_corpus(width, count):
             expression += "+23*" + "*".join(("x", "y") * (degree // 2))
         rows.append(expression)
     return rows
+
+
+def deep_residual_corpus(width, count):
+    """Sparse products through degree 64 with nonlinear opaque factor words."""
+    return residual_corpus(width, count, deep=True)
 
 
 def check_semantics(expressions, results, width):
@@ -535,7 +541,7 @@ def main():
     parser.add_argument(
         "--family",
         choices=("complement", "weighted", "bitwise", "interleaved", "quadratic",
-                 "cubic", "higher", "perturbed", "completion", "residual"),
+                 "cubic", "higher", "perturbed", "completion", "residual", "deep-residual"),
         default="complement",
     )
     args = parser.parse_args()
@@ -562,6 +568,7 @@ def main():
                 "perturbed": perturbed_corpus,
                 "completion": completion_corpus,
                 "residual": residual_corpus,
+                "deep-residual": deep_residual_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")

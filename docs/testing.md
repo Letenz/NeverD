@@ -4,6 +4,8 @@
 
 # Testing NeverD
 
+`DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
+
 `DriverProcessPebDeclaration.*`, `DriverProcessPebExecution.*`, `KernelProcessPeb.*` and `KernelProcessPebInitialization.*` cover strict transport, explicit zero/full-width inputs, per-process identity, repeated native calls, forged tokens, missing declarations, IRQL and retained recovery dependencies. Run the native driver, driver emulation and kernel snapshot suites; unavailable backends remain explicit skips.
 
 `DriverMSRExecution.*` and `DriverMSRDeclaration.*` check explicit MSR values, full-width splitting, preserved state, repeated reads, exact instruction limits, missing/invalid inputs, and lack of memory authority across available backends. `KernelMSRRead.*` retains unused-declaration dependencies. Run the native driver, driver emulation and kernel snapshot owners; unavailable WHP/HVF execution is a skip, not native qualification.
@@ -266,7 +268,7 @@ at 2/3 bits. Wider checks are algebraic and arithmetic coverage, not SMT claims.
 The highest-bit coefficient additionally checks arbitrary arithmetic factors at
 2–257 bits, neighboring coefficients that still observe carries, and separate
 full-width Z3 proofs at 8/16/32/64 bits for the product-parity transfer.
-Missing-corner completion covers four through thirty-two factors at 8–257 bits,
+Missing-corner completion covers four through sixty-four factors at 8–257 bits,
 two missing corners, up to six independent partitions, opaque arithmetic words
 and high-bit coefficient changes. Independent word oracles and exhaustive
 three-bit assignments check completed and partial-budget results. Separate Z3
@@ -292,6 +294,22 @@ repeated 24-factor tails at 2–257 bits, both complement policies, a changed
 constant, zero storage and the exact last proof-work unit. Independent modular
 arithmetic checks both expanded and factored forms. These tests also cover
 reuse of completed subexpressions without sharing incomplete normalization.
+Incremental product construction is checked against complete canonical
+construction through 64 factors at 1–257 bits, in both operand orders, with
+repeated factors, zero/even coefficients, wide literals and independent modular
+arithmetic. Merging two products and later coefficient changes retain the
+ordinary canonicalization rules.
+Long distribution proofs additionally check 48 repeated factors, even scales,
+unchanged opaque summands, changed coefficients and the exact final work unit.
+Product valuation tests use independent word arithmetic through 257 bits,
+neighboring coefficients that still observe carries, zero/short work, absent
+storage and a refused seven-input domain. Separate Z3 checks prove the complete
+zero-product rewrites at 8/16/32/64 bits. These are exhaustive parity proofs in
+the implementation; randomized values are additional test coverage.
+The `deep-residual` family of `benchmark_symbolic_masks.py` adds sparse
+24/32/48/64-degree products, disturbed coefficients, interleaved blocks and
+opaque arithmetic words. Use `--count 32` to cover each degree at all four
+standard widths; the unchanged per-query allowance is 65,536 work units.
 Sixteen repeated small partitions check that exponential expansion is refused
 before consuming the budget needed to simplify their shared child.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
@@ -2851,6 +2869,12 @@ disjoint regions, page completeness, Unicode positions and revision changes.
 Run the broader `check-neverd` target before review because the source observers
 cross both C backends. Pack schema/probe tests in `signatures/scripts/tests`
 validate data production separately from these engine tests.
+
+The worker source-synthesis integration also covers a missing-corner product
+of degree 24. CLI single-function and whole-program HighC/LLVMC, plus both GUI
+worker source routes, recompile and execute the result against an independent
+formula at `-O0` and `-O2`, preserving the high-bit remainder and toggle/cache
+isolation.
 
 ## Modular MBA simplification
 
@@ -7323,7 +7347,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 68 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 270 WHP outcomes from all 135 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 68 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5085 CPU + 270 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 126 driver environment checks + 116 driver API checks = 5795`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 270 WHP outcomes from all 135 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 68 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5085 CPU + 270 WHP + 32 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 126 driver environment checks + 116 driver API checks = 5802`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 The genuine WDK inventory also builds `driver_device_queries.c`, `driver_file_objects.c` and `driver_file_handles.c` in normal and CFG forms. `DriverDeviceQueryTests.cpp` and `DriverFileObjectTests.cpp` reuse the portable callers’ assertions for retained deletion, failed CREATE, process identity, last-handle CLEANUP and deferred CLOSE across both contracts, bases and scheduling policies. All three families have mandatory native gates; inventory validation independently discovers sources with `NEVERD_WDK_FIXTURE` so a dual-mode source cannot silently lose its WDK build.
 

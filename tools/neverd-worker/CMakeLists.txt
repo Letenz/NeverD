@@ -257,6 +257,10 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_presentation_cli_test.py"
                   "$<TARGET_FILE:neverd-worker>" "${_neverd_worker_test_cli}" --engine "$<TARGET_FILE:neverd_shared>")
         set_tests_properties(NeverDWorkerCLIDataPresentation PROPERTIES TIMEOUT 180)
+        add_test(NAME NeverDWorkerCLIInstructionFlow
+          COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/instruction_flow_cli_test.py"
+                  "$<TARGET_FILE:neverd-worker>" "${_neverd_worker_test_cli}")
+        set_tests_properties(NeverDWorkerCLIInstructionFlow PROPERTIES TIMEOUT 120)
         add_test(NAME NeverDWorkerCLIStackFrame
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/stack_frame_cli_test.py"
                   "$<TARGET_FILE:neverd-worker>" "${_neverd_worker_test_cli}" --cc "${CMAKE_C_COMPILER}")
