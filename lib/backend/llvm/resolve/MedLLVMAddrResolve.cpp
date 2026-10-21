@@ -2045,10 +2045,24 @@ bool MedLLVMEmitter::valueIsGuardedScalarOffset(const MedVar &Value) const {
 bool MedLLVMEmitter::valueIsOpaqueRuntimeOffset(const MedVar &Value) const {
   if (!CurMedFunc || !Img)
     return false;
+  const unsigned PointerSize = getTargetRegInfo(TargetArch).PointerSize;
+  if (PointerSize == 0 || PointerSize > 8)
+    return false;
+
+  // Exact spill recovery can itself consult scalar provenance. Keep a
+  // re-entered source query incomplete until its outer proof has finished.
+  using QueryKey = std::tuple<const MedLLVMEmitter *, const MedFunc *,
+                              AddressProvenanceVarKey>;
+  static thread_local std::set<QueryKey> ActiveQueries;
+  const QueryKey Query{this, CurMedFunc, addressProvenanceVarKey(Value)};
+  if (!ActiveQueries.insert(Query).second)
+    return false;
+  auto LeaveQuery = llvm::make_scope_exit([&] { ActiveQueries.erase(Query); });
 
   // Audit the producer DAG independently of the consumer's domain proof.
-  // Private spills and image-backed pointer tables remain owned by their
-  // existing all-path memory proofs; arithmetic cannot erase their provenance.
+  // A nested runtime load retains its address dependencies, and a private
+  // reload retains every exact reaching STORE source. Neither may hide image
+  // pointers behind an otherwise ordinary arithmetic or merge operation.
   unsigned Budget = 256;
   std::set<AddressProvenanceVarKey> Active, Done;
   bool SawRuntimeLoad = false;
@@ -2062,21 +2076,61 @@ bool MedLLVMEmitter::valueIsOpaqueRuntimeOffset(const MedVar &Value) const {
         const auto Key = addressProvenanceVarKey(V);
         if (Done.count(Key))
           return true;
-        if (!Active.insert(Key).second || lookupPhi(V) ||
-            varMayBeFrameAddress(V))
+        if (!Active.insert(Key).second || varMayBeFrameAddress(V))
           return false;
-        const MedOp *Def = lookupDef(V);
-        if (!Def) {
+        auto finish = [&] {
           Active.erase(Key);
           Done.insert(Key);
           return true;
+        };
+        if (const PhiNode *Phi = lookupPhi(V)) {
+          if (!sameIndexValue(Phi->Output, V))
+            return false;
+          bool SawFeasible = false;
+          for (const auto &[Pred, Arg] : Phi->Args) {
+            const auto Edge = classifyPhiIncomingEdge(*Phi, Pred);
+            if (Edge == PhiEdgeFeasibility::Infeasible)
+              continue;
+            if (Edge != PhiEdgeFeasibility::ProvenFeasible ||
+                Arg.Size != V.Size || !scalarSource(Arg, Depth + 1))
+              return false;
+            SawFeasible = true;
+          }
+          return SawFeasible && finish();
         }
+        const MedOp *Def = lookupDef(V);
+        if (!Def)
+          return finish();
         if (!sameIndexValue(Def->Output, V))
           return false;
+        // The lifter publishes an incoming physical carrier as an exact
+        // self-COPY. Other COPY cycles have no established entry value.
+        if (Def->Opcode == NdOp::COPY && Def->NumInputs == 1 &&
+            (V.Kind == MedVar::Reg || V.Kind == MedVar::Param) &&
+            sameIndexValue(Def->Inputs[0], V))
+          return finish();
         if (Def->Opcode == NdOp::LOAD) {
-          if (!isOpaqueRuntimeWordLoad(*Def))
+          if (Def->NumInputs != 1 || V.Size > PointerSize ||
+              Def->MemoryAddressSpace != NdMemoryAddressSpace::Default)
             return false;
-          SawRuntimeLoad = true;
+          const MedVar &Address = Def->Inputs[0];
+          if (varMayBeFrameAddress(Address)) {
+            std::vector<MedVar> Sources;
+            if (!collectFrameReloadSources(*Def, Sources) || Sources.empty())
+              return false;
+            for (const MedVar &Source : Sources)
+              if (Source.Size != V.Size || !scalarSource(Source, Depth + 1))
+                return false;
+          } else {
+            if (traceValueVA(Address) || !scalarSource(Address, Depth + 1))
+              return false;
+            SawRuntimeLoad = true;
+          }
+        } else if (Def->Opcode == NdOp::SELECT) {
+          if (!selectPreservesPointerValues(*Def) ||
+              !scalarSource(Def->Inputs[1], Depth + 1) ||
+              !scalarSource(Def->Inputs[2], Depth + 1))
+            return false;
         } else {
           switch (Def->Opcode) {
           case NdOp::COPY:
@@ -2104,9 +2158,7 @@ bool MedLLVMEmitter::valueIsOpaqueRuntimeOffset(const MedVar &Value) const {
             if (!scalarSource(Def->Inputs[I], Depth + 1))
               return false;
         }
-        Active.erase(Key);
-        Done.insert(Key);
-        return true;
+        return finish();
       };
   return scalarSource(Value, 0) && SawRuntimeLoad;
 }

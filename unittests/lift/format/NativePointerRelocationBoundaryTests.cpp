@@ -902,6 +902,31 @@ selected_cmov:
   mov (%rax), %rax
   ret
 .size selected_cmov,.-selected_cmov
+.globl selected_sources
+.type selected_sources,@function
+selected_sources:
+  sub $24, %rsp
+  mov (%rdi), %rax
+  mov (%rax), %rax
+  mov %rax, (%rsp)
+  test %rsi, %rsi
+  jz 1f
+  mov (%rsp), %rdx
+  jmp 2f
+1:
+  mov 8(%rdi), %rdx
+  mov (%rdx), %rdx
+2:
+  lea table_a(%rip), %rax
+  lea (%rax,%rdx,8), %rax
+  lea table_b(%rip), %rcx
+  lea (%rcx,%rdx,8), %rcx
+  test %rsi, %rsi
+  cmovz %rcx, %rax
+  mov (%rax), %rax
+  add $24, %rsp
+  ret
+.size selected_sources,.-selected_sources
 .section .data.rel.ro,"aw",@progbits
 .p2align 3
 table_a:
@@ -920,6 +945,7 @@ mirror_owner:
 #include <stdint.h>
 extern uint64_t selected_phi(const uint64_t *, uint64_t);
 extern uint64_t selected_cmov(const uint64_t *, uint64_t);
+extern uint64_t selected_sources(const uint64_t *const *, uint64_t);
 int main(void) {
   const uint64_t a[] = {11,23,47,89}, b[] = {101,211,433,877};
   const uint64_t choices[] = {0,1,UINT64_MAX,UINT64_C(1)<<63};
@@ -929,6 +955,10 @@ int main(void) {
         uint64_t expected = choices[c] ? a[index] : b[index];
         if (selected_phi(&index, choices[c]) != expected) return 1;
         if (selected_cmov(&index, choices[c]) != expected) return 2;
+        uint64_t reverse = 3 - index;
+        const uint64_t *pair[] = {&index, &reverse};
+        expected = choices[c] ? a[index] : b[reverse];
+        if (selected_sources(pair, choices[c]) != expected) return 3;
       }
   return 0;
 }
@@ -946,6 +976,7 @@ int main(void) {
   auto Med = liftToMedIR(Object);
   ASSERT_EQ(Med.exitCode, 0) << Med.err;
   EXPECT_NE(Med.out.find("PHI RAX"), std::string::npos) << Med.out;
+  EXPECT_NE(Med.out.find("PHI RDX"), std::string::npos) << Med.out;
   EXPECT_NE(Med.out.find("INT_OR RAX"), std::string::npos) << Med.out;
   auto Lifted = liftToLLVMIRUnopt(Object);
   ASSERT_EQ(Lifted.exitCode, 0) << Lifted.err;

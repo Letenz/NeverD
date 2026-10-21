@@ -7562,9 +7562,13 @@ An immutable scalar table indexed by an unbounded runtime value, such as a field
 A selection between computed addresses in one immutable pointer-mirror run may
 retain an unbounded runtime offset without changing the scalar-offset proof.
 Every feasible arm must preserve its complete pointer and use the same
-symbolized address model. The shared runtime-source audit excludes frame
-reloads, image-derived words, hidden mapped bases and incomplete value graphs;
-the container audit requires the complete immutable run, including any exact
+symbolized address model. The shared runtime-source audit follows nested
+opaque loads, complete acyclic value selections and exact private-frame
+reloads through every reaching store. It excludes image-derived words, hidden
+mapped bases, uninitialized or escaped stack storage and incomplete or cyclic
+value graphs. Load-address dependencies stay visible through every nesting
+level, and this proof grants neither a scalar bound nor a callable domain.
+The container audit requires the complete immutable run, including any exact
 relocation owner. Such an address keeps its emitted arithmetic and selection,
 with no raw-VA rebasing. A raw or mixed model, truncated pointer, mutable run or
 per-object embedding cannot acquire this permission. Indirect calls still need

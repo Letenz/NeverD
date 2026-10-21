@@ -285,6 +285,10 @@ public:
     return Emitter.valueIsStableAddressOffset(Value, Forbidden);
   }
 
+  static bool runtimeOffset(MedLLVMEmitter &Emitter, const MedVar &Value) {
+    return Emitter.valueIsOpaqueRuntimeOffset(Value);
+  }
+
   static std::pair<uint64_t, uint64_t>
   stableOffsetNodeWork(const MedLLVMEmitter &Emitter) {
     return {Emitter.AddressProvenanceWork.StableOffsetNodes,
@@ -15883,6 +15887,195 @@ TEST(LLVMDataPointerInvariantBoundary,
           if (Module)
             expectValidModule(*Module);
         }
+}
+
+TEST(LLVMDataPointerInvariantBoundary,
+     RuntimeOffsetSourcesRequireCompleteMemoryAndMergeProofs) {
+  enum class Case {
+    Single,
+    Nested,
+    Spilled,
+    Selected,
+    Phi,
+    Combined,
+    ImageNested,
+    MissingStore,
+    PartialStore,
+    LaterStore,
+    EscapedSlot,
+    SelectedImage,
+    PhiImage,
+    Cycle,
+    SegmentLoad,
+    NarrowPhi,
+    Deep
+  };
+  for (Arch A : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+      for (Case C :
+           {Case::Single, Case::Nested, Case::Spilled, Case::Selected,
+            Case::Phi, Case::Combined, Case::ImageNested, Case::MissingStore,
+            Case::PartialStore, Case::LaterStore, Case::EscapedSlot,
+            Case::SelectedImage, Case::PhiImage, Case::Cycle, Case::SegmentLoad,
+            Case::NarrowPhi, Case::Deep}) {
+        SCOPED_TRACE(std::to_string(static_cast<int>(A)) + "/" +
+                     formatTraceName(Format) + "/" +
+                     std::to_string(static_cast<int>(C)));
+        const uint16_t Width = getTargetRegInfo(A).PointerSize;
+        BinaryImage Image =
+            makeSpilledConstTableImage(A, Format, /*PointerTable=*/true);
+        Image.Bits = Width == 8 ? Bitness::Bits64 : Bitness::Bits32;
+        MedFunc F;
+        F.Name = "runtime_offset_sources";
+        F.Entry = CallerVA;
+        F.FrameSize = 32;
+        F.ReturnType = NdType::makeInt(Width);
+        int Next = 0;
+        auto temp = [&](uint16_t Size = 0) {
+          MedVar V;
+          V.Kind = MedVar::Temp;
+          V.TheArch = A;
+          V.Id = Next++;
+          V.SSAVer = 1;
+          V.Size = Size ? Size : Width;
+          return V;
+        };
+        auto number = [&](uint64_t N) {
+          return MedVar::makeConst(N, Width, ConstantAddressProvenance::Scalar);
+        };
+        const MedVar ImageAddress = MedVar::makeConst(
+            SpilledConstTableVA, Width, ConstantAddressProvenance::DataAddress);
+        MedVar Input = temp(), Choice = temp(), SP = temp();
+        Input.Kind = Choice.Kind = MedVar::Param;
+        SP.Kind = MedVar::Reg;
+        SP.RegOff = getTargetRegInfo(A).StackPointer;
+        SP.SSAVer = 0;
+        F.Params = {Input, Choice};
+        F.Blocks.resize(C == Case::Cycle ? 5 : 4);
+        for (size_t I = 0; I != F.Blocks.size(); ++I) {
+          F.Blocks[I].Id = int(I);
+          F.Blocks[I].StartAddr = CallerVA + I * 0x100;
+          F.Blocks[I].EndAddr = F.Blocks[I].StartAddr + 0x100;
+        }
+        F.Blocks[0].Succs = {1, 2};
+        F.Blocks[1].Preds = F.Blocks[2].Preds = {0};
+        F.Blocks[1].Succs = F.Blocks[2].Succs = {3};
+        F.Blocks[3].Preds = {1, 2};
+        auto append = [&](int Block, NdOp Opcode, MedVar Out,
+                          std::initializer_list<MedVar> Inputs) {
+          MedOp Op;
+          Op.Opcode = Opcode;
+          Op.Output = Out;
+          Op.Addr = F.Blocks[Block].StartAddr + F.Blocks[Block].Ops.size();
+          for (const auto &V : Inputs)
+            Op.addInput(V);
+          F.Blocks[Block].Ops.push_back(Op);
+        };
+        MedVar Index = temp(), Condition = temp(1), Slot = temp();
+        append(0, NdOp::LOAD, Index,
+               {C == Case::ImageNested ? ImageAddress : Input});
+        if (C == Case::SegmentLoad)
+          F.Blocks[0].Ops.back().MemoryAddressSpace =
+              NdMemoryAddressSpace::X86FS;
+        if (C == Case::Nested || C == Case::Combined ||
+            C == Case::ImageNested || C == Case::Deep) {
+          const int Count = C == Case::Deep ? 40 : 1;
+          for (int I = 0; I != Count; ++I) {
+            MedVar Loaded = temp();
+            append(0, NdOp::LOAD, Loaded, {Index});
+            Index = Loaded;
+          }
+        }
+        append(0, NdOp::INT_ADD, Slot, {SP, number(uint64_t(-16))});
+        append(0, NdOp::INT_NOTEQUAL, Condition, {Choice, number(0)});
+        append(0, NdOp::COND_BR, {},
+               {number(F.Blocks[2].StartAddr), Condition});
+        const bool Spill = C == Case::Spilled || C == Case::Combined ||
+                           C == Case::MissingStore || C == Case::PartialStore ||
+                           C == Case::LaterStore || C == Case::EscapedSlot;
+        MedVar Arms[] = {temp(), temp()};
+        for (int I = 1; I != 3; ++I) {
+          if (Spill && C != Case::LaterStore &&
+              !(C == Case::MissingStore && I == 2)) {
+            MedVar Stored = Index;
+            if (C == Case::PartialStore && I == 2) {
+              Stored = temp(Width / 2);
+              append(I, NdOp::SUBBYTES, Stored, {Index, number(0)});
+            }
+            append(I, NdOp::STORE, {}, {Slot, Stored});
+          }
+          MedVar Arm = Index;
+          if (I == 2 && C == Case::PhiImage)
+            Arm = ImageAddress;
+          if (I == 2 && C == Case::NarrowPhi) {
+            Arm = temp(Width / 2);
+            append(I, NdOp::SUBBYTES, Arm, {Index, number(0)});
+            Arms[I - 1].Size = Arm.Size;
+          }
+          append(I, NdOp::COPY, Arms[I - 1], {Arm});
+          append(I, NdOp::BRANCH, {}, {number(F.Blocks[3].StartAddr)});
+        }
+        if (C == Case::EscapedSlot)
+          append(3, NdOp::STORE, {}, {Input, Slot});
+        if (Spill) {
+          MedVar Reload = temp();
+          append(3, NdOp::LOAD, Reload, {Slot});
+          if (C == Case::LaterStore)
+            append(3, NdOp::STORE, {}, {Slot, Index});
+          Index = Reload;
+        }
+        if (C == Case::Selected || C == Case::SelectedImage) {
+          MedVar Selected = temp();
+          append(3, NdOp::SELECT, Selected,
+                 {Condition, Index,
+                  C == Case::SelectedImage ? ImageAddress : number(3)});
+          Index = Selected;
+        }
+        if (C == Case::Phi || C == Case::Combined || C == Case::PhiImage ||
+            C == Case::Cycle || C == Case::NarrowPhi) {
+          MedVar Merged = temp();
+          PhiNode Phi;
+          Phi.Output = Merged;
+          Phi.Args = {{1, Arms[0]}, {2, Arms[1]}};
+          if (C == Case::Cycle) {
+            MedVar Step = temp();
+            Phi.Args.push_back({3, Step});
+            F.Blocks[3].Preds.push_back(3);
+            F.Blocks[3].Succs = {3, 4};
+            F.Blocks[4].Preds = {3};
+            append(3, NdOp::INT_ADD, Step, {Merged, number(1)});
+            append(3, NdOp::COND_BR, {},
+                   {number(F.Blocks[3].StartAddr), Condition});
+          }
+          F.Blocks[3].Phis.push_back(Phi);
+          if (C == Case::Combined) {
+            MedVar Sum = temp();
+            append(3, NdOp::INT_ADD, Sum, {Index, Merged});
+            Index = Sum;
+          } else
+            Index = Merged;
+        }
+        const int Exit = C == Case::Cycle ? 4 : 3;
+        MedVar Scaled = temp();
+        append(Exit, NdOp::INT_MULT, Scaled, {Index, number(Width)});
+        append(Exit, NdOp::RETURN, {}, {Scaled});
+        const bool Expected = C == Case::Single || C == Case::Nested ||
+                              C == Case::Spilled || C == Case::Selected ||
+                              C == Case::Phi || C == Case::Combined;
+        MedLLVMEmitter Proof;
+        MedLLVMProvenanceTestPeer::prepareFreshAnalysis(Proof, F, Image, A,
+                                                        Format);
+        EXPECT_EQ(MedLLVMProvenanceTestPeer::runtimeOffset(Proof, Scaled),
+                  Expected);
+        if (C != Case::SegmentLoad)
+          EXPECT_FALSE(
+              MedLLVMProvenanceTestPeer::stableOffset(Proof, Scaled, nullptr));
+        // Reusing the source proof must not change its result after the
+        // ordinary scalar analysis has populated its own caches.
+        EXPECT_EQ(MedLLVMProvenanceTestPeer::runtimeOffset(Proof, Scaled),
+                  Expected);
+      }
 }
 
 TEST(LLVMDataPointerInvariantBoundary,
