@@ -197,7 +197,8 @@ private:
                             uint64_t Establisher, Stack Bounds,
                             const Image &Owner) const;
   llvm::Expected<std::optional<Context>>
-  unwindEpilogue(const ExceptionFunction &Frame, const Context &Current,
+  unwindEpilogue(const ExceptionFunction &Frame,
+                 const ExceptionFunction &Primary, const Context &Current,
                  Stack Bounds, const Image &Owner) const;
   llvm::Expected<Action> advanceImpl(Dispatch &State,
                                      std::optional<int32_t> FilterResult) const;
