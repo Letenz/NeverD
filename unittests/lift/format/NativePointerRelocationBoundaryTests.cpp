@@ -856,6 +856,122 @@ TEST_F(NativePointerRelocationBoundary,
 }
 
 TEST_F(NativePointerRelocationBoundary,
+       RuntimeIndexedMirrorSelectionsSurviveRelinking) {
+#if !defined(__x86_64__) || defined(__APPLE__) || defined(_WIN32)
+  GTEST_SKIP() << "native execution requires an x86-64 ELF host";
+#else
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "native fixture requires Clang's GNU-style driver";
+  const fs::path Source = tmpFile("runtime-mirror-selections.s");
+  const fs::path Object = tmpFile("runtime-mirror-selections.o");
+  const fs::path Harness = tmpFile("runtime-mirror-selections-main.c");
+  const fs::path Original = tmpFile("runtime-mirror-selections-original");
+  const fs::path IR = tmpFile("runtime-mirror-selections.ll");
+  const fs::path Rebuilt = tmpFile("runtime-mirror-selections-rebuilt");
+  {
+    std::ofstream OS(Source);
+    ASSERT_TRUE(OS);
+    OS << R"(
+.text
+.globl selected_phi
+.type selected_phi,@function
+selected_phi:
+  mov (%rdi), %rax
+  test %rsi, %rsi
+  jz 1f
+  lea table_a(%rip), %rcx
+  lea (%rcx,%rax,8), %rax
+  jmp 2f
+1:
+  lea table_b(%rip), %rcx
+  lea (%rcx,%rax,8), %rax
+2:
+  mov (%rax), %rax
+  ret
+.size selected_phi,.-selected_phi
+.globl selected_cmov
+.type selected_cmov,@function
+selected_cmov:
+  mov (%rdi), %rdx
+  lea table_a(%rip), %rax
+  lea (%rax,%rdx,8), %rax
+  lea table_b(%rip), %rcx
+  lea (%rcx,%rdx,8), %rcx
+  test %rsi, %rsi
+  cmovz %rcx, %rax
+  mov (%rax), %rax
+  ret
+.size selected_cmov,.-selected_cmov
+.section .data.rel.ro,"aw",@progbits
+.p2align 3
+table_a:
+  .quad 11,23,47,89
+table_b:
+  .quad 101,211,433,877
+mirror_owner:
+  .quad selected_phi
+.section .note.GNU-stack,"",@progbits
+)";
+  }
+  {
+    std::ofstream OS(Harness);
+    ASSERT_TRUE(OS);
+    OS << R"(
+#include <stdint.h>
+extern uint64_t selected_phi(const uint64_t *, uint64_t);
+extern uint64_t selected_cmov(const uint64_t *, uint64_t);
+int main(void) {
+  const uint64_t a[] = {11,23,47,89}, b[] = {101,211,433,877};
+  const uint64_t choices[] = {0,1,UINT64_MAX,UINT64_C(1)<<63};
+  for (unsigned repeat = 0; repeat != 16; ++repeat)
+    for (uint64_t index = 0; index != 4; ++index)
+      for (unsigned c = 0; c != 4; ++c) {
+        uint64_t expected = choices[c] ? a[index] : b[index];
+        if (selected_phi(&index, choices[c]) != expected) return 1;
+        if (selected_cmov(&index, choices[c]) != expected) return 2;
+      }
+  return 0;
+}
+)";
+  }
+  auto Compile =
+      exec(NEVERD_TEST_CLANG, {"-c", Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+  Compile =
+      exec(NEVERD_TEST_CLANG, {"-fPIE", "-pie", Object.string(),
+                               Harness.string(), "-o", Original.string()});
+  ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+  auto Native = exec(Original.string(), {});
+  ASSERT_EQ(Native.exitCode, 0) << Native.err;
+  auto Med = liftToMedIR(Object);
+  ASSERT_EQ(Med.exitCode, 0) << Med.err;
+  EXPECT_NE(Med.out.find("PHI RAX"), std::string::npos) << Med.out;
+  EXPECT_NE(Med.out.find("INT_OR RAX"), std::string::npos) << Med.out;
+  auto Lifted = liftToLLVMIRUnopt(Object);
+  ASSERT_EQ(Lifted.exitCode, 0) << Lifted.err;
+  EXPECT_NE(Lifted.out.find("@__nd_codeptr_"), std::string::npos);
+  const size_t Start = Lifted.out.find("; ModuleID");
+  ASSERT_NE(Start, std::string::npos);
+  {
+    std::ofstream OS(IR);
+    ASSERT_TRUE(OS);
+    OS << std::string_view(Lifted.out).substr(Start);
+  }
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    Compile =
+        exec(NEVERD_TEST_CLANG, {Optimization, "-fPIE", "-pie", IR.string(),
+                                 Harness.string(), "-o", Rebuilt.string()});
+    ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+    for (unsigned Attempt = 0; Attempt != 5; ++Attempt) {
+      auto Run = exec(Rebuilt.string(), {});
+      EXPECT_EQ(Run.exitCode, 0) << Run.err;
+    }
+  }
+#endif
+}
+
+TEST_F(NativePointerRelocationBoundary,
        MachOObjectAbsoluteCodePointerRelocationSurvivesLift) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "cross-target Mach-O fixtures require Clang's GNU-style "

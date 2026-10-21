@@ -2039,10 +2039,16 @@ bool MedLLVMEmitter::valueIsGuardedScalarOffset(const MedVar &Value) const {
   if (!Matches)
     return false;
 
-  // A guard certifies the scaled SSA definition, not the load everywhere it
-  // is used. Audit its producer DAG for relocation sources before admitting
-  // opaque runtime record fields. Private spills and image-backed pointer
-  // tables remain owned by their existing all-path memory proofs.
+  return valueIsOpaqueRuntimeOffset(Constraint->Value);
+}
+
+bool MedLLVMEmitter::valueIsOpaqueRuntimeOffset(const MedVar &Value) const {
+  if (!CurMedFunc || !Img)
+    return false;
+
+  // Audit the producer DAG independently of the consumer's domain proof.
+  // Private spills and image-backed pointer tables remain owned by their
+  // existing all-path memory proofs; arithmetic cannot erase their provenance.
   unsigned Budget = 256;
   std::set<AddressProvenanceVarKey> Active, Done;
   bool SawRuntimeLoad = false;
@@ -2102,7 +2108,7 @@ bool MedLLVMEmitter::valueIsGuardedScalarOffset(const MedVar &Value) const {
         Done.insert(Key);
         return true;
       };
-  return scalarSource(Constraint->Value, 0) && SawRuntimeLoad;
+  return scalarSource(Value, 0) && SawRuntimeLoad;
 }
 
 bool MedLLVMEmitter::valueIsStableAddressOffset(const MedVar &V,

@@ -497,6 +497,19 @@ void MedLLVMEmitter::readOnlyAfterRelocRun(const Segment *Seg,
   }
 }
 
+std::optional<uint64_t>
+MedLLVMEmitter::immutablePointerMirrorRun(uint64_t VA) const {
+  if (!addrInCodePtrMirrorRun(VA) || !isMaterializableReadOnlyDataAddress(VA))
+    return std::nullopt;
+  const Segment *Seg = Img->getSegmentFor(VA);
+  if (!isReadOnlyAfterReloc(Seg))
+    return std::nullopt;
+  uint64_t RunStart = 0, RunEnd = 0;
+  readOnlyAfterRelocRun(Seg, RunStart, RunEnd);
+  return VA >= RunStart && VA < RunEnd ? std::optional<uint64_t>(RunStart)
+                                       : std::nullopt;
+}
+
 bool MedLLVMEmitter::addrInCodePtrMirrorRun(uint64_t VA) const {
   if (!Img)
     return false;

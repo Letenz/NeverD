@@ -15713,6 +15713,179 @@ TEST(LLVMDataPointerInvariantBoundary,
 }
 
 TEST(LLVMDataPointerInvariantBoundary,
+     RuntimeIndicesRetainTheirReadOnlyAddressAcrossSelections) {
+  enum class Case {
+    Scalar,
+    Runtime,
+    ImageLoad,
+    FrameLoad,
+    SecondBase,
+    Narrow,
+    Raw,
+    MixedModel,
+    Cycle
+  };
+  for (Arch A : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+      for (bool Phi : {false, true})
+        for (Case C : {Case::Scalar, Case::Runtime, Case::ImageLoad,
+                       Case::FrameLoad, Case::SecondBase, Case::Narrow,
+                       Case::Raw, Case::MixedModel, Case::Cycle}) {
+          if (C == Case::Cycle && !Phi)
+            continue;
+          SCOPED_TRACE(std::to_string(static_cast<int>(A)) + "/" +
+                       formatTraceName(Format) + "/" + std::to_string(Phi) +
+                       "/" + std::to_string(static_cast<int>(C)));
+          const uint16_t Width = getTargetRegInfo(A).PointerSize;
+          constexpr va_t Table = 0x4000;
+          BinaryImage Image;
+          Image.Arch = A;
+          Image.Format = Format;
+          Image.Bits = Width == 8 ? Bitness::Bits64 : Bitness::Bits32;
+          Segment Data;
+          Data.Name = ".rodata";
+          Data.VA = Table;
+          Data.Flags = SegmentFlags::Readable;
+          Data.Data.resize(256, 42);
+          Data.Size = Data.FileSz = Data.Data.size();
+          const uint64_t Payload = Table + 0xe0;
+          std::memcpy(Data.Data.data() + 0x80, &Payload, Width);
+          Image.Segments.push_back(Data);
+          Image.RelocDataAddrs = {Table, Table + 0x40, Payload};
+          Image.DataPtrRelocSlots.insert(Table + 0x80);
+          Image.DataPtrRelocTargetOwners[Table + 0x80] = Table;
+          MedFunc F;
+          F.Name = "selected_runtime_table";
+          F.Entry = 0x100;
+          F.ReturnType = NdType::makeInt(Width);
+          int Next = 0;
+          auto temp = [&](uint16_t Size = 0) {
+            MedVar V;
+            V.Kind = MedVar::Temp;
+            V.Id = Next++;
+            V.SSAVer = 1;
+            V.TheArch = A;
+            V.Size = Size ? Size : Width;
+            return V;
+          };
+          auto number = [&](uint64_t N) {
+            return MedVar::makeConst(N, Width,
+                                     ConstantAddressProvenance::Scalar);
+          };
+          auto address = [&](uint64_t N) {
+            return MedVar::makeConst(N, Width,
+                                     ConstantAddressProvenance::DataAddress);
+          };
+          MedVar Input = temp(), Choice = temp();
+          Input.Kind = Choice.Kind = MedVar::Param;
+          F.Params = {Input, Choice};
+          F.Blocks.resize(C == Case::Cycle ? 6 : Phi ? 4 : 1);
+          for (size_t I = 0; I != F.Blocks.size(); ++I) {
+            F.Blocks[I].Id = int(I);
+            F.Blocks[I].StartAddr = 0x100 + I * 0x40;
+            F.Blocks[I].EndAddr = F.Blocks[I].StartAddr + 0x40;
+          }
+          auto append = [&](int Block, NdOp Opcode, MedVar Out,
+                            std::initializer_list<MedVar> Inputs) {
+            MedOp Op;
+            Op.Opcode = Opcode;
+            Op.Output = Out;
+            Op.Addr = F.Blocks[Block].StartAddr + F.Blocks[Block].Ops.size();
+            for (const auto &V : Inputs)
+              Op.addInput(V);
+            F.Blocks[Block].Ops.push_back(Op);
+          };
+          MedVar Index = temp(), Scaled = temp(), Condition = temp(1);
+          MedVar Source = Input;
+          if (C == Case::ImageLoad)
+            Source = address(Table + 0x80);
+          if (C == Case::FrameLoad) {
+            Source.Kind = MedVar::Reg;
+            Source.RegOff = getTargetRegInfo(A).StackPointer;
+            Source.SSAVer = 0;
+          }
+          append(0, C == Case::Scalar ? NdOp::COPY : NdOp::LOAD, Index,
+                 {C == Case::Scalar ? number(1) : Source});
+          if (C == Case::SecondBase) {
+            MedVar Mixed = temp();
+            append(0, NdOp::INT_ADD, Mixed, {Index, address(Table + 0x40)});
+            Index = Mixed;
+          }
+          append(0, NdOp::INT_MULT, Scaled, {Index, number(Width)});
+          append(0, NdOp::INT_NOTEQUAL, Condition, {Choice, number(0)});
+          if (Phi) {
+            append(0, NdOp::COND_BR, {}, {number(0x180), Condition});
+            F.Blocks[0].Succs = {1, 2};
+          }
+          MedVar Arms[] = {temp(), temp()};
+          for (int I = 0; I != 2; ++I) {
+            const int Block = Phi ? I + 1 : 0;
+            MedVar Base = address(Table + I * 0x40);
+            if (C == Case::Raw || (C == Case::MixedModel && I == 1))
+              Base.Provenance = ConstantAddressProvenance::Address;
+            append(Block, NdOp::INT_ADD, Arms[I], {Base, Scaled});
+            if (C == Case::Narrow && I == 1) {
+              MedVar Narrow = temp(1), Wide = temp();
+              append(Block, NdOp::SUBBYTES, Narrow, {Arms[I], number(0)});
+              append(Block, NdOp::INT_ZEXT, Wide, {Narrow});
+              Arms[I] = Wide;
+            }
+            if (Phi) {
+              F.Blocks[Block].Preds = {0};
+              F.Blocks[Block].Succs = {3};
+              append(Block, NdOp::BRANCH, {}, {number(0x1c0)});
+            }
+          }
+          MedVar Selected = temp(), Result = temp();
+          const int Merge = Phi ? 3 : 0;
+          if (Phi) {
+            PhiNode Node;
+            Node.Output = Selected;
+            Node.Args = {{1, Arms[0]}, {2, Arms[1]}};
+            F.Blocks[Merge].Preds = {1, 2};
+            if (C == Case::Cycle) {
+              MedVar Advanced = temp();
+              Node.Args.push_back({4, Advanced});
+              F.Blocks[Merge].Preds.push_back(4);
+              F.Blocks[Merge].Succs = {4, 5};
+              append(Merge, NdOp::COND_BR, {}, {number(0x200), Condition});
+              F.Blocks[4].Preds = {Merge};
+              F.Blocks[4].Succs = {Merge};
+              append(4, NdOp::INT_ADD, Advanced, {Selected, Scaled});
+              append(4, NdOp::BRANCH, {}, {number(0x1c0)});
+              F.Blocks[5].Preds = {Merge};
+            }
+            F.Blocks[Merge].Phis.push_back(Node);
+          } else {
+            append(Merge, NdOp::SELECT, Selected,
+                   {Condition, Arms[0], Arms[1]});
+          }
+          const int Read = C == Case::Cycle ? 5 : Merge;
+          append(Read, NdOp::LOAD, Result, {Selected});
+          append(Read, NdOp::RETURN, {}, {Result});
+          MedLLVMEmitter Classifier;
+          MedLLVMProvenanceTestPeer::prepareFreshAnalysis(Classifier, F, Image,
+                                                          A, Format);
+          EXPECT_EQ(MedLLVMProvenanceTestPeer::stableOffset(Classifier, Scaled,
+                                                            nullptr),
+                    C == Case::Scalar);
+          EXPECT_FALSE(
+              MedLLVMProvenanceTestPeer::pointerTableLoadIsCallableOnly(
+                  Classifier, Result));
+          llvm::LLVMContext Context;
+          testing::internal::CaptureStderr();
+          auto Module = MedLLVMEmitter().emit({F}, Context, "selected-runtime",
+                                              A, {}, &Image, Format);
+          const auto Diagnostic = testing::internal::GetCapturedStderr();
+          EXPECT_EQ(Module != nullptr, C == Case::Scalar || C == Case::Runtime)
+              << Diagnostic;
+          if (Module)
+            expectValidModule(*Module);
+        }
+}
+
+TEST(LLVMDataPointerInvariantBoundary,
      RuntimeScalarBoundsBelongToTheScaledDefinition) {
   enum class Case {
     Valid,

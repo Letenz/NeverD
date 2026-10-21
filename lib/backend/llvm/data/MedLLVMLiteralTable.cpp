@@ -469,6 +469,7 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   bool SawUnprovedFrameReload = false;
   bool SawRawOriginalBase = false;
   bool SawSymbolizedBase = false;
+  bool SawOpaqueRuntimeOffset = false;
   bool AuditIncomplete = false;
   // Large flag-expanded scalar DAGs in real computed-goto loops use just under
   // 5K nodes. Keep the audit bounded while leaving headroom above that proven
@@ -982,6 +983,16 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   // be reused under a different ancestor set.
   std::set<AddressProvenanceVarKey> ProvenWithoutBase;
   size_t CycleEpoch = 0;
+  auto offsetPreservesAddress = [&](const MedVar &Offset) {
+    if (valueIsStableAddressOffset(Offset))
+      return true;
+    if (!valueIsOpaqueRuntimeOffset(Offset))
+      return false;
+    // The complete address audit below must still establish one immutable
+    // run and a uniform symbolized model for every selectable base.
+    SawOpaqueRuntimeOffset = true;
+    return true;
+  };
   std::function<BaseProof(const MedVar &, int, SeenSet)> walk;
   auto walkUncached = [&](const MedVar &V, int Depth,
                           SeenSet Seen) -> BaseProof {
@@ -1276,7 +1287,7 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
             LeftPointer ? Def->Inputs[0] : Def->Inputs[1];
         const MedVar &OffsetInput =
             LeftPointer ? Def->Inputs[1] : Def->Inputs[0];
-        if (!valueIsStableAddressOffset(OffsetInput)) {
+        if (!offsetPreservesAddress(OffsetInput)) {
           SawInvalidPointerExpression = true;
           return BaseProof::Invalid;
         }
@@ -1309,7 +1320,7 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
       }
       if ((L == BaseProof::HasBase || L == BaseProof::Cycle) &&
           R == BaseProof::NoBase) {
-        if (!valueIsStableAddressOffset(Def->Inputs[1])) {
+        if (!offsetPreservesAddress(Def->Inputs[1])) {
           SawInvalidPointerExpression = true;
           return BaseProof::Invalid;
         }
@@ -1562,6 +1573,27 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   };
   BaseProof Proof = walk(BaseVar, 0, {});
 
+  if (SawOpaqueRuntimeOffset) {
+    std::optional<uint64_t> Run;
+    bool CompleteMirror =
+        !SawRawOriginalBase && SawSymbolizedBase && CycleEpoch == 0;
+    for (const auto &Base : Bases) {
+      const auto Owner = immutablePointerMirrorRun(Base.VA);
+      const auto ExactOwner = Base.OwnerVA == InvalidVA
+                                  ? Owner
+                                  : immutablePointerMirrorRun(Base.OwnerVA);
+      if (!Owner || ExactOwner != Owner || (Run && *Run != *Owner)) {
+        CompleteMirror = false;
+        break;
+      }
+      Run = Owner;
+    }
+    if (!CompleteMirror || !Run) {
+      Proof = BaseProof::Invalid;
+      SawInvalidPointerExpression = true;
+    }
+  }
+
   // An invalid relocatable leaf can be hidden by constant arithmetic whose
   // old-image value happens to fold back into a read-only table.  The child
   // walk intentionally rejects that leaf before recording a raw table base;
@@ -1593,6 +1625,7 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
       SawNonBaseValueMerge = false;
       SawRawOriginalBase = true;
       SawSymbolizedBase = false;
+      SawOpaqueRuntimeOffset = false;
       Proof = BaseProof::HasBase;
     }
   }
@@ -1781,6 +1814,13 @@ llvm::Value *MedLLVMEmitter::tryResolveSelectMergeTable(
   // SawPhi because the scalar-domain proof consumes them before this pointer
   // audit, so ordinary `base +/- scalar_phi` remains eligible.
   if (!SawPointerValueMerge && !SawPhi) {
+    if (SawOpaqueRuntimeOffset) {
+      if (llvm::Value *Indexed = tryResolveRuntimeIndexedReadOnlyTable(
+              AddrVar, SizeHint, Bases.size(), Builder))
+        return Indexed;
+      failAmbiguousAddress("literal-runtime-index");
+      return nullptr;
+    }
     if (llvm::Value *Indexed =
             tryResolveIndexedGlobalPtr(AddrVar, SizeHint, FailClosed, Builder))
       return Indexed;

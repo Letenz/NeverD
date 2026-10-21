@@ -771,6 +771,10 @@ private:
   /// `mirror + (node - runStart)`.
   bool addrInCodePtrMirrorRun(uint64_t VA) const;
 
+  /// The immutable complete-run mirror owning this data address, if any.
+  /// A per-object embedding or mutable mirror supplies no such certificate.
+  std::optional<uint64_t> immutablePointerMirrorRun(uint64_t VA) const;
+
   /// If \p AddrVar provably indexes a single writable data segment, return that
   /// segment's start VA; std::nullopt otherwise (no writable base, or the
   /// address mixes two distinct data segments).  VA zero is a valid section
@@ -1040,8 +1044,13 @@ private:
   /// Prove a scaled index at its guarded SSA definition. This does not publish
   /// a scalar model for the unconstrained input or for another load occurrence.
   bool valueIsGuardedScalarOffset(const MedVar &V) const;
+  /// An expression of unchanged runtime words and numeric operands. This
+  /// establishes neither an index bound nor a callable slot domain. An address
+  /// consumer additionally needs a complete immutable mirror and one uniform
+  /// symbolized address model before using it as an unbounded offset.
+  bool valueIsOpaqueRuntimeOffset(const MedVar &V) const;
   /// A runtime word read with no frame or relocatable image address dependency.
-  /// Only a separately bounded scalar use may consume this certificate.
+  /// A consumer must separately prove its bound or complete mirror ownership.
   bool isOpaqueRuntimeWordLoad(const MedOp &Op) const;
   /// Every indirect call of this exact SSA value is reached through a complete
   /// predecessor edge that excludes zero; no result is shared with other uses.

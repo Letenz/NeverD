@@ -2143,10 +2143,22 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
                                           /*DirectPhiConstant=*/false);
         bool LeftTable = L.Role == AddressRole::PointerTable;
         bool RightTable = R.Role == AddressRole::PointerTable;
+        auto offsetPreservesAddress = [&](const MedVar &Offset,
+                                          const AddressProof &Pointer) {
+          if (valueIsStableAddressOffset(Offset))
+            return true;
+          // The complete run already owns every selected static arm. Preserve
+          // its emitted pointer plus unchanged runtime bits; do not rebase an
+          // unbounded raw address or grant callable identity to the LOAD.
+          return Pointer.Model == AddressModel::Symbolized &&
+                 immutablePointerMirrorRun(Pointer.Segment) ==
+                     std::optional<uint64_t>(Pointer.Segment) &&
+                 valueIsOpaqueRuntimeOffset(Offset);
+        };
         if (RightTable && (Def->Opcode == NdOp::INT_SUB || LeftTable))
           return invalidProof();
         if (LeftTable) {
-          if (!valueIsStableAddressOffset(Def->Inputs[1]) ||
+          if (!offsetPreservesAddress(Def->Inputs[1], L) ||
               Def->Output.Size == 0 || Def->Inputs[0].Size == 0 ||
               Def->Output.Size < Def->Inputs[0].Size)
             return invalidProof();
@@ -2154,7 +2166,7 @@ llvm::Value *MedLLVMEmitter::tryResolveCodePtrTablePtr(
         }
         if (RightTable) {
           if (Def->Opcode != NdOp::INT_ADD ||
-              !valueIsStableAddressOffset(Def->Inputs[0]) ||
+              !offsetPreservesAddress(Def->Inputs[0], R) ||
               Def->Output.Size == 0 || Def->Inputs[1].Size == 0 ||
               Def->Output.Size < Def->Inputs[1].Size)
             return invalidProof();
