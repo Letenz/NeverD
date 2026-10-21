@@ -954,6 +954,20 @@ Fork after initialization and dynamic SDK unloading are not supported by the
 retained backend; those embedding hosts must select the explicit native-thread
 baseline. Normal builds enable all four performance providers.
 
+The SDK exposes `neverd_session_discover_functions_step` for polling clients.
+Its single retained job owns a value snapshot of the image, including bytes
+and metadata, and never borrows or mutates the live session on its thread.
+Completion publishes both the discovered identities and the detector's
+verified-entry/code-reference facts on the session executor, only if the
+function-list revision still matches. The computation releases its image
+before the result waits for publication. A stale job is drained before another
+starts; edits/reload do not accumulate retired snapshots. Errors remain SDK
+diagnostics, and destruction joins the job before SDK code can unload.
+Explicit synchronous discovery can consume the same job and still returns
+only when discovery is complete. Worker polling waits for requests rather
+than busy-spinning while a snapshot is computing. Older SDKs retain the
+synchronous fallback.
+
 Function preparation uses `neverd_prepare_function_view`, which shares the
 source route's ARM mode, exception-handler discovery and analysis-scope checks
 without emitting C. Source, IR and CFG views consume that prepared pipeline.
