@@ -738,6 +738,8 @@ void LLVMCWriter::recordSourceNames(const llvm::Module &Mod) {
 
 void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   bool HasFloatingArithmetic = false;
+  bool HasWin64Call = false;
+  Win64CallABI.clear();
   std::set<std::string> Headers;
   // The routines the user declares that the unit calls: directly, and
   // through their imports.
@@ -792,6 +794,8 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
             ScalarUnaries.emplace(
                 functionIdentifier(*Call->getCalledFunction()), *Shape);
         }
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst))
+          HasWin64Call |= Call->getCallingConv() == llvm::CallingConv::Win64;
         if (llvm::isa<llvm::FenceInst>(&Inst))
           HasCIntrinsics = true;
         // A library routine called through its import takes the header that
@@ -997,6 +1001,15 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
       OS << "#include <" << H << ">\n";
     OS << "\n";
     IncludedHeaders.insert(Headers.begin(), Headers.end());
+  }
+  if (HasWin64Call) {
+    Win64CallABI =
+        GlobalIdentifierAllocator.allocate("__neverd_ms_abi", "nd_ms_abi");
+    // Win64 is MSVC x64's native convention. Other hosts still need the
+    // explicit ABI when calling a physical Win64 function pointer.
+    OS << "#if defined(_MSC_VER) && defined(_M_X64)\n#define " << Win64CallABI
+       << "\n#else\n#define " << Win64CallABI
+       << " __attribute__((ms_abi))\n#endif\n\n";
   }
   // A routine the user declares under the name of one a header the unit
   // includes declares otherwise takes another identifier, which links by

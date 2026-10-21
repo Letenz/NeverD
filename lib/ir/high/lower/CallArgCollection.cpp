@@ -518,9 +518,12 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
         }
       }
     }
-    // A validated zero-argument binding is a complete result. An empty list
-    // must not select the unbound-call heuristic and acquire live registers.
-    if (Hinted.empty())
+    // Analyst operands were placed and proved at the original call occurrence
+    // before SSA. Register/stack scanning cannot replace their exact widths or
+    // append operands beyond that declaration. A zero-argument binding is also
+    // complete and must not acquire unrelated live registers.
+    if (Hinted.empty() ||
+        Call.SourceCallHint->CallKind == SourceCallTypeHint::Kind::Analyst)
       return Hinted;
   }
 
