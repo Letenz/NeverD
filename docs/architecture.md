@@ -1908,6 +1908,13 @@ arithmetic flags. Both return-PC stores, the cookie read and the FS chain
 transfer remain explicit. Scratch storage is separate from source temporaries,
 and all frame displacements keep their signed representation. This projection
 preserves the source EH metadata and does not grant native reconstruction.
+`RegistrationEpilogue` subsequently expands unguarded shared exits from the
+current helper instructions, using the same decoder, relocations and x86
+lifter as ordinary instructions. Exact caller boundaries and chain-removal
+receipts bind each occurrence. Explicit CALL/RET stack effects retain the
+moved return PC; EAX, EDX and flags are preserved by the helper's own dataflow.
+Guarded wrappers keep their original calls until the checker and its failure
+path have a physical projection. Neither expansion changes native EH admission.
 Registration range recovery uses complete installing prefixes as local entry
 boundaries. A bounded instruction graph can disprove a heuristic start inside
 an operand while retaining stated, exported, relocated and conflicting direct

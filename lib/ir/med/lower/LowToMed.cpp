@@ -13,6 +13,7 @@
 
 #include "neverd/ir/med/LowToMed.h"
 
+#include "../X86/RegistrationEpilogue.h"
 #include "../X86/RegistrationPrologue.h"
 #include "../X86/RegistrationRoots.h"
 
@@ -580,10 +581,11 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
                                    BinaryFormat Fmt) {
   TargetArch = TheArch;
   TargetFormat = Fmt;
-  const auto Physical =
-      Image && TheArch == Arch::X86 && Fmt == BinaryFormat::COFF
-          ? x86_registration::projectCxxPrologue(*Image, SourceLow)
-          : std::nullopt;
+  auto Physical = Image && TheArch == Arch::X86 && Fmt == BinaryFormat::COFF
+                      ? x86_registration::projectCxxPrologue(*Image, SourceLow)
+                      : std::nullopt;
+  if (Physical)
+    x86_registration::projectCxxEpilogues(*Image, SourceLow, *Physical);
   const LowFunc &Low = Physical ? *Physical : SourceLow;
   for (const LowBlock &Block : Low.Blocks)
     for (const LowOp &Op : Block.Ops) {

@@ -6054,6 +6054,12 @@ stack writes, including overlapping saves and both return-PC stores.
 `CxxEAXHelperProjectionRechecksTheCurrentEntry` rejects stale bytes, allocation,
 handler, cookie, fixups, source operations, boundaries, entry ownership and
 receipts. Physical projection must keep the separate native EH gate closed.
+`CxxSharedEpilogueProjectsThePhysicalReturnBeforeSSA` checks the returned scalar,
+restored ESP and chain removal for 32 source forms, including caller argument
+pops. `CxxSharedEpilogueProjectionRequiresItsCurrentCall` rejects 22 changed
+receipts, instruction boundaries, calls, helpers and ownership conditions.
+The guarded-exit tests additionally require their cookie-checking CALL to
+survive MedIR conversion even when the source cookie proof is complete.
 `RegistrationTryLevel.CxxSharedEpilogue*` checks 32 combinations of push width,
 allocation, helper form and parent return-pop, eight overwritten-save cases,
 26 current-image mutations and 18 call/frame mutations. The assembled images

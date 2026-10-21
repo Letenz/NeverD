@@ -1953,6 +1953,7 @@ TEST(RegistrationTryLevel, CxxEAXHelperInputPE32HasTheCheckedPhysicalCall) {
   ASSERT_TRUE(ExitFunction.ExceptionMetadata);
   ASSERT_TRUE(ExitFunction.RegistrationStates);
   bool FoundExit = false;
+  va_t ExitCall = InvalidVA;
   for (const auto &Block : ExitFunction.Blocks)
     for (const auto &Op : Block.Ops)
       if (Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
@@ -1964,6 +1965,7 @@ TEST(RegistrationTryLevel, CxxEAXHelperInputPE32HasTheCheckedPhysicalCall) {
         EXPECT_EQ(Exit->Caller.size(), 5u);
         EXPECT_EQ(Exit->Helper.size(), 20u);
         FoundExit = true;
+        ExitCall = Op.Addr;
       }
   EXPECT_TRUE(FoundExit);
   const bool IntactSaves =
@@ -1975,6 +1977,16 @@ TEST(RegistrationTryLevel, CxxEAXHelperInputPE32HasTheCheckedPhysicalCall) {
   EXPECT_EQ(bool(ExitStates.CxxPrologue), IntactSaves);
   EXPECT_FALSE(cxxRegistrationFrameCoordinate(*ExitFunction.ExceptionMetadata,
                                               &ExitStates));
+  const auto ExitMed =
+      Converter.convert(ExitFunction, Arch::X86, BinaryFormat::COFF);
+  const bool RetainedExitCall = std::any_of(
+      ExitMed.Blocks.begin(), ExitMed.Blocks.end(), [&](const auto &Block) {
+        return std::any_of(
+            Block.Ops.begin(), Block.Ops.end(), [&](const auto &Op) {
+              return Op.Addr == ExitCall && Op.Opcode == NdOp::CALL;
+            });
+      });
+  EXPECT_EQ(RetainedExitCall, !IntactSaves);
   const va_t GuardedParent = Export("guarded_state_parent");
   ASSERT_NE(GuardedParent, InvalidVA);
   const auto GuardedFunction = liftEntry(*Image, GuardedParent);
@@ -2658,6 +2670,157 @@ TEST(RegistrationTryLevel, CxxSharedEpilogueRestoresTheProvedParentFrame) {
         }
 }
 
+TEST(RegistrationTryLevel,
+     CxxSharedEpilogueProjectsThePhysicalReturnBeforeSSA) {
+  for (bool Wide : {false, true})
+    for (unsigned Variant : {0, 1, 2})
+      for (uint32_t Allocation : {0, 1, 4, 32})
+        for (bool PopArguments : {false, true}) {
+          if (Variant && Allocation < 4)
+            continue;
+          SCOPED_TRACE(::testing::Message()
+                       << Wide << ' ' << Variant << ' ' << Allocation << ' '
+                       << PopArguments);
+          auto [Image, Call] = makeCxxSharedEpilogueImage(
+              Wide, Variant, Allocation, PopArguments);
+          const auto Low = liftEntry(Image, kText + 0x20);
+          ASSERT_TRUE(Low.RegistrationStates);
+          ASSERT_TRUE(Low.RegistrationStates->ChainOperationsComplete);
+          LowToMedConverter Converter;
+          Converter.setBinaryImage(&Image);
+          const auto Med =
+              Converter.convert(Low, Arch::X86, BinaryFormat::COFF);
+          ASSERT_TRUE(verifyMedFunc(Med, "shared-cxx-physical-return"));
+          unsigned Returns = 0, StackRestores = 0, ChainRemovals = 0;
+          for (const auto &Block : Med.Blocks)
+            for (const auto &Op : Block.Ops) {
+              EXPECT_FALSE(Op.Addr == Call && Op.Opcode == NdOp::CALL);
+              if (Op.Opcode == NdOp::RETURN) {
+                ++Returns;
+                ASSERT_EQ(Op.NumInputs, 1u);
+                EXPECT_TRUE(Op.Inputs[0].isConst());
+                EXPECT_EQ(Op.Inputs[0].ConstVal, 0x11223344u);
+              }
+              if (Op.Addr == Call && Op.Output.Kind == MedVar::Reg &&
+                  Op.Output.RegOff == x86reg::RSP && Op.Output.Size == 4 &&
+                  entryStackOffset(Med, Op.Output, Arch::X86,
+                                   BinaryFormat::COFF) == 0)
+                ++StackRestores;
+              if (Op.Addr == Call && Op.Opcode == NdOp::STORE &&
+                  Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS)
+                ++ChainRemovals;
+            }
+          EXPECT_EQ(Returns, 1u);
+          EXPECT_NE(StackRestores, 0u);
+          EXPECT_EQ(ChainRemovals, 1u);
+          EXPECT_FALSE(cxxRegistrationFrameCoordinate(
+              *Med.ExceptionMetadata, &*Med.RegistrationStates));
+        }
+}
+
+TEST(RegistrationTryLevel, CxxSharedEpilogueProjectionRequiresItsCurrentCall) {
+  auto [Original, Call] = makeCxxSharedEpilogueImage(false, 2, 32);
+  const auto Proven = liftEntry(Original, kText + 0x20);
+  ASSERT_TRUE(Proven.RegistrationStates);
+  ASSERT_TRUE(Proven.RegistrationStates->ChainOperationsComplete);
+  for (unsigned Mutation = 0; Mutation != 22; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = Original;
+    auto Low = Proven;
+    auto &Block =
+        *std::find_if(Low.Blocks.begin(), Low.Blocks.end(),
+                      [&](const auto &B) { return B.EndAddr == Call + 5; });
+    auto &Boundary = Block.InstructionBoundaries.back();
+    auto &Accesses = Low.RegistrationStates->ChainAccesses;
+    auto Access =
+        std::find_if(Accesses.begin(), Accesses.end(), [&](const auto &A) {
+          return A.Address == Call &&
+                 A.AccessKind == RegistrationChainAccess::Kind::Remove;
+        });
+    ASSERT_NE(Access, Accesses.end());
+    switch (Mutation) {
+    case 0:
+      Accesses.erase(Access);
+      break;
+    case 1:
+      ++Access->OpSeq;
+      break;
+    case 2:
+      ++Access->EndAddress;
+      break;
+    case 3:
+      ++Access->Address;
+      break;
+    case 4: {
+      const auto Duplicate = *Access;
+      Accesses.push_back(Duplicate);
+      break;
+    }
+    case 5:
+      Access->AccessKind = RegistrationChainAccess::Kind::ReadInstalledHead;
+      break;
+    case 6:
+      Image.Segments.front().Data[0x180 + 12] ^= 1;
+      break;
+    case 7:
+      Image.Segments.front().Data[Call - kText] = 0xe9;
+      break;
+    case 8:
+      Image.BaseRelocations.push_back({kText + 0x181, 3});
+      break;
+    case 9:
+      Image.Segments.front().Flags =
+          Image.Segments.front().Flags | SegmentFlags::Writable;
+      break;
+    case 10:
+      --Boundary.FirstOp;
+      break;
+    case 11:
+      ++Boundary.OpCount;
+      break;
+    case 12:
+      --Boundary.Size;
+      break;
+    case 13:
+      Boundary.Mode = InstructionMode::Thumb;
+      break;
+    case 14:
+      Boundary.TargetMode = LowInstructionTargetMode::ARM;
+      break;
+    case 15:
+      Boundary.ControlFlags |= LowInstructionControlFlag::NoReturn;
+      break;
+    case 16:
+      Block.Ops.back().Output = NdVar::reg(x86reg::RDX, 4);
+      break;
+    case 17:
+      ++Block.Ops.back().Inputs[0].Offset;
+      break;
+    case 18:
+      Low.OrdinaryModuleAnalysisRoots.insert(Call + 1);
+      break;
+    case 19:
+      ++Block.EndAddr;
+      break;
+    case 20:
+      Low.RegistrationStates->CxxPrologue.reset();
+      break;
+    case 21:
+      Low.RegistrationStates->ChainOperationsComplete = false;
+      break;
+    }
+    LowToMedConverter Converter;
+    Converter.setBinaryImage(&Image);
+    const auto Med = Converter.convert(Low, Arch::X86, BinaryFormat::COFF);
+    EXPECT_TRUE(
+        std::any_of(Med.Blocks.begin(), Med.Blocks.end(), [&](const auto &B) {
+          return std::any_of(B.Ops.begin(), B.Ops.end(), [&](const auto &Op) {
+            return Op.Addr == Call && Op.Opcode == NdOp::CALL;
+          });
+        }));
+  }
+}
+
 TEST(RegistrationTryLevel, CxxSharedEpilogueCannotRestoreOverwrittenSaves) {
   for (bool Wide : {false, true})
     for (unsigned Variant : {1, 2})
@@ -3065,6 +3228,17 @@ TEST(RegistrationTryLevel, CxxGuardedSharedEpilogueProvesTheCookieBeforeExit) {
           EXPECT_TRUE(States.CallFrameEffects.empty());
           EXPECT_FALSE(cxxRegistrationFrameCoordinate(
               *Function.ExceptionMetadata, &States));
+          LowToMedConverter Converter;
+          Converter.setBinaryImage(&Image);
+          const auto Med =
+              Converter.convert(Function, Arch::X86, BinaryFormat::COFF);
+          EXPECT_TRUE(std::any_of(
+              Med.Blocks.begin(), Med.Blocks.end(), [&](const auto &B) {
+                return std::any_of(
+                    B.Ops.begin(), B.Ops.end(), [&](const auto &Op) {
+                      return Op.Addr == Call && Op.Opcode == NdOp::CALL;
+                    });
+              }));
         }
 }
 
