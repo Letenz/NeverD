@@ -271,14 +271,17 @@ public:
         // distribution proof quadratic in its number of factors.
         llvm::APInt Scale(Width, 1);
         std::map<uint32_t, uint32_t> Powers;
+        unsigned PolynomialOperands = 0;
         for (SymRef Child : Ctx.operands(R)) {
           const auto &Operand = Memo.at(Child.index());
           if (Operand.empty()) {
             Scale.clearAllBits();
             break;
           }
-          if (Operand.size() != 1)
+          if (Operand.size() != 1) {
+            ++PolynomialOperands;
             continue;
+          }
           const auto &[Key, Coefficient] = *Operand.begin();
           if (!Resources.charge(Words))
             return nullptr;
@@ -301,7 +304,14 @@ public:
         if (!Resources.array(Powers.size(), sizeof(Factor)))
           return nullptr;
         Monomial Key(Powers.begin(), Powers.end());
-        if (!add(P, Key, Scale))
+        // Multiply the polynomial children before attaching a long common
+        // monomial. Its powers then need copying only once per final term.
+        // Keep the scale early so modular zero coefficients still prune work.
+        const bool DelayCommon =
+            Powers.size() >= ArithmeticProductLimits::MinCommonAtoms &&
+            PolynomialOperands >=
+                ArithmeticProductLimits::MinPolynomialOperands;
+        if (!add(P, DelayCommon ? Monomial{} : Key, Scale))
           return nullptr;
         for (SymRef Child : Ctx.operands(R)) {
           if (P.empty())
@@ -314,6 +324,13 @@ public:
           P = std::move(Next);
           if (P.empty())
             break;
+        }
+        if (DelayCommon && !P.empty()) {
+          Polynomial Common, Next;
+          if (!add(Common, Key, llvm::APInt(Width, 1)) ||
+              !multiply(P, Common, Next))
+            return nullptr;
+          P = std::move(Next);
         }
       } else if (Ctx.op(R) == SymOp::Not && ExpandComplements) {
         // A word complement is exactly -1-X in the modular ring. Only
@@ -505,6 +522,21 @@ public:
         continue;
       }
 
+      // Extract an entire shared monomial together. Removing just one atom
+      // per frame repeatedly scans and copies the same long common powers.
+      Monomial Divisor;
+      if (Counts.at(BestId).first == F.P.size()) {
+        for (const auto &[Id, Count] : Counts)
+          if (Count.first == F.P.size()) {
+            if (!Resources.array(1, sizeof(Factor)))
+              return std::nullopt;
+            Divisor.emplace_back(Id, Count.second);
+          }
+      } else {
+        if (!Resources.array(1, sizeof(Factor)))
+          return std::nullopt;
+        Divisor.emplace_back(BestId, BestPower);
+      }
       Frame Next;
       for (const auto &[Key, Coefficient] : F.P) {
         auto It = std::lower_bound(Key.begin(), Key.end(), Factor{BestId, 0});
@@ -513,17 +545,22 @@ public:
             return std::nullopt;
           continue;
         }
-        if (!Resources.array(Key.size(), sizeof(Factor)))
+        if (!Resources.array(Key.size(), sizeof(Factor)) ||
+            !Resources.array(Words, sizeof(uint64_t)))
           return std::nullopt;
-        Monomial Quotient(Key);
-        const size_t Index = static_cast<size_t>(It - Key.begin());
-        Quotient[Index].second -= BestPower;
-        if (!Quotient[Index].second)
-          Quotient.erase(Quotient.begin() + Index);
-        if (!add(Next.P, Quotient, Coefficient))
+        Monomial Quotient;
+        Quotient.reserve(Key.size());
+        size_t I = 0;
+        for (auto [Id, Power] : Key) {
+          if (I != Divisor.size() && Divisor[I].first == Id)
+            Power -= Divisor[I++].second;
+          if (Power)
+            Quotient.emplace_back(Id, Power);
+        }
+        if (!addOwned(Next.P, std::move(Quotient), Coefficient))
           return std::nullopt;
       }
-      auto Common = term({{BestId, BestPower}}, llvm::APInt(Width, 1));
+      auto Common = term(Divisor, llvm::APInt(Width, 1));
       if (!Common || !Resources.charge(1, sizeof(Frame)))
         return std::nullopt;
       F.P.clear();

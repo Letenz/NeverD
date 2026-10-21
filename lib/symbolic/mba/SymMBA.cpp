@@ -882,6 +882,92 @@ SymRef detail::completeComplementarySums(SymContext &Ctx, SymRef Root,
 
 namespace {
 
+// Read a small linear tail separately from a large product frontier. Those
+// summands remain additive even when the nonlinear terms use the same inputs.
+// This is a decomposition of the sum, not an independence assumption.
+SymRef simplifyLinearTail(SymContext &Ctx, SymRef Root, const MBAOptions &Opts,
+                          WorkBudget &Budget, SolveReport &Rep) {
+  using Limits = LinearTailLimits;
+  if (Ctx.op(Root) != SymOp::Add || Ctx.numOperands(Root) > Limits::MaxTerms ||
+      Budget.exhausted())
+    return Root;
+  unsigned Higher = 0, LinearCount = 0;
+  size_t Nodes = 0;
+  auto Unscaled = [&](SymRef Term) {
+    return Ctx.op(Term) == SymOp::Mul && Ctx.numOperands(Term) == 2 &&
+                   Ctx.isConst(Ctx.operand(Term, 0))
+               ? Ctx.operand(Term, 1)
+               : Term;
+  };
+  for (SymRef Term : Ctx.operands(Root)) {
+    SymRef Body = Unscaled(Term);
+    if (Ctx.op(Body) == SymOp::Mul) {
+      Higher +=
+          Ctx.numOperands(Body) - unsigned(Ctx.isConst(Ctx.operand(Body, 0))) >=
+          Limits::MinDegree;
+    } else {
+      const size_t Cost = Ctx.readabilityCost(Body);
+      if (Cost > Limits::MaxNodes - Nodes)
+        return Root;
+      Nodes += Cost;
+      ++LinearCount;
+    }
+  }
+  if (Higher < Limits::MinProducts || LinearCount < 2)
+    return Root;
+  const size_t Count = Ctx.numOperands(Root);
+  const size_t Words = (size_t(Ctx.width(Root)) - 1) / 64 + 1;
+  size_t Storage = (Nodes + Count) * 128;
+  if (Storage > Opts.MaxTableBytes ||
+      Words > (Opts.MaxTableBytes - Storage) / (Count * sizeof(uint64_t)))
+    return Root;
+  Storage += Words * Count * sizeof(uint64_t);
+  if (!Budget.consume(Nodes + Count + Words * Count))
+    return Root;
+  // Own every reference before interning the reduced tail can grow the arena.
+  llvm::SmallVector<SymRef, 8> Linear, Other, Pending;
+  for (SymRef Term : Ctx.operands(Root)) {
+    SymRef Body = Unscaled(Term);
+    if (Ctx.op(Body) == SymOp::Mul)
+      Other.push_back(Term);
+    else {
+      Linear.push_back(Term);
+      Pending.push_back(Body);
+    }
+  }
+  llvm::SmallVector<SymRef, 4> Inputs;
+  while (!Pending.empty()) {
+    SymRef R = Pending.pop_back_val();
+    if (Ctx.isConst(R))
+      continue;
+    if (Ctx.isVar(R)) {
+      if (!llvm::is_contained(Inputs, R))
+        Inputs.push_back(R);
+      if (Inputs.size() > Limits::MaxInputs)
+        return Root;
+      continue;
+    }
+    auto Op = Ctx.op(R);
+    if (Op != SymOp::And && Op != SymOp::Or && Op != SymOp::Xor &&
+        Op != SymOp::Not)
+      return Root;
+    Pending.append(Ctx.operands(R).begin(), Ctx.operands(R).end());
+  }
+  auto Tail = Ctx.mkAdd(Linear);
+  MBAOptions Inner = Opts;
+  Inner.MaxTableBytes -= Storage;
+  SolveReport Report;
+  auto Reduced = solveOneRegion(Ctx, Tail, Inner, Budget, Report);
+  Rep.BudgetExhausted |= Report.BudgetExhausted;
+  Rep.NumAtoms = std::max(Rep.NumAtoms, Report.NumAtoms);
+  if (Reduced == Tail || Report.Evidence != MBAEvidence::Derivation)
+    return Root;
+  Other.push_back(Reduced);
+  auto Candidate = Ctx.mkAdd(Other);
+  return readingScore(Ctx, Candidate) < readingScore(Ctx, Root) ? Candidate
+                                                                : Root;
+}
+
 SymRef finishCompletedSums(SymContext &Ctx, SymRef Root, const MBAOptions &Opts,
                            WorkBudget &Budget, SolveReport &Rep) {
   SymRef Completed = completeComplementarySums(Ctx, Root, Opts, Budget);
@@ -1076,6 +1162,8 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                               /*ExpandComplements=*/false)
             : solveCoefficientFactors(Ctx, WalkRoot, Opts, Budget, Factored);
     WholeRep.BudgetExhausted |= Factored.BudgetExhausted;
+    WholeAlternative =
+        simplifyLinearTail(Ctx, WholeAlternative, Opts, Budget, WholeRep);
   }
 
   // Walking children before parents means that by the time a node is reached,
