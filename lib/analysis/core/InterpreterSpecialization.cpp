@@ -33,6 +33,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <memory>
 #include <set>
 #include <tuple>
 #include <utility>
@@ -645,6 +646,7 @@ struct ProducerBitView {
 struct ControlRefinement {
   explicit ControlRefinement(uint64_t CacheWords) : Proofs(CacheWords) {}
   detail::FiniteQueryCache Proofs;
+  std::unique_ptr<RecoveryMachineExitLookup> MachineExits;
   std::vector<SymRegisterRange> Registers;
   std::vector<SpecializationFrameSlot> Slots;
   std::vector<SymRegisterRange> ContextRegisters;
@@ -2379,17 +2381,15 @@ bool Specializer::evaluate(int Id) {
         lowerRuntimeRegisterRead(Instruction, Options, ReadSample);
     std::vector<LowOp> Operations = Instruction.Ops;
     std::optional<SpecializationExternalExit> ExternalExit;
-    for (const auto &Declaration : Options.X64MachineExits) {
-      if (++Result.EvaluatedOperations > Options.MaxOperations)
-        return fail(SpecializationStatus::BudgetExceeded,
-                    "machine-exit lookup budget exhausted");
-      if (Declaration.Address == Cursor.Address) {
-        ExternalExit.emplace();
-        ExternalExit->Original = Instruction;
-        ExternalExit->MachineExit = Declaration;
-        break;
-      }
-    }
+    uint64_t ExitWork = Options.MaxOperations - Result.EvaluatedOperations;
+    const bool LookedUp =
+        Refinement.MachineExits->lookup(Cursor.Address, ExitWork, ExternalExit);
+    Result.EvaluatedOperations = Options.MaxOperations - ExitWork;
+    if (!LookedUp)
+      return fail(SpecializationStatus::BudgetExceeded,
+                  "machine-exit lookup budget exhausted");
+    if (ExternalExit)
+      ExternalExit->Original = Instruction;
     if (Instruction.TerminalImport) {
       if (std::find(Options.X64TerminalImports.begin(),
                     Options.X64TerminalImports.end(),
@@ -4391,6 +4391,30 @@ SpecializationResult Specializer::run() {
     setUnsafeOrigin(Location, false, InitialOrigins);
     for (uint16_t I = 0; I < Location.Size; ++I)
       InitialOrigins.UndefinedFlags.erase(Location.Offset + I);
+  }
+  if (!Refinement.MachineExits) {
+    auto Architecture = recoveryArchitecture(Options.Architecture);
+    if (!Architecture) {
+      fail(SpecializationStatus::Unsupported,
+           llvm::toString(Architecture.takeError()));
+      return std::move(Result);
+    }
+    uint64_t Work = Options.MaxOperations - Result.EvaluatedOperations;
+    auto Index = (*Architecture)->prepareMachineExitLookup(Options, Work);
+    Result.EvaluatedOperations = Options.MaxOperations - Work;
+    if (!Index) {
+      llvm::handleAllErrors(std::move(Index.takeError()),
+                            [&](const llvm::ErrorInfoBase &Error) {
+                              fail(Error.convertToErrorCode() ==
+                                           std::make_error_code(
+                                               std::errc::value_too_large)
+                                       ? SpecializationStatus::BudgetExceeded
+                                       : SpecializationStatus::InvalidInput,
+                                   Error.message());
+                            });
+      return std::move(Result);
+    }
+    Refinement.MachineExits = std::move(*Index);
   }
   std::vector<int> Entries;
   const auto InitialProjection =
