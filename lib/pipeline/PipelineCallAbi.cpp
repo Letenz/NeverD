@@ -918,9 +918,11 @@ AnalysisCacheWarmup warmOmittedCallees(const BinaryImage &Img,
   // Warming fills three quarters of the memo, and leaves the rest to the
   // callees selections read: bodies past it would only push those out.
   constexpr size_t WarmedBytes = OmittedCalleeMemo::MaxBytes / 4 * 3;
-  // A small body is the signature of a routine many functions call; a large
-  // one is read where a selection first reads it.
-  constexpr size_t MaxWarmedOperations = 512;
+  // A body past the SSA node bound is no signature (conversion), so warming
+  // converts lifts up to that many operations; a selection converts a larger
+  // callee where it first calls it.
+  constexpr size_t MaxWarmedOperations =
+      static_cast<size_t>(limits::kMaxSSANodes);
   for (const va_t Target : Functions) {
     if (!Reader.reads(Target))
       continue;
