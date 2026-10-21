@@ -120,6 +120,29 @@ TEST_F(SessionFunctionDiscovery,
   }
 }
 
+TEST_F(SessionFunctionDiscovery, CallsAtTheEntryAreSweptInStep) {
+  // The image's one PT_LOAD maps its headers too, and a sweep from them
+  // decodes `00 e8`, the last header byte with the opcode of the entry's
+  // first call, as one instruction.  Swept from the entry, every call is
+  // read: main calls a, c and d; a calls b; b calls c.
+  constexpr char Code[] = "\xe8\x0b\x00\x00\x00"     // main: call a
+                          "\xe8\x12\x00\x00\x00"     // call c
+                          "\xe8\x13\x00\x00\x00"     // call d
+                          "\xc3"                     // ret
+                          "\xe8\x01\x00\x00\x00\xc3" // a: call b; ret
+                          "\xe8\x01\x00\x00\x00\xc3" // b: call c; ret
+                          "\xb8\x07\x00\x00\x00\xc3" // c: mov eax, 7; ret
+                          "\xc3";                    // d: ret
+  const std::string Path = write(
+      "chain.elf", makeNativeELF(false, 0x400000, {},
+                                 std::string_view(Code, sizeof(Code) - 1)));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Entry = neverd_session_entry_addr(Session);
+  ASSERT_EQ(neverd_session_discover_functions(Session), 5);
+  for (const uint64_t Offset : {0x0, 0x10, 0x16, 0x1c, 0x22})
+    EXPECT_GE(neverd_func_find_by_addr(Session, Entry + Offset), 0) << Offset;
+}
+
 TEST_F(SessionFunctionDiscovery,
        RecoveredExtentsSurviveSelectingAnotherFunction) {
   // An x86-64 entry that calls the function after it: discovery lists both

@@ -1178,9 +1178,20 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
   for (const auto &[Start, End] : Img.ImportStubRanges)
     if (End > Start)
       AddRange(Img.getSegmentFor(Start), Start, End - Start);
+  // A sectionless mapping can start with what is no code, as an executable
+  // ELF's one PT_LOAD maps its headers: a sweep through them may come out of
+  // step and decode across the first instructions.  The entry point is an
+  // instruction, so the sweep starts again there.
   for (const Segment &Seg : Img.Segments)
-    if (!Img.segmentHasReadableSectionMetadata(Seg))
-      AddRange(&Seg, Seg.VA, Seg.Data.size());
+    if (!Img.segmentHasReadableSectionMetadata(Seg)) {
+      const va_t End = Seg.VA + Seg.Data.size();
+      const va_t Entry = normalizeCodeAddress(Img.Entry, Img.Arch, Img.Mode);
+      if (Img.Entry != 0 && Entry > Seg.VA && Entry < End) {
+        AddRange(&Seg, Seg.VA, Entry - Seg.VA);
+        AddRange(&Seg, Entry, End - Entry);
+      } else
+        AddRange(&Seg, Seg.VA, Seg.Data.size());
+    }
 
   // An x86 sweep reads only sizes and ids, and the targets of calls.
   const bool SweepWithoutDetail =
