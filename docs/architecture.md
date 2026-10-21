@@ -4505,7 +4505,14 @@ keeps its forwarder probes (`propagateForwardedCallArities`): a later run
 takes one where the callee summaries, user prototypes and names hold what the
 probe read under every key `recoverCallAbi` noted, so a new summary read in
 `recoverCallAbi` must note its key, and it may write summaries only at the
-recovered function's entry. Every normal
+recovered function's entry. The body keeps its recoveries as an omitted
+callee the same way (`recoverModuleCallAbi`): a later run whose summaries hold
+what a recovery read takes the summaries it left at the entry and the
+parameter count that bounds the run's calls, and on i386 what the second
+regparm pass reads of the body and gives. Where only that second pass reads
+differently, the body is recovered again from the summaries the first pass
+read. A Darwin run, whose recovery also reads the leaf callees of its own
+selection, keeps none. Every normal
 return must agree on the stack change, and a pushed result must be initialized
 without reading an empty slot. Cycles in the call graph, incomplete lifting,
 environment restores, tag changes, unknown intrinsics and exceptional edges
