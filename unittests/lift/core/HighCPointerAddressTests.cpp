@@ -41716,7 +41716,9 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadGsWrappedSehLlvmcNestsHandlerBodies) {
     ASSERT_FALSE(Source.empty()) << Source;
     EXPECT_EQ(Source.find("__asm { test"), std::string::npos) << Source;
     EXPECT_EQ(Source.find("struct anon_"), std::string::npos) << Source;
-    EXPECT_NE(Source.find("stos_count"), std::string::npos) << Source;
+    // The buffer clear, a forward REP STOS of zero, is memset of its bytes,
+    // as HighC prints it.
+    EXPECT_NE(Source.find("__builtin_memset("), std::string::npos) << Source;
     EXPECT_NE(Source.find("__asm__(\"llvm.localaddress\")"), std::string::npos)
         << Source;
     // Function selection retains the emitter's exact dependency declarations.
@@ -44650,26 +44652,33 @@ TEST(HighCPointerAddresses, FlatFillsAndCopiesAreTheLibraryRoutines) {
     Code[16] = Destination;
     return Code;
   };
-  for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF}) {
-    SCOPED_TRACE(static_cast<int>(Format));
-    const auto Render = [&](std::vector<uint8_t> Code) {
-      BinaryImage Img = makeCodeFixture(Entry, std::move(Code));
-      Img.Format = Format;
-      return highcOnlyFunction(std::move(Img), Entry);
-    };
-    const std::string Filled = Render(Fill);
-    EXPECT_NE(Filled.find("__builtin_memset("), std::string::npos) << Filled;
-    EXPECT_NE(Filled.find(", 0, 0x40);"), std::string::npos) << Filled;
-    EXPECT_EQ(Filled.find("stosq"), std::string::npos) << Filled;
-    // 0x40 bytes from rsp + 0x48 to rsp + 0x8: adjacent, apart.
-    const std::string Copied = Render(Copy(0x48, 0x08));
-    EXPECT_NE(Copied.find("__builtin_memcpy("), std::string::npos) << Copied;
-    EXPECT_NE(Copied.find(", 0x40);"), std::string::npos) << Copied;
-    EXPECT_EQ(Copied.find("movsq"), std::string::npos) << Copied;
-    // From rsp + 0x10 to rsp + 0x18: the copy reads what it wrote.
-    const std::string Smeared = Render(Copy(0x10, 0x18));
-    EXPECT_NE(Smeared.find("movsq"), std::string::npos) << Smeared;
-  }
+  // LLVM-C prints them alike, from the IR the optimizer folds the counts in.
+  for (const bool LLVMC : {false, true})
+    for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      SCOPED_TRACE(LLVMC);
+      const auto Render = [&](std::vector<uint8_t> Code) {
+        BinaryImage Img = makeCodeFixture(Entry, std::move(Code));
+        Img.Format = Format;
+        return LLVMC ? llvmcOnlyFunction(std::move(Img), Entry, /*NoOpt=*/false)
+                     : highcOnlyFunction(std::move(Img), Entry);
+      };
+      const std::string Filled = Render(Fill);
+      EXPECT_NE(Filled.find("__builtin_memset("), std::string::npos) << Filled;
+      EXPECT_NE(Filled.find(", 0, 0x40);"), std::string::npos) << Filled;
+      EXPECT_EQ(Filled.find("stos"), std::string::npos) << Filled;
+      // 0x40 bytes from rsp + 0x48 to rsp + 0x8: adjacent, apart.
+      const std::string Copied = Render(Copy(0x48, 0x08));
+      EXPECT_NE(Copied.find("__builtin_memcpy("), std::string::npos) << Copied;
+      EXPECT_NE(Copied.find(", 0x40);"), std::string::npos) << Copied;
+      EXPECT_EQ(Copied.find("movs"), std::string::npos) << Copied;
+      // From rsp + 0x10 to rsp + 0x18: the copy reads what it wrote.
+      const std::string Smeared = Render(Copy(0x10, 0x18));
+      EXPECT_NE(Smeared.find(LLVMC ? "movs_count" : "movsq"), std::string::npos)
+          << Smeared;
+      EXPECT_EQ(Smeared.find("__builtin_memcpy((void *)"), std::string::npos)
+          << Smeared;
+    }
 }
 
 TEST(HighCPointerAddresses, StackProbesLeaveNoSelfAssignment) {
@@ -44682,16 +44691,21 @@ TEST(HighCPointerAddresses, StackProbesLeaveNoSelfAssignment) {
       0x48, 0x8b, 0x44, 0x24, 0x08,             // mov rax, [rsp + 8]
       0x48, 0x81, 0xc4, 0x08, 0x10, 0x00, 0x00, // add rsp, 0x1008
       0xc3};                                    // ret
-  for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF}) {
-    SCOPED_TRACE(static_cast<int>(Format));
-    BinaryImage Img = makeCodeFixture(Entry, Code);
-    Img.Format = Format;
-    const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
-    ASSERT_NE(HighC.find("return"), std::string::npos) << HighC;
-    EXPECT_FALSE(
-        std::regex_search(HighC, std::regex(R"((^|[^\w.])([\w.]+) = \2;)")))
-        << HighC;
-  }
+  // Nor LLVM-C, whose optimizer drops the store.
+  for (const bool LLVMC : {false, true})
+    for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      SCOPED_TRACE(LLVMC);
+      BinaryImage Img = makeCodeFixture(Entry, Code);
+      Img.Format = Format;
+      const std::string Source =
+          LLVMC ? llvmcOnlyFunction(std::move(Img), Entry, /*NoOpt=*/false)
+                : highcOnlyFunction(std::move(Img), Entry);
+      ASSERT_NE(Source.find("return"), std::string::npos) << Source;
+      EXPECT_FALSE(
+          std::regex_search(Source, std::regex(R"((^|[^\w.])([\w.]+) = \2;)")))
+          << Source;
+    }
 }
 
 TEST(HighCPointerAddresses, RepeatedCpuidAndRdtscDoNotRedeclareLocals) {
