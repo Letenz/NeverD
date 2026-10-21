@@ -7,6 +7,7 @@
 #include "../../lib/symbolic/mba/SymMBADetail.h"
 #include "SymMBATestsDetail.h"
 
+#include <array>
 #include <bit>
 
 namespace {
@@ -28,6 +29,58 @@ TEST(SymMBAArithmetic, ExtractsSharedFactors) {
     test::simplifiesTo("x * x * y + x * x * z", "x * x * (y + z)", Width);
     test::simplifiesTo("x * y + x * z + w", "x * (y + z) + w", Width);
   }
+}
+
+TEST(SymMBAArithmetic, SharedFlatProductsKeepProofsIndependentAndBudgeted) {
+  for (unsigned Width : {2u, 3u, 8u, 64u, 257u})
+    for (bool ExpandComplements : {false, true}) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(ExpandComplements);
+      SymContext C;
+      auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+      auto Z = C.mkVar("z", Width), W = C.mkVar("w", Width);
+      llvm::SmallVector<SymRef, 32> Tail;
+      for (unsigned I = 0; I != 24; ++I)
+        Tail.push_back(I % 3 == 0 ? X : I % 3 == 1 ? Y : C.mkNot(Z));
+      auto Common = C.mkMul(Tail);
+      auto Three = C.mkConst(Width, 3);
+      auto Factored =
+          C.mkMul({Common, C.mkAdd(X, C.mkMul(Three, Y)), C.mkAdd(Z, W)});
+      auto Expanded = C.mkAdd({C.mkMul({Common, X, Z}), C.mkMul({Common, X, W}),
+                               C.mkMul({Three, Common, Y, Z}),
+                               C.mkMul({Three, Common, Y, W})});
+      detail::WorkBudget Full(65536);
+      ASSERT_TRUE(detail::proveArithmeticIdentity(C, Expanded, Factored, Full,
+                                                  MBAOptions{}.MaxTableBytes,
+                                                  ExpandComplements));
+      for (size_t Work : {size_t(0), size_t(1), Full.used() - 1, Full.used()}) {
+        detail::WorkBudget Budget(Work);
+        EXPECT_EQ(detail::proveArithmeticIdentity(C, Expanded, Factored, Budget,
+                                                  MBAOptions{}.MaxTableBytes,
+                                                  ExpandComplements),
+                  Work == Full.used());
+        EXPECT_LE(Budget.used(), Work);
+      }
+      detail::WorkBudget Wrong(65536), NoStorage(65536);
+      EXPECT_FALSE(detail::proveArithmeticIdentity(
+          C, Expanded, C.mkAdd(Factored, C.mkOne(Width)), Wrong,
+          MBAOptions{}.MaxTableBytes, ExpandComplements));
+      EXPECT_FALSE(detail::proveArithmeticIdentity(
+          C, Expanded, Factored, NoStorage, 0, ExpandComplements));
+      for (uint64_t I = 0; I != 256; ++I) {
+        std::array<llvm::APInt, 4> Values{
+            llvm::APInt(Width, I, false, true),
+            ~llvm::APInt(Width, I * 37, false, true),
+            llvm::APInt(Width, I * 11, false, true),
+            ~llvm::APInt(Width, I * 79, false, true)};
+        auto A = Values[0], B = Values[1], D = Values[2], E = Values[3];
+        auto Want = (A + llvm::APInt(Width, 3) * B) * (D + E);
+        for (unsigned J = 0; J != 8; ++J)
+          Want *= A * B * ~D;
+        EXPECT_EQ(C.eval(Expanded, Values), Want);
+        EXPECT_EQ(C.eval(Factored, Values), Want);
+      }
+    }
 }
 
 TEST(SymMBAArithmetic, ExtractsRepeatedWordCoefficients) {
