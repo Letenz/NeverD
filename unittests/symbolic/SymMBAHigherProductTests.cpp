@@ -503,6 +503,23 @@ TEST(SymMBAHigherProduct, CoefficientBoundsAdmitIndependentModularExpansions) {
         detail::WorkBudget Full(65536);
         ASSERT_TRUE(
             detail::productCoefficientsFitScale(H, Degree, Scale, Full));
+        detail::WorkBudget SupportBudget(65536);
+        auto Support =
+            detail::recoverProductSupport(H, Degree, 2, SupportBudget, 65536);
+        ASSERT_TRUE(Support);
+        ASSERT_EQ(Support->size(), Degree);
+        std::vector<unsigned> Actual, Expected;
+        for (const auto &Factor : *Support) {
+          unsigned Bits = 0;
+          for (unsigned I = 0; I != 4; ++I)
+            Bits |= unsigned(Factor.at(I)) << I;
+          Actual.push_back(Bits);
+        }
+        for (auto Value : Other)
+          Expected.push_back(1u | (1u << Value));
+        llvm::sort(Actual);
+        llvm::sort(Expected);
+        EXPECT_EQ(Actual, Expected);
         detail::WorkBudget Short(Full.used() - 1);
         EXPECT_FALSE(
             detail::productCoefficientsFitScale(H, Degree, Scale, Short));
@@ -540,6 +557,81 @@ TEST(SymMBAHigherProduct, CancelsExactResidualsBeforePolynomialProofExpansion) {
     EXPECT_FALSE(
         detail::provePolynomialIdentity(C, Input, Expected, 3, NoStorage, 0));
   }
+}
+
+TEST(SymMBAHigherProduct, ExtremalScaleRejectionKeepsGeneralExpansionExact) {
+  for (unsigned Width : {3u, 8u, 32u, 64u, 257u}) {
+    SymContext C;
+    auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+    llvm::SmallVector<uint32_t, 2> Ids;
+    C.collectVars(C.mkAdd(X, Y), Ids);
+    llvm::SmallVector<detail::PolyTerm, 3> Terms{
+        {llvm::APInt(Width, 1), {X, X, X, X}},
+        {llvm::APInt(Width, 3), {Y, Y, Y, Y}}};
+    detail::WorkBudget General(4096), Single(4096);
+    auto Form = detail::expandOverMinterms(C, Terms, Ids, Width, General);
+    ASSERT_TRUE(Form);
+    EXPECT_FALSE(detail::expandOverMinterms(C, Terms, Ids, Width, Single,
+                                            /*Optional=*/true,
+                                            /*SingleProduct=*/true));
+    EXPECT_LT(Single.used(), 1024u);
+    // Cancelling a leading coefficient makes the scale check inconclusive.
+    // It must still expand the surviving polynomial with its full scale.
+    Terms.push_back({llvm::APInt::getAllOnes(Width), {X, X, X, X}});
+    detail::WorkBudget Cancelled(4096), Unrestricted(4096);
+    auto Actual =
+        detail::expandOverMinterms(C, Terms, Ids, Width, Cancelled, true, true);
+    auto Expected =
+        detail::expandOverMinterms(C, Terms, Ids, Width, Unrestricted);
+    ASSERT_TRUE(Actual);
+    ASSERT_TRUE(Expected);
+    EXPECT_EQ(Actual->Higher, Expected->Higher);
+  }
+}
+
+TEST(SymMBAHigherProduct, AvoidsExpandingTheTwoSlowMixedDegreeTails) {
+  for (unsigned Width : {3u, 8u, 16u, 32u, 64u, 257u})
+    for (bool FifthDegree : {false, true}) {
+      SymContext C;
+      const char *Tail =
+          FifthDegree
+              ? "182*x*y*z*w*(x^z)+364*(x&y)*(z&w)*(z|w)*(x^z)*(x|y)"
+              : "19*x*x*x*x*x*y*z+7*(x^y)*(x&y)*(y|z)*(x|z)*(x^z)*(y^z)*~(x&z)";
+      auto Parsed = parseSymExpr(C, Tail, Width);
+      ASSERT_TRUE(Parsed.ok());
+      auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+      auto Input = C.mkAdd({Parsed.Root, C.mkXor(X, Y),
+                            C.mkMul(C.mkConst(Width, 2), C.mkAnd(X, Y))});
+      MBAOptions Options;
+      Options.MaxWork = 65536;
+      Options.VerifySamples = 0;
+      auto R = simplifyMBADeep(C, Input, Options);
+      EXPECT_LT(R.Work, 20000u) << Width << " " << FifthDegree;
+      EXPECT_LE(R.SizeAfter, C.readabilityCost(C.mkAdd({Parsed.Root, X, Y})));
+      std::mt19937_64 Random(0x45585452);
+      for (unsigned Sample = 0; Sample != 128; ++Sample) {
+        std::array<llvm::APInt, 4> Values;
+        for (auto &Value : Values) {
+          Value = llvm::APInt(Width, 0);
+          for (unsigned Bit = 0; Bit < Width; Bit += 64)
+            Value |= llvm::APInt(Width, Random(), false, true).shl(Bit);
+        }
+        auto A = Values[0], B = Values[1], Z = Values[2], W = Values[3];
+        auto Want = A + B;
+        if (FifthDegree)
+          Want +=
+              llvm::APInt(Width, 182, false, true) * A * B * Z * W * (A ^ Z) +
+              llvm::APInt(Width, 364, false, true) * (A & B) * (Z & W) *
+                  (Z | W) * (A ^ Z) * (A | B);
+        else
+          Want +=
+              llvm::APInt(Width, 19, false, true) * A * A * A * A * A * B * Z +
+              llvm::APInt(Width, 7, false, true) * (A ^ B) * (A & B) * (B | Z) *
+                  (A | Z) * (A ^ Z) * (B ^ Z) * ~(A & Z);
+        EXPECT_EQ(C.eval(Input, Values), Want);
+        EXPECT_EQ(C.eval(R.Expr, Values), Want);
+      }
+    }
 }
 
 Expansion holedPartitions(SymContext &C, unsigned Width, unsigned Degree,

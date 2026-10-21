@@ -39,6 +39,7 @@ public:
       ReadIRQL,
       ReadCurrentThread,
       ReadCPUID,
+      ReadMSR,
       ReadTimestamp,
       ReadTimestampAndProcessor,
       ReadDisabledShadowStack

@@ -4,6 +4,8 @@
 
 # Testing NeverD
 
+`DriverMSRExecution.*` and `DriverMSRDeclaration.*` check explicit MSR values, full-width splitting, preserved state, repeated reads, exact instruction limits, missing/invalid inputs, and lack of memory authority across available backends. `KernelMSRRead.*` retains unused-declaration dependencies. Run the native driver, driver emulation and kernel snapshot owners; unavailable WHP/HVF execution is a skip, not native qualification.
+
 `AndroidSignals.Descriptor*` and `Receive*` check caught/ignored/blocked and
 terminating signals during original poll/epoll/pselect6 and TCP/UDP receive
 calls. Independent O0/O2 fixtures run across relocation packing and available
@@ -272,6 +274,17 @@ must finish within the unchanged 65,536-unit allowance.
 Partially factored quartic and sextic inputs exercise the form produced by
 source preprocessing, with full-width oracles through 257 bits, exhaustive
 three-bit partial-budget checks and an independent SMT proof.
+Subset-degree recovery checks every two-input cubic factor triple at all seven
+nonzero three-bit scales, including vanished mixed coefficients. Independently
+expanded fourth through eighth degrees also check the recovered factor supports
+at 2–257 bits. Refusal controls separate insufficient work/storage from an
+impossible support, and a nearby polynomial with the same support must still
+fail coefficient validation. Single cubic products retain their exact factors
+while the linear tail improves; independent word oracles and separate small-word
+Z3 checks cover the resulting expressions.
+Extremal-coefficient controls retain general expansion and handle cancelled
+leading terms. The slow fifth- and seventh-degree mixed tails have explicit
+work ceilings and independent full-word arithmetic oracles through 257 bits.
 Sixteen repeated small partitions check that exponential expansion is refused
 before consuming the budget needed to simplify their shared child.
 `SymSimplifyGuard.MaskedNoWrapAdmissionMatchesExhaustiveByteDomains` checks
@@ -1159,6 +1172,16 @@ headers as `musl_libc_stub.c` says;
 `SessionCAPITest.DarwinProgramsJoinTheirPlatformsLibrary` loads
 `darwin_libc_calls_{x64,arm64,ios_arm64}`, built against the headers the
 Darwin libraries read as `darwin_libc_stub.c` says;
+`SessionCAPITest.AProgramsOwnDeclarationOfAnImportDecides` checks zero-, one- and
+four-parameter user declarations through both C backends on those three Darwin
+targets as well as Linux x64, i386, AArch64 and ARM32. The Darwin cases first
+populate the SDK-bound pipeline to check declaration invalidation too.
+`NativeSourceHints.UserPrototypeKeepsExplicitCallSiteAuthority` checks that an
+explicit occurrence contract still wins over user and inferred callee summaries
+on x64 and AArch64;
+`ObjCCallHints.UserPrototypesOverrideOnlyMatchingAutomaticSDKCalls` checks
+direct stubs and indirect import slots, unrelated declarations and SDK precedence
+over inferred callee signatures on both architectures;
 `SessionCAPITest.UefiApplicationsJoinTheirFirmwaresLibrary` loads
 `uefi_calls_{x64,x86,arm64}.efi`, built as `uefi_calls.c` says, whose entry
 takes `EFI_IMAGE_ENTRY_POINT`;
@@ -7289,7 +7312,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 68 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 270 WHP outcomes from all 135 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 68 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5085 CPU + 270 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 103 driver environment checks + 116 driver API checks = 5772`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 270 WHP outcomes from all 135 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 68 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5085 CPU + 270 WHP + 25 SEH + 77 scheduling + 30 wait sets + 29 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks + 116 driver environment checks + 116 driver API checks = 5785`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 The genuine WDK inventory also builds `driver_device_queries.c`, `driver_file_objects.c` and `driver_file_handles.c` in normal and CFG forms. `DriverDeviceQueryTests.cpp` and `DriverFileObjectTests.cpp` reuse the portable callers’ assertions for retained deletion, failed CREATE, process identity, last-handle CLEANUP and deferred CLOSE across both contracts, bases and scheduling policies. All three families have mandatory native gates; inventory validation independently discovers sources with `NEVERD_WDK_FIXTURE` so a dual-mode source cannot silently lose its WDK build.
 

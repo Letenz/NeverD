@@ -144,6 +144,14 @@ struct DriverPhysicalMemoryInventory {
   std::string Evidence;
 };
 
+/// An explicitly declared, stable nonfaulting MSR read in checked-x64 mode.
+/// Currently only IA32_LSTAR is supported. This is an opaque numeric input,
+/// not host CPU state, executable memory, a kernel identity or pointer proof.
+struct DriverMSRRead {
+  uint32_t Index = 0;
+  uint64_t Value = 0;
+};
+
 /// Explicit class-196 system-information result for checked-x64 execution.
 /// Reports the declared low fourteen flags without implementing a hardware
 /// mitigation or inferring native host state. Reserved bits must be zero.
@@ -183,6 +191,9 @@ struct DriverOptions {
   /// Explicit CPU environment inputs, never inferred from the host processor.
   /// A missing leaf/subleaf stops before publishing any CPUID register result.
   std::vector<DriverCPUID> CPUID;
+  /// Explicit MSR replies. Omission refuses reads; declarations retain an
+  /// unreconstructed environment dependency even if unused. WRMSR is denied.
+  std::vector<DriverMSRRead> MSRReads;
   uint64_t TimeoutMilliseconds = profile::DefaultTimeoutMilliseconds;
   std::string ServiceName = profile::DefaultServiceName;
   /// Zero selects the preferred PE image base.

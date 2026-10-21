@@ -143,6 +143,13 @@ public:
   void setCallEntryArgumentCounts(const std::map<va_t, int> *M) {
     CallEntryArgumentCounts = M;
   }
+  /// Imports whose supported user prototypes already own the argument
+  /// summaries (PipelineResult::CallUserPrototypes). Automatic Darwin SDK
+  /// bindings must leave those summaries intact; explicit call-site contracts
+  /// retain their authority.
+  void setUserPrototypeCallees(const std::set<va_t> *S) {
+    UserPrototypeCallees = S;
+  }
   /// Indirect-call dispatchers (PipelineResult::CallDispatchThunks).
   void setCallDispatchThunks(const std::set<va_t> *S) {
     CallDispatchThunks = S;
@@ -418,6 +425,7 @@ private:
   const std::map<va_t, int> *CallEntryStackArgs = nullptr;
   const std::set<va_t> *CallEntryStackSlots = nullptr;
   const std::map<va_t, int> *CallEntryArgumentCounts = nullptr;
+  const std::set<va_t> *UserPrototypeCallees = nullptr;
   const std::set<va_t> *CallDispatchThunks = nullptr;
   std::set<va_t> *CallSummaryKeysRead = nullptr;
   const std::map<va_t, int> *CallVariadicFrom = nullptr;

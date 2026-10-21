@@ -864,6 +864,13 @@ refreshes its views as after loading signatures. Every declaration drops
 the context, which reads a copy of the library, and the context takes back
 the members it gave.
 
+On macOS and iOS, a supported user import prototype that already supplies the
+call's argument summary also takes precedence over automatic Darwin SDK
+source-call binding. LowToMed matches the import slot or direct-call stub and
+keeps the ordinary arguments for both C backends. Explicit call-site source
+contracts retain their authority. Prototypes without supported argument summaries
+keep the existing SDK binding.
+
 A RETURN hands back the parameter that arrived in the result register when
 no path from the function's entry to it writes any byte of that register,
 calls a routine, which clobbers it, or enters through an exceptional edge
@@ -1092,8 +1099,25 @@ anchor identify how many factors select each other minterm. Coefficients with
 one anchor then distinguish the selected or omitted factor. The candidate's
 entire expansion must match, including missing coefficients and modular zeros,
 before the independent polynomial difference proof can authorize it. This
-direct reading requires a scale with additive order at least four; other cubic
-products retain the bounded factor search.
+direct reading requires a scale with additive order at least four. Once this
+anchor determines the factors, a failed reconstruction does not repeat an
+exhaustive search. Already factored cubic and higher-degree components retain
+their exact spelling while other degrees improve.
+Unanchored cubic and quartic recovery can infer factor supports from the maximum
+degree in every subset of active minterms. Bounded subset transforms recover
+the number of factors with each exact support; negative multiplicities reject
+the single-product reading. Geometry only proposes a candidate: its complete
+coefficient expansion, including modular zeros, and the independent polynomial
+difference proof still govern replacement. Larger domains keep bounded search.
+Anchored searches also use necessary pair-membership coefficient bounds when
+the modular scale distinguishes membership counts. Ambiguous scales retain
+the original search; these bounds never authorize a replacement.
+Before a higher-degree single-product search expands its tensor, unequal
+nonzero lexicographic extremal coefficients can reject it: each extremal
+monomial of a product occurs exactly once and fixes the same scale. Equal
+extrema from separate terms are summed; cancellation declines this check.
+This admission is explicit and never applies to general polynomial difference
+verification. Unrecovered components remain exact residuals.
 Higher-degree roots first group terms sharing all but one or two factors.
 The existing semantic solver proves each small quotient, and an independent
 arithmetic proof checks the complete distribution before substituting those
@@ -1117,8 +1141,10 @@ modular coefficient differences, including negative terms for absent corners.
 The complete unreduced distribution is checked independently before composing
 the factor proofs. A coefficient is never inferred for a missing term: its
 difference is retained explicitly. Models share an indexed relation lookup and
-are expanded only once per canonical product. Small frontiers retain the local
-cofactor path. Work, cumulative storage, term and edge bounds cover proposal,
+are expanded only once per canonical product. Repeated coefficients share their
+frequency count, and a Cartesian plan exceeding the term bound is declined
+before allocating its prefixes. Small frontiers retain the local cofactor path.
+Work, cumulative storage, term and edge bounds cover proposal,
 residual construction and proof; only a shorter completed candidate is kept.
 If earlier arithmetic factoring hides that frontier, a bounded arithmetic
 normalization can restore it. A whole product word and one of its existing AND

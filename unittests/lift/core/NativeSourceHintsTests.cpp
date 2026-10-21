@@ -42,6 +42,69 @@
 
 using namespace neverd;
 
+TEST(NativeSourceHints, UserPrototypeKeepsExplicitCallSiteAuthority) {
+  // An explicit occurrence contract remains authoritative even when the target
+  // also has a user prototype and a different inferred callee signature.
+  for (const Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    LowFunc Low;
+    Low.Entry = 0x1000;
+    LowBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Low.Entry;
+    Block.EndAddr = Low.Entry + 8;
+    LowOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Addr = Low.Entry;
+    Call.addInput(NdVar::cst(0x2000, 8));
+    Block.Ops.push_back(Call);
+    LowOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = Low.Entry + 4;
+    Return.addInput(NdVar::reg(getTargetRegInfo(Architecture).IntReturnReg, 8));
+    Block.Ops.push_back(Return);
+    Low.Blocks.push_back(Block);
+
+    SourceCallTypeHint Explicit;
+    Explicit.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+    Explicit.TargetAddress = 0x2000;
+    Explicit.TargetName = "read";
+    Explicit.Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+    Explicit.Signature.ReturnType = NdType::makeInt(8, true);
+    Explicit.Signature.Parameters = {{"first", NdType::makeInt(8, true)},
+                                     {"second", NdType::makeInt(8, true)}};
+    std::string Error;
+    ASSERT_TRUE(
+        assignDarwinScalarSourceABI(Explicit.Signature, Architecture, Error))
+        << Error;
+    auto Inferred = Explicit.Signature;
+    Inferred.Parameters.pop_back();
+    ASSERT_TRUE(assignDarwinScalarSourceABI(Inferred, Architecture, Error))
+        << Error;
+    const std::map<SourceCallOccurrenceKey, SourceCallTypeHint> Sites{
+        {{Call.Addr, Call.Seq, Call.Opcode, 0x2000}, Explicit}};
+    const std::map<va_t, SourceFunctionTypeHint> Callees{{0x2000, Inferred}};
+    const std::set<va_t> UserPrototypes{0x2000};
+    LowToMedConverter Converter;
+    Converter.setSourceCallHintsEnabled(true);
+    Converter.setSourceCallSiteHints(&Sites);
+    Converter.setSourceCalleeTypeHints(&Callees);
+    Converter.setUserPrototypeCallees(&UserPrototypes);
+    const auto Med = Converter.convert(Low, Architecture, BinaryFormat::MachO);
+    size_t Calls = 0;
+    for (const auto &B : Med.Blocks)
+      for (const auto &Op : B.Ops)
+        if (Op.Opcode == NdOp::CALL) {
+          ++Calls;
+          ASSERT_TRUE(Op.SourceCallHint);
+          EXPECT_TRUE(equalSourceABIs(Op.SourceCallHint->Signature,
+                                      Explicit.Signature));
+          EXPECT_EQ(Op.NumInputs, 3u);
+        }
+    EXPECT_EQ(Calls, 1u);
+  }
+}
+
 namespace {
 struct HFAImportVeneerFixture {
   static constexpr va_t Entry = 0x1000, Slot = 0x2080;
