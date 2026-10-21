@@ -129,9 +129,9 @@ private:
 
   // Location and synchronization.
   std::optional<Address> currentAddress() const;
-  /// The list window holding the keyboard focus, if one does.
+  /// The list window receiving commands, including its open context menu.
   ChooserView *focusedChooser() const;
-  /// The pseudocode or IR window holding the keyboard focus, if one does.
+  /// The code window receiving commands, including its open context menu.
   CodeView *focusedCodeView() const;
   std::optional<Address> currentFunction() const;
   /// Open a function in the code window used before the chooser took focus.
@@ -236,6 +236,7 @@ private:
   void chooseFont();
   void chooseTheme();
   void showShortcuts();
+  QWidget *commandFocusWidget() const;
   /// Edit > Copy: the selection of the view holding the focus.
   void copySelection();
   void showCommandPalette();
@@ -304,6 +305,7 @@ private:
   QHash<int, ChooserView *> choosers_;
   QPointer<CodeView> pseudocode_;
   QPointer<CodeView> lastCodeView_;
+  QPointer<QWidget> contextMenuFocus_;
   /// Tab returns to the last code window, even after assembly takes focus.
   QPointer<CodeView> tabCodeView_;
   std::optional<Address> initialAddress_;
