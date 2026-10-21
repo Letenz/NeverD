@@ -78,6 +78,39 @@ static const std::vector<RoundTripTC> kX64 = {
    "return (long)d[0]+(long)d[1]+(long)d[2];}\n",
    {0x5000ULL}, "RepString", 0},
 
+  // rep stosq of zero over a frame buffer: C's memset of the same bytes.
+  {"rep_stosq_zero",
+   "long f(long a){unsigned long b[6];for(int i=0;i<6;i++)b[i]=(unsigned long)a+i;"
+   "unsigned long *d=b+1;unsigned long n=4;"
+   "__asm__ volatile(\"cld; rep stosq\":\"+D\"(d),\"+c\"(n):\"a\"(0UL):\"memory\",\"cc\");"
+   "return (long)(b[0]+b[1]*3+b[4]*5+b[5]*7);}\n",
+   {0x1234ULL}, "RepString", 0},
+
+  // rep stosd of a value whose bytes are all 0xFF: memset with 0xFF.
+  {"rep_stosd_ones",
+   "long f(long a){unsigned int b[6];for(int i=0;i<6;i++)b[i]=(unsigned int)a+i;"
+   "unsigned int *d=b+1;unsigned long n=3;"
+   "__asm__ volatile(\"cld; rep stosl\":\"+D\"(d),\"+c\"(n):\"a\"(0xFFFFFFFFu):\"memory\",\"cc\");"
+   "unsigned long acc=0;for(int i=0;i<6;i++)acc=acc*131+b[i];return (long)acc;}\n",
+   {0x77ULL}, "RepString", 0},
+
+  // rep stosd of a value whose bytes differ, which no memset stores.
+  {"rep_stosd_pattern",
+   "long f(long a){unsigned int b[6];for(int i=0;i<6;i++)b[i]=(unsigned int)a+i;"
+   "unsigned int *d=b+1;unsigned long n=3;"
+   "__asm__ volatile(\"cld; rep stosl\":\"+D\"(d),\"+c\"(n):\"a\"(0x01020304u):\"memory\",\"cc\");"
+   "unsigned long acc=0;for(int i=0;i<6;i++)acc=acc*131+b[i];return (long)acc;}\n",
+   {0x99ULL}, "RepString", 0},
+
+  // A forward rep movsb whose destination overlaps its source from above
+  // repeats the bytes it already copied, which memcpy need not do.
+  {"rep_movsb_overlap_forward",
+   "long f(long a){unsigned char b[24];for(int i=0;i<24;i++)b[i]=(unsigned char)(a+i);"
+   "unsigned char *ps=b+2,*pd=b+5;unsigned long n=12;"
+   "__asm__ volatile(\"cld; rep movsb\":\"+S\"(ps),\"+D\"(pd),\"+c\"(n)::\"memory\",\"cc\");"
+   "int acc=0;for(int i=0;i<24;i++)acc=acc*3+b[i];return acc;}\n",
+   {0x21}, "RepString", 0},
+
   // Single (non-REP) stosb: one byte store, pointer advances by 1.
   {"stosb_single",
    "long f(long a){unsigned char b[4]={0x77,0x77,0x77,0x77};"

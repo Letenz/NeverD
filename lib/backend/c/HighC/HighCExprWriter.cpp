@@ -5752,6 +5752,25 @@ const HighExpr *HighCWriter::truthTestedValue(const HighExpr *E) const {
   return E;
 }
 
+bool HighCWriter::disjointMemory(const HighExpr &A, const HighExpr &B,
+                                 uint64_t Bytes) const {
+  const auto Apart = [Bytes](uint64_t Low, uint64_t High) {
+    return High - Low >= Bytes;
+  };
+  if (const auto DA = frameDisplacement(A))
+    if (const auto DB = frameDisplacement(B))
+      return *DA <= *DB
+                 ? Apart(static_cast<uint64_t>(*DA), static_cast<uint64_t>(*DB))
+                 : Apart(static_cast<uint64_t>(*DB),
+                         static_cast<uint64_t>(*DA));
+  const HighExpr *CA = unwrapIntegerView(&A);
+  const HighExpr *CB = unwrapIntegerView(&B);
+  if (CA && CB && CA->Kind == ExprKind::Const && CB->Kind == ExprKind::Const)
+    return CA->ConstVal <= CB->ConstVal ? Apart(CA->ConstVal, CB->ConstVal)
+                                        : Apart(CB->ConstVal, CA->ConstVal);
+  return false;
+}
+
 std::optional<int64_t> HighCWriter::frameDisplacement(const HighExpr &E) const {
   if (!CurrentFunc ||
       FrameDisplacementDepth >= limits::kMaxFrameDisplacementDepth)

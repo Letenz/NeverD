@@ -597,7 +597,10 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           [this](const HighExpr &E, uint16_t Width) {
             return isSameWidthUnsigned(E, Width);
           },
-          Opts.Format == BinaryFormat::COFF);
+          Opts.Format == BinaryFormat::COFF,
+          [this](const HighExpr &A, const HighExpr &B, uint64_t Bytes) {
+            return disjointMemory(A, B, Bytes);
+          });
       if (!Rendered.empty()) {
         writeCIndentedSnippet(OS, Rendered, Indent);
         break;
@@ -1323,7 +1326,10 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           [this](const HighExpr &E, uint16_t Width) {
             return isSameWidthUnsigned(E, Width);
           },
-          Opts.Format == BinaryFormat::COFF);
+          Opts.Format == BinaryFormat::COFF,
+          [this](const HighExpr &A, const HighExpr &B, uint64_t Bytes) {
+            return disjointMemory(A, B, Bytes);
+          });
       if (!Rendered.empty()) {
         writeCIndentedSnippet(OS, Rendered, Indent);
         break;
