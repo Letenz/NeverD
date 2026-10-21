@@ -153,7 +153,9 @@ std::vector<std::string> callArguments(llvm::StringRef Text,
   int Depth = 0;
   for (const char C : Text.drop_front(At + Call.size())) {
     if (Depth == 0 && (C == ',' || C == ')')) {
-      Arguments.push_back(llvm::StringRef(Argument).trim().str());
+      const llvm::StringRef Trimmed = llvm::StringRef(Argument).trim();
+      if (C == ',' || !Trimmed.empty())
+        Arguments.push_back(Trimmed.str());
       Argument.clear();
       if (C == ')')
         break;
@@ -5908,13 +5910,18 @@ TEST_F(SessionCAPITest, CalleeSignaturesReadOnceServeLaterSelections) {
 TEST_F(SessionCAPITest, AProgramsOwnDeclarationOfAnImportDecides) {
   // The user declares the routine a program imports as read, as a library of
   // its own may export it: every call passes the parameters it declares, in
-  // both C backends, whatever the C library's read takes.  With one, the
-  // call passes that one; with four, the fourth too, from the register or
-  // the stack slot the convention gives it: on x64, i386, AArch64 and ARM.
-  for (const char *Fixture : {"linux_libc_calls_x64", "linux_libc_calls_x86",
-                              "linux_libc_calls_arm64", "linux_libc_calls_arm"})
+  // both C backends, whatever the C library's read takes. With none, the
+  // call passes none; with four, the fourth too, from the register or
+  // the stack slot the convention gives it: on x64, i386, AArch64 and ARM,
+  // including Mach-O's automatic Darwin SDK source-call bindings.
+  for (const char *Fixture :
+       {"linux_libc_calls_x64", "linux_libc_calls_x86",
+        "linux_libc_calls_arm64", "linux_libc_calls_arm",
+        "darwin_libc_calls_x64", "darwin_libc_calls_arm64",
+        "darwin_libc_calls_ios_arm64"})
     for (const auto &[Declaration, Count] :
-         {std::pair<const char *, size_t>{"long read(int File);", 1},
+         {std::pair<const char *, size_t>{"long read(void);", 0},
+          {"long read(int File);", 1},
           {"long read(int File, void *Buffer, unsigned long Count, int Extra);",
            4}}) {
       SCOPED_TRACE(std::string(Fixture) + ": " + Declaration);
@@ -5929,11 +5936,17 @@ TEST_F(SessionCAPITest, AProgramsOwnDeclarationOfAnImportDecides) {
       ASSERT_EQ(neverd_session_load(Own, Path.c_str()), 1)
           << takeString(neverd_last_error(Own));
       ASSERT_GE(neverd_session_discover_functions(Own), 0);
-      const int Index = neverd_func_find_by_name(Own, "Read");
+      const bool Darwin = llvm::StringRef(Fixture).starts_with("darwin_");
+      const int Index =
+          neverd_func_find_by_name(Own, Darwin ? "_Read" : "Read");
       ASSERT_GE(Index, 0);
       const neverd_va_t Entry = neverd_func_entry(Own, Index);
       const std::string Before = takeString(neverd_decompile(Own, Entry));
-      EXPECT_EQ(callArguments(Before, "Read", "read").size(), 3u) << Before;
+      EXPECT_EQ(
+          callArguments(Before, "Read", Darwin ? "neverd_darwin_read" : "read")
+              .size(),
+          3u)
+          << Before;
       const std::string Declared =
           takeString(neverd_local_types_declare(Own, Declaration, nullptr));
       ASSERT_NE(Declared.find("\"read\""), std::string::npos) << Declared;
@@ -5943,7 +5956,11 @@ TEST_F(SessionCAPITest, AProgramsOwnDeclarationOfAnImportDecides) {
         const std::vector<std::string> Arguments =
             callArguments(Text, "Read", "read");
         ASSERT_EQ(Arguments.size(), Count) << Text;
-        EXPECT_NE(Arguments[0].find("arg0"), std::string::npos) << Text;
+        if (Count)
+          EXPECT_NE(Arguments[0].find("arg0"), std::string::npos) << Text;
+        if (Count == 4 && Darwin)
+          EXPECT_NE(Arguments[3].find("arg3"), std::string::npos) << Text;
+        EXPECT_EQ(Text.find("neverd_darwin_read"), std::string::npos) << Text;
       }
     }
 }
