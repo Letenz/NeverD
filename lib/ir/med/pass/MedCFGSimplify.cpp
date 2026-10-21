@@ -18,6 +18,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <tuple>
 
 namespace neverd {
 
@@ -229,16 +230,24 @@ void LowToMedConverter::simplifyCfg(MedFunc &Func) {
   // Exceptional predecessors are likewise derived from the successor graph.
   // Rebuild them after renumbering so SSA recognizes every landing pad as an
   // independent root and the LLVM emitter targets the prologue block itself.
-  for (const auto &Blk : NewBlocks)
+  for (const auto &Blk : NewBlocks) {
+    // Renumbering gives each source a unique ID. Only edges from this source
+    // can duplicate one of its predecessors, so do not scan every earlier
+    // source already entering a shared cleanup or landing pad.
+    std::set<
+        std::tuple<int, va_t, ExceptionalEdgeKind, uint32_t, int32_t, va_t>>
+        Seen;
     for (const ExceptionalEdge &Edge : Blk.ExceptionalSuccs)
       if (Edge.BlockId >= 0 &&
-          Edge.BlockId < static_cast<int>(NewBlocks.size())) {
+          Edge.BlockId < static_cast<int>(NewBlocks.size()) &&
+          Seen.emplace(Edge.BlockId, Edge.TargetVA, Edge.Kind, Edge.RegionIndex,
+                       Edge.State, Edge.SourceVA)
+              .second) {
         ExceptionalEdge Pred = Edge;
         Pred.BlockId = Blk.Id;
-        auto &Preds = NewBlocks[Edge.BlockId].ExceptionalPreds;
-        if (std::find(Preds.begin(), Preds.end(), Pred) == Preds.end())
-          Preds.push_back(Pred);
+        NewBlocks[Edge.BlockId].ExceptionalPreds.push_back(Pred);
       }
+  }
   Func.Blocks = std::move(NewBlocks);
 }
 

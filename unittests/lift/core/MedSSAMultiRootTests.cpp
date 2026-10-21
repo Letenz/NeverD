@@ -31,6 +31,77 @@ namespace {
 
 using namespace neverd;
 
+TEST(MedSSAMultiRoot, SharedHandlersRetainEveryDistinctExceptionalPredecessor) {
+  for (Arch Architecture : {Arch::X86, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    constexpr int Sources = 256;
+    constexpr int Targets = 4;
+    constexpr int Contexts = 6;
+    const auto Width = getTargetRegInfo(Architecture).PointerSize;
+    LowFunc Low;
+    Low.Entry = 0x1000;
+    Low.Name = "shared_exception_handlers";
+    // Removing the empty interval between sources and handlers must remap
+    // every destination while keeping the source state and instruction.
+    Low.Blocks.resize(Sources + 1 + Targets);
+    std::vector<std::vector<ExceptionalEdge>> Expected(Targets);
+    for (int I = 0; I < static_cast<int>(Low.Blocks.size()); ++I) {
+      auto &Block = Low.Blocks[I];
+      Block.Id = I;
+      Block.StartAddr = Low.Entry + 16 * I;
+      Block.EndAddr = Block.StartAddr + 8;
+      if (I == Sources)
+        continue;
+      LowOp Return;
+      Return.Addr = Block.StartAddr;
+      Return.Opcode = NdOp::RETURN;
+      Return.addInput(NdVar::scalar(0, Width));
+      Block.Ops.push_back(Return);
+      if (I >= Sources)
+        continue;
+      for (int J = 0; J < Targets; ++J) {
+        const va_t Target = Low.Entry + 16 * (Sources + 1 + J);
+        const ExceptionalEdge Edges[] = {
+            {Sources + 1 + J, Target, ExceptionalEdgeKind::CxxCleanup, 0, 3},
+            {Sources + 1 + J, Target, ExceptionalEdgeKind::CxxCleanup, 1, 3},
+            {Sources + 1 + J, Target, ExceptionalEdgeKind::CxxCleanup, 0, 4},
+            {Sources + 1 + J, Target, ExceptionalEdgeKind::CxxCleanup, 0, 3,
+             Block.StartAddr + 1},
+            {Sources + 1 + J, Target, ExceptionalEdgeKind::CxxCatch, 0, 3},
+            {Sources + 1 + J, Target + 1, ExceptionalEdgeKind::CxxCleanup, 0,
+             3}};
+        for (auto Edge : Edges) {
+          Block.ExceptionalSuccs.push_back(Edge);
+          Edge.BlockId = I;
+          Low.Blocks[Sources + 1 + J].ExceptionalPreds.push_back(Edge);
+          Expected[J].push_back(Edge);
+        }
+        // Duplicate metadata does not create another incoming occurrence.
+        Block.ExceptionalSuccs.push_back(Edges[0]);
+        Block.ExceptionalSuccs.push_back(Edges[2]);
+      }
+      Block.ExceptionalSuccs.push_back(
+          {-1, 0x80000, ExceptionalEdgeKind::CxxCleanup, 0, 3});
+    }
+    auto Med = LowToMedConverter().convert(Low, Architecture);
+    ASSERT_EQ(Med.Blocks.size(), Sources + Targets);
+    for (int J = 0; J < Targets; ++J) {
+      const auto &Handler = Med.Blocks[Sources + J];
+      EXPECT_EQ(Handler.ExceptionalPreds.size(), Sources * Contexts);
+      EXPECT_EQ(Handler.ExceptionalPreds, Expected[J]);
+    }
+    for (int I = 0; I < Sources; ++I) {
+      const auto &Edges = Med.Blocks[I].ExceptionalSuccs;
+      ASSERT_EQ(Edges.size(), Targets * (Contexts + 2) + 1);
+      for (int J = 0; J < Targets; ++J)
+        for (int K = 0; K < Contexts + 2; ++K)
+          EXPECT_EQ(Edges[J * (Contexts + 2) + K].BlockId, Sources + J);
+      EXPECT_EQ(Edges.back().BlockId, -1);
+    }
+    EXPECT_TRUE(verifyMedFunc(Med, "shared-exception-handlers"));
+  }
+}
+
 TEST(MedSSAMultiRoot, MergesDefinitionsFromIndependentSourcesAtAJoin) {
   constexpr va_t EntryVA = 0x1000;
   constexpr va_t ResumeVA = 0x1100;
