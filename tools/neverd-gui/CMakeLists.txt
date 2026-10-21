@@ -5,6 +5,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
   include(CTest)
   add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../neverd-worker" "${CMAKE_BINARY_DIR}/worker")
+  add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp" "${CMAKE_BINARY_DIR}/mcp")
 endif()
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Network LinguistTools Svg
@@ -99,15 +100,12 @@ if(NEVERD_TRANSLATIONS)
   qt_add_resources(neverd-gui "app_translations" PREFIX /i18n
     BASE "${CMAKE_CURRENT_BINARY_DIR}" FILES ${NEVERD_QM_FILES})
 endif()
-add_dependencies(neverd-gui neverd-worker)
+# The MCP server ships beside the workbench, whose sessions it can attach to.
+add_dependencies(neverd-gui neverd-worker neverd-mcp)
 install(TARGETS neverd-gui RUNTIME DESTINATION bin BUNDLE DESTINATION .)
 qt_generate_deploy_app_script(TARGET neverd-gui OUTPUT_SCRIPT deploy_script
   NO_UNSUPPORTED_PLATFORM_ERROR)
 install(SCRIPT ${deploy_script})
-install(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp/neverd-mcp" DESTINATION bin)
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp/server.py"
-              "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp/reading.py"
-              "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp/transport.py" DESTINATION bin)
 
 if(BUILD_TESTING)
   option(NEVERD_GUI_CI_DIAGNOSTICS
@@ -214,8 +212,6 @@ if(BUILD_TESTING)
     TEST_PYTHON="${Python3_EXECUTABLE}" TEST_SERVER="${CMAKE_CURRENT_SOURCE_DIR}/mcp/tests/fake_mcp.py")
   add_test(NAME NeverDMcpQt COMMAND neverd-mcp-qt-tests)
   set_tests_properties(NeverDMcpQt PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_FORCE_STDERR_LOGGING=1" TIMEOUT 30)
-  add_test(NAME NeverDMcpProtocol COMMAND "${Python3_EXECUTABLE}" -m unittest discover
-    -s "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp/tests" -v)
   if(NEVERD_WORKER_REAL_ENGINE_TESTS)
     add_test(NAME NeverDGuiAnalysis COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/analysis_probe_test.py"

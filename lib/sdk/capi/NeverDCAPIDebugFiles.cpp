@@ -20,6 +20,7 @@
 #include "neverd/evm/bytecode/EVMBytecode.h"
 #include "neverd/loader/ELF/SBFELFLoader.h"
 #include "neverd/loader/ObjectFileUtils.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/BinaryLoading.h"
 #include "neverd/support/FilePath.h"
 
@@ -35,9 +36,6 @@ using namespace neverd;
 using namespace neverd::sdk;
 
 namespace {
-
-/// Enough of a MAP's names to tell planted ones by, for a question.
-constexpr size_t SampleNames = 8;
 
 std::string stampHex(uint32_t Stamp) {
   std::string Text;
@@ -60,7 +58,7 @@ llvm::json::Object mapJson(const std::filesystem::path &Path,
   llvm::json::Array Names;
   if (Read.Context)
     for (const FunctionSym &Function : Read.Context->allFunctions()) {
-      if (Names.size() == SampleNames)
+      if (Names.size() == kDebugFileSampleNames)
         break;
       Names.push_back(jsonSafeText(Function.Name));
     }

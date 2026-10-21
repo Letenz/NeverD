@@ -19,6 +19,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/sbf/analysis/SBFFunctionBody.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/BitVector.h"
@@ -97,8 +98,6 @@ std::string displayOperands(Session &S, const Decoder &D,
   }
   return Result;
 }
-
-inline constexpr size_t kShortInstructionByteColumnWidth = 18;
 
 std::string evmBytes(const evm::LowInstruction &Instruction) {
   std::string Bytes;
@@ -226,6 +225,7 @@ const char *neverd_disasm_json_ex(neverd_session_t Sess, neverd_va_t Addr,
       MaxInsns > 0 ? static_cast<uint64_t>(MaxInsns) : (Span > 0 ? Span : 256);
 
   const TargetRegInfo &Registers = getTargetRegInfo(S->Img.Arch);
+  InstructionFlowScratch Scratch;
   const bool ModeKnown = decodeNativeRange(
       S->Img, S->Dec, Addr, Span, Limit,
       [&](const DecodedInsn &DI, const uint8_t *Bytes, int Sz) {
@@ -255,7 +255,7 @@ const char *neverd_disasm_json_ex(neverd_session_t Sess, neverd_va_t Addr,
           Obj["operand_bits"] = std::move(Bits);
         }
         if (Options & (NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK)) {
-          const InstructionFlow Flow = summarizeInstructionFlow(
+          const InstructionFlow Flow = Scratch.summarize(
               S->Img, S->Dec, DI,
               Options & NEVERD_DISASM_STACK ? &Registers : nullptr);
           if (Options & NEVERD_DISASM_FLOW) {
@@ -328,9 +328,11 @@ const char *neverd_code_refs_json(neverd_session_t Sess, neverd_va_t FirstEntry,
   // Each function's references, merged in entry order.
   std::vector<std::vector<Ref>> Slots(Page.Functions.size());
   const bool Decoded = decodeFunctions(
-      S->Img, Page, [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
+      S->Img, Page,
+      [&](size_t Index, Decoder &Dec, const DecodedInsn &DI,
+          InstructionFlowScratch &Scratch) {
         auto &Out = Slots[Index];
-        const InstructionFlow Flow = summarizeInstructionFlow(S->Img, Dec, DI);
+        const InstructionFlow Flow = Scratch.summarize(S->Img, Dec, DI);
         if (Flow.Target != InvalidVA && !Flow.Kind.empty() &&
             Flow.Kind != UnliftedFlow)
           Out.push_back({DI.Addr, Flow.Target, Flow.Kind});
@@ -374,9 +376,8 @@ const char *neverd_pointer_refs_json(neverd_session_t Sess,
     S->setError("no binary loaded");
     return nullptr;
   }
-  constexpr int MaxSlotsPerQuery = 65536;
   const size_t Limit =
-      static_cast<size_t>(std::clamp(MaxSlots, 1, MaxSlotsPerQuery));
+      static_cast<size_t>(std::clamp(MaxSlots, 1, kMaxDataSlotsPerQuery));
   // Both slot sets are ordered; walk them as one ascending sequence.
   const auto &Code = S->Img.CodePtrRelocSlots;
   const auto &Data = S->Img.DataPtrRelocSlots;

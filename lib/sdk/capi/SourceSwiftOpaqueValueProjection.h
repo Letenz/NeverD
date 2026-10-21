@@ -10,6 +10,7 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/loader/Swift/SwiftOpaqueValueEffects.h"
 #include "neverd/pipeline/NativeSourceHints.h"
+#include "neverd/sdk/Limits.h"
 
 namespace neverd::sdk {
 namespace swift_opaque_value_detail {
@@ -82,7 +83,7 @@ inline bool sameExpression(const ExprPtr &Expected, const ExprPtr &Actual,
 }
 inline bool sameBody(const HighFunc &E, const HighFunc &A,
                      const BinaryImage &Image) {
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   return sameCompleteSourceBody(
       E, A,
       [&](const ExprPtr &X, const ExprPtr &Y) {

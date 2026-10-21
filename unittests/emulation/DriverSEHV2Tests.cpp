@@ -45,7 +45,7 @@ TEST_P(DriverSEHV2Execution, OriginalHelpersRaiseCatchAndContinue) {
         ++Raises;
         EXPECT_FALSE(Call.Result.has_value());
       }
-    EXPECT_EQ(Raises, 2u);
+    EXPECT_EQ(Raises, 3u);
   }
 }
 

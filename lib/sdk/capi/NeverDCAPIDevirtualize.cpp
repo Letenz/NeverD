@@ -16,6 +16,7 @@
 #include "neverd/ir/med/MedMutableSource.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
 #include "neverd/pipeline/NativeSourceHints.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Constants.h"
@@ -151,7 +152,7 @@ std::string highRecoverySourceLimitation(const HighFunc &Function) {
   // reject an explicit Undef leaf or a missing non-void return expression.
   // Check those publication failures without changing ordinary decompilation,
   // whose diagnostic placeholders are still useful to a human reader.
-  size_t Budget = 1000000;
+  size_t Budget = kSourceEvaluationWork;
   const auto Spend = [&](size_t Count) {
     if (Count > Budget)
       return false;
@@ -228,7 +229,7 @@ std::string highRecoverySourceLimitation(const HighFunc &Function) {
 }
 
 std::string llvmRecoverySourceLimitation(const llvm::Module &Module) {
-  size_t Budget = 1000000;
+  size_t Budget = kSourceEvaluationWork;
   std::vector<const llvm::Value *> Pending;
   std::set<const llvm::Value *> Seen;
   const auto Add = [&](const llvm::Value *Value) {

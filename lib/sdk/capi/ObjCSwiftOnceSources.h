@@ -7,6 +7,7 @@
 
 #include "neverd/pipeline/NativeSourceHints.h"
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/sdk/Limits.h"
 
 #include <array>
 #include <tuple>
@@ -152,7 +153,7 @@ struct NativeContextDefinitions {
   bool Complete = true;
 
   explicit NativeContextDefinitions(const HighFunc &Function) {
-    size_t Budget = 100000;
+    size_t Budget = kSourceExpressionWork;
     std::set<const HighExpr *> Seen;
     walkStmts(Function.Body, [&](const HighStmt &Statement) {
       if (!Budget) {
@@ -215,7 +216,7 @@ discardableNativeContextRead(const ExprPtr &Value,
   // A dead local may still have an effectful producer. Check every definition
   // and copy dependency before letting liveness cleanup remove the read.
   // Missing definitions and exhausted inspection keep the original operand.
-  size_t Budget = 1024;
+  size_t Budget = kSwiftOnceSliceWork;
   std::vector<const HighExpr *> Pending{E.get()};
   std::set<const HighExpr *> Seen;
   VarKeySet Variables;
@@ -272,7 +273,7 @@ inline bool projectedOnceContextUnused(const HighFunc &Function,
       Parameter >= Function.SourceTypeHint->Parameters.size())
     return false;
   bool Unused = true;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   std::set<const HighExpr *> Seen;
   walkStmts(Function.Body, [&](const HighStmt &Statement) {
     forEachExpr(Statement, [&](const ExprPtr &Root) {
@@ -397,7 +398,7 @@ inline std::optional<HighFunc> sharedOnceTailView(const HighFunc &Function,
     HighFunc Early, Shared;
     if (!Tail(Guard.Body, Early.Body) || !Tail(Continuation, Shared.Body))
       continue;
-    size_t Budget = 10000;
+    size_t Budget = kSourceFrameWork;
     if (!sameStraightLineSourceBody(
             Early, Shared,
             [&](const ExprPtr &A, const ExprPtr &B) {
@@ -749,7 +750,7 @@ getterContract(const HighFunc &Original, const BinaryImage &Image) {
   std::optional<std::pair<size_t, size_t>> OnceParameters;
   std::optional<std::pair<size_t, size_t>> StringStorageParameters;
   std::set<size_t> Reads;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   bool Valid = true;
   std::function<void(const ExprPtr &, unsigned)> Scan = [&](const ExprPtr &E,
                                                             unsigned Depth) {
@@ -878,7 +879,7 @@ sharedObjCOnceGetterContract(const HighFunc &F, const BinaryImage &Image) {
   if (!Flow.Diagnostics.Complete || !Flow.Diagnostics.Items.empty())
     return std::nullopt;
   size_t OnceCalls = 0;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   bool StorageUsed = false;
   bool Valid = true;
   std::function<void(const ExprPtr &)> Scan = [&](const ExprPtr &E) {
@@ -1518,7 +1519,7 @@ objcEffectfulThunkContract(const HighFunc &F, const BinaryImage &Image) {
   const auto Flow = buildHighSourceFlowGraph(F);
   if (!Flow.Diagnostics.Complete || !Flow.Diagnostics.Items.empty())
     return std::nullopt;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   size_t ContextUses = 0;
   const HighExpr *Once = nullptr;
   bool CollectionBridge = false;
@@ -1633,7 +1634,7 @@ inline bool discardableCallbackReturn(ExprPtr Value) {
   // Same-width machine integer addition/subtraction cannot trap or access
   // memory, even if the discarded bits are a private-frame address. This does
   // not establish frame bounds, erase any statement or define unknown inputs.
-  size_t Budget = 1024;
+  size_t Budget = kSwiftOnceSliceWork;
   const auto Visit = [&](const auto &Self, const ExprPtr &E,
                          unsigned Depth) -> bool {
     if (!Budget || Depth > 16 || !callbackScalarView(E))
@@ -1665,7 +1666,7 @@ inline bool discardableCallbackReturn(ExprPtr Value) {
 // cannot keep an otherwise unobserved context or unknown register alive.
 // Calls, loads and explicit parameter reads remain observable to this proof.
 inline bool discardPureCallbackResults(HighFunc &Function) {
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   bool Complete = true;
   walkStmts(Function.Body, [&](HighStmt &Statement) {
     if (!Budget) {
@@ -1733,7 +1734,7 @@ onceContextLivenessView(const HighFunc &Function,
   HighFunc View = Function;
   std::map<const HighExpr *, ExprPtr> Copies;
   std::set<const HighExpr *> Active;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   bool Valid = true;
   std::function<ExprPtr(const ExprPtr &, unsigned)> Copy =
       [&](const ExprPtr &E, unsigned Depth) -> ExprPtr {
@@ -1803,7 +1804,7 @@ nestedCallbackContract(const HighFunc &F, const BinaryImage &Image) {
   const auto Flow = buildHighSourceFlowGraph(F);
   if (!Flow.Diagnostics.Complete || !Flow.Diagnostics.Items.empty())
     return std::nullopt;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   SwiftOnceNestedCallbackContract Contract;
   Contract.Signature = callbackHint(Image.Arch);
   std::set<const HighExpr *> ContextCalls;
@@ -1885,7 +1886,7 @@ inline bool ignoresContext(const HighFunc &F) {
   const auto Flow = buildHighSourceFlowGraph(F);
   if (!Flow.Diagnostics.Complete || !Flow.Diagnostics.Items.empty())
     return false;
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   std::vector<ExprPtr> Pending;
   for (const auto &Node : Flow.Nodes) {
     if (Node.Test)
@@ -1918,7 +1919,7 @@ independentCallbackChain(va_t Root, const BinaryImage &Image,
                          const std::set<va_t> &DirectTargets) {
   std::map<va_t, SwiftOnceNestedCallbackContract> Nested;
   std::set<va_t> Active, Verified;
-  size_t Budget = 256;
+  size_t Budget = kSwiftOnceValueWork;
   std::function<bool(va_t, unsigned)> Verify = [&](va_t Address,
                                                    unsigned Depth) {
     if (!Budget-- || Depth > 16 || DirectTargets.count(Address) ||
@@ -2002,7 +2003,7 @@ copyContract(const HighFunc &Original, const BinaryImage &Image) {
   bool Valid = true;
   const HighStmt *Store = nullptr;
   const HighExpr *Once = nullptr, *Retain = nullptr;
-  size_t Budget = 10000;
+  size_t Budget = kSourceFrameWork;
   std::function<void(const ExprPtr &, unsigned)> FindCalls =
       [&](const ExprPtr &E, unsigned Depth) {
         if (!E || !Budget-- || Depth > 64) {
@@ -2121,7 +2122,7 @@ copyContract(const HighFunc &Original, const BinaryImage &Image) {
   const std::set<size_t> Parameters{*P, *I, *S, *D};
   std::vector<std::vector<unsigned>> Effects(Flow.Nodes.size());
   size_t PredicateReads = 0, SourceReads = 0;
-  Budget = 10000;
+  Budget = kSourceFrameWork;
   for (size_t N = 0; N < Flow.Nodes.size(); ++N) {
     const auto &Node = Flow.Nodes[N];
     auto &Events = Effects[N];
@@ -2449,7 +2450,7 @@ discoverSwiftOnceSources(const BinaryImage &Image,
     walkStmts(F.Body, [&](const HighStmt &S) {
       forEachRhsExpr(S, [&](const ExprPtr &Root) {
         std::vector<ExprPtr> Pending{Root};
-        size_t Budget = 100000;
+        size_t Budget = kSourceExpressionWork;
         while (!Pending.empty() && Budget--) {
           auto E = Pending.back();
           Pending.pop_back();
@@ -2569,7 +2570,7 @@ discoverSwiftOnceSources(const BinaryImage &Image,
     const auto Function = Functions.find(Analysis[I]);
     if (Function == Functions.end() || !Function->second)
       continue;
-    size_t Budget = 100000;
+    size_t Budget = kSourceExpressionWork;
     walkStmts(Function->second->Body, [&](const HighStmt &S) {
       forEachRhsExpr(S, [&](const ExprPtr &Root) {
         std::vector<ExprPtr> Pending{Root};
@@ -2644,7 +2645,7 @@ inline bool currentSwiftOnceCallbackEntry(const HighFunc &Function,
     if (!Caller.SourceTypeHint)
       continue;
     bool Found = false;
-    size_t Budget = 100000;
+    size_t Budget = kSourceExpressionWork;
     walkStmts(Caller.Body, [&](const HighStmt &Statement) {
       forEachRhsExpr(Statement, [&](const ExprPtr &Root) {
         std::vector<ExprPtr> Pending{Root};
@@ -2867,7 +2868,7 @@ inline ObjCSourceBindingResult bindSwiftOnceSourceReferences(
       ContextDefinitions;
   if (IgnoredNativeContexts && !IgnoredNativeContexts->empty())
     ContextDefinitions.emplace(Function);
-  size_t Budget = 100000;
+  size_t Budget = kSourceExpressionWork;
   std::map<const HighExpr *, ExprPtr> Copies;
   std::function<ExprPtr(const ExprPtr &, unsigned)> Copy =
       [&](const ExprPtr &Original, unsigned Depth) -> ExprPtr {

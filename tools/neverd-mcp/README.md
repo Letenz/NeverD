@@ -3,17 +3,14 @@
 For the offline JavaScript/web analysis surface implemented entirely in C++,
 use the separate [neverd-web-mcp](../neverd-web-mcp/README.md) executable.
 
-`neverd-mcp` is a Python 3.10+ standard-library adapter. It has no Qt, LLVM,
-third-party Python dependency, network listener, model provider, or agent loop.
-It implements MCP **2025-11-25** JSON-RPC over newline-delimited stdio; its
-internal worker connection uses the separate length-prefixed worker protocol.
-The executable, `server.py`, `reading.py` and `transport.py` must stay in the
-same directory.
-The macOS application also supplies a launcher at
-`NeverD.app/Contents/MacOS/neverd-mcp`. It uses the bundled interpreter when the
-engine includes Python.framework; otherwise it requires Python 3.10+ on `PATH`.
-The application GUI itself does not need Python when Python engine plugins are
-disabled. The launcher still requires an explicit worker/file or attach path.
+`neverd-mcp` is one native executable, built with the worker and installed
+beside it (`NeverD.app/Contents/MacOS/neverd-mcp` on macOS). It runs the
+worker's engine in its own process, over the same C ABI library: no interpreter,
+no worker process and no framing between a query and its answer. It has no Qt,
+network listener, model provider, or agent loop. It implements MCP
+**2025-11-25** JSON-RPC over newline-delimited stdio, and answers a client that
+asks for 2025-06-18 in kind. Build it with `cmake --build build --target
+neverd-mcp`.
 
 ## Headless use
 
@@ -23,23 +20,23 @@ Configure your MCP host with an explicit executable and arguments, for example:
 {
   "mcpServers": {
     "neverd": {
-      "command": "/absolute/path/to/python3",
-      "args": [
-        "/absolute/path/to/NeverD/tools/neverd-mcp/server.py",
-        "--worker", "/absolute/path/to/neverd-worker",
-        "--file", "/absolute/path/to/your-binary"
-      ]
+      "command": "/absolute/path/to/neverd-mcp",
+      "args": ["--file", "/absolute/path/to/your-binary"]
     }
   }
 }
 ```
 
-The adapter starts exactly one explicitly selected worker and opens only that
-input with `read_only:true`. MCP callers cannot select other files, load plugins,
-edit annotations, run targets or launch commands. Decompilation and some queries
-may trigger the existing full-image analysis; read-only means no persistent
-project edits, rather than no internal analysis work. Closing MCP terminates its
-owned worker. Use the worker that ships with the matching engine build.
+The server opens only that input, read-only, as the workbench opens a file.
+MCP callers cannot select other files, load plugins, edit annotations, run
+targets or launch commands. Decompilation and some queries may trigger the
+existing full-image analysis; read-only means no persistent project edits,
+rather than no internal analysis work. While no request waits, the server runs
+the workbench's idle-time analysis: function discovery, the reference index,
+then each function's preparation for its first decompile, so a model's later
+calls find that work done. The engine library must be the one the executable
+was built with. `--worker`, which named the worker an earlier Python adapter
+started, is refused.
 
 Tools: `project_metadata`, `list_functions`, `read_disassembly`,
 `read_decompilation`, `read_bytes`, `list_xrefs`, `list_strings`, `read_cfg`,
@@ -54,7 +51,7 @@ shows, an import's name or a label also works; it is resolved first.
 `read_decompilation` starts at the function's definition and reports how many
 `prelude_lines` (includes, types and declarations that make the file compile)
 it left out; `prelude: true` returns them too. C reads in a lossless shorter
-spelling (`reading.py`): fixed-width types as `i64`/`u32`/`uptr`, the stack
+spelling (`Reading.cpp`): fixed-width types as `i64`/`u32`/`uptr`, the stack
 frame on one line with its members named without `stack_storage.`, one
 declaration per type run, and typed accesses into byte-array globals named
 by address (`g_8A180`), each listed with its type in the header's `legend`;
@@ -79,7 +76,7 @@ to a session-local immutable snapshot, such as `neverd://result/1`. Read it with
 `resources/read` and `?offset=0&limit=32768`; the response contains text
 chunks, character offsets, `next_offset`, `complete`, project ID and revision.
 Concatenate those chunks to recover the tool's text, or the resource's JSON. Continuations read the
-cached revision without querying the worker again. At most four snapshots and
+cached revision without querying the engine again. At most four snapshots and
 8 MiB of encoded snapshot data are retained; eviction is explicit when read,
 and callers can repeat the original query to create a new snapshot.
 
@@ -89,7 +86,7 @@ Explicitly enable **Share current session** in the GUI, then use the displayed
 private credential file:
 
 ```sh
-python3 /absolute/path/to/server.py --attach /private/session/credentials.json
+/absolute/path/to/neverd-mcp --attach /private/session/credentials.json
 ```
 
 The broker is enabled only by the user. It uses an OS-user-scoped local socket
@@ -128,16 +125,18 @@ subscriptions and legacy HTTP+SSE transports are not implemented.
 
 ## Budgets and cancellation
 
-- MCP input: 1 MiB per newline-delimited message; worker frames: 8 MiB.
-- Adapter queue: 16 messages, one serialized worker query; GUI client: 32 requests.
+- MCP input: 1 MiB per newline-delimited message; workbench frames: 8 MiB.
+- Server queue: 16 messages, answered in order by one executor; GUI client: 32
+  requests.
 - Inline tool/resource output: 512 KiB. Larger results become bounded cached
   resources; over 8 MiB returns an explicit budget error. Pages are at most 512 entries,
   bytes at most 4096, and CFG size remains bounded by the worker.
-- Request timeout: 120 seconds. GUI broker: at most four authenticated clients,
-  16 pending requests per client and 32 total.
+- Attached request timeout: 120 seconds. GUI broker: at most four authenticated
+  clients, 16 pending requests per client and 32 total.
 - Cancellation suppresses queued/cancelled MCP results. An already running
-  synchronous analysis can continue until completion; the adapter does not claim
-  to stop engine computation. A worker timeout ends the connection.
+  synchronous analysis can continue until completion; the server does not claim
+  to stop engine computation. A timed-out workbench request ends the
+  attachment.
 
 These are transport/result budgets, not guarantees about LLVM analysis memory.
 The GUI client's server capabilities list currently shows its first page and
@@ -147,13 +146,19 @@ instructions or automatically fed to a model.
 ## Verification
 
 ```sh
-python3 -m unittest discover -s tools/neverd-mcp/tests -v
+cmake --build build --target neverd-mcp-tests neverd-mcp-process-tests
+ctest --test-dir build -L '^mcp$' --output-on-failure
 cmake -S tools/neverd-gui/mcp/tests -B build-mcp-tests -DCMAKE_PREFIX_PATH=/path/to/Qt
 cmake --build build-mcp-tests
 ctest --test-dir build-mcp-tests --output-on-failure
 ```
 
-Tests exercise version negotiation, initialization ordering, exact addresses,
+`NeverDMCP` checks the protocol, tools and result shapes against a recording
+backend, the reading view, and attachment to a stand-in workbench (credential
+privacy, handshake, idle events, load progress, fatal messages and timeouts).
+`NeverDMCPProcess` launches the executable on the test's own binary with the
+real engine and reads it as a client does. The Qt tests exercise version
+negotiation, initialization ordering, exact addresses,
 scope and argument validation, resource paging, result errors/budgets,
 fragmented worker frames, GUI credentials and same-session routing, subprocess
 stdio, request cancellation/history limits, malformed or oversized servers,

@@ -6,6 +6,8 @@
 
 The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend.
 
+Only the leading `UWOP_EPILOG` sequence defines V2 epilogues. Later markers consume two slots without restoring state or affecting prologue offset ordering; a truncated pair remains malformed.
+
 PE GuardCFFunctionTable parsing belongs to the COFF loader. Its complete,
 immutable table supplies address-taken function identities, without asserting
 an ABI, a supported body or runtime CFG admission. The low-level detector owns
@@ -958,6 +960,36 @@ Fork after initialization and dynamic SDK unloading are not supported by the
 retained backend; those embedding hosts must select the explicit native-thread
 baseline. Normal builds enable all four performance providers.
 
+The SDK exposes `neverd_session_discover_functions_step` for polling clients.
+Its single retained job owns a value snapshot of the image, including bytes
+and metadata, and never borrows or mutates the live session on its thread.
+Completion publishes both the discovered identities and the detector's
+verified-entry/code-reference facts on the session executor, only if the
+function-list revision still matches. The computation releases its image
+before the result waits for publication. A stale job is drained before another
+starts; edits/reload do not accumulate retired snapshots. Errors remain SDK
+diagnostics, and destruction joins the job before SDK code can unload.
+Explicit synchronous discovery can consume the same job and still returns
+only when discovery is complete. Worker polling waits for requests rather
+than busy-spinning while a snapshot is computing. Older SDKs retain the
+synchronous fallback.
+
+The worker polls stepped function discovery when the engine exports it;
+the client must also opt in through `open.step_discovery`. The default preserves
+synchronous discovery for older clients that do not coordinate image memory.
+Older engines retain synchronous discovery. Pending work yields to foreground
+requests without publishing a partial discovery result.
+
+Discovery completion is a worker scheduling boundary before the derived
+listing rebuild. The executor publishes an immediate heartbeat using the same
+state envelope as periodic liveness notifications, then waits for requests for
+at most its existing idle grace (waking on arrival). This lets a large-image
+GUI waiting for discovery publication export its analysis snapshot before
+further listing work. The GUI's large-image memory gate remains in force;
+completion does not claim reference-index readiness, and later listing reads
+still build from the published SDK functions. Errors publish an unavailable
+index without keeping replica startup blocked.
+
 Function preparation uses `neverd_prepare_function_view`, which shares the
 source route's ARM mode, exception-handler discovery and analysis-scope checks
 without emitting C. Source, IR and CFG views consume that prepared pipeline.
@@ -992,6 +1024,19 @@ function that is not a symbol start adds its own entry to its run, which keys
 other facts. The cache keeps the latest such
 selection's facts beside the symbol inventory's, so passing through one
 leaves what the symbol starts share in place.
+The GUI owner no longer requests that pipeline warmup: source/CFG views use
+separate analysis sessions and cannot consume the owner's pipeline cache.
+With idle analysis enabled, native images with 4096–65536 functions and at most
+64 MiB of input instead prefetch one source entry in an analysis replica.
+Larger inputs prepare on demand, and fresh replicas wait for discovery to
+release its image snapshot. This bounds simultaneous image ownership while
+owner browsing reads continue. Foreground requests reuse that replica's image
+preparation; concurrent independent views retain the second lane. Prefetch is
+read-only and follows the existing revision, cancellation and replica reset
+rules. It overlaps computation with browsing, not a reduced analysis scope.
+The GUI opts in with `open.step_discovery`; older workers ignore that additive
+field. Clients without the same large-image memory gate keep the worker's
+synchronous-discovery default.
 Both kinds share the image's no-return-name, stack-probe, function-pointer,
 relocation-root and executable-owner indexes. The image, debug context, symbol
 inventory and exact verified entries bind that shared ownership. Each distinct
@@ -1013,6 +1058,14 @@ remain the same.
 Core callers opt in through `PipelineOptions::AnalysisCache` and must reset it
 before input or policy mutation; image pointers alone do not establish validity.
 
+Instruction-flow sweeps keep one `InstructionFlowScratch` per decoding worker.
+The workspace reuses only the temporary LowOp vector's storage: operations
+are cleared and the x87 state reset before every instruction, including after
+an unsupported lift. Returned references and transfer facts own their values.
+Disassembly pages own a workspace for that call; parallel access-width,
+reference and string-reference scans retire theirs with each worker. No TLS,
+session cache, new semantic shortcut or cross-instruction state is involved.
+
 Function selection also retains decoded image data-access widths. Their exact
 ordered function address/size inventory is checked after synchronization;
 changed extents rebuild the widths and discard source using the former names.
@@ -1021,6 +1074,13 @@ and lookup indexes, since the names and their list positions stay unchanged.
 Names, exports and list changes retain their ordinary invalidation guards.
 Image reloads, function edits, analysis-policy and signature changes retire
 these facts. Navigation still discards the preceding output IR and source.
+
+Reference and warmup pages share one address-ordered function index for each
+function-list revision. Page lookup is a lower bound plus the requested rows;
+it does not repeatedly sort the remaining image. Stateless access-width scans
+also order their inventory once per scan. Duplicate addresses select the
+first listed identity consistently, and list revisions/storage changes retire
+borrowed pointers before the next page.
 
 Each worker retains up to eight completed code documents under a 32 MiB
 conservative retained-size allowance. Exact function, representation, project

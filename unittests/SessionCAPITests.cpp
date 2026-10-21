@@ -54,6 +54,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #ifndef _WIN32
 #include <csignal>
 #include <fcntl.h>
@@ -3120,6 +3121,173 @@ void seedAccessWidthFunctions(neverd_session_t Session) {
   State.Img.Symbols = {neverd::Symbol::makeFunc(DataELFEntry, 8),
                        neverd::Symbol::makeFunc(DataELFEntry + 0x20, 8)};
   neverd::sdk::SessionTestAccess::resetFunctions(State);
+}
+
+TEST_F(SessionCAPITest, FunctionPagesReuseOneCompleteAddressOrder) {
+  auto &State = *neverd::sdk::toSession(Session);
+  State.Functions = {{50, 8, "last"},
+                     {0, 4, "zero"},
+                     {30, 8, "middle"},
+                     {10, 8, "first"},
+                     {30, 8, "alias"}};
+  State.functionListChanged();
+  using neverd::sdk::SessionTestAccess;
+  auto Page = SessionTestAccess::functionPage(State, 0, 2);
+  ASSERT_EQ(Page.Functions.size(), 2u);
+  EXPECT_EQ(Page.Functions[0]->Entry, 0u);
+  EXPECT_EQ(Page.Functions[1]->Entry, 10u);
+  ASSERT_EQ(Page.NextEntry, 30u);
+  ASSERT_TRUE(State.FunctionPages);
+  const auto *Order = State.FunctionPages->Ordered.data();
+  Page = SessionTestAccess::functionPage(State, *Page.NextEntry, 2);
+  ASSERT_EQ(Page.Functions.size(), 2u);
+  EXPECT_EQ(Page.Functions[0]->Entry, 30u);
+  EXPECT_EQ(Page.Functions[0]->Name, "middle");
+  EXPECT_EQ(Page.Functions[1]->Entry, 50u);
+  EXPECT_FALSE(Page.NextEntry);
+  EXPECT_EQ(State.FunctionPages->Ordered.data(), Order);
+  Page = SessionTestAccess::functionPage(State, 11, 0);
+  ASSERT_EQ(Page.Functions.size(), 1u);
+  EXPECT_EQ(Page.Functions[0]->Entry, 30u);
+  EXPECT_EQ(Page.NextEntry, 50u);
+  EXPECT_TRUE(
+      SessionTestAccess::functionPage(State, 51, 4096).Functions.empty());
+  // Same allocation and count, but a changed entry must rebuild the order.
+  State.Functions[0].Entry = 5;
+  State.functionListChanged();
+  Page = SessionTestAccess::functionPage(State, 0, 4096);
+  ASSERT_EQ(Page.Functions.size(), 4u);
+  EXPECT_EQ(Page.Functions[1]->Entry, 5u);
+  EXPECT_EQ(State.FunctionPages->Revision, State.FunctionListRevision);
+  // Vector replacement retires all borrowed pointers, including on reload.
+  State.Functions = {{100, 16, "replacement"}};
+  State.functionListChanged();
+  Page = SessionTestAccess::functionPage(State, 0, 2);
+  ASSERT_EQ(Page.Functions.size(), 1u);
+  EXPECT_EQ(Page.Functions.front()->Entry, 100u);
+  EXPECT_FALSE(Page.NextEntry);
+}
+
+TEST_F(SessionCAPITest, DiscoveryStepsPublishTheSynchronousFunctionsAndProofs) {
+  const auto Input = write("discovery-step.elf", accessWidthCacheELF());
+  std::unique_ptr<void, decltype(&neverd_session_destroy)> Other(
+      neverd_session_create(), neverd_session_destroy);
+  ASSERT_EQ(neverd_session_load(Other.get(), Input.c_str()), 1);
+  seedAccessWidthFunctions(Other.get());
+  ASSERT_GE(neverd_session_discover_functions(Other.get()), 0);
+  const auto &Expected = *neverd::sdk::toSession(Other.get());
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  seedAccessWidthFunctions(Session);
+  ASSERT_EQ(neverd_session_discover_functions_step(Session), 0);
+  // A poll starts work but never publishes a partial candidate inventory.
+  auto &State = *neverd::sdk::toSession(Session);
+  EXPECT_FALSE(State.DiscoveredFunctions);
+  EXPECT_EQ(takeString(neverd_session_file_path(Session)), Input);
+  EXPECT_EQ(neverd_func_count(Session), 2);
+  int Status = 0;
+  for (int I = 0; !Status && I < 10000; ++I) {
+    Status = neverd_session_discover_functions_step(Session);
+    if (!Status)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ASSERT_EQ(Status, 1) << takeString(neverd_last_error(Session));
+  EXPECT_EQ(State.Functions, Expected.Functions);
+  EXPECT_EQ(State.Img.VerifiedFunctionEntries,
+            Expected.Img.VerifiedFunctionEntries);
+  EXPECT_EQ(State.Img.CodeRefTargets, Expected.Img.CodeRefTargets);
+  EXPECT_FALSE(State.FunctionDiscovery);
+  // Synchronous callers can also finish an outstanding snapshot job.
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  seedAccessWidthFunctions(Session);
+  ASSERT_EQ(neverd_session_discover_functions_step(Session), 0);
+  EXPECT_GE(neverd_session_discover_functions(Session), 0);
+  EXPECT_EQ(State.Functions, Expected.Functions);
+  EXPECT_FALSE(State.FunctionDiscovery);
+}
+
+TEST_F(SessionCAPITest, DiscoveryStepsDiscardTheImageReplacedDuringAJob) {
+  EXPECT_EQ(neverd_session_discover_functions_step(Session), -1);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("no binary"),
+            std::string::npos);
+  const auto First = write("first.elf", makeNativeELF(false));
+  const auto Next = write("next.elf", makeNativeELF(true));
+  ASSERT_EQ(neverd_session_load(Session, First.c_str()), 1);
+  ASSERT_EQ(neverd_session_discover_functions_step(Session), 0);
+  ASSERT_EQ(neverd_session_load(Session, Next.c_str()), 1);
+  std::unique_ptr<void, decltype(&neverd_session_destroy)> Other(
+      neverd_session_create(), neverd_session_destroy);
+  ASSERT_EQ(neverd_session_load(Other.get(), Next.c_str()), 1);
+  ASSERT_GE(neverd_session_discover_functions(Other.get()), 0);
+  int Status = 0;
+  for (int I = 0; !Status && I < 10000; ++I) {
+    Status = neverd_session_discover_functions_step(Session);
+    if (!Status)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ASSERT_EQ(Status, 1) << takeString(neverd_last_error(Session));
+  const auto &State = *neverd::sdk::toSession(Session);
+  const auto &Expected = *neverd::sdk::toSession(Other.get());
+  EXPECT_EQ(State.Functions, Expected.Functions);
+  EXPECT_EQ(State.Img.VerifiedFunctionEntries,
+            Expected.Img.VerifiedFunctionEntries);
+}
+
+TEST_F(SessionCAPITest,
+       InstructionFlowScratchDoesNotLeakAcrossInstructionsOrReads) {
+  // A read, NOP and return followed by a separate write, NOP and return.
+  // Reusing lift storage must not make either NOP/return repeat the access,
+  // or hide the conflicting widths the two functions state at the same data.
+  std::string Code(0x30, '\xcc');
+  for (const auto [Offset, Load] :
+       {std::pair{0u, true}, std::pair{0x20u, false}}) {
+    std::string Bytes =
+        Load ? std::string("\x48\x8b\x05", 3) : std::string("\x89\x05", 2);
+    const auto Delta = static_cast<uint32_t>(
+        DataELFData - (DataELFEntry + Offset + Bytes.size() + 4));
+    for (unsigned I = 0; I < 4; ++I)
+      Bytes += static_cast<char>(Delta >> (8 * I));
+    Bytes += std::string("\x90\xc3", 2);
+    Code.replace(Offset, Bytes.size(), Bytes);
+  }
+  const auto Input = write("scratch-accesses.elf",
+                           makeDataELF(std::string("hello world\0", 12), Code));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  auto &State = *neverd::sdk::toSession(Session);
+  State.Img.Symbols = {neverd::Symbol::makeFunc(DataELFEntry, 9),
+                       neverd::Symbol::makeFunc(DataELFEntry + 0x20, 8)};
+  neverd::sdk::SessionTestAccess::resetFunctions(State);
+  std::string Previous;
+  for (unsigned Repeat = 0; Repeat < 3; ++Repeat) {
+    const auto Text =
+        takeString(neverd_code_refs_json(Session, DataELFEntry, 2));
+    auto Parsed = llvm::json::parse(Text);
+    ASSERT_TRUE(static_cast<bool>(Parsed)) << Text;
+    const auto *Rows = Parsed->getAsObject()->getArray("refs");
+    ASSERT_TRUE(Rows && Rows->size() == 2) << Text;
+    for (unsigned I = 0; I < 2; ++I) {
+      const auto *Row = (*Rows)[I].getAsArray();
+      ASSERT_TRUE(Row && Row->size() == 4) << Text;
+      EXPECT_EQ(std::stoull((*Row)[0].getAsString()->str(), nullptr, 16),
+                DataELFEntry + (I ? 0x20 : 0));
+      EXPECT_EQ(std::stoull((*Row)[1].getAsString()->str(), nullptr, 16),
+                DataELFData);
+      EXPECT_EQ((*Row)[2].getAsString().value_or(""), I ? "write" : "read");
+      EXPECT_EQ((*Row)[3].getAsInteger().value_or(0), I ? 4 : 8);
+    }
+    if (Repeat)
+      EXPECT_EQ(Text, Previous);
+    Previous = Text;
+    const auto Strings =
+        takeString(neverd_string_refs_json(Session, nullptr, DataELFEntry, 2));
+    auto StringPage = llvm::json::parse(Strings);
+    ASSERT_TRUE(static_cast<bool>(StringPage)) << Strings;
+    const auto *StringRows = StringPage->getAsObject()->getArray("refs");
+    ASSERT_TRUE(StringRows && StringRows->size() == 2) << Strings;
+    const auto *Widths =
+        neverd::sdk::SessionTestAccess::dataAccessWidths(State);
+    ASSERT_TRUE(Widths);
+    EXPECT_EQ(Widths->at(DataELFData), 0u);
+  }
 }
 
 TEST_F(SessionCAPITest, WarmingScansTheDataAccessWidthsTheFirstViewReads) {

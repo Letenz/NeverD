@@ -11,6 +11,8 @@
 
 #ifndef NEVERD_SDK_RESOURCEHANDLES_H
 #define NEVERD_SDK_RESOURCEHANDLES_H
+#include "neverd/sdk/Limits.h"
+
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
@@ -26,8 +28,8 @@ llvm::Error release(uint64_t, HandleKind);
 llvm::Expected<llvm::StringRef> text(const char *, uint64_t Limit,
                                      llvm::StringRef What,
                                      bool AllowEmpty = false);
-llvm::Expected<const char *> ownedString(llvm::StringRef,
-                                         uint64_t Limit = 64 * 1024 * 1024);
+llvm::Expected<const char *>
+ownedString(llvm::StringRef, uint64_t Limit = kMaxOwnedResourceStringBytes);
 void reportError(const char **, llvm::StringRef) noexcept;
 
 /// No exception crosses a C boundary, including allocation failures while

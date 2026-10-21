@@ -42,6 +42,7 @@
 #include "neverd/loader/SymbolSpelling.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/sbf/emit/SBFLLVMEmitter.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/sdk/NeverDCAPI.h"
 #include "neverd/sigs/SignatureDB.h"
 #include "neverd/types/HeaderLibrary.h"
@@ -61,6 +62,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <list>
 #include <map>
 #include <memory>
@@ -284,7 +286,7 @@ struct Session {
   };
   /// The modules of the functions shown last, the newest first.
   std::list<FunctionLlvmModule> FunctionLlvmModules;
-  static constexpr size_t MaxFunctionLlvmModules = 8;
+  static constexpr size_t MaxFunctionLlvmModules = kMaxFunctionLlvmModules;
   /// The C route that emitted a function's source, or the language its
   /// HighC source is spelled in.
   enum class SourceRoute : uint8_t {
@@ -315,7 +317,7 @@ struct Session {
   };
   /// The sources of the functions shown last, the newest first.
   std::list<FunctionSource> FunctionSources;
-  static constexpr size_t MaxFunctionSources = 8;
+  static constexpr size_t MaxFunctionSources = kMaxFunctionSources;
   /// The widths of the reads and writes the code of every function states
   /// at each address (dataAccessWidths), and the exact function extents they
   /// were read from. Navigation can keep these image facts, but no output IR.
@@ -335,6 +337,17 @@ struct Session {
   /// Function entries the detector found on request
   /// (neverd_session_discover_functions); kept until the next load.
   std::optional<std::vector<std::pair<va_t, std::string>>> DiscoveredFunctions;
+  struct FunctionDiscoveryResult {
+    std::vector<std::pair<va_t, std::string>> Functions;
+    std::set<va_t> VerifiedEntries, CodeReferences;
+  };
+  struct FunctionDiscoveryJob {
+    uint64_t Revision;
+    std::future<FunctionDiscoveryResult> Result;
+  };
+  /// The job owns its image; it never borrows Session state. Stale jobs stay
+  /// here until ready, so an edit neither waits nor accumulates retired jobs.
+  std::optional<FunctionDiscoveryJob> FunctionDiscovery;
   std::set<va_t> OnlyFunctionEntries;
   /// Whole-program source simplifies symbolically
   /// (neverd_session_set_source_symbolic).
@@ -374,6 +387,15 @@ struct Session {
   /// Code that changes the list calls functionListChanged().
   uint64_t FunctionListRevision = 0;
   void functionListChanged() { ++FunctionListRevision; }
+  /// Address order belongs to the complete function-list revision, not to
+  /// one page. Reference scans and warmup can request thousands of pages.
+  struct FunctionPageIndex {
+    uint64_t Revision;
+    const FuncInfo *List;
+    size_t Count;
+    std::vector<const FuncInfo *> Ordered;
+  };
+  mutable std::optional<FunctionPageIndex> FunctionPages;
   /// What refreshFunctionNames last derived the names from.  From the same
   /// inputs it derives the names the list holds, so it keeps them: an image
   /// lists tens of thousands of functions.

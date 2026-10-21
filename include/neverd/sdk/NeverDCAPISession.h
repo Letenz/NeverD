@@ -157,6 +157,14 @@ NEVERD_API int neverd_session_is_loaded(neverd_session_t Sess);
 /// and no size, and stays listed until the next load; the full pipeline may
 /// list more.  Idempotent; returns the function count, or -1 with an error.
 NEVERD_API int neverd_session_discover_functions(neverd_session_t Sess);
+/// Start/poll native function discovery on an owned image snapshot. Returns
+/// 0 while pending, 1 after publishing the complete result, or -1 with
+/// last_error. Other queries may use the session between polls. A changed
+/// function-list revision discards the old result before starting another
+/// snapshot. At most one job is retained; destroying the session joins it.
+/// The synchronous discovery entry point keeps its existing completion
+/// contract and can consume the same pending job.
+NEVERD_API int neverd_session_discover_functions_step(neverd_session_t Sess);
 
 /// Run the full analysis pipeline (lift → optimize → decompile).
 /// Call after neverd_session_load() to pre-compute analysis data.

@@ -2,6 +2,7 @@
 #include "SourceEdits.h"
 
 #include "neverd/ir/SourceStackFrame.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -52,7 +53,7 @@ neverd::sdk::readSourceStackFrame(const llvm::json::Object &O) {
     F.InputSHA256 = Text->lower();
   }
   if (const auto *Points = O.getArray("points")) {
-    if (Points->size() > 256)
+    if (Points->size() > kMaxStackFramePoints)
       throw std::invalid_argument("Too many SP corrections");
     for (const auto &P : *Points) {
       const auto *Row = P.getAsObject();
@@ -66,7 +67,7 @@ neverd::sdk::readSourceStackFrame(const llvm::json::Object &O) {
   } else if (O.get("points"))
     throw std::invalid_argument("points must be an array");
   if (const auto *Variables = O.getArray("variables")) {
-    if (Variables->size() > 256)
+    if (Variables->size() > kMaxStackFrameVariables)
       throw std::invalid_argument("Too many stack variables");
     for (const auto &V : *Variables) {
       const auto *Row = V.getAsObject();
@@ -75,14 +76,15 @@ neverd::sdk::readSourceStackFrame(const llvm::json::Object &O) {
       const auto Name = Row ? Row->getString("name") : std::nullopt;
       if (!At || !Bytes || *Bytes < 1 || *Bytes > 16 || !Name ||
           (Row->get("type") && !Row->getString("type")) || Name->empty() ||
-          Name->size() > 128)
+          Name->size() > kMaxStackVariableNameBytes)
         throw std::invalid_argument("Invalid stack variable");
       F.Variables.push_back({*At, static_cast<uint16_t>(*Bytes), Name->str(),
                              Row->getString("type").value_or("").str()});
     }
   } else if (O.get("variables"))
     throw std::invalid_argument("variables must be an array");
-  if (!F.empty() && (F.Snapshot.empty() || F.Snapshot.size() > 128))
+  if (!F.empty() &&
+      (F.Snapshot.empty() || F.Snapshot.size() > kMaxSourceSnapshotBytes))
     throw std::invalid_argument(
         "A stack edit requires an original graph snapshot");
   return F;
@@ -183,7 +185,7 @@ const char *neverd_stack_frame_json(neverd_session_t Sess, neverd_va_t Entry,
   S->clearError();
   try {
     llvm::StringRef Text = OptionsJSON ? OptionsJSON : "{}";
-    if (Text.size() > 128 * 1024)
+    if (Text.size() > kMaxStackFrameOptionsBytes)
       throw std::invalid_argument("Stack policy exceeds 128 KiB");
     auto Parsed = llvm::json::parse(Text);
     if (!Parsed) {

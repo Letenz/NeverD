@@ -2426,10 +2426,9 @@ private slots:
     QVERIFY(!firstFinished);
   }
 
-  void idleAnalysisPreparesFunctionsUnlessTurnedOff() {
-    // The load dialog's Analysis option also has the worker prepare each
-    // function for its first decompile in idle time; turned off, it
-    // prepares none.
+  void ownerDoesNotWarmPipelinesUsedOnlyByAnalysisReplicas() {
+    // Reference indexing still runs in the owner. Pipeline warmup there
+    // cannot accelerate a view prepared in a different analysis Session.
     QTemporaryDir directory;
     Session session(QString::fromLocal8Bit(TEST_WORKER));
     const auto preparation = [&] {
@@ -2441,14 +2440,162 @@ private slots:
     };
     session.open(writeFixture(directory, QStringLiteral("prepared.bin")));
     QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
-    QTRY_COMPARE_WITH_TIMEOUT(preparation(), QStringLiteral("complete"),
+    QTRY_COMPARE_WITH_TIMEOUT(preparation(), QStringLiteral("off"),
                               OpenTimeoutMs);
+    QJsonObject initialSnapshot;
+    session.read(
+        "analysis_snapshot", {}, this,
+        [&](const QJsonObject &payload) { initialSnapshot = payload; });
+    QTRY_VERIFY_WITH_TIMEOUT(initialSnapshot.contains("open"), OpenTimeoutMs);
+    QVERIFY(initialSnapshot.value("open")
+                .toObject()
+                .value("step_discovery")
+                .toBool());
     LoadOptions options;
     options.analysis = false;
     session.open(writeFixture(directory, QStringLiteral("unprepared.bin")),
                  options);
+    QTRY_COMPARE_WITH_TIMEOUT(session.fileName(),
+                              QStringLiteral("unprepared.bin"), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
     QTRY_COMPARE_WITH_TIMEOUT(preparation(), QStringLiteral("off"),
                               OpenTimeoutMs);
+    QJsonObject disabledSnapshot;
+    session.read(
+        "analysis_snapshot", {}, this,
+        [&](const QJsonObject &payload) { disabledSnapshot = payload; });
+    QTRY_VERIFY_WITH_TIMEOUT(disabledSnapshot.contains("open"), OpenTimeoutMs);
+    QVERIFY(!disabledSnapshot.value("open")
+                 .toObject()
+                 .value("step_discovery")
+                 .toBool());
+  }
+
+  void prefetchedSourceAndForegroundUseTheSameAnalysisReplica() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(
+        writeFixture(directory, QStringLiteral("pseudocode-parallel.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    AnalysisPool pool(session.queries(), QString::fromLocal8Bit(TEST_WORKER));
+    QStringList diagnostics;
+    connect(&pool, &AnalysisPool::diagnostic, this,
+            [&](const QString &text) { diagnostics.append(text); });
+    pool.prefetchSource(Base);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        diagnostics.join('\n').contains("fixture parallel decompile " +
+                                        hexAddress(Base) + " started"),
+        OpenTimeoutMs);
+    QObject owner;
+    const QJsonObject payload{{"address", hexAddress(Base + 32)},
+                              {"representation", "source"}};
+    auto &replica = pool.queries(payload, &owner);
+    QCOMPARE(&replica, &pool.externalQueries());
+    bool done = false;
+    replica.subscribe({"decompile", payload}, &owner,
+                      [&](const QJsonObject &response) {
+                        done = response.value("status") == QLatin1String("ok");
+                      });
+    QTRY_VERIFY_WITH_TIMEOUT(done, OpenTimeoutMs);
+    const auto preparations = diagnostics.size();
+    const QJsonObject cached{{"address", hexAddress(Base)},
+                             {"representation", "source"},
+                             {"source_options", QJsonObject{}},
+                             {"offset", 0},
+                             {"limit", 1}};
+    done = false;
+    pool.queries(cached, &owner)
+        .subscribe({"decompile", cached}, &owner,
+                   [&](const QJsonObject &response) {
+                     done = response.value("status") == QLatin1String("ok") &&
+                            !response.value("payload")
+                                 .toObject()
+                                 .value("text")
+                                 .toString()
+                                 .isEmpty();
+                   });
+    QTRY_VERIFY_WITH_TIMEOUT(done, OpenTimeoutMs);
+    QCOMPARE(diagnostics.size(), preparations);
+  }
+
+  void analysisReplicaWaitsWithoutBlockingOwnerReads_data() {
+    QTest::addColumn<bool>("cancel");
+    QTest::newRow("release") << false;
+    QTest::newRow("cancel-before-release") << true;
+  }
+
+  void analysisReplicaWaitsWithoutBlockingOwnerReads() {
+    QFETCH(bool, cancel);
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(writeFixture(directory, QStringLiteral("snapshot-wait.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    AnalysisPool pool(session.queries(), QString::fromLocal8Bit(TEST_WORKER));
+    pool.setSnapshotBlocked(true);
+    QStringList diagnostics;
+    connect(&pool, &AnalysisPool::diagnostic, this,
+            [&](const QString &text) { diagnostics.append(text); });
+    QObject owner;
+    const QJsonObject payload{{"address", hexAddress(Base)},
+                              {"representation", "source"}};
+    auto &replica = pool.queries(payload, &owner);
+    bool done = false;
+    replica.subscribe({"decompile", payload}, &owner,
+                      [&](const QJsonObject &response) {
+                        done = response.value("status") == QLatin1String("ok");
+                      });
+    // Round-trip a read through the writable owner while the analysis job is
+    // queued. No replica may start before discovery's snapshot is released.
+    bool ownerDone = false;
+    session.read("functions", {{"limit", 1}}, this,
+                 [&](const QJsonObject &) { ownerDone = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(ownerDone, OpenTimeoutMs);
+    QVERIFY(!done);
+    QVERIFY(diagnostics.isEmpty());
+    QCOMPARE(replica.pendingReadCount(), 1);
+    if (cancel) {
+      pool.unsubscribeOwner(&owner);
+      QTRY_COMPARE(replica.pendingReadCount(), 0);
+    }
+    pool.setSnapshotBlocked(false);
+    if (cancel) {
+      QTest::qWait(50);
+      QVERIFY(!done);
+      QVERIFY(diagnostics.isEmpty());
+    } else {
+      QTRY_VERIFY_WITH_TIMEOUT(done, OpenTimeoutMs);
+    }
+  }
+
+  void prefetchedSourceIsRetiredWhenTheProjectChanges() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(
+        writeFixture(directory, QStringLiteral("pseudocode-slow.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    AnalysisPool pool(session.queries(), QString::fromLocal8Bit(TEST_WORKER));
+    QStringList diagnostics;
+    connect(&pool, &AnalysisPool::diagnostic, this,
+            [&](const QString &text) { diagnostics.append(text); });
+    pool.prefetchSource(Base);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        diagnostics.join('\n').contains("fixture slow decompile started"),
+        OpenTimeoutMs);
+    session.open(writeFixture(directory, QStringLiteral("replacement.bin")));
+    QTRY_COMPARE_WITH_TIMEOUT(session.fileName(),
+                              QStringLiteral("replacement.bin"), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    QObject owner;
+    const QJsonObject payload{{"address", hexAddress(Base + 32)},
+                              {"representation", "source"}};
+    bool done = false;
+    pool.queries(payload, &owner)
+        .subscribe({"decompile", payload}, &owner,
+                   [&](const QJsonObject &response) {
+                     done = response.value("status") == QLatin1String("ok");
+                   });
+    QTRY_VERIFY_WITH_TIMEOUT(done, OpenTimeoutMs);
+    QCOMPARE(session.fileName(), QStringLiteral("replacement.bin"));
   }
 
   void analysisPagesKeepTheirReplicaWhenAnotherFunctionQueues() {

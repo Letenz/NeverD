@@ -13,6 +13,7 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/loader/StringLiteralSymbols.h"
+#include "neverd/sdk/Limits.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -43,13 +44,6 @@ namespace {
 #define NEVERD_IMPORT_SLOT_SUFFIX(Suffix)                                      \
   constexpr llvm::StringLiteral ImportSlotSuffix(Suffix);
 #include "neverd/DataNames.def"
-
-/// Sections a mirror's comment names before it stops at `...`.
-constexpr size_t MaxSectionsNoted = 6;
-/// Addresses a mirror's comment lists before it counts the rest.
-constexpr size_t MaxReachesNoted = 16;
-/// The width a comment wraps its sentences at, after its `; `.
-constexpr size_t CommentWidth = 78;
 
 /// \p Text as a comment can hold it: valid UTF-8 on the comment's own line.
 std::string commentText(llvm::StringRef Text) {
@@ -593,9 +587,9 @@ std::string mirrorComment(const llvm::GlobalVariable &Mirror,
   llvm::sort(Spanned, [](const Section *Left, const Section *Right) {
     return Left->VA < Right->VA;
   });
-  for (size_t I = 0; I < Spanned.size() && I < MaxSectionsNoted; ++I)
+  for (size_t I = 0; I < Spanned.size() && I < kMaxLLVMCommentSections; ++I)
     OS << (I ? ", " : " (") << commentText(Spanned[I]->Name);
-  if (Spanned.size() > MaxSectionsNoted)
+  if (Spanned.size() > kMaxLLVMCommentSections)
     OS << ", ...";
   if (!Spanned.empty())
     OS << ")";
@@ -606,9 +600,9 @@ std::string mirrorComment(const llvm::GlobalVariable &Mirror,
   if (!Reached.empty())
     OS << " This function uses:";
   std::string Block;
-  for (const std::string &Line : wrapWords(Sentence, CommentWidth))
+  for (const std::string &Line : wrapWords(Sentence, kLLVMCommentWidth))
     Block += "; " + Line + "\n";
-  for (size_t I = 0; I < Reached.size() && I < MaxReachesNoted; ++I) {
+  for (size_t I = 0; I < Reached.size() && I < kMaxLLVMCommentReaches; ++I) {
     const auto Offset = static_cast<int64_t>(Reached[I] - First);
     Block += ";   " + std::string(Offset < 0 ? "-" : "+") +
              std::to_string(Offset < 0 ? -static_cast<uint64_t>(Offset)
@@ -618,8 +612,9 @@ std::string mirrorComment(const llvm::GlobalVariable &Mirror,
       Block += " " + Note;
     Block += "\n";
   }
-  if (Reached.size() > MaxReachesNoted)
-    Block += ";   ... and " + std::to_string(Reached.size() - MaxReachesNoted) +
+  if (Reached.size() > kMaxLLVMCommentReaches)
+    Block += ";   ... and " +
+             std::to_string(Reached.size() - kMaxLLVMCommentReaches) +
              " more\n";
   return Block;
 }

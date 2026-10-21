@@ -10,6 +10,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/decode/InstructionRelocations.h"
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/Parallel.h"
 
@@ -120,8 +121,16 @@ StackMove stackMove(const TargetRegInfo &Registers, llvm::ArrayRef<LowOp> Ops) {
 InstructionFlow summarizeInstructionFlow(const BinaryImage &Img, Decoder &Dec,
                                          const DecodedInsn &DI,
                                          const TargetRegInfo *StackRegisters) {
+  InstructionFlowScratch Scratch;
+  return Scratch.summarize(Img, Dec, DI, StackRegisters);
+}
+
+InstructionFlow
+InstructionFlowScratch::summarize(const BinaryImage &Img, Decoder &Dec,
+                                  const DecodedInsn &DI,
+                                  const TargetRegInfo *StackRegisters) {
   InstructionFlow Flow;
-  std::vector<LowOp> Ops;
+  Ops.clear();
   // Each row is lifted independently of its neighbours.
   Dec.resetX86FpuState();
   try {
@@ -287,53 +296,70 @@ std::optional<va_t> relocatedPointer(const BinaryImage &Img, va_t Slot) {
              : Target;
 }
 
-FunctionPage functionPage(const Session &S, va_t FirstEntry, int MaxFunctions) {
-  return functionPage(S.Functions, FirstEntry, MaxFunctions);
-}
-
-FunctionPage functionPage(llvm::ArrayRef<FuncInfo> Functions, va_t FirstEntry,
-                          int MaxFunctions) {
+namespace {
+std::vector<const FuncInfo *>
+orderedFunctions(llvm::ArrayRef<FuncInfo> Functions) {
   std::vector<const FuncInfo *> Ordered;
   Ordered.reserve(Functions.size());
   for (const FuncInfo &F : Functions)
-    if (F.Entry >= FirstEntry)
-      Ordered.push_back(&F);
-  std::sort(Ordered.begin(), Ordered.end(),
-            [](const FuncInfo *Left, const FuncInfo *Right) {
-              return Left->Entry < Right->Entry;
-            });
+    Ordered.push_back(&F);
+  const auto ByEntry = [](const FuncInfo *Left, const FuncInfo *Right) {
+    return Left->Entry < Right->Entry;
+  };
+  if (!std::is_sorted(Ordered.begin(), Ordered.end(), ByEntry))
+    std::stable_sort(Ordered.begin(), Ordered.end(), ByEntry);
   Ordered.erase(std::unique(Ordered.begin(), Ordered.end(),
                             [](const FuncInfo *Left, const FuncInfo *Right) {
                               return Left->Entry == Right->Entry;
                             }),
                 Ordered.end());
-  const size_t End = std::min(
-      Ordered.size(), static_cast<size_t>(std::clamp(
-                          MaxFunctions, 1, FunctionPage::MaxFunctionsPerPage)));
+  return Ordered;
+}
+
+FunctionPage pageFunctions(llvm::ArrayRef<const FuncInfo *> Ordered,
+                           va_t FirstEntry, int MaxFunctions) {
+  const auto First = std::lower_bound(
+      Ordered.begin(), Ordered.end(), FirstEntry,
+      [](const FuncInfo *F, va_t Entry) { return F->Entry < Entry; });
+  const size_t End =
+      std::min(static_cast<size_t>(Ordered.end() - First),
+               static_cast<size_t>(std::clamp(
+                   MaxFunctions, 1, FunctionPage::MaxFunctionsPerPage)));
   FunctionPage Page;
-  if (End < Ordered.size())
-    Page.NextEntry = Ordered[End]->Entry;
-  Ordered.resize(End);
-  Page.Functions = std::move(Ordered);
-  Page.Entries.reserve(Functions.size());
-  for (const FuncInfo &F : Functions)
-    Page.Entries.push_back(F.Entry);
-  llvm::sort(Page.Entries);
-  Page.Entries.erase(std::unique(Page.Entries.begin(), Page.Entries.end()),
-                     Page.Entries.end());
+  if (End < static_cast<size_t>(Ordered.end() - First))
+    Page.NextEntry = First[End]->Entry;
+  Page.Functions.assign(First, First + End);
+  // The order holds each entry once, ascending: every function's entry.
+  Page.Entries.reserve(Ordered.size());
+  for (const FuncInfo *F : Ordered)
+    Page.Entries.push_back(F->Entry);
   return Page;
+}
+} // namespace
+
+FunctionPage functionPage(const Session &S, va_t FirstEntry, int MaxFunctions) {
+  if (!S.FunctionPages || S.FunctionPages->Revision != S.FunctionListRevision ||
+      S.FunctionPages->List != S.Functions.data() ||
+      S.FunctionPages->Count != S.Functions.size())
+    S.FunctionPages = Session::FunctionPageIndex{
+        S.FunctionListRevision, S.Functions.data(), S.Functions.size(),
+        orderedFunctions(S.Functions)};
+  return pageFunctions(S.FunctionPages->Ordered, FirstEntry, MaxFunctions);
+}
+
+FunctionPage functionPage(llvm::ArrayRef<FuncInfo> Functions, va_t FirstEntry,
+                          int MaxFunctions) {
+  return pageFunctions(orderedFunctions(Functions), FirstEntry, MaxFunctions);
 }
 
 namespace {
-/// A function without a recorded size reads at most this many instructions;
-/// this bounds a corrupt or missing extent.
-constexpr uint64_t MaxUnsizedInstructions = 65536;
 
 /// The instructions of a function without a recorded size: those its own
 /// direct jumps reach from \p Entry, short of another function's entry in
 /// \p Entries, in address order.  32-bit ARM, whose jumps can change the
 /// instruction set, reads up to the first terminator instead.
-std::vector<va_t> unsizedBody(const BinaryImage &Img, Decoder &Dec, va_t Entry,
+std::vector<va_t> unsizedBody(const BinaryImage &Img, Decoder &Dec,
+                              InstructionFlowScratch &Scratch, va_t Entry,
                               llvm::ArrayRef<va_t> Entries) {
   const auto OtherEntry = [&](va_t Address) {
     return Address != Entry &&
@@ -342,16 +368,16 @@ std::vector<va_t> unsizedBody(const BinaryImage &Img, Decoder &Dec, va_t Entry,
   const bool FollowsJumps = Img.Arch != Arch::ARM && !Entries.empty();
   std::set<va_t> Body;
   std::vector<va_t> Pending{Entry};
-  while (!Pending.empty() && Body.size() < MaxUnsizedInstructions) {
+  while (!Pending.empty() && Body.size() < kMaxUnsizedInstructions) {
     const va_t Start = Pending.back();
     Pending.pop_back();
     (void)decodeNativeRange(
-        Img, Dec, Start, 0, MaxUnsizedInstructions - Body.size(),
+        Img, Dec, Start, 0, kMaxUnsizedInstructions - Body.size(),
         [&](const DecodedInsn &DI, const uint8_t *, int) {
           if (OtherEntry(DI.Addr) || !Body.insert(DI.Addr).second)
             return false;
           if (FollowsJumps) {
-            const InstructionFlow Flow = summarizeInstructionFlow(Img, Dec, DI);
+            const InstructionFlow Flow = Scratch.summarize(Img, Dec, DI);
             if ((Flow.Kind == "jump" || Flow.Kind == "cjump") &&
                 Flow.Target != InvalidVA && !OtherEntry(Flow.Target) &&
                 !Body.count(Flow.Target))
@@ -368,7 +394,8 @@ std::vector<va_t> unsizedBody(const BinaryImage &Img, Decoder &Dec, va_t Entry,
 bool decodeExtents(
     const BinaryImage &Img, llvm::ArrayRef<std::pair<va_t, uint64_t>> Extents,
     llvm::ArrayRef<va_t> Entries,
-    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &)>
+    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &,
+                            InstructionFlowScratch &)>
         Visit) {
   // The parts of a function its unwind records keep apart from its body,
   // past other functions' code, are its code too: MSVC moves cold paths
@@ -383,21 +410,23 @@ bool decodeExtents(
       DecoderFailed = true;
       return;
     }
+    InstructionFlowScratch Scratch;
     for (size_t Index = Claim(); Index < Total; Index = Claim()) {
       const auto [Entry, Size] = Extents[Index];
       if (Size > 0) {
         (void)decodeNativeRange(
             Img, Local, Entry, Size, Size,
             [&](const DecodedInsn &DI, const uint8_t *, int) {
-              Visit(Index, Local, DI);
+              Visit(Index, Local, DI, Scratch);
               return true;
             });
       } else {
-        for (const va_t Address : unsizedBody(Img, Local, Entry, Entries))
+        for (const va_t Address :
+             unsizedBody(Img, Local, Scratch, Entry, Entries))
           (void)decodeNativeRange(
               Img, Local, Address, 0, 1,
               [&](const DecodedInsn &DI, const uint8_t *, int) {
-                Visit(Index, Local, DI);
+                Visit(Index, Local, DI, Scratch);
                 return true;
               });
       }
@@ -407,7 +436,7 @@ bool decodeExtents(
               Img, Local, Range.Begin, Range.End - Range.Begin,
               Range.End - Range.Begin,
               [&](const DecodedInsn &DI, const uint8_t *, int) {
-                Visit(Index, Local, DI);
+                Visit(Index, Local, DI, Scratch);
                 return true;
               });
     }
@@ -423,7 +452,8 @@ bool isDataAccess(const InstructionRef &Ref) {
 
 bool decodeFunctions(
     const BinaryImage &Img, const FunctionPage &Page,
-    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &)>
+    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &,
+                            InstructionFlowScratch &)>
         Visit) {
   std::vector<std::pair<va_t, uint64_t>> Extents;
   Extents.reserve(Page.Functions.size());
@@ -436,16 +466,18 @@ std::optional<DataAccessWidths>
 collectDataAccessWidths(const BinaryImage &Img,
                         llvm::ArrayRef<FuncInfo> Functions) {
   std::vector<std::pair<va_t, unsigned>> Accesses;
+  const auto Ordered = orderedFunctions(Functions);
   for (std::optional<va_t> Cursor = va_t{0}; Cursor;) {
     const FunctionPage Page =
-        functionPage(Functions, *Cursor, FunctionPage::MaxFunctionsPerPage);
+        pageFunctions(Ordered, *Cursor, FunctionPage::MaxFunctionsPerPage);
     // Each function's accesses, which only the thread decoding it writes.
     std::vector<std::vector<std::pair<va_t, unsigned>>> Slots(
         Page.Functions.size());
     const bool Decoded = decodeFunctions(
-        Img, Page, [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
-          for (const InstructionRef &Ref :
-               summarizeInstructionFlow(Img, Dec, DI).Refs)
+        Img, Page,
+        [&](size_t Index, Decoder &Dec, const DecodedInsn &DI,
+            InstructionFlowScratch &Scratch) {
+          for (const InstructionRef &Ref : Scratch.summarize(Img, Dec, DI).Refs)
             if (isDataAccess(Ref))
               Slots[Index].emplace_back(Ref.To, Ref.Bytes);
         });
@@ -469,13 +501,12 @@ DataAccessScan::update(const BinaryImage &Img,
   // its pages give the function's entry.
   std::vector<std::pair<va_t, uint64_t>> Next;
   std::vector<va_t> NextEntries;
-  for (std::optional<va_t> Cursor = va_t{0}; Cursor;) {
-    FunctionPage Page =
-        functionPage(Functions, *Cursor, FunctionPage::MaxFunctionsPerPage);
-    for (const FuncInfo *F : Page.Functions)
-      Next.emplace_back(F->Entry, F->Size);
-    NextEntries = std::move(Page.Entries);
-    Cursor = Page.NextEntry;
+  const auto Ordered = orderedFunctions(Functions);
+  Next.reserve(Ordered.size());
+  NextEntries.reserve(Ordered.size());
+  for (const FuncInfo *F : Ordered) {
+    Next.emplace_back(F->Entry, F->Size);
+    NextEntries.push_back(F->Entry);
   }
   // A function without a size reads up to the other functions' entries, so
   // with other entries what it read before cannot be read again to take it
@@ -494,9 +525,10 @@ DataAccessScan::update(const BinaryImage &Img,
   std::vector<std::vector<std::pair<va_t, unsigned>>> Slots(Read.size());
   if (!Read.empty() &&
       !decodeExtents(Img, Read, NextEntries,
-                     [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
+                     [&](size_t Index, Decoder &Dec, const DecodedInsn &DI,
+                         InstructionFlowScratch &Scratch) {
                        for (const InstructionRef &Ref :
-                            summarizeInstructionFlow(Img, Dec, DI).Refs)
+                            Scratch.summarize(Img, Dec, DI).Refs)
                          if (isDataAccess(Ref))
                            Slots[Index].emplace_back(Ref.To, Ref.Bytes);
                      })) {

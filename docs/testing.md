@@ -2404,6 +2404,14 @@ require worker protocol/Web and affected mock transport regressions. These
 MCP suites own catalog qualification separately from the existing Python
 native capability checker. See the [profile](web-mcp-profile.md).
 
+The worker build also builds `neverd-mcp`, NeverD's native MCP server, which
+runs the worker's engine in process. `ctest -L '^mcp$'` runs `NeverDMCP`, the
+protocol, tool, result-shape, reading-view and workbench-attachment cases
+against a recording backend and a stand-in workbench socket, and
+`NeverDMCPProcess`, which launches the executable on the test's own binary with
+the real engine and skips on Windows. Changes to the worker engine or its
+operations also run `NeverDMCPProcess`.
+
 `WebNexe.*` covers pinned EOF framing, strict first-shim JSON, malformed binary64
 lengths, first-sentinel window boundaries, private paths, overlap/alias coverage
 and independent member/work/private-metadata budgets. `WebNexeSDK.*` exercises

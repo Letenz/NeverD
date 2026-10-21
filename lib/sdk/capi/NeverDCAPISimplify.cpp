@@ -21,6 +21,7 @@
 
 #include "SessionImpl.h"
 
+#include "neverd/sdk/Limits.h"
 #include "neverd/sdk/NeverDCAPI.h"
 #include "neverd/symbolic/SymMBA.h"
 #include "neverd/symbolic/SymParse.h"
@@ -63,9 +64,6 @@ static_assert(static_cast<int>(symbolic::MBAEvidence::Samples) ==
                   NEVERD_SIMPLIFY_EVIDENCE_SAMPLES,
               "evidence enumerations have drifted apart");
 
-/// The width a leaf takes when the caller names none.
-constexpr unsigned kDefaultWidth = 32;
-
 /// Where a field ends, measured from the start of its struct.
 #define FIELD_END(Type, Field)                                                 \
   (offsetof(Type, Field) + sizeof(static_cast<Type *>(nullptr)->Field))
@@ -92,7 +90,7 @@ struct Simplified {
 };
 
 struct SimplifyConfig {
-  unsigned Width = kDefaultWidth;
+  unsigned Width = kDefaultSymbolicWidth;
   bool Deep = true;
   symbolic::MBAOptions MBA;
   symbolic::SymParseOptions Parse;
@@ -226,7 +224,7 @@ void neverd_simplify_result_dispose(neverd_simplify_result *Result) {
 const char *neverd_simplify_expr_json(const char *Expr, unsigned Width,
                                       int Deep) {
   SimplifyConfig Config;
-  Config.Width = Width ? Width : kDefaultWidth;
+  Config.Width = Width ? Width : kDefaultSymbolicWidth;
   Config.Deep = Deep != 0;
   Simplified S = simplify(Expr, Config);
   if (!S.Ok)
