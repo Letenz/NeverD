@@ -128,6 +128,9 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
   if (!Options.MSRReads.empty() &&
       Options.Contract != ExecutionContract::CheckedX64)
     return failure("driver msr_reads requires checked-x64 execution");
+  if (!Options.ProcessPebs.empty() &&
+      Options.Contract != ExecutionContract::CheckedX64)
+    return failure("driver process_pebs requires checked-x64 execution");
   KernelExportRegistry Exports;
   if (auto E = Exports.initialize(Options))
     return std::move(E);

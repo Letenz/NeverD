@@ -1154,6 +1154,7 @@ private:
   llvm::Error validateQueryBuffer(uint64_t Address, uint32_t Size,
                                   bool Writable, llvm::StringRef API);
   std::optional<DriverKernelVaShadowQuery> KernelVaShadowQuery;
+  std::vector<DriverProcessPeb> ProcessPebs;
   llvm::Expected<uint64_t> queryKernelVaShadow(llvm::ArrayRef<uint64_t> Args);
   std::optional<DriverVersionQuery> VersionQuery;
   llvm::Expected<uint64_t> queryVersion(uint64_t Address);
