@@ -8,7 +8,8 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from server import MAX_CACHED_RESULTS, MAX_RESULT, PROTOCOL, RpcError, Server, serve
+from server import (DEFAULT_STRING_TEXT_LIMIT, MAX_CACHED_RESULTS, MAX_RESULT, PROTOCOL, RpcError, Server,
+                    compact_result, serve)
 from transport import Backend, MAX_FRAME, read_frame, write_frame
 
 
@@ -57,12 +58,18 @@ class McpProtocolTests(unittest.TestCase):
         with self.assertRaises(RpcError):
             self.server.handle(INIT)
 
+    def test_only_pages_take_a_revision_guard(self):
+        self.ready()
+        for listed in self.server.handle(request("tools/list"))["tools"]:
+            properties = listed["inputSchema"]["properties"]
+            self.assertEqual("expected_revision" in properties, "offset" in properties, listed["name"])
+
     def test_address_and_revision_remain_strings(self):
         self.ready()
-        result = self.server.handle(request("tools/call", {"name": "read_disassembly", "arguments": {
+        result = self.server.handle(request("tools/call", {"name": "list_xrefs", "arguments": {
             "address": "0xffffffffffffffff", "limit": 2, "expected_revision": "18446744073709551615"}}))
         self.assertFalse(result["isError"])
-        self.assertEqual(self.backend.calls, [("disasm", {"address": "0xffffffffffffffff", "limit": 2}, "18446744073709551615")])
+        self.assertEqual(self.backend.calls, [("xrefs", {"address": "0xffffffffffffffff", "limit": 2}, "18446744073709551615")])
 
     def test_validation_rejects_path_changes_and_unbounded_pages(self):
         self.ready()
@@ -105,7 +112,7 @@ class McpProtocolTests(unittest.TestCase):
         self.backend.response = {"status": "ok", "revision": "42", "payload": {"text": "x" * MAX_CACHED_RESULTS}}
         result = self.server.handle(request("tools/call", {"name": "project_metadata"}))
         self.assertTrue(result["isError"])
-        self.assertEqual(result["structuredContent"]["status"], "budget_exceeded")
+        self.assertEqual(json.loads(result["content"][0]["text"])["status"], "budget_exceeded")
 
     def test_large_results_return_bounded_revision_stable_resource_pages(self):
         self.ready()
@@ -126,10 +133,116 @@ class McpProtocolTests(unittest.TestCase):
             if page["complete"]:
                 break
             offset = page["next_offset"]
-        self.assertEqual(json.loads("".join(chunks)), expected)
+        self.assertEqual("".join(chunks), compact_result("metadata", {}, expected)[0])
+        self.assertEqual(json.loads("".join(chunks))["revision"], "42")
         self.assertEqual(len(self.backend.calls), 1)
         with self.assertRaises(RpcError):
             self.server.handle(request("resources/read", {"uri": uri + "?expected_revision=43"}))
+
+    def test_tools_return_what_an_agent_reads(self):
+        self.ready()
+        self.backend.response = {"type": "response", "protocol_major": 1, "request_id": "9", "operation": "decompile",
+                                 "analysis_state": "complete", "project_id": "project-1", "revision": "7", "status": "ok",
+                                 "payload": {"address": "0x401000", "representation": "c", "dialect": "c",
+                                             "text": "int main(void) {\n    return 0;\n}\n", "offset": 0,
+                                             "total_lines": 3, "next_offset": None, "complete": True,
+                                             "rows": [{"line": 0, "address": "0x401000"}] * 50,
+                                             "source_variables": [{"name": "v"}] * 50,
+                                             "code_names": [{"begin_byte": 4}] * 50, "source_calls": []}}
+        result = self.server.handle(request("tools/call", {"name": "read_decompilation", "arguments": {"address": "0x401000"}}))
+        self.assertFalse(result["isError"])
+        self.assertNotIn("structuredContent", result)
+        header, code = result["content"][0]["text"].split("\n", 1)
+        self.assertEqual(json.loads(header), {"revision": "7", "address": "0x401000", "representation": "c",
+                                              "offset": 0, "total_lines": 3, "complete": True})
+        self.assertEqual(code, "int main(void) {\n    return 0;\n}\n")
+        # exact=true asks for the engine's spelling, which is the same here.
+        result = self.server.handle(request("tools/call", {"name": "read_decompilation",
+                                                           "arguments": {"address": "0x401000", "exact": True}}))
+        self.assertEqual(result["content"][0]["text"].split("\n", 1)[1], code)
+        self.assertNotIn("exact", self.backend.calls[-1][1])
+        # The complete worker response stays available as a resource.
+        contents = self.server.handle(request("resources/read", {"uri": "neverd://project/decompile?address=0x401000"}))
+        self.assertEqual(len(json.loads(contents["contents"][0]["text"])["payload"]["rows"]), 50)
+
+    def test_tables_are_columns_and_rows(self):
+        self.ready()
+        self.backend.response = {"status": "ok", "revision": "3", "payload": {"items": [
+            {"addr": "0x1000", "address": "0x1000", "name": "main", "display_name": "main", "engine_name": "sub_1000",
+             "linkage_name": "sub_1000", "name_origin": "synthesized", "size": 42, "library": False, "thunk": True,
+             "exported": True, "recognition_state": "disabled", "library_annotations": []}],
+            "total": 1, "offset": 0, "next_offset": None, "complete": True}}
+        result = self.server.handle(request("tools/call", {"name": "list_functions", "arguments": {"limit": 1}}))
+        self.assertEqual(json.loads(result["content"][0]["text"]), {
+            "revision": "3", "total": 1, "offset": 0, "next_offset": None, "complete": True,
+            "columns": ["address", "name", "size", "flags"], "rows": [["0x1000", "main", 42, "thunk,exported"]]})
+        self.server.handle(request("tools/call", {"name": "list_strings", "arguments": {"filter": "http"}}))
+        self.assertEqual(self.backend.calls[-1][:2], ("strings", {"filter": "http", "text_limit": DEFAULT_STRING_TEXT_LIMIT}))
+        self.server.handle(request("tools/call", {"name": "find_string_references", "arguments": {"filter": "passw"}}))
+        self.assertEqual(self.backend.calls[-1][:2], ("string_references", {"filter": "passw"}))
+        self.backend.response = {"status": "ok", "revision": "3", "payload": {"total": 3, "offset": 0, "next_offset": None,
+            "complete": True, "items": [{"address": "0x10", "module": "ws2_32.dll", "name": "connect"},
+                                        {"address": "0x18", "module": "kernel32.dll", "name": "CreateFileW"},
+                                        {"address": "0x20", "module": "ws2_32.dll", "name": "send"}]}}
+        result = self.server.handle(request("tools/call", {"name": "list_imports", "arguments": {}}))
+        self.assertEqual(json.loads(result["content"][0]["text"])["modules"],
+                         {"ws2_32.dll": ["connect", "send"], "kernel32.dll": ["CreateFileW"]})
+
+    def test_names_resolve_to_addresses_first(self):
+        self.ready()
+        replies = [{"status": "ok", "revision": "5", "payload": {"address": "0x2a90", "function_address": "0x2a90"}},
+                   {"status": "ok", "revision": "5", "payload": {"text": "int main(void);\n"}}]
+        self.backend.query = lambda operation, payload, revision=None: (
+            self.backend.calls.append((operation, payload, revision)) or replies[len(self.backend.calls) - 1])
+        result = self.server.handle(request("tools/call", {"name": "read_decompilation", "arguments": {"address": "main"}}))
+        self.assertFalse(result["isError"])
+        self.assertEqual([call[:2] for call in self.backend.calls],
+                         [("resolve", {"query": "main"}), ("decompile", {"address": "0x2a90"})])
+
+    def test_graph_tools_take_names_and_waypoints(self):
+        self.ready()
+        self.backend.response = {"status": "ok", "revision": "1", "payload": {
+            "segments": [{"from": "0x10", "to": "0x30", "shortest": 2, "node_count": 3, "complete": True,
+                          "paths": [["0x10", "0x20", "0x30"]]}], "unconnected": 0, "max_depth": 16,
+            "nodes": [{"address": "0x10", "name": "main", "kind": "function"},
+                      {"address": "0x20", "name": "sub_20", "kind": "function"},
+                      {"address": "0x30", "name": "connect", "kind": "import"}]}}
+        result = self.server.handle(request("tools/call", {"name": "find_call_paths", "arguments": {
+            "from": "main", "via": ["sub_20"], "to": "connect", "shortest_only": True}}))
+        self.assertEqual(self.backend.calls[-1][:2], ("call_paths", {"waypoints": ["main", "sub_20", "connect"],
+                                                                     "shortest_only": True}))
+        self.assertEqual(result["content"][0]["text"].splitlines()[1:],
+                         ["main@0x10 -> connect@import: shortest 2, 3 nodes on paths",
+                          "  main@0x10 -> sub_20 -> connect@import"])
+        self.server.handle(request("tools/call", {"name": "list_call_tree", "arguments": {"function": "connect", "callers": True}}))
+        self.assertEqual(self.backend.calls[-1][:2], ("call_tree", {"root": "connect", "direction": "callers"}))
+        for arguments in ({"from": "main", "to": ""}, {"from": "main", "to": "x", "via": "y"},
+                          {"from": "main", "to": "x", "shortest_only": 1}):
+            with self.subTest(arguments=arguments), self.assertRaises(RpcError):
+                self.server.handle(request("tools/call", {"name": "find_call_paths", "arguments": arguments}))
+
+    def test_source_pages_start_at_the_definition(self):
+        self.ready()
+        replies = [{"status": "ok", "revision": "2", "payload": {
+                        "address": "0x10", "dialect": "c", "text": "#include <stdint.h>\n\nint f(void) {\n",
+                        "offset": 0, "total_lines": 5, "next_offset": 3, "complete": False,
+                        "prelude": {"lines": 2, "end_byte": 21}}},
+                   {"status": "ok", "revision": "2", "payload": {
+                        "address": "0x10", "dialect": "c", "text": "int f(void) {\n    return 0;\n}\n",
+                        "offset": 2, "total_lines": 5, "next_offset": None, "complete": True}}]
+        self.backend.query = lambda operation, payload, revision=None: (
+            self.backend.calls.append((operation, payload, revision)) or replies[len(self.backend.calls) - 1])
+        result = self.server.handle(request("tools/call", {"name": "read_decompilation", "arguments": {"address": "0x10"}}))
+        header, code = result["content"][0]["text"].split("\n", 1)
+        self.assertEqual(self.backend.calls[-1][:2], ("decompile", {"address": "0x10", "offset": 2}))
+        self.assertEqual(json.loads(header)["prelude_lines"], 2)
+        self.assertEqual(code, "int f(void) {\n    return 0;\n}\n")
+        # With prelude=true, the page is the one the worker gives.
+        self.backend.calls.clear()
+        result = self.server.handle(request("tools/call", {"name": "read_decompilation",
+                                                           "arguments": {"address": "0x10", "prelude": True}}))
+        self.assertEqual(len(self.backend.calls), 1)
+        self.assertTrue(result["content"][0]["text"].split("\n", 1)[1].startswith("#include"))
 
     def test_snapshot_cache_eviction_is_explicit(self):
         self.ready()
@@ -185,6 +298,22 @@ class McpProtocolTests(unittest.TestCase):
         backend._read()
         self.assertEqual(backend.messages.get_nowait()["request_id"], "next")
         self.assertIsInstance(backend.messages.get_nowait(), EOFError)
+
+    def test_load_progress_responses_do_not_replace_the_result(self):
+        backend = Backend.__new__(Backend)
+        backend.closed = False
+        backend.serial = 0
+        backend.timeout = 1
+        backend.input = io.BytesIO()
+        backend.messages = queue.Queue(maxsize=32)
+        for done in (0, 1):
+            backend.messages.put({"type": "response", "request_id": "1", "status": "progress",
+                                  "payload": {"phase": "image", "done": done, "total": 1, "detail": ""}})
+        backend.messages.put({"type": "response", "request_id": "1", "status": "ok", "payload": {"opened": True}})
+        result = backend.query("open", {"path": "/input", "read_only": True})
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["payload"], {"opened": True})
+        self.assertTrue(backend.messages.empty())
 
 
 if __name__ == "__main__":

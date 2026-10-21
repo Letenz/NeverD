@@ -7,7 +7,8 @@ use the separate [neverd-web-mcp](../neverd-web-mcp/README.md) executable.
 third-party Python dependency, network listener, model provider, or agent loop.
 It implements MCP **2025-11-25** JSON-RPC over newline-delimited stdio; its
 internal worker connection uses the separate length-prefixed worker protocol.
-The executable, `server.py` and `transport.py` must stay in the same directory.
+The executable, `server.py`, `reading.py` and `transport.py` must stay in the
+same directory.
 The macOS application also supplies a launcher at
 `NeverD.app/Contents/MacOS/neverd-mcp`. It uses the bundled interpreter when the
 engine includes Python.framework; otherwise it requires Python 3.10+ on `PATH`.
@@ -41,19 +42,43 @@ project edits, rather than no internal analysis work. Closing MCP terminates its
 owned worker. Use the worker that ships with the matching engine build.
 
 Tools: `project_metadata`, `list_functions`, `read_disassembly`,
-`read_decompilation`, `read_bytes`, `list_xrefs`, `list_strings`, `read_cfg`.
-All addresses are exact hexadecimal strings. Results preserve the worker's
-`project_id`, `revision`, status, page continuation and original addresses.
-Use `expected_revision` when continuing a page; an analysis-triggering query can
-publish a newer revision. `resources/list` provides metadata and the first
-function page. `resources/templates/list` describes parametrized function,
-disassembly, C/IR and xref resources.
+`read_decompilation`, `read_bytes`, `list_xrefs`, `list_strings`, `read_cfg`,
+`list_imports`, `find_string_references` (the instructions and functions
+that use strings matching a filter, in one call), `find_call_paths` (call
+paths between functions or imports through waypoints, shortest first, as a
+path finder shows them) and `list_call_tree` (what a function calls, or what
+calls it, to a depth). `list_strings` and `list_imports` take a `filter`;
+`list_strings` cuts texts to `text_limit` bytes, 200 unless asked otherwise,
+with an ellipsis. Wherever a tool takes an `address`, a name the workbench
+shows, an import's name or a label also works; it is resolved first.
+`read_decompilation` starts at the function's definition and reports how many
+`prelude_lines` (includes, types and declarations that make the file compile)
+it left out; `prelude: true` returns them too. C reads in a lossless shorter
+spelling (`reading.py`): fixed-width types as `i64`/`u32`/`uptr`, the stack
+frame on one line with its members named without `stack_storage.`, one
+declaration per type run, and typed accesses into byte-array globals named
+by address (`g_8A180`), each listed with its type in the header's `legend`;
+`exact: true` returns the engine's spelling.
+
+Tool results are shaped for a model's context. They omit the worker's transport
+envelope and the presentation data the workbench maps code with (line anchors,
+variable and call-site tables, name spans): a page of pseudocode is about a
+twentieth of the worker's response. Tables are `columns` plus `rows`; disassembly
+and pseudocode are text under a one-line JSON header that carries the revision
+and page continuation. All addresses are exact hexadecimal strings. Results keep
+the worker's `revision`, status, page continuation and original addresses, and
+no `structuredContent` copy of the text. Use `expected_revision` when continuing
+a page; an analysis-triggering query can publish a newer revision.
+`resources/list` provides metadata and the first function page.
+`resources/templates/list` describes parametrized function, disassembly, C/IR
+and xref resources; resources return the worker's complete JSON, project ID
+included.
 
 Results larger than 512 KiB return a `resource_link` and `resource_uri` pointing
 to a session-local immutable snapshot, such as `neverd://result/1`. Read it with
-`resources/read` and `?offset=0&limit=32768`; the response contains JSON text
+`resources/read` and `?offset=0&limit=32768`; the response contains text
 chunks, character offsets, `next_offset`, `complete`, project ID and revision.
-Concatenate those chunks to recover the original JSON. Continuations read the
+Concatenate those chunks to recover the tool's text, or the resource's JSON. Continuations read the
 cached revision without querying the worker again. At most four snapshots and
 8 MiB of encoded snapshot data are retained; eviction is explicit when read,
 and callers can repeat the original query to create a new snapshot.

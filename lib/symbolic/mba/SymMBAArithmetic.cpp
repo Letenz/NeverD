@@ -105,6 +105,27 @@ public:
     return true;
   }
 
+  // These keys and coefficients have already been allocated and charged by
+  // multiplication or flat-monomial construction. Transfer their ownership
+  // instead of allocating and copying the same polynomial entry again.
+  bool addOwned(Polynomial &To, Monomial Key, llvm::APInt Coefficient) {
+    if (!Resources.charge(1 + Key.size() + Words))
+      return false;
+    if (Coefficient.isZero())
+      return true;
+    auto It = To.lower_bound(Key);
+    if (It != To.end() && It->first == Key) {
+      It->second += Coefficient;
+      if (It->second.isZero())
+        To.erase(It);
+      return true;
+    }
+    if (!Resources.charge(1, 128))
+      return false;
+    To.emplace_hint(It, std::move(Key), std::move(Coefficient));
+    return true;
+  }
+
   bool copy(const Polynomial &From, Polynomial &To) {
     for (const auto &[Key, Coefficient] : From)
       if (!add(To, Key, Coefficient))
@@ -142,7 +163,7 @@ public:
             ++J;
           }
         }
-        if (!add(Out, Key, Coefficient))
+        if (!addOwned(Out, std::move(Key), std::move(Coefficient)))
           return false;
       }
     }
@@ -240,7 +261,7 @@ public:
               Key.emplace_back(Child.index(), 1);
             }
           }
-          if (!add(P, Key, Coefficient))
+          if (!addOwned(P, std::move(Key), std::move(Coefficient)))
             return nullptr;
           Memo.emplace(Index, std::move(P));
           continue;
@@ -614,6 +635,90 @@ bool hasRepeatedCoefficients(const SymContext &Ctx, SymRef E) {
   return false;
 }
 
+// Strip an identical nonconstant monomial from both sides of a large
+// distribution proof. This proves the sufficient identity between quotients;
+// it never divides a word or assumes that a modular coefficient is invertible.
+// Keeping complements opaque makes these factors formal polynomial atoms.
+std::pair<SymRef, SymRef>
+reduceDistributionProof(SymContext &Ctx, SymRef Before, SymRef After,
+                        ArithmeticResources &Resources) {
+  const auto Original = std::make_pair(Before, After);
+  constexpr size_t MaxTerms = 128, MaxEdges = 4096;
+  if (Ctx.op(Before) != SymOp::Add || Ctx.numOperands(Before) < 6 ||
+      Ctx.numOperands(Before) > MaxTerms ||
+      (Ctx.op(After) == SymOp::Add && Ctx.numOperands(After) > MaxTerms))
+    return Original;
+  size_t Count = Ctx.numOperands(Before) +
+                 (Ctx.op(After) == SymOp::Add ? Ctx.numOperands(After) : 1);
+  if (!Resources.array(Count * 4, sizeof(SymRef)))
+    return Original;
+  llvm::SmallVector<SymRef, 128> Left(Ctx.operands(Before));
+  llvm::SmallVector<SymRef, 128> Right;
+  if (Ctx.op(After) == SymOp::Add)
+    Right.append(Ctx.operands(After).begin(), Ctx.operands(After).end());
+  else
+    Right.push_back(After);
+  llvm::sort(Left);
+  llvm::sort(Right);
+  llvm::SmallVector<SymRef, 128> L, R;
+  std::set_difference(Left.begin(), Left.end(), Right.begin(), Right.end(),
+                      std::back_inserter(L));
+  std::set_difference(Right.begin(), Right.end(), Left.begin(), Left.end(),
+                      std::back_inserter(R));
+  if (L.empty() || R.empty())
+    return Original;
+  auto Factors = [&](SymRef Term) {
+    auto F = Ctx.operands(Term);
+    return Ctx.isConst(F.front()) ? F.drop_front() : F;
+  };
+  size_t Edges = 0;
+  llvm::SmallVector<SymRef, 32> Common, Next;
+  for (auto Terms : {llvm::ArrayRef<SymRef>(L), llvm::ArrayRef<SymRef>(R)})
+    for (SymRef Term : Terms) {
+      if (Ctx.op(Term) != SymOp::Mul)
+        return Original;
+      auto F = Factors(Term);
+      if (F.size() > MaxEdges - Edges)
+        return Original;
+      if (!Resources.array(F.size() * 3, sizeof(SymRef)))
+        return Original;
+      if (Edges == 0)
+        Common.append(F.begin(), F.end());
+      else {
+        Next.clear();
+        std::set_intersection(Common.begin(), Common.end(), F.begin(), F.end(),
+                              std::back_inserter(Next));
+        Common.swap(Next);
+      }
+      Edges += F.size();
+      if (Common.size() < 4)
+        return Original;
+    }
+  // Snapshot every quotient before a builder can relocate the operand pool.
+  if (!Resources.charge(Edges + Count, 128 * (L.size() + R.size())))
+    return Original;
+  llvm::SmallVector<llvm::SmallVector<SymRef, 16>, 8> Quotients;
+  for (auto Terms : {llvm::ArrayRef<SymRef>(L), llvm::ArrayRef<SymRef>(R)})
+    for (SymRef Term : Terms) {
+      auto F = Factors(Term);
+      Quotients.emplace_back();
+      auto &Q = Quotients.back();
+      auto First = Ctx.operand(Term, 0);
+      if (Ctx.isConst(First))
+        Q.push_back(First);
+      std::set_difference(F.begin(), F.end(), Common.begin(), Common.end(),
+                          std::back_inserter(Q));
+    }
+  Left.clear();
+  Right.clear();
+  for (size_t I = 0; I != Quotients.size(); ++I) {
+    auto &Q = Quotients[I];
+    SymRef Term = Q.empty() ? Ctx.mkOne(Ctx.width(Before)) : Ctx.mkMul(Q);
+    (I < L.size() ? Left : Right).push_back(Term);
+  }
+  return {Ctx.mkAdd(Left), Ctx.mkAdd(Right)};
+}
+
 } // namespace
 
 SymRef solveNestedProductCofactors(SymContext &Ctx, SymRef E,
@@ -756,6 +861,9 @@ bool proveArithmeticIdentity(SymContext &Ctx, SymRef Before, SymRef After,
       Ctx.width(Before) != Ctx.width(After))
     return false;
   ArithmeticResources Resources(Budget, MaxBytes);
+  if (!ExpandComplements)
+    std::tie(Before, After) =
+        reduceDistributionProof(Ctx, Before, After, Resources);
   ArithmeticNormalizer Normalizer(Ctx, Resources, Ctx.width(Before),
                                   ExpandComplements);
   auto Left = Normalizer.normalize(Before);

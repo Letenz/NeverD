@@ -78,6 +78,7 @@ namespace sdk {
 void preserveAnalystStackObjects(llvm::Module &);
 
 struct LLVMFunctionView;
+struct CallReferenceGraph;
 
 struct FuncInfo {
   va_t Entry;
@@ -385,6 +386,15 @@ struct Session {
   /// Code that changes the list calls functionListChanged().
   uint64_t FunctionListRevision = 0;
   void functionListChanged() { ++FunctionListRevision; }
+  /// Address order belongs to the complete function-list revision, not to
+  /// one page. Reference scans and warmup can request thousands of pages.
+  struct FunctionPageIndex {
+    uint64_t Revision;
+    const FuncInfo *List;
+    size_t Count;
+    std::vector<const FuncInfo *> Ordered;
+  };
+  mutable std::optional<FunctionPageIndex> FunctionPages;
   /// What refreshFunctionNames last derived the names from.  From the same
   /// inputs it derives the names the list holds, so it keeps them: an image
   /// lists tens of thousands of functions.
@@ -410,6 +420,9 @@ struct Session {
     std::unordered_map<std::string, std::vector<va_t>> Exported;
   };
   std::optional<FunctionNameIndex> NameIndex;
+  /// The function graph the direct references of the listed functions make
+  /// (NeverDCAPICallPaths.cpp), read from the list at a revision.
+  std::shared_ptr<const CallReferenceGraph> CallGraph;
   /// The first function listed under \p Name, else the first listed at an
   /// address the image exports under it, taking the exports in order: a
   /// linker that folds identical functions exports several names for one.

@@ -915,6 +915,7 @@ _C_TYPES: dict[str, object] = {
     "const unsigned char *": ctypes.POINTER(ctypes.c_ubyte),
     "unsigned long long *": ctypes.POINTER(ctypes.c_ulonglong),
     "neverd_va_t *": ctypes.POINTER(ctypes.c_uint64),
+    "const neverd_va_t *": ctypes.POINTER(ctypes.c_uint64),
     "const void *": ctypes.c_void_p,
     "void *": ctypes.c_void_p,
     "neverd_load_progress_fn": LoadProgressCallback,
@@ -1867,6 +1868,18 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_call_paths_json",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_call_tree_json",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_resolve_addr",
     "const char *",
     ["neverd_session_t", "neverd_va_t"],
@@ -2025,6 +2038,18 @@ _declare(
     "neverd_decompile_all_ex",
     "const char *",
     ["neverd_session_t", "const char *", "neverd_output_language_t", "int", "int"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_decompile_functions",
+    "const char *",
+    [
+        "neverd_session_t",
+        "const char *",
+        "neverd_output_language_t",
+        "const neverd_va_t *",
+        "int",
+    ],
     ownership=Ownership.OWNED_STRING,
 )
 _declare("neverd_evm_set_strict", "void", ["neverd_session_t", "int"])

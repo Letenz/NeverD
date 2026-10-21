@@ -937,3 +937,66 @@ TEST(SymMBAArithmetic, RecognizesComplementarySelfNegatingCoefficients) {
 }
 
 } // namespace
+
+namespace {
+
+TEST(SymMBAArithmetic,
+     LongDistributionProofRetainsCoefficientsAndMultiplicities) {
+  for (unsigned Width : {3u, 8u, 32u, 64u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+    auto Z = C.mkVar("z", Width), W = C.mkVar("w", Width);
+    llvm::SmallVector<SymRef, 64> Factors;
+    for (unsigned I = 0; I != 48; ++I)
+      Factors.push_back(I % 3 == 0 ? X : I % 3 == 1 ? C.mkNot(Y) : Z);
+    auto Tail = C.mkMul(Factors), Scale = C.mkConst(Width, 6);
+    auto Sum = C.mkAdd(X, Y);
+    auto Factored = C.mkMul({Scale, Tail, Sum, C.mkAdd(Y, Z), C.mkAdd(Z, W)});
+    llvm::SmallVector<SymRef, 8> Terms;
+    for (auto A : {X, Y})
+      for (auto B : {Y, Z})
+        for (auto D : {Z, W})
+          Terms.push_back(C.mkMul({Scale, Tail, A, B, D}));
+    auto Before = C.mkAdd(Terms);
+    // Identical unrelated summands may be cancelled, including opaque words.
+    auto Extra = C.mkXor(C.mkAdd(X, W), Y);
+    Before = C.mkAdd(Before, Extra);
+    auto After = C.mkAdd(Factored, Extra);
+    detail::WorkBudget Full(65536);
+    ASSERT_TRUE(detail::proveArithmeticIdentity(C, Before, After, Full,
+                                                MBAOptions{}.MaxTableBytes,
+                                                /*ExpandComplements=*/false));
+    EXPECT_LT(Full.used(), 8192u);
+    for (size_t Work : {size_t(0), size_t(1), Full.used() - 1, Full.used()}) {
+      detail::WorkBudget Budget(Work);
+      EXPECT_EQ(detail::proveArithmeticIdentity(C, Before, After, Budget,
+                                                MBAOptions{}.MaxTableBytes,
+                                                /*ExpandComplements=*/false),
+                Work == Full.used());
+      EXPECT_LE(Budget.used(), Work);
+    }
+    detail::WorkBudget Wrong(65536), NoStorage(65536);
+    EXPECT_FALSE(detail::proveArithmeticIdentity(
+        C, Before, C.mkAdd(After, C.mkMul(Tail, Scale)), Wrong,
+        MBAOptions{}.MaxTableBytes, /*ExpandComplements=*/false));
+    EXPECT_FALSE(detail::proveArithmeticIdentity(C, Before, After, NoStorage, 0,
+                                                 /*ExpandComplements=*/false));
+    for (unsigned I = 0; I != 256; ++I) {
+      std::array<llvm::APInt, 4> Values{
+          llvm::APInt(Width, I, false, true),
+          ~llvm::APInt(Width, I * 37, false, true),
+          llvm::APInt(Width, I * 11, false, true),
+          ~llvm::APInt(Width, I * 79, false, true)};
+      auto A = Values[0], B = Values[1], D = Values[2], E = Values[3];
+      auto Want = llvm::APInt(Width, 6) * (A + B) * (B + D) * (D + E);
+      for (unsigned J = 0; J != 16; ++J)
+        Want *= A * ~B * D;
+      Want += (A + E) ^ B;
+      EXPECT_EQ(C.eval(Before, Values), Want);
+      EXPECT_EQ(C.eval(After, Values), Want);
+    }
+  }
+}
+
+} // namespace
