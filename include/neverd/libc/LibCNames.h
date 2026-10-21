@@ -407,6 +407,7 @@ public:
 private:
   const BinaryImage *Image;
   std::set<va_t> Targets;
+  std::set<va_t> ImportAddresses;
   /// A restricted load skips the whole-image symbol walk.  Its targets are
   /// answered one at a time, the same way, and remembered: CFG workers
   /// share one index.
