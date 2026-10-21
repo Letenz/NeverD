@@ -124,6 +124,19 @@ summarizeInstructionFlow(const BinaryImage &Img, Decoder &Dec,
                          const DecodedInsn &DI,
                          const TargetRegInfo *StackRegisters = nullptr);
 
+/// One decoding worker's temporary lift storage. Only capacity survives a
+/// call: every instruction starts with empty operations and fresh FPU state.
+/// Results own their facts and never borrow this workspace.
+class InstructionFlowScratch {
+public:
+  InstructionFlow summarize(const BinaryImage &Img, Decoder &Dec,
+                            const DecodedInsn &DI,
+                            const TargetRegInfo *StackRegisters = nullptr);
+
+private:
+  std::vector<LowOp> Ops;
+};
+
 /// The pointer the loader stored in a relocated slot, as a code address when
 /// the slot points to code.
 std::optional<va_t> relocatedPointer(const BinaryImage &Img, va_t Slot);
@@ -141,7 +154,8 @@ FunctionPage functionPage(llvm::ArrayRef<FuncInfo> Functions, va_t FirstEntry,
 FunctionPage functionPage(const Session &S, va_t FirstEntry, int MaxFunctions);
 
 /// Decodes each function of \p Page in \p Img with a decoder of its own,
-/// functions in parallel, and calls \p Visit(Index, Decoder, Instruction) for
+/// functions in parallel, and calls Visit(Index, Decoder, Instruction, Scratch)
+/// with one exclusive scratch workspace per decoding worker for
 /// each of its instructions in order: up to the function's recorded size, or
 /// to its first terminator when it has none, then the parts of it that lie
 /// apart from its body (ExceptionInfo::outlyingChunks).  One function's
@@ -150,7 +164,8 @@ FunctionPage functionPage(const Session &S, va_t FirstEntry, int MaxFunctions);
 /// be set up.
 bool decodeFunctions(
     const BinaryImage &Img, const FunctionPage &Page,
-    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &)>
+    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &,
+                            InstructionFlowScratch &)>
         Visit);
 
 /// The width of the reads and writes the instructions of each of \p

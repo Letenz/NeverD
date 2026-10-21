@@ -1005,6 +1005,14 @@ remain the same.
 Core callers opt in through `PipelineOptions::AnalysisCache` and must reset it
 before input or policy mutation; image pointers alone do not establish validity.
 
+Instruction-flow sweeps keep one `InstructionFlowScratch` per decoding worker.
+The workspace reuses only the temporary LowOp vector's storage: operations
+are cleared and the x87 state reset before every instruction, including after
+an unsupported lift. Returned references and transfer facts own their values.
+Disassembly pages own a workspace for that call; parallel access-width,
+reference and string-reference scans retire theirs with each worker. No TLS,
+session cache, new semantic shortcut or cross-instruction state is involved.
+
 Function selection also retains decoded image data-access widths. Their exact
 ordered function address/size inventory is checked after synchronization;
 changed extents rebuild the widths and discard source using the former names.

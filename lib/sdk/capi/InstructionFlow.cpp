@@ -120,8 +120,16 @@ StackMove stackMove(const TargetRegInfo &Registers, llvm::ArrayRef<LowOp> Ops) {
 InstructionFlow summarizeInstructionFlow(const BinaryImage &Img, Decoder &Dec,
                                          const DecodedInsn &DI,
                                          const TargetRegInfo *StackRegisters) {
+  InstructionFlowScratch Scratch;
+  return Scratch.summarize(Img, Dec, DI, StackRegisters);
+}
+
+InstructionFlow
+InstructionFlowScratch::summarize(const BinaryImage &Img, Decoder &Dec,
+                                  const DecodedInsn &DI,
+                                  const TargetRegInfo *StackRegisters) {
   InstructionFlow Flow;
-  std::vector<LowOp> Ops;
+  Ops.clear();
   // Each row is lifted independently of its neighbours.
   Dec.resetX86FpuState();
   try {
@@ -323,7 +331,8 @@ namespace {
 /// recorded size.
 bool decodeExtents(
     const BinaryImage &Img, llvm::ArrayRef<std::pair<va_t, uint64_t>> Extents,
-    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &)>
+    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &,
+                            InstructionFlowScratch &)>
         Visit) {
   // A function without a recorded size is decoded only up to its first
   // terminator; this bounds a corrupt or missing extent.
@@ -341,12 +350,13 @@ bool decodeExtents(
       DecoderFailed = true;
       return;
     }
+    InstructionFlowScratch Scratch;
     for (size_t Index = Claim(); Index < Total; Index = Claim()) {
       const auto [Entry, Size] = Extents[Index];
       const uint64_t Limit = Size > 0 ? Size : MaxUnsizedInstructions;
       (void)decodeNativeRange(Img, Local, Entry, Size, Limit,
                               [&](const DecodedInsn &DI, const uint8_t *, int) {
-                                Visit(Index, Local, DI);
+                                Visit(Index, Local, DI, Scratch);
                                 return Size > 0 ||
                                        !Local.isFunctionTerminator(DI);
                               });
@@ -356,7 +366,7 @@ bool decodeExtents(
               Img, Local, Range.Begin, Range.End - Range.Begin,
               Range.End - Range.Begin,
               [&](const DecodedInsn &DI, const uint8_t *, int) {
-                Visit(Index, Local, DI);
+                Visit(Index, Local, DI, Scratch);
                 return true;
               });
     }
@@ -372,7 +382,8 @@ bool isDataAccess(const InstructionRef &Ref) {
 
 bool decodeFunctions(
     const BinaryImage &Img, const FunctionPage &Page,
-    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &)>
+    llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &,
+                            InstructionFlowScratch &)>
         Visit) {
   std::vector<std::pair<va_t, uint64_t>> Extents;
   Extents.reserve(Page.Functions.size());
@@ -392,9 +403,10 @@ collectDataAccessWidths(const BinaryImage &Img,
     std::vector<std::vector<std::pair<va_t, unsigned>>> Slots(
         Page.Functions.size());
     const bool Decoded = decodeFunctions(
-        Img, Page, [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
-          for (const InstructionRef &Ref :
-               summarizeInstructionFlow(Img, Dec, DI).Refs)
+        Img, Page,
+        [&](size_t Index, Decoder &Dec, const DecodedInsn &DI,
+            InstructionFlowScratch &Scratch) {
+          for (const InstructionRef &Ref : Scratch.summarize(Img, Dec, DI).Refs)
             if (isDataAccess(Ref))
               Slots[Index].emplace_back(Ref.To, Ref.Bytes);
         });
@@ -436,9 +448,10 @@ DataAccessScan::update(const BinaryImage &Img,
   std::vector<std::vector<std::pair<va_t, unsigned>>> Slots(Read.size());
   if (!Read.empty() &&
       !decodeExtents(Img, Read,
-                     [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
+                     [&](size_t Index, Decoder &Dec, const DecodedInsn &DI,
+                         InstructionFlowScratch &Scratch) {
                        for (const InstructionRef &Ref :
-                            summarizeInstructionFlow(Img, Dec, DI).Refs)
+                            Scratch.summarize(Img, Dec, DI).Refs)
                          if (isDataAccess(Ref))
                            Slots[Index].emplace_back(Ref.To, Ref.Bytes);
                      })) {
