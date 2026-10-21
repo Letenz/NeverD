@@ -450,6 +450,8 @@ struct Session {
   /// The first function listed under \p Name, else the first listed at an
   /// address the image exports under it, taking the exports in order: a
   /// linker that folds identical functions exports several names for one.
+  /// On Mach-O only, a C spelling also finds its ABI-decorated symbol after
+  /// both exact-name lookups fail.
   std::optional<size_t> functionIndexNamed(llvm::StringRef Name);
   /// Emits the session's C (cEmitter()), keeping the image's function names
   /// from one emission to the next.  Those name the symbol table Symbols

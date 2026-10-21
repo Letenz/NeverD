@@ -7455,6 +7455,69 @@ TEST_F(SessionCAPITest, NativeAnalysisPublishesRecoveredFunctions) {
   }
 }
 
+TEST_F(SessionCAPITest, MachOFunctionLookupAcceptsOneABIDecoration) {
+  for (bool AArch64 : {false, true}) {
+    for (const std::string Name : {"_entry", "__entry"}) {
+      SCOPED_TRACE(AArch64);
+      SCOPED_TRACE(Name);
+      const std::string Path =
+          write("named.macho", makeObservedMachO(AArch64, Name));
+      ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+      const int Index = neverd_func_find_by_name(Session, Name.c_str());
+      ASSERT_GE(Index, 0);
+      EXPECT_EQ(takeString(neverd_func_name(Session, Index)), Name);
+      EXPECT_EQ(neverd_func_find_by_name(Session, Name.c_str() + 1), Index);
+      const std::string Disassembly =
+          takeString(neverd_disasm_text(Session, Name.c_str(), 0));
+      ASSERT_FALSE(Disassembly.empty());
+      EXPECT_EQ(takeString(neverd_disasm_text(Session, Name.c_str() + 1, 0)),
+                Disassembly);
+      EXPECT_EQ(neverd_func_find_by_name(Session, ("_" + Name).c_str()), -1);
+      EXPECT_EQ(neverd_func_find_by_name(Session, ""), -1);
+      if (Name == "__entry")
+        EXPECT_EQ(neverd_func_find_by_name(Session, "entry"), -1);
+    }
+  }
+}
+
+TEST_F(SessionCAPITest, MachOFunctionLookupPrefersExactNamesAndExports) {
+  const std::string Path =
+      write("lookup.macho", makeObservedMachO(false, "_entry"));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  auto &State = *neverd::sdk::toSession(Session);
+  const neverd_va_t Entry = neverd_session_entry_addr(Session);
+  State.Functions = {{Entry, 6, "_entry"}, {Entry + 0x20, 6, "entry"}};
+  State.Img.Exports.clear();
+  State.functionListChanged();
+  EXPECT_EQ(neverd_func_find_by_name(Session, "entry"), 1);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "_entry"), 0);
+
+  State.Functions[1].Name = "other";
+  State.Img.Exports = {{"entry", 0, Entry + 0x20},
+                       {"_alias", 0, Entry + 0x20},
+                       {"_entry", 0, Entry + 0x20}};
+  State.functionListChanged();
+  EXPECT_EQ(neverd_func_find_by_name(Session, "entry"), 1);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "alias"), 1);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "_entry"), 0);
+
+  State.Img.Exports.clear();
+  State.Functions[0].Name = "_renamed";
+  State.functionListChanged();
+  EXPECT_EQ(neverd_func_find_by_name(Session, "entry"), -1);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "alias"), -1);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "renamed"), 0);
+}
+
+TEST_F(SessionCAPITest, ELFFunctionLookupKeepsLeadingUnderscores) {
+  const std::string Path = write("named.elf", makeNamedNativeELF("_entry"));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  EXPECT_GE(neverd_func_find_by_name(Session, "_entry"), 0);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "entry"), -1);
+  EXPECT_EQ(neverd_func_find_by_name(Session, "__entry"), -1);
+  EXPECT_TRUE(takeString(neverd_disasm_text(Session, "entry", 0)).empty());
+}
+
 TEST_F(SessionCAPITest, LazyNativeAnalysisRetainsRecoveredNamesAcrossReload) {
   const std::string Path = write("recovered.elf", makeNativeELF(false));
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);

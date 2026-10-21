@@ -301,6 +301,46 @@ private slots:
                  (before - widgets[2]->geometry().right() - 1));
   }
 
+  void flowLayoutCentersOddAndEvenHeights_data() {
+    QTest::addColumn<int>("firstHeight");
+    QTest::addColumn<int>("secondHeight");
+    QTest::newRow("odd row, even item") << 21 << 20;
+    QTest::newRow("even item, odd row") << 20 << 21;
+    QTest::newRow("even row, odd item") << 22 << 19;
+    QTest::newRow("odd item, even row") << 19 << 22;
+  }
+
+  void flowLayoutCentersOddAndEvenHeights() {
+    QFETCH(int, firstHeight);
+    QFETCH(int, secondHeight);
+    class SizedWidget : public QWidget {
+    public:
+      SizedWidget(int height, QWidget *parent) : QWidget(parent) {
+        setFixedSize(20, height);
+      }
+      QSize sizeHint() const override { return size(); }
+    };
+    QWidget row;
+    auto *flow = new FlowLayout(&row);
+    flow->setContentsMargins(3, 5, 7, 9);
+    flow->setSpacing(4);
+    auto *first = new SizedWidget(firstHeight, &row);
+    auto *second = new SizedWidget(secondHeight, &row);
+    flow->addWidget(first);
+    flow->addWidget(second);
+    const QRect bounds(11, 13, 90, flow->heightForWidth(90));
+    flow->setGeometry(bounds);
+    const int rowHeight = qMax(firstHeight, secondHeight);
+    const int rowTop = bounds.top() + 5;
+    for (QWidget *widget : {first, second}) {
+      QCOMPARE(widget->geometry().size(), widget->sizeHint());
+      QCOMPARE(widget->geometry().center().y(), rowTop + (rowHeight - 1) / 2);
+      QVERIFY(widget->geometry().top() >= rowTop);
+      QVERIFY(widget->geometry().bottom() < rowTop + rowHeight);
+    }
+    QVERIFY(!first->geometry().intersects(second->geometry()));
+  }
+
   void addressSpellings() {
     QCOMPARE(hexAddress(0xffff800012340000ULL),
              QStringLiteral("0xffff800012340000"));
