@@ -468,7 +468,10 @@ std::string decompilation(const Json &Payload, Ordered Out, bool Exact) {
   std::string Text = Body.is_string() ? Body.get<std::string>() : "";
   if (!Exact && Out["representation"] == "c" && !Text.empty()) {
     // The same C in fewer tokens; the legend lists every abbreviation.
-    auto View = readingView(Text);
+    const auto &Function = member(Payload, "function_text");
+    auto View = readingView(Text, Function.is_string()
+                                      ? Function.get_ref<const std::string &>()
+                                      : std::string_view());
     Text = std::move(View.Text);
     if (!View.Legend.empty())
       Out["legend"] = View.Legend;

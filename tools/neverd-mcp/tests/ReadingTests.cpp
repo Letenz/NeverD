@@ -43,20 +43,20 @@ MCP_TEST(AbbreviationsAreListedAndReversible) {
   require(View.Text.substr(0, View.Text.find('\n')) == "i32 f(i64 arg0) {",
           "types are abbreviated in a signature");
   require(contains(View.Text, "_Alignas(16) struct frame_1000 { u8 gap0[8]; "
-                              "i64 var_m10; u32 var_m8; } stack_storage;"),
-          "a frame is declared on one line");
+                              "i64 s10; u32 s8; } stack_storage;"),
+          "a frame is declared on one line, its slots named sN");
   require(contains(View.Text, "    i64 t1_2, t1_3;\n    u8 t4_5;\n"),
           "declarations of one type merge");
-  require(contains(View.Text, "    var_m10 = arg0;\n"),
+  require(contains(View.Text, "    s10 = arg0;\n"),
           "frame members drop stack_storage.");
   require(
       contains(View.Text, "    t1_2 = g_A010;\n    g_A010 = (i32)t1_2 + 1;\n"),
       "a typed global access is named by its address");
-  require(contains(View.Text, "return (i32)(uptr)&var_m8;"),
+  require(contains(View.Text, "return (i32)(uptr)&s8;"),
           "uintptr_t is abbreviated");
   require(View.Legend == "iN/uN: intN_t/uintN_t, uptr: uintptr_t; "
-                         "var_mN/gapN: stack_storage members; globals: i32 "
-                         "g_A010",
+                         "sN/gapN: stack_storage members var_mN/gapN, sN the "
+                         "slot at -0xN; globals: i32 g_A010",
           "the legend lists each abbreviation: " + View.Legend);
 }
 
@@ -109,6 +109,33 @@ MCP_TEST(NamesTheTextAlreadyUsesAreNotReused) {
   require(contains(View.Text, "&g_A000_bytes[4]"),
           "an access keeps its spelling where its name is taken");
   require(!contains(View.Legend, "var_mN"), "no frame note");
+}
+
+MCP_TEST(SlotsKeepTheirNamesWhereAShortNameIsTaken) {
+  const auto View =
+      readingView("void f(int64_t s8) {\n    stack_storage.var_m8 = s8;\n}\n");
+  require(contains(View.Text, "    var_m8 = s8;\n"),
+          "a slot keeps var_mN where sN names something else: " + View.Text);
+  require(contains(View.Legend, "var_mN/gapN: stack_storage members"),
+          "the legend says so: " + View.Legend);
+}
+
+MCP_TEST(TemporariesAreNumberedAcrossTheWholeFunction) {
+  const std::string First = "int32_t f(int32_t t1) {\n    int32_t t9_4;\n"
+                            "    int32_t t3_2;\n    t9_4 = t1;\n";
+  const std::string Second = "    t3_2 = t9_4 + 1;\n    return t3_2;\n}\n";
+  const std::string Whole = First + Second;
+  // t1 is taken, so the first temporary is t2 on every page.
+  const auto Head = readingView(First, Whole);
+  require(contains(Head.Text, "    i32 t2, t3;\n    t2 = t1;\n"),
+          "the first page: " + Head.Text);
+  const auto Tail = readingView(Second, Whole);
+  require(Tail.Text == "    t3 = t2 + 1;\n    return t3;\n}\n",
+          "the second page numbers them as the first does: " + Tail.Text);
+  require(contains(Tail.Legend, "tN: the temporaries tB_I, numbered in order"),
+          "the legend says so: " + Tail.Legend);
+  require(contains(readingView(Second).Text, "t3_2 = t9_4 + 1;"),
+          "a page alone keeps the engine's names");
 }
 
 MCP_TEST(TextWithoutAbbreviationsHasNoLegend) {

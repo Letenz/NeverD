@@ -309,6 +309,10 @@ Json Server::callTool(const Tool &Selected, Json Arguments) {
     auto Response = Operation == "search"
                         ? search(Arguments)
                         : Session.query(Operation, Arguments, Revision);
+    // A page from the first line to the last is the whole function.
+    std::optional<std::string> Function;
+    if (Operation == "decompile" && !Exact)
+      Function = pagedFunction(Response);
     const Json Lines =
         member(member(member(Response, "payload"), "prelude"), "lines");
     if (Operation == "decompile" && !Prelude && truthy(Lines) &&
@@ -325,6 +329,10 @@ Json Server::callTool(const Tool &Selected, Json Arguments) {
       if (member(Response, "payload").is_object())
         Response["payload"]["prelude_lines"] = Lines;
     }
+    if (Operation == "decompile" && !Exact && !Function)
+      Function = wholeFunction(Arguments, Response);
+    if (Function && member(Response, "payload").is_object())
+      Response["payload"]["function_text"] = std::move(*Function);
     Arguments["exact"] = Exact;
     auto [Text, IsError] = compactResult(Operation, Arguments, Response);
     return textResult(std::move(Text), IsError, Response);
@@ -332,6 +340,58 @@ Json Server::callTool(const Tool &Selected, Json Arguments) {
     return {{"content", Json::array({textContent(Failure.what())})},
             {"isError", true}};
   }
+}
+
+namespace {
+/// Whether \p Payload is a page of C.
+bool cPage(const Json &Payload) {
+  const auto &Dialect = member(Payload, "dialect");
+  return (truthy(Dialect) ? Dialect : member(Payload, "representation")) == "c";
+}
+} // namespace
+
+std::optional<std::string> Server::pagedFunction(const Json &Response) {
+  const auto &Payload = member(Response, "payload");
+  const auto &Text = member(Payload, "text");
+  if (!succeeded(Response) || !cPage(Payload) || !Text.is_string() ||
+      member(Payload, "offset") != 0 || !truthy(member(Payload, "complete")))
+    return std::nullopt;
+  return Text.get<std::string>();
+}
+
+std::optional<std::string> Server::wholeFunction(const Json &Arguments,
+                                                 const Json &Response) {
+  if (!succeeded(Response) || !cPage(member(Response, "payload")))
+    return std::nullopt;
+  // The pages are the function's lines in order; the engine keeps the text
+  // it paged.  The page read stands without the whole when that fails.
+  const auto &Taken = member(Response, "revision");
+  const auto Revision = Taken.is_string()
+                            ? std::optional(Taken.get<std::string>())
+                            : std::nullopt;
+  Json Request = Arguments;
+  Request["offset"] = 0;
+  Request["limit"] = MaxDecompilationLines;
+  std::string Whole;
+  try {
+    for (unsigned Page = 0; Page < MaxDecompilationPages; ++Page) {
+      const auto Reply = Session.query("decompile", Request, Revision);
+      const auto &Part = member(Reply, "payload");
+      const auto &Lines = member(Part, "text");
+      if (!succeeded(Reply) || !Lines.is_string())
+        return std::nullopt;
+      Whole += Lines.get_ref<const std::string &>();
+      if (truthy(member(Part, "complete")))
+        return Whole;
+      const auto &Next = member(Part, "next_offset");
+      if (!Next.is_number_integer() || Next.get<std::int64_t>() <= 0 ||
+          Next == member(Request, "offset"))
+        return std::nullopt;
+      Request["offset"] = Next;
+    }
+  } catch (const std::exception &) {
+  }
+  return std::nullopt;
 }
 
 Json Server::search(const Json &Arguments) {

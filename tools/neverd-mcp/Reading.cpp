@@ -511,9 +511,69 @@ replaceFrameMembers(std::string_view Code,
   return Out;
 }
 
+/// Whether \p Name is \p Stem followed by uppercase hexadecimal digits.
+bool hexNamed(std::string_view Name, std::string_view Stem) {
+  return Name.size() > Stem.size() && Name.starts_with(Stem) &&
+         std::all_of(Name.begin() + Stem.size(), Name.end(), upperHex);
+}
+
+/// \p Code with each frame slot's name, var_mN, spelled sN.
+std::string shortSlotNames(std::string_view Code, bool *Changed) {
+  std::string Out;
+  Out.reserve(Code.size());
+  std::size_t Last = 0;
+  identifiers(Code, [&](std::size_t At, std::string_view Name) {
+    if (!hexNamed(Name, "var_m"))
+      return;
+    Out.append(Code.substr(Last, At - Last));
+    Out += 's';
+    Out.append(Name.substr(5));
+    Last = At + Name.size();
+    *Changed = true;
+  });
+  Out.append(Code.substr(Last));
+  return Out;
+}
+
+/// Whether \p Name is a temporary the engine names by its value, tB_I.
+bool temporaryName(std::string_view Name) {
+  const auto Digits = [](std::string_view Part) {
+    return !Part.empty() && std::all_of(Part.begin(), Part.end(), [](char C) {
+      return std::isdigit(static_cast<unsigned char>(C)) != 0;
+    });
+  };
+  const auto Separator = Name.find('_');
+  return Name.size() > 3 && Name.front() == 't' &&
+         Separator != std::string_view::npos &&
+         Digits(Name.substr(1, Separator - 1)) &&
+         Digits(Name.substr(Separator + 1));
+}
+
+/// The temporaries of \p Function numbered tN in the order it first uses
+/// them, past every tN name it uses already.
+std::map<std::string, std::string, std::less<>>
+temporaryNumbers(std::string_view Function) {
+  const auto Taken = identifierSet(Function);
+  std::map<std::string, std::string, std::less<>> Numbers;
+  unsigned Next = 1;
+  (void)outsideLiterals(Function, [&](std::string_view Code) {
+    identifiers(Code, [&](std::size_t, std::string_view Name) {
+      if (!temporaryName(Name) || Numbers.count(Name))
+        return;
+      std::string Short;
+      do
+        Short = "t" + std::to_string(Next++);
+      while (Taken.count(Short));
+      Numbers.emplace(std::string(Name), std::move(Short));
+    });
+    return std::string(Code);
+  });
+  return Numbers;
+}
+
 } // namespace
 
-ReadingView readingView(std::string_view Text) {
+ReadingView readingView(std::string_view Text, std::string_view Function) {
   const auto Taken = identifierSet(Text);
   std::map<std::string_view, std::string_view, std::less<>> Short;
   for (const auto &Type : TypeNames)
@@ -528,6 +588,10 @@ ReadingView readingView(std::string_view Text) {
   for (const auto &Name : Elsewhere)
     if (Name.starts_with("var_m") || Name.starts_with("gap"))
       FrameNamesFree = false;
+  // Slots are spelled sN where nothing else is.
+  const bool SlotNamesFree =
+      std::none_of(Taken.begin(), Taken.end(),
+                   [](const std::string &Name) { return hexNamed(Name, "s"); });
 
   // Each address used in a byte-array global, with the types it is read
   // and written as, in order of first use, and how often.
@@ -580,15 +644,27 @@ ReadingView readingView(std::string_view Text) {
     return Out;
   });
 
+  // Numbered across the whole function, or not at all.
+  const auto Numbers = temporaryNumbers(Function);
+  std::map<std::string_view, std::string_view, std::less<>> Temporaries;
+  for (const auto &[Long, Number] : Numbers)
+    Temporaries.emplace(Long, Number);
+
   View = mergeDeclarations(foldFrames(View));
-  bool UsedTypes = false, UsedFrame = false;
+  bool UsedTypes = false, UsedFrame = false, UsedSlots = false,
+       UsedTemporaries = false;
   View = outsideLiterals(View, [&](std::string_view Code) {
-    const auto Bare =
+    auto Bare =
         FrameNamesFree
             ? replaceFrameMembers(
                   Code, [](std::string_view Name) { return std::string(Name); },
                   &UsedFrame)
             : std::string(Code);
+    // Only frame members are named var_mN then: the frame's declaration
+    // and the accesses just made bare.
+    if (FrameNamesFree && SlotNamesFree)
+      Bare = shortSlotNames(Bare, &UsedSlots);
+    Bare = replaceIdentifiers(Bare, Temporaries, &UsedTemporaries);
     return replaceIdentifiers(Bare, Short, &UsedTypes);
   });
 
@@ -609,8 +685,13 @@ ReadingView readingView(std::string_view Text) {
   if (UsedTypes)
     Notes.push_back(std::string("iN/uN: intN_t/uintN_t") +
                     (Short.count("uintptr_t") ? ", uptr: uintptr_t" : ""));
-  if (UsedFrame)
+  if (UsedSlots)
+    Notes.push_back("sN/gapN: stack_storage members var_mN/gapN, sN the slot "
+                    "at -0xN");
+  else if (UsedFrame)
     Notes.push_back("var_mN/gapN: stack_storage members");
+  if (UsedTemporaries)
+    Notes.push_back("tN: the temporaries tB_I, numbered in order");
   if (!ByType.empty()) {
     std::string Globals = "globals: ";
     for (std::size_t I = 0; I < ByType.size(); ++I) {
