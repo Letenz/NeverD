@@ -19,6 +19,7 @@
 #include "ProjectDatabase.h"
 #include "QuickStartDialog.h"
 #include "Session.h"
+#include "SessionTestAccess.h"
 #include "SetTypeDialog.h"
 #include "SettingsKeys.h"
 #include "SymbolTablePromptDialog.h"
@@ -2681,6 +2682,34 @@ private slots:
     const QJsonObject secondPayload{{"address", hexAddress(Base + 64)},
                                     {"representation", "source"}};
     QVERIFY(&pool.queries(secondPayload, &second) != &firstLane);
+  }
+
+  void heartbeatsOfAnotherProjectLeaveTheSessionAlone() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    session.open(
+        writeFixture(directory, QStringLiteral("heartbeat-project.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    const auto heartbeat = [&](const QString &project) {
+      return QJsonObject{
+          {"type", "heartbeat"},
+          {"protocol_major", 1},
+          {"project_id", project},
+          {"revision", session.revision()},
+          {"background", QJsonObject{{"state", "replayed"},
+                                     {"functions", 4242},
+                                     {"generation", "replayed"},
+                                     {"discovery_complete", true}}}};
+    };
+    // The worker built this before the reply that opened the project, and
+    // sent it after: its state, discovery completion included, is not ours.
+    SessionTestAccess::receive(session,
+                               heartbeat(QStringLiteral("previous-project")));
+    QVERIFY(session.background().value("state") != QLatin1String("replayed"));
+    SessionTestAccess::receive(session,
+                               heartbeat(session.queries().projectId()));
+    QCOMPARE(session.background().value("state").toString(),
+             QStringLiteral("replayed"));
   }
 
   void analysisPagesKeepTheirReplicaWhenAnotherFunctionQueues() {
