@@ -2672,7 +2672,6 @@ void MainWindow::searchBinary(const QString &kind, bool again) {
       return;
     last = text.trimmed();
   }
-  const auto from = currentAddress().value_or(0);
   const auto pattern = last;
   const bool backward = !searchDown_;
   const auto serial = ++searchSerial_, epoch = session_.epoch();
@@ -2681,68 +2680,86 @@ void MainWindow::searchBinary(const QString &kind, bool again) {
     session_.queries().unsubscribe(searchSubscription_);
   if (auto *results = choosers_.value(int(ChooserKind::SearchResults)))
     results->model().setLocalRows({});
-  auto request = std::make_shared<std::function<void(bool)>>();
-  const std::weak_ptr<std::function<void(bool)>> weak = request;
-  *request = [this, kind, pattern, from, backward, serial, epoch, revision,
-              weak](bool wrapped) {
-    auto keep = weak.lock();
-    if (!keep)
+  // A previous search can still be navigating to its first match. Use its
+  // settled cursor, just as the source view does, so that completion cannot
+  // invalidate the search the user has just accepted.
+  const auto beginSearch = [this, kind, pattern, backward, serial, epoch,
+                            revision] {
+    if (serial != searchSerial_ || epoch != session_.epoch() ||
+        revision != session_.revision() || !session_.loaded())
       return;
-    QJsonObject query{{"kind", kind},
-                      {"pattern", pattern},
-                      {"limit", 4096},
-                      {"backward", backward}};
-    if (!wrapped)
-      query["from"] = hexAddress(from);
-    searchSubscription_ = session_.read(
-        QStringLiteral("search"), query, this,
-        [this, kind, pattern, serial, epoch, revision, from, backward, wrapped,
-         keep](const QJsonObject &payload) {
-          if (serial != searchSerial_ || epoch != session_.epoch() ||
-              revision != session_.revision() || !session_.loaded() ||
-              currentAddress().value_or(0) != from)
-            return;
-          if (payload.value("building").toBool()) {
-            QTimer::singleShot(1, this, [keep, wrapped] { (*keep)(wrapped); });
-            return;
-          }
-          if (payload.value("coverage").toString() == "partial")
-            output_->append(tr("Immediate search has undecoded ranges; results "
-                               "cover decoded executable ranges only."),
-                            1);
-          const auto items = payload.value("items").toArray();
-          if (items.isEmpty() && !wrapped) {
-            (*keep)(true);
-            return;
-          }
-          if (items.isEmpty()) {
-            output_->append(tr("Search failed: %1 not found").arg(pattern), 1);
-            return;
-          }
-          auto *dock = chooserDock(ChooserKind::SearchResults);
-          choosers_.value(int(ChooserKind::SearchResults))
-              ->model()
-              .setLocalRows(items);
-          if (!dock->isOpen())
-            addDockWidget(dock, KDDockWidgets::Location_OnBottom,
-                          docks_.value(DisassemblyDock));
-          dock->open();
-          if (!payload.value("complete").toBool())
-            output_->append(
-                tr("Showing %1 matches; use Next to continue the search.")
-                    .arg(items.size()),
-                0);
-          // The worker already ordered and bounded the page from this cursor.
-          if (const auto address =
-                  addressValue(items.first().toObject().value("address")))
-            navigate(*address);
-        },
-        [this, serial, epoch](const QString &, const QString &message) {
-          if (serial == searchSerial_ && epoch == session_.epoch())
-            output_->append(message, 2);
-        });
+    const auto from = currentAddress().value_or(0);
+    auto request = std::make_shared<std::function<void(bool)>>();
+    const std::weak_ptr<std::function<void(bool)>> weak = request;
+    *request = [this, kind, pattern, from, backward, serial, epoch, revision,
+                weak](bool wrapped) {
+      auto keep = weak.lock();
+      if (!keep)
+        return;
+      QJsonObject query{{"kind", kind},
+                        {"pattern", pattern},
+                        {"limit", 4096},
+                        {"backward", backward}};
+      if (!wrapped)
+        query["from"] = hexAddress(from);
+      searchSubscription_ = session_.read(
+          QStringLiteral("search"), query, this,
+          [this, kind, pattern, serial, epoch, revision, from, backward,
+           wrapped, keep](const QJsonObject &payload) {
+            if (serial != searchSerial_ || epoch != session_.epoch() ||
+                revision != session_.revision() || !session_.loaded() ||
+                currentAddress().value_or(0) != from)
+              return;
+            if (payload.value("building").toBool()) {
+              QTimer::singleShot(1, this,
+                                 [keep, wrapped] { (*keep)(wrapped); });
+              return;
+            }
+            if (payload.value("coverage").toString() == "partial")
+              output_->append(
+                  tr("Immediate search has undecoded ranges; results "
+                     "cover decoded executable ranges only."),
+                  1);
+            const auto items = payload.value("items").toArray();
+            if (items.isEmpty() && !wrapped) {
+              (*keep)(true);
+              return;
+            }
+            if (items.isEmpty()) {
+              output_->append(tr("Search failed: %1 not found").arg(pattern),
+                              1);
+              return;
+            }
+            auto *dock = chooserDock(ChooserKind::SearchResults);
+            choosers_.value(int(ChooserKind::SearchResults))
+                ->model()
+                .setLocalRows(items);
+            if (!dock->isOpen())
+              addDockWidget(dock, KDDockWidgets::Location_OnBottom,
+                            docks_.value(DisassemblyDock));
+            dock->open();
+            if (!payload.value("complete").toBool())
+              output_->append(
+                  tr("Showing %1 matches; use Next to continue the search.")
+                      .arg(items.size()),
+                  0);
+            // The worker already ordered and bounded the page from this cursor.
+            if (const auto address =
+                    addressValue(items.first().toObject().value("address")))
+              navigate(*address);
+          },
+          [this, serial, epoch](const QString &, const QString &message) {
+            if (serial == searchSerial_ && epoch == session_.epoch())
+              output_->append(message, 2);
+          });
+    };
+    (*request)(false);
   };
-  (*request)(false);
+  if (disassembly_->listing()->jumpPending())
+    connect(disassembly_->listing(), &ListingView::jumpSettled, this,
+            beginSearch, Qt::SingleShotConnection);
+  else
+    beginSearch();
 }
 
 void MainWindow::queryRegister(const QString &kind) {
