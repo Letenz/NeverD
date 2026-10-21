@@ -2,6 +2,7 @@
 // production main window and its views, edits and session transitions.
 #include "ChooserView.h"
 #include "CodeView.h"
+#include "DeepLink.h"
 #include "DisassemblyView.h"
 #include "Docking.h"
 #include "DwarfPromptDialog.h"
@@ -9,6 +10,7 @@
 #include "FunctionEditDialog.h"
 #include "GraphView.h"
 #include "HexView.h"
+#include "InstanceServer.h"
 #include "ListingView.h"
 #include "LoadFileDialog.h"
 #include "LocalTypesView.h"
@@ -57,6 +59,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QLocalSocket>
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
@@ -6331,6 +6334,150 @@ private slots:
              QJsonArray{QStringLiteral("uefi-x64")});
     QCOMPARE(choice.value(QStringLiteral("removed")).toArray(),
              QJsonArray{QStringLiteral("windows-kernel-x64")});
+  }
+
+  void linksCopyAndOpenTheirPlaces() {
+    // Copy link names the place the disassembly shows, and a link opens its
+    // place in the view it asks for, as IDA's open_ida_link does; another
+    // build, an address the program lacks or a bookmark it lacks is refused.
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const QString hash =
+        bench.session.metadata().value(QStringLiteral("sha256")).toString();
+    QCOMPARE(hash.size(), 64);
+    auto *disassembly = bench.window->disassembly();
+    disassembly->navigate(Base + 0x44);
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(Base + 0x44));
+    disassembly->focusContent();
+    clearClipboard();
+    QTRY_VERIFY(bench.action(ActionId::EditCopyLink)->isEnabled());
+    bench.action(ActionId::EditCopyLink)->trigger();
+    QCOMPARE(QApplication::clipboard()->text(),
+             QStringLiteral("neverd:///fixture.bin/addresses?rva=0x44"
+                            "&sha256=%1")
+                 .arg(hash.left(16)));
+
+    QString error;
+    const auto open = [&](const QString &text) {
+      error = QStringLiteral("unanswered");
+      const ParsedLink parsed = parseDeepLink(text);
+      if (!parsed.link) {
+        error = parsed.error;
+        return;
+      }
+      bench.window->openLink(*parsed.link,
+                             [&](const QString &result) { error = result; });
+    };
+    // A function by an address inside it, shown from its entry.
+    open(QStringLiteral(
+        "neverd:///fixture.bin/functions?rva=0x48&view=pseudocode"));
+    QTRY_COMPARE_WITH_TIMEOUT(error, QString(), OpenTimeoutMs);
+    QTRY_VERIFY(bench.codeView(QStringLiteral("source")));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        bench.codeView(QStringLiteral("source"))->text()->function(),
+        std::optional<Address>(Base + 0x40), OpenTimeoutMs);
+    open(QStringLiteral("neverd:///addresses?ea=%1&view=graph")
+             .arg(hexAddress(Base + 0x52)));
+    QTRY_COMPARE_WITH_TIMEOUT(error, QString(), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(disassembly->graphMode() &&
+                                 disassembly->graph()->loaded(),
+                             OpenTimeoutMs);
+    QTRY_COMPARE(disassembly->currentFunction(),
+                 std::optional<Address>(Base + 0x50));
+
+    open(QStringLiteral("neverd:///fixture.bin/functions?rva=0x40&sha256=%1")
+             .arg(hash.startsWith(QLatin1String("00000000"))
+                      ? QStringLiteral("ffffffff")
+                      : QStringLiteral("00000000")));
+    QTRY_VERIFY(error.startsWith(
+        QStringLiteral("The link names another build of the input")));
+    open(QStringLiteral("neverd:///addresses?rva=0x7fffffff"));
+    QTRY_VERIFY(error.startsWith(QStringLiteral("The link's address")));
+    open(QStringLiteral("neverd:///bookmarks?rva=0x40"));
+    QTRY_VERIFY(error.startsWith(QStringLiteral("No bookmark is at")));
+  }
+
+  void otherProgramsFindTheWorkbenchAndOpenLinksInIt() {
+    // As IDA 9.4's IPC server: get_info names the program, and open_link
+    // opens a link in this window; hcli's requests, without a newline, are
+    // answered too.  The server lives where only this user can reach it.
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    auto &server = bench.window->instanceServer();
+    QVERIFY2(server.listening(), qPrintable(server.errorString()));
+#ifndef Q_OS_WIN
+    QCOMPARE(QFileInfo(server.serverName()).absolutePath(),
+             InstanceServer::directory());
+    QCOMPARE(QFileInfo(InstanceServer::directory()).permissions() &
+                 (QFile::ReadGroup | QFile::WriteGroup | QFile::ExeGroup |
+                  QFile::ReadOther | QFile::WriteOther | QFile::ExeOther),
+             QFileDevice::Permissions());
+#endif
+    const auto instances = InstanceServer::discover();
+    QVERIFY(std::any_of(instances.begin(), instances.end(),
+                        [&](const InstanceServer::Instance &instance) {
+                          return instance.server == server.serverName() &&
+                                 instance.pid ==
+                                     QCoreApplication::applicationPid();
+                        }));
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+
+    QLocalSocket socket;
+    socket.connectToServer(server.serverName());
+    QVERIFY(socket.waitForConnected(1000));
+    const auto ask = [&](const QByteArray &request) {
+      socket.write(request);
+      QByteArray reply;
+      QTest::qWaitFor(
+          [&] {
+            reply += socket.readAll();
+            return reply.contains('\n');
+          },
+          OpenTimeoutMs);
+      return QJsonDocument::fromJson(reply.left(reply.indexOf('\n'))).object();
+    };
+    const QJsonObject info = ask("{\"cmd\":\"get_info\"}\n");
+    QCOMPARE(info.value(QStringLiteral("status")).toString(),
+             QStringLiteral("ok"));
+    QVERIFY(info.value(QStringLiteral("loaded")).toBool());
+    QCOMPARE(info.value(QStringLiteral("input_name")).toString(),
+             QStringLiteral("fixture.bin"));
+    QCOMPARE(
+        info.value(QStringLiteral("sha256")).toString(),
+        bench.session.metadata().value(QStringLiteral("sha256")).toString());
+    QCOMPARE(info.value(QStringLiteral("pid")).toInteger(),
+             QCoreApplication::applicationPid());
+    QCOMPARE(ask("{\"cmd\":\"ping\"}").value(QStringLiteral("status")),
+             QJsonValue(QStringLiteral("ok")));
+    QCOMPARE(ask("{\"cmd\":\"is_analysis_complete\"}\n")
+                 .value(QStringLiteral("status")),
+             QJsonValue(QStringLiteral("ok")));
+    const QJsonObject opened =
+        ask("{\"cmd\":\"open_link\",\"uri\":\"neverd:///fixture.bin/"
+            "addresses?rva=0x52\"}\n");
+    QVERIFY2(opened.value(QStringLiteral("status")).toString() ==
+                 QLatin1String("ok"),
+             qPrintable(QJsonDocument(opened).toJson()));
+    QTRY_COMPARE(bench.window->disassembly()->currentItem(),
+                 std::optional<Address>(Base + 0x52));
+    QCOMPARE(ask("{\"cmd\":\"open_link\",\"uri\":\"neverd:///types\"}\n")
+                 .value(QStringLiteral("message"))
+                 .toString(),
+             QStringLiteral("A types link names its type with name=."));
+    QCOMPARE(ask("{\"cmd\":\"rename\"}\n")
+                 .value(QStringLiteral("message"))
+                 .toString(),
+             QStringLiteral("Unknown command: rename"));
+    QCOMPARE(ask("[1]\n").value(QStringLiteral("message")).toString(),
+             QStringLiteral("Expected a JSON object"));
   }
 
   void pathfinderListsTheCallPathsBetweenWaypoints() {

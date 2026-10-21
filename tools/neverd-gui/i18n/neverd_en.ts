@@ -124,6 +124,14 @@
         <translation>Copy the current address</translation>
     </message>
     <message>
+        <source>Copy &amp;link</source>
+        <translation>Copy &amp;link</translation>
+    </message>
+    <message>
+        <source>Copy a neverd:// link to the place under the cursor, which NeverD opens there</source>
+        <translation>Copy a neverd:// link to the place under the cursor, which NeverD opens there</translation>
+    </message>
+    <message>
         <source>Re&amp;name...</source>
         <translation>Re&amp;name...</translation>
     </message>
@@ -278,6 +286,14 @@
     <message>
         <source>Choose a bookmark to jump to</source>
         <translation>Choose a bookmark to jump to</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;link...</source>
+        <translation>Jump to &amp;link...</translation>
+    </message>
+    <message>
+        <source>Go to the place a neverd:// or ida:// link names</source>
+        <translation>Go to the place a neverd:// or ida:// link names</translation>
     </message>
     <message>
         <source>&amp;Text...</source>
@@ -2870,6 +2886,62 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
         <source>Pathfinding</source>
         <translation>Pathfinding</translation>
     </message>
+    <message>
+        <source>Other programs cannot open links in this window: %1</source>
+        <translation>Other programs cannot open links in this window: %1</translation>
+    </message>
+    <message>
+        <source>Copied link: %1</source>
+        <translation>Copied link: %1</translation>
+    </message>
+    <message>
+        <source>Jump to link</source>
+        <translation>Jump to link</translation>
+    </message>
+    <message>
+        <source>Link (neverd:// or ida://):</source>
+        <translation>Link (neverd:// or ida://):</translation>
+    </message>
+    <message>
+        <source>Not a link to follow: %1</source>
+        <translation>Not a link to follow: %1</translation>
+    </message>
+    <message>
+        <source>No program is open to follow the link in.</source>
+        <translation>No program is open to follow the link in.</translation>
+    </message>
+    <message>
+        <source>The link names another build of the input: its SHA-256 starts %1, and that of %2 starts %3.</source>
+        <translation>The link names another build of the input: its SHA-256 starts %1, and that of %2 starts %3.</translation>
+    </message>
+    <message>
+        <source>The link names %1, not %2; following it here.</source>
+        <translation>The link names %1, not %2; following it here.</translation>
+    </message>
+    <message>
+        <source>The program changed before the link opened.</source>
+        <translation>The program changed before the link opened.</translation>
+    </message>
+    <message>
+        <source>No local type is named %1.</source>
+        <translation>No local type is named %1.</translation>
+    </message>
+    <message>
+        <source>The link's address %1 is not in %2.</source>
+        <translation>The link's address %1 is not in %2.</translation>
+    </message>
+    <message>
+        <source>No bookmark is at %1.</source>
+        <translation>No bookmark is at %1.</translation>
+    </message>
+    <message>
+        <source>No function is at %1.</source>
+        <translation>No function is at %1.</translation>
+    </message>
+    <message>
+        <source>Another link took this one's place.</source>
+        <translation>Another link took this one's place.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -5111,6 +5183,147 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
     <message>
         <source>Copy</source>
         <translation>Copy</translation>
+    </message>
+</context>
+<context>
+    <name>DeepLink</name>
+    <message>
+        <source>A link starts with neverd:// or ida://.</source>
+        <translation>A link starts with neverd:// or ida://.</translation>
+    </message>
+    <message>
+        <source>A Knowledge Exchange link names a file to download, not a place in a program.</source>
+        <translation>A Knowledge Exchange link names a file to download, not a place in a program.</translation>
+    </message>
+    <message>
+        <source>A link names its input before its resource.</source>
+        <translation>A link names its input before its resource.</translation>
+    </message>
+    <message>
+        <source>A link names one resource, after its input's name when it has one.</source>
+        <translation>A link names one resource, after its input's name when it has one.</translation>
+    </message>
+    <message>
+        <source>A link names functions, addresses, strings, segments, names, imports, exports, types or bookmarks, not "%1".</source>
+        <translation>A link names functions, addresses, strings, segments, names, imports, exports, types or bookmarks, not "%1".</translation>
+    </message>
+    <message>
+        <source>A link gives %1 once.</source>
+        <translation>A link gives %1 once.</translation>
+    </message>
+    <message>
+        <source>%1 is a number, decimal or after 0x, not "%2".</source>
+        <translation>%1 is a number, decimal or after 0x, not "%2".</translation>
+    </message>
+    <message>
+        <source>A link has no view "%1".</source>
+        <translation>A link has no view "%1".</translation>
+    </message>
+    <message>
+        <source>sha256 is 8 to 64 hexadecimal digits of the input's SHA-256, not "%1".</source>
+        <translation>sha256 is 8 to 64 hexadecimal digits of the input's SHA-256, not "%1".</translation>
+    </message>
+    <message>
+        <source>A link gives rva or ea, not both.</source>
+        <translation>A link gives rva or ea, not both.</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=, not an address.</source>
+        <translation>A types link names its type with name=, not an address.</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=.</source>
+        <translation>A types link names its type with name=.</translation>
+    </message>
+    <message>
+        <source>%1 links give their address with rva= or ea=.</source>
+        <translation>%1 links give their address with rva= or ea=.</translation>
+    </message>
+    <message>
+        <source>%1 links name an address, not a type.</source>
+        <translation>%1 links name an address, not a type.</translation>
+    </message>
+    <message>
+        <source>%1 links show in %2, not in %3.</source>
+        <translation>%1 links show in %2, not in %3.</translation>
+    </message>
+</context>
+<context>
+    <name>LinkDispatch</name>
+    <message numerus="yes">
+        <source>%n running NeverDs have programs open, and the link names none of them; give it the input's name.</source>
+        <translation>
+            <numerusform>%n running NeverDs have programs open, and the link names none of them; give it the input's name.</numerusform>
+            <numerusform>%n running NeverDs have programs open, and the link names none of them; give it the input's name.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The NeverD that has %1 open did not answer.</source>
+        <translation>The NeverD that has %1 open did not answer.</translation>
+    </message>
+    <message>
+        <source>Opened in the NeverD that has %1 open (process %2).</source>
+        <translation>Opened in the NeverD that has %1 open (process %2).</translation>
+    </message>
+    <message>
+        <source>%1	(does not answer)</source>
+        <translation>%1	(does not answer)</translation>
+    </message>
+    <message>
+        <source>%1	(no program open)</source>
+        <translation>%1	(no program open)</translation>
+    </message>
+    <message>
+        <source>analysis complete</source>
+        <translation>analysis complete</translation>
+    </message>
+    <message>
+        <source>analyzing</source>
+        <translation>analyzing</translation>
+    </message>
+    <message>
+        <source>NeverD is not running.</source>
+        <translation>NeverD is not running.</translation>
+    </message>
+    <message>
+        <source>neverd:// links no longer open in NeverD.</source>
+        <translation>neverd:// links no longer open in NeverD.</translation>
+    </message>
+    <message>
+        <source>The registry did not take the neverd:// handler.</source>
+        <translation>The registry did not take the neverd:// handler.</translation>
+    </message>
+    <message>
+        <source>neverd:// links now open in %1.</source>
+        <translation>neverd:// links now open in %1.</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; they open in it once it is in Applications.</source>
+        <translation>On macOS the NeverD application declares neverd:// links; they open in it once it is in Applications.</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; remove the application to stop that.</source>
+        <translation>On macOS the NeverD application declares neverd:// links; remove the application to stop that.</translation>
+    </message>
+    <message>
+        <source>Could not remove %1.</source>
+        <translation>Could not remove %1.</translation>
+    </message>
+    <message>
+        <source>Could not write %1.</source>
+        <translation>Could not write %1.</translation>
+    </message>
+    <message>
+        <source>Wrote %1, but xdg-mime did not make it the handler of neverd:// links.</source>
+        <translation>Wrote %1, but xdg-mime did not make it the handler of neverd:// links.</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open.</source>
+        <translation>No running NeverD has the link's program open.</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open, and no recently opened file is it; name the file too: neverd-gui FILE LINK</source>
+        <translation>No running NeverD has the link's program open, and no recently opened file is it; name the file too: neverd-gui FILE LINK</translation>
     </message>
 </context>
 </TS>

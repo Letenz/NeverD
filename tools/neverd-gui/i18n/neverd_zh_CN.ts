@@ -124,6 +124,14 @@
         <translation>复制当前地址</translation>
     </message>
     <message>
+        <source>Copy &amp;link</source>
+        <translation>复制链接(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Copy a neverd:// link to the place under the cursor, which NeverD opens there</source>
+        <translation>复制指向光标处位置的 neverd:// 链接，NeverD 会在该处打开它</translation>
+    </message>
+    <message>
         <source>Re&amp;name...</source>
         <translation>重命名(&amp;N)...</translation>
     </message>
@@ -278,6 +286,14 @@
     <message>
         <source>Choose a bookmark to jump to</source>
         <translation>选择要跳转到的书签</translation>
+    </message>
+    <message>
+        <source>Jump to &amp;link...</source>
+        <translation>跳转到链接(&amp;L)...</translation>
+    </message>
+    <message>
+        <source>Go to the place a neverd:// or ida:// link names</source>
+        <translation>转到 neverd:// 或 ida:// 链接所指的位置</translation>
     </message>
     <message>
         <source>&amp;Text...</source>
@@ -2864,6 +2880,62 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Pathfinding</source>
         <translation>路径查找</translation>
     </message>
+    <message>
+        <source>Other programs cannot open links in this window: %1</source>
+        <translation>其他程序无法在此窗口中打开链接：%1</translation>
+    </message>
+    <message>
+        <source>Copied link: %1</source>
+        <translation>已复制链接：%1</translation>
+    </message>
+    <message>
+        <source>Jump to link</source>
+        <translation>跳转到链接</translation>
+    </message>
+    <message>
+        <source>Link (neverd:// or ida://):</source>
+        <translation>链接（neverd:// 或 ida://）：</translation>
+    </message>
+    <message>
+        <source>Not a link to follow: %1</source>
+        <translation>不是可跳转的链接：%1</translation>
+    </message>
+    <message>
+        <source>No program is open to follow the link in.</source>
+        <translation>没有打开可跟随该链接的程序。</translation>
+    </message>
+    <message>
+        <source>The link names another build of the input: its SHA-256 starts %1, and that of %2 starts %3.</source>
+        <translation>该链接指向输入文件的另一个构建：其 SHA-256 以 %1 开头，而 %2 的以 %3 开头。</translation>
+    </message>
+    <message>
+        <source>The link names %1, not %2; following it here.</source>
+        <translation>该链接指向 %1，而不是 %2；仍在此处打开。</translation>
+    </message>
+    <message>
+        <source>The program changed before the link opened.</source>
+        <translation>链接打开前程序已更改。</translation>
+    </message>
+    <message>
+        <source>No local type is named %1.</source>
+        <translation>没有名为 %1 的本地类型。</translation>
+    </message>
+    <message>
+        <source>The link's address %1 is not in %2.</source>
+        <translation>链接的地址 %1 不在 %2 中。</translation>
+    </message>
+    <message>
+        <source>No bookmark is at %1.</source>
+        <translation>%1 处没有书签。</translation>
+    </message>
+    <message>
+        <source>No function is at %1.</source>
+        <translation>%1 处没有函数。</translation>
+    </message>
+    <message>
+        <source>Another link took this one's place.</source>
+        <translation>另一个链接取代了此链接。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -5077,6 +5149,146 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
     <message>
         <source>Copy</source>
         <translation>复制</translation>
+    </message>
+</context>
+<context>
+    <name>DeepLink</name>
+    <message>
+        <source>A link starts with neverd:// or ida://.</source>
+        <translation>链接以 neverd:// 或 ida:// 开头。</translation>
+    </message>
+    <message>
+        <source>A Knowledge Exchange link names a file to download, not a place in a program.</source>
+        <translation>Knowledge Exchange 链接指向要下载的文件，而不是程序中的位置。</translation>
+    </message>
+    <message>
+        <source>A link names its input before its resource.</source>
+        <translation>链接在资源之前给出输入文件名。</translation>
+    </message>
+    <message>
+        <source>A link names one resource, after its input's name when it has one.</source>
+        <translation>链接只给出一个资源，若有输入文件名则放在其后。</translation>
+    </message>
+    <message>
+        <source>A link names functions, addresses, strings, segments, names, imports, exports, types or bookmarks, not "%1".</source>
+        <translation>链接指定 functions、addresses、strings、segments、names、imports、exports、types 或 bookmarks，而不是“%1”。</translation>
+    </message>
+    <message>
+        <source>A link gives %1 once.</source>
+        <translation>链接只能给出一次 %1。</translation>
+    </message>
+    <message>
+        <source>%1 is a number, decimal or after 0x, not "%2".</source>
+        <translation>%1 是十进制数或 0x 开头的数，不是“%2”。</translation>
+    </message>
+    <message>
+        <source>A link has no view "%1".</source>
+        <translation>链接没有“%1”视图。</translation>
+    </message>
+    <message>
+        <source>sha256 is 8 to 64 hexadecimal digits of the input's SHA-256, not "%1".</source>
+        <translation>sha256 是输入文件 SHA-256 的 8 到 64 位十六进制数字，而不是“%1”。</translation>
+    </message>
+    <message>
+        <source>A link gives rva or ea, not both.</source>
+        <translation>链接给出 rva 或 ea，不能同时给出。</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=, not an address.</source>
+        <translation>types 链接用 name= 指定类型，而不是地址。</translation>
+    </message>
+    <message>
+        <source>A types link names its type with name=.</source>
+        <translation>types 链接用 name= 指定类型。</translation>
+    </message>
+    <message>
+        <source>%1 links give their address with rva= or ea=.</source>
+        <translation>%1 链接用 rva= 或 ea= 给出地址。</translation>
+    </message>
+    <message>
+        <source>%1 links name an address, not a type.</source>
+        <translation>%1 链接指定的是地址，而不是类型。</translation>
+    </message>
+    <message>
+        <source>%1 links show in %2, not in %3.</source>
+        <translation>%1 链接显示在 %2 中，而不是 %3 中。</translation>
+    </message>
+</context>
+<context>
+    <name>LinkDispatch</name>
+    <message numerus="yes">
+        <source>%n running NeverDs have programs open, and the link names none of them; give it the input's name.</source>
+        <translation>
+            <numerusform>%n 个运行中的 NeverD 打开了程序，但该链接没有指明其中任何一个；请为它加上输入文件名。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>The NeverD that has %1 open did not answer.</source>
+        <translation>打开了 %1 的 NeverD 没有响应。</translation>
+    </message>
+    <message>
+        <source>Opened in the NeverD that has %1 open (process %2).</source>
+        <translation>已在打开了 %1 的 NeverD 中打开（进程 %2）。</translation>
+    </message>
+    <message>
+        <source>%1	(does not answer)</source>
+        <translation>%1	（无响应）</translation>
+    </message>
+    <message>
+        <source>%1	(no program open)</source>
+        <translation>%1	（未打开程序）</translation>
+    </message>
+    <message>
+        <source>analysis complete</source>
+        <translation>分析完成</translation>
+    </message>
+    <message>
+        <source>analyzing</source>
+        <translation>正在分析</translation>
+    </message>
+    <message>
+        <source>NeverD is not running.</source>
+        <translation>NeverD 没有在运行。</translation>
+    </message>
+    <message>
+        <source>neverd:// links no longer open in NeverD.</source>
+        <translation>neverd:// 链接不再在 NeverD 中打开。</translation>
+    </message>
+    <message>
+        <source>The registry did not take the neverd:// handler.</source>
+        <translation>注册表未接受 neverd:// 处理程序。</translation>
+    </message>
+    <message>
+        <source>neverd:// links now open in %1.</source>
+        <translation>neverd:// 链接现在在 %1 中打开。</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; they open in it once it is in Applications.</source>
+        <translation>在 macOS 上，NeverD 应用声明了 neverd:// 链接；放入“应用程序”后，链接即在其中打开。</translation>
+    </message>
+    <message>
+        <source>On macOS the NeverD application declares neverd:// links; remove the application to stop that.</source>
+        <translation>在 macOS 上，NeverD 应用声明了 neverd:// 链接；如需停止，请删除该应用。</translation>
+    </message>
+    <message>
+        <source>Could not remove %1.</source>
+        <translation>无法删除 %1。</translation>
+    </message>
+    <message>
+        <source>Could not write %1.</source>
+        <translation>无法写入 %1。</translation>
+    </message>
+    <message>
+        <source>Wrote %1, but xdg-mime did not make it the handler of neverd:// links.</source>
+        <translation>已写入 %1，但 xdg-mime 未将其设为 neverd:// 链接的处理程序。</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open.</source>
+        <translation>没有运行中的 NeverD 打开了该链接的程序。</translation>
+    </message>
+    <message>
+        <source>No running NeverD has the link's program open, and no recently opened file is it; name the file too: neverd-gui FILE LINK</source>
+        <translation>没有运行中的 NeverD 打开了该链接的程序，最近打开的文件中也没有它；请同时指定文件：neverd-gui FILE LINK</translation>
     </message>
 </context>
 </TS>
